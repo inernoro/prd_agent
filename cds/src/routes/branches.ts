@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import { isIP } from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,13 +16,14 @@ import { classifyDeployRuntime, computeServiceDrift } from '../services/deploy-r
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog } from '../types.js';
-import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy } from '../types.js';
+import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
-import { detectStack } from '../services/stack-detector.js';
+import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
+import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
 import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
@@ -30,9 +32,9 @@ import { GitHubAppClient } from '../services/github-app-client.js';
 import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
-import { buildPreviewUrl } from '../services/comment-template.js';
-import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
+import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { selfStatusCache, type RemoteBranchEntry } from '../services/self-status-cache.js';
@@ -42,6 +44,7 @@ import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { waitForFlushWithTimeout } from '../services/bounded-flush.js';
+import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -891,6 +894,41 @@ export async function validateBuildReadiness(
   if (webInstallResult && webInstallResult.exitCode !== 0) {
     webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
   }
+  // #746 guard #3 — 真实 boot 预检(boot install smoke)。
+  // runPnpmInstallWithCache 在 lockfile 哈希命中 stamp 时直接 skip,不跑真正的
+  // `pnpm install`。但 master-run 启动时跑的是**未缓存的** `pnpm install
+  // --frozen-lockfile --prefer-offline`,这条会在 pnpm 11 的 ERR_PNPM_IGNORED_BUILDS
+  // (未批准 native build)等 gate 上 exit 1 → master-run exit 78 → systemd 崩溃循环。
+  // 2026-06-08 两次 502 事故(CI=true / pnpm-workspace.yaml 占位字符串)都是从这个
+  // 缓存 skip 的缝里溜过去的:tsc 过了、cached install skip 了,真实启动才崩。
+  //
+  // 只在上面 helper **跳过了真实 install**(命中缓存 stamp)时才补跑这条 boot 预检:
+  // 那才是"真实 pnpm install 行为尚未被验证"的危险缝隙。若 helper 本轮已经用**同一条**
+  // 命令真实跑过且成功,再跑第二遍纯属重复(双倍 install 时间 + 第二次偶发失败可能误伤),
+  // helper 自己那次就已经是等价的 boot 预检了。
+  if (installResult._timing.skipped) {
+    const bootInstall = await shell.exec(
+      'pnpm install --frozen-lockfile --prefer-offline',
+      { cwd: cdsDir, timeout: 240_000 },
+    );
+    if (bootInstall.exitCode !== 0) {
+      const err = (combinedOutput(bootInstall) || 'boot install 失败').slice(0, 600);
+      timings['total_ms'] = Date.now() - validateStartedAt;
+      progress({
+        phase: 'validate-install',
+        status: 'error',
+        message: `boot 预检失败(master-run 的 pnpm install 会崩,已阻止 swap): ${formatValidationTimings(timings)}`,
+        timings: { ...timings },
+      });
+      return {
+        ok: false,
+        stage: 'install',
+        error: `boot 预检失败 — master-run 启动时的 \`pnpm install --frozen-lockfile --prefer-offline\` 退出非零(若放行将导致 systemd 崩溃循环 502): ${err}`,
+        timings,
+      };
+    }
+  }
+
   progress({
     phase: 'validate-install',
     status: webWarning ? 'warning' : 'done',
@@ -1257,6 +1295,167 @@ async function collectListeningPorts(shell: IShellExecutor): Promise<Set<number>
   const result = await shell.exec('ss -H -ltn').catch(() => null);
   if (!result || result.exitCode !== 0) return new Set();
   return parseListenPorts(result.stdout);
+}
+
+function routeShellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function dockerNameSafeHash(parts: string[]): string {
+  return createHash('sha1').update(parts.join('\n')).digest('hex').slice(0, 20);
+}
+
+function resourceExternalProxyName(projectId: string, branchId: string, resourceId: string): string {
+  return `cds-ext-${dockerNameSafeHash([projectId, branchId, resourceId])}`;
+}
+
+function resourceExternalFirewallChain(projectId: string, branchId: string, resourceId: string): string {
+  return `CDS_EXT_${dockerNameSafeHash([projectId, branchId, resourceId]).slice(0, 16).toUpperCase()}`;
+}
+
+function resourceExternalPortRange(): { start: number; end: number } {
+  const startRaw = Number(process.env.CDS_RESOURCE_TCP_PORT_START);
+  const endRaw = Number(process.env.CDS_RESOURCE_TCP_PORT_END);
+  const start = Number.isFinite(startRaw) && startRaw >= 1024 && startRaw <= 65000 ? Math.floor(startRaw) : 43000;
+  const end = Number.isFinite(endRaw) && endRaw >= start && endRaw <= 65535 ? Math.floor(endRaw) : Math.min(65535, start + 1999);
+  return { start, end };
+}
+
+async function allocateResourceExternalPort(shell: IShellExecutor, preferred?: number): Promise<number> {
+  const used = await collectListeningPorts(shell);
+  const { start, end } = resourceExternalPortRange();
+  if (preferred && preferred >= 1024 && preferred <= 65535 && !used.has(preferred)) return preferred;
+  for (let port = start; port <= end; port += 1) {
+    if (!used.has(port)) return port;
+  }
+  throw new Error(`资源公网 TCP 端口池已耗尽：${start}-${end}`);
+}
+
+function normalizeIpv4Allowlist(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const result: string[] = [];
+  for (const raw of input.slice(0, 20)) {
+    const item = String(raw || '').trim();
+    if (!item) continue;
+    const [ip, prefixRaw] = item.split('/');
+    if (isIP(ip) !== 4) {
+      throw new Error(`IP allowlist 目前仅支持 IPv4/CIDR：${item}`);
+    }
+    if (prefixRaw !== undefined) {
+      const prefix = Number(prefixRaw);
+      if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+        throw new Error(`CIDR 前缀必须在 0-32 之间：${item}`);
+      }
+      result.push(`${ip}/${prefix}`);
+    } else {
+      result.push(`${ip}/32`);
+    }
+  }
+  return Array.from(new Set(result));
+}
+
+async function ensureDockerNetwork(shell: IShellExecutor, network: string): Promise<void> {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(network)) {
+    throw new Error(`Docker network 名称非法：${network}`);
+  }
+  const inspect = await shell.exec(`docker network inspect ${routeShellQuote(network)}`, { timeout: 10_000 });
+  if (inspect.exitCode === 0) return;
+  const create = await shell.exec(`docker network create ${routeShellQuote(network)}`, { timeout: 15_000 });
+  if (create.exitCode !== 0) {
+    throw new Error(`创建 Docker 网络 "${network}" 失败：${combinedOutput(create)}`);
+  }
+}
+
+async function cleanupResourceExternalFirewall(shell: IShellExecutor, chain: string, port?: number): Promise<void> {
+  if (!/^[A-Z0-9_]{1,28}$/.test(chain)) return;
+  if (port && port >= 1 && port <= 65535) {
+    for (let i = 0; i < 8; i += 1) {
+      const del = await shell.exec(`iptables -D DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+      if (del.exitCode !== 0) break;
+    }
+  }
+  await shell.exec(`iptables -F ${chain} 2>/dev/null || true`, { timeout: 5000 });
+  await shell.exec(`iptables -X ${chain} 2>/dev/null || true`, { timeout: 5000 });
+}
+
+async function applyResourceExternalFirewall(
+  shell: IShellExecutor,
+  chain: string,
+  port: number,
+  allowlist: string[],
+): Promise<{ enforced: boolean; chain?: string }> {
+  if (allowlist.length === 0) {
+    await cleanupResourceExternalFirewall(shell, chain, port);
+    return { enforced: false };
+  }
+  if (!/^[A-Z0-9_]{1,28}$/.test(chain)) throw new Error(`iptables chain 名称非法：${chain}`);
+  const probe = await shell.exec('iptables -L DOCKER-USER -n', { timeout: 5000 });
+  if (probe.exitCode !== 0) {
+    throw new Error(`IP allowlist 需要主机 iptables DOCKER-USER 链，但当前不可用：${combinedOutput(probe).slice(0, 240)}`);
+  }
+  await shell.exec(`iptables -N ${chain} 2>/dev/null || true`, { timeout: 5000 });
+  await shell.exec(`iptables -F ${chain}`, { timeout: 5000 });
+  for (const cidr of allowlist) {
+    const add = await shell.exec(`iptables -A ${chain} -s ${cidr} -j ACCEPT`, { timeout: 5000 });
+    if (add.exitCode !== 0) {
+      throw new Error(`写入 IP allowlist 失败 (${cidr})：${combinedOutput(add).slice(0, 240)}`);
+    }
+  }
+  const drop = await shell.exec(`iptables -A ${chain} -j DROP`, { timeout: 5000 });
+  if (drop.exitCode !== 0) {
+    throw new Error(`写入 IP allowlist 默认拒绝规则失败：${combinedOutput(drop).slice(0, 240)}`);
+  }
+  const check = await shell.exec(`iptables -C DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+  if (check.exitCode !== 0) {
+    const jump = await shell.exec(`iptables -I DOCKER-USER 1 -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+    if (jump.exitCode !== 0) {
+      throw new Error(`挂载 IP allowlist 链失败：${combinedOutput(jump).slice(0, 240)}`);
+    }
+  }
+  return { enforced: true, chain };
+}
+
+const RESOURCE_TCP_PROXY_SCRIPT = `
+const net = require('net');
+const targetHost = process.env.TARGET_HOST;
+const targetPort = Number(process.env.TARGET_PORT || 0);
+const listenPort = Number(process.env.LISTEN_PORT || 15432);
+const allowlist = (process.env.ALLOWLIST || '').split(',').map((x) => x.trim()).filter(Boolean);
+const block = new net.BlockList();
+if (allowlist.length === 0) {
+  throw new Error('ALLOWLIST is required for CDS resource TCP proxy');
+}
+for (const rule of allowlist) {
+  const [ip, prefixRaw] = rule.split('/');
+  const prefix = Number(prefixRaw || '32');
+  if (Number.isInteger(prefix) && prefix >= 0 && prefix <= 32) block.addSubnet(ip, prefix, 'ipv4');
+}
+function normalizeIp(ip) {
+  return String(ip || '').replace(/^::ffff:/, '');
+}
+const server = net.createServer((client) => {
+  const ip = normalizeIp(client.remoteAddress);
+  if (!block.check(ip, 'ipv4')) {
+    client.destroy();
+    return;
+  }
+  const upstream = net.connect({ host: targetHost, port: targetPort });
+  upstream.on('error', () => client.destroy());
+  client.on('error', () => upstream.destroy());
+  client.pipe(upstream);
+  upstream.pipe(client);
+});
+server.listen(listenPort, '0.0.0.0');
+process.on('SIGTERM', () => server.close(() => process.exit(0)));
+process.on('SIGINT', () => server.close(() => process.exit(0)));
+`;
+
+function resourceTcpProxyImage(): string {
+  const image = process.env.CDS_RESOURCE_TCP_PROXY_IMAGE || 'node:20-alpine';
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,180}$/.test(image)) {
+    throw new Error(`资源 TCP proxy 镜像名非法：${image}`);
+  }
+  return image;
 }
 
 interface RunServiceWithPortRetryOptions {
@@ -2385,6 +2584,232 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return masked;
   }
 
+  function isSqlInitInfra(service: InfraService): boolean {
+    const kind = detectInfraDataKind(service.dockerImage);
+    return kind === 'postgres' || kind === 'mysql';
+  }
+
+  function composeDatabaseInitCommand(detection: StackDetection, init: DatabaseInitRecommendation): string {
+    const command = (init.command || '').trim();
+    const install = (detection.installCommand || '').trim();
+    if (!command || !install) return command;
+    if (command.includes(install)) return command;
+    return `${install} && ${command}`;
+  }
+
+  async function runDatabaseSqlInit(params: {
+    entry: BranchEntry;
+    init: DatabaseInitRecommendation;
+    scanDir: string;
+    projectId: string;
+    logEvent: (ev: OperationLogEvent) => void;
+  }): Promise<void> {
+    const { entry, init, scanDir, projectId, logEvent } = params;
+    const file = init.files.find((f) => f === 'schema.sql' || f === 'init.sql') || init.files[0];
+    if (!file) throw new Error('未找到 SQL 初始化文件');
+    const sqlPath = path.resolve(scanDir, file);
+    const normalizedScanDir = path.resolve(scanDir);
+    if (!sqlPath.startsWith(`${normalizedScanDir}${path.sep}`) && sqlPath !== normalizedScanDir) {
+      throw new Error(`SQL 初始化文件路径非法: ${file}`);
+    }
+    const sql = fs.readFileSync(sqlPath, 'utf-8');
+    const infra = stateService.getInfraServicesForProject(projectId)
+      .filter((svc) => svc.status === 'running' && isSqlInitInfra(svc))
+      .sort((a, b) => a.id.localeCompare(b.id))[0];
+    if (!infra) {
+      throw new Error('检测到 SQL 初始化脚本，但没有已运行的 PostgreSQL/MySQL/MariaDB 服务可执行。');
+    }
+    logEvent({
+      step: `database-init-sql-${infra.id}`,
+      status: 'running',
+      title: `正在执行 ${file} 到 ${infra.name || infra.id}`,
+      detail: { infraId: infra.id, file, branchId: entry.id },
+      timestamp: new Date().toISOString(),
+    });
+    const plan = buildInfraDataExec(infra, 'init-sql', sql);
+    const result = await runDockerExec(plan.argv, plan.stdin, 120_000);
+    const output = maskSecretValues([result.stdout, result.stderr].filter(Boolean).join('\n'), plan.secretValues);
+    if (result.code !== 0) {
+      throw new Error(output || `${file} 执行失败，exit code ${result.code}`);
+    }
+    logEvent({
+      step: `database-init-sql-${infra.id}`,
+      status: 'done',
+      title: `初始化完成：${file}`,
+      log: output.trim() || undefined,
+      detail: { infraId: infra.id, file, truncated: result.truncated },
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  async function runDatabaseInitializationForDeploy(params: {
+    entry: BranchEntry;
+    profiles: BuildProfile[];
+    requestId?: string;
+    operationId?: string;
+    actor?: string;
+    trigger?: string;
+    assertCurrent?: (step: string) => void;
+    logEvent: (ev: OperationLogEvent) => void;
+  }): Promise<void> {
+    const { entry, profiles, requestId, operationId, actor, trigger, assertCurrent, logEvent } = params;
+    if (profiles.length === 0) return;
+    const projectId = entry.projectId || 'default';
+    const customEnv = getMergedEnv(projectId, entry.id);
+    const firstEffective = resolveEffectiveProfile(profiles[0], entry);
+    const scanTargets: Array<{ profile: BuildProfile; scanDir: string; label: string; root: boolean }> = profiles.map((profile) => {
+      const effective = resolveEffectiveProfile(profile, entry);
+      return {
+        profile: effective,
+        scanDir: path.resolve(entry.worktreePath, effective.workDir || '.'),
+        label: effective.name || effective.id,
+        root: false,
+      };
+    });
+    const rootDir = path.resolve(entry.worktreePath);
+    if (!scanTargets.some((target) => target.scanDir === rootDir)) {
+      scanTargets.push({
+        profile: { ...firstEffective, workDir: '.', containerWorkDir: firstEffective.containerWorkDir || '/app' },
+        scanDir: rootDir,
+        label: '仓库根目录',
+        root: true,
+      });
+    }
+
+    const seen = new Set<string>();
+    let executed = 0;
+    let skipped = 0;
+    logEvent({
+      step: 'database-init',
+      status: 'running',
+      title: '数据库准备中',
+      detail: { scanTargets: scanTargets.map((target) => ({ label: target.label, root: target.root })) },
+      timestamp: new Date().toISOString(),
+    });
+
+    for (const target of scanTargets) {
+      assertCurrent?.(`database-init scan ${target.label}`);
+      let detection: StackDetection;
+      try {
+        detection = detectStack(target.scanDir);
+      } catch (err) {
+        skipped += 1;
+        logEvent({
+          step: `database-init-scan-${target.label}`,
+          status: 'warning',
+          title: `${target.label} 初始化扫描失败`,
+          log: (err as Error).message,
+          timestamp: new Date().toISOString(),
+        });
+        continue;
+      }
+      const init = detection.databaseInit;
+      if (!init) continue;
+      const key = `${target.scanDir}:${init.kind}:${init.command || ''}:${init.files.join('|')}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (!init.autoExecutable) {
+        skipped += 1;
+        logEvent({
+          step: `database-init-${init.kind}-${target.label}`,
+          status: 'info',
+          title: `检测到 ${init.label}，需要手动确认后执行`,
+          log: init.summary,
+          timestamp: new Date().toISOString(),
+        });
+        continue;
+      }
+
+      if (init.kind === 'sql') {
+        try {
+          await runDatabaseSqlInit({ entry, init, scanDir: target.scanDir, projectId, logEvent });
+        } catch (err) {
+          logEvent({
+            step: `database-init-sql-${target.label}`,
+            status: 'error',
+            title: '初始化失败，查看日志',
+            log: (err as Error).message,
+            detail: { files: init.files, label: target.label },
+            timestamp: new Date().toISOString(),
+          });
+          throw err;
+        }
+        executed += 1;
+        continue;
+      }
+
+      const command = composeDatabaseInitCommand(detection, init);
+      if (!command) {
+        skipped += 1;
+        continue;
+      }
+      const step = `database-init-${target.profile.id}-${init.kind}`;
+      logEvent({
+        step,
+        status: 'running',
+        title: `正在执行迁移：${init.label}`,
+        log: command,
+        detail: { profileId: target.profile.id, files: init.files, signals: init.signals },
+        timestamp: new Date().toISOString(),
+      });
+      let result;
+      try {
+        result = await containerService.runProfileCommand(
+          entry,
+          target.profile,
+          command,
+          undefined,
+          customEnv,
+          { requestId, operationId, actor, trigger, assertCurrent, timeoutMs: target.profile.buildTimeout ?? 600_000 },
+        );
+      } catch (err) {
+        logEvent({
+          step,
+          status: 'error',
+          title: '初始化失败，查看日志',
+          log: (err as Error).message,
+          detail: { profileId: target.profile.id, files: init.files },
+          timestamp: new Date().toISOString(),
+        });
+        throw err;
+      }
+      const output = maskSecretsText(combinedOutput(result), { mask: true });
+      if (result.exitCode !== 0) {
+        const message = output || `${init.label} 初始化失败，exit code ${result.exitCode}`;
+        logEvent({
+          step,
+          status: 'error',
+          title: '初始化失败，查看日志',
+          log: message,
+          detail: { profileId: target.profile.id, files: init.files },
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error(message);
+      }
+      logEvent({
+        step,
+        status: 'done',
+        title: `初始化完成：${init.label}`,
+        log: output.trim() || undefined,
+        detail: { profileId: target.profile.id, files: init.files },
+        timestamp: new Date().toISOString(),
+      });
+      executed += 1;
+    }
+
+    logEvent({
+      step: 'database-init',
+      status: 'done',
+      title: executed > 0
+        ? `数据库初始化完成：已执行 ${executed} 个任务`
+        : skipped > 0
+          ? '数据库初始化：已识别手动兜底项，未自动执行'
+          : '数据库初始化：未发现需要执行的任务',
+      detail: { executed, skipped },
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   // ── Helper: SSE setup ──
   function initSSE(res: import('express').Response) {
     res.writeHead(200, {
@@ -2432,8 +2857,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       emitSkip('preview_host_missing');
       return null;
     }
-    // 走 buildPreviewUrl 全栈唯一入口，公式同 v3（tail-prefix-projectSlug）。
-    const smokeHost = buildPreviewUrl(previewHost, entry.branch, previewProjectSlug(project, project.id));
+    // 走 buildPreviewUrlForProject 全栈入口，项目预览身份由 preview-slug.ts 统一解析。
+    const smokeHost = buildPreviewUrlForProject(previewHost, entry.branch, project, project.id).url;
     if (!smokeHost) {
       emitSkip('preview_host_missing');
       return null;
@@ -2945,10 +3370,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branchesWithSubject = await Promise.all(
       branches.map(async (b) => {
         const project = b.projectId ? stateService.getProject(b.projectId) : undefined;
-        const projectSlug = previewProjectSlug(project, b.projectId);
-        const previewSlug = b.branch && projectSlug
-          ? computePreviewSlug(b.branch, projectSlug)
-          : b.id;
+        const preview = b.branch
+          ? buildPreviewUrlForProject('', b.branch, project, b.projectId)
+          : undefined;
+        const projectSlug = preview?.projectIdentity.slug || b.projectId || '';
+        const previewSlug = preview?.previewSlug || b.id;
         const deployRuntime = summarizeBranchDeployRuntime(
           b,
           stateService.getBuildProfilesForProject(b.projectId || 'default'),
@@ -2962,6 +3388,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             commitSha: b.githubCommitSha || '',
             subject: '',
             builder: buildGithubSenderBuilder(b),
+            projectSlug,
             previewSlug,
             deployRuntime,
           };
@@ -2981,6 +3408,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             commitSha: lines[0] || '',
             subject: lines[1] || '',
             builder: mergeBuilderAvatar(commitBuilder, buildGithubSenderBuilder(b)),
+            projectSlug,
             previewSlug,
             deployRuntime,
           };
@@ -2993,6 +3421,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             commitSha: b.githubCommitSha || '',
             subject: '',
             builder: buildGithubSenderBuilder(b),
+            projectSlug,
             previewSlug,
             deployRuntime,
           };
@@ -3058,6 +3487,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const previewHost = (config.previewDomain || config.rootDomains?.[0] || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
     for (const b of branchesWithSubject as Array<{ previewSlug?: string; previewUrl?: string }>) {
       b.previewUrl = previewHost && b.previewSlug ? `https://${b.previewSlug}.${previewHost}` : '';
+    }
+    const profilesByProject = new Map<string, BuildProfile[]>();
+    const infraByProject = new Map<string, InfraService[]>();
+    for (const b of branchesWithSubject as Array<BranchEntry & { previewUrl?: string; resources?: unknown[] }>) {
+      const branchProjectId = b.projectId || 'default';
+      if (!profilesByProject.has(branchProjectId)) {
+        profilesByProject.set(branchProjectId, stateService.getBuildProfilesForProject(branchProjectId));
+      }
+      if (!infraByProject.has(branchProjectId)) {
+        infraByProject.set(branchProjectId, stateService.getInfraServicesForProject(branchProjectId));
+      }
+      b.resources = buildUnifiedBranchResources({
+        branch: b,
+        profiles: profilesByProject.get(branchProjectId) || [],
+        infraServices: infraByProject.get(branchProjectId) || [],
+        externalAccessPolicies: await getActiveResourceExternalAccessForBranch(branchProjectId, b),
+        cloneTasks: stateService.listResourceCloneTasks({ projectId: branchProjectId, branchId: b.id }),
+        previewUrl: b.previewUrl || '',
+        publicHost: previewHost,
+      });
     }
 
     res.json({
@@ -3735,6 +4184,4204 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     res.json({ branch });
+  });
+
+  router.get('/branches/:id/resources', async (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+
+    const live = req.query.live === 'true' || req.query.live === '1';
+    const infraServices = stateService.getInfraServicesForProject(projectId);
+    if (live) {
+      const runningNames = await containerService.getRunningContainerNames();
+      for (const [profileId, svc] of Object.entries(branch.services || {})) {
+        if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
+          svc.status = 'stopped';
+          branch.services[profileId] = svc;
+        }
+      }
+      for (const svc of infraServices) {
+        if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
+          svc.status = 'stopped';
+        }
+      }
+      reconcileBranchStatus(branch);
+      stateService.save();
+    }
+
+    const previewHost = (config.previewDomain || config.rootDomains?.[0] || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const preview = branch.branch
+      ? buildPreviewUrlForProject(previewHost, branch.branch, stateService.getProject(projectId), projectId)
+      : undefined;
+    const previewUrl = preview?.url || '';
+    const resources = buildUnifiedBranchResources({
+      branch,
+      profiles: stateService.getBuildProfilesForProject(projectId),
+      infraServices,
+      externalAccessPolicies: await getActiveResourceExternalAccessForBranch(projectId, branch),
+      cloneTasks: stateService.listResourceCloneTasks({ projectId, branchId: branch.id }),
+      previewUrl,
+      publicHost: previewHost,
+    });
+    res.json({
+      branchId: branch.id,
+      branchName: branch.branch,
+      projectId,
+      resources,
+    });
+  });
+
+  function resourcePublicHost(): string {
+    return (config.previewDomain || config.rootDomains?.[0] || '')
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '');
+  }
+
+  function hasProjectScopedOrCookieAuth(req: Request, projectId: string): boolean {
+    const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
+    const cookieAuth = (req as any)._cdsCookieAuth === true;
+    return cookieAuth || Boolean(projKey && projKey.projectId === projectId);
+  }
+
+  function requireSecretRevealAccess(req: Request, res: Response, projectId: string): boolean {
+    if (hasProjectScopedOrCookieAuth(req, projectId)) return true;
+    res.status(403).json({
+      error: 'forbidden_secret_reveal',
+      reason: 'connection string reveal requires project-scoped key (cdsp_) or human cookie session',
+      projectId,
+      hint: '请在该项目下「授权 Agent」生成 cdsp_ 项目级 key，或使用已登录 CDS 控制台的人工会话。静态 AI_ACCESS_KEY 与 cdsg_ 全局 key 不允许读取明文连接串。',
+    });
+    return false;
+  }
+
+  type ResourcePermissionRole = 'member' | 'developer' | 'admin';
+  type ResourcePermissionAction =
+    | 'resource-restart'
+    | 'external-temporary-access'
+    | 'external-policy-admin'
+    | 'database-clone'
+    | 'database-connect-existing'
+    | 'backup-create'
+    | 'backup-restore'
+    | 'credentials-reset'
+    | 'connection-inject'
+    | 'data-clear'
+    | 'data-write'
+    | 'resource-delete';
+
+  function resolveResourcePermissionRole(req: Request): ResourcePermissionRole {
+    const explicit = String(
+      (req as any).workspaceMember?.role
+        || (req as any).user?.role
+        || (req as any).cdsUser?.role
+        || '',
+    ).toLowerCase();
+    if (explicit === 'owner' || explicit === 'admin') return 'admin';
+    if (explicit === 'developer' || explicit === 'dev') return 'developer';
+    if (explicit === 'member' || explicit === 'viewer' || explicit === 'read-only') return 'member';
+    if ((req as any)._cdsCookieAuth === true) return 'admin';
+    if ((req as any).cdsProjectKey) return 'developer';
+    if ((req as any)._aiSession) return 'developer';
+    return 'member';
+  }
+
+  function resourcePermissionRank(role: ResourcePermissionRole): number {
+    return role === 'admin' ? 3 : role === 'developer' ? 2 : 1;
+  }
+
+  function isProductionLikeResource(branch: BranchEntry, resource: UnifiedBranchResource): boolean {
+    const raw = `${branch.branch} ${resource.displayName} ${resource.serviceName}`.toLowerCase();
+    return /\b(prod|production|main|master)\b/.test(raw);
+  }
+
+  function requiredResourceRole(action: ResourcePermissionAction, branch: BranchEntry, resource: UnifiedBranchResource): ResourcePermissionRole {
+    if (
+      action === 'backup-restore'
+      || action === 'database-connect-existing'
+      || action === 'external-policy-admin'
+      || action === 'data-clear'
+      || action === 'data-write'
+      || action === 'resource-delete'
+    ) {
+      return 'admin';
+    }
+    if (action === 'external-temporary-access' && isProductionLikeResource(branch, resource)) {
+      return 'admin';
+    }
+    return 'developer';
+  }
+
+  function requireResourcePermission(
+    req: Request,
+    res: Response,
+    action: ResourcePermissionAction,
+    branch: BranchEntry,
+    resource: UnifiedBranchResource,
+  ): boolean {
+    const role = resolveResourcePermissionRole(req);
+    const required = requiredResourceRole(action, branch, resource);
+    if (resourcePermissionRank(role) >= resourcePermissionRank(required)) return true;
+    res.status(403).json({
+      error: 'resource_permission_denied',
+      action,
+      role,
+      requiredRole: required,
+      message: `当前角色 ${role} 不能执行 ${action}，需要 ${required} 权限。`,
+    });
+    return false;
+  }
+
+  function buildResourcePermissionSummary(req: Request, branch: BranchEntry, resource: UnifiedBranchResource): {
+    role: ResourcePermissionRole;
+    productionLike: boolean;
+    actions: Record<ResourcePermissionAction, { allowed: boolean; requiredRole: ResourcePermissionRole; reason?: string }>;
+  } {
+    const role = resolveResourcePermissionRole(req);
+    const rank = resourcePermissionRank(role);
+    const actions = [
+      'resource-restart',
+      'external-temporary-access',
+      'external-policy-admin',
+      'database-clone',
+      'database-connect-existing',
+      'backup-create',
+      'backup-restore',
+      'credentials-reset',
+      'connection-inject',
+      'data-clear',
+      'data-write',
+      'resource-delete',
+    ] as const satisfies readonly ResourcePermissionAction[];
+    const result = {} as Record<ResourcePermissionAction, { allowed: boolean; requiredRole: ResourcePermissionRole; reason?: string }>;
+    for (const action of actions) {
+      const requiredRole = requiredResourceRole(action, branch, resource);
+      const allowed = rank >= resourcePermissionRank(requiredRole);
+      result[action] = {
+        allowed,
+        requiredRole,
+        ...(allowed ? {} : { reason: `当前角色 ${role} 需要 ${requiredRole} 权限才能执行 ${action}` }),
+      };
+    }
+    return {
+      role,
+      productionLike: isProductionLikeResource(branch, resource),
+      actions: result,
+    };
+  }
+
+  function decodeResourceId(raw: string): string {
+    try { return decodeURIComponent(raw); } catch { return raw; }
+  }
+
+  function resourceRuntimeKey(runtime: string): 'mysql' | 'postgres' | 'mongodb' | 'redis' | 'unknown' {
+    const lower = runtime.toLowerCase();
+    if (lower.includes('mysql') || lower.includes('mariadb')) return 'mysql';
+    if (lower.includes('postgres')) return 'postgres';
+    if (lower.includes('mongo')) return 'mongodb';
+    if (lower.includes('redis')) return 'redis';
+    return 'unknown';
+  }
+
+  type ResourceWorkbenchRuntimeKey = 'mysql' | 'postgres' | 'sqlserver' | 'mongodb' | 'redis' | 'rabbitmq' | 'unknown';
+
+  interface ResourceWorkbenchCapability {
+    runtimeKey: ResourceWorkbenchRuntimeKey;
+    runtime: 'sql' | 'document' | 'keyValue' | 'queue' | 'unsupported';
+    runner: 'sql' | 'mongo' | 'redis-readonly' | 'planned';
+    treeLabel: string;
+    consoleLabel: string;
+    commandLanguage: 'sql' | 'mongo' | 'redis' | 'rabbitmq' | 'text';
+    resultModes: Array<'table' | 'json' | 'output'>;
+    defaultCommand: string;
+    ready: boolean;
+    writeSupported: boolean;
+    customPanels: string[];
+    note: string;
+  }
+
+  function resourceWorkbenchRuntimeKey(runtime: string): ResourceWorkbenchRuntimeKey {
+    const lower = runtime.toLowerCase();
+    if (lower.includes('mysql') || lower.includes('mariadb')) return 'mysql';
+    if (lower.includes('postgres')) return 'postgres';
+    if (lower.includes('sql server') || lower.includes('mssql') || lower.includes('sqlserver')) return 'sqlserver';
+    if (lower.includes('mongo')) return 'mongodb';
+    if (lower.includes('redis')) return 'redis';
+    if (lower.includes('rabbit')) return 'rabbitmq';
+    return 'unknown';
+  }
+
+  function resourceWorkbenchCapability(runtime: string): ResourceWorkbenchCapability {
+    const runtimeKey = resourceWorkbenchRuntimeKey(runtime);
+    if (runtimeKey === 'mysql' || runtimeKey === 'postgres') {
+      return {
+        runtimeKey,
+        runtime: 'sql',
+        runner: 'sql',
+        treeLabel: '数据库 / 表',
+        consoleLabel: 'SQL Console',
+        commandLanguage: 'sql',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'SELECT * FROM <table> LIMIT 50',
+        ready: true,
+        writeSupported: true,
+        customPanels: ['schema', 'ddl', 'backup'],
+        note: 'SQL 系资源共用统一工作台协议，DDL/DML 由 data-write 权限和审计保护。',
+      };
+    }
+    if (runtimeKey === 'sqlserver') {
+      return {
+        runtimeKey,
+        runtime: 'sql',
+        runner: 'planned',
+        treeLabel: '数据库 / schema / 表',
+        consoleLabel: 'T-SQL Console',
+        commandLanguage: 'sql',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'SELECT TOP 50 * FROM <table>;',
+        ready: false,
+        writeSupported: false,
+        customPanels: ['schema', 'ddl', 'backup'],
+        note: 'SQL Server for Linux 已进入工作台协议，执行器需要 sqlcmd/mssql-tools 后接入。',
+      };
+    }
+    if (runtimeKey === 'mongodb') {
+      return {
+        runtimeKey,
+        runtime: 'document',
+        runner: 'mongo',
+        treeLabel: '数据库 / collection',
+        consoleLabel: 'MongoDB Console',
+        commandLanguage: 'mongo',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'db.getCollection("<collection>").find({}).limit(50);',
+        ready: true,
+        writeSupported: true,
+        customPanels: ['collection', 'index', 'document'],
+        note: '文档型资源共用统一工作台协议，collection 选择只生成默认命令。',
+      };
+    }
+    if (runtimeKey === 'redis') {
+      return {
+        runtimeKey,
+        runtime: 'keyValue',
+        runner: 'redis-readonly',
+        treeLabel: 'DB / key',
+        consoleLabel: 'Redis Console',
+        commandLanguage: 'redis',
+        resultModes: ['json', 'output'],
+        defaultCommand: 'GET <key>',
+        ready: true,
+        writeSupported: false,
+        customPanels: ['string', 'hash', 'list', 'set', 'zset', 'stream'],
+        note: 'Redis 先保留只读 key 浏览，后续在同一协议下补命令执行和结构化编辑。',
+      };
+    }
+    if (runtimeKey === 'rabbitmq') {
+      return {
+        runtimeKey,
+        runtime: 'queue',
+        runner: 'planned',
+        treeLabel: 'vhost / exchange / queue / binding',
+        consoleLabel: 'RabbitMQ Command',
+        commandLanguage: 'rabbitmq',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'list queues',
+        ready: false,
+        writeSupported: false,
+        customPanels: ['queue', 'exchange', 'binding', 'message'],
+        note: 'RabbitMQ 已进入工作台协议，后续接入 list / peek / publish / purge 等动作命令。',
+      };
+    }
+    return {
+      runtimeKey,
+      runtime: 'unsupported',
+      runner: 'planned',
+      treeLabel: '资源树',
+      consoleLabel: 'Command',
+      commandLanguage: 'text',
+      resultModes: ['json', 'output'],
+      defaultCommand: '',
+      ready: false,
+      writeSupported: false,
+      customPanels: [],
+      note: '该资源尚未声明数据工作台执行器。',
+    };
+  }
+
+  function sqlIdent(name: string): string {
+    return `\`${name.replace(/`/g, '``')}\``;
+  }
+
+  function pgIdent(name: string): string {
+    return `"${name.replace(/"/g, '""')}"`;
+  }
+
+  function pgString(value: string): string {
+    return `'${value.replace(/'/g, "''")}'`;
+  }
+
+  function sqlString(value: string): string {
+    return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+  }
+
+  function branchDatabaseName(base: string, branch: BranchEntry): string {
+    const prefix = (base || 'app').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 32) || 'app';
+    const suffix = StateService.slugify(branch.branch || branch.id).replace(/-/g, '_').slice(0, 28) || branch.id.slice(0, 8);
+    return `${prefix}_${suffix}`.slice(0, 64);
+  }
+
+  function branchDatabaseUser(branch: BranchEntry): string {
+    return `cds_${StateService.slugify(branch.id).replace(/-/g, '_').slice(0, 24)}`.slice(0, 32);
+  }
+
+  interface MysqlBranchDatabaseResult {
+    branchUser: string;
+    branchPassword: string;
+    database: string;
+    internalHost: string;
+    internalPort: number;
+    databaseUrl: string;
+    injectedEnv: Record<string, string>;
+    maskedInjectedEnv: Record<string, string>;
+  }
+
+  interface ResourceBackupEntry {
+    id: string;
+    name: string;
+    sizeBytes: number;
+    createdAt: string;
+    runtime: string;
+    database?: string;
+  }
+
+  interface MysqlConnectionEnvResult {
+    branchUser: string;
+    branchPassword: string;
+    database: string;
+    internalHost: string;
+    internalPort: number;
+    injectedEnv: Record<string, string>;
+    maskedInjectedEnv: Record<string, string>;
+  }
+
+  type ResourceDatabaseRuntime = 'mysql' | 'postgres' | 'mongodb' | 'redis';
+
+  interface DbDataQueryResult {
+    columns: string[];
+    rows: string[][];
+    rowCount: number;
+  }
+
+  interface SqlTableRef {
+    schema?: string;
+    table: string;
+  }
+
+  type SqlDataRuntime = 'mysql' | 'postgres';
+
+  function resolvedInfraEnv(service: InfraService, branch?: BranchEntry): Record<string, string> {
+    const projectId = service.projectId || branch?.projectId || 'default';
+    const vars = branch ? getMergedEnv(projectId, branch.id) : stateService.getCustomEnv(projectId);
+    return resolveEnvTemplates(service.env || {}, vars);
+  }
+
+  function resolvedServiceDbName(service: InfraService): string {
+    const dbName = String(service.dbName || '').trim();
+    return dbName.includes('${') ? '' : dbName;
+  }
+
+  function mysqlRootPassword(service: InfraService, branch?: BranchEntry): string {
+    const env = resolvedInfraEnv(service, branch);
+    return env.MYSQL_ROOT_PASSWORD
+      || env.MARIADB_ROOT_PASSWORD
+      || env.MYSQL_PASSWORD
+      || '';
+  }
+
+  function mysqlPasswordArg(password: string): string {
+    return password ? ` -p${shq(password)}` : '';
+  }
+
+  function maskTextSecrets(textValue: string, secrets: string[]): string {
+    let masked = textValue;
+    for (const secret of secrets) {
+      if (secret && secret.length >= 3) masked = masked.split(secret).join('******');
+    }
+    return masked;
+  }
+
+  function mysqlClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
+    const database = mysqlDatabaseForBranch(service, branch);
+    const branchUser = branchEnv.MYSQL_USER || '';
+    const branchPassword = branchEnv.MYSQL_PASSWORD || '';
+    if (branchUser && branchPassword) {
+      return { user: branchUser, password: branchPassword, database, secrets: [branchPassword] };
+    }
+    const rootPassword = mysqlRootPassword(service, branch);
+    const user = env.MYSQL_USER || env.MARIADB_USER || 'root';
+    const password = env.MYSQL_USER || env.MARIADB_USER
+      ? (env.MYSQL_PASSWORD || env.MARIADB_PASSWORD || rootPassword)
+      : rootPassword;
+    return { user, password, database, secrets: [password] };
+  }
+
+  function parseDbTsv(stdout: string): DbDataQueryResult {
+    const lines = stdout.replace(/\r\n/g, '\n').split('\n').filter((line) => line.length > 0);
+    if (lines.length === 0) return { columns: [], rows: [], rowCount: 0 };
+    const columns = lines[0].split('\t');
+    const rows = lines.slice(1).map((line) => line.split('\t'));
+    return { columns, rows, rowCount: rows.length };
+  }
+
+  function normalizeReadOnlySql(sql: string): string {
+    const trimmed = sql.trim();
+    if (!trimmed) throw new Error('SQL 不能为空');
+    if (trimmed.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
+    const withoutTrailing = trimmed.replace(/;+$/g, '').trim();
+    if (withoutTrailing.includes(';')) {
+      throw new Error('只读 SQL Console 一次只允许执行一条语句');
+    }
+    const head = withoutTrailing.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
+    if (!['select', 'show', 'describe', 'desc', 'explain'].includes(head)) {
+      throw new Error('第一阶段 SQL Console 只允许 SELECT / SHOW / DESCRIBE / EXPLAIN');
+    }
+    if (head === 'select' && /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|set|use|load|outfile|dumpfile|lock|unlock)\b/i.test(withoutTrailing)) {
+      throw new Error('检测到写入或高风险关键字，已拒绝执行');
+    }
+    return withoutTrailing;
+  }
+
+  function normalizeDangerousWriteSql(sql: string): string {
+    const trimmed = sql.trim();
+    if (!trimmed) throw new Error('SQL 不能为空');
+    if (trimmed.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
+    const withoutTrailing = trimmed.replace(/;+$/g, '').trim();
+    if (withoutTrailing.includes(';')) {
+      throw new Error('写 SQL 一次只允许执行一条语句');
+    }
+    const head = withoutTrailing.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
+    if (!['insert', 'update', 'delete', 'create', 'alter', 'drop', 'truncate', 'replace'].includes(head)) {
+      throw new Error('写 SQL 只允许 INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE');
+    }
+    if (/\b(grant|revoke|load\s+data|outfile|dumpfile|copy\s+.*program|pg_read_file|pg_ls_dir)\b/i.test(withoutTrailing)) {
+      throw new Error('检测到权限或文件系统高风险 SQL，已拒绝执行');
+    }
+    return withoutTrailing;
+  }
+
+  async function runMysqlDataQuery(service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
+    if (service.status !== 'running') {
+      throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
+    }
+    const creds = mysqlClientCredentials(service, branch);
+    if (!creds.database || !/^[a-zA-Z0-9_]+$/.test(creds.database)) {
+      throw new Error(`数据库名不合法: ${creds.database || '(empty)'}`);
+    }
+    const result = await shell.exec(
+      `docker exec ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --batch --raw --default-character-set=utf8mb4 ${shq(creds.database)} -e ${shq(sql)}`,
+      { timeout: timeoutMs },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets));
+    }
+    return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
+  }
+
+  function postgresDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
+    return String(
+      branchEnv.POSTGRES_DB
+        || env.POSTGRES_DB
+        || resolvedServiceDbName(service)
+        || env.POSTGRES_USER
+        || 'postgres',
+    )
+      .replace(/[^a-zA-Z0-9_]/g, '_')
+      .slice(0, 63);
+  }
+
+  function postgresClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
+    const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
+    const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
+    return { user, password, database: postgresDatabaseForBranch(service, branch), secrets: [password] };
+  }
+
+  async function runPostgresDataQuery(service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
+    if (service.status !== 'running') {
+      throw new Error(`PostgreSQL 服务当前未运行（status=${service.status}）`);
+    }
+    const creds = postgresClientCredentials(service, branch);
+    if (!creds.database || !/^[a-zA-Z0-9_]+$/.test(creds.database)) {
+      throw new Error(`数据库名不合法: ${creds.database || '(empty)'}`);
+    }
+    const result = await shell.exec(
+      `docker exec -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -A -F ${shq('\t')} -P footer=off -X -q -c ${shq(sql)}`,
+      { timeout: timeoutMs },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets));
+    }
+    return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
+  }
+
+  async function runSqlDataQuery(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
+    return runtime === 'postgres'
+      ? runPostgresDataQuery(service, branch, sql, timeoutMs)
+      : runMysqlDataQuery(service, branch, sql, timeoutMs);
+  }
+
+  async function runSqlDataInitScript(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string): Promise<{ exitCode: number; output: string; error: string | null; truncated: boolean }> {
+    const trimmed = sql.trim();
+    if (!trimmed) throw new Error('初始化 SQL 不能为空');
+    if (trimmed.length > 100_000) throw new Error('初始化 SQL 过长（上限 100KB）');
+    const database = sqlDataDatabase(runtime, service, branch);
+    if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
+      throw new Error(`数据库名不合法: ${database || '(empty)'}`);
+    }
+    const command = runtime === 'postgres'
+      ? (() => {
+        const creds = postgresClientCredentials(service, branch);
+        return {
+          command: `printf %s ${shq(trimmed)} | docker exec -i -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -v ON_ERROR_STOP=1 -P pager=off`,
+          secrets: creds.secrets,
+        };
+      })()
+      : (() => {
+        const creds = mysqlClientCredentials(service, branch);
+        return {
+          command: `printf %s ${shq(trimmed)} | docker exec -i ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --default-character-set=utf8mb4 ${shq(creds.database)}`,
+          secrets: creds.secrets,
+        };
+      })();
+    const result = await shell.exec(command.command, { timeout: 120_000 });
+    const rawOutput = result.stdout || '';
+    const rawError = result.stderr || '';
+    const output = maskTextSecrets(rawOutput.slice(0, 256 * 1024), command.secrets);
+    const error = maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets);
+    return {
+      exitCode: result.exitCode,
+      output,
+      error: result.exitCode === 0 ? null : (error || output || '初始化 SQL 执行失败'),
+      truncated: rawOutput.length > 256 * 1024 || rawError.length > 16 * 1024,
+    };
+  }
+
+  function sqlDataDatabase(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry): string {
+    return runtime === 'postgres'
+      ? postgresDatabaseForBranch(service, branch)
+      : mysqlDatabaseForBranch(service, branch);
+  }
+
+  function tableNameFromRequest(input: unknown): string {
+    const value = String(input || '').trim();
+    if (!value || !/^[a-zA-Z0-9_$]+$/.test(value)) {
+      throw new Error('表名不合法');
+    }
+    return value;
+  }
+
+  function sqlSchemaFromRequest(input: unknown): string | undefined {
+    const value = String(input || '').trim();
+    if (!value) return undefined;
+    if (!/^[a-zA-Z0-9_$]+$/.test(value)) {
+      throw new Error('schema 名不合法');
+    }
+    return value;
+  }
+
+  function sqlTableRefFromRequest(tableInput: unknown, schemaInput: unknown): SqlTableRef {
+    return {
+      schema: sqlSchemaFromRequest(schemaInput),
+      table: tableNameFromRequest(tableInput),
+    };
+  }
+
+  function sqlTableIdent(runtime: SqlDataRuntime, ref: SqlTableRef): string {
+    if (runtime === 'postgres') {
+      return ref.schema ? `${pgIdent(ref.schema)}.${pgIdent(ref.table)}` : pgIdent(ref.table);
+    }
+    return sqlIdent(ref.table);
+  }
+
+  function redisPassword(service: InfraService): string {
+    const env = resolvedInfraEnv(service);
+    return env.REDIS_PASSWORD || env.REDIS_PASS || env.REDISCLI_AUTH || '';
+  }
+
+  function mongoDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
+    return String(
+      branchEnv.MONGO_INITDB_DATABASE
+        || branchEnv.MONGODB_DATABASE
+        || service.dbName
+        || env.MONGO_INITDB_DATABASE
+        || 'app',
+    )
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 63);
+  }
+
+  function mongoDatabaseFromRequest(input: unknown, fallback: string): string {
+    const value = String(input || fallback || '').trim();
+    if (!value || !/^[a-zA-Z0-9_-]{1,63}$/.test(value)) {
+      throw new Error(`MongoDB database 名不合法：${value || '(empty)'}`);
+    }
+    return value;
+  }
+
+  function chooseMongoCurrentDatabase(configuredDatabase: string, databases: unknown[]): string {
+    const validDatabases = databases
+      .map((item) => (item && typeof item === 'object' && 'name' in item ? String((item as { name?: unknown }).name || '') : ''))
+      .filter((name) => /^[a-zA-Z0-9_-]{1,63}$/.test(name));
+    if (validDatabases.includes(configuredDatabase)) return configuredDatabase;
+    const businessDatabase = validDatabases.find((name) => !['admin', 'config', 'local'].includes(name));
+    return businessDatabase || validDatabases[0] || configuredDatabase;
+  }
+
+  function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
+    const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
+    const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
+      || branchUser
+      || env.MONGO_INITDB_ROOT_USERNAME
+      || env.MONGO_USERNAME
+      || env.MONGODB_USERNAME
+      || '';
+    const password = branchEnv.MONGO_INITDB_ROOT_PASSWORD
+      || branchEnv.MONGODB_PASSWORD
+      || env.MONGO_INITDB_ROOT_PASSWORD
+      || env.MONGO_PASSWORD
+      || env.MONGODB_PASSWORD
+      || '';
+    const database = databaseOverride || mongoDatabaseForBranch(service, branch);
+    const authSourceDb = user
+      ? (branchEnv.MONGODB_AUTH_SOURCE || branchEnv.MONGO_AUTH_SOURCE || (branchUser ? database : 'admin'))
+      : '';
+    const uri = user
+      ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:27017/${encodeURIComponent(database)}?authSource=${encodeURIComponent(authSourceDb)}`
+      : `mongodb://localhost:27017/${encodeURIComponent(database)}`;
+    return { user, password, database, uri, secrets: [password] };
+  }
+
+  async function runMongoJson(service: InfraService, branch: BranchEntry, script: string, databaseOverride?: string, timeoutMs = 30_000): Promise<unknown> {
+    if (service.status !== 'running') {
+      throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
+    }
+    const creds = mongoCredentials(service, branch, databaseOverride);
+    const result = await shell.exec(
+      `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq(script)}`,
+      { timeout: timeoutMs },
+    );
+    const stdout = maskTextSecrets((result.stdout || '').trim(), creds.secrets);
+    const stderr = maskTextSecrets((result.stderr || '').trim(), creds.secrets);
+    if (result.exitCode !== 0) {
+      throw new Error(stderr || stdout || 'MongoDB 查询失败');
+    }
+    const jsonLine = stdout.split('\n').reverse().find((line) => {
+      const t = line.trim();
+      return t.startsWith('{') || t.startsWith('[');
+    }) || stdout;
+    try {
+      return JSON.parse(jsonLine);
+    } catch {
+      throw new Error(`MongoDB 返回非 JSON 输出: ${stdout.slice(0, 500)}`);
+    }
+  }
+
+  function mongoCollectionFromRequest(input: unknown): string {
+    const value = String(input || '').trim();
+    if (!value || value.length > 120 || /[\0\r\n]/.test(value) || value.includes('$cmd')) {
+      throw new Error('collection 名不合法');
+    }
+    return value;
+  }
+
+  function mongoJsonObject(input: unknown, label: string): Record<string, unknown> {
+    if (input === undefined || input === null || input === '') return {};
+    if (typeof input === 'object' && !Array.isArray(input)) return input as Record<string, unknown>;
+    if (typeof input === 'string') {
+      const parsed = JSON.parse(input);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    }
+    throw new Error(`${label} 必须是 JSON object`);
+  }
+
+  function mongoSafeJson(value: unknown): string {
+    const text = JSON.stringify(value ?? {});
+    if (text.length > 20_000) throw new Error('MongoDB 查询 JSON 过长（上限 20KB）');
+    return text;
+  }
+
+  function normalizeMongoFindCommand(commandInput: unknown): { collection: string; script: string } {
+    const command = String(commandInput || '').trim();
+    if (!command) throw new Error('MongoDB 命令不能为空');
+    if (command.length > 20_000) throw new Error('MongoDB 命令过长（上限 20KB）');
+    const withoutTrailing = command.replace(/;+$/g, '').trim();
+    if (withoutTrailing.includes(';')) {
+      throw new Error('MongoDB Console 一次只允许执行一条命令');
+    }
+    if (/\b(insert|insertOne|insertMany|update|updateOne|updateMany|delete|deleteOne|deleteMany|drop|dropDatabase|dropCollection|create|createCollection|aggregate|mapReduce|eval|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer)\b/i.test(withoutTrailing) || /\$where\b/i.test(withoutTrailing)) {
+      throw new Error('MongoDB Console 当前只允许只读 find 查询');
+    }
+
+    const getCollectionMatch = withoutTrailing.match(/^db\.getCollection\((["'])([^"'\r\n]{1,120})\1\)\.find\s*\(/);
+    const dotCollectionMatch = withoutTrailing.match(/^db\.([a-zA-Z0-9_$-]{1,120})\.find\s*\(/);
+    const collection = getCollectionMatch?.[2] || dotCollectionMatch?.[1] || '';
+    if (!collection) {
+      throw new Error('MongoDB Console 当前只支持 db.getCollection("collection").find(...) 或 db.collection.find(...)');
+    }
+    mongoCollectionFromRequest(collection);
+    if (!/\.limit\s*\(\s*\d{1,3}\s*\)\s*$/.test(withoutTrailing)) {
+      throw new Error('MongoDB find 查询必须显式追加 limit(1-100)');
+    }
+    const limitRaw = Number(withoutTrailing.match(/\.limit\s*\(\s*(\d{1,3})\s*\)\s*$/)?.[1] || 0);
+    if (!Number.isFinite(limitRaw) || limitRaw < 1 || limitRaw > 100) {
+      throw new Error('MongoDB limit 必须在 1-100 之间');
+    }
+
+    return {
+      collection,
+      script: `JSON.stringify((${withoutTrailing}).toArray())`,
+    };
+  }
+
+  async function runRedisCli(service: InfraService, args: string[], timeoutMs = 15_000): Promise<string> {
+    if (service.status !== 'running') {
+      throw new Error(`Redis 服务当前未运行（status=${service.status}）`);
+    }
+    const password = redisPassword(service);
+    const authArgs = password ? ['-a', password, '--no-auth-warning'] : [];
+    const result = await shell.exec(
+      ['docker', 'exec', shq(service.containerName || ''), 'redis-cli', '--raw', ...authArgs.map(shq), ...args.map(shq)].join(' '),
+      { timeout: timeoutMs },
+    );
+    const output = maskTextSecrets((result.stdout || '').trim(), [password]);
+    const error = maskTextSecrets((result.stderr || '').trim(), [password]);
+    if (result.exitCode !== 0) {
+      throw new Error(error || output || 'Redis 命令执行失败');
+    }
+    return output;
+  }
+
+  function redisKeyFromRequest(input: unknown): string {
+    const value = String(input || '');
+    if (!value || value.length > 512) throw new Error('Redis key 不合法');
+    return value;
+  }
+
+  async function redisKeyMeta(service: InfraService, key: string): Promise<{ key: string; type: string; ttl: number; memoryBytes: number | null }> {
+    const [type, ttlRaw, memoryRaw] = await Promise.all([
+      runRedisCli(service, ['TYPE', key]),
+      runRedisCli(service, ['TTL', key]),
+      runRedisCli(service, ['MEMORY', 'USAGE', key]).catch(() => ''),
+    ]);
+    const memoryBytes = Number(memoryRaw);
+    return {
+      key,
+      type: type || 'none',
+      ttl: Number(ttlRaw),
+      memoryBytes: Number.isFinite(memoryBytes) ? memoryBytes : null,
+    };
+  }
+
+  async function redisValuePreview(service: InfraService, key: string, type: string): Promise<{ kind: string; values: string[]; truncated: boolean }> {
+    if (type === 'string') {
+      const value = await runRedisCli(service, ['GET', key]);
+      return { kind: 'string', values: [value], truncated: value.length > 4096 };
+    }
+    if (type === 'list') {
+      const value = await runRedisCli(service, ['LRANGE', key, '0', '49']);
+      return { kind: 'list', values: value ? value.split('\n') : [], truncated: false };
+    }
+    if (type === 'set') {
+      const value = await runRedisCli(service, ['SMEMBERS', key]);
+      return { kind: 'set', values: value ? value.split('\n').slice(0, 50) : [], truncated: value.split('\n').length > 50 };
+    }
+    if (type === 'zset') {
+      const value = await runRedisCli(service, ['ZRANGE', key, '0', '49', 'WITHSCORES']);
+      return { kind: 'zset', values: value ? value.split('\n') : [], truncated: false };
+    }
+    if (type === 'hash') {
+      const value = await runRedisCli(service, ['HGETALL', key]);
+      return { kind: 'hash', values: value ? value.split('\n').slice(0, 100) : [], truncated: value.split('\n').length > 100 };
+    }
+    return { kind: type || 'unknown', values: [], truncated: false };
+  }
+
+  async function createMysqlBranchDatabase(service: InfraService, branch: BranchEntry, targetDatabase: string): Promise<MysqlBranchDatabaseResult> {
+    const branchUser = branchDatabaseUser(branch);
+    const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
+    const rootPassword = mysqlRootPassword(service);
+    const sql = [
+      `CREATE DATABASE IF NOT EXISTS ${sqlIdent(targetDatabase)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+      `CREATE USER IF NOT EXISTS ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
+      `ALTER USER ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
+      `GRANT ALL PRIVILEGES ON ${sqlIdent(targetDatabase)}.* TO ${sqlString(branchUser)}@'%'`,
+      'FLUSH PRIVILEGES',
+    ].join('; ');
+    const result = await shell.exec(
+      `docker exec ${shq(service.containerName || '')} mysql -uroot${mysqlPasswordArg(rootPassword)} -e ${shq(sql)}`,
+      { timeout: 60_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 分支库创建失败').trim(), [rootPassword, branchPassword]));
+    }
+    const internalHost = service.id;
+    const internalPort = service.containerPort || 3306;
+    const databaseUrl = `mysql://${branchUser}:${branchPassword}@${internalHost}:${internalPort}/${targetDatabase}`;
+    const injectedEnv: Record<string, string> = {
+      DATABASE_URL: databaseUrl,
+      MYSQL_HOST: internalHost,
+      MYSQL_PORT: String(internalPort),
+      MYSQL_DATABASE: targetDatabase,
+      MYSQL_USER: branchUser,
+      MYSQL_PASSWORD: branchPassword,
+    };
+    const maskedInjectedEnv = {
+      ...injectedEnv,
+      DATABASE_URL: `mysql://${branchUser}:******@${internalHost}:${internalPort}/${targetDatabase}`,
+      MYSQL_PASSWORD: '******',
+    };
+    return { branchUser, branchPassword, database: targetDatabase, internalHost, internalPort, databaseUrl, injectedEnv, maskedInjectedEnv };
+  }
+
+  function buildMysqlConnectionEnv(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    branchUser: string;
+    branchPassword: string;
+    database: string;
+  }): MysqlConnectionEnvResult {
+    const { service, branchUser, branchPassword, database } = params;
+    const internalHost = service.id;
+    const internalPort = service.containerPort || 3306;
+    const databaseUrl = `mysql://${branchUser}:${branchPassword}@${internalHost}:${internalPort}/${database}`;
+    const injectedEnv: Record<string, string> = {
+      DATABASE_URL: databaseUrl,
+      MYSQL_HOST: internalHost,
+      MYSQL_PORT: String(internalPort),
+      MYSQL_DATABASE: database,
+      MYSQL_USER: branchUser,
+      MYSQL_PASSWORD: branchPassword,
+    };
+    return {
+      branchUser,
+      branchPassword,
+      database,
+      internalHost,
+      internalPort,
+      injectedEnv,
+      maskedInjectedEnv: {
+        ...injectedEnv,
+        DATABASE_URL: `mysql://${branchUser}:******@${internalHost}:${internalPort}/${database}`,
+        MYSQL_PASSWORD: '******',
+      },
+    };
+  }
+
+  function getExistingMysqlConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchPassword = branchEnv.MYSQL_PASSWORD || '';
+    const branchUser = branchEnv.MYSQL_USER || '';
+    if (!branchUser || !branchPassword) return null;
+    return buildMysqlConnectionEnv({
+      service,
+      branch,
+      branchUser,
+      branchPassword,
+      database: mysqlDatabaseForBranch(service, branch),
+    });
+  }
+
+  function buildPostgresConnectionEnv(params: {
+    service: InfraService;
+    branchUser: string;
+    branchPassword: string;
+    database: string;
+  }): MysqlConnectionEnvResult {
+    const { service, branchUser, branchPassword, database } = params;
+    const internalHost = service.id;
+    const internalPort = service.containerPort || 5432;
+    const databaseUrl = `postgresql://${branchUser}:${branchPassword}@${internalHost}:${internalPort}/${database}`;
+    const injectedEnv: Record<string, string> = {
+      DATABASE_URL: databaseUrl,
+      POSTGRES_URL: databaseUrl,
+      POSTGRES_HOST: internalHost,
+      POSTGRES_PORT: String(internalPort),
+      POSTGRES_DB: database,
+      POSTGRES_USER: branchUser,
+      POSTGRES_PASSWORD: branchPassword,
+    };
+    return {
+      branchUser,
+      branchPassword,
+      database,
+      internalHost,
+      internalPort,
+      injectedEnv,
+      maskedInjectedEnv: {
+        ...injectedEnv,
+        DATABASE_URL: `postgresql://${branchUser}:******@${internalHost}:${internalPort}/${database}`,
+        POSTGRES_URL: `postgresql://${branchUser}:******@${internalHost}:${internalPort}/${database}`,
+        POSTGRES_PASSWORD: '******',
+      },
+    };
+  }
+
+  async function createPostgresBranchDatabase(service: InfraService, branch: BranchEntry, targetDatabase: string): Promise<MysqlConnectionEnvResult> {
+    if (service.status !== 'running') {
+      throw new Error(`PostgreSQL 服务当前未运行（status=${service.status}）`);
+    }
+    if (!targetDatabase || !/^[a-zA-Z0-9_]+$/.test(targetDatabase)) {
+      throw new Error(`目标数据库名不合法: ${targetDatabase || '(empty)'}`);
+    }
+    const branchUser = branchDatabaseUser(branch).slice(0, 63);
+    const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
+    const env = resolvedInfraEnv(service);
+    const adminUser = env.POSTGRES_USER || 'postgres';
+    const adminPassword = env.POSTGRES_PASSWORD || '';
+    const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
+    const sql = [
+      `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${pgString(branchUser)}) THEN CREATE ROLE ${pgIdent(branchUser)} LOGIN PASSWORD ${pgString(branchPassword)}; END IF; END $$;`,
+      `ALTER ROLE ${pgIdent(branchUser)} WITH LOGIN PASSWORD ${pgString(branchPassword)};`,
+      `SELECT 'CREATE DATABASE ${pgIdent(targetDatabase)} OWNER ${pgIdent(branchUser)}' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = ${pgString(targetDatabase)})\\gexec`,
+      `GRANT ALL PRIVILEGES ON DATABASE ${pgIdent(targetDatabase)} TO ${pgIdent(branchUser)};`,
+    ].join('\n');
+    const result = await shell.exec(
+      `printf %s ${shq(sql)} | docker exec -i -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} psql -U ${shq(adminUser)} -d ${shq(adminDb)} -v ON_ERROR_STOP=1`,
+      { timeout: 60_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 分支库创建失败').trim(), [adminPassword, branchPassword]));
+    }
+    return buildPostgresConnectionEnv({ service, branchUser, branchPassword, database: targetDatabase });
+  }
+
+  function buildMongoConnectionEnv(params: {
+    service: InfraService;
+    branchUser: string;
+    branchPassword: string;
+    database: string;
+  }): MysqlConnectionEnvResult {
+    const { service, branchUser, branchPassword, database } = params;
+    const internalHost = service.id;
+    const internalPort = service.containerPort || 27017;
+    const authPart = branchUser ? `${encodeURIComponent(branchUser)}:${encodeURIComponent(branchPassword)}@` : '';
+    const authSourceDb = branchUser ? database : '';
+    const authSource = authSourceDb ? `?authSource=${encodeURIComponent(authSourceDb)}` : '';
+    const databaseUrl = `mongodb://${authPart}${internalHost}:${internalPort}/${encodeURIComponent(database)}${authSource}`;
+    const injectedEnv: Record<string, string> = {
+      DATABASE_URL: databaseUrl,
+      MONGODB_URL: databaseUrl,
+      MONGO_INITDB_DATABASE: database,
+      MONGODB_DATABASE: database,
+      MONGODB_HOST: internalHost,
+      MONGODB_PORT: String(internalPort),
+      ...(authSourceDb ? { MONGODB_AUTH_SOURCE: authSourceDb } : {}),
+    };
+    if (branchUser) {
+      injectedEnv.MONGODB_USERNAME = branchUser;
+      injectedEnv.MONGODB_PASSWORD = branchPassword;
+    }
+    const maskedUrl = branchUser
+      ? `mongodb://${encodeURIComponent(branchUser)}:******@${internalHost}:${internalPort}/${encodeURIComponent(database)}${authSource}`
+      : databaseUrl;
+    return {
+      branchUser,
+      branchPassword,
+      database,
+      internalHost,
+      internalPort,
+      injectedEnv,
+      maskedInjectedEnv: {
+        ...injectedEnv,
+        DATABASE_URL: maskedUrl,
+        MONGODB_URL: maskedUrl,
+        ...(branchUser ? { MONGODB_PASSWORD: '******' } : {}),
+      },
+    };
+  }
+
+  function mongoAdminUri(service: InfraService): { uri: string; secrets: string[]; rootUser: string; rootPassword: string } {
+    const env = resolvedInfraEnv(service);
+    const rootUser = env.MONGO_INITDB_ROOT_USERNAME
+      || env.MONGO_USERNAME
+      || env.MONGODB_USERNAME
+      || '';
+    const rootPassword = env.MONGO_INITDB_ROOT_PASSWORD
+      || env.MONGO_PASSWORD
+      || env.MONGODB_PASSWORD
+      || '';
+    const uri = rootUser
+      ? `mongodb://${encodeURIComponent(rootUser)}:${encodeURIComponent(rootPassword)}@localhost:27017/admin`
+      : 'mongodb://localhost:27017/admin';
+    return { uri, secrets: [rootPassword], rootUser, rootPassword };
+  }
+
+  async function runMongoAdminScript(service: InfraService, script: string, timeoutMs = 60_000): Promise<void> {
+    if (service.status !== 'running') {
+      throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
+    }
+    const admin = mongoAdminUri(service);
+    const result = await shell.exec(
+      `docker exec ${shq(service.containerName || '')} mongosh ${shq(admin.uri)} --quiet --eval ${shq(script)}`,
+      { timeout: timeoutMs },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 管理命令失败').trim(), admin.secrets));
+    }
+  }
+
+  async function createMongoBranchDatabase(service: InfraService, branch: BranchEntry, targetDatabase: string): Promise<MysqlConnectionEnvResult> {
+    if (!targetDatabase || !/^[a-zA-Z0-9_]+$/.test(targetDatabase)) {
+      throw new Error(`目标数据库名不合法: ${targetDatabase || '(empty)'}`);
+    }
+    const admin = mongoAdminUri(service);
+    const branchUser = admin.rootUser ? branchDatabaseUser(branch).slice(0, 63) : '';
+    const branchPassword = branchUser ? randomUUID().replace(/-/g, '').slice(0, 24) : '';
+    const script = branchUser
+      ? [
+        `const target = db.getSiblingDB(${mongoSafeJson(targetDatabase)});`,
+        `if (!target.getUser(${mongoSafeJson(branchUser)})) { target.createUser({ user: ${mongoSafeJson(branchUser)}, pwd: ${mongoSafeJson(branchPassword)}, roles: [{ role: 'readWrite', db: ${mongoSafeJson(targetDatabase)} }] }); }`,
+        `else { target.updateUser(${mongoSafeJson(branchUser)}, { pwd: ${mongoSafeJson(branchPassword)}, roles: [{ role: 'readWrite', db: ${mongoSafeJson(targetDatabase)} }] }); }`,
+        'target.getCollection("__cds_branch").updateOne({ _id: "created" }, { $set: { at: new Date() } }, { upsert: true });',
+      ].join(' ')
+      : [
+        `const target = db.getSiblingDB(${mongoSafeJson(targetDatabase)});`,
+        'target.getCollection("__cds_branch").updateOne({ _id: "created" }, { $set: { at: new Date() } }, { upsert: true });',
+      ].join(' ');
+    await runMongoAdminScript(service, script);
+    return buildMongoConnectionEnv({ service, branchUser, branchPassword, database: targetDatabase });
+  }
+
+  function getExistingPostgresConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchUser = branchEnv.POSTGRES_USER || '';
+    const branchPassword = branchEnv.POSTGRES_PASSWORD || '';
+    const database = branchEnv.POSTGRES_DB || postgresDatabaseForBranch(service, branch);
+    if (!branchUser || !branchPassword || !database) return null;
+    return buildPostgresConnectionEnv({ service, branchUser, branchPassword, database });
+  }
+
+  function getExistingMongoConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || mongoDatabaseForBranch(service, branch);
+    const branchUser = branchEnv.MONGODB_USERNAME || '';
+    const branchPassword = branchEnv.MONGODB_PASSWORD || '';
+    const url = branchEnv.MONGODB_URL || branchEnv.DATABASE_URL || '';
+    if (url) {
+      const maskedUrl = maskConnectionString(url);
+      return {
+        branchUser,
+        branchPassword,
+        database,
+        internalHost: service.id,
+        internalPort: service.containerPort || 27017,
+        injectedEnv: {
+          DATABASE_URL: url,
+          MONGODB_URL: url,
+          MONGO_INITDB_DATABASE: database,
+          MONGODB_DATABASE: database,
+          ...(branchUser ? { MONGODB_USERNAME: branchUser } : {}),
+          ...(branchPassword ? { MONGODB_PASSWORD: branchPassword } : {}),
+        },
+        maskedInjectedEnv: {
+          DATABASE_URL: maskedUrl,
+          MONGODB_URL: maskedUrl,
+          MONGO_INITDB_DATABASE: database,
+          MONGODB_DATABASE: database,
+          ...(branchUser ? { MONGODB_USERNAME: branchUser } : {}),
+          ...(branchPassword ? { MONGODB_PASSWORD: '******' } : {}),
+        },
+      };
+    }
+    if (!database) return null;
+    return buildMongoConnectionEnv({ service, branchUser, branchPassword, database });
+  }
+
+  function getExistingResourceConnectionEnv(runtime: ReturnType<typeof resourceRuntimeKey>, service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
+    if (runtime === 'mysql') return getExistingMysqlConnectionEnv(service, branch);
+    if (runtime === 'postgres') return getExistingPostgresConnectionEnv(service, branch);
+    if (runtime === 'mongodb') return getExistingMongoConnectionEnv(service, branch);
+    return null;
+  }
+
+  async function resetResourceBranchCredentials(runtime: ReturnType<typeof resourceRuntimeKey>, service: InfraService, branch: BranchEntry): Promise<MysqlConnectionEnvResult> {
+    if (runtime === 'mysql') return resetMysqlBranchCredentials(service, branch);
+    if (runtime === 'postgres') return createPostgresBranchDatabase(service, branch, postgresDatabaseForBranch(service, branch));
+    if (runtime === 'mongodb') return createMongoBranchDatabase(service, branch, mongoDatabaseForBranch(service, branch));
+    throw new Error(`${runtime} 暂不支持重置连接凭据`);
+  }
+
+  async function resetMysqlBranchCredentials(service: InfraService, branch: BranchEntry): Promise<MysqlConnectionEnvResult> {
+    if (service.status !== 'running') {
+      throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
+    }
+    const database = mysqlDatabaseForBranch(service, branch);
+    if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
+      throw new Error(`数据库名不合法: ${database || '(empty)'}`);
+    }
+    const branchUser = branchDatabaseUser(branch);
+    const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
+    const rootPassword = mysqlRootPassword(service);
+    const sql = [
+      `CREATE USER IF NOT EXISTS ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
+      `ALTER USER ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
+      `GRANT ALL PRIVILEGES ON ${sqlIdent(database)}.* TO ${sqlString(branchUser)}@'%'`,
+      'FLUSH PRIVILEGES',
+    ].join('; ');
+    const result = await shell.exec(
+      `docker exec ${shq(service.containerName || '')} mysql -uroot${mysqlPasswordArg(rootPassword)} -e ${shq(sql)}`,
+      { timeout: 60_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 凭据重置失败').trim(), [rootPassword, branchPassword]));
+    }
+    return buildMysqlConnectionEnv({ service, branch, branchUser, branchPassword, database });
+  }
+
+  function injectBranchMysqlEnv(branch: BranchEntry, envToInject: Record<string, string>): void {
+    for (const [key, value] of Object.entries(envToInject)) {
+      stateService.setCustomEnvVar(key, value, branch.id);
+    }
+  }
+
+  function maskConnectionString(connectionString: string): string {
+    try {
+      const url = new URL(connectionString);
+      if (url.password) url.password = '******';
+      if (url.username && /secret|token|password/i.test(url.username)) url.username = '******';
+      return url.toString();
+    } catch {
+      return maskTextSecrets(connectionString, [connectionString]);
+    }
+  }
+
+  function externalConnectionEnv(runtime: ReturnType<typeof resourceRuntimeKey>, connectionString: string): Record<string, string> {
+    if (runtime === 'mysql') return { DATABASE_URL: connectionString, MYSQL_URL: connectionString };
+    if (runtime === 'postgres') return { DATABASE_URL: connectionString, POSTGRES_URL: connectionString };
+    if (runtime === 'mongodb') return { DATABASE_URL: connectionString, MONGODB_URL: connectionString };
+    return { DATABASE_URL: connectionString };
+  }
+
+  function injectBranchEnv(branch: BranchEntry, envToInject: Record<string, string>): void {
+    for (const [key, value] of Object.entries(envToInject)) {
+      stateService.setCustomEnvVar(key, value, branch.id);
+    }
+  }
+
+  function injectEnvIntoProfileOverride(branch: BranchEntry, profileId: string, envToInject: Record<string, string>): BuildProfileOverride {
+    const current = stateService.getBranchProfileOverride(branch.id, profileId) || {};
+    const next: BuildProfileOverride = {
+      ...current,
+      env: {
+        ...(current.env || {}),
+        ...envToInject,
+      },
+      notes: current.notes || 'CDS resource connection injected',
+    };
+    stateService.setBranchProfileOverride(branch.id, profileId, next);
+    return stateService.getBranchProfileOverride(branch.id, profileId) || next;
+  }
+
+  function resourceBackupDir(): string {
+    return `/data/cds/${stateService.projectSlug}/backups`;
+  }
+
+  function sanitizeBackupFileName(name: unknown): string {
+    const value = String(name || '').trim();
+    const base = path.posix.basename(value);
+    if (!value || value !== base || value.includes('..')) {
+      throw new Error('非法备份文件名');
+    }
+    return value;
+  }
+
+  function mysqlDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
+    return String(
+      branchEnv.MYSQL_DATABASE
+        || env.MYSQL_DATABASE
+        || env.MARIADB_DATABASE
+        || resolvedServiceDbName(service)
+        || 'app',
+    )
+      .replace(/[^a-zA-Z0-9_]/g, '_')
+      .slice(0, 64);
+  }
+
+  function resourceBackupExtension(runtime: ResourceDatabaseRuntime): string {
+    if (runtime === 'mongodb') return '.archive.gz';
+    if (runtime === 'redis') return '.rdb';
+    return '.sql.gz';
+  }
+
+  function resourceDatabaseForRuntime(runtime: ResourceDatabaseRuntime, service: InfraService, branch: BranchEntry): string | undefined {
+    if (runtime === 'mysql') return mysqlDatabaseForBranch(service, branch);
+    if (runtime === 'postgres') return postgresDatabaseForBranch(service, branch);
+    if (runtime === 'mongodb') return mongoDatabaseForBranch(service, branch);
+    return undefined;
+  }
+
+  function makeResourceBackupFileName(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    runtime: ResourceDatabaseRuntime;
+    database?: string;
+    reason: 'manual' | 'pre-restore';
+  }): string {
+    const { service, branch, runtime, database, reason } = params;
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+    const safeDatabase = String(database || 'instance').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+    return `${service.id}-${branch.id}-${safeDatabase}-${runtime}-${reason}-${stamp}${resourceBackupExtension(runtime)}`;
+  }
+
+  async function listResourceBackupEntries(service: InfraService, branch: BranchEntry, runtime: ResourceDatabaseRuntime, database?: string): Promise<ResourceBackupEntry[]> {
+    const dir = resourceBackupDir();
+    const ext = resourceBackupExtension(runtime);
+    const result = await shell.exec(
+      `mkdir -p ${shq(dir)} && find ${shq(dir)} -maxdepth 1 -type f -name ${shq(`${service.id}-${branch.id}-*${ext}`)} -printf '%f\t%s\t%T@\\n' | sort -r -k3`,
+      { timeout: 15_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error((result.stderr || result.stdout || '读取备份列表失败').trim());
+    }
+    return result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [name, sizeRaw, mtimeRaw] = line.split('\t');
+        const mtimeMs = Number(mtimeRaw) * 1000;
+        return {
+          id: name,
+          name,
+          sizeBytes: Number(sizeRaw) || 0,
+          createdAt: Number.isFinite(mtimeMs) ? new Date(mtimeMs).toISOString() : new Date().toISOString(),
+          runtime,
+          ...(database ? { database } : {}),
+        };
+      });
+  }
+
+  async function statBackupEntry(fileName: string, runtime: ResourceDatabaseRuntime, database?: string): Promise<ResourceBackupEntry> {
+    const filePath = path.posix.join(resourceBackupDir(), fileName);
+    const stat = await shell.exec(`stat -c '%s\t%Y' ${shq(filePath)}`, { timeout: 10_000 });
+    const [sizeRaw, mtimeRaw] = stat.stdout.trim().split('\t');
+    const mtimeMs = Number(mtimeRaw) * 1000;
+    return {
+      id: fileName,
+      name: fileName,
+      sizeBytes: Number(sizeRaw) || 0,
+      createdAt: Number.isFinite(mtimeMs) ? new Date(mtimeMs).toISOString() : new Date().toISOString(),
+      runtime,
+      ...(database ? { database } : {}),
+    };
+  }
+
+  async function createMysqlBackupFile(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    reason: 'manual' | 'pre-restore';
+  }): Promise<ResourceBackupEntry> {
+    const { service, branch, resourceId, resourceName, projectId, actor, reason } = params;
+    if (service.status !== 'running') {
+      throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
+    }
+    const database = mysqlDatabaseForBranch(service, branch);
+    if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
+      throw new Error(`数据库名不合法: ${database || '(empty)'}`);
+    }
+    const dir = resourceBackupDir();
+    const fileName = makeResourceBackupFileName({ service, branch, runtime: 'mysql', database, reason });
+    const filePath = path.posix.join(dir, fileName);
+    const rootPassword = mysqlRootPassword(service);
+    const dumpCmd = `mysqldump -uroot${mysqlPasswordArg(rootPassword)} --single-transaction --quick --routines --triggers --events ${shq(database)} | gzip -c`;
+    const result = await shell.exec(
+      `mkdir -p ${shq(dir)} && docker exec ${shq(service.containerName || '')} sh -c ${shq(dumpCmd)} > ${shq(filePath)}`,
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 备份失败').trim(), [rootPassword]));
+    }
+    const entry = await statBackupEntry(fileName, 'mysql', database);
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-backup',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} ${reason === 'pre-restore' ? '恢复前' : '手动'}备份已生成：${fileName}`,
+    });
+    return entry;
+  }
+
+  async function createPostgresBackupFile(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    reason: 'manual' | 'pre-restore';
+  }): Promise<ResourceBackupEntry> {
+    const { service, branch, resourceId, resourceName, projectId, actor, reason } = params;
+    if (service.status !== 'running') {
+      throw new Error(`PostgreSQL 服务当前未运行（status=${service.status}）`);
+    }
+    const database = postgresDatabaseForBranch(service, branch);
+    if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
+      throw new Error(`数据库名不合法: ${database || '(empty)'}`);
+    }
+    const dir = resourceBackupDir();
+    const fileName = makeResourceBackupFileName({ service, branch, runtime: 'postgres', database, reason });
+    const filePath = path.posix.join(dir, fileName);
+    const creds = postgresClientCredentials(service, branch);
+    const result = await shell.exec(
+      `mkdir -p ${shq(dir)} && docker exec -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} pg_dump -U ${shq(creds.user)} -d ${shq(database)} --no-owner --no-privileges | gzip -c > ${shq(filePath)}`,
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 备份失败').trim(), creds.secrets));
+    }
+    const entry = await statBackupEntry(fileName, 'postgres', database);
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-backup',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} ${reason === 'pre-restore' ? '恢复前' : '手动'}备份已生成：${fileName}`,
+    });
+    return entry;
+  }
+
+  async function createMongoBackupFile(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    reason: 'manual' | 'pre-restore';
+  }): Promise<ResourceBackupEntry> {
+    const { service, branch, resourceId, resourceName, projectId, actor, reason } = params;
+    if (service.status !== 'running') {
+      throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
+    }
+    const database = mongoDatabaseForBranch(service, branch);
+    const dir = resourceBackupDir();
+    const fileName = makeResourceBackupFileName({ service, branch, runtime: 'mongodb', database, reason });
+    const filePath = path.posix.join(dir, fileName);
+    const creds = mongoCredentials(service, branch);
+    const result = await shell.exec(
+      `mkdir -p ${shq(dir)} && docker exec ${shq(service.containerName || '')} mongodump --uri ${shq(creds.uri)} --db ${shq(database)} --archive --gzip > ${shq(filePath)}`,
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 备份失败').trim(), creds.secrets));
+    }
+    const entry = await statBackupEntry(fileName, 'mongodb', database);
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-backup',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} ${reason === 'pre-restore' ? '恢复前' : '手动'}备份已生成：${fileName}`,
+    });
+    return entry;
+  }
+
+  function redisConfigValue(output: string, key: string): string {
+    const lines = output.split('\n').map((line) => line.trim()).filter(Boolean);
+    const index = lines.findIndex((line) => line === key);
+    return index >= 0 ? lines[index + 1] || '' : lines[lines.length - 1] || '';
+  }
+
+  async function waitForRedisBgsave(service: InfraService): Promise<void> {
+    for (let i = 0; i < 120; i += 1) {
+      const info = await runRedisCli(service, ['INFO', 'persistence']);
+      const active = info.split('\n').some((line) => line.trim() === 'rdb_bgsave_in_progress:1');
+      if (!active) return;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    throw new Error('Redis BGSAVE 超时');
+  }
+
+  async function createRedisBackupFile(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    reason: 'manual' | 'pre-restore';
+  }): Promise<ResourceBackupEntry> {
+    const { service, branch, resourceId, resourceName, projectId, actor, reason } = params;
+    if (service.status !== 'running') {
+      throw new Error(`Redis 服务当前未运行（status=${service.status}）`);
+    }
+    const dir = resourceBackupDir();
+    const fileName = makeResourceBackupFileName({ service, branch, runtime: 'redis', reason });
+    const filePath = path.posix.join(dir, fileName);
+    await runRedisCli(service, ['BGSAVE']).catch((err) => {
+      const message = (err as Error).message;
+      if (!/Background saving already in progress/i.test(message)) throw err;
+    });
+    await waitForRedisBgsave(service);
+    const redisDir = redisConfigValue(await runRedisCli(service, ['CONFIG', 'GET', 'dir']), 'dir') || '/data';
+    const redisFile = redisConfigValue(await runRedisCli(service, ['CONFIG', 'GET', 'dbfilename']), 'dbfilename') || 'dump.rdb';
+    const result = await shell.exec(
+      `mkdir -p ${shq(dir)} && docker exec ${shq(service.containerName || '')} cat ${shq(path.posix.join(redisDir, redisFile))} > ${shq(filePath)}`,
+      { timeout: 300_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error((result.stderr || result.stdout || 'Redis RDB 备份失败').trim());
+    }
+    const entry = await statBackupEntry(fileName, 'redis');
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-backup',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} ${reason === 'pre-restore' ? '恢复前' : '手动'}RDB 备份已生成：${fileName}`,
+    });
+    return entry;
+  }
+
+  async function createResourceBackupFile(params: {
+    runtime: ResourceDatabaseRuntime;
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    reason: 'manual' | 'pre-restore';
+  }): Promise<ResourceBackupEntry> {
+    if (params.runtime === 'mysql') return createMysqlBackupFile(params);
+    if (params.runtime === 'postgres') return createPostgresBackupFile(params);
+    if (params.runtime === 'mongodb') return createMongoBackupFile(params);
+    return createRedisBackupFile(params);
+  }
+
+  async function restoreMysqlBackupFile(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    backupName: string;
+  }): Promise<{ backup: string; database: string; safetyBackup: ResourceBackupEntry }> {
+    const { service, branch, resourceId, resourceName, projectId, actor, backupName } = params;
+    if (service.status !== 'running') {
+      throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
+    }
+    const database = mysqlDatabaseForBranch(service, branch);
+    if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
+      throw new Error(`数据库名不合法: ${database || '(empty)'}`);
+    }
+    const { fileName, filePath } = await assertBackupFile(backupName, 'mysql', { service, branch });
+    const safetyBackup = await createMysqlBackupFile({
+      service,
+      branch,
+      resourceId,
+      resourceName,
+      projectId,
+      actor,
+      reason: 'pre-restore',
+    });
+    const rootPassword = mysqlRootPassword(service);
+    const result = await shell.exec(
+      `gunzip -c ${shq(filePath)} | docker exec -i ${shq(service.containerName || '')} mysql -uroot${mysqlPasswordArg(rootPassword)} ${shq(database)}`,
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 恢复失败').trim(), [rootPassword]));
+    }
+    stateService.recordDestructiveOp({
+      type: 'purge-database',
+      projectId,
+      mongoDumpPath: safetyBackup.name,
+      summary: `恢复 ${resourceName} 到备份 ${fileName}，恢复前备份 ${safetyBackup.name}`,
+      triggeredBy: actor,
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-restore',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} 已从备份 ${fileName} 恢复到 ${database}，恢复前备份 ${safetyBackup.name}`,
+    });
+    return { backup: fileName, database, safetyBackup };
+  }
+
+  async function restoreMysqlBackupIntoBranchDatabase(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    backupName: string;
+    targetDatabase: string;
+  }): Promise<MysqlBranchDatabaseResult & { backup: string }> {
+    const { service, branch, backupName, targetDatabase } = params;
+    if (service.status !== 'running') {
+      throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
+    }
+    if (!targetDatabase || !/^[a-zA-Z0-9_]+$/.test(targetDatabase)) {
+      throw new Error(`目标数据库名不合法: ${targetDatabase || '(empty)'}`);
+    }
+    const { fileName, filePath } = await assertBackupFile(backupName, 'mysql', { service, branch });
+    const branchDb = await createMysqlBranchDatabase(service, branch, targetDatabase);
+    const rootPassword = mysqlRootPassword(service);
+    const result = await shell.exec(
+      `gunzip -c ${shq(filePath)} | docker exec -i ${shq(service.containerName || '')} mysql -uroot${mysqlPasswordArg(rootPassword)} ${shq(targetDatabase)}`,
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 新库恢复失败').trim(), [rootPassword, branchDb.branchPassword]));
+    }
+    return { ...branchDb, backup: fileName };
+  }
+
+  async function assertBackupFile(
+    fileNameInput: unknown,
+    runtime: ResourceDatabaseRuntime,
+    scope: { service: InfraService; branch: BranchEntry },
+  ): Promise<{ fileName: string; filePath: string }> {
+    const fileName = sanitizeBackupFileName(fileNameInput);
+    const ext = resourceBackupExtension(runtime);
+    if (!fileName.endsWith(ext)) {
+      throw new Error(`当前 ${runtime} 备份只支持 ${ext} 文件`);
+    }
+    const prefix = `${scope.service.id}-${scope.branch.id}-`;
+    if (!fileName.startsWith(prefix)) {
+      throw new Error(`备份文件不属于当前资源或分支: ${fileName}`);
+    }
+    const filePath = path.posix.join(resourceBackupDir(), fileName);
+    const exists = await shell.exec(`test -f ${shq(filePath)}`, { timeout: 10_000 });
+    if (exists.exitCode !== 0) {
+      throw new Error(`备份文件不存在: ${fileName}`);
+    }
+    return { fileName, filePath };
+  }
+
+  async function restorePostgresBackupFile(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    backupName: string;
+  }): Promise<{ backup: string; database: string; safetyBackup: ResourceBackupEntry }> {
+    const { service, branch, resourceId, resourceName, projectId, actor, backupName } = params;
+    if (service.status !== 'running') {
+      throw new Error(`PostgreSQL 服务当前未运行（status=${service.status}）`);
+    }
+    const database = postgresDatabaseForBranch(service, branch);
+    const { fileName, filePath } = await assertBackupFile(backupName, 'postgres', { service, branch });
+    const safetyBackup = await createPostgresBackupFile({
+      service,
+      branch,
+      resourceId,
+      resourceName,
+      projectId,
+      actor,
+      reason: 'pre-restore',
+    });
+    const creds = postgresClientCredentials(service, branch);
+    const resetSql = 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public;';
+    const reset = await shell.exec(
+      `docker exec -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(database)} -v ON_ERROR_STOP=1 -c ${shq(resetSql)}`,
+      { timeout: 120_000 },
+    );
+    if (reset.exitCode !== 0) {
+      throw new Error(maskTextSecrets((reset.stderr || reset.stdout || 'PostgreSQL 恢复前清空 schema 失败').trim(), creds.secrets));
+    }
+    const result = await shell.exec(
+      `gunzip -c ${shq(filePath)} | docker exec -i -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(database)} -v ON_ERROR_STOP=1`,
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 恢复失败').trim(), creds.secrets));
+    }
+    stateService.recordDestructiveOp({
+      type: 'purge-database',
+      projectId,
+      mongoDumpPath: safetyBackup.name,
+      summary: `恢复 ${resourceName} 到备份 ${fileName}，恢复前备份 ${safetyBackup.name}`,
+      triggeredBy: actor,
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-restore',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} 已从备份 ${fileName} 恢复到 ${database}，恢复前备份 ${safetyBackup.name}`,
+    });
+    return { backup: fileName, database, safetyBackup };
+  }
+
+  async function restorePostgresBackupIntoBranchDatabase(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    backupName: string;
+    targetDatabase: string;
+  }): Promise<MysqlConnectionEnvResult & { backup: string }> {
+    const { service, branch, backupName, targetDatabase } = params;
+    const { fileName, filePath } = await assertBackupFile(backupName, 'postgres', { service, branch });
+    const branchDb = await createPostgresBranchDatabase(service, branch, targetDatabase);
+    const result = await shell.exec(
+      `gunzip -c ${shq(filePath)} | docker exec -i -e PGPASSWORD=${shq(branchDb.branchPassword)} ${shq(service.containerName || '')} psql -U ${shq(branchDb.branchUser)} -d ${shq(targetDatabase)} -v ON_ERROR_STOP=1`,
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 新库恢复失败').trim(), [branchDb.branchPassword]));
+    }
+    return { ...branchDb, backup: fileName };
+  }
+
+  async function restoreMongoBackupFile(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    backupName: string;
+  }): Promise<{ backup: string; database: string; safetyBackup: ResourceBackupEntry }> {
+    const { service, branch, resourceId, resourceName, projectId, actor, backupName } = params;
+    if (service.status !== 'running') {
+      throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
+    }
+    const database = mongoDatabaseForBranch(service, branch);
+    const { fileName, filePath } = await assertBackupFile(backupName, 'mongodb', { service, branch });
+    const safetyBackup = await createMongoBackupFile({
+      service,
+      branch,
+      resourceId,
+      resourceName,
+      projectId,
+      actor,
+      reason: 'pre-restore',
+    });
+    const creds = mongoCredentials(service, branch);
+    const result = await shell.exec(
+      `docker exec -i ${shq(service.containerName || '')} mongorestore --uri ${shq(creds.uri)} --db ${shq(database)} --archive --gzip --drop < ${shq(filePath)}`,
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 恢复失败').trim(), creds.secrets));
+    }
+    stateService.recordDestructiveOp({
+      type: 'purge-database',
+      projectId,
+      mongoDumpPath: safetyBackup.name,
+      summary: `恢复 ${resourceName} 到备份 ${fileName}，恢复前备份 ${safetyBackup.name}`,
+      triggeredBy: actor,
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-restore',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} 已从备份 ${fileName} 恢复到 ${database}，恢复前备份 ${safetyBackup.name}`,
+    });
+    return { backup: fileName, database, safetyBackup };
+  }
+
+  async function restoreMongoBackupIntoBranchDatabase(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    backupName: string;
+    targetDatabase: string;
+    sourceDatabase: string;
+  }): Promise<MysqlConnectionEnvResult & { backup: string }> {
+    const { service, branch, backupName, targetDatabase, sourceDatabase } = params;
+    const { fileName, filePath } = await assertBackupFile(backupName, 'mongodb', { service, branch });
+    const branchDb = await createMongoBranchDatabase(service, branch, targetDatabase);
+    const admin = mongoAdminUri(service);
+    const result = await shell.exec(
+      `docker exec -i ${shq(service.containerName || '')} mongorestore --uri ${shq(admin.uri)} --archive --gzip --drop --nsFrom ${shq(`${sourceDatabase}.*`)} --nsTo ${shq(`${targetDatabase}.*`)} < ${shq(filePath)}`,
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 新库恢复失败').trim(), [...admin.secrets, branchDb.branchPassword]));
+    }
+    return { ...branchDb, backup: fileName };
+  }
+
+  async function restoreRedisBackupFile(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    backupName: string;
+  }): Promise<{ backup: string; database: string; safetyBackup: ResourceBackupEntry }> {
+    const { service, branch, resourceId, resourceName, projectId, actor, backupName } = params;
+    if (service.status !== 'running') {
+      throw new Error(`Redis 服务当前未运行（status=${service.status}）`);
+    }
+    const { fileName, filePath } = await assertBackupFile(backupName, 'redis', { service, branch });
+    const safetyBackup = await createRedisBackupFile({
+      service,
+      branch,
+      resourceId,
+      resourceName,
+      projectId,
+      actor,
+      reason: 'pre-restore',
+    });
+    const redisDir = redisConfigValue(await runRedisCli(service, ['CONFIG', 'GET', 'dir']), 'dir') || '/data';
+    const redisFile = redisConfigValue(await runRedisCli(service, ['CONFIG', 'GET', 'dbfilename']), 'dbfilename') || 'dump.rdb';
+    const targetPath = path.posix.join(redisDir, redisFile);
+    const result = await shell.exec(
+      `docker cp ${shq(filePath)} ${shq(`${service.containerName || ''}:${targetPath}`)} && docker restart ${shq(service.containerName || '')}`,
+      { timeout: 300_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error((result.stderr || result.stdout || 'Redis RDB 恢复失败').trim());
+    }
+    stateService.recordDestructiveOp({
+      type: 'purge-database',
+      projectId,
+      mongoDumpPath: safetyBackup.name,
+      summary: `恢复 ${resourceName} Redis RDB 到 ${fileName}，恢复前备份 ${safetyBackup.name}`,
+      triggeredBy: actor,
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-restore',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} Redis 已从 RDB ${fileName} 恢复并重启，恢复前备份 ${safetyBackup.name}`,
+    });
+    return { backup: fileName, database: 'redis-rdb', safetyBackup };
+  }
+
+  async function restoreResourceBackupFile(params: {
+    runtime: ResourceDatabaseRuntime;
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+    backupName: string;
+  }): Promise<{ backup: string; database: string; safetyBackup: ResourceBackupEntry }> {
+    if (params.runtime === 'mysql') return restoreMysqlBackupFile(params);
+    if (params.runtime === 'postgres') return restorePostgresBackupFile(params);
+    if (params.runtime === 'mongodb') return restoreMongoBackupFile(params);
+    return restoreRedisBackupFile(params);
+  }
+
+  async function restoreResourceBackupIntoBranchDatabase(params: {
+    runtime: ResourceDatabaseRuntime;
+    service: InfraService;
+    branch: BranchEntry;
+    backupName: string;
+    targetDatabase: string;
+    sourceDatabase?: string;
+  }): Promise<MysqlConnectionEnvResult & { backup: string }> {
+    if (params.runtime === 'mysql') return restoreMysqlBackupIntoBranchDatabase(params);
+    if (params.runtime === 'postgres') return restorePostgresBackupIntoBranchDatabase(params);
+    if (params.runtime === 'mongodb') {
+      return restoreMongoBackupIntoBranchDatabase({
+        ...params,
+        sourceDatabase: params.sourceDatabase || mongoDatabaseForBranch(params.service, params.branch),
+      });
+    }
+    throw new Error('Redis RDB 只能恢复覆盖当前 Redis 实例，不能从备份创建独立新库');
+  }
+
+  function acceptedResourceConfirmNames(resource: UnifiedBranchResource): Set<string> {
+    const raw = resource.raw as Partial<InfraService>;
+    return new Set([resource.displayName, resource.serviceName, raw.id].filter(Boolean) as string[]);
+  }
+
+  function ensureResourceNameConfirmed(input: unknown, resource: UnifiedBranchResource, operation: string): void {
+    const confirmResourceName = String(input || '').trim();
+    if (!acceptedResourceConfirmNames(resource).has(confirmResourceName)) {
+      throw new Error(`${operation} 属于危险操作，请输入资源名确认：${resource.displayName}`);
+    }
+  }
+
+  function removeBranchResourceEnv(runtime: ResourceDatabaseRuntime, branch: BranchEntry): void {
+    const keys = runtime === 'mysql'
+      ? ['DATABASE_URL', 'MYSQL_URL', 'MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_DATABASE', 'MYSQL_USER', 'MYSQL_PASSWORD']
+      : runtime === 'postgres'
+        ? ['DATABASE_URL', 'POSTGRES_URL', 'POSTGRES_HOST', 'POSTGRES_PORT', 'POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
+        : runtime === 'mongodb'
+          ? ['DATABASE_URL', 'MONGODB_URL', 'MONGO_INITDB_DATABASE', 'MONGODB_DATABASE', 'MONGODB_HOST', 'MONGODB_PORT', 'MONGODB_USERNAME', 'MONGODB_PASSWORD', 'MONGODB_AUTH_SOURCE']
+          : ['DATABASE_URL', 'REDIS_URL', 'REDIS_HOST', 'REDIS_PORT', 'REDIS_PASSWORD'];
+    for (const key of keys) {
+      stateService.removeCustomEnvVar(key, branch.id);
+    }
+  }
+
+  function branchOwnedDatabaseForDelete(runtime: ResourceDatabaseRuntime, service: InfraService, branch: BranchEntry): string {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    if (runtime === 'mysql') {
+      const database = branchEnv.MYSQL_DATABASE || '';
+      if (!database || !branchEnv.MYSQL_USER) {
+        throw new Error('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
+      }
+      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+    }
+    if (runtime === 'postgres') {
+      const database = branchEnv.POSTGRES_DB || '';
+      if (!database || !branchEnv.POSTGRES_USER) {
+        throw new Error('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
+      }
+      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
+    }
+    if (runtime === 'mongodb') {
+      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
+      const env = resolvedInfraEnv(service);
+      const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
+      if (!database || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
+        throw new Error('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
+      }
+      return database.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
+    }
+    throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+  }
+
+  async function clearResourceData(params: {
+    runtime: ResourceDatabaseRuntime;
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+  }): Promise<{ database: string; safetyBackup: ResourceBackupEntry }> {
+    const { runtime, service, branch, resourceId, resourceName, projectId, actor } = params;
+    const safetyBackup = await createResourceBackupFile({ runtime, service, branch, resourceId, resourceName, projectId, actor, reason: 'pre-restore' });
+    const database = resourceDatabaseForRuntime(runtime, service, branch) || 'redis-rdb';
+    if (runtime === 'mysql') {
+      const rootPassword = mysqlRootPassword(service);
+      const creds = mysqlClientCredentials(service, branch);
+      const sql = [
+        `DROP DATABASE IF EXISTS ${sqlIdent(database)}`,
+        `CREATE DATABASE ${sqlIdent(database)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+        creds.user !== 'root' ? `GRANT ALL PRIVILEGES ON ${sqlIdent(database)}.* TO ${sqlString(creds.user)}@'%'` : '',
+        'FLUSH PRIVILEGES',
+      ].filter(Boolean).join('; ');
+      const result = await shell.exec(
+        `docker exec ${shq(service.containerName || '')} mysql -uroot${mysqlPasswordArg(rootPassword)} -e ${shq(sql)}`,
+        { timeout: 120_000 },
+      );
+      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 清空数据失败').trim(), [rootPassword, ...creds.secrets]));
+    } else if (runtime === 'postgres') {
+      const creds = postgresClientCredentials(service, branch);
+      const sql = 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public;';
+      const result = await shell.exec(
+        `docker exec -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(database)} -v ON_ERROR_STOP=1 -c ${shq(sql)}`,
+        { timeout: 120_000 },
+      );
+      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 清空数据失败').trim(), creds.secrets));
+    } else if (runtime === 'mongodb') {
+      const creds = mongoCredentials(service, branch);
+      const result = await shell.exec(
+        `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq('db.dropDatabase()')}`,
+        { timeout: 120_000 },
+      );
+      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 清空数据失败').trim(), creds.secrets));
+    } else {
+      await runRedisCli(service, ['FLUSHALL']);
+    }
+    stateService.recordDestructiveOp({
+      type: 'purge-database',
+      projectId,
+      mongoDumpPath: safetyBackup.name,
+      summary: `清空 ${resourceName} 数据，操作前备份 ${safetyBackup.name}`,
+      triggeredBy: actor,
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-restore',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} 数据已清空，操作前备份 ${safetyBackup.name}`,
+    });
+    return { database, safetyBackup };
+  }
+
+  async function deleteBranchDatabaseResource(params: {
+    runtime: ResourceDatabaseRuntime;
+    service: InfraService;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    projectId: string;
+    actor: string;
+  }): Promise<{ database: string; safetyBackup: ResourceBackupEntry }> {
+    const { runtime, service, branch, resourceId, resourceName, projectId, actor } = params;
+    if (runtime === 'redis') {
+      throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+    }
+    const database = branchOwnedDatabaseForDelete(runtime, service, branch);
+    const safetyBackup = await createResourceBackupFile({ runtime, service, branch, resourceId, resourceName, projectId, actor, reason: 'pre-restore' });
+    if (runtime === 'mysql') {
+      const rootPassword = mysqlRootPassword(service);
+      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const user = branchEnv.MYSQL_USER || '';
+      const sql = [
+        `DROP DATABASE IF EXISTS ${sqlIdent(database)}`,
+        user ? `DROP USER IF EXISTS ${sqlString(user)}@'%'` : '',
+        'FLUSH PRIVILEGES',
+      ].filter(Boolean).join('; ');
+      const result = await shell.exec(
+        `docker exec ${shq(service.containerName || '')} mysql -uroot${mysqlPasswordArg(rootPassword)} -e ${shq(sql)}`,
+        { timeout: 120_000 },
+      );
+      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 删除数据库失败').trim(), [rootPassword]));
+    } else if (runtime === 'postgres') {
+      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const user = branchEnv.POSTGRES_USER || '';
+      const env = resolvedInfraEnv(service);
+      const adminUser = env.POSTGRES_USER || 'postgres';
+      const adminPassword = env.POSTGRES_PASSWORD || '';
+      const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
+      const sql = [
+        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${pgString(database)} AND pid <> pg_backend_pid();`,
+        `DROP DATABASE IF EXISTS ${pgIdent(database)};`,
+        user ? `DROP ROLE IF EXISTS ${pgIdent(user)};` : '',
+      ].filter(Boolean).join('\n');
+      const result = await shell.exec(
+        `printf %s ${shq(sql)} | docker exec -i -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} psql -U ${shq(adminUser)} -d ${shq(adminDb)} -v ON_ERROR_STOP=1`,
+        { timeout: 120_000 },
+      );
+      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 删除数据库失败').trim(), [adminPassword]));
+    } else if (runtime === 'mongodb') {
+      const creds = mongoCredentials(service, branch);
+      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const user = branchEnv.MONGODB_USERNAME || '';
+      const script = [
+        'db.dropDatabase();',
+        user ? `db.dropUser(${mongoSafeJson(user)});` : '',
+      ].filter(Boolean).join(' ');
+      const result = await shell.exec(
+        `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq(script)}`,
+        { timeout: 120_000 },
+      );
+      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 删除数据库失败').trim(), creds.secrets));
+    }
+    removeBranchResourceEnv(runtime, branch);
+    stateService.recordDestructiveOp({
+      type: 'purge-database',
+      projectId,
+      mongoDumpPath: safetyBackup.name,
+      summary: `删除 ${resourceName} 分支数据库 ${database}，操作前备份 ${safetyBackup.name}`,
+      triggeredBy: actor,
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-deleted',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName,
+      result: 'success',
+      note: `${resourceName} 分支数据库 ${database} 已删除，操作前备份 ${safetyBackup.name}`,
+    });
+    return { database, safetyBackup };
+  }
+
+  async function clonePostgresMainIntoBranchDatabase(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    sourceDatabase: string;
+    targetDatabase: string;
+  }): Promise<MysqlConnectionEnvResult> {
+    const { service, branch, sourceDatabase, targetDatabase } = params;
+    if (!sourceDatabase || !/^[a-zA-Z0-9_]+$/.test(sourceDatabase)) {
+      throw new Error(`源数据库名不合法: ${sourceDatabase || '(empty)'}`);
+    }
+    if (sourceDatabase === targetDatabase) {
+      throw new Error('源数据库与目标数据库相同，拒绝覆盖复制');
+    }
+    const branchDb = await createPostgresBranchDatabase(service, branch, targetDatabase);
+    const env = resolvedInfraEnv(service);
+    const adminUser = env.POSTGRES_USER || 'postgres';
+    const adminPassword = env.POSTGRES_PASSWORD || '';
+    const result = await shell.exec(
+      [
+        `docker exec -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} pg_dump -U ${shq(adminUser)} -d ${shq(sourceDatabase)} --no-owner --no-privileges`,
+        `docker exec -i -e PGPASSWORD=${shq(branchDb.branchPassword)} ${shq(service.containerName || '')} psql -U ${shq(branchDb.branchUser)} -d ${shq(targetDatabase)} -v ON_ERROR_STOP=1`,
+      ].join(' | '),
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 克隆失败').trim(), [adminPassword, branchDb.branchPassword]));
+    }
+    return branchDb;
+  }
+
+  async function cloneMongoMainIntoBranchDatabase(params: {
+    service: InfraService;
+    branch: BranchEntry;
+    sourceDatabase: string;
+    targetDatabase: string;
+  }): Promise<MysqlConnectionEnvResult> {
+    const { service, branch, sourceDatabase, targetDatabase } = params;
+    if (!sourceDatabase || !/^[a-zA-Z0-9_]+$/.test(sourceDatabase)) {
+      throw new Error(`源 database 名不合法: ${sourceDatabase || '(empty)'}`);
+    }
+    if (sourceDatabase === targetDatabase) {
+      throw new Error('源 database 与目标 database 相同，拒绝覆盖复制');
+    }
+    const branchDb = await createMongoBranchDatabase(service, branch, targetDatabase);
+    const admin = mongoAdminUri(service);
+    const result = await shell.exec(
+      [
+        `docker exec ${shq(service.containerName || '')} mongodump --uri ${shq(admin.uri)} --db ${shq(sourceDatabase)} --archive --gzip`,
+        `docker exec -i ${shq(service.containerName || '')} mongorestore --uri ${shq(admin.uri)} --archive --gzip --drop --nsFrom ${shq(`${sourceDatabase}.*`)} --nsTo ${shq(`${targetDatabase}.*`)}`,
+      ].join(' | '),
+      { timeout: 1_800_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 克隆失败').trim(), [...admin.secrets, branchDb.branchPassword]));
+    }
+    return branchDb;
+  }
+
+  async function runMysqlCloneMainTask(params: {
+    taskId: string;
+    projectId: string;
+    branch: BranchEntry;
+    resourceId: string;
+    resourceName: string;
+    actor: string;
+    service: InfraService;
+    sourceDatabase: string;
+    targetDatabase: string;
+  }): Promise<void> {
+    const { taskId, projectId, branch, resourceId, resourceName, actor, service, sourceDatabase, targetDatabase } = params;
+    const appendLog = (line: string): string => {
+      const task = stateService.getResourceCloneTask(taskId);
+      return `${task?.log || ''}\n[${new Date().toISOString()}] ${line}`;
+    };
+    try {
+      stateService.updateResourceCloneTask(taskId, {
+        status: 'running',
+        progress: 10,
+        startedAt: new Date().toISOString(),
+        progressMessage: `准备从 ${sourceDatabase} 复制到 ${targetDatabase}`,
+        log: appendLog(`started mysqldump clone from ${sourceDatabase} to ${targetDatabase}`),
+      });
+      stateService.save();
+
+      if (service.status !== 'running') {
+        throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
+      }
+      if (!sourceDatabase || !/^[a-zA-Z0-9_]+$/.test(sourceDatabase)) {
+        throw new Error(`源数据库名不合法: ${sourceDatabase || '(empty)'}`);
+      }
+      if (sourceDatabase === targetDatabase) {
+        throw new Error('源数据库与目标数据库相同，拒绝覆盖复制');
+      }
+
+      const branchDb = await createMysqlBranchDatabase(service, branch, targetDatabase);
+      stateService.updateResourceCloneTask(taskId, {
+        progress: 35,
+        progressMessage: '目标库和分支账号已创建，开始导出源库',
+        injectedEnv: branchDb.maskedInjectedEnv,
+        log: appendLog(`created target database ${targetDatabase} and branch user ${branchDb.branchUser}`),
+      });
+      stateService.save();
+
+      const rootPassword = mysqlRootPassword(service);
+      const mysqlAuth = mysqlPasswordArg(rootPassword);
+      const dumpCmd = `mysqldump -uroot${mysqlAuth} --single-transaction --quick --routines --triggers --events ${shq(sourceDatabase)}`;
+      const importCmd = `mysql -uroot${mysqlAuth} ${shq(targetDatabase)}`;
+      const timeoutRaw = Number(process.env.CDS_MYSQL_CLONE_TIMEOUT_MS || 1_800_000);
+      const timeoutMs = Math.max(60_000, Math.min(Number.isFinite(timeoutRaw) ? timeoutRaw : 1_800_000, 3_600_000));
+      stateService.updateResourceCloneTask(taskId, {
+        progress: 55,
+        progressMessage: 'mysqldump 导出中，正在导入目标库',
+        log: appendLog('running mysqldump | mysql import'),
+      });
+      stateService.save();
+      const cloneResult = await shell.exec(
+        `docker exec ${shq(service.containerName || '')} sh -c ${shq(`${dumpCmd} | ${importCmd}`)}`,
+        { timeout: timeoutMs },
+      );
+      if (cloneResult.exitCode !== 0) {
+        throw new Error(maskTextSecrets((cloneResult.stderr || cloneResult.stdout || 'MySQL 克隆导入失败').trim(), [rootPassword, branchDb.branchPassword]));
+      }
+
+      injectBranchMysqlEnv(branch, branchDb.injectedEnv);
+      const completed = stateService.updateResourceCloneTask(taskId, {
+        status: 'completed',
+        progress: 100,
+        progressMessage: 'MySQL 克隆完成，连接变量已注入分支 scope',
+        finishedAt: new Date().toISOString(),
+        injectedEnv: branchDb.maskedInjectedEnv,
+        log: appendLog(`completed mysql clone into ${targetDatabase}`),
+      });
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-db-clone',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName,
+        result: 'success',
+        note: `${resourceName} clone-main 完成：${completed.progressMessage}`,
+      });
+      stateService.save();
+    } catch (err) {
+      const rootPassword = mysqlRootPassword(service);
+      const message = maskTextSecrets((err as Error).message, [rootPassword]);
+      const failed = stateService.updateResourceCloneTask(taskId, {
+        status: 'failed',
+        progress: 100,
+        errorMessage: message,
+        progressMessage: 'MySQL 克隆失败',
+        finishedAt: new Date().toISOString(),
+        log: maskTextSecrets(appendLog(`failed: ${message}`), [rootPassword]),
+      });
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-db-clone',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName,
+        result: 'failed',
+        note: `${resourceName} clone-main 失败：${failed.errorMessage || message}`,
+      });
+      stateService.save();
+    }
+  }
+
+  async function getBranchResourceSnapshot(branch: BranchEntry) {
+    const projectId = branch.projectId || 'default';
+    const previewHost = resourcePublicHost();
+    const preview = branch.branch
+      ? buildPreviewUrlForProject(previewHost, branch.branch, stateService.getProject(projectId), projectId)
+      : undefined;
+    const previewUrl = preview?.url || '';
+    return buildUnifiedBranchResources({
+      branch,
+      profiles: stateService.getBuildProfilesForProject(projectId),
+      infraServices: stateService.getInfraServicesForProject(projectId),
+      externalAccessPolicies: await getActiveResourceExternalAccessForBranch(projectId, branch),
+      cloneTasks: stateService.listResourceCloneTasks({ projectId, branchId: branch.id }),
+      branchEnv: stateService.getCustomEnvScope(branch.id),
+      previewUrl,
+      publicHost: previewHost,
+    });
+  }
+
+  function resourceContainerName(resource: UnifiedBranchResource): string {
+    const raw = resource.raw as { containerName?: string } | undefined;
+    return String(resource.containerName || raw?.containerName || '').trim();
+  }
+
+  async function resolveResourceForRequest(req: Request, res: Response): Promise<{
+    branch: BranchEntry;
+    projectId: string;
+    resourceId: string;
+    resource: UnifiedBranchResource;
+    containerName: string;
+  } | null> {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return null;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return null; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return null;
+    }
+    return {
+      branch,
+      projectId,
+      resourceId,
+      resource,
+      containerName: resourceContainerName(resource),
+    };
+  }
+
+  function externalRuntimeConnectionString(
+    resource: UnifiedBranchResource,
+    service: InfraService,
+    host: string,
+    port: number,
+    branch: BranchEntry,
+  ): string {
+    const runtime = resourceRuntimeKey(resource.runtime);
+    const env = resolvedInfraEnv(service, branch);
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    if (runtime === 'mysql') {
+      const db = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app';
+      const user = branchEnv.MYSQL_USER || env.MYSQL_USER || env.MARIADB_USER || 'user';
+      return `mysql://${user}:******@${host}:${port}/${db}`;
+    }
+    if (runtime === 'postgres') {
+      const db = branchEnv.POSTGRES_DB || env.POSTGRES_DB || resolvedServiceDbName(service) || 'postgres';
+      const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
+      return `postgres://${user}:******@${host}:${port}/${db}`;
+    }
+    if (runtime === 'mongodb') {
+      const db = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || env.MONGO_INITDB_DATABASE || resolvedServiceDbName(service) || 'app';
+      const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
+      const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
+        || branchUser
+        || env.MONGO_INITDB_ROOT_USERNAME
+        || env.MONGO_USERNAME
+        || env.MONGODB_USERNAME
+        || 'user';
+      const authSource = branchEnv.MONGODB_AUTH_SOURCE || branchEnv.MONGO_AUTH_SOURCE || (branchUser ? db : 'admin');
+      return `mongodb://${user}:******@${host}:${port}/${db}?authSource=${authSource}`;
+    }
+    if (runtime === 'redis') return `redis://:******@${host}:${port}`;
+    return `${host}:${port}`;
+  }
+
+  function usableRuntimeConnectionString(
+    resource: UnifiedBranchResource,
+    service: InfraService,
+    branch: BranchEntry,
+    host: string,
+    port: number,
+  ): string {
+    const runtime = resourceRuntimeKey(resource.runtime);
+    const env = resolvedInfraEnv(service, branch);
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    if (runtime === 'mysql') {
+      const database = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || resolvedServiceDbName(service) || 'app';
+      const user = branchEnv.MYSQL_USER || env.MYSQL_USER || 'root';
+      const password = branchEnv.MYSQL_PASSWORD || env.MYSQL_PASSWORD || env.MYSQL_ROOT_PASSWORD || '';
+      return `mysql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
+    }
+    if (runtime === 'postgres') {
+      const database = branchEnv.POSTGRES_DB || env.POSTGRES_DB || resolvedServiceDbName(service) || env.POSTGRES_USER || 'postgres';
+      const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
+      const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
+      return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
+    }
+    if (runtime === 'mongodb') {
+      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || env.MONGO_INITDB_DATABASE || resolvedServiceDbName(service) || 'app';
+      const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
+      const serviceUser = branchEnv.MONGO_INITDB_ROOT_USERNAME || env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME || '';
+      const user = branchUser || serviceUser;
+      const branchPassword = branchEnv.MONGODB_PASSWORD || branchEnv.MONGO_PASSWORD || '';
+      const servicePassword = branchEnv.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_PASSWORD || env.MONGODB_PASSWORD || '';
+      const password = branchPassword || servicePassword;
+      const auth = user ? `${encodeURIComponent(user)}:${encodeURIComponent(password)}@` : '';
+      const authSourceDb = user
+        ? (branchEnv.MONGODB_AUTH_SOURCE || branchEnv.MONGO_AUTH_SOURCE || (branchUser ? database : 'admin'))
+        : '';
+      const authSource = authSourceDb ? `?authSource=${encodeURIComponent(authSourceDb)}` : '';
+      return `mongodb://${auth}${host}:${port}/${encodeURIComponent(database)}${authSource}`;
+    }
+    if (runtime === 'redis') {
+      const password = branchEnv.REDIS_PASSWORD || env.REDIS_PASSWORD || env.REDIS_PASS || env.REDISCLI_AUTH || '';
+      return password ? `redis://:${encodeURIComponent(password)}@${host}:${port}` : `redis://${host}:${port}`;
+    }
+    return `${host}:${port}`;
+  }
+
+  async function disableTcpResourceExternalAccess(policy?: ResourceExternalAccessPolicy | null): Promise<void> {
+    if (!policy) return;
+    const proxyContainerName = policy.proxyContainerName;
+    if (proxyContainerName && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(proxyContainerName)) {
+      await shell.exec(`docker rm -f ${routeShellQuote(proxyContainerName)} 2>/dev/null || true`, { timeout: 15_000 });
+    }
+    if (policy.firewallChain) {
+      await cleanupResourceExternalFirewall(shell, policy.firewallChain, policy.port);
+    }
+  }
+
+  function isResourceExternalAccessExpired(policy?: ResourceExternalAccessPolicy | null, now = Date.now()): boolean {
+    if (!policy?.enabled || !policy.expiresAt) return false;
+    const expiresAt = Date.parse(policy.expiresAt);
+    return Number.isFinite(expiresAt) && expiresAt <= now;
+  }
+
+  async function expireResourceExternalAccessIfNeeded(
+    projectId: string,
+    branch: BranchEntry,
+    resourceId: string,
+    policy?: ResourceExternalAccessPolicy,
+  ): Promise<ResourceExternalAccessPolicy | undefined> {
+    if (!policy || !isResourceExternalAccessExpired(policy)) return policy;
+    await disableTcpResourceExternalAccess(policy).catch(() => undefined);
+    const expired = stateService.upsertResourceExternalAccess({
+      projectId,
+      branchId: branch.id,
+      resourceId,
+      enabled: false,
+      kind: policy.kind,
+      address: policy.address,
+      host: policy.host,
+      port: policy.port,
+      connectionString: policy.connectionString,
+      proxyContainerName: undefined,
+      targetHost: undefined,
+      targetPort: undefined,
+      allowlistEnforced: false,
+      firewallChain: undefined,
+      allowlist: policy.allowlist || [],
+      expiresAt: policy.expiresAt,
+      updatedBy: 'system:ttl-expired',
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-external-access',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor: 'system:ttl-expired',
+      resourceId,
+      result: 'success',
+      note: `资源外部访问已在 ${policy.expiresAt} 到期并自动关闭`,
+    });
+    stateService.save();
+    return expired;
+  }
+
+  async function getActiveResourceExternalAccessForBranch(projectId: string, branch: BranchEntry): Promise<ResourceExternalAccessPolicy[]> {
+    const policies = stateService.getResourceExternalAccessForBranch(projectId, branch.id);
+    for (const policy of policies) {
+      await expireResourceExternalAccessIfNeeded(projectId, branch, policy.resourceId, policy);
+    }
+    return stateService.getResourceExternalAccessForBranch(projectId, branch.id);
+  }
+
+  let resourceExternalAccessSweepRunning = false;
+  async function sweepExpiredResourceExternalAccess(): Promise<void> {
+    if (resourceExternalAccessSweepRunning) return;
+    resourceExternalAccessSweepRunning = true;
+    try {
+      for (const branch of stateService.getAllBranches()) {
+        const projectId = branch.projectId || 'default';
+        const policies = stateService.getResourceExternalAccessForBranch(projectId, branch.id);
+        for (const policy of policies) {
+          await expireResourceExternalAccessIfNeeded(projectId, branch, policy.resourceId, policy);
+        }
+      }
+    } finally {
+      resourceExternalAccessSweepRunning = false;
+    }
+  }
+
+  const resourceExternalAccessSweepMs = Number(process.env.CDS_RESOURCE_EXTERNAL_ACCESS_SWEEP_MS || 60_000);
+  if (resourceExternalAccessSweepMs > 0 && process.env.NODE_ENV !== 'test') {
+    const timer = setInterval(() => {
+      void sweepExpiredResourceExternalAccess().catch((err) => {
+        console.warn('[resource-external-access] expired policy sweep failed:', (err as Error).message);
+      });
+    }, resourceExternalAccessSweepMs);
+    timer.unref?.();
+  }
+
+  async function enableTcpResourceExternalAccess(input: {
+    branch: BranchEntry;
+    projectId: string;
+    resourceId: string;
+    resource: UnifiedBranchResource;
+    allowlist: string[];
+    currentPolicy?: ResourceExternalAccessPolicy;
+  }): Promise<{
+    address: string;
+    host: string;
+    port: number;
+    connectionString: string;
+    proxyContainerName: string;
+    targetHost: string;
+    targetPort: number;
+    allowlistEnforced: boolean;
+    firewallChain?: string;
+  }> {
+    if (input.resource.source !== 'infra') {
+      throw new Error('只有 infra TCP 资源需要资源级 TCP proxy');
+    }
+    const service = input.resource.raw as InfraService;
+    const targetContainer = resourceContainerName(input.resource);
+    if (!targetContainer) throw new Error(`资源 "${input.resource.displayName}" 没有关联目标容器`);
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(targetContainer)) {
+      throw new Error(`目标容器名非法：${targetContainer}`);
+    }
+    const targetRunning = await containerService.isRunning(targetContainer).catch(() => false);
+    if (!targetRunning) {
+      throw new Error(`资源 "${input.resource.displayName}" 未运行，不能开启公网 TCP 访问`);
+    }
+    const targetPort = input.resource.containerPort || service.containerPort || input.resource.port;
+    if (!targetPort || targetPort < 1 || targetPort > 65535) {
+      throw new Error(`资源 "${input.resource.displayName}" 缺少可代理的容器端口`);
+    }
+    const host = resourcePublicHost();
+    if (!host) throw new Error('CDS 未配置 previewDomain/rootDomains，无法生成公网 TCP host');
+    if (input.allowlist.length === 0) {
+      throw new Error('开启数据库/缓存公网 TCP 访问必须填写 IP allowlist，禁止空 allowlist 暴露到公网');
+    }
+
+    const proxyContainerName = resourceExternalProxyName(input.projectId, input.branch.id, input.resourceId);
+    const firewallChain = resourceExternalFirewallChain(input.projectId, input.branch.id, input.resourceId);
+    const network = stateService.getProject(input.projectId)?.dockerNetwork || config.dockerNetwork;
+    const listenPort = 15432;
+    const port = await allocateResourceExternalPort(shell, input.currentPolicy?.enabled ? input.currentPolicy.port : undefined);
+    await disableTcpResourceExternalAccess(input.currentPolicy);
+    await ensureDockerNetwork(shell, network);
+    const firewall = await applyResourceExternalFirewall(shell, firewallChain, port, input.allowlist);
+
+    const scriptB64 = Buffer.from(RESOURCE_TCP_PROXY_SCRIPT, 'utf8').toString('base64');
+    const evalScript = "eval(Buffer.from(process.env.CDS_PROXY_SCRIPT_B64,'base64').toString('utf8'))";
+    const labels = [
+      'cds.managed=true',
+      'cds.type=resource-external-access',
+      `cds.project.id=${input.projectId}`,
+      `cds.branch.id=${input.branch.id}`,
+      `cds.resource.id=${input.resourceId}`,
+      `cds.target.container=${targetContainer}`,
+    ];
+    const cmd = [
+      'docker run -d',
+      `--name ${routeShellQuote(proxyContainerName)}`,
+      `--network ${routeShellQuote(network)}`,
+      `-p 0.0.0.0:${port}:${listenPort}`,
+      ...labels.map((label) => `--label ${routeShellQuote(label)}`),
+      `-e ${routeShellQuote(`TARGET_HOST=${targetContainer}`)}`,
+      `-e ${routeShellQuote(`TARGET_PORT=${targetPort}`)}`,
+      `-e ${routeShellQuote(`LISTEN_PORT=${listenPort}`)}`,
+      `-e ${routeShellQuote(`ALLOWLIST=${input.allowlist.join(',')}`)}`,
+      `-e ${routeShellQuote(`CDS_PROXY_SCRIPT_B64=${scriptB64}`)}`,
+      '--restart unless-stopped',
+      resourceTcpProxyImage(),
+      'node',
+      '-e',
+      routeShellQuote(evalScript),
+    ].join(' ');
+    const run = await shell.exec(cmd, { timeout: 60_000 });
+    if (run.exitCode !== 0) {
+      await cleanupResourceExternalFirewall(shell, firewallChain, port);
+      throw new Error(`启动资源公网 TCP proxy 失败：${combinedOutput(run).slice(0, 500)}`);
+    }
+    return {
+      address: `tcp://${host}:${port}`,
+      host,
+      port,
+      connectionString: externalRuntimeConnectionString(input.resource, service, host, port, input.branch),
+      proxyContainerName,
+      targetHost: targetContainer,
+      targetPort,
+      allowlistEnforced: firewall.enforced,
+      ...(firewall.chain ? { firewallChain: firewall.chain } : {}),
+    };
+  }
+
+  async function resolveSqlDataResourceForRequest(req: Request, res: Response): Promise<{
+    branch: BranchEntry;
+    projectId: string;
+    resourceId: string;
+    resourceName: string;
+    runtime: SqlDataRuntime;
+    service: InfraService;
+  } | null> {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return null;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return null; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return null;
+    }
+    if (resource.source !== 'infra' || resource.kind !== 'database') {
+      res.status(400).json({ error: '只有数据库资源支持数据面板' });
+      return null;
+    }
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (runtime !== 'mysql' && runtime !== 'postgres') {
+      res.status(400).json({ error: `${resource.runtime} 数据面板执行器待接入` });
+      return null;
+    }
+    return {
+      branch,
+      projectId,
+      resourceId,
+      resourceName: resource.displayName,
+      runtime,
+      service: resource.raw as InfraService,
+    };
+  }
+
+  async function resolveRedisDataResourceForRequest(req: Request, res: Response): Promise<{
+    branch: BranchEntry;
+    projectId: string;
+    resourceId: string;
+    resourceName: string;
+    service: InfraService;
+  } | null> {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return null;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return null; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return null;
+    }
+    if (resource.source !== 'infra' || resourceRuntimeKey(resource.runtime) !== 'redis') {
+      res.status(400).json({ error: '只有 Redis 资源支持 Redis 数据面板' });
+      return null;
+    }
+    return {
+      branch,
+      projectId,
+      resourceId,
+      resourceName: resource.displayName,
+      service: resource.raw as InfraService,
+    };
+  }
+
+  async function resolveMongoDataResourceForRequest(req: Request, res: Response): Promise<{
+    branch: BranchEntry;
+    projectId: string;
+    resourceId: string;
+    resourceName: string;
+    service: InfraService;
+  } | null> {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return null;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return null; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return null;
+    }
+    if (resource.source !== 'infra' || resourceRuntimeKey(resource.runtime) !== 'mongodb') {
+      res.status(400).json({ error: '只有 MongoDB 资源支持 MongoDB 数据面板' });
+      return null;
+    }
+    return {
+      branch,
+      projectId,
+      resourceId,
+      resourceName: resource.displayName,
+      service: resource.raw as InfraService,
+    };
+  }
+
+  router.put('/branches/:id/resources/:resourceId/external-access', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    const enabled = Boolean(req.body?.enabled);
+    let allowlist: string[];
+    try {
+      allowlist = normalizeIpv4Allowlist(req.body?.allowlist);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    if (enabled && resource.source === 'infra' && allowlist.length === 0) {
+      res.status(400).json({ error: '开启数据库/缓存公网 TCP 访问必须填写 IP allowlist，禁止空 allowlist 暴露到公网' });
+      return;
+    }
+    const ttlMinutesRaw = Number(req.body?.ttlMinutes);
+    const ttlMinutes = Number.isFinite(ttlMinutesRaw) && ttlMinutesRaw > 0
+      ? Math.min(ttlMinutesRaw, 7 * 24 * 60)
+      : null;
+    const expiresAt = enabled && ttlMinutes
+      ? new Date(Date.now() + ttlMinutes * 60_000).toISOString()
+      : null;
+    const externalAction: ResourcePermissionAction = enabled && (!ttlMinutes || ttlMinutes > 24 * 60)
+      ? 'external-policy-admin'
+      : 'external-temporary-access';
+    if (!requireResourcePermission(req, res, externalAction, branch, resource)) return;
+    const previewHost = resourcePublicHost();
+    const currentPolicy = stateService.getResourceExternalAccess(projectId, branch.id, resourceId);
+    let runtime: Partial<ResourceExternalAccessPolicy> = {};
+    if (resource.source === 'infra') {
+      try {
+        if (enabled) {
+          runtime = await enableTcpResourceExternalAccess({
+            branch,
+            projectId,
+            resourceId,
+            resource,
+            allowlist,
+            currentPolicy,
+          });
+        } else {
+          await disableTcpResourceExternalAccess(currentPolicy);
+          runtime = {
+            address: currentPolicy?.address || resource.externalAccess?.address,
+            host: currentPolicy?.host || resource.externalAccess?.host || previewHost,
+            port: currentPolicy?.port || resource.externalAccess?.port,
+            connectionString: currentPolicy?.connectionString || resource.externalAccess?.connectionString,
+            proxyContainerName: undefined,
+            targetHost: undefined,
+            targetPort: undefined,
+            allowlistEnforced: false,
+            firewallChain: undefined,
+          };
+        }
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+        return;
+      }
+    }
+    const fallbackAddress = resource.source === 'app'
+      ? resource.externalUrl || resource.externalAccess?.address || ''
+      : runtime.address || resource.externalAccess?.address || (previewHost && runtime.port ? `tcp://${previewHost}:${runtime.port}` : '');
+    if (enabled && !fallbackAddress) {
+      res.status(409).json({ error: `资源 "${resource.displayName}" 没有可用的外部地址或端口` });
+      return;
+    }
+    const actor = resolveActorFromRequest(req);
+    const policy = stateService.upsertResourceExternalAccess({
+      projectId,
+      branchId: branch.id,
+      resourceId,
+      enabled,
+      kind: resource.source === 'app' ? 'https' : 'tcp',
+      address: enabled ? fallbackAddress : resource.externalAccess?.address || fallbackAddress || undefined,
+      host: runtime.host || previewHost || resource.externalAccess?.host,
+      port: runtime.port || resource.externalAccess?.port || resource.port,
+      connectionString: runtime.connectionString || resource.externalAccess?.connectionString,
+      proxyContainerName: enabled ? runtime.proxyContainerName || resource.externalAccess?.proxyContainerName : undefined,
+      targetHost: enabled ? runtime.targetHost || resource.externalAccess?.targetHost : undefined,
+      targetPort: enabled ? runtime.targetPort || resource.externalAccess?.targetPort : undefined,
+      allowlistEnforced: Boolean(runtime.allowlistEnforced),
+      firewallChain: enabled ? runtime.firewallChain || resource.externalAccess?.firewallChain : undefined,
+      allowlist,
+      expiresAt,
+      updatedBy: actor,
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-external-access',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName: resource.displayName,
+      result: 'success',
+      note: `${enabled ? '开启' : '关闭'} ${resource.displayName} 外部访问${expiresAt ? `，有效期至 ${expiresAt}` : ''}`,
+    });
+    stateService.save();
+    const nextResources = await getBranchResourceSnapshot(branch);
+    res.json({ policy, resource: nextResources.find((item) => item.id === resourceId) || null });
+  });
+
+  router.get('/branches/:id/resources/:resourceId/connection-string', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    if (resource.source !== 'infra') {
+      res.status(400).json({ error: '只有 infra 资源支持生成数据库/缓存连接串' });
+      return;
+    }
+    if (!requireSecretRevealAccess(req, res, projectId)) return;
+    if (!requireResourcePermission(req, res, 'connection-inject', branch, resource)) return;
+    const service = resource.raw as InfraService;
+    const scope = String(req.query.scope || 'internal') === 'external' ? 'external' : 'internal';
+    const policy = await expireResourceExternalAccessIfNeeded(
+      projectId,
+      branch,
+      resourceId,
+      stateService.getResourceExternalAccess(projectId, branch.id, resourceId),
+    );
+    let host = service.id;
+    let port = service.containerPort || resource.containerPort || resource.port;
+    if (scope === 'external') {
+      if (!policy?.enabled || !policy.host || !policy.port) {
+        res.status(409).json({ error: '资源尚未开启公网访问，无法生成外部连接串' });
+        return;
+      }
+      host = policy.host;
+      port = policy.port;
+    }
+    if (!host || !port) {
+      res.status(409).json({ error: `资源 "${resource.displayName}" 缺少可用 host/port` });
+      return;
+    }
+    const connectionString = usableRuntimeConnectionString(resource, service, branch, host, port);
+    const maskedConnectionString = maskConnectionString(connectionString);
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-connection-inject',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor: resolveActorFromRequest(req),
+      resourceId,
+      resourceName: resource.displayName,
+      result: 'success',
+      note: `${resource.displayName} 复制${scope === 'external' ? '外部' : '内部'}连接串`,
+    });
+    stateService.save();
+    res.json({
+      branchId: branch.id,
+      resourceId,
+      scope,
+      connectionString,
+      maskedConnectionString,
+      expiresAt: scope === 'external' ? policy?.expiresAt || null : null,
+    });
+  });
+
+  router.get('/branches/:id/resources/:resourceId/audit', (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
+    const logs = stateService.getActivityLogs(projectId)
+      .filter((entry) => entry.branchId === branch.id && entry.resourceId === resourceId)
+      .slice(0, limit);
+    res.json({ branchId: branch.id, resourceId, logs, total: logs.length });
+  });
+
+  router.get('/branches/:id/resources/:resourceId/permissions', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    const permissions = buildResourcePermissionSummary(req, branch, resource);
+    res.json({ branchId: branch.id, resourceId, ...permissions });
+  });
+
+  router.get('/branches/:id/resources/:resourceId/metrics', async (req, res) => {
+    const ctx = await resolveResourceForRequest(req, res);
+    if (!ctx) return;
+    try {
+      const statsMap = ctx.containerName && ctx.resource.status === 'running'
+        ? await containerService.getServiceStats([ctx.containerName])
+        : new Map();
+      res.json({
+        branchId: ctx.branch.id,
+        projectId: ctx.projectId,
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resource.displayName,
+        containerName: ctx.containerName || null,
+        status: ctx.resource.status,
+        ts: Date.now(),
+        stats: ctx.containerName && ctx.resource.status === 'running'
+          ? (statsMap.get(ctx.containerName) || null)
+          : null,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/logs', async (req, res) => {
+    const ctx = await resolveResourceForRequest(req, res);
+    if (!ctx) return;
+    if (!ctx.containerName) {
+      res.status(409).json({ error: `资源 "${ctx.resource.displayName}" 没有关联容器，无法读取日志` });
+      return;
+    }
+    const tailRaw = Number(req.query.tail);
+    const tail = Number.isFinite(tailRaw) ? Math.min(Math.max(Math.floor(tailRaw), 20), 1000) : 200;
+    try {
+      const logs = await containerService.getLogs(ctx.containerName, tail);
+      const mask = shouldMask(req);
+      const maskedLogs = maskSecretsText(logs, { mask });
+      res.json({
+        branchId: ctx.branch.id,
+        projectId: ctx.projectId,
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resource.displayName,
+        containerName: ctx.containerName,
+        status: ctx.resource.status,
+        tail,
+        masked: mask,
+        logs: maskedLogs,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/data/tables', async (req, res) => {
+    const ctx = await resolveSqlDataResourceForRequest(req, res);
+    if (!ctx) return;
+    try {
+      const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      const sql = ctx.runtime === 'postgres'
+        ? "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name"
+        : 'SHOW FULL TABLES';
+      const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
+      const tables = result.rows.map((row) => {
+        if (ctx.runtime === 'postgres') {
+          const schema = row[0] || 'public';
+          const name = row[1] || '';
+          return {
+            schema,
+            name,
+            fullName: `${schema}.${name}`,
+            type: row[2] || 'BASE TABLE',
+          };
+        }
+        return {
+          schema: database,
+          name: row[0] || '',
+          fullName: row[0] || '',
+          type: row[1] || 'BASE TABLE',
+        };
+      }).filter((row) => row.name);
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, tables });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/workbench-capability', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    const capability = resourceWorkbenchCapability(resource.runtime);
+    res.json({
+      branchId: branch.id,
+      resourceId,
+      resourceName: resource.displayName,
+      source: resource.source,
+      kind: resource.kind,
+      runtime: resource.runtime,
+      capability,
+    });
+  });
+
+  router.get('/branches/:id/resources/:resourceId/data/schema', async (req, res) => {
+    const ctx = await resolveSqlDataResourceForRequest(req, res);
+    if (!ctx) return;
+    let ref: SqlTableRef;
+    try {
+      ref = sqlTableRefFromRequest(req.query.table, req.query.schema);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    try {
+      const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      const sql = ctx.runtime === 'postgres'
+        ? [
+          'SELECT column_name, data_type, is_nullable,',
+          "CASE WHEN EXISTS (SELECT 1 FROM information_schema.key_column_usage k WHERE k.table_schema = 'public' AND k.table_name = c.table_name AND k.column_name = c.column_name) THEN 'KEY' ELSE '' END AS column_key,",
+          'column_default,',
+          "CASE WHEN column_default LIKE 'nextval%' THEN 'auto_increment' ELSE '' END AS extra",
+          'FROM information_schema.columns c',
+          `WHERE table_schema = ${pgString(ref.schema || 'public')} AND table_name = ${pgString(ref.table)}`,
+          'ORDER BY ordinal_position',
+        ].join(' ')
+        : [
+          'SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA',
+          'FROM information_schema.COLUMNS',
+          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${sqlString(ref.table)}`,
+          'ORDER BY ORDINAL_POSITION',
+        ].join(' ');
+      const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
+      const columns = result.rows.map((row) => ({
+        name: row[0] || '',
+        type: row[1] || '',
+        nullable: row[2] || '',
+        key: row[3] || '',
+        defaultValue: row[4] || '',
+        extra: row[5] || '',
+      }));
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, columns });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/data/preview', async (req, res) => {
+    const ctx = await resolveSqlDataResourceForRequest(req, res);
+    if (!ctx) return;
+    let ref: SqlTableRef;
+    try {
+      ref = sqlTableRefFromRequest(req.query.table, req.query.schema);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 200) : 50;
+    try {
+      const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      const ident = sqlTableIdent(ctx.runtime, ref);
+      const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, `SELECT * FROM ${ident} LIMIT ${limit}`);
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, limit, ...result });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/query', async (req, res) => {
+    const ctx = await resolveSqlDataResourceForRequest(req, res);
+    if (!ctx) return;
+    let sql = '';
+    try {
+      sql = normalizeReadOnlySql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    try {
+      const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 执行只读 SQL：${sql.slice(0, 120)}`,
+      });
+      stateService.save();
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, sql, ...result });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} 只读 SQL 失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/query-write', async (req, res) => {
+    const ctx = await resolveSqlDataResourceForRequest(req, res);
+    if (!ctx) return;
+    const resources = await getBranchResourceSnapshot(ctx.branch);
+    const resource = resources.find((item) => item.id === ctx.resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+    try {
+      ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行写 SQL');
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+    let sql = '';
+    try {
+      sql = normalizeDangerousWriteSql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    try {
+      const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
+      stateService.recordDestructiveOp({
+        type: 'purge-database',
+        projectId: ctx.projectId,
+        summary: `对 ${ctx.resourceName} 执行写 SQL：${sql.slice(0, 160)}`,
+        triggeredBy: resolveActorFromRequest(req),
+      });
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 执行写 SQL：${sql.slice(0, 120)}`,
+      });
+      stateService.save();
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, sql, ...result });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} 写 SQL 失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/init-sql', async (req, res) => {
+    const ctx = await resolveSqlDataResourceForRequest(req, res);
+    if (!ctx) return;
+    const resources = await getBranchResourceSnapshot(ctx.branch);
+    const resource = resources.find((item) => item.id === ctx.resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+    try {
+      ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行初始化 SQL');
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+    const sql = typeof req.body?.sql === 'string' ? req.body.sql : '';
+    try {
+      const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      const result = await runSqlDataInitScript(ctx.runtime, ctx.service, ctx.branch, sql);
+      stateService.recordDestructiveOp({
+        type: 'purge-database',
+        projectId: ctx.projectId,
+        summary: `对 ${ctx.resourceName} 执行初始化 SQL：${database}`,
+        triggeredBy: resolveActorFromRequest(req),
+      });
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: result.exitCode === 0 ? 'success' : 'failed',
+        note: `${ctx.resourceName} 执行初始化 SQL：${database}`,
+      });
+      stateService.save();
+      res.status(result.exitCode === 0 ? 200 : 500).json({
+        ok: result.exitCode === 0,
+        branchId: ctx.branch.id,
+        resourceId: ctx.resourceId,
+        runtime: ctx.runtime,
+        database,
+        ...result,
+      });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} 初始化 SQL 失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/data/redis/keys', async (req, res) => {
+    const ctx = await resolveRedisDataResourceForRequest(req, res);
+    if (!ctx) return;
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : '0';
+    const pattern = typeof req.query.pattern === 'string' && req.query.pattern.trim() ? req.query.pattern.trim().slice(0, 200) : '*';
+    const countRaw = Number(req.query.count);
+    const count = Number.isFinite(countRaw) ? Math.min(Math.max(Math.floor(countRaw), 10), 200) : 100;
+    try {
+      const output = await runRedisCli(ctx.service, ['SCAN', cursor, 'MATCH', pattern, 'COUNT', String(count)]);
+      const lines = output ? output.split('\n') : ['0'];
+      const nextCursor = lines[0] || '0';
+      const names = lines.slice(1).filter(Boolean);
+      const keys = await Promise.all(names.slice(0, count).map((key) => redisKeyMeta(ctx.service, key).catch(() => ({
+        key,
+        type: 'unknown',
+        ttl: -2,
+        memoryBytes: null,
+      }))));
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, cursor: nextCursor, pattern, keys });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/data/redis/key', async (req, res) => {
+    const ctx = await resolveRedisDataResourceForRequest(req, res);
+    if (!ctx) return;
+    let key = '';
+    try {
+      key = redisKeyFromRequest(req.query.key);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    try {
+      const meta = await redisKeyMeta(ctx.service, key);
+      const preview = await redisValuePreview(ctx.service, key, meta.type);
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 查看 Redis key：${key.slice(0, 120)}`,
+      });
+      stateService.save();
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, ...meta, preview });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/data/redis/memory', async (req, res) => {
+    const ctx = await resolveRedisDataResourceForRequest(req, res);
+    if (!ctx) return;
+    try {
+      const info = await runRedisCli(ctx.service, ['INFO', 'memory']);
+      const memory: Record<string, string> = {};
+      for (const line of info.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const idx = trimmed.indexOf(':');
+        if (idx > 0) memory[trimmed.slice(0, idx)] = trimmed.slice(idx + 1);
+      }
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, memory });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/data/mongo/databases', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    try {
+      const configuredDatabase = mongoDatabaseForBranch(ctx.service, ctx.branch);
+      const data = await runMongoJson(ctx.service, ctx.branch, 'JSON.stringify(db.adminCommand({ listDatabases: 1 }).databases.map(d => ({ name: d.name, sizeOnDisk: d.sizeOnDisk || 0 })))');
+      const databases = Array.isArray(data) ? data : [];
+      const currentDatabase = chooseMongoCurrentDatabase(configuredDatabase, databases);
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, configuredDatabase, currentDatabase, databases });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/data/mongo/collections', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    try {
+      const database = mongoDatabaseFromRequest(req.query.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      const script = `JSON.stringify(db.getCollectionInfos({}, { nameOnly: false }).map(c => ({ name: c.name, type: c.type || 'collection' })))`;
+      const data = await runMongoJson(ctx.service, ctx.branch, script, database);
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collections: Array.isArray(data) ? data : [] });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/data/mongo/documents', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    let collection = '';
+    try {
+      collection = mongoCollectionFromRequest(req.query.collection);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 100) : 50;
+    try {
+      const database = mongoDatabaseFromRequest(req.query.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      const script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).find({}).limit(${limit}).toArray())`;
+      const data = await runMongoJson(ctx.service, ctx.branch, script, database);
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collection, limit, documents: Array.isArray(data) ? data : [] });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/mongo/command', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    let database = '';
+    let command: { collection: string; script: string };
+    try {
+      database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      command = normalizeMongoFindCommand(req.body?.command);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    try {
+      const data = await runMongoJson(ctx.service, ctx.branch, command.script, database);
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 执行 MongoDB find：${database}.${command.collection}`,
+      });
+      stateService.save();
+      res.json({
+        branchId: ctx.branch.id,
+        resourceId: ctx.resourceId,
+        database,
+        collection: command.collection,
+        kind: 'documents',
+        documents: Array.isArray(data) ? data : [],
+      });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} MongoDB command 失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/mongo/query', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    let collection = '';
+    let filter: Record<string, unknown>;
+    let projection: Record<string, unknown>;
+    let sort: Record<string, unknown>;
+    try {
+      collection = mongoCollectionFromRequest(req.body?.collection);
+      mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      filter = mongoJsonObject(req.body?.filter, 'filter');
+      projection = mongoJsonObject(req.body?.projection, 'projection');
+      sort = mongoJsonObject(req.body?.sort, 'sort');
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    const limitRaw = Number(req.body?.limit);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 100) : 50;
+    try {
+      const database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      const script = [
+        `const cursor = db.getCollection(${mongoSafeJson(collection)}).find(${mongoSafeJson(filter)}, ${mongoSafeJson(projection)}).sort(${mongoSafeJson(sort)}).limit(${limit});`,
+        'JSON.stringify(cursor.toArray())',
+      ].join(' ');
+      const data = await runMongoJson(ctx.service, ctx.branch, script, database);
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 查询 MongoDB collection：${collection}`,
+      });
+      stateService.save();
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collection, filter, projection, sort, limit, documents: Array.isArray(data) ? data : [] });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} MongoDB 查询失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/mongo/write', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    const resources = await getBranchResourceSnapshot(ctx.branch);
+    const resource = resources.find((item) => item.id === ctx.resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+    try {
+      ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行 MongoDB 写入');
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+
+    const action = String(req.body?.action || '').trim();
+    let database = '';
+    let collection = '';
+    let script = '';
+    try {
+      database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      collection = mongoCollectionFromRequest(req.body?.collection);
+      if (action === 'insertOne') {
+        const document = mongoJsonObject(req.body?.document, 'document');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).insertOne(${mongoSafeJson(document)}))`;
+      } else if (action === 'updateMany') {
+        const filter = mongoJsonObject(req.body?.filter, 'filter');
+        const update = mongoJsonObject(req.body?.update, 'update');
+        if (Object.keys(update).length === 0) throw new Error('update 不能为空');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).updateMany(${mongoSafeJson(filter)}, ${mongoSafeJson(update)}))`;
+      } else if (action === 'deleteMany') {
+        const filter = mongoJsonObject(req.body?.filter, 'filter');
+        if (Object.keys(filter).length === 0) throw new Error('deleteMany 必须提供非空 filter');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).deleteMany(${mongoSafeJson(filter)}))`;
+      } else if (action === 'createCollection') {
+        script = `JSON.stringify(db.createCollection(${mongoSafeJson(collection)}))`;
+      } else if (action === 'dropCollection') {
+        script = `JSON.stringify({ dropped: db.getCollection(${mongoSafeJson(collection)}).drop() })`;
+      } else {
+        throw new Error('action 只允许 insertOne / updateMany / deleteMany / createCollection / dropCollection');
+      }
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+
+    try {
+      const result = await runMongoJson(ctx.service, ctx.branch, script, database);
+      stateService.recordDestructiveOp({
+        type: 'purge-database',
+        projectId: ctx.projectId,
+        summary: `对 ${ctx.resourceName} 执行 MongoDB ${action}：${database}.${collection}`,
+        triggeredBy: resolveActorFromRequest(req),
+      });
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 执行 MongoDB ${action}：${database}.${collection}`,
+      });
+      stateService.save();
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collection, action, result });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} MongoDB ${action} 失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/backups', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (resource.source !== 'infra' || !['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
+      res.status(400).json({ error: '只有数据库/缓存资源支持备份列表' });
+      return;
+    }
+    const rawInfra = resource.raw as InfraService;
+    try {
+      const database = resourceDatabaseForRuntime(runtime as ResourceDatabaseRuntime, rawInfra, branch);
+      const backups = await listResourceBackupEntries(rawInfra, branch, runtime as ResourceDatabaseRuntime, database);
+      res.json({ branchId: branch.id, resourceId, runtime, database, backups, directory: resourceBackupDir(), supported: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/backups', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'backup-create', branch, resource)) return;
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (resource.source !== 'infra' || !['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
+      res.status(400).json({ error: '只有数据库/缓存资源支持手动备份' });
+      return;
+    }
+    const actor = resolveActorFromRequest(req);
+    const rawInfra = resource.raw as InfraService;
+    try {
+      const backup = await createResourceBackupFile({
+        runtime: runtime as ResourceDatabaseRuntime,
+        service: rawInfra,
+        branch,
+        resourceId,
+        resourceName: resource.displayName,
+        projectId,
+        actor,
+        reason: 'manual',
+      });
+      stateService.save();
+      res.status(201).json({ branchId: branch.id, resourceId, backup });
+    } catch (err) {
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-backup',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: 'failed',
+        note: `${resource.displayName} 手动备份失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/restore-backup', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'backup-restore', branch, resource)) return;
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (resource.source !== 'infra' || !['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
+      res.status(400).json({ error: '只有数据库/缓存资源支持备份恢复' });
+      return;
+    }
+    const confirmResourceName = String(req.body?.confirmResourceName || '').trim();
+    const acceptedNames = new Set([resource.displayName, resource.serviceName, (resource.raw as InfraService).id].filter(Boolean));
+    if (!acceptedNames.has(confirmResourceName)) {
+      res.status(409).json({ error: `恢复会覆盖当前库，请输入资源名确认：${resource.displayName}` });
+      return;
+    }
+    const actor = resolveActorFromRequest(req);
+    const rawInfra = resource.raw as InfraService;
+    try {
+      const restored = await restoreResourceBackupFile({
+        runtime: runtime as ResourceDatabaseRuntime,
+        service: rawInfra,
+        branch,
+        resourceId,
+        resourceName: resource.displayName,
+        projectId,
+        actor,
+        backupName: req.body?.backupName,
+      });
+      stateService.save();
+      res.json({ branchId: branch.id, resourceId, restored });
+    } catch (err) {
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-restore',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: 'failed',
+        note: `${resource.displayName} 恢复失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      const message = (err as Error).message;
+      res.status(message.includes('备份文件不属于当前资源或分支') ? 409 : 500).json({ error: message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/clear-data', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    if (resource.source !== 'infra' || !['database', 'cache'].includes(resource.kind)) {
+      res.status(400).json({ error: '只有数据库/缓存资源支持清空数据' });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'data-clear', branch, resource)) return;
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (!['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
+      res.status(400).json({ error: `${resource.runtime} 暂不支持清空数据` });
+      return;
+    }
+    try {
+      ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '清空数据');
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+    const actor = resolveActorFromRequest(req);
+    try {
+      const result = await clearResourceData({
+        runtime: runtime as ResourceDatabaseRuntime,
+        service: resource.raw as InfraService,
+        branch,
+        resourceId,
+        resourceName: resource.displayName,
+        projectId,
+        actor,
+      });
+      stateService.save();
+      res.json({ branchId: branch.id, resourceId, cleared: result });
+    } catch (err) {
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-restore',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: 'failed',
+        note: `${resource.displayName} 清空数据失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.delete('/branches/:id/resources/:resourceId', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    if (resource.source !== 'infra' || resource.kind !== 'database') {
+      res.status(400).json({ error: '当前只支持删除分支独立数据库资源' });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'resource-delete', branch, resource)) return;
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (!['mysql', 'postgres', 'mongodb'].includes(runtime)) {
+      res.status(400).json({ error: `${resource.runtime} 暂不支持删除分支数据库` });
+      return;
+    }
+    try {
+      ensureResourceNameConfirmed(req.body?.confirmResourceName || req.query.confirmResourceName, resource, '删除数据库');
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+    const actor = resolveActorFromRequest(req);
+    try {
+      const result = await deleteBranchDatabaseResource({
+        runtime: runtime as ResourceDatabaseRuntime,
+        service: resource.raw as InfraService,
+        branch,
+        resourceId,
+        resourceName: resource.displayName,
+        projectId,
+        actor,
+      });
+      stateService.save();
+      const nextResources = await getBranchResourceSnapshot(branch);
+      res.json({ branchId: branch.id, resourceId, deleted: result, resources: nextResources });
+    } catch (err) {
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-deleted',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: 'failed',
+        note: `${resource.displayName} 删除数据库失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      const message = (err as Error).message;
+      res.status(message.includes('拒绝删除共享数据库') ? 409 : 500).json({ error: message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/credentials/reset', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    if (resource.source !== 'infra' || resource.kind !== 'database') {
+      res.status(400).json({ error: '只有数据库资源支持重置连接凭据' });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'credentials-reset', branch, resource)) return;
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (!['mysql', 'postgres', 'mongodb'].includes(runtime)) {
+      res.status(400).json({ error: `${resource.runtime} 暂不支持凭据重置` });
+      return;
+    }
+    const rawInfra = resource.raw as InfraService;
+    const confirmResourceName = String(req.body?.confirmResourceName || '').trim();
+    const acceptedNames = new Set([resource.displayName, resource.serviceName, rawInfra.id].filter(Boolean));
+    if (!acceptedNames.has(confirmResourceName)) {
+      res.status(409).json({ error: `重置会让旧连接失效，请输入资源名确认：${resource.serviceName}` });
+      return;
+    }
+    const actor = resolveActorFromRequest(req);
+    try {
+      const result = await resetResourceBranchCredentials(runtime, rawInfra, branch);
+      injectBranchEnv(branch, result.injectedEnv);
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-credentials-reset',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: 'success',
+        note: `${resource.displayName} 已重置分支 ${resource.runtime} 账号 ${result.branchUser || '(none)'}，旧连接需要重新部署后生效`,
+      });
+      stateService.save();
+      const nextResources = await getBranchResourceSnapshot(branch);
+      res.json({
+        branchId: branch.id,
+        resourceId,
+        injectedEnv: result.maskedInjectedEnv,
+        resource: nextResources.find((item) => item.id === resourceId) || null,
+        needsRedeploy: true,
+      });
+    } catch (err) {
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-credentials-reset',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: 'failed',
+        note: `${resource.displayName} 凭据重置失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/inject-connection', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    if (resource.source !== 'infra' || resource.kind !== 'database') {
+      res.status(400).json({ error: '只有数据库资源支持连接变量注入' });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'connection-inject', branch, resource)) return;
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (!['mysql', 'postgres', 'mongodb'].includes(runtime)) {
+      res.status(400).json({ error: `${resource.runtime} 暂不支持连接变量注入` });
+      return;
+    }
+    const rawInfra = resource.raw as InfraService;
+    const connection = getExistingResourceConnectionEnv(runtime, rawInfra, branch);
+    if (!connection) {
+      res.status(409).json({ error: `当前分支没有独立 ${resource.runtime} 凭据；请先创建空库、克隆 main/prod，或重置凭据。` });
+      return;
+    }
+    const bodyIds = Array.isArray(req.body?.targetResourceIds)
+      ? req.body.targetResourceIds.map((item: unknown) => String(item || '').trim()).filter(Boolean)
+      : [];
+    const candidateApps = resources.filter((item) => (
+      item.source === 'app'
+      && (
+        item.dependsOn.includes(rawInfra.id)
+        || item.dependsOn.includes(resourceId)
+        || item.dependsOn.includes(resource.serviceName)
+      )
+    ));
+    const targetIds = bodyIds.length > 0 ? new Set(bodyIds) : new Set(candidateApps.map((item) => item.id));
+    const targetApps = resources.filter((item) => item.source === 'app' && targetIds.has(item.id));
+    if (targetApps.length === 0) {
+      res.status(409).json({ error: '没有可注入的应用资源；请先在构建配置 dependsOn 中声明数据库依赖，或传入 targetResourceIds。' });
+      return;
+    }
+    const actor = resolveActorFromRequest(req);
+    const injectedApps = targetApps.map((app) => {
+      const raw = app.raw as ServiceState;
+      const override = injectEnvIntoProfileOverride(branch, raw.profileId, connection.injectedEnv);
+      return {
+        resourceId: app.id,
+        profileId: raw.profileId,
+        displayName: app.displayName,
+        serviceName: app.serviceName,
+        overrideEnvKeys: Object.keys(override.env || {}).filter((key) => Object.prototype.hasOwnProperty.call(connection.injectedEnv, key)),
+      };
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-connection-inject',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor,
+      resourceId,
+      resourceName: resource.displayName,
+      result: 'success',
+      note: `${resource.displayName} 连接变量已注入 ${injectedApps.map((item) => item.serviceName).join(', ')}，需要重新部署应用生效`,
+    });
+    stateService.save();
+    res.json({
+      branchId: branch.id,
+      resourceId,
+      injectedEnv: connection.maskedInjectedEnv,
+      injectedApps,
+      needsRedeploy: true,
+    });
+  });
+
+  router.get('/branches/:id/resources/:resourceId/clone-tasks', (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const tasks = stateService
+      .listResourceCloneTasks({ projectId, branchId: branch.id, resourceId })
+      .slice()
+      .reverse();
+    res.json({ branchId: branch.id, resourceId, tasks });
+  });
+
+  router.post('/branches/:id/resources/:resourceId/clone-tasks', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    if (resource.source !== 'infra' || resource.kind !== 'database') {
+      res.status(400).json({ error: '只有数据库资源支持创建分支数据库/克隆任务' });
+      return;
+    }
+    const mode = typeof req.body?.mode === 'string' ? req.body.mode : 'empty';
+    if (!['empty', 'clone-main', 'restore-backup', 'connect-existing'].includes(mode)) {
+      res.status(400).json({ error: 'mode 必须是 empty / clone-main / restore-backup / connect-existing' });
+      return;
+    }
+    const cloneAction: ResourcePermissionAction = mode === 'restore-backup'
+      ? 'backup-restore'
+      : mode === 'connect-existing'
+        ? 'database-connect-existing'
+        : 'database-clone';
+    if (!requireResourcePermission(req, res, cloneAction, branch, resource)) return;
+    const runtime = resourceRuntimeKey(resource.runtime);
+    const actor = resolveActorFromRequest(req);
+    const rawInfra = resource.raw as InfraService;
+    const baseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
+      ? resourceDatabaseForRuntime(runtime, rawInfra, branch) || 'app'
+      : resolvedServiceDbName(rawInfra) || 'app';
+    const targetDatabase = String(req.body?.targetDatabase || branchDatabaseName(baseDb, branch))
+      .replace(/[^a-zA-Z0-9_]/g, '_')
+      .slice(0, 64);
+    const strategy = mode === 'connect-existing'
+      ? 'external-connection'
+      : mode === 'restore-backup'
+        ? 'backup-restore'
+        : mode === 'clone-main'
+          ? (runtime === 'mysql' ? 'mysqldump' : 'background-copy')
+          : 'branch-database';
+    const task = stateService.addResourceCloneTask({
+      projectId,
+      branchId: branch.id,
+      resourceId,
+      runtime,
+      mode: mode as 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing',
+      strategy,
+      status: mode === 'empty' ? 'running' : 'pending',
+      progress: mode === 'empty' ? 20 : 5,
+      progressMessage: mode === 'empty' ? '正在创建分支独立空库' : '任务已登记，等待后台执行器接管',
+      sourceBranchId: typeof req.body?.sourceBranchId === 'string' ? req.body.sourceBranchId : undefined,
+      sourceResourceId: typeof req.body?.sourceResourceId === 'string' ? req.body.sourceResourceId : resourceId,
+      targetDatabase,
+      backupId: typeof req.body?.backupId === 'string' ? req.body.backupId : undefined,
+      externalConnectionName: typeof req.body?.externalConnectionName === 'string' ? req.body.externalConnectionName : undefined,
+      actor,
+      log: `[${new Date().toISOString()}] ${actor} created ${mode} task for ${resource.displayName}`,
+    });
+
+    let resultTask = task;
+    try {
+      if (mode === 'empty') {
+        let branchDb: MysqlConnectionEnvResult | MysqlBranchDatabaseResult;
+        if (runtime === 'mysql') {
+          if (rawInfra.status !== 'running') {
+            throw new Error(`MySQL 服务当前未运行（status=${rawInfra.status}）`);
+          }
+          branchDb = await createMysqlBranchDatabase(rawInfra, branch, targetDatabase);
+        } else if (runtime === 'postgres') {
+          branchDb = await createPostgresBranchDatabase(rawInfra, branch, targetDatabase);
+        } else if (runtime === 'mongodb') {
+          branchDb = await createMongoBranchDatabase(rawInfra, branch, targetDatabase);
+        } else {
+          throw new Error(`${resource.runtime} 暂不支持创建分支独立数据库`);
+        }
+        injectBranchEnv(branch, branchDb.injectedEnv);
+        resultTask = stateService.updateResourceCloneTask(task.id, {
+          status: 'completed',
+          progress: 100,
+          progressMessage: `分支独立 ${resource.runtime} 空库已创建，连接变量已注入分支 scope`,
+          startedAt: task.createdAt,
+          finishedAt: new Date().toISOString(),
+          injectedEnv: branchDb.maskedInjectedEnv,
+          log: `${task.log || ''}\n[${new Date().toISOString()}] created ${runtime} database ${targetDatabase} and branch user ${branchDb.branchUser || '(none)'}`,
+        });
+      } else if (mode === 'clone-main' && runtime === 'mysql') {
+        const sourceDatabase = String(req.body?.sourceDatabase || baseDb)
+          .replace(/[^a-zA-Z0-9_]/g, '_')
+          .slice(0, 64);
+        resultTask = stateService.updateResourceCloneTask(task.id, {
+          status: 'running',
+          progress: 5,
+          progressMessage: `后台克隆任务已启动：${sourceDatabase} -> ${targetDatabase}`,
+          startedAt: new Date().toISOString(),
+        });
+        stateService.appendActivityLog(projectId, {
+          type: 'resource-db-clone',
+          branchId: branch.id,
+          branchName: branch.branch,
+          actor,
+          resourceId,
+          resourceName: resource.displayName,
+          result: 'pending',
+          note: `${resource.displayName} clone-main 后台任务已启动：${sourceDatabase} -> ${targetDatabase}`,
+        });
+        stateService.save();
+        void runMysqlCloneMainTask({
+          taskId: task.id,
+          projectId,
+          branch,
+          resourceId,
+          resourceName: resource.displayName,
+          actor,
+          service: rawInfra,
+          sourceDatabase,
+          targetDatabase,
+        });
+        res.status(202).json({ task: resultTask });
+        return;
+      } else if (mode === 'clone-main' && (runtime === 'postgres' || runtime === 'mongodb')) {
+        const sourceDatabase = String(req.body?.sourceDatabase || baseDb)
+          .replace(/[^a-zA-Z0-9_]/g, '_')
+          .slice(0, 64);
+        resultTask = stateService.updateResourceCloneTask(task.id, {
+          status: 'running',
+          progress: 15,
+          progressMessage: `正在复制 ${sourceDatabase} -> ${targetDatabase}`,
+          startedAt: new Date().toISOString(),
+          log: `${task.log || ''}\n[${new Date().toISOString()}] started ${runtime} clone from ${sourceDatabase} to ${targetDatabase}`,
+        });
+        const cloned = runtime === 'postgres'
+          ? await clonePostgresMainIntoBranchDatabase({ service: rawInfra, branch, sourceDatabase, targetDatabase })
+          : await cloneMongoMainIntoBranchDatabase({ service: rawInfra, branch, sourceDatabase, targetDatabase });
+        injectBranchEnv(branch, cloned.injectedEnv);
+        resultTask = stateService.updateResourceCloneTask(task.id, {
+          status: 'completed',
+          progress: 100,
+          progressMessage: `${resource.runtime} 克隆完成，连接变量已注入分支 scope`,
+          finishedAt: new Date().toISOString(),
+          injectedEnv: cloned.maskedInjectedEnv,
+          log: `${task.log || ''}\n[${new Date().toISOString()}] completed ${runtime} clone into ${targetDatabase}`,
+        });
+      } else if (mode === 'clone-main') {
+        throw new Error(`${resource.runtime} 暂不支持从 main/prod 克隆`);
+      } else if (mode === 'restore-backup') {
+        const backupName = String(req.body?.backupName || req.body?.backupId || '').trim();
+        if (!backupName) {
+          throw new Error('从备份创建新数据库需要 backupName');
+        }
+        if (!['mysql', 'postgres', 'mongodb'].includes(runtime)) {
+          throw new Error(`${resource.runtime} 暂不支持从备份创建独立新库`);
+        }
+        const restored = await restoreResourceBackupIntoBranchDatabase({
+          runtime: runtime as ResourceDatabaseRuntime,
+          service: rawInfra,
+          branch,
+          backupName,
+          targetDatabase,
+          sourceDatabase: String(req.body?.sourceDatabase || baseDb).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64),
+        });
+        injectBranchEnv(branch, restored.injectedEnv);
+        resultTask = stateService.updateResourceCloneTask(task.id, {
+          status: 'completed',
+          progress: 100,
+          progressMessage: `已从备份 ${restored.backup} 创建独立数据库 ${targetDatabase}`,
+          startedAt: task.createdAt,
+          finishedAt: new Date().toISOString(),
+          backupId: restored.backup,
+          injectedEnv: restored.maskedInjectedEnv,
+          log: `${task.log || ''}\n[${new Date().toISOString()}] restored backup ${restored.backup} into ${targetDatabase}`,
+        });
+      } else if (mode === 'connect-existing') {
+        const connectionString = String(req.body?.connectionString || '').trim();
+        if (!connectionString) {
+          throw new Error('连接已有数据库需要 connectionString');
+        }
+        if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(connectionString)) {
+          throw new Error('connectionString 必须是合法连接 URL');
+        }
+        const injectedEnv = externalConnectionEnv(runtime, connectionString);
+        injectBranchEnv(branch, injectedEnv);
+        const maskedConnectionString = maskConnectionString(connectionString);
+        resultTask = stateService.updateResourceCloneTask(task.id, {
+          status: 'completed',
+          progress: 100,
+          progressMessage: `已连接已有数据库：${req.body?.externalConnectionName || resource.displayName}`,
+          startedAt: task.createdAt,
+          finishedAt: new Date().toISOString(),
+          externalConnectionName: typeof req.body?.externalConnectionName === 'string' ? req.body.externalConnectionName : resource.displayName,
+          injectedEnv: Object.fromEntries(Object.keys(injectedEnv).map((key) => [key, maskedConnectionString])),
+          log: `${task.log || ''}\n[${new Date().toISOString()}] connected existing database ${maskedConnectionString}`,
+        });
+      }
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-db-clone',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: resultTask.status === 'completed' ? 'success' : 'pending',
+        note: `${resource.displayName} ${mode} 任务：${resultTask.progressMessage || resultTask.status}`,
+      });
+      stateService.save();
+      res.status(201).json({ task: resultTask });
+    } catch (err) {
+      resultTask = stateService.updateResourceCloneTask(task.id, {
+        status: 'failed',
+        progress: 100,
+        errorMessage: (err as Error).message,
+        progressMessage: '任务失败',
+        finishedAt: new Date().toISOString(),
+        log: `${task.log || ''}\n[${new Date().toISOString()}] failed: ${(err as Error).message}`,
+      });
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-db-clone',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: 'failed',
+        note: `${resource.displayName} ${mode} 任务失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message, task: resultTask });
+    }
   });
 
   // GET /api/branches/:id/effective-env — 该分支在 deploy 时真正生效的环境变量(Phase A)
@@ -4678,6 +9325,78 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  router.post('/branches/:id/database-init/run', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+    const rawCommand = typeof req.body?.command === 'string' ? req.body.command.trim() : '';
+    if (!rawCommand) {
+      res.status(400).json({ error: 'migration_command_required', message: '迁移命令不能为空。' });
+      return;
+    }
+    if (rawCommand.length > 2000) {
+      res.status(400).json({ error: 'migration_command_too_long', message: '迁移命令过长，请控制在 2000 字符以内。' });
+      return;
+    }
+
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const requestedProfileId = typeof req.body?.profileId === 'string' ? req.body.profileId.trim() : '';
+    const baseProfile = (requestedProfileId
+      ? profiles.find((profile) => profile.id === requestedProfileId)
+      : profiles[0]) || null;
+    if (!baseProfile) {
+      res.status(400).json({ error: 'profile_not_found', message: requestedProfileId ? `构建配置不存在: ${requestedProfileId}` : '尚未配置构建配置。' });
+      return;
+    }
+
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'database-init',
+      profileId: baseProfile.id,
+      source: 'api.database-init-run',
+      reason: '手动执行数据库初始化/迁移命令',
+      sse: false,
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
+
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    try {
+      const profile = resolveEffectiveProfile(baseProfile, entry);
+      const result = await containerService.runProfileCommand(
+        entry,
+        profile,
+        rawCommand,
+        undefined,
+        getMergedEnv(entry.projectId || 'default', entry.id),
+        {
+          requestId,
+          operationId: branchOperationLease?.operationId || undefined,
+          actor: resolveActorFromRequest(req),
+          trigger: triggerFromRequest(req),
+          timeoutMs: profile.buildTimeout ?? 600_000,
+        },
+      );
+      const output = maskSecretsText(combinedOutput(result), { mask: true });
+      completeBranchOperation(branchOperationLease, result.exitCode === 0 ? 'completed' : 'failed');
+      res.status(result.exitCode === 0 ? 200 : 500).json({
+        ok: result.exitCode === 0,
+        profileId: profile.id,
+        command: rawCommand,
+        exitCode: result.exitCode,
+        output,
+      });
+    } catch (err) {
+      completeBranchOperation(branchOperationLease, 'failed');
+      res.status(500).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
   // ── Build & Run (SSE stream) ──
 
   router.post('/branches/:id/deploy', async (req, res) => {
@@ -5032,6 +9751,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
         }
       }
+
+      await runDatabaseInitializationForDeploy({
+        entry,
+        profiles,
+        requestId,
+        operationId: branchOperationLease?.operationId || undefined,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+        assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+        logEvent,
+      });
 
       // ── Compute startup layers (topological sort by dependsOn) ──
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
@@ -5924,10 +10654,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    // 走 buildPreviewUrl 全栈唯一入口；project 必有，用 'default' 兜底。
+    // 走 buildPreviewUrlForProject 全栈入口；project 必有，用 'default' 兜底。
     const smokeProject = stateService.getProject(entry.projectId || 'default');
-    const smokeProjectSlug = previewProjectSlug(smokeProject, entry.projectId || 'default');
-    const smokeHost = buildPreviewUrl(previewHost, entry.branch, smokeProjectSlug);
+    const smokeHost = buildPreviewUrlForProject(
+      previewHost,
+      entry.branch,
+      smokeProject,
+      entry.projectId || 'default',
+    ).url;
     if (!smokeHost) {
       res.status(400).json({ error: 'preview_host_missing', message: '无法生成预览 URL' });
       return;
@@ -10395,36 +15129,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
-  // GET /api/cli-version — return the currently-bundled cdscli VERSION
-  //
-  // 读 .claude/skills/cds/cli/cdscli.py 里的 `VERSION = "x.y.z"` 常量，
-  // 每次被 cdscli update / cdscli version 调用时返回。解析结果缓存 60s
-  // 避免每次都 read+regex（CLI 进程短命，主要让 Dashboard 轮询便宜）。
-  let _cliVersionCache: { version: string | null; at: number } = { version: null, at: 0 };
-  function readBundledCliVersion(): string | null {
-    const now = Date.now();
-    if (_cliVersionCache.version !== null && now - _cliVersionCache.at < 60_000) {
-      return _cliVersionCache.version;
-    }
-    try {
-      const cliPath = path.join(config.repoRoot, '.claude', 'skills', 'cds', 'cli', 'cdscli.py');
-      if (!fs.existsSync(cliPath)) {
-        _cliVersionCache = { version: null, at: now };
-        return null;
-      }
-      const content = fs.readFileSync(cliPath, 'utf-8');
-      // Anchor on VERSION = "..." at start of line to avoid catching
-      // comments, test fixtures, or nested module vars. Only first match.
-      const match = content.match(/^VERSION\s*=\s*"([^"]+)"/m);
-      const version = match ? match[1] : null;
-      _cliVersionCache = { version, at: now };
-      return version;
-    } catch {
-      return null;
-    }
-  }
+  // GET /api/cli-version — return the currently-bundled cdscli VERSION.
+  // Shared with the global X-Cds-Cli-Latest response header so CLI drift
+  // detection and the explicit version endpoint cannot diverge.
   router.get('/cli-version', (_req, res) => {
-    const version = readBundledCliVersion();
+    const version = readBundledCdsCliVersion(config.repoRoot);
     if (!version) {
       res.status(404).json({ error: '未找到 cdscli VERSION 常量' });
       return;
@@ -12461,6 +17170,30 @@ cdscli project list --human
         }
       }
 
+      // #746 guard #2 — 分支新鲜度警告(非阻断)。
+      // 落后 main 太多的分支 self-update 容易撞上 lockfile 漂移 / 陈旧配置
+      // (2026-06-08 一次事故的诱因)。这里只**警告**不阻断:真正的"装不上/起不来"
+      // 由 guard #3(boot install smoke)在 swap 前兜住;此处给操作者早期可见性。
+      if (branch && branch !== 'main') {
+        try {
+          const behindRaw = (await shell.exec(
+            `git rev-list --count origin/${branch}..origin/main`,
+            { cwd: repoRoot },
+          )).stdout.trim();
+          const behind = Number.parseInt(behindRaw, 10);
+          if (Number.isFinite(behind) && behind >= 50) {
+            send(
+              'checkout',
+              'warning',
+              `分支落后 origin/main ${behind} 个提交 — 陈旧分支更易撞 lockfile/配置漂移。` +
+                `建议先 rebase 到 main。本次仍会继续(由 boot 预检兜底),仅提醒。`,
+            );
+          }
+        } catch {
+          /* 新鲜度检查失败不影响 self-update */
+        }
+      }
+
       // Step 3: hard-reset local to the remote tip.
       //
       // Prior implementation used `git pull` which creates a merge commit
@@ -12793,6 +17526,24 @@ cdscli project list --human
       const backendSec = Math.floor((Date.now() - cdsBackendStart) / 1000);
       timingRecorder.merge({ buildBackendMs: Date.now() - cdsBackendStart });
       send('build-backend', 'done', `后端 dist/ 已重编到 ${newHead} (${backendSec}s)`);
+
+      // The first nginx-render above runs before dist/ is rebuilt, so pages
+      // generated from dist/cli/render-page.js (notably cds-waiting.html) can
+      // otherwise lag one deploy behind. Re-render after the atomic dist swap
+      // so nginx uses the current loading-page templates during this restart.
+      try {
+        const renderRes = await shell.exec('./exec_cds.sh nginx-render', {
+          cwd: path.join(repoRoot, 'cds'),
+          timeout: 15_000,
+        });
+        if (renderRes.exitCode === 0) {
+          send('nginx-render', 'done', 'nginx 模板已用新 dist 重新渲染');
+        } else {
+          send('nginx-render', 'warning', `nginx-render(new dist) exit=${renderRes.exitCode}: ${(renderRes.stderr || renderRes.stdout || '').slice(0, 200)}`);
+        }
+      } catch (err) {
+        send('nginx-render', 'warning', `nginx-render(new dist) 异常(忽略,继续): ${(err as Error).message}`);
+      }
 
       // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)

@@ -141,6 +141,7 @@ public class LiteraryAgentImageGenController : ControllerBase
             var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
             if (existed != null)
             {
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
                 return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
             }
         }
@@ -313,6 +314,7 @@ public class LiteraryAgentImageGenController : ControllerBase
             var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
             if (existed != null)
             {
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
                 return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
             }
             throw;

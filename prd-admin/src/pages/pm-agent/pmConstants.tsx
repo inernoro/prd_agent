@@ -14,6 +14,9 @@ import type {
   PmRiskStatus,
 } from '@/services/contracts/pmAgent';
 
+// ── 项目管理智能体强调色（左导航高亮 / 卡片辉光走 .pa-accent-blue）──
+export const PM_ACCENT = '#3B82F6';
+
 // ── 项目类型注册表（S / I / O）──
 export const PROJECT_TYPE_REGISTRY: Record<PmProjectType, { label: string; short: string; color: string; desc: string }> = {
   general: { label: '普通项目', short: '普', color: '#64748B', desc: '不分级的通用项目，适用于大多数日常工作' },
@@ -150,6 +153,26 @@ export const MILESTONE_HEALTH_REGISTRY: Record<PmMilestoneHealth, { label: strin
   reached: { label: '已达成', color: '#10B981' },
   cancelled: { label: '已取消', color: '#9CA3AF' },
 };
+
+// ── 工作日志分类注册表（与后端 DailyLogCategory 对齐，预留与周报联动）──
+export const WORK_LOG_CATEGORY_REGISTRY: Record<string, { label: string; color: string }> = {
+  development: { label: '开发', color: '#3B82F6' },
+  meeting: { label: '会议', color: '#A855F7' },
+  communication: { label: '沟通', color: '#F59E0B' },
+  documentation: { label: '文档', color: '#10B981' },
+  testing: { label: '测试', color: '#EC4899' },
+  todo: { label: '待办', color: '#6366F1' },
+  other: { label: '其他', color: '#6B7280' },
+};
+export const WORK_LOG_CATEGORIES = ['development', 'meeting', 'communication', 'documentation', 'testing', 'other'] as const;
+
+/** 进度条配色：done=绿，>=70 蓝，>=30 橙，否则灰 */
+export function progressColor(percent: number, status?: PmTaskStatus): string {
+  if (status === 'done') return '#10B981';
+  if (percent >= 70) return '#3B82F6';
+  if (percent >= 30) return '#F59E0B';
+  return '#6B7280';
+}
 
 // ── 优先级注册表 ──
 export const PRIORITY_REGISTRY: Record<PmTaskPriority, { label: string; color: string; weight: number }> = {

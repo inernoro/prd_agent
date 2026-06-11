@@ -4,6 +4,11 @@ import type { ApiResponse } from '@/types/api';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 import type { ModelAdapterInfo } from '@/services/contracts/models';
 import type { ImageGenGenerateResponse } from '@/services/contracts/imageGen';
+import {
+  createLiteraryAgentImageGenRunReal,
+  getLiteraryAgentImageGenModelsReal,
+  streamLiteraryAgentImageGenRunWithRetryReal,
+} from '@/services/real/literaryAgentConfig';
 
 // ============ Visual Creation — 视觉创作迷你面板服务层 ============
 //
@@ -25,7 +30,97 @@ export async function generateVisualImage(p: {
   size?: string;
   modelName?: string;
   images?: string[];
+  appKey?: 'visual-agent' | 'literary-agent';
 }): Promise<ApiResponse<{ url: string; revisedPrompt?: string }>> {
+  if (p.appKey === 'literary-agent') {
+    const created = await createLiteraryAgentImageGenRunReal({
+      input: {
+        items: [{ prompt: p.prompt, count: 1, size: p.size }],
+        size: p.size,
+        modelId: p.modelName,
+        responseFormat: 'url',
+        maxConcurrency: 1,
+      },
+      idempotencyKey: `doc-literary-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    });
+
+    if (!created.success) {
+      return created as unknown as ApiResponse<{ url: string; revisedPrompt?: string }>;
+    }
+
+    const runId = created.data.runId;
+    return await new Promise<ApiResponse<{ url: string; revisedPrompt?: string }>>((resolve) => {
+      const ac = new AbortController();
+      let settled = false;
+      const finish = (result: ApiResponse<{ url: string; revisedPrompt?: string }>) => {
+        if (settled) return;
+        settled = true;
+        ac.abort();
+        resolve(result);
+      };
+
+      void streamLiteraryAgentImageGenRunWithRetryReal({
+        runId,
+        afterSeq: 0,
+        signal: ac.signal,
+        maxAttempts: 10,
+        onEvent: (evt) => {
+          if (settled) return;
+          if (evt.event === 'error') {
+            let message = '图片生成失败';
+            try {
+              const payload = JSON.parse(evt.data || '{}') as { message?: string; errorMessage?: string };
+              message = payload.message || payload.errorMessage || message;
+            } catch { /* ignore malformed SSE payload */ }
+            finish({ success: false, data: null as never, error: { code: 'IMAGE_GEN_FAILED', message } });
+            return;
+          }
+          let payload: Record<string, unknown> = {};
+          try {
+            payload = JSON.parse(evt.data || '{}') as Record<string, unknown>;
+          } catch {
+            return;
+          }
+          const type = typeof payload.type === 'string' ? payload.type : '';
+          if (type === 'imageDone') {
+            const asset = payload.asset && typeof payload.asset === 'object' ? payload.asset as Record<string, unknown> : null;
+            const url = typeof payload.url === 'string' ? payload.url : (typeof asset?.url === 'string' ? asset.url : '');
+            if (url) {
+              finish({
+                success: true,
+                data: {
+                  url,
+                  revisedPrompt: typeof payload.revisedPrompt === 'string' ? payload.revisedPrompt : undefined,
+                },
+                error: null,
+              });
+            }
+          } else if (type === 'runDone') {
+            const failed = Number(payload.failed ?? 0);
+            const status = String(payload.status ?? '');
+            if (failed > 0 || status === 'Failed' || status === 'Cancelled') {
+              finish({
+                success: false,
+                data: null as never,
+                error: { code: 'IMAGE_GEN_FAILED', message: status === 'Cancelled' ? '图片生成已取消' : '图片生成失败' },
+              });
+            }
+          }
+        },
+      }).then((res) => {
+        if (!settled && !res.success) {
+          finish(res as unknown as ApiResponse<{ url: string; revisedPrompt?: string }>);
+        } else if (!settled) {
+          finish({
+            success: false,
+            data: null as never,
+            error: { code: 'IMAGE_GEN_NO_RESULT', message: '图片生成结束但未收到图片结果' },
+          });
+        }
+      });
+    });
+  }
+
   const res = await apiRequest<ImageGenGenerateResponse>(api.visualAgent.imageGen.generate(), {
     method: 'POST',
     body: {
@@ -51,13 +146,15 @@ export async function generateVisualImage(p: {
 }
 
 /**
- * 获取生图可用模型列表（从 visual-agent 模型池）。
+ * 获取生图可用模型列表（按 appKey 使用对应模型池）。
  * 返回 { value: modelId, label: modelId }[] 去重列表。
  */
-export async function listVisualModels(): Promise<ApiResponse<{ value: string; label: string }[]>> {
-  const res = await apiRequest<ModelGroupForApp[]>(api.visualAgent.imageGen.models(), {
-    method: 'GET',
-  });
+export async function listVisualModels(appKey: 'visual-agent' | 'literary-agent' = 'visual-agent'): Promise<ApiResponse<{ value: string; label: string }[]>> {
+  const res = appKey === 'literary-agent'
+    ? await getLiteraryAgentImageGenModelsReal() as ApiResponse<ModelGroupForApp[]>
+    : await apiRequest<ModelGroupForApp[]>(api.visualAgent.imageGen.models(), {
+      method: 'GET',
+    });
 
   if (!res.success) {
     return res as unknown as ApiResponse<{ value: string; label: string }[]>;

@@ -40,6 +40,7 @@ import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContra
 import type { ClearImageGenModelContract, ClearIntentModelContract, ClearVisionModelContract, CreateModelContract, DeleteModelContract, GetModelsContract, SetImageGenModelContract, SetIntentModelContract, SetMainModelContract, SetVisionModelContract, TestModelContract, UpdateModelContract, UpdateModelPrioritiesContract, GetModelAdapterInfoContract, GetModelsAdapterInfoBatchContract, GetAdapterInfoByModelNameContract } from '@/services/contracts/models';
 import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfigContract, GetLLMConfigsContract, UpdateLLMConfigContract } from '@/services/contracts/llmConfigs';
 import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract } from '@/services/contracts/llmLogs';
+import type { GetTeamActivityLogsContract, GetTeamActivityModulesContract } from '@/services/contracts/teamActivity';
 import type { GetAdminDocumentContentContract } from '@/services/contracts/adminDocuments';
 import type { ListUploadArtifactsContract } from '@/services/contracts/uploadArtifacts';
 import type { AdminImpersonateContract } from '@/services/contracts/lab';
@@ -315,6 +316,7 @@ import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatfor
 import { clearImageGenModelReal, clearIntentModelReal, clearVisionModelReal, createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal, updateModelPrioritiesReal, getModelAdapterInfoReal, getModelsAdapterInfoBatchReal, getAdapterInfoByModelNameReal } from '@/services/real/models';
 import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
 import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal } from '@/services/real/llmLogs';
+import { getTeamActivityLogsReal, getTeamActivityModulesReal } from '@/services/real/teamActivity';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
 import { listUploadArtifactsReal } from '@/services/real/uploadArtifacts';
 import {
@@ -804,6 +806,8 @@ export const handleAdminNotification: HandleAdminNotificationContract = withAuth
 export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
+export { searchDirectoryUsers } from '@/services/real/directory';
+export type { DirectoryUser } from '@/services/real/directory';
 export const createUser: CreateAdminUserContract = withAuth(createUserReal);
 export const bulkCreateUsers: BulkCreateAdminUsersContract = withAuth(bulkCreateUsersReal);
 export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleReal);
@@ -877,6 +881,9 @@ export const createLLMConfig: CreateLLMConfigContract = withAuth(createLLMConfig
 export const updateLLMConfig: UpdateLLMConfigContract = withAuth(updateLLMConfigReal);
 export const deleteLLMConfig: DeleteLLMConfigContract = withAuth(deleteLLMConfigReal);
 export const activateLLMConfig: ActivateLLMConfigContract = withAuth(activateLLMConfigReal);
+
+export const getTeamActivityLogs: GetTeamActivityLogsContract = withAuth(getTeamActivityLogsReal);
+export const getTeamActivityModules: GetTeamActivityModulesContract = withAuth(getTeamActivityModulesReal);
 
 export const getLlmLogs: GetLlmLogsContract = withAuth(getLlmLogsReal);
 export const getLlmLogDetail: GetLlmLogDetailContract = withAuth(getLlmLogDetailReal);
@@ -1440,6 +1447,7 @@ export const channelService: IChannelService = new ChannelService();
 export {
   getCurrentWeekChangelog,
   getChangelogReleases,
+  getChangelogReleaseByVersion,
   getChangelogGitHubLogs,
   postChangelogAiSummary,
   listChangelogReportSources,
@@ -1692,14 +1700,21 @@ export {
   listTags as listSiteTags,
   createShareLink as createSiteShareLink,
   listShares as listSiteShares,
+  ensureShareShortLink as ensureSiteShareShortLink,
   revokeShare as revokeSiteShare,
   viewShare as viewSiteShare,
   saveSharedSite,
   listShareViewLogs,
   renewShare as renewSiteShare,
   getShareAnalytics as getSiteShareAnalytics,
+  listSiteGroups,
+  createSiteGroup,
+  updateSiteGroup,
+  deleteSiteGroup,
+  setSiteGroup,
+  copySiteToTeam,
 } from '@/services/real/webPages';
-export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, WebPageGroup, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry, ShareAnalyticsVisitorSummary, ShareAnalyticsTrendPoint, ShareAnalyticsHourlyPoint, ShareAnalyticsVisitorStats, ShareAnalyticsCommentEntry } from '@/services/real/webPages';
 
 // ── Team 团队（跨应用协作） ──
 export {
@@ -1888,6 +1903,8 @@ export {
   togglePinnedEntry,
   listDocumentStoresWithPreview,
   searchDocumentEntries,
+  listKnowledgeEntriesPaged,
+  getDocumentEntry,
   moveDocumentEntry,
   updateDocumentContent,
   setFolderPrimaryChild,
@@ -1908,6 +1925,7 @@ export {
   getDocStoreShareView,
   listDocStoreShareEntries,
   getDocStoreShareEntryContent,
+  getDocumentStoreFolders,
 } from '@/services/real/documentStore';
 export type {
   DocumentStore,
@@ -1993,6 +2011,10 @@ export {
   getPmTaskActivitiesReal as getPmTaskActivities,
   addPmTaskCommentReal as addPmTaskComment,
   bulkPmTasksReal as bulkPmTasks,
+  listPmTaskWorkLogsReal as listPmTaskWorkLogs,
+  createPmTaskWorkLogReal as createPmTaskWorkLog,
+  updatePmTaskWorkLogReal as updatePmTaskWorkLog,
+  deletePmTaskWorkLogReal as deletePmTaskWorkLog,
   getPmMembersReal as getPmMembers,
   setPmMembersReal as setPmMembers,
   setPmObserversReal as setPmObservers,
@@ -2020,6 +2042,8 @@ export {
   listPmGoalsReal as listPmGoals,
   createPmGoalReal as createPmGoal,
   updatePmGoalReal as updatePmGoal,
+  setGoalAsMilestoneReal as setGoalAsMilestone,
+  reparentPmGoalReal as reparentPmGoal,
   deletePmGoalReal as deletePmGoal,
   listPmGoalCheckInsReal as listPmGoalCheckIns,
   addPmGoalCheckInReal as addPmGoalCheckIn,
@@ -2038,6 +2062,10 @@ export {
   updatePmRiskReal as updatePmRisk,
   deletePmRiskReal as deletePmRisk,
   getPmBurndownReal as getPmBurndown,
+  getPmMyTodosReal as getPmMyTodos,
+  getPmAgentPreferencesReal as getPmAgentPreferences,
+  updatePmQuickActionsReal as updatePmQuickActions,
+  getPmReportSummaryReal as getPmReportSummary,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -2064,6 +2092,9 @@ export type {
   SavePmMilestoneInput,
   PmTask,
   PmTaskDraft,
+  PmTaskWorkLog,
+  CreatePmTaskWorkLogInput,
+  UpdatePmTaskWorkLogInput,
   PmStakeholder,
   PmEvaluation,
   PmEvaluationRound,
@@ -2090,6 +2121,9 @@ export type {
   UpdatePmTaskInput,
   BatchCreatePmTasksInput,
   SetStakeholdersInput,
+  PmMyTodoItem,
+  PmAgentPrefs,
+  PmReportSummary,
 } from '@/services/contracts/pmAgent';
 
 // ── CCAS Agent 赋码采集关联综合智能体 ──
@@ -2132,3 +2166,27 @@ export type {
   CcasQaRequest,
   CcasQaReferencePayload,
 } from '@/services/real/ccasAgent';
+
+// ── Shitu Agent 识途（新人文化与制度问答）──
+export {
+  getShituMeta,
+  getShituCategoryStore,
+  SHITU_QA_STREAM_URL,
+} from '@/services/real/shituAgent';
+export type {
+  ShituCategoryKey,
+  ShituTabMeta,
+  ShituMeta,
+  ShituCategoryStore,
+  ShituQaHistoryItem,
+  ShituQaReferencePayload,
+} from '@/services/real/shituAgent';
+
+// ── Front End Agent 前端搭档智能体 ──
+export {
+  FRONT_END_AGENT_STREAM_URL,
+} from '@/services/real/frontEndAgent';
+export type {
+  FrontEndAgentRequest,
+  FrontEndAgentTaskType,
+} from '@/services/real/frontEndAgent';

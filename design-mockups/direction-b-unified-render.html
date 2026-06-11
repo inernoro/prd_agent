@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方向 B · 统一渲染</title>
+<style>
+  :root{
+    --bg:#0b0c10;
+    --text:#f2f3f6;
+    --text-dim:rgba(242,243,246,.56);
+    --text-faint:rgba(242,243,246,.34);
+    --line:rgba(255,255,255,.07);
+    --line-strong:rgba(255,255,255,.15);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;
+    background:var(--bg);color:var(--text);min-height:100vh;
+    background-image:radial-gradient(1100px 700px at 80% -5%, hsla(230,40%,24%,.25), transparent 60%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:1320px;margin:0 auto;padding:48px 40px 80px}
+  .tag{display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.08em;color:var(--text-dim);
+    border:1px solid var(--line);border-radius:999px;padding:6px 14px}
+  .tag .dot{width:6px;height:6px;border-radius:50%;background:hsl(152,55%,55%);box-shadow:0 0 10px hsl(152,55%,55%)}
+  h1{font-size:40px;font-weight:600;letter-spacing:-.02em;margin:22px 0 10px}
+  h1 .name{background:linear-gradient(90deg,hsl(208,80%,74%),hsl(196,70%,68%));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{color:var(--text-dim);font-size:15px;margin-bottom:40px}
+  .section-label{display:flex;align-items:center;gap:12px;font-size:12px;letter-spacing:.16em;color:var(--text-faint);margin:44px 0 18px;text-transform:uppercase}
+  .section-label::before{content:"";width:18px;height:1px;background:var(--line-strong)}
+
+  .card{position:relative;border-radius:20px;border:1px solid var(--line);
+    background:linear-gradient(165deg,#15161c,#0e0f14);overflow:hidden;cursor:pointer;
+    transition:transform .35s cubic-bezier(.2,.8,.2,1),border-color .35s,box-shadow .35s}
+  .card:hover{transform:translateY(-4px);border-color:var(--line-strong);box-shadow:0 24px 60px -24px rgba(0,0,0,.8)}
+
+  /* —— 关键：统一的“渲染棚”。同一束顶光 + 同一地面阴影 + 同一材质球，只换主色 —— */
+  .stage{position:relative;height:120px;
+    background:
+      radial-gradient(60% 80% at 50% 0%, hsla(var(--h),50%,40%,.20), transparent 70%),
+      linear-gradient(180deg,#16171e,#0d0e13);
+    display:grid;place-items:center;border-bottom:1px solid var(--line)}
+  .orb{width:72px;height:72px;border-radius:50%;position:relative;
+    background:
+      radial-gradient(28% 28% at 34% 28%, #fff 0%, transparent 38%),         /* 高光 */
+      radial-gradient(120% 120% at 32% 24%, hsl(var(--h),85%,70%), hsl(var(--h),75%,42%) 55%, hsl(var(--h),70%,22%) 100%);
+    box-shadow:
+      0 14px 26px -8px hsla(var(--h),70%,30%,.7),                            /* 落地阴影：所有球同方向 */
+      inset 0 -8px 14px hsla(var(--h),70%,16%,.9),
+      inset 0 4px 8px rgba(255,255,255,.18);
+  }
+  .orb::after{content:"";position:absolute;left:50%;bottom:-26px;transform:translateX(-50%);
+    width:60px;height:14px;border-radius:50%;background:radial-gradient(closest-side, rgba(0,0,0,.55), transparent);filter:blur(2px)}
+  .orb svg{position:absolute;inset:0;margin:auto;width:30px;height:30px;color:rgba(255,255,255,.92)}
+
+  .body{padding:18px 20px 20px}
+  .body h3{font-size:16px;font-weight:600;margin-bottom:6px}
+  .body p{font-size:12.5px;color:var(--text-dim);line-height:1.5}
+  .badge{position:absolute;top:14px;right:14px;font-size:11px;color:hsl(var(--h),75%,76%);
+    border:1px solid hsla(var(--h),60%,55%,.4);border-radius:999px;padding:3px 9px;background:hsla(var(--h),60%,50%,.12);backdrop-filter:blur(4px)}
+
+  .features{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+  .agents{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+  .agent .stage{height:104px}.agent .orb{width:60px;height:60px}
+  @media(max-width:1100px){.features,.agents{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="tag"><span class="dot"></span>MAP · 米多智能体生态平台</span>
+  <h1>晚上好，<span class="name">蒋云峰</span></h1>
+  <p class="sub">选一个智能体开始创作，或在下方的实用工具里探索平台能力</p>
+
+  <div class="features">
+    <div class="card" style="--h:178"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18M3 12h18M3 17h18"/></svg></div></div><div class="body"><h3>海鲜市场</h3><p>发现和 Fork 优质提示词与配置</p></div></div>
+    <div class="card" style="--h:214"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2Z"/><path d="M8 7h6"/></svg></div></div><div class="body"><h3>智识殿堂</h3><p>探索社区共享的知识库</p></div></div>
+    <div class="card" style="--h:320"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 3-6 3z"/></svg></div></div><div class="body"><h3>作品广场</h3><p>探索 AI 驱动的创意作品与灵感</p></div></div>
+    <div class="card" style="--h:38"><span class="badge">模型发布</span><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3 2.5 6 6 .5-4.5 4 1.5 6L12 16l-5 3.5 1.5-6L4 9.5l6-.5z"/></svg></div></div><div class="body"><h3>更新中心</h3><p>Anthropic 冲刺 IPO：Claude 一个月烧掉…</p></div></div>
+  </div>
+
+  <div class="section-label">Agents · 15 个专属智能体</div>
+  <div class="agents">
+    <div class="card agent" style="--h:268"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 19a7 7 0 1 0-7-7c0 2 1 3 3 3h1a2 2 0 0 1 0 4z"/><circle cx="8.5" cy="10.5" r="1"/><circle cx="15.5" cy="10.5" r="1"/></svg></div></div><div class="body"><h3>视觉创作智能体</h3><p>高级视觉创作，支持文生图、图生图</p></div></div>
+    <div class="card agent" style="--h:152"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2 2 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div></div><div class="body"><h3>文学创作智能体</h3><p>文学创作与配图，支持写作、润色</p></div></div>
+    <div class="card agent" style="--h:38"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="6" width="14" height="14" rx="3"/><path d="M9 2v4M15 2v4"/></svg></div></div><div class="body"><h3>缺陷管理智能体</h3><p>缺陷提交与跟踪，支持信息提取、分类</p></div></div>
+    <div class="card agent" style="--h:6"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="14" height="12" rx="2"/><path d="m17 10 4-2v8l-4-2z"/></svg></div></div><div class="body"><h3>视频创作智能体</h3><p>文章转视频教程，AI 驱动分镜脚本</p></div></div>
+    <div class="card agent" style="--h:208"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="6" width="14" height="15" rx="2"/><path d="M9 11h6M9 15h4M9 3h6l1 3H8z"/></svg></div></div><div class="body"><h3>周报智能体</h3><p>周报创建、提交、审阅，支持 AI 生成</p></div></div>
+    <div class="card agent" style="--h:178"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18M5 8l7-5 7 5M5 8v8l7 5 7-5V8"/></svg></div></div><div class="body"><h3>个人任务树</h3><p>分层任务管理，对话摘取任务、卡点</p></div></div>
+    <div class="card agent" style="--h:268"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg></div></div><div class="body"><h3>项目管理智能体</h3><p>项目看板、任务编排与进度追踪</p></div></div>
+    <div class="card agent" style="--h:320"><div class="stage"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 10a4 4 0 1 1 8 0c0 4-4 4-4 8"/><circle cx="12" cy="20" r="1"/></svg></div></div><div class="body"><h3>毒舌秘书</h3><p>犀利点评，帮你看清方案里的漏洞</p></div></div>
+  </div>
+</div>
+</body>
+</html>

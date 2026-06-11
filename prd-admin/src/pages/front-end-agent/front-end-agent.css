@@ -1,0 +1,253 @@
+@keyframes fea-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fea-pulse-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.28); }
+  50% { box-shadow: 0 0 0 7px rgba(99, 102, 241, 0); }
+}
+
+.fea-page {
+  --fea-indigo: 99, 102, 241;
+  --fea-violet: 129, 140, 248;
+  --fea-lavender: 199, 210, 254;
+  --fea-panel-bg: rgba(18, 18, 24, 0.72);
+  --fea-border: rgba(99, 102, 241, 0.18);
+}
+
+.fea-title-holo {
+  background: linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  letter-spacing: -0.02em;
+  animation: vaHoloFlow 6s ease-in-out infinite;
+}
+
+.fea-subtitle-warm {
+  color: rgba(199, 210, 254, 0.58);
+  letter-spacing: 0.01em;
+}
+
+.fea-subtitle-muted {
+  color: rgba(199, 210, 254, 0.38);
+}
+
+.fea-header-rule {
+  height: 1px;
+  margin-top: 0.75rem;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(99, 102, 241, 0.4) 20%,
+    rgba(129, 140, 248, 0.3) 50%,
+    rgba(99, 102, 241, 0.25) 80%,
+    transparent
+  );
+}
+
+.fea-vintage-badge {
+  border-color: rgba(99, 102, 241, 0.35);
+  background: rgba(99, 102, 241, 0.12);
+  color: rgba(199, 210, 254, 0.82);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.fea-chip {
+  border: 1px solid rgba(99, 102, 241, 0.22);
+  background: rgba(99, 102, 241, 0.08);
+  color: rgba(199, 210, 254, 0.62);
+}
+
+.fea-fade-up {
+  animation: fea-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.fea-rail-card {
+  cursor: pointer;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.28s ease, box-shadow 0.28s ease, background 0.28s ease, filter 0.28s ease;
+}
+
+.fea-rail-card:hover {
+  transform: translateY(-3px) scale(1.01);
+  filter: brightness(1.06);
+}
+
+.fea-rail-card:active {
+  transform: translateY(-1px) scale(0.995);
+}
+
+.fea-task-pill {
+  cursor: pointer;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease, filter 0.22s ease;
+}
+
+.fea-task-pill:hover {
+  transform: translateY(-2px) scale(1.03);
+  filter: brightness(1.08);
+}
+
+.fea-task-pill:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.fea-task-pill-idle {
+  border-color: rgba(99, 102, 241, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(199, 210, 254, 0.55);
+}
+
+.fea-task-pill-idle:hover {
+  background: rgba(99, 102, 241, 0.1);
+  color: rgba(199, 210, 254, 0.78);
+  border-color: rgba(99, 102, 241, 0.28);
+}
+
+.fea-task-pill-active {
+  border-color: rgba(99, 102, 241, 0.55) !important;
+  background: rgba(99, 102, 241, 0.18) !important;
+  color: rgba(199, 210, 254, 0.95) !important;
+  box-shadow: 0 0 24px rgba(99, 102, 241, 0.18);
+  animation: fea-pulse-ring 2.6s ease-in-out infinite;
+}
+
+.fea-page button,
+.fea-modal-panel button {
+  cursor: pointer;
+}
+
+.fea-page button:disabled,
+.fea-modal-panel button:disabled {
+  cursor: not-allowed;
+}
+
+.fea-btn {
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease, opacity 0.2s ease;
+}
+
+.fea-btn:not(:disabled):hover {
+  transform: translateY(-1px) scale(1.02);
+  filter: brightness(1.08);
+  box-shadow: 0 4px 22px rgba(10, 10, 14, 0.45);
+}
+
+.fea-btn:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+  filter: brightness(1.02);
+}
+
+.fea-btn:disabled {
+  cursor: not-allowed;
+  transform: none;
+  filter: none;
+  box-shadow: none;
+}
+
+.fea-btn-primary:not(:disabled) {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.95) 0%, rgba(79, 82, 221, 0.95) 100%);
+  border-color: rgba(129, 140, 248, 0.45);
+  color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.28);
+}
+
+.fea-btn-primary:not(:disabled):hover {
+  box-shadow: 0 6px 28px rgba(99, 102, 241, 0.38);
+}
+
+.fea-btn-danger:not(:disabled):hover {
+  box-shadow: 0 6px 24px rgba(244, 63, 94, 0.16);
+}
+
+.fea-link {
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease, filter 0.2s ease;
+}
+
+.fea-link:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+
+.fea-link:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.fea-panel {
+  position: relative;
+  background: var(--fea-panel-bg);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border-color: var(--fea-border);
+  box-shadow:
+    0 12px 48px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(199, 210, 254, 0.06),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.fea-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(145deg, rgba(99, 102, 241, 0.05) 0%, transparent 42%, rgba(129, 140, 248, 0.03) 100%);
+}
+
+.fea-panel-header {
+  border-bottom-color: rgba(99, 102, 241, 0.14);
+}
+
+.fea-input {
+  border-color: rgba(99, 102, 241, 0.16);
+  background: rgba(12, 12, 18, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.fea-input::placeholder {
+  color: rgba(199, 210, 254, 0.32);
+}
+
+.fea-input:focus {
+  border-color: rgba(99, 102, 241, 0.45);
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.15);
+  outline: none;
+}
+
+.fea-aside-hint {
+  border-color: rgba(99, 102, 241, 0.1);
+  background: rgba(99, 102, 241, 0.03);
+  color: rgba(199, 210, 254, 0.38);
+}
+
+.fea-section-label {
+  color: rgba(199, 210, 254, 0.72);
+  letter-spacing: 0.08em;
+}
+
+.fea-modal-backdrop {
+  animation: fea-fade-up 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.fea-modal-panel {
+  animation: fea-fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fea-title-holo,
+  .fea-fade-up,
+  .fea-task-pill-active {
+    animation: none;
+  }
+
+  .fea-btn:not(:disabled):hover,
+  .fea-task-pill:hover,
+  .fea-rail-card:hover,
+  .fea-link:hover {
+    transform: none;
+  }
+}

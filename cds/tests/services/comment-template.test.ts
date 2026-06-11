@@ -5,6 +5,7 @@ import {
   buildDashboardUrl,
   buildPrReviewDeeplink,
   buildPreviewUrl,
+  buildPreviewUrlForProject,
   buildTemplateVariables,
   renderTemplate,
 } from '../../src/services/comment-template.js';
@@ -72,6 +73,37 @@ describe('buildPreviewUrl', () => {
   it('omits prefix segment for branches without `/`', () => {
     expect(buildPreviewUrl('example.com', 'main', 'demo'))
       .toBe('https://main-demo.example.com');
+  });
+});
+
+describe('buildPreviewUrlForProject', () => {
+  it('uses the project preview identity SSOT and returns diagnostics', () => {
+    const result = buildPreviewUrlForProject(
+      'miduo.org',
+      'cursor/frontend-agent-1685',
+      { id: 'default', slug: 'workspace', aliasSlug: 'prd-agent' },
+      'default',
+    );
+
+    expect(result.url).toBe('https://frontend-agent-1685-cursor-prd-agent.miduo.org');
+    expect(result.previewSlug).toBe('frontend-agent-1685-cursor-prd-agent');
+    expect(result.projectIdentity).toEqual({
+      slug: 'prd-agent',
+      source: 'aliasSlug',
+      degraded: false,
+    });
+  });
+
+  it('still returns previewSlug when host is missing', () => {
+    const result = buildPreviewUrlForProject(
+      '',
+      'cursor/frontend-agent-1685',
+      { id: 'default', slug: 'workspace', aliasSlug: 'prd-agent' },
+      'default',
+    );
+
+    expect(result.url).toBe('');
+    expect(result.previewSlug).toBe('frontend-agent-1685-cursor-prd-agent');
   });
 });
 

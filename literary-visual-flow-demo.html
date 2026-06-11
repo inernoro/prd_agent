@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>文学创作智能体配图链路 Demo</title>
+  <style>
+    :root {
+      --bg: #17171d;
+      --panel: #202029;
+      --panel-2: #252432;
+      --line: rgba(255,255,255,0.12);
+      --line-strong: rgba(168,85,247,0.42);
+      --text: rgba(255,255,255,0.92);
+      --muted: rgba(255,255,255,0.58);
+      --faint: rgba(255,255,255,0.34);
+      --purple: #a855f7;
+      --blue: #7c8cff;
+      --green: #44d18b;
+      --gold: #e7b957;
+      --danger: #ff5a6f;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 18% 12%, rgba(124,140,255,0.18), transparent 30%),
+        radial-gradient(circle at 78% 18%, rgba(168,85,247,0.18), transparent 32%),
+        linear-gradient(135deg, #15151b, #1b1b22 52%, #15151b);
+      color: var(--text);
+    }
+    button, textarea, select { font: inherit; }
+    button { cursor: pointer; }
+    .shell {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 24px auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 390px;
+      gap: 18px;
+    }
+    .doc {
+      min-height: calc(100vh - 48px);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(24,24,31,0.74);
+      box-shadow: 0 20px 70px rgba(0,0,0,0.34);
+      overflow: hidden;
+    }
+    .doc-header {
+      padding: 22px 24px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+    }
+    .doc-title { margin: 0; font-size: 20px; letter-spacing: 0; }
+    .doc-sub { margin: 7px 0 0; color: var(--muted); font-size: 13px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      border-radius: 999px;
+      color: var(--muted);
+      padding: 8px 12px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .doc-body {
+      padding: 24px;
+      display: grid;
+      gap: 16px;
+    }
+    .article-block {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.035);
+      border-radius: 14px;
+      padding: 20px;
+    }
+    .article-block h2 {
+      margin: 0 0 12px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    .article-block p {
+      margin: 0;
+      color: rgba(255,255,255,0.76);
+      line-height: 1.9;
+      font-size: 14px;
+    }
+    .inserted-image {
+      display: none;
+      border: 1px solid rgba(68,209,139,0.32);
+      background: rgba(68,209,139,0.06);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .inserted-image.show { display: block; }
+    .drawer {
+      height: calc(100vh - 48px);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(23,23,29,0.88);
+      box-shadow: 0 24px 80px rgba(0,0,0,0.42);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: sticky;
+      top: 24px;
+    }
+    .drawer-header {
+      padding: 18px 18px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .brand {
+      display: flex;
+      gap: 11px;
+      min-width: 0;
+      align-items: center;
+    }
+    .mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 13px;
+      color: #b8c0ff;
+      background: linear-gradient(135deg, rgba(124,140,255,0.26), rgba(168,85,247,0.16));
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .mark::before {
+      content: "";
+      width: 18px;
+      height: 18px;
+      border: 2px solid currentColor;
+      border-radius: 6px;
+      transform: rotate(-18deg);
+      box-shadow: 8px -8px 0 -5px currentColor;
+    }
+    .header-title { font-weight: 760; font-size: 17px; }
+    .header-sub { margin-top: 3px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .agent-card {
+      margin: 16px 16px 0;
+      border: 1px solid var(--line-strong);
+      background: linear-gradient(135deg, rgba(168,85,247,0.18), rgba(68,209,139,0.08));
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .agent-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .agent-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 11px;
+      border: 1px solid rgba(231,185,87,0.55);
+      background: rgba(231,185,87,0.12);
+      position: relative;
+      flex: none;
+    }
+    .agent-icon::before {
+      content: "";
+      position: absolute;
+      left: 11px;
+      top: 9px;
+      width: 13px;
+      height: 17px;
+      border: 2px solid var(--gold);
+      border-radius: 10px 10px 5px 5px;
+      transform: rotate(-24deg);
+    }
+    .agent-icon::after {
+      content: "";
+      position: absolute;
+      left: 19px;
+      top: 20px;
+      width: 12px;
+      height: 2px;
+      background: var(--gold);
+      transform: rotate(34deg);
+      border-radius: 999px;
+    }
+    .agent-name { font-size: 15px; font-weight: 760; }
+    .agent-desc { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .handoff {
+      margin: 12px 16px 0;
+      border: 1px solid rgba(168,85,247,0.28);
+      background: rgba(168,85,247,0.10);
+      color: rgba(220,190,255,0.94);
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .messages {
+      flex: 1;
+      overflow: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+    }
+    .bubble {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.055);
+      border-radius: 16px;
+      padding: 14px;
+      line-height: 1.7;
+      font-size: 13px;
+    }
+    .bubble.user {
+      align-self: flex-end;
+      width: 82%;
+      border-color: rgba(124,140,255,0.42);
+      background: linear-gradient(135deg, rgba(124,140,255,0.25), rgba(168,85,247,0.15));
+    }
+    .bubble.assistant {
+      width: 100%;
+    }
+    .bubble-title {
+      color: rgba(230,210,255,0.95);
+      font-weight: 740;
+      margin-bottom: 8px;
+    }
+    .mini-panel {
+      display: none;
+      border: 1px solid rgba(168,85,247,0.32);
+      background: rgba(18,18,24,0.92);
+      border-radius: 14px;
+      padding: 14px;
+      gap: 12px;
+      flex-direction: column;
+    }
+    .mini-panel.show { display: flex; }
+    .field-label {
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 720;
+      margin-bottom: 7px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .prompt {
+      width: 100%;
+      min-height: 152px;
+      max-height: 300px;
+      resize: vertical;
+      border: 1px solid rgba(255,255,255,0.13);
+      background: rgba(255,255,255,0.055);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 12px;
+      line-height: 1.6;
+      outline: none;
+      overflow: auto;
+      font-size: 13px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    select {
+      min-width: 0;
+      flex: 1;
+      border: 1px solid rgba(255,255,255,0.13);
+      background: rgba(255,255,255,0.055);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 9px 10px;
+      outline: none;
+      font-size: 13px;
+    }
+    .btn {
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.07);
+      color: var(--text);
+      border-radius: 11px;
+      padding: 10px 13px;
+      font-size: 13px;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      gap: 7px;
+      white-space: nowrap;
+    }
+    .btn.primary {
+      border-color: rgba(168,85,247,0.64);
+      background: linear-gradient(135deg, rgba(168,85,247,0.88), rgba(124,140,255,0.78));
+      font-weight: 760;
+    }
+    .btn.green {
+      border-color: rgba(68,209,139,0.45);
+      background: rgba(68,209,139,0.12);
+      color: rgba(190,255,220,0.94);
+    }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .composer {
+      padding: 14px 16px 16px;
+      border-top: 1px solid var(--line);
+    }
+    .composer-row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+    }
+    .composer textarea {
+      flex: 1;
+      height: 58px;
+      resize: none;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(255,255,255,0.075);
+      color: var(--text);
+      border-radius: 13px;
+      padding: 11px 12px;
+      outline: none;
+      line-height: 1.5;
+      font-size: 13px;
+    }
+    .helper {
+      margin-top: 8px;
+      color: var(--faint);
+      font-size: 11px;
+    }
+    .mode-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 11px;
+    }
+    .tab {
+      flex: 1;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: rgba(255,255,255,0.045);
+      border-radius: 999px;
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    .tab.active {
+      color: var(--text);
+      border-color: rgba(124,140,255,0.45);
+      background: rgba(124,140,255,0.16);
+    }
+    .preview {
+      display: none;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px;
+      overflow: hidden;
+      min-height: 220px;
+      background: #0f1118;
+      position: relative;
+    }
+    .preview.show { display: block; }
+    .mock-art {
+      min-height: 260px;
+      background:
+        linear-gradient(120deg, rgba(255,255,255,0.14) 0 1px, transparent 1px 100%),
+        radial-gradient(circle at 20% 23%, rgba(124,140,255,0.92), transparent 18%),
+        radial-gradient(circle at 62% 35%, rgba(68,209,139,0.42), transparent 20%),
+        radial-gradient(circle at 72% 70%, rgba(231,185,87,0.48), transparent 24%),
+        linear-gradient(150deg, #111827, #172033 48%, #2a1740);
+      background-size: auto, auto, auto, auto, 100% 100%;
+      padding: 24px;
+      display: flex;
+      align-items: end;
+      position: relative;
+    }
+    .mock-art::before {
+      content: "";
+      position: absolute;
+      left: 24px;
+      top: 28px;
+      width: 46%;
+      height: 44%;
+      border-left: 2px solid rgba(255,255,255,0.48);
+      border-top: 2px solid rgba(255,255,255,0.20);
+      transform: skewY(-12deg);
+      filter: blur(0.2px);
+    }
+    .mock-art::after {
+      content: "";
+      position: absolute;
+      right: 34px;
+      top: 42px;
+      width: 116px;
+      height: 142px;
+      border: 1px solid rgba(255,255,255,0.24);
+      background:
+        linear-gradient(rgba(255,255,255,0.14) 0 0) 18px 24px / 72px 8px no-repeat,
+        linear-gradient(rgba(255,255,255,0.10) 0 0) 18px 45px / 88px 6px no-repeat,
+        linear-gradient(rgba(124,140,255,0.22), rgba(68,209,139,0.10));
+      border-radius: 12px;
+      transform: rotate(5deg);
+    }
+    .art-caption {
+      position: relative;
+      z-index: 1;
+      width: 76%;
+      padding: 18px;
+      border-left: 3px solid rgba(231,185,87,0.92);
+      background: rgba(7,10,18,0.42);
+      backdrop-filter: blur(10px);
+    }
+    .art-caption strong { display: block; font-size: 18px; margin-bottom: 8px; }
+    .art-caption span { display: block; color: rgba(255,255,255,0.72); line-height: 1.6; font-size: 12px; }
+    .progress {
+      display: none;
+      border: 1px solid rgba(168,85,247,0.28);
+      background: rgba(168,85,247,0.08);
+      border-radius: 12px;
+      padding: 12px;
+      gap: 10px;
+      flex-direction: column;
+    }
+    .progress.show { display: flex; }
+    .bar {
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.10);
+      overflow: hidden;
+    }
+    .bar span {
+      display: block;
+      height: 100%;
+      width: 8%;
+      background: linear-gradient(90deg, var(--purple), var(--blue));
+      transition: width 0.4s ease;
+    }
+    .progress-text {
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .empty {
+      margin: auto;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.8;
+      padding: 20px;
+      border: 1px dashed rgba(255,255,255,0.16);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.035);
+    }
+    @media (max-width: 900px) {
+      .shell { grid-template-columns: 1fr; }
+      .drawer { position: static; height: 760px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="doc">
+      <div class="doc-header">
+        <div>
+          <h1 class="doc-title">日报-2026-05-31-今日大事早知道</h1>
+          <p class="doc-sub">知识库正文，模拟当前文档内容</p>
+        </div>
+        <span class="pill">正文已作为参考输入</span>
+      </div>
+      <div class="doc-body">
+        <div class="article-block">
+          <h2>从干瘪列表到可读双栏</h2>
+          <p>
+            今天，我们把干瘪的列表种成了双栏的森林，让沉默的页面长出评论的耳朵。
+            72 次提交，不是代码的堆叠，是体验的破茧。知识库列表卡片改版后，卡片有了摘要片段、标签、修改时间与更清晰的扫读节奏。
+          </p>
+        </div>
+        <div class="article-block">
+          <h2>协作信号浮出水面</h2>
+          <p>
+            评论抽屉与卡点墙让隐含的信息变得可见。团队不再只靠文档正文传递状态，边缘的微弱信号也开始成为协作的一部分。
+          </p>
+        </div>
+        <div id="insertedImage" class="inserted-image">
+          <div class="mock-art">
+            <div class="art-caption">
+              <strong>已插入的配图</strong>
+              <span>从干瘪列表到可读双栏，从沉默托管到回声评论。</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="drawer">
+      <div class="drawer-header">
+        <div class="brand">
+          <div class="mark" aria-hidden="true"></div>
+          <div>
+            <div class="header-title">AI 文档对话</div>
+            <div class="header-sub">日报-2026-05-31-今日大事早知道</div>
+          </div>
+        </div>
+        <span class="pill">Demo</span>
+      </div>
+
+      <div class="agent-card" id="agentCard">
+        <div class="agent-row">
+          <span class="agent-icon" aria-hidden="true"></span>
+          <div>
+            <div class="agent-name" id="agentName">文学创作智能体</div>
+            <div class="agent-desc" id="agentDesc">写作、润色、插画描述；明确配图请求会接力视觉生图</div>
+          </div>
+        </div>
+      </div>
+      <div class="handoff" id="handoffTip">
+        智能涌现：文学负责文字与画面构思；当你说“配个图看看”，系统直接打开文学配图面板。
+      </div>
+
+      <div class="messages" id="messages">
+        <div class="empty" id="emptyState">
+          试试下面两个按钮。<br />
+          一个直达生图，一个保留文学文本输出。
+        </div>
+        <div class="mini-panel" id="miniPanel">
+          <div>
+            <div class="field-label">
+              <span>提示词</span>
+              <button class="btn" id="useOriginalBtn" type="button">用原文</button>
+            </div>
+            <textarea id="promptBox" class="prompt"></textarea>
+          </div>
+          <div class="toolbar">
+            <select id="modelSelect">
+              <option>gpt-image-2-all</option>
+              <option>gpt-image-2-fast</option>
+            </select>
+            <select>
+              <option>自适应</option>
+              <option>16:9</option>
+              <option>4:3</option>
+            </select>
+          </div>
+          <button class="btn primary" id="generateBtn" type="button">生成图片</button>
+          <div class="progress" id="progress">
+            <div class="bar"><span id="progressBar"></span></div>
+            <div class="progress-text"><span id="progressLabel">正在绘制</span><span id="progressSec">0s</span></div>
+          </div>
+          <div class="preview" id="preview">
+            <div class="mock-art">
+              <div class="art-caption">
+                <strong>脉络与回响</strong>
+                <span>冷峻深空蓝、斜向光轨、卡片阶梯、评论回声与知识森林。</span>
+              </div>
+            </div>
+          </div>
+          <div class="toolbar" id="insertActions" style="display:none">
+            <button class="btn green" id="insertBtn" type="button">插入文档</button>
+            <button class="btn" id="resetBtn" type="button">重新生成</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="mode-tabs">
+          <button class="tab active" id="directDemo" type="button">配图请求</button>
+          <button class="tab" id="textDemo" type="button">提示词请求</button>
+        </div>
+        <div class="composer-row">
+          <textarea id="userInput">帮我配个图看看？</textarea>
+          <button class="btn primary" id="sendBtn" type="button">发送</button>
+        </div>
+        <div class="helper" id="helper">明确配图意图：直接打开文学配图面板，不先输出长文字。</div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    const docExcerpt = '今天，我们把干瘪的列表种成了双栏的森林，让沉默的页面长出评论的耳朵。72 次提交，不是代码的堆叠，是体验的破茧。知识库列表卡片改版后，卡片有了摘要片段、标签、修改时间与更清晰的扫读节奏。评论抽屉与卡点墙让隐含的信息变得可见。';
+    const messages = document.getElementById('messages');
+    const emptyState = document.getElementById('emptyState');
+    const miniPanel = document.getElementById('miniPanel');
+    const promptBox = document.getElementById('promptBox');
+    const userInput = document.getElementById('userInput');
+    const helper = document.getElementById('helper');
+    const directDemo = document.getElementById('directDemo');
+    const textDemo = document.getElementById('textDemo');
+    const sendBtn = document.getElementById('sendBtn');
+    const generateBtn = document.getElementById('generateBtn');
+    const progress = document.getElementById('progress');
+    const progressBar = document.getElementById('progressBar');
+    const progressLabel = document.getElementById('progressLabel');
+    const progressSec = document.getElementById('progressSec');
+    const preview = document.getElementById('preview');
+    const insertActions = document.getElementById('insertActions');
+    const insertedImage = document.getElementById('insertedImage');
+    const useOriginalBtn = document.getElementById('useOriginalBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const insertBtn = document.getElementById('insertBtn');
+
+    function addBubble(text, type) {
+      emptyState.style.display = 'none';
+      const div = document.createElement('div');
+      div.className = 'bubble ' + type;
+      div.innerHTML = text;
+      messages.insertBefore(div, miniPanel);
+      messages.scrollTop = messages.scrollHeight;
+      return div;
+    }
+
+    function clearFlow() {
+      [...messages.querySelectorAll('.bubble')].forEach((el) => el.remove());
+      miniPanel.classList.remove('show');
+      progress.classList.remove('show');
+      preview.classList.remove('show');
+      insertActions.style.display = 'none';
+      generateBtn.style.display = '';
+      progressBar.style.width = '8%';
+      emptyState.style.display = '';
+    }
+
+    function setDemo(mode) {
+      clearFlow();
+      const direct = mode === 'direct';
+      directDemo.classList.toggle('active', direct);
+      textDemo.classList.toggle('active', !direct);
+      userInput.value = direct ? '帮我配个图看看？' : '帮我写个配图提示词';
+      helper.textContent = direct
+        ? '明确配图意图：直接打开文学配图面板，不先输出长文字。'
+        : '提示词/描述类请求：保留文学智能体的文本输出，再让用户决定是否接力生图。';
+    }
+
+    function showVisualPanel() {
+      emptyState.style.display = 'none';
+      miniPanel.classList.add('show');
+      promptBox.value = [
+        '基于文档《日报-2026-05-31-今日大事早知道》生成一张配图。',
+        '用户要求：' + userInput.value.trim(),
+        '参考正文：',
+        docExcerpt,
+        '',
+        '画面要求：提炼正文的核心意象与情绪，做成可直接插入文档的横版配图；避免复刻具体 UI 截图，文字元素只保留必要标题或短句。'
+      ].join('\n');
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function showTextReply() {
+      addBubble(
+        '<div class="bubble-title">文学创作智能体 回复</div>' +
+        '【配图提示词】冷峻深空蓝背景，斜向光轨从左上穿过画面，半透明知识卡片呈阶梯状漂浮。卡片上保留极短文字：列表、评论、回响。远处有由细线构成的双栏文档轮廓，整体克制、现代、适合作为文档头图。' +
+        '<div style="margin-top:12px"><button class="btn primary" type="button" onclick="showVisualPanel()">为这段配图</button></div>',
+        'assistant'
+      );
+    }
+
+    sendBtn.addEventListener('click', () => {
+      clearFlow();
+      addBubble('<div class="bubble-title">文学创作智能体</div>' + userInput.value.trim(), 'user');
+      if (directDemo.classList.contains('active')) {
+        showVisualPanel();
+      } else {
+        showTextReply();
+      }
+    });
+
+    generateBtn.addEventListener('click', () => {
+      progress.classList.add('show');
+      generateBtn.style.display = 'none';
+      preview.classList.remove('show');
+      insertActions.style.display = 'none';
+      let tick = 0;
+      progressLabel.textContent = '正在绘制 · gpt-image-2-all';
+      const timer = setInterval(() => {
+        tick += 1;
+        progressSec.textContent = tick + 's';
+        progressBar.style.width = Math.min(92, 12 + tick * 18) + '%';
+        if (tick >= 5) {
+          clearInterval(timer);
+          progress.classList.remove('show');
+          preview.classList.add('show');
+          insertActions.style.display = 'flex';
+          messages.scrollTop = messages.scrollHeight;
+        }
+      }, 450);
+    });
+
+    useOriginalBtn.addEventListener('click', () => {
+      promptBox.value = docExcerpt + '\n\n请把这段正文构思成一张横版配图，强调“列表变成森林、评论成为回声、知识卡片浮出水面”的意象。';
+    });
+    resetBtn.addEventListener('click', () => {
+      progress.classList.remove('show');
+      preview.classList.remove('show');
+      insertActions.style.display = 'none';
+      generateBtn.style.display = '';
+    });
+    insertBtn.addEventListener('click', () => {
+      insertedImage.classList.add('show');
+      insertBtn.textContent = '已插入';
+      insertBtn.disabled = true;
+    });
+    directDemo.addEventListener('click', () => setDemo('direct'));
+    textDemo.addEventListener('click', () => setDemo('text'));
+  </script>
+</body>
+</html>

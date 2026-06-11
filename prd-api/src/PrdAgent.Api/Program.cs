@@ -85,7 +85,11 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 // 添加服务
 builder.Services.AddScoped<PrdAgent.Api.Filters.PmAuditActionFilter>();
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        // 团队动态：全局白名单审计（白名单外的动作一次字典查找即逃逸）
+        options.Filters.Add<PrdAgent.Api.Filters.ActivityLogActionFilter>();
+    })
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -278,6 +282,9 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillServic
 builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.PmAgentService>();
+
+// 演讲智能体（长文本 → 思维导图演讲）
+builder.Services.AddScoped<PrdAgent.Api.Services.SpeechAgentService>();
 
 // 技能引导 Agent
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.SkillAgentService>();

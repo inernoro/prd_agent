@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -8,6 +10,8 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -27,6 +31,8 @@ public class PmAgentController : ControllerBase
     private readonly PmAgentService _pmService;
     private readonly IAssetStorage _assetStorage;
     private readonly IHostedSiteService _hostedSites;
+    private readonly ILlmGateway _gateway;
+    private readonly IFileContentExtractor _fileExtractor;
     private readonly ILogger<PmAgentController> _logger;
 
     public PmAgentController(
@@ -34,12 +40,16 @@ public class PmAgentController : ControllerBase
         PmAgentService pmService,
         IAssetStorage assetStorage,
         IHostedSiteService hostedSites,
+        ILlmGateway gateway,
+        IFileContentExtractor fileExtractor,
         ILogger<PmAgentController> logger)
     {
         _db = db;
         _pmService = pmService;
         _assetStorage = assetStorage;
         _hostedSites = hostedSites;
+        _gateway = gateway;
+        _fileExtractor = fileExtractor;
         _logger = logger;
     }
 
@@ -1001,6 +1011,7 @@ public class PmAgentController : ControllerBase
                 leadId = g.LeadId, leadName = g.LeadName, confidence = g.Confidence,
                 score = g.Score, scoreNote = g.ScoreNote, scoredAt = g.ScoredAt, scoredByName = g.ScoredByName,
                 progress = effective, progressMode = g.ProgressMode, linkedMilestoneCount = linked.Count,
+                isMilestone = linked.Any(m => m.AutoFromGoal),
                 status = g.Status, createdBy = g.CreatedBy, createdByName = g.CreatedByName,
                 orderKey = g.OrderKey, createdAt = g.CreatedAt, updatedAt = g.UpdatedAt,
             };
@@ -1116,6 +1127,114 @@ public class PmAgentController : ControllerBase
         }
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
         await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>把目标设为/取消里程碑：开 → 建一条联动里程碑(AutoFromGoal=true，GoalId 关联)；关 → 删除该联动里程碑。
+    /// 团队/个人目标都支持（个人目标仅本人，团队目标 owner/leader）。</summary>
+    [HttpPost("goals/{goalId}/milestone")]
+    public async Task<IActionResult> ToggleGoalMilestone(string goalId, [FromBody] ToggleGoalMilestoneRequest request)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        var project = await FindAccessibleProjectAsync(g.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可操作"));
+        if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可操作"));
+
+        var existing = await _db.PmMilestones.Find(m => m.GoalId == goalId && m.AutoFromGoal).FirstOrDefaultAsync();
+        if (request.Enabled)
+        {
+            if (existing == null)
+            {
+                var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+                await _db.PmMilestones.InsertOneAsync(new PmMilestone
+                {
+                    ProjectId = g.ProjectId,
+                    Title = g.Title,
+                    Description = g.Description,
+                    GoalId = goalId,
+                    OwnerId = g.LeadId,
+                    OwnerName = g.LeadName,
+                    AutoFromGoal = true,
+                    Status = PmMilestoneStatus.Planned,
+                    OrderKey = DateTime.UtcNow.Ticks,
+                    CreatedBy = userId,
+                    CreatedByName = creatorName,
+                });
+            }
+            return Ok(ApiResponse<object>.Ok(new { isMilestone = true }));
+        }
+        await _db.PmMilestones.DeleteManyAsync(m => m.GoalId == goalId && m.AutoFromGoal);
+        return Ok(ApiResponse<object>.Ok(new { isMilestone = false }));
+    }
+
+    /// <summary>调整目标层级（画布拖拽，Xmind 式）：把目标挂到新父目标下，或升为顶层(parentId 空)。
+    /// 校验：同范围、不挂到自身/后代(防环)、调整后层级不超上限；级联更新整棵子树的 Depth。</summary>
+    [HttpPost("goals/{goalId}/reparent")]
+    public async Task<IActionResult> ReparentGoal(string goalId, [FromBody] ReparentGoalRequest request)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        var project = await FindAccessibleProjectAsync(g.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可调整"));
+        if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可调整"));
+
+        var newParentId = string.IsNullOrWhiteSpace(request.ParentId) ? null : request.ParentId;
+        if (newParentId == goalId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能挂到自己下面"));
+        if (newParentId == (g.ParentId ?? null))
+            return Ok(ApiResponse<object>.Ok(new { updated = false })); // 没变化
+
+        var all = await _db.PmGoals.Find(x => x.ProjectId == g.ProjectId).ToListAsync();
+        var childrenByParent = all.GroupBy(x => x.ParentId ?? "").ToDictionary(x => x.Key, x => x.ToList());
+
+        var newBaseDepth = 0;
+        if (newParentId != null)
+        {
+            var parent = all.FirstOrDefault(x => x.Id == newParentId);
+            if (parent == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标父级不存在"));
+            if (parent.Scope != g.Scope)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅可在同一范围（团队/个人）内调整层级"));
+            // 防环：新父不能是本目标的后代
+            var subtree = new HashSet<string>();
+            var st = new Stack<string>(); st.Push(goalId);
+            while (st.Count > 0) { var cur = st.Pop(); if (!subtree.Add(cur)) continue; if (childrenByParent.TryGetValue(cur, out var cs)) foreach (var c in cs) st.Push(c.Id); }
+            if (subtree.Contains(newParentId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能挂到自己的子目标下（会形成循环）"));
+            newBaseDepth = parent.Depth + 1;
+        }
+
+        // BFS 计算子树新深度并校验上限
+        var newDepth = new Dictionary<string, int>();
+        var q = new Queue<(string id, int depth)>(); q.Enqueue((goalId, newBaseDepth));
+        while (q.Count > 0)
+        {
+            var (id, depth) = q.Dequeue();
+            if (newDepth.ContainsKey(id)) continue;
+            if (depth >= PmGoal.MaxGoalDepth)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"调整后层级超过上限（最多 {PmGoal.MaxGoalDepth} 层）"));
+            newDepth[id] = depth;
+            if (childrenByParent.TryGetValue(id, out var cs)) foreach (var c in cs) q.Enqueue((c.Id, depth + 1));
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var kv in newDepth)
+        {
+            if (kv.Key == goalId)
+                await _db.PmGoals.UpdateOneAsync(x => x.Id == kv.Key,
+                    Builders<PmGoal>.Update.Set(x => x.ParentId, newParentId).Set(x => x.Depth, kv.Value).Set(x => x.UpdatedAt, now));
+            else
+                await _db.PmGoals.UpdateOneAsync(x => x.Id == kv.Key,
+                    Builders<PmGoal>.Update.Set(x => x.Depth, kv.Value).Set(x => x.UpdatedAt, now));
+        }
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
 
@@ -1410,6 +1529,9 @@ public class PmAgentController : ControllerBase
     {
         if (m.Status == PmMilestoneStatus.Reached) return "reached";
         if (m.Status == PmMilestoneStatus.Cancelled) return "cancelled";
+        // 有实际完成时间即视为已完成 —— 不再按"未完成"判逾期。
+        // 早于/等于计划截止 = 按时达成；晚于计划截止仍算完成（滑移由 slippageDays 单独体现）。
+        if (m.ReachedAt.HasValue) return "reached";
         var allDone = total > 0 && done >= total;
         var today = DateTime.UtcNow.Date;
         if (m.DueAt.HasValue && !allDone)
@@ -1606,6 +1728,11 @@ public class PmAgentController : ControllerBase
             else if (request.Status != PmMilestoneStatus.Reached && m.Status == PmMilestoneStatus.Reached)
                 update = update.Set(x => x.ReachedAt, (DateTime?)null);
         }
+        // 实际完成时间（可补录，独立于状态切换）：显式设置优先于上面的状态联动
+        if (request.ClearReachedAt == true)
+            update = update.Set(x => x.ReachedAt, (DateTime?)null);
+        else if (request.ReachedAt.HasValue)
+            update = update.Set(x => x.ReachedAt, request.ReachedAt);
         await _db.PmMilestones.UpdateOneAsync(x => x.Id == milestoneId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
@@ -2319,12 +2446,22 @@ public class PmAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Title))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务标题不能为空"));
 
+        // 两级子任务约束：父任务必须存在、同项目，且自身不能已是子任务（否则会变三级）
+        var parentId = string.IsNullOrWhiteSpace(request.ParentTaskId) ? null : request.ParentTaskId;
+        if (parentId != null)
+        {
+            var parentErr = await ValidateParentForTwoLevelAsync(projectId, parentId, childId: null);
+            if (parentErr != null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, parentErr));
+        }
+
+        var progress = ClampProgress(request.ProgressPercent ?? 0);
         var task = new PmTask
         {
             ProjectId = projectId,
             Title = request.Title.Trim(),
             Description = request.Description?.Trim(),
-            ParentTaskId = request.ParentTaskId,
+            ParentTaskId = parentId,
             MilestoneId = string.IsNullOrWhiteSpace(request.MilestoneId) ? null : request.MilestoneId,
             GoalId = string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId,
             Status = PmTaskStatus.All.Contains(request.Status ?? "") ? request.Status! : PmTaskStatus.Backlog,
@@ -2336,10 +2473,14 @@ public class PmAgentController : ControllerBase
             DependsOn = request.DependsOn ?? new(),
             Labels = request.Labels ?? new(),
             OrderKey = request.OrderKey ?? DateTime.UtcNow.Ticks,
+            ProgressPercent = progress,
+            AutoProgress = request.ProgressPercent == null,
             CreatedBy = userId,
         };
         await FillAssigneeNameAsync(task);
         await _db.PmTasks.InsertOneAsync(task);
+        // 新增子任务 → 父任务转自动汇总并重算进度
+        if (parentId != null) await RecalcParentProgressAsync(parentId);
         await RecalcTaskCountAsync(projectId);
         return Ok(ApiResponse<object>.Ok(task));
     }
@@ -2430,8 +2571,47 @@ public class PmAgentController : ControllerBase
         // GoalId：空串=解除归属（置 null），非空=归属
         if (request.GoalId != null) update = update.Set(t => t.GoalId, string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId);
 
+        // 手填进度 → 该任务转为手动进度（不再被自动汇总覆盖）
+        var manualProgressSet = false;
+        if (request.ProgressPercent.HasValue)
+        {
+            update = update.Set(t => t.ProgressPercent, ClampProgress(request.ProgressPercent.Value))
+                           .Set(t => t.AutoProgress, false);
+            manualProgressSet = true;
+        }
+
+        // 重设父任务（两级约束）：空串=升为顶层，非空=挂为子任务
+        string? newParentId = null;
+        var reparented = false;
+        if (request.ParentTaskId != null)
+        {
+            newParentId = string.IsNullOrWhiteSpace(request.ParentTaskId) ? null : request.ParentTaskId;
+            if (newParentId != (task.ParentTaskId ?? null))
+            {
+                if (newParentId != null)
+                {
+                    var parentErr = await ValidateParentForTwoLevelAsync(task.ProjectId, newParentId, childId: taskId);
+                    if (parentErr != null)
+                        return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, parentErr));
+                }
+                update = update.Set(t => t.ParentTaskId, newParentId);
+                reparented = true;
+            }
+        }
+
         await _db.PmTasks.UpdateOneAsync(t => t.Id == taskId, update);
         if (request.Status != null) await RecalcTaskCountAsync(task.ProjectId);
+
+        // 进度汇总：状态/进度/父子关系变化时，重算相关父任务
+        if (request.Status != null || manualProgressSet)
+        {
+            if (task.ParentTaskId != null) await RecalcParentProgressAsync(task.ParentTaskId);
+        }
+        if (reparented)
+        {
+            if (task.ParentTaskId != null) await RecalcParentProgressAsync(task.ParentTaskId); // 旧父
+            if (newParentId != null) await RecalcParentProgressAsync(newParentId);              // 新父
+        }
 
         // 变更留痕（仅记录关键字段）
         var changes = new List<PmTaskActivity>();
@@ -2495,6 +2675,110 @@ public class PmAgentController : ControllerBase
         await NotifyMentionsAsync(request.MentionedUserIds, userId, actorName, task, activity.Content ?? "");
 
         return Ok(ApiResponse<object>.Ok(activity));
+    }
+
+    // ─────────────────────────────────────────────
+    // 任务工作日志（处理人按天记录"做了什么、完成多少进度"，流水多条）
+    // ─────────────────────────────────────────────
+
+    /// <summary>列出某任务的工作日志（按日期 + 创建时间倒序）</summary>
+    [HttpGet("tasks/{taskId}/work-logs")]
+    public async Task<IActionResult> GetWorkLogs(string taskId)
+    {
+        var userId = GetUserId();
+        var task = await _db.PmTasks.Find(t => t.Id == taskId).FirstOrDefaultAsync();
+        if (task == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        if (await FindAccessibleProjectAsync(task.ProjectId, userId) == null)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权操作"));
+
+        var items = await _db.PmTaskWorkLogs.Find(w => w.TaskId == taskId)
+            .SortByDescending(w => w.Date).Limit(500).ToListAsync();
+        items = items.OrderByDescending(w => w.Date).ThenByDescending(w => w.CreatedAt).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>新增一条工作日志（带进度时联动更新任务进度）</summary>
+    [HttpPost("tasks/{taskId}/work-logs")]
+    public async Task<IActionResult> CreateWorkLog(string taskId, [FromBody] CreateWorkLogRequest request)
+    {
+        var userId = GetUserId();
+        var task = await _db.PmTasks.Find(t => t.Id == taskId).FirstOrDefaultAsync();
+        if (task == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        if (await FindAccessibleProjectAsync(task.ProjectId, userId) == null)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权操作"));
+        if (string.IsNullOrWhiteSpace(request.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "工作内容不能为空"));
+
+        var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var log = new PmTaskWorkLog
+        {
+            TaskId = taskId,
+            ProjectId = task.ProjectId,
+            UserId = userId,
+            UserName = actorName,
+            Date = (request.Date ?? DateTime.UtcNow).Date,
+            Content = request.Content.Trim(),
+            DurationMinutes = request.DurationMinutes,
+            ProgressPercent = request.ProgressPercent.HasValue ? ClampProgress(request.ProgressPercent.Value) : null,
+            Category = DailyLogCategory.All.Contains(request.Category ?? "") ? request.Category! : DailyLogCategory.Development,
+        };
+        await _db.PmTaskWorkLogs.InsertOneAsync(log);
+
+        // 带进度 → 联动更新任务进度（仅叶子任务；父任务进度由子任务汇总，不被日志覆盖）
+        if (request.ProgressPercent.HasValue)
+        {
+            var hasChildren = await _db.PmTasks.Find(t => t.ParentTaskId == taskId).AnyAsync();
+            if (!hasChildren)
+            {
+                var p = ClampProgress(request.ProgressPercent.Value);
+                await _db.PmTasks.UpdateOneAsync(t => t.Id == taskId,
+                    Builders<PmTask>.Update
+                        .Set(t => t.ProgressPercent, p)
+                        .Set(t => t.AutoProgress, false)
+                        .Set(t => t.UpdatedAt, DateTime.UtcNow));
+                await _db.PmTaskActivities.InsertOneAsync(new PmTaskActivity
+                {
+                    TaskId = taskId, ProjectId = task.ProjectId, Type = PmActivityType.Change,
+                    UserId = userId, UserName = actorName,
+                    Field = "progress", FromValue = task.ProgressPercent.ToString(), ToValue = p.ToString(),
+                });
+                if (task.ParentTaskId != null) await RecalcParentProgressAsync(task.ParentTaskId);
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(log));
+    }
+
+    /// <summary>编辑工作日志（仅作者本人）</summary>
+    [HttpPut("work-logs/{logId}")]
+    public async Task<IActionResult> UpdateWorkLog(string logId, [FromBody] UpdateWorkLogRequest request)
+    {
+        var userId = GetUserId();
+        var log = await _db.PmTaskWorkLogs.Find(w => w.Id == logId).FirstOrDefaultAsync();
+        if (log == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "日志不存在"));
+        if (log.UserId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能编辑本人填写的日志"));
+
+        var update = Builders<PmTaskWorkLog>.Update.Set(w => w.UpdatedAt, DateTime.UtcNow);
+        if (request.Content != null) update = update.Set(w => w.Content, request.Content.Trim());
+        if (request.Date.HasValue) update = update.Set(w => w.Date, request.Date.Value.Date);
+        if (request.DurationMinutes.HasValue) update = update.Set(w => w.DurationMinutes, request.DurationMinutes);
+        if (request.ProgressPercent.HasValue) update = update.Set(w => w.ProgressPercent, ClampProgress(request.ProgressPercent.Value));
+        if (request.Category != null && DailyLogCategory.All.Contains(request.Category)) update = update.Set(w => w.Category, request.Category);
+        await _db.PmTaskWorkLogs.UpdateOneAsync(w => w.Id == logId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除工作日志（仅作者本人）</summary>
+    [HttpDelete("work-logs/{logId}")]
+    public async Task<IActionResult> DeleteWorkLog(string logId)
+    {
+        var userId = GetUserId();
+        var log = await _db.PmTaskWorkLogs.Find(w => w.Id == logId).FirstOrDefaultAsync();
+        if (log == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "日志不存在"));
+        if (log.UserId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能删除本人填写的日志"));
+        await _db.PmTaskWorkLogs.DeleteOneAsync(w => w.Id == logId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
     /// <summary>评论 @ 提醒：给被提及用户各写一条站内通知。失败不影响评论本身。</summary>
@@ -2600,6 +2884,10 @@ public class PmAgentController : ControllerBase
         await _db.PmTasks.UpdateManyAsync(
             t => t.ProjectId == task.ProjectId,
             Builders<PmTask>.Update.PullAll(t => t.DependsOn, toDelete));
+        // 同时清理被删任务相关的工作日志
+        await _db.PmTaskWorkLogs.DeleteManyAsync(w => toDelete.Contains(w.TaskId));
+        // 删的是子任务 → 重算父任务进度
+        if (task.ParentTaskId != null) await RecalcParentProgressAsync(task.ParentTaskId);
         await RecalcTaskCountAsync(task.ProjectId);
         return Ok(ApiResponse<object>.Ok(new { deletedCount = result.DeletedCount }));
     }
@@ -2981,6 +3269,45 @@ public class PmAgentController : ControllerBase
                 .Set(p => p.UpdatedAt, DateTime.UtcNow));
     }
 
+    private static int ClampProgress(int v) => PmTask.ClampProgress(v);
+
+    /// <summary>
+    /// 校验某任务能否作为两级层级里的父任务。返回 null 表示通过，否则返回错误文案。
+    /// </summary>
+    private async Task<string?> ValidateParentForTwoLevelAsync(string projectId, string parentId, string? childId)
+    {
+        if (childId != null && parentId == childId)
+            return "父任务不能是自己";
+        var parent = await _db.PmTasks.Find(t => t.Id == parentId).FirstOrDefaultAsync();
+        if (parent == null || parent.ProjectId != projectId)
+            return "父任务不存在或不在同一项目";
+        if (parent.ParentTaskId != null)
+            return "仅支持两级子任务：所选任务本身已是子任务";
+        // 目标任务若已有子任务，则它是父任务，不能再被挂到别人下面（否则其子任务变三级）
+        if (childId != null)
+        {
+            var childHasChildren = await _db.PmTasks.Find(t => t.ProjectId == projectId && t.ParentTaskId == childId).AnyAsync();
+            if (childHasChildren)
+                return "仅支持两级子任务：该任务已有子任务，不能再挂为他人的子任务";
+        }
+        return null;
+    }
+
+    /// <summary>重算父任务进度并落库（由子任务汇总，无子任务则不动）。</summary>
+    private async Task RecalcParentProgressAsync(string parentTaskId)
+    {
+        var parent = await _db.PmTasks.Find(t => t.Id == parentTaskId).FirstOrDefaultAsync();
+        if (parent == null) return;
+        var children = await _db.PmTasks.Find(t => t.ParentTaskId == parentTaskId).ToListAsync();
+        var progress = PmTask.ComputeParentProgress(children);
+        if (progress == null) return; // 没有子任务则不动父任务进度
+        var update = Builders<PmTask>.Update
+            .Set(t => t.AutoProgress, true)
+            .Set(t => t.ProgressPercent, progress.Value)
+            .Set(t => t.UpdatedAt, DateTime.UtcNow);
+        await _db.PmTasks.UpdateOneAsync(t => t.Id == parentTaskId, update);
+    }
+
     private async Task WriteSseEvent(string eventName, object data)
     {
         try
@@ -2992,9 +3319,607 @@ public class PmAgentController : ControllerBase
         catch (ObjectDisposedException) { }
         catch (OperationCanceledException) { }
     }
+
+    // ─────────────────────────────────────────────
+    // 首页工作台（以「人」为中心，跨项目）：我的待办 / 便捷操作偏好 / AI 助手
+    // ─────────────────────────────────────────────
+
+    /// <summary>当前用户可访问的项目（与 ListProjects 的 all 口径一致），按更新时间倒序。</summary>
+    private async Task<List<PmProject>> ListAccessibleProjectsAsync(string userId, int limit)
+    {
+        var b = Builders<PmProject>.Filter;
+        var filter = b.And(
+            b.Eq(p => p.IsDeleted, false),
+            b.Or(
+                b.Eq(p => p.OwnerId, userId),
+                b.Eq(p => p.LeaderId, userId),
+                b.AnyEq(p => p.MemberIds, userId),
+                b.AnyEq(p => p.ObserverIds, userId),
+                b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)));
+        return await _db.PmProjects.Find(filter).SortByDescending(p => p.UpdatedAt).Limit(limit).ToListAsync();
+    }
+
+    /// <summary>
+    /// 我的待办（跨项目）：指派给我的未完成任务（逾期优先、截止近的在前）+ 待我打分的结案评价。
+    /// </summary>
+    [HttpGet("my-todos")]
+    public async Task<IActionResult> GetMyTodos()
+    {
+        var userId = GetUserId();
+        var projects = await ListAccessibleProjectsAsync(userId, 100);
+        var titleById = projects.ToDictionary(p => p.Id, p => p.Title);
+        var projIds = projects.Select(p => p.Id).ToList();
+        var tasks = projIds.Count == 0
+            ? new List<PmTask>()
+            : await _db.PmTasks.Find(t =>
+                    projIds.Contains(t.ProjectId) && t.AssigneeId == userId
+                    && t.Status != PmTaskStatus.Done && t.Status != PmTaskStatus.Cancelled)
+                .ToListAsync();
+
+        var today = DateTime.UtcNow.Date;
+        var items = new List<object>();
+
+        // 待我打分的结案评价（收集中且我未打分）
+        foreach (var p in projects)
+        {
+            var round = p.EvaluationRound;
+            if (round == null || round.Status != PmEvaluationRoundStatus.Collecting) continue;
+            if (round.Participants.Any(x => x.UserId == userId && x.Score == null))
+                items.Add(new
+                {
+                    kind = "evaluation",
+                    id = p.Id,
+                    projectId = p.Id,
+                    projectTitle = p.Title,
+                    title = "结案评价待打分",
+                    dueAt = (DateTime?)null,
+                    priority = (string?)null,
+                    status = (string?)null,
+                    overdue = false,
+                });
+        }
+
+        foreach (var t in tasks
+            .OrderByDescending(t => t.DueAt.HasValue && t.DueAt.Value < today)
+            .ThenBy(t => t.DueAt ?? DateTime.MaxValue)
+            .Take(50))
+        {
+            items.Add(new
+            {
+                kind = "task",
+                id = t.Id,
+                projectId = t.ProjectId,
+                projectTitle = titleById.GetValueOrDefault(t.ProjectId, ""),
+                title = t.Title,
+                dueAt = t.DueAt,
+                priority = (string?)t.Priority,
+                status = (string?)t.Status,
+                overdue = t.DueAt.HasValue && t.DueAt.Value < today,
+            });
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
+    }
+
+    /// <summary>
+    /// 跨项目执行数据报表（与 NPSS 看板分工：NPSS 管经营评价/奖金，本端点管执行数据）。
+    /// scope: managed(我管理的) / related(我相关的) / all(默认，全部我可见的)。
+    /// </summary>
+    [HttpGet("reports/summary")]
+    public async Task<IActionResult> GetReportsSummary([FromQuery] string? scope = null)
+    {
+        var userId = GetUserId();
+        var b = Builders<PmProject>.Filter;
+        var conds = new List<FilterDefinition<PmProject>> { b.Eq(p => p.IsDeleted, false) };
+        var managed = b.Eq(p => p.LeaderId, userId);
+        var related = b.And(
+            b.Or(
+                b.AnyEq(p => p.MemberIds, userId),
+                b.AnyEq(p => p.ObserverIds, userId),
+                b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)),
+            b.Ne(p => p.LeaderId, userId));
+        if (scope == "managed") conds.Add(managed);
+        else if (scope == "related") conds.Add(related);
+        else conds.Add(b.Or(
+            b.Eq(p => p.OwnerId, userId), b.Eq(p => p.LeaderId, userId),
+            b.AnyEq(p => p.MemberIds, userId), b.AnyEq(p => p.ObserverIds, userId),
+            b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)));
+
+        var projects = await _db.PmProjects.Find(b.And(conds)).SortByDescending(p => p.UpdatedAt).Limit(200).ToListAsync();
+        var projIds = projects.Select(p => p.Id).ToList();
+        var titleById = projects.ToDictionary(p => p.Id, p => p.Title);
+        var today = DateTime.UtcNow.Date;
+
+        var tasks = projIds.Count == 0 ? new List<PmTask>() : await _db.PmTasks
+            .Find(t => projIds.Contains(t.ProjectId)).Limit(3000).ToListAsync();
+        var milestones = projIds.Count == 0 ? new List<PmMilestone>() : await _db.PmMilestones
+            .Find(m => projIds.Contains(m.ProjectId)).Limit(500).ToListAsync();
+        var risks = projIds.Count == 0 ? new List<PmRisk>() : await _db.PmRisks
+            .Find(r => projIds.Contains(r.ProjectId)).Limit(500).ToListAsync();
+
+        // 项目维度：生命周期 / 类型分布
+        var lifecycleDist = PmProjectLifecycle.All
+            .Select(k => new { key = k, count = projects.Count(p => p.Lifecycle == k) })
+            .Where(x => x.count > 0).ToList();
+        var typeDist = PmProjectType.All
+            .Select(k => new { key = k, count = projects.Count(p => p.ProjectType == k) })
+            .Where(x => x.count > 0).ToList();
+
+        // 任务维度：状态分布 / 完成率 / 逾期 / 负责人 Top
+        bool IsOpen(PmTask t) => t.Status != PmTaskStatus.Done && t.Status != PmTaskStatus.Cancelled;
+        bool IsOverdue(PmTask t) => IsOpen(t) && t.DueAt.HasValue && t.DueAt.Value < today;
+        var doneCount = tasks.Count(t => t.Status == PmTaskStatus.Done);
+        var effective = tasks.Count(t => t.Status != PmTaskStatus.Cancelled);
+        var statusDist = PmTaskStatus.All
+            .Select(k => new { key = k, count = tasks.Count(t => t.Status == k) })
+            .Where(x => x.count > 0).ToList();
+        var assigneeTop = tasks
+            .Where(t => !string.IsNullOrWhiteSpace(t.AssigneeId))
+            .GroupBy(t => t.AssigneeId!)
+            .Select(g => new
+            {
+                name = g.Select(t => t.AssigneeName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "未知",
+                total = g.Count(),
+                done = g.Count(t => t.Status == PmTaskStatus.Done),
+                overdue = g.Count(IsOverdue),
+            })
+            .OrderByDescending(x => x.total).Take(10).ToList();
+
+        // 里程碑维度：达成 / 逾期未达成 / 即将到期
+        var msReached = milestones.Count(m => m.Status == PmMilestoneStatus.Reached);
+        var msOverdue = milestones.Count(m => m.Status == PmMilestoneStatus.Planned && m.DueAt.HasValue && m.DueAt.Value < today);
+        var msUpcoming = milestones
+            .Where(m => m.Status == PmMilestoneStatus.Planned && m.DueAt.HasValue && m.DueAt.Value >= today)
+            .OrderBy(m => m.DueAt)
+            .Take(8)
+            .Select(m => new { id = m.Id, projectId = m.ProjectId, projectTitle = titleById.GetValueOrDefault(m.ProjectId, ""), title = m.Title, dueAt = m.DueAt })
+            .ToList();
+
+        // 风险维度：概率 x 影响矩阵 + 高分 Top
+        int W(string level) => level == PmRiskLevel.High ? 3 : level == PmRiskLevel.Medium ? 2 : 1;
+        var openRisks = risks.Where(r => r.Status != PmRiskStatus.Closed).ToList();
+        var riskLevels = new[] { PmRiskLevel.High, PmRiskLevel.Medium, PmRiskLevel.Low };
+        var riskMatrix = (from prob in riskLevels
+                          from impact in riskLevels
+                          let count = openRisks.Count(r => r.Probability == prob && r.Impact == impact)
+                          where count > 0
+                          select new { probability = prob, impact, count }).ToList();
+        var riskTop = openRisks
+            .OrderByDescending(r => W(r.Probability) * W(r.Impact))
+            .Take(8)
+            .Select(r => new
+            {
+                id = r.Id, projectId = r.ProjectId,
+                projectTitle = titleById.GetValueOrDefault(r.ProjectId, ""),
+                title = r.Title, probability = r.Probability, impact = r.Impact,
+                status = r.Status, score = W(r.Probability) * W(r.Impact),
+            })
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            scope = scope == "managed" || scope == "related" ? scope : "all",
+            projectTotal = projects.Count,
+            lifecycleDist,
+            typeDist,
+            tasks = new
+            {
+                total = tasks.Count,
+                done = doneCount,
+                overdue = tasks.Count(IsOverdue),
+                completionRate = effective > 0 ? Math.Round(doneCount * 100.0 / effective) : 0,
+                statusDist,
+                assigneeTop,
+            },
+            milestones = new { total = milestones.Count, reached = msReached, overdue = msOverdue, upcoming = msUpcoming },
+            risks = new { open = openRisks.Count, matrix = riskMatrix, top = riskTop },
+        }));
+    }
+
+    /// <summary>项目管理智能体用户偏好（quickActionIds 为 null 表示从未配置，前端走默认）。</summary>
+    [HttpGet("preferences")]
+    public async Task<IActionResult> GetPmPreferences()
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences.Find(x => x.UserId == userId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { quickActionIds = prefs?.PmAgentPreferences?.QuickActionIds }));
+    }
+
+    /// <summary>更新首页「便捷操作」配置。id 对应前端 pmQuickActionRegistry，后端只存有序字符串列表（上限 50）。</summary>
+    [HttpPut("preferences/quick-actions")]
+    public async Task<IActionResult> UpdatePmQuickActions([FromBody] UpdatePmQuickActionsRequest request)
+    {
+        var userId = GetUserId();
+        var ids = (request.QuickActionIds ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct()
+            .Take(50)
+            .ToList();
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.PmAgentPreferences, new PmAgentPreferences { QuickActionIds = ids })
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.UserPreferences.UpdateOneAsync(x => x.UserId == userId, update, new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { quickActionIds = ids }));
+    }
+
+    /// <summary>
+    /// AI 助手附件解析：上传 md / pdf，提取纯文本返回（无状态不落库，文本由前端随提问回传）。
+    /// </summary>
+    [HttpPost("assistant/attachments")]
+    [RequestSizeLimit(12 * 1024 * 1024)]
+    public async Task<IActionResult> ExtractAssistantAttachment(IFormFile file)
+    {
+        var result = await AssistantAttachmentHelper.ExtractAsync(_fileExtractor, file);
+        if (!result.Ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error!));
+        return Ok(ApiResponse<object>.Ok(new { name = result.Name, text = result.Text, chars = result.Chars, truncated = result.Truncated }));
+    }
+
+    /// <summary>
+    /// 首页 AI 助手（SSE：phase/typing/action/done/error）。
+    /// 以当前用户为中心、跨其全部相关项目（项目/目标/里程碑/任务/风险摘要）为上下文回答问题；
+    /// 可通过 &lt;&lt;&lt;ACTIONS&gt;&gt;&gt; 动作协议代用户创建项目/目标/里程碑/任务（与 product-agent 工作助手同款机制）。
+    /// </summary>
+    [HttpPost("assistant/ask")]
+    public async Task AssistantAsk([FromBody] PmAssistantAskRequest request)
+    {
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        var userId = GetUserId();
+        var question = (request.Question ?? "").Trim();
+        if (question.Length == 0) { await WriteSseEvent("error", new { message = "请输入问题" }); return; }
+        if (question.Length > 1000) question = question[..1000];
+
+        await WriteSseEvent("phase", new { message = "正在汇总你相关的项目数据…" });
+
+        var me = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var myName = string.IsNullOrWhiteSpace(me?.DisplayName) ? (me?.Username ?? "用户") : me!.DisplayName!;
+        var projects = await ListAccessibleProjectsAsync(userId, 20);
+        var projIds = projects.Select(p => p.Id).ToList();
+
+        var goals = projIds.Count == 0 ? new List<PmGoal>() : await _db.PmGoals
+            .Find(g => projIds.Contains(g.ProjectId)).SortBy(g => g.OrderKey).Limit(120).ToListAsync();
+        var milestones = projIds.Count == 0 ? new List<PmMilestone>() : await _db.PmMilestones
+            .Find(m => projIds.Contains(m.ProjectId)).SortBy(m => m.DueAt).Limit(120).ToListAsync();
+        var risks = projIds.Count == 0 ? new List<PmRisk>() : await _db.PmRisks
+            .Find(r => projIds.Contains(r.ProjectId) && r.Status != PmRiskStatus.Closed).Limit(60).ToListAsync();
+        var myTasks = projIds.Count == 0 ? new List<PmTask>() : await _db.PmTasks
+            .Find(t => projIds.Contains(t.ProjectId) && t.AssigneeId == userId
+                && t.Status != PmTaskStatus.Done && t.Status != PmTaskStatus.Cancelled)
+            .Limit(80).ToListAsync();
+        var today = DateTime.UtcNow.Date;
+        var overdueTasks = projIds.Count == 0 ? new List<PmTask>() : await _db.PmTasks
+            .Find(t => projIds.Contains(t.ProjectId) && t.DueAt < today
+                && t.Status != PmTaskStatus.Done && t.Status != PmTaskStatus.Cancelled)
+            .Limit(40).ToListAsync();
+
+        string D(DateTime? t) => t.HasValue ? t.Value.ToString("yyyy-MM-dd") : "—";
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"# 当前用户：{myName}");
+        sb.AppendLine($"今日：{DateTime.UtcNow:yyyy-MM-dd}（涉及本周/本月时以此为准）");
+        sb.AppendLine($"\n## 我相关的项目（{projects.Count}）");
+        foreach (var p in projects)
+        {
+            var role = p.LeaderId == userId ? "项目经理" : p.OwnerId == userId ? "立项人" : p.MemberIds.Contains(userId) ? "成员" : "观察者/干系人";
+            sb.AppendLine($"- [{p.ProjectNo}] {p.Title}（类型 {p.ProjectType}，生命周期 {p.Lifecycle}，我的角色 {role}；任务 {p.DoneTaskCount}/{p.TaskCount}；计划 {D(p.PlannedStartAt)}~{D(p.PlannedEndAt)}；预算 {(p.Budget?.ToString("0") ?? "—")}，实际 {(p.ActualCost?.ToString("0") ?? "—")}）目标：{p.BusinessGoal}");
+        }
+        var noById = projects.ToDictionary(p => p.Id, p => $"[{p.ProjectNo}]{p.Title}");
+        string PN(string projectId) => noById.GetValueOrDefault(projectId, projectId);
+        if (goals.Count > 0)
+        {
+            sb.AppendLine($"\n## 目标（{goals.Count}）");
+            foreach (var g in goals) sb.AppendLine($"- {PN(g.ProjectId)} {g.Title}（{g.Scope}，状态 {g.Status}，进度 {g.Progress}%）{(string.IsNullOrWhiteSpace(g.Metric) ? "" : $" 指标：{g.Metric}")}");
+        }
+        if (milestones.Count > 0)
+        {
+            sb.AppendLine($"\n## 里程碑（{milestones.Count}）");
+            foreach (var m in milestones) sb.AppendLine($"- {PN(m.ProjectId)} {m.Title}（计划 {D(m.DueAt)}，实际达成 {D(m.ReachedAt)}，状态 {m.Status}）");
+        }
+        if (myTasks.Count > 0)
+        {
+            sb.AppendLine($"\n## 指派给我的未完成任务（{myTasks.Count}）");
+            foreach (var t in myTasks) sb.AppendLine($"- {PN(t.ProjectId)} {t.Title}（状态 {t.Status}，优先级 {t.Priority}，截止 {D(t.DueAt)}）");
+        }
+        if (overdueTasks.Count > 0)
+        {
+            sb.AppendLine($"\n## 已逾期任务（{overdueTasks.Count}，全员）");
+            foreach (var t in overdueTasks) sb.AppendLine($"- {PN(t.ProjectId)} {t.Title}（负责人 {t.AssigneeName ?? "未指派"}，截止 {D(t.DueAt)}，状态 {t.Status}）");
+        }
+        if (risks.Count > 0)
+        {
+            sb.AppendLine($"\n## 未关闭风险（{risks.Count}）");
+            foreach (var r in risks) sb.AppendLine($"- {PN(r.ProjectId)} {r.Title}（概率 {r.Probability}，影响 {r.Impact}，状态 {r.Status}）");
+        }
+
+        var ctx = sb.ToString();
+        if (ctx.Length > 14000) ctx = ctx[..14000] + "\n…（上下文过长已截断）";
+
+        var systemPrompt =
+            "你是「项目管理智能体」首页的 AI 助手，服务对象是用户「" + myName + "」。你的知识库仅限下面提供的该用户相关项目数据（项目/目标/里程碑/任务/风险）。\n" +
+            "要求：\n" +
+            "1. 只依据所给数据回答，不得编造；数据中没有的，明确说明「现有数据未覆盖」。可以跨项目对比分析（如哪个项目风险最高、我的任务分布）。\n" +
+            "2. 涉及本周/本月/逾期等口径时，按给定的今日日期与各对象的计划/截止/达成日期推算。\n" +
+            "3. 输出纯文本，禁止使用任何 Markdown 标记：不要 #、*、**、反引号、代码块、竖线表格。用自然段落和「· 」项目符号组织，必要时用「一、二、三」分节。\n" +
+            "4. 分析/查询类问题的结构固定为三段：先「结论」（2-4 句直接给判断），再「依据」（列数据与关系），最后「建议」（可执行的下一步）。\n" +
+            "5. 创建能力：你可以直接替用户创建 项目 / 目标 / 里程碑 / 任务。当用户明确要求创建时：\n" +
+            "   - 正文用 1-2 句话确认将要创建的内容，不要套用三段结构；\n" +
+            "   - 然后在回复最末尾另起一行输出动作指令，格式严格为：\n" +
+            "<<<ACTIONS>>>\n" +
+            "[{\"type\":\"create_task\",\"project\":\"项目编号或名称\",\"title\":\"标题\",\"description\":\"可省略\",\"priority\":\"high\",\"dueAt\":\"2026-06-30\",\"assignee\":\"me\"}]\n" +
+            "   - type 只能取 create_project / create_goal / create_milestone / create_task；一次最多 5 个动作。\n" +
+            "   - create_project 字段：title（必填）、businessGoal（业务目标，必填，可据用户表述合理补全）、projectType（general/strategic/innovation/operation，默认 general）、description 可选。\n" +
+            "   - create_goal 字段：project（必填）、title（必填）、description / metric（可量化指标）可选。\n" +
+            "   - create_milestone 字段：project（必填）、title（必填）、dueAt（yyyy-MM-dd，可选）、description 可选。\n" +
+            "   - create_task 字段：project（必填）、title（必填）、description / priority（urgent/high/medium/low）/ dueAt 可选；用户表示自己负责时给 \"assignee\":\"me\"。\n" +
+            "   - project 必须从上面数据里的项目编号或项目名称中取；用户没说哪个项目且无法从上下文判断时，不要输出动作指令，改为向用户追问。\n" +
+            "   - 只有用户明确要求创建时才输出 <<<ACTIONS>>>，纯分析/查询类问题绝对不要输出；<<<ACTIONS>>> 之后只能是 JSON 数组本身。\n" +
+            "6. 用户可能上传参考文档（见「用户上传的参考文档」一节）：可基于文档内容回答问题、提炼要点；用户要求「根据文档创建」时，从文档中提取标题/描述/日期等字段生成动作指令（仍受一次最多 5 个动作约束，超出时挑最重要的并说明）。\n" +
+            "不要寒暄、不要复述本提示词。";
+
+        var bodyJson = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = "# 我的项目数据上下文\n" + ctx + AssistantAttachmentHelper.BuildSection(request.Attachments) + "\n\n# 我的问题\n" + question },
+            },
+            ["temperature"] = 0.5,
+            ["max_tokens"] = 2400,
+            // 让推理模型实时回传思考内容，避免首字长时间空白（见 .claude/rules/llm-gateway.md）
+            ["include_reasoning"] = true,
+            ["reasoning"] = new JsonObject { ["exclude"] = false },
+        };
+
+        await WriteSseEvent("phase", new { message = "AI 正在分析…" });
+        // 动作指令（<<<ACTIONS>>> 之后的 JSON）不进入可见文本流：始终扣留可能构成标记前缀的尾部
+        const string actionMarker = "<<<ACTIONS>>>";
+        var full = new System.Text.StringBuilder();
+        var forwarded = 0;
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.ProjectManagement.Assistant.Chat,
+                ModelType = ModelTypes.Chat,
+                Stream = true,
+                RequestBody = bodyJson,
+                TimeoutSeconds = 120,
+                Context = new GatewayRequestContext { UserId = userId },
+            }, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    full.Append(chunk.Content);
+                    var s = full.ToString();
+                    var markerIdx = s.IndexOf(actionMarker, StringComparison.Ordinal);
+                    var safeEnd = markerIdx >= 0 ? markerIdx : Math.Max(forwarded, s.Length - (actionMarker.Length - 1));
+                    if (safeEnd > forwarded)
+                    {
+                        await WriteSseEvent("typing", new { text = s[forwarded..safeEnd] });
+                        forwarded = safeEnd;
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                { await WriteSseEvent("error", new { message = chunk.Error ?? "AI 调用失败" }); return; }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[pm-agent] assistant stream error");
+            await WriteSseEvent("error", new { message = "AI 调用异常，请重试" });
+            return;
+        }
+
+        var fullText = full.ToString();
+        var actionIdx = fullText.IndexOf(actionMarker, StringComparison.Ordinal);
+        var visibleEnd = actionIdx >= 0 ? actionIdx : fullText.Length;
+        if (visibleEnd > forwarded)
+            await WriteSseEvent("typing", new { text = fullText[forwarded..visibleEnd] });
+
+        if (actionIdx >= 0)
+        {
+            var specs = ParsePmAssistantActions(fullText[(actionIdx + actionMarker.Length)..]);
+            foreach (var spec in specs)
+            {
+                await WriteSseEvent("phase", new { message = "正在执行操作…" });
+                var result = await ExecutePmAssistantActionAsync(userId, spec, projects);
+                await WriteSseEvent("action", result);
+            }
+        }
+        await WriteSseEvent("done", new { });
+    }
+
+    private sealed record PmAssistantActionSpec(
+        string Type, string? Project, string Title, string? Description,
+        string? Priority, string? DueAt, string? ProjectType, string? Metric, string? BusinessGoal, bool AssignToMe);
+
+    /// <summary>解析助手动作指令 JSON（容忍代码块围栏 / json 语言标），非法输入返回空列表，最多 5 条。</summary>
+    private static List<PmAssistantActionSpec> ParsePmAssistantActions(string raw)
+    {
+        var result = new List<PmAssistantActionSpec>();
+        var json = raw.Trim().Trim('`').Trim();
+        if (json.StartsWith("json", StringComparison.OrdinalIgnoreCase)) json = json[4..].Trim();
+        try
+        {
+            if (JsonNode.Parse(json) is not JsonArray arr) return result;
+            foreach (var node in arr.Take(5))
+            {
+                if (node is not JsonObject o) continue;
+                var type = o["type"]?.GetValue<string>() ?? "";
+                var title = (o["title"]?.GetValue<string>() ?? "").Trim();
+                if (type.Length == 0 || title.Length == 0) continue;
+                result.Add(new PmAssistantActionSpec(
+                    type,
+                    o["project"]?.GetValue<string>(),
+                    title,
+                    o["description"]?.GetValue<string>(),
+                    o["priority"]?.GetValue<string>(),
+                    o["dueAt"]?.GetValue<string>(),
+                    o["projectType"]?.GetValue<string>(),
+                    o["metric"]?.GetValue<string>(),
+                    o["businessGoal"]?.GetValue<string>(),
+                    string.Equals(o["assignee"]?.GetValue<string>(), "me", StringComparison.OrdinalIgnoreCase)));
+            }
+        }
+        catch
+        {
+            // LLM 输出非法 JSON：忽略动作，正文已正常返回
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 执行首页助手动作（创建项目/目标/里程碑/任务）。创建逻辑与对应 REST 端点对齐：
+    /// 编号生成、权限校验、冗余名称、计数重算。返回 SSE action 事件载荷。
+    /// </summary>
+    private async Task<object> ExecutePmAssistantActionAsync(string userId, PmAssistantActionSpec spec, List<PmProject> accessible)
+    {
+        var title = spec.Title.Length > 200 ? spec.Title[..200] : spec.Title;
+        var description = string.IsNullOrWhiteSpace(spec.Description) ? null : spec.Description!.Trim();
+        if (description is { Length: > 4000 }) description = description[..4000];
+        DateTime? dueAt = null;
+        if (!string.IsNullOrWhiteSpace(spec.DueAt)
+            && DateTime.TryParse(spec.DueAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsedDue))
+            dueAt = parsedDue;
+
+        PmProject? ResolveProject()
+        {
+            var r = spec.Project?.Trim();
+            if (string.IsNullOrWhiteSpace(r)) return null;
+            return accessible.FirstOrDefault(p => string.Equals(p.ProjectNo, r, StringComparison.OrdinalIgnoreCase))
+                ?? accessible.FirstOrDefault(p => string.Equals(p.Title, r, StringComparison.OrdinalIgnoreCase))
+                ?? (accessible.Count(p => p.Title.Contains(r!, StringComparison.OrdinalIgnoreCase)) == 1
+                    ? accessible.First(p => p.Title.Contains(r!, StringComparison.OrdinalIgnoreCase))
+                    : null);
+        }
+
+        object Fail(string kind, string error, PmProject? project = null) => new
+        { kind, ok = false, id = (string?)null, projectId = project?.Id, projectTitle = project?.Title, title, error = (string?)error };
+        object Success(string kind, string id, PmProject project) => new
+        { kind, ok = true, id = (string?)id, projectId = (string?)project.Id, projectTitle = (string?)project.Title, title, error = (string?)null };
+
+        try
+        {
+            switch (spec.Type)
+            {
+                case "create_project":
+                {
+                    var businessGoal = (spec.BusinessGoal ?? spec.Description ?? title).Trim();
+                    var me = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+                    var project = new PmProject
+                    {
+                        ProjectNo = await GenerateProjectNoAsync(),
+                        Title = title,
+                        Description = description,
+                        BusinessGoal = businessGoal,
+                        ProjectType = PmProjectType.All.Contains(spec.ProjectType ?? "") ? spec.ProjectType! : PmProjectType.General,
+                        Lifecycle = PmProjectLifecycle.Registered,
+                        LeaderId = userId,
+                        LeaderName = me?.DisplayName,
+                        MemberIds = new List<string> { userId },
+                        OwnerId = userId,
+                    };
+                    await _db.PmProjects.InsertOneAsync(project);
+                    _logger.LogInformation("[pm-agent] Assistant created project {ProjectNo} by {UserId}", project.ProjectNo, userId);
+                    return new { kind = "project", ok = true, id = (string?)project.Id, projectId = (string?)project.Id, projectTitle = (string?)project.Title, title, error = (string?)null };
+                }
+                case "create_goal":
+                {
+                    var project = ResolveProject();
+                    if (project == null) return Fail("goal", "未能定位项目，请说明项目编号或名称");
+                    // 团队目标仅 owner/leader 可建；其他成员落为个人目标（与 REST 端点权限对齐）
+                    var scope = (project.OwnerId == userId || project.LeaderId == userId) ? PmGoalScope.Team : PmGoalScope.Personal;
+                    var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+                    var goal = new PmGoal
+                    {
+                        ProjectId = project.Id,
+                        Scope = scope,
+                        OwnerId = userId,
+                        Title = title,
+                        Description = description,
+                        Metric = string.IsNullOrWhiteSpace(spec.Metric) ? null : spec.Metric!.Trim(),
+                        Status = PmGoalStatus.OnTrack,
+                        CreatedBy = userId,
+                        CreatedByName = creatorName,
+                        OrderKey = DateTime.UtcNow.Ticks,
+                    };
+                    await _db.PmGoals.InsertOneAsync(goal);
+                    return Success("goal", goal.Id, project);
+                }
+                case "create_milestone":
+                {
+                    var project = ResolveProject();
+                    if (project == null) return Fail("milestone", "未能定位项目，请说明项目编号或名称");
+                    if (project.OwnerId != userId && project.LeaderId != userId)
+                        return Fail("milestone", "仅立项人或项目经理可创建里程碑", project);
+                    var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+                    var milestone = new PmMilestone
+                    {
+                        ProjectId = project.Id,
+                        Title = title,
+                        Description = description,
+                        DueAt = dueAt,
+                        BaselineDueAt = dueAt,
+                        Status = PmMilestoneStatus.Planned,
+                        OrderKey = DateTime.UtcNow.Ticks,
+                        CreatedBy = userId,
+                        CreatedByName = creatorName,
+                    };
+                    await _db.PmMilestones.InsertOneAsync(milestone);
+                    return Success("milestone", milestone.Id, project);
+                }
+                case "create_task":
+                {
+                    var project = ResolveProject();
+                    if (project == null) return Fail("task", "未能定位项目，请说明项目编号或名称");
+                    var task = new PmTask
+                    {
+                        ProjectId = project.Id,
+                        Title = title,
+                        Description = description,
+                        Status = PmTaskStatus.Backlog,
+                        Priority = PmTaskPriority.All.Contains(spec.Priority ?? "") ? spec.Priority! : PmTaskPriority.Medium,
+                        AssigneeId = spec.AssignToMe ? userId : null,
+                        DueAt = dueAt,
+                        Source = PmTaskSource.AiDecompose,
+                        OrderKey = DateTime.UtcNow.Ticks,
+                        CreatedBy = userId,
+                    };
+                    await FillAssigneeNameAsync(task);
+                    await _db.PmTasks.InsertOneAsync(task);
+                    await RecalcTaskCountAsync(project.Id);
+                    return Success("task", task.Id, project);
+                }
+                default:
+                    return Fail(spec.Type, "不支持的动作类型");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[pm-agent] assistant action failed: {Type}", spec.Type);
+            return Fail(spec.Type.Replace("create_", ""), "创建失败，请重试");
+        }
+    }
 }
 
 // ── 请求模型 ──
+
+public class PmAssistantAskRequest
+{
+    public string? Question { get; set; }
+    /// <summary>随提问携带的参考文档（前端先调 assistant/attachments 提取文本后回传，最多 3 个）</summary>
+    public List<AssistantAttachmentInput>? Attachments { get; set; }
+}
+
+public class UpdatePmQuickActionsRequest
+{
+    public List<string>? QuickActionIds { get; set; }
+}
 
 public class CreatePmProjectRequest
 {
@@ -3217,6 +4142,8 @@ public class CreatePmTaskRequest
     public List<string>? DependsOn { get; set; }
     public List<string>? Labels { get; set; }
     public double? OrderKey { get; set; }
+    /// <summary>进度百分比 0-100（可选，叶子任务可创建即带进度）</summary>
+    public int? ProgressPercent { get; set; }
 }
 
 public class BatchCreatePmTasksRequest
@@ -3252,6 +4179,43 @@ public class UpdatePmTaskRequest
     public string? MilestoneId { get; set; }
     /// <summary>所属目标：传空串=解除归属，非空=归属，null=不变</summary>
     public string? GoalId { get; set; }
+    /// <summary>进度百分比 0-100（null=不变；叶子任务手填后该任务转为手动进度）</summary>
+    public int? ProgressPercent { get; set; }
+    /// <summary>父任务 ID：传空串=取消父子关系（升为顶层），非空=挂为该任务的子任务，null=不变</summary>
+    public string? ParentTaskId { get; set; }
+}
+
+public class CreateWorkLogRequest
+{
+    public string Content { get; set; } = string.Empty;
+    /// <summary>工作日期（默认今天）</summary>
+    public DateTime? Date { get; set; }
+    /// <summary>耗时（分钟，选填）</summary>
+    public int? DurationMinutes { get; set; }
+    /// <summary>填报进度 0-100（选填；带入则联动任务进度）</summary>
+    public int? ProgressPercent { get; set; }
+    /// <summary>分类（DailyLogCategory，选填）</summary>
+    public string? Category { get; set; }
+}
+
+public class UpdateWorkLogRequest
+{
+    public string? Content { get; set; }
+    public DateTime? Date { get; set; }
+    public int? DurationMinutes { get; set; }
+    public int? ProgressPercent { get; set; }
+    public string? Category { get; set; }
+}
+
+public class ToggleGoalMilestoneRequest
+{
+    public bool Enabled { get; set; }
+}
+
+public class ReparentGoalRequest
+{
+    /// <summary>新父目标 Id；空/缺省=升为顶层</summary>
+    public string? ParentId { get; set; }
 }
 
 public class MilestoneRequest
@@ -3271,6 +4235,10 @@ public class MilestoneRequest
     public bool? ResetBaseline { get; set; }
     public string? Status { get; set; }
     public long? OrderKey { get; set; }
+    /// <summary>实际完成时间（可补录）。非空=设置；配合 ClearReachedAt 清空。null=不变。</summary>
+    public DateTime? ReachedAt { get; set; }
+    /// <summary>true=清空实际完成时间。</summary>
+    public bool? ClearReachedAt { get; set; }
 }
 
 public class MilestoneCriterionInput

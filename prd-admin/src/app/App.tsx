@@ -48,6 +48,8 @@ function NavigationBridge() {
 //   2. AppShell 内但不进 launcher 的路由（admin 后端菜单 / 移动端 / 子路由）
 //   3. 子路由专用组件（如 LiteraryAgentEditorPageWrapper / WorkflowEditorPage 等）
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
+const InlineCommentBubbleMockupPage = lazy(() => import('@/pages/_mockup/InlineCommentBubbleMockupPage'));
+const InlineCommentOverlayProbe = lazy(() => import('@/pages/_mockup/InlineCommentOverlayProbe'));
 const JoinTeamPage = lazy(() => import('@/pages/JoinTeamPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
@@ -196,6 +198,11 @@ export default function App() {
         } />
 
         <Route path="/login" element={<LoginPage />} />
+
+        {/* 静态 mockup（无需登录），仅供评审样式 */}
+        <Route path="/_mockup/inline-comment-bubble" element={<InlineCommentBubbleMockupPage />} />
+        {/* 真实 InlineCommentOverlay 自测页（Playwright 取头像 img 尺寸断言） */}
+        <Route path="/_mockup/inline-comment-overlay-probe" element={<InlineCommentOverlayProbe />} />
 
         {/* 公开分享页面 - 无需登录 */}
         <Route path="/s/wp/:token" element={<ShareViewPage />} />

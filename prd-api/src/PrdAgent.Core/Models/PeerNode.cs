@@ -50,7 +50,7 @@ public static class PeerNodeStatus
 }
 
 /// <summary>
-/// 一次性配对码（管理员握手用，短 TTL，握手成功即失效）。
+/// 一次性配对码（管理员握手用，默认 3 天有效，握手成功即失效）。
 /// 集合 peer_pairing_codes，Id 即配对码本身。
 /// </summary>
 public class PeerPairingCode
@@ -61,14 +61,53 @@ public class PeerPairingCode
     /// <summary>生成该配对码的管理员 userId</summary>
     public string CreatedBy { get; set; } = string.Empty;
 
-    /// <summary>过期时间（默认 5 分钟）</summary>
-    public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddMinutes(5);
+    /// <summary>过期时间（默认 3 天）</summary>
+    public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(3);
 
     /// <summary>是否已被使用（一次性）</summary>
     public bool Used { get; set; }
 
     /// <summary>使用方（握手成功后记录对端 nodeId，审计用）</summary>
     public string? UsedByNodeId { get; set; }
+
+    /// <summary>两阶段握手 prepare 阶段暂存的发起方回连地址。</summary>
+    public string? PendingInitiatorBaseUrl { get; set; }
+
+    /// <summary>两阶段握手 prepare 阶段暂存的发起方展示名。</summary>
+    public string? PendingInitiatorDisplayName { get; set; }
+
+    /// <summary>两阶段握手 prepare 阶段生成的共享密钥；confirm 成功后才落 PeerNode。</summary>
+    public string? PendingSharedSecret { get; set; }
+
+    /// <summary>confirm 阶段若替换了已有节点，记录旧节点 ID 以便 cancel 回滚。</summary>
+    public string? PendingReplacedPeerNodeId { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的展示名。</summary>
+    public string? PendingPreviousDisplayName { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的地址。</summary>
+    public string? PendingPreviousBaseUrl { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的共享密钥。</summary>
+    public string? PendingPreviousSharedSecret { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的状态。</summary>
+    public string? PendingPreviousStatus { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的最后错误。</summary>
+    public string? PendingPreviousLastError { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的最后通信时间。</summary>
+    public DateTime? PendingPreviousLastContactAt { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的创建人。</summary>
+    public string? PendingPreviousCreatedBy { get; set; }
+
+    /// <summary>两阶段握手 confirm 完成时间。</summary>
+    public DateTime? ConfirmedAt { get; set; }
+
+    /// <summary>发起端完成探活和本地落库后写入；写入后 cancel 不能再撤销正式连接。</summary>
+    public DateTime? FinalizedAt { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

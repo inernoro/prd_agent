@@ -78,6 +78,12 @@
 - [统一短链系统规格](spec.short-links) `spec.short-links`
   > 统一短链系统产品规格，已落地（PR #613）
 
+- [演讲智能体产品规格](spec.speech-agent) `spec.speech-agent`
+  > 长文本/文档转思维导图风格的可演讲材料，首期 mindmap 模式（MVP 已落地）
+
+- [前端搭档智能体产品规格](spec.front-end-agent) `spec.front-end-agent`
+  > 面向后端同事的前端交付助手：接 API、写组件、修报错、看截图现象
+
 ### 二、设计文档
 
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
@@ -89,8 +95,12 @@
 
 - [智能体宇宙设计](design.agent-universe) `design.agent-universe`
   > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
+- [知识库智能体架构设计](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
+  > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
+- [团队动态设计](design.team-activity) `design.team-activity`
+  > 全局白名单审计 Filter 自动留痕 + TargetTitle 标题快照（删除前预读）+ 管理员时间线页（/team-activity）
 
 - [LLM Gateway 统一调用架构设计](design.llm-gateway) `design.llm-gateway`
   > 所有 LLM 调用通过统一网关，三级调度 + 健康管理
@@ -207,6 +217,9 @@
 - [CDS Agent R0 · CDS-managed runtime fact source 设计](design.cds-agent-managed-runtime-fact-source) `design.cds-agent-managed-runtime-fact-source`
   > CDS-managed runtime 事实来源的设计文档
 
+- [CDS Agent 工作区基础设施模型](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
+  > 工作区来源从 GitHub 仓库迁移到文件夹/知识库（document_stores），GitHub 降级为可选钩子；含官方/自建边界表、数据模型、文件注入受阻说明
+
 - [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
   > CDS 一键配置与项目扫描技能的上手设计
 
@@ -300,11 +313,19 @@
 
 - [CDS Railway 式部署向导设计](design.cds-railway-onboarding-flow) `design.cds-railway-onboarding-flow`
 - [CDS 绝对可视化一键部署设计（含架构图）](design.cds-visual-deploy) `design.cds-visual-deploy`
+- [演讲智能体技术设计](design.speech-agent) `design.speech-agent`
+  > 数据模型 / Controller / SpeechAgentService 流式拆大纲 / SSE 协议 / compute-then-send 落地
 - [CDS AI 生成 compose 草稿设计](design.cds-ai-compose) `design.cds-ai-compose`
   > 从 Railway 首次部署路径抽象 CDS 一键部署、运行环境选择、基础设施创建和可观察性闭环
 
 - [缺陷分享与 Agent 技能修复架构](design.defect-agent-share-skill-architecture) `design.defect-agent-share-skill-architecture`
   > 缺陷分享中心、外部 Agent 技能接入与修复报告闭环的架构设计
+
+- [系统级跨节点互传（Peer Sync）设计](design.peer-sync) `design.peer-sync`
+  > 多节点间消息互传的协议设计、数据模型与同步机制
+
+- [文档再加工 · 智能体调用路由设计](design.reprocess-chat-routing) `design.reprocess-chat-routing`
+  > 文档再加工功能中不同智能体（视觉/文学）的调用路由与分发设计
 
 ### 三、指南
 
@@ -361,6 +382,9 @@
 
 - [海鲜市场（配置市场）使用教程](guide.marketplace) `guide.marketplace`
   > 配置浏览、筛选、Fork 与发布的完整流程
+
+- [视觉验收技能跨仓库使用教程](guide.visual-acceptance-skill) `guide.visual-acceptance-skill`
+  > 用个人 AgentApiKey + 海鲜市场安装、更新 `create-visual-test-to-kb`，避免借用个人 accesskey
 
 - [工作流画布操作手册](guide.workflow-canvas) `guide.workflow-canvas`
   > 工作流画布的详细操作参考
@@ -594,6 +618,7 @@
   > AI 百宝箱后续迭代的待办事项与方向
 
 - [AI 文本辅助通用 Domain 设计](plan.ai-text-assist) `plan.ai-text-assist`
+- [MD转PPT 对话式 artifact 工作台改造计划](plan.md-to-ppt-chat-redesign) `plan.md-to-ppt-chat-redesign`
   > AI 文本辅助功能的通用领域模型设计
 
 - [配图标记手动干预](plan.manual-image-marking-control) `plan.manual-image-marking-control`
@@ -669,6 +694,9 @@
 - [视频创作 Agent 列表/详情页全面重做交接](plan.video-agent-list-detail-rebuild) `plan.video-agent-list-detail-rebuild`
   > 视频创作 Agent 列表与详情页全面重做的交接文档
 
+- [CDS PR #684 审查修复计划](plan.cds-pr684-review-remediation) `plan.cds-pr684-review-remediation`
+  > CDS PR #684 代码审查发现问题的分阶段修复计划与进度追踪
+
 ### 六、技术债务台账
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
@@ -696,6 +724,9 @@
 - [CDS Agent 工作台 · 债务台账](debt.cds-agent) `debt.cds-agent`
   > 4 条 open：R1 商业级 provider 闭环 / Lite 只读模式能力边界 / CDS Agent 文档群熵减 / 无 profile 时 Lite 直跑
 
+- [MD 转网页 PPT · 债务台账](debt.md-to-ppt) `debt.md-to-ppt`
+  > 2 条 open：预览 iframe same-origin 安全债（重构时从隔离源渲染）/ 知识库注入 CDS Agent 会话未实现（UI 已禁用占位）
+
 - [CDS state.json 影子存储 · 债务台账](debt.cds-state-json) `debt.cds-state-json`
   > 4 条 open：webhook deliveries 全量刷盘 / StateService 内存全量加载 / mongo-split 模式 state.json 同步写 / 无独立清理策略
 
@@ -705,6 +736,9 @@
 - [CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）· 债务台账](debt.cds-tutorial) `debt.cds-tutorial`
 - [CDS 绝对可视化一键部署 · 债务台账](debt.cds-visual-deploy) `debt.cds-visual-deploy`
   > 5 条 open：--write 重序列化丢注释 / 自愈覆盖面有限 / 占位值需人工 / 真机冒烟依赖 CDS / 发布脚本需真实 owner
+
+- [演讲智能体 · 债务台账](debt.speech-agent) `debt.speech-agent`
+  > 11 条 open：输入仅支持粘贴 / 视图非画布 / 无 Run-Worker / 无配图 / 无备注 / 无播放态 / 无发布 / 白天主题待适配 / 无节点增删 / 无 chunk / CDS 自测待补
 
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
@@ -737,6 +771,18 @@
 - [开放接口对外网关债务台账](debt.open-api) `debt.open-api`
   > Phase 1 落地网关 + 按 Key 绑定 + 默认回落 + 导航修复；伞形 appCallerCode 静态注册不变量（守卫测试）；限流按 Key 桶 / 降级预警 / 配额 / embeddings 分到 Phase 2
 
+- [日报技能债务台账](debt.daily-report) `debt.daily-report`
+  > daily-report-summary 技能与 reference/publish.py 的已知边界与待补项
+
+- [系统级跨节点互传（Peer Sync）债务台账](debt.peer-sync) `debt.peer-sync`
+  > prd-api PeerSync + prd-admin 系统互联的已知边界与 Phase 2 待补功能
+
+- [个人任务树 Agent · 债务台账](debt.task-tree) `debt.task-tree`
+  > TaskTreeController + prd-admin pages/task-tree 的已知边界与后续可补项
+
+- [网页托管评论 · 债务台账](debt.web-hosting-comments) `debt.web-hosting-comments`
+  > 网页托管评论功能的已知边界与待补实现
+
 ### 七、周报
 
 - [智能体宇宙 · 完备度看板](report.agent-universe-completeness) `report.agent-universe-completeness`
@@ -745,6 +791,8 @@
 - [CDS 绝对可视化一键部署 · 完整报告](report.cds-visual-deploy) `report.cds-visual-deploy`
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
   > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
+- [CDS Agent 体验修复验收报告](report.cds-agent-ux-acceptance-2026-06-06) `report.cds-agent-ux-acceptance-2026-06-06`
+  > 用户 9 问逐条验收：发送卡死/不流式/噪声/展开空已修并取证；工具循环/线程不停在借来的 runtime（缓解）；工作区文件注入是需新建的接缝（gates md→ppt 案例）
 
 - [CDS Agent P4-1 远端发布前验收与试用入口报告](report.cds-agent-p4-1-remote-preflight-2026-05-19) `report.cds-agent-p4-1-remote-preflight-2026-05-19`
   > CDS Agent P4-1 远端发布前验收与试用入口的验收报告
@@ -787,6 +835,12 @@
 
 - [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
+
+- [周报 2026-W23 (06-01 ~ 06-07)](report.2026-W23) `report.2026-W23`
+  > 2026 年第 23 周工作总结（215 commits / 18 PRs，PM Agent Phase 1 完整体系、智能体宇宙能力契约 + 统一调用信封、多页面教程系统从悬浮图标迁移到页头常驻 pill、CDS 基础设施单一 SSOT + 一键部署闭环、知识库列表两次反复改造、网页托管 5 个边界 bug 收口）
+
+- [周报 2026-W22 (05-25 ~ 05-31)](report.2026-W22) `report.2026-W22`
+  > 2026 年第 22 周工作总结（250 commits / 24 PRs，智能体爆发周：CCAS + Project Route + PM + 个人任务树一周新增 4 个 Agent；验收技能 create-visual-test-to-kb 标准化；CDS 自更新链路重构 + 教程体系 + compose 评分自愈；网页托管角色细分 + 分享面板 + 站点评论；CDS Agent Lite 降级）
 
 - [周报 2026-W21 (05-18 ~ 05-24)](report.2026-W21) `report.2026-W21`
   > 2026 年第 21 周工作总结（160 commits / 20 PRs，分享链接安全加固 /s/{token} 统一、周报编辑器 Notion 式大改造 + 时间树视图、CDS Agent 官方 SDK 边界合入、CDS 容器可观测性收口、预览 URL SSOT 化）
@@ -894,6 +948,8 @@
 | 2026-05-07 | 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
 | 2026-05-07 | 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
 | 2026-05-07 | 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |
+| 2026-06-07 | 新增 | `report.2026-W23` | 周报 2026-W23 (06-01 ~ 06-07) |
+| 2026-06-07 | 新增 | `report.2026-W22` | 周报 2026-W22 (05-25 ~ 05-31) |
 | 2026-05-24 | 新增 | `report.2026-W21` | 周报 2026-W21 (05-18 ~ 05-24) |
 | 2026-05-24 | 新增 | `report.2026-W20` | 周报 2026-W20 (05-11 ~ 05-17) |
 | 2026-05-09 | 新增 | `report.2026-W19` | 周报 2026-W19 (05-04 ~ 05-10) |
@@ -962,3 +1018,5 @@
 | 2026-03-11 | 重排 | `index.yml` + `guide.list.directory.md` | 按阅读优先级重新排序文档索引 |
 | 2026-03-10 | 新增 | `index.yml` | 文档元数据索引 |
 | 2026-03-10 | 新增 | `guide.list.directory.md` | 文档索引目录页 |
+| 2026-06-10 | 新增 | `debt.cds-nginx-loading-pages` | CDS loading pages 债务台账 |
+| 2026-06-10 | 新增 | `design.cds-skill-version-update` | CDS 技能版本与更新架构 |

@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, ArrowUpCircle } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import './product-cards.css';
 import {
   listUpgradeRequests,
   createUpgradeRequest,
@@ -148,7 +149,7 @@ export function UpgradeRequestsTab({ productId }: { productId: string }) {
       ) : (
         <div className="flex flex-col gap-2">
           {items.map((u) => (
-            <div key={u.id} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+            <div key={u.id} className="pa-row rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">

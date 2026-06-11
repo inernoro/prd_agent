@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import type { ApiResponse } from '@/types/api';
+import { connectSse } from '@/lib/useSseStream';
 
 // ──────────────────────────────────────────────
 // 类型定义
@@ -330,6 +331,31 @@ export async function uploadAppealImage(
 // SSE 流式接口 URL（供 useSseStream 使用）
 export function getResultStreamUrl(submissionId: string): string {
   return `/api/review-agent/submissions/${submissionId}/result/stream`;
+}
+
+export async function runReviewSubmission(
+  submissionId: string,
+  signal: AbortSignal,
+  onPhase?: (message: string) => void,
+): Promise<{ success: boolean; errorMessage?: string }> {
+  let streamError: string | undefined;
+  const result = await connectSse({
+    url: getResultStreamUrl(submissionId),
+    signal,
+    onEvent: (event) => {
+      if (!event.data) return;
+      try {
+        const data = JSON.parse(event.data) as { message?: string; errorMessage?: string };
+        if (event.event === 'phase' && data.message) onPhase?.(data.message);
+        if (event.event === 'error') streamError = data.message ?? data.errorMessage ?? '评审失败';
+      } catch {
+        // Ignore non-JSON keepalive payloads.
+      }
+    },
+  });
+  if (!result.success) return { success: false, errorMessage: result.errorMessage };
+  if (streamError) return { success: false, errorMessage: streamError };
+  return { success: true };
 }
 
 // ──────────────────────────────────────────────

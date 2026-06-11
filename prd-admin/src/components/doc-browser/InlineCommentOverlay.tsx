@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { MessageSquare } from 'lucide-react';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
+import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { CommentLine, ReplyBox, groupKey, threadColor, withAlpha } from './inlineCommentShared';
 
 // 行内评论高亮 + 气泡/内联卡片浮层。
@@ -211,26 +211,103 @@ export function InlineCommentOverlay({
               />
             ))}
 
-            {/* 气泡：两种布局都有。点击 → 激活该分组（margin 联动右侧卡 + 连线 / inline 就地展开）。
+            {/* 气泡：变体 C 头像堆叠（最多 3 个真实头像，超出显 +N）。
+                按 authorUserId 去重，同一人多条评论合一个头像；最右一个戴线程色 ring。
+                整组可点 → 激活该分组（margin 联动右侧卡 + 连线 / inline 就地展开）；
                 激活的气泡带 data-active-hl，供连线层 InlineCommentConnector 取锚点。 */}
-            <button
-              type="button"
-              data-active-hl={active ? '1' : undefined}
-              onClick={(e) => { e.stopPropagation(); onActivate?.(m.key, m.comments[0].selectedText); }}
-              title={m.comments.map((c) => `${c.authorDisplayName}：${c.content}`).join('\n').slice(0, 240)}
-              className="inline-flex items-center gap-0.5 cursor-pointer"
-              style={{
-                position: 'absolute', top: m.bubble.top - 7, left: m.bubble.left + 2,
-                height: 17, padding: '0 5px', borderRadius: 9, pointerEvents: 'auto',
-                background: withAlpha(col, 0.96), color: m.orphaned ? '#e2e8f0' : '#1a1205',
-                fontSize: 10, fontWeight: 700, lineHeight: '17px',
-                boxShadow: active ? `0 0 0 2px ${withAlpha(col, 0.45)}` : '0 2px 6px rgba(0,0,0,0.28)',
-                zIndex: 6,
-              }}
-            >
-              <MessageSquare size={10} />
-              {m.comments.length > 1 ? m.comments.length : ''}
-            </button>
+            {(() => {
+              const AV = 18;
+              const uniqueAuthors = Array.from(
+                new Map(m.comments.map((c) => [c.authorUserId || c.id, c])).values()
+              );
+              const displayed = uniqueAuthors.slice(0, 3);
+              const overflow = uniqueAuthors.length - displayed.length;
+              return (
+                <button
+                  type="button"
+                  data-active-hl={active ? '1' : undefined}
+                  onClick={(e) => { e.stopPropagation(); onActivate?.(m.key, m.comments[0].selectedText); }}
+                  title={m.comments.map((c) => `${c.authorDisplayName}：${c.content}`).join('\n').slice(0, 240)}
+                  className="inline-flex items-center cursor-pointer p-0 bg-transparent"
+                  style={{
+                    position: 'absolute',
+                    top: m.bubble.top - AV / 2 + 4,
+                    left: m.bubble.left + 2,
+                    height: AV,
+                    border: 'none',
+                    pointerEvents: 'auto',
+                    zIndex: 6,
+                    filter: m.orphaned ? 'grayscale(0.7) opacity(0.75)' : undefined,
+                    transition: 'transform 0.12s',
+                  }}
+                >
+                  {displayed.map((c, i) => {
+                    const isRightmost = i === displayed.length - 1 && overflow === 0;
+                    return (
+                      <img
+                        key={c.id}
+                        src={resolveAvatarUrl({ avatarFileName: c.authorAvatar })}
+                        alt={c.authorDisplayName || ''}
+                        width={AV}
+                        height={AV}
+                        onError={(e) => {
+                          const t = e.currentTarget;
+                          if (t.src !== DEFAULT_AVATAR_FALLBACK) t.src = DEFAULT_AVATAR_FALLBACK;
+                        }}
+                        style={{
+                          // Tailwind base layer 默认给 img 加 height: auto，会把 HTML
+                          // width/height 属性覆盖成 0（src 未加载时塌缩成边框那一圈）。
+                          // inline style 显式指定 width/height 强制吃住 18×18。
+                          width: AV,
+                          height: AV,
+                          borderRadius: '50%',
+                          marginLeft: i === 0 ? 0 : -6,
+                          border: isRightmost
+                            ? `2px solid ${col}`
+                            : `2px solid var(--bg-card, #1e1f20)`,
+                          boxShadow: active && isRightmost
+                            ? `0 0 0 2px ${withAlpha(col, 0.5)}, 0 1px 3px rgba(0,0,0,0.45)`
+                            : '0 1px 3px rgba(0,0,0,0.45)',
+                          zIndex: 10 + i,
+                          position: 'relative',
+                          objectFit: 'cover',
+                          background: 'var(--bg-card, #1e1f20)',
+                          display: 'block',
+                          boxSizing: 'content-box',
+                          flexShrink: 0,
+                        }}
+                      />
+                    );
+                  })}
+                  {overflow > 0 && (
+                    <span
+                      style={{
+                        width: AV,
+                        height: AV,
+                        borderRadius: '50%',
+                        marginLeft: -6,
+                        border: `2px solid ${col}`,
+                        background: withAlpha(col, 0.95),
+                        color: m.orphaned ? '#e2e8f0' : '#1a1205',
+                        fontSize: 9,
+                        fontWeight: 800,
+                        lineHeight: 1,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 20,
+                        position: 'relative',
+                        boxShadow: active
+                          ? `0 0 0 2px ${withAlpha(col, 0.5)}, 0 1px 3px rgba(0,0,0,0.45)`
+                          : '0 1px 3px rgba(0,0,0,0.45)',
+                      }}
+                    >
+                      +{overflow}
+                    </span>
+                  )}
+                </button>
+              );
+            })()}
 
             {/* inline 展开卡片：就地（GitHub 评论代码风），可读可回复可删 */}
             {inlineExpanded && (

@@ -8,6 +8,7 @@ import {
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
+  ClipboardCheck,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -535,11 +536,26 @@ export function buildDisplayItems(
 
 // ── 文件图标（所有类型映射通过 FILE_TYPE_REGISTRY 注册表） ──
 
+function isAcceptanceEntry(entry: DocBrowserEntry): boolean {
+  if (entry.isFolder) return false;
+  const metadata = entry.metadata ?? {};
+  if (metadata.kind === 'acceptance-report' || metadata.type === 'acceptance-report') return true;
+  if (getVerdictConfig(metadata.verdict)) return true;
+  return (entry.tags ?? []).some(tag => tag === '视觉验收' || tag === '验收报告');
+}
+
 function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEntry; isPrimary: boolean; isPinned: boolean; isOpen?: boolean }) {
   if (entry.isFolder) {
     return isOpen
       ? <FolderOpen size={14} style={{ color: 'rgba(234,179,8,0.7)' }} />
       : <FolderClosed size={14} style={{ color: 'rgba(234,179,8,0.6)' }} />;
+  }
+  if (isAcceptanceEntry(entry)) {
+    return (
+      <ClipboardCheck size={14} style={{ color: 'rgba(45,212,191,0.95)' }} aria-label="验收报告">
+        <title>验收报告</title>
+      </ClipboardCheck>
+    );
   }
   if (isPrimary) return <Star size={14} style={{ color: 'rgba(234,179,8,0.85)' }} />;
   if (isPinned) return <Pin size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
@@ -1092,6 +1108,7 @@ function TreeNode({
   const reprocessing = !isFolder ? reprocessingMap?.[entry.id] : undefined;
   const isChecked = !isFolder && (selectedIds?.has(entry.id) ?? false);
   const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
+  const reserveSelectSpace = isChecked || !!selectionActive;
   const [dragOver, setDragOver] = useState(false);
 
   // 是否需要渲染右上角徽章行
@@ -1103,7 +1120,7 @@ function TreeNode({
     !isFolder && (
       isShared || reprocessing !== undefined || !!verdictForRow ||
       hasTags || isContentMatch ||
-      isPrimary || (isPinned && !isPrimary)
+      isPrimary
     );
 
 
@@ -1174,40 +1191,28 @@ function TreeNode({
         }}
         title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
-        {/* 左侧状态色条：验收结论 → 绿/琥珀/红竖条，整列向下一扫即知通过率分布（颜色 + 文字双编码，满足无障碍） */}
-        {verdictForRow && (
-          <span
-            aria-hidden
-            className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r-full"
-            style={{ width: '3px', height: '64%', background: verdictForRow.color, opacity: isSelected ? 1 : 0.9 }}
-          />
-        )}
-        {/* 选中态：圆角块内侧细 accent 条（无验收色条时才显示，避免与状态色条重叠） */}
-        {isSelected && !isFolder && !verdictForRow && (
-          <span
-            aria-hidden
-            className="absolute left-[3px] top-1/2 -translate-y-1/2 rounded-full"
-            style={{
-              width: '3px',
-              height: '60%',
-              background: 'var(--accent-primary, var(--accent-gold))',
-              opacity: 0.85,
-            }}
-          />
-        )}
         {/* 第一行：图标 + 标题独占整行（标题增强：更亮更粗略放大），徽章移到第二行，避免挤占标题宽度 */}
         <div className="flex items-center gap-2 w-full min-w-0">
-          {/* 批量多选勾选框：仅文件，hover 或已进入多选态时显示；点击只切换选择不打开文档 */}
+          {/* 批量多选勾选框：普通状态悬浮覆盖文件图标，不再永久占一列目录宽度。 */}
           {!isFolder && onToggleSelect && (
             <span
               role="checkbox"
               aria-checked={isChecked}
               onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
-              className={`flex-shrink-0 inline-flex items-center justify-center cursor-pointer transition-opacity ${isChecked || selectionActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+              className={`${reserveSelectSpace ? 'flex-shrink-0' : 'absolute'} inline-flex items-center justify-center cursor-pointer transition-opacity ${reserveSelectSpace ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
               style={{
                 width: 15, height: 15, borderRadius: 4,
                 border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong, rgba(255,255,255,0.28))'}`,
-                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'transparent',
+                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'rgba(18,18,24,0.96)',
+                ...(!reserveSelectSpace
+                  ? {
+                      left: `${10 + depth * 14}px`,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      zIndex: 2,
+                      boxShadow: '0 0 0 2px rgba(18,18,24,0.72)',
+                    }
+                  : {}),
               }}
               title={isChecked ? '取消选择' : '选择（批量操作）'}
             >
@@ -1336,15 +1341,11 @@ function TreeNode({
           </span>
         )}
 
-        {/* README / Pin 简化为 icon */}
+        {/* README 保留为文字徽章；置顶状态已由行首 Pin 图标表达，避免重复。 */}
         {!isFolder && isPrimary && (
           <span className="flex-shrink-0" title="主文档（README）" style={{ color: 'rgba(234,179,8,0.85)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>
             README
           </span>
-        )}
-
-        {isPinned && !isPrimary && (
-          <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
         {/* 时间：第二行右对齐，跟随排序键显示 createdAt 或 updatedAt */}
         {showUpdatedTime && entry[timeField] && (
@@ -1686,7 +1687,22 @@ export function DocBrowser({
   // 用户点「收起批注栏」后本条目临时切回 TOC（切文档复位）
   const [marginCollapsed, setMarginCollapsed] = useState(false);
   // 划词后就地输入浮层（取代甩到右侧抽屉）
-  const [composer, setComposer] = useState<{ entryId: string; sel: PendingSelection; rect: { top: number; left: number; width: number; height: number } } | null>(null);
+  // rects: 选区在打开浮层瞬间的所有 client rect（多行选区需要多个矩形），用于保留正文里的高亮覆盖层
+  const [composer, setComposer] = useState<{
+    entryId: string;
+    sel: PendingSelection;
+    rect: { top: number; left: number; width: number; height: number };
+    rects: Array<{ top: number; left: number; width: number; height: number }>;
+  } | null>(null);
+  // 进入编辑模式 / 切到别的条目时强制收掉 composer 状态，避免 rect 与已经被 textarea
+  // 替换 / 已经卸载的正文不同步（Bugbot Medium）。只渲染守卫不够：退出 editMode 时
+  // composer 状态还在会让覆盖层"复活"在过时位置。
+  useEffect(() => {
+    if (editMode) setComposer(null);
+  }, [editMode]);
+  useEffect(() => {
+    setComposer(null);
+  }, [selectedEntryId]);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -1794,13 +1810,24 @@ export function DocBrowser({
         const created = res.data;
         setInlineCommentItems((prev) => (prev.some((c) => c.id === created.id) ? prev : [...prev, created]));
         setCommentCount((c) => c + 1);
+        // 自动激活新评论的线程 → 触发 InlineCommentConnector 入场动画（从正文气泡画连线到右侧卡），
+        // 用户不用再手动点气泡才看到联系。groupKey 必须和 Overlay/Margin 同一函数，否则 activeKey 对不上。
+        if (input.selectedText) {
+          // margin 模式下若用户手动收起了批注栏（marginCollapsed=true），Margin 与 Connector 都
+          // 没挂载（条件 !marginCollapsed），仅设 activeKey 谁也画不出来。与 handleActivateComment
+          // 保持同样的兜底：先重开批注栏再激活，确保连线必然显现（Bugbot Medium）。
+          if (inlineCommentLayout === 'margin' && marginCollapsed) {
+            setMarginCollapsed(false);
+          }
+          setActiveCommentKey(groupKey(input.selectedText));
+        }
         await refreshComments(); // 与服务器对账：成功则覆盖为真值，失败则保留乐观结果
       }
       return true;
     }
     toast.error('添加失败', res.error?.message);
     return false;
-  }, [trackedEntryForComments, refreshComments]);
+  }, [trackedEntryForComments, refreshComments, inlineCommentLayout, marginCollapsed]);
 
   const handleDeleteComment = useCallback(async (comment: DocumentInlineComment) => {
     // 删除前确认：margin/inline 的「删除」按钮小、易误点，与抽屉路径保持同样的二次确认（Codex P2）
@@ -3131,13 +3158,28 @@ export function DocBrowser({
                 )}
                 {/* 划词选中时的浮层"添加评论"按钮——仅有写权限时出现；只读访客（私有分享/匿名公开）不弹，
                     避免写了提交才 403（Codex P2：read-only viewers 不该拿到写入框） */}
-                {liveSelection && !editMode && commentsCanCreate && (
+                {liveSelection && !composer && !editMode && commentsCanCreate && (
                   <SelectionActionPopover
                     selection={liveSelection}
                     onAddComment={() => {
                       // 就地输入：在选区旁展开 composer，不再甩到右侧抽屉
                       if (!trackedEntryForComments) return;
                       const r = liveSelection.rect;
+                      // 捕获选区所有 client rect（多行选区需要多个矩形）用于保留高亮覆盖层
+                      // 用户反馈：打开浮层后正文选区被清掉，写到一半就忘了自己选了哪段
+                      const sel = window.getSelection();
+                      const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+                      // range 存在但 getClientRects() 空（折叠 / 不可见行 / 被 display:none 包裹）也要回退到
+                      // liveSelection.rect 的 bounding box，否则 PendingSelectionHighlight 渲染不出来（Bugbot Low）
+                      const clientRects = range ? Array.from(range.getClientRects()) : [];
+                      const rects = clientRects.length > 0
+                        ? clientRects.map((cr) => ({
+                            top: cr.top,
+                            left: cr.left,
+                            width: cr.width,
+                            height: cr.height,
+                          }))
+                        : [{ top: r.top, left: r.left, width: r.width, height: r.height }];
                       setComposer({
                         entryId: trackedEntryForComments.id,
                         sel: {
@@ -3148,9 +3190,11 @@ export function DocBrowser({
                           endOffset: liveSelection.endOffset,
                         },
                         rect: { top: r.top, left: r.left, width: r.width, height: r.height },
+                        rects,
                       });
+                      // 不主动清浏览器选区——textarea 拿到 focus 时浏览器自己会清，
+                      // 我们用 PendingSelectionHighlight 覆盖层兜底，保证正文高亮不消失
                       clearLiveSelection();
-                      window.getSelection()?.removeAllRanges();
                     }}
                   />
                 )}
@@ -3170,22 +3214,29 @@ export function DocBrowser({
                     onDelete={handleDeleteComment}
                   />
                 )}
-                {/* 划词后就地输入浮层（createPortal 到 body） */}
-                {composer && (
-                  <InlineCommentComposer
-                    selectedText={composer.sel.selectedText}
-                    anchorRect={composer.rect}
-                    scrollRef={contentAreaRef}
-                    onSubmit={(content) => handleCreateComment({
-                      selectedText: composer.sel.selectedText,
-                      contextBefore: composer.sel.contextBefore,
-                      contextAfter: composer.sel.contextAfter,
-                      startOffset: composer.sel.startOffset,
-                      endOffset: composer.sel.endOffset,
-                      content,
-                    }, composer.entryId)}
-                    onClose={() => setComposer(null)}
-                  />
+                {/* 划词后就地输入浮层（createPortal 到 body）。!editMode 守卫：进入编辑模式
+                    后正文被 textarea 替换，原选区 rect 与现内容已经对不上，浮层和高亮覆盖层
+                    必须同时收掉，否则旧覆盖层会飘在 textarea 上（Bugbot Medium） */}
+                {composer && !editMode && (
+                  <>
+                    {/* 保留正文里的选区高亮：textarea 拿 focus 后浏览器选区会消失，
+                        用 fixed 覆盖层模拟选区颜色，跟随滚动；用户写到一半依然能看到选了哪段 */}
+                    <PendingSelectionHighlight rects={composer.rects} scrollRef={contentAreaRef} />
+                    <InlineCommentComposer
+                      selectedText={composer.sel.selectedText}
+                      anchorRect={composer.rect}
+                      scrollRef={contentAreaRef}
+                      onSubmit={(content) => handleCreateComment({
+                        selectedText: composer.sel.selectedText,
+                        contextBefore: composer.sel.contextBefore,
+                        contextAfter: composer.sel.contextAfter,
+                        startOffset: composer.sel.startOffset,
+                        endOffset: composer.sel.endOffset,
+                        content,
+                      }, composer.entryId)}
+                      onClose={() => setComposer(null)}
+                    />
+                  </>
                 )}
               </div>
               </div>
@@ -3343,6 +3394,91 @@ export function DocBrowser({
       )}
     </div>
     </TagColorsContext.Provider>
+  );
+}
+
+// 打开就地输入浮层期间，正文里的待评论选区高亮覆盖层。
+// 浏览器原生 selection 在 textarea 拿到 focus 后会被清掉，写到一半就忘了选了哪段——
+// 用 fixed 定位、createPortal 到 body，按打开浮层瞬间捕获的 client rect 画选区色块，
+// 跟随正文滚动平移（与 InlineCommentComposer 同一套 scrollDy 逻辑）。
+function PendingSelectionHighlight({
+  rects,
+  scrollRef,
+}: {
+  rects: Array<{ top: number; left: number; width: number; height: number }>;
+  scrollRef?: React.RefObject<HTMLElement>;
+}) {
+  const [scrollDy, setScrollDy] = useState(0);
+  // 滚动容器在视口里的 bounding rect —— 用来把高亮裁剪在正文区域内，
+  // 避免选区滚出正文后还在 toolbar/sidebar 上面继续画（Codex P2）。
+  const [clip, setClip] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
+  useEffect(() => {
+    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
+    const start = read();
+    const onScroll = () => {
+      setScrollDy(read() - start);
+      const el = scrollRef?.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setClip({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
+      } else {
+        setClip(null);
+      }
+    };
+    onScroll(); // 初始化一次拿到当前裁剪框
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [scrollRef]);
+  if (rects.length === 0) return null;
+  return createPortal(
+    <div aria-hidden style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 115 }}>
+      {rects.map((r, i) => {
+        // 视口坐标：rect 原始 top - 累计滚动位移
+        const top = r.top - scrollDy;
+        const left = r.left;
+        const right = left + r.width;
+        const bottom = top + r.height;
+        // 完全滚出滚动容器 → 不渲染（节流 DOM）；部分相交 → 用 clipPath 裁掉容器外的部分
+        if (clip) {
+          if (bottom <= clip.top || top >= clip.bottom || right <= clip.left || left >= clip.right) {
+            return null;
+          }
+        }
+        // 用 inset(top right bottom left) clip-path 把超出 clip 的部分切掉；
+        // 数值相对于元素自身左上角（top/right/bottom/left = 各边收进多少 px）
+        let clipPath: string | undefined;
+        if (clip) {
+          const cTop = Math.max(0, clip.top - top);
+          const cLeft = Math.max(0, clip.left - left);
+          const cRight = Math.max(0, right - clip.right);
+          const cBottom = Math.max(0, bottom - clip.bottom);
+          if (cTop || cLeft || cRight || cBottom) {
+            clipPath = `inset(${cTop}px ${cRight}px ${cBottom}px ${cLeft}px)`;
+          }
+        }
+        return (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              top,
+              left,
+              width: r.width,
+              height: r.height,
+              background: 'rgba(168,85,247,0.28)',
+              borderBottom: '2px solid rgba(168,85,247,0.85)',
+              borderRadius: 2,
+              clipPath,
+            }}
+          />
+        );
+      })}
+    </div>,
+    document.body,
   );
 }
 

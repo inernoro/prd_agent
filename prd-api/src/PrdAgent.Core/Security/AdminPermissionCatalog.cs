@@ -242,6 +242,11 @@ public static class AdminPermissionCatalog
     public const string EmergenceAgentUse = "emergence-agent.use";
 
     /// <summary>
+    /// 演讲智能体权限：把长文本转成思维导图演讲（创建/生成/编辑/发布）。
+    /// </summary>
+    public const string SpeechAgentUse = "speech-agent.use";
+
+    /// <summary>
     /// 个人任务树智能体权限：创建/编辑任务树、对话摘取任务、查看卡点上报（普通用户级 Agent 权限）
     /// </summary>
     public const string TaskTreeUse = "task-tree.use";
@@ -302,14 +307,34 @@ public static class AdminPermissionCatalog
     public const string CcasAgentUse = "ccas-agent.use";
 
     /// <summary>
+    /// 识途 Agent 权限：新人文化与制度问答
+    /// </summary>
+    public const string ShituAgentUse = "shitu-agent.use";
+
+    /// <summary>
+    /// 识途 Agent 管理权限：维护内嵌分类知识库
+    /// </summary>
+    public const string ShituAgentManage = "shitu-agent.manage";
+
+    /// <summary>
     /// 私人助理 Agent 权限：任务拆解、四象限排序、任务清单管理
     /// </summary>
     public const string PaAgentUse = "pa-agent.use";
 
     /// <summary>
+    /// 前端搭档智能体权限：API 接入、组件生成、前端报错诊断和视觉样式建议
+    /// </summary>
+    public const string FrontEndAgentUse = "front-end-agent.use";
+
+    /// <summary>
     /// 系统互联管理权限：配置跨节点互传的对端节点（测试↔正式环境配对），管理员级。
     /// </summary>
     public const string PeerSyncManage = "peer-sync.manage";
+
+    /// <summary>
+    /// 团队动态权限（读）：查看全员工作动态时间线（管理员级）
+    /// </summary>
+    public const string TeamActivityRead = "team-activity.read";
 
     /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
@@ -402,6 +427,8 @@ public static class AdminPermissionCatalog
 
         new(EmergenceAgentUse, "涌现探索智能体", "可视化功能涌现与创意探索（创建/探索/涌现）"),
 
+        new(SpeechAgentUse, "演讲智能体", "把长文本/文档转成思维导图风格的可演讲 PPT（首期 mindmap 模式）"),
+
         new(TaskTreeUse, "个人任务树智能体", "分层任务管理、对话摘取任务、卡点上报（创建/编辑/查看）"),
         new(TaskTreeViewAll, "个人任务树-全员卡点", "卡点墙聚合查看所有人的卡点（管理层/上级；普通成员只看自己）"),
 
@@ -419,12 +446,17 @@ public static class AdminPermissionCatalog
         new(SkillAgentUse, "技能引导智能体", "AI 引导创建技能、导出技能包"),
 
         new(CcasAgentUse, "赋码采集关联系统智能体", "产线赋码业务的 PRD 生成 + 设备素材库 + 流程示意图绘制"),
+        new(ShituAgentUse, "识途智能体", "新人文化与制度问答（企业文化/事故教训/规章制度/奖赏表彰）"),
+        new(ShituAgentManage, "识途智能体-管理", "维护识途内嵌分类知识库内容"),
         new(PaAgentUse, "私人助理 Agent", "任务拆解、四象限排序、任务清单管理"),
+        new(FrontEndAgentUse, "前端搭档智能体", "API 接入、组件生成、前端报错诊断和视觉样式建议"),
 
         new(PeerSyncManage, "系统互联-管理", "配置跨节点互传的对端节点（测试↔正式环境配对）"),
 
         new(DailyTipsRead, "小技巧-读", "查看小技巧列表（管理视图）"),
         new(DailyTipsWrite, "小技巧-写", "新建/编辑/删除首页小技巧与引导卡片"),
+
+        new(TeamActivityRead, "团队动态-读", "查看全员工作动态时间线（仅授予管理层）"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

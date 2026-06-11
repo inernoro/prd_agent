@@ -134,6 +134,22 @@ public static class Product
         Category = "Analysis"
     )]
     public const string RequirementAiFill = "product-agent.requirement-ai-fill::chat";
+
+    [AppCallerMetadata(
+        "产品管理-追溯关系分析",
+        "图谱追溯模式下，对整条关系链做 AI 流式分析（关键对象/关系/时间节点/前因后果）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string TraceRelationAnalysis = "product-agent.trace-relation-analysis::chat";
+
+    [AppCallerMetadata(
+        "产品管理-AI助手",
+        "工作台右侧抽屉 AI 助手问答：以该产品全量数据 + 知识库文档为上下文，回答需求/缺陷/矩阵/人员等分析问题（SSE 流式）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string WorkAssistant = "product-agent.work-assistant::chat";
 }
 
 /// <summary>
@@ -1157,6 +1173,46 @@ public static class PrReview
     }
 }
 
+public static class SpeechAgent
+{
+    public const string AppName = "演讲智能体";
+
+    public static class Mindmap
+    {
+        [AppCallerMetadata(
+            "导图大纲生成",
+            "将长文本拆解为思维导图大纲（root → 章节 → 要点）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Generation"
+        )]
+        public const string Outline = "speech-agent.mindmap.outline::chat";
+
+        [AppCallerMetadata(
+            "演讲备注生成",
+            "为单个节点生成演讲备注（口播稿）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Generation"
+        )]
+        public const string SpeakerNotes = "speech-agent.mindmap.speaker-notes::chat";
+
+        [AppCallerMetadata(
+            "节点 AI 重写",
+            "对单个节点的标题+要点重写（可指定风格：精简/故事化/数字化/反问开场/雷军风/TED 风等）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Generation"
+        )]
+        public const string NodeRewrite = "speech-agent.node-rewrite::chat";
+
+        [AppCallerMetadata(
+            "节点配图生成",
+            "为单个节点生成 AI 插画（取代 SVG 简笔）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Generation"
+        )]
+        public const string NodeImage = "speech-agent.node-image::generation";
+    }
+}
+
 public static class EmergenceExplorer
 {
     public const string AppName = "Emergence Explorer";
@@ -1264,6 +1320,36 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.milestone-suggest::chat";
     }
+
+    public static class Assistant
+    {
+        [AppCallerMetadata(
+            "项目管理-AI助手",
+            "首页工作台 AI 助手：以当前用户全部相关项目(目标/里程碑/任务/风险)为上下文，跨项目问答分析，并可通过对话创建项目/目标/里程碑/任务(SSE 流式)",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string Chat = "pm-agent.assistant::chat";
+    }
+}
+
+/// <summary>
+/// 识途 Agent — 新人文化与制度问答
+/// </summary>
+public static class ShituAgent
+{
+    public const string AppName = "识途 Agent";
+
+    public static class Qa
+    {
+        [AppCallerMetadata(
+            "识途-知识库问答",
+            "基于分类知识库（企业文化/事故教训/规章制度/奖赏表彰）的严格 RAG 多轮问答",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Chat = "shitu-agent.qa::chat";
+    }
 }
 
 /// <summary>
@@ -1343,6 +1429,33 @@ public static class PageAgent
         Category = "Workflow"
     )]
     public const string Generate = "page-agent.generate::chat";
+}
+
+/// <summary>
+/// 前端搭档智能体 — API 接入、组件生成、前端报错诊断和视觉样式建议
+/// </summary>
+public static class FrontEndAgent
+{
+    public const string AppName = "前端搭档智能体";
+
+    public static class Assistant
+    {
+        [AppCallerMetadata(
+            "前端搭档-流式助手",
+            "面向后端同事生成前端类型、service、组件代码、报错修复方案和验收清单",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Code"
+        )]
+        public const string Chat = "front-end-agent.assistant::chat";
+
+        [AppCallerMetadata(
+            "前端搭档-截图视觉诊断",
+            "根据截图识别布局/CSS 问题并输出修复方案",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Code"
+        )]
+        public const string VisualDiagnosis = "front-end-agent.assistant::vision";
+    }
 }
 
 /// <summary>
@@ -1477,6 +1590,41 @@ public static class InfraAgent
             Category = "Workflow"
         )]
         public const string Chat = "infra-agent.review-lite::chat";
+    }
+}
+
+/// <summary>
+/// Markdown 转 PPT Agent — 直接生成富设计 reveal.js HTML 网页 PPT
+/// </summary>
+public static class MdToPptAgent
+{
+    public const string AppName = "MD 转 PPT 智能体";
+
+    public static class Generation
+    {
+        [AppCallerMetadata(
+            "MD转PPT-大纲生成",
+            "将 Markdown/文本内容通过 LLM 流式生成 PPT 大纲结构，每页含标题和要点",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Convert = "md-to-ppt-agent.generation::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-富设计HTML直出",
+            "将 Markdown/文本内容直接生成完整 reveal.js HTML 网页 PPT，多样版式、富视觉设计，无需大纲中转",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string HtmlGenerate = "md-to-ppt-agent.html-generate::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-局部修改",
+            "对已有网页 PPT 的指定页面进行局部修改和重新生成",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Patch = "md-to-ppt-agent.patch::chat";
     }
 }
 }

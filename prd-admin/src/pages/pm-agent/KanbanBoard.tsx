@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Trash2, GripVertical, CalendarClock, ListTree } from 'lucide-react';
 import type { PmTask, PmTaskStatus } from '@/services/contracts/pmAgent';
-import { BOARD_COLUMNS, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY } from './pmConstants';
+import { BOARD_COLUMNS, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, progressColor } from './pmConstants';
 
 interface Props {
   tasks: PmTask[];
@@ -69,6 +69,7 @@ export function KanbanBoard({ tasks, onMove, onDelete, onOpen, wipLimits }: Prop
                 const p = PRIORITY_REGISTRY[t.priority];
                 const overdue = isOverdue(t);
                 const prog = childProgress(t.id);
+                const pct = t.status === 'done' ? 100 : (t.progressPercent ?? 0);
                 return (
                   <div
                     key={t.id}
@@ -113,6 +114,14 @@ export function KanbanBoard({ tasks, onMove, onDelete, onOpen, wipLimits }: Prop
                             <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(168,85,247,0.15)', color: '#A855F7' }}>AI</span>
                           )}
                         </div>
+                        {pct > 0 && t.status !== 'cancelled' && (
+                          <div className="flex items-center gap-1.5 mt-2">
+                            <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
+                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: progressColor(pct, t.status) }} />
+                            </div>
+                            <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>{pct}%</span>
+                          </div>
+                        )}
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); onDelete(t.id); }}

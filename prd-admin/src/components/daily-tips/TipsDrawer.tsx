@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT, START_TUTORIAL_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide, filterPageTips } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, filterPageTips, isUpdateTip, pickAutoOpenUpdateTip } from './pageGuideMatch';
 import { difficultyMeta } from './difficultyMeta';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload, SPOTLIGHT_PAYLOAD_UPDATED_EVENT } from './TipsRotator';
@@ -219,18 +219,26 @@ export function TipsDrawer() {
   // 抽屉实际展示的列表:默认「本页」,用户可切「全部」浏览所有页面的教程。
   const viewTips = showAllPages ? tips : pageTips;
 
-  // ── 推送自动展开:按 tip.id 记忆,每条定向 tip 本 session 只弹一次 ──
-  // 轮询时如果管理员新推了一条,tips 里会多出一个 isTargeted 的新 id,它不在
-  // 已弹过集合里 → 再自动弹一次。解决「session 第二条推送不弹」的坑。
+  // ── 本页更新教程自动展开:抽屉唯一的自动弹出路径 ──────────────
+  // 规则(用户 2026-06-11):推送只跟页面走 —— 没教程的页面绝不自动弹任何东西;
+  // 有教程的页面只在两种情况自动出现:
+  //   1) 新人没走完本页 *-page-guide → Spotlight 自动开讲(下面的 effect,优先级更高);
+  //   2) 本页功能有更新(*-update-* / feature-release)且未学会 → 自动展开抽屉提醒一次(本 effect)。
+  // 决策只看 pageTips(filterPageTips 按页过滤后的子集),且绝不自动切「全部教程」——
+  // 这是「不会在 A 页弹 B 页教程」的结构性保证。
+  //
+  // 旧版「管理员定向推送(isTargeted)自动弹 + 不属本页就切全部教程」已删除:推送后台已下线,
+  // 而 Track 统计埋点会给「看过一眼」的 tip 建 Delivery 记录,被 /visible 误判成 isTargeted,
+  // 导致在无教程页面弹出「全部教程」面板(用户 2026-06-11 反馈「莫名其妙弹出,像病毒一样」)。
   useEffect(() => {
     if (!loaded) return;
     if (pageGuideHere) return; // 本页有未走完教程 → 由 Spotlight 自动开讲,不抢着展开抽屉(避免叠加)
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     const opened = readAutoOpenedIds();
-    const newTargeted = tips.find((t) => t.isTargeted && !opened.has(t.id));
-    if (!newTargeted) return;
+    const updateTip = pickAutoOpenUpdateTip(pageTips, opened);
+    if (!updateTip) return;
 
-    opened.add(newTargeted.id);
+    opened.add(updateTip.id);
     writeAutoOpenedIds(opened);
     markAutoOpenedToday();
 
@@ -238,24 +246,18 @@ export function TipsDrawer() {
     if (hiddenByUser) {
       setHiddenByUser(false);
     }
-    // 被推送的 tip 若不属于当前页(filterPageTips 已按 actionUrl 页面限定将其排除在 pageTips 之外),
-    // 自动展开时切到「全部教程」,否则抽屉打开却看不到刚推送的内容(本页列表里没有它)。
-    // 属于本页则保持「本页教程」语义(showAllPages 默认 false)。
-    if (!pageTips.some((p) => p.id === newTargeted.id)) {
-      setShowAllPages(true);
-    }
-    setExpanded(true);
+    setExpanded(true); // 保持「本页教程」语义(showAllPages 默认 false),绝不自动切「全部教程」
     // pageGuideHere 必须进 deps:否则首屏若落在「有教程页」early-return 后,
-    // 切到「无教程页」时本 effect 不再 fire,自动弹窗整 session 失效(Bugbot)。
+    // 切到「有更新页」时本 effect 不再 fire,更新提醒整 session 失效(Bugbot)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, tips, pageGuideHere]);
+  }, [loaded, pageTips, pageGuideHere]);
 
   // ── 新用户兜底自动弹抽屉:已移除 ──────────────────────────
   // 历史上「本日第一次访问且本页有任意 tip 就自动展开抽屉」会在用户没点任何按钮时
   // 自己弹出教程(例如本页 *-page-guide 已学会、却把残留的「本周改动」公告弹出来),
   // 用户 2026-06-04 反馈「没点按钮却弹窗出来教程」。教程入口已是页头常驻按钮(TipsEntryButton),
-  // 不需要再自动展开抽屉来「证明书的存在」。保留的自动行为只剩两类(均为明确意图):
-  //   1) 管理员定向推送(isTargeted)→ 上面的 effect 自动弹;
+  // 不需要再自动展开抽屉来「证明书的存在」。保留的自动行为只剩两类(均为明确意图、均按页限定):
+  //   1) 本页有未学会的更新教程 → 上面的 effect 自动弹(本页列表);
   //   2) 本页未走完的 *-page-guide → 下面的 effect 走 Spotlight 强制开讲(onboarding 规则)。
 
   // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
@@ -576,7 +578,7 @@ export function TipsDrawer() {
               const estMin = stepCount > 0 ? Math.max(1, Math.round(stepCount * 0.5)) : 0;
               const diff = difficultyMeta(t.difficulty);
               const xpReward = t.xpReward ?? 0;
-              const isUpdate = (t.sourceId?.includes('-update-') ?? false) || t.sourceType === 'feature-release';
+              const isUpdate = isUpdateTip(t);
               const isPageGuide = t.sourceId?.endsWith('-page-guide') ?? false;
               const accent = t.isTargeted
                 ? 'rgba(244,63,94,0.95)'

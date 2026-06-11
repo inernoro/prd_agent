@@ -1,11 +1,53 @@
 # 文档再加工 · 智能体调用路由设计
 
-> **状态**: 已实现 (claude/loving-noether-eCZVo)
-> **覆盖范围**: 知识库再加工 Chat 抽屉里的 3 种智能体调用方式如何收敛到统一的 LLM 链路。
+> **状态**: 已实现；2026-06-08 补充 Agent Universe 与文学配图模式
+> **覆盖范围**: 知识库再加工 Chat 抽屉里的智能体调用方式、业务归属、写回策略。
+
+> 2026-06-08 说明：本文早期版本描述的是 `direct-chat` 收敛方案。当前实现已升级为
+> Agent Universe 能力契约 + 真实适配器/真实业务入口：内置智能体不再统一降级成聊天，
+> 生成型/结构化/业务专属动作必须走各自真实管道。
 
 ## 1. 管理摘要
 
 知识库「文档再加工」抽屉的智能体调用分 **3 个入口、1 条管道、1 个落库口**。所有智能体调用统一走百宝箱的 `POST /api/ai-toolbox/direct-chat` SSE 接口，区别只在"系统提示词从哪里组装"。回包是同一份 SSE 协议（`start` / `text` / `thinking` / `error` / `done`），落库走同一个 `POST /entries/{id}/reprocess/apply-content`。
+
+### 1.1 当前策略：按智能体业务身份调用，不仿冒
+
+当前知识库抽屉遵循三条规则：
+
+1. **内置智能体走真实能力**：`AgentCapabilityRegistry` 是能力边界 SSOT。已登记的内置智能体必须走真实适配器或真实业务入口，不再用一段 system prompt 假装智能体。
+2. **业务归属不跳转**：用户选中「文学创作智能体」并说“配个图看看”时，UI 仍归属文学创作，图片生成走 `/api/literary-agent/image-gen/runs`，不切到 `visual-agent`。
+3. **写回口统一**：无论产出是文本还是图片，写回知识库仍统一走 `apply-content`：文本可替换/追加/另存，图片以 Markdown 图片写入文档。
+
+```
+知识库文档
+  │
+  └─ AI 文档对话抽屉
+       │
+       ├─ 选择文学创作智能体
+       │    │
+       │    ├─ 用户要求：改写/续写/润色
+       │    │     └─ Agent Universe / literary chat
+       │    │          └─ 输出文本
+       │    │               └─ 替换原文 / 追加末尾 / 另存为新文档
+       │    │
+       │    └─ 用户要求：配图/插图/封面/出图
+       │          └─ 文学配图 mini 面板
+       │               ├─ appKey = literary-agent
+       │               ├─ 模型池 = literary-agent.illustration.*
+       │               ├─ 参考图 = 文学创作配置中激活的风格图
+       │               └─ /api/literary-agent/image-gen/runs
+       │                    └─ imageDone
+       │                         └─ 追加 Markdown 图片到文档
+       │
+       ├─ 选择视觉创作智能体
+       │    └─ 视觉生图 mini 面板
+       │         ├─ appKey = visual-agent
+       │         └─ /api/visual-agent/image-gen/*
+       │
+       └─ 选择自定义/快捷智能体
+            └─ direct chat / custom:{id}
+```
 
 ## 2. 调用图（架构总览）
 

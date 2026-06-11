@@ -29,6 +29,14 @@ export interface CurrentWeekView {
   source: 'local' | 'github' | 'none';
   /** ISO 8601 拉取时间 */
   fetchedAt: string;
+  /** 全量日期组数（=碎片文件数），不受 daysLimit 影响，用于 chip 计数 */
+  totalDays?: number;
+  /** 全量 entries 总数，不受 daysLimit 影响，用于 chip 计数 */
+  totalEntries?: number;
+  /** 本次响应跳过的日期组数（用于 loadMore 续接） */
+  daysOffset?: number;
+  /** 是否还有更多日期组 */
+  hasMore?: boolean;
   fragments: ChangelogFragment[];
 }
 
@@ -51,6 +59,8 @@ export interface ChangelogRelease {
   sourceScope?: string;
   /** "用户更新项" 高亮（仅已发布版本可能有） */
   highlights: string[];
+  /** true 时 days 是空数组（summary 模式），需调 releaseByVersion 端点拉详情 */
+  entriesOmitted?: boolean;
   days: ChangelogDay[];
 }
 
@@ -58,7 +68,17 @@ export interface ReleasesView {
   dataSourceAvailable: boolean;
   source: 'local' | 'github' | 'none';
   fetchedAt: string;
+  /** 版本总数，用于 chip 计数 */
+  totalReleases?: number;
+  /** 所有版本 entries 总数，用于 chip 计数（summary 模式下仍准确） */
+  totalEntries?: number;
   releases: ChangelogRelease[];
+}
+
+export interface GitHubCoAuthor {
+  name: string;
+  matchedUsername?: string | null;
+  matchedDisplayName?: string | null;
 }
 
 export interface GitHubLogEntry {
@@ -69,12 +89,25 @@ export interface GitHubLogEntry {
   authorAvatarUrl?: string | null;
   commitTimeUtc: string;
   htmlUrl: string;
+  /** 彩蛋：GitHub 作者名匹配到的系统用户登录名（去数字 + 颠倒容忍 + 通用后缀剥离），null=未匹配 */
+  matchedUsername?: string | null;
+  /** 彩蛋：匹配到的系统用户显示名（为空时后端回退登录名），null=未匹配 */
+  matchedDisplayName?: string | null;
+  /** Co-authored-by 联合作者（已剔除与主作者同人），每位同样带系统用户匹配结果 */
+  coAuthors?: GitHubCoAuthor[];
 }
 
 export interface GitHubLogsView {
   dataSourceAvailable: boolean;
   source: 'local' | 'github' | 'none';
   fetchedAt: string;
+  /** 「最近一周」窗口内的 commit 总数（列表数据上限） */
+  totalCount?: number;
+  /** 仓库全历史提交总数（不限窗口），null=暂未统计成功，展示时降级用 totalCount */
+  repoTotalCommitCount?: number | null;
+  hasMore?: boolean;
+  /** 下一页 cursor，传给 before 参数取下一批 */
+  nextCursor?: string | null;
   logs: GitHubLogEntry[];
 }
 
@@ -82,26 +115,48 @@ export interface GitHubLogsView {
 
 /**
  * 获取待发布更新（基于全部 changelogs/*.md 碎片，按日期倒序）
- * @param force 绕过服务端缓存（GitHub 路径意味着触发真实拉取）
+ * 支持瀑布式分页：daysLimit + daysOffset
  */
-export async function getCurrentWeekChangelog(force = false): Promise<ApiResponse<CurrentWeekView>> {
-  return await apiRequest<CurrentWeekView>(api.changelog.currentWeek(force), { method: 'GET' });
+export async function getCurrentWeekChangelog(opts: {
+  daysLimit?: number;
+  daysOffset?: number;
+  force?: boolean;
+} = {}): Promise<ApiResponse<CurrentWeekView>> {
+  return await apiRequest<CurrentWeekView>(api.changelog.currentWeek(opts), { method: 'GET' });
 }
 
 /**
  * 获取历史发布（基于 CHANGELOG.md，按版本倒序）
- * @param force 绕过服务端缓存
+ * summary=true 时只返回元数据 + entryCount（首屏极轻），详情靠 getChangelogReleaseByVersion
  */
-export async function getChangelogReleases(limit = 20, force = false): Promise<ApiResponse<ReleasesView>> {
-  return await apiRequest<ReleasesView>(api.changelog.releases(limit, force), { method: 'GET' });
+export async function getChangelogReleases(opts: {
+  limit?: number;
+  summary?: boolean;
+  force?: boolean;
+} = {}): Promise<ApiResponse<ReleasesView>> {
+  return await apiRequest<ReleasesView>(api.changelog.releases(opts), { method: 'GET' });
+}
+
+/**
+ * 获取单个版本的完整 entries（按需懒加载，配合 summary 模式使用）
+ */
+export async function getChangelogReleaseByVersion(
+  version: string,
+  force = false,
+): Promise<ApiResponse<ChangelogRelease>> {
+  return await apiRequest<ChangelogRelease>(api.changelog.releaseByVersion(version, force), { method: 'GET' });
 }
 
 /**
  * 获取 GitHub 日志（优先本地 git log，失败时回退 GitHub commits API）
- * @param force 绕过服务端缓存
+ * 支持 cursor 分页：before=<sha>
  */
-export async function getChangelogGitHubLogs(limit = 30, force = false): Promise<ApiResponse<GitHubLogsView>> {
-  return await apiRequest<GitHubLogsView>(api.changelog.githubLogs(limit, force), { method: 'GET' });
+export async function getChangelogGitHubLogs(opts: {
+  limit?: number;
+  before?: string;
+  force?: boolean;
+} = {}): Promise<ApiResponse<GitHubLogsView>> {
+  return await apiRequest<GitHubLogsView>(api.changelog.githubLogs(opts), { method: 'GET' });
 }
 
 export type ChangelogAiSummarySubtab = 'releases' | 'fragments' | 'github_logs';

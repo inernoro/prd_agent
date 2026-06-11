@@ -1,2 +1,0 @@
-| chore | prd-admin | 技能精简：下线 5 个冗余/失效技能（bridge / fix-unused-imports / technical-documentation / cn-brief-summary / daily-entropy-plan），official-skills bundle 同步移除 technical-documentation，海鲜市场不再提供该技能 |
-| chore | prd-admin | skillGlyphRegistry 移除已下线的 technical-documentation 图标条目 |

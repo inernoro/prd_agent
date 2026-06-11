@@ -120,7 +120,10 @@ describe('validateBuildReadiness (P4 Part 18 hardening)', () => {
 
     const cwds = shell.cwds;
     expect(cwds).toContain('/opt/prd_agent/cds');
-    // Both commands should run in that cwd
+    // 本 mock 无 lockfile stamp → runPnpmInstallWithCache 真实跑(skipped=false),
+    // 此时 #746 guard#3 boot-install 不再重复跑(helper 那次就是等价 boot 预检),
+    // 所以 cds 目录只跑两条:真实 install + tsc。boot-install 仅在缓存命中跳过真实
+    // install 时才补跑(见 branches.ts validateBuildReadiness)。
     expect(cwds.filter((c) => c === '/opt/prd_agent/cds').length).toBe(2);
   });
 });

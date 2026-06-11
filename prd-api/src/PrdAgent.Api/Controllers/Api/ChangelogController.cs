@@ -5,10 +5,13 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
+using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.Changelog;
 
@@ -39,55 +42,141 @@ public class ChangelogController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IChangelogPushHub _pushHub;
+    private readonly MongoDbContext _db;
+    private readonly IMemoryCache _cache;
 
     public ChangelogController(
         IChangelogReader reader,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
-        IChangelogPushHub pushHub)
+        IChangelogPushHub pushHub,
+        MongoDbContext db,
+        IMemoryCache cache)
     {
         _reader = reader;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _pushHub = pushHub;
+        _db = db;
+        _cache = cache;
     }
 
     /// <summary>
     /// 待发布更新（从全部 changelogs/ 碎片读取，按日期倒序）
     /// </summary>
+    /// <param name="daysLimit">分页：只返回前 N 个日期组（按日期倒序），null=全部。前端首屏建议 4</param>
+    /// <param name="daysOffset">分页：跳过前 N 个日期组（与 daysLimit 配合）</param>
     /// <param name="force">true 时绕过服务端缓存，重新从源拉取（GitHub 路径意味着真实 API 调用）</param>
     [HttpGet("current-week")]
-    public async Task<IActionResult> GetCurrentWeek([FromQuery] bool force = false)
+    public async Task<IActionResult> GetCurrentWeek(
+        [FromQuery] int? daysLimit = null,
+        [FromQuery] int daysOffset = 0,
+        [FromQuery] bool force = false)
     {
         var view = await _reader.GetCurrentWeekAsync(force).ConfigureAwait(false);
         if (!force) SetClientCacheHeaders();
-        return Ok(ApiResponse<CurrentWeekDto>.Ok(MapCurrentWeek(view)));
+        return Ok(ApiResponse<CurrentWeekDto>.Ok(MapCurrentWeek(view, daysLimit, daysOffset)));
     }
 
     /// <summary>
     /// 历史发布（从 CHANGELOG.md 读取，按版本倒序）
     /// </summary>
-    /// <param name="limit">最多返回的版本数量（1..100，默认 20）</param>
+    /// <param name="limit">最多返回的版本数量（1..100，默认 8）</param>
+    /// <param name="summary">true 时只返回每个版本的元数据（version/releaseDate/entryCount/highlights），days 为空；前端按需调 by-version 端点拉详情</param>
     /// <param name="force">true 时绕过服务端缓存，重新从源拉取</param>
     [HttpGet("releases")]
-    public async Task<IActionResult> GetReleases([FromQuery] int limit = 20, [FromQuery] bool force = false)
+    public async Task<IActionResult> GetReleases(
+        [FromQuery] int limit = 8,
+        [FromQuery] bool summary = false,
+        [FromQuery] bool force = false)
     {
-        if (limit <= 0 || limit > 100) limit = 20;
-        var view = await _reader.GetReleasesAsync(limit, force).ConfigureAwait(false);
+        if (limit <= 0 || limit > 100) limit = 8;
+        // reader 永远拉满 100（单一 cache key），controller 切片输出。
+        // 这样 chip 显示的 totalReleases / totalEntries 永远基于全量，不会被 limit 截断（Bugbot #5）。
+        var view = await _reader.GetReleasesAsync(100, force).ConfigureAwait(false);
         if (!force) SetClientCacheHeaders();
-        return Ok(ApiResponse<ReleasesDto>.Ok(MapReleases(view)));
+        return Ok(ApiResponse<ReleasesDto>.Ok(MapReleases(view, summary, limit)));
+    }
+
+    /// <summary>
+    /// 单个版本详情（按需懒加载）。配合 releases?summary=true 使用：前端先拿元数据，
+    /// 卡片进入视口时调本端点拉具体 entries，瀑布式展开。
+    /// </summary>
+    [HttpGet("releases/by-version/{version}")]
+    public async Task<IActionResult> GetReleaseByVersion(string version, [FromQuery] bool force = false)
+    {
+        var view = await _reader.GetReleasesAsync(100, force).ConfigureAwait(false);
+        var release = view.Releases.FirstOrDefault(r => r.Version == version);
+        if (release == null)
+            return NotFound(ApiResponse<ChangelogReleaseDto>.Fail("RELEASE_NOT_FOUND", $"版本 {version} 不存在"));
+        if (!force) SetClientCacheHeaders();
+        return Ok(ApiResponse<ChangelogReleaseDto>.Ok(MapRelease(release, summary: false)));
     }
 
     /// <summary>
     /// GitHub 日志（优先本地 git log，失败时回退 GitHub commits API）
     /// </summary>
+    /// <param name="limit">本次返回条数（1..1000，默认 80 — 与前端首屏 visible=80 对齐）</param>
+    /// <param name="before">cursor：返回该 sha 之后的条目（按时间倒序的「之后」=更老）。空=从最新开始</param>
     [HttpGet("github-logs")]
-    public async Task<IActionResult> GetGitHubLogs([FromQuery] int limit = 30, [FromQuery] bool force = false)
+    public async Task<IActionResult> GetGitHubLogs(
+        [FromQuery] int limit = 80,
+        [FromQuery] string? before = null,
+        [FromQuery] bool force = false)
     {
-        if (limit <= 0 || limit > 1000) limit = 1000;
-        var view = await _reader.GetGitHubLogsAsync(limit, force).ConfigureAwait(false);
+        if (limit <= 0 || limit > 1000) limit = 80;
+        // reader 永远拿全量（1000 上限），controller 切片
+        var view = await _reader.GetGitHubLogsAsync(1000, force).ConfigureAwait(false);
+        var matchIndex = await GetUserMatchIndexAsync().ConfigureAwait(false);
         if (!force) SetClientCacheHeaders();
-        return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view)));
+        return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view, limit, before, matchIndex)));
+    }
+
+    // ── GitHub 作者名 ↔ 系统用户 彩蛋匹配 ────────────────────────────
+
+    private sealed record GitHubUserMatchCandidate(
+        string Username,
+        string DisplayName,
+        string NormUsername,
+        string NormDisplayName);
+
+    private const string UserMatchIndexCacheKey = "changelog:github-author-match-index";
+
+    /// <summary>
+    /// 活跃人类用户的归一化名字索引（10 分钟内存缓存）。
+    /// 供 GitHub 提交作者名匹配「这是系统里的谁」彩蛋使用，失败时返回空表不影响主流程。
+    /// </summary>
+    private async Task<IReadOnlyList<GitHubUserMatchCandidate>> GetUserMatchIndexAsync()
+    {
+        if (_cache.TryGetValue(UserMatchIndexCacheKey, out IReadOnlyList<GitHubUserMatchCandidate>? cached) && cached != null)
+        {
+            return cached;
+        }
+
+        try
+        {
+            var users = await _db.Users
+                .Find(u => u.Status == UserStatus.Active && u.UserType == UserType.Human)
+                .Project(u => new { u.Username, u.DisplayName })
+                .ToListAsync()
+                .ConfigureAwait(false);
+
+            IReadOnlyList<GitHubUserMatchCandidate> index = users
+                .Select(u => new GitHubUserMatchCandidate(
+                    u.Username ?? string.Empty,
+                    u.DisplayName ?? string.Empty,
+                    GitHubAuthorMatcher.Normalize(u.Username),
+                    GitHubAuthorMatcher.Normalize(u.DisplayName)))
+                .Where(c => c.NormUsername.Length >= 2 || c.NormDisplayName.Length >= 2)
+                .ToList();
+
+            _cache.Set(UserMatchIndexCacheKey, index, TimeSpan.FromMinutes(10));
+            return index;
+        }
+        catch
+        {
+            return Array.Empty<GitHubUserMatchCandidate>();
+        }
     }
 
     /// <summary>
@@ -312,58 +401,143 @@ public class ChangelogController : ControllerBase
 
     // ── DTO 映射 ──────────────────────────────────────────────────────
 
-    private static CurrentWeekDto MapCurrentWeek(CurrentWeekView view) => new()
+    private static CurrentWeekDto MapCurrentWeek(CurrentWeekView view, int? daysLimit = null, int daysOffset = 0)
     {
-        WeekStart = view.WeekStart.ToString("yyyy-MM-dd"),
-        WeekEnd = view.WeekEnd.ToString("yyyy-MM-dd"),
+        var totalDays = view.Fragments.Count;
+        var totalEntries = view.Fragments.Sum(f => f.Entries.Count);
+        var offset = Math.Max(0, daysOffset);
+        var sliced = daysLimit.HasValue
+            ? view.Fragments.Skip(offset).Take(Math.Max(0, daysLimit.Value)).ToList()
+            : view.Fragments;
+        var hasMore = daysLimit.HasValue && (offset + sliced.Count) < totalDays;
+
+        return new CurrentWeekDto
+        {
+            WeekStart = view.WeekStart.ToString("yyyy-MM-dd"),
+            WeekEnd = view.WeekEnd.ToString("yyyy-MM-dd"),
+            DataSourceAvailable = view.DataSourceAvailable,
+            Source = view.Source,
+            FetchedAt = view.FetchedAt.ToString("o"),
+            TotalDays = totalDays,
+            TotalEntries = totalEntries,
+            DaysOffset = offset,
+            HasMore = hasMore,
+            Fragments = sliced.ConvertAll(f => new ChangelogFragmentDto
+            {
+                FileName = f.FileName,
+                Date = f.Date.ToString("yyyy-MM-dd"),
+                Entries = f.Entries.ConvertAll(MapEntry),
+            }),
+        };
+    }
+
+    private static ReleasesDto MapReleases(ReleasesView view, bool summary = false, int displayLimit = int.MaxValue) => new()
+    {
         DataSourceAvailable = view.DataSourceAvailable,
         Source = view.Source,
         FetchedAt = view.FetchedAt.ToString("o"),
-        Fragments = view.Fragments.ConvertAll(f => new ChangelogFragmentDto
-        {
-            FileName = f.FileName,
-            Date = f.Date.ToString("yyyy-MM-dd"),
-            Entries = f.Entries.ConvertAll(MapEntry),
-        }),
+        // totals 永远从全量 view 算（与 displayLimit 解耦），让 chip 显示真实数字
+        TotalReleases = view.Releases.Count,
+        TotalEntries = view.Releases.Sum(r => r.Days.Sum(d => d.Entries.Count)),
+        // 输出列表按 displayLimit 切片
+        Releases = view.Releases.Take(displayLimit).Select(r => MapRelease(r, summary)).ToList(),
     };
 
-    private static ReleasesDto MapReleases(ReleasesView view) => new()
+    private static ChangelogReleaseDto MapRelease(ChangelogRelease r, bool summary) => new()
     {
-        DataSourceAvailable = view.DataSourceAvailable,
-        Source = view.Source,
-        FetchedAt = view.FetchedAt.ToString("o"),
-        Releases = view.Releases.ConvertAll(r => new ChangelogReleaseDto
-        {
-            Version = r.Version,
-            ReleaseDate = r.ReleaseDate?.ToString("yyyy-MM-dd"),
-            EntryCount = r.Days.Sum(d => d.Entries.Count),
-            SourceScope = r.Version == "未发布" ? "changelog-unreleased-block" : "changelog-release-block",
-            Highlights = r.Highlights,
-            Days = r.Days.ConvertAll(d => new ChangelogDayDto
+        Version = r.Version,
+        ReleaseDate = r.ReleaseDate?.ToString("yyyy-MM-dd"),
+        EntryCount = r.Days.Sum(d => d.Entries.Count),
+        SourceScope = r.Version == "未发布" ? "changelog-unreleased-block" : "changelog-release-block",
+        Highlights = r.Highlights,
+        EntriesOmitted = summary,
+        // summary 模式：days 为空数组（节省 90%+ 体积）；详情靠 by-version 端点
+        Days = summary
+            ? new List<ChangelogDayDto>()
+            : r.Days.ConvertAll(d => new ChangelogDayDto
             {
                 Date = d.Date.ToString("yyyy-MM-dd"),
                 CommitTimeUtc = d.CommitTimeUtc?.ToString("o"),
                 Entries = d.Entries.ConvertAll(MapEntry),
             }),
-        }),
     };
 
-    private static GitHubLogsDto MapGitHubLogs(GitHubLogsView view) => new()
+    private static GitHubLogsDto MapGitHubLogs(
+        GitHubLogsView view,
+        int limit,
+        string? before,
+        IReadOnlyList<GitHubUserMatchCandidate> matchIndex)
     {
-        DataSourceAvailable = view.DataSourceAvailable,
-        Source = view.Source,
-        FetchedAt = view.FetchedAt.ToString("o"),
-        Logs = view.Logs.ConvertAll(l => new GitHubLogEntryDto
+        var totalCount = view.Logs.Count;
+        var startIdx = 0;
+        if (!string.IsNullOrEmpty(before))
         {
-            Sha = l.Sha,
-            ShortSha = l.ShortSha,
-            Message = l.Message,
-            AuthorName = l.AuthorName,
-            AuthorAvatarUrl = l.AuthorAvatarUrl,
-            CommitTimeUtc = l.CommitTimeUtc.ToString("o"),
-            HtmlUrl = l.HtmlUrl,
-        }),
-    };
+            var idx = view.Logs.FindIndex(l => l.Sha == before);
+            if (idx >= 0) startIdx = idx + 1; // 跳过 cursor 自身
+        }
+        var slice = view.Logs.Skip(startIdx).Take(Math.Max(0, limit)).ToList();
+        var hasMore = (startIdx + slice.Count) < totalCount;
+        var nextCursor = slice.Count > 0 ? slice[^1].Sha : null;
+
+        // 同一作者在一页里反复出现，按作者名做请求内 memo，避免重复扫描索引
+        var matchMemo = new Dictionary<string, GitHubUserMatchCandidate?>(StringComparer.Ordinal);
+        GitHubUserMatchCandidate? ResolveMatch(string authorName)
+        {
+            if (matchMemo.TryGetValue(authorName, out var memo)) return memo;
+            GitHubUserMatchCandidate? hit = null;
+            // 变体含「剥掉通用组织后缀」的版本（如 yurenping-miduo → yurenping）
+            var variants = GitHubAuthorMatcher.NormalizedVariants(authorName);
+            if (variants.Count > 0)
+            {
+                hit = matchIndex.FirstOrDefault(c => variants.Any(v =>
+                    GitHubAuthorMatcher.IsMatch(v, c.NormUsername) ||
+                    GitHubAuthorMatcher.IsMatch(v, c.NormDisplayName)));
+            }
+            matchMemo[authorName] = hit;
+            return hit;
+        }
+
+        return new GitHubLogsDto
+        {
+            DataSourceAvailable = view.DataSourceAvailable,
+            Source = view.Source,
+            FetchedAt = view.FetchedAt.ToString("o"),
+            TotalCount = totalCount,
+            RepoTotalCommitCount = view.RepoTotalCommitCount,
+            HasMore = hasMore,
+            NextCursor = hasMore ? nextCursor : null,
+            Logs = slice.ConvertAll(l =>
+            {
+                var match = ResolveMatch(l.AuthorName);
+                return new GitHubLogEntryDto
+                {
+                    Sha = l.Sha,
+                    ShortSha = l.ShortSha,
+                    Message = l.Message,
+                    AuthorName = l.AuthorName,
+                    AuthorAvatarUrl = l.AuthorAvatarUrl,
+                    CommitTimeUtc = l.CommitTimeUtc.ToString("o"),
+                    HtmlUrl = l.HtmlUrl,
+                    MatchedUsername = match?.Username,
+                    MatchedDisplayName = match == null
+                        ? null
+                        : (string.IsNullOrWhiteSpace(match.DisplayName) ? match.Username : match.DisplayName),
+                    CoAuthors = l.CoAuthorNames.ConvertAll(name =>
+                    {
+                        var coMatch = ResolveMatch(name);
+                        return new GitHubCoAuthorDto
+                        {
+                            Name = name,
+                            MatchedUsername = coMatch?.Username,
+                            MatchedDisplayName = coMatch == null
+                                ? null
+                                : (string.IsNullOrWhiteSpace(coMatch.DisplayName) ? coMatch.Username : coMatch.DisplayName),
+                        };
+                    }),
+                };
+            }),
+        };
+    }
 
     private static ChangelogEntryDto MapEntry(ChangelogEntry e) => new()
     {
@@ -549,6 +723,14 @@ public class ChangelogController : ControllerBase
         public string Source { get; set; } = "none";
         /// <summary>ISO 8601 时间戳</summary>
         public string FetchedAt { get; set; } = string.Empty;
+        /// <summary>全量「日期组」数（=碎片文件数），不受 daysLimit 影响，用于 chip 计数</summary>
+        public int TotalDays { get; set; }
+        /// <summary>全量 entries 总数，不受 daysLimit 影响，用于 chip 计数</summary>
+        public int TotalEntries { get; set; }
+        /// <summary>本次响应跳过的日期组数（= daysOffset）</summary>
+        public int DaysOffset { get; set; }
+        /// <summary>是否还有更多日期组，前端据此触发 loadMore</summary>
+        public bool HasMore { get; set; }
         public List<ChangelogFragmentDto> Fragments { get; set; } = new();
     }
 
@@ -569,6 +751,8 @@ public class ChangelogController : ControllerBase
         /// <summary>"changelog-unreleased-block" / "changelog-release-block"</summary>
         public string SourceScope { get; set; } = string.Empty;
         public List<string> Highlights { get; set; } = new();
+        /// <summary>true 时 Days 是空数组（summary 模式），前端需调 by-version 端点拉详情</summary>
+        public bool EntriesOmitted { get; set; }
         public List<ChangelogDayDto> Days { get; set; } = new();
     }
 
@@ -577,6 +761,10 @@ public class ChangelogController : ControllerBase
         public bool DataSourceAvailable { get; set; }
         public string Source { get; set; } = "none";
         public string FetchedAt { get; set; } = string.Empty;
+        /// <summary>版本总数（=Releases.Count，用于 chip 计数）</summary>
+        public int TotalReleases { get; set; }
+        /// <summary>所有版本的 entries 总数（用于 chip 计数，summary 模式下仍准确）</summary>
+        public int TotalEntries { get; set; }
         public List<ChangelogReleaseDto> Releases { get; set; } = new();
     }
 
@@ -589,6 +777,19 @@ public class ChangelogController : ControllerBase
         public string? AuthorAvatarUrl { get; set; }
         public string CommitTimeUtc { get; set; } = string.Empty;
         public string HtmlUrl { get; set; } = string.Empty;
+        /// <summary>彩蛋：作者名匹配到的系统用户登录名（去数字 + 颠倒容忍 + 通用后缀剥离），null=未匹配</summary>
+        public string? MatchedUsername { get; set; }
+        /// <summary>彩蛋：匹配到的系统用户显示名（为空时回退登录名），null=未匹配</summary>
+        public string? MatchedDisplayName { get; set; }
+        /// <summary>Co-authored-by 联合作者（已剔除与主作者同人），每位同样做系统用户匹配</summary>
+        public List<GitHubCoAuthorDto> CoAuthors { get; set; } = new();
+    }
+
+    public sealed class GitHubCoAuthorDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? MatchedUsername { get; set; }
+        public string? MatchedDisplayName { get; set; }
     }
 
     public sealed class GitHubLogsDto
@@ -596,6 +797,14 @@ public class ChangelogController : ControllerBase
         public bool DataSourceAvailable { get; set; }
         public string Source { get; set; } = "none";
         public string FetchedAt { get; set; } = string.Empty;
+        /// <summary>「最近一周」窗口内的 commit 总数（不受 limit 影响，列表数据上限）</summary>
+        public int TotalCount { get; set; }
+        /// <summary>仓库全历史提交总数（不限窗口），null=暂未统计成功，前端降级用 TotalCount</summary>
+        public int? RepoTotalCommitCount { get; set; }
+        /// <summary>是否还有更多，前端据此触发 loadMore</summary>
+        public bool HasMore { get; set; }
+        /// <summary>下一页 cursor（=本批次最后一条的 sha），前端传给 before 参数取下一批</summary>
+        public string? NextCursor { get; set; }
         public List<GitHubLogEntryDto> Logs { get; set; } = new();
     }
 }

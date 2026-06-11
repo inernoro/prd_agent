@@ -4,16 +4,15 @@ import type { LucideIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
-  Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, UploadCloud, Cog,
-  Github, GitCommit, ExternalLink, Brain, Wand2, Radio,
+  Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, Cog,
+  Github, GitCommit, ExternalLink, Brain, Wand2, Radio, UserCheck, Flame,
 } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { SparkleButton } from '@/components/effects/SparkleButton';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { glassPanel } from '@/lib/glassStyles';
 import { getChangelogGitHubLogs, postChangelogAiSummary } from '@/services';
-import type { ChangelogEntry, GitHubLogEntry, GitHubLogsView } from '@/services';
+import type { ChangelogEntry, ChangelogRelease, GitHubLogEntry, GitHubLogsView } from '@/services';
 import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
 import { TabBar } from '@/components/design/TabBar';
@@ -24,24 +23,62 @@ import {
 } from './components/WeeklyReportsTab';
 import { WeeklyReportSourcesProvider } from './components/weeklyReportSourcesContext';
 import { AiNewsTimeline } from '@/components/ai-news/AiNewsTimeline';
+import { groupGitHubLogsByWeek } from './lib/groupGitHubLogsByWeek';
+import { burstParticles } from './lib/burstParticles';
+import { AnimatedNumber } from './components/AnimatedNumber';
+import './changelog-dynamic.css';
 
 
-/** 类型徽章注册表（禁止 switch / if-else） */
-const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: string; border: string; icon: LucideIcon }> = {
+interface TypeBadgeMeta {
+  label: string;
+  color: string;
+  bg: string;
+  border: string;
+  icon: LucideIcon;
+}
+
+/** 更新类型枚举：changelogs/*.md 第一列只允许这些 key，UI 只展示中文 label。 */
+const TYPE_BADGE_REGISTRY: Record<string, TypeBadgeMeta> = {
   feat: { label: '新功能', color: '#86efac', bg: 'rgba(34, 197, 94, 0.10)', border: 'rgba(34, 197, 94, 0.32)', icon: Sparkles },
   fix: { label: '修复', color: '#fdba74', bg: 'rgba(251, 146, 60, 0.10)', border: 'rgba(251, 146, 60, 0.32)', icon: Wrench },
-  refactor: { label: '重构', color: '#93c5fd', bg: 'rgba(59, 130, 246, 0.10)', border: 'rgba(59, 130, 246, 0.32)', icon: Shuffle },
   perf: { label: '优化', color: '#c4b5fd', bg: 'rgba(139, 92, 246, 0.10)', border: 'rgba(139, 92, 246, 0.32)', icon: Gauge },
+  refactor: { label: '重构', color: '#93c5fd', bg: 'rgba(59, 130, 246, 0.10)', border: 'rgba(59, 130, 246, 0.32)', icon: Shuffle },
   docs: { label: '文档', color: '#67e8f9', bg: 'rgba(6, 182, 212, 0.10)', border: 'rgba(6, 182, 212, 0.32)', icon: FileText },
   chore: { label: '杂项', color: '#d4d4d8', bg: 'rgba(161, 161, 170, 0.10)', border: 'rgba(161, 161, 170, 0.32)', icon: Package },
-  enhance: { label: '增强', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.10)', border: 'rgba(244, 114, 182, 0.32)', icon: Zap },
-  rule: { label: '规范', color: '#e879f9', bg: 'rgba(232, 121, 249, 0.10)', border: 'rgba(232, 121, 249, 0.32)', icon: Shield },
   test: { label: '测试', color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)', border: 'rgba(52, 211, 153, 0.32)', icon: FlaskConical },
-  ci: { label: '构筑', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)', icon: Cog },
-  deploy: { label: '部署', color: '#6ee7b7', bg: 'rgba(110, 231, 183, 0.10)', border: 'rgba(110, 231, 183, 0.32)', icon: UploadCloud },
+  ci: { label: '构建', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)', icon: Cog },
+  build: { label: '构建', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)', icon: Cog },
+  release: { label: '发布', color: '#fde68a', bg: 'rgba(245, 158, 11, 0.10)', border: 'rgba(245, 158, 11, 0.30)', icon: Calendar },
+  security: { label: '安全', color: '#fda4af', bg: 'rgba(244, 63, 94, 0.10)', border: 'rgba(244, 63, 94, 0.30)', icon: Shield },
+  ops: { label: '运维', color: '#fcd34d', bg: 'rgba(234, 179, 8, 0.10)', border: 'rgba(234, 179, 8, 0.30)', icon: Cog },
+  style: { label: '样式', color: '#f0abfc', bg: 'rgba(217, 70, 239, 0.10)', border: 'rgba(217, 70, 239, 0.30)', icon: Package },
+  polish: { label: '润色', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.10)', border: 'rgba(244, 114, 182, 0.32)', icon: Zap },
+  rule: { label: '规范', color: '#e879f9', bg: 'rgba(232, 121, 249, 0.10)', border: 'rgba(232, 121, 249, 0.32)', icon: Shield },
+  merge: { label: '合并', color: '#a5b4fc', bg: 'rgba(99, 102, 241, 0.10)', border: 'rgba(99, 102, 241, 0.28)', icon: GitCommit },
+  revert: { label: '回滚', color: '#fca5a5', bg: 'rgba(248, 113, 113, 0.10)', border: 'rgba(248, 113, 113, 0.30)', icon: Shuffle },
 };
 
-const FALLBACK_BADGE = {
+const CHANGELOG_TYPE_ORDER = [
+  'feat',
+  'fix',
+  'perf',
+  'refactor',
+  'docs',
+  'chore',
+  'test',
+  'ci',
+  'build',
+  'release',
+  'security',
+  'ops',
+  'style',
+  'polish',
+  'rule',
+  'merge',
+  'revert',
+];
+
+const FALLBACK_BADGE: TypeBadgeMeta = {
   label: '其他',
   color: '#d4d4d8',
   bg: 'rgba(161, 161, 170, 0.10)',
@@ -50,7 +87,11 @@ const FALLBACK_BADGE = {
 };
 
 function getTypeBadge(type: string) {
-  return TYPE_BADGE_REGISTRY[type.toLowerCase()] ?? { ...FALLBACK_BADGE, label: type };
+  return TYPE_BADGE_REGISTRY[type.toLowerCase()] ?? FALLBACK_BADGE;
+}
+
+function isUnarchivedRelease(release: ChangelogRelease): boolean {
+  return release.version === '未发布' || release.sourceScope === 'changelog-unreleased-block';
 }
 
 interface FlatEntry extends ChangelogEntry {
@@ -64,9 +105,13 @@ interface FlatEntry extends ChangelogEntry {
 type HistorySubtab = 'releases' | 'fragments' | 'github_logs';
 type HistorySummaryStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v1';
+// v4：新增 repoTotalCommitCount / matched* / coAuthors 字段，bump key 使旧缓存自然失效
+const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v4';
 const GITHUB_LOGS_CACHE_TTL_MS = 5 * 60 * 1000;
-const GITHUB_LOGS_FETCH_LIMIT = 1000;
+/** 首屏只拉 80 条（与 visible=80 对齐），后续走 cursor 续接 */
+const GITHUB_LOGS_INITIAL_FETCH = 80;
+/** 续接每批拉 80 条 */
+const GITHUB_LOGS_PAGE_SIZE = 80;
 const GITHUB_LOGS_LIVE_POLL_MS = 35 * 1000;
 const GITHUB_LOGS_NEW_HIGHLIGHT_MS = 5200;
 const RELEASES_INITIAL_VISIBLE = 4;
@@ -89,6 +134,12 @@ interface HistorySummaryResult {
   insight: string;
   thinkingTrace: string;
   generatedAt: number;
+}
+
+interface PublishedTimelineGroup {
+  date: string;
+  versionEvents: string[];
+  rows: FlatEntry[];
 }
 
 function formatLocalDateValue(d: Date): string {
@@ -130,17 +181,6 @@ function formatRelativeTime(iso?: string | null): string {
   return `${days} 天前`;
 }
 
-function getLatestCommitDateTime(days: Array<{ commitTimeUtc?: string | null }>): string | null {
-  const latestCommitDay = days
-    .map((d) => parseIsoDate(d.commitTimeUtc))
-    .filter((d): d is Date => d instanceof Date)
-    .sort((a, b) => b.getTime() - a.getTime())[0];
-  if (latestCommitDay) {
-    return formatLocalDateTimeValue(latestCommitDay);
-  }
-  return null;
-}
-
 function readGitHubLogsCache(): GitHubLogsView | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -178,8 +218,10 @@ function useIncrementalVisible(
   const [visibleCount, setVisibleCount] = useState(initial);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
+  // 关键：total 增长（瀑布加载新批次）时**保留**当前 visibleCount，不重置回 initial，
+  // 否则用户滚动到第 8 组后触发的 backend loadMore 会把视图缩回第 6 组。
   useEffect(() => {
-    setVisibleCount(Math.min(initial, total));
+    setVisibleCount((current) => Math.min(Math.max(current, initial), total));
   }, [enabled, initial, total]);
 
   useEffect(() => {
@@ -216,7 +258,9 @@ export default function ChangelogPage() {
   const loadingReleases = useChangelogStore((s) => s.loadingReleases);
   const error = useChangelogStore((s) => s.error);
   const loadCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
+  const loadMoreFragments = useChangelogStore((s) => s.loadMoreFragments);
   const loadReleases = useChangelogStore((s) => s.loadReleases);
+  const loadReleaseDetail = useChangelogStore((s) => s.loadReleaseDetail);
   const markAsSeen = useChangelogStore((s) => s.markAsSeen);
 
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
@@ -279,12 +323,59 @@ export default function ChangelogPage() {
     return d.getTime();
   });
 
-  // 进入页面：拉取数据 + 标记已读
-  // 「本周更新」section 已下线；但仍拉 currentWeek 以驱动已读计数 & 顶部的数据源徽标
+  // 进入页面：瀑布式首屏三件套
+  // - currentWeek 只拉 4 个日期组（daysLimit=4），更多走 loadMoreFragments 增量补
+  // - releases 走 summary 模式：只元数据 + 计数，体积 <5kB；每个版本详情靠 IntersectionObserver 进入视口时按需补
+  // - githubLogs 只拉首批 80 条，cursor 分页续接
   useEffect(() => {
-    void loadCurrentWeek();
-    void loadReleases(20);
+    void loadCurrentWeek({ daysLimit: 4 });
+    void loadReleases({ limit: 100, summary: true });
     markAsSeen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // releases summary 到位后：只对【第一个版本】立刻拉详情；
+  // 其余 release 走 IntersectionObserver — 滚动到可视区才拉，避免一次性 700kB 详情压栈
+  //
+  // 注意：不再用本地 triggeredRef 缓存「已请求」状态。SSE / 刷新会重新调用
+  // loadReleases({summary:true})，把所有版本的 days 清空（entriesOmitted=true），
+  // 若 ref 还记着「已请求过」就永远不会重拉，卡片留空（Bugbot #2）。
+  // 改为：以 `release.entriesOmitted` 本身作为「是否需要拉」的信号；store 端
+  // 用 `loadingReleaseVersions` 做并发去重，本端无需再缓存。
+  useEffect(() => {
+    if (!releases || releases.releases.length === 0) return;
+    const firstUnarchived = releases.releases.find(isUnarchivedRelease);
+    const firstPublished = releases.releases.find((release) => !isUnarchivedRelease(release));
+    for (const release of [firstUnarchived, firstPublished]) {
+      if (release?.entriesOmitted) void loadReleaseDetail(release.version);
+    }
+  }, [releases, loadReleaseDetail]);
+
+  // 其他 release：IntersectionObserver 监视 data-release-version 元素，进视口才拉
+  useEffect(() => {
+    if (activeTab !== 'update_center' || historySubtab !== 'releases') return;
+    if (!releases) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const v = (entry.target as HTMLElement).dataset.releaseVersion;
+          if (!v) continue;
+          // 让 store 自己判断「是否需要拉」+ 并发去重（loadingReleaseVersions / entriesOmitted）
+          void loadReleaseDetail(v);
+        }
+      },
+      { rootMargin: '300px 0px', threshold: 0.01 },
+    );
+    const nodes = document.querySelectorAll<HTMLElement>('[data-release-version]');
+    nodes.forEach((n) => observer.observe(n));
+    return () => observer.disconnect();
+  }, [activeTab, historySubtab, releases, loadReleaseDetail]);
+
+  // GitHub logs：首屏拉一次 80 条让 chip 计数准确（不是 0），不进入轮询
+  useEffect(() => {
+    if (githubLogsRef.current) return; // sessionStorage cache 已有，跳过
+    void refreshGitHubLogs({ force: false, foreground: false, showError: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -292,7 +383,7 @@ export default function ChangelogPage() {
     githubLogsRef.current = githubLogs;
   }, [githubLogs]);
 
-  // 离开 GitHub 日志子 tab 或离开更新中心主 tab 时清错误，返回时可重新拉取
+  // 离开 GitHub 提交子 tab 或离开更新中心主 tab 时清错误，返回时可重新拉取
   useEffect(() => {
     if (activeTab !== 'update_center' || historySubtab !== 'github_logs') {
       setGitHubLogsError(null);
@@ -323,19 +414,37 @@ export default function ChangelogPage() {
 
     try {
       const previous = githubLogsRef.current;
-      const res = await getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT, force);
+      // 刷新永远只拉首批 80 条（最新的）。续接更老的走 loadMoreGitHubLogs（cursor）。
+      const res = await getChangelogGitHubLogs({ limit: GITHUB_LOGS_INITIAL_FETCH, force });
       if (res.success) {
         // 成功就清错误横幅（无论 foreground/trailing/SSE 触发）：否则前一次前台失败留下的
         // 红色「注意」横幅会在后台成功更新后仍挂着，与实际状态不符（Bugbot Medium）。
         setGitHubLogsError(null);
+        const newShas = new Set(res.data.logs.map((log) => log.sha));
         const previousShas = new Set((previous?.logs ?? []).map((log) => log.sha));
         const insertedShas = previous
           ? res.data.logs.filter((log) => !previousShas.has(log.sha)).map((log) => log.sha)
           : [];
 
-        setGitHubLogs(res.data);
+        // 保留用户已通过 cursor 续接到的更老 logs（不在 newShas 里的）。
+        // 否则 35s 轮询 / 手动刷新 / SSE 会用 first-page 80 条覆盖整个列表，
+        // 用户正在看的更老内容直接消失（Bugbot #3 + Codex P2）。
+        const preservedTail = (previous?.logs ?? []).filter((log) => !newShas.has(log.sha));
+        // ⚠️ 关键：合并 tail 时也要保留 previous 的 hasMore / nextCursor。
+        // 否则用 res.data 的 nextCursor（first-page 最后一条 sha）去续接，
+        // 会拉回已经在 preservedTail 里的同一批，产生重复（Bugbot High #1 + Codex P2）
+        const merged: GitHubLogsView = preservedTail.length > 0 && previous
+          ? {
+              ...res.data,
+              logs: [...res.data.logs, ...preservedTail],
+              hasMore: previous.hasMore,
+              nextCursor: previous.nextCursor,
+            }
+          : res.data;
+
+        setGitHubLogs(merged);
         setLiveFetchedAt(res.data.fetchedAt);
-        writeGitHubLogsCache(res.data);
+        writeGitHubLogsCache(merged);
 
         if (insertedShas.length > 0) {
           setNewGitHubLogShas((current) => new Set([...current, ...insertedShas]));
@@ -348,11 +457,11 @@ export default function ChangelogPage() {
           }, GITHUB_LOGS_NEW_HIGHLIGHT_MS);
         }
       } else {
-        if (showError) setGitHubLogsError(res.error?.message || '加载 GitHub 日志失败');
+        if (showError) setGitHubLogsError(res.error?.message || '加载 GitHub 提交失败');
       }
     } catch (error: unknown) {
       if (showError) {
-        setGitHubLogsError(error instanceof Error ? error.message : '加载 GitHub 日志失败');
+        setGitHubLogsError(error instanceof Error ? error.message : '加载 GitHub 提交失败');
       }
     } finally {
       githubLogsRefreshInFlightRef.current = false;
@@ -374,16 +483,53 @@ export default function ChangelogPage() {
     refreshGitHubLogsRef.current = refreshGitHubLogs;
   }, [refreshGitHubLogs]);
 
+  // cursor 分页续接 GitHub 提交（向更老的方向）
+  const loadingMoreLogsRef = useRef(false);
+  const loadMoreGitHubLogs = useCallback(async () => {
+    if (loadingMoreLogsRef.current) return;
+    const startSnapshot = githubLogsRef.current;
+    if (!startSnapshot || !startSnapshot.hasMore || !startSnapshot.nextCursor) return;
+    loadingMoreLogsRef.current = true;
+    const requestedCursor = startSnapshot.nextCursor;
+    try {
+      const res = await getChangelogGitHubLogs({
+        limit: GITHUB_LOGS_PAGE_SIZE,
+        before: requestedCursor,
+      });
+      if (!res.success || !res.data) return;
+      // ⚠️ 关键：读最新 ref，而不是用 startSnapshot —— refresh 可能在我们等待期间到达。
+      // 若 latest 已不包含 requestedCursor（=refresh 已用新数据完全覆盖），
+      // 本次返回的旧 cursor 数据是过时的，直接丢弃，避免用 stale 数据覆盖新列表（Bugbot #2）。
+      const latest = githubLogsRef.current;
+      if (!latest) return;
+      const latestHasCursor = latest.logs.some((l) => l.sha === requestedCursor);
+      if (!latestHasCursor) return;
+      const merged: GitHubLogsView = {
+        ...res.data,
+        // 累积保留头部已展示的（最新），追加新批次（更老）
+        logs: [...latest.logs, ...res.data.logs],
+      };
+      setGitHubLogs(merged);
+      writeGitHubLogsCache(merged);
+    } finally {
+      loadingMoreLogsRef.current = false;
+    }
+  }, []);
+
+  // 只在用户进入「GitHub 提交」子 tab 时才启动 35s 轮询；
+  // 默认子 tab 是「已发布」，否则首屏 mount 时 requestIdleCallback 会与初始渲染抢主线程
+  // 实时性兜底：handleServerUpdate (SSE push) 仍在常驻，后端有更新会主动推。
   useEffect(() => {
     if (activeTab !== 'update_center') return;
+    if (historySubtab !== 'github_logs') return;
     let stopped = false;
 
     const run = () => {
       if (stopped || document.visibilityState !== 'visible') return;
       void refreshGitHubLogs({
         force: true,
-        foreground: historySubtab === 'github_logs' && !githubLogsRef.current,
-        showError: historySubtab === 'github_logs',
+        foreground: !githubLogsRef.current,
+        showError: true,
       });
     };
 
@@ -413,8 +559,8 @@ export default function ChangelogPage() {
   }, []);
 
   const handleRefresh = () => {
-    void loadCurrentWeek(true);
-    void loadReleases(20, true);
+    void loadCurrentWeek({ daysLimit: 4, force: true });
+    void loadReleases({ limit: 100, summary: true, force: true });
     void refreshGitHubLogs({ force: true, foreground: historySubtab === 'github_logs', showError: historySubtab === 'github_logs' });
   };
 
@@ -430,8 +576,8 @@ export default function ChangelogPage() {
     lastBeatRef.current = Date.now();
     const viewType = (data as { viewType?: string })?.viewType;
     // 服务器已把新数据落库，这里只做 force=false 的后台静默重读（读存量，不打 GitHub、不闪 loading）
-    if (viewType === 'current-week') void loadCurrentWeek(false);
-    else if (viewType === 'releases') void loadReleases(20, false);
+    if (viewType === 'current-week') void loadCurrentWeek({ daysLimit: 4 });
+    else if (viewType === 'releases') void loadReleases({ limit: 100, summary: true });
     else if (viewType === 'github-logs') void refreshGitHubLogs({ force: false });
     setJustUpdatedAt(Date.now());
   }, [loadCurrentWeek, loadReleases, refreshGitHubLogs]);
@@ -533,11 +679,17 @@ export default function ChangelogPage() {
   };
 
   const counts = useMemo(() => {
-    const released = releases?.releases.reduce((sum, release) => (
-      sum + (release.entryCount ?? release.days.reduce((daySum, day) => daySum + day.entries.length, 0))
-    ), 0) ?? 0;
-    const unpublished = currentWeek?.fragments.reduce((sum, fragment) => sum + fragment.entries.length, 0) ?? 0;
-    const logs = githubLogs?.logs.length ?? 0;
+    const released = releases?.totalEntries
+      ?? releases?.releases.reduce((sum, release) => (
+        sum + (release.entryCount ?? release.days.reduce((daySum, day) => daySum + day.entries.length, 0))
+      ), 0)
+      ?? 0;
+    const unpublished = currentWeek?.totalEntries
+      ?? currentWeek?.fragments.reduce((sum, fragment) => sum + fragment.entries.length, 0)
+      ?? 0;
+    // chip 显示仓库全历史提交总数（用户关心的是「这个仓库一共提交了多少次」），
+    // 统计失败时降级为「最近一周」窗口内条数
+    const logs = githubLogs?.repoTotalCommitCount ?? githubLogs?.totalCount ?? githubLogs?.logs.length ?? 0;
     return { releases: released, fragments: unpublished, github_logs: logs };
   }, [currentWeek, githubLogs, releases]);
 
@@ -560,17 +712,60 @@ export default function ChangelogPage() {
         }
       }
     }
-    return { availableTypes: Array.from(types).sort() };
+    return { availableTypes: CHANGELOG_TYPE_ORDER.filter((type) => types.has(type)) };
   }, [currentWeek, releases]);
 
-  const matchFilter = (e: ChangelogEntry): boolean => {
+  // 每个类型的条目数（热度）：releases + fragments 合并统计，驱动筛选 chip 的热度角标。
+  // 统计窗口 = 最近 30 天（用户 2026-06-11 指定），让角标反映「近期」热度而非全史累计
+  const typeCounts = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const cutoffKey = `${cutoff.getFullYear()}-${`${cutoff.getMonth() + 1}`.padStart(2, '0')}-${`${cutoff.getDate()}`.padStart(2, '0')}`;
+    const result: Record<string, number> = {};
+    const add = (type: string) => {
+      const key = type.toLowerCase();
+      if (!key) return;
+      result[key] = (result[key] ?? 0) + 1;
+    };
+    if (releases) {
+      for (const r of releases.releases) {
+        for (const d of r.days) {
+          if (d.date < cutoffKey) continue;
+          for (const e of d.entries) add(e.type);
+        }
+      }
+    }
+    if (currentWeek) {
+      for (const f of currentWeek.fragments) {
+        if (f.date < cutoffKey) continue;
+        for (const e of f.entries) add(e.type);
+      }
+    }
+    return result;
+  }, [currentWeek, releases]);
+
+  // 热度排名（仅条目数 >= 5 的类型参与发光，避免小样本也戴火焰）
+  const hotTypeRanking = useMemo(() => (
+    availableTypes
+      .filter((t) => (typeCounts[t] ?? 0) >= 5)
+      .sort((a, b) => (typeCounts[b] ?? 0) - (typeCounts[a] ?? 0))
+  ), [availableTypes, typeCounts]);
+
+  const matchFilter = useCallback((e: ChangelogEntry): boolean => {
     if (typeFilter && e.type.toLowerCase() !== typeFilter) return false;
     return true;
-  };
+  }, [typeFilter]);
 
-  const releaseRenderItems = useMemo(() => {
+  const allReleaseRenderItems = useMemo(() => {
     if (!releases) return [];
+    // 去重：CHANGELOG.md 文末有第二个 `## [未发布]` 模板锚点，parser 会重复匹配
+    const seenVersions = new Set<string>();
     return releases.releases
+      .filter((r) => {
+        if (seenVersions.has(r.version)) return false;
+        seenVersions.add(r.version);
+        return true;
+      })
       .map((release) => {
         const visibleDays = release.days
           .map((d) => ({
@@ -579,14 +774,45 @@ export default function ChangelogPage() {
           }))
           .filter((d) => d.entries.length > 0);
         const totalCount = visibleDays.reduce((s, d) => s + d.entries.length, 0);
-        if (totalCount === 0 && release.highlights.length === 0) {
+        // summary 模式（entriesOmitted=true）下 days 故意为空——仍然要渲染卡片，让 IntersectionObserver
+        // 能挂到 dom 上触发详情拉取。只有当 release 真的「无 entries + 无 highlights + 非 summary」时才隐藏。
+        if (totalCount === 0 && release.highlights.length === 0 && !release.entriesOmitted) {
           return null;
         }
         const entryCount = release.entryCount ?? release.days.reduce((sum, day) => sum + day.entries.length, 0);
         return { release, visibleDays, totalCount, entryCount };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);
-  }, [releases, typeFilter]);
+  }, [releases, matchFilter]);
+
+  const publishedTimelineGroups = useMemo(() => {
+    const groups = new Map<string, PublishedTimelineGroup>();
+    const ensureGroup = (date: string) => {
+      const existing = groups.get(date);
+      if (existing) return existing;
+      const created: PublishedTimelineGroup = { date, versionEvents: [], rows: [] };
+      groups.set(date, created);
+      return created;
+    };
+
+    for (const { release, visibleDays } of allReleaseRenderItems) {
+      if (!isUnarchivedRelease(release) && release.releaseDate) {
+        ensureGroup(release.releaseDate).versionEvents.push(`v${release.version}`);
+      }
+      for (const day of visibleDays) {
+        const group = ensureGroup(day.date);
+        group.rows.push(...day.entries.map((entry) => ({
+          ...entry,
+          date: day.date,
+          commitTimeUtc: day.commitTimeUtc ?? null,
+          source: 'release' as const,
+          releaseVersion: release.version,
+        })));
+      }
+    }
+
+    return Array.from(groups.values()).sort((a, b) => b.date.localeCompare(a.date));
+  }, [allReleaseRenderItems]);
 
   const fragmentGroups = useMemo(() => {
     if (!currentWeek) return [];
@@ -608,12 +834,12 @@ export default function ChangelogPage() {
       else acc.push({ date: fragment.date, rows });
       return acc;
     }, []);
-  }, [currentWeek, typeFilter]);
+  }, [currentWeek, matchFilter]);
 
   const githubLogRows = githubLogs?.logs ?? [];
   const releaseList = useIncrementalVisible(
     activeTab === 'update_center' && historySubtab === 'releases',
-    releaseRenderItems.length,
+    publishedTimelineGroups.length,
     RELEASES_INITIAL_VISIBLE,
     RELEASES_VISIBLE_STEP,
     scrollRootRef
@@ -632,6 +858,51 @@ export default function ChangelogPage() {
     GITHUB_LOGS_VISIBLE_STEP,
     scrollRootRef
   );
+
+  const githubLogVisibleCount = githubLogList.visibleCount;
+  // 当前可见的提交按自然周分组；startIndex 用于保持入场动画的全局 stagger 次序
+  const githubLogWeekGroups = useMemo(() => {
+    const rows = githubLogs?.logs ?? [];
+    const groups = groupGitHubLogsByWeek(rows.slice(0, githubLogVisibleCount));
+    let offset = 0;
+    return groups.map((group) => {
+      const withOffset = { ...group, startIndex: offset };
+      offset += group.logs.length;
+      return withOffset;
+    });
+  }, [githubLogs, githubLogVisibleCount]);
+
+  useEffect(() => {
+    if (activeTab !== 'update_center' || historySubtab !== 'releases') return;
+    if (!releases) return;
+    const visibleDates = new Set(
+      publishedTimelineGroups.slice(0, releaseList.visibleCount).map((group) => group.date)
+    );
+    for (const release of releases.releases) {
+      if (!release.entriesOmitted) continue;
+      if (release.releaseDate && visibleDates.has(release.releaseDate)) {
+        void loadReleaseDetail(release.version);
+      }
+    }
+  }, [activeTab, historySubtab, loadReleaseDetail, publishedTimelineGroups, releaseList.visibleCount, releases]);
+
+  // ── 瀑布式 backend loadMore 触发器 ──
+  // 当用户已渲染到本地数据末尾 1 组之内 且 backend 还有更多 → preemptive fetch 下一批
+  useEffect(() => {
+    if (activeTab !== 'update_center') return;
+    if (historySubtab !== 'fragments') return;
+    if (!currentWeek?.hasMore) return;
+    if (fragmentList.visibleCount < fragmentGroups.length - 1) return;
+    void loadMoreFragments();
+  }, [activeTab, historySubtab, currentWeek, fragmentList.visibleCount, fragmentGroups.length, loadMoreFragments]);
+
+  useEffect(() => {
+    if (activeTab !== 'update_center') return;
+    if (historySubtab !== 'github_logs') return;
+    if (!githubLogs?.hasMore) return;
+    if (githubLogList.visibleCount < githubLogRows.length - 10) return;
+    void loadMoreGitHubLogs();
+  }, [activeTab, historySubtab, githubLogs, githubLogList.visibleCount, githubLogRows.length, loadMoreGitHubLogs]);
 
   // 数据源标签 + 拉取时间显示（github / local / none）
   const sourceLabel = (() => {
@@ -677,9 +948,22 @@ export default function ChangelogPage() {
   const activeSummaryLabel = historySubtab === 'releases'
     ? '已发布'
     : historySubtab === 'fragments'
-      ? '待发布'
-      : '实时日志';
+      ? '未发布'
+      : 'GitHub 提交';
   const activeTotal = counts[historySubtab];
+
+  // 新提交/新条目到达时给「共 N 次提交」chip 一道扫光（同页签内数值增长才触发，切页签不闪）
+  const [totalFlash, setTotalFlash] = useState(false);
+  const prevTotalRef = useRef<{ tab: HistorySubtab; value: number } | null>(null);
+  useEffect(() => {
+    const prev = prevTotalRef.current;
+    prevTotalRef.current = { tab: historySubtab, value: activeTotal };
+    if (prev && prev.tab === historySubtab && activeTotal > prev.value) {
+      setTotalFlash(true);
+      const timer = setTimeout(() => setTotalFlash(false), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTotal, historySubtab]);
 
   return (
     <WeeklyReportSourcesProvider>
@@ -800,26 +1084,47 @@ export default function ChangelogPage() {
               筛选
             </div>
             
-            <div className="flex flex-wrap gap-1.5 ml-1">
+            <div className="flex flex-wrap ml-1" style={{ gap: '12px 10px', paddingTop: '6px' }}>
               {availableTypes.map((t) => {
                 const meta = getTypeBadge(t);
                 const active = typeFilter === t;
                 const Icon = meta.icon;
+                const count = typeCounts[t] ?? 0;
+                const hotRank = hotTypeRanking.indexOf(t);
+                const hotClass = hotRank === 0 ? ' clg-chip-hot1' : hotRank === 1 || hotRank === 2 ? ' clg-chip-hot2' : '';
                 return (
                   <button
                     key={t}
                     type="button"
-                    onClick={() => setTypeFilter(active ? null : t)}
-                    className="h-8 pl-2.5 pr-3 rounded-lg text-[13px] font-medium transition-all cursor-pointer inline-flex items-center gap-1.5"
+                    onClick={(e) => {
+                      setTypeFilter(active ? null : t);
+                      if (!active) burstParticles(e.clientX, e.clientY, meta.color);
+                    }}
+                    title={`${meta.label} · 近 30 天 ${count} 条${hotRank === 0 ? ' · 最热' : ''}`}
+                    className={`clg-chip h-8 pl-2.5 pr-3 rounded-lg text-[13px] font-medium cursor-pointer inline-flex items-center gap-1.5${hotClass}`}
                     style={{
-                      background: active ? meta.bg : 'rgba(255, 255, 255, 0.04)',
-                      border: `1px solid ${active ? meta.border : 'rgba(255, 255, 255, 0.10)'}`,
-                      color: active ? meta.color : 'var(--text-muted)',
+                      background: meta.bg,
+                      border: `1px solid ${meta.border}`,
+                      color: meta.color,
                       lineHeight: '1',
+                      boxShadow: active ? `0 0 0 2px ${meta.border}` : undefined,
+                      filter: active ? 'brightness(1.15)' : undefined,
                     }}
                   >
                     <Icon size={13} />
                     {meta.label}
+                    {count > 0 && (
+                      hotRank === 0 ? (
+                        <span className="clg-badge clg-badge-hot">
+                          <Flame size={9} strokeWidth={2.5} />
+                          {count}
+                        </span>
+                      ) : (
+                        <span className="clg-badge" style={{ background: meta.color }}>
+                          {count}
+                        </span>
+                      )
+                    )}
                   </button>
                 );
               })}
@@ -840,6 +1145,15 @@ export default function ChangelogPage() {
                 清除筛选
               </button>
             )}
+
+            <span
+              className="ml-auto inline-flex items-center gap-1 text-[11px] self-end pb-1"
+              style={{ color: 'var(--text-muted)', opacity: 0.75 }}
+              title="角标统计最近 30 天的条目数，越久没有新增热度自然衰减；火焰徽章 = 近 30 天最热类型"
+            >
+              <Flame size={10} style={{ color: '#fb923c' }} />
+              近 30 天热度
+            </span>
           </div>
         )}
       </header>
@@ -872,20 +1186,20 @@ export default function ChangelogPage() {
         </div>
       )}
 
-      {/* ── 历史区：CHANGELOG / 碎片 / GitHub 日志 ───────────────────── */}
+      {/* ── 更新区：已发布流水 / 未发布碎片 / GitHub 提交 ───────────────────── */}
       <section style={glassPanel} className="rounded-2xl p-5">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-4 flex-wrap">
             <h2 className="text-[18px] font-semibold tracking-wide" style={{ color: 'var(--text-primary)' }}>
-              历史发布
+              更新记录
             </h2>
             {([
               { key: 'releases', label: '已发布', icon: <Calendar size={13} /> },
-              { key: 'fragments', label: '待发布', icon: <FileText size={13} /> },
+              { key: 'fragments', label: '未发布', icon: <FileText size={13} /> },
               {
                 key: 'github_logs',
-                label: '实时日志',
-                // 实时日志 icon 上叠加一颗"动态刷新"指示点（呼吸 + 旋转），强调内容是近实时的
+                label: 'GitHub 提交',
+                // GitHub 提交 icon 上叠加一颗"动态刷新"指示点（呼吸 + 旋转），强调内容是近实时的
                 icon: (
                   <span className="relative inline-flex">
                     <Github size={13} />
@@ -902,11 +1216,16 @@ export default function ChangelogPage() {
             ] as const).map((tab) => {
               const active = historySubtab === tab.key;
               const count = counts[tab.key];
+              const fragmentFileCount = currentWeek?.totalDays ?? currentWeek?.fragments.length ?? 0;
+              const tabTitle = tab.key === 'fragments' && currentWeek
+                ? `${fragmentFileCount} 个碎片文件 · ${count} 条未发布改动\n来源：changelogs/*.md\n进入已发布流水：发布到 admin 生产环境后合入 CHANGELOG.md`
+                : undefined;
               return (
                 <button
                   key={tab.key}
                   type="button"
                   onClick={() => setHistorySubtab(tab.key)}
+                  title={tabTitle}
                   className="h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium transition-all"
                   style={{
                     background: active ? 'rgba(99, 102, 241, 0.14)' : 'rgba(255, 255, 255, 0.04)',
@@ -926,7 +1245,7 @@ export default function ChangelogPage() {
                       fontVariantNumeric: 'tabular-nums',
                     }}
                   >
-                    {count}
+                    <AnimatedNumber value={count} />
                   </span>
                 </button>
               );
@@ -934,7 +1253,7 @@ export default function ChangelogPage() {
           </div>
           <div className="flex items-center gap-3 flex-wrap justify-end">
             <span
-              className="h-7 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium"
+              className={`clg-sweep h-7 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium${totalFlash ? ' clg-sweep-on' : ''}`}
               style={{
                 color: 'var(--text-secondary)',
                 background: 'rgba(255, 255, 255, 0.04)',
@@ -943,32 +1262,44 @@ export default function ChangelogPage() {
               }}
               title={`${activeSummaryLabel}总数量`}
             >
-              共 {activeTotal} 条
+              共 <AnimatedNumber value={activeTotal} /> {historySubtab === 'github_logs' ? '次提交' : '条'}
             </span>
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              {historySubtab === 'releases' && '来自 CHANGELOG.md'}
-              {historySubtab === 'fragments' && '来自全部 changelogs/*.md 碎片'}
+              {historySubtab === 'releases' && '来自 admin 生产发布流水'}
+              {historySubtab === 'fragments' && '来自已合并但未上生产的 changelogs/*.md 碎片'}
               {historySubtab === 'github_logs' && (
-                <>
-                  {githubLogs?.source === 'local' ? '来自本地 git log · 最近一周' : '来自 GitHub commits API · 最近一周'}
-                  {' · 35 秒自动同步'}
-                  {liveFetchedAtRelative ? ` · ${liveFetchedAtRelative}` : ''}
-                </>
+                <span className="inline-flex items-center gap-1">
+                  {githubLogs?.source === 'local' ? '来自本地 git log' : '来自 GitHub commits API'}
+                  {githubLogs?.repoTotalCommitCount != null
+                    ? <> · 仓库总提交 <AnimatedNumber value={githubLogs.repoTotalCommitCount} style={{ color: 'var(--text-secondary)', fontWeight: 600 }} /> 次 · 下方列出最近一周 {githubLogs.totalCount ?? githubLogs.logs.length} 条</>
+                    : ' · 最近一周'}
+                  {' · 35 秒自动同步 · '}
+                  <span className="relative inline-flex h-1.5 w-1.5 shrink-0" aria-hidden>
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  </span>
+                  {liveFetchedAtRelative ? ` ${liveFetchedAtRelative}` : ' 实时同步中'}
+                </span>
               )}
             </span>
-            <div
+            <button
+              type="button"
+              onClick={() => { void summarizeCurrentTab(); }}
+              disabled={activeSummaryStatus === 'loading'}
+              className={`h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium transition-all disabled:cursor-not-allowed${activeSummaryStatus === 'loading' ? '' : ' clg-ai-shimmer'}`}
               style={{
-                transform: 'scale(0.82)',
-                transformOrigin: 'right center',
-                opacity: activeSummaryStatus === 'loading' ? 0.76 : 1,
-                pointerEvents: activeSummaryStatus === 'loading' ? 'none' : 'auto',
+                background: activeSummaryStatus === 'loading'
+                  ? 'rgba(99, 102, 241, 0.10)'
+                  : 'rgba(255, 255, 255, 0.04)',
+                border: `1px solid ${activeSummaryStatus === 'loading' ? 'rgba(99, 102, 241, 0.24)' : 'rgba(255, 255, 255, 0.08)'}`,
+                color: activeSummaryStatus === 'loading' ? '#c7d2fe' : 'var(--text-secondary)',
+                boxShadow: activeSummaryStatus === 'loading' ? '0 0 0 1px rgba(99, 102, 241, 0.08)' : 'none',
               }}
+              title="总结当前页签的更新内容"
             >
-              <SparkleButton
-                text={activeSummaryStatus === 'loading' ? '总结中...' : 'AI 总结'}
-                onClick={() => { void summarizeCurrentTab(); }}
-              />
-            </div>
+              {activeSummaryStatus === 'loading' ? <MapSpinner size={12} /> : <Wand2 size={13} />}
+              {activeSummaryStatus === 'loading' ? '总结中' : 'AI 总结'}
+            </button>
           </div>
         </div>
 
@@ -1094,9 +1425,9 @@ export default function ChangelogPage() {
 
         {historySubtab === 'releases' && (
           <>
-            {loadingReleases && !releases && <MapSectionLoader text="正在加载历史发布…" />}
+            {loadingReleases && !releases && <MapSectionLoader text="正在加载已发布流水…" />}
 
-            {!loadingReleases && releases && releases.releases.length === 0 && (
+            {!loadingReleases && releases && publishedTimelineGroups.length === 0 && (
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{
@@ -1105,146 +1436,88 @@ export default function ChangelogPage() {
                   color: 'var(--text-muted)',
                 }}
               >
-                暂无历史发布
+                暂无已发布流水
               </div>
             )}
 
-            {releases && releaseRenderItems.length > 0 && (() => {
-              // 锚点 changelog-latest 必须落在「第一个**实际渲染**的 release」上:
-              // 原实现 `releaseIdx === 0 ? {anchor} : {}` 的 bug 是第一个 release 如果
-              // 被 matchFilter 过滤掉(totalCount=0 && highlights=0 → return null),
-              // 锚点会跟着一起消失,教程小书演示就找不到元素超时。
-              // 用闭包变量 firstVisibleAssigned 记录"是否已经分配过",保证稳定命中。
-              let firstVisibleAssigned = false;
-              return (
+            {releases && publishedTimelineGroups.length > 0 && (
               <div className="flex flex-col gap-6">
-                {releaseRenderItems.slice(0, releaseList.visibleCount).map(({ release, visibleDays, totalCount, entryCount }) => {
-                  const isUnreleased = release.version === '未发布';
-                  const scopeLabel = isUnreleased ? 'CHANGELOG 未发布块' : 'CHANGELOG 版本块';
-                  const countLabel = typeFilter
-                    ? `${scopeLabel} · 筛选 ${totalCount} / 全部 ${entryCount} 条`
-                    : `${scopeLabel} · 全部 ${entryCount} 条`;
-                  const releaseDisplayDate = release.releaseDate;
-                  const releaseCommitDateTime = getLatestCommitDateTime(visibleDays);
-                  const releaseDateTitle = releaseCommitDateTime
-                    ? `CHANGELOG 版本日期：${release.releaseDate ?? '未发布'}\n最近一次 CHANGELOG 合并提交：${releaseCommitDateTime}`
-                    : undefined;
-
-                  const isFirstVisible = !firstVisibleAssigned;
-                  if (isFirstVisible) firstVisibleAssigned = true;
-
-                  return (
+                {publishedTimelineGroups.slice(0, releaseList.visibleCount).map((group, groupIdx) => (
                     <div
-                      key={`${release.version}-${release.releaseDate ?? ''}`}
-                      {...(isFirstVisible ? { 'data-tour-id': 'changelog-latest' } : {})}
+                      key={group.date}
+                      {...(groupIdx === 0 ? { 'data-tour-id': 'changelog-latest' } : {})}
                     >
-                        <div className="flex items-center gap-2 mb-3">
+                      <div className="flex items-center gap-2 mb-3 flex-wrap">
                         <div
-                          className="px-2.5 py-0.5 rounded-md text-[12px] font-semibold font-mono"
+                          className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
                           style={{
-                            background: isUnreleased
-                              ? 'rgba(251, 191, 36, 0.10)'
-                              : 'rgba(99, 102, 241, 0.12)',
-                            border: `1px solid ${isUnreleased ? 'rgba(251, 191, 36, 0.32)' : 'rgba(99, 102, 241, 0.32)'}`,
-                            color: isUnreleased ? '#fbbf24' : '#a5b4fc',
+                            background: 'rgba(255, 255, 255, 0.04)',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            color: 'var(--text-secondary)',
+                            fontSize: '13px',
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                            fontWeight: 600,
                           }}
                         >
-                          {isUnreleased ? '未发布' : `v${release.version}`}
+                          <Calendar size={13} />
+                          {group.date}
                         </div>
-                        {releaseDisplayDate && (
-                          <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }} title={releaseDateTitle}>
-                            {releaseDisplayDate}
-                          </span>
-                        )}
                         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                          · {countLabel}
+                          · {group.rows.length} 条
                         </span>
-                      </div>
-
-                      {release.highlights.length > 0 && (
-                        <div
-                          className="mb-3 rounded-lg px-3 py-2.5 text-[12px]"
-                          style={{
-                            background: 'rgba(99, 102, 241, 0.06)',
-                            border: '1px solid rgba(99, 102, 241, 0.18)',
-                          }}
-                        >
-                          <div
-                            className="text-[10px] font-semibold mb-1 tracking-wider"
-                            style={{ color: '#a5b4fc' }}
+                        {group.versionEvents.map((version) => (
+                          <span
+                            key={version}
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold font-mono"
+                            style={{
+                              background: 'rgba(99, 102, 241, 0.12)',
+                              border: '1px solid rgba(99, 102, 241, 0.32)',
+                              color: '#a5b4fc',
+                            }}
                           >
-                            用户更新项
-                          </div>
-                          <ul className="flex flex-col gap-0.5" style={{ color: 'var(--text-secondary)' }}>
-                            {release.highlights.map((h, i) => (
-                              <li key={i}>• {h}</li>
-                            ))}
-                          </ul>
+                            <Tag size={11} />
+                            版本发布 {version}
+                          </span>
+                        ))}
+                      </div>
+                      {group.rows.length > 0 && (
+                        <div className="flex flex-col gap-1.5">
+                          {group.rows.map((entry, idx) => (
+                            <EntryRow
+                              key={`${group.date}-${entry.releaseVersion ?? ''}-${idx}`}
+                              entry={entry}
+                              newCutoff={newBadgeCutoff}
+                            />
+                          ))}
                         </div>
                       )}
-
-                      {visibleDays.length > 0 && (
-                        <div className="flex flex-col gap-3">
-                          {visibleDays.map((day, dayIdx) => {
-                            const dayCommitDateTime = formatCommitDateTime(day.commitTimeUtc);
-                            const dayTitle = dayCommitDateTime
-                              ? `CHANGELOG 日期：${day.date}\n最近一次 CHANGELOG 合并提交：${dayCommitDateTime}`
-                              : undefined;
-                            return (
-                              <div key={`${day.date}-${dayIdx}`}>
-                                <div
-                                  className="inline-flex items-center gap-2 mb-2.5 px-2.5 py-1 rounded-md"
-                                  style={{
-                                    background: 'rgba(255, 255, 255, 0.04)',
-                                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                                    color: 'var(--text-secondary)',
-                                    fontSize: '13px',
-                                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                                    fontWeight: 600,
-                                    letterSpacing: '0.02em',
-                                  }}
-                                  title={dayTitle}
-                                >
-                                  <Calendar size={13} />
-                                  {day.date}
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                  {day.entries.map((e, idx) => (
-                                    <EntryRow
-                                      key={`${day.date}-${idx}`}
-                                      entry={{
-                                        ...e,
-                                        date: day.date,
-                                        commitTimeUtc: day.commitTimeUtc ?? null,
-                                        source: 'release',
-                                        releaseVersion: release.version,
-                                      }}
-                                      newCutoff={newBadgeCutoff}
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })}
+                      {group.rows.length === 0 && group.versionEvents.length > 0 && (
+                        <div
+                          className="rounded-xl px-4 py-3 text-[12px]"
+                          style={{
+                            background: 'rgba(99, 102, 241, 0.06)',
+                            border: '1px dashed rgba(99, 102, 241, 0.18)',
+                            color: 'var(--text-muted)',
+                          }}
+                        >
+                          该版本详情按需加载中，继续滚动会补齐同一流水中的改动条目。
                         </div>
                       )}
                     </div>
-                  );
-                })}
+                  ))}
                 <IncrementalSentinel
                   refEl={releaseList.sentinelRef}
                   show={releaseList.hasMore}
-                  text={`继续加载历史发布 ${Math.min(RELEASES_VISIBLE_STEP, releaseRenderItems.length - releaseList.visibleCount)} 个版本…`}
+                  text={`继续加载已发布流水 ${Math.min(RELEASES_VISIBLE_STEP, publishedTimelineGroups.length - releaseList.visibleCount)} 个日期…`}
                 />
               </div>
-              );
-            })()}
+            )}
           </>
         )}
 
         {historySubtab === 'fragments' && (
           <>
-            {!currentWeek && <MapSectionLoader text="正在加载待发布功能…" />}
+            {!currentWeek && <MapSectionLoader text="正在加载未发布改动…" />}
 
             {currentWeek && currentWeek.fragments.length === 0 && (
               <div
@@ -1255,7 +1528,7 @@ export default function ChangelogPage() {
                   color: 'var(--text-muted)',
                 }}
               >
-                暂无待发布碎片
+                暂无未发布改动
               </div>
             )}
 
@@ -1268,7 +1541,7 @@ export default function ChangelogPage() {
                   color: 'var(--text-muted)',
                 }}
               >
-                当前筛选条件下暂无待发布碎片条目
+                当前筛选条件下暂无未发布改动
               </div>
             )}
 
@@ -1315,8 +1588,12 @@ export default function ChangelogPage() {
                   ))}
                 <IncrementalSentinel
                   refEl={fragmentList.sentinelRef}
-                  show={fragmentList.hasMore}
-                  text={`继续加载待发布日期 ${Math.min(FRAGMENT_GROUPS_VISIBLE_STEP, fragmentGroups.length - fragmentList.visibleCount)} 组…`}
+                  show={fragmentList.hasMore || (currentWeek?.hasMore ?? false)}
+                  text={
+                    fragmentList.hasMore
+                      ? `继续加载未发布日期 ${Math.min(FRAGMENT_GROUPS_VISIBLE_STEP, fragmentGroups.length - fragmentList.visibleCount)} 组…`
+                      : `从服务器加载更多日期组…`
+                  }
                 />
               </div>
             )}
@@ -1325,7 +1602,7 @@ export default function ChangelogPage() {
 
         {historySubtab === 'github_logs' && (
           <>
-            {loadingGitHubLogs && !githubLogs && <MapSectionLoader text="正在加载 GitHub 日志…" />}
+            {loadingGitHubLogs && !githubLogs && <MapSectionLoader text="正在加载 GitHub 提交…" />}
 
             {gitHubLogsError && (
               <div
@@ -1349,26 +1626,62 @@ export default function ChangelogPage() {
                   color: 'var(--text-muted)',
                 }}
               >
-                暂无 GitHub 日志
+                暂无 GitHub 提交
               </div>
             )}
 
             {githubLogs && githubLogRows.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <AnimatePresence initial={false}>
-                  {githubLogRows.slice(0, githubLogList.visibleCount).map((log, index) => (
-                    <GitHubLogRow
-                      key={log.sha}
-                      log={log}
-                      index={index}
-                      isLiveNew={newGitHubLogShas.has(log.sha)}
-                    />
-                  ))}
-                </AnimatePresence>
+              <div className="flex flex-col gap-4">
+                {githubLogWeekGroups.map((group) => (
+                  <div
+                    key={group.weekStart}
+                    className="rounded-xl px-4 py-3"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.025)',
+                      border: '1px solid rgba(255, 255, 255, 0.06)',
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
+                      <div
+                        className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.04)',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          color: 'var(--text-secondary)',
+                          fontSize: '13px',
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                          fontWeight: 600,
+                        }}
+                      >
+                        <Calendar size={13} />
+                        {group.label}
+                      </div>
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        · {group.logs.length} 条提交
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <AnimatePresence initial={false}>
+                        {group.logs.map((log, idx) => (
+                          <GitHubLogRow
+                            key={log.sha}
+                            log={log}
+                            index={group.startIndex + idx}
+                            isLiveNew={newGitHubLogShas.has(log.sha)}
+                          />
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  </div>
+                ))}
                 <IncrementalSentinel
                   refEl={githubLogList.sentinelRef}
-                  show={githubLogList.hasMore}
-                  text={`继续加载实时日志 ${Math.min(GITHUB_LOGS_VISIBLE_STEP, githubLogRows.length - githubLogList.visibleCount)} 条…`}
+                  show={githubLogList.hasMore || (githubLogs.hasMore ?? false)}
+                  text={
+                    githubLogList.hasMore
+                      ? `继续加载 GitHub 提交 ${Math.min(GITHUB_LOGS_VISIBLE_STEP, githubLogRows.length - githubLogList.visibleCount)} 条…`
+                      : `从服务器加载更多日志…`
+                  }
                 />
               </div>
             )}
@@ -1502,6 +1815,19 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
   const commitDateTime = formatCommitDateTime(log.commitTimeUtc) ?? log.commitTimeUtc;
   const relativeTime = formatRelativeTime(log.commitTimeUtc);
   const avatarLetter = (log.authorName || '?').trim().charAt(0).toUpperCase() || '?';
+  // 彩蛋：匹配到系统用户时，作者名直接显示系统显示名（GitHub 原名进 tooltip），不再单列两个名字
+  const isMatched = Boolean(log.matchedDisplayName);
+  const primaryAuthorLabel = log.matchedDisplayName ?? log.authorName;
+  const coAuthors = log.coAuthors ?? [];
+  const authorTooltip = [
+    `GitHub 作者：${log.authorName}`,
+    isMatched
+      ? `已匹配系统用户：${log.matchedDisplayName}${log.matchedUsername && log.matchedUsername !== log.matchedDisplayName ? `（${log.matchedUsername}）` : ''}`
+      : null,
+    coAuthors.length > 0
+      ? `联合作者：${coAuthors.map((co) => (co.matchedDisplayName ? `${co.name} = ${co.matchedDisplayName}` : co.name)).join('、')}`
+      : null,
+  ].filter(Boolean).join('\n');
   return (
     <motion.a
       layout
@@ -1542,10 +1868,11 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       <div
         className="shrink-0 inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px]"
         style={{
-          color: 'var(--text-secondary)',
-          background: 'rgba(255, 255, 255, 0.04)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          color: isMatched ? '#86efac' : 'var(--text-secondary)',
+          background: isMatched ? 'rgba(34, 197, 94, 0.08)' : 'rgba(255, 255, 255, 0.04)',
+          border: `1px solid ${isMatched ? 'rgba(34, 197, 94, 0.28)' : 'rgba(255, 255, 255, 0.08)'}`,
         }}
+        title={authorTooltip}
       >
         {log.authorAvatarUrl ? (
           <img
@@ -1566,7 +1893,19 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
             {avatarLetter}
           </span>
         )}
-        {log.authorName}
+        {primaryAuthorLabel}
+        {isMatched && <UserCheck size={11} style={{ flexShrink: 0 }} />}
+        {coAuthors.map((co) => (
+          <span
+            key={co.name}
+            className="inline-flex items-center gap-0.5"
+            style={{ color: co.matchedDisplayName ? '#86efac' : 'var(--text-muted)' }}
+          >
+            <span style={{ opacity: 0.55 }}>+</span>
+            {co.matchedDisplayName ?? co.name}
+            {co.matchedDisplayName && <UserCheck size={10} style={{ flexShrink: 0 }} />}
+          </span>
+        ))}
       </div>
       <div className="text-[13px] leading-relaxed flex-1 truncate" style={{ color: 'var(--text-secondary)', minWidth: 0 }}>
         {log.message}

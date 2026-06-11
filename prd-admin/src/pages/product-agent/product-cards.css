@@ -1,0 +1,6 @@
+/*
+ * 产品管理智能体 — 卡片/列表行统一动效。
+ * 实现已抽取为跨智能体共享样式 components/agent-shell/agent-cards.css，
+ * 此处仅做转发以兼容既有 import。
+ */
+@import '../../components/agent-shell/agent-cards.css';

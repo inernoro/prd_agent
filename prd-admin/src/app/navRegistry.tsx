@@ -32,20 +32,26 @@ const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
+const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.TaskDetailPage })));
+const PmProjectDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.ProjectDetailPage })));
 const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
 const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
 const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
+const KnowledgeDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.KnowledgeDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
+const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ default: m.ShituAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
+const FrontEndAgentPage = lazy(() => import('@/pages/front-end-agent').then(m => ({ default: m.FrontEndAgentPage })));
 const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
+const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
 const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
 const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
@@ -53,6 +59,11 @@ const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
+const MdToPptAgentPage = lazy(() => import('@/pages/md-to-ppt-agent/MdToPptAgentPage').then(m => ({ default: m.MdToPptAgentPage })));
+const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
+const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
+const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
+const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
 const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
@@ -241,6 +252,37 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       tags: ['任务', '任务树', '卡点', '进度', '智能体'],
     },
   },
+  {
+    path: '/speech-agent/new',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentCreatePage />),
+  },
+  {
+    path: '/speech-agent/:deckId/play',
+    placement: 'fullscreen',
+    permission: 'speech-agent.use',
+    element: fullscreenGuarded('speech-agent.use', <SpeechAgentPlayPage />),
+  },
+  {
+    path: '/speech-agent/:deckId',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentEditorPage />),
+  },
+  {
+    path: '/speech-agent',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentListPage />),
+    nav: {
+      label: '演讲智能体',
+      shortLabel: '演讲',
+      description: '把长文本/文档转成可上台讲的思维导图（首期 mindmap 模式）',
+      icon: 'Mic',
+      section: 'agent',
+      appKey: 'speech-agent',
+      wip: true,
+      tags: ['演讲', '导图', 'PPT', '思维导图', '智能体'],
+    },
+  },
 
   // ╔══════════════ 百宝箱（8）══════════════════════════════
   {
@@ -315,6 +357,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/shitu-agent',
+    permission: 'shitu-agent.use',
+    element: shellGuarded('shitu-agent.use', <ShituAgentPage />),
+    nav: {
+      label: '识途',
+      shortLabel: '识途',
+      description: '新人文化与制度问答：企业文化 / 事故教训 / 规章制度 / 奖赏表彰',
+      icon: 'BookOpen',
+      section: 'toolbox',
+      appKey: 'shitu-agent',
+      tags: ['识途', '新人', '文化', '制度', '问答'],
+      wip: true,
+    },
+  },
+  {
     path: '/pr-review',
     permission: 'pr-review.use',
     element: shellGuarded('pr-review.use', <PrReviewPage />),
@@ -344,9 +401,39 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
-    path: '/pm-agent',
+    path: '/front-end-agent',
+    permission: 'front-end-agent.use',
+    element: shellGuarded('front-end-agent.use', <FrontEndAgentPage />),
+    nav: {
+      label: '前端搭档智能体',
+      shortLabel: '前端',
+      description: '给后端同事用的前端交付助手：接 API、写组件、修报错、看截图现象',
+      icon: 'Code2',
+      section: 'toolbox',
+      appKey: 'front-end-agent',
+      wip: true,
+      tags: ['前端', 'API', '组件', '报错', 'CSS', '智能体'],
+    },
+  },
+  {
+    // 任务独立详情页（全屏路由，参数化子路由，不进导航）
+    path: '/pm-agent/p/:projectId/task/:taskId',
+    placement: 'fullscreen',
     permission: 'pm-agent.use',
-    element: shellGuarded('pm-agent.use', <PmAgentPage />),
+    element: fullscreenGuarded('pm-agent.use', <PmTaskDetailPage />),
+  },
+  {
+    // 项目层视图（进入某个具体项目：目标/里程碑/任务等 9 大模块），参数化子路由，全屏，不进导航
+    path: '/pm-agent/p/:projectId',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmProjectDetailPage />),
+  },
+  {
+    path: '/pm-agent',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmAgentPage />),
     nav: {
       label: '项目管理智能体',
       shortLabel: '项目',
@@ -364,6 +451,13 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <SingleProductView />),
+  },
+  {
+    // 知识详情页（独立路由，静态段 knowledge 优先于下方 :kind 通配），全屏，不进导航
+    path: '/product-agent/p/:productId/knowledge/:entryId',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
   },
   {
     // 对象独立详情/新建页（需求/功能/缺陷，:id 为 new 时是新建），参数化子路由，全屏，不进导航
@@ -415,6 +509,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'transcript-agent',
       tags: ['转录', '语音', 'ASR', '字幕'],
+    },
+  },
+  {
+    path: '/md-to-ppt-agent',
+    permission: 'access',
+    element: shellGuarded('access', <MdToPptAgentPage />),
+    nav: {
+      label: 'MD 转网页 PPT',
+      shortLabel: 'PPT',
+      description: '将 Markdown 或文档内容 AI 直出 reveal.js 网页 PPT，支持局部修改与一键发布',
+      icon: 'FileText',
+      section: 'toolbox',
+      appKey: 'md-to-ppt-agent',
+      tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
+      wip: true,
     },
   },
   {
@@ -483,6 +592,19 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'ScrollText',
       section: 'utility',
       tags: ['日志', 'logs', '审计'],
+    },
+  },
+  {
+    path: '/team-activity',
+    permission: 'team-activity.read',
+    element: shellGuarded('team-activity.read', <TeamActivityPage />),
+    nav: {
+      label: '团队动态',
+      shortLabel: '动态',
+      description: '全员工作动态时间线（管理员）',
+      icon: 'Activity',
+      section: 'utility',
+      tags: ['动态', '活动', '工作日志', 'activity'],
     },
   },
 

@@ -215,12 +215,42 @@ export type PmTask = {
   dependsOn: string[];
   labels: string[];
   orderKey: number;
+  /** 进度百分比 0-100（叶子任务手填/日志带入；父任务由子任务自动汇总） */
+  progressPercent: number;
+  /** 是否由子任务自动汇总进度 */
+  autoProgress: boolean;
   source: 'manual' | 'ai_decompose';
   sourceRef?: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
 };
+
+/** 任务工作日志条目（处理人按天记录做了什么、完成多少进度） */
+export type PmTaskWorkLog = {
+  id: string;
+  taskId: string;
+  projectId: string;
+  userId: string;
+  userName?: string | null;
+  date: string;
+  content: string;
+  durationMinutes?: number | null;
+  progressPercent?: number | null;
+  category: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreatePmTaskWorkLogInput = {
+  content: string;
+  date?: string;
+  durationMinutes?: number | null;
+  progressPercent?: number | null;
+  category?: string;
+};
+
+export type UpdatePmTaskWorkLogInput = Partial<CreatePmTaskWorkLogInput>;
 
 /** AI 拆解出的任务草稿（SSE 流式返回，未落库） */
 export type PmTaskDraft = {
@@ -297,6 +327,9 @@ export type UpdatePmTaskInput = Partial<{
   orderKey: number;
   milestoneId: string;
   goalId: string;
+  progressPercent: number;
+  /** 重设父任务：空串=升为顶层，非空=挂为子任务 */
+  parentTaskId: string;
 }>;
 
 export type BatchCreatePmTasksInput = {
@@ -487,6 +520,8 @@ export type PmGoal = {
   progress: number;
   progressMode: 'auto' | 'manual';
   linkedMilestoneCount?: number;
+  /** 是否已设为里程碑（存在 AutoFromGoal 联动里程碑） */
+  isMilestone?: boolean;
   status: PmGoalStatus;
   createdBy: string;
   createdByName?: string | null;
@@ -519,6 +554,8 @@ export type PmGoalDraft = { title: string; description?: string | null; metric?:
 export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;
 export type CreatePmGoalContract = (projectId: string, input: SavePmGoalInput) => Promise<ApiResponse<PmGoal>>;
 export type UpdatePmGoalContract = (goalId: string, input: SavePmGoalInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type SetGoalAsMilestoneContract = (goalId: string, enabled: boolean) => Promise<ApiResponse<{ isMilestone: boolean }>>;
+export type ReparentPmGoalContract = (goalId: string, parentId: string | null) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmGoalContract = (goalId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 
 // ── 审计日志 ──
@@ -585,6 +622,10 @@ export type SavePmMilestoneInput = Partial<{
   deliverables: { type: PmDeliverableType; refId?: string; title: string; url?: string }[];
   resetBaseline: boolean;
   status: PmMilestoneStatus; orderKey: number;
+  /** 实际完成时间（ISO）。设置后早于/等于计划截止即不算逾期 */
+  reachedAt: string;
+  /** true=清空实际完成时间 */
+  clearReachedAt: boolean;
 }>;
 /** AI 建议的里程碑草稿 */
 export type PmMilestoneDraft = { title: string; description?: string; acceptanceCriteria?: string[]; dueDate?: string };
@@ -683,3 +724,60 @@ export type TogglePmExcellenceContract = (projectId: string, isExcellent: boolea
 export type GetPmTaskActivitiesContract = (taskId: string) => Promise<ApiResponse<{ items: PmTaskActivity[] }>>;
 export type AddPmTaskCommentContract = (taskId: string, content: string, mentionedUserIds?: string[]) => Promise<ApiResponse<PmTaskActivity>>;
 export type BulkPmTasksContract = (projectId: string, input: BulkTasksInput) => Promise<ApiResponse<{ matched?: number; modified?: number; deletedCount?: number }>>;
+
+// ── 任务工作日志 ──
+export type ListPmTaskWorkLogsContract = (taskId: string) => Promise<ApiResponse<{ items: PmTaskWorkLog[] }>>;
+export type CreatePmTaskWorkLogContract = (taskId: string, input: CreatePmTaskWorkLogInput) => Promise<ApiResponse<PmTaskWorkLog>>;
+export type UpdatePmTaskWorkLogContract = (logId: string, input: UpdatePmTaskWorkLogInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmTaskWorkLogContract = (logId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 首页工作台（跨项目）──
+
+/** 首页「我的待办」一条：跨项目聚合（指派给我的未完成任务 + 待我打分的结案评价）。 */
+export interface PmMyTodoItem {
+  kind: 'task' | 'evaluation';
+  id: string;
+  projectId: string;
+  projectTitle: string;
+  title: string;
+  dueAt?: string | null;
+  priority?: PmTaskPriority | null;
+  status?: PmTaskStatus | null;
+  overdue: boolean;
+}
+export type GetPmMyTodosContract = () => Promise<ApiResponse<{ items: PmMyTodoItem[]; total: number }>>;
+
+/** 项目管理智能体用户偏好（quickActionIds：null = 从未配置走默认；空数组 = 用户主动清空）。 */
+export interface PmAgentPrefs {
+  quickActionIds: string[] | null;
+}
+export type GetPmAgentPreferencesContract = () => Promise<ApiResponse<PmAgentPrefs>>;
+export type UpdatePmQuickActionsContract = (quickActionIds: string[]) => Promise<ApiResponse<PmAgentPrefs>>;
+
+/** 跨项目执行数据报表（一级导航「报表」页，与 NPSS 看板分工：本接口管执行数据）。 */
+export interface PmReportSummary {
+  scope: 'managed' | 'related' | 'all';
+  projectTotal: number;
+  lifecycleDist: Array<{ key: PmProjectLifecycle; count: number }>;
+  typeDist: Array<{ key: PmProjectType; count: number }>;
+  tasks: {
+    total: number;
+    done: number;
+    overdue: number;
+    completionRate: number;
+    statusDist: Array<{ key: PmTaskStatus; count: number }>;
+    assigneeTop: Array<{ name: string; total: number; done: number; overdue: number }>;
+  };
+  milestones: {
+    total: number;
+    reached: number;
+    overdue: number;
+    upcoming: Array<{ id: string; projectId: string; projectTitle: string; title: string; dueAt?: string | null }>;
+  };
+  risks: {
+    open: number;
+    matrix: Array<{ probability: PmRiskLevel; impact: PmRiskLevel; count: number }>;
+    top: Array<{ id: string; projectId: string; projectTitle: string; title: string; probability: PmRiskLevel; impact: PmRiskLevel; status: PmRiskStatus; score: number }>;
+  };
+}
+export type GetPmReportSummaryContract = (scope?: PmProjectScope) => Promise<ApiResponse<PmReportSummary>>;

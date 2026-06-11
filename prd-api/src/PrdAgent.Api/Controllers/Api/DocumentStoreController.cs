@@ -90,20 +90,47 @@ public class DocumentStoreController : ControllerBase
     /// <summary>可写：拥有者 或 团队成员（决策 10 全员可编辑；不含 public）；项目库走项目成员判定</summary>
     private async Task<bool> CanWriteStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
         => s.OwnerId == userId || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: true)
-           || await IsProductKnowledgeMemberAsync(s, userId);
+           || await IsProductKnowledgeMemberAsync(s, userId)
+           || IsShituKnowledgeWritable(s);
 
     /// <summary>可读：拥有者 或 公开 或 团队成员；项目库走项目成员判定（含观察者/干系人）；产品库走产品成员判定</summary>
     private async Task<bool> CanReadStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
         => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: false)
-           || await IsProductKnowledgeMemberAsync(s, userId);
+           || await IsProductKnowledgeMemberAsync(s, userId)
+           || IsShituKnowledgeReadable(s);
+
+    private bool IsShituKnowledgeReadable(DocumentStore s)
+    {
+        if (string.IsNullOrEmpty(s.ShituCategoryRef)) return false;
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.Super)
+               || permissions.Contains(AdminPermissionCatalog.ShituAgentUse)
+               || permissions.Contains(AdminPermissionCatalog.ShituAgentManage);
+    }
+
+    private bool IsShituKnowledgeWritable(DocumentStore s)
+    {
+        if (string.IsNullOrEmpty(s.ShituCategoryRef)) return false;
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.Super)
+               || permissions.Contains(AdminPermissionCatalog.ShituAgentManage);
+    }
 
     /// <summary>
     /// 产品知识库访问判定：仅当 store.ProductKnowledgeRef 非空时生效（格式 product:{id} / version:{id}）。
-    /// 产品 owner 与成员均可读写（与 product-agent 的产品访问语义对齐）。
+    /// 产品 owner、成员、全局产品管理权限（Super/ProductAgentAdmin/ProductAgentManage）均可读写
+    /// （与 product-agent 的 FindAccessibleProductAsync 访问语义完全对齐）。
     /// </summary>
     private async Task<bool> IsProductKnowledgeMemberAsync(DocumentStore s, string userId)
     {
         if (string.IsNullOrEmpty(s.ProductKnowledgeRef)) return false;
+        // 与 ProductAgentController.CanManage() 对齐：全局产品管理权限可读写所有产品知识库。
+        // 否则管理员能通过 find-or-create 拿到 storeId，却在本控制器被拒（"文档空间不存在"）。
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        if (permissions.Contains(AdminPermissionCatalog.Super)
+            || permissions.Contains(AdminPermissionCatalog.ProductAgentAdmin)
+            || permissions.Contains(AdminPermissionCatalog.ProductAgentManage))
+            return true;
         var parts = s.ProductKnowledgeRef.Split(':', 2);
         if (parts.Length != 2) return false;
         string? productId = parts[0] switch
@@ -307,20 +334,31 @@ public class DocumentStoreController : ControllerBase
         page = Math.Max(1, page);
 
         FilterDefinition<DocumentStore> filter;
-        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase))
         {
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-            if (!myTeamIds.Contains(teamId))
-                return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
-            filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                if (!myTeamIds.Contains(teamId))
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            }
+            else
+            {
+                // 团队空间聚合视图：不传 teamId = 我加入的所有团队的共享空间
+                if (myTeamIds.Count == 0)
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds);
+            }
         }
         else
         {
-            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
+            // 我的知识库：排除项目库 / 产品库 / 识途库（专用 Agent 内嵌 tab 访问）
             filter = Builders<DocumentStore>.Filter.And(
                 Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
                 Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
-                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null));
         }
 
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
@@ -625,7 +663,7 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(folder));
     }
 
-    /// <summary>获取空间内的文档条目列表（支持 parentId 过滤层级）</summary>
+    /// <summary>获取空间内的文档条目列表（支持 parentId 层级 + 分类/标签/关联版本过滤）</summary>
     [HttpGet("stores/{storeId}/entries")]
     public async Task<IActionResult> ListEntries(
         string storeId,
@@ -635,7 +673,11 @@ public class DocumentStoreController : ControllerBase
         [FromQuery] string? keyword = null,
         [FromQuery] string? parentId = null,
         [FromQuery] bool all = false,
-        [FromQuery] bool searchContent = false)
+        [FromQuery] bool searchContent = false,
+        [FromQuery] string? category = null,
+        [FromQuery] string? tag = null,
+        [FromQuery] string? versionId = null,
+        [FromQuery] bool excludeFolders = false)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
@@ -668,6 +710,27 @@ public class DocumentStoreController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(sourceType))
             filter &= filterBuilder.Eq(e => e.SourceType, sourceType);
+
+        // 分类过滤："__none__" 表示未分类（Category 为空）
+        if (!string.IsNullOrWhiteSpace(category))
+        {
+            filter &= category == "__none__"
+                ? filterBuilder.Or(
+                    filterBuilder.Eq(e => e.Category, null),
+                    filterBuilder.Eq(e => e.Category, string.Empty),
+                    filterBuilder.Exists(e => e.Category, false))
+                : filterBuilder.Eq(e => e.Category, category);
+        }
+
+        if (!string.IsNullOrWhiteSpace(tag))
+            filter &= filterBuilder.AnyEq(e => e.Tags, tag);
+
+        if (!string.IsNullOrWhiteSpace(versionId))
+            filter &= filterBuilder.AnyEq(e => e.VersionIds, versionId);
+
+        // 知识列表视图只看文档，不混文件夹（文件夹治理走独立 tab）
+        if (excludeFolders)
+            filter &= filterBuilder.Eq(e => e.IsFolder, false);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -714,6 +777,30 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds }));
     }
 
+    /// <summary>
+    /// Phase 2：获取知识库的目录（文件夹）列表，供「另存到指定目录」选择器 + 智能体感知目录结构用。
+    /// 只返回文件夹（轻量投影 id/title/parentId），前端据 parentId 自行拼成树。
+    /// </summary>
+    [HttpGet("stores/{storeId}/folders")]
+    public async Task<IActionResult> ListFolders(string storeId)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        var folders = await _db.DocumentEntries
+            .Find(e => e.StoreId == storeId && e.IsFolder)
+            .Project(e => new { e.Id, e.Title, e.ParentId })
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { folders }));
+    }
+
     /// <summary>获取文档条目详情</summary>
     [HttpGet("entries/{entryId}")]
     public async Task<IActionResult> GetEntry(string entryId)
@@ -746,6 +833,12 @@ public class DocumentStoreController : ControllerBase
                 string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim()));
         if (request.Metadata != null)
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Metadata, request.Metadata));
+        if (request.VersionIds != null)
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.VersionIds, request.VersionIds));
+        if (!string.IsNullOrWhiteSpace(request.ContentType))
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.ContentType, request.ContentType));
+        if (request.SortOrder.HasValue)
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.SortOrder, request.SortOrder.Value));
 
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedBy, userId));
@@ -961,15 +1054,17 @@ public class DocumentStoreController : ControllerBase
         var summary = content.Length > 200 ? content[..200] : content;
         var contentIndex = content.Length > 2000 ? content[..2000] : content;
 
-        await _db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == entryId,
-            Builders<DocumentEntry>.Update
-                .Set(e => e.DocumentId, entry.DocumentId)
-                .Set(e => e.Summary, summary.Trim())
-                .Set(e => e.ContentIndex, contentIndex.Trim())
-                .Set(e => e.UpdatedBy, userId)
-                .Set(e => e.UpdatedByName, userName)
-                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+        var contentUpdate = Builders<DocumentEntry>.Update
+            .Set(e => e.DocumentId, entry.DocumentId)
+            .Set(e => e.Summary, summary.Trim())
+            .Set(e => e.ContentIndex, contentIndex.Trim())
+            .Set(e => e.UpdatedBy, userId)
+            .Set(e => e.UpdatedByName, userName)
+            .Set(e => e.UpdatedAt, DateTime.UtcNow);
+        if (!string.IsNullOrWhiteSpace(request.ContentType))
+            contentUpdate = contentUpdate.Set(e => e.ContentType, request.ContentType);
+
+        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entryId, contentUpdate);
 
         // 模板库的人工写入：持久化合规标记，前端可据此提示「缺 需求一一对应表」
         if (contentCompliant.HasValue)
@@ -1974,22 +2069,33 @@ public class DocumentStoreController : ControllerBase
         pageSize = Math.Clamp(pageSize, 1, 500);
         page = Math.Max(1, page);
 
-        var isTeamScope = string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId);
+        var isTeamScope = string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase);
         FilterDefinition<DocumentStore> filter;
         if (isTeamScope)
         {
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-            if (!myTeamIds.Contains(teamId!))
-                return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
-            filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                if (!myTeamIds.Contains(teamId!))
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            }
+            else
+            {
+                // 团队空间聚合视图：不传 teamId = 我加入的所有团队的共享空间
+                if (myTeamIds.Count == 0)
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds);
+            }
         }
         else
         {
-            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
+            // 我的知识库：排除项目库 / 产品库 / 识途库（专用 Agent 内嵌 tab 访问）
             filter = Builders<DocumentStore>.Filter.And(
                 Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
                 Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
-                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null));
         }
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
         var stores = await _db.DocumentStores.Find(filter)
@@ -2691,6 +2797,20 @@ public class DocumentStoreController : ControllerBase
                 return TemplateValidationError(template, problems);
         }
 
+        // Phase 2：mode=new 可指定目标目录。校验 parentId 是同库的文件夹，避免把新文档塞到别人库 / 非文件夹下。
+        string? targetParentId = null;
+        if (mode == "new" && !string.IsNullOrWhiteSpace(request.ParentId))
+        {
+            var parent = await _db.DocumentEntries
+                .Find(e => e.Id == request.ParentId && e.StoreId == entry.StoreId)
+                .FirstOrDefaultAsync();
+            if (parent == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标目录不存在或不属于当前知识库"));
+            if (!parent.IsFolder)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标必须是文件夹"));
+            targetParentId = parent.Id;
+        }
+
         // 复用 ApplyService 内部逻辑：构造一个临时 Run+Message 喂给它，避免重复实现写盘细节
         var tmpRun = new DocumentStoreAgentRun
         {
@@ -2707,7 +2827,7 @@ public class DocumentStoreController : ControllerBase
         };
         try
         {
-            var result = await applyService.ApplyAsync(tmpRun, entry, messageSeq: 0, mode, request.Title, _db);
+            var result = await applyService.ApplyAsync(tmpRun, entry, messageSeq: 0, mode, request.Title, _db, targetParentId);
 
             // 替换 / 追加修改了原 entry 的正文 —— 必须按 UpdateEntryContent 同款逻辑
             // 重绑划词评论的 offset，否则旧评论高亮会指向新文本的错误位置（Codex P2 #2）。
@@ -4513,6 +4633,12 @@ public class UpdateDocumentEntryRequest
     /// <summary>分类（传空字符串=清除分类；null=不变）</summary>
     public string? Category { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
+    /// <summary>关联的产品版本 ID 列表（产品知识库专用；传空数组=清空关联；null=不变）</summary>
+    public List<string>? VersionIds { get; set; }
+    /// <summary>内容 MIME 类型（格式纠错：text/markdown ↔ text/html；null=不变）</summary>
+    public string? ContentType { get; set; }
+    /// <summary>目录手动排序值（拖拽排序写入；null=不变）</summary>
+    public double? SortOrder { get; set; }
 }
 
 public class AddSubscriptionRequest
@@ -4598,6 +4724,9 @@ public class ApplyContentRequest
 
     /// <summary>mode=new 时的标题（可选）</summary>
     public string? Title { get; set; }
+
+    /// <summary>mode=new 时的目标目录（可选）。为空则落在源文档同目录。必须是同库的文件夹条目。</summary>
+    public string? ParentId { get; set; }
 }
 
 public class CreateReprocessAgentRequest
@@ -4635,8 +4764,10 @@ public class MoveEntryRequest
 
 public class UpdateEntryContentRequest
 {
-    /// <summary>文档内容（Markdown/纯文本）</summary>
+    /// <summary>文档内容（Markdown / 纯文本 / 富文本 HTML）</summary>
     public string Content { get; set; } = string.Empty;
+    /// <summary>可选：同时更新条目的 contentType（如富文本编辑后置为 text/html）；null=不变</summary>
+    public string? ContentType { get; set; }
 }
 
 public class CreateShareLinkRequest

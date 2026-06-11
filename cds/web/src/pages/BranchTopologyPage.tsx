@@ -39,7 +39,6 @@ import {
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
 import { useInfraCatalog } from '@/lib/infraCatalog';
-import { InfraDataPanel } from '@/components/deployment/InfraDataPanel';
 import {
   reduceBranchListState,
   type BranchListAction,
@@ -1469,6 +1468,15 @@ function lastLines(value: string, count = 18): string {
     .join('\n');
 }
 
+function resourceConsoleHref(projectId: string, branchId: string, infraId: string): string {
+  const params = new URLSearchParams({
+    openBranch: branchId,
+    resource: `infra:${infraId}`,
+    resourceTab: 'data',
+  });
+  return `/branches/${encodeURIComponent(projectId)}?${params.toString()}`;
+}
+
 function NodeDetails({
   selectedProfile,
   selectedInfra,
@@ -1538,7 +1546,14 @@ function NodeDetails({
   }
 
   if (selectedInfra) {
-    return <InfraDetails selectedInfra={selectedInfra} projectId={projectId} onToast={onToast} />;
+    return (
+      <InfraDetails
+        selectedInfra={selectedInfra}
+        projectId={projectId}
+        branchId={activeBranch?.id}
+        onToast={onToast}
+      />
+    );
   }
 
   const profile = selectedProfile!;
@@ -1773,10 +1788,12 @@ function NodeDetails({
 function InfraDetails({
   selectedInfra,
   projectId,
+  branchId,
   onToast,
 }: {
   selectedInfra: InfraService;
   projectId: string;
+  branchId?: string;
   onToast: (message: string) => void;
 }): JSX.Element {
   const [logsState, setLogsState] = useState<
@@ -1842,13 +1859,32 @@ function InfraDetails({
           查看日志
         </Button>
       </div>
-      <InfraDataPanel
-        infraId={selectedInfra.id}
-        projectId={projectId}
-        image={selectedInfra.dockerImage}
-        running={selectedInfra.status === 'running'}
-        initSql={selectedInfra.initSql}
-      />
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <TerminalSquare className="h-4 w-4 text-primary" />
+              独立资源控制台
+            </div>
+            <div className="mt-1 text-xs leading-5 text-muted-foreground">
+              数据查询、初始化、DDL、备份和权限操作统一在资源控制台完成，避免在拓扑侧栏挤压操作窗口。
+            </div>
+          </div>
+          {branchId ? (
+            <Button type="button" asChild>
+              <a href={resourceConsoleHref(projectId, branchId, selectedInfra.id)}>
+                <Maximize2 />
+                打开控制台
+              </a>
+            </Button>
+          ) : (
+            <Button type="button" disabled title="先在顶部选择分支，资源控制台需要分支上下文">
+              <Maximize2 />
+              打开控制台
+            </Button>
+          )}
+        </div>
+      </div>
       <DisclosurePanel icon={<FileText className="h-4 w-4" />} title="容器日志" subtitle="最近 docker logs 输出">
         {logsState.status === 'idle' ? (
           <RuntimeEmpty

@@ -361,14 +361,19 @@ public class WebPagesController : ControllerBase
 
         // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
         //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
-        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        // teamId 为空 = 跨团队聚合视图（知识库团队空间消费），无单团队角色概念，仅附带 owners。
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase))
         {
-            var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
-            var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
             var owners = items.Count > 0
                 ? await BuildUserCardsAsync(items.Select(s => s.OwnerUserId))
                 : new Dictionary<string, object>();
-            return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole }));
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
+                var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
+                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole }));
+            }
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners }));
         }
 
         return Ok(ApiResponse<object>.Ok(new { items, total }));
@@ -389,6 +394,172 @@ public class WebPagesController : ControllerBase
         {
             // 请求包含我无编辑权的团队：返回 403，前端据此提示而非误报成功（默认走 ExceptionMiddleware 会变 401）
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // 团队空间分组（专题 / 日常分类）
+    // ─────────────────────────────────────────────
+
+    /// <summary>我在该团队是否具备网页托管编辑权（owner/editor）</summary>
+    private async Task<bool> CanEditInTeamAsync(string userId, string teamId)
+    {
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
+        return roles.TryGetValue(teamId, out var r)
+               && (r == WebHostingRoles.Owner || r == WebHostingRoles.Editor);
+    }
+
+    /// <summary>列出团队空间的分组（专题 + 日常分类，团队成员可见）</summary>
+    [HttpGet("groups")]
+    public async Task<IActionResult> ListGroups([FromQuery] string teamId)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(teamId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "teamId 不能为空"));
+        if (!await _teams.IsMemberAsync(teamId, userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你不是该团队成员"));
+
+        var groups = await _db.WebPageGroups.Find(g => g.TeamId == teamId)
+            .Sort(Builders<WebPageGroup>.Sort.Ascending(g => g.SortOrder).Ascending(g => g.CreatedAt))
+            .ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { groups }));
+    }
+
+    /// <summary>创建团队空间分组（可先建空分组再加内容；需团队内网页托管编辑权）</summary>
+    [HttpPost("groups")]
+    public async Task<IActionResult> CreateGroup([FromBody] CreateWebPageGroupRequest req)
+    {
+        var userId = GetUserId();
+        var name = req.Name?.Trim();
+        if (string.IsNullOrWhiteSpace(req.TeamId) || string.IsNullOrWhiteSpace(name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "teamId 和 name 不能为空"));
+        var kind = req.Kind?.Trim().ToLowerInvariant();
+        if (kind != WebPageGroupKind.Topic && kind != WebPageGroupKind.Daily)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "kind 必须是 topic 或 daily"));
+        if (!await CanEditInTeamAsync(userId, req.TeamId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该团队是只读或非成员角色，无法创建分组"));
+
+        var dup = await _db.WebPageGroups.Find(g => g.TeamId == req.TeamId && g.Kind == kind && g.Name == name)
+            .FirstOrDefaultAsync();
+        if (dup != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "同类型下已存在同名分组"));
+
+        var group = new WebPageGroup
+        {
+            TeamId = req.TeamId,
+            Kind = kind,
+            Name = name,
+            SortOrder = req.SortOrder ?? 0,
+            CreatedBy = userId,
+        };
+        await _db.WebPageGroups.InsertOneAsync(group);
+        return Ok(ApiResponse<object>.Ok(group));
+    }
+
+    /// <summary>重命名/调序团队空间分组（需团队内网页托管编辑权）</summary>
+    [HttpPut("groups/{groupId}")]
+    public async Task<IActionResult> UpdateGroup(string groupId, [FromBody] UpdateWebPageGroupRequest req)
+    {
+        var userId = GetUserId();
+        var group = await _db.WebPageGroups.Find(g => g.Id == groupId).FirstOrDefaultAsync();
+        if (group == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分组不存在"));
+        if (!await CanEditInTeamAsync(userId, group.TeamId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该团队是只读或非成员角色，无法修改分组"));
+
+        var update = Builders<WebPageGroup>.Update.Set(g => g.UpdatedAt, DateTime.UtcNow);
+        var name = req.Name?.Trim();
+        if (!string.IsNullOrWhiteSpace(name)) update = update.Set(g => g.Name, name);
+        if (req.SortOrder.HasValue) update = update.Set(g => g.SortOrder, req.SortOrder.Value);
+        await _db.WebPageGroups.UpdateOneAsync(g => g.Id == groupId, update);
+        var updated = await _db.WebPageGroups.Find(g => g.Id == groupId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    /// <summary>删除团队空间分组（组内站点的 GroupId 清空回到「未分组」，站点本身不动）</summary>
+    [HttpDelete("groups/{groupId}")]
+    public async Task<IActionResult> DeleteGroup(string groupId)
+    {
+        var userId = GetUserId();
+        var group = await _db.WebPageGroups.Find(g => g.Id == groupId).FirstOrDefaultAsync();
+        if (group == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分组不存在"));
+        if (!await CanEditInTeamAsync(userId, group.TeamId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该团队是只读或非成员角色，无法删除分组"));
+
+        await _db.HostedSites.UpdateManyAsync(
+            s => s.GroupId == groupId,
+            Builders<HostedSite>.Update.Set(s => s.GroupId, null));
+        await _db.WebPageGroups.DeleteOneAsync(g => g.Id == groupId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>设置站点的团队分组归属（groupId 为空 = 移出分组；需站点创建者或团队编辑权）</summary>
+    [HttpPatch("{id}/group")]
+    public async Task<IActionResult> SetSiteGroup(string id, [FromBody] SetSiteGroupRequest req)
+    {
+        var userId = GetUserId();
+        var site = await _db.HostedSites.Find(s => s.Id == id).FirstOrDefaultAsync();
+        if (site == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+
+        string? targetGroupId = null;
+        if (!string.IsNullOrWhiteSpace(req.GroupId))
+        {
+            var group = await _db.WebPageGroups.Find(g => g.Id == req.GroupId).FirstOrDefaultAsync();
+            if (group == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分组不存在"));
+            // 分组必须属于站点已共享到的团队，防止跨团队挂靠
+            if (!(site.SharedTeamIds ?? new List<string>()).Contains(group.TeamId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点未共享到该分组所属团队"));
+            if (site.OwnerUserId != userId && !await CanEditInTeamAsync(userId, group.TeamId))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该团队是只读角色，无法调整分组"));
+            targetGroupId = group.Id;
+        }
+        else
+        {
+            // 移出分组：站点创建者，或站点所在任一团队的编辑权
+            var allowed = site.OwnerUserId == userId;
+            if (!allowed)
+            {
+                foreach (var tid in site.SharedTeamIds ?? new List<string>())
+                {
+                    if (await CanEditInTeamAsync(userId, tid)) { allowed = true; break; }
+                }
+            }
+            if (!allowed)
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权调整该站点的分组"));
+        }
+
+        await _db.HostedSites.UpdateOneAsync(
+            s => s.Id == id,
+            Builders<HostedSite>.Update.Set(s => s.GroupId, targetGroupId).Set(s => s.UpdatedAt, DateTime.UtcNow));
+        site.GroupId = targetGroupId;
+        return Ok(ApiResponse<object>.Ok(site));
+    }
+
+    /// <summary>把自己的网页物理复制一份进团队空间（副本独立，原件规则不受影响）</summary>
+    [HttpPost("{id}/copy-to-team")]
+    public async Task<IActionResult> CopyToTeam(string id, [FromBody] CopySiteToTeamRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.TeamId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "teamId 不能为空"));
+        try
+        {
+            var copy = await _siteService.CopyToTeamAsync(id, GetUserId(), req.TeamId, req.GroupId);
+            return Ok(ApiResponse<object>.Ok(copy));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
     }
 
@@ -561,7 +732,10 @@ public class WebPagesController : ControllerBase
                 req.Password, req.ExpiresInDays,
                 purpose: isVisit ? "visit" : "share",
                 forceNew: forceNew,
-                visibility: visibility);
+                visibility: visibility,
+                // 数字短链按需分配：仅当用户在分享面板主动选「数字短链」时 client 传 true。
+                // 默认 false → 只发不可枚举的 /s/wp/{token} 长链，不污染 short_links。
+                allocateShortLink: req.AllocateShortLink ?? false);
 
             // P1 调整（2026-05-21 用户反馈）：默认 URL 保留分类前缀 /s/wp/{token}
             //   - 分类前缀有语义、利于在分享总管理面板里按类型分类
@@ -591,6 +765,37 @@ public class WebPagesController : ControllerBase
         catch (UnauthorizedAccessException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// 事后为某条已存在的分享生成数字短链 /s/{seq}（用户在分享面板点「生成数字短链」）。
+    /// 幂等：已有短链则原样返回。仅创建者可调用。
+    /// </summary>
+    [HttpPost("shares/{shareId}/short-link")]
+    public async Task<IActionResult> EnsureShareShortLink(string shareId)
+    {
+        try
+        {
+            var seq = await _siteService.EnsureShortLinkAsync(GetUserId(), shareId);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                shortSeq = seq,
+                shortShareUrl = seq > 0 ? $"/s/{seq}" : null,
+                unifiedShareUrl = (string?)null, // 由 client 用已知 token 自行拼 /s/{token}
+            }));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
     }
 
@@ -885,6 +1090,37 @@ public class SetSiteTeamsRequest
     public List<string>? TeamIds { get; set; }
 }
 
+public class CreateWebPageGroupRequest
+{
+    public string? TeamId { get; set; }
+
+    /// <summary>topic = 专题 | daily = 日常分类</summary>
+    public string? Kind { get; set; }
+
+    public string? Name { get; set; }
+    public int? SortOrder { get; set; }
+}
+
+public class UpdateWebPageGroupRequest
+{
+    public string? Name { get; set; }
+    public int? SortOrder { get; set; }
+}
+
+public class SetSiteGroupRequest
+{
+    /// <summary>目标分组 ID（空 = 移出分组）</summary>
+    public string? GroupId { get; set; }
+}
+
+public class CopySiteToTeamRequest
+{
+    public string? TeamId { get; set; }
+
+    /// <summary>副本直接归入的分组 ID（可选）</summary>
+    public string? GroupId { get; set; }
+}
+
 public class CreateWebPageShareRequest
 {
     public string? SiteId { get; set; }
@@ -905,6 +1141,12 @@ public class CreateWebPageShareRequest
 
     /// <summary>访问可见性：owner-only（默认） / logged-in / public</summary>
     public string? Visibility { get; set; }
+
+    /// <summary>
+    /// 是否分配数字短链 /s/{seq}。默认 false：用户意图里没有短链就不强制生成，
+    /// 只发不可枚举的 /s/wp/{token} 长链。仅当用户在分享面板主动选「数字短链」时传 true。
+    /// </summary>
+    public bool? AllocateShortLink { get; set; }
 }
 
 public class RenewShareRequest

@@ -245,6 +245,9 @@ public class MongoDbContext
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
 
+    // MD 转网页 PPT 生成运行记录（server-authority：刷新可重连/查看）
+    public IMongoCollection<MdToPptRun> MdToPptRuns => _database.GetCollection<MdToPptRun>("md_to_ppt_runs");
+
     // Desktop 更新加速缓存
     public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
 
@@ -252,6 +255,7 @@ public class MongoDbContext
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
+    public IMongoCollection<WebPageGroup> WebPageGroups => _database.GetCollection<WebPageGroup>("web_page_groups");
 
     // 统一短链路由（所有分享系统共用 /s/{seq}）
     public IMongoCollection<ShortLink> ShortLinks => _database.GetCollection<ShortLink>("short_links");
@@ -322,6 +326,10 @@ public class MongoDbContext
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
 
+    // Speech Agent 演讲智能体（首期 mode=mindmap：思维导图演讲）
+    public IMongoCollection<PrdAgent.Core.Models.SpeechAgent.SpeechDeck> SpeechDecks => _database.GetCollection<PrdAgent.Core.Models.SpeechAgent.SpeechDeck>("speech_decks");
+    public IMongoCollection<PrdAgent.Core.Models.SpeechAgent.SpeechNode> SpeechNodes => _database.GetCollection<PrdAgent.Core.Models.SpeechAgent.SpeechNode>("speech_nodes");
+
     // 个人任务树
     public IMongoCollection<TaskTree> TaskTrees => _database.GetCollection<TaskTree>("task_trees");
     public IMongoCollection<TaskNode> TaskNodes => _database.GetCollection<TaskNode>("task_nodes");
@@ -331,6 +339,7 @@ public class MongoDbContext
     public IMongoCollection<PmTask> PmTasks => _database.GetCollection<PmTask>("pm_tasks");
     public IMongoCollection<PmRewardConfig> PmRewardConfigs => _database.GetCollection<PmRewardConfig>("pm_reward_configs");
     public IMongoCollection<PmTaskActivity> PmTaskActivities => _database.GetCollection<PmTaskActivity>("pm_task_activities");
+    public IMongoCollection<PmTaskWorkLog> PmTaskWorkLogs => _database.GetCollection<PmTaskWorkLog>("pm_task_work_logs");
     public IMongoCollection<PmKnowledgeFile> PmKnowledgeFiles => _database.GetCollection<PmKnowledgeFile>("pm_knowledge_files");
     public IMongoCollection<PmDecision> PmDecisions => _database.GetCollection<PmDecision>("pm_decisions");
     public IMongoCollection<PmWeeklyReport> PmWeeklyReports => _database.GetCollection<PmWeeklyReport>("pm_weekly_reports");
@@ -342,9 +351,14 @@ public class MongoDbContext
     public IMongoCollection<PmRisk> PmRisks => _database.GetCollection<PmRisk>("pm_risks");
     public IMongoCollection<PmAuditLog> PmAuditLogs => _database.GetCollection<PmAuditLog>("pm_audit_logs");
 
+    // 团队动态（全平台白名单写操作留痕，ActivityLogActionFilter 写入）
+    public IMongoCollection<ActivityLog> ActivityLogs => _database.GetCollection<ActivityLog>("activity_logs");
+
     // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
     public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");
+    public IMongoCollection<ProductInitiation> ProductInitiations => _database.GetCollection<ProductInitiation>("product_initiations");
+    public IMongoCollection<ProductRelease> ProductReleases => _database.GetCollection<ProductRelease>("product_releases");
     public IMongoCollection<Requirement> Requirements => _database.GetCollection<Requirement>("requirements");
     public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
     public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");

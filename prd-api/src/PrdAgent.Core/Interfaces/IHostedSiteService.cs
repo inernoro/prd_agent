@@ -59,6 +59,13 @@ public interface IHostedSiteService
     /// <summary>设置站点分享到的团队（「分享到团队」操作，仅 owner 可调）。返回更新后的站点，无权或不存在返回 null</summary>
     Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct = default);
 
+    /// <summary>
+    /// 把自己的站点物理复制一份进团队空间（COS 文件完整拷贝，副本与原件互相独立）。
+    /// groupId 可选：副本直接归入目标团队的专题/日常分类。
+    /// 站点不存在/非 owner 抛 KeyNotFoundException；目标团队无编辑权抛 UnauthorizedAccessException。
+    /// </summary>
+    Task<HostedSite> CopyToTeamAsync(string siteId, string userId, string teamId, string? groupId, CancellationToken ct = default);
+
     Task<List<string>> ListFoldersAsync(string userId, CancellationToken ct = default);
 
     Task<List<TagCountResult>> ListTagsAsync(string userId, CancellationToken ct = default);
@@ -103,7 +110,15 @@ public interface IHostedSiteService
         CancellationToken ct = default,
         string purpose = "share",
         bool forceNew = false,
-        string visibility = "owner-only");
+        string visibility = "owner-only",
+        bool allocateShortLink = false);
+
+    /// <summary>
+    /// 事后为某条已存在的分享按需分配数字短链 /s/{seq}（用户在分享面板点「生成数字短链」）。
+    /// 幂等：已有则返回原 Seq。返回分配后的 ShortSeq（&gt;0 成功）。
+    /// 仅创建者可调用；visit 便捷链不支持。
+    /// </summary>
+    Task<long> EnsureShortLinkAsync(string userId, string shareId, CancellationToken ct = default);
 
     /// <summary>
     /// 列出分享：默认包含未过期 + 过期 ≤ 7 天（允许续期）的链接。
@@ -137,7 +152,7 @@ public interface IHostedSiteService
     Task<List<ShareViewLog>> ListShareViewLogsForSiteAsync(string siteId, string userId, int limit = 50, CancellationToken ct = default);
 
     /// <summary>
-    /// 用户分享统计聚合：当前所有未撤销分享 + 活跃链接 + 时间窗内访问总量 / 独立 IP / 时间线。
+    /// 用户分享统计聚合：当前所有未撤销分享 + 活跃链接 + 时间窗内访问总量 / 独立访客 / 时间线。
     /// 用于「分享统计」Drawer（参考 Cloudflare 风格简化版）。
     /// siteId 非空时把统计范围收窄到该站点（用于站点卡上的「本站点统计」过滤按钮）。
     /// </summary>
@@ -266,8 +281,13 @@ public class ShareAnalyticsResult
     public int ExpiredShares { get; set; }
     public long TotalViews { get; set; }
     public int UniqueIpCount { get; set; }
+    public long CommentCount { get; set; }
     public List<ShareAnalyticsTimelineEntry> Timeline { get; set; } = new();
     public List<ShareAnalyticsLinkSummary> TopLinks { get; set; } = new();
+    public List<ShareAnalyticsTrendPoint> Trend { get; set; } = new();
+    public List<ShareAnalyticsHourlyPoint> Hourly { get; set; } = new();
+    public List<ShareAnalyticsVisitorStats> TopVisitors { get; set; } = new();
+    public List<ShareAnalyticsCommentEntry> RecentComments { get; set; } = new();
 }
 
 public class ShareAnalyticsTimelineEntry
@@ -275,9 +295,13 @@ public class ShareAnalyticsTimelineEntry
     public DateTime ViewedAt { get; set; }
     public string ShareToken { get; set; } = string.Empty;
     public string? ShareTitle { get; set; }
+    public string ShareUrl { get; set; } = string.Empty;
+    public string? ViewerUserId { get; set; }
     public string? ViewerName { get; set; }
+    public string? ViewerAvatarFileName { get; set; }
     public string? IpAddress { get; set; }
     public string? UserAgent { get; set; }
+    public string? ClientSummary { get; set; }
 }
 
 public class ShareAnalyticsLinkSummary
@@ -285,12 +309,56 @@ public class ShareAnalyticsLinkSummary
     public string ShareId { get; set; } = string.Empty;
     public string Token { get; set; } = string.Empty;
     public string? Title { get; set; }
+    public string ShareUrl { get; set; } = string.Empty;
     public long ViewCount { get; set; }
     public long UniqueIpCount { get; set; }
     public DateTime? LastViewedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ExpiresAt { get; set; }
     public string Visibility { get; set; } = "owner-only";
+    public List<ShareAnalyticsVisitorSummary> Visitors { get; set; } = new();
+}
+
+public class ShareAnalyticsVisitorSummary
+{
+    public string? ViewerUserId { get; set; }
+    public string ViewerName { get; set; } = "匿名访客";
+    public string? ViewerAvatarFileName { get; set; }
+    public long ViewCount { get; set; }
+}
+
+public class ShareAnalyticsTrendPoint
+{
+    public string Date { get; set; } = string.Empty;
+    public long Views { get; set; }
+    public long Comments { get; set; }
+}
+
+public class ShareAnalyticsHourlyPoint
+{
+    public int Hour { get; set; }
+    public long Views { get; set; }
+}
+
+public class ShareAnalyticsVisitorStats
+{
+    public string? ViewerUserId { get; set; }
+    public string ViewerName { get; set; } = "匿名访客";
+    public string? ViewerAvatarFileName { get; set; }
+    public long ViewCount { get; set; }
+    public DateTime LastViewedAt { get; set; }
+}
+
+public class ShareAnalyticsCommentEntry
+{
+    public string Id { get; set; } = string.Empty;
+    public string SiteId { get; set; } = string.Empty;
+    public string SiteTitle { get; set; } = string.Empty;
+    public string? ShareToken { get; set; }
+    public string AuthorName { get; set; } = "用户";
+    public string? AuthorAvatarFileName { get; set; }
+    public string Content { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
 }
 
 public class ShareDiagnosticsResult

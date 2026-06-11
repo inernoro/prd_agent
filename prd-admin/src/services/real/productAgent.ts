@@ -20,6 +20,8 @@ import type {
   ProductCategory,
   DescTemplate,
   ProductMembersResult,
+  ProductInitiation,
+  ProductRelease,
 } from '@/pages/product-agent/types';
 
 interface ListWrap<T> {
@@ -81,6 +83,66 @@ export function updateVersion(versionId: string, body: Partial<ProductVersion>) 
 }
 export function deleteVersion(versionId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/versions/${versionId}`, { method: 'DELETE' });
+}
+
+export function listInitiations(productId: string, scope: 'mine' | 'all' = 'mine') {
+  return apiRequest<ListWrap<ProductInitiation>>(`/api/product/products/${productId}/initiations?scope=${scope}`);
+}
+export function createInitiation(productId: string, body: {
+  projectType: 'standard' | 'custom';
+  systemName?: string;
+  appName?: string;
+  customerSource?: string;
+  planName: string;
+  requirementDescription?: string;
+  departmentName?: string;
+  planUrl?: string;
+  versionType: 'major' | 'medium' | 'minor';
+  requirementIds: string[];
+}) {
+  return apiRequest<ProductInitiation>(`/api/product/products/${productId}/initiations`, { method: 'POST', body });
+}
+export function syncInitiationReview(id: string, submissionId: string) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/review`, { method: 'POST', body: { submissionId } });
+}
+export function decideInitiation(id: string, body: {
+  reviewMeetingRequired: boolean;
+  expectedMeetingAt?: string;
+  primaryOwnerId?: string;
+}) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/decision`, { method: 'POST', body });
+}
+export function approveInitiation(id: string, comment?: string) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/approve`, { method: 'POST', body: { comment } });
+}
+export function listReleases(productId: string, scope: 'mine' | 'all' = 'mine', ownerId?: string) {
+  const q = new URLSearchParams({ scope });
+  if (ownerId) q.set('ownerId', ownerId);
+  return apiRequest<ListWrap<ProductRelease>>(`/api/product/products/${productId}/releases?${q.toString()}`);
+}
+export function createRelease(productId: string, body: {
+  initiationId?: string;
+  isTemporaryOptimization: boolean;
+  planName?: string;
+  ownerId: string;
+  openBrandScope?: string;
+  additionalRequirementIds?: string[];
+  teamMemberIds: string[];
+  plannedReleaseAt: string;
+}) {
+  return apiRequest<ProductRelease>(`/api/product/products/${productId}/releases`, { method: 'POST', body });
+}
+export function completeRelease(id: string, announcementUrl: string) {
+  return apiRequest<ProductRelease>(`/api/product/releases/${id}/complete`, { method: 'POST', body: { announcementUrl } });
+}
+export function importVersionWorkflow(productId: string, body: {
+  kind: 'initiation' | 'release';
+  rows: Array<Record<string, unknown>>;
+}) {
+  return apiRequest<{ created: number; errors: { row: number; message: string }[] }>(
+    `/api/product/products/${productId}/version-workflow/import`,
+    { method: 'POST', body },
+  );
 }
 
 // ── 需求 ──
@@ -190,8 +252,31 @@ export function deleteDescTemplate(templateId: string) {
 }
 
 // ── 批量导入 ──
-export function importRequirements(productId: string, rows: { title: string; grade?: string; description?: string }[]) {
-  return apiRequest<{ created: number }>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
+export interface ImportRequirementRow {
+  title: string;
+  grade?: string;
+  description?: string;
+  sourceSystem?: string;
+  externalId?: string;
+  sourceUrl?: string;
+  sourceStatus?: string;
+  sourcePriority?: string;
+  sourceFields?: Record<string, string>;
+  handlerNames?: string[];
+  developerNames?: string[];
+  creatorNames?: string[];
+  ccNames?: string[];
+  comments?: { author: string; title: string; content: string; createdAt?: string }[];
+  attachmentIds?: string[];
+  sourceCreatedAt?: string;
+  sourceModifiedAt?: string;
+  sourceCompletedAt?: string;
+  importedFileName?: string;
+  importBatchId?: string;
+}
+
+export function importRequirements(productId: string, rows: ImportRequirementRow[]) {
+  return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
 }
 
 // ── 报表 / 统计分析 ──
@@ -199,9 +284,29 @@ export interface ProductAnalytics {
   releaseProgress: { versionId: string; versionName: string; total: number; done: number; doing: number; todo: number }[];
   overall: { total: number; done: number; doing: number; todo: number };
   velocity: { week: string; requirements: number; features: number }[];
+  /** 规模统计（原工作台数据展示区迁入报表） */
+  counts: { versions: number; requirements: number; features: number; defects: number };
+  /** 需求分级分布（key: p0-p3） */
+  requirementsByGrade: Record<string, number>;
+  /** 追溯缺陷状态分布（key: DefectStatus 原始值） */
+  defectsByStatus: Record<string, number>;
+  /** 版本生命周期分布（key: lifecycle） */
+  versionsByLifecycle: Record<string, number>;
 }
 export function getProductAnalytics(productId: string) {
   return apiRequest<ProductAnalytics>(`/api/product/products/${productId}/analytics`);
+}
+
+// ── 用户偏好（工作台快捷操作，用户级跨产品共用） ──
+export interface ProductAgentPrefs {
+  /** null = 从未配置（前端走默认）；空数组 = 用户主动清空 */
+  quickActionIds: string[] | null;
+}
+export function getProductAgentPreferences() {
+  return apiRequest<ProductAgentPrefs>('/api/product/preferences');
+}
+export function updateProductAgentQuickActions(quickActionIds: string[]) {
+  return apiRequest<ProductAgentPrefs>('/api/product/preferences/quick-actions', { method: 'PUT', body: { quickActionIds } });
 }
 
 // ── 批量操作 ──
@@ -285,6 +390,21 @@ export function getVersionKnowledgeStore(versionId: string) {
   return apiRequest<KnowledgeStore>(`/api/product/versions/${versionId}/knowledge/store`);
 }
 
+/** 总览聚合知识行：条目 + 所属产品 */
+export interface OverviewKnowledgeEntryRow {
+  entry: import('@/services/contracts/documentStore').DocumentEntry;
+  productId: string | null;
+  productName: string | null;
+}
+/** 管理层总览：跨产品聚合知识列表（分页 + 关键词/产品过滤） */
+export function getOverviewKnowledgeEntries(q: { page?: number; pageSize?: number; keyword?: string; productId?: string } = {}) {
+  const params = new URLSearchParams({ page: String(q.page ?? 1), pageSize: String(q.pageSize ?? 20) });
+  if (q.keyword) params.set('keyword', q.keyword);
+  if (q.productId) params.set('productId', q.productId);
+  return apiRequest<{ items: OverviewKnowledgeEntryRow[]; total: number; page: number; pageSize: number }>(
+    `/api/product/overview/knowledge/entries?${params.toString()}`);
+}
+
 // ── 缺陷追溯（复用 defect-agent，P1）──
 /** 追溯缺陷精简类型（DefectReport 子集） */
 export interface TracedDefect {
@@ -292,11 +412,21 @@ export interface TracedDefect {
   defectNo: string;
   title?: string | null;
   status: string;
+  /** 统一等级 p0/p1/p2/p3（取代严重度）。severity 仍保留用于旧数据兜底。 */
+  grade?: string | null;
   severity?: string | null;
   priority?: string | null;
   tracedRequirementId?: string | null;
   tracedVersionId?: string | null;
   tracedFeatureId?: string | null;
+  /** 以下字段由 list/detail 接口返回的完整 DefectReport 提供，用于产品内缺陷详情编辑 */
+  rawContent?: string | null;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
+  reporterId?: string | null;
+  reporterName?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string }) {
   const q = new URLSearchParams();
@@ -321,6 +451,22 @@ export function untraceDefect(defectId: string) {
 /** 缺陷转需求：在缺陷所追溯的产品下生成一条需求并建立溯源追溯，返回新需求。 */
 export function convertDefectToRequirement(defectId: string) {
   return apiRequest<Requirement>(`/api/product/defects/${defectId}/convert-to-requirement`, { method: 'POST' });
+}
+
+/** 工作台「我的待办」一条：需求/功能/缺陷统一结构（后端已按"需我处理"过滤好）。 */
+export interface MyTodoItem {
+  kind: 'requirement' | 'feature' | 'defect';
+  id: string;
+  no: string;
+  title: string;
+  /** 原始状态值（需求/功能为工作流状态 Key，缺陷为 DefectStatus）。 */
+  state?: string | null;
+  /** 已解析的状态中文标签（需求/功能由后端工作流解析；缺陷为空，前端用 defectStatusLabel 兜底）。 */
+  stateLabel?: string | null;
+}
+/** 工作台「我的待办」：只返回当前用户现在需要处理的项（后端按状态责任人 + 未到终态/未完成过滤）。 */
+export function getMyTodos(productId: string) {
+  return apiRequest<ListWrap<MyTodoItem>>(`/api/product/products/${productId}/my-todos`);
 }
 
 // ── 动态/讨论时间线（P2）──
@@ -437,7 +583,7 @@ export function getOverviewFeatures(params?: { grade?: string; keyword?: string;
 }
 export interface OverviewDefectRow {
   id: string; productId: string; productName: string; defectNo: string; title?: string | null;
-  status: string; severity?: string | null; priority?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
+  status: string; grade?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
 }
 export function getOverviewDefects(params?: { status?: string; keyword?: string }) {
   const q = new URLSearchParams();
@@ -455,6 +601,9 @@ export function getOverviewKnowledge() {
 export function getOverviewGraph() {
   return apiRequest<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/product/overview/graph');
 }
-export function createProductDefect(productId: string, body: { title: string; description?: string; severity?: string; requirementId?: string; versionId?: string }) {
+export function createProductDefect(productId: string, body: { title: string; description?: string; grade?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
+}
+export function updateProductDefect(productId: string, defectId: string, body: { title: string; description?: string; grade?: string; status?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
+  return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects/${defectId}`, { method: 'PUT', body });
 }

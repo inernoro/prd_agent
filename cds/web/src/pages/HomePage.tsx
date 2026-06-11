@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ShapeGrid from '@/components/effects/ShapeGrid';
+import { CdsAccessMorphBoard } from '@/pages/LoginPage';
 import './HomePage.css';
 
 const FEED_LINES = [
@@ -21,11 +22,11 @@ const BranchIcon = (props: { className?: string }) => (
 export function HomePage(): JSX.Element {
   const [feedIndex, setFeedIndex] = useState(0);
   const [feedOff, setFeedOff] = useState(false);
+  const [accessMode, setAccessMode] = useState(false);
 
   useEffect(() => {
-    // 预取登录页 + 控制台首页的 lazy chunk:用户还在首页停留时就把下一跳的代码
-    // 拉进内存,点击时 React 不会触发 Suspense fallback(那个全屏 loader 就是
-    // "白屏跳一下"的根因)。配合 Link 的 viewTransition,实现首页→登录的丝滑溶解。
+    // 预取访问面板和控制台 lazy chunk:首页点击 Access/Enter Console 时只做本页
+    // board 状态切换;提交成功后再进入控制台,避免中途出现 Suspense 跳闪。
     const preload = () => {
       void import('@/pages/LoginPage');
       void import('@/pages/ProjectListPage');
@@ -34,6 +35,14 @@ export function HomePage(): JSX.Element {
     if (typeof ric === 'function') ric(preload);
     else window.setTimeout(preload, 200);
   }, []);
+
+  function openAccessMode() {
+    setAccessMode(true);
+  }
+
+  function closeAccessMode() {
+    setAccessMode(false);
+  }
 
   useEffect(() => {
     let fadeTimer: number | undefined;
@@ -81,14 +90,14 @@ export function HomePage(): JSX.Element {
             <Link to="/project-list" viewTransition>Console</Link>
             <Link to="/project-list" viewTransition>Branches</Link>
             <Link to="/cds-settings" viewTransition>Settings</Link>
-            <Link to="/login" viewTransition>Access</Link>
+            <button type="button" onClick={openAccessMode}>Access</button>
           </div>
           <div className="cdsh-navcta">
-            <Link className="cdsh-btn cdsh-btn-ghost" to="/login" viewTransition>Log in</Link>
-            <Link className="cdsh-btn cdsh-btn-primary" to="/login?redirect=%2Fproject-list" viewTransition>
+            <button className="cdsh-btn cdsh-btn-ghost" type="button" onClick={openAccessMode}>Log in</button>
+            <button className="cdsh-btn cdsh-btn-primary" type="button" onClick={openAccessMode}>
               Enter Console
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-            </Link>
+            </button>
           </div>
         </nav>
 
@@ -107,11 +116,11 @@ export function HomePage(): JSX.Element {
               webhooks and a preview URL — without ever breaking the control plane.
             </p>
             <div className="cdsh-cta cdsh-rise" style={{ animationDelay: '.45s' }}>
-              <Link className="cdsh-btn cdsh-btn-primary cdsh-btn-lg" to="/login?redirect=%2Fproject-list" viewTransition>
+              <button className="cdsh-btn cdsh-btn-primary cdsh-btn-lg" type="button" onClick={openAccessMode}>
                 Enter Console
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-              </Link>
-              <Link className="cdsh-btn cdsh-btn-ghost cdsh-btn-lg" to="/login" viewTransition>System Access</Link>
+              </button>
+              <button className="cdsh-btn cdsh-btn-ghost cdsh-btn-lg" type="button" onClick={openAccessMode}>System Access</button>
             </div>
             <div className="cdsh-meta-row cdsh-rise" style={{ animationDelay: '.55s' }}>
               <span className="cdsh-meta">
@@ -126,7 +135,12 @@ export function HomePage(): JSX.Element {
           </div>
 
           {/* BOARD */}
-          <div className="cdsh-board cdsh-rise" style={{ animationDelay: '.3s' }}>
+          {accessMode ? (
+            <div className="cdsh-login-panel cdsh-home-access-board">
+              <CdsAccessMorphBoard target="/project-list" onHome={closeAccessMode} />
+            </div>
+          ) : (
+            <div className="cdsh-board cdsh-rise" style={{ animationDelay: '.3s' }}>
             <div className="cdsh-board-head">
               <div className="cdsh-left">
                 <BranchIcon />
@@ -219,7 +233,8 @@ export function HomePage(): JSX.Element {
               <span className="cdsh-k">cds</span>&nbsp;&gt;&nbsp;
               <span className={`cdsh-feed${feedOff ? ' cdsh-off' : ''}`}>{FEED_LINES[feedIndex]}</span>
             </p>
-          </div>
+            </div>
+          )}
         </section>
 
         {/* STRIP */}

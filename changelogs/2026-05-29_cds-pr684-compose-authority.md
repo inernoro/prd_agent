@@ -1,1 +1,0 @@
-| fix | cds | [安全] 虚拟 compose 权威校验补全:diff 改为解析整份文档(含顶层 networks/x-cds-domain)+ 递归到叶子,classifyComposeField 加祖先前缀匹配,堵死"改 networks 子键 / services.*.deploy.replicas 等 platform 字段被当 user 放行"的权威绕过(Codex P2×2) |

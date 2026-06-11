@@ -80,6 +80,7 @@ public sealed class SidecarRuntimeAdapter : IInfraAgentRuntimeAdapter
                 Type = ev.Type switch
                 {
                     SidecarEventType.TextDelta => InfraAgentRuntimeEventType.TextDelta,
+                    SidecarEventType.Thinking => InfraAgentRuntimeEventType.Thinking,
                     SidecarEventType.ToolUse => InfraAgentRuntimeEventType.ToolUse,
                     SidecarEventType.ToolResult => InfraAgentRuntimeEventType.ToolResult,
                     SidecarEventType.Usage => InfraAgentRuntimeEventType.Usage,

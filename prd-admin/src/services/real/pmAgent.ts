@@ -21,6 +21,10 @@ import type {
   GetPmTaskActivitiesContract,
   AddPmTaskCommentContract,
   BulkPmTasksContract,
+  ListPmTaskWorkLogsContract,
+  CreatePmTaskWorkLogContract,
+  UpdatePmTaskWorkLogContract,
+  DeletePmTaskWorkLogContract,
   GetPmMembersContract,
   SetPmMembersContract,
   SetPmObserversContract,
@@ -47,6 +51,8 @@ import type {
   ListPmGoalsContract,
   CreatePmGoalContract,
   UpdatePmGoalContract,
+  SetGoalAsMilestoneContract,
+  ReparentPmGoalContract,
   DeletePmGoalContract,
   ListPmGoalCheckInsContract,
   AddPmGoalCheckInContract,
@@ -65,6 +71,10 @@ import type {
   UpdatePmRiskContract,
   DeletePmRiskContract,
   GetPmBurndownContract,
+  GetPmMyTodosContract,
+  GetPmAgentPreferencesContract,
+  UpdatePmQuickActionsContract,
+  GetPmReportSummaryContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -216,6 +226,14 @@ export const updatePmGoalReal: UpdatePmGoalContract = async (goalId, input) => {
   return await apiRequest(api.pm.goals.item(encodeURIComponent(goalId)), { method: 'PUT', body: input });
 };
 
+export const setGoalAsMilestoneReal: SetGoalAsMilestoneContract = async (goalId, enabled) => {
+  return await apiRequest(api.pm.goals.milestone(encodeURIComponent(goalId)), { method: 'POST', body: { enabled } });
+};
+
+export const reparentPmGoalReal: ReparentPmGoalContract = async (goalId, parentId) => {
+  return await apiRequest(api.pm.goals.reparent(encodeURIComponent(goalId)), { method: 'POST', body: { parentId } });
+};
+
 export const deletePmGoalReal: DeletePmGoalContract = async (goalId) => {
   return await apiRequest(api.pm.goals.item(encodeURIComponent(goalId)), { method: 'DELETE' });
 };
@@ -350,10 +368,44 @@ export const bulkPmTasksReal: BulkPmTasksContract = async (projectId, input) => 
   return await apiRequest(api.pm.projects.bulkTasks(encodeURIComponent(projectId)), { method: 'POST', body: input });
 };
 
+export const listPmTaskWorkLogsReal: ListPmTaskWorkLogsContract = async (taskId) => {
+  return await apiRequest(api.pm.tasks.workLogs(encodeURIComponent(taskId)), { method: 'GET' });
+};
+
+export const createPmTaskWorkLogReal: CreatePmTaskWorkLogContract = async (taskId, input) => {
+  return await apiRequest(api.pm.tasks.workLogs(encodeURIComponent(taskId)), { method: 'POST', body: input });
+};
+
+export const updatePmTaskWorkLogReal: UpdatePmTaskWorkLogContract = async (logId, input) => {
+  return await apiRequest(api.pm.workLogs.update(encodeURIComponent(logId)), { method: 'PUT', body: input });
+};
+
+export const deletePmTaskWorkLogReal: DeletePmTaskWorkLogContract = async (logId) => {
+  return await apiRequest(api.pm.workLogs.delete(encodeURIComponent(logId)), { method: 'DELETE' });
+};
+
 export const getPmRewardConfigReal: GetPmRewardConfigContract = async () => {
   return await apiRequest(api.pm.rewardConfig(), { method: 'GET' });
 };
 
 export const updatePmRewardConfigReal: UpdatePmRewardConfigContract = async (input) => {
   return await apiRequest(api.pm.rewardConfig(), { method: 'PUT', body: input });
+};
+
+// ── 首页工作台（跨项目）──
+
+export const getPmMyTodosReal: GetPmMyTodosContract = async () => {
+  return await apiRequest(api.pm.myTodos(), { method: 'GET' });
+};
+
+export const getPmAgentPreferencesReal: GetPmAgentPreferencesContract = async () => {
+  return await apiRequest(api.pm.preferences(), { method: 'GET' });
+};
+
+export const updatePmQuickActionsReal: UpdatePmQuickActionsContract = async (quickActionIds) => {
+  return await apiRequest(api.pm.quickActions(), { method: 'PUT', body: { quickActionIds } });
+};
+
+export const getPmReportSummaryReal: GetPmReportSummaryContract = async (scope) => {
+  return await apiRequest(api.pm.reportsSummary(scope), { method: 'GET' });
 };

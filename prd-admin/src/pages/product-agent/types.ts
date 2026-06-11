@@ -103,6 +103,73 @@ export interface ProductVersion {
   updatedAt: string;
 }
 
+export type VersionScale = 'major' | 'medium' | 'minor';
+
+export interface ProductInitiation {
+  id: string;
+  productId: string;
+  tCode?: string | null;
+  systemName?: string | null;
+  appName?: string | null;
+  projectType: 'standard' | 'custom';
+  customerSource?: string | null;
+  planName: string;
+  requirementDescription?: string | null;
+  departmentName?: string | null;
+  planUrl?: string | null;
+  versionType: VersionScale;
+  requirementIds: string[];
+  status: string;
+  reviewSubmissionId?: string | null;
+  reviewScore?: number | null;
+  reviewPassed?: boolean | null;
+  reviewMeetingRequired?: boolean | null;
+  expectedMeetingAt?: string | null;
+  firstDraftMeetingAt?: string | null;
+  secondDraftMeetingAt?: string | null;
+  thirdDraftMeetingAt?: string | null;
+  projectAt?: string | null;
+  plannedProjectAt?: string | null;
+  needUiDesign?: boolean | null;
+  isAiPoc?: boolean | null;
+  developmentStatus: string;
+  remark?: string | null;
+  primaryOwnerId?: string | null;
+  approvalComment?: string | null;
+  createdBy: string;
+  sourceType: 'system' | 'import';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductRelease {
+  id: string;
+  productId: string;
+  initiationId?: string | null;
+  tCode?: string | null;
+  vCode: string;
+  systemName?: string | null;
+  appName?: string | null;
+  isTemporaryOptimization: boolean;
+  projectType: 'standard' | 'custom';
+  planName: string;
+  versionType: VersionScale;
+  planUrl?: string | null;
+  departmentName?: string | null;
+  ownerId?: string | null;
+  openBrandScope: string;
+  requirementIds: string[];
+  teamMemberIds: string[];
+  plannedReleaseAt?: string | null;
+  releasedAt?: string | null;
+  announcementUrl?: string | null;
+  status: string;
+  createdBy: string;
+  sourceType: 'system' | 'import';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Requirement {
   id: string;
   productId: string;
@@ -120,9 +187,36 @@ export interface Requirement {
   ownerId: string;
   assigneeId?: string | null;
   sourceDefectId?: string | null;
+  sourceSystem?: string | null;
+  externalId?: string | null;
+  sourceUrl?: string | null;
+  sourceSnapshot?: RequirementSourceSnapshot | null;
   stateEnteredAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RequirementSourceSnapshot {
+  status: string;
+  priority: string;
+  fields: Record<string, string>;
+  handlerNames: string[];
+  developerNames: string[];
+  creatorNames: string[];
+  ccNames: string[];
+  comments: {
+    author: string;
+    title: string;
+    content: string;
+    createdAt?: string | null;
+  }[];
+  attachmentIds: string[];
+  sourceCreatedAt?: string | null;
+  sourceModifiedAt?: string | null;
+  sourceCompletedAt?: string | null;
+  importedFileName: string;
+  importBatchId: string;
+  importedAt: string;
 }
 
 export interface Feature {
@@ -271,6 +365,52 @@ export const ITEM_GRADE_LABEL: Record<ItemGrade, string> = {
   p2: 'P2 中',
   p3: 'P3 低',
 };
+
+/** 缺陷状态英文值 → 中文标签（与后端 DefectStatus 同口径，工作台/列表/图表统一展示用）。 */
+export const DEFECT_STATUS_LABEL: Record<string, string> = {
+  draft: '草稿',
+  reviewing: '评审中',
+  awaiting: '待处理',
+  submitted: '已提交',
+  assigned: '已分配',
+  processing: '处理中',
+  verifying: '待验收',
+  resolved: '已解决',
+  rejected: '已拒绝',
+  closed: '已关闭',
+};
+
+/** 取缺陷状态中文标签，未知值回退原文。 */
+export function defectStatusLabel(status?: string | null): string {
+  const s = (status ?? '').trim();
+  if (!s) return '—';
+  return DEFECT_STATUS_LABEL[s] ?? DEFECT_STATUS_LABEL[s.toLowerCase()] ?? s;
+}
+
+/** 旧缺陷「严重度」→ 统一「等级」兜底映射（与后端 ProductAgentController.SeverityToGrade 同口径）。 */
+export function severityToItemGrade(severity?: string | null): ItemGrade {
+  switch (severity) {
+    case 'blocker':
+    case 'critical':
+      return 'p0';
+    case 'major':
+      return 'p1';
+    case 'minor':
+      return 'p2';
+    case 'trivial':
+    case 'suggestion':
+      return 'p3';
+    default:
+      return 'p2';
+  }
+}
+
+/** 取缺陷有效等级：优先 grade，旧数据为空时由 severity 兜底。 */
+export function effectiveDefectGrade(d: { grade?: string | null; severity?: string | null }): ItemGrade {
+  const g = d.grade;
+  if (g === 'p0' || g === 'p1' || g === 'p2' || g === 'p3') return g;
+  return severityToItemGrade(d.severity);
+}
 
 export const PRODUCT_GRADE_LABEL: Record<ProductGrade, string> = {
   core: '核心',

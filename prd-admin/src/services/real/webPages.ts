@@ -32,6 +32,8 @@ export interface HostedSite {
   ownerUserId: string;
   /** 分享到的团队 ID 列表（仅网页托管消费） */
   sharedTeamIds?: string[];
+  /** 团队空间分组归属（专题/日常分类的 WebPageGroup.Id；null/undefined = 未分组） */
+  groupId?: string | null;
   viewCount: number;
   /** 可见性：private = 仅自己可见 | public = 出现在 /u/:username 公开页 */
   visibility?: 'private' | 'public';
@@ -78,21 +80,34 @@ export interface ShareAnalyticsLinkSummary {
   shareId: string;
   token: string;
   title?: string;
+  shareUrl?: string;
   viewCount: number;
   uniqueIpCount: number;
   lastViewedAt?: string;
   createdAt: string;
   expiresAt?: string;
   visibility: string;
+  visitors?: ShareAnalyticsVisitorSummary[];
 }
 
 export interface ShareAnalyticsTimelineEntry {
   viewedAt: string;
   shareToken: string;
   shareTitle?: string;
+  shareUrl?: string;
+  viewerUserId?: string;
   viewerName?: string;
+  viewerAvatarFileName?: string;
   ipAddress?: string;
   userAgent?: string;
+  clientSummary?: string;
+}
+
+export interface ShareAnalyticsVisitorSummary {
+  viewerUserId?: string;
+  viewerName: string;
+  viewerAvatarFileName?: string;
+  viewCount: number;
 }
 
 export interface ShareAnalyticsResult {
@@ -101,8 +116,43 @@ export interface ShareAnalyticsResult {
   expiredShares: number;
   totalViews: number;
   uniqueIpCount: number;
+  commentCount?: number;
   timeline: ShareAnalyticsTimelineEntry[];
   topLinks: ShareAnalyticsLinkSummary[];
+  trend?: ShareAnalyticsTrendPoint[];
+  hourly?: ShareAnalyticsHourlyPoint[];
+  topVisitors?: ShareAnalyticsVisitorStats[];
+  recentComments?: ShareAnalyticsCommentEntry[];
+}
+
+export interface ShareAnalyticsTrendPoint {
+  date: string;
+  views: number;
+  comments: number;
+}
+
+export interface ShareAnalyticsHourlyPoint {
+  hour: number;
+  views: number;
+}
+
+export interface ShareAnalyticsVisitorStats {
+  viewerUserId?: string;
+  viewerName: string;
+  viewerAvatarFileName?: string;
+  viewCount: number;
+  lastViewedAt: string;
+}
+
+export interface ShareAnalyticsCommentEntry {
+  id: string;
+  siteId: string;
+  siteTitle: string;
+  shareToken?: string;
+  authorName: string;
+  authorAvatarFileName?: string;
+  content: string;
+  createdAt: string;
 }
 
 export interface TagCount {
@@ -222,9 +272,10 @@ export async function listSites(params?: {
   if (params?.sort) sp.set('sort', params.sort);
   if (params?.skip) sp.set('skip', String(params.skip));
   if (params?.limit) sp.set('limit', String(params.limit));
-  if (params?.scope === 'team' && params?.teamId) {
+  if (params?.scope === 'team') {
     sp.set('scope', 'team');
-    sp.set('teamId', params.teamId);
+    // teamId 缺省 = 跨团队聚合视图（我加入的所有团队的共享站点）
+    if (params.teamId) sp.set('teamId', params.teamId);
   }
   const q = sp.toString();
   return apiRequest(`${api.webPages.list()}${q ? `?${q}` : ''}`, { method: 'GET' });
@@ -270,6 +321,63 @@ export async function listTags(): Promise<ApiResponse<{ tags: TagCount[] }>> {
   return apiRequest(api.webPages.tags(), { method: 'GET' });
 }
 
+// ─── Team Groups（团队空间专题 / 日常分类） ───
+
+export interface WebPageGroup {
+  id: string;
+  teamId: string;
+  /** topic = 专题 | daily = 日常分类 */
+  kind: 'topic' | 'daily';
+  name: string;
+  sortOrder: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listSiteGroups(teamId: string): Promise<ApiResponse<{ groups: WebPageGroup[] }>> {
+  return apiRequest(`${api.webPages.groups()}?teamId=${encodeURIComponent(teamId)}`, { method: 'GET' });
+}
+
+export async function createSiteGroup(input: {
+  teamId: string;
+  kind: 'topic' | 'daily';
+  name: string;
+  sortOrder?: number;
+}): Promise<ApiResponse<WebPageGroup>> {
+  return apiRequest(api.webPages.groups(), { method: 'POST', body: input });
+}
+
+export async function updateSiteGroup(
+  groupId: string,
+  input: { name?: string; sortOrder?: number },
+): Promise<ApiResponse<WebPageGroup>> {
+  return apiRequest(api.webPages.groupById(encodeURIComponent(groupId)), { method: 'PUT', body: input });
+}
+
+export async function deleteSiteGroup(groupId: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(api.webPages.groupById(encodeURIComponent(groupId)), { method: 'DELETE' });
+}
+
+export async function setSiteGroup(siteId: string, groupId: string | null): Promise<ApiResponse<HostedSite>> {
+  return apiRequest(api.webPages.setGroup(encodeURIComponent(siteId)), {
+    method: 'PATCH',
+    body: { groupId },
+  });
+}
+
+/** 把自己的网页物理复制一份进团队空间（副本独立，原件不受影响） */
+export async function copySiteToTeam(
+  siteId: string,
+  teamId: string,
+  groupId?: string | null,
+): Promise<ApiResponse<HostedSite>> {
+  return apiRequest(api.webPages.copyToTeam(encodeURIComponent(siteId)), {
+    method: 'POST',
+    body: { teamId, groupId: groupId ?? null },
+  });
+}
+
 // ─── Share ───
 
 export async function createShareLink(data: {
@@ -286,6 +394,8 @@ export async function createShareLink(data: {
   forceNew?: boolean;
   /** 访问可见性：owner-only（默认）/ logged-in / public */
   visibility?: 'owner-only' | 'logged-in' | 'public';
+  /** 是否分配数字短链 /s/{seq}。默认 false：只发 /s/wp/{token} 长链，不污染 short_links */
+  allocateShortLink?: boolean;
 }): Promise<ApiResponse<{
   id: string;
   token: string;
@@ -308,6 +418,17 @@ export async function createShareLink(data: {
 
 export async function listShares(): Promise<ApiResponse<{ items: ShareLinkItem[] }>> {
   return apiRequest(api.webPages.shares(), { method: 'GET' });
+}
+
+/**
+ * 事后为某条已存在的分享按需生成数字短链 /s/{seq}（用户点「生成数字短链」时调用）。
+ * 幂等：已有则返回原 seq。
+ */
+export async function ensureShareShortLink(shareId: string): Promise<ApiResponse<{
+  shortSeq: number;
+  shortShareUrl: string | null;
+}>> {
+  return apiRequest(api.webPages.shareShortLink(encodeURIComponent(shareId)), { method: 'POST' });
 }
 
 export async function revokeShare(shareId: string): Promise<ApiResponse<{ revoked: boolean }>> {
@@ -372,6 +493,7 @@ export interface ShareViewLogItem {
   shareId: string;
   viewerUserId?: string;
   viewerName?: string;
+  viewerAvatarFileName?: string;
   shareOwnerUserId: string;
   viewedAt: string;
   ipAddress?: string;
@@ -394,7 +516,7 @@ export async function renewShare(shareId: string, extendDays: number): Promise<A
   });
 }
 
-/** 用户分享统计聚合（参考 Cloudflare 简化版，含活跃链接 / 时间窗内访问 / 独立 IP / 时间线 / Top 链接） */
+/** 用户分享统计聚合（参考 Cloudflare 简化版，含活跃链接 / 时间窗内访问 / 独立访客 / 时间线 / Top 链接） */
 export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise<ApiResponse<ShareAnalyticsResult>> {
   const params = new URLSearchParams({ rangeDays: String(rangeDays) });
   if (siteId) params.set('siteId', siteId);

@@ -50,6 +50,7 @@ import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCar
 import { ProjectRouteAgentCardArt } from '@/pages/ai-toolbox/components/ProjectRouteAgentCardArt';
 import { PaAgentCardArt } from '@/pages/ai-toolbox/components/PaAgentCardArt';
 import { PmAgentCardArt } from '@/pages/ai-toolbox/components/PmAgentCardArt';
+import { ProductAgentCardArt } from '@/pages/ai-toolbox/components/ProductAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
@@ -272,6 +273,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         <ReviewAgentCardArt />
       ) : item.agentKey === 'pm-agent' && !uploadedCover ? (
         <PmAgentCardArt />
+      ) : item.agentKey === 'product-agent' && !uploadedCover ? (
+        <ProductAgentCardArt />
       ) : item.agentKey === 'project-route-agent' ? (
         <ProjectRouteAgentCardArt />
       ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
@@ -287,7 +290,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
               preload="metadata"
               onCanPlayThrough={() => setVideoReady(true)}
               className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+              style={{ opacity: hovering && videoReady ? 1 : 0, filter: 'saturate(0.86) brightness(0.92)' }}
             />
           )}
         </>
@@ -299,6 +302,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             draggable={false}
             onError={() => setCoverFailed(true)}
+            style={{ filter: 'saturate(0.86) brightness(0.92)' }}
           />
           {videoUrl && (
             <video
@@ -310,7 +314,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
               preload="metadata"
               onCanPlayThrough={() => setVideoReady(true)}
               className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+              style={{ opacity: hovering && videoReady ? 1 : 0, filter: 'saturate(0.86) brightness(0.92)' }}
             />
           )}
         </>
@@ -325,6 +329,14 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
           }}
         />
       )}
+
+      {/* 统一暗角蒙版：给所有封面图套同一层「玻璃」，让画风各异的图读起来像一家人（A2 核心） */}
+      <div
+        className="absolute inset-0 pointer-events-none z-[1]"
+        style={{
+          background: `linear-gradient(165deg, ${accent.from}12 0%, transparent 32%), linear-gradient(180deg, rgba(8,8,12,0.30) 0%, rgba(8,8,12,0.05) 38%, rgba(8,8,12,0.35) 100%)`,
+        }}
+      />
 
       {/* Strong dark fade at the bottom for text readability */}
       <div
@@ -531,7 +543,7 @@ export default function AgentLauncherPage() {
 
   useEffect(() => {
     loadItems();
-    void loadChangelogCurrentWeek();
+    void loadChangelogCurrentWeek({ daysLimit: 8 });
     void loadHomepageAssets();
     void loadWeeklyPoster();
   }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets, loadWeeklyPoster]);
@@ -762,16 +774,18 @@ export default function AgentLauncherPage() {
   return (
     <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
       {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
-      <div 
-        className="absolute inset-x-0 top-0 pointer-events-none" 
-        style={{ 
-          height: isMobile ? '70vh' : '90vh', 
+      <div
+        className="absolute inset-x-0 top-0 pointer-events-none"
+        style={{
+          height: isMobile ? '70vh' : '90vh',
           zIndex: 0,
+          // overflow:hidden 把缩放 1.04 的背景图裁回容器内，避免在 AppShell 滚动容器里撑出横向滚动条
+          overflow: 'hidden',
           maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
           WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
         }}
       >
-        {/* Background image */}
+        {/* Background image —— 降级为「氛围层」：压暗 + 降饱和 + 轻模糊，从主角照片变墙上光影 */}
         <div
           className="absolute inset-0"
           style={{
@@ -779,7 +793,9 @@ export default function AgentLauncherPage() {
             backgroundSize: 'cover',
             backgroundPosition: 'center top',
             backgroundRepeat: 'no-repeat',
-            opacity: 0.85,
+            opacity: 0.5,
+            filter: 'saturate(0.78) brightness(0.7) blur(1px)',
+            transform: 'scale(1.04)',
           }}
         />
         {/* Left fade overlay — text readability */}
@@ -789,6 +805,14 @@ export default function AgentLauncherPage() {
             background: isMobile
               ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(10,10,11,0.7) 40%, transparent 100%)'
               : 'linear-gradient(90deg, var(--bg-base) 0%, rgba(10,10,11,0.8) 25%, rgba(10,10,11,0.4) 50%, transparent 80%)',
+          }}
+        />
+        {/* Bottom scrim —— 让背景图无缝熔进深空底色，卡片区域是干净深色，不再有照片噪点透出（A2 驯服核心） */}
+        <div
+          className="absolute inset-x-0 bottom-0"
+          style={{
+            height: '60%',
+            background: 'linear-gradient(180deg, transparent 0%, rgba(10,10,11,0.5) 55%, var(--bg-base) 100%)',
           }}
         />
       </div>
@@ -979,6 +1003,7 @@ export default function AgentLauncherPage() {
                             backgroundImage: `url(${link.backgroundUrl})`,
                             backgroundSize: 'cover',
                             backgroundPosition: 'center',
+                            filter: 'saturate(0.86) brightness(0.92)',
                           }}
                         />
                         {/* Downward shifted gradient to expose bright beautiful card tops */}

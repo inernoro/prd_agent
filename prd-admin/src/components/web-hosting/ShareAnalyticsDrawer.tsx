@@ -1,19 +1,33 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, BarChart3, Eye, Users, Link2, Clock, Lock, Globe } from 'lucide-react';
+import { X, BarChart3, Eye, Users, Link2, Clock, Lock, Globe, MessageSquare } from 'lucide-react';
+import type { EChartsOption } from 'echarts';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
   getSiteShareAnalytics,
+  type ShareAnalyticsCommentEntry,
   type ShareAnalyticsResult,
+  type ShareAnalyticsTimelineEntry,
+  type ShareAnalyticsVisitorStats,
+  type ShareAnalyticsVisitorSummary,
 } from '@/services';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { EChart } from '@/components/charts/EChart';
+
+const AXIS_LABEL = 'rgba(130,130,140,0.85)';
+const SPLIT_LINE = 'rgba(130,130,140,0.16)';
+const SERIES_BLUE = '#60a5fa';
+const SERIES_GREEN = '#34d399';
+const SERIES_INDIGO = '#818cf8';
 
 /**
  * 网页托管分享统计抽屉 — 用户主动分享活动的简化版 Cloudflare 仪表盘。
  *
  * 三块内容：
- *   1. 聚合卡（活跃链接 / 总分享 / 时间窗 PV / 独立 IP）
+ *   1. 聚合卡（活跃链接 / 总分享 / 时间窗 PV / 独立访客）
  *   2. Top 链接表（按 PV 排序，最多 10 条；含 visibility / 过期信息）
- *   3. 时间线（最近 100 条访问事件，IP 已脱敏 a.b.*.*）
+ *   3. 最近访问 / 用户统计两个视图，默认展示访问流水。
  *
  * 遵循 frontend-modal 规则：createPortal 挂 body、inline height、min-h-0 滚动区、
  * overscrollBehavior:contain、ESC + 蒙版点击关闭、z-[10000]。
@@ -34,6 +48,7 @@ export function ShareAnalyticsDrawer({
   const [rangeDays, setRangeDays] = useState<7 | 30 | 90>(7);
   const [data, setData] = useState<ShareAnalyticsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'recent' | 'users'>('recent');
   // PR #685 Cursor Bugbot 反馈：rangeDays 快速切换 7→30→90 时，慢响应可能覆盖新结果。
   // fetchIdRef 守卫：每次发起请求递增 id，只有"我就是当前最新发出去的那个"才写 state。
   const fetchIdRef = useRef(0);
@@ -112,6 +127,74 @@ export function ShareAnalyticsDrawer({
     );
   };
 
+  const trendOption = useMemo<EChartsOption | null>(() => {
+    if (!data?.trend?.length) return null;
+    return {
+      grid: { left: 34, right: 12, top: 16, bottom: 24 },
+      tooltip: { trigger: 'axis', confine: true },
+      legend: { top: 0, right: 0, textStyle: { color: AXIS_LABEL, fontSize: 10 } },
+      xAxis: {
+        type: 'category',
+        data: data.trend.map(t => t.date),
+        axisLabel: { color: AXIS_LABEL, fontSize: 9, formatter: (v: string) => v.slice(5), hideOverlap: true },
+        axisLine: { lineStyle: { color: SPLIT_LINE } },
+        axisTick: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        minInterval: 1,
+        axisLabel: { color: AXIS_LABEL, fontSize: 9 },
+        splitLine: { lineStyle: { color: SPLIT_LINE } },
+      },
+      series: [
+        {
+          name: '访问',
+          type: 'line',
+          smooth: true,
+          symbol: 'none',
+          data: data.trend.map(t => t.views),
+          lineStyle: { color: SERIES_BLUE, width: 2 },
+          areaStyle: { color: 'rgba(96,165,250,0.14)' },
+        },
+        {
+          name: '评论',
+          type: 'line',
+          smooth: true,
+          symbol: 'none',
+          data: data.trend.map(t => t.comments),
+          lineStyle: { color: SERIES_GREEN, width: 2 },
+        },
+      ],
+    };
+  }, [data]);
+
+  const hourlyOption = useMemo<EChartsOption | null>(() => {
+    if (!data?.hourly?.length) return null;
+    return {
+      grid: { left: 28, right: 12, top: 12, bottom: 22 },
+      tooltip: { trigger: 'axis', confine: true },
+      xAxis: {
+        type: 'category',
+        data: data.hourly.map(h => String(h.hour)),
+        axisLabel: { color: AXIS_LABEL, fontSize: 9, interval: 2, formatter: (v: string) => `${v}时` },
+        axisLine: { lineStyle: { color: SPLIT_LINE } },
+        axisTick: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        minInterval: 1,
+        axisLabel: { color: AXIS_LABEL, fontSize: 9 },
+        splitLine: { lineStyle: { color: SPLIT_LINE } },
+      },
+      series: [{
+        name: '访问',
+        type: 'bar',
+        data: data.hourly.map(h => h.views),
+        itemStyle: { color: SERIES_INDIGO, borderRadius: [2, 2, 0, 0] },
+      }],
+    };
+  }, [data]);
+
   const modal = (
     <div
       className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
@@ -119,7 +202,7 @@ export function ShareAnalyticsDrawer({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-3xl rounded-2xl border flex flex-col"
+        className="w-full max-w-5xl rounded-2xl border flex flex-col"
         style={{
           height: '85vh',
           maxHeight: '85vh',
@@ -198,7 +281,7 @@ export function ShareAnalyticsDrawer({
                 {scopedSiteId ? '此站点尚未创建分享' : '还没有创建任何分享'}
               </div>
               <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                创建第一个分享后,这里会显示访问统计 PV / 独立 IP / Top 链接 / 时间线
+                创建第一个分享后,这里会显示访问统计 PV / 独立访客 / Top 链接 / 时间线
               </div>
               <button
                 type="button"
@@ -216,7 +299,7 @@ export function ShareAnalyticsDrawer({
           ) : (
             <>
               {/* 聚合卡 — P1-2 修复："共 X"改为更清楚的"总 X 条" */}
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-5 gap-3">
                 <StatCard
                   icon={<Link2 size={14} />}
                   label="活跃链接"
@@ -224,123 +307,46 @@ export function ShareAnalyticsDrawer({
                   sub={data.totalShares > data.activeShares ? `总计 ${data.totalShares} 条` : undefined}
                 />
                 <StatCard icon={<Eye size={14} />} label="时间窗 PV" value={data.totalViews} />
-                <StatCard icon={<Users size={14} />} label="独立 IP" value={data.uniqueIpCount} />
+                <StatCard icon={<Users size={14} />} label="独立访客" value={data.uniqueIpCount} />
+                <StatCard icon={<MessageSquare size={14} />} label="评论" value={data.commentCount ?? 0} />
                 <StatCard icon={<Clock size={14} />} label="已过期" value={data.expiredShares} />
               </div>
 
-              {/* Top 链接 — P1-3 修复：补表头 / P2-2 修复：列宽固定 */}
-              {data.topLinks.length > 0 && (
-                <div>
-                  <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
-                    <Link2 size={12} />
-                    Top 链接 (按 PV 排序)
+              <div
+                className="inline-flex w-fit rounded-lg p-0.5"
+                style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-subtle, rgba(127,127,127,0.12))' }}
+              >
+                <TabButton active={activeTab === 'recent'} icon={<Clock size={12} />} onClick={() => setActiveTab('recent')}>
+                  最近访问
+                </TabButton>
+                <TabButton active={activeTab === 'users'} icon={<Users size={12} />} onClick={() => setActiveTab('users')}>
+                  用户统计
+                </TabButton>
+              </div>
+
+              {activeTab === 'recent' ? (
+                <RecentVisitsTable entries={data.timeline} fmtTime={fmtTime} />
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <ChartCard title="访问 / 评论趋势">
+                      {trendOption ? <EChart option={trendOption} height={150} /> : <EmptyMini text="暂无趋势数据" />}
+                    </ChartCard>
+                    <ChartCard title="访问时段分布">
+                      {hourlyOption ? <EChart option={hourlyOption} height={150} /> : <EmptyMini text="暂无时段数据" />}
+                    </ChartCard>
                   </div>
-                  <div
-                    className="flex flex-col rounded-lg overflow-hidden border"
-                    style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}
-                  >
-                    {/* 列宽统一：标题 flex 自适应、可见性 chip 96px、PV/IP/时间各 88px */}
-                    <div
-                      className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
-                      style={{
-                        gridTemplateColumns: 'minmax(0,1fr) 96px 80px 80px 96px',
-                        gap: 12,
-                        background: 'var(--bg-elevated)',
-                        color: 'var(--text-muted)',
-                        borderBottom: '1px solid var(--border-subtle, rgba(127,127,127,0.12))',
-                      }}
-                    >
-                      <span>链接标题</span>
-                      <span>可见性</span>
-                      <span className="text-right">PV</span>
-                      <span className="text-right">独立 IP</span>
-                      <span className="text-right">最后访问</span>
-                    </div>
-                    {data.topLinks.map((link) => (
-                      <div
-                        key={link.shareId}
-                        className="grid items-center px-3 py-2 text-xs border-b last:border-b-0"
-                        style={{
-                          gridTemplateColumns: 'minmax(0,1fr) 96px 80px 80px 96px',
-                          gap: 12,
-                          background: 'var(--bg-sunken)',
-                          borderColor: 'var(--border-subtle, rgba(127,127,127,0.08))',
-                        }}
-                      >
-                        <span className="truncate" style={{ color: 'var(--text-primary)' }} title={link.title || link.token}>
-                          {link.title || link.token}
-                        </span>
-                        <div className="min-w-0">{visibilityBadge(link.visibility)}</div>
-                        <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                          {link.viewCount.toLocaleString()}
-                        </span>
-                        <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                          {link.uniqueIpCount.toLocaleString()}
-                        </span>
-                        <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                          {link.lastViewedAt ? fmtTime(link.lastViewedAt) : '—'}
-                        </span>
-                      </div>
-                    ))}
+                  <div className="grid grid-cols-2 gap-3">
+                    <ChartCard title="访客排行">
+                      <TopVisitorsList visitors={data.topVisitors ?? []} fmtTime={fmtTime} />
+                    </ChartCard>
+                    <ChartCard title={`互动动态${data.commentCount ? ` · ${data.commentCount}` : ''}`}>
+                      <RecentCommentsList comments={data.recentComments ?? []} fmtTime={fmtTime} />
+                    </ChartCard>
                   </div>
+                  <TopLinksTable links={data.topLinks} visibilityBadge={visibilityBadge} fmtTime={fmtTime} />
                 </div>
               )}
-
-              {/* 时间线 — 加表头 + 列宽统一 */}
-              <div>
-                <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
-                  <Clock size={12} />
-                  最近访问 (IP 已脱敏)
-                </div>
-                {data.timeline.length === 0 ? (
-                  <div className="text-xs py-4 text-center" style={{ color: 'var(--text-secondary)' }}>
-                    时间窗内暂无访问
-                  </div>
-                ) : (
-                  <div className="flex flex-col rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}>
-                    <div
-                      className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
-                      style={{
-                        gridTemplateColumns: '100px minmax(0,1fr) 100px 120px',
-                        gap: 12,
-                        background: 'var(--bg-elevated)',
-                        color: 'var(--text-muted)',
-                        borderBottom: '1px solid var(--border-subtle, rgba(127,127,127,0.12))',
-                      }}
-                    >
-                      <span>时间</span>
-                      <span>分享链接</span>
-                      <span>访问者</span>
-                      <span>IP (脱敏)</span>
-                    </div>
-                    {data.timeline.map((entry, idx) => (
-                      <div
-                        key={`${entry.shareToken}-${entry.viewedAt}-${idx}`}
-                        className="grid items-center px-3 py-1.5 text-xs border-b last:border-b-0"
-                        style={{
-                          gridTemplateColumns: '100px minmax(0,1fr) 100px 120px',
-                          gap: 12,
-                          background: 'var(--bg-sunken)',
-                          borderColor: 'var(--border-subtle, rgba(127,127,127,0.08))',
-                        }}
-                      >
-                        <span className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                          {fmtTime(entry.viewedAt)}
-                        </span>
-                        <span className="truncate" style={{ color: 'var(--text-primary)' }} title={entry.shareTitle || entry.shareToken}>
-                          {entry.shareTitle || entry.shareToken}
-                        </span>
-                        <span className="truncate" style={{ color: 'var(--text-secondary)' }}>
-                          {entry.viewerName || '匿名'}
-                        </span>
-                        <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                          {entry.ipAddress || '—'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </>
           )}
         </div>
@@ -372,6 +378,306 @@ function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: s
           {sub}
         </div>
       )}
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  icon,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+      style={active
+        ? { background: 'var(--accent-primary, #818cf8)', color: '#fff' }
+        : { color: 'var(--text-secondary)' }}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-lg border p-3"
+      style={{
+        background: 'var(--bg-sunken)',
+        borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))',
+      }}
+    >
+      <div className="mb-2 text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function EmptyMini({ text }: { text: string }) {
+  return (
+    <div className="flex h-[150px] items-center justify-center text-xs" style={{ color: 'var(--text-muted)' }}>
+      {text}
+    </div>
+  );
+}
+
+function RecentVisitsTable({ entries, fmtTime }: { entries: ShareAnalyticsTimelineEntry[]; fmtTime: (iso: string) => string }) {
+  if (entries.length === 0) {
+    return (
+      <div className="text-xs py-8 text-center" style={{ color: 'var(--text-secondary)' }}>
+        时间窗内暂无访问
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}>
+      <div
+        className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+        style={{
+          gridTemplateColumns: '100px minmax(0,1fr) 140px 150px',
+          gap: 12,
+          background: 'var(--bg-elevated)',
+          color: 'var(--text-muted)',
+          borderBottom: '1px solid var(--border-subtle, rgba(127,127,127,0.12))',
+        }}
+      >
+        <span>时间</span>
+        <span>分享链接</span>
+        <span>访问者</span>
+        <span>来源</span>
+      </div>
+      {entries.map((entry, idx) => (
+        <div
+          key={`${entry.shareToken}-${entry.viewedAt}-${idx}`}
+          className="grid items-center px-3 py-1.5 text-xs border-b last:border-b-0"
+          style={{
+            gridTemplateColumns: '100px minmax(0,1fr) 140px 150px',
+            gap: 12,
+            background: 'var(--bg-sunken)',
+            borderColor: 'var(--border-subtle, rgba(127,127,127,0.08))',
+          }}
+        >
+          <span className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+            {fmtTime(entry.viewedAt)}
+          </span>
+          <a
+            href={entry.shareUrl || `/s/wp/${entry.shareToken}`}
+            target="_blank"
+            rel="noopener"
+            className="truncate hover:underline"
+            style={{ color: 'var(--text-primary)' }}
+            title={entry.shareTitle || entry.shareToken}
+          >
+            {entry.shareTitle || entry.shareToken}
+          </a>
+          <VisitorIdentity entry={entry} />
+          <span className="truncate tabular-nums" style={{ color: 'var(--text-muted)' }} title={entry.clientSummary || undefined}>
+            {entry.clientSummary || '未知来源'}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TopVisitorsList({ visitors, fmtTime }: { visitors: ShareAnalyticsVisitorStats[]; fmtTime: (iso: string) => string }) {
+  if (visitors.length === 0) return <EmptyMini text="暂无访客数据" />;
+  const max = Math.max(...visitors.map(v => v.viewCount), 1);
+  return (
+    <div className="flex flex-col gap-2">
+      {visitors.map((v) => (
+        <div key={`${v.viewerUserId || v.viewerName}-${v.lastViewedAt}`} className="flex items-center gap-2">
+          <UserAvatar
+            src={resolveAvatarUrl({ avatarFileName: v.viewerAvatarFileName })}
+            alt={v.viewerName || '匿名访客'}
+            className="h-7 w-7 shrink-0 rounded-full object-cover"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="truncate" style={{ color: 'var(--text-primary)' }}>{v.viewerName || '匿名访客'}</span>
+              <span className="shrink-0 tabular-nums" style={{ color: 'var(--text-secondary)' }}>{v.viewCount} 次</span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--bg-elevated)' }}>
+              <div className="h-full rounded-full" style={{ width: `${Math.max(6, (v.viewCount / max) * 100)}%`, background: SERIES_BLUE }} />
+            </div>
+            <div className="mt-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              最近 {fmtTime(v.lastViewedAt)}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RecentCommentsList({ comments, fmtTime }: { comments: ShareAnalyticsCommentEntry[]; fmtTime: (iso: string) => string }) {
+  if (comments.length === 0) return <EmptyMini text="暂无评论" />;
+  return (
+    <div className="flex max-h-[250px] flex-col gap-2 overflow-y-auto pr-1">
+      {comments.map((c) => (
+        <div key={c.id} className="flex gap-2 rounded-md p-2" style={{ background: 'var(--bg-elevated)' }}>
+          <UserAvatar
+            src={resolveAvatarUrl({ avatarFileName: c.authorAvatarFileName })}
+            alt={c.authorName}
+            className="h-7 w-7 shrink-0 rounded-full object-cover"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="truncate font-medium" style={{ color: 'var(--text-primary)' }}>{c.authorName || '用户'}</span>
+              <span className="shrink-0 tabular-nums text-[10px]" style={{ color: 'var(--text-muted)' }}>{fmtTime(c.createdAt)}</span>
+            </div>
+            <div className="mt-0.5 truncate text-[10px]" style={{ color: 'var(--text-muted)' }} title={c.siteTitle}>
+              评论了「{c.siteTitle}」
+            </div>
+            <div className="mt-1 line-clamp-2 text-xs leading-snug" style={{ color: 'var(--text-secondary)' }} title={c.content}>
+              {c.content}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TopLinksTable({
+  links,
+  visibilityBadge,
+  fmtTime,
+}: {
+  links: ShareAnalyticsResult['topLinks'];
+  visibilityBadge: (v: string) => React.ReactNode;
+  fmtTime: (iso: string) => string;
+}) {
+  if (links.length === 0) return null;
+  return (
+    <div>
+      <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
+        <Link2 size={12} />
+        Top 链接 (按 PV 排序)
+      </div>
+      <div
+        className="flex flex-col rounded-lg overflow-hidden border"
+        style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}
+      >
+        <div
+          className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+          style={{
+            gridTemplateColumns: 'minmax(0,1fr) 88px 96px 64px 76px 96px',
+            gap: 12,
+            background: 'var(--bg-elevated)',
+            color: 'var(--text-muted)',
+            borderBottom: '1px solid var(--border-subtle, rgba(127,127,127,0.12))',
+          }}
+        >
+          <span>链接标题</span>
+          <span>可见性</span>
+          <span>用户</span>
+          <span className="text-right">PV</span>
+          <span className="text-right">访客</span>
+          <span className="text-right">最后访问</span>
+        </div>
+        {links.map((link) => (
+          <div
+            key={link.shareId}
+            className="grid items-center px-3 py-2 text-xs border-b last:border-b-0"
+            style={{
+              gridTemplateColumns: 'minmax(0,1fr) 88px 96px 64px 76px 96px',
+              gap: 12,
+              background: 'var(--bg-sunken)',
+              borderColor: 'var(--border-subtle, rgba(127,127,127,0.08))',
+            }}
+          >
+            <a
+              href={link.shareUrl || `/s/wp/${link.token}`}
+              target="_blank"
+              rel="noopener"
+              className="truncate hover:underline"
+              style={{ color: 'var(--text-primary)' }}
+              title={link.title || link.token}
+            >
+              {link.title || link.token}
+            </a>
+            <div className="min-w-0">{visibilityBadge(link.visibility)}</div>
+            <AvatarStack visitors={link.visitors ?? []} />
+            <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+              {link.viewCount.toLocaleString()}
+            </span>
+            <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+              {link.uniqueIpCount.toLocaleString()}
+            </span>
+            <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+              {link.lastViewedAt ? fmtTime(link.lastViewedAt) : '—'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AvatarStack({ visitors }: { visitors: ShareAnalyticsVisitorSummary[] }) {
+  if (visitors.length === 0) {
+    return <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>—</span>;
+  }
+  const visible = visitors.slice(0, 4);
+  const hidden = visitors.length - visible.length;
+  return (
+    <div className="flex items-center" title={visitors.map(v => v.viewerName || '匿名访客').join('、')}>
+      {visible.map((v, idx) => (
+        <UserAvatar
+          key={`${v.viewerUserId || v.viewerName || 'anonymous'}-${idx}`}
+          src={resolveAvatarUrl({ avatarFileName: v.viewerAvatarFileName })}
+          alt={v.viewerName || '匿名访客'}
+          className="h-6 w-6 rounded-full object-cover"
+          style={{
+            marginLeft: idx === 0 ? 0 : -8,
+            border: '2px solid var(--bg-sunken)',
+            boxShadow: '0 0 0 1px var(--border-subtle, rgba(127,127,127,0.12))',
+          }}
+        />
+      ))}
+      {hidden > 0 && (
+        <span
+          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold"
+          style={{
+            marginLeft: -8,
+            background: 'var(--bg-elevated)',
+            color: 'var(--text-secondary)',
+            border: '2px solid var(--bg-sunken)',
+          }}
+        >
+          +{hidden}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function VisitorIdentity({ entry }: { entry: ShareAnalyticsTimelineEntry }) {
+  const name = entry.viewerName || '匿名访客';
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <UserAvatar
+        src={resolveAvatarUrl({ avatarFileName: entry.viewerAvatarFileName })}
+        alt={name}
+        className="h-6 w-6 shrink-0 rounded-full object-cover"
+      />
+      <span className="truncate" style={{ color: 'var(--text-secondary)' }} title={name}>
+        {name}
+      </span>
     </div>
   );
 }

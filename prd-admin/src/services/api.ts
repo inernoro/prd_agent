@@ -188,6 +188,12 @@ export const api = {
     },
   },
 
+  // ============ Team Activity 团队动态 ============
+  teamActivity: {
+    logs: () => '/api/team-activity/logs',
+    modules: () => '/api/team-activity/modules',
+  },
+
   // ============ Skills 技能管理 ============
   skills: {
     list: () => '/api/skills',
@@ -1091,6 +1097,10 @@ export const api = {
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
     setTeams: (id: string) => `/api/web-pages/${id}/teams`,
+    groups: () => '/api/web-pages/groups',
+    groupById: (groupId: string) => `/api/web-pages/groups/${groupId}`,
+    setGroup: (id: string) => `/api/web-pages/${id}/group`,
+    copyToTeam: (id: string) => `/api/web-pages/${id}/copy-to-team`,
     // 波1 访客痕迹：记录一次访问 + owner 查本页访客名单。
     // 走独立前缀 /api/web-page-analytics 避开 AdminPermissionMiddleware 对 /api/web-pages/* 的写权限拦截。
     recordView: (id: string) => `/api/web-page-analytics/${id}/record-view`,
@@ -1105,6 +1115,7 @@ export const api = {
     viewLogs: '/api/web-pages/shares/view-logs',
     shareLogsForSite: (siteId: string) => `/api/web-pages/${siteId}/share-logs`,
     renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
+    shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
   },
   // ============ 公开主页（/u/:username 无需登录） ============
@@ -1288,18 +1299,27 @@ export const api = {
 
   // ============ Changelog 更新中心（代码级周报） ============
   changelog: {
-    currentWeek: (force?: boolean) =>
-      `/api/changelog/current-week${force ? '?force=true' : ''}`,
-    releases: (limit?: number, force?: boolean) => {
+    currentWeek: (opts?: { daysLimit?: number; daysOffset?: number; force?: boolean }) => {
       const params: string[] = [];
-      if (limit) params.push(`limit=${limit}`);
-      if (force) params.push('force=true');
+      if (opts?.daysLimit != null) params.push(`daysLimit=${opts.daysLimit}`);
+      if (opts?.daysOffset != null && opts.daysOffset > 0) params.push(`daysOffset=${opts.daysOffset}`);
+      if (opts?.force) params.push('force=true');
+      return `/api/changelog/current-week${params.length ? `?${params.join('&')}` : ''}`;
+    },
+    releases: (opts?: { limit?: number; summary?: boolean; force?: boolean }) => {
+      const params: string[] = [];
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.summary) params.push('summary=true');
+      if (opts?.force) params.push('force=true');
       return `/api/changelog/releases${params.length ? `?${params.join('&')}` : ''}`;
     },
-    githubLogs: (limit?: number, force?: boolean) => {
+    releaseByVersion: (version: string, force?: boolean) =>
+      `/api/changelog/releases/by-version/${encodeURIComponent(version)}${force ? '?force=true' : ''}`,
+    githubLogs: (opts?: { limit?: number; before?: string; force?: boolean }) => {
       const params: string[] = [];
-      if (limit) params.push(`limit=${limit}`);
-      if (force) params.push('force=true');
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.before) params.push(`before=${encodeURIComponent(opts.before)}`);
+      if (opts?.force) params.push('force=true');
       return `/api/changelog/github-logs${params.length ? `?${params.join('&')}` : ''}`;
     },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
@@ -1405,10 +1425,22 @@ export const api = {
       delete: (taskId: string) => `/api/pm/tasks/${taskId}`,
       activities: (taskId: string) => `/api/pm/tasks/${taskId}/activities`,
       comments: (taskId: string) => `/api/pm/tasks/${taskId}/comments`,
+      workLogs: (taskId: string) => `/api/pm/tasks/${taskId}/work-logs`,
+    },
+    workLogs: {
+      update: (logId: string) => `/api/pm/work-logs/${logId}`,
+      delete: (logId: string) => `/api/pm/work-logs/${logId}`,
     },
     knowledge: {
       file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
     },
+    // 首页工作台（跨项目）
+    myTodos: () => '/api/pm/my-todos',
+    reportsSummary: (scope?: string) => `/api/pm/reports/summary${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`,
+    preferences: () => '/api/pm/preferences',
+    quickActions: () => '/api/pm/preferences/quick-actions',
+    assistantAsk: () => '/api/pm/assistant/ask',
+    assistantAttachments: () => '/api/pm/assistant/attachments',
     weeklyReportsImportable: (params?: { weekYear?: number; weekNumber?: number }) => {
       const q = new URLSearchParams();
       if (params?.weekYear) q.set('weekYear', String(params.weekYear));
@@ -1427,6 +1459,8 @@ export const api = {
     },
     goals: {
       item: (goalId: string) => `/api/pm/goals/${goalId}`,
+      milestone: (goalId: string) => `/api/pm/goals/${goalId}/milestone`,
+      reparent: (goalId: string) => `/api/pm/goals/${goalId}/reparent`,
       checkins: (goalId: string) => `/api/pm/goals/${goalId}/checkins`,
       score: (goalId: string) => `/api/pm/goals/${goalId}/score`,
     },

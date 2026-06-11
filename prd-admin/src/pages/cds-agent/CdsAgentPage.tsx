@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, CalendarClock, Copy, Cpu, Download, FileSearch, FileText, GitCompare, GitPullRequest, Globe2, KeyRound, ListChecks, MessageSquare, MousePointerClick, Network, PauseCircle, Play, Plus, RefreshCw, Route, Search, Send, Server, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { toast } from '@/lib/toast';
@@ -937,11 +937,18 @@ export default function CdsAgentPage() {
   const [runtimeDiscoveryRefreshed, setRuntimeDiscoveryRefreshed] = useState<boolean | null>(null);
   const [runtimeStatusLoadedAt, setRuntimeStatusLoadedAt] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'simple' | 'pro'>(readInitialViewMode);
+  // 简洁模式保持「聊天纯净」：Git/证据/运行摘要/调试 等运维遥测默认收起（用户心智：这是聊天，不是运维台）。
+  // 用 state 而非常量，既不触发 ESLint no-constant-binary，又让块内变量保持被引用、避免误删级联。
+  const [showOpsPanels] = useState(false);
   const [simpleTaskMode, setSimpleTaskMode] = useState<'chat' | 'code'>('chat');
   const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [simpleSubmitStatus, setSimpleSubmitStatus] = useState('');
   const [simpleRunState, setSimpleRunState] = useState<SimpleRunState | null>(null);
+  // 首屏加载态:刷新后 loadAll 拉数据期间,主区显示加载动画而不是 10 秒空白(用户:刷新后大约10秒没内容)。
+  const [bootLoading, setBootLoading] = useState(true);
+  // 右侧「准备情况/运行进展」面板折叠:让聊天主区可占满宽度(借鉴 Codex 右侧不占固定栏)。
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [autoScrollPaused, setAutoScrollPaused] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -950,6 +957,9 @@ export default function CdsAgentPage() {
   // 杜绝「跑完之后还在循环请求」——不依赖 session.status 在列表里的滞后翻转。
   const runFinishedRef = useRef(false);
   const pollTickRef = useRef(0);
+  // 仅自动启用一次默认模型：没有任何模型配置时静默走「一键启用默认模型」，
+  // 让用户无需先点「同步系统主模型」就能直接发消息（修复:配置半天不出效果/刷新后诡异空配置态）。
+  const autoImportDefaultTriedRef = useRef(false);
   const [eventStreamHealthy, setEventStreamHealthy] = useState(false);
   const [sessionQuery, setSessionQuery] = useState('');
   const [eventReplayMode, setEventReplayMode] = useState(false);
@@ -969,13 +979,14 @@ export default function CdsAgentPage() {
   const [browserTargetIndex, setBrowserTargetIndex] = useState('0');
   const [browserActionText, setBrowserActionText] = useState('/cds-agent');
   const [draft, setDraft] = useState({
-    title: '远程巡检任务',
+    title: '',
     connectionId: '',
     runtimeProfileId: '',
     toolPolicy: 'readonly-auto',
     gitRepository: '',
     gitRef: 'main',
     workspaceRoot: '',
+    workspaceKbId: '',
   });
   const [profileDraft, setProfileDraft] = useState({
     name: '',
@@ -2260,10 +2271,11 @@ export default function CdsAgentPage() {
                 type="button"
                 onClick={() => void importDefaultProfile()}
                 disabled={busy}
+                title="当前还没有配置可用的运行模型，所以无法创建会话。点此用系统默认主模型一键生成一个运行配置，之后即可正常使用。"
                 className="inline-flex min-h-8 items-center justify-center gap-2 rounded-md px-2 text-xs font-semibold disabled:opacity-45"
                 style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.32)', color: 'rgba(253,230,138,0.95)' }}
               >
-                <KeyRound size={12} /> 同步系统主模型
+                <KeyRound size={12} /> 一键启用默认模型
               </button>
             )}
           </div>
@@ -2294,7 +2306,7 @@ export default function CdsAgentPage() {
   );
 
   useEffect(() => {
-    void loadAll();
+    void loadAll().finally(() => setBootLoading(false));
   }, []);
 
   useEffect(() => {
@@ -2509,6 +2521,17 @@ export default function CdsAgentPage() {
       setProfiles(items);
       const preferred = items.find((item) => item.isDefault) ?? items[0];
       if (preferred) setDraft((prev) => ({ ...prev, runtimeProfileId: prev.runtimeProfileId || preferred.id }));
+      // 零摩擦：没有任何模型配置时，静默用系统默认主模型一键生成一个运行配置。
+      // 成功 → 用户进来就能直接发消息，不再看到「请先同步系统主模型」三连警告（图1 诡异态）。
+      // 失败(系统未配默认主模型) → 静默忽略，仍保留手动「同步系统主模型」按钮兜底。
+      if (items.length === 0 && !autoImportDefaultTriedRef.current) {
+        autoImportDefaultTriedRef.current = true;
+        const auto = await importDefaultInfraAgentRuntimeProfile();
+        if (auto.success && auto.data?.item) {
+          setProfiles([auto.data.item]);
+          setDraft((prev) => ({ ...prev, runtimeProfileId: prev.runtimeProfileId || auto.data!.item.id }));
+        }
+      }
     }
     if (profileTemplateRes.success) {
       setProfileTemplates(profileTemplateRes.data?.items ?? []);
@@ -2585,7 +2608,11 @@ export default function CdsAgentPage() {
       content,
       status: 'sending',
       createdAt: new Date().toISOString(),
-      sessionId: sessionId ?? activeSession?.id ?? null,
+      // 关键：未显式传 sessionId 时保持 null（in-flight 未绑定），不要回退到 activeSession?.id。
+      // 旧实现回退到 activeSession 会把「从超时会话发送」的乐观消息绑到旧会话；随后新建会话切走，
+      // 这条消息被 visibleLocalMessages 过滤掉 → 中间闪一帧空状态（用户：发出去→消失→又出现）。
+      // null 绑定让它在任意当前会话都显示，由下方「服务端已回显同内容」的去重逻辑收尾。
+      sessionId: sessionId ?? null,
     };
     setLocalMessages((prev) => [...prev, item]);
     setAutoScrollPaused(false);
@@ -2597,15 +2624,6 @@ export default function CdsAgentPage() {
     setLocalMessages((prev) => prev.map((item) => (
       item.id === id ? { ...item, status } : item
     )));
-  }
-
-  function clearLocalUserMessages(content: string, sessionId?: string | null) {
-    const normalized = content.trim();
-    setLocalMessages((prev) => prev.filter((item) => {
-      if (item.role !== 'user') return true;
-      if (sessionId && item.sessionId && item.sessionId !== sessionId) return true;
-      return item.content.trim() !== normalized;
-    }));
   }
 
   function setSimplePhase(
@@ -2677,7 +2695,7 @@ export default function CdsAgentPage() {
         runtime: activeProfile?.runtime ?? 'claude-sdk',
         model: activeProfile?.model,
         runtimeProfileId: activeProfile?.id,
-        title: draft.title,
+        title: draft.title.trim() || prompt.trim().slice(0, 28) || '新会话',
         toolPolicy: draft.toolPolicy,
         gitRepository: draft.gitRepository.trim() || undefined,
         gitRef: draft.gitRef.trim() || undefined,
@@ -2848,7 +2866,10 @@ export default function CdsAgentPage() {
         if (!session) return;
       }
 
-      if (canStartFromStatus(session.status)) {
+      // 仅「从未启动过」(无 cdsSessionId)才走启动；已провизион过的会话(含一轮回复后转 idle 的)
+      // 直接发消息——SendMessage 内部会在 CDS 会话被回收时按同一个 MAP 会话重建,历史保留。
+      // 旧实现对 idle 会话也 re-start,CDS 会话被回收时 start 报 not-found → 兜底新建会话 → 上一轮历史丢失。
+      if (canStartFromStatus(session.status) && !session.cdsSessionId) {
         setSimplePhase('starting', '正在启动远程 runtime', 'CDS 正在准备容器、workspace 和 runtime transport', session);
         setSimpleSubmitStatus('正在启动远程 runtime…');
         const startRes = await startInfraAgentSession(session.id);
@@ -2924,7 +2945,9 @@ export default function CdsAgentPage() {
             await refreshDetail(session.id);
             return;
           }
-          clearLocalUserMessages(normalizedPrompt, retryMessageRes.data.item.id);
+          // 不立刻清除乐观消息(否则在 refreshDetail 把服务端消息拉回来之前会闪一帧空窗)。
+          // 标为已发送，保留显示；待 refreshDetail 后由 visibleLocalMessages 的内容去重无缝隐去。
+          updateLocalMessageStatus(optimisticMessageId, 'sent');
           upsertSession(retryMessageRes.data.item);
           await refreshDetail(retryMessageRes.data.item.id);
           setSimplePhase('completed', '请求已进入运行队列', 'Agent 已接收任务，后续结果会在当前会话流式出现', retryMessageRes.data.item);
@@ -2937,7 +2960,7 @@ export default function CdsAgentPage() {
         await refreshDetail(session.id);
         return;
       }
-      clearLocalUserMessages(normalizedPrompt, messageRes.data.item.id);
+      updateLocalMessageStatus(optimisticMessageId, 'sent');
       upsertSession(messageRes.data.item);
       await refreshDetail(messageRes.data.item.id);
       setSimplePhase('completed', '请求已进入运行队列', 'Agent 已接收任务，后续结果会在当前会话流式出现', messageRes.data.item);
@@ -3433,13 +3456,13 @@ export default function CdsAgentPage() {
     const res = await importDefaultInfraAgentRuntimeProfile();
     setBusy(false);
     if (!res.success || !res.data?.item) {
-      toast.error('同步系统模型失败', res.error?.message ?? '请先在模型设置中配置可用主模型');
+      toast.error('启用默认模型失败', res.error?.message ?? '请先在模型设置中配置可用主模型');
       return;
     }
     setProfiles((prev) => [res.data!.item, ...prev.filter((item) => item.id !== res.data!.item.id)]);
     setDraft((prev) => ({ ...prev, runtimeProfileId: res.data!.item.id }));
     setProfileTest('');
-    toast.success('已同步系统主模型', '可以直接测试并用于新的远程会话');
+    toast.success('已启用默认模型', '现在可以创建并运行远程会话了');
   }
 
   async function approveTool(approvalId: string, decision: 'allow' | 'deny') {
@@ -3542,10 +3565,26 @@ export default function CdsAgentPage() {
       | { kind: 'msg'; at: number; key: string; msg: InfraAgentMessageView }
       | { kind: 'local-msg'; at: number; key: string; msg: LocalTimelineMessage }
       | { kind: 'evt'; at: number; seq: number; key: string; ev: InfraAgentEventView };
-    const visibleLocalMessages = localMessages.filter((item) => (
-      !item.sessionId || !activeSession?.id || item.sessionId === activeSession.id
-    ));
+    // 服务端已落库的用户消息内容集合，用于给乐观副本去重。
+    // 注意：服务端存的是带「【对话模式】…」前缀的原文，displayMessageContent 会剥前缀，
+    // 必须用剥后的内容比对，才能和乐观副本(干净 prompt)对上，否则去重失效→重复气泡。
+    const serverUserContents = new Set(
+      messages.filter((m) => m.role === 'user').map((m) => displayMessageContent(m).trim()),
+    );
+    const visibleLocalMessages = localMessages.filter((item) => {
+      const sameSession = !item.sessionId || !activeSession?.id || item.sessionId === activeSession.id;
+      if (!sameSession) return false;
+      // 服务端已回显同内容的用户消息 → 隐去乐观副本：既避免重复，又把「乐观显示 → 服务端到达」
+      // 衔接成无缝（不再先 clear 出现空窗、再等服务端消息冒出来）。
+      if (item.role === 'user' && serverUserContents.has(item.content.trim())) return false;
+      return true;
+    });
     const assistantStreamText = assistantTextFromEvents(displayedEvents);
+    // 推理模型的思考原文（边车 thinking 事件透出）。在等待气泡里流式展示，消除"思考期间空白"。
+    const thinkingText = displayedEvents
+      .filter((e) => e.type === 'thinking')
+      .map((e) => (typeof parsePayload(e).text === 'string' ? (parsePayload(e).text as string) : ''))
+      .join('');
     const shouldShowAssistantStream = Boolean(
       assistantStreamText.trim()
       && !messages.some((message) => message.role === 'assistant' && message.content.trim() === assistantStreamText.trim()),
@@ -3562,7 +3601,8 @@ export default function CdsAgentPage() {
           id: 'assistant-stream',
           role: 'assistant',
           content: assistantStreamText,
-          status: isLiveStatus ? 'streaming' : 'completed',
+          // 本轮回复收到 done 即视为完成（即便会话仍 live），让回复立刻按 markdown 渲染，而不是一直纯文本
+          status: (isLiveStatus && latestAssistantEvent?.type !== 'done') ? 'streaming' : 'completed',
           createdAt: latestAssistantEvent?.createdAt ?? new Date().toISOString(),
           sessionId: activeSession?.id ?? null,
         },
@@ -3711,6 +3751,9 @@ export default function CdsAgentPage() {
 	        state: activeSession ? 'pass' : 'pending',
 	      },
 	    ] as const;
+	    // 「运行日志」不是用户视角的可复盘产物(纯聊天也会有日志)，从产物计数里剔除，
+	    // 避免一句闲聊在右栏报「1个产物」。真实文件/diff/命令/快照仍计入。
+	    const reviewableArtifactCount = artifacts.filter((a) => a.id !== 'session-log').length;
 	    const runProgressChecklist = [
         {
           label: '执行有效性',
@@ -3718,9 +3761,11 @@ export default function CdsAgentPage() {
           state: emptyExecution || staleExecution || activeSessionTimedOut ? 'warn' : hasRuntimeRun || hasAssistantOutput ? 'pass' : activeSession ? 'pending' : 'idle',
         },
 	      {
-	        label: lastAssistant || artifacts.length > 0 ? '结果可复盘' : '等待 Agent 输出',
-	        detail: artifacts.length > 0 ? `${artifacts.length} 个产物 / ${lastSeq} 个事件` : `${lastSeq} 个事件 / ${messages.length} 条消息`,
-	        state: lastAssistant || artifacts.length > 0 ? 'pass' : activeSession ? 'pending' : 'idle',
+	        label: lastAssistant || reviewableArtifactCount > 0 ? '结果可复盘' : '等待 Agent 输出',
+	        detail: reviewableArtifactCount > 0
+	          ? `${reviewableArtifactCount} 个产物可复盘`
+	          : lastAssistant ? "回复已生成，可在上方查看" : "等待 Agent 首个输出",
+	        state: lastAssistant || reviewableArtifactCount > 0 ? 'pass' : activeSession ? 'pending' : 'idle',
 	      },
 	    ] as const;
     const readinessDone = readinessChecklist.filter((item) => item.state === 'pass').length;
@@ -3765,70 +3810,40 @@ export default function CdsAgentPage() {
 	    );
 	    const officialPoolReady = Boolean(runtimeStatus && runtimeStatus.instanceCount > 0 && runtimeStatus.healthyCount > 0);
 	    const liteModeActive = Boolean(runtimeStatus?.liteReviewAvailable && !officialPoolReady);
-	    const modeBadge = (
-	      <span
-	        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold"
-	        style={liteModeActive
-	          ? { background: 'rgba(96,165,250,0.16)', border: '1px solid rgba(96,165,250,0.32)', color: 'rgba(191,219,254,0.95)' }
-	          : { background: 'rgba(52,211,153,0.14)', border: '1px solid rgba(52,211,153,0.3)', color: 'rgba(167,243,208,0.95)' }}
-	      >
-	        {liteModeActive ? <FileSearch size={12} /> : <ShieldCheck size={12} />}
-	        {liteModeActive ? 'Lite 预览 · 只读' : '官方 SDK'}
-	      </span>
-	    );
 	    const simpleComposer = (
-	      <div className="mx-auto w-full max-w-[820px] rounded-2xl p-3" style={{ background: 'rgba(38,38,38,0.96)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 18px 60px rgba(0,0,0,0.34)' }}>
+	      <div className="mx-auto w-full max-w-[820px] rounded-2xl p-3 transition focus-within:ring-2 focus-within:ring-sky-400/45" style={{ background: 'rgba(38,38,38,0.96)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 18px 60px rgba(0,0,0,0.34)' }}>
 	        {liteModeActive && (
 	          <div className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-relaxed text-blue-100/82" style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.22)' }}>
 	            当前为 <strong>Lite 预览模式</strong>：尚未配置 Claude/Anthropic provider，系统改用现有模型做<strong>只读</strong>代码审查（不修改文件、不执行命令、无需审批）。结果为预览级，配置官方 provider 后自动升级为商业级审查。
 	          </div>
 	        )}
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="inline-flex rounded-lg p-1" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
-              {([
-                { value: 'chat', label: '对话', icon: MessageSquare },
-                { value: 'code', label: 'Code 巡检', icon: Terminal },
-              ] as const).map((mode) => {
-                const Icon = mode.icon;
-                const active = simpleTaskMode === mode.value;
-                return (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    onClick={() => setSimpleTaskMode(mode.value)}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold"
-                    style={active
-                      ? { background: 'rgba(96,165,250,0.18)', color: 'rgba(191,219,254,0.96)' }
-                      : { color: 'rgba(255,255,255,0.48)' }}
-                  >
-                    <Icon size={13} />
-                    {mode.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex items-center gap-2">
-              {modeBadge}
-              <span className="text-xs text-white/36">
-                {simpleTaskMode === 'code' ? '面向代码、测试、构建和 PR 建议' : '不要求仓库，先按普通 Agent 对话处理'}
-              </span>
-            </div>
-          </div>
 	        <textarea
 	          value={prompt}
 	          onChange={(e) => setPrompt(e.target.value)}
+	          onKeyDown={(e) => {
+	            // 兑现 placeholder 的「回车发送」承诺。此前没有任何 onKeyDown，回车只换行不发送。
+	            // Shift+Enter 换行；输入法组字中(isComposing)的回车是选词确认，绝不当发送。
+	            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+	              e.preventDefault();
+	              if (!sendDisabled) void runSimpleReadonlyReview();
+	            }
+	          }}
 	          rows={2}
+	          autoFocus
 	          placeholder={simpleTaskMode === 'code'
-	            ? '告诉 Agent 要巡检什么，例如：找出当前仓库最值得修复的一个小问题，并说明如何提交 PR'
-	            : '直接告诉 Agent 你想问什么，不需要先填写仓库'}
-	          className="min-h-[72px] w-full resize-none rounded-xl bg-transparent px-2 py-2 text-base leading-relaxed text-white outline-none placeholder:text-white/34"
+	            ? '在此输入：告诉 Agent 要巡检什么，例如「找出当前仓库最值得修复的一个小问题，并说明如何提交 PR」'
+	            : '在此输入你的问题，回车发送（无需先填仓库）'}
+	          className="no-focus-ring min-h-[60px] max-h-[200px] w-full resize-none bg-transparent px-1 pt-0.5 text-base leading-relaxed text-white outline-none placeholder:text-white/40"
 	        />
-          {simpleRunState && (
+          {/* 只在失败时显示诊断卡(含 复制诊断/traceId)。正常发送/运行/完成阶段不再弹这张
+              「正在发送任务…」开发者卡片——进度已由对话里的用户气泡(sending/sent)+「正在生成回复/思考」
+              气泡 + 右栏运行进展承载。修复用户反馈:发出去后冒出奇怪的诊断对话框。 */}
+          {simpleRunState && simpleRunState.phase === 'failed' && (
             <div
               className="mt-2 rounded-xl px-3 py-2 text-xs"
               style={{
-                background: simpleRunState.phase === 'failed' ? 'rgba(239,68,68,0.1)' : 'rgba(96,165,250,0.08)',
-                border: simpleRunState.phase === 'failed' ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(96,165,250,0.18)',
+                background: 'rgba(239,68,68,0.1)',
+                border: '1px solid rgba(239,68,68,0.28)',
               }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3863,50 +3878,62 @@ export default function CdsAgentPage() {
               )}
             </div>
           )}
-	        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-2">
-            {simpleTaskMode === 'code' ? (
-              <>
-                <input
-                  value={draft.gitRepository}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
-                  placeholder="仓库 URL，可留空使用默认 workspace"
-                  className="h-9 min-w-[220px] flex-1 rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/30"
-                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
-                />
-                <input
-                  value={draft.gitRef}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
-                  placeholder="main"
-                  className="h-9 w-[104px] rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/30"
-                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
-                />
-              </>
-            ) : (
-              <div className="min-w-[220px] flex-1 truncate rounded-lg px-3 py-2 text-xs text-white/42" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                对话模式不要求仓库；需要代码上下文时切到 Code 巡检
-              </div>
-            )}
-            {activeSessionRuntimeState.isLive && (
-              <button
-                type="button"
-                onClick={() => void stopSession()}
-                disabled={busy}
-                className="inline-flex h-9 min-w-[82px] items-center justify-center gap-2 rounded-lg text-sm font-semibold disabled:opacity-45"
-                style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.34)', color: 'rgba(252,165,165,0.98)' }}
-              >
-                <Square size={14} />
-                停止
-              </button>
-            )}
-	          <button
-	            type="button"
-	            onClick={() => void runSimpleReadonlyReview()}
-	            disabled={sendDisabled}
-	            className="inline-flex h-9 min-w-[94px] items-center justify-center gap-2 rounded-lg text-sm font-semibold disabled:opacity-45"
-	            style={{ background: 'rgba(96,165,250,0.16)', border: '1px solid rgba(96,165,250,0.36)', color: 'rgba(191,219,254,0.98)' }}
-	          >
-	            {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />}
-	            {activeSession?.manualTakeoverEnabled ? '记录' : activeSession ? '发送' : '运行'}
+	        {/* Codex 风:控件融合一行(模式/工作区/模型/停止/发送),不臃肿。代码模式工作区以知识库/文件夹为主,GitHub 降为可选钩子。 */}
+	        <div className="mt-1.5 flex items-center gap-2">
+	          <div className="inline-flex shrink-0 rounded-lg p-0.5" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
+	            {([{ value: 'chat', label: '对话', icon: MessageSquare }, { value: 'code', label: '代码', icon: Terminal }] as const).map((mode) => {
+	              const Icon = mode.icon;
+	              const active = simpleTaskMode === mode.value;
+	              return (
+	                <button key={mode.value} type="button" onClick={() => setSimpleTaskMode(mode.value)}
+	                  className="inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-xs font-semibold"
+	                  style={active ? { background: 'rgba(96,165,250,0.18)', color: 'rgba(191,219,254,0.96)' } : { color: 'rgba(255,255,255,0.46)' }}>
+	                  <Icon size={12} />{mode.label}
+	                </button>
+	              );
+	            })}
+	          </div>
+	          {simpleTaskMode === 'code' && (
+	            <>
+	              {/* 知识库注入：UI 先占位但后端尚未支持把知识库灌进 CDS Agent 会话上下文,
+	                  createInfraAgentSession 也没有这个字段。为避免"选了却不生效"误导用户,
+	                  暂时禁用并标注「开发中」。后端 KB 注入设计落地后再启用并接 workspaceKbId。 */}
+	              <select value="" disabled title="知识库注入开发中，暂不生效"
+	                className="h-7 min-w-[150px] flex-1 rounded-md px-2 text-xs text-white/45 outline-none cursor-not-allowed"
+	                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}>
+	                <option value="">知识库注入（开发中）</option>
+	              </select>
+	              <input value={draft.gitRepository} onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
+	                placeholder="可选：GitHub（钩子）"
+	                className="h-7 min-w-[110px] flex-1 rounded-md px-2.5 text-xs text-white outline-none placeholder:text-white/30"
+	                style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }} />
+	            </>
+	          )}
+	          <div className="flex-1" />
+	          {activeSession && activeSessionRuntimeState.isLive ? (
+	            <span className="hidden sm:inline-flex h-7 max-w-[190px] items-center gap-1 truncate rounded-md px-2.5 text-[11px] text-white/55"
+	              style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }} title="本会话运行中，模型已固定；新建会话可改">
+	              <ShieldCheck size={11} className="shrink-0 text-emerald-300/70" />{activeSessionProfile?.model || activeSession.model || '默认'}
+	            </span>
+	          ) : profiles.length > 0 ? (
+	            <select value={draft.runtimeProfileId} onChange={(e) => setDraft((prev) => ({ ...prev, runtimeProfileId: e.target.value }))}
+	              title="选择模型" className="h-7 max-w-[190px] rounded-md px-2 text-xs text-white outline-none"
+	              style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}>
+	              {profiles.map((pf) => (<option key={pf.id} value={pf.id}>{pf.model || pf.name}</option>))}
+	            </select>
+	          ) : null}
+	          {activeSessionRuntimeState.isLive && (
+	            <button type="button" onClick={() => void stopSession()} disabled={busy} title="停止"
+	              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg disabled:opacity-45"
+	              style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.34)', color: 'rgba(252,165,165,0.98)' }}>
+	              <Square size={13} />
+	            </button>
+	          )}
+	          <button type="button" onClick={() => void runSimpleReadonlyReview()} disabled={sendDisabled}
+	            title={activeSession?.manualTakeoverEnabled ? '记录' : '发送（回车）'}
+	            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full disabled:opacity-40"
+	            style={{ background: 'rgba(96,165,250,0.95)', color: '#0b1220' }}>
+	            {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={15} /> : <Send size={15} />}
 	          </button>
 	        </div>
 	      </div>
@@ -3925,7 +3952,7 @@ export default function CdsAgentPage() {
     };
 	    return (
 	      <div className="h-full min-h-0 overflow-hidden px-3 py-4 text-white sm:px-5" style={{ background: '#0F0F10' }}>
-	        <div className="mx-auto grid h-[calc(100vh-112px)] max-w-[1880px] gap-4 xl:grid-cols-[292px_minmax(0,1fr)_336px]">
+	        <div className={`mx-auto grid h-[calc(100vh-112px)] max-w-[1880px] gap-4 ${rightPanelCollapsed ? "xl:grid-cols-[292px_minmax(0,1fr)]" : "xl:grid-cols-[292px_minmax(0,1fr)_336px]"}`}>
 	          <aside className="min-h-0 overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
 	            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
 	              <div className="min-w-0">
@@ -4034,6 +4061,16 @@ export default function CdsAgentPage() {
 	                >
 	                  <RefreshCw size={14} />
 	                </button>
+	                <button
+	                  type="button"
+	                  onClick={() => setRightPanelCollapsed((v) => !v)}
+	                  className="hidden xl:inline-flex h-8 w-8 items-center justify-center rounded-lg text-white/58 hover:text-white/82"
+	                  style={{ background: rightPanelCollapsed ? 'rgba(96,165,250,0.16)' : 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}
+	                  aria-label={rightPanelCollapsed ? '显示准备情况面板' : '隐藏右栏让聊天占满宽度'}
+	                  title={rightPanelCollapsed ? '显示「准备情况/运行进展」' : '隐藏右栏，聊天占满宽度'}
+	                >
+	                  <ListChecks size={14} />
+	                </button>
 	                {activeSession && canStartActiveSession && (
 	                  <button
 	                    type="button"
@@ -4060,17 +4097,20 @@ export default function CdsAgentPage() {
 	            </div>
 
 	            <div ref={timelineRef} onScroll={handleTimelineScroll} className="mx-auto mt-4 min-h-0 w-full max-w-[980px] flex-1 space-y-3 overflow-y-auto px-4 pb-5 pt-4" style={{ overscrollBehavior: 'contain' }}>
-	              {!hasConversation ? (
+	              {bootLoading && messages.length === 0 && visibleLocalMessages.length === 0 ? (
+	                <div className="flex h-full min-h-[360px] items-center justify-center">
+	                  <MapSectionLoader text="正在加载会话…" />
+	                </div>
+	              ) : !hasConversation ? (
 	                <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-6 text-center">
 	                  <div>
 	                    <h2 className="text-2xl font-semibold text-white/88">{simpleTaskMode === 'code' ? '要在这个仓库里检查什么？' : '想让 Agent 做什么？'}</h2>
 	                    <div className="mt-2 text-sm text-white/42">
                         {simpleTaskMode === 'code'
                           ? '输入代码巡检任务后，CDS 会创建只读 Agent 会话并沉淀过程、结果和产物。'
-                          : '可以先直接对话；需要仓库、测试或 PR 建议时再切到 Code 巡检。'}
+                          : '可以先直接对话；需要仓库、测试或 PR 建议时再切到「代码」模式。'}
                       </div>
 	                  </div>
-	                  {simpleComposer}
 	                  {simplePromptPresetRow}
 	                </div>
 	              ) : (
@@ -4088,10 +4128,20 @@ export default function CdsAgentPage() {
 	                        >
 	                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
                           {block.msg.role === 'assistant' ? (
-                            block.msg.id === 'assistant-stream' && isLiveStatus ? (
-                              <div className="text-sm leading-relaxed text-white/78">
-                                <StreamingText text={block.msg.content} streaming mode="blur" />
-                              </div>
+                            block.msg.id === 'assistant-stream' ? (
+                              // 同一个 StreamingText 贯穿「流式中→已完成」两阶段：流式时词级动画(纯文本,
+                              // 避免每 chunk 全量 markdown reflow)，done 时由它自身用 blur 过渡切到 markdown 渲染。
+                              // 修复点：旧实现在两阶段间「换组件」(StreamingText↔MarkdownContent)，导致结束瞬间
+                              // 从裸 ** 啪一下跳成粗体。统一成一个组件后是平滑过渡，不再硬切。
+                              <StreamingText
+                                text={block.msg.content}
+                                streaming={block.msg.status === 'streaming'}
+                                mode="blur"
+                                markdown
+                                renderMarkdown={(c) => (
+                                  <MarkdownContent content={c} className="text-sm leading-relaxed text-white/78" />
+                                )}
+                              />
                             ) : (
                               <MarkdownContent content={displayMessageContent(block.msg)} className="text-sm leading-relaxed text-white/78" />
                             )
@@ -4121,6 +4171,11 @@ export default function CdsAgentPage() {
                   const durationSec = Math.max(0, Math.round((lastAt - firstAt) / 1000));
                   const lastLabel = processEventLabel(events[events.length - 1]);
                   const hasError = events.some((e) => e.type === 'error');
+                  // 纯内部状态/日志分组（无工具调用/结果、无错误、无待审批）对普通对话零价值，
+                  // 「后台状态 running / dispatching run to CDS-managed... / 用时10小时2分钟」这种会污染聊天流
+                  // （用户反馈：我消息发出去了，怎么冒出奇怪的对话框日志）。从对话里隐去；
+                  // 运行状态看右侧「运行进展/摘要」，完整内部日志看右侧「运行日志」。
+                  if (summary.usefulCount === 0 && !hasError && !pendingApproval) return null;
                   const processTitle = pendingApproval
                     ? '等待审批'
                     : hasError
@@ -4173,7 +4228,14 @@ export default function CdsAgentPage() {
                               const stepOpen = simpleExpandedEventId === event.id;
                               const label = processEventLabel(event);
                               // 任何事件都能展开看细节（错误码/traceId、状态原因、工具入参/结果），不再只有工具调用可展开。
-                              const canExpand = event.type !== 'log' || Boolean(String(parsePayload(event).message ?? '').trim());
+                              // 只在「展开后确实有内容」时才显示「详情」。否则空 payload 事件
+                              // 会展开成空/「{}」（用户反馈：展开折叠的没有内容）。tool_call/tool_result
+                              // 有富渲染（工具名/文件树/diff/输出）始终可展开；其它类型要求 renderPayload 有真实文本。
+                              const canExpand = (() => {
+                                if (event.type === 'tool_call' || event.type === 'tool_result') return true;
+                                const txt = renderPayload(event).trim();
+                                return txt.length > 0 && txt !== '{}';
+                              })();
                               return (
                                 <div key={event.id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(0,0,0,0.2)' }}>
                                   <button
@@ -4211,9 +4273,21 @@ export default function CdsAgentPage() {
 	              )}
 	              {awaitingAgent && (
 	                <div className="flex justify-start">
-	                  <div className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)' }}>
-	                    <MapSpinner size={13} />
-	                    <span>Agent 正在执行… 已等待 {formatHumanDuration(waitedSec)}</span>
+	                  <div className="max-w-[88%] rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)' }}>
+	                    <div className="inline-flex items-center gap-2">
+	                      <MapSpinner size={13} />
+	                      <span>
+		                        {thinkingText.trim()
+		                          ? '正在思考…'
+		                          : `正在生成回复… 已等待 ${formatHumanDuration(waitedSec)}`}
+		                        {!thinkingText.trim() && waitedSec >= 15 ? '（推理模型可能在思考，稍候）' : ''}
+		                      </span>
+	                    </div>
+	                    {thinkingText.trim() && (
+	                      <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg px-2 py-1.5 text-[11px] leading-relaxed text-white/50" style={{ background: 'rgba(0,0,0,0.22)', overscrollBehavior: 'contain' }}>
+	                        {thinkingText}
+	                      </div>
+	                    )}
 	                  </div>
                 </div>
               )}
@@ -4229,14 +4303,15 @@ export default function CdsAgentPage() {
                 </button>
               )}
 
-	            {hasConversation && (
-	              <div className="shrink-0 px-5 pb-5 pt-3" style={{ background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.96) 18%)' }}>
-	                <div className="mb-3">{simplePromptPresetRow}</div>
-	                {simpleComposer}
-	              </div>
-	            )}
+	            {/* 输入区永远停在底部：空状态也在底部，发送后不再从中间跳到底部（修复输入框位置跳变）。
+	                预设提示仅在已有对话时贴在输入框上方；空状态的预设由中间引导区承载，避免重复。 */}
+	            <div className="shrink-0 px-5 pb-5 pt-3" style={{ background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.96) 18%)' }}>
+	              {hasConversation && <div className="mb-3">{simplePromptPresetRow}</div>}
+	              {simpleComposer}
+	            </div>
 	          </main>
 
+	          {!rightPanelCollapsed && (
 	          <aside className="min-h-0 overflow-y-auto rounded-2xl" style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.08)', overscrollBehavior: 'contain' }}>
 	            <div className="border-b border-white/10 px-4 py-4">
 	              <div className="flex items-center justify-between gap-3">
@@ -4291,6 +4366,7 @@ export default function CdsAgentPage() {
 	              </div>
 	            </div>
 
+	            {showOpsPanels && (<>
 	            <div className="border-b border-white/10 px-4 py-4">
 	              <div className="mb-3 flex items-center justify-between gap-2">
 	                <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/76"><GitPullRequest size={14} /> Git</div>
@@ -4384,7 +4460,9 @@ export default function CdsAgentPage() {
 	                )}
 	              </details>
 	            </div>
+	            </>)}
 	          </aside>
+	          )}
 	        </div>
 	      </div>
     );
@@ -5014,7 +5092,8 @@ export default function CdsAgentPage() {
               <input
                 value={draft.title}
                 onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}
-                className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                placeholder="会话名称（留空自动从首条消息命名）"
+                className="w-full rounded-md px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
                 style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
               />
               <button

@@ -66,14 +66,19 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
   );
 
   // 首次挂载：拉取本周更新（让红点提前出现）
+  // daysLimit=8 覆盖绝大多数用户的查看间隔（≤1 周），把 260kB 砍到 ~15kB；
+  // 如果用户超过 8 天没访问，红点数会偏少（罕见场景，可接受）。
   useEffect(() => {
-    void loadCurrentWeek();
+    void loadCurrentWeek({ daysLimit: 8 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 计算 popover 位置（基于按钮位置）
+  // 注意：不再用 force=true 刷新——铃铛是「看一眼最新」的辅助入口，
+  // SWR 5min 新鲜度足够；force=true 会清空更新中心页 loadMoreFragments 累积到的
+  // 更老日期组 tail，让正打开页面的用户瞬间「列表变短」（Bugbot #1 第三轮）。
   const openPopover = () => {
-    void loadCurrentWeek(true);
+    void loadCurrentWeek({ daysLimit: 8 });
     const rect = buttonRef.current?.getBoundingClientRect();
     if (rect) {
       const popoverWidth = 360;
@@ -179,7 +184,7 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
               <div className="flex items-center gap-2">
                 <Sparkles size={14} style={{ color: 'var(--accent-gold, #fbbf24)' }} />
                 <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  待发布更新
+                  未发布更新
                 </span>
                 {currentWeek?.weekStart && (
                   <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>

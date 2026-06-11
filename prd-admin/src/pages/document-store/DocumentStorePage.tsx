@@ -40,6 +40,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
+import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { useTeamStore } from '@/stores/teamStore';
@@ -1652,17 +1653,11 @@ export function DocumentStorePage() {
     } else if (tab === 'team') {
       // 切到 team tab 时 teamScope 还未被 scope-sync effect 更新到记忆值,
       // 这里直接读 useTeamStore 兜底取记忆 teamId,避免"刚切过来闪一下未选 team 空态"。
+      // teamId 为 null = 「全部」聚合视图（我加入的所有团队），由后端 AnyIn 聚合查询支撑
       const remembered = useTeamStore.getState().getScope('document-store');
       const effectiveTeamId = teamScope.teamId
         ?? (remembered.scope === 'team' ? remembered.teamId : null);
-      if (effectiveTeamId) {
-        loadStores('team', effectiveTeamId);
-      } else {
-        // 团队空间未选具体空间时不拉数据，明确转为空态（而非永远 loading）
-        ++listFetchSeq.current; // 让任何 in-flight 请求作废
-        setStores([]);
-        setLoading(false);
-      }
+      loadStores('team', effectiveTeamId);
     } else if (tab === 'favorites') {
       loadFavorites();
     } else if (tab === 'likes') {
@@ -2146,7 +2141,7 @@ export function DocumentStorePage() {
               <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                 {teamScope.teamId
                   ? '当前团队空间还没有任何知识库，从「我的空间」把知识库分享过来吧'
-                  : '在上方选择或新建一个团队空间'}
+                  : '你加入的团队空间还没有任何知识库，从「我的空间」把知识库分享过来吧'}
               </p>
             )}
           </div>
@@ -2373,6 +2368,11 @@ export function DocumentStorePage() {
             })}
           </div>
         )}
+
+        {/* 团队空间：团队共享的网页托管站点（默认「全部」聚合，团队以标签展示在卡上） */}
+        {tab === 'team' && !loading && (
+          <TeamWebPagesSection key={teamScope.teamId ?? '__all__'} teamId={teamScope.teamId} />
+        )}
       </div>
 
       {/* 账号级访客统计抽屉（列表页「统计」入口，聚合全部知识库） */}
@@ -2396,6 +2396,9 @@ export function DocumentStorePage() {
             if (tab === 'team' && teamScope.teamId) {
               const res = await setStoreTeams(s.id, [teamScope.teamId]);
               if (!res.success) toast.error('已创建,但分享到团队空间失败', res.error?.message);
+            } else if (tab === 'team') {
+              // 「全部」聚合视图下无明确目标团队：建到我的空间并提示手动分享
+              toast.success('已创建到我的空间', '当前是「全部」视图，未自动分享到团队，可在卡片上点「分享到团队空间」');
             }
             setShowCreate(false);
             setSelectedStoreId(s.id);
