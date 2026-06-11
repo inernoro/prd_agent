@@ -2677,6 +2677,44 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { releaseProgress, overall, velocity }));
     }
 
+    // ════════════════════════ 用户偏好（工作台快捷操作） ════════════════════════
+
+    /// <summary>读取产品管理智能体用户偏好（用户级，跨产品共用）。</summary>
+    [HttpGet("preferences")]
+    public async Task<IActionResult> GetProductAgentPreferences()
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences.Find(x => x.UserId == userId).FirstOrDefaultAsync();
+        // quickActionIds 为 null 表示从未配置（前端走默认）；空数组表示用户主动清空。
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            quickActionIds = prefs?.ProductAgentPreferences?.QuickActionIds,
+        }));
+    }
+
+    /// <summary>更新工作台「快捷操作」配置。id 对应前端 quickActionRegistry，后端只存有序字符串列表（上限 50）。</summary>
+    [HttpPut("preferences/quick-actions")]
+    public async Task<IActionResult> UpdateProductAgentQuickActions([FromBody] UpdateQuickActionsRequest request)
+    {
+        var userId = GetUserId();
+        var ids = (request.QuickActionIds ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct()
+            .Take(50)
+            .ToList();
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ProductAgentPreferences, new ProductAgentPreferences { QuickActionIds = ids })
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { quickActionIds = ids }));
+    }
+
     // ════════════════════════ 批量操作 ════════════════════════
 
     /// <summary>批量操作需求 / 功能：删除 / 指派处理人 / 改分级（仅作用于有权访问的产品下的对象）。</summary>
@@ -3571,6 +3609,12 @@ public class UpdateProductDefectRequest
     public string? AssigneeId { get; set; }
     public string? FeatureId { get; set; }
     public string? VersionId { get; set; }
+}
+
+public class UpdateQuickActionsRequest
+{
+    /// <summary>工作台「快捷操作」操作 id 有序列表（对应前端 quickActionRegistry）</summary>
+    public List<string>? QuickActionIds { get; set; }
 }
 
 public class AssistantAskRequest

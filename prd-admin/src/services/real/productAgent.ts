@@ -266,6 +266,18 @@ export function getProductAnalytics(productId: string) {
   return apiRequest<ProductAnalytics>(`/api/product/products/${productId}/analytics`);
 }
 
+// ── 用户偏好（工作台快捷操作，用户级跨产品共用） ──
+export interface ProductAgentPrefs {
+  /** null = 从未配置（前端走默认）；空数组 = 用户主动清空 */
+  quickActionIds: string[] | null;
+}
+export function getProductAgentPreferences() {
+  return apiRequest<ProductAgentPrefs>('/api/product/preferences');
+}
+export function updateProductAgentQuickActions(quickActionIds: string[]) {
+  return apiRequest<ProductAgentPrefs>('/api/product/preferences/quick-actions', { method: 'PUT', body: { quickActionIds } });
+}
+
 // ── 批量操作 ──
 export function batchUpdateItems(body: { entityType: 'requirement' | 'feature'; ids: string[]; op: 'delete' | 'assign' | 'grade'; assigneeId?: string | null; grade?: string }) {
   return apiRequest<{ affected: number }>('/api/product/items/batch', { method: 'POST', body });
