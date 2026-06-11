@@ -683,6 +683,179 @@ describe('resource database access', () => {
     expect(harness.shell.commands.some((cmd) => cmd.includes('SELECT * FROM "audit"."events" LIMIT 50'))).toBe(true);
   });
 
+  it('runs MySQL DDL and CRUD against the branch-selected database', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mysql-main',
+      projectId: 'prd-agent',
+      name: 'MySQL 8',
+      dockerImage: 'mysql:8',
+      containerPort: 3306,
+      hostPort: 3306,
+      containerName: 'cds-mysql-main',
+      status: 'running',
+      dbName: 'shared_app',
+      env: { MYSQL_ROOT_PASSWORD: 'root-pw', MYSQL_DATABASE: 'shared_app' },
+      volumes: [],
+    });
+    harness.stateService.setCustomEnvVar('MYSQL_DATABASE', 'branch_app', 'main-branch');
+    harness.stateService.setCustomEnvVar('MYSQL_USER', 'cds_main', 'main-branch');
+    harness.stateService.setCustomEnvVar('MYSQL_PASSWORD', 'branch-pw', 'main-branch');
+    harness.shell.addResponsePattern(/docker exec .* mysql /, (match) => {
+      const cmd = match.input || '';
+      if (cmd.includes('SELECT * FROM `cds_workbench_acceptance`')) {
+        return { stdout: 'id\tname\n1\tAda\n', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const base = '/api/branches/main-branch/resources/infra%3Amysql-main/data';
+    const headers = { 'x-test-cookie-auth': '1' };
+    const confirmResourceName = 'MySQL 8';
+    const create = await request(server!, 'POST', `${base}/query-write`, { sql: 'CREATE TABLE cds_workbench_acceptance (id INT PRIMARY KEY, name VARCHAR(64))', confirmResourceName }, headers);
+    const insert = await request(server!, 'POST', `${base}/query-write`, { sql: "INSERT INTO cds_workbench_acceptance (id, name) VALUES (1, 'Ada')", confirmResourceName }, headers);
+    const select = await request(server!, 'POST', `${base}/query`, { sql: 'SELECT * FROM `cds_workbench_acceptance`' });
+    const update = await request(server!, 'POST', `${base}/query-write`, { sql: "UPDATE cds_workbench_acceptance SET name = 'Grace' WHERE id = 1", confirmResourceName }, headers);
+    const remove = await request(server!, 'POST', `${base}/query-write`, { sql: 'DELETE FROM cds_workbench_acceptance WHERE id = 1', confirmResourceName }, headers);
+    const drop = await request(server!, 'POST', `${base}/query-write`, { sql: 'DROP TABLE cds_workbench_acceptance', confirmResourceName }, headers);
+
+    expect([create.status, insert.status, select.status, update.status, remove.status, drop.status]).toEqual([200, 200, 200, 200, 200, 200]);
+    expect(select.body.database).toBe('branch_app');
+    expect(select.body.rows).toEqual([['1', 'Ada']]);
+    const mysqlCommands = harness.shell.commands.filter((cmd) => cmd.includes(' mysql '));
+    expect(mysqlCommands).toHaveLength(6);
+    expect(mysqlCommands.every((cmd) => cmd.includes("-u'cds_main'") && cmd.includes("-p'branch-pw'") && cmd.includes("'branch_app'"))).toBe(true);
+    expect(mysqlCommands.some((cmd) => cmd.includes("'shared_app'"))).toBe(false);
+  });
+
+  it('runs PostgreSQL DDL and CRUD against the branch-selected database', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'postgres-main',
+      projectId: 'prd-agent',
+      name: 'PostgreSQL 16',
+      dockerImage: 'postgres:16',
+      containerPort: 5432,
+      hostPort: 5432,
+      containerName: 'cds-postgres-main',
+      status: 'running',
+      dbName: 'shared_pg',
+      env: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'admin-pw', POSTGRES_DB: 'shared_pg' },
+      volumes: [],
+    });
+    harness.stateService.setCustomEnvVar('POSTGRES_DB', 'branch_pg', 'main-branch');
+    harness.stateService.setCustomEnvVar('POSTGRES_USER', 'cds_main', 'main-branch');
+    harness.stateService.setCustomEnvVar('POSTGRES_PASSWORD', 'branch-pw', 'main-branch');
+    harness.shell.addResponsePattern(/docker exec .* psql /, (match) => {
+      const cmd = match.input || '';
+      if (cmd.includes('SELECT * FROM "public"."cds_workbench_acceptance"')) {
+        return { stdout: 'id\tname\n1\tAda\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes('CREATE TABLE')) return { stdout: 'CREATE TABLE\n', stderr: '', exitCode: 0 };
+      if (cmd.includes('INSERT INTO')) return { stdout: 'INSERT 0 1\n', stderr: '', exitCode: 0 };
+      if (cmd.includes('UPDATE')) return { stdout: 'UPDATE 1\n', stderr: '', exitCode: 0 };
+      if (cmd.includes('DELETE FROM')) return { stdout: 'DELETE 1\n', stderr: '', exitCode: 0 };
+      if (cmd.includes('DROP TABLE')) return { stdout: 'DROP TABLE\n', stderr: '', exitCode: 0 };
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const base = '/api/branches/main-branch/resources/infra%3Apostgres-main/data';
+    const headers = { 'x-test-cookie-auth': '1' };
+    const confirmResourceName = 'PostgreSQL 16';
+    const create = await request(server!, 'POST', `${base}/query-write`, { sql: 'CREATE TABLE "public"."cds_workbench_acceptance" (id INT PRIMARY KEY, name TEXT)', confirmResourceName }, headers);
+    const insert = await request(server!, 'POST', `${base}/query-write`, { sql: "INSERT INTO \"public\".\"cds_workbench_acceptance\" (id, name) VALUES (1, 'Ada')", confirmResourceName }, headers);
+    const select = await request(server!, 'POST', `${base}/query`, { sql: 'SELECT * FROM "public"."cds_workbench_acceptance"' });
+    const update = await request(server!, 'POST', `${base}/query-write`, { sql: "UPDATE \"public\".\"cds_workbench_acceptance\" SET name = 'Grace' WHERE id = 1", confirmResourceName }, headers);
+    const remove = await request(server!, 'POST', `${base}/query-write`, { sql: 'DELETE FROM "public"."cds_workbench_acceptance" WHERE id = 1', confirmResourceName }, headers);
+    const drop = await request(server!, 'POST', `${base}/query-write`, { sql: 'DROP TABLE "public"."cds_workbench_acceptance"', confirmResourceName }, headers);
+
+    expect([create.status, insert.status, select.status, update.status, remove.status, drop.status]).toEqual([200, 200, 200, 200, 200, 200]);
+    expect(select.body.database).toBe('branch_pg');
+    expect(select.body.rows).toEqual([['1', 'Ada']]);
+    const pgCommands = harness.shell.commands.filter((cmd) => cmd.includes(' psql '));
+    expect(pgCommands).toHaveLength(6);
+    expect(pgCommands.every((cmd) => cmd.includes("PGPASSWORD='branch-pw'") && cmd.includes("-U 'cds_main'") && cmd.includes("-d 'branch_pg'"))).toBe(true);
+    expect(pgCommands.some((cmd) => cmd.includes("'shared_pg'"))).toBe(false);
+  });
+
+  it('executes initialization SQL through the branch resource database, not the shared infra default', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mysql-main',
+      projectId: 'prd-agent',
+      name: 'MySQL 8',
+      dockerImage: 'mysql:8',
+      containerPort: 3306,
+      hostPort: 3306,
+      containerName: 'cds-mysql-main',
+      status: 'running',
+      dbName: 'shared_app',
+      env: { MYSQL_ROOT_PASSWORD: 'root-pw', MYSQL_DATABASE: 'shared_app' },
+      volumes: [],
+    });
+    harness.stateService.addInfraService({
+      id: 'postgres-main',
+      projectId: 'prd-agent',
+      name: 'PostgreSQL 16',
+      dockerImage: 'postgres:16',
+      containerPort: 5432,
+      hostPort: 5432,
+      containerName: 'cds-postgres-main',
+      status: 'running',
+      dbName: 'shared_pg',
+      env: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'admin-pw', POSTGRES_DB: 'shared_pg' },
+      volumes: [],
+    });
+    harness.stateService.setCustomEnvVar('MYSQL_DATABASE', 'branch_app', 'main-branch');
+    harness.stateService.setCustomEnvVar('MYSQL_USER', 'cds_main', 'main-branch');
+    harness.stateService.setCustomEnvVar('MYSQL_PASSWORD', 'branch-pw', 'main-branch');
+    harness.stateService.setCustomEnvVar('POSTGRES_DB', 'branch_pg', 'main-branch');
+    harness.stateService.setCustomEnvVar('POSTGRES_USER', 'cds_main', 'main-branch');
+    harness.stateService.setCustomEnvVar('POSTGRES_PASSWORD', 'branch-pw', 'main-branch');
+    harness.shell.addResponsePattern(/printf %s .* docker exec -i .* mysql /, () => ({ stdout: 'mysql init ok\n', stderr: '', exitCode: 0 }));
+    harness.shell.addResponsePattern(/printf %s .* docker exec -i -e PGPASSWORD=.* psql /, () => ({ stdout: 'postgres init ok\n', stderr: '', exitCode: 0 }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const headers = { 'x-test-cookie-auth': '1' };
+    const mysql = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amysql-main/data/init-sql',
+      { sql: 'CREATE TABLE init_mysql (id INT PRIMARY KEY);', confirmResourceName: 'MySQL 8' },
+      headers,
+    );
+    const postgres = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Apostgres-main/data/init-sql',
+      { sql: 'CREATE TABLE init_postgres (id INT PRIMARY KEY);', confirmResourceName: 'PostgreSQL 16' },
+      headers,
+    );
+
+    expect(mysql.status).toBe(200);
+    expect(mysql.body.database).toBe('branch_app');
+    expect(postgres.status).toBe(200);
+    expect(postgres.body.database).toBe('branch_pg');
+    const mysqlInitCommand = harness.shell.commands.find((cmd) => cmd.includes('init_mysql')) || '';
+    const postgresInitCommand = harness.shell.commands.find((cmd) => cmd.includes('init_postgres')) || '';
+    expect(mysqlInitCommand).toContain("'branch_app'");
+    expect(mysqlInitCommand).not.toContain("'shared_app'");
+    expect(postgresInitCommand).toContain("-d 'branch_pg'");
+    expect(postgresInitCommand).not.toContain("-d 'shared_pg'");
+  });
+
   it('runs MongoDB workbench find command and rejects write-like commands', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;

@@ -738,6 +738,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
     [/^POST \/infra\/(.+)\/init-sql$/, '执行初始化 SQL'],
+    [/^POST \/branches\/(.+)\/resources\/(.+)\/data\/init-sql$/, '执行分支资源初始化 SQL'],
     [/^DELETE \/ai\/sessions\/(.+)$/, '撤销 AI 会话'],
     [/^POST \/ai\/approve\/(.+)$/, '批准 AI 连接'],
     [/^POST \/ai\/reject\/(.+)$/, '拒绝 AI 连接'],

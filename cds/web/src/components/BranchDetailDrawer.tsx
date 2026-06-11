@@ -4432,8 +4432,6 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data`
     : '';
-  const infraId = resource.source === 'infra' ? resource.id.replace(/^infra:/, '') : '';
-  const projectId = resource.projectId || '';
   const selectedTable = tablesState.tables.find((table) => sqlTableKey(table) === selectedTableKey) || null;
 
   const loadTables = useCallback(async () => {
@@ -4474,13 +4472,13 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
   }, [loadTablePreview, selectedTable]);
 
   async function runInitializationSql(): Promise<void> {
-    if (!infraId || !projectId || !initSql.trim()) return;
+    if (!basePath || !initSql.trim()) return;
     setInitBusy('init-sql');
     setInitError('');
     try {
-      const result = await apiRequest<WorkbenchCommandResult>(`/api/infra/${encodeURIComponent(infraId)}/init-sql?project=${encodeURIComponent(projectId)}`, {
+      const result = await apiRequest<WorkbenchCommandResult>(`${basePath}/init-sql`, {
         method: 'POST',
-        body: { sql: initSql },
+        body: { sql: initSql, confirmResourceName: resource.serviceName || resource.displayName },
       });
       setInitResult(result);
       void loadTables();
@@ -4645,7 +4643,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
                     placeholder="CREATE TABLE example (id INT PRIMARY KEY);"
                   />
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" size="sm" variant="outline" disabled={!initSql.trim() || initBusy !== null || !infraId || !projectId} onClick={() => void runInitializationSql()}>
+                    <Button type="button" size="sm" variant="outline" disabled={!initSql.trim() || initBusy !== null || !basePath} onClick={() => void runInitializationSql()}>
                       {initBusy === 'init-sql' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
                       执行初始化 SQL
                     </Button>

@@ -4726,6 +4726,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
       : runMysqlDataQuery(service, branch, sql, timeoutMs);
   }
 
+  async function runSqlDataInitScript(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string): Promise<{ exitCode: number; output: string; error: string | null; truncated: boolean }> {
+    const trimmed = sql.trim();
+    if (!trimmed) throw new Error('初始化 SQL 不能为空');
+    if (trimmed.length > 100_000) throw new Error('初始化 SQL 过长（上限 100KB）');
+    const database = sqlDataDatabase(runtime, service, branch);
+    if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
+      throw new Error(`数据库名不合法: ${database || '(empty)'}`);
+    }
+    const command = runtime === 'postgres'
+      ? (() => {
+        const creds = postgresClientCredentials(service, branch);
+        return {
+          command: `printf %s ${shq(trimmed)} | docker exec -i -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -v ON_ERROR_STOP=1 -P pager=off`,
+          secrets: creds.secrets,
+        };
+      })()
+      : (() => {
+        const creds = mysqlClientCredentials(service, branch);
+        return {
+          command: `printf %s ${shq(trimmed)} | docker exec -i ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --default-character-set=utf8mb4 ${shq(creds.database)}`,
+          secrets: creds.secrets,
+        };
+      })();
+    const result = await shell.exec(command.command, { timeout: 120_000 });
+    const rawOutput = result.stdout || '';
+    const rawError = result.stderr || '';
+    const output = maskTextSecrets(rawOutput.slice(0, 256 * 1024), command.secrets);
+    const error = maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets);
+    return {
+      exitCode: result.exitCode,
+      output,
+      error: result.exitCode === 0 ? null : (error || output || '初始化 SQL 执行失败'),
+      truncated: rawOutput.length > 256 * 1024 || rawError.length > 16 * 1024,
+    };
+  }
+
   function sqlDataDatabase(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry): string {
     return runtime === 'postgres'
       ? postgresDatabaseForBranch(service, branch)
@@ -7270,6 +7306,67 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resourceName: ctx.resourceName,
         result: 'failed',
         note: `${ctx.resourceName} 写 SQL 失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/init-sql', async (req, res) => {
+    const ctx = await resolveSqlDataResourceForRequest(req, res);
+    if (!ctx) return;
+    const resources = await getBranchResourceSnapshot(ctx.branch);
+    const resource = resources.find((item) => item.id === ctx.resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+    try {
+      ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行初始化 SQL');
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+    const sql = typeof req.body?.sql === 'string' ? req.body.sql : '';
+    try {
+      const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      const result = await runSqlDataInitScript(ctx.runtime, ctx.service, ctx.branch, sql);
+      stateService.recordDestructiveOp({
+        type: 'purge-database',
+        projectId: ctx.projectId,
+        summary: `对 ${ctx.resourceName} 执行初始化 SQL：${database}`,
+        triggeredBy: resolveActorFromRequest(req),
+      });
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: result.exitCode === 0 ? 'success' : 'failed',
+        note: `${ctx.resourceName} 执行初始化 SQL：${database}`,
+      });
+      stateService.save();
+      res.status(result.exitCode === 0 ? 200 : 500).json({
+        ok: result.exitCode === 0,
+        branchId: ctx.branch.id,
+        resourceId: ctx.resourceId,
+        runtime: ctx.runtime,
+        database,
+        ...result,
+      });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} 初始化 SQL 失败：${(err as Error).message}`,
       });
       stateService.save();
       res.status(500).json({ error: (err as Error).message });
