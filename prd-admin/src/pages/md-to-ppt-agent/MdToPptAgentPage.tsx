@@ -2370,8 +2370,8 @@ export function MdToPptAgentPage() {
                 }}
                 placeholder={
                   generatedHtml
-                    ? '继续精修，如：第3页改两栏对比...'
-                    : '告诉 AI 你想做什么 PPT...'
+                    ? '继续精修，如：第3页改两栏对比（Enter 发送）'
+                    : '告诉 AI 你想做什么 PPT...（Enter 发送，Shift+Enter 换行）'
                 }
                 rows={3}
                 disabled={isProcessing}
@@ -2429,7 +2429,10 @@ export function MdToPptAgentPage() {
                       className="flex items-center gap-1 h-7 px-2 rounded-lg text-[10px] font-mono bg-white/4 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/8 border border-white/8 disabled:opacity-40 max-w-[170px]"
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80 shrink-0" />
-                      <span className="truncate">{effectiveProfile?.model ?? 'CDS 默认'}</span>
+                      {/* 只显示短名（去掉 vendor 前缀），全名在 title；避免长 ID 挤压底部工具行 */}
+                      <span className="truncate">
+                        {(effectiveProfile?.model ?? 'CDS 默认').split('/').pop()}
+                      </span>
                       <ChevronUp size={9} className="shrink-0 opacity-60" />
                     </button>
 
@@ -2483,15 +2486,15 @@ export function MdToPptAgentPage() {
                   </div>
                 )}
 
-                <span className="text-[9px] text-[var(--text-tertiary)] select-none">
-                  Enter 发送 · Shift+Enter 换行
-                </span>
+                {/* 快捷键提示挪进 placeholder/title（2026-06-11 视觉验收：原文字提示被模型
+                    chip 挤成两行折叠），底部工具行保持单行不挤压 */}
                 <span className="flex-1" />
 
                 {/* 实底主按钮（主操作一眼可见） */}
                 <button
                   onClick={handleSend}
                   disabled={!input.trim() || isProcessing}
+                  title="Enter 发送 · Shift+Enter 换行"
                   className="shrink-0 flex items-center gap-1.5 h-7 px-3 rounded-lg text-[11px] font-semibold bg-purple-500/85 text-white hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   {isProcessing ? <MapSpinner size={11} /> : <Send size={11} />}
