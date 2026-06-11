@@ -40,3 +40,12 @@
 | feat | prd-admin | 模板画廊卡升级：真渐变/格纸纹理迷你幻灯预览 + 主题字体示例标题 + 角标数据 + 一句话气质描述（替代原始的"Aa 标题示意"色块条） |
 | refactor | prd-admin | 删除头部「设置」收起面板（模板 chips 与画廊重复）：生成前选模板唯一入口为右侧画廊，生成后切换走预览工具栏色点 |
 | docs | doc | plan.md-to-ppt-next-wave 新增 §9 用户模板共享走海鲜市场（IForkable + CONFIG_TYPE_REGISTRY 方案）与 §10 官方模板扩容节奏清单 |
+| fix | prd-api | P0 修复并行逐页生成的页面黑屏：section 根元素 inline display/min-height:100vh 覆盖 reveal 隐藏规则导致当前页被推出视口；新增 SanitizeSection 消毒（布局样式挪入 pp-root 包裹层、尺寸定位属性剥离、vh 单位替换）+ 5 条回归测试 |
+| feat | prd-api | deck 壳子注入溢出自适应守卫脚本：内容高于 700px 设计框时对 pp-root 等比缩小（兜底） |
+| fix | prd-api | 逐页提示词版面硬约束：禁止 vh/vw、根元素禁止 style、内容预算（要点不超过 5 条）、横向时间线最多 4 项且每项 min-width 170px（修文字逐字竖排挤压） |
+| feat | prd-api | 新增 GET /api/md-to-ppt/profiles + convert/patch/prewarm 支持 runtimeProfileId：用户在 PPT 页随时切换生成模型（与基础设施运行配置同数据源）；预热会话与所选模型不匹配时弃用重建 |
+| feat | prd-admin | 输入框旁新增模型 chip + 切换弹层：任何时候可换模型，选择持久化并随生成/精修/预热下发 |
+| feat | prd-admin | 生成期底部页卡升级为真实缩略图（完成页用同一设计系统迷你渲染，一眼看到每页效果），未完成页骨架占位 |
+| feat | prd-admin | 并行生成全程对话同步：壳子确定/每页完成/最终汇总都更新聊天气泡（左侧保持主力语言交互，不再静默） |
+| feat | prd-admin | 预览工具栏新增「重绘本页」：定向只重绘当前页（修复溢出/挤压排版），内容逐字保留其余页不动 |
+| feat | prd-admin | 生成后切换模板改为先确认再重绘（确认条说明耗时与影响），杜绝误触模板色点白白触发 1 分钟整体重绘 |

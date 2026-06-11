@@ -11,6 +11,7 @@ import {
   Plus,
   Upload,
   BookOpen,
+  ChevronUp,
   Check,
   AlertCircle,
   RotateCcw,
@@ -39,6 +40,8 @@ import {
   getRecentMdToPptRuns,
   getMdToPptOutline,
   getMdToPptTemplates,
+  getMdToPptProfiles,
+  type MdToPptProfileItem,
   createMdToPptTemplate,
   deleteMdToPptTemplate,
   prewarmMdToPpt,
@@ -917,6 +920,32 @@ export function MdToPptAgentPage() {
   const [diagLines, setDiagLines] = useState<MdToPptDiagEvent[]>([]);
   const [modelInfo, setModelInfo] = useState<{ model: string; platform: string } | null>(null);
 
+  // ─── 模型运行配置（用户随时切换，2026-06-11 诉求 7）：选中项随 convert/patch/prewarm 下发
+  const [profiles, setProfiles] = useState<MdToPptProfileItem[]>([]);
+  const [selectedProfileId, setSelectedProfileIdRaw] = useState<string | null>(() => {
+    try { return sessionStorage.getItem('md2ppt-profile'); } catch { return null; }
+  });
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const setSelectedProfileId = useCallback((id: string | null) => {
+    setSelectedProfileIdRaw(id);
+    try {
+      if (id) sessionStorage.setItem('md2ppt-profile', id);
+      else sessionStorage.removeItem('md2ppt-profile');
+    } catch { /* ignore */ }
+  }, []);
+  const effectiveProfile = useMemo(() => {
+    return profiles.find((p) => p.id === selectedProfileId)
+      ?? profiles.find((p) => p.isEffectiveDefault)
+      ?? profiles[0]
+      ?? null;
+  }, [profiles, selectedProfileId]);
+
+  // ─── 换模板确认（2026-06-11 诉求 8）：有产物时切模板 = AI 整体重绘约 1 分钟，
+  //     误触代价大，必须先确认再执行
+  const [pendingTemplateSwitch, setPendingTemplateSwitch] = useState<
+    { kind: 'official'; value: string; label: string } | { kind: 'custom'; tpl: MdToPptTemplateItem } | null
+  >(null);
+
   // ─── 生成期流式可视化（2 秒定理：等待时屏幕必须有持续变化的内容）
   //     delta 先进 ref，150ms 节流刷进 state，避免大 HTML 每个 token 触发整页 re-render。
   const [streamPreview, setStreamPreview] = useState('');
@@ -964,6 +993,16 @@ export function MdToPptAgentPage() {
     if (!frameHead || pagesLiveIdx < 0) return '';
     return buildLiveSlideDoc(extractHeadAssets(frameHead + '<body>'), pagesDone[pagesLiveIdx] ?? '');
   }, [frameHead, pagesLiveIdx, pagesDone]);
+
+  // 页卡真缩略图（诉求 1：底部页卡要一眼看到真实效果，不是文字卡）——
+  // 每个完成页用同一套设计系统渲成迷你实况文档，iframe 等比缩放展示
+  const pageThumbDocs = useMemo(() => {
+    if (!frameHead) return {} as Record<number, string>;
+    const assets = extractHeadAssets(frameHead + '<body>');
+    const out: Record<number, string> = {};
+    for (const i of pagesDoneIdxs) out[i] = buildLiveSlideDoc(assets, pagesDone[i] ?? '');
+    return out;
+  }, [frameHead, pagesDoneIdxs, pagesDone]);
 
   // ─── 思考过程流（推理模型先想后写：deepseek-v3.2 实测思考可占总耗时 90%，
   //     正文集中尾部爆发。思考期间产物无片段可渲染，就渲染思考本身——它就是此刻的产物）
@@ -1156,11 +1195,12 @@ export function MdToPptAgentPage() {
     saveSession({ messages, activeRunId, theme, templateId, outlineDraft });
   }, [messages, activeRunId, theme, templateId, outlineDraft]);
 
-  // 模板列表进页即载（右侧模板画廊是空状态主视觉，必须秒出）
+  // 模板列表进页即载（右侧模板画廊是空状态主视觉，必须秒出）；模型配置列表同时载入
   useEffect(() => {
     if (templatesLoadedRef.current) return;
     templatesLoadedRef.current = true;
     void getMdToPptTemplates().then(setCustomTemplates);
+    void getMdToPptProfiles().then(setProfiles);
   }, []);
 
   // ─── 圈选反馈指令组装（texts 为空时退化为坐标描述）
@@ -1436,13 +1476,13 @@ export function MdToPptAgentPage() {
 
       // 预热 CDS Agent 会话：用户阅读/确认大纲的十几秒里把环境启动做完，
       // 点「确认生成」时后端直接复用，启动开销对用户不可见（产物即体验）
-      prewarmMdToPpt();
+      prewarmMdToPpt(selectedProfileId);
 
       setIsProcessing(false);
       setOutlineAdjusting(false);
       setArtifactPhase('idle');
     },
-    [messages, pushMsg, outlineDraft]
+    [messages, pushMsg, outlineDraft, selectedProfileId]
   );
 
   // ─── Convert 核心（大纲编辑器「确认生成」与旧版气泡共用）
@@ -1471,13 +1511,35 @@ export function MdToPptAgentPage() {
         slideCount: pages ?? undefined,
         outlinePages,
         summary,
+        runtimeProfileId: selectedProfileId ?? undefined,
         onFrame: (f) => {
           setFrameHead(f.head);
           setPagesTotal(f.total);
+          // 左侧对话保持主力语言交互（诉求 2）：阶段事件同步进聊天气泡
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === genMsg.id
+                ? { ...m, content: `设计系统已确定，${Math.min(4, f.total)} 路子智能体开始并行绘制 ${f.total} 页...` }
+                : m
+            )
+          );
         },
         onPage: (pg) => {
           setPagesTotal(pg.total);
           setPagesDone((prev) => ({ ...prev, [pg.index]: pg.html }));
+          const pageTitle = outlinePages?.[pg.index]?.title;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === genMsg.id
+                ? {
+                    ...m,
+                    content:
+                      `正在并行绘制：第 ${pg.index + 1} 页${pageTitle ? `《${pageTitle}》` : ''}完成（${pg.done}/${pg.total}）` +
+                      (pg.done < pg.total ? '，其余页绘制中...' : '，正在拼装 deck...'),
+                  }
+                : m
+            )
+          );
         },
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
@@ -1506,12 +1568,18 @@ export function MdToPptAgentPage() {
           setGeneratedHtml(html);
           setArtifactPhase('done');
           setIsProcessing(false);
+          const pageCount = outlinePages?.length ?? pages;
+          const titleSample = outlinePages?.slice(0, 3).map((p) => p.title).filter(Boolean).join('、');
           setMessages((prev) =>
             prev.map((m) =>
               m.id === genMsg.id
                 ? {
                     ...m,
-                    content: 'PPT 已生成！你可以继续对话精修，例如：「第3页改两栏对比」「整体换商务蓝」「加一页讲 ROI」',
+                    content:
+                      `PPT 已生成${pageCount ? `，共 ${pageCount} 页` : ''}` +
+                      (titleSample ? `（${titleSample} 等）` : '') +
+                      '！你可以继续对话精修，例如：「第3页改两栏对比」「整体换商务蓝」「加一页讲 ROI」；' +
+                      '哪页排版不满意，工具栏「重绘本页」一键重画。',
                     phase: 'done',
                   }
                 : m
@@ -1533,7 +1601,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, pushMsg, theme, templateId, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+    [isProcessing, pushMsg, theme, templateId, selectedProfileId, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
   );
 
   // 序列化大纲（注入生成提示词 / 调整上下文共用）
@@ -1626,7 +1694,12 @@ export function MdToPptAgentPage() {
   //     styleOverride 用于「换风格/换模板 = AI 按新参照重绘」（不传则沿用当前选择；
   //     templateId 传 null 表示明确切回官方主题）。
   const startPatch = useCallback(
-    (instruction: string, baseHtml?: string, styleOverride?: { theme?: string; templateId?: string | null }) => {
+    (
+      instruction: string,
+      baseHtml?: string,
+      styleOverride?: { theme?: string; templateId?: string | null },
+      slideIndex?: number
+    ) => {
       const base = baseHtml ?? generatedHtml;
       if (!base || isProcessing) return;
 
@@ -1646,8 +1719,10 @@ export function MdToPptAgentPage() {
       const cleanup = streamMdToPptPatch({
         currentHtml: base,
         slideRequest: instruction,
+        slideIndex,
         theme: styleOverride?.theme ?? theme,
         templateId: effTemplateId ?? undefined,
+        runtimeProfileId: selectedProfileId ?? undefined,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
         },
@@ -1695,54 +1770,87 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [generatedHtml, isProcessing, pushMsg, theme, templateId, slidePos, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+    [generatedHtml, isProcessing, pushMsg, theme, templateId, selectedProfileId, slidePos, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
   );
 
   // ─── 换风格/换模板 = AI 参照新设计参照整体重绘（2026-06-10 用户纠偏：风格是
   //     AI 的设计参照，不是前端 CSS 换皮）。无产物时只改选择（影响下一次生成）；
   //     有产物时把当前 HTML 交给 AI 按新参照重新设计排版与配色。
+  //     有产物时切换是重操作（AI 整体重绘约 1 分钟），误触代价大 → 先挂起待确认
+  //     （诉求 8）；无产物时只是改选择，零代价直接生效。
   const switchTheme = useCallback(
     (value: string) => {
       if (value === theme && templateId == null) return;
-      setTheme(value);
-      setTemplateId(null);
-      if (!generatedHtml || isProcessing) return;
-
-      const label = THEME_OPTIONS.find((o) => o.value === value)?.label ?? value;
-      const base = latestHtml();
-      if (editMode) {
-        commitEdits();
-        setEditMode(false);
+      if (!generatedHtml || isProcessing) {
+        setTheme(value);
+        setTemplateId(null);
+        return;
       }
-      pushMsg({ role: 'user', content: `整体换成「${label}」风格` });
-      startPatch(
-        `参照「${label}」风格把整份 PPT 重新设计：配色、字体、版式气质全部按该风格重绘，内容与页数保持不变。`,
-        base,
-        { theme: value, templateId: null }
-      );
+      const label = THEME_OPTIONS.find((o) => o.value === value)?.label ?? value;
+      setPendingTemplateSwitch({ kind: 'official', value, label });
     },
-    [theme, templateId, generatedHtml, isProcessing, latestHtml, editMode, commitEdits, pushMsg, startPatch]
+    [theme, templateId, generatedHtml, isProcessing]
   );
 
   // ─── 选自定义模板（参考图提取的风格规范作为生成参照）
   const selectCustomTemplate = useCallback(
     (t: MdToPptTemplateItem) => {
-      setTemplateId(t.id);
-      if (!generatedHtml || isProcessing) return;
-      const base = latestHtml();
-      if (editMode) {
-        commitEdits();
-        setEditMode(false);
+      if (!generatedHtml || isProcessing) {
+        setTemplateId(t.id);
+        return;
       }
-      pushMsg({ role: 'user', content: `整体换成自定义模板「${t.name}」的风格` });
-      startPatch(
-        `参照自定义模板「${t.name}」的风格规范把整份 PPT 重新设计：配色、字体、版式气质全部按规范重绘，内容与页数保持不变。`,
-        base,
-        { templateId: t.id }
-      );
+      setPendingTemplateSwitch({ kind: 'custom', tpl: t });
     },
-    [generatedHtml, isProcessing, latestHtml, editMode, commitEdits, pushMsg, startPatch]
+    [generatedHtml, isProcessing]
   );
+
+  // ─── 确认执行换模板重绘（pendingTemplateSwitch 确认条的「确认重绘」）
+  const applyTemplateSwitch = useCallback(() => {
+    const p = pendingTemplateSwitch;
+    if (!p || isProcessing) return;
+    setPendingTemplateSwitch(null);
+    const base = latestHtml();
+    if (editMode) {
+      commitEdits();
+      setEditMode(false);
+    }
+    if (p.kind === 'official') {
+      setTheme(p.value);
+      setTemplateId(null);
+      pushMsg({ role: 'user', content: `整体换成「${p.label}」风格` });
+      startPatch(
+        `参照「${p.label}」风格把整份 PPT 重新设计：配色、字体、版式气质全部按该风格重绘，内容与页数保持不变。`,
+        base,
+        { theme: p.value, templateId: null }
+      );
+    } else {
+      setTemplateId(p.tpl.id);
+      pushMsg({ role: 'user', content: `整体换成自定义模板「${p.tpl.name}」的风格` });
+      startPatch(
+        `参照自定义模板「${p.tpl.name}」的风格规范把整份 PPT 重新设计：配色、字体、版式气质全部按规范重绘，内容与页数保持不变。`,
+        base,
+        { templateId: p.tpl.id }
+      );
+    }
+  }, [pendingTemplateSwitch, isProcessing, latestHtml, editMode, commitEdits, pushMsg, startPatch]);
+
+  // ─── 重绘当前页（诉求 4/6：溢出/挤压页的一键修复，slideIndex 定向只动这一页）
+  const redrawCurrentPage = useCallback(() => {
+    if (!slidePos || isProcessing) return;
+    const n = slidePos.cur;
+    if (editMode) {
+      commitEdits();
+      setEditMode(false);
+    }
+    pushMsg({ role: 'user', content: `重绘第 ${n} 页` });
+    startPatch(
+      `只重绘第 ${n} 页：整页重新设计排版，修复溢出、挤压、文字逐字竖排等版面问题；` +
+      '该页的信息内容逐字保留，其余页完全不动。注意横向步骤/时间线最多 4 项且每项 min-width:170px。',
+      latestHtml(),
+      undefined,
+      n
+    );
+  }, [slidePos, isProcessing, editMode, commitEdits, pushMsg, startPatch, latestHtml]);
 
   // ─── 上传参考图创建模板（零摩擦：选图即建，名字默认取文件名；视觉提取约 5-15s）
   const handleTemplateFile = useCallback(
@@ -1769,7 +1877,7 @@ export function MdToPptAgentPage() {
           setTemplateId(result.template.id);
           pushMsg({
             role: 'assistant',
-            content: `自定义模板「${result.template.name}」已创建并选中（参考图风格已提取）。下次生成按它执行；想立即把当前 PPT 重绘成该风格，点设置里的模板色点即可。`,
+            content: `自定义模板「${result.template.name}」已创建并选中（参考图风格已提取）。下次生成按它执行；想立即把当前 PPT 重绘成该风格，点预览工具栏的模板色点并确认即可。`,
             phase: 'text',
           });
         } else {
@@ -2309,6 +2417,64 @@ export function MdToPptAgentPage() {
                     </div>
                   )}
                 </div>
+
+                {/* 模型 chip + 切换弹层（诉求 7：任何时候都能换模型，数据源 = 基础设施运行配置） */}
+                {profiles.length > 0 && (
+                  <div className="relative shrink-0 min-w-0">
+                    <button
+                      onClick={() => setShowModelPicker((v) => !v)}
+                      disabled={isProcessing}
+                      data-testid="model-picker-chip"
+                      title={'当前模型：' + (effectiveProfile?.model ?? '默认') + '（点击切换，影响后续生成/精修）'}
+                      className="flex items-center gap-1 h-7 px-2 rounded-lg text-[10px] font-mono bg-white/4 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/8 border border-white/8 disabled:opacity-40 max-w-[170px]"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80 shrink-0" />
+                      <span className="truncate">{effectiveProfile?.model ?? 'CDS 默认'}</span>
+                      <ChevronUp size={9} className="shrink-0 opacity-60" />
+                    </button>
+
+                    {showModelPicker && (
+                      <div
+                        data-testid="model-picker-pop"
+                        className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-white/10 bg-[var(--bg-elevated)] shadow-xl z-10 overflow-hidden"
+                      >
+                        <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)] border-b border-white/6">
+                          切换生成模型（来自「基础设施 → 配置」的运行配置）
+                        </div>
+                        <div style={{ maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                          {profiles.map((p) => {
+                            const active = effectiveProfile?.id === p.id;
+                            return (
+                              <button
+                                key={p.id}
+                                onClick={() => {
+                                  setSelectedProfileId(p.id);
+                                  setShowModelPicker(false);
+                                  // 大纲阶段切模型 → 立刻按新模型重新预热
+                                  if (outlineDraft) prewarmMdToPpt(p.id);
+                                }}
+                                className={[
+                                  'w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/5',
+                                  active ? 'bg-purple-500/10' : '',
+                                ].join(' ')}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className={['text-[11px] font-mono truncate', active ? 'text-purple-200' : 'text-[var(--text-secondary)]'].join(' ')}>
+                                    {p.model}
+                                  </div>
+                                  <div className="text-[9px] text-[var(--text-tertiary)] truncate">
+                                    {p.name}{p.isEffectiveDefault ? ' · 默认' : ''}{p.owned ? '' : ' · 团队共享'}
+                                  </div>
+                                </div>
+                                {active && <Check size={11} className="text-purple-300 shrink-0" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <span className="text-[9px] text-[var(--text-tertiary)] select-none">
                   Enter 发送 · Shift+Enter 换行
@@ -2955,6 +3121,8 @@ export function MdToPptAgentPage() {
                       const isDone = pagesMode ? pagesDone[i] != null : i < doneCount;
                       const isCurrent = pagesMode ? !isDone && building : i === doneCount && building;
                       const isViewing = effLiveDoc !== '' && i === effLiveIdx;
+                      const thumb = pagesMode ? pageThumbDocs[i] : undefined;
+                      const title = (pagesMode ? outlineDraft?.outline[i]?.title : slideProgress.titles[i]) || '';
                       return (
                         <button
                           key={i}
@@ -2964,29 +3132,54 @@ export function MdToPptAgentPage() {
                             const latest = pagesMode ? pagesLiveIdx : doneCount - 1;
                             setLiveSlideSel(i === latest ? null : i);
                           }}
+                          title={isDone ? `第 ${i + 1} 页${title ? '：' + title : ''}（点击查看）` : undefined}
                           className={[
-                            'shrink-0 rounded-md border px-2 pt-1.5 pb-1 text-left transition-colors duration-500',
+                            'shrink-0 rounded-md border overflow-hidden text-left transition-all duration-500',
                             isDone
-                              ? 'bg-purple-500/12 border-purple-500/30 cursor-pointer hover:bg-purple-500/20'
+                              ? 'bg-purple-500/12 border-purple-500/35 cursor-pointer hover:border-purple-400/70'
                               : isCurrent
                                 ? 'bg-white/6 border-purple-500/40 animate-pulse'
                                 : 'bg-transparent border-dashed border-white/10',
                             isViewing ? 'ring-2 ring-purple-400/70' : '',
                           ].join(' ')}
-                          style={{ width: 104, height: 56 }}
+                          style={{ width: 150, height: 106 }}
                         >
-                          <div className={['text-[9px] tabular-nums', isDone ? 'text-purple-300' : 'text-[var(--text-tertiary)]'].join(' ')}>
-                            第 {i + 1} 页
+                          {/* 完成页 = 真实缩略图（同一设计系统迷你渲染，一眼看到效果）；
+                                未完成 = 骨架占位/呼吸闪烁 */}
+                          <div className="relative" style={{ width: 150, height: 84, overflow: 'hidden', background: 'rgba(0,0,0,.3)' }}>
+                            {isDone && thumb ? (
+                              <iframe
+                                srcDoc={thumb}
+                                sandbox=""
+                                tabIndex={-1}
+                                title={`第 ${i + 1} 页缩略图`}
+                                style={{
+                                  width: 600,
+                                  height: 336,
+                                  border: 0,
+                                  transform: 'scale(0.25)',
+                                  transformOrigin: 'top left',
+                                  pointerEvents: 'none',
+                                }}
+                              />
+                            ) : (
+                              <div className="absolute inset-0 flex flex-col justify-center gap-1.5 px-3" aria-hidden>
+                                <div className={['h-1.5 w-2/3 rounded', isCurrent ? 'bg-purple-400/30' : 'bg-white/6'].join(' ')} />
+                                <div className={['h-1 w-full rounded', isCurrent ? 'bg-purple-400/20' : 'bg-white/5'].join(' ')} />
+                                <div className={['h-1 w-4/5 rounded', isCurrent ? 'bg-purple-400/20' : 'bg-white/5'].join(' ')} />
+                              </div>
+                            )}
                           </div>
-                          <div
-                            className={['text-[10px] leading-tight mt-0.5', isDone ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]'].join(' ')}
-                            style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-                          >
-                            {isDone
-                              ? (pagesMode ? outlineDraft?.outline[i]?.title : slideProgress.titles[i]) || '已生成'
-                              : isCurrent
-                                ? '绘制中...'
-                                : ''}
+                          <div className="flex items-center gap-1 px-2" style={{ height: 22 }}>
+                            <span className={['text-[9px] tabular-nums shrink-0', isDone ? 'text-purple-300' : 'text-[var(--text-tertiary)]'].join(' ')}>
+                              {i + 1}
+                            </span>
+                            <span
+                              className={['text-[10px] leading-none truncate', isDone ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]'].join(' ')}
+                            >
+                              {isDone ? title || '已生成' : isCurrent ? '绘制中...' : '等待中'}
+                            </span>
+                            {isDone && <Check size={9} className="ml-auto shrink-0 text-purple-300/80" />}
                           </div>
                         </button>
                       );
@@ -3099,6 +3292,16 @@ export function MdToPptAgentPage() {
                     {editMode ? '完成编辑' : '编辑内容'}
                   </button>
                   <button
+                    onClick={redrawCurrentPage}
+                    disabled={isStreaming || editMode || !slidePos}
+                    data-testid="redraw-page-button"
+                    title="对当前页整页重绘：修复溢出、挤压、排版问题，内容保持不变，其余页不动"
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border bg-white/5 text-[var(--text-secondary)] hover:bg-white/10 border-white/10 disabled:opacity-40"
+                  >
+                    <Sparkles size={11} />
+                    重绘本页
+                  </button>
+                  <button
                     onClick={handleDownload}
                     title="下载独立 HTML（含当前主题样式，双击即可演示）"
                     className="flex items-center justify-center w-7 h-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[var(--text-secondary)]"
@@ -3127,6 +3330,33 @@ export function MdToPptAgentPage() {
                       已记录修改
                     </span>
                   )}
+                </div>
+              )}
+
+              {/* 换模板确认条（诉求 8）：切模板 = AI 整体重绘约 1 分钟，误触代价大，先确认再执行 */}
+              {pendingTemplateSwitch && !isStreaming && (
+                <div
+                  data-testid="template-switch-confirm"
+                  className="shrink-0 flex items-center gap-2.5 px-3 py-2 bg-purple-500/10 border-b border-purple-500/25 text-[11px] text-purple-200"
+                >
+                  <Wand2 size={12} className="shrink-0" />
+                  <span className="min-w-0 truncate">
+                    切换到「{pendingTemplateSwitch.kind === 'official' ? pendingTemplateSwitch.label : pendingTemplateSwitch.tpl.name}」？
+                    AI 将参照该模板整体重绘当前 PPT（约 1-2 分钟），内容与页数不变。
+                  </span>
+                  <button
+                    onClick={applyTemplateSwitch}
+                    data-testid="template-switch-apply"
+                    className="ml-auto shrink-0 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-purple-500/85 text-white hover:bg-purple-500"
+                  >
+                    确认重绘
+                  </button>
+                  <button
+                    onClick={() => setPendingTemplateSwitch(null)}
+                    className="shrink-0 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5"
+                  >
+                    取消
+                  </button>
                 </div>
               )}
 

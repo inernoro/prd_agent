@@ -59,10 +59,31 @@ export async function getMdToPptOutline(
  * 在大纲生成成功后 fire-and-forget 调用，把 5-15s 的 Agent 环境启动开销
  * 藏进用户阅读/确认大纲的时间里；Convert 时后端自动复用预热好的会话。
  */
-export function prewarmMdToPpt(): void {
-  void apiRequest('/api/md-to-ppt/prewarm', { method: 'POST', body: {} }).catch(() => {
+export function prewarmMdToPpt(runtimeProfileId?: string | null): void {
+  void apiRequest('/api/md-to-ppt/prewarm', {
+    method: 'POST',
+    body: { runtimeProfileId: runtimeProfileId ?? undefined },
+  }).catch(() => {
     /* 预热只是优化，失败不打扰用户 */
   });
+}
+
+// ============ 模型运行配置（用户随时切换，2026-06-11 诉求 7） ============
+
+export interface MdToPptProfileItem {
+  id: string;
+  name: string;
+  model: string;
+  runtime: string;
+  isDefault: boolean;
+  isEffectiveDefault: boolean;
+  owned: boolean;
+}
+
+/** 当前用户可用的模型运行配置（与「基础设施 → 配置」同一数据源） */
+export async function getMdToPptProfiles(): Promise<MdToPptProfileItem[]> {
+  const res = await apiRequest<MdToPptProfileItem[]>('/api/md-to-ppt/profiles');
+  return res.success && Array.isArray(res.data) ? res.data : [];
 }
 
 // ============ Types ============
@@ -214,6 +235,8 @@ export interface MdToPptConvertSseOptions {
   outlinePages?: OutlineSlide[];
   /** PPT 一句话主题（逐页模式给子智能体的全局语境） */
   summary?: string;
+  /** 模型运行配置 ID（用户在 PPT 页切换的模型；缺省走后端默认链） */
+  runtimeProfileId?: string;
   /** 壳子就绪（head 含完整设计系统，实况渲染用） */
   onFrame?: (data: { head: string; total: number }) => void;
   /** 单页完成（并行，真实进度） */
@@ -248,6 +271,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           templateId: options.templateId,
           outlinePages: options.outlinePages,
           summary: options.summary,
+          runtimeProfileId: options.runtimeProfileId,
         }),
         signal: abortController.signal,
       });
@@ -308,6 +332,8 @@ export interface MdToPptPatchSseOptions {
   theme?: string;
   /** 自定义模板 ID（优先于 theme 生效） */
   templateId?: string;
+  /** 模型运行配置 ID（用户在 PPT 页切换的模型） */
+  runtimeProfileId?: string;
   onStart?: () => void;
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
@@ -337,6 +363,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
           slideIndex: options.slideIndex,
           theme: options.theme,
           templateId: options.templateId,
+          runtimeProfileId: options.runtimeProfileId,
         }),
         signal: abortController.signal,
       });

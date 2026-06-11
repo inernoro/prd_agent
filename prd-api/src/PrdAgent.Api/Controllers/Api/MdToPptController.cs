@@ -173,10 +173,21 @@ public class MdToPptController : ControllerBase
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n" +
             $"<title>{System.Net.WebUtility.HtmlEncode(title)}</title>\n" +
             "<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.css\">\n" +
-            "<style>\n" + tokens + PptComponentCss + "</style>\n</head>\n<body>\n<div class=\"reveal\">\n<div class=\"slides\">\n";
+            "<style>\n" + tokens + PptComponentCss +
+            // pp-root：消毒后注入的统一内容包裹层（布局样式承接 + 溢出缩放目标）
+            ".pp-root{width:100%;}\n" +
+            "</style>\n</head>\n<body>\n<div class=\"reveal\">\n<div class=\"slides\">\n";
         var suffix =
             "\n</div>\n</div>\n<script src=\"https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js\"></script>\n" +
-            "<script>Reveal.initialize({ hash:false, transition:'fade', slideNumber:'c/t', controls:true, progress:true, center:true, margin:0.06 });</script>\n</body>\n</html>";
+            "<script>Reveal.initialize({ hash:false, transition:'fade', slideNumber:'c/t', controls:true, progress:true, center:true, margin:0.06 });\n" +
+            // 溢出自适应守卫：内容高于 700px 设计框时对 .pp-root 等比缩小（兜底，不替代内容预算约束）
+            "function ppFit(){var H=700;document.querySelectorAll('.reveal .slides > section').forEach(function(s){" +
+            "var r=s.querySelector(':scope > .pp-root');if(!r)return;r.style.transform='';" +
+            "var prev=s.style.display;s.style.display='block';var ch=r.scrollHeight;s.style.display=prev;" +
+            "if(ch>H*0.99){var k=Math.max(0.55,(H*0.97)/ch);r.style.transform='scale('+k+')';r.style.transformOrigin='top center';}});" +
+            "if(window.Reveal&&Reveal.layout)Reveal.layout();}\n" +
+            "Reveal.on('ready',function(){setTimeout(ppFit,250);if(document.fonts&&document.fonts.ready){document.fonts.ready.then(function(){setTimeout(ppFit,80);});}});" +
+            "</script>\n</body>\n</html>";
         return (head, suffix);
     }
 
@@ -588,7 +599,7 @@ public class MdToPptController : ControllerBase
     // 全部做完；Convert 到来直接复用，把 5-15s 的 Agent 环境启动开销藏进阅读时间。
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PrewarmEntry> PrewarmSessions = new();
 
-    private sealed record PrewarmEntry(string SessionId, DateTime CreatedAt);
+    private sealed record PrewarmEntry(string SessionId, DateTime CreatedAt, string? ProfileId = null);
 
     private static readonly TimeSpan PrewarmTtl = TimeSpan.FromMinutes(8);
 
@@ -596,20 +607,45 @@ public class MdToPptController : ControllerBase
     /// 预创建并启动一个 CDS Agent 会话（幂等；失败静默——预热只是优化，绝不打扰用户）。
     /// 前端在大纲生成成功后 fire-and-forget 调用。
     /// </summary>
-    [HttpPost("prewarm")]
-    public async Task<IActionResult> Prewarm()
+    /// <summary>
+    /// 可选的模型运行配置列表（与基础设施页同一数据源）：PPT 页「模型」chip 的弹层数据。
+    /// 用户随时切换模型（用户 2026-06-11 诉求 7），切换结果通过 convert/patch/prewarm 的
+    /// runtimeProfileId 字段下发。
+    /// </summary>
+    [HttpGet("profiles")]
+    public async Task<IActionResult> ListProfiles()
     {
         var userId = this.GetRequiredUserId();
+        var visible = await ListVisibleRuntimeProfilesAsync(userId, CancellationToken.None);
+        var def = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
+        return Ok(visible.Select(p => new
+        {
+            id = p.Id,
+            name = p.Name,
+            model = p.Model,
+            runtime = p.Runtime,
+            isDefault = p.IsDefault,
+            isEffectiveDefault = def != null && def.Id == p.Id,
+            owned = p.CreatedByUserId == userId,
+        }));
+    }
+
+    [HttpPost("prewarm")]
+    public async Task<IActionResult> Prewarm([FromBody] MdToPptPrewarmRequest? req = null)
+    {
+        var userId = this.GetRequiredUserId();
+        var requestedProfileId = req?.RuntimeProfileId;
 
         if (PrewarmSessions.TryGetValue(userId, out var existing)
-            && DateTime.UtcNow - existing.CreatedAt < PrewarmTtl)
+            && DateTime.UtcNow - existing.CreatedAt < PrewarmTtl
+            && (string.IsNullOrWhiteSpace(requestedProfileId) || existing.ProfileId == requestedProfileId))
         {
             return Ok(new { sessionId = existing.SessionId, reused = true });
         }
 
         var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
         if (connection == null) return Ok(new { sessionId = (string?)null, reason = "no_connection" });
-        var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
+        var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, requestedProfileId);
         if (profile == null) return Ok(new { sessionId = (string?)null, reason = "no_profile" });
 
         try
@@ -634,7 +670,7 @@ public class MdToPptController : ControllerBase
                     new StartInfraAgentSessionRequest(profile.Runtime, profile.Model),
                     CancellationToken.None) ?? session;
             }
-            PrewarmSessions[userId] = new PrewarmEntry(session.Id, DateTime.UtcNow);
+            PrewarmSessions[userId] = new PrewarmEntry(session.Id, DateTime.UtcNow, profile.Id);
             _logger.LogInformation("[MdToPpt-Prewarm] session ready userId={UserId} sessionId={Id}", userId, session.Id);
             return Ok(new { sessionId = session.Id });
         }
@@ -645,10 +681,16 @@ public class MdToPptController : ControllerBase
         }
     }
 
-    /// <summary>取走当前用户的预热会话（验证仍可用）；不可用返回 null 走全新创建路径</summary>
-    private async Task<InfraAgentSessionView?> TakePrewarmedSessionAsync(string userId)
+    /// <summary>取走当前用户的预热会话（验证仍可用且模型配置匹配）；不可用返回 null 走全新创建路径</summary>
+    private async Task<InfraAgentSessionView?> TakePrewarmedSessionAsync(string userId, string? expectedProfileId = null)
     {
         if (!PrewarmSessions.TryRemove(userId, out var entry)) return null;
+        if (expectedProfileId != null && entry.ProfileId != null && entry.ProfileId != expectedProfileId)
+        {
+            // 预热用的不是用户现在选的模型：弃用，避免「选 A 跑 B」
+            try { await _sessions.StopAsync(userId, entry.SessionId, CancellationToken.None); } catch { }
+            return null;
+        }
         if (DateTime.UtcNow - entry.CreatedAt >= PrewarmTtl)
         {
             // 过期预热：后台停掉，不阻塞本次生成
@@ -699,7 +741,7 @@ public class MdToPptController : ControllerBase
         var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页。";
         var userContent = $"{styleHint}\n\n---\n\n# 用户内容\n\n{req.Content?.Trim()}";
 
-        await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT", run);
+        await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT", run, req.RuntimeProfileId);
     }
 
     // ─────────────────────────────────────────────
@@ -729,7 +771,7 @@ public class MdToPptController : ControllerBase
             : "（未指定具体页，按要求修改整份 PPT）";
         var userContent = $"---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求{pageHint}\n\n{req.SlideRequest?.Trim()}";
 
-        await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT 修改", run);
+        await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT 修改", run, req.RuntimeProfileId);
     }
 
     // ─────────────────────────────────────────────
@@ -915,6 +957,12 @@ public class MdToPptController : ControllerBase
             "## 内容要求\n" +
             "信息充实：结构化正文（卡片/数据/对比/列表至少一种）+ 至少一个视觉装置（光晕/强调条/大数字/独特大字编排）。" +
             "绝不允许一句话居中、四周大片空白。\n\n" +
+            "## 画布与版面硬约束（违反会被系统剥离或压缩，必须遵守）\n" +
+            "画布是 960x700 的固定设计框（reveal.js 整体缩放适配屏幕）：\n" +
+            "1. 所有尺寸只用 px / % / rem / em，禁止 vh / vw 单位（设计框内语义错误）；\n" +
+            "2. <section> 根元素禁止写 style 属性（系统会剥离根上的布局样式）——版式样式全部写在内层容器上；\n" +
+            "3. 内容总高度必须装进 700px：要点最多呈现 5 条；横向步骤/时间线最多 4 项，且每项必须 flex:1 1 0 + min-width:170px（否则中文逐字竖排挤压）；\n" +
+            "4. 大段文字宁可精炼，不可缩字号到 12px 以下硬塞。\n\n" +
             "## 输出（最高优先级）\n" +
             $"只输出本页（第 {index + 1}/{total} 页）一个完整的 <section>...</section> HTML 片段：" +
             "首字符是 <，末字符是 >；不含 <html>/<head>/<style>/<script>，不含 markdown 围栏与任何解释；" +
@@ -957,7 +1005,66 @@ public class MdToPptController : ControllerBase
         var cleaned = StripCodeFences(text);
         var m = System.Text.RegularExpressions.Regex.Match(cleaned, "<section[\\s\\S]*?</section>",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        return m.Success ? m.Value : string.Empty;
+        return m.Success ? SanitizeSection(m.Value) : string.Empty;
+    }
+
+    /// <summary>
+    /// 子智能体产出的 section 消毒（2026-06-11 P0：页 2 黑屏根因修复）。
+    /// 根因：子智能体把 display:flex / min-height:100vh 写在 section 根元素 inline style 上——
+    /// inline 优先级高于 reveal.css 的隐藏规则，非当前页藏不掉、把当前页推出视口（实测 y=836）。
+    /// 处置：1) vh 单位在 reveal 960x700 设计框内语义错误，整段替换为安全值；
+    /// 2) 根元素 style 拆解——布局类属性挪到内层 .pp-root 包裹层（保留设计意图），
+    ///    尺寸/定位类属性直接丢弃；其余（padding/background 等）留在根上；
+    /// 3) 始终注入 .pp-root 包裹层，供壳子里的溢出自适应脚本做统一缩放目标。
+    /// </summary>
+    internal static string SanitizeSection(string section)
+    {
+        if (string.IsNullOrWhiteSpace(section)) return section;
+        section = section.Replace("100vh", "100%").Replace("100VH", "100%");
+
+        var open = System.Text.RegularExpressions.Regex.Match(section, "^\\s*<section([^>]*)>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!open.Success) return section;
+
+        var attrs = open.Groups[1].Value;
+        var wrapperStyle = string.Empty;
+        var styleMatch = System.Text.RegularExpressions.Regex.Match(attrs, "\\sstyle\\s*=\\s*\"([^\"]*)\"",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (styleMatch.Success)
+        {
+            // 布局类 → 挪去包裹层；尺寸/定位类 → 丢弃；其余留在 section 根
+            var moveToWrapper = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "display", "flex-direction", "flex-wrap", "justify-content", "align-items",
+                "align-content", "gap", "row-gap", "column-gap", "text-align",
+            };
+            var drop = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "min-height", "height", "max-height", "min-width", "width", "max-width",
+                "position", "top", "left", "right", "bottom", "margin", "transform", "inset", "z-index",
+            };
+            var keep = new List<string>();
+            var moved = new List<string>();
+            foreach (var decl in styleMatch.Groups[1].Value.Split(';'))
+            {
+                var d = decl.Trim();
+                if (d.Length == 0) continue;
+                var name = d.Split(':')[0].Trim();
+                if (drop.Contains(name)) continue;
+                if (moveToWrapper.Contains(name)) moved.Add(d);
+                else keep.Add(d);
+            }
+            wrapperStyle = string.Join(";", moved);
+            var keepStyle = string.Join(";", keep);
+            attrs = attrs.Remove(styleMatch.Index, styleMatch.Length);
+            if (keepStyle.Length > 0) attrs += $" style=\"{keepStyle}\"";
+        }
+
+        var closeIdx = section.LastIndexOf("</section>", StringComparison.OrdinalIgnoreCase);
+        if (closeIdx < 0) return section;
+        var inner = section[open.Length..closeIdx];
+        var wrapperAttr = wrapperStyle.Length > 0 ? $" style=\"{wrapperStyle}\"" : string.Empty;
+        return $"<section{attrs}><div class=\"pp-root\"{wrapperAttr}>{inner}</div></section>";
     }
 
     private static string FallbackSection(MdToPptOutlinePageDto page, int index)
@@ -1066,7 +1173,7 @@ public class MdToPptController : ControllerBase
             await EmitAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
             return;
         }
-        var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
+        var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
         if (profile == null)
         {
             await PersistRunErrorAsync(run, "没有可用的模型运行配置");
@@ -1107,7 +1214,7 @@ public class MdToPptController : ControllerBase
 
         var sections = new string[total];
         var gate = new SemaphoreSlim(4, 4); // 并行度：4 路子智能体
-        var presession = await TakePrewarmedSessionAsync(userId); // 预热会话给第 1 页
+        var presession = await TakePrewarmedSessionAsync(userId, profile.Id); // 预热会话给第 1 页（模型须匹配）
         var doneCount = 0;
 
         try
@@ -1130,7 +1237,7 @@ public class MdToPptController : ControllerBase
                         var (text2, _) = await RunAgentOnceAsync(
                             userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", null);
                         section = text2 != null ? ExtractSection(text2) : string.Empty;
-                        if (string.IsNullOrEmpty(section)) section = FallbackSection(pages[i], i);
+                        if (string.IsNullOrEmpty(section)) section = SanitizeSection(FallbackSection(pages[i], i));
                     }
                     sections[i] = section;
                     var n = Interlocked.Increment(ref doneCount);
@@ -1162,7 +1269,7 @@ public class MdToPptController : ControllerBase
         }
     }
 
-    private async Task RunAgentStreamAsync(string userId, string systemPrompt, string userPrompt, string title, MdToPptRun run)
+    private async Task RunAgentStreamAsync(string userId, string systemPrompt, string userPrompt, string title, MdToPptRun run, string? runtimeProfileId = null)
     {
         var overallStart = DateTime.UtcNow;
         InfraConnection? connection = null;
@@ -1195,7 +1302,7 @@ public class MdToPptController : ControllerBase
 
             // 2. 解析运行配置
             var t1 = DateTime.UtcNow;
-            runtimeProfile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
+            runtimeProfile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, runtimeProfileId);
             if (runtimeProfile == null)
             {
                 await PersistRunErrorAsync(run, "没有可用的模型运行配置，请先配置 baseUrl、model 和 API key");
@@ -1546,7 +1653,8 @@ public class MdToPptController : ControllerBase
     // 解析运行配置（四级优先级）
     // ─────────────────────────────────────────────
 
-    private async Task<InfraAgentRuntimeProfile?> ResolveRuntimeProfileAsync(string userId, CancellationToken ct)
+    /// <summary>当前用户可见的全部运行配置（own + 团队共享），own 在前、默认在前、新改的在前</summary>
+    private async Task<List<InfraAgentRuntimeProfile>> ListVisibleRuntimeProfilesAsync(string userId, CancellationToken ct)
     {
         var memberTeamIds = await _db.ReportTeamMembers
             .Find(x => x.UserId == userId)
@@ -1564,32 +1672,40 @@ public class MdToPptController : ControllerBase
             .ToList();
 
         var fb = Builders<InfraAgentRuntimeProfile>.Filter;
-        var ownedFilter = fb.Eq(x => x.CreatedByUserId, userId);
-        var sharedFilter = visibleTeamIds.Count == 0
-            ? fb.Where(_ => false)
-            : fb.AnyIn(x => x.SharedTeamIds, visibleTeamIds);
+        var filter = fb.Eq(x => x.CreatedByUserId, userId);
+        if (visibleTeamIds.Count > 0)
+            filter |= fb.AnyIn(x => x.SharedTeamIds, visibleTeamIds);
 
-        var profile = await _db.InfraAgentRuntimeProfiles
-            .Find(ownedFilter & fb.Eq(x => x.IsDefault, true))
-            .FirstOrDefaultAsync(ct);
-        if (profile != null) return profile;
+        var all = await _db.InfraAgentRuntimeProfiles
+            .Find(filter)
+            .Limit(200)
+            .ToListAsync(ct);
+        return all
+            .OrderByDescending(x => x.CreatedByUserId == userId)
+            .ThenByDescending(x => x.IsDefault)
+            .ThenByDescending(x => x.UpdatedAt)
+            .ToList();
+    }
 
-        profile = await _db.InfraAgentRuntimeProfiles
-            .Find(sharedFilter & fb.Eq(x => x.IsDefault, true))
-            .SortByDescending(x => x.UpdatedAt)
-            .FirstOrDefaultAsync(ct);
-        if (profile != null) return profile;
+    /// <summary>
+    /// 解析运行配置。requestedProfileId 优先（用户在 PPT 页随时切换的模型，必须在可见集合内）；
+    /// 未指定时按四级优先：own 默认 → 共享默认 → own 最近 → 共享最近。
+    /// </summary>
+    private async Task<InfraAgentRuntimeProfile?> ResolveRuntimeProfileAsync(
+        string userId, CancellationToken ct, string? requestedProfileId = null)
+    {
+        var visible = await ListVisibleRuntimeProfilesAsync(userId, ct);
+        if (!string.IsNullOrWhiteSpace(requestedProfileId))
+        {
+            var requested = visible.FirstOrDefault(x => x.Id == requestedProfileId);
+            if (requested != null) return requested;
+            // 指定的配置不可见/已删除：按默认链兜底，不让请求直接失败
+        }
 
-        profile = await _db.InfraAgentRuntimeProfiles
-            .Find(ownedFilter)
-            .SortByDescending(x => x.UpdatedAt)
-            .FirstOrDefaultAsync(ct);
-        if (profile != null) return profile;
-
-        return await _db.InfraAgentRuntimeProfiles
-            .Find(sharedFilter)
-            .SortByDescending(x => x.UpdatedAt)
-            .FirstOrDefaultAsync(ct);
+        return visible.FirstOrDefault(x => x.CreatedByUserId == userId && x.IsDefault)
+            ?? visible.FirstOrDefault(x => x.IsDefault)
+            ?? visible.FirstOrDefault(x => x.CreatedByUserId == userId)
+            ?? visible.FirstOrDefault();
     }
 
     // ─────────────────────────────────────────────
@@ -1729,6 +1845,9 @@ public class MdToPptConvertRequest
 
     /// <summary>PPT 一句话主题（并行逐页模式给子智能体的全局语境）</summary>
     public string? Summary { get; set; }
+
+    /// <summary>模型运行配置 ID（可选；用户在 PPT 页随时切换模型，缺省走默认链）</summary>
+    public string? RuntimeProfileId { get; set; }
 }
 
 public class MdToPptOutlinePageDto
@@ -1753,6 +1872,15 @@ public class MdToPptPatchRequest
 
     /// <summary>自定义模板 ID（可选；优先于 Theme 生效）</summary>
     public string? TemplateId { get; set; }
+
+    /// <summary>模型运行配置 ID（可选；用户在 PPT 页随时切换模型，缺省走默认链）</summary>
+    public string? RuntimeProfileId { get; set; }
+}
+
+public class MdToPptPrewarmRequest
+{
+    /// <summary>模型运行配置 ID（可选；预热会话必须与用户当前所选模型匹配）</summary>
+    public string? RuntimeProfileId { get; set; }
 }
 
 public class MdToPptTemplateCreateRequest
