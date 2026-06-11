@@ -2453,9 +2453,14 @@ export function MdToPptAgentPage() {
                   </div>
                 )}
 
-                {/* 逐页卡片：标题 input + 要点 textarea（一行一条），上移/下移/删 */}
+                {/* 逐页卡片网格：一排 3-4 个（自适应列宽），比竖排堆叠更一目了然 */}
+                <div
+                  className="shrink-0 grid gap-3"
+                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
+                  data-testid="outline-grid"
+                >
                 {outlineDraft.outline.map((slide, i) => (
-                  <div key={i} className="shrink-0 rounded-xl border border-white/10 bg-white/3 px-4 py-3" data-testid={'outline-card-' + i}>
+                  <div key={i} className="rounded-xl border border-white/10 bg-white/3 px-3.5 py-3 flex flex-col" data-testid={'outline-card-' + i}>
                     <div className="flex items-center gap-2 mb-1.5">
                       <span className="shrink-0 w-6 h-6 rounded-md bg-purple-500/15 text-purple-300 text-[11px] font-bold tabular-nums flex items-center justify-center">
                         {i + 1}
@@ -2530,10 +2535,10 @@ export function MdToPptAgentPage() {
                           return { ...d, outline };
                         })
                       }
-                      rows={Math.max(2, slide.bullets.length)}
+                      rows={Math.max(3, slide.bullets.length)}
                       placeholder="每行一条要点"
-                      className="w-full resize-none text-[11px] leading-relaxed bg-transparent text-[var(--text-secondary)] placeholder-[var(--text-tertiary)] border border-white/6 focus:border-purple-500/30 rounded-md px-2 py-1.5 outline-none ml-8"
-                      style={{ width: 'calc(100% - 2rem)', outline: 'none', boxShadow: 'none' }}
+                      className="w-full flex-1 resize-none text-[11px] leading-relaxed bg-transparent text-[var(--text-secondary)] placeholder-[var(--text-tertiary)] border border-white/6 focus:border-purple-500/30 rounded-md px-2 py-1.5 outline-none"
+                      style={{ outline: 'none', boxShadow: 'none', minHeight: 64 }}
                     />
                   </div>
                 ))}
@@ -2545,11 +2550,13 @@ export function MdToPptAgentPage() {
                     return { ...d, outline, totalPages: outline.length };
                   })}
                   data-testid="outline-add-page"
-                  className="shrink-0 flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] py-2.5 text-[11px]"
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] text-[11px]"
+                  style={{ minHeight: 120 }}
                 >
                   <Plus size={12} />
                   添加一页
                 </button>
+                </div>
 
                 {/* 让 AI 调整（也可以直接在左侧对话输入，效果相同） */}
                 <div className="shrink-0 flex items-center gap-2 pb-1">
