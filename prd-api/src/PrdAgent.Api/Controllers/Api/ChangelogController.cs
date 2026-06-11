@@ -485,12 +485,13 @@ public class ChangelogController : ControllerBase
         {
             if (matchMemo.TryGetValue(authorName, out var memo)) return memo;
             GitHubUserMatchCandidate? hit = null;
-            var norm = GitHubAuthorMatcher.Normalize(authorName);
-            if (norm.Length >= 2)
+            // 变体含「剥掉通用组织后缀」的版本（如 yurenping-miduo → yurenping）
+            var variants = GitHubAuthorMatcher.NormalizedVariants(authorName);
+            if (variants.Count > 0)
             {
-                hit = matchIndex.FirstOrDefault(c =>
-                    GitHubAuthorMatcher.IsMatch(norm, c.NormUsername) ||
-                    GitHubAuthorMatcher.IsMatch(norm, c.NormDisplayName));
+                hit = matchIndex.FirstOrDefault(c => variants.Any(v =>
+                    GitHubAuthorMatcher.IsMatch(v, c.NormUsername) ||
+                    GitHubAuthorMatcher.IsMatch(v, c.NormDisplayName)));
             }
             matchMemo[authorName] = hit;
             return hit;
@@ -521,6 +522,18 @@ public class ChangelogController : ControllerBase
                     MatchedDisplayName = match == null
                         ? null
                         : (string.IsNullOrWhiteSpace(match.DisplayName) ? match.Username : match.DisplayName),
+                    CoAuthors = l.CoAuthorNames.ConvertAll(name =>
+                    {
+                        var coMatch = ResolveMatch(name);
+                        return new GitHubCoAuthorDto
+                        {
+                            Name = name,
+                            MatchedUsername = coMatch?.Username,
+                            MatchedDisplayName = coMatch == null
+                                ? null
+                                : (string.IsNullOrWhiteSpace(coMatch.DisplayName) ? coMatch.Username : coMatch.DisplayName),
+                        };
+                    }),
                 };
             }),
         };
@@ -764,9 +777,18 @@ public class ChangelogController : ControllerBase
         public string? AuthorAvatarUrl { get; set; }
         public string CommitTimeUtc { get; set; } = string.Empty;
         public string HtmlUrl { get; set; } = string.Empty;
-        /// <summary>彩蛋：作者名匹配到的系统用户登录名（去数字 + 颠倒容忍），null=未匹配</summary>
+        /// <summary>彩蛋：作者名匹配到的系统用户登录名（去数字 + 颠倒容忍 + 通用后缀剥离），null=未匹配</summary>
         public string? MatchedUsername { get; set; }
         /// <summary>彩蛋：匹配到的系统用户显示名（为空时回退登录名），null=未匹配</summary>
+        public string? MatchedDisplayName { get; set; }
+        /// <summary>Co-authored-by 联合作者（已剔除与主作者同人），每位同样做系统用户匹配</summary>
+        public List<GitHubCoAuthorDto> CoAuthors { get; set; } = new();
+    }
+
+    public sealed class GitHubCoAuthorDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? MatchedUsername { get; set; }
         public string? MatchedDisplayName { get; set; }
     }
 

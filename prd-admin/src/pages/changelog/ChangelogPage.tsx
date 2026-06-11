@@ -102,8 +102,8 @@ interface FlatEntry extends ChangelogEntry {
 type HistorySubtab = 'releases' | 'fragments' | 'github_logs';
 type HistorySummaryStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-// v3：新增 repoTotalCommitCount / matched* 字段，bump key 使旧缓存自然失效
-const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v3';
+// v4：新增 repoTotalCommitCount / matched* / coAuthors 字段，bump key 使旧缓存自然失效
+const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v4';
 const GITHUB_LOGS_CACHE_TTL_MS = 5 * 60 * 1000;
 /** 首屏只拉 80 条（与 visible=80 对齐），后续走 cursor 续接 */
 const GITHUB_LOGS_INITIAL_FETCH = 80;
@@ -1729,6 +1729,19 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
   const commitDateTime = formatCommitDateTime(log.commitTimeUtc) ?? log.commitTimeUtc;
   const relativeTime = formatRelativeTime(log.commitTimeUtc);
   const avatarLetter = (log.authorName || '?').trim().charAt(0).toUpperCase() || '?';
+  // 彩蛋：匹配到系统用户时，作者名直接显示系统显示名（GitHub 原名进 tooltip），不再单列两个名字
+  const isMatched = Boolean(log.matchedDisplayName);
+  const primaryAuthorLabel = log.matchedDisplayName ?? log.authorName;
+  const coAuthors = log.coAuthors ?? [];
+  const authorTooltip = [
+    `GitHub 作者：${log.authorName}`,
+    isMatched
+      ? `已匹配系统用户：${log.matchedDisplayName}${log.matchedUsername && log.matchedUsername !== log.matchedDisplayName ? `（${log.matchedUsername}）` : ''}`
+      : null,
+    coAuthors.length > 0
+      ? `联合作者：${coAuthors.map((co) => (co.matchedDisplayName ? `${co.name} = ${co.matchedDisplayName}` : co.name)).join('、')}`
+      : null,
+  ].filter(Boolean).join('\n');
   return (
     <motion.a
       layout
@@ -1769,10 +1782,11 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       <div
         className="shrink-0 inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px]"
         style={{
-          color: 'var(--text-secondary)',
-          background: 'rgba(255, 255, 255, 0.04)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          color: isMatched ? '#86efac' : 'var(--text-secondary)',
+          background: isMatched ? 'rgba(34, 197, 94, 0.08)' : 'rgba(255, 255, 255, 0.04)',
+          border: `1px solid ${isMatched ? 'rgba(34, 197, 94, 0.28)' : 'rgba(255, 255, 255, 0.08)'}`,
         }}
+        title={authorTooltip}
       >
         {log.authorAvatarUrl ? (
           <img
@@ -1793,22 +1807,20 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
             {avatarLetter}
           </span>
         )}
-        {log.authorName}
+        {primaryAuthorLabel}
+        {isMatched && <UserCheck size={11} style={{ flexShrink: 0 }} />}
+        {coAuthors.map((co) => (
+          <span
+            key={co.name}
+            className="inline-flex items-center gap-0.5"
+            style={{ color: co.matchedDisplayName ? '#86efac' : 'var(--text-muted)' }}
+          >
+            <span style={{ opacity: 0.55 }}>+</span>
+            {co.matchedDisplayName ?? co.name}
+            {co.matchedDisplayName && <UserCheck size={10} style={{ flexShrink: 0 }} />}
+          </span>
+        ))}
       </div>
-      {log.matchedDisplayName && (
-        <span
-          className="shrink-0 inline-flex items-center gap-1 h-[26px] px-2 rounded-md text-[12px]"
-          style={{
-            background: 'rgba(34, 197, 94, 0.10)',
-            border: '1px solid rgba(34, 197, 94, 0.28)',
-            color: '#86efac',
-          }}
-          title={`GitHub 账号已匹配系统用户：${log.matchedDisplayName}${log.matchedUsername && log.matchedUsername !== log.matchedDisplayName ? `（${log.matchedUsername}）` : ''}`}
-        >
-          <UserCheck size={11} />
-          {log.matchedDisplayName}
-        </span>
-      )}
       <div className="text-[13px] leading-relaxed flex-1 truncate" style={{ color: 'var(--text-secondary)', minWidth: 0 }}>
         {log.message}
       </div>

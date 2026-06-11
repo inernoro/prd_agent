@@ -75,6 +75,12 @@ export interface ReleasesView {
   releases: ChangelogRelease[];
 }
 
+export interface GitHubCoAuthor {
+  name: string;
+  matchedUsername?: string | null;
+  matchedDisplayName?: string | null;
+}
+
 export interface GitHubLogEntry {
   sha: string;
   shortSha: string;
@@ -83,10 +89,12 @@ export interface GitHubLogEntry {
   authorAvatarUrl?: string | null;
   commitTimeUtc: string;
   htmlUrl: string;
-  /** 彩蛋：GitHub 作者名匹配到的系统用户登录名（去数字 + 颠倒容忍），null=未匹配 */
+  /** 彩蛋：GitHub 作者名匹配到的系统用户登录名（去数字 + 颠倒容忍 + 通用后缀剥离），null=未匹配 */
   matchedUsername?: string | null;
   /** 彩蛋：匹配到的系统用户显示名（为空时后端回退登录名），null=未匹配 */
   matchedDisplayName?: string | null;
+  /** Co-authored-by 联合作者（已剔除与主作者同人），每位同样带系统用户匹配结果 */
+  coAuthors?: GitHubCoAuthor[];
 }
 
 export interface GitHubLogsView {

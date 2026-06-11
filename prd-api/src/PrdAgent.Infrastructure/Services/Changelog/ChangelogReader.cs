@@ -108,6 +108,8 @@ public sealed class GitHubLogEntry
     public string Message { get; set; } = string.Empty;
     public string AuthorName { get; set; } = string.Empty;
     public string? AuthorAvatarUrl { get; set; }
+    /// <summary>commit message 里 Co-authored-by trailer 的联合作者名（已去邮箱、去重、剔除与主作者同人）</summary>
+    public List<string> CoAuthorNames { get; set; } = new();
     public DateTime CommitTimeUtc { get; set; }
     public string HtmlUrl { get; set; } = string.Empty;
 }
@@ -910,7 +912,8 @@ public sealed class ChangelogReader : IChangelogReader
             startInfo.ArgumentList.Add($"--since={since:O}");
             startInfo.ArgumentList.Add("--date=iso-strict");
             // %cI：提交者时间，与 GitHub commits API 的 committer.date 对齐（%aI 为作者时间，rebase 后易不一致）
-            startInfo.ArgumentList.Add("--pretty=format:%H%x1f%cI%x1f%an%x1f%s%x1e");
+            // 末位 trailers：Co-authored-by 联合作者（valueonly，多个值以 0x02 分隔）
+            startInfo.ArgumentList.Add("--pretty=format:%H%x1f%cI%x1f%an%x1f%s%x1f%(trailers:key=Co-authored-by,valueonly,separator=%x02)%x1e");
 
             using var process = new Process { StartInfo = startInfo };
             if (!process.Start())
@@ -950,13 +953,27 @@ public sealed class ChangelogReader : IChangelogReader
                     continue;
                 }
                 if (committedAtUtc < since) continue;
+                var resolvedAuthorName = string.IsNullOrWhiteSpace(authorName) ? "unknown" : authorName;
+                var coAuthorNames = new List<string>();
+                if (parts.Length > 4)
+                {
+                    foreach (var trailerValue in parts[4].Split('\u0002', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    {
+                        var coName = GitHubAuthorMatcher.ExtractNameFromTrailerValue(trailerValue);
+                        if (coName == null) continue;
+                        if (GitHubAuthorMatcher.IsRawMatch(coName, resolvedAuthorName)) continue; // 与主作者同人不重复列
+                        if (coAuthorNames.Exists(n => string.Equals(n, coName, StringComparison.OrdinalIgnoreCase))) continue;
+                        coAuthorNames.Add(coName);
+                    }
+                }
                 result.Add(new GitHubLogEntry
                 {
                     Sha = sha,
                     ShortSha = sha.Length > 7 ? sha[..7] : sha,
                     Message = message,
-                    AuthorName = string.IsNullOrWhiteSpace(authorName) ? "unknown" : authorName,
+                    AuthorName = resolvedAuthorName,
                     AuthorAvatarUrl = null,
+                    CoAuthorNames = coAuthorNames,
                     CommitTimeUtc = committedAtUtc,
                     HtmlUrl = BuildCommitHtmlUrl(sha),
                 });
@@ -1358,13 +1375,19 @@ public sealed class ChangelogReader : IChangelogReader
         var firstLine = (message ?? string.Empty)
             .Split('\n', 2, StringSplitOptions.TrimEntries)[0]
             .Trim();
+        var resolvedAuthorName = string.IsNullOrWhiteSpace(authorName) ? "unknown" : authorName!;
+        // 联合作者从完整 message 的 Co-authored-by trailer 解析（截断成首行之前）
+        var coAuthorNames = GitHubAuthorMatcher.ParseCoAuthorNames(message)
+            .Where(n => !GitHubAuthorMatcher.IsRawMatch(n, resolvedAuthorName))
+            .ToList();
         return new GitHubLogEntry
         {
             Sha = sha,
             ShortSha = sha.Length > 7 ? sha[..7] : sha,
             Message = string.IsNullOrWhiteSpace(firstLine) ? "(no message)" : firstLine,
-            AuthorName = string.IsNullOrWhiteSpace(authorName) ? "unknown" : authorName,
+            AuthorName = resolvedAuthorName,
             AuthorAvatarUrl = string.IsNullOrWhiteSpace(avatarUrl) ? null : avatarUrl,
+            CoAuthorNames = coAuthorNames,
             CommitTimeUtc = committedAtUtc,
             HtmlUrl = string.IsNullOrWhiteSpace(htmlUrl) ? BuildCommitHtmlUrl(sha) : htmlUrl!,
         };

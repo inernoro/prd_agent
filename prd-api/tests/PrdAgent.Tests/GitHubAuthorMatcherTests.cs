@@ -39,8 +39,54 @@ public class GitHubAuthorMatcherTests
     [InlineData("inernoro123", "Inernoro", true)]     // GitHub 名带数字 vs 系统名
     [InlineData("San-Zhang", "zhangsan88", true)]     // 颠倒 + 数字 + 分隔符叠加
     [InlineData("dev-bot", "devuser", false)]
+    [InlineData("yurenping-miduo", "yurenping", true)]  // 通用组织后缀剥离
+    [InlineData("chenshuhuai-miduo", "chenshuhuai", true)]
+    [InlineData("Kitty-0313", "kitty", true)]           // 数字段后缀剥离（归一化天然处理）
+    [InlineData("weixisheng-miduo", "shengweixi", true)]  // 剥后缀后再命中颠倒规则
+    [InlineData("yurenping-miduo", "renyuping", false)]   // 剥后缀后既不相等也非颠倒
     public void IsRawMatch_NormalizesBothSides(string rawA, string rawB, bool expected)
     {
         Assert.Equal(expected, GitHubAuthorMatcher.IsRawMatch(rawA, rawB));
+    }
+
+    [Fact]
+    public void NormalizedVariants_StripsCommonOrgSuffix()
+    {
+        var variants = GitHubAuthorMatcher.NormalizedVariants("yurenping-miduo");
+        Assert.Equal(new[] { "yurenpingmiduo", "yurenping" }, variants);
+
+        // 剥后缀后剩余不足 2 字符 → 不产出剥离变体
+        Assert.Equal(new[] { "amiduo" }, GitHubAuthorMatcher.NormalizedVariants("a-miduo"));
+        // 无后缀 → 只有原始归一化
+        Assert.Equal(new[] { "inernoro" }, GitHubAuthorMatcher.NormalizedVariants("inernoro"));
+    }
+
+    [Fact]
+    public void ParseCoAuthorNames_ExtractsTrailers()
+    {
+        const string message = "feat: 某功能\n\n正文说明\n\n" +
+            "Co-authored-by: yurenping-miduo <yurenping-miduo@users.noreply.github.com>\n" +
+            "Co-Authored-By: chenshuhuai-miduo <chenshh@miduonet.com>\n" +
+            "Co-authored-by: yurenping-miduo <dup@example.com>\n" +
+            "Co-authored-by: NoEmailName\n";
+        var names = GitHubAuthorMatcher.ParseCoAuthorNames(message);
+        Assert.Equal(new[] { "yurenping-miduo", "chenshuhuai-miduo", "NoEmailName" }, names);
+    }
+
+    [Fact]
+    public void ParseCoAuthorNames_EmptyWhenNoTrailer()
+    {
+        Assert.Empty(GitHubAuthorMatcher.ParseCoAuthorNames("fix: 普通提交\n\n没有联合作者"));
+        Assert.Empty(GitHubAuthorMatcher.ParseCoAuthorNames(null));
+    }
+
+    [Theory]
+    [InlineData("yurenping-miduo <a@b.com>", "yurenping-miduo")]
+    [InlineData("  Plain Name  ", "Plain Name")]
+    [InlineData("<only@email>", null)]
+    [InlineData("", null)]
+    public void ExtractNameFromTrailerValue_HandlesEmailAndPlain(string? value, string? expected)
+    {
+        Assert.Equal(expected, GitHubAuthorMatcher.ExtractNameFromTrailerValue(value));
     }
 }
