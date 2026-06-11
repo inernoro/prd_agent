@@ -715,8 +715,12 @@ export default function ChangelogPage() {
     return { availableTypes: CHANGELOG_TYPE_ORDER.filter((type) => types.has(type)) };
   }, [currentWeek, releases]);
 
-  // 每个类型的条目数（热度）：releases + fragments 合并统计，驱动筛选 chip 的热度角标
+  // 每个类型的条目数（热度）：releases + fragments 合并统计，驱动筛选 chip 的热度角标。
+  // 统计窗口 = 最近 30 天（用户 2026-06-11 指定），让角标反映「近期」热度而非全史累计
   const typeCounts = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const cutoffKey = `${cutoff.getFullYear()}-${`${cutoff.getMonth() + 1}`.padStart(2, '0')}-${`${cutoff.getDate()}`.padStart(2, '0')}`;
     const result: Record<string, number> = {};
     const add = (type: string) => {
       const key = type.toLowerCase();
@@ -724,10 +728,18 @@ export default function ChangelogPage() {
       result[key] = (result[key] ?? 0) + 1;
     };
     if (releases) {
-      for (const r of releases.releases) for (const d of r.days) for (const e of d.entries) add(e.type);
+      for (const r of releases.releases) {
+        for (const d of r.days) {
+          if (d.date < cutoffKey) continue;
+          for (const e of d.entries) add(e.type);
+        }
+      }
     }
     if (currentWeek) {
-      for (const f of currentWeek.fragments) for (const e of f.entries) add(e.type);
+      for (const f of currentWeek.fragments) {
+        if (f.date < cutoffKey) continue;
+        for (const e of f.entries) add(e.type);
+      }
     }
     return result;
   }, [currentWeek, releases]);
@@ -1088,7 +1100,7 @@ export default function ChangelogPage() {
                       setTypeFilter(active ? null : t);
                       if (!active) burstParticles(e.clientX, e.clientY, meta.color);
                     }}
-                    title={`${meta.label} · ${count} 条${hotRank === 0 ? ' · 最热' : ''}`}
+                    title={`${meta.label} · 近 30 天 ${count} 条${hotRank === 0 ? ' · 最热' : ''}`}
                     className={`clg-chip h-8 pl-2.5 pr-3 rounded-lg text-[13px] font-medium cursor-pointer inline-flex items-center gap-1.5${hotClass}`}
                     style={{
                       background: meta.bg,

@@ -5,4 +5,4 @@
 | feat | prd-api | 识别 commit message 的 Co-authored-by 联合作者（本地 git trailers + GitHub API 双路径），每位联合作者同样做系统用户匹配 |
 | feat | prd-api | 用户名匹配支持剥离团队通用组织后缀（如 yurenping-miduo 匹配 yurenping） |
 | feat | prd-admin | 更新中心面板动态化：统计数字滚动、新提交到达扫光、同步状态呼吸点、AI 总结按钮流光 |
-| feat | prd-admin | 筛选标签 Telegram 式热度角标：常驻类型彩色 + 右上角条目数徽章，最热标签火焰角标 + 流光描边 + 呼吸光晕，点击迸发同色粒子 |
+| feat | prd-admin | 筛选标签 Telegram 式热度角标：常驻类型彩色 + 右上角近 30 天条目数徽章，最热标签火焰角标 + 流光描边 + 呼吸光晕，点击迸发同色粒子 |
