@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
   Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, Cog,
-  Github, GitCommit, ExternalLink, Brain, Wand2, Radio, UserCheck,
+  Github, GitCommit, ExternalLink, Brain, Wand2, Radio, UserCheck, Flame,
 } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -24,6 +24,9 @@ import {
 import { WeeklyReportSourcesProvider } from './components/weeklyReportSourcesContext';
 import { AiNewsTimeline } from '@/components/ai-news/AiNewsTimeline';
 import { groupGitHubLogsByWeek } from './lib/groupGitHubLogsByWeek';
+import { burstParticles } from './lib/burstParticles';
+import { AnimatedNumber } from './components/AnimatedNumber';
+import './changelog-dynamic.css';
 
 
 interface TypeBadgeMeta {
@@ -712,6 +715,30 @@ export default function ChangelogPage() {
     return { availableTypes: CHANGELOG_TYPE_ORDER.filter((type) => types.has(type)) };
   }, [currentWeek, releases]);
 
+  // 每个类型的条目数（热度）：releases + fragments 合并统计，驱动筛选 chip 的热度角标
+  const typeCounts = useMemo(() => {
+    const result: Record<string, number> = {};
+    const add = (type: string) => {
+      const key = type.toLowerCase();
+      if (!key) return;
+      result[key] = (result[key] ?? 0) + 1;
+    };
+    if (releases) {
+      for (const r of releases.releases) for (const d of r.days) for (const e of d.entries) add(e.type);
+    }
+    if (currentWeek) {
+      for (const f of currentWeek.fragments) for (const e of f.entries) add(e.type);
+    }
+    return result;
+  }, [currentWeek, releases]);
+
+  // 热度排名（仅条目数 >= 5 的类型参与发光，避免小样本也戴火焰）
+  const hotTypeRanking = useMemo(() => (
+    availableTypes
+      .filter((t) => (typeCounts[t] ?? 0) >= 5)
+      .sort((a, b) => (typeCounts[b] ?? 0) - (typeCounts[a] ?? 0))
+  ), [availableTypes, typeCounts]);
+
   const matchFilter = useCallback((e: ChangelogEntry): boolean => {
     if (typeFilter && e.type.toLowerCase() !== typeFilter) return false;
     return true;
@@ -913,6 +940,19 @@ export default function ChangelogPage() {
       : 'GitHub 提交';
   const activeTotal = counts[historySubtab];
 
+  // 新提交/新条目到达时给「共 N 次提交」chip 一道扫光（同页签内数值增长才触发，切页签不闪）
+  const [totalFlash, setTotalFlash] = useState(false);
+  const prevTotalRef = useRef<{ tab: HistorySubtab; value: number } | null>(null);
+  useEffect(() => {
+    const prev = prevTotalRef.current;
+    prevTotalRef.current = { tab: historySubtab, value: activeTotal };
+    if (prev && prev.tab === historySubtab && activeTotal > prev.value) {
+      setTotalFlash(true);
+      const timer = setTimeout(() => setTotalFlash(false), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTotal, historySubtab]);
+
   return (
     <WeeklyReportSourcesProvider>
     <div className="flex flex-col gap-5 h-full min-h-0">
@@ -1032,26 +1072,45 @@ export default function ChangelogPage() {
               筛选
             </div>
             
-            <div className="flex flex-wrap gap-1.5 ml-1">
+            <div className="flex flex-wrap ml-1" style={{ gap: '12px 10px', paddingTop: '6px' }}>
               {availableTypes.map((t) => {
                 const meta = getTypeBadge(t);
                 const active = typeFilter === t;
                 const Icon = meta.icon;
+                const count = typeCounts[t] ?? 0;
+                const hotRank = hotTypeRanking.indexOf(t);
+                const hotClass = hotRank === 0 ? ' clg-chip-hot1' : hotRank === 1 || hotRank === 2 ? ' clg-chip-hot2' : '';
                 return (
                   <button
                     key={t}
                     type="button"
-                    onClick={() => setTypeFilter(active ? null : t)}
-                    className="h-8 pl-2.5 pr-3 rounded-lg text-[13px] font-medium transition-all cursor-pointer inline-flex items-center gap-1.5"
+                    onClick={(e) => {
+                      setTypeFilter(active ? null : t);
+                      if (!active) burstParticles(e.clientX, e.clientY, meta.color);
+                    }}
+                    title={`${meta.label} · ${count} 条${hotRank === 0 ? ' · 最热' : ''}`}
+                    className={`clg-chip h-8 pl-2.5 pr-3 rounded-lg text-[13px] font-medium cursor-pointer inline-flex items-center gap-1.5${hotClass}`}
                     style={{
-                      background: active ? meta.bg : 'rgba(255, 255, 255, 0.04)',
-                      border: `1px solid ${active ? meta.border : 'rgba(255, 255, 255, 0.10)'}`,
-                      color: active ? meta.color : 'var(--text-muted)',
+                      background: meta.bg,
+                      border: `1px solid ${meta.border}`,
+                      color: meta.color,
                       lineHeight: '1',
+                      boxShadow: active ? `0 0 0 2px ${meta.border}` : undefined,
+                      filter: active ? 'brightness(1.15)' : undefined,
                     }}
                   >
+                    {hotRank === 0 && (
+                      <span className="clg-flame">
+                        <Flame size={9} strokeWidth={2.5} />
+                      </span>
+                    )}
                     <Icon size={13} />
                     {meta.label}
+                    {count > 0 && (
+                      <span className="clg-badge" style={{ background: meta.color }}>
+                        {count}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -1163,7 +1222,7 @@ export default function ChangelogPage() {
                       fontVariantNumeric: 'tabular-nums',
                     }}
                   >
-                    {count}
+                    <AnimatedNumber value={count} />
                   </span>
                 </button>
               );
@@ -1171,7 +1230,7 @@ export default function ChangelogPage() {
           </div>
           <div className="flex items-center gap-3 flex-wrap justify-end">
             <span
-              className="h-7 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium"
+              className={`clg-sweep h-7 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium${totalFlash ? ' clg-sweep-on' : ''}`}
               style={{
                 color: 'var(--text-secondary)',
                 background: 'rgba(255, 255, 255, 0.04)',
@@ -1180,27 +1239,31 @@ export default function ChangelogPage() {
               }}
               title={`${activeSummaryLabel}总数量`}
             >
-              共 {activeTotal} {historySubtab === 'github_logs' ? '次提交' : '条'}
+              共 <AnimatedNumber value={activeTotal} /> {historySubtab === 'github_logs' ? '次提交' : '条'}
             </span>
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
               {historySubtab === 'releases' && '来自 admin 生产发布流水'}
               {historySubtab === 'fragments' && '来自已合并但未上生产的 changelogs/*.md 碎片'}
               {historySubtab === 'github_logs' && (
-                <>
+                <span className="inline-flex items-center gap-1">
                   {githubLogs?.source === 'local' ? '来自本地 git log' : '来自 GitHub commits API'}
                   {githubLogs?.repoTotalCommitCount != null
-                    ? ` · 仓库总提交 ${githubLogs.repoTotalCommitCount} 次 · 下方列出最近一周 ${githubLogs.totalCount ?? githubLogs.logs.length} 条`
+                    ? <> · 仓库总提交 <AnimatedNumber value={githubLogs.repoTotalCommitCount} style={{ color: 'var(--text-secondary)', fontWeight: 600 }} /> 次 · 下方列出最近一周 {githubLogs.totalCount ?? githubLogs.logs.length} 条</>
                     : ' · 最近一周'}
-                  {' · 35 秒自动同步'}
-                  {liveFetchedAtRelative ? ` · ${liveFetchedAtRelative}` : ''}
-                </>
+                  {' · 35 秒自动同步 · '}
+                  <span className="relative inline-flex h-1.5 w-1.5 shrink-0" aria-hidden>
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  </span>
+                  {liveFetchedAtRelative ? ` ${liveFetchedAtRelative}` : ' 实时同步中'}
+                </span>
               )}
             </span>
             <button
               type="button"
               onClick={() => { void summarizeCurrentTab(); }}
               disabled={activeSummaryStatus === 'loading'}
-              className="h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium transition-all disabled:cursor-not-allowed"
+              className={`h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium transition-all disabled:cursor-not-allowed${activeSummaryStatus === 'loading' ? '' : ' clg-ai-shimmer'}`}
               style={{
                 background: activeSummaryStatus === 'loading'
                   ? 'rgba(99, 102, 241, 0.10)'
