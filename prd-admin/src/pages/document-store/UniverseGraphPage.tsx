@@ -518,7 +518,11 @@ export function UniverseGraphPage() {
       {/* 返回 + 库名 */}
       <div style={{ position: 'absolute', top: 12, left: 56, zIndex: 11, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button
-          onClick={() => navigate(`/document-store/${storeId}`)}
+          onClick={() => {
+            // 回到知识库详情：把当前库 ID 塞回 sessionStorage，让 DocumentStorePage 自动选中
+            if (storeId) sessionStorage.setItem('doc-store-selected-id', storeId);
+            navigate('/document-store');
+          }}
           style={{
             background: 'rgba(45,45,45,0.85)',
             border: '1px solid #3a3a3a',

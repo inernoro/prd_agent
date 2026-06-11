@@ -32,6 +32,7 @@ import {
   FolderSync,
   BarChart3,
   Send,
+  Network,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -600,6 +601,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
   initialEntryId?: string;
 }) {
+  const navigate = useNavigate();
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
@@ -1039,6 +1041,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
                 发布到智识殿堂
               </button>
             )}
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => navigate(`/document-store/${storeId}/universe`)}
+              title="打开知识宇宙图：Obsidian 风格力导向布局，看本库文档之间的双链关系网"
+            >
+              <Network size={13} /> 关系图谱
+            </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)} title="查看本知识库的访客统计报表">
               <BarChart3 size={13} /> 统计
             </Button>
