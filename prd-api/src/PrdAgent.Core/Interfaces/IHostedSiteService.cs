@@ -59,6 +59,13 @@ public interface IHostedSiteService
     /// <summary>设置站点分享到的团队（「分享到团队」操作，仅 owner 可调）。返回更新后的站点，无权或不存在返回 null</summary>
     Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct = default);
 
+    /// <summary>
+    /// 把自己的站点物理复制一份进团队空间（COS 文件完整拷贝，副本与原件互相独立）。
+    /// groupId 可选：副本直接归入目标团队的专题/日常分类。
+    /// 站点不存在/非 owner 抛 KeyNotFoundException；目标团队无编辑权抛 UnauthorizedAccessException。
+    /// </summary>
+    Task<HostedSite> CopyToTeamAsync(string siteId, string userId, string teamId, string? groupId, CancellationToken ct = default);
+
     Task<List<string>> ListFoldersAsync(string userId, CancellationToken ct = default);
 
     Task<List<TagCountResult>> ListTagsAsync(string userId, CancellationToken ct = default);

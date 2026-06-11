@@ -331,12 +331,22 @@ public class DocumentStoreController : ControllerBase
         page = Math.Max(1, page);
 
         FilterDefinition<DocumentStore> filter;
-        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase))
         {
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-            if (!myTeamIds.Contains(teamId))
-                return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
-            filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                if (!myTeamIds.Contains(teamId))
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            }
+            else
+            {
+                // 团队空间聚合视图：不传 teamId = 我加入的所有团队的共享空间
+                if (myTeamIds.Count == 0)
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds);
+            }
         }
         else
         {
@@ -2050,14 +2060,24 @@ public class DocumentStoreController : ControllerBase
         pageSize = Math.Clamp(pageSize, 1, 500);
         page = Math.Max(1, page);
 
-        var isTeamScope = string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId);
+        var isTeamScope = string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase);
         FilterDefinition<DocumentStore> filter;
         if (isTeamScope)
         {
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-            if (!myTeamIds.Contains(teamId!))
-                return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
-            filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                if (!myTeamIds.Contains(teamId!))
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            }
+            else
+            {
+                // 团队空间聚合视图：不传 teamId = 我加入的所有团队的共享空间
+                if (myTeamIds.Count == 0)
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds);
+            }
         }
         else
         {

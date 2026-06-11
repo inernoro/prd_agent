@@ -623,8 +623,8 @@ public sealed class DailyTipsController : ControllerBase
                     Steps = new List<DailyTipTourStep>
                     {
                         new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 1 步：欢迎来到网页托管", Body = "这里集中托管并分享你的 HTML/ZIP/Markdown/PDF/视频。先认识顶部的空间切换：个人空间放自己的，团队空间与成员共享。下面 14 步走一遍整页。", NavigateTo = "/web-pages" },
-                        new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 2 步：先认识空间", Body = "「个人空间」放自己的，「团队空间」与成员共享；chip 后的数字是该空间站点数，单击切换。" },
-                        new() { Selector = "[data-tour-id=webpages-space-add]", Title = "第 3 步：新建或加入团队", Body = "最右侧虚线「+」可新建团队空间，或用邀请码加入别人的；团队空间内成员互相可见。" },
+                        new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 2 步：先认识空间", Body = "一级导航只有两项：「个人空间」放自己的，「团队空间」与成员共享；进入团队空间后，已加入的团队会以标签平铺在第二行，点标签即可切换团队。" },
+                        new() { Selector = "[data-tour-id=webpages-space-add]", Title = "第 3 步：新建或加入团队", Body = "虚线「+」可新建团队空间（命名后自动成为管理员，可拉成员进来），或用邀请码加入别人的；团队空间内成员互相可见。" },
                         new() { Selector = "[data-tour-id=webpages-header-actions]", Title = "第 4 步：顶部工具栏", Body = "右上角集中了「分享统计 / 分享管理 / 上传站点」三个入口。" },
                         new() { Selector = "[data-tour-id=webpages-stats-btn]", Title = "第 5 步：分享数据统计", Body = "点图表图标查看每个站点的 PV、独立访客、访问时间线。" },
                         new() { Selector = "[data-tour-id=webpages-share-mgmt-btn]", Title = "第 6 步：分享链接管理", Body = "点链接图标统一管理所有分享链接的密码、有效期和开关。" },

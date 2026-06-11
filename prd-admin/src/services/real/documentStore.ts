@@ -230,9 +230,10 @@ export async function listDocumentStoresWithPreview(
   opts?: { scope?: 'mine' | 'team'; teamId?: string | null },
 ) {
   const sp = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (opts?.scope === 'team' && opts?.teamId) {
+  if (opts?.scope === 'team') {
     sp.set('scope', 'team');
-    sp.set('teamId', opts.teamId);
+    // teamId 缺省 = 跨团队聚合视图（我加入的所有团队的共享空间）
+    if (opts.teamId) sp.set('teamId', opts.teamId);
   }
   return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentStoreWithPreview[]; total: number; page: number; pageSize: number }>(
     `${api.documentStore.stores.listWithPreview()}?${sp.toString()}`,
