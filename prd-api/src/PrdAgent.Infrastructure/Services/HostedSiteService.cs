@@ -1006,14 +1006,42 @@ public class HostedSiteService : IHostedSiteService
     }
 
     /// <summary>
+    /// 团队内部人判定：登录用户对分享指向的全部站点都具备成员关系
+    /// （分享创建者本人 / 站点创建者 / 站点已共享到我所在的团队）。
+    /// 合集分享按「全部站点」判定，防止混入他团队站点时被部分成员免密带过。
+    /// </summary>
+    private async Task<bool> IsTeamInsiderForShareAsync(WebPageShareLink share, string viewerUserId, CancellationToken ct)
+    {
+        if (share.CreatedBy == viewerUserId) return true;
+
+        var targetIds = new List<string>(share.SiteIds ?? new List<string>());
+        if (share.SiteId != null && !targetIds.Contains(share.SiteId))
+            targetIds.Insert(0, share.SiteId);
+        if (targetIds.Count == 0) return false;
+
+        var sites = await _db.HostedSites.Find(x => targetIds.Contains(x.Id)).ToListAsync(ct);
+        if (sites.Count == 0) return false;
+
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(viewerUserId, ct);
+        return sites.All(s =>
+            s.OwnerUserId == viewerUserId
+            || (s.SharedTeamIds ?? new List<string>()).Any(myTeamIds.Contains));
+    }
+
+    /// <summary>
     /// 分享访问统一关卡：滑动窗口速率限制 + Hash 优先校验 + 持久化窗口状态。
     /// 返回 null 表示通过；返回 tuple 时调用方应直接 short-circuit 用对应 HttpStatus 回客户端。
     /// 不绑定 IP：容器反代下 IP 不可靠，NAT 局域网下会一锅端 —— 改按 shareLink 全局限速。
+    /// 团队成员免密：登录用户若是分享目标站点的团队内部人（IsTeamInsiderForShareAsync），
+    /// 视同内部访问直接放行密码门控；外部访客（未登录 / 非成员）仍需密码。
     /// </summary>
     private async Task<(string Error, int HttpStatus, int? RetryAfter)?> EnforceShareAccessAsync(
-        WebPageShareLink share, string? password, CancellationToken ct)
+        WebPageShareLink share, string? password, string? viewerUserId, CancellationToken ct)
     {
         if (share.AccessLevel != "password") return null;
+
+        if (!string.IsNullOrEmpty(viewerUserId) && await IsTeamInsiderForShareAsync(share, viewerUserId, ct))
+            return null;
 
         var rl = _sharePwd.CheckRateLimit(share.RecentAttempts);
         if (!rl.Allowed)
@@ -1083,7 +1111,7 @@ public class HostedSiteService : IHostedSiteService
             return new ShareViewResult { Error = vg.Error, HttpStatus = vg.HttpStatus, ErrorCode = vg.ErrorCode };
         // "public" + 通过 visibility 校验后：下面 password gate 仍然生效
 
-        var gate = await EnforceShareAccessAsync(share, password, ct);
+        var gate = await EnforceShareAccessAsync(share, password, viewerUserId, ct);
         if (gate is { } g)
             return new ShareViewResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter, ErrorCode = g.HttpStatus == 429 ? "rate_limited" : "wrong_password" };
 
@@ -1931,7 +1959,7 @@ public class HostedSiteService : IHostedSiteService
         if (visGate is { } vg)
             return new SaveSharedSiteResult { Error = vg.Error, HttpStatus = vg.HttpStatus };
 
-        var gate = await EnforceShareAccessAsync(share, password, ct);
+        var gate = await EnforceShareAccessAsync(share, password, userId, ct);
         if (gate is { } g)
             return new SaveSharedSiteResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter };
 
@@ -2611,7 +2639,7 @@ public class HostedSiteService : IHostedSiteService
 
         // 密码门控：复用 ViewShareAsync 同款 EnforceShareAccessAsync —— 它内置滑动窗口速率限制
         // （10 次/分钟）+ 持久化 RecentAttempts + 恒时比对。直接手写比对会绕过防爆破（Codex P1）。
-        var gate = await EnforceShareAccessAsync(share, password, ct);
+        var gate = await EnforceShareAccessAsync(share, password, viewerUserId, ct);
         if (gate is { } g)
         {
             var code = g.HttpStatus == 429 ? "rate_limited" : "UNAUTHORIZED";
