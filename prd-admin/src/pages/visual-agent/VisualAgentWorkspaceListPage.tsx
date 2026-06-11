@@ -333,7 +333,19 @@ function QuickInputBox(props: {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isFocused, setIsFocused] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const openDefectDialog = useGlobalDefectStore((s) => s.openDialog);
+
+  // 从剪贴板 / 拖拽事件里提取第一张图片文件（与编辑器画板保持一致的交互）
+  const pickFirstImageFile = (list: FileList | null | undefined, items?: DataTransferItemList | null): File | null => {
+    const fromFiles = Array.from(list ?? []).find((f) => (f.type || '').startsWith('image/'));
+    if (fromFiles) return fromFiles;
+    const fromItems = Array.from(items ?? [])
+      .filter((it) => it.kind === 'file' && (it.type || '').startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .find((f): f is File => Boolean(f));
+    return fromItems ?? null;
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -372,6 +384,42 @@ function QuickInputBox(props: {
     e.target.value = '';
   };
 
+  // 粘贴剪贴板里的图片（Ctrl/Cmd+V）——首页此前缺失，仅编辑器支持
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (loading || !onImageSelect) return;
+    const img = pickFirstImageFile(e.clipboardData?.files, e.clipboardData?.items);
+    if (!img) return; // 没有图片时放行，允许正常粘贴文本
+    e.preventDefault();
+    onImageSelect(img);
+  };
+
+  // 拖拽图片到输入框
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (loading || !onImageSelect) return;
+    const img = pickFirstImageFile(e.dataTransfer?.files, e.dataTransfer?.items);
+    if (!img) {
+      toast.warning('请拖入图片文件');
+      return;
+    }
+    onImageSelect(img);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (loading || !onImageSelect) return;
+    if (Array.from(e.dataTransfer?.types ?? []).includes('Files')) {
+      e.preventDefault();
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
   const canSubmit = value.trim() && !loading;
 
   return (
@@ -382,18 +430,36 @@ function QuickInputBox(props: {
           ...glassInputArea,
           // 暖褐色调磨砂玻璃，与金色主题协调
           background: 'rgba(28, 24, 20, 0.82)',
-          // 聚焦时边框变亮 - 使用柔和的琥珀金
-          border: isFocused
+          // 聚焦/拖拽时边框变亮 - 使用柔和的琥珀金
+          border: isFocused || isDragging
             ? '1px solid rgba(99, 102, 241, 0.5)'
             : '1px solid rgba(99, 102, 241, 0.18)',
-          boxShadow: isFocused
+          boxShadow: isFocused || isDragging
             ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(99, 102, 241, 0.15), 0 1px 0 rgba(199,210,254,0.08) inset'
             : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(199,210,254,0.05) inset',
         }}
         onClick={handleContainerClick}
+        onPaste={handlePaste}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
       >
         {/* 输入区域 - 简化内边距 */}
         <div className="px-5 pt-4 pb-3 relative min-h-[80px]">
+          {/* 拖拽图片时的提示蒙层 */}
+          {isDragging && (
+            <div
+              className="absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-[16px] pointer-events-none"
+              style={{
+                background: 'rgba(28, 24, 20, 0.92)',
+                border: '1px dashed rgba(99, 102, 241, 0.6)',
+                color: 'rgba(199, 210, 254, 0.9)',
+              }}
+            >
+              <Image size={16} />
+              <span className="text-[13px] font-medium">松开鼠标，把图片作为参考图</span>
+            </div>
+          )}
           {/* 图片预览 chip - 参考 AdvancedVisualAgentTab 样式 */}
           {selectedImage ? (
             <div
@@ -556,7 +622,7 @@ function QuickInputBox(props: {
                 color: 'rgba(199, 210, 254, 0.55)',
                 border: '1px solid rgba(99, 102, 241, 0.15)',
               }}
-              title="添加图片参考"
+              title="添加图片参考（也可直接粘贴 Ctrl/Cmd+V 或拖入图片）"
             >
               <Image size={14} />
               <span>图片</span>
