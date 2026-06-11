@@ -5115,7 +5115,7 @@ function BranchCard({
               aria-label="发布到目标"
               className="border-emerald-500/35 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15 hover:text-emerald-500"
             >
-              <Rocket />
+              <ExternalLink />
             </Button>
           ) : null}
           {isRunning ? (
