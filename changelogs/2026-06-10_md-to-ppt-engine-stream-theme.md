@@ -67,3 +67,4 @@
 | feat | cds | Agent 请求观测台（用户信任诉求落地）：新页 /agent-requests/:projectId——一条条请求实时列表（title/clientApp/clientUser/model/状态/耗时/事件数 + 收发内容预览）、按用户/应用/状态/关键字筛选、行展开看完整事件流；项目卡心电图按钮直达 |
 | feat | cds | 会话打标 + 聚合端点：POST agent-sessions 接受 title/clientUser/clientApp；GET /projects/:id/agent-requests 合并 live 会话与持久历史（state 持久 ring buffer 500 条，重启后历史可查）；结构性事件发布 agent-session.activity 到全局 SSE 总线（text_delta 不发防洪水）+ 5 条路由测试 |
 | feat | prd-api | MAP 创建 CDS 会话补传观测台标签：title/clientUser(userId)/clientApp；CreateInfraAgentSessionRequest 加 ClientApp，MdToPpt 全部会话标记 md-to-ppt |
+| fix | prd-api | CDS 会话失联秒级对账：CDS 自更新/重启清空内存会话后，MAP 轮询撞 session_not_found 立即标记会话 failed + 落 error 事件（此前空转 4 分钟才超时）——页级重试随即重建新会话（两次真实事故根因：并行 agent 频繁 self-update 生产 CDS） |

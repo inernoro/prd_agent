@@ -1608,6 +1608,34 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "Failed to import CDS stream events for infra agent session {SessionId} cdsSession={CdsSessionId}",
                 session.Id,
                 session.CdsSessionId);
+
+            // 会话失联对账（2026-06-11 真实事故 x2）：CDS 是内存会话，CDS 自更新/重启
+            // 会瞬间清空全部会话——此前 MAP 轮询循环对 session_not_found 只打 warning，
+            // 调用方空转 4 分钟才超时。这里立即标记 failed + 落 error 事件，让消费方
+            // （MdToPpt 页级重试等）秒级感知并重建新会话。
+            if (ex is InfraAgentSessionException sessEx
+                && sessEx.Message.Contains("session_not_found", StringComparison.OrdinalIgnoreCase)
+                && session.Status != InfraAgentSessionStatuses.Failed
+                && session.Status != InfraAgentSessionStatuses.Stopped)
+            {
+                try
+                {
+                    const string lostMsg = "CDS 会话已丢失（CDS 服务可能刚重启/自更新），请重建会话重试";
+                    await MarkRuntimeFailedAsync(session, lostMsg, CancellationToken.None);
+                    // MarkRuntimeFailedAsync 不落事件——这里补一条 error 事件，
+                    // 让事件轮询方（RunAgentOnceAsync 等）立即收到终态而非空转到超时
+                    await AppendRawEventAsync(
+                        session.Id,
+                        await NextEventSeqAsync(session.Id, CancellationToken.None),
+                        InfraAgentEventTypes.Error,
+                        JsonSerializer.Serialize(new { message = lostMsg, code = "cds_session_lost" }),
+                        CancellationToken.None);
+                }
+                catch (Exception markEx)
+                {
+                    _logger.LogWarning(markEx, "mark session failed after session_not_found failed sessionId={Id}", session.Id);
+                }
+            }
         }
     }
 
