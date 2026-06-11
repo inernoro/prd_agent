@@ -2435,6 +2435,13 @@ export function MdToPptAgentPage() {
 
                     {showModelPicker && (
                       <div
+                        className="fixed inset-0"
+                        style={{ zIndex: 9 }}
+                        onClick={() => setShowModelPicker(false)}
+                      />
+                    )}
+                    {showModelPicker && (
+                      <div
                         data-testid="model-picker-pop"
                         className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-white/10 bg-[var(--bg-elevated)] shadow-xl z-10 overflow-hidden"
                       >
