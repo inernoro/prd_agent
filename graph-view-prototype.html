@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>知识库宇宙图 原型预览</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #07070d;
+    color: #d8d4cf;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  body {
+    background: radial-gradient(ellipse at center, #0e0e1a 0%, #07070d 70%);
+  }
+
+  #canvas {
+    position: absolute;
+    inset: 0;
+    cursor: grab;
+  }
+  #canvas:active { cursor: grabbing; }
+
+  /* 顶部状态栏 */
+  .topbar {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(20, 20, 32, 0.7);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 10px 20px;
+    display: flex;
+    gap: 24px;
+    font-size: 13px;
+    z-index: 10;
+  }
+  .stat { display: flex; align-items: center; gap: 6px; }
+  .stat-label { color: #7a7484; font-size: 11px; }
+  .stat-val { color: #fff; font-weight: 600; }
+
+  /* 左侧：标签筛选 */
+  .legend {
+    position: absolute;
+    top: 80px;
+    left: 16px;
+    background: rgba(20, 20, 32, 0.75);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 16px;
+    z-index: 10;
+    width: 200px;
+  }
+  .legend-title {
+    font-size: 11px;
+    color: #7a7484;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    margin-bottom: 2px;
+    transition: background 0.15s;
+  }
+  .legend-item:hover { background: rgba(255,255,255,0.05); }
+  .legend-item.muted { opacity: 0.35; }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .legend-count {
+    margin-left: auto;
+    font-size: 11px;
+    color: #7a7484;
+  }
+
+  /* 右下：操作提示 */
+  .hint {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    background: rgba(20, 20, 32, 0.75);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: #9a93a8;
+    line-height: 1.8;
+    z-index: 10;
+  }
+  .hint kbd {
+    background: rgba(255,255,255,0.08);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: inherit;
+    color: #d8d4cf;
+  }
+
+  /* 悬停预览卡 */
+  .preview-card {
+    position: absolute;
+    z-index: 100;
+    width: 280px;
+    background: rgba(28, 28, 44, 0.95);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    padding: 14px 16px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  .preview-card.show { opacity: 1; }
+  .preview-card .tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .preview-card .title {
+    font-size: 14px;
+    color: #fff;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .preview-card .summary {
+    font-size: 12px;
+    color: #b0a8bf;
+    line-height: 1.6;
+    margin-bottom: 10px;
+  }
+  .preview-card .links-row {
+    display: flex;
+    gap: 14px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .preview-card .link-stat {
+    font-size: 11px;
+    color: #7a7484;
+  }
+  .preview-card .link-stat strong {
+    color: #fff;
+    font-size: 13px;
+    margin-right: 4px;
+  }
+
+  /* 缩放控件 */
+  .zoom-ctrl {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    background: rgba(20, 20, 32, 0.75);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    z-index: 10;
+  }
+  .zoom-ctrl button {
+    width: 36px;
+    height: 36px;
+    background: transparent;
+    border: none;
+    color: #d8d4cf;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  .zoom-ctrl button:hover { background: rgba(255,255,255,0.06); }
+  .zoom-ctrl .zoom-val {
+    padding: 0 12px;
+    font-size: 12px;
+    color: #9a93a8;
+    border-left: 1px solid rgba(255,255,255,0.08);
+    border-right: 1px solid rgba(255,255,255,0.08);
+    height: 36px;
+    display: flex;
+    align-items: center;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div class="topbar">
+  <div class="stat"><span class="stat-label">文档</span><span class="stat-val" id="statDocs">0</span></div>
+  <div class="stat"><span class="stat-label">引用</span><span class="stat-val" id="statEdges">0</span></div>
+  <div class="stat"><span class="stat-label">孤岛</span><span class="stat-val" id="statIsolated">0</span></div>
+  <div class="stat"><span class="stat-label">最热</span><span class="stat-val" id="statHottest">-</span></div>
+</div>
+
+<div class="legend">
+  <div class="legend-title">按类型过滤</div>
+  <div id="legendList"></div>
+</div>
+
+<div class="hint">
+  鼠标 <kbd>悬停</kbd> 看预览 · <kbd>滚轮</kbd> 缩放 · <kbd>拖动</kbd> 移动<br>
+  <kbd>点击节点</kbd> 锁定聚焦视角
+</div>
+
+<div class="zoom-ctrl">
+  <button onclick="zoomBy(0.83)">−</button>
+  <div class="zoom-val" id="zoomVal">100%</div>
+  <button onclick="zoomBy(1.2)">+</button>
+  <button onclick="resetView()" title="回到全景">⊕</button>
+</div>
+
+<div class="preview-card" id="previewCard"></div>
+
+<script>
+// ========== 数据：20 篇文档 + 引用关系 ==========
+const CATEGORIES = {
+  kb:       { name: '知识库',     color: '#5b9eff', glow: 'rgba(91,158,255,0.6)' },
+  tech:     { name: '技术调研',   color: '#b97cff', glow: 'rgba(185,124,255,0.6)' },
+  product:  { name: '产品规划',   color: '#ff9c5b', glow: 'rgba(255,156,91,0.6)' },
+  report:   { name: '周报日报',   color: '#5bcc8a', glow: 'rgba(91,204,138,0.6)' },
+  defect:   { name: '缺陷管理',   color: '#ff5b7a', glow: 'rgba(255,91,122,0.6)' },
+  pr:       { name: 'PR 审查',    color: '#5bcfd8', glow: 'rgba(91,207,216,0.6)' },
+  design:   { name: '设计文档',   color: '#ffd84d', glow: 'rgba(255,216,77,0.6)' },
+};
+
+const DOCS = [
+  { id: 0,  title: '知识库设计文档',     cat: 'kb',      summary: '本系统知识库整体架构、数据模型、扩展点。' },
+  { id: 1,  title: 'Obsidian 调研报告',  cat: 'tech',    summary: 'Obsidian 是否开源、核心玩法、能否融入。' },
+  { id: 2,  title: 'Graph View 调研',    cat: 'tech',    summary: '宇宙图实现技术选型和交互设计。' },
+  { id: 3,  title: '双链实现方案',       cat: 'design',  summary: 'WikiLink 解析器、引用账本表、改名同步。' },
+  { id: 4,  title: '反向链接 UI',        cat: 'design',  summary: '文档底部反向链接面板的交互。' },
+  { id: 5,  title: '2026-Q2 产品规划',   cat: 'product', summary: '本季度目标与里程碑。' },
+  { id: 6,  title: '周报 2026-W22',      cat: 'report',  summary: '本周完成与下周计划。' },
+  { id: 7,  title: '周报 2026-W23',      cat: 'report',  summary: '完成知识库设计第二轮评审。' },
+  { id: 8,  title: '周报 2026-W24',      cat: 'report',  summary: '开始双链 MVP 开发。' },
+  { id: 9,  title: '缺陷 #1234 双链不生效', cat: 'defect', summary: '中文标题匹配漏掉。' },
+  { id: 10, title: '缺陷 #1289 图谱卡顿',  cat: 'defect', summary: '节点超过 500 后帧率下降。' },
+  { id: 11, title: 'PR #501 双链 MVP',    cat: 'pr',      summary: '双链解析 + 反向账本入库。' },
+  { id: 12, title: 'PR #512 反向链接面板', cat: 'pr',      summary: '文档底部展示组件。' },
+  { id: 13, title: '涌现探索器调研',     cat: 'tech',    summary: '种子→探索→涌现的画布实现。' },
+  { id: 14, title: 'ReactFlow 技术选型', cat: 'tech',    summary: '画布渲染框架对比与选择。' },
+  { id: 15, title: '文档空间架构 v2',    cat: 'design',  summary: '文档空间存储、权限、订阅源。' },
+  { id: 16, title: '多人协作方案',       cat: 'design',  summary: '冲突合并与权限隔离。' },
+  { id: 17, title: 'AI 推荐链接',        cat: 'design',  summary: '保存时 AI 扫描推荐潜在引用。' },
+  { id: 18, title: '海鲜市场技能',       cat: 'kb',      summary: '通过 API Key 搜索、下载、上传技能。' },
+  { id: 19, title: '用户故事地图',       cat: 'product', summary: '核心用户场景拆解。' },
+];
+
+// 引用关系 (from → to)
+const EDGES = [
+  [1, 0], [1, 2], [1, 3],
+  [2, 1], [2, 14], [2, 13],
+  [3, 0], [3, 1], [3, 17],
+  [4, 3], [4, 15],
+  [5, 0], [5, 1], [5, 19],
+  [6, 0], [6, 5],
+  [7, 0], [7, 5], [7, 3],
+  [8, 3], [8, 1], [8, 11],
+  [9, 3], [9, 11],
+  [10, 2], [10, 14],
+  [11, 3], [11, 4], [11, 17],
+  [12, 4], [12, 3],
+  [13, 2], [13, 17], [13, 14],
+  [14, 2], [14, 13],
+  [15, 0], [15, 16],
+  [16, 15],
+  [17, 3], [17, 13],
+  [18, 0],
+  [19, 5],
+];
+
+// ========== 力导向布局 ==========
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// 计算每个节点入度（被引用数）
+const inDeg = new Array(DOCS.length).fill(0);
+for (const [, to] of EDGES) inDeg[to]++;
+
+// 节点初始化（随机散布）
+const nodes = DOCS.map((d, i) => ({
+  ...d,
+  x: W/2 + (Math.random() - 0.5) * 400,
+  y: H/2 + (Math.random() - 0.5) * 400,
+  vx: 0, vy: 0,
+  r: 6 + Math.sqrt(inDeg[i]) * 4,  // 节点半径 = sqrt(被引用数) 放大
+}));
+
+// 邻接表
+const neighbors = new Map();
+nodes.forEach(n => neighbors.set(n.id, new Set()));
+for (const [from, to] of EDGES) {
+  neighbors.get(from).add(to);
+  neighbors.get(to).add(from);
+}
+
+// 视口变换
+let view = { tx: 0, ty: 0, scale: 1 };
+let hoverId = null;
+let focusId = null;       // 点击锁定的节点
+let activeCategories = new Set(Object.keys(CATEGORIES));  // 当前启用的分类
+
+// 力导向参数
+const REPULSION = 3500;
+const SPRING_K = 0.012;
+const REST_LEN = 130;
+const GRAVITY = 0.005;
+const DAMPING = 0.82;
+
+function simulate() {
+  for (const n of nodes) { n.fx = 0; n.fy = 0; }
+
+  // 节点间排斥
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i+1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d2 = dx*dx + dy*dy + 1;
+      const d = Math.sqrt(d2);
+      const f = REPULSION / d2;
+      a.fx -= (dx/d) * f;
+      a.fy -= (dy/d) * f;
+      b.fx += (dx/d) * f;
+      b.fy += (dy/d) * f;
+    }
+  }
+
+  // 边的弹簧
+  for (const [from, to] of EDGES) {
+    const a = nodes[from], b = nodes[to];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx*dx + dy*dy) + 0.001;
+    const f = (d - REST_LEN) * SPRING_K;
+    a.fx += (dx/d) * f;
+    a.fy += (dy/d) * f;
+    b.fx -= (dx/d) * f;
+    b.fy -= (dy/d) * f;
+  }
+
+  // 中心引力
+  for (const n of nodes) {
+    n.fx += (W/2 - n.x) * GRAVITY;
+    n.fy += (H/2 - n.y) * GRAVITY;
+  }
+
+  // 积分
+  for (const n of nodes) {
+    if (n.dragged) continue;
+    n.vx = (n.vx + n.fx) * DAMPING;
+    n.vy = (n.vy + n.fy) * DAMPING;
+    n.x += n.vx;
+    n.y += n.vy;
+  }
+}
+
+// 跑几百步预热
+for (let i = 0; i < 300; i++) simulate();
+
+// ========== 渲染 ==========
+function isActive(node) { return activeCategories.has(node.cat); }
+
+function getHighlightSet() {
+  if (focusId !== null) {
+    const set = new Set([focusId, ...neighbors.get(focusId)]);
+    return set;
+  }
+  if (hoverId !== null) {
+    const set = new Set([hoverId, ...neighbors.get(hoverId)]);
+    return set;
+  }
+  return null;
+}
+
+function render() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(view.tx, view.ty);
+  ctx.scale(view.scale, view.scale);
+
+  const hi = getHighlightSet();
+
+  // 边
+  for (const [from, to] of EDGES) {
+    const a = nodes[from], b = nodes[to];
+    const bothActive = isActive(a) && isActive(b);
+    const highlighted = hi && hi.has(from) && hi.has(to);
+
+    if (highlighted) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 1.4;
+    } else if (hi) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.lineWidth = 1;
+    } else if (!bothActive) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+      ctx.lineWidth = 1;
+    } else {
+      ctx.strokeStyle = 'rgba(180,180,220,0.14)';
+      ctx.lineWidth = 1;
+    }
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  // 节点光晕
+  for (const n of nodes) {
+    const active = isActive(n);
+    const highlighted = hi ? hi.has(n.id) : true;
+    if (!active || !highlighted) continue;
+
+    const cat = CATEGORIES[n.cat];
+    const grad = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r * 3);
+    grad.addColorStop(0, cat.glow);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.r * 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 节点圆
+  for (const n of nodes) {
+    const active = isActive(n);
+    const highlighted = hi ? hi.has(n.id) : true;
+    const cat = CATEGORIES[n.cat];
+
+    let alpha = 1;
+    if (!active) alpha = 0.15;
+    else if (!highlighted) alpha = 0.2;
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = cat.color;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 中心高亮点
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, Math.max(1.5, n.r * 0.3), 0, Math.PI * 2);
+    ctx.fill();
+
+    // 边框
+    if (n.id === focusId) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r + 4, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (n.id === hoverId) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r + 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // 标题（只画大节点 + 高亮节点）
+  ctx.font = '12px -apple-system, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (const n of nodes) {
+    const active = isActive(n);
+    const highlighted = hi ? hi.has(n.id) : true;
+    if (!active) continue;
+
+    const isImportant = n.r >= 10 || n.id === hoverId || n.id === focusId || (hi && hi.has(n.id));
+    if (!isImportant) continue;
+
+    const label = n.title.length > 12 ? n.title.slice(0, 12) + '…' : n.title;
+    ctx.fillStyle = highlighted ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.4)';
+    ctx.fillText(label, n.x, n.y + n.r + 6);
+  }
+
+  ctx.restore();
+}
+
+function loop() {
+  simulate();
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+
+// ========== 鼠标交互 ==========
+function screenToWorld(sx, sy) {
+  return { x: (sx - view.tx) / view.scale, y: (sy - view.ty) / view.scale };
+}
+
+function pickNode(sx, sy) {
+  const { x, y } = screenToWorld(sx, sy);
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    if (!isActive(n)) continue;
+    const dx = n.x - x, dy = n.y - y;
+    if (dx*dx + dy*dy <= n.r * n.r) return n;
+  }
+  return null;
+}
+
+let dragMode = null; // 'pan' | 'node' | null
+let dragNode = null;
+let dragStart = null;
+
+canvas.addEventListener('mousedown', e => {
+  const n = pickNode(e.clientX, e.clientY);
+  if (n) {
+    dragMode = 'node';
+    dragNode = n;
+    n.dragged = true;
+    canvas.style.cursor = 'grabbing';
+  } else {
+    dragMode = 'pan';
+    dragStart = { x: e.clientX - view.tx, y: e.clientY - view.ty };
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (dragMode === 'pan') {
+    view.tx = e.clientX - dragStart.x;
+    view.ty = e.clientY - dragStart.y;
+  } else if (dragMode === 'node') {
+    const { x, y } = screenToWorld(e.clientX, e.clientY);
+    dragNode.x = x;
+    dragNode.y = y;
+    dragNode.vx = 0;
+    dragNode.vy = 0;
+  } else {
+    const n = pickNode(e.clientX, e.clientY);
+    hoverId = n ? n.id : null;
+    if (n) {
+      showPreview(n, e.clientX, e.clientY);
+      canvas.style.cursor = 'pointer';
+    } else {
+      hidePreview();
+      canvas.style.cursor = 'grab';
+    }
+  }
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (dragMode === 'node') {
+    dragNode.dragged = false;
+    // 没拖动距离 = 视为点击
+    if (Math.abs(dragNode.vx) < 0.1 && Math.abs(dragNode.vy) < 0.1) {
+      focusId = (focusId === dragNode.id) ? null : dragNode.id;
+    }
+  }
+  dragMode = null;
+  dragNode = null;
+  canvas.style.cursor = 'grab';
+});
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.12 : 0.9;
+  const { x, y } = screenToWorld(e.clientX, e.clientY);
+  view.scale *= factor;
+  view.scale = Math.max(0.3, Math.min(3, view.scale));
+  view.tx = e.clientX - x * view.scale;
+  view.ty = e.clientY - y * view.scale;
+  updateZoomLabel();
+}, { passive: false });
+
+function zoomBy(factor) {
+  const cx = W / 2, cy = H / 2;
+  const { x, y } = screenToWorld(cx, cy);
+  view.scale *= factor;
+  view.scale = Math.max(0.3, Math.min(3, view.scale));
+  view.tx = cx - x * view.scale;
+  view.ty = cy - y * view.scale;
+  updateZoomLabel();
+}
+function resetView() {
+  view.tx = 0; view.ty = 0; view.scale = 1;
+  focusId = null;
+  updateZoomLabel();
+}
+function updateZoomLabel() {
+  document.getElementById('zoomVal').textContent = Math.round(view.scale * 100) + '%';
+}
+
+// ========== 预览卡 ==========
+const card = document.getElementById('previewCard');
+function showPreview(n, sx, sy) {
+  const cat = CATEGORIES[n.cat];
+  const inLinks = inDeg[n.id];
+  const outLinks = neighbors.get(n.id).size - inLinks;
+  card.innerHTML = `
+    <span class="tag" style="background:${cat.glow};color:${cat.color}">${cat.name}</span>
+    <div class="title">${n.title}</div>
+    <div class="summary">${n.summary}</div>
+    <div class="links-row">
+      <div class="link-stat"><strong>${inLinks}</strong>被引用</div>
+      <div class="link-stat"><strong>${Math.max(0, neighbors.get(n.id).size - inLinks)}</strong>引用了</div>
+      <div class="link-stat"><strong>${neighbors.get(n.id).size}</strong>总连接</div>
+    </div>
+  `;
+  card.style.left = Math.min(W - 300, sx + 20) + 'px';
+  card.style.top = Math.min(H - 180, sy + 20) + 'px';
+  card.classList.add('show');
+}
+function hidePreview() { card.classList.remove('show'); }
+
+// ========== Legend ==========
+function renderLegend() {
+  const list = document.getElementById('legendList');
+  list.innerHTML = '';
+  for (const [key, cat] of Object.entries(CATEGORIES)) {
+    const count = nodes.filter(n => n.cat === key).length;
+    const active = activeCategories.has(key);
+    const item = document.createElement('div');
+    item.className = 'legend-item' + (active ? '' : ' muted');
+    item.innerHTML = `
+      <div class="legend-dot" style="background:${cat.color};color:${cat.color}"></div>
+      <div>${cat.name}</div>
+      <div class="legend-count">${count}</div>
+    `;
+    item.onclick = () => {
+      if (activeCategories.has(key)) activeCategories.delete(key);
+      else activeCategories.add(key);
+      renderLegend();
+    };
+    list.appendChild(item);
+  }
+}
+renderLegend();
+
+// ========== 顶部统计 ==========
+document.getElementById('statDocs').textContent = nodes.length;
+document.getElementById('statEdges').textContent = EDGES.length;
+const isolated = nodes.filter(n => neighbors.get(n.id).size === 0).length;
+document.getElementById('statIsolated').textContent = isolated;
+const hottestId = inDeg.indexOf(Math.max(...inDeg));
+document.getElementById('statHottest').textContent = DOCS[hottestId].title;
+
+</script>
+</body>
+</html>
