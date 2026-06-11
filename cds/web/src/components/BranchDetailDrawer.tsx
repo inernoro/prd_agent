@@ -3762,7 +3762,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
               重新读取
             </Button>
           </div>
-          <MongoDocumentsView state={documentsState} />
+          <MongoDocumentsView state={documentsState} collection={selectedCollection} />
         </div>
 
         <div className="min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
@@ -3903,8 +3903,10 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
 
 function MongoDocumentsView({
   state,
+  collection,
 }: {
   state: { status: 'idle' | 'loading' | 'ok' | 'error'; documents: unknown[]; message?: string };
+  collection?: string;
 }): JSX.Element {
   if (state.status === 'loading') {
     return <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取文档</div>;
@@ -3913,7 +3915,11 @@ function MongoDocumentsView({
     return <div className="px-3 py-3 text-xs leading-5 text-destructive">{state.message}</div>;
   }
   if (state.documents.length === 0) {
-    return <div className="px-3 py-3 text-xs text-muted-foreground">选择 collection 后预览前 50 条文档。</div>;
+    return (
+      <div className="px-3 py-3 text-xs text-muted-foreground">
+        {state.status === 'ok' && collection ? `${collection} 暂无文档，或当前查询结果为空。` : '选择 collection 后预览前 50 条文档。'}
+      </div>
+    );
   }
   return (
     <div className="max-h-[560px] space-y-2 overflow-auto p-3">

@@ -4766,11 +4766,18 @@ function BranchCard({
           // running 时才用 service 自身状态做精细化区分。
           const chipStatus = isInterim || isError ? branch.status : resource.status;
           const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
+          const chipToneClass = chipStatus === 'running'
+            ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
+            : chipStatus === 'error'
+              ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
+              : isInterim
+                ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
+                : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
           return (
             <button
               key={resource.id}
               type="button"
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/60 px-2 text-xs text-foreground/75 transition-[background-color,border-color,color] hover:border-primary/35 hover:bg-[hsl(var(--surface-raised))]/75 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${chipToneClass} ${
                 resource.access === 'external'
                   ? 'ring-1 ring-[hsl(var(--hairline))]'
                   : ''
@@ -4783,8 +4790,8 @@ function BranchCard({
               }}
             >
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
-              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-90 saturate-90" /> : null}
-              {chipDisplay.port ? <span className="font-mono text-foreground/75">:{resource.port}</span> : null}
+              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85 saturate-100 brightness-105" /> : null}
+              {chipDisplay.port ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
             </button>
           );
         }) : (
