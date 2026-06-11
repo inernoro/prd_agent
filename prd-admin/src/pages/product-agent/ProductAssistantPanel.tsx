@@ -7,13 +7,15 @@
  * 对话保存在 sessionStorage（按产品隔离），切 tab / 刷新不丢，支持手动清除。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Sparkles, Send, Copy, Check, Trash2 } from 'lucide-react';
+import { Sparkles, Send, Copy, Check, Trash2, Mic, MicOff } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
+import { useSpeechInput } from '@/lib/useSpeechInput';
 import { useAuthStore } from '@/stores/authStore';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { stripMarkdown } from '@/lib/stripMarkdown';
+import { toast } from '@/lib/toast';
 
 const PRESETS = ['本月需求分析', '本月需求矩阵分析', '本月缺陷分析'];
 
@@ -71,9 +73,21 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
     onError: (m) => finalize(`出错：${m}`),
   });
 
+  // 语音输入（Web Speech API；不支持的浏览器自动隐藏麦克风按钮）
+  const speechBaseRef = useRef('');
+  const speech = useSpeechInput({
+    onResult: (finalText, interim) => setInput(speechBaseRef.current + finalText + interim),
+    onError: (msg) => toast.error('语音输入', msg),
+  });
+  const toggleVoice = () => {
+    if (!speech.listening) speechBaseRef.current = input;
+    speech.toggle();
+  };
+
   const ask = (q: string) => {
     const text = q.trim();
     if (!text || sse.isStreaming) return;
+    if (speech.listening) speech.stop();
     answerRef.current = '';
     setLiveAnswer('');
     pendingRef.current = text;
@@ -176,30 +190,59 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
         ))}
       </div>
 
-      {/* 输入区 */}
-      <div className="shrink-0 px-5 py-3 flex items-end gap-2">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              ask(input);
-            }
-          }}
-          rows={1}
-          placeholder="输入问题，Enter 发送…"
-          className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-[13px] text-white/90 outline-none focus:border-cyan-500/40"
-          style={{ maxHeight: 120 }}
-        />
-        <button
-          onClick={() => ask(input)}
-          disabled={!input.trim() || sse.isStreaming}
-          className="shrink-0 flex items-center justify-center px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-40"
-          title="发送"
+      {/* 输入区（参考 Codex 桌面端：大输入框 + 底部操作行，语音/发送在框内右下） */}
+      <div className="shrink-0 px-5 py-3">
+        <div
+          className={`rounded-xl border bg-white/5 flex flex-col transition-colors ${
+            speech.listening ? 'border-red-400/50' : 'border-white/10 focus-within:border-cyan-500/40'
+          }`}
         >
-          {sse.isStreaming ? <MapSpinner size={14} /> : <Send size={14} />}
-        </button>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                ask(input);
+              }
+            }}
+            rows={3}
+            placeholder={speech.listening ? '正在聆听，直接说出你的问题…' : '输入问题，Enter 发送，Shift+Enter 换行…'}
+            className="w-full resize-none bg-transparent px-3.5 pt-3 text-[13px] text-white/90 outline-none placeholder:text-white/30"
+            style={{ minHeight: 84, maxHeight: 200, overflowY: 'auto' }}
+          />
+          <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
+            {speech.listening && (
+              <span className="flex items-center gap-1.5 text-[11px] text-red-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                正在聆听…再点麦克风结束
+              </span>
+            )}
+            <div className="ml-auto flex items-center gap-1.5">
+              {speech.supported && (
+                <button
+                  onClick={toggleVoice}
+                  className={`flex items-center justify-center w-8 h-8 rounded-lg border text-sm transition-colors ${
+                    speech.listening
+                      ? 'bg-red-500/20 text-red-300 border-red-400/40 hover:bg-red-500/30'
+                      : 'bg-white/5 text-white/55 border-white/10 hover:text-white hover:bg-white/10'
+                  }`}
+                  title={speech.listening ? '停止语音输入' : '语音输入（说话转文字）'}
+                >
+                  {speech.listening ? <MicOff size={15} /> : <Mic size={15} />}
+                </button>
+              )}
+              <button
+                onClick={() => ask(input)}
+                disabled={!input.trim() || sse.isStreaming}
+                className="flex items-center justify-center w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40"
+                title="发送"
+              >
+                {sse.isStreaming ? <MapSpinner size={14} /> : <Send size={14} />}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -239,9 +239,9 @@ function MyTodos({ product }: { product: Product }) {
   // 状态标签：缺陷用前端 SSOT 映射，需求/功能用后端已解析的工作流状态名
   const stateOf = (it: MyTodoItem) => (it.kind === 'defect' ? defectStatusLabel(it.state) : it.stateLabel || undefined);
 
-  // 工作台右栏窄卡片：撑满剩余高度，列表内部滚动
+  // 工作台右栏窄卡片：与快捷操作按 7:3 分高（flexGrow），列表内部滚动
   return (
-    <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="min-h-0 flex flex-col rounded-xl border border-white/10 bg-white/[0.02] p-4" style={{ flexGrow: 7, flexBasis: 0 }}>
       <div className="shrink-0 flex items-center gap-2 mb-1">
         <ListChecks size={15} className="text-cyan-400" />
         <span className="text-sm font-semibold text-white/80">我的待办</span>

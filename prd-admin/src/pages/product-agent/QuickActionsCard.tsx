@@ -42,8 +42,9 @@ export function QuickActionsCard({ productId, gotoTab }: { productId: string; go
   const ctx = { productId, navigate, gotoTab };
 
   return (
-    <div className="shrink-0 rounded-xl border border-white/10 bg-white/[0.02] p-4">
-      <div className="flex items-center gap-2 mb-3">
+    // 与「我的待办」按 3:7 分高（flexGrow），网格内部滚动
+    <div className="min-h-0 flex flex-col rounded-xl border border-white/10 bg-white/[0.02] p-4" style={{ flexGrow: 3, flexBasis: 0 }}>
+      <div className="shrink-0 flex items-center gap-2 mb-3">
         <Zap size={15} className="text-amber-300" />
         <span className="text-sm font-semibold text-white/80">快捷操作</span>
         <button
@@ -55,12 +56,12 @@ export function QuickActionsCard({ productId, gotoTab }: { productId: string; go
         </button>
       </div>
       {loading ? (
-        <div className="flex justify-center py-4"><MapSpinner size={18} /></div>
+        <div className="flex-1 flex items-center justify-center"><MapSpinner size={18} /></div>
       ) : actions.length === 0 ? (
-        <div className="text-[12px] text-white/35 py-3 text-center">还没有快捷操作，点右上角「配置」添加。</div>
+        <div className="flex-1 flex items-center justify-center text-[12px] text-white/35 text-center px-4">还没有快捷操作，点右上角「配置」添加。</div>
       ) : (
-        // 配置很多时卡片内部滚动，避免把右栏「我的待办」挤到零高
-        <div className="grid grid-cols-2 gap-2" style={{ maxHeight: 280, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+        // 配置很多时网格内部滚动，不撑破 30% 高度
+        <div className="flex-1 grid grid-cols-2 gap-2 content-start" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {actions.map((a) => {
             const Icon = a.icon;
             return (
