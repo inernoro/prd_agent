@@ -4787,15 +4787,14 @@ function BranchCard({
           // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
           // running 时才用 service 自身状态做精细化区分。
           const chipStatus = isInterim || isError ? branch.status : resource.status;
-          const chipClass = isError ? issueClass : statusClass(chipStatus);
           const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
           return (
             <button
               key={resource.id}
               type="button"
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs transition-[background-color,border-color,box-shadow] hover:border-primary/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${chipClass} ${
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-2 text-xs text-muted-foreground/80 opacity-90 transition-[background-color,border-color,color,opacity] hover:border-[hsl(var(--hairline-strong))] hover:bg-[hsl(var(--surface-sunken))]/55 hover:text-foreground hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
                 resource.access === 'external'
-                  ? 'shadow-[0_0_0_1px_rgba(56,189,248,0.28),0_0_16px_-8px_rgba(56,189,248,0.85)] ring-1 ring-sky-400/35'
+                  ? 'ring-1 ring-[hsl(var(--hairline))]'
                   : ''
               }`}
               title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}\n点击打开资源面板`}
@@ -4805,9 +4804,9 @@ function BranchCard({
                 onResourcePanel?.(resource);
               }}
             >
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
-              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0" /> : null}
-              {chipDisplay.port ? <span className="font-mono text-muted-foreground">:{resource.port}</span> : null}
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full opacity-65 ${chipRailClass}`} aria-hidden />
+              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-70 saturate-50" /> : null}
+              {chipDisplay.port ? <span className="font-mono text-muted-foreground/80">:{resource.port}</span> : null}
             </button>
           );
         }) : (
