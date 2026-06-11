@@ -342,6 +342,16 @@ def validate_inputs(a, body, manifest):
         for r0 in img_refs:
             if not any(n.lower().startswith(r0.lower()) for n in mani_names):
                 errs.append(f"[断链] 诉求引用「图{r0}」但 manifest 无以 {r0} 开头的截图：{ls[:70]}")
+
+    # ── v2.5 验收地址 + 步骤式证据（2026-06-11 用户指出：报告无标的物地址无法跳转；
+    #    集中 {{EVIDENCE}} 在证据板渲染成「没有可解析的证据步骤」）──
+    if "验收地址" not in body or "http" not in body:
+        errs.append("[结构] 报告缺「验收地址」段（被验收功能页的可点击深链 + 分支/commit）——读者必须能从报告一键跳到标的物")
+    step_heads = re.findall(r"^## 步骤\s*\d+", body, re.M)
+    img_count = len(re.findall(r"\{\{IMG:", body))
+    if len(step_heads) < 3 or img_count < 3:
+        errs.append(f"[结构] 证据必须步骤式：>=3 个「## 步骤 N」段且逐段 {{{{IMG:}}}} 配图（当前步骤={len(step_heads)} 配图={img_count}）。"
+                    "证据板按步骤解析，集中 {{EVIDENCE}} 会渲染成『没有可解析的证据步骤』")
     return errs
 
 
