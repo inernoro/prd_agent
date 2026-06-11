@@ -17,7 +17,7 @@ import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
 import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy } from '../types.js';
-import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
+import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { combinedOutput } from '../types.js';
@@ -4589,10 +4589,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   type SqlDataRuntime = 'mysql' | 'postgres';
 
-  function mysqlRootPassword(service: InfraService): string {
-    return service.env?.MYSQL_ROOT_PASSWORD
-      || service.env?.MARIADB_ROOT_PASSWORD
-      || service.env?.MYSQL_PASSWORD
+  function resolvedInfraEnv(service: InfraService, branch?: BranchEntry): Record<string, string> {
+    const projectId = service.projectId || branch?.projectId || 'default';
+    const vars = branch ? getMergedEnv(projectId, branch.id) : stateService.getCustomEnv(projectId);
+    return resolveEnvTemplates(service.env || {}, vars);
+  }
+
+  function resolvedServiceDbName(service: InfraService): string {
+    const dbName = String(service.dbName || '').trim();
+    return dbName.includes('${') ? '' : dbName;
+  }
+
+  function mysqlRootPassword(service: InfraService, branch?: BranchEntry): string {
+    const env = resolvedInfraEnv(service, branch);
+    return env.MYSQL_ROOT_PASSWORD
+      || env.MARIADB_ROOT_PASSWORD
+      || env.MYSQL_PASSWORD
       || '';
   }
 
@@ -4610,14 +4622,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function mysqlClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     const database = mysqlDatabaseForBranch(service, branch);
     const branchUser = branchEnv.MYSQL_USER || '';
     const branchPassword = branchEnv.MYSQL_PASSWORD || '';
     if (branchUser && branchPassword) {
       return { user: branchUser, password: branchPassword, database, secrets: [branchPassword] };
     }
-    const rootPassword = mysqlRootPassword(service);
-    return { user: 'root', password: rootPassword, database, secrets: [rootPassword] };
+    const rootPassword = mysqlRootPassword(service, branch);
+    const user = env.MYSQL_USER || env.MARIADB_USER || 'root';
+    const password = env.MYSQL_USER || env.MARIADB_USER
+      ? (env.MYSQL_PASSWORD || env.MARIADB_PASSWORD || rootPassword)
+      : rootPassword;
+    return { user, password, database, secrets: [password] };
   }
 
   function parseDbTsv(stdout: string): DbDataQueryResult {
@@ -4684,11 +4701,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function postgresDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.POSTGRES_DB
-        || service.dbName
-        || service.env?.POSTGRES_DB
-        || service.env?.POSTGRES_USER
+        || env.POSTGRES_DB
+        || resolvedServiceDbName(service)
+        || env.POSTGRES_USER
         || 'postgres',
     )
       .replace(/[^a-zA-Z0-9_]/g, '_')
@@ -4697,8 +4715,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function postgresClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
-    const user = branchEnv.POSTGRES_USER || service.env?.POSTGRES_USER || 'postgres';
-    const password = branchEnv.POSTGRES_PASSWORD || service.env?.POSTGRES_PASSWORD || '';
+    const env = resolvedInfraEnv(service, branch);
+    const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
+    const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
     return { user, password, database: postgresDatabaseForBranch(service, branch), secrets: [password] };
   }
 
@@ -4800,16 +4819,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function redisPassword(service: InfraService): string {
-    return service.env?.REDIS_PASSWORD || service.env?.REDIS_PASS || service.env?.REDISCLI_AUTH || '';
+    const env = resolvedInfraEnv(service);
+    return env.REDIS_PASSWORD || env.REDIS_PASS || env.REDISCLI_AUTH || '';
   }
 
   function mongoDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MONGO_INITDB_DATABASE
         || branchEnv.MONGODB_DATABASE
         || service.dbName
-        || service.env?.MONGO_INITDB_DATABASE
+        || env.MONGO_INITDB_DATABASE
         || 'app',
     )
       .replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -4835,18 +4856,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
     const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
       || branchUser
-      || service.env?.MONGO_INITDB_ROOT_USERNAME
-      || service.env?.MONGO_USERNAME
-      || service.env?.MONGODB_USERNAME
+      || env.MONGO_INITDB_ROOT_USERNAME
+      || env.MONGO_USERNAME
+      || env.MONGODB_USERNAME
       || '';
     const password = branchEnv.MONGO_INITDB_ROOT_PASSWORD
       || branchEnv.MONGODB_PASSWORD
-      || service.env?.MONGO_INITDB_ROOT_PASSWORD
-      || service.env?.MONGO_PASSWORD
-      || service.env?.MONGODB_PASSWORD
+      || env.MONGO_INITDB_ROOT_PASSWORD
+      || env.MONGO_PASSWORD
+      || env.MONGODB_PASSWORD
       || '';
     const database = databaseOverride || mongoDatabaseForBranch(service, branch);
     const authSourceDb = user
@@ -5132,9 +5154,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const branchUser = branchDatabaseUser(branch).slice(0, 63);
     const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
-    const adminUser = service.env?.POSTGRES_USER || 'postgres';
-    const adminPassword = service.env?.POSTGRES_PASSWORD || '';
-    const adminDb = service.env?.POSTGRES_DB || adminUser || 'postgres';
+    const env = resolvedInfraEnv(service);
+    const adminUser = env.POSTGRES_USER || 'postgres';
+    const adminPassword = env.POSTGRES_PASSWORD || '';
+    const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
     const sql = [
       `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${pgString(branchUser)}) THEN CREATE ROLE ${pgIdent(branchUser)} LOGIN PASSWORD ${pgString(branchPassword)}; END IF; END $$;`,
       `ALTER ROLE ${pgIdent(branchUser)} WITH LOGIN PASSWORD ${pgString(branchPassword)};`,
@@ -5197,13 +5220,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mongoAdminUri(service: InfraService): { uri: string; secrets: string[]; rootUser: string; rootPassword: string } {
-    const rootUser = service.env?.MONGO_INITDB_ROOT_USERNAME
-      || service.env?.MONGO_USERNAME
-      || service.env?.MONGODB_USERNAME
+    const env = resolvedInfraEnv(service);
+    const rootUser = env.MONGO_INITDB_ROOT_USERNAME
+      || env.MONGO_USERNAME
+      || env.MONGODB_USERNAME
       || '';
-    const rootPassword = service.env?.MONGO_INITDB_ROOT_PASSWORD
-      || service.env?.MONGO_PASSWORD
-      || service.env?.MONGODB_PASSWORD
+    const rootPassword = env.MONGO_INITDB_ROOT_PASSWORD
+      || env.MONGO_PASSWORD
+      || env.MONGODB_PASSWORD
       || '';
     const uri = rootUser
       ? `mongodb://${encodeURIComponent(rootUser)}:${encodeURIComponent(rootPassword)}@localhost:27017/admin`
@@ -5392,11 +5416,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function mysqlDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MYSQL_DATABASE
-        || service.dbName
-        || service.env?.MYSQL_DATABASE
-        || service.env?.MARIADB_DATABASE
+        || env.MYSQL_DATABASE
+        || env.MARIADB_DATABASE
+        || resolvedServiceDbName(service)
         || 'app',
     )
       .replace(/[^a-zA-Z0-9_]/g, '_')
@@ -6058,7 +6083,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (runtime === 'mongodb') {
       const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
-      const serviceRequiresAuth = Boolean(service.env?.MONGO_INITDB_ROOT_USERNAME || service.env?.MONGO_USERNAME || service.env?.MONGODB_USERNAME);
+      const env = resolvedInfraEnv(service);
+      const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
       if (!database || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
         throw new Error('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
       }
@@ -6163,9 +6189,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } else if (runtime === 'postgres') {
       const branchEnv = stateService.getCustomEnvScope(branch.id);
       const user = branchEnv.POSTGRES_USER || '';
-      const adminUser = service.env?.POSTGRES_USER || 'postgres';
-      const adminPassword = service.env?.POSTGRES_PASSWORD || '';
-      const adminDb = service.env?.POSTGRES_DB || adminUser || 'postgres';
+      const env = resolvedInfraEnv(service);
+      const adminUser = env.POSTGRES_USER || 'postgres';
+      const adminPassword = env.POSTGRES_PASSWORD || '';
+      const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
       const sql = [
         `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${pgString(database)} AND pid <> pg_backend_pid();`,
         `DROP DATABASE IF EXISTS ${pgIdent(database)};`,
@@ -6225,8 +6252,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error('源数据库与目标数据库相同，拒绝覆盖复制');
     }
     const branchDb = await createPostgresBranchDatabase(service, branch, targetDatabase);
-    const adminUser = service.env?.POSTGRES_USER || 'postgres';
-    const adminPassword = service.env?.POSTGRES_PASSWORD || '';
+    const env = resolvedInfraEnv(service);
+    const adminUser = env.POSTGRES_USER || 'postgres';
+    const adminPassword = env.POSTGRES_PASSWORD || '';
     const result = await shell.exec(
       [
         `docker exec -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} pg_dump -U ${shq(adminUser)} -d ${shq(sourceDatabase)} --no-owner --no-privileges`,
@@ -6441,20 +6469,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     branch: BranchEntry,
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
-    const env = service.env || {};
+    const env = resolvedInfraEnv(service, branch);
     const branchEnv = stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
-      const db = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || env.MARIADB_DATABASE || 'app';
+      const db = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || env.MARIADB_USER || 'user';
       return `mysql://${user}:******@${host}:${port}/${db}`;
     }
     if (runtime === 'postgres') {
-      const db = branchEnv.POSTGRES_DB || service.dbName || env.POSTGRES_DB || 'postgres';
+      const db = branchEnv.POSTGRES_DB || env.POSTGRES_DB || resolvedServiceDbName(service) || 'postgres';
       const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
       return `postgres://${user}:******@${host}:${port}/${db}`;
     }
     if (runtime === 'mongodb') {
-      const db = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || service.dbName || env.MONGO_INITDB_DATABASE || 'app';
+      const db = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || env.MONGO_INITDB_DATABASE || resolvedServiceDbName(service) || 'app';
       const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
       const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
         || branchUser
@@ -6477,22 +6505,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
     port: number,
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
-    const env = service.env || {};
+    const env = resolvedInfraEnv(service, branch);
     const branchEnv = stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
-      const database = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || 'app';
+      const database = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || 'root';
       const password = branchEnv.MYSQL_PASSWORD || env.MYSQL_PASSWORD || env.MYSQL_ROOT_PASSWORD || '';
       return `mysql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
     }
     if (runtime === 'postgres') {
-      const database = branchEnv.POSTGRES_DB || service.dbName || env.POSTGRES_DB || env.POSTGRES_USER || 'postgres';
+      const database = branchEnv.POSTGRES_DB || env.POSTGRES_DB || resolvedServiceDbName(service) || env.POSTGRES_USER || 'postgres';
       const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
       const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
       return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
     }
     if (runtime === 'mongodb') {
-      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || service.dbName || env.MONGO_INITDB_DATABASE || 'app';
+      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || env.MONGO_INITDB_DATABASE || resolvedServiceDbName(service) || 'app';
       const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
       const serviceUser = branchEnv.MONGO_INITDB_ROOT_USERNAME || env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME || '';
       const user = branchUser || serviceUser;
@@ -8154,7 +8182,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const runtime = resourceRuntimeKey(resource.runtime);
     const actor = resolveActorFromRequest(req);
     const rawInfra = resource.raw as InfraService;
-    const baseDb = rawInfra.dbName || rawInfra.env?.MYSQL_DATABASE || rawInfra.env?.POSTGRES_DB || rawInfra.env?.MONGO_INITDB_DATABASE || 'app';
+    const baseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
+      ? resourceDatabaseForRuntime(runtime, rawInfra, branch) || 'app'
+      : resolvedServiceDbName(rawInfra) || 'app';
     const targetDatabase = String(req.body?.targetDatabase || branchDatabaseName(baseDb, branch))
       .replace(/[^a-zA-Z0-9_]/g, '_')
       .slice(0, 64);

@@ -786,6 +786,64 @@ describe('resource database access', () => {
     expect(pgCommands.some((cmd) => cmd.includes("'shared_pg'"))).toBe(false);
   });
 
+  it('resolves PostgreSQL service env templates before workbench queries and init SQL', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'postgres-main',
+      projectId: 'prd-agent',
+      name: 'PostgreSQL 16',
+      dockerImage: 'postgres:16',
+      containerPort: 5432,
+      hostPort: 5432,
+      containerName: 'cds-postgres-main',
+      status: 'running',
+      dbName: '${CDS_POSTGRES_DB}',
+      env: {
+        POSTGRES_USER: '${CDS_POSTGRES_USER}',
+        POSTGRES_PASSWORD: '${CDS_POSTGRES_PASSWORD}',
+        POSTGRES_DB: '${CDS_POSTGRES_DB}',
+      },
+      volumes: [],
+    });
+    harness.stateService.setCustomEnvVar('CDS_POSTGRES_USER', 'resolved_user', 'prd-agent');
+    harness.stateService.setCustomEnvVar('CDS_POSTGRES_PASSWORD', 'resolved-pw', 'prd-agent');
+    harness.stateService.setCustomEnvVar('CDS_POSTGRES_DB', 'resolved_db', 'prd-agent');
+    harness.shell.addResponsePattern(/information_schema\.tables/, () => ({
+      stdout: 'table_schema\ttable_name\ttable_type\npublic\tusers\tBASE TABLE\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/printf %s .* docker exec -i -e PGPASSWORD=.* psql /, () => ({
+      stdout: 'CREATE TABLE\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const tables = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Apostgres-main/data/tables');
+    const init = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Apostgres-main/data/init-sql',
+      { sql: 'CREATE TABLE init_postgres (id INT PRIMARY KEY);', confirmResourceName: 'PostgreSQL 16' },
+      { 'x-test-cookie-auth': '1' },
+    );
+
+    expect(tables.status).toBe(200);
+    expect(tables.body.database).toBe('resolved_db');
+    expect(tables.body.tables).toEqual([{ schema: 'public', name: 'users', fullName: 'public.users', type: 'BASE TABLE' }]);
+    expect(init.status).toBe(200);
+    expect(init.body.database).toBe('resolved_db');
+    const pgCommands = harness.shell.commands.filter((cmd) => cmd.includes(' psql '));
+    expect(pgCommands.length).toBeGreaterThanOrEqual(2);
+    expect(pgCommands.every((cmd) => cmd.includes("PGPASSWORD='resolved-pw'") && cmd.includes("-U 'resolved_user'") && cmd.includes("-d 'resolved_db'"))).toBe(true);
+    expect(pgCommands.some((cmd) => cmd.includes('${'))).toBe(false);
+  });
+
   it('executes initialization SQL through the branch resource database, not the shared infra default', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;
