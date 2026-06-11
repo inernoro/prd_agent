@@ -2622,6 +2622,11 @@ public class ProductAgentController : ControllerBase
 
         var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
         var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).SortBy(v => v.CreatedAt).ToListAsync();
+        var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
+        var defects = await _db.DefectReports.Find(Builders<DefectReport>.Filter.And(
+                Builders<DefectReport>.Filter.Eq(d => d.TracedProductId, productId),
+                Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false)))
+            .Limit(5000).ToListAsync();
 
         // 需求 / 功能流程定义（拿状态分类 + 终态标签）
         var (_, reqWfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
@@ -2674,7 +2679,19 @@ public class ProductAgentController : ControllerBase
             };
         }).ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { releaseProgress, overall, velocity }));
+        // 规模/分布统计（原工作台数据展示区迁入报表，口径与 overview/stats 一致）
+        var counts = new
+        {
+            versions = versions.Count,
+            requirements = reqs.Count,
+            features = feats.Count,
+            defects = defects.Count,
+        };
+        var requirementsByGrade = ProductItemGrade.All.ToDictionary(g => g, g => reqs.Count(r => r.Grade == g));
+        var defectsByStatus = defects.GroupBy(d => d.Status).ToDictionary(g => g.Key, g => g.Count());
+        var versionsByLifecycle = ProductVersionLifecycle.All.ToDictionary(l => l, l => versions.Count(v => v.Lifecycle == l));
+
+        return Ok(ApiResponse<object>.Ok(new { releaseProgress, overall, velocity, counts, requirementsByGrade, defectsByStatus, versionsByLifecycle }));
     }
 
     // ════════════════════════ 用户偏好（工作台快捷操作） ════════════════════════
