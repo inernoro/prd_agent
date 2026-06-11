@@ -252,8 +252,31 @@ export function deleteDescTemplate(templateId: string) {
 }
 
 // ── 批量导入 ──
-export function importRequirements(productId: string, rows: { title: string; grade?: string; description?: string }[]) {
-  return apiRequest<{ created: number }>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
+export interface ImportRequirementRow {
+  title: string;
+  grade?: string;
+  description?: string;
+  sourceSystem?: string;
+  externalId?: string;
+  sourceUrl?: string;
+  sourceStatus?: string;
+  sourcePriority?: string;
+  sourceFields?: Record<string, string>;
+  handlerNames?: string[];
+  developerNames?: string[];
+  creatorNames?: string[];
+  ccNames?: string[];
+  comments?: { author: string; title: string; content: string; createdAt?: string }[];
+  attachmentIds?: string[];
+  sourceCreatedAt?: string;
+  sourceModifiedAt?: string;
+  sourceCompletedAt?: string;
+  importedFileName?: string;
+  importBatchId?: string;
+}
+
+export function importRequirements(productId: string, rows: ImportRequirementRow[]) {
+  return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
 }
 
 // ── 报表 / 统计分析 ──

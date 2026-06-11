@@ -2751,8 +2751,59 @@ public class ProductAgentController : ControllerBase
         var initialState = await ResolveInitialStateAsync(wfId);
         var now = DateTime.UtcNow;
         var created = 0;
+        var updated = 0;
         foreach (var row in rows)
         {
+            var sourceSystem = row.SourceSystem?.Trim().ToLowerInvariant();
+            var externalId = row.ExternalId?.Trim();
+            var sourceSnapshot = string.IsNullOrWhiteSpace(sourceSystem) || string.IsNullOrWhiteSpace(externalId)
+                ? null
+                : new RequirementSourceSnapshot
+                {
+                    Status = row.SourceStatus?.Trim() ?? string.Empty,
+                    Priority = row.SourcePriority?.Trim() ?? string.Empty,
+                    Fields = row.SourceFields ?? new(),
+                    HandlerNames = row.HandlerNames ?? new(),
+                    DeveloperNames = row.DeveloperNames ?? new(),
+                    CreatorNames = row.CreatorNames ?? new(),
+                    CcNames = row.CcNames ?? new(),
+                    Comments = (row.Comments ?? new()).Select(comment => new RequirementSourceComment
+                    {
+                        Author = comment.Author?.Trim() ?? string.Empty,
+                        Title = comment.Title?.Trim() ?? string.Empty,
+                        Content = comment.Content?.Trim() ?? string.Empty,
+                        CreatedAt = ParseImportDate(comment.CreatedAt),
+                    }).ToList(),
+                    AttachmentIds = row.AttachmentIds ?? new(),
+                    SourceCreatedAt = ParseImportDate(row.SourceCreatedAt),
+                    SourceModifiedAt = ParseImportDate(row.SourceModifiedAt),
+                    SourceCompletedAt = ParseImportDate(row.SourceCompletedAt),
+                    ImportedFileName = row.ImportedFileName?.Trim() ?? string.Empty,
+                    ImportBatchId = row.ImportBatchId?.Trim() ?? string.Empty,
+                    ImportedAt = now,
+                };
+            Requirement? existing = null;
+            if (sourceSnapshot != null)
+            {
+                existing = await _db.Requirements.Find(r =>
+                    r.ProductId == productId &&
+                    !r.IsDeleted &&
+                    r.SourceSystem == sourceSystem &&
+                    r.ExternalId == externalId).FirstOrDefaultAsync();
+            }
+            if (existing != null)
+            {
+                await _db.Requirements.UpdateOneAsync(r => r.Id == existing.Id,
+                    Builders<Requirement>.Update
+                        .Set(r => r.Title, row.Title!.Trim())
+                        .Set(r => r.Description, row.Description?.Trim())
+                        .Set(r => r.Grade, ProductItemGrade.All.Contains(row.Grade ?? "") ? row.Grade! : ProductItemGrade.P2)
+                        .Set(r => r.SourceUrl, row.SourceUrl?.Trim())
+                        .Set(r => r.SourceSnapshot, sourceSnapshot)
+                        .Set(r => r.UpdatedAt, now));
+                updated++;
+                continue;
+            }
             var req = new Requirement
             {
                 ProductId = productId,
@@ -2764,12 +2815,24 @@ public class ProductAgentController : ControllerBase
                 CurrentState = initialState,
                 StateEnteredAt = now,
                 OwnerId = userId,
+                SourceSystem = sourceSystem,
+                ExternalId = externalId,
+                SourceUrl = row.SourceUrl?.Trim(),
+                SourceSnapshot = sourceSnapshot,
             };
             await _db.Requirements.InsertOneAsync(req);
             created++;
         }
         await RecalcProductCountsAsync(productId);
-        return Ok(ApiResponse<object>.Ok(new { created }));
+        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+    }
+
+    private static DateTime? ParseImportDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (!DateTime.TryParse(value, out var parsed)) return null;
+        var unspecified = DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
+        return new DateTimeOffset(unspecified, TimeSpan.FromHours(8)).UtcDateTime;
     }
 
     // ════════════════════════ 报表 / 统计分析 ════════════════════════
@@ -3739,6 +3802,31 @@ public class ImportRequirementRow
     public string? Title { get; set; }
     public string? Grade { get; set; }
     public string? Description { get; set; }
+    public string? SourceSystem { get; set; }
+    public string? ExternalId { get; set; }
+    public string? SourceUrl { get; set; }
+    public string? SourceStatus { get; set; }
+    public string? SourcePriority { get; set; }
+    public Dictionary<string, string>? SourceFields { get; set; }
+    public List<string>? HandlerNames { get; set; }
+    public List<string>? DeveloperNames { get; set; }
+    public List<string>? CreatorNames { get; set; }
+    public List<string>? CcNames { get; set; }
+    public List<ImportRequirementComment>? Comments { get; set; }
+    public List<string>? AttachmentIds { get; set; }
+    public string? SourceCreatedAt { get; set; }
+    public string? SourceModifiedAt { get; set; }
+    public string? SourceCompletedAt { get; set; }
+    public string? ImportedFileName { get; set; }
+    public string? ImportBatchId { get; set; }
+}
+
+public class ImportRequirementComment
+{
+    public string? Author { get; set; }
+    public string? Title { get; set; }
+    public string? Content { get; set; }
+    public string? CreatedAt { get; set; }
 }
 
 public class BatchRequest
