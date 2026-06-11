@@ -4770,7 +4770,7 @@ function BranchCard({
             <button
               key={resource.id}
               type="button"
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-2 text-xs text-muted-foreground/80 opacity-90 transition-[background-color,border-color,color,opacity] hover:border-[hsl(var(--hairline-strong))] hover:bg-[hsl(var(--surface-sunken))]/55 hover:text-foreground hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/60 px-2 text-xs text-foreground/75 transition-[background-color,border-color,color] hover:border-primary/35 hover:bg-[hsl(var(--surface-raised))]/75 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
                 resource.access === 'external'
                   ? 'ring-1 ring-[hsl(var(--hairline))]'
                   : ''
@@ -4782,9 +4782,9 @@ function BranchCard({
                 onResourcePanel?.(resource);
               }}
             >
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full opacity-65 ${chipRailClass}`} aria-hidden />
-              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-70 saturate-50" /> : null}
-              {chipDisplay.port ? <span className="font-mono text-muted-foreground/80">:{resource.port}</span> : null}
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
+              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-90 saturate-90" /> : null}
+              {chipDisplay.port ? <span className="font-mono text-foreground/75">:{resource.port}</span> : null}
             </button>
           );
         }) : (
