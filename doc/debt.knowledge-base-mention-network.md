@@ -1,14 +1,8 @@
----
-type: debt
-title: 知识库引用网络（双链 + 反向链接 + 宇宙图）—— 已知边界与遗留事项
-status: open
-owner: 知识库小组
-last-updated: 2026-06-11
-related:
-  - design.knowledge-base-mention-network.md
----
-
 # 知识库引用网络 已知债务台账
+
+> **版本**：v1.0 | **日期**：2026-06-11 | **状态**：开放（MVP 已知边界 + 后续可补项）
+
+> **关联文档**：`design.knowledge-base-mention-network.md`（本设计的主文档，本文是其遗留事项台账）
 
 ## 一、MVP 已知边界（2026-06-11 上线时明确告知用户）
 
