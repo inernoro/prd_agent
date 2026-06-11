@@ -11,6 +11,7 @@ type PreviewActionSplitButtonProps = {
   onRelease?: () => void;
   releaseDisabled?: boolean;
   releaseLabel?: string;
+  previewLabel?: string;
   className?: string;
 };
 
@@ -24,10 +25,13 @@ export function PreviewActionSplitButton({
   onRelease,
   releaseDisabled = false,
   releaseLabel = '发布到目标',
+  previewLabel,
   className = '',
 }: PreviewActionSplitButtonProps): JSX.Element {
+  const hasLabel = Boolean(previewLabel);
   const mainClassName = [
-    'inline-flex h-9 w-10 items-center justify-center rounded-l-md border border-emerald-500/35 bg-emerald-500/10 text-emerald-500 transition-colors',
+    'inline-flex h-9 items-center justify-center rounded-l-md border border-emerald-500/35 bg-emerald-500/10 text-emerald-500 transition-colors',
+    hasLabel ? 'min-w-0 flex-1 gap-2 px-3 text-sm font-medium' : 'w-10',
     'hover:border-emerald-500/50 hover:bg-emerald-500/15 hover:text-emerald-400',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/35',
     disabled ? 'pointer-events-none opacity-50' : '',
@@ -64,6 +68,7 @@ export function PreviewActionSplitButton({
           onClick={(event) => event.stopPropagation()}
         >
           {icon}
+          {previewLabel ? <span className="truncate">{previewLabel}</span> : null}
         </a>
       ) : (
         <button
@@ -78,6 +83,7 @@ export function PreviewActionSplitButton({
           }}
         >
           {icon}
+          {previewLabel ? <span className="truncate">{previewLabel}</span> : null}
         </button>
       )}
       <DropdownMenu trigger={menuTrigger} width={210}>

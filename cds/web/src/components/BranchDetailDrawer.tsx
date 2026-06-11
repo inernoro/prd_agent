@@ -2302,12 +2302,15 @@ export function BranchDetailDrawer({
             ) : (
               <>
                 {previewUrl ? (
-                  <Button asChild className="flex-[2_1_0]">
-                    <a href={previewUrl} target="_blank" rel="noreferrer" title="打开预览页">
-                      <Play />
-                      打开预览页
-                    </a>
-                  </Button>
+                  <PreviewActionSplitButton
+                    className="flex-[2_1_0]"
+                    previewHref={previewUrl}
+                    previewLabel="打开预览页"
+                    previewTitle="打开预览页"
+                    previewAriaLabel="打开预览页"
+                    onRelease={onRelease && branch ? () => onRelease(branch.id) : undefined}
+                    releaseDisabled={!onRelease}
+                  />
                 ) : (
                   <Button className="flex-[2_1_0]" disabled title="当前没有可用预览地址">
                     <Play />
