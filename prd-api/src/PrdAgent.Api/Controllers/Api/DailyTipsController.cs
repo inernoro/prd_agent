@@ -143,10 +143,12 @@ public sealed class DailyTipsController : ControllerBase
         // 上方 seedFillers 已经覆盖空 DB 场景（dbSourceIds 为空集，seedFillers = 全套合规 seed），
         // 旧 fallback 会绕过 dbSourceIds 让 admin 禁用 (IsActive=false) 的 seed 复活 (Codex P2)。
 
-        // 定向 tip / 被投递 tip 永远置顶,保证「为你修复」类消息被最先看到
+        // 定向 tip(TargetUserId = 当前用户)置顶,保证「为你修复」类消息被最先看到。
+        // 注意:Deliveries 里有当前用户 != 被定向推送 —— Track 端点会给「看过一眼」的用户补一条
+        // Delivery 记录纯做统计(seen/viewCount),若把它算进置顶/isTargeted,任何被浏览过的普通教程
+        // 都会变成「为你推送」,并触发前端定向自动弹窗(2026-06-11 用户反馈:无教程页面弹「全部教程」)。
         var ordered = items
-            .OrderByDescending(x => x.TargetUserId == userId
-                                    || (x.Deliveries != null && x.Deliveries.Any(d => d.UserId == userId)))
+            .OrderByDescending(x => x.TargetUserId == userId)
             .ThenBy(x => x.DisplayOrder)
             .ThenByDescending(x => x.CreatedAt)
             .Select(x =>
@@ -164,7 +166,8 @@ public sealed class DailyTipsController : ControllerBase
                     x.CtaText,
                     x.TargetSelector,
                     x.AutoAction,
-                    isTargeted = x.TargetUserId == userId || mine != null,
+                    // 仅 TargetUserId 命中才算定向;mine(Delivery)只是 Track 统计记录,不代表被推送
+                    isTargeted = x.TargetUserId == userId,
                     x.SourceType,
                     x.SourceId,
                     x.Version,
