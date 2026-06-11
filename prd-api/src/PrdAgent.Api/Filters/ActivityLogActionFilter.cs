@@ -72,6 +72,9 @@ public sealed class ActivityLogActionFilter : IAsyncActionFilter
 
         try
         {
+            // Action 抛了未处理异常时不留痕——此时 Result 为空、响应码还停留在默认 200，不能当成功
+            if (executed.Exception != null && !executed.ExceptionHandled) return;
+
             // 仅记录成功结果（2xx）
             var status = (executed.Result as ObjectResult)?.StatusCode
                          ?? (executed.Result as StatusCodeResult)?.StatusCode

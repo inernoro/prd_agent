@@ -3,7 +3,7 @@
  * 数据由后端 ActivityLogActionFilter 按白名单自动留痕，本页只读：
  * 按天分组的时间线流 + 按人/模块/时间筛选 + 加载更多分页。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity } from 'lucide-react';
 import { PageHeader, GlassCard, Button } from '@/components/design';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -67,6 +67,9 @@ export default function TeamActivityPage() {
   const [filterModule, setFilterModule] = useState('');
   const [filterRange, setFilterRange] = useState<RangeKey>('all');
 
+  // 过期响应守卫：快速切换筛选 / 加载更多与刷新竞态时，丢弃晚到的旧请求结果
+  const fetchIdRef = useRef(0);
+
   useEffect(() => {
     void getTeamActivityModules().then((res) => {
       if (res.success) setModules(res.data.items);
@@ -75,6 +78,7 @@ export default function TeamActivityPage() {
 
   const load = useCallback(
     async (nextPage: number, append: boolean) => {
+      const fetchId = ++fetchIdRef.current;
       if (append) setLoadingMore(true);
       else setLoading(true);
       const res = await getTeamActivityLogs({
@@ -84,6 +88,7 @@ export default function TeamActivityPage() {
         module: filterModule || undefined,
         from: rangeFrom(filterRange),
       });
+      if (fetchIdRef.current !== fetchId) return;
       if (res.success) {
         setItems((prev) => (append ? [...prev, ...res.data.items] : res.data.items));
         setTotal(res.data.total);
@@ -221,7 +226,8 @@ function ActivityRow({ item }: { item: TeamActivityItem }) {
         <span className="text-white/45"> {item.actionLabel}</span>
         {item.targetTitle ? <span className="text-cyan-200/90"> 《{item.targetTitle}》</span> : null}
       </div>
-      <RelativeTime value={item.createdAt} className="text-[11px] text-white/35 shrink-0" />
+      {/* 列表场景关闭逐行自刷新定时器（项目惯例，长列表 N 行 N 个 interval 会拖性能） */}
+      <RelativeTime value={item.createdAt} refreshIntervalMs={0} className="text-[11px] text-white/35 shrink-0" />
     </div>
   );
 }
