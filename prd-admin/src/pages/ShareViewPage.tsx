@@ -328,6 +328,29 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               {submitting ? '验证中...' : '确认'}
             </button>
           </form>
+
+          {/* 团队成员免密指引：后端凭登录态识别团队成员并放行密码门控；
+              未登录访客在系统眼里与外部人无异，必须给一条「去登录」的出路 */}
+          {!isAuthenticated ? (
+            <button
+              type="button"
+              onClick={() => navigate(`/login?returnUrl=${encodeURIComponent(window.location.pathname + window.location.search)}`)}
+              style={{
+                marginTop: 20,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'rgba(59, 130, 246, 0.9)',
+                fontSize: 13,
+              }}
+            >
+              团队成员？登录后可免密访问 →
+            </button>
+          ) : (
+            <p style={{ marginTop: 20, fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>
+              当前账号不在该网页所属的团队内，需输入密码访问
+            </p>
+          )}
         </div>
 
         {/* Shake animation */}
