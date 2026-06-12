@@ -182,6 +182,10 @@ export function SingleProductView() {
         <div className="flex h-full min-h-0 flex-1 flex-col">
           <FeatureCatalogTab productId={product.id} />
         </div>
+      ) : active === 'requirements' ? (
+        <div className="flex h-full min-h-0 flex-1 flex-col">
+          <RequirementsTab productId={product.id} />
+        </div>
       ) : active === 'board' ? (
         <div className="flex-1 min-h-0 p-4">
           <BoardTab productId={product.id} />
@@ -193,7 +197,6 @@ export function SingleProductView() {
       ) : (
         <SectionShell title={SECTION_TITLE[active]}>
           {active === 'versions' && <VersionsTab productId={product.id} />}
-          {active === 'requirements' && <RequirementsTab productId={product.id} />}
           {active === 'reports' && <ReportsTab productId={product.id} />}
           {active === 'defects' && <DefectsTab productId={product.id} />}
           {active === 'team' && <ProductTeamTab productId={product.id} />}
@@ -423,10 +426,16 @@ function RequirementsTab({ productId }: { productId: string }) {
     void reload();
   }, [reload]);
 
-  if (loading) return <MapSectionLoader text="正在加载需求…" />;
+  if (loading) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center">
+        <MapSectionLoader text="正在加载需求…" />
+      </div>
+    );
+  }
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+    <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
+      <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">
           <input
@@ -453,41 +462,47 @@ function RequirementsTab({ productId }: { productId: string }) {
           {items.length > 0 && <ViewToggle view={view} setView={setView} />}
         </div>
       </div>
-      <p className="text-xs text-white/35">仅显示你作为负责人或处理人的需求。</p>
+      <p className="shrink-0 text-xs text-white/35">仅显示你作为负责人或处理人的需求。</p>
       {items.length === 0 ? (
         <EmptyHint text="没有与你相关的需求。你是负责人或处理人的需求会出现在这里；点「新建需求」可创建新条目。" />
       ) : (
         <>
-        {bar}
+        <div className="shrink-0 w-full min-w-0">{bar}</div>
         {filtered.length === 0 ? (
           <div className="text-center text-white/35 text-sm py-10">没有匹配的需求，调整筛选条件试试。</div>
         ) : view === 'board' && workflow && workflow.states.length > 0 ? (
-        <StateBoard items={filtered} productId={productId} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
+        <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
+          <StateBoard items={filtered} productId={productId} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
+        </div>
       ) : view === 'board' ? (
-        <GradeBoard
-          items={filtered}
-          onCardClick={(r) => openDetail(r.id)}
-          renderSub={(r) => `${r.requirementNo}${r.externalId ? ` · ${r.externalId}` : ''} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
-        />
+        <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
+          <GradeBoard
+            items={filtered}
+            onCardClick={(r) => openDetail(r.id)}
+            renderSub={(r) => `${r.requirementNo}${r.externalId ? ` · ${r.externalId}` : ''} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
+          />
+        </div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 w-full min-w-0">
           {selected.size > 0 && (
             <BatchBar entityType="requirement" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
           )}
-          <RequirementDataTable
-            items={filtered}
-            selected={selected}
-            toggleSelected={toggleSel}
-            openDetail={openDetail}
-            stateLabel={stateLabel}
-            nameOf={nameOf}
-            versionName={versionName}
-            customerName={customerName}
-            onDelete={async (id) => {
-              await deleteRequirement(id);
-              await reload();
-            }}
-          />
+          <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-white/10" style={{ overscrollBehavior: 'contain' }}>
+            <RequirementDataTable
+              items={filtered}
+              selected={selected}
+              toggleSelected={toggleSel}
+              openDetail={openDetail}
+              stateLabel={stateLabel}
+              nameOf={nameOf}
+              versionName={versionName}
+              customerName={customerName}
+              onDelete={async (id) => {
+                await deleteRequirement(id);
+                await reload();
+              }}
+            />
+          </div>
         </div>
       )}
         </>
@@ -529,51 +544,72 @@ function RequirementDataTable({
     .filter((field) => field !== 'ID')
     .sort((left, right) => left.localeCompare(right, 'zh-CN')), [items]);
   const rows = orderByHierarchy(items);
-  const cell = 'max-w-56 truncate px-3 py-2 text-xs text-white/60';
+  const cell = 'truncate px-3 py-2 text-xs text-white/60';
+  const dynamicColCount = sourceFields.length;
+  const minTableWidth = 1180 + dynamicColCount * 120;
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-white/10">
-      <table className="min-w-max whitespace-nowrap text-left text-sm">
-        <thead className="sticky top-0 z-10 bg-[#181a20] text-[11px] text-white/45">
-          <tr>
-            <th className="w-10 px-3 py-2 font-medium">选择</th>
-            <th className="px-3 py-2 font-medium">MAP 编号</th>
-            <th className="px-3 py-2 font-medium">需求 ID</th>
-            <th className="min-w-72 px-3 py-2 font-medium">标题</th>
-            <th className="px-3 py-2 font-medium">分级</th>
-            <th className="px-3 py-2 font-medium">MAP 状态</th>
-            <th className="px-3 py-2 font-medium">处理人</th>
-            <th className="px-3 py-2 font-medium">负责人</th>
-            <th className="px-3 py-2 font-medium">关联版本</th>
-            <th className="px-3 py-2 font-medium">关联客户</th>
-            {sourceFields.map((field) => <th key={field} className="px-3 py-2 font-medium">{field}</th>)}
-            <th className="px-3 py-2 font-medium">创建时间</th>
-            <th className="px-3 py-2 font-medium">更新时间</th>
-            <th className="w-16 px-3 py-2 font-medium">操作</th>
+    <table className="w-full table-fixed text-left text-sm" style={{ minWidth: minTableWidth }}>
+      <colgroup>
+        <col style={{ width: 40 }} />
+        <col style={{ width: '7%' }} />
+        <col style={{ width: '7%' }} />
+        <col style={{ width: dynamicColCount > 0 ? '18%' : '24%' }} />
+        <col style={{ width: '5%' }} />
+        <col style={{ width: '8%' }} />
+        <col style={{ width: '8%' }} />
+        <col style={{ width: '8%' }} />
+        <col style={{ width: '9%' }} />
+        <col style={{ width: '9%' }} />
+        {sourceFields.map((field) => <col key={field} style={{ width: '8%' }} />)}
+        <col style={{ width: '9%' }} />
+        <col style={{ width: '9%' }} />
+        <col style={{ width: 48 }} />
+      </colgroup>
+      <thead className="sticky top-0 z-10 bg-[#0f1014] text-[11px] text-white/45 border-b border-white/10">
+        <tr>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">选择</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">MAP 编号</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">需求 ID</th>
+          <th className="px-3 py-2.5 font-medium">标题</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">分级</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">MAP 状态</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">处理人</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">负责人</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">关联版本</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">关联客户</th>
+          {sourceFields.map((field) => <th key={field} className="px-3 py-2.5 font-medium whitespace-nowrap">{field}</th>)}
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">创建时间</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">更新时间</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(({ item, depth }) => (
+          <tr key={item.id} onClick={() => openDetail(item.id)} className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]">
+            <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} className="accent-cyan-500" /></td>
+            <td className={`${cell} whitespace-nowrap font-mono text-cyan-200/80`}>{item.requirementNo}</td>
+            <td className={`${cell} whitespace-nowrap`}>{item.externalId || '-'}</td>
+            <td className="px-3 py-2 text-white/85">
+              <div className="truncate" style={{ paddingLeft: depth * 20 }} title={item.title}>
+                {depth > 0 && <span className="mr-1 text-white/25">└</span>}
+                {item.title}
+              </div>
+            </td>
+            <td className={`${cell} whitespace-nowrap`}>{ITEM_GRADE_LABEL[item.grade]}</td>
+            <td className={cell} title={stateLabel(item.currentState ?? '')}>{stateLabel(item.currentState ?? '') || '-'}</td>
+            <td className={cell} title={nameOf(item.assigneeId)}>{nameOf(item.assigneeId)}</td>
+            <td className={cell} title={nameOf(item.ownerId)}>{nameOf(item.ownerId)}</td>
+            <td className={cell} title={item.versionIds.map((id) => versionName.get(id) ?? id).join('、') || '-'}>{item.versionIds.map((id) => versionName.get(id) ?? id).join('、') || '-'}</td>
+            <td className={cell} title={item.customerIds.map((id) => customerName.get(id) ?? id).join('、') || '-'}>{item.customerIds.map((id) => customerName.get(id) ?? id).join('、') || '-'}</td>
+            {sourceFields.map((field) => <td key={field} className={cell} title={item.sourceSnapshot?.fields?.[field]}>{item.sourceSnapshot?.fields?.[field] || '-'}</td>)}
+            <td className={`${cell} whitespace-nowrap`}>{new Date(item.createdAt).toLocaleString('zh-CN')}</td>
+            <td className={`${cell} whitespace-nowrap`}>{new Date(item.updatedAt).toLocaleString('zh-CN')}</td>
+            <td className="px-3 py-2 text-center" onClick={(event) => event.stopPropagation()}><button onClick={() => void onDelete(item.id)} className="text-white/30 hover:text-red-300" title="删除"><Trash2 size={14} /></button></td>
           </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ item, depth }) => (
-            <tr key={item.id} onClick={() => openDetail(item.id)} className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]">
-              <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} className="accent-cyan-500" /></td>
-              <td className={cell}>{item.requirementNo}</td>
-              <td className={cell}>{item.externalId || '-'}</td>
-              <td className="max-w-96 px-3 py-2 text-white/85"><div className="truncate" style={{ paddingLeft: depth * 20 }}>{depth > 0 && <span className="mr-1 text-white/25">└</span>}{item.title}</div></td>
-              <td className={cell}>{ITEM_GRADE_LABEL[item.grade]}</td>
-              <td className={cell}>{stateLabel(item.currentState ?? '') || '-'}</td>
-              <td className={cell}>{nameOf(item.assigneeId)}</td>
-              <td className={cell}>{nameOf(item.ownerId)}</td>
-              <td className={cell}>{item.versionIds.map((id) => versionName.get(id) ?? id).join('、') || '-'}</td>
-              <td className={cell}>{item.customerIds.map((id) => customerName.get(id) ?? id).join('、') || '-'}</td>
-              {sourceFields.map((field) => <td key={field} className={cell} title={item.sourceSnapshot?.fields?.[field]}>{item.sourceSnapshot?.fields?.[field] || '-'}</td>)}
-              <td className={cell}>{new Date(item.createdAt).toLocaleString('zh-CN')}</td>
-              <td className={cell}>{new Date(item.updatedAt).toLocaleString('zh-CN')}</td>
-              <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}><button onClick={() => void onDelete(item.id)} className="text-white/30 hover:text-red-300" title="删除"><Trash2 size={14} /></button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
