@@ -82,3 +82,4 @@
 | fix | cds | Jwt__Secret 注入改为项目环境变量优先、CDS 全局值仅兜底：根治换 CDS_JWT_SECRET 跨项目穿透打哑其他项目存量密文的联动事故 |
 | feat | prd-api | 新增 PlatformKeyIntegrityWorker：启动及每 6 小时自检平台 API key 可解密性，发现环境密钥不匹配立即 LogError + 全局站内告警（幂等，恢复后自动关闭），杜绝密钥哑掉两小时无人知的静默故障 |
 | chore | - | 删除过期验收驱动 e2e/lifecycle.mjs（写死旧分支 URL 的一次性脚本）；新增 .claude/rules/cross-project-isolation.md 跨项目隔离原则与共享通道清单 |
+| chore | - | 合并 main（218 个提交）进开发分支：container.ts 环境构建采用 main 的 resolveProfileRuntimeEnv 重构并移植 Jwt 项目级优先修复，remote-hosts.ts 合并双方 import；CDS 1932 测试、API 943 测试、admin 419 测试全绿 |
