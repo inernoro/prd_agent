@@ -134,9 +134,10 @@ public static class ProductEntityType
     public const string Feature = "feature";
     public const string Customer = "customer";
     public const string UpgradeRequest = "upgrade-request";
+    public const string Defect = "defect";
 
     public static readonly string[] All =
     {
-        Product, Version, Requirement, Feature, Customer, UpgradeRequest,
+        Product, Version, Requirement, Feature, Customer, UpgradeRequest, Defect,
     };
 }

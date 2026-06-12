@@ -167,6 +167,12 @@ public class DefectReport
     // ===== 产品管理智能体（product-agent）追溯引用 =====
     // 缺陷追溯需求：由 product-agent 写入，defect-agent 不感知这些字段（仅追加，不改既有逻辑）。
 
+    /// <summary>产品管理智能体绑定的流程定义 Id（状态 Key 与 Status 一致）。</summary>
+    public string? WorkflowDefId { get; set; }
+
+    /// <summary>产品内缺陷划分：缺陷 / 非产品缺陷，见 ProductDefectLinkageCatalog。</summary>
+    public string? ProductDefectClassification { get; set; }
+
     /// <summary>追溯到的产品 ID（product-agent.products）</summary>
     public string? TracedProductId { get; set; }
 

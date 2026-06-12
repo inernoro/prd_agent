@@ -200,21 +200,16 @@ export function SingleProductView() {
   );
 }
 
-// ── 看板（按状态分列拖拽流转）──
+// ── 看板（需求按状态分列拖拽流转；功能无独立流转，跟随所属版本）──
 function BoardTab({ productId }: { productId: string }) {
-  const [kind, setKind] = useState<'requirement' | 'feature'>('requirement');
   return (
     <div className="h-full min-h-0 flex flex-col gap-3">
       <div className="shrink-0 flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-white/80">看板</h2>
-        <span className="text-[11px] text-white/35">拖拽卡片到目标列即可流转状态</span>
-        <div className="flex rounded-lg border border-white/10 overflow-hidden ml-auto">
-          <button onClick={() => setKind('requirement')} className={`px-3 py-1 text-xs ${kind === 'requirement' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>需求</button>
-          <button onClick={() => setKind('feature')} className={`px-3 py-1 text-xs ${kind === 'feature' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>功能</button>
-        </div>
+        <h2 className="text-sm font-semibold text-white/80">需求看板</h2>
+        <span className="text-[11px] text-white/35">拖拽卡片到目标列即可流转需求状态；功能状态请查看所属版本</span>
       </div>
       <div className="flex-1 min-h-0">
-        <KanbanBoard key={kind} productId={productId} entityType={kind} />
+        <KanbanBoard productId={productId} entityType="requirement" />
       </div>
     </div>
   );
@@ -582,16 +577,18 @@ function RequirementDataTable({
 function FeaturesTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<Feature[]>([]);
+  const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const { workflow } = useEffectiveWorkflow('feature', productId);
+  const { workflow: versionWorkflow } = useEffectiveWorkflow('version', productId);
   const nameOf = useDirectoryNames();
   const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await listFeatures(productId);
-    if (res.success) setItems(res.data.items);
+    const [featRes, verRes] = await Promise.all([listFeatures(productId), listVersions(productId)]);
+    if (featRes.success) setItems(featRes.data.items);
+    if (verRes.success) setVersions(verRes.data.items);
     setLoading(false);
   }, [productId]);
 
@@ -599,16 +596,21 @@ function FeaturesTab({ productId }: { productId: string }) {
     void reload();
   }, [reload]);
 
-  const stateLabel = useCallback((key: string) => workflow?.states.find((s) => s.key === key)?.label ?? key, [workflow]);
+  const versionById = useMemo(() => new Map(versions.map((v) => [v.id, v])), [versions]);
+  const featureVersionState = useCallback((f: Feature) => {
+    const v = f.plannedVersionId ? versionById.get(f.plannedVersionId) : undefined;
+    return v?.currentState ?? '';
+  }, [versionById]);
+  const stateLabel = useCallback((key: string) => versionWorkflow?.states.find((s) => s.key === key)?.label ?? key, [versionWorkflow]);
   const featureTitle = useMemo(() => new Map(items.map((f) => [f.id, f.title])), [items]);
   const fields = useMemo<FilterFieldDef<Feature>[]>(() => [
     { key: 'grade', label: '等级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (f, v) => f.grade === v },
-    { key: 'state', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (f) => f.currentState ?? '', stateLabel), test: (f, v) => (f.currentState ?? '') === v },
+    { key: 'state', label: '版本状态', defaultVisible: true, options: (its) => distinctOptions(its, (f) => featureVersionState(f), stateLabel), test: (f, v) => featureVersionState(f) === v },
     { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (f) => f.assigneeId ?? '', nameOf), test: (f, v) => (f.assigneeId ?? '') === v },
     { key: 'owner', label: '负责人', options: (its) => distinctOptions(its, (f) => f.ownerId ?? '', nameOf), test: (f, v) => (f.ownerId ?? '') === v },
     { key: 'parent', label: '父功能', options: (its) => distinctOptions(its, (f) => f.parentId ?? '', (id) => featureTitle.get(id) ?? id), test: (f, v) => (f.parentId ?? '') === v },
     { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (f, v) => inTimeRange(f.createdAt, v) },
-  ], [stateLabel, nameOf, featureTitle]);
+  ], [stateLabel, nameOf, featureTitle, featureVersionState]);
   const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:feature', fields, keywordOf: (f) => `${f.featureNo} ${f.title} ${f.description ?? ''}`, keywordPlaceholder: '搜索编号/标题/描述' });
 
   if (loading) return <MapSectionLoader text="正在加载功能…" />;

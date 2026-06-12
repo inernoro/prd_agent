@@ -121,4 +121,11 @@ public class ProductWorkflowTransition
     /// comment 与 RequireComment 等价；为空表示除 RequireComment 外无额外字段要求。
     /// </summary>
     public List<string>? RequiredFieldKeys { get; set; }
+
+    /// <summary>
+    /// 跨对象联动：流转成功后额外触发关联对象操作。
+    /// requirement = 缺陷转需求；defect = 需求转缺陷并标记产品缺陷。
+    /// 见 ProductEntityType.Requirement / ProductEntityType.Defect。
+    /// </summary>
+    public string? LinkEntityType { get; set; }
 }

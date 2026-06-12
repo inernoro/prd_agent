@@ -11,3 +11,4 @@
 | feat | prd-admin | 流程模板状态配置改为表格式（颜色/名称/说明/起始/结束/删除确认） |
 | fix | prd-admin | 状态定义区补回状态说明列并固定列宽，名称列不再挤占其他列 |
 | feat | prd-api | WorkflowState 新增 Description 字段供状态说明存储 |
+| refactor | prd-admin | 应用配置移除功能流转页，功能状态改读所属计划版本 |

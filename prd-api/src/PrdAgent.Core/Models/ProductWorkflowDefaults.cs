@@ -10,9 +10,13 @@ public static class ProductWorkflowDefaults
 {
     public const string RequirementDefId = "wf-default-requirement";
     public const string FeatureDefId = "wf-default-feature";
+    public const string DefectDefId = "wf-default-defect";
 
     /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认需求流程定义。</summary>
     public const int RequirementWorkflowRevision = 6;
+
+    /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认缺陷流程定义。</summary>
+    public const int DefectWorkflowRevision = 1;
 
     public static ProductWorkflowDefinition Requirement() => new()
     {
@@ -72,6 +76,10 @@ public static class ProductWorkflowDefaults
         {
             edge.RequiredFieldKeys = new() { ProductWorkflowTransitionFieldKeys.VersionIds };
         }
+        if (edge.ToState == RequirementWorkflowCatalog.Rejected)
+        {
+            edge.LinkEntityType = ProductEntityType.Defect;
+        }
     }
 
     public static ProductWorkflowDefinition Feature() => new()
@@ -100,5 +108,50 @@ public static class ProductWorkflowDefaults
         },
     };
 
-    public static ProductWorkflowDefinition[] All() => new[] { Requirement(), Feature() };
+    public static ProductWorkflowDefinition Defect() => new()
+    {
+        Id = DefectDefId,
+        Name = DefectWorkflowCatalog.WorkflowName,
+        Description = "已提交 → 已分配 → 处理中 → 待验收 → 已解决 / 已拒绝 / 已关闭（可在应用配置中自定义）",
+        EntityType = ProductEntityType.Defect,
+        IsDefault = true,
+        ProductId = null,
+        States = new()
+        {
+            new() { Key = DefectStatus.Submitted, Label = "已提交", Color = "#9ca3af", IsInitial = true, Category = "todo", SortOrder = 0, SlaHours = 24 },
+            new() { Key = DefectStatus.Assigned, Label = "已分配", Color = "#60a5fa", Category = "todo", SortOrder = 1, SlaHours = 24 },
+            new() { Key = DefectStatus.Processing, Label = "处理中", Color = "#f59e0b", Category = "doing", SortOrder = 2, SlaHours = 72, WipLimit = 10 },
+            new() { Key = DefectStatus.Verifying, Label = "待验收", Color = "#a78bfa", Category = "doing", SortOrder = 3, SlaHours = 48 },
+            new() { Key = DefectStatus.Resolved, Label = "已解决", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
+            new() { Key = DefectStatus.Rejected, Label = "已拒绝", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
+            new() { Key = DefectStatus.Closed, Label = "已关闭", Color = "#6b7280", IsFinal = true, Category = "done", SortOrder = 6 },
+        },
+        Transitions = BuildDefectTransitions(),
+    };
+
+    private static List<ProductWorkflowTransition> BuildDefectTransitions()
+    {
+        var list = new List<ProductWorkflowTransition>();
+        foreach (var (fromKey, toKeys) in DefectWorkflowCatalog.TransitionMatrix)
+        {
+            foreach (var toKey in toKeys)
+            {
+                var edge = new ProductWorkflowTransition
+                {
+                    Key = $"{fromKey}-to-{toKey}",
+                    Label = DefectWorkflowCatalog.BuildTransitionActionLabel(toKey),
+                    FromState = fromKey,
+                    ToState = toKey,
+                    RequireComment = toKey == DefectStatus.Rejected,
+                    AutoAssignToActor = toKey == DefectStatus.Processing,
+                };
+                if (toKey == DefectStatus.Rejected)
+                    edge.LinkEntityType = ProductEntityType.Requirement;
+                list.Add(edge);
+            }
+        }
+        return list;
+    }
+
+    public static ProductWorkflowDefinition[] All() => new[] { Requirement(), Feature(), Defect() };
 }

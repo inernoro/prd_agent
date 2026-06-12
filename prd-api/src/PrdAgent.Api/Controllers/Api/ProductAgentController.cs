@@ -637,6 +637,56 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    [HttpGet("products/{productId}/releases/inherit-manifest")]
+    public async Task<IActionResult> GetInheritReleaseManifest(string productId)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var previous = await FindLatestReleaseWithManifestAsync(productId);
+        if (previous == null)
+            return Ok(ApiResponse<object>.Ok(new { previousReleaseId = (string?)null, items = Array.Empty<ReleaseFeatureItem>() }));
+        var items = previous.FeatureManifest
+            .Where(x => !string.Equals(x.ChangeType, FeatureChangeType.Deprecated, StringComparison.Ordinal))
+            .Select(x => new ReleaseFeatureItem
+            {
+                FeatureId = x.FeatureId,
+                ChangeType = FeatureChangeType.Unchanged,
+                ChangeNote = null,
+            })
+            .ToList();
+        return Ok(ApiResponse<object>.Ok(new { previousReleaseId = previous.Id, previousVCode = previous.VCode, items }));
+    }
+
+    [HttpGet("releases/{id}")]
+    public async Task<IActionResult> GetRelease(string id)
+    {
+        var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    [HttpPut("releases/{id}/feature-manifest")]
+    public async Task<IActionResult> UpdateReleaseFeatureManifest(string id, [FromBody] UpdateReleaseFeatureManifestRequest request)
+    {
+        var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        if (item.Status == "released")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已上线版本的功能清单不可修改"));
+        var manifest = NormalizeReleaseFeatureManifest(request.FeatureManifest ?? new());
+        if (manifest.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "功能清单不能为空"));
+        await _db.ProductReleases.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductRelease>.Update
+                .Set(x => x.FeatureManifest, manifest)
+                .Set(x => x.PreviousReleaseId, request.PreviousReleaseId ?? item.PreviousReleaseId)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.ProductReleases.Find(x => x.Id == id).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
     [HttpPost("products/{productId}/releases")]
     public async Task<IActionResult> CreateRelease(string productId, [FromBody] CreateReleaseRequest request)
     {
@@ -666,6 +716,10 @@ public class ProductAgentController : ControllerBase
         var versionType = request.IsTemporaryOptimization ? "minor" : initiation!.VersionType;
         var vCode = initiation?.TCode?.Replace("T", "V", StringComparison.OrdinalIgnoreCase)
             ?? await GenerateWorkflowCodeAsync(productId, "V", versionType);
+        var previousRelease = await FindLatestReleaseWithManifestAsync(productId);
+        var manifest = await ResolveReleaseFeatureManifestAsync(productId, request.FeatureManifest, previousRelease);
+        if (manifest.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "功能清单不能为空，请至少纳入一项功能"));
         var item = new ProductRelease
         {
             ProductId = productId,
@@ -685,6 +739,8 @@ public class ProductAgentController : ControllerBase
             RequirementIds = (initiation?.RequirementIds ?? new()).Concat(request.AdditionalRequirementIds ?? new()).Distinct().ToList(),
             TeamMemberIds = request.TeamMemberIds.Distinct().ToList(),
             PlannedReleaseAt = request.PlannedReleaseAt,
+            PreviousReleaseId = request.PreviousReleaseId ?? previousRelease?.Id,
+            FeatureManifest = manifest,
             Status = "announcement_pending",
             CreatedBy = userId,
         };
@@ -1501,14 +1557,39 @@ public class ProductAgentController : ControllerBase
                     .Set(w => w.UpdatedAt, DateTime.UtcNow));
         }
 
+        var defectDef = ProductWorkflowDefaults.Defect();
+        var existingDefect = await _db.ProductWorkflowDefinitions
+            .Find(w => w.Id == ProductWorkflowDefaults.DefectDefId && !w.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (existingDefect == null)
+        {
+            defectDef.SeedRevision = ProductWorkflowDefaults.DefectWorkflowRevision;
+            defectDef.IsUserCustomized = false;
+            await _db.ProductWorkflowDefinitions.InsertOneAsync(defectDef);
+        }
+        else if (!existingDefect.IsUserCustomized
+                 && existingDefect.SeedRevision < ProductWorkflowDefaults.DefectWorkflowRevision)
+        {
+            await _db.ProductWorkflowDefinitions.UpdateOneAsync(
+                w => w.Id == defectDef.Id,
+                Builders<ProductWorkflowDefinition>.Update
+                    .Set(w => w.Name, defectDef.Name)
+                    .Set(w => w.Description, defectDef.Description)
+                    .Set(w => w.States, defectDef.States)
+                    .Set(w => w.Transitions, defectDef.Transitions)
+                    .Set(w => w.SeedRevision, ProductWorkflowDefaults.DefectWorkflowRevision)
+                    .Set(w => w.UpdatedAt, DateTime.UtcNow));
+        }
+
+        var seedIds = new[] { ProductWorkflowDefaults.FeatureDefId, ProductWorkflowDefaults.DefectDefId };
         var existingIds = (await _db.ProductWorkflowDefinitions
-            .Find(Builders<ProductWorkflowDefinition>.Filter.In(w => w.Id, new[] { ProductWorkflowDefaults.FeatureDefId }))
+            .Find(Builders<ProductWorkflowDefinition>.Filter.In(w => w.Id, seedIds))
             .Project(w => w.Id).ToListAsync()).ToHashSet();
-        var missingFeature = ProductWorkflowDefaults.All()
+        var missingBuiltin = ProductWorkflowDefaults.All()
             .Where(w => w.Id != ProductWorkflowDefaults.RequirementDefId && !existingIds.Contains(w.Id))
             .ToList();
-        if (missingFeature.Count > 0)
-            await _db.ProductWorkflowDefinitions.InsertManyAsync(missingFeature);
+        if (missingBuiltin.Count > 0)
+            await _db.ProductWorkflowDefinitions.InsertManyAsync(missingBuiltin);
 
         await MigrateLegacyRequirementStatesAsync();
     }
@@ -1655,6 +1736,13 @@ public class ProductAgentController : ControllerBase
                 if (ur == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
                 currentState = ur.CurrentState; workflowDefId = ur.WorkflowDefId; productId = ur.ProductId;
                 break;
+            case ProductEntityType.Defect:
+                var d = await _db.DefectReports.Find(x => x.Id == request.EntityId && !x.IsDeleted).FirstOrDefaultAsync();
+                if (d == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
+                if (string.IsNullOrWhiteSpace(d.TracedProductId))
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷未追溯到产品，无法流转"));
+                currentState = d.Status; workflowDefId = d.WorkflowDefId; productId = d.TracedProductId!;
+                break;
             default:
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的对象类型"));
         }
@@ -1695,6 +1783,7 @@ public class ProductAgentController : ControllerBase
         string entityTitle = string.Empty;
         string entityGrade = string.Empty;
         Requirement? requirementEntity = null;
+        DefectReport? defectEntity = null;
 
         if (request.EntityType == ProductEntityType.Requirement)
         {
@@ -1714,8 +1803,17 @@ public class ProductAgentController : ControllerBase
             entityTitle = featEntity.Title;
             entityGrade = featEntity.Grade;
         }
+        else if (request.EntityType == ProductEntityType.Defect)
+        {
+            defectEntity = await _db.DefectReports.Find(x => x.Id == request.EntityId && !x.IsDeleted).FirstOrDefaultAsync();
+            if (defectEntity == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
+            entityOwnerId = defectEntity.ReporterId;
+            entityAssigneeId = defectEntity.AssigneeId;
+            entityTitle = defectEntity.Title ?? defectEntity.DefectNo;
+            entityGrade = defectEntity.Grade ?? SeverityToGrade(defectEntity.Severity);
+        }
 
-        if (request.EntityType is ProductEntityType.Requirement or ProductEntityType.Feature)
+        if (request.EntityType is ProductEntityType.Requirement or ProductEntityType.Feature or ProductEntityType.Defect)
         {
             if (!ProductWorkflowTransitionGuard.CanExecuteTransition(userId, transition, product, isGlobalAdmin, entityOwnerId, entityAssigneeId))
                 return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前用户无权执行该流转"));
@@ -1812,12 +1910,28 @@ public class ProductAgentController : ControllerBase
                 await _db.VersionUpgradeRequests.UpdateOneAsync(x => x.Id == request.EntityId,
                     Builders<VersionUpgradeRequest>.Update.Set(x => x.CurrentState, transition.ToState).Set(x => x.UpdatedAt, now));
                 break;
+            case ProductEntityType.Defect:
+            {
+                var du = Builders<DefectReport>.Update.Set(x => x.Status, transition.ToState).Set(x => x.UpdatedAt, now);
+                if (effectiveAssignee != null)
+                {
+                    var assigneeName = (await _db.Users.Find(uu => uu.UserId == effectiveAssignee).FirstOrDefaultAsync())?.DisplayName;
+                    du = du.Set(x => x.AssigneeId, effectiveAssignee).Set(x => x.AssigneeName, assigneeName);
+                }
+                if (!string.IsNullOrWhiteSpace(request.Title)) du = du.Set(x => x.Title, request.Title.Trim());
+                if (!string.IsNullOrWhiteSpace(request.Grade)) du = du.Set(x => x.Grade, request.Grade.Trim());
+                await _db.DefectReports.UpdateOneAsync(x => x.Id == request.EntityId, du);
+                break;
+            }
         }
+
+        await HandleTransitionCrossLinkAsync(request.EntityType, request.EntityId, productId, userId, transition);
+
         _logger.LogInformation("[product-agent] Transition {Type}/{Id} {From}->{To} by {User}",
             request.EntityType, request.EntityId, currentState, transition.ToState, userId);
 
-        // 记录时间线 + 通知（仅需求 / 功能）
-        if (request.EntityType is ProductEntityType.Requirement or ProductEntityType.Feature)
+        // 记录时间线 + 通知（需求 / 功能 / 缺陷）
+        if (request.EntityType is ProductEntityType.Requirement or ProductEntityType.Feature or ProductEntityType.Defect)
         {
             var actorName = (await _db.Users.Find(uu => uu.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
             string LabelOf(string? key) => def.States.FirstOrDefault(s => s.Key == key)?.Label ?? key ?? "未设置";
@@ -1830,17 +1944,114 @@ public class ProductAgentController : ControllerBase
             var notifyAssignee = effectiveAssignee ?? ctx?.assigneeId;
             var no = ctx?.no ?? request.EntityId;
             var title = ctx?.title ?? "";
+            var itemUrl = request.EntityType == ProductEntityType.Defect
+                ? $"/product-agent/p/{productId}/defect/{request.EntityId}"
+                : ItemUrl(productId, request.EntityType, request.EntityId);
             await NotifyItemAsync(new[] { notifyAssignee }, userId, $"状态变更 · {no}",
-                $"{actorName ?? "有人"} 把「{title}」从 {fromLabel} 流转到 {toLabel}", ItemUrl(productId, request.EntityType, request.EntityId));
+                $"{actorName ?? "有人"} 把「{title}」从 {fromLabel} 流转到 {toLabel}", itemUrl);
             if (effectiveAssignee != null)
             {
                 var assigneeName = (await _db.Users.Find(uu => uu.UserId == effectiveAssignee).FirstOrDefaultAsync())?.DisplayName;
                 await RecordActivityAsync(request.EntityType, request.EntityId, productId, ProductActivityType.Assign, userId, actorName, toValue: assigneeName ?? effectiveAssignee);
                 if (effectiveAssignee != userId)
-                    await NotifyItemAsync(new[] { (string?)effectiveAssignee }, userId, $"指派给你 · {no}", $"{actorName ?? "有人"} 把「{title}」指派给你处理", ItemUrl(productId, request.EntityType, request.EntityId));
+                    await NotifyItemAsync(new[] { (string?)effectiveAssignee }, userId, $"指派给你 · {no}", $"{actorName ?? "有人"} 把「{title}」指派给你处理", itemUrl);
             }
         }
         return Ok(ApiResponse<object>.Ok(new { entityId = request.EntityId, newState = transition.ToState }));
+    }
+
+    /// <summary>流转成功后按规则触发需求 ↔ 缺陷联动。</summary>
+    private async Task HandleTransitionCrossLinkAsync(string entityType, string entityId, string productId, string userId, ProductWorkflowTransition transition)
+    {
+        if (string.IsNullOrWhiteSpace(transition.LinkEntityType)) return;
+
+        if (entityType == ProductEntityType.Requirement && transition.LinkEntityType == ProductEntityType.Defect)
+        {
+            var req = await _db.Requirements.Find(r => r.Id == entityId && !r.IsDeleted).FirstOrDefaultAsync();
+            if (req != null) await EnsureDefectFromRequirementAsync(req, productId, userId);
+        }
+        else if (entityType == ProductEntityType.Defect && transition.LinkEntityType == ProductEntityType.Requirement)
+        {
+            var defect = await _db.DefectReports.Find(d => d.Id == entityId && !d.IsDeleted).FirstOrDefaultAsync();
+            if (defect != null) await ConvertDefectToRequirementInternalAsync(defect, userId);
+        }
+    }
+
+    /// <summary>需求标记为产品缺陷并确保存在关联缺陷（幂等）。</summary>
+    private async Task<DefectReport> EnsureDefectFromRequirementAsync(Requirement req, string productId, string userId)
+    {
+        var fd = req.FormData ?? new Dictionary<string, string>();
+        fd[ProductDefectLinkageCatalog.RequirementProductDefectFormKey] = ProductDefectLinkageCatalog.RequirementProductDefectValue;
+        await _db.Requirements.UpdateOneAsync(r => r.Id == req.Id,
+            Builders<Requirement>.Update.Set(r => r.FormData, fd).Set(r => r.UpdatedAt, DateTime.UtcNow));
+
+        var existing = await _db.DefectReports
+            .Find(d => d.TracedRequirementId == req.Id && d.TracedProductId == productId && !d.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (existing != null) return existing;
+
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        string? assigneeName = null;
+        if (!string.IsNullOrWhiteSpace(req.AssigneeId))
+            assigneeName = (await _db.Users.Find(u => u.UserId == req.AssigneeId).FirstOrDefaultAsync())?.DisplayName;
+
+        var defect = new DefectReport
+        {
+            DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
+            Title = req.Title,
+            RawContent = req.Description ?? string.Empty,
+            Grade = req.Grade,
+            AssigneeId = req.AssigneeId,
+            AssigneeName = assigneeName,
+            Status = DefectStatus.Submitted,
+            ReporterId = userId,
+            ReporterName = user?.DisplayName,
+            TracedProductId = productId,
+            TracedRequirementId = req.Id,
+            ProductDefectClassification = ProductDefectLinkageCatalog.ProductDefect,
+        };
+        var (_, workflowDefId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
+        defect.WorkflowDefId = workflowDefId;
+        await _db.DefectReports.InsertOneAsync(defect);
+        await RecalcDefectCountAsync(productId);
+        var actorName = user?.DisplayName;
+        await RecordActivityAsync(ProductEntityType.Defect, defect.Id, productId, ProductActivityType.Convert, userId, actorName,
+            content: $"由需求 {req.RequirementNo} 联动生成");
+        return defect;
+    }
+
+    /// <summary>缺陷转需求（幂等，与 POST convert-to-requirement 共用）。</summary>
+    private async Task<Requirement> ConvertDefectToRequirementInternalAsync(DefectReport defect, string userId)
+    {
+        var existing = await _db.Requirements.Find(r => r.SourceDefectId == defect.Id && !r.IsDeleted).FirstOrDefaultAsync();
+        if (existing != null) return existing;
+
+        if (string.IsNullOrWhiteSpace(defect.TracedProductId))
+            throw new InvalidOperationException("缺陷未追溯到产品，无法转需求");
+
+        var productId = defect.TracedProductId!;
+        var (_, workflowDefId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
+        var req = new Requirement
+        {
+            ProductId = productId,
+            RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
+            Title = string.IsNullOrWhiteSpace(defect.Title) ? $"由缺陷 {defect.DefectNo} 转化" : defect.Title!.Trim(),
+            Description = defect.RawContent,
+            Grade = defect.Grade ?? SeverityToGrade(defect.Severity),
+            WorkflowDefId = workflowDefId,
+            OwnerId = userId,
+            SourceDefectId = defect.Id,
+        };
+        req.CurrentState = await ResolveInitialStateAsync(workflowDefId);
+        await _db.Requirements.InsertOneAsync(req);
+
+        await _db.DefectReports.UpdateOneAsync(d => d.Id == defect.Id,
+            Builders<DefectReport>.Update.Set(d => d.TracedRequirementId, req.Id));
+        var convActor = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        await RecordActivityAsync(ProductEntityType.Requirement, req.Id, productId, ProductActivityType.Convert, userId, convActor,
+            content: $"由缺陷 {defect.DefectNo} 转化生成");
+        await RecalcProductCountsAsync(productId);
+        return req;
     }
 
     // ════════════════════════ 知识图谱（P2）════════════════════════
@@ -2224,7 +2435,10 @@ public class ProductAgentController : ControllerBase
             TracedRequirementId = request.RequirementId,
             TracedVersionId = request.VersionId,
             TracedFeatureId = request.FeatureId,
+            ProductDefectClassification = ProductDefectLinkageCatalog.NormalizeClassification(request.ProductDefectClassification),
         };
+        var (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
+        defect.WorkflowDefId = defectWfId;
         await _db.DefectReports.InsertOneAsync(defect);
         await RecalcDefectCountAsync(productId);
         return Ok(ApiResponse<object>.Ok(defect));
@@ -2261,6 +2475,8 @@ public class ProductAgentController : ControllerBase
         var statusVal = request.Status ?? string.Empty;
         if (DefectStatus.All.Contains(statusVal))
             u = u.Set(d => d.Status, statusVal);
+        if (request.ProductDefectClassification != null)
+            u = u.Set(d => d.ProductDefectClassification, ProductDefectLinkageCatalog.NormalizeClassification(request.ProductDefectClassification));
 
         await _db.DefectReports.UpdateOneAsync(d => d.Id == defectId, u);
         var updated = await _db.DefectReports.Find(d => d.Id == defectId).FirstOrDefaultAsync();
@@ -2300,31 +2516,7 @@ public class ProductAgentController : ControllerBase
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
 
-        // 幂等：已转过则直接返回既有需求
-        var existing = await _db.Requirements.Find(r => r.SourceDefectId == defectId && !r.IsDeleted).FirstOrDefaultAsync();
-        if (existing != null) return Ok(ApiResponse<object>.Ok(existing));
-
-        var (_, workflowDefId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
-        var req = new Requirement
-        {
-            ProductId = productId,
-            RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
-            Title = string.IsNullOrWhiteSpace(defect.Title) ? $"由缺陷 {defect.DefectNo} 转化" : defect.Title!.Trim(),
-            Description = defect.RawContent,
-            Grade = defect.Grade ?? SeverityToGrade(defect.Severity),
-            WorkflowDefId = workflowDefId,
-            OwnerId = userId,
-            SourceDefectId = defectId,
-        };
-        req.CurrentState = await ResolveInitialStateAsync(workflowDefId);
-        await _db.Requirements.InsertOneAsync(req);
-
-        // 建立追溯：缺陷指向新需求（新需求的「追溯缺陷」即可看到来源缺陷）
-        await _db.DefectReports.UpdateOneAsync(d => d.Id == defectId,
-            Builders<DefectReport>.Update.Set(d => d.TracedRequirementId, req.Id));
-        var convActor = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
-        await RecordActivityAsync(ProductEntityType.Requirement, req.Id, productId, ProductActivityType.Convert, userId, convActor, content: $"由缺陷 {defect.DefectNo} 转化生成");
-        await RecalcProductCountsAsync(productId);
+        var req = await ConvertDefectToRequirementInternalAsync(defect, userId);
         _logger.LogInformation("[product-agent] Defect {DefectNo} converted to requirement {ReqNo} by {User}", defect.DefectNo, req.RequirementNo, userId);
         return Ok(ApiResponse<object>.Ok(req));
     }
@@ -2352,6 +2544,11 @@ public class ProductAgentController : ControllerBase
             case ProductEntityType.Feature:
                 var f = await _db.Features.Find(x => x.Id == entityId && !x.IsDeleted).FirstOrDefaultAsync();
                 return f == null ? null : (f.ProductId, f.AssigneeId, f.OwnerId, f.Title, f.FeatureNo);
+            case ProductEntityType.Defect:
+                var d = await _db.DefectReports.Find(x => x.Id == entityId && !x.IsDeleted).FirstOrDefaultAsync();
+                return d == null || string.IsNullOrWhiteSpace(d.TracedProductId)
+                    ? null
+                    : (d.TracedProductId!, d.AssigneeId, d.ReporterId, d.Title ?? d.DefectNo, d.DefectNo);
             default:
                 return null;
         }
@@ -4233,6 +4430,10 @@ public class ProductAgentController : ControllerBase
                 await _db.VersionUpgradeRequests.UpdateOneAsync(x => x.Id == entityId,
                     Builders<VersionUpgradeRequest>.Update.Set(x => x.WorkflowDefId, workflowDefId).Set(x => x.CurrentState, currentState));
                 break;
+            case ProductEntityType.Defect:
+                await _db.DefectReports.UpdateOneAsync(x => x.Id == entityId,
+                    Builders<DefectReport>.Update.Set(x => x.WorkflowDefId, workflowDefId).Set(x => x.Status, currentState ?? DefectStatus.Submitted));
+                break;
         }
     }
 
@@ -4310,6 +4511,59 @@ public class ProductAgentController : ControllerBase
     private Task LinkRequirementToReleaseAsync(string releaseId, string requirementId)
         => _db.ProductReleases.UpdateOneAsync(x => x.Id == releaseId,
             Builders<ProductRelease>.Update.AddToSet(x => x.RequirementIds, requirementId).Set(x => x.UpdatedAt, DateTime.UtcNow));
+
+    private async Task<ProductRelease?> FindLatestReleaseWithManifestAsync(string productId)
+    {
+        var candidates = await _db.ProductReleases.Find(x =>
+                x.ProductId == productId && !x.IsDeleted && x.FeatureManifest.Count > 0)
+            .SortByDescending(x => x.ReleasedAt)
+            .ThenByDescending(x => x.CreatedAt)
+            .Limit(5)
+            .ToListAsync();
+        return candidates.FirstOrDefault();
+    }
+
+    private async Task<List<ReleaseFeatureItem>> ResolveReleaseFeatureManifestAsync(
+        string productId,
+        List<ReleaseFeatureItem>? requested,
+        ProductRelease? previousRelease)
+    {
+        if (requested is { Count: > 0 })
+            return await ValidateReleaseFeatureManifestAsync(productId, NormalizeReleaseFeatureManifest(requested));
+        if (previousRelease == null)
+            return new List<ReleaseFeatureItem>();
+        return previousRelease.FeatureManifest
+            .Where(x => !string.Equals(x.ChangeType, FeatureChangeType.Deprecated, StringComparison.Ordinal))
+            .Select(x => new ReleaseFeatureItem
+            {
+                FeatureId = x.FeatureId,
+                ChangeType = FeatureChangeType.Unchanged,
+            })
+            .ToList();
+    }
+
+    private static List<ReleaseFeatureItem> NormalizeReleaseFeatureManifest(IEnumerable<ReleaseFeatureItem> items)
+        => items
+            .Where(x => !string.IsNullOrWhiteSpace(x.FeatureId))
+            .GroupBy(x => x.FeatureId)
+            .Select(g => g.Last())
+            .ToList();
+
+    private async Task<List<ReleaseFeatureItem>> ValidateReleaseFeatureManifestAsync(string productId, List<ReleaseFeatureItem> manifest)
+    {
+        var featureIds = manifest.Select(x => x.FeatureId).Distinct().ToList();
+        var existing = await _db.Features.Find(f => f.ProductId == productId && featureIds.Contains(f.Id) && !f.IsDeleted)
+            .Project(f => f.Id).ToListAsync();
+        var existingSet = existing.ToHashSet();
+        foreach (var item in manifest)
+        {
+            if (!existingSet.Contains(item.FeatureId))
+                throw new InvalidOperationException($"功能 {item.FeatureId} 不存在或已删除");
+            if (!string.IsNullOrWhiteSpace(item.ChangeType) && !FeatureChangeType.All.Contains(item.ChangeType))
+                throw new InvalidOperationException($"无效的功能变更类型：{item.ChangeType}");
+        }
+        return manifest;
+    }
 
     private async Task AdvanceRequirementsToStateAsync(
         string productId,
@@ -4458,6 +4712,14 @@ public class CreateReleaseRequest
     public List<string>? TeamMemberIds { get; set; }
     public List<string>? AdditionalRequirementIds { get; set; }
     public DateTime? PlannedReleaseAt { get; set; }
+    public string? PreviousReleaseId { get; set; }
+    public List<ReleaseFeatureItem>? FeatureManifest { get; set; }
+}
+
+public class UpdateReleaseFeatureManifestRequest
+{
+    public string? PreviousReleaseId { get; set; }
+    public List<ReleaseFeatureItem>? FeatureManifest { get; set; }
 }
 
 public class CompleteReleaseRequest
@@ -4708,6 +4970,8 @@ public class CreateProductDefectRequest
     public string? RequirementId { get; set; }
     public string? VersionId { get; set; }
     public string? FeatureId { get; set; }
+    /// <summary>缺陷 / 非产品缺陷，见 ProductDefectLinkageCatalog</summary>
+    public string? ProductDefectClassification { get; set; }
 }
 
 public class UpdateProductDefectRequest
@@ -4720,6 +4984,8 @@ public class UpdateProductDefectRequest
     public string? AssigneeId { get; set; }
     public string? FeatureId { get; set; }
     public string? VersionId { get; set; }
+    /// <summary>缺陷 / 非产品缺陷，见 ProductDefectLinkageCatalog</summary>
+    public string? ProductDefectClassification { get; set; }
 }
 
 public class UpdateQuickActionsRequest

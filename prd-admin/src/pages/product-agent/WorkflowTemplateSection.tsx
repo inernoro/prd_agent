@@ -15,10 +15,10 @@ import {
   findMatrixTransition,
 } from './WorkflowTransitionRuleModal';
 
+/** 应用配置维护需求与缺陷的状态流转（功能跟随版本；版本无独立矩阵）。 */
 const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'requirement', label: '需求' },
-  { value: 'feature', label: '功能' },
-  { value: 'version', label: '版本' },
+  { value: 'defect', label: '缺陷' },
 ];
 
 function defaultWorkflowName(entityType: ProductEntityType): string {

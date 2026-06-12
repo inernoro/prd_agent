@@ -13,6 +13,7 @@ import {
   type WorkflowTransitionFieldKey,
   type WorkflowTransitionRole,
 } from './workflowTransitionGuard';
+import { WORKFLOW_LINK_ENTITY_LABELS } from './productDefectLinkageCatalog';
 
 const WORKFLOW_ROLE_OPTIONS = Object.values(WORKFLOW_TRANSITION_ROLES);
 const WORKFLOW_FIELD_OPTIONS = Object.values(WORKFLOW_TRANSITION_FIELD_KEYS);
@@ -111,6 +112,19 @@ export function WorkflowTransitionRuleModal({
               ))}
             </div>
           </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs text-white/50">跨对象联动（流转成功后自动执行）</span>
+            <select
+              value={draft.linkEntityType ?? ''}
+              onChange={(e) => setDraft((d) => ({ ...d, linkEntityType: e.target.value || null }))}
+              className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+            >
+              <option value="">无</option>
+              <option value="defect">{WORKFLOW_LINK_ENTITY_LABELS.defect}</option>
+              <option value="requirement">{WORKFLOW_LINK_ENTITY_LABELS.requirement}</option>
+            </select>
+            <p className="text-[11px] text-white/35">需求流转可联动生成缺陷；缺陷流转可联动转为需求。可在矩阵中按业务配置。</p>
+          </div>
           <div className="flex flex-col gap-2">
             <span className="text-xs text-white/50">流转前必填字段</span>
             <div className="flex flex-wrap gap-x-4 gap-y-2">
@@ -172,5 +186,6 @@ export function createDefaultMatrixTransition(
     autoAssignToActor: existing?.autoAssignToActor,
     allowedRoles: existing?.allowedRoles,
     requiredFieldKeys: existing?.requiredFieldKeys,
+    linkEntityType: existing?.linkEntityType,
   };
 }

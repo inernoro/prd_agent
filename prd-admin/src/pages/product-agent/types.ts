@@ -10,6 +10,7 @@ export type ProductEntityType =
   | 'version'
   | 'requirement'
   | 'feature'
+  | 'defect'
   | 'customer'
   | 'upgrade-request';
 
@@ -368,6 +369,8 @@ export interface WorkflowTransition {
   autoAssignToActor?: boolean;
   /** 流转前必须已填写的字段（title / assigneeId / grade / comment） */
   requiredFieldKeys?: string[] | null;
+  /** 跨对象联动：requirement | defect */
+  linkEntityType?: string | null;
 }
 
 export interface WorkflowDefinition {
