@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, Sun, X } from 'lucide-react';
+import { Check, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -106,6 +106,7 @@ type ShellAuthStatus = {
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
+const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
 
 function shellLoginHref(mode?: string): string {
   const path = mode === 'github' ? '/api/auth/github/login' : '/login';
@@ -415,6 +416,19 @@ function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailN
         >
           <Settings />
           <span>Settings</span>
+        </Link>
+        <Link
+          to="/release-center"
+          className="cds-rail-item"
+          data-active={active === 'release-center' ? 'true' : 'false'}
+          aria-label="发布中心"
+          title="发布中心（目标 / 版本 / 日志 / 回滚）"
+          onClick={onNavigate}
+          onMouseEnter={preloadReleaseCenterPage}
+          onFocus={preloadReleaseCenterPage}
+        >
+          <Rocket />
+          <span>Releases</span>
         </Link>
       </div>
       <div className="flex-1" />

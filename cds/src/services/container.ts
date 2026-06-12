@@ -4,7 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe } from '../types.js';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
@@ -459,6 +459,134 @@ export class ContainerService {
     return `'${value.replace(/'/g, `'\\''`)}'`;
   }
 
+  private resolveProfileRuntimeEnv(
+    entry: BranchEntry,
+    profile: BuildProfile,
+    customEnv?: Record<string, string>,
+  ): Record<string, string> {
+    const mergedEnv: Record<string, string> = {};
+
+    if (customEnv) {
+      Object.assign(mergedEnv, customEnv);
+    }
+
+    mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
+    mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
+
+    if (entry.branch) {
+      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
+    }
+    if (entry.githubCommitSha) {
+      mergedEnv['VITE_BUILD_ID'] = entry.githubCommitSha.slice(0, 12);
+    }
+
+    const isNodeContainer = /\bnode:/.test(profile.dockerImage);
+    if (isNodeContainer) {
+      mergedEnv['PNPM_HOME'] = mergedEnv['PNPM_HOME'] || '/pnpm';
+      mergedEnv['npm_config_store_dir'] = mergedEnv['npm_config_store_dir'] || '/pnpm/store';
+      const currentPath = mergedEnv['PATH'] || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+      if (!currentPath.includes('/pnpm')) {
+        mergedEnv['PATH'] = `/pnpm:${currentPath}`;
+      }
+    }
+
+    if (profile.env) {
+      Object.assign(mergedEnv, profile.env);
+    }
+
+    const isolatedEnv = applyPerBranchDbIsolation(mergedEnv, profile.dbScope, entry.branch);
+    const missingTemplates = missingEnvTemplates(isolatedEnv);
+    if (missingTemplates.length > 0) {
+      throw new Error(
+        `环境变量模板缺少值: ${missingTemplates.join(', ')}。请在项目环境变量中填写，或先启动对应基础设施服务后再部署。`,
+      );
+    }
+
+    const resolveVars: Record<string, string> = { ...isolatedEnv };
+    if (customEnv) {
+      for (const [k, v] of Object.entries(isolatedEnv)) {
+        if (v === `\${${k}}` && customEnv[k] !== undefined) {
+          resolveVars[k] = customEnv[k];
+        }
+      }
+    }
+    return resolveEnvTemplates(isolatedEnv, resolveVars);
+  }
+
+  private async buildProfileVolumeFlags(
+    entry: BranchEntry,
+    profile: BuildProfile,
+    command: string,
+    onOutput?: (chunk: string) => void,
+  ): Promise<{ containerWorkDir: string; volumeFlags: string[]; isNodeContainer: boolean; skipSrcMount: boolean }> {
+    const srcMount = path.join(entry.worktreePath, profile.workDir);
+    const containerWorkDir = profile.containerWorkDir || '/app';
+    const skipSrcMount = profile.prebuiltImage === true;
+    const isNodeContainer = /\bnode:/.test(profile.dockerImage);
+    const volumeFlags: string[] = skipSrcMount
+      ? []
+      : [`-v "${srcMount}":"${containerWorkDir}"`];
+
+    if (skipSrcMount) {
+      onOutput?.(`── 预构建镜像模式: 跳过 source mount(image 已含应用文件)──\n`);
+    }
+
+    if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
+      volumeFlags.push(`-v "${nodeModulesVolumeName(entry.id, profile.id)}":"${containerWorkDir}/node_modules"`);
+    }
+
+    if (profile.cacheMounts) {
+      for (const cm of profile.cacheMounts) {
+        const mkdir = await this.shell.exec(`mkdir -p "${cm.hostPath}"`);
+        if (mkdir.exitCode !== 0) {
+          throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
+        }
+        volumeFlags.push(`-v "${cm.hostPath}":"${cm.containerPath}"`);
+      }
+    }
+
+    const ffmpegPaths = ['/opt/ffmpeg-static/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
+    const ffprobePaths = ['/opt/ffmpeg-static/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe'];
+    const findResult = await this.shell.exec(
+      `for p in ${ffmpegPaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+    );
+    const ffmpegPath = findResult.stdout?.trim();
+    if (ffmpegPath) {
+      volumeFlags.push(`-v "${ffmpegPath}:/usr/local/bin/ffmpeg:ro"`);
+      const findProbe = await this.shell.exec(
+        `for p in ${ffprobePaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+      );
+      const ffprobePath = findProbe.stdout?.trim();
+      if (ffprobePath) {
+        volumeFlags.push(`-v "${ffprobePath}:/usr/local/bin/ffprobe:ro"`);
+      }
+    }
+
+    return { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount };
+  }
+
+  private buildEntrypointFlags(profile: BuildProfile, onOutput?: (chunk: string) => void): string[] {
+    const entrypointFlags: string[] = [];
+    if (profile.entrypoint !== undefined) {
+      const ep = profile.entrypoint;
+      if (ep === '') {
+        entrypointFlags.push(`--entrypoint=""`);
+        onOutput?.(`── entrypoint 覆盖: (清空 image ENTRYPOINT) ──\n`);
+      } else if (/\s/.test(ep)) {
+        onOutput?.(
+          `── ⚠ cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
+          `── ⚠ 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
+          `(CDS 已默认 sh -c 包装 command) ──\n` +
+          `── ⚠ 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
+        );
+      } else {
+        entrypointFlags.push(`--entrypoint ${JSON.stringify(ep)}`);
+        onOutput?.(`── entrypoint 覆盖: ${ep} ──\n`);
+      }
+    }
+    return entrypointFlags;
+  }
+
   /**
    * Remove stale CDS app containers for the same branch/profile before a new
    * docker run attaches service aliases. Docker DNS keeps every container that
@@ -693,175 +821,17 @@ export class ContainerService {
       },
     });
 
-    const srcMount = path.join(entry.worktreePath, profile.workDir);
-    const containerWorkDir = profile.containerWorkDir || '/app';
-    // Phase 7 fix(B17,2026-05-01)— 预构建镜像模式跳过 srcMount。
-    // 详见 BuildProfile.prebuiltImage 注释。
-    const skipSrcMount = profile.prebuiltImage === true;
-
-    // Build environment variables (later entries override earlier ones)
-    // Priority: customEnv (user dashboard) < profile.env (per-profile)
-    const mergedEnv: Record<string, string> = {};
-
-    // User-defined env vars from dashboard (includes CDS_* vars from infra services)
-    if (customEnv) {
-      Object.assign(mergedEnv, customEnv);
+    const command = profile.command || '';
+    if (!command) {
+      throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
     }
-
-    // JWT
-    mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
-    mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
-
-    // Inject git metadata so frontend build tools can stamp bundle URLs.
-    // Branch containers often mount only a subdirectory (e.g. prd-admin -> /app),
-    // so `git rev-parse` inside Vite may fall back to "local". That makes CDN
-    // and browser caches keep stale `*-local.js` assets even after CDS shows a
-    // newer GitHub commit in the widget.
-    if (entry.branch) {
-      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
-    }
-    if (entry.githubCommitSha) {
-      mergedEnv['VITE_BUILD_ID'] = entry.githubCommitSha.slice(0, 12);
-    }
-
-    // Detect Node.js containers by image name (node:*, *node:*, etc.)
-    const isNodeContainer = /\bnode:/.test(profile.dockerImage);
-
-    // For Node.js containers: move pnpm store outside the bind-mounted source directory.
-    // Without this, pnpm creates .pnpm-store inside /app (the bind mount), and Vite's
-    // chokidar watches all those files, quickly exhausting the kernel inotify limit (ENOSPC).
-    // Setting PNPM_HOME=/pnpm puts the store at /pnpm/store (container overlay FS),
-    // invisible to Vite's file watcher. pnpm falls back to copying instead of hard-linking,
-    // which is fine for dev environments.
-    if (isNodeContainer) {
-      mergedEnv['PNPM_HOME'] = mergedEnv['PNPM_HOME'] || '/pnpm';
-      // Move pnpm content-addressable store outside the project directory.
-      // Without this, pnpm creates <project>/.pnpm-store and Vite's chokidar
-      // watches all those files, exhausting the kernel inotify limit (ENOSPC).
-      // pnpm reads store-dir from npm_config_store_dir (NOT "PNPM_STORE_DIR").
-      // See: https://github.com/orgs/pnpm/discussions/6566
-      mergedEnv['npm_config_store_dir'] = mergedEnv['npm_config_store_dir'] || '/pnpm/store';
-      // Ensure pnpm binary is on PATH after corepack enable
-      const currentPath = mergedEnv['PATH'] || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-      if (!currentPath.includes('/pnpm')) {
-        mergedEnv['PATH'] = `/pnpm:${currentPath}`;
-      }
-    }
-
-    // Profile-specific env (highest priority)
-    if (profile.env) {
-      Object.assign(mergedEnv, profile.env);
-    }
-
-    // Phase 5(2026-05-01)— 多分支 DB 隔离:
-    //   profile.dbScope==='per-branch' 时,把 MYSQL_DATABASE 等 DB-name 类 env
-    //   后缀 _<branchSlug>,实现"同一 DB 实例下每分支独立 database"。
-    //   必须在 resolveEnvTemplates 之前调用 — 这样 ${MYSQL_DATABASE} 引用会
-    //   展开成新值,连接串也会跟着变。
-    //   shared 模式(默认)是 noop,保持现有行为不变。
-    const isolatedEnv = applyPerBranchDbIsolation(mergedEnv, profile.dbScope, entry.branch);
-
-    // Resolve ${CDS_*} env var templates in all values
-    // e.g., MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
-    // → "mongodb://172.17.0.1:37821"
-    const missingTemplates = missingEnvTemplates(isolatedEnv);
-    if (missingTemplates.length > 0) {
-      throw new Error(
-        `环境变量模板缺少值: ${missingTemplates.join(', ')}。请在项目环境变量中填写，或先启动对应基础设施服务后再部署。`,
-      );
-    }
-    // Phase 7 B16 + Bugbot 三轮迭代(PR #521)— 三个场景同时要 work:
-    //   1. B16 自引用:profile.env.X="${X}" 时,resolve 应拿 customEnv.X 真值
-    //   2. profile-local:URL=${HOST}:${PORT},HOST/PORT 在 isolatedEnv 应可查
-    //   3. per-branch isolation:isolatedEnv.CDS_POSTGRES_DB="app_feat_login"
-    //      (Phase 5 修改的)不应被 customEnv 的 'app' 覆盖回去 → 否则
-    //      ${CDS_POSTGRES_DB} 在 CDS_DATABASE_URL 解析回 'app',隔离完全失效
-    //
-    // 之前 fix 用 `{...isolatedEnv, ...customEnv}` 满足 1+2 但破坏 3。
-    // 正解:isolatedEnv 是真值源(per-branch + profile.env + customEnv 已合并),
-    //       仅当某 key 在 isolatedEnv 里值就是字面量 "${K}" 自引用时,才回退
-    //       到 customEnv 拿真值。这样三个场景全 work。
-    const resolveVars: Record<string, string> = { ...isolatedEnv };
-    if (customEnv) {
-      for (const [k, v] of Object.entries(isolatedEnv)) {
-        // 自引用模式 ${K} 字面量(== 自己的 key) → 回退到 customEnv 真值
-        if (v === `\${${k}}` && customEnv[k] !== undefined) {
-          resolveVars[k] = customEnv[k];
-        }
-      }
-    }
-    const resolvedEnv = resolveEnvTemplates(isolatedEnv, resolveVars);
-
-    // Write to temp file — avoids shell escaping issues with special chars
+    const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const envFlag = `--env-file "${envFilePath}"`;
-
-    // Shared cache mounts (avoid duplicating node_modules, nuget, etc.)
-    // Phase 7 (B17): prebuiltImage 模式跳过 srcMount,不覆盖 image 自带文件
-    const volumeFlags: string[] = skipSrcMount
-      ? []
-      : [`-v "${srcMount}":"${containerWorkDir}"`];
-    if (skipSrcMount) {
-      onOutput?.(`── 预构建镜像模式: 跳过 source mount(image 已含应用文件)──\n`);
-    }
-
-    // 用户反馈 2026-05-06 (#4):部署有时 19s(命中)有时 57s(重链 669 个包)。
-    // 根因:srcMount 是 host 上的 worktree 目录,worktree 重置 / 首次创建时
-    // node_modules 是空,pnpm 要从 /pnpm/store(host bind mount,内容齐全)
-    // 重新 hardlink/copy 到 /app/node_modules,O(N=669) 文件操作 ≈ 30-40s。
-    // 加一个 per-(branch, profile) 的 docker named volume 挂在
-    // /app/node_modules 上,**Docker 让 volume 覆盖 bind mount 的子路径**,
-    // 即:首次部署装满 volume,后续部署 volume 持久化,跳过重链。worktree
-    // 重置不影响这个 volume(代价是 stale node_modules,但 pnpm 用 lockfile
-    // diff 自我修正,只补差量)。
-    //
-    // ⚠ Bugbot 2026-05-06 bf11290f:此优化只在 pnpm 自我修正语义下安全
-    // (worktree 重置 / 切 commit 时 stale modules 由 lockfile diff 收敛)。
-    // npm / yarn 不保证差量校验,启用 volume 反而可能装入旧版本依赖。
-    // 收紧到 command 含 pnpm 的场景才挂 volume,其它场景仍走 worktree 的
-    // bind mount(慢但语义安全)。
-    if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(profile.command || '')) {
-      // SSOT: util/node-modules-volume.ts(Bugbot 3e19da66 — 防 sanitize 漂移)
-      volumeFlags.push(`-v "${nodeModulesVolumeName(entry.id, profile.id)}":"${containerWorkDir}/node_modules"`);
-    }
-
-    if (profile.cacheMounts) {
-      for (const cm of profile.cacheMounts) {
-        // Ensure host path exists
-        const mkdir = await this.shell.exec(`mkdir -p "${cm.hostPath}"`);
-        if (mkdir.exitCode !== 0) {
-          throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
-        }
-        volumeFlags.push(`-v "${cm.hostPath}":"${cm.containerPath}"`);
-      }
-    }
-
-    // ffmpeg: 静态编译版 bind mount（零依赖，单文件）
-    // 优先使用 /opt/ffmpeg-static/（用户下载的静态版），否则尝试宿主机 /usr/bin/ffmpeg
-    const ffmpegPaths = ['/opt/ffmpeg-static/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
-    const ffprobePaths = ['/opt/ffmpeg-static/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe'];
-    const findResult = await this.shell.exec(
-      `for p in ${ffmpegPaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
-    );
-    const ffmpegPath = findResult.stdout?.trim();
-    if (ffmpegPath) {
-      volumeFlags.push(`-v "${ffmpegPath}:/usr/local/bin/ffmpeg:ro"`);
-      // ffprobe
-      const findProbe = await this.shell.exec(
-        `for p in ${ffprobePaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
-      );
-      const ffprobePath = findProbe.stdout?.trim();
-      if (ffprobePath) {
-        volumeFlags.push(`-v "${ffprobePath}:/usr/local/bin/ffprobe:ro"`);
-      }
-    }
+    const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount } =
+      await this.buildProfileVolumeFlags(entry, profile, command, onOutput);
 
     try {
-      const command = profile.command || '';
-      if (!command) {
-        throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
-      }
-
       onOutput?.(`── 运行: ${command} ──\n`);
       // ⚠ Bugbot 2026-05-06 1f32c1da:之前 log 的条件是 isNodeContainer && !skipSrcMount,
       // 比真正挂 volume 的条件(还要 /\bpnpm\b/.test(command))宽,npm/yarn 项目会
@@ -887,25 +857,7 @@ export class ContainerService {
       // 字面文件名 "sh -c" 启动失败 "executable file not found")。CDS 默认
       // 已用 sh -c "command" 包装应用 command(line 467-ish),
       // 想强制 sh -c 行为只需 cds.entrypoint: "" 清空 wrapper 即可。
-      const entrypointFlags: string[] = [];
-      if (profile.entrypoint !== undefined) {
-        const ep = profile.entrypoint;
-        if (ep === '') {
-          entrypointFlags.push(`--entrypoint=""`);
-          onOutput?.(`── entrypoint 覆盖: (清空 image ENTRYPOINT) ──\n`);
-        } else if (/\s/.test(ep)) {
-          // 多词形式无效:跳过覆盖,提示用户改写
-          onOutput?.(
-            `── ⚠ cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
-            `── ⚠ 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
-            `(CDS 已默认 sh -c 包装 command) ──\n` +
-            `── ⚠ 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
-          );
-        } else {
-          entrypointFlags.push(`--entrypoint ${JSON.stringify(ep)}`);
-          onOutput?.(`── entrypoint 覆盖: ${ep} ──\n`);
-        }
-      }
+      const entrypointFlags = this.buildEntrypointFlags(profile, onOutput);
 
       // Bug D fix(2026-05-10) — profile 容器需要 --network-alias,否则 network
       // 内只能用 container_name(全局唯一长名 cds-app-...) 互访,不能用短 service 名。
@@ -1016,6 +968,92 @@ export class ContainerService {
         });
         throw err;
       }
+    } finally {
+      this.removeEnvFile(envFilePath);
+    }
+  }
+
+  /**
+   * Run a short-lived command in the same profile runtime environment as
+   * runService. Database migrations use this so DATABASE_URL, per-branch DB
+   * isolation, source mounts, and package caches match the app container.
+   */
+  async runProfileCommand(
+    entry: BranchEntry,
+    profile: BuildProfile,
+    command: string,
+    onOutput?: (chunk: string) => void,
+    customEnv?: Record<string, string>,
+    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
+      assertCurrent?: (step: string) => void;
+      timeoutMs?: number;
+    } = {},
+  ): Promise<ExecResult> {
+    const network = this.getNetworkForProject(entry.projectId);
+    await this.ensureNetwork(network);
+
+    const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
+    const envFilePath = this.writeEnvFile(resolvedEnv);
+    const envFlag = `--env-file "${envFilePath}"`;
+    const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount } =
+      await this.buildProfileVolumeFlags(entry, profile, command, onOutput);
+
+    try {
+      if (!command.trim()) {
+        throw new Error(`构建配置 "${profile.id}" 缺少迁移命令`);
+      }
+      onOutput?.(`── 执行一次性命令: ${command} ──\n`);
+      if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
+        onOutput?.(`── Node.js 容器: node_modules 走 docker volume(跨部署持久化,首次会装满,后续秒过)──\n`);
+      }
+
+      const entrypointFlags = this.buildEntrypointFlags(profile, onOutput);
+      const runCmd = [
+        'docker run --rm',
+        `--network ${network}`,
+        ...volumeFlags,
+        ...entrypointFlags,
+        `-w ${containerWorkDir}`,
+        envFlag,
+        '--tmpfs /tmp',
+        `--label cds.managed=true`,
+        `--label cds.type=job`,
+        `--label cds.project.id=${entry.projectId || 'default'}`,
+        `--label cds.branch.id=${entry.id}`,
+        `--label cds.profile.id=${profile.id}`,
+        profile.dockerImage,
+        `sh -c "${command.replace(/"/g, '\\"')}"`,
+      ].join(' ');
+
+      context.assertCurrent?.(`runProfileCommand before docker-run ${profile.id}`);
+      const result = await this.shell.exec(runCmd, {
+        timeout: context.timeoutMs ?? profile.buildTimeout ?? 600_000,
+      });
+      this.recordContainerEvent({
+        severity: result.exitCode === 0 ? 'info' : 'error',
+        source: 'cds-container-service',
+        action: result.exitCode === 0 ? 'profile.job.completed' : 'profile.job.failed',
+        message: `profile command ${result.exitCode === 0 ? 'completed' : 'failed'} for ${profile.id}`,
+        projectId: entry.projectId,
+        branchId: entry.id,
+        profileId: profile.id,
+        requestId: context.requestId ?? undefined,
+        operationId: context.operationId ?? undefined,
+        command: {
+          name: 'docker run --rm',
+          exitCode: result.exitCode,
+          stdoutPreview: result.stdout,
+          stderrPreview: result.stderr,
+        },
+        details: {
+          image: profile.dockerImage,
+          network,
+          actor: context.actor ?? null,
+          trigger: context.trigger ?? null,
+        },
+      });
+      onOutput?.(combinedOutput(result));
+      return result;
     } finally {
       this.removeEnvFile(envFilePath);
     }

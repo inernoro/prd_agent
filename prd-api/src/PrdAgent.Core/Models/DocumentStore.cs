@@ -88,6 +88,12 @@ public class DocumentStore
     /// </summary>
     public string? ProductKnowledgeRef { get; set; }
 
+    /// <summary>
+    /// 识途 Agent 分类知识库绑定（culture / incident / policy / award）。
+    /// 非空时从个人知识库列表隐藏，只在 shitu-agent 内嵌知识库 tab 访问。
+    /// </summary>
+    public string? ShituCategoryRef { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

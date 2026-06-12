@@ -10,7 +10,8 @@ import {
 } from './pmConstants';
 
 interface Props {
-  onBack: () => void;
+  /** 作为独立视图嵌入工作台导航时不传（无返回按钮） */
+  onBack?: () => void;
 }
 
 const yuan = (n: number) => n.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
@@ -63,9 +64,11 @@ export function DashboardView({ onBack }: Props) {
   return (
     <div className="flex flex-col gap-4 h-full min-h-0">
       <div className="shrink-0">
-        <button onClick={onBack} className="flex items-center gap-1 text-[12px] mb-2 hover:opacity-70" style={{ color: 'var(--text-muted)' }}>
-          <ArrowLeft size={14} /> 返回项目列表
-        </button>
+        {onBack && (
+          <button onClick={onBack} className="flex items-center gap-1 text-[12px] mb-2 hover:opacity-70" style={{ color: 'var(--text-muted)' }}>
+            <ArrowLeft size={14} /> 返回项目列表
+          </button>
+        )}
         <div className="flex items-center gap-2 flex-wrap">
           <TrendingUp size={20} style={{ color: '#10B981' }} />
           <div className="flex flex-col">

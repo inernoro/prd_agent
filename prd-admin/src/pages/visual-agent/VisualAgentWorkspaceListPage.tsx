@@ -41,278 +41,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
+import { NightSkyBackground } from '@/components/effects/NightSkyBackground';
 import { ParticleVortex } from '@/components/effects/ParticleVortex';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
-
-// ============ 夜景背景 Canvas 组件 ============
-function NightSkyBackground() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationRef = useRef<number>(0);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let width = window.innerWidth;
-    let height = window.innerHeight;
-
-    const resize = () => {
-      width = window.innerWidth;
-      height = window.innerHeight;
-      canvas.width = width;
-      canvas.height = height;
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    // 星星类
-    class StarObj {
-      size: number;
-      speed: number;
-      x: number;
-      y: number;
-      opacity: number;
-
-      constructor(x: number, y: number) {
-        this.size = Math.random() * 2;
-        this.speed = Math.random() * 0.03;
-        this.x = x;
-        this.y = y;
-        this.opacity = Math.random() * 0.5 + 0.3;
-      }
-
-      reset() {
-        this.size = Math.random() * 2;
-        this.speed = Math.random() * 0.03;
-        this.x = width;
-        this.y = Math.random() * height;
-        this.opacity = Math.random() * 0.5 + 0.3;
-      }
-
-      update() {
-        this.x -= this.speed;
-        if (this.x < 0) {
-          this.reset();
-        } else {
-          ctx!.globalAlpha = this.opacity;
-          ctx!.fillRect(this.x, this.y, this.size, this.size);
-          ctx!.globalAlpha = 1;
-        }
-      }
-    }
-
-    // 流星类
-    class ShootingStar {
-      x: number;
-      y: number;
-      len: number;
-      speed: number;
-      size: number;
-      waitTime: number;
-      active: boolean;
-
-      constructor() {
-        this.x = 0;
-        this.y = 0;
-        this.len = 0;
-        this.speed = 0;
-        this.size = 0;
-        this.waitTime = 0;
-        this.active = false;
-        this.reset();
-      }
-
-      reset() {
-        this.x = Math.random() * width;
-        this.y = 0;
-        this.len = Math.random() * 80 + 10;
-        this.speed = Math.random() * 10 + 6;
-        this.size = Math.random() * 1 + 0.1;
-        this.waitTime = Date.now() + Math.random() * 5000 + 1000;
-        this.active = false;
-      }
-
-      update() {
-        if (this.active) {
-          this.x -= this.speed;
-          this.y += this.speed;
-          if (this.x < 0 || this.y >= height) {
-            this.reset();
-          } else {
-            ctx!.lineWidth = this.size;
-            ctx!.beginPath();
-            ctx!.moveTo(this.x, this.y);
-            ctx!.lineTo(this.x + this.len, this.y - this.len);
-            ctx!.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-            ctx!.stroke();
-          }
-        } else {
-          if (this.waitTime < Date.now()) {
-            this.active = true;
-          }
-        }
-      }
-    }
-
-    // 地形类
-    class Terrain {
-      terrainCanvas: HTMLCanvasElement;
-      terCtx: CanvasRenderingContext2D;
-      scrollDelay: number;
-      lastScroll: number;
-      fillStyle: string;
-      mHeight: number;
-      points: number[];
-
-      constructor(options: {
-        scrollDelay?: number;
-        fillStyle?: string;
-        mHeight?: number;
-        displacement?: number;
-      } = {}) {
-        this.terrainCanvas = document.createElement('canvas');
-        this.terCtx = this.terrainCanvas.getContext('2d')!;
-        this.scrollDelay = options.scrollDelay || 90;
-        this.lastScroll = Date.now();
-        this.fillStyle = options.fillStyle || '#191D4C';
-        this.mHeight = options.mHeight || height;
-        this.points = [];
-
-        this.terrainCanvas.width = width;
-        this.terrainCanvas.height = height;
-
-        let displacement = options.displacement || 140;
-        const power = Math.pow(2, Math.ceil(Math.log(width) / Math.log(2)));
-
-        this.points[0] = this.mHeight;
-        this.points[power] = this.points[0];
-
-        for (let i = 1; i < power; i *= 2) {
-          for (let j = power / i / 2; j < power; j += power / i) {
-            this.points[j] =
-              (this.points[j - power / i / 2] + this.points[j + power / i / 2]) / 2 +
-              Math.floor(Math.random() * -displacement + displacement);
-          }
-          displacement *= 0.6;
-        }
-      }
-
-      update() {
-        this.terCtx.clearRect(0, 0, width, height);
-        this.terCtx.fillStyle = this.fillStyle;
-
-        if (Date.now() > this.lastScroll + this.scrollDelay) {
-          this.lastScroll = Date.now();
-          this.points.push(this.points.shift()!);
-        }
-
-        this.terCtx.beginPath();
-        for (let i = 0; i <= width; i++) {
-          if (i === 0) {
-            this.terCtx.moveTo(0, this.points[0]);
-          } else if (this.points[i] !== undefined) {
-            this.terCtx.lineTo(i, this.points[i]);
-          }
-        }
-
-        this.terCtx.lineTo(width, this.terrainCanvas.height);
-        this.terCtx.lineTo(0, this.terrainCanvas.height);
-        this.terCtx.lineTo(0, this.points[0]);
-        this.terCtx.fill();
-
-        // 绘制到主 canvas
-        ctx!.drawImage(this.terrainCanvas, 0, 0);
-      }
-    }
-
-    // 初始化实体
-    const stars: StarObj[] = [];
-    const shootingStars: ShootingStar[] = [];
-    const terrains: Terrain[] = [];
-
-    // 创建星星
-    for (let i = 0; i < Math.min(height, 300); i++) {
-      stars.push(new StarObj(Math.random() * width, Math.random() * height));
-    }
-
-    // 创建流星
-    shootingStars.push(new ShootingStar());
-    shootingStars.push(new ShootingStar());
-
-    // 创建地形层 - 使用金色/琥珀色调，与主题呼应
-    terrains.push(
-      new Terrain({
-        mHeight: height / 2 - 100,
-        fillStyle: 'rgba(45, 50, 85, 0.35)',  // 最远层：冷靛蓝色，较亮
-        displacement: 160,
-        scrollDelay: 120,
-      })
-    );
-    terrains.push(
-      new Terrain({
-        displacement: 130,
-        scrollDelay: 70,
-        fillStyle: 'rgba(30, 35, 60, 0.55)',  // 中间层：深靛蓝色
-        mHeight: height / 2 - 40,
-      })
-    );
-    terrains.push(
-      new Terrain({
-        displacement: 100,
-        scrollDelay: 35,
-        fillStyle: 'rgba(15, 18, 35, 0.85)',  // 最近层：深靛黑
-        mHeight: height / 2 + 20,
-      })
-    );
-
-    function animate() {
-      // 背景渐变 - 顶部深邃，底部微暖褐调配合金色山川
-      const gradient = ctx!.createLinearGradient(0, 0, 0, height);
-      gradient.addColorStop(0, '#080808');      // 顶部：纯黑
-      gradient.addColorStop(0.3, '#08080c');    // 中上：微冷黑
-      gradient.addColorStop(0.6, '#0c0c14');    // 中下：冷靛黑
-      gradient.addColorStop(1, '#08080e');      // 底部：深靛
-      ctx!.fillStyle = gradient;
-      ctx!.fillRect(0, 0, width, height);
-
-      // 绘制星星
-      ctx!.fillStyle = '#ffffff';
-      for (const star of stars) {
-        star.update();
-      }
-
-      // 绘制流星
-      for (const shootingStar of shootingStars) {
-        shootingStar.update();
-      }
-
-      // 绘制地形
-      for (const terrain of terrains) {
-        terrain.update();
-      }
-
-      animationRef.current = requestAnimationFrame(animate);
-    }
-
-    animate();
-
-    return () => {
-      window.removeEventListener('resize', resize);
-      cancelAnimationFrame(animationRef.current);
-    };
-  }, []);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="fixed inset-0 w-full h-full pointer-events-none"
-      style={{ zIndex: 0 }}
-    />
-  );
-}
 
 function formatDate(iso: string | null | undefined) {
   const s = String(iso ?? '').trim();
@@ -602,7 +333,19 @@ function QuickInputBox(props: {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isFocused, setIsFocused] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const openDefectDialog = useGlobalDefectStore((s) => s.openDialog);
+
+  // 从剪贴板 / 拖拽事件里提取第一张图片文件（与编辑器画板保持一致的交互）
+  const pickFirstImageFile = (list: FileList | null | undefined, items?: DataTransferItemList | null): File | null => {
+    const fromFiles = Array.from(list ?? []).find((f) => (f.type || '').startsWith('image/'));
+    if (fromFiles) return fromFiles;
+    const fromItems = Array.from(items ?? [])
+      .filter((it) => it.kind === 'file' && (it.type || '').startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .find((f): f is File => Boolean(f));
+    return fromItems ?? null;
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -641,6 +384,46 @@ function QuickInputBox(props: {
     e.target.value = '';
   };
 
+  // 粘贴剪贴板里的图片（Ctrl/Cmd+V）——首页此前缺失，仅编辑器支持
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (loading || !onImageSelect) return;
+    const img = pickFirstImageFile(e.clipboardData?.files, e.clipboardData?.items);
+    if (!img) return; // 没有图片时放行，允许正常粘贴文本
+    e.preventDefault();
+    onImageSelect(img);
+  };
+
+  // 拖拽图片到输入框
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (loading || !onImageSelect) return;
+    const img = pickFirstImageFile(e.dataTransfer?.files, e.dataTransfer?.items);
+    if (!img) {
+      toast.warning('请拖入图片文件');
+      return;
+    }
+    onImageSelect(img);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (loading || !onImageSelect) return;
+    if (Array.from(e.dataTransfer?.types ?? []).includes('Files')) {
+      e.preventDefault();
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    // 只有真正离开容器时才清除高亮:指针移入内部子元素(如 textarea / 按钮)也会触发 dragleave,
+    // relatedTarget 仍在容器内时保持 isDragging,避免拖拽悬停时提示蒙层/高亮边框闪烁(Bugbot)。
+    const next = e.relatedTarget as Node | null;
+    if (next && e.currentTarget.contains(next)) return;
+    setIsDragging(false);
+  };
+
   const canSubmit = value.trim() && !loading;
 
   return (
@@ -651,18 +434,36 @@ function QuickInputBox(props: {
           ...glassInputArea,
           // 暖褐色调磨砂玻璃，与金色主题协调
           background: 'rgba(28, 24, 20, 0.82)',
-          // 聚焦时边框变亮 - 使用柔和的琥珀金
-          border: isFocused
+          // 聚焦/拖拽时边框变亮 - 使用柔和的琥珀金
+          border: isFocused || isDragging
             ? '1px solid rgba(99, 102, 241, 0.5)'
             : '1px solid rgba(99, 102, 241, 0.18)',
-          boxShadow: isFocused
+          boxShadow: isFocused || isDragging
             ? '0 24px 64px rgba(0,0,0,0.5), 0 0 0 3px rgba(99, 102, 241, 0.15), 0 1px 0 rgba(199,210,254,0.08) inset'
             : '0 24px 64px rgba(0,0,0,0.5), 0 1px 0 rgba(199,210,254,0.05) inset',
         }}
         onClick={handleContainerClick}
+        onPaste={handlePaste}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
       >
         {/* 输入区域 - 简化内边距 */}
         <div className="px-5 pt-4 pb-3 relative min-h-[80px]">
+          {/* 拖拽图片时的提示蒙层 */}
+          {isDragging && (
+            <div
+              className="absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-[16px] pointer-events-none"
+              style={{
+                background: 'rgba(28, 24, 20, 0.92)',
+                border: '1px dashed rgba(99, 102, 241, 0.6)',
+                color: 'rgba(199, 210, 254, 0.9)',
+              }}
+            >
+              <Image size={16} />
+              <span className="text-[13px] font-medium">松开鼠标，把图片作为参考图</span>
+            </div>
+          )}
           {/* 图片预览 chip - 参考 AdvancedVisualAgentTab 样式 */}
           {selectedImage ? (
             <div
@@ -825,7 +626,7 @@ function QuickInputBox(props: {
                 color: 'rgba(199, 210, 254, 0.55)',
                 border: '1px solid rgba(99, 102, 241, 0.15)',
               }}
-              title="添加图片参考"
+              title="添加图片参考（也可直接粘贴 Ctrl/Cmd+V 或拖入图片）"
             >
               <Image size={14} />
               <span>图片</span>

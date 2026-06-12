@@ -74,6 +74,51 @@ export function matchPageGuide(
 }
 
 /**
+ * 是否为「更新教程」(*-update-YYYYwNN / feature-release)——本页功能本周有更新时的提醒类 tip。
+ * TipsDrawer 的卡片 chip 与「本页更新自动展开」共用,避免两处 inline 判定漂移。
+ */
+export function isUpdateTip(t: DailyTip): boolean {
+  return (t.sourceId?.includes('-update-') ?? false) || t.sourceType === 'feature-release';
+}
+
+/**
+ * 是否为「轻微提醒更新」(sourceId 含 `-update-reminder`)——单步悬浮气泡式的新功能提醒,
+ * 进入对应页面自动以 Spotlight 弹一次、看过即标记学会、之后永不再弹(不管取消还是知道了)。
+ *
+ * 与普通「更新教程」(*-update-YYYYwNN / feature-release)的区别:后者自动展开**抽屉**让用户
+ * 主动「跟我做」,前者直接在功能位置弹一个**悬浮气泡**轻提醒。两条路径互斥:reminder 由
+ * TipsDrawer 的专用 effect 走 Spotlight,因此必须从 pickAutoOpenUpdateTip(抽屉路径)里排除,
+ * 否则同一条 tip 会既弹抽屉又弹气泡。
+ */
+export function isUpdateReminderTip(t: DailyTip): boolean {
+  return t.sourceId?.includes('-update-reminder') ?? false;
+}
+
+/**
+ * 「本页更新教程自动展开」的唯一决策函数(用户 2026-06-11 规则:推送只跟页面走)。
+ *
+ * 自动弹出仅两类,且都严格限定在「本页有教程」的页面:
+ *   1) 新人没走完本页 *-page-guide → Spotlight 自动开讲(matchPageGuide,优先级更高,由调用方先判);
+ *   2) 本页功能有更新(*-update-* / feature-release)且未学会 → 自动展开抽屉提醒一次(本函数)。
+ * 没有教程的页面 pageTips 为空 → 恒返回 null,绝不弹任何东西。
+ *
+ * 入参 pageTips 必须是 filterPageTips 按当前页过滤后的子集 —— 这是「不会在 A 页弹 B 页教程」的
+ * 结构性保证;历史 bug:旧版用全量 tips + isTargeted 判定,而 Track 统计埋点会给「看过一眼」的 tip
+ * 建 Delivery 记录,被 /visible 误判成 isTargeted → 在无教程页面弹出「全部教程」面板
+ * (用户 2026-06-11 反馈「莫名其妙弹出,像病毒一样」)。
+ */
+export function pickAutoOpenUpdateTip(
+  pageTips: DailyTip[],
+  alreadyOpened: Set<string>,
+): DailyTip | null {
+  // 排除「轻微提醒更新」(*-update-reminder):它走 Spotlight 悬浮气泡路径(TipsDrawer 专用 effect),
+  // 不走抽屉自动展开,否则同一条会双弹。
+  return pageTips.find(
+    (t) => isUpdateTip(t) && !isUpdateReminderTip(t) && !t.learned && !alreadyOpened.has(t.id),
+  ) ?? null;
+}
+
+/**
  * 当前路由「本页教程」集合 —— TipsDrawer(抽屉作用域)与 TipsEntryButton(按钮是否显示)
  * 共用的单一过滤逻辑(SSOT,避免两份 inline 拷贝随规则漂移)。
  *

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Factory, FileText, Image as ImageIcon, GitBranch, AlertCircle, MessageSquare, HelpCircle, X, Database } from 'lucide-react';
+import { Factory, FileText, Image as ImageIcon, GitBranch, AlertCircle, MessageSquare, HelpCircle, X, Database, User } from 'lucide-react';
 import { getCcasMeta } from '@/services';
 import type { CcasMeta } from '@/services';
 import { TabBar } from '@/components/design/TabBar';
@@ -61,6 +61,12 @@ export function CcasAgentPage() {
             <h1 className="text-xl font-semibold text-white truncate">赋码采集关联系统智能体</h1>
           </div>
           <p className="text-xs text-white/50 truncate">{activeTabDef.desc}</p>
+          {meta?.authorName && (
+            <p className="text-[11px] text-white/35 mt-0.5 inline-flex items-center gap-1">
+              <User className="w-3 h-3" />
+              作者：{meta.authorName}
+            </p>
+          )}
         </div>
         <button
           type="button"

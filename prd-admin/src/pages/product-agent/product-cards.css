@@ -1,45 +1,6 @@
 /*
- * 产品管理智能体 — 产品卡片动效
- * 入场：淡入 + 上浮 + 轻微缩放，按索引错峰（stagger）
- * 悬停：抬升 + 青色辉光 + 描边提亮
- * 降级：prefers-reduced-motion 下全部关闭
+ * 产品管理智能体 — 卡片/列表行统一动效。
+ * 实现已抽取为跨智能体共享样式 components/agent-shell/agent-cards.css，
+ * 此处仅做转发以兼容既有 import。
  */
-
-@keyframes paCardIn {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.pa-card {
-  animation: paCardIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
-  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background-color 0.22s ease;
-  will-change: transform;
-}
-
-.pa-card:hover {
-  transform: translateY(-4px);
-  border-color: rgba(34, 211, 238, 0.45) !important;
-  box-shadow:
-    0 12px 32px -12px rgba(6, 182, 212, 0.38),
-    0 6px 16px -8px rgba(0, 0, 0, 0.55);
-}
-
-.pa-card:active {
-  transform: translateY(-1px) scale(0.995);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pa-card {
-    animation: none;
-  }
-  .pa-card:hover,
-  .pa-card:active {
-    transform: none;
-  }
-}
+@import '../../components/agent-shell/agent-cards.css';

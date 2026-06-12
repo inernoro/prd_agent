@@ -59,6 +59,13 @@ public interface IHostedSiteService
     /// <summary>设置站点分享到的团队（「分享到团队」操作，仅 owner 可调）。返回更新后的站点，无权或不存在返回 null</summary>
     Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct = default);
 
+    /// <summary>
+    /// 把自己的站点物理复制一份进团队空间（COS 文件完整拷贝，副本与原件互相独立）。
+    /// groupId 可选：副本直接归入目标团队的专题/日常分类。
+    /// 站点不存在/非 owner 抛 KeyNotFoundException；目标团队无编辑权抛 UnauthorizedAccessException。
+    /// </summary>
+    Task<HostedSite> CopyToTeamAsync(string siteId, string userId, string teamId, string? groupId, CancellationToken ct = default);
+
     Task<List<string>> ListFoldersAsync(string userId, CancellationToken ct = default);
 
     Task<List<TagCountResult>> ListTagsAsync(string userId, CancellationToken ct = default);
@@ -103,7 +110,15 @@ public interface IHostedSiteService
         CancellationToken ct = default,
         string purpose = "share",
         bool forceNew = false,
-        string visibility = "owner-only");
+        string visibility = "owner-only",
+        bool allocateShortLink = false);
+
+    /// <summary>
+    /// 事后为某条已存在的分享按需分配数字短链 /s/{seq}（用户在分享面板点「生成数字短链」）。
+    /// 幂等：已有则返回原 Seq。返回分配后的 ShortSeq（&gt;0 成功）。
+    /// 仅创建者可调用；visit 便捷链不支持。
+    /// </summary>
+    Task<long> EnsureShortLinkAsync(string userId, string shareId, CancellationToken ct = default);
 
     /// <summary>
     /// 列出分享：默认包含未过期 + 过期 ≤ 7 天（允许续期）的链接。

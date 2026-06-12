@@ -8,13 +8,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Clock, AlertTriangle, User } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getUsers } from '@/services';
+import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import { listRequirements, listFeatures, transition } from '@/services/real/productAgent';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { ITEM_GRADE_LABEL } from './types';
 import type { Requirement, Feature } from './types';
 import { slaInfo } from './sla';
+import './product-cards.css';
 
 type Item = (Requirement | Feature) & { title: string; currentState?: string | null; grade: string; assigneeId?: string | null; stateEnteredAt?: string | null };
 
@@ -36,9 +37,20 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   useEffect(() => {
     void reload();
   }, [reload]);
+  // 处理人姓名走 /api/teams/search-users（仅需登录），普通产品成员也能拿到，不用管理员专用的 /api/users。
   useEffect(() => {
-    void getUsers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) setUsers(res.data.items);
+    void searchDirectoryUsers('', 200).then((res) => {
+      if (res.success) {
+        setUsers(res.data.items.map((u) => ({
+          userId: u.userId,
+          username: u.username,
+          displayName: u.displayName,
+          avatarFileName: u.avatarFileName,
+          role: '' as AdminUser['role'],
+          status: 'Active' as AdminUser['status'],
+          createdAt: '',
+        })));
+      }
     });
   }, []);
 
@@ -167,7 +179,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
                             draggable
                             onDragStart={() => setDragId(it.id)}
                             onClick={() => navigate(`/product-agent/p/${productId}/${entityType}/${it.id}`)}
-                            className="cursor-grab active:cursor-grabbing rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] p-2.5 flex flex-col gap-1.5"
+                            className="pa-row cursor-grab active:cursor-grabbing rounded-lg border border-white/10 bg-white/[0.03] p-2.5 flex flex-col gap-1.5"
                           >
                             <div className="text-sm text-white/90 line-clamp-2">{it.title}</div>
                             <div className="flex items-center gap-2 flex-wrap">

@@ -57,11 +57,12 @@ public class DocumentStoreSyncResource : ISyncableResource
             : Builders<DocumentStore>.Filter.Or(
                 Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, actor.UserId),
                 Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds));
-        // 项目库 / 产品库走各自访问轴，互传 v1 不列入（避免越权）。
+        // 项目库 / 产品库 / 识途库走各自访问轴，互传 v1 不列入（避免越权）。
         var filter = Builders<DocumentStore>.Filter.And(
             ownerOrTeam,
             Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
-            Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
+            Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
+            Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null));
 
         var stores = await _db.DocumentStores.Find(filter).SortByDescending(s => s.UpdatedAt).ToListAsync(ct);
         return stores.Select(s => new SyncItemSummary

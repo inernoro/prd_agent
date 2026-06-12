@@ -24,6 +24,8 @@ export interface MarketplaceSkillDto {
 
   // === 技能专属字段 ===
   title: string;
+  /** 语义化版本号。用户上传技能来自 SKILL.md frontmatter；官方虚拟技能由后端目录提供。 */
+  version?: string | null;
   description: string;
   iconEmoji: string;
   /** 封面图 CDN URL，空则走 iconEmoji 兜底 */
