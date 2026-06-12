@@ -83,3 +83,4 @@
 | feat | prd-api | 新增 PlatformKeyIntegrityWorker：启动及每 6 小时自检平台 API key 可解密性，发现环境密钥不匹配立即 LogError + 全局站内告警（幂等，恢复后自动关闭），杜绝密钥哑掉两小时无人知的静默故障 |
 | chore | - | 删除过期验收驱动 e2e/lifecycle.mjs（写死旧分支 URL 的一次性脚本）；新增 .claude/rules/cross-project-isolation.md 跨项目隔离原则与共享通道清单 |
 | chore | - | 合并 main（218 个提交）进开发分支：container.ts 环境构建采用 main 的 resolveProfileRuntimeEnv 重构并移植 Jwt 项目级优先修复，remote-hosts.ts 合并双方 import；CDS 1932 测试、API 943 测试、admin 419 测试全绿 |
+| feat | prd-api | 平台密钥自愈端点 POST /api/mds/platforms/:id/restore-key-from-profile：密钥环境不匹配时从仍可解密的运行配置（DataProtection）服务端恢复平台 key 并用当前密钥重加密，明文不出进程、同 host 守卫防错配 |
