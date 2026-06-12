@@ -20,3 +20,4 @@
 | refactor | prd-admin | 项目知识库移除「成员作品」子视图与二级标题，只保留知识文档直出 |
 | feat | prd-api | 网页托管新增 GET /api/web-pages/:id/content：服务端代理读取站点入口 HTML（owner/团队成员可读，2MB 上限，包装资产站拒绝），供知识库导入绕开浏览器跨域 |
 | feat | prd-admin | 项目知识库新增「从网页托管导入」：选择我的/团队共享站点，HTML 内容一键导入为知识文档（可预览） |
+| revert | prd-admin | 按用户要求下线简报「调整内容」入口（预览弹窗按钮/面板/流式重写 UI 移除；后端 refine 端点暂留无入口，记入债务台账） |
