@@ -8,3 +8,6 @@
 | fix | prd-admin | UserSearchSelect 改为单输入框 combobox，移除下拉内第二层搜索 |
 | test | prd-admin | 新增 requirementCreateValidation 与 customerRecentStorage 单元测试 |
 | fix | prd-admin | 新建需求关联功能改为非必填，RelationField 改用单层 combobox 输入 |
+| feat | prd-admin | 流程模板状态配置改为表格式（颜色/名称/说明/起始/结束/删除确认） |
+| fix | prd-admin | 状态定义区补回状态说明列并固定列宽，名称列不再挤占其他列 |
+| feat | prd-api | WorkflowState 新增 Description 字段供状态说明存储 |

@@ -344,6 +344,8 @@ export interface FormTemplate {
 export interface WorkflowState {
   key: string;
   label: string;
+  /** 状态说明（流程模板配置页） */
+  description?: string | null;
   color?: string | null;
   isInitial: boolean;
   isFinal: boolean;

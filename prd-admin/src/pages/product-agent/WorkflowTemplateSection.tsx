@@ -76,7 +76,7 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [statesOpen, setStatesOpen] = useState(false);
+  const [statesOpen, setStatesOpen] = useState(true);
   const [ruleModal, setRuleModal] = useState<{
     transition: WorkflowTransition;
     from: WorkflowState;
@@ -133,6 +133,7 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
       {
         key: `state_${s.length + 1}`,
         label: '',
+        description: '',
         color: '#60A5FA',
         isInitial: s.length === 0,
         isFinal: false,
@@ -308,62 +309,100 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
           <span className="text-xs text-white/35">（{sortedStates.length} 个状态）</span>
         </button>
         {statesOpen && (
-          <div className="px-3 pb-3 pt-1 border-t border-white/5 flex flex-col gap-2">
-            {sortedStates.map((s, i) => {
-              const idx = states.findIndex((x) => x.key === s.key);
-              const row = idx >= 0 ? idx : i;
-              return (
-                <div key={s.key} className="flex items-center gap-2 flex-wrap">
-                  <input
-                    type="color"
-                    value={s.color ?? '#60A5FA'}
-                    onChange={(e) => updateState(row, { color: e.target.value })}
-                    className="w-7 h-7 rounded bg-transparent border border-white/10 shrink-0"
-                  />
-                  <input
-                    value={s.label}
-                    onChange={(e) => updateState(row, { label: e.target.value })}
-                    placeholder="状态名"
-                    className="flex-1 min-w-[100px] px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
-                  />
-                  <input
-                    value={s.key}
-                    onChange={(e) => updateState(row, { key: e.target.value })}
-                    placeholder="key"
-                    className="w-24 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-[11px] text-white/60 font-mono outline-none"
-                  />
-                  <label className="flex items-center gap-1 text-xs text-white/50 whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={s.isInitial}
-                      onChange={(e) => updateState(row, { isInitial: e.target.checked })}
-                      className="accent-cyan-500"
-                    />
-                    初始
-                  </label>
-                  <label className="flex items-center gap-1 text-xs text-white/50 whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={s.isFinal}
-                      onChange={(e) => updateState(row, { isFinal: e.target.checked })}
-                      className="accent-cyan-500"
-                    />
-                    终态
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => void confirmRemoveState(row)}
-                    className="text-white/30 hover:text-red-300 p-1"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              );
-            })}
+          <div className="px-3 pb-3 pt-2 border-t border-white/5">
+            {sortedStates.length === 0 ? (
+              <p className="text-xs text-white/35 py-2 text-center">还没有状态，点击下方添加。</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[520px] table-fixed border-collapse text-xs">
+                  <colgroup>
+                    <col style={{ width: 40 }} />
+                    <col style={{ width: 112 }} />
+                    <col />
+                    <col style={{ width: 72 }} />
+                    <col style={{ width: 72 }} />
+                    <col style={{ width: 44 }} />
+                  </colgroup>
+                  <thead>
+                    <tr className="text-[11px] text-white/40 border-b border-white/8">
+                      <th className="pb-2 font-medium text-left">颜色</th>
+                      <th className="pb-2 font-medium text-left">状态名称</th>
+                      <th className="pb-2 font-medium text-left">状态说明</th>
+                      <th className="pb-2 font-medium text-center">起始状态</th>
+                      <th className="pb-2 font-medium text-center">结束状态</th>
+                      <th className="pb-2 font-medium text-center">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedStates.map((s, i) => {
+                      const idx = states.findIndex((x) => x.key === s.key);
+                      const row = idx >= 0 ? idx : i;
+                      return (
+                        <tr key={s.key} className="border-b border-white/5 last:border-0">
+                          <td className="py-1.5 pr-2 align-middle">
+                            <input
+                              type="color"
+                              value={s.color ?? '#60A5FA'}
+                              onChange={(e) => updateState(row, { color: e.target.value })}
+                              title="状态颜色"
+                              className="w-8 h-8 rounded bg-transparent border border-white/10 cursor-pointer"
+                            />
+                          </td>
+                          <td className="py-1.5 pr-2 align-middle">
+                            <input
+                              value={s.label}
+                              onChange={(e) => updateState(row, { label: e.target.value })}
+                              placeholder="如：待评审"
+                              className="w-full min-w-0 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+                            />
+                          </td>
+                          <td className="py-1.5 pr-2 align-middle">
+                            <input
+                              value={s.description ?? ''}
+                              onChange={(e) => updateState(row, { description: e.target.value })}
+                              placeholder="简要说明该状态含义"
+                              className="w-full min-w-0 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm text-white/80 outline-none focus:border-cyan-500/40"
+                            />
+                          </td>
+                          <td className="py-1.5 align-middle text-center">
+                            <input
+                              type="checkbox"
+                              checked={s.isInitial}
+                              onChange={(e) => updateState(row, { isInitial: e.target.checked })}
+                              title="新建时的默认状态（仅一个）"
+                              className="accent-cyan-500"
+                            />
+                          </td>
+                          <td className="py-1.5 align-middle text-center">
+                            <input
+                              type="checkbox"
+                              checked={s.isFinal}
+                              onChange={(e) => updateState(row, { isFinal: e.target.checked })}
+                              title="流程结束状态"
+                              className="accent-cyan-500"
+                            />
+                          </td>
+                          <td className="py-1.5 align-middle text-center">
+                            <button
+                              type="button"
+                              onClick={() => void confirmRemoveState(row)}
+                              title="删除状态"
+                              className="text-white/30 hover:text-red-300 p-1"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
             <button
               type="button"
               onClick={addState}
-              className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm"
+              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm"
             >
               <Plus size={14} /> 添加状态
             </button>

@@ -64,6 +64,9 @@ public class ProductWorkflowState
     /// <summary>状态显示名（如 "待评审"）</summary>
     public string Label { get; set; } = string.Empty;
 
+    /// <summary>状态说明（配置页展示，帮助团队理解该状态含义）</summary>
+    public string? Description { get; set; }
+
     /// <summary>状态颜色（CSS 颜色，用于标签 / 看板列着色）</summary>
     public string? Color { get; set; }
 
