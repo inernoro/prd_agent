@@ -354,6 +354,9 @@ public class MongoDbContext
     // 团队动态（全平台白名单写操作留痕，ActivityLogActionFilter 写入）
     public IMongoCollection<ActivityLog> ActivityLogs => _database.GetCollection<ActivityLog>("activity_logs");
 
+    // 行为信号事件（行为洞察面板采集层，前端 behaviorTracker 批量上报）
+    public IMongoCollection<BehaviorEvent> BehaviorEvents => _database.GetCollection<BehaviorEvent>("behavior_events");
+
     // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
     public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");

@@ -86,3 +86,34 @@ export type GetTeamActivityModulesContract = () => Promise<ApiResponse<TeamActiv
 export type GetTeamActivityStatsContract = (
   params?: GetTeamActivityStatsParams
 ) => Promise<ApiResponse<TeamActivityStatsData>>;
+
+export type BehaviorInsight = {
+  kind: 'api-error' | 'slow-endpoint' | 'long-dwell' | 'quick-exit' | 'route-oscillation' | string;
+  kindLabel: string;
+  /** 洞察对象：路由 / METHOD path / 路由对 */
+  target: string;
+  userCount: number;
+  eventCount: number;
+  metric: string;
+  suggestion: string;
+  evidence: string[];
+};
+
+export type TeamActivityInsightsData = {
+  items: BehaviorInsight[];
+  /** 窗口内的行为事件数（路由级信号采集量） */
+  behaviorEventCount: number;
+  /** 路由级信号采集起点；null 表示尚无任何采集数据 */
+  trackedSince?: string | null;
+  windowFrom: string;
+  windowTo: string;
+};
+
+export type GetTeamActivityInsightsParams = {
+  from?: string;
+  to?: string;
+};
+
+export type GetTeamActivityInsightsContract = (
+  params?: GetTeamActivityInsightsParams
+) => Promise<ApiResponse<TeamActivityInsightsData>>;

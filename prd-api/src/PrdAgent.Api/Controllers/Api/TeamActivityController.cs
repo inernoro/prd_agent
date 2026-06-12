@@ -202,6 +202,255 @@ public class TeamActivityController : ControllerBase
         }));
     }
 
+    // ────────────────────────── 行为洞察 ──────────────────────────
+
+    private sealed record Insight(
+        string Kind,
+        string KindLabel,
+        string Target,
+        int UserCount,
+        long EventCount,
+        string Metric,
+        string Suggestion,
+        List<string> Evidence,
+        double Severity);
+
+    /// <summary>归一化路径：把数字 / 长 hex / GUID 路径段替换为 :id，避免同一页面被参数打散</summary>
+    private static string NormalizePath(string path)
+    {
+        var segments = path.Split('/');
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var s = segments[i];
+            if (s.Length == 0) continue;
+            var isDigits = s.All(char.IsDigit);
+            var isHex = s.Length >= 16 && s.All(c => char.IsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == '-');
+            if (isDigits || isHex) segments[i] = ":id";
+        }
+        return string.Join('/', segments);
+    }
+
+    /// <summary>
+    /// 行为洞察：从「沉默的行为信号」聚合出带证据的改进方向。
+    /// 数据源两路：apirequestlogs（报错热点 / 等待过久，历史即有）+ behavior_events（停留过久 / 秒退 / 反复横跳，自采集上线起累积）。
+    /// 全部为规则式聚类（阈值见各段注释），只输出聚合结果不含个体明细。
+    /// </summary>
+    [HttpGet("insights")]
+    public async Task<IActionResult> Insights([FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+    {
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        // 未指定范围时取近 30 天：洞察是「最近哪里不好用」，扫全史既慢又稀释信号
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+        var insights = new List<Insight>();
+
+        // ── 信号 A：报错热点（apirequestlogs，排除鉴权噪音 401）──
+        var rb = Builders<ApiRequestLog>.Filter;
+        var errLogs = await _db.ApiRequestLogs.Find(rb.And(
+                rb.Gte(x => x.StartedAt, fromUtc),
+                rb.Lte(x => x.StartedAt, endUtc),
+                rb.Ne(x => x.Direction, "outbound"),
+                rb.Gte(x => x.StatusCode, 400),
+                rb.Ne(x => x.StatusCode, 401)))
+            .SortByDescending(x => x.StartedAt)
+            .Limit(20000)
+            .Project(x => new { x.Path, x.Method, x.StatusCode, x.ErrorCode, x.UserId })
+            .ToListAsync();
+
+        foreach (var g in errLogs
+                     .Where(x => x.Path != null && x.Path.StartsWith("/api") && !x.Path.StartsWith("/api/behavior"))
+                     .GroupBy(x => (Path: NormalizePath(x.Path!), x.Method, x.StatusCode))
+                     .Where(g => g.Count() >= 5))
+        {
+            var count = g.Count();
+            var users = g.Select(x => x.UserId).Distinct().Count();
+            var topCode = g.Where(x => !string.IsNullOrEmpty(x.ErrorCode))
+                .GroupBy(x => x.ErrorCode!).OrderByDescending(c => c.Count()).FirstOrDefault();
+            insights.Add(new Insight(
+                Kind: "api-error",
+                KindLabel: "频繁报错",
+                Target: $"{g.Key.Method} {g.Key.Path}",
+                UserCount: users,
+                EventCount: count,
+                Metric: $"HTTP {g.Key.StatusCode} × {count}",
+                Suggestion: g.Key.StatusCode >= 500
+                    ? "服务端错误高频出现，优先修复；用户遇到 5xx 通常会直接放弃当前操作"
+                    : "该接口在真实使用中高频失败，排查最常见错误码的触发条件；若属参数/状态校验，应把校验前移到前端并给出可行动的提示文案",
+                Evidence: new List<string>
+                {
+                    $"{count} 次失败，{users} 人遇到",
+                    topCode != null ? $"最常见错误码 {topCode.Key}（{topCode.Count()} 次）" : "无业务错误码（多为框架层拒绝）",
+                },
+                Severity: count * (g.Key.StatusCode >= 500 ? 3 : 1) + users * 2));
+        }
+
+        // ── 信号 B：等待过久（apirequestlogs 中 ≥3s 的非流式慢请求）──
+        var slowLogs = await _db.ApiRequestLogs.Find(rb.And(
+                rb.Gte(x => x.StartedAt, fromUtc),
+                rb.Lte(x => x.StartedAt, endUtc),
+                rb.Ne(x => x.Direction, "outbound"),
+                rb.Eq(x => x.IsEventStream, false),
+                rb.Gte(x => x.DurationMs, 3000)))
+            .SortByDescending(x => x.StartedAt)
+            .Limit(20000)
+            .Project(x => new { x.Path, x.Method, x.DurationMs, x.UserId })
+            .ToListAsync();
+
+        foreach (var g in slowLogs
+                     .Where(x => x.Path != null && x.Path.StartsWith("/api"))
+                     .GroupBy(x => (Path: NormalizePath(x.Path!), x.Method))
+                     .Where(g => g.Count() >= 5))
+        {
+            var count = g.Count();
+            var users = g.Select(x => x.UserId).Distinct().Count();
+            var avgSec = g.Average(x => (double)(x.DurationMs ?? 0)) / 1000.0;
+            insights.Add(new Insight(
+                Kind: "slow-endpoint",
+                KindLabel: "等待过久",
+                Target: $"{g.Key.Method} {g.Key.Path}",
+                UserCount: users,
+                EventCount: count,
+                Metric: $"慢请求均值 {avgSec:F1}s",
+                Suggestion: "等待超过 3 秒且无流式反馈即为体验缺陷：优先做流式/分页/缓存/异步化，至少给阶段性进度提示",
+                Evidence: new List<string>
+                {
+                    $"{count} 次 ≥3s 的请求，{users} 人等待过",
+                    $"慢请求平均耗时 {avgSec:F1}s",
+                },
+                Severity: count + avgSec * 5 + users * 2));
+        }
+
+        // ── 行为事件（采集自上线起）──
+        var bb = Builders<BehaviorEvent>.Filter;
+        var events = await _db.BehaviorEvents.Find(bb.And(
+                bb.Gte(x => x.OccurredAt, fromUtc),
+                bb.Lte(x => x.OccurredAt, endUtc)))
+            .SortByDescending(x => x.OccurredAt)
+            .Limit(50000)
+            .Project(x => new { x.Type, x.Route, x.FromRoute, x.DwellMs, x.UserId, x.OccurredAt })
+            .ToListAsync();
+
+        // ── 信号 C/D：停留过久 + 秒退（route-dwell）──
+        var dwells = events.Where(e => e.Type == "route-dwell" && e.DwellMs.HasValue).ToList();
+        foreach (var g in dwells.GroupBy(e => e.Route).Where(g => g.Count() >= 8))
+        {
+            var count = g.Count();
+            var users = g.Select(x => x.UserId).Distinct().Count();
+            var avgMs = g.Average(x => (double)x.DwellMs!.Value);
+            var bounce = g.Count(x => x.DwellMs!.Value < 5000);
+            var bounceRate = (double)bounce / count;
+
+            // 停留过久：平均可见停留 ≥3 分钟（内容消费页属正常，由产品负责人结合页面性质判断）
+            if (avgMs >= 180_000)
+            {
+                insights.Add(new Insight(
+                    Kind: "long-dwell",
+                    KindLabel: "停留过久",
+                    Target: g.Key,
+                    UserCount: users,
+                    EventCount: count,
+                    Metric: $"平均停留 {avgMs / 60000.0:F1} 分钟",
+                    Suggestion: "若该页不是内容消费页，长停留通常意味着「找不到下一步」：检查主操作是否一眼可见、是否缺少引导（3 秒原则）",
+                    Evidence: new List<string>
+                    {
+                        $"{count} 次访问，{users} 人",
+                        $"平均可见停留 {avgMs / 60000.0:F1} 分钟（已剔除切走标签页的时间）",
+                    },
+                    Severity: avgMs / 60000.0 * users));
+            }
+
+            // 秒退：≥40% 的进入在 5 秒内离开
+            if (count >= 10 && bounceRate >= 0.4)
+            {
+                insights.Add(new Insight(
+                    Kind: "quick-exit",
+                    KindLabel: "秒退放弃",
+                    Target: g.Key,
+                    UserCount: users,
+                    EventCount: count,
+                    Metric: $"秒退率 {bounceRate * 100:F0}%",
+                    Suggestion: "大量进入在 5 秒内离开：入口承诺与页面承接不匹配，或首屏没有给出「这是什么/能做什么」（检查入口文案与空状态引导）",
+                    Evidence: new List<string>
+                    {
+                        $"{count} 次进入中 {bounce} 次在 5 秒内离开，涉及 {users} 人",
+                    },
+                    Severity: bounceRate * 100 + count / 10.0));
+            }
+        }
+
+        // ── 信号 E：反复横跳（同一用户 2 分钟内 A→B→A 折返，按页面对聚类）──
+        var oscillations = new Dictionary<string, (int Trips, HashSet<string> Users, string A, string B)>();
+        foreach (var userGroup in events
+                     .Where(e => e.Type == "route-transition" && !string.IsNullOrEmpty(e.FromRoute) && e.FromRoute != e.Route)
+                     .GroupBy(e => e.UserId))
+        {
+            var seq = userGroup.OrderBy(e => e.OccurredAt).ToList();
+            for (var i = 0; i + 1 < seq.Count; i++)
+            {
+                var cur = seq[i];
+                var next = seq[i + 1];
+                var isReturn = next.FromRoute == cur.Route && next.Route == cur.FromRoute;
+                if (!isReturn || (next.OccurredAt - cur.OccurredAt) > TimeSpan.FromMinutes(2)) continue;
+                var pair = string.CompareOrdinal(cur.FromRoute, cur.Route) <= 0
+                    ? (A: cur.FromRoute!, B: cur.Route)
+                    : (A: cur.Route, B: cur.FromRoute!);
+                var key = $"{pair.A}{pair.B}";
+                if (!oscillations.TryGetValue(key, out var agg)) agg = (0, new HashSet<string>(), pair.A, pair.B);
+                agg.Trips++;
+                agg.Users.Add(userGroup.Key);
+                oscillations[key] = agg;
+            }
+        }
+
+        foreach (var (_, agg) in oscillations.Where(kv => kv.Value.Trips >= 3))
+        {
+            insights.Add(new Insight(
+                Kind: "route-oscillation",
+                KindLabel: "反复横跳",
+                Target: $"{agg.A} ↔ {agg.B}",
+                UserCount: agg.Users.Count,
+                EventCount: agg.Trips,
+                Metric: $"2 分钟内折返 {agg.Trips} 次",
+                Suggestion: "用户在两页之间反复对照：考虑把关键信息并排展示、提供跨页摘要，或在其中一页内嵌另一页的关键数据",
+                Evidence: new List<string>
+                {
+                    $"{agg.Users.Count} 人发生 {agg.Trips} 次快速折返（2 分钟内 A→B→A）",
+                },
+                Severity: agg.Trips * 4 + agg.Users.Count * 3));
+        }
+
+        // 采集起点：让前端能诚实告知「路由级信号从何时开始有数据」
+        var earliest = await _db.BehaviorEvents.Find(FilterDefinition<BehaviorEvent>.Empty)
+            .SortBy(x => x.CreatedAt)
+            .Limit(1)
+            .Project(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        var items = insights
+            .OrderByDescending(i => i.Severity)
+            .Take(30)
+            .Select(i => new
+            {
+                kind = i.Kind,
+                kindLabel = i.KindLabel,
+                target = i.Target,
+                userCount = i.UserCount,
+                eventCount = i.EventCount,
+                metric = i.Metric,
+                suggestion = i.Suggestion,
+                evidence = i.Evidence,
+            })
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items,
+            behaviorEventCount = events.Count,
+            trackedSince = earliest == default ? (DateTime?)null : earliest,
+            windowFrom = fromUtc,
+            windowTo = endUtc,
+        }));
+    }
+
     /// <summary>
     /// 模块筛选清单（来自白名单注册表，避免前后端模块清单漂移）。
     /// </summary>
