@@ -1581,6 +1581,8 @@ public class MdToPptController : ControllerBase
         InfraAgentSessionView? session = presession;
         try
         {
+            // 永不抛（2026-06-12 实测：单页 HttpClient 100s 超时异常逃逸炸掉整本 deck）——
+            // 任何传输层异常都折叠为 (null, message)，由调用方走"重试一次 -> 兜底页"链路
             if (session == null)
             {
                 session = await _sessions.CreateAsync(userId,
@@ -1632,6 +1634,11 @@ public class MdToPptController : ControllerBase
                 await Task.Delay(800);
             }
             return (null, "页面生成超时");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[MdToPpt-Page] transport failure folded to page error: {Msg}", ex.Message);
+            return (null, ex.Message);
         }
         finally
         {
@@ -1727,6 +1734,8 @@ public class MdToPptController : ControllerBase
                 await gate.WaitAsync();
                 try
                 {
+                  try
+                  {
                     string sys, usr;
                     MdToPptAnchors.AnchorSlide? layout = null;
                     if (anchor != null)
@@ -1765,6 +1774,18 @@ public class MdToPptController : ControllerBase
                     var ms = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                     _logger.LogInformation("[MdToPpt-Pages] page {Idx} done {N}/{Total} elapsedMs={Ms}", i, n, total, ms);
                     await EmitAsync("page", new { index = i, total, html = section, done = n });
+                  }
+                  catch (Exception pageEx)
+                  {
+                      // 单页全链路兜底：任何异常都不许杀整本
+                      _logger.LogError(pageEx, "[MdToPpt-Pages] page {Idx} hard-failed, fallback slide", i);
+                      var fb = anchor != null
+                          ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design), pages[i], i)
+                          : SanitizeSection(FallbackSection(pages[i], i));
+                      sections[i] = fb;
+                      var n2 = Interlocked.Increment(ref doneCount);
+                      await EmitAsync("page", new { index = i, total, html = fb, done = n2 });
+                  }
                 }
                 finally { gate.Release(); }
             }).ToList();

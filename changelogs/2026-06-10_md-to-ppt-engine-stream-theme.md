@@ -73,3 +73,4 @@
 | fix | prd-admin | 锚定 deck 页码桥 v2：active/is-active/current 类 + 视口中心 elementFromPoint 反查 + 800ms 兜底轮询（monochrome 等不打类标的运行时页码也跟手） |
 | feat | prd-admin | 输入框大气化（用户点名）：composer 加高加圆角、聚焦上浮+饱满光环；页卡缩略图 hover 浮起投影（交互灵动） |
 | fix | prd-admin | looksLikeDeck 识别锚定 deck（div.slide）：retro-zine 等 div 容器模板生成完被误判"结果异常"丢弃的问题 |
+| fix | prd-api | 单页故障绝不杀整本：RunAgentOnceAsync 永不抛（传输异常折叠为页错误走重试/兜底）+ 并行任务体全链路兜底页（实测单页 HttpClient 100s 超时异常逃逸炸掉整个 deck） |
