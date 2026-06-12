@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT, START_TUTORIAL_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide, filterPageTips, isUpdateTip, isUpdateReminderTip, pickAutoOpenUpdateTip } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, filterPageTips, isUpdateTip, isUpdateReminderTip, pickAutoOpenUpdateTip, routePathOf } from './pageGuideMatch';
 import { difficultyMeta } from './difficultyMeta';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload, SPOTLIGHT_PAYLOAD_UPDATED_EVENT } from './TipsRotator';
@@ -272,6 +272,15 @@ export function TipsDrawer() {
     if (pageGuideHere) return; // 本页有未走完的新手教程 → 先让 Spotlight 走完整套,不抢
     const reminder = pageTips.find((t) => isUpdateReminderTip(t) && !t.learned);
     if (!reminder || !reminder.sourceId) return;
+    // 只在「精确目标页」且锚点确实在 DOM 里才弹/标记学会(Codex P2):
+    // reminder 是非 page-guide,filterPageTips 会把它匹配到子路由(如 /visual-agent/:id 编辑器),
+    // 但锚点(visual-image-btn)只在列表页存在。若在编辑器子路由弹,会「定位不到目标」走失败卡,
+    // 且 markLearned 永久消费掉,用户再没机会在列表页看到该新功能提醒。故双重门:精确路由 + 目标存在。
+    if (location.pathname !== routePathOf(reminder.actionUrl)) return;
+    let targetEl: Element | null = null;
+    try { targetEl = reminder.targetSelector ? document.querySelector(reminder.targetSelector) : null; }
+    catch { targetEl = null; }
+    if (!targetEl) return;
     // 同 session 内本页 *-page-guide 刚自动开讲/走完(完成时 markLearned 让 pageGuideHere 同 session 变 null)
     // → 不要紧接着再弹更新提醒:新人刚走完整套教程(里面已讲到该新功能),立刻又弹气泡是重复打断(Codex P2)。
     // 留到「下次进页」(page-guide 非本 session 新开)再弹。filterPageTips 不按 learned 过滤,
@@ -295,7 +304,7 @@ export function TipsDrawer() {
     void trackTip(reminder.id, 'clicked');
     writeSpotlightPayload(reminder); // 在 [data-tour-id=...] 位置弹单步气泡
     void markLearned(reminder.id);   // 看过即标记学会 → 之后永不再弹(取消/知道了都一样)
-  }, [loaded, pageTips, pageGuideHere, markLearned]);
+  }, [loaded, pageTips, pageGuideHere, markLearned, location.pathname]);
 
   // ── 新用户兜底自动弹抽屉:已移除 ──────────────────────────
   // 历史上「本日第一次访问且本页有任意 tip 就自动展开抽屉」会在用户没点任何按钮时

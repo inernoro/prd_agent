@@ -417,6 +417,10 @@ function QuickInputBox(props: {
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
+    // 只有真正离开容器时才清除高亮:指针移入内部子元素(如 textarea / 按钮)也会触发 dragleave,
+    // relatedTarget 仍在容器内时保持 isDragging,避免拖拽悬停时提示蒙层/高亮边框闪烁(Bugbot)。
+    const next = e.relatedTarget as Node | null;
+    if (next && e.currentTarget.contains(next)) return;
     setIsDragging(false);
   };
 
