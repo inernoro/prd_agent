@@ -113,3 +113,6 @@ cds/nginx/www/
 # skills-CLI 安装的第三方技能在 .claude/skills 下生成的 symlink（指向 .agents，本地产物）
 # 真实可复现记录在 skills-lock.json；新容器跑 `npx skills update` 恢复
 .claude/skills/ux-heuristics
+
+# 验收报告/截图本地退化产物——归档走知识库，不入库（2026-06-12 清理）
+doc/acceptance/

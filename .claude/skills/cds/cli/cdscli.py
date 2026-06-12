@@ -936,8 +936,11 @@ def _slugify_for_preview(s: str) -> str:
     return s.strip('-')
 
 
-def _repo_name_from_git_ref(raw: str) -> str:
-    """与 cds/src/services/preview-slug.ts:repoNameFromGitRef 保持语义一致。"""
+def _repo_name_from_git_ref(raw: str | None) -> str:
+    """与 cds/src/services/preview-slug.ts:repoNameFromGitRef 保持语义一致。
+
+    用于从 git remote URL / scp 形式引用中提取仓库名 slug。
+    """
     value = (raw or "").strip()
     if not value:
         return ""
@@ -986,6 +989,8 @@ def _project_slug_hints(repo_root: str) -> list[str]:
     directory_slug = _slugify_for_preview(os.path.basename(repo_root))
     origin_slug = _git_origin_slug()
     if directory_slug in _GENERIC_WORKSPACE_SLUGS:
+        # 泛型目录（workspace 等）的安全身份就是目录 slug：服务端未持久化
+        # collision-checked alias 时，禁止隐式采用 repo 别名（见 phase16 测试）
         return unique((directory_slug,))
     return unique((directory_slug or origin_slug,))
 
@@ -4287,40 +4292,15 @@ def _git_remote_url(root: str) -> str | None:
     return None
 
 
-def _repo_name_from_git_ref(raw: str | None) -> str:
-    """与 cds/src/services/preview-slug.ts:repoNameFromGitRef 对齐。
-
-    Cloud Agent / 临时 clone 目录常叫 workspace，不能拿目录名当 CDS 项目 slug。
-    """
-    value = (raw or "").strip()
-    if not value:
-        return ""
-    without_query = re.sub(r"[?#].*$", "", value).rstrip("/")
-    path_part = without_query
-    if re.match(r"^[^@\s]+@[^:\s]+:.+", without_query):
-        path_part = without_query[without_query.index(":") + 1:]
-    else:
-        try:
-            path_part = urllib.parse.urlparse(without_query).path
-        except Exception:
-            path_part = without_query
-    last = (
-        path_part.replace("\\", "/").split("/")
-    )
-    last = [p for p in last if p]
-    repo = last[-1] if last else ""
-    repo = re.sub(r"\.git$", "", repo, flags=re.IGNORECASE)
-    return _slugify_for_preview(repo)
-
-
 def _fallback_project_slug(repo_root: str) -> str:
     """preview-url / branch-id 本地推算用的项目 slug。
 
-    优先 git remote 仓库名（prd_agent → prd-agent），目录名仅作兜底。
+    与 _project_slug_hints 共用同一优先序（SSOT）：泛型目录名优先 git remote
+    仓库名，普通目录名优先目录 slug；两者皆空才回落 basename。
     """
-    from_git = _repo_name_from_git_ref(_git_remote_url(repo_root))
-    if from_git:
-        return from_git
+    hints = _project_slug_hints(repo_root)
+    if hints:
+        return hints[0]
     return _slugify_for_preview(os.path.basename(repo_root))
 
 

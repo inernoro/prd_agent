@@ -757,6 +757,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
     // 项目级 Agent 会话
+    [/^GET \/projects\/[^/]+\/agent-requests$/, '列出 Agent 请求'],
     [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+\/stream$/, '订阅 Agent 会话事件流'],
     [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+\/logs$/, '查看 Agent 会话日志'],
     [/^POST \/projects\/[^/]+\/agent-sessions\/[^/]+\/stop$/, '停止 Agent 会话'],

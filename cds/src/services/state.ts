@@ -2683,6 +2683,25 @@ export class StateService {
     }
   }
 
+  /** Agent 请求历史（观测台持久层）：ring buffer 500 条，会话 stop/fail 时落一条摘要 */
+  static readonly AGENT_REQUEST_HISTORY_MAX = 500;
+
+  recordAgentRequest(record: import('../types.js').AgentRequestRecord): void {
+    const list = this.state.agentRequestHistory || [];
+    list.push(record);
+    while (list.length > StateService.AGENT_REQUEST_HISTORY_MAX) list.shift();
+    this.state.agentRequestHistory = list;
+    try {
+      this.save();
+    } catch (err) {
+      console.warn('[state] recordAgentRequest save failed:', (err as Error).message);
+    }
+  }
+
+  listAgentRequests(): import('../types.js').AgentRequestRecord[] {
+    return this.state.agentRequestHistory || [];
+  }
+
   recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {
     // 2026-05-07 用户反馈"以前的更新日志去哪了":在写历史前,把当前 active 的
     // logTail 转储到 record.steps,历史抽屉就能展开看完整步骤序列。

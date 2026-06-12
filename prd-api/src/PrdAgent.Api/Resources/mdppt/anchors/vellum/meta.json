@@ -1,0 +1,71 @@
+{
+  "name": "vellum",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-vellum)",
+  "license": "MIT",
+  "slideCount": 9,
+  "layouts": [
+    {
+      "file": "01-slide--cover.html",
+      "layout": "slide--cover",
+      "classAttr": "slide light slide--cover",
+      "chars": 681,
+      "summary": "Essay 01 · 2026 On Restraint Field notes on the discipline of less, written for designers "
+    },
+    {
+      "file": "02-slide--statement.html",
+      "layout": "slide--statement",
+      "classAttr": "slide dark slide--statement",
+      "chars": 524,
+      "summary": "[The Argument] Most design problems are removed , not solved. 02 / 09 Bold claim. Stand by"
+    },
+    {
+      "file": "03-slide--text.html",
+      "layout": "slide--text",
+      "classAttr": "slide light slide--text",
+      "chars": 1031,
+      "summary": "[Field Note 03] 03 Observation What you remove is louder than what you keep. Subtraction c"
+    },
+    {
+      "file": "04-slide--stats.html",
+      "layout": "slide--stats",
+      "classAttr": "slide light slide--stats",
+      "chars": 1346,
+      "summary": "[By the Numbers] 04 Three findings from a year of editing . 73 % of choices in early draft"
+    },
+    {
+      "file": "05-slide--list.html",
+      "layout": "slide--list",
+      "classAttr": "slide light slide--list",
+      "chars": 1090,
+      "summary": "[Method] 05 [Why It Matters] Four rules that hold . One accent color per spread. Never two"
+    },
+    {
+      "file": "06-slide--quote.html",
+      "layout": "slide--quote",
+      "classAttr": "slide dark slide--quote",
+      "chars": 694,
+      "summary": "\" Design is a plan for arranging elements to accomplish a particular purpose . Charles Eam"
+    },
+    {
+      "file": "07-slide--compare.html",
+      "layout": "slide--compare",
+      "classAttr": "slide slide--compare",
+      "chars": 1698,
+      "summary": "Before The unfocused draft Three points compete for the title slot. Two accent colors. The"
+    },
+    {
+      "file": "08-slide--chart.html",
+      "layout": "slide--chart",
+      "classAttr": "slide light slide--chart",
+      "chars": 2019,
+      "summary": "[Pattern] 08 How drafts shrink during editing. Word count, indexed (start = 100) 100 Draft"
+    },
+    {
+      "file": "09-slide--end.html",
+      "layout": "slide--end",
+      "classAttr": "slide light slide--end",
+      "chars": 774,
+      "summary": "[End notes] Edit until it stops looking edited . Thank you for reading. Comments, correcti"
+    }
+  ]
+}

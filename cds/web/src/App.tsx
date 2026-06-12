@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { reportDashboardRenderError } from '@/lib/client-diagnostics';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 
+const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
 const BranchListPage = lazy(() => import('@/pages/BranchListPage').then((m) => ({ default: m.BranchListPage })));
 const BranchTopologyPage = lazy(() => import('@/pages/BranchTopologyPage').then((m) => ({ default: m.BranchTopologyPage })));
@@ -249,6 +250,7 @@ export function App(): JSX.Element {
             <Route path="/branch-topology" element={<BranchTopologyPage />} />
             <Route path="/release-center" element={<ReleaseCenterPage />} />
             <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
+            <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />
             <Route path="*" element={<Navigate to="/project-list" replace />} />
           </Routes>
         </Suspense>
