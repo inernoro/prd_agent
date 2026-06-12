@@ -2505,7 +2505,9 @@ export function MdToPptAgentPage() {
           <div className="shrink-0 border-t border-white/8 px-3 pt-3" style={{ paddingBottom: 34 }}>
             <div
               data-testid="composer-shell"
-              className="flex flex-col gap-2 rounded-2xl border border-white/12 bg-white/4 px-3.5 pt-3 pb-2.5 transition-all duration-300 focus-within:border-purple-400/80 focus-within:bg-white/7 focus-within:ring-2 focus-within:ring-purple-500/35 focus-within:shadow-[0_8px_32px_rgba(168,85,247,.22)] focus-within:-translate-y-0.5"
+              /* 禁止在这层加 transform（如 -translate-y）：transform 会创建新 stacking context，
+                 让卡内 z-10 的 + 菜单被 fixed z-[5] 的关闭蒙层盖住，菜单项永远点不到 */
+              className="flex flex-col gap-2 rounded-2xl border border-white/12 bg-white/4 px-3.5 pt-3 pb-2.5 transition-all duration-300 focus-within:border-purple-400/80 focus-within:bg-white/7 focus-within:ring-2 focus-within:ring-purple-500/35 focus-within:shadow-[0_8px_32px_rgba(168,85,247,.22)]"
             >
               {/* Pending attachments & KB refs（卡内顶部） */}
               {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
