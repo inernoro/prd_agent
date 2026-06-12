@@ -119,31 +119,34 @@ export function PulseBand({
               <span className="text-[11px] tracking-widest text-white/40">活跃时段</span>
               {stats.sampled ? <span className="text-[10px] text-white/30">（近 5000 条采样）</span> : null}
             </div>
-            <div className="flex items-end gap-[3px] h-8">
-              {hourly.map((count, h) => {
-                const ratio = count / hourMax;
-                const isNow = h === currentHour;
-                return (
-                  <div
-                    key={h}
-                    title={`${h}:00 — ${count} 条`}
-                    className="flex-1 rounded-sm transition-all duration-500"
-                    style={{
-                      height: count === 0 ? 3 : Math.max(5, Math.round(ratio * 32)),
-                      background: isNow
-                        ? '#22d3ee'
-                        : `rgba(34, 211, 238, ${count === 0 ? 0.1 : 0.25 + ratio * 0.65})`,
-                    }}
-                  />
-                );
-              })}
-            </div>
-            <div className="flex justify-between text-[10px] text-white/25 tabular-nums">
-              <span>0时</span>
-              <span>6时</span>
-              <span>12时</span>
-              <span>18时</span>
-              <span>23时</span>
+            {/* 限宽：中间栏可能非常宽，柱子不限宽会被 flex-1 拉成胖药丸 */}
+            <div className="flex flex-col gap-1" style={{ width: 'min(100%, 400px)' }}>
+              <div className="flex items-end gap-[3px] h-8">
+                {hourly.map((count, h) => {
+                  const ratio = count / hourMax;
+                  const isNow = h === currentHour;
+                  return (
+                    <div
+                      key={h}
+                      title={`${h}:00 — ${count} 条`}
+                      className="flex-1 rounded-[2px] transition-all duration-500"
+                      style={{
+                        height: count === 0 ? 3 : Math.max(6, Math.round(ratio * 32)),
+                        background: isNow
+                          ? '#22d3ee'
+                          : `rgba(34, 211, 238, ${count === 0 ? 0.1 : 0.25 + ratio * 0.65})`,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              <div className="flex justify-between text-[10px] text-white/25 tabular-nums">
+                <span>0时</span>
+                <span>6时</span>
+                <span>12时</span>
+                <span>18时</span>
+                <span>23时</span>
+              </div>
             </div>
           </div>
         </div>
