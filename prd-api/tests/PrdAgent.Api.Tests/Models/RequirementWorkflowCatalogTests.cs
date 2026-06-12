@@ -39,6 +39,17 @@ public class RequirementWorkflowCatalogTests
     }
 
     [Fact]
+    public void Default_requirement_workflow_states_have_builtin_descriptions()
+    {
+        var def = ProductWorkflowDefaults.Requirement();
+        foreach (var (key, expected) in RequirementWorkflowCatalog.StateDescriptions)
+        {
+            var state = def.States.First(s => s.Key == key);
+            Assert.Equal(expected, state.Description);
+        }
+    }
+
+    [Fact]
     public void Default_requirement_workflow_matches_builtin_state_count()
     {
         var def = ProductWorkflowDefaults.Requirement();

@@ -28,6 +28,18 @@ public static class RequirementWorkflowCatalog
         [Scheduled] = "已排期",
     };
 
+    /// <summary>内置状态说明（流程模板「状态定义」初始展示文案）。</summary>
+    public static readonly IReadOnlyDictionary<string, string> StateDescriptions = new Dictionary<string, string>
+    {
+        [New] = "新提交的需求，待评审",
+        [Planning] = "经过产品经理评审，认为此需求合理，待排期规划",
+        [Approved] = "需求已出产品方案，待开发",
+        [Developing] = "该需求正在开发中，待上线",
+        [Released] = "需求已经实现，并且项目已经上线",
+        [Rejected] = "经过产品经理评审，认为此需求不合理",
+        [Scheduled] = "需求经过产品经理规划，已申请立项，待评审",
+    };
+
     /// <summary>MAP 旧默认流程状态 → 当前内置状态 Key。</summary>
     public static readonly IReadOnlyDictionary<string, string> LegacyStateMap = new Dictionary<string, string>
     {

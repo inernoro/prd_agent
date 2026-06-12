@@ -12,3 +12,4 @@
 | fix | prd-admin | 状态定义区补回状态说明列并固定列宽，名称列不再挤占其他列 |
 | feat | prd-api | WorkflowState 新增 Description 字段供状态说明存储 |
 | refactor | prd-admin | 应用配置移除功能流转页，功能状态改读所属计划版本 |
+| feat | prd-api | 需求工作流 7 状态补全状态说明种子文案（SeedRevision 7） |

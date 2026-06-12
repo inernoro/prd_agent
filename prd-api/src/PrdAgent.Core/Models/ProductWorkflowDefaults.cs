@@ -13,7 +13,7 @@ public static class ProductWorkflowDefaults
     public const string DefectDefId = "wf-default-defect";
 
     /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认需求流程定义。</summary>
-    public const int RequirementWorkflowRevision = 6;
+    public const int RequirementWorkflowRevision = 7;
 
     /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认缺陷流程定义。</summary>
     public const int DefectWorkflowRevision = 1;
@@ -28,13 +28,13 @@ public static class ProductWorkflowDefaults
         ProductId = null,
         States = new()
         {
-            new() { Key = RequirementWorkflowCatalog.New, Label = "待评审", Color = "#9ca3af", IsInitial = true, Category = "todo", SortOrder = 0, SlaHours = 48 },
-            new() { Key = RequirementWorkflowCatalog.Planning, Label = "待规划", Color = "#38bdf8", Category = "todo", SortOrder = 1, SlaHours = 48 },
-            new() { Key = RequirementWorkflowCatalog.Approved, Label = "已立项", Color = "#60a5fa", Category = "todo", SortOrder = 2 },
-            new() { Key = RequirementWorkflowCatalog.Developing, Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 3, SlaHours = 72, WipLimit = 8 },
-            new() { Key = RequirementWorkflowCatalog.Released, Label = "已上线", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
-            new() { Key = RequirementWorkflowCatalog.Rejected, Label = "已拒绝", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
-            new() { Key = RequirementWorkflowCatalog.Scheduled, Label = "已排期", Color = "#a78bfa", Category = "todo", SortOrder = 6 },
+            new() { Key = RequirementWorkflowCatalog.New, Label = "待评审", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.New], Color = "#9ca3af", IsInitial = true, Category = "todo", SortOrder = 0, SlaHours = 48 },
+            new() { Key = RequirementWorkflowCatalog.Planning, Label = "待规划", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Planning], Color = "#38bdf8", Category = "todo", SortOrder = 1, SlaHours = 48 },
+            new() { Key = RequirementWorkflowCatalog.Approved, Label = "已立项", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Approved], Color = "#60a5fa", Category = "todo", SortOrder = 2 },
+            new() { Key = RequirementWorkflowCatalog.Developing, Label = "开发中", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Developing], Color = "#f59e0b", Category = "doing", SortOrder = 3, SlaHours = 72, WipLimit = 8 },
+            new() { Key = RequirementWorkflowCatalog.Released, Label = "已上线", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Released], Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
+            new() { Key = RequirementWorkflowCatalog.Rejected, Label = "已拒绝", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Rejected], Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
+            new() { Key = RequirementWorkflowCatalog.Scheduled, Label = "已排期", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Scheduled], Color = "#a78bfa", Category = "todo", SortOrder = 6 },
         },
         Transitions = BuildRequirementTransitions(),
     };
