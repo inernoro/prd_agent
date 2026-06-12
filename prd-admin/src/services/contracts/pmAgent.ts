@@ -606,6 +606,8 @@ export type PmMilestone = {
   blockedBy?: string[];
   status: PmMilestoneStatus;
   orderKey: number;
+  /** 由目标「设为里程碑」联动创建（与目标同生命周期，取消即删除） */
+  autoFromGoal?: boolean;
   taskTotal: number;
   taskDone: number;
   progress: number;

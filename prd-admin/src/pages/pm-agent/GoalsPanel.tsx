@@ -28,6 +28,8 @@ interface Props {
   /** 目标画布反查列表点击跳转 */
   onNavigateTask?: (taskId: string) => void;
   onNavigateWeekly?: (reportId: string) => void;
+  /** 目标侧操作可能联动里程碑（设为/取消里程碑、删除目标），通知父级刷新 milestones，否则「里程碑」tab 看到的是旧数据 */
+  onMilestonesChanged?: () => void;
 }
 
 const STATUS_KEYS: PmGoalStatus[] = ['on_track', 'at_risk', 'done', 'abandoned'];
@@ -42,7 +44,7 @@ function fmtDate(s?: string | null) {
  * 项目目标 —— 以业务目标为北极星，团队目标（全员可见）+ 我的个人目标（仅本人）。
  * 团队目标进度可由关联里程碑自动滚动（auto）或手填（manual）。团队目标写操作限项目经理。
  */
-export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalChange, onNavigateTask, onNavigateWeekly }: Props) {
+export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalChange, onNavigateTask, onNavigateWeekly, onMilestonesChanged }: Props) {
   const [goals, setGoals] = useState<PmGoal[]>([]);
   const [milestones, setMilestones] = useState<PmMilestone[]>([]);
   const [loading, setLoading] = useState(true);
@@ -137,7 +139,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
 
   const toggleGoalMilestone = async (g: PmGoal) => {
     const res = await setGoalAsMilestone(g.id, !g.isMilestone);
-    if (res.success) { toast.success(g.isMilestone ? '已取消里程碑' : '已设为里程碑', g.isMilestone ? '' : '已在「里程碑」同步显示'); await load(); }
+    if (res.success) { toast.success(g.isMilestone ? '已取消里程碑' : '已设为里程碑', g.isMilestone ? '' : '已在「里程碑」同步显示'); await load(); onMilestonesChanged?.(); }
     else toast.error('操作失败', res.error?.message || '');
   };
 
@@ -149,7 +151,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
     if (!window.confirm(msg)) return;
     setBusyId(g.id);
     const res = await deletePmGoal(g.id);
-    if (res.success) { await load(); } // 级联删子树，重新拉取以反映整棵子树移除
+    if (res.success) { await load(); onMilestonesChanged?.(); } // 级联删子树 + 联动里程碑，父级 milestones 一并刷新
     else toast.error('删除失败', res.error?.message || '');
     setBusyId(null);
   };
@@ -215,6 +217,9 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
                 <span className="text-[9.5px] px-1 py-0.5 rounded shrink-0 tabular-nums" style={{ background: 'var(--bg-base)', color: 'var(--text-muted)' }}>L{depth + 1}</span>
               )}
               <span className="text-[13px] font-medium break-words" style={{ color: 'var(--text-primary)' }}>{g.title}</span>
+              {g.isMilestone && (
+                <span className="text-[9.5px] px-1 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5" style={{ background: 'rgba(168,85,247,0.14)', color: '#A855F7' }} title="已设为里程碑，在「里程碑」同步显示"><Flag size={9} />里程碑</span>
+              )}
             </div>
             {g.description && <div className="text-[11.5px] mt-0.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>{g.description}</div>}
           </div>
@@ -329,7 +334,9 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
       </div>
 
       {view === 'canvas' ? (
-        <GoalsCanvas projectId={projectId} businessGoal={businessGoal} canManage={canManage} goals={goals} onReload={load} onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
+        <GoalsCanvas projectId={projectId} businessGoal={businessGoal} canManage={canManage} goals={goals}
+          onReload={() => { load(); onMilestonesChanged?.(); /* 画布抽屉内可设为/取消里程碑、删目标，需同步父级 milestones */ }}
+          onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
       ) : view === 'dashboard' ? (
         <GoalsDashboard goals={goals} cycles={cycles} />
       ) : (
@@ -373,8 +380,10 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
               return (
                 <div key={m.id} className="shrink-0 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', minWidth: 150 }}>
                   <div className="flex items-center gap-1.5">
-                    <span style={{ width: 9, height: 9, background: h.color, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 2 }} />
-                    <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>{m.title}</span>
+                    {m.autoFromGoal
+                      ? <Target size={10} style={{ color: h.color, flexShrink: 0 }} aria-label="来自目标" />
+                      : <span style={{ width: 9, height: 9, background: h.color, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 2 }} />}
+                    <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }} title={m.autoFromGoal ? `${m.title}（来自目标）` : m.title}>{m.title}</span>
                   </div>
                   <div className="text-[10.5px] mt-1" style={{ color: 'var(--text-muted)' }}>
                     {m.dueAt ? `${fmtDate(m.dueAt)} · ` : ''}{m.progress}% · <span style={{ color: h.color }}>{h.label}</span>

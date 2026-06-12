@@ -1271,6 +1271,8 @@ public class PmAgentController : ControllerBase
         }
         await _db.PmGoals.DeleteManyAsync(x => toDelete.Contains(x.Id));
         await _db.PmGoalCheckIns.DeleteManyAsync(x => toDelete.Contains(x.GoalId));
+        // 「设为里程碑」联动创建的里程碑与目标同生命周期，目标删除时一并清理（手动建的关联里程碑不动）
+        await _db.PmMilestones.DeleteManyAsync(x => x.AutoFromGoal && x.GoalId != null && toDelete.Contains(x.GoalId!));
         return Ok(ApiResponse<object>.Ok(new { deleted = true, count = toDelete.Count }));
     }
 
@@ -1511,6 +1513,7 @@ public class PmAgentController : ControllerBase
                 blockedBy = blockedByTitles,
                 status = m.Status,
                 orderKey = m.OrderKey,
+                autoFromGoal = m.AutoFromGoal,
                 taskTotal = total,
                 taskDone = done,
                 progress,
