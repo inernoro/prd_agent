@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { StreamingText } from '@/components/streaming/StreamingText';
+import { ImportPasswordModal } from './ImportPasswordModal';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   listCases,
@@ -78,6 +80,7 @@ export function CasesTab() {
   const [actionMsg, setActionMsg] = useState('');
   const [exporting, setExporting] = useState(false);
   const [sinking, setSinking] = useState(false);
+  const [importPwOpen, setImportPwOpen] = useState(false);
   const streamRef = useRef('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -399,7 +402,7 @@ export function CasesTab() {
             ) : (
               <div key={i} className="flex flex-col gap-1.5">
                 <MsgMeta related={m.relatedCases} hits={m.codeHits} />
-                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3">
+                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 min-w-0 break-words">
                   <MarkdownContent content={m.content} variant="reading" />
                 </div>
               </div>
@@ -410,8 +413,13 @@ export function CasesTab() {
             <div className="flex flex-col gap-1.5">
               <MsgMeta related={curRelated} hits={curHits} />
               {streamingText ? (
-                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3">
-                  <MarkdownContent content={streamingText} variant="reading" />
+                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 min-w-0 break-words">
+                  <StreamingText
+                    text={streamingText}
+                    streaming={isStreaming}
+                    markdown
+                    renderMarkdown={(c) => <MarkdownContent content={c} variant="reading" />}
+                  />
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-sm text-white/50 py-2">
@@ -489,10 +497,10 @@ export function CasesTab() {
             />
           </div>
           <button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => setImportPwOpen(true)}
             disabled={importStream.isStreaming}
             className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10 disabled:opacity-40"
-            title="导入历史 bug 文件，AI 自动解析为案例"
+            title="导入历史 bug 文件，AI 自动解析为案例（需口令）"
           >
             {importStream.isStreaming ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -600,6 +608,17 @@ export function CasesTab() {
           onSaved={() => {
             setEditorOpen(false);
             void load(keyword);
+          }}
+        />
+      )}
+
+      {importPwOpen && (
+        <ImportPasswordModal
+          title="案例导入口令"
+          onClose={() => setImportPwOpen(false)}
+          onConfirm={() => {
+            setImportPwOpen(false);
+            fileInputRef.current?.click();
           }}
         />
       )}

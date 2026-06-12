@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Send, Plus, Pencil, Trash2, Loader2, X, BookOpen, Search, Upload, Paperclip, Image as ImageIcon, ClipboardPaste } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { StreamingText } from '@/components/streaming/StreamingText';
+import { ImportPasswordModal } from './ImportPasswordModal';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   listKnowledge,
@@ -27,6 +29,7 @@ export function KnowledgeTab() {
   const [askUploading, setAskUploading] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [contextText, setContextText] = useState('');
+  const [importPwOpen, setImportPwOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const askFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -226,8 +229,13 @@ export function KnowledgeTab() {
             </div>
           )}
           {typing ? (
-            <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3">
-              <MarkdownContent content={typing} variant="reading" />
+            <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 min-w-0 break-words">
+              <StreamingText
+                text={typing}
+                streaming={isStreaming}
+                markdown
+                renderMarkdown={(c) => <MarkdownContent content={c} variant="reading" />}
+              />
             </div>
           ) : (
             !isStreaming && (
@@ -258,10 +266,10 @@ export function KnowledgeTab() {
             />
           </div>
           <button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => setImportPwOpen(true)}
             disabled={importing}
             className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10 disabled:opacity-40"
-            title="导入文件形成知识"
+            title="导入文件形成知识（需口令）"
           >
             {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
             导入
@@ -352,6 +360,17 @@ export function KnowledgeTab() {
           onSaved={() => {
             setEditorOpen(false);
             void load(keyword);
+          }}
+        />
+      )}
+
+      {importPwOpen && (
+        <ImportPasswordModal
+          title="业务知识导入口令"
+          onClose={() => setImportPwOpen(false)}
+          onConfirm={() => {
+            setImportPwOpen(false);
+            fileInputRef.current?.click();
           }}
         />
       )}

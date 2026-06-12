@@ -52,11 +52,21 @@ export function ChannelTraceAgentPage() {
         </div>
       </header>
 
-      <div className="flex-1 min-h-0">
-        {tab === 'knowledge' && <KnowledgeTab />}
-        {tab === 'cases' && <CasesTab />}
-        {tab === 'checklist' && <ChecklistTab />}
-        {tab === 'diff' && <DiffTab />}
+      {/* 四个 Tab 全部常驻挂载，仅用 display 切换可见性，保证切走再切回时
+          对话记录 / 输入框 / 流式结果等组件状态不被卸载清空。 */}
+      <div className="flex-1 min-h-0 relative">
+        <div className={tab === 'knowledge' ? 'h-full min-h-0' : 'hidden'}>
+          <KnowledgeTab />
+        </div>
+        <div className={tab === 'cases' ? 'h-full min-h-0' : 'hidden'}>
+          <CasesTab />
+        </div>
+        <div className={tab === 'checklist' ? 'h-full min-h-0' : 'hidden'}>
+          <ChecklistTab />
+        </div>
+        <div className={tab === 'diff' ? 'h-full min-h-0' : 'hidden'}>
+          <DiffTab />
+        </div>
       </div>
     </div>
   );
