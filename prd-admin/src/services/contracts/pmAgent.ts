@@ -78,6 +78,8 @@ export type PmProject = {
   isExcellent: boolean;
   excellenceAwardedAt?: string | null;
   wipLimits?: Partial<Record<PmTaskStatus, number>> | null;
+  /** 里程碑交付物类型字典（空 = 前端用内置默认） */
+  deliverableTypes?: string[];
   stakeholders: PmStakeholder[];
   evaluation?: PmEvaluation | null;
   evaluationRound?: PmEvaluationRound | null;
@@ -289,6 +291,7 @@ export type UpdatePmProjectInput = Partial<{
   plannedEndAt: string;
   budget: number;
   actualCost: number;
+  deliverableTypes: string[];
   valueCoefficient: number;
   wipLimits: Record<string, number>;
   memberIds: string[];
@@ -579,7 +582,8 @@ export type ListPmAuditLogsContract = (opts?: { projectId?: string; page?: numbe
 export type PmMilestoneStatus = 'planned' | 'reached' | 'cancelled';
 export type PmMilestoneHealth = 'on_track' | 'at_risk' | 'overdue' | 'reached' | 'cancelled';
 export type PmMilestoneCriterion = { id: string; text: string; done: boolean };
-export type PmDeliverableType = 'weekly' | 'decision' | 'link';
+/** 内置 weekly/decision/link/doc/other + 项目级自定义类型（自由字符串，字典见 PmProject.deliverableTypes） */
+export type PmDeliverableType = string;
 export type PmDeliverableRef = { type: PmDeliverableType; refId?: string | null; title: string; url?: string | null };
 export type PmMilestone = {
   id: string;

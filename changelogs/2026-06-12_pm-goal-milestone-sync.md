@@ -33,3 +33,5 @@
 | feat | prd-admin | Markdown 富文本编辑：引入 @uiw/react-md-editor（懒加载独立 chunk），富文本（所见即所得）/源码双模式切换，源码模式保留 [[ 引用自动补全；HTML 等仍编辑源码 |
 | feat | prd-admin | 目标三视图统一编辑：仪表盘卡片点击打开与画布同一个 GoalDetailDrawer，保存同源刷新，数据同步 |
 | polish | prd-admin | 目标抽屉信息架构重排：「AI 拆细 / 加子目标」上移头部常驻可见，「删除目标」收进底部危险区，不再埋在正文中部 |
+| feat | prd-api | 项目级「里程碑交付物类型」字典：PmProject.DeliverableTypes（更新端点整表替换，去空去重限 30），交付物 Type 放开为自由字符串 |
+| feat | prd-admin | 里程碑详情页 /pm-agent/p/:projectId/milestone/:id：OKR（关联目标 + KR 完成度条）、验收标准 DoD 勾选/增删、名下任务直达任务详情、交付物管理（内置 + 项目自定义类型即时增删）、标题行内改/计划日/负责人/标记达成；抽屉头部加「详情页」入口 |

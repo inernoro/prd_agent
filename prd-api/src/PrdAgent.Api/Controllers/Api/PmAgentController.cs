@@ -192,6 +192,9 @@ public class PmAgentController : ControllerBase
         if (request.ActualCost.HasValue) update = update.Set(p => p.ActualCost, request.ActualCost);
         if (request.ValueCoefficient.HasValue) update = update.Set(p => p.ValueCoefficient, Math.Max(0, request.ValueCoefficient.Value));
         if (request.WipLimits != null) update = update.Set(p => p.WipLimits, request.WipLimits.Where(kv => PmTaskStatus.All.Contains(kv.Key) && kv.Value > 0).ToDictionary(kv => kv.Key, kv => kv.Value));
+        if (request.DeliverableTypes != null)
+            update = update.Set(p => p.DeliverableTypes,
+                request.DeliverableTypes.Select(t => (t ?? string.Empty).Trim()).Where(t => t.Length is > 0 and <= 20).Distinct().Take(30).ToList());
         if (request.MemberIds != null) update = update.Set(p => p.MemberIds, request.MemberIds);
         if (request.Lifecycle != null && PmProjectLifecycle.All.Contains(request.Lifecycle))
         {
@@ -4540,6 +4543,8 @@ public class UpdatePmProjectRequest
     public double? ValueCoefficient { get; set; }
     public Dictionary<string, int>? WipLimits { get; set; }
     public List<string>? MemberIds { get; set; }
+    /// <summary>里程碑交付物类型字典（整表替换；去空去重，至多 30 个）</summary>
+    public List<string>? DeliverableTypes { get; set; }
 }
 
 public class AddCommentRequest

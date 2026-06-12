@@ -202,6 +202,12 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
         <div className="flex items-center gap-2 px-5 py-4 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <MilestoneIcon size={16} style={{ color: '#A855F7' }} />
           <span className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{isCreate ? '新增里程碑' : '里程碑详情'}</span>
+          {!isCreate && milestone && (
+            <a href={`/pm-agent/p/${projectId}/milestone/${milestone.id}`} className="text-[11px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:underline shrink-0"
+              style={{ color: '#A855F7', background: 'rgba(168,85,247,0.10)' }} title="打开里程碑详情页（OKR / 验收 / 任务 / 交付物集中管理）">
+              <ExternalLink size={10} />详情页
+            </a>
+          )}
           {milestone?.autoFromGoal && (
             <span className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 shrink-0" style={{ background: 'rgba(168,85,247,0.14)', color: '#A855F7' }} title="由目标「设为里程碑」联动创建，与目标同步（在目标侧取消即移除）"><Target size={9} />来自目标</span>
           )}
