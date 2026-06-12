@@ -2,7 +2,6 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 
@@ -31,18 +30,15 @@ public class TapdBugAgentService
     };
 
     private readonly ILlmGateway _gateway;
-    private readonly IExternalAuthorizationService _externalAuthorizationService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<TapdBugAgentService> _logger;
 
     public TapdBugAgentService(
         ILlmGateway gateway,
-        IExternalAuthorizationService externalAuthorizationService,
         IHttpClientFactory httpClientFactory,
         ILogger<TapdBugAgentService> logger)
     {
         _gateway = gateway;
-        _externalAuthorizationService = externalAuthorizationService;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -145,15 +141,15 @@ public class TapdBugAgentService
         return draft;
     }
 
-    public async Task<TapdBugSubmitResult> SubmitAsync(string userId, TapdBugSubmitRequest request)
+    public async Task<TapdBugSubmitResult> SubmitAsync(TapdBugSubmitRequest request)
     {
         if (!request.Confirmed)
         {
             throw new InvalidOperationException("提交前必须先确认缺陷摘要");
         }
 
-        if (string.IsNullOrWhiteSpace(request.AuthId))
-            throw new ArgumentException("请选择 TAPD 授权");
+        if (string.IsNullOrWhiteSpace(request.Cookie))
+            throw new ArgumentException("请填写 TAPD Cookie");
         if (string.IsNullOrWhiteSpace(request.WorkspaceId))
             throw new ArgumentException("请填写 TAPD 工作空间 ID");
         if (request.Draft == null)
@@ -163,21 +159,13 @@ public class TapdBugAgentService
         if (draft.MissingFields.Count > 0)
             throw new ArgumentException("缺陷信息不完整: " + string.Join("、", draft.MissingFields));
 
-        var credentials = await _externalAuthorizationService.ResolveCredentialsAsync(
-            userId,
-            request.AuthId.Trim(),
-            AppKey,
-            CancellationToken.None);
-        if (credentials == null || !credentials.TryGetValue("cookie", out var cookie) || string.IsNullOrWhiteSpace(cookie))
-        {
-            throw new InvalidOperationException("TAPD 授权不可用，请到开放平台重新验证授权");
-        }
+        var cookie = request.Cookie.Trim();
 
-        var addBugToken = FirstNonEmpty(request.AddBugToken, GetCredential(credentials, "addBugToken"));
+        var addBugToken = FirstNonEmpty(request.AddBugToken);
         if (string.IsNullOrWhiteSpace(addBugToken))
             throw new ArgumentException("缺少 add_bug_token，请从 TAPD 新增缺陷页面抓包后填写");
 
-        var dscToken = FirstNonEmpty(request.DscToken, GetCredential(credentials, "dscToken"), ExtractCookieValue(cookie, "dsc-token"));
+        var dscToken = FirstNonEmpty(request.DscToken, ExtractCookieValue(cookie, "dsc-token"));
         if (string.IsNullOrWhiteSpace(dscToken))
             throw new ArgumentException("缺少 dsc_token，请从 TAPD Cookie 或抓包字段中填写");
 
@@ -610,11 +598,6 @@ public class TapdBugAgentService
         return null;
     }
 
-    private static string? GetCredential(Dictionary<string, string> credentials, string key)
-    {
-        return credentials.TryGetValue(key, out var value) ? value : null;
-    }
-
     private static string? FirstNonEmpty(params string?[] values)
     {
         return values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
@@ -629,7 +612,7 @@ public sealed record TapdBugPreviewRequest
 
 public sealed record TapdBugSubmitRequest
 {
-    public string? AuthId { get; init; }
+    public string? Cookie { get; init; }
     public string? WorkspaceId { get; init; }
     public string? AddBugToken { get; init; }
     public string? DscToken { get; init; }

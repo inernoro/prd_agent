@@ -1,21 +1,18 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   AlertCircle,
   Bug,
   CheckCircle2,
   ExternalLink,
-  Key,
   Loader2,
   Send,
   Wand2,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { PageHeader } from '@/components/design/PageHeader';
 import { toast } from '@/lib/toast';
-import { listAuthorizations, type AuthorizationSummary } from '@/services/real/authorizations';
 import { streamTapdBugPreviewReal, submitTapdBugReal } from '@/services/real/tapdBugAgent';
 import type { TapdBugDraft, TapdBugSubmitResult } from '@/services/contracts/tapdBugAgent';
 
@@ -126,9 +123,7 @@ function TextLinesEditor({
 }
 
 export function TapdBugReportPage() {
-  const [authItems, setAuthItems] = useState<AuthorizationSummary[]>([]);
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authId, setAuthId] = useState('');
+  const [tapdCookie, setTapdCookie] = useState('');
   const [workspaceId, setWorkspaceId] = useState('');
   const [addBugToken, setAddBugToken] = useState('');
   const [dscToken, setDscToken] = useState('');
@@ -143,29 +138,10 @@ export function TapdBugReportPage() {
   const [submitResult, setSubmitResult] = useState<TapdBugSubmitResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setAuthLoading(true);
-    listAuthorizations()
-      .then((res) => {
-        if (!res.success || !res.data) {
-          setError(res.error?.message || '加载 TAPD 授权失败');
-          return;
-        }
-        const activeTapd = res.data.filter((item) => item.type === 'tapd' && item.status === 'active');
-        setAuthItems(activeTapd);
-        if (!authId && activeTapd.length === 1) {
-          setAuthId(activeTapd[0].id);
-          const ids = activeTapd[0].metadata?.workspaceIds;
-          if (Array.isArray(ids) && typeof ids[0] === 'string') setWorkspaceId(ids[0]);
-        }
-      })
-      .finally(() => setAuthLoading(false));
-  }, [authId]);
-
   const normalizedDraft = useMemo(() => normalizeDraft(draft), [draft]);
   const readyToSubmit =
     normalizedDraft.missingFields.length === 0 &&
-    authId.trim().length > 0 &&
+    tapdCookie.trim().length > 0 &&
     workspaceId.trim().length > 0 &&
     addBugToken.trim().length > 0;
 
@@ -211,8 +187,8 @@ export function TapdBugReportPage() {
       toast.error('缺陷信息不完整', `请补齐：${finalDraft.missingFields.join('、')}`);
       return;
     }
-    if (!authId || !workspaceId || !addBugToken) {
-      toast.error('TAPD 提交配置不完整', '请选择授权，并填写工作空间 ID 与 add_bug_token');
+    if (!tapdCookie || !workspaceId || !addBugToken) {
+      toast.error('TAPD 提交配置不完整', '请填写 Cookie、工作空间 ID 与 add_bug_token');
       return;
     }
 
@@ -221,7 +197,7 @@ export function TapdBugReportPage() {
     setSubmitResult(null);
     try {
       const res = await submitTapdBugReal({
-        authId,
+        cookie: tapdCookie,
         workspaceId,
         addBugToken,
         dscToken,
@@ -286,38 +262,24 @@ export function TapdBugReportPage() {
 
           <GlassCard className="p-5">
             <div className="flex items-center gap-2 mb-4">
-              <Key size={16} style={{ color: 'var(--accent-gold-2)' }} />
+              <Bug size={16} style={{ color: 'var(--accent-gold-2)' }} />
               <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 2. TAPD 提交配置
               </h2>
             </div>
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-2">
-                <FieldLabel required>TAPD 授权</FieldLabel>
-                {authItems.length > 0 ? (
-                  <select
-                    value={authId}
-                    onChange={(e) => setAuthId(e.target.value)}
-                    className="h-10 rounded-xl px-3 text-sm outline-none"
-                    style={inputStyle}
-                    disabled={authLoading}
-                  >
-                    <option value="">请选择 TAPD 授权</option>
-                    {authItems.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-xl p-3 text-xs border" style={inputStyle}>
-                    还没有可用 TAPD 授权。请先到{' '}
-                    <Link className="underline" to="/open-platform?tab=auth">
-                      开放平台 / 外部授权
-                    </Link>{' '}
-                    添加 Cookie 授权。
-                  </div>
-                )}
+                <FieldLabel required>TAPD Cookie</FieldLabel>
+                <textarea
+                  value={tapdCookie}
+                  onChange={(e) => setTapdCookie(e.target.value)}
+                  placeholder="从浏览器 Network 请求头复制完整 Cookie，例如：tapdsession=...; dsc-token=...; ..."
+                  className="min-h-[110px] rounded-xl px-3 py-2 text-sm outline-none resize-y font-mono"
+                  style={inputStyle}
+                />
+                <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  Cookie 只随本次提交请求发送到后端，不保存到外部授权中心。
+                </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-2">
@@ -352,7 +314,7 @@ export function TapdBugReportPage() {
                 />
               </div>
               <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                Cookie 保存在外部授权中心；本页只临时使用 token 提交，不会把 token 写入草稿。
+                提示：如果 Cookie 中包含 dsc-token，下面的 dsc_token 可以不填。
               </p>
             </div>
           </GlassCard>

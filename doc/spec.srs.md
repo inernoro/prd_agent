@@ -2264,11 +2264,11 @@ sequenceDiagram
 | 需求编号 | TAPD-BUG-001 |
 | 需求名称 | TAPD 缺陷自动提报 |
 | 优先级 | **[应该]** |
-| 实现层 | Web 管理后台 + 后端 LLM Gateway + TAPD Cookie 授权 |
+| 实现层 | Web 管理后台 + 后端 LLM Gateway + 页面直填 TAPD Cookie |
 
 **功能详述**：
 1. 用户从百宝箱进入 `/tapd-bug-agent` 页面。
-2. 页面读取外部授权中心中状态为 active 的 TAPD Cookie 授权，用户选择授权后填写工作空间 ID 与临时 `add_bug_token`。
+2. 用户在页面直接粘贴 TAPD 请求 Cookie，并填写工作空间 ID 与临时 `add_bug_token`，无需先创建外部授权。
 3. 用户输入口语化缺陷现象，后端通过 `ILlmGateway` 流式整理为 TAPD 标准草稿：标题、前置条件、复现步骤、实际结果、预期结果、严重程度、优先级、缺陷类型、处理人、所属版本。
 4. 后端通过 SSE 推送阶段、模型、思考过程、原始输出和最终草稿；前端展示缺失项，四要素不完整时禁止提交。
 5. 用户确认后调用 `POST /api/tapd-bug-agent/submit`，请求必须包含 `confirmed: true`。后端只创建 TAPD 缺陷，不提供修改或删除 TAPD 缺陷的接口。

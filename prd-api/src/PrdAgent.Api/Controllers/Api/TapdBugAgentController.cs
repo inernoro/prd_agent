@@ -67,7 +67,8 @@ public class TapdBugAgentController : ControllerBase
     {
         try
         {
-            var result = await _service.SubmitAsync(this.GetRequiredUserId(), request);
+            this.GetRequiredUserId();
+            var result = await _service.SubmitAsync(request);
             if (!result.Success)
             {
                 return BadRequest(ApiResponse<object>.Fail("TAPD_SUBMIT_FAILED", result.Error ?? "TAPD 提交失败"));

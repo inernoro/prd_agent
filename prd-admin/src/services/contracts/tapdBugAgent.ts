@@ -21,7 +21,7 @@ export interface TapdBugPreviewInput {
 }
 
 export interface TapdBugSubmitInput {
-  authId: string;
+  cookie: string;
   workspaceId: string;
   addBugToken?: string;
   dscToken?: string;
