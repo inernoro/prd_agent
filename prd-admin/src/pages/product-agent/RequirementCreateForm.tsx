@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Save, Sparkles } from 'lucide-react';
+import { FileText, Mic, MicOff, Save, Sparkles } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { CustomerSearchSelect } from './CustomerSearchSelect';
 import { useSseStream } from '@/lib/useSseStream';
+import { useSpeechInput } from '@/lib/useSpeechInput';
+import { toast } from '@/lib/toast';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { TapdPropertyPanel, TapdPropertyRow } from './TapdPropertyPanel';
 import { toRequirementOptions } from './comboboxOptions';
@@ -13,15 +15,14 @@ import { REQUIREMENT_ORIGIN_FORM_KEY, REQUIREMENT_ORIGIN_OPTIONS, type Requireme
 import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
 import { RequirementTypeSelect } from './RequirementTypeSelect';
 import { validateRequirementCreateInput } from './requirementCreateValidation';
-import { createRequirement, listDescTemplates } from '@/services/real/productAgent';
-import type { Customer, DescTemplate, ItemGrade, Requirement } from './types';
+import { applyRequirementAiFill, type RequirementAiFillResult } from './requirementAiFillApply';
+import { createRequirement, listDescTemplates, listFeatures } from '@/services/real/productAgent';
+import type { Customer, DescTemplate, Feature, ItemGrade, Requirement } from './types';
 import { ITEM_GRADE_LABEL } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 const RESERVED_TEMPLATE_LABELS = new Set(['需求来源', '需求类型', '客户名称', '客户', '归属版本', '标题', '名称', '描述', '需求名称', '需求描述']);
 const RESERVED_TEMPLATE_KEYS = new Set(['title', 'name', 'description', 'desc', 'requirementSource', 'customerName']);
-
-interface AiFillResult { title?: string; description?: string; grade?: string; formData?: Record<string, string> }
 
 function mergeDesc(prev: string, tpl: string): string {
   const stripped = (prev || '').replace(/<br\s*\/?>/gi, '').replace(/<div>\s*<\/div>/gi, '').replace(/&nbsp;/gi, '').trim();
@@ -58,34 +59,62 @@ function DescTemplatePicker({ onApply }: { onApply: (content: string) => void })
   );
 }
 
-function AiFillBar({ productId, templateId, onFill }: { productId: string; templateId?: string; onFill: (r: AiFillResult) => void }) {
+function AiFillBar({ productId, templateId, onFill }: { productId: string; templateId?: string; onFill: (r: RequirementAiFillResult) => void }) {
   const [text, setText] = useState('');
-  const { phase, phaseMessage, typing, isStreaming, start, abort } = useSseStream<AiFillResult>({
+  const speechBaseRef = useRef('');
+  const speech = useSpeechInput({
+    onResult: (finalText, interim) => setText(speechBaseRef.current + finalText + interim),
+    onError: (msg) => toast.error('语音输入', msg),
+  });
+  const { phase, phaseMessage, typing, isStreaming, start, abort } = useSseStream<RequirementAiFillResult>({
     url: `/api/product/products/${productId}/requirements/ai-fill/stream`,
     method: 'POST',
     itemEvent: 'result',
     onItem: (r) => onFill(r),
   });
+
+  const toggleVoice = () => {
+    if (!speech.listening) speechBaseRef.current = text;
+    speech.toggle();
+  };
+
+  const runFill = () => {
+    if (speech.listening) speech.cancel();
+    speechBaseRef.current = '';
+    if (text.trim()) void start({ body: { text: text.trim(), templateId } });
+  };
+
   return (
-    <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/[0.04] px-3 py-2.5">
+    <div className={`rounded-lg border px-3 py-2.5 ${speech.listening ? 'border-red-400/40 bg-red-500/[0.04]' : 'border-cyan-500/20 bg-cyan-500/[0.04]'}`}>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          rows={2}
-          placeholder="粘贴原始需求描述，AI 自动拆解回填标题与字段…"
+          rows={3}
+          placeholder={speech.listening ? '正在聆听，说出需求背景、客户、要改的功能模块…' : '粘贴或语音输入原始需求，AI 自动拆解并回填标题、来源、客户、父需求、关联功能等字段…'}
           className="flex-1 min-w-0 bg-black/20 border border-white/10 rounded-md px-2.5 py-2 text-[13px] text-white outline-none focus:border-cyan-500/40 resize-none placeholder:text-white/25"
         />
         <div className="flex items-center gap-2 shrink-0">
+          {speech.supported && !isStreaming && (
+            <button
+              type="button"
+              onClick={toggleVoice}
+              title={speech.listening ? '停止语音输入' : '语音输入'}
+              className={`flex items-center justify-center w-8 h-8 rounded-md border text-xs ${speech.listening ? 'border-red-400/50 text-red-200 bg-red-500/10' : 'border-white/15 text-white/60 hover:bg-white/5'}`}
+            >
+              {speech.listening ? <MicOff size={14} /> : <Mic size={14} />}
+            </button>
+          )}
           {isStreaming ? (
             <button type="button" onClick={abort} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-white/15 text-white/70 text-xs"><MapSpinner size={13} /> 停止</button>
           ) : (
-            <button type="button" onClick={() => { if (text.trim()) void start({ body: { text: text.trim(), templateId } }); }} disabled={!text.trim()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-xs disabled:opacity-40">
+            <button type="button" onClick={runFill} disabled={!text.trim()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-xs disabled:opacity-40">
               <Sparkles size={13} /> 智能填充
             </button>
           )}
         </div>
       </div>
+      {speech.listening && <div className="mt-1.5 text-[11px] text-red-200/80">正在录音，说完点麦克风停止或直接智能填充</div>}
       {phase !== 'idle' && <div className={`mt-1.5 text-[11px] ${phase === 'error' ? 'text-red-300/80' : 'text-white/45'}`}>{phaseMessage}</div>}
       {isStreaming && typing && <div className="mt-1.5 text-[11px] text-white/40 font-mono max-h-16 overflow-y-auto whitespace-pre-wrap">{typing}</div>}
     </div>
@@ -144,12 +173,18 @@ export function RequirementCreateForm({
   const [requirementType, setRequirementType] = useState('');
   const [customerIds, setCustomerIds] = useState<string[]>([]);
   const [customerList, setCustomerList] = useState(customers);
+  const [features, setFeatures] = useState<Feature[]>([]);
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const { template } = useEffectiveTemplate('requirement', productId);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   useEffect(() => { setCustomerList(customers); }, [customers]);
+  useEffect(() => {
+    void listFeatures(productId).then((res) => {
+      if (res.success) setFeatures(res.data.items);
+    });
+  }, [productId]);
 
   const split = useMemo(() => {
     const templateName = (template?.name ?? '').trim();
@@ -201,14 +236,23 @@ export function RequirementCreateForm({
     formData: mergedFormData,
   }), [title, description, assigneeId, split.others, split.files, mergedFormData]);
 
-  const onAiFill = (r: AiFillResult) => {
-    if (r.title) setTitle(r.title);
-    if (r.description) { descAutoFilledRef.current = true; setDescription(r.description); }
-    if (r.grade && ITEM_GRADES.includes(r.grade as ItemGrade)) setGrade(r.grade as ItemGrade);
-    if (r.formData) {
-      const typeVal = r.formData[REQUIREMENT_TYPE_FORM_KEY];
-      if (typeVal) setRequirementType(typeVal);
-      setFormData((prev) => ({ ...prev, ...r.formData }));
+  const onAiFill = (r: RequirementAiFillResult) => {
+    const applied = applyRequirementAiFill({
+      result: r,
+      customers: customerList,
+      requirements,
+      features,
+      templateFields: [...split.others, ...split.files],
+    });
+    if (applied.title) setTitle(applied.title);
+    if (applied.description) { descAutoFilledRef.current = true; setDescription(applied.description); }
+    if (applied.grade) setGrade(applied.grade);
+    if (applied.requirementOrigin !== undefined) setRequirementOrigin(applied.requirementOrigin);
+    if (applied.requirementType) setRequirementType(applied.requirementType);
+    if (applied.parentId) setParentId(applied.parentId);
+    if (applied.customerIds?.length) setCustomerIds(applied.customerIds);
+    if (Object.keys(applied.formData).length > 0) {
+      setFormData((prev) => ({ ...prev, ...applied.formData }));
     }
   };
 

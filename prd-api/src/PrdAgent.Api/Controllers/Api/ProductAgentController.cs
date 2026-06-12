@@ -3598,7 +3598,7 @@ public class ProductAgentController : ControllerBase
         await Sse("done", new { });
     }
 
-  private static readonly HashSet<string> RequirementOriginValues = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> RequirementOriginValues = new(StringComparer.Ordinal)
     {
         "客户反馈", "内部规划", "运营活动", "竞品调研", "其他",
     };
