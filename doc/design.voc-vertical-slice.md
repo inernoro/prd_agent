@@ -116,8 +116,10 @@ Body: { productId: string }
 
 1. **查重**：`Requirements.Find(SourceEmergenceNodeId == nodeId && !IsDeleted)`，命中即返回既有需求（忽略本次 productId），结束；
 2. **insert 需求**（`SourceEmergenceNodeId=nodeId`、`SourceSystem="emergence"`、`ProductId=productId`）——这一步才是"占位"动作；
-3. **并发兜底**：`Requirement.SourceEmergenceNodeId` 上有 **partial unique index（仅非空）**，两个请求同时过了第 1 步查重时，第二条 insert 会被唯一约束拒绝（duplicate key）→ 捕获后回到第 1 步查重、返回已存在的那条，绝不产生两条；
+3. **并发兜底**：`Requirement.SourceEmergenceNodeId` 上有 **partial unique index，过滤条件 = 非空 且 `IsDeleted: false`**（即只对"活跃且有来源节点"的行唯一）。两个请求同时过了第 1 步查重时，第二条 insert 会被唯一约束拒绝（duplicate key）→ 捕获后回到第 1 步查重、返回已存在的那条，绝不产生两条；
 4. **best-effort 回填节点**：insert 成功后再 `UpdateOne(node, { AdoptedRequirementId: reqId, Status: planned })`。此步**失败也无害**——需求已建成且经 `SourceEmergenceNodeId` 可反查，`AdoptedRequirementId` 只是给 UI 用的反范化指针，可在下次读节点或下次 adopt（会命中第 1 步查重、再次尝试回填）时懒修复。任何一步失败重试都收敛到同一条需求，不卡死、不劈裂。
+
+**软删除与唯一索引必须同口径（否则重新流转会卡死）**：查重过滤 `!IsDeleted`，索引也必须把 `IsDeleted: false` 写进 `partialFilterExpression`——两者口径一致是硬要求。若索引漏了 `IsDeleted: false`：需求被软删后，查重（`!IsDeleted`）查不到活跃行，但索引里软删行还占位，重新 adopt 的 insert 会撞 duplicate-key 却无活跃行可返回 → 该节点永久无法再流转。把软删行排除出索引后：软删 → 索引腾出 → 重新 adopt 可正常 insert 一条新活跃需求，"一节点一活跃需求"成立；同时节点 `AdoptedRequirementId` 若仍指向已删需求，按第 4 步懒修复重写为新需求 id（读取时校验目标需求 `!IsDeleted`，已删则视同未流转、允许重新 adopt）。
 
 唯一索引是本方案的承重件（不是可选防御）。按本仓库 `no-auto-index.md` 规则，索引由 DBA 手动创建、不在启动时自动建——本设计声明该索引为**实现前置条件**，需同步写入 `doc/guide.mongodb-indexes.md`。
 
