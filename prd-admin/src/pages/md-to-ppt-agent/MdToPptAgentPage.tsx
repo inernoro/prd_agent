@@ -999,6 +999,9 @@ export function MdToPptAgentPage() {
   const [streamPreview, setStreamPreview] = useState('');
   // 本轮预计页数（来自大纲），驱动"逐页点亮"进度卡的占位格子数
   const [expectedPages, setExpectedPages] = useState<number | null>(null);
+  // 定向单页重绘进行中的页号（1-based）。非 null = 单页 patch：保持整份 deck 可见，
+  // 只在目标页打"重绘中"遮罩，绝不铺满整份骨架（诉求：重绘一页不是重绘全部）。
+  const [patchingSlide, setPatchingSlide] = useState<number | null>(null);
   const streamBufRef = useRef('');
   const streamFlushTimerRef = useRef<number | null>(null);
 
@@ -1095,6 +1098,7 @@ export function MdToPptAgentPage() {
     setFrameAnchored(false);
     setPagesTotal(0);
     setPagesDone({});
+    setPatchingSlide(null);
   }, []);
 
   const handleStreamDelta = useCallback((text: string) => {
@@ -1891,7 +1895,10 @@ export function MdToPptAgentPage() {
       setIsProcessing(true);
       setArtifactPhase('patching');
       resetStreamPreview();
-      setExpectedPages(slidePos?.total ?? null); // 精修重出整份 deck，按当前页数占位
+      const isSinglePage = slideIndex != null;
+      // 单页重绘：保持整份 deck 可见（只遮目标页），不铺骨架；整份精修才按页数占位骨架
+      setPatchingSlide(isSinglePage ? slideIndex! : null);
+      setExpectedPages(isSinglePage ? null : (slidePos?.total ?? null));
       pendingRestoreRef.current = restoreSlideRef.current; // 精修完成重载后回到当前页
 
       const patchMsg = pushMsg({
@@ -1927,11 +1934,13 @@ export function MdToPptAgentPage() {
             );
             setIsProcessing(false);
             setArtifactPhase('done');
+            setPatchingSlide(null);
             return;
           }
           setGeneratedHtml(html);
           setArtifactPhase('done');
           setIsProcessing(false);
+          setPatchingSlide(null);
           setMessages((prev) =>
             prev.map((m) =>
               m.id === patchMsg.id
@@ -1950,6 +1959,7 @@ export function MdToPptAgentPage() {
           );
           setIsProcessing(false);
           setArtifactPhase('done');
+          setPatchingSlide(null);
         },
       });
 
@@ -3094,7 +3104,7 @@ export function MdToPptAgentPage() {
                         ? 'border-purple-400/70 bg-purple-500/12 shadow-[0_0_18px_rgba(168,85,247,.25)]'
                         : 'border-white/10 bg-white/3',
                     ].join(' ')}
-                    style={{ aspectRatio: '3 / 4', minHeight: 0 }}
+                    style={{ aspectRatio: '1 / 1', minHeight: 0 }}
                     data-testid={'outline-card-' + i}
                   >
                     <div className="flex items-center gap-2 mb-1.5">
@@ -3291,7 +3301,7 @@ export function MdToPptAgentPage() {
           {/* Generating progress —— Gamma 式实况渲染：等待期的主视觉就是真实幻灯页本身。
                 已完成的页流式解析后立即真实渲染（实况 iframe），底部页卡可点击回看任意已完成页；
                 第一页出来之前用骨架幻灯 + 代码流尾巴 + Agent 环境准备过渡，全程无静止空等。 */}
-          {(artifactPhase === 'generating' || artifactPhase === 'patching') && (() => {
+          {(artifactPhase === 'generating' || (artifactPhase === 'patching' && patchingSlide == null)) && (() => {
             const pagesMode = pagesTotal > 0;
             const doneCount = pagesMode ? pagesDoneIdxs.length : slideProgress.titles.length;
             const building = pagesMode ? doneCount < pagesTotal : slideProgress.building;
@@ -3505,8 +3515,10 @@ export function MdToPptAgentPage() {
             );
           })()}
 
-          {/* Done: iframe preview */}
-          {(artifactPhase === 'done' || (artifactPhase === 'idle' && generatedHtml)) && generatedHtml && (
+          {/* Done: iframe preview（单页重绘进行中也走这里——保持整份 deck 可见，只遮目标页） */}
+          {(artifactPhase === 'done'
+            || (artifactPhase === 'idle' && generatedHtml)
+            || (artifactPhase === 'patching' && patchingSlide != null)) && generatedHtml && (
             <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
               {/* Toolbar */}
               <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-white/8 flex-wrap">
@@ -3709,6 +3721,19 @@ export function MdToPptAgentPage() {
                   onCancel={() => setFeedbackMode(false)}
                   onSubmit={handleFeedbackSubmit}
                 />
+                {/* 单页重绘进行中：整份 deck 仍在背后可见，仅顶部一条状态告知"只重绘第 N 页"，
+                      不再用整份骨架冒充全部重绘（诉求：重绘一页 ≠ 重绘全部） */}
+                {patchingSlide != null && (
+                  <div
+                    data-testid="single-page-redraw-banner"
+                    className="absolute top-0 left-0 right-0 flex items-center gap-2 px-3 py-2 bg-purple-600/85 text-white text-[11px] font-medium backdrop-blur-sm"
+                    style={{ zIndex: 5 }}
+                  >
+                    <MapSpinner size={13} />
+                    <span>仅重绘第 {patchingSlide} 页（其余 {Math.max(0, (slidePos?.total ?? 1) - 1)} 页保持不动）…</span>
+                    {elapsedSec > 0 && <span className="ml-auto tabular-nums opacity-80">{elapsedSec}s</span>}
+                  </div>
+                )}
               </div>
             </div>
           )}

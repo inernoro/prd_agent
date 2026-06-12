@@ -84,3 +84,5 @@
 | chore | - | 删除过期验收驱动 e2e/lifecycle.mjs（写死旧分支 URL 的一次性脚本）；新增 .claude/rules/cross-project-isolation.md 跨项目隔离原则与共享通道清单 |
 | chore | - | 合并 main（218 个提交）进开发分支：container.ts 环境构建采用 main 的 resolveProfileRuntimeEnv 重构并移植 Jwt 项目级优先修复，remote-hosts.ts 合并双方 import；CDS 1932 测试、API 943 测试、admin 419 测试全绿 |
 | feat | prd-api | 平台密钥自愈端点 POST /api/mds/platforms/:id/restore-key-from-profile：密钥环境不匹配时从仍可解密的运行配置（DataProtection）服务端恢复平台 key 并用当前密钥重加密，明文不出进程、同 host 守卫防错配 |
+| fix | prd-admin | 重绘单页不再冒充全部重绘：单页 patch 保持整份 deck 可见，仅顶部状态条提示「仅重绘第 N 页」，不再铺满 8 张等待骨架（后端本就只 splice 替换目标 section，是前端骨架误导） |
+| fix | prd-admin | 大纲卡片由 3:4 竖比例改 1:1，减约 1/4 高度，消除内容只占一半的空白 |
