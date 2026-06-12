@@ -413,7 +413,7 @@ function RequirementsTab({ productId }: { productId: string }) {
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await listRequirements(productId);
+    const res = await listRequirements(productId, { mine: true });
     if (res.success) setItems(res.data.items);
     setLoading(false);
   }, [productId]);
@@ -452,8 +452,9 @@ function RequirementsTab({ productId }: { productId: string }) {
           {items.length > 0 && <ViewToggle view={view} setView={setView} />}
         </div>
       </div>
+      <p className="text-xs text-white/35">仅显示你作为负责人或处理人的需求。</p>
       {items.length === 0 ? (
-        <EmptyHint text="还没有需求。点「新建需求」打开独立页面填写，可分级并关联客户、版本、功能，被缺陷追溯。" />
+        <EmptyHint text="没有与你相关的需求。你是负责人或处理人的需求会出现在这里；点「新建需求」可创建新条目。" />
       ) : (
         <>
         {bar}
@@ -689,7 +690,7 @@ function DefectsTab({ productId }: { productId: string }) {
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await listTracedDefects(productId);
+    const res = await listTracedDefects(productId, { mine: true });
     if (res.success) setItems(res.data.items);
     setLoading(false);
   }, [productId]);
@@ -734,8 +735,9 @@ function DefectsTab({ productId }: { productId: string }) {
           <Plus size={15} /> 新建缺陷
         </button>
       </div>
+      <p className="text-xs text-white/35">仅显示你作为处理人或上报人的缺陷。</p>
       {items.length === 0 ? (
-        <EmptyHint text="还没有缺陷。点上方「新建缺陷」创建本产品的第一个缺陷。" />
+        <EmptyHint text="没有与你相关的缺陷。你是处理人或上报人的缺陷会出现在这里；点「新建缺陷」可创建新条目。" />
       ) : (
         <>
         {bar}

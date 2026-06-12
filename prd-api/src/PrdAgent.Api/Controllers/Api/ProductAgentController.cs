@@ -905,7 +905,12 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>需求列表（按产品，可按版本 / 客户过滤）</summary>
     [HttpGet("products/{productId}/requirements")]
-    public async Task<IActionResult> ListRequirements(string productId, [FromQuery] string? versionId = null, [FromQuery] string? customerId = null, [FromQuery] string? grade = null)
+    public async Task<IActionResult> ListRequirements(
+        string productId,
+        [FromQuery] string? versionId = null,
+        [FromQuery] string? customerId = null,
+        [FromQuery] string? grade = null,
+        [FromQuery] bool mine = false)
     {
         if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
@@ -914,6 +919,11 @@ public class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(versionId)) conds.Add(b.AnyEq(r => r.VersionIds, versionId));
         if (!string.IsNullOrWhiteSpace(customerId)) conds.Add(b.AnyEq(r => r.CustomerIds, customerId));
         if (!string.IsNullOrWhiteSpace(grade) && ProductItemGrade.All.Contains(grade)) conds.Add(b.Eq(r => r.Grade, grade));
+        if (mine)
+        {
+            var userId = GetUserId();
+            conds.Add(b.Or(b.Eq(r => r.AssigneeId, userId), b.Eq(r => r.OwnerId, userId)));
+        }
         var items = await _db.Requirements.Find(b.And(conds)).SortByDescending(r => r.CreatedAt).ToListAsync();
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
@@ -2384,7 +2394,12 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>列出追溯到本产品（可按需求/版本/功能细分）的缺陷。</summary>
     [HttpGet("products/{productId}/defects")]
-    public async Task<IActionResult> ListTracedDefects(string productId, [FromQuery] string? requirementId = null, [FromQuery] string? versionId = null, [FromQuery] string? featureId = null)
+    public async Task<IActionResult> ListTracedDefects(
+        string productId,
+        [FromQuery] string? requirementId = null,
+        [FromQuery] string? versionId = null,
+        [FromQuery] string? featureId = null,
+        [FromQuery] bool mine = false)
     {
         if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
@@ -2393,6 +2408,11 @@ public class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(requirementId)) conds.Add(b.Eq(d => d.TracedRequirementId, requirementId));
         if (!string.IsNullOrWhiteSpace(versionId)) conds.Add(b.Eq(d => d.TracedVersionId, versionId));
         if (!string.IsNullOrWhiteSpace(featureId)) conds.Add(b.Eq(d => d.TracedFeatureId, featureId));
+        if (mine)
+        {
+            var userId = GetUserId();
+            conds.Add(b.Or(b.Eq(d => d.AssigneeId, userId), b.Eq(d => d.ReporterId, userId)));
+        }
         var items = await _db.DefectReports.Find(b.And(conds)).SortByDescending(d => d.CreatedAt).Limit(200).ToListAsync();
         return Ok(ApiResponse<object>.Ok(new { items }));
     }

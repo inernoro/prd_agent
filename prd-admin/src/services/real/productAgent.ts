@@ -178,11 +178,12 @@ export function importVersionWorkflow(productId: string, body: {
 }
 
 // ── 需求 ──
-export function listRequirements(productId: string, params?: { versionId?: string; customerId?: string; grade?: string }) {
+export function listRequirements(productId: string, params?: { versionId?: string; customerId?: string; grade?: string; mine?: boolean }) {
   const q = new URLSearchParams();
   if (params?.versionId) q.set('versionId', params.versionId);
   if (params?.customerId) q.set('customerId', params.customerId);
   if (params?.grade) q.set('grade', params.grade);
+  if (params?.mine) q.set('mine', 'true');
   const qs = q.toString();
   return apiRequest<ListWrap<Requirement>>(`/api/product/products/${productId}/requirements${qs ? `?${qs}` : ''}`);
 }
@@ -506,11 +507,12 @@ export interface TracedDefect {
   /** 缺陷 / 非产品缺陷 */
   productDefectClassification?: string | null;
 }
-export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string }) {
+export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string; mine?: boolean }) {
   const q = new URLSearchParams();
   if (params?.requirementId) q.set('requirementId', params.requirementId);
   if (params?.versionId) q.set('versionId', params.versionId);
   if (params?.featureId) q.set('featureId', params.featureId);
+  if (params?.mine) q.set('mine', 'true');
   const qs = q.toString();
   return apiRequest<ListWrap<TracedDefect>>(`/api/product/products/${productId}/defects${qs ? `?${qs}` : ''}`);
 }

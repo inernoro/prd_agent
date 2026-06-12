@@ -134,7 +134,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'requirements' && (
-        <SectionShell title="需求（跨产品）" desc="所有产品的需求汇总，点击进入需求详情">
+        <SectionShell title="需求（跨产品）" desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
           <RequirementsTable isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
@@ -144,7 +144,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'defects' && (
-        <SectionShell title="缺陷（跨产品）" desc="追溯到产品的缺陷汇总，点击进入缺陷详情">
+        <SectionShell title="缺陷（跨产品）" desc="全部产品追溯到产品的缺陷汇总，点击进入缺陷详情">
           <DefectsTable isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
