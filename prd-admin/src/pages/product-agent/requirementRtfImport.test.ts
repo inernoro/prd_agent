@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseRequirementRtfBytes, replaceImportImageMarkers } from './requirementRtfImport';
+import {
+  normalizeRtfImage,
+  parseRequirementRtfBytes,
+  replaceImportImageMarkers,
+  sniffImageFormat,
+  stripFailedImageMarkers,
+} from './requirementRtfImport';
 
 function rtf(text: string): Uint8Array {
   return new TextEncoder().encode(text);
@@ -58,5 +64,22 @@ describe('parseRequirementRtfBytes', () => {
 
   it('rejects non-rtf files', () => {
     expect(() => parseRequirementRtfBytes(new TextEncoder().encode('plain text'), 'bad.rtf')).toThrow('不是有效的 RTF 文件');
+  });
+
+  it('sniffs jpeg even when declared as png', () => {
+    const jpegHeader = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+    expect(sniffImageFormat(jpegHeader)?.mimeType).toBe('image/jpeg');
+    const normalized = normalizeRtfImage({
+      fileName: 'import-1.png',
+      mimeType: 'image/png',
+      bytes: jpegHeader,
+      refIndex: 0,
+    });
+    expect(normalized).toBeNull();
+  });
+
+  it('strips failed image markers from html', () => {
+    const html = '<p>正文</p><p data-import-image="3"></p><p data-import-image="4"></p>';
+    expect(stripFailedImageMarkers(html, [3])).toBe('<p>正文</p><p data-import-image="4"></p>');
   });
 });

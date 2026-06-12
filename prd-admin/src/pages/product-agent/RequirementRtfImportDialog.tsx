@@ -4,7 +4,15 @@ import { AlertCircle, CheckCircle2, FileText, Image, Upload, X } from 'lucide-re
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import { importRequirements, type ImportRequirementRow } from '@/services/real/productAgent';
-import { parseRequirementRtfBytes, replaceImportImageMarkers, type RtfImportRequirement } from './requirementRtfImport';
+import {
+  normalizeRtfImage,
+  parseRequirementRtfBytes,
+  replaceImportImageMarkers,
+  rtfImageToUploadFile,
+  stripFailedImageMarkers,
+  type RtfImportImage,
+  type RtfImportRequirement,
+} from './requirementRtfImport';
 import { REQUIREMENT_SOURCE_RTF } from './requirementSource';
 
 interface ParsedRequirementItem {
@@ -35,7 +43,8 @@ export function RequirementRtfImportDialog({
   const [parsing, setParsing] = useState(true);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState('');
-  const [result, setResult] = useState<{ created: number; updated: number } | null>(null);
+  const [result, setResult] = useState<{ created: number; updated: number; skippedImages: number } | null>(null);
+  const [imageWarnings, setImageWarnings] = useState<string[]>([]);
 
   const validItems = useMemo(
     () => parsedFiles.flatMap((item) => item.requirements),
@@ -78,11 +87,55 @@ export function RequirementRtfImportDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [importing, onClose]);
 
+  const formatUploadError = (fileName: string, uploaded: Awaited<ReturnType<typeof uploadAttachment>>) => {
+    const detail = uploaded.error?.message ?? uploaded.error?.code;
+    return detail ? `${fileName}：${detail}` : `${fileName}：上传失败`;
+  };
+
   const runImport = async () => {
     setImporting(true);
     setResult(null);
+    setImageWarnings([]);
     const batchId = crypto.randomUUID();
     const rows: ImportRequirementRow[] = [];
+    const uploadedByRef = new Map<number, { index: number; url: string; fileName: string; attachmentId: string }>();
+    const failedRefIndices = new Set<number>();
+    const warningMessages: string[] = [];
+    let skippedImageCount = 0;
+
+    const ensureImageUploaded = async (image: RtfImportImage, progressLabel: string): Promise<boolean> => {
+      if (uploadedByRef.has(image.refIndex)) return true;
+      if (failedRefIndices.has(image.refIndex)) return false;
+
+      const normalized = normalizeRtfImage(image);
+      if (!normalized) {
+        failedRefIndices.add(image.refIndex);
+        skippedImageCount += 1;
+        warningMessages.push(`${image.fileName}：无效或超限图片，已跳过`);
+        return false;
+      }
+
+      setProgress(progressLabel);
+      let uploaded = await uploadAttachment(rtfImageToUploadFile(normalized));
+      if (!uploaded.success || !uploaded.data) {
+        await new Promise((resolve) => { setTimeout(resolve, 600); });
+        uploaded = await uploadAttachment(rtfImageToUploadFile(normalized));
+      }
+      if (!uploaded.success || !uploaded.data) {
+        failedRefIndices.add(image.refIndex);
+        skippedImageCount += 1;
+        warningMessages.push(formatUploadError(normalized.fileName, uploaded));
+        return false;
+      }
+
+      uploadedByRef.set(image.refIndex, {
+        index: normalized.refIndex,
+        url: uploaded.data.url,
+        fileName: uploaded.data.fileName,
+        attachmentId: uploaded.data.attachmentId,
+      });
+      return true;
+    };
 
     for (let itemIndex = 0; itemIndex < validItems.length; itemIndex += 1) {
       const item = validItems[itemIndex];
@@ -94,22 +147,28 @@ export function RequirementRtfImportDialog({
         : item.file.name;
 
       for (let imageIndex = 0; imageIndex < requirement.images.length; imageIndex += 1) {
-        setProgress(`正在上传 ${fileHint} 第 ${itemIndex + 1}/${validItems.length} 条需求的图片 ${imageIndex + 1}/${requirement.images.length}`);
         const image = requirement.images[imageIndex];
-        const imageFile = new File([image.bytes.slice().buffer], image.fileName, { type: image.mimeType });
-        const uploaded = await uploadAttachment(imageFile);
-        if (!uploaded.success || !uploaded.data) {
-          setProgress(`图片上传失败：${uploaded.error?.message ?? image.fileName}`);
-          setImporting(false);
-          return;
-        }
-        uploadedImages.push({ index: image.refIndex, url: uploaded.data.url, fileName: uploaded.data.fileName });
-        attachmentIds.push(uploaded.data.attachmentId);
+        const ok = await ensureImageUploaded(
+          image,
+          `正在上传 ${fileHint} 第 ${itemIndex + 1}/${validItems.length} 条需求的图片 ${imageIndex + 1}/${requirement.images.length}`,
+        );
+        if (!ok) continue;
+        const cached = uploadedByRef.get(image.refIndex);
+        if (!cached) continue;
+        uploadedImages.push({ index: cached.index, url: cached.url, fileName: cached.fileName });
+        attachmentIds.push(cached.attachmentId);
       }
+
+      const failedForRequirement = requirement.images
+        .map((image) => image.refIndex)
+        .filter((refIndex) => failedRefIndices.has(refIndex));
       rows.push({
         title: requirement.title,
         grade: requirement.grade,
-        description: replaceImportImageMarkers(requirement.description, uploadedImages),
+        description: stripFailedImageMarkers(
+          replaceImportImageMarkers(requirement.description, uploadedImages),
+          failedForRequirement,
+        ),
         sourceSystem: REQUIREMENT_SOURCE_RTF,
         externalId: requirement.externalId,
         sourceStatus: requirement.sourceStatus,
@@ -134,10 +193,16 @@ export function RequirementRtfImportDialog({
     setImporting(false);
     if (!imported.success) {
       setProgress(imported.error?.message ?? '导入失败');
+      if (warningMessages.length > 0) setImageWarnings(warningMessages.slice(0, 8));
       return;
     }
-    setResult({ created: imported.data.created, updated: imported.data.updated ?? 0 });
-    setProgress('');
+    setResult({
+      created: imported.data.created,
+      updated: imported.data.updated ?? 0,
+      skippedImages: skippedImageCount,
+    });
+    setImageWarnings(warningMessages.slice(0, 8));
+    setProgress(skippedImageCount > 0 ? `导入完成，${skippedImageCount} 张图片未上传（需求正文已去除对应占位）` : '');
     await onImported();
   };
 
@@ -212,7 +277,18 @@ export function RequirementRtfImportDialog({
           {progress && <div className="mb-3 text-xs text-cyan-200/80">{progress}</div>}
           {result && (
             <div className="mb-3 text-xs text-emerald-200">
-              导入完成：新增 {result.created} 条，更新 {result.updated} 条。
+              导入完成：新增 {result.created} 条，更新 {result.updated} 条
+              {result.skippedImages > 0 ? `，跳过 ${result.skippedImages} 张图片` : ''}。
+            </div>
+          )}
+          {imageWarnings.length > 0 && (
+            <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
+              <div className="font-medium text-amber-100 mb-1">部分图片未上传（需求已继续导入）</div>
+              <ul className="list-disc pl-4 space-y-0.5 text-amber-100/75">
+                {imageWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
             </div>
           )}
           <div className="flex items-center justify-between gap-3">

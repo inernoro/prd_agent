@@ -57,6 +57,80 @@ const SKIPPED_DESTINATIONS = new Set([
 ]);
 
 const IMAGE_MARKER = (index: number) => `[[IMPORT_IMAGE_${index}]]`;
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+export interface SniffedImageFormat {
+  mimeType: string;
+  extension: string;
+}
+
+/** 按文件头魔数识别图片格式（优先于 RTF 内的 pngblip/jpegblip 声明）。 */
+export function sniffImageFormat(bytes: Uint8Array): SniffedImageFormat | null {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return { mimeType: 'image/png', extension: 'png' };
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { mimeType: 'image/jpeg', extension: 'jpg' };
+  }
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return { mimeType: 'image/gif', extension: 'gif' };
+  }
+  if (
+    bytes.length >= 12
+    && bytes[0] === 0x52
+    && bytes[1] === 0x49
+    && bytes[8] === 0x57
+    && bytes[9] === 0x45
+    && bytes[10] === 0x42
+    && bytes[11] === 0x50
+  ) {
+    return { mimeType: 'image/webp', extension: 'webp' };
+  }
+  return null;
+}
+
+function trimPngBytes(bytes: Uint8Array): Uint8Array {
+  const endMarker = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+  for (let index = bytes.length - endMarker.length; index >= 0; index -= 1) {
+    if (endMarker.every((byte, offset) => bytes[index + offset] === byte)) {
+      return bytes.slice(0, index + endMarker.length);
+    }
+  }
+  return bytes;
+}
+
+function trimJpegBytes(bytes: Uint8Array): Uint8Array {
+  for (let index = bytes.length - 2; index >= 0; index -= 1) {
+    if (bytes[index] === 0xff && bytes[index + 1] === 0xd9) return bytes.slice(0, index + 2);
+  }
+  return bytes;
+}
+
+function trimImageBytes(bytes: Uint8Array, format: SniffedImageFormat): Uint8Array {
+  if (format.mimeType === 'image/png') return trimPngBytes(bytes);
+  if (format.mimeType === 'image/jpeg') return trimJpegBytes(bytes);
+  return bytes;
+}
+
+/** 校正内嵌图：裁剪尾部杂质、按魔数修正 mime/扩展名、过滤空图与超限图。 */
+export function normalizeRtfImage(image: RtfImportImage): RtfImportImage | null {
+  if (!image.bytes?.length) return null;
+  const sniffed = sniffImageFormat(image.bytes);
+  if (!sniffed) return null;
+  const trimmed = trimImageBytes(image.bytes, sniffed);
+  if (trimmed.length < 16 || trimmed.length > MAX_ATTACHMENT_BYTES) return null;
+  return {
+    ...image,
+    bytes: trimmed,
+    mimeType: sniffed.mimeType,
+    fileName: `import-${image.refIndex + 1}.${sniffed.extension}`,
+  };
+}
+
+export function rtfImageToUploadFile(image: RtfImportImage): File {
+  const copy = new Uint8Array(image.bytes);
+  return new File([copy], image.fileName, { type: image.mimeType });
+}
 
 function findGroupStart(input: string, controlIndex: number): number {
   for (let index = controlIndex; index >= 0; index -= 1) {
@@ -102,12 +176,14 @@ function extractImages(input: string): { rtf: string; images: RtfImportImage[] }
         bytes[index / 2] = Number.parseInt(evenHex.slice(index, index + 2), 16);
       }
       const imageIndex = images.length;
-      images.push({
+      const draft: RtfImportImage = {
         fileName: `import-${imageIndex + 1}.${extension}`,
         mimeType,
         bytes,
         refIndex: imageIndex,
-      });
+      };
+      const normalized = normalizeRtfImage(draft) ?? draft;
+      images.push(normalized);
       groups.push({ start, end, replacement: IMAGE_MARKER(imageIndex) });
     } else {
       groups.push({ start, end, replacement: '' });
@@ -396,6 +472,21 @@ export function replaceImportImageMarkers(
     const replacement = `<p><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.fileName)}" style="max-width:100%;border-radius:8px;margin:8px 0;" /></p>`;
     for (const marker of markers) {
       result = result.replace(marker, replacement);
+    }
+  }
+  return result;
+}
+
+/** 移除上传失败图片在描述 HTML 中的占位段落。 */
+export function stripFailedImageMarkers(html: string, failedRefIndices: number[]): string {
+  let result = html;
+  for (const index of failedRefIndices) {
+    const markers = [
+      `<p data-import-image="${index}"></p>`,
+      `<p data-tapd-image="${index}"></p>`,
+    ];
+    for (const marker of markers) {
+      result = result.split(marker).join('');
     }
   }
   return result;
