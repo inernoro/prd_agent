@@ -4,14 +4,18 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Pencil, Trash2, Upload } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Upload, Star } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { listProducts, createProduct, updateProduct, deleteProduct, getOverviewStats } from '@/services/real/productAgent';
 import { ProductImportDialog } from './ProductImportDialog';
 import type { Product, ProductGrade, ProductCategory } from './types';
 import { useProductCategories, categoryLabel, categoryColor } from './productCategories';
+import { readFavoriteProductIds, toggleFavoriteProductId } from './productFavoriteStorage';
 import './product-cards.css';
+
+const SEARCH_BOX =
+  'flex flex-1 min-w-[280px] max-w-xl items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 transition-colors focus-within:border-cyan-500/40 focus-within:bg-white/[0.07]';
 
 export function ProductsSection() {
   const navigate = useNavigate();
@@ -20,6 +24,8 @@ export function ProductsSection() {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
   const [gradeFilter, setGradeFilter] = useState<ProductGrade | ''>('');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(() => readFavoriteProductIds());
   const [editing, setEditing] = useState<Product | 'new' | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [canImport, setCanImport] = useState(false);
@@ -41,29 +47,49 @@ export function ProductsSection() {
     });
   }, []);
 
+  const toggleFavorite = (productId: string) => {
+    toggleFavoriteProductId(productId);
+    setFavoriteIds(readFavoriteProductIds());
+  };
+
+  const visibleProducts = favoritesOnly
+    ? products.filter((p) => favoriteIds.has(p.id))
+    : products;
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10">
-            <Search size={14} className="text-white/40" />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">
+          <label className={SEARCH_BOX}>
+            <Search size={15} className="shrink-0 text-white/40" />
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               placeholder="搜索产品名 / 编号"
-              className="bg-transparent text-sm text-white outline-none w-44"
+              className="no-focus-ring min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"
             />
-          </div>
+          </label>
           <button
-            onClick={() => setGradeFilter('')}
-            className={`px-2.5 py-1 rounded-md text-xs border ${gradeFilter === '' ? 'bg-white/10 text-white border-white/20' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+            type="button"
+            onClick={() => { setFavoritesOnly(false); setGradeFilter(''); }}
+            className={`px-2.5 py-1 rounded-md text-xs border ${!favoritesOnly && gradeFilter === '' ? 'bg-white/10 text-white border-white/20' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
           >
             全部
+          </button>
+          <button
+            type="button"
+            onClick={() => { setFavoritesOnly(true); setGradeFilter(''); }}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs border ${
+              favoritesOnly ? 'bg-amber-500/15 text-amber-200 border-amber-500/35' : 'text-white/50 border-white/10 hover:bg-white/5'
+            }`}
+          >
+            <Star size={12} className={favoritesOnly ? 'fill-amber-300 text-amber-300' : ''} />
+            收藏
           </button>
           {categories.map((c) => (
             <button
               key={c.id}
-              onClick={() => setGradeFilter(c.id)}
+              onClick={() => { setGradeFilter(c.id); setFavoritesOnly(false); }}
               className="px-2.5 py-1 rounded-md text-xs border"
               style={{
                 borderColor: gradeFilter === c.id ? c.color : 'rgba(255,255,255,0.1)',
@@ -95,13 +121,19 @@ export function ProductsSection() {
 
       {loading ? (
         <MapSectionLoader text="正在加载产品…" />
-      ) : products.length === 0 ? (
+      ) : visibleProducts.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-16 px-6">
-          还没有产品。点「新建产品」创建第一个，开始串联版本、需求、功能与缺陷。
+          {favoritesOnly
+            ? '还没有收藏的产品。在卡片右上角点星标即可收藏。'
+            : products.length === 0
+              ? '还没有产品。点「新建产品」创建第一个，开始串联版本、需求、功能与缺陷。'
+              : '没有匹配的产品，试试调整搜索或筛选条件。'}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3">
-          {products.map((p, i) => (
+          {visibleProducts.map((p, i) => {
+            const isFavorite = favoriteIds.has(p.id);
+            return (
             <div
               key={p.id}
               onClick={() => navigate(`/product-agent/p/${p.id}`)}
@@ -109,13 +141,30 @@ export function ProductsSection() {
               className="pa-card group cursor-pointer rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 flex flex-col gap-2"
             >
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="text-white font-medium truncate">{p.name}</div>
                   <div className="text-[11px] text-white/40 mt-0.5">{p.productNo}</div>
                 </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color: categoryColor(categories, p.grade), background: 'rgba(255,255,255,0.06)' }}>
-                  {categoryLabel(categories, p.grade)}
-                </span>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    title={isFavorite ? '取消收藏' : '收藏'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFavorite(p.id);
+                    }}
+                    className={`flex h-7 w-7 items-center justify-center rounded-md border transition-colors ${
+                      isFavorite
+                        ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
+                        : 'border-transparent text-white/30 opacity-0 group-hover:opacity-100 hover:border-white/15 hover:bg-white/5 hover:text-amber-200/90'
+                    }`}
+                  >
+                    <Star size={14} className={isFavorite ? 'fill-current' : ''} />
+                  </button>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: categoryColor(categories, p.grade), background: 'rgba(255,255,255,0.06)' }}>
+                    {categoryLabel(categories, p.grade)}
+                  </span>
+                </div>
               </div>
               {p.description && <div className="text-xs text-white/50 line-clamp-2 min-h-[2rem]">{p.description}</div>}
               <div className="grid grid-cols-4 gap-1 mt-1">
@@ -157,7 +206,8 @@ export function ProductsSection() {
                 </div>
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
       )}
 
