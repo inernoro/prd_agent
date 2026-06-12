@@ -32,14 +32,27 @@ public class TapdBugAgentServiceTests
     {
         var draft = TapdBugAgentService.NormalizeDraft(new TapdBugDraft
         {
-            Title = "地区筛选无效",
             ActualResult = new List<string> { "列表无变化" },
         }, null);
 
+        Assert.Contains("标题", draft.MissingFields);
         Assert.Contains("前置条件", draft.MissingFields);
         Assert.Contains("复现步骤", draft.MissingFields);
         Assert.Contains("预期结果", draft.MissingFields);
         Assert.DoesNotContain("实际结果", draft.MissingFields);
+    }
+
+    [Fact]
+    public void NormalizeDraft_ShouldAutoFillFourRequiredSectionsFromShortDescription()
+    {
+        var draft = TapdBugAgentService.NormalizeDraft(new TapdBugDraft(), "不能输汉字，提示502");
+
+        Assert.Empty(draft.MissingFields);
+        Assert.Equal("不能输汉字，提示502", draft.Title);
+        Assert.Contains("已登录系统并进入出现该问题的功能页面", draft.Preconditions);
+        Assert.Contains("在相关输入框中输入汉字内容并提交或保存", draft.Steps);
+        Assert.Contains("不能输汉字，提示502", draft.ActualResult);
+        Assert.Contains("页面不应出现 502 错误", draft.ExpectedResult);
     }
 
     [Fact]

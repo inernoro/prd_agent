@@ -285,6 +285,8 @@ public class TapdBugAgentService
             MissingFields = new List<string>()
         };
 
+        normalized = AutoFillRequiredFields(normalized, naturalText);
+
         var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(normalized.Title)) missing.Add("标题");
         if (normalized.Preconditions.Count == 0) missing.Add("前置条件");
@@ -314,13 +316,13 @@ public class TapdBugAgentService
             var root = doc.RootElement;
             return new TapdBugDraft
             {
-                Title = GetString(root, "title"),
-                Module = GetString(root, "module"),
-                Severity = GetString(root, "severity"),
-                Priority = GetString(root, "priority"),
-                BugType = GetString(root, "bugType"),
-                CurrentOwner = GetString(root, "currentOwner"),
-                VersionReport = GetString(root, "versionReport"),
+                Title = GetString(root, "title") ?? string.Empty,
+                Module = GetString(root, "module") ?? string.Empty,
+                Severity = GetString(root, "severity") ?? string.Empty,
+                Priority = GetString(root, "priority") ?? string.Empty,
+                BugType = GetString(root, "bugType") ?? string.Empty,
+                CurrentOwner = GetString(root, "currentOwner") ?? string.Empty,
+                VersionReport = GetString(root, "versionReport") ?? string.Empty,
                 Preconditions = GetStringList(root, "preconditions"),
                 Steps = GetStringList(root, "steps"),
                 ActualResult = GetStringList(root, "actualResult"),
@@ -367,7 +369,7 @@ public class TapdBugAgentService
             你是 TAPD 缺陷自动提报智能体，负责把用户口语化缺陷描述整理为标准缺陷草稿。
             严格规则：
             1. 只能输出严格 JSON，不要输出 Markdown、解释、代码围栏。
-            2. 禁止编造缺失信息；不确定的字段留空，并把中文字段名写入 missingFields。
+            2. 必须尽量基于用户原话合理补齐四要素。信息不足时使用“进入出现该问题的页面/执行描述中的操作/观察异常结果/不应出现异常错误”等可核对表述，不要让四要素为空。
             3. 标题格式为“场景 + 问题现象”，不超过 30 个中文字符。
             4. 四要素必须拆成数组：preconditions、steps、actualResult、expectedResult。
             5. 默认 module/versionReport 为“附近门店组件精准筛选”，currentOwner 为“黄卫杰;”。
@@ -399,6 +401,98 @@ public class TapdBugAgentService
         var items = NormalizeLines(lines)
             .Select(line => $"<li>{WebUtility.HtmlEncode(line)}</li>");
         return "<ol>" + string.Concat(items) + "</ol>";
+    }
+
+    private static TapdBugDraft AutoFillRequiredFields(TapdBugDraft draft, string? naturalText)
+    {
+        var source = FirstNonEmpty(naturalText, draft.Title) ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(source))
+            return draft;
+
+        var title = FirstNonEmpty(draft.Title, source) ?? string.Empty;
+        return draft with
+        {
+            Preconditions = draft.Preconditions.Count > 0
+                ? draft.Preconditions
+                : BuildInferredPreconditions(),
+            Steps = draft.Steps.Count > 0
+                ? draft.Steps
+                : BuildInferredSteps(source, title),
+            ActualResult = draft.ActualResult.Count > 0
+                ? draft.ActualResult
+                : BuildInferredActualResult(source),
+            ExpectedResult = draft.ExpectedResult.Count > 0
+                ? draft.ExpectedResult
+                : BuildInferredExpectedResult(source),
+        };
+    }
+
+    private static List<string> BuildInferredPreconditions()
+    {
+        return new List<string>
+        {
+            "已登录系统并进入出现该问题的功能页面",
+            "当前账号具备执行该操作的权限"
+        };
+    }
+
+    private static List<string> BuildInferredSteps(string source, string title)
+    {
+        var steps = new List<string> { "进入出现该问题的功能页面" };
+        var action = InferActionStep(source, title);
+        if (!string.IsNullOrWhiteSpace(action)) steps.Add(action);
+        steps.Add("观察页面提示或接口返回结果");
+        return steps;
+    }
+
+    private static string InferActionStep(string source, string title)
+    {
+        var text = source + " " + title;
+        if (text.Contains("汉字", StringComparison.Ordinal))
+            return "在相关输入框中输入汉字内容并提交或保存";
+        if (text.Contains("筛选", StringComparison.Ordinal))
+            return "按描述选择筛选条件并确认筛选";
+        if (text.Contains("点击", StringComparison.Ordinal))
+            return "按描述点击对应按钮或入口";
+        if (text.Contains("上传", StringComparison.Ordinal))
+            return "按描述上传对应文件或素材";
+        if (text.Contains("保存", StringComparison.Ordinal))
+            return "按描述填写内容后点击保存";
+        return "按用户描述执行对应操作";
+    }
+
+    private static List<string> BuildInferredActualResult(string source)
+    {
+        var trimmed = source.Trim();
+        return new List<string>
+        {
+            trimmed.Length > 0 ? trimmed : "执行操作后出现异常现象"
+        };
+    }
+
+    private static List<string> BuildInferredExpectedResult(string source)
+    {
+        if (source.Contains("502", StringComparison.Ordinal))
+        {
+            return new List<string>
+            {
+                "系统应正常处理该输入或给出明确的业务校验提示",
+                "页面不应出现 502 错误"
+            };
+        }
+
+        if (source.Contains("筛选", StringComparison.Ordinal))
+        {
+            return new List<string>
+            {
+                "系统应按照所选条件正确过滤并展示匹配结果"
+            };
+        }
+
+        return new List<string>
+        {
+            "系统应按业务规则正常完成该操作，并给出清晰结果反馈"
+        };
     }
 
     private static List<string> NormalizeLines(IEnumerable<string>? lines)
