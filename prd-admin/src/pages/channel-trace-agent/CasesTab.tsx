@@ -400,9 +400,9 @@ export function CasesTab() {
                 </div>
               </div>
             ) : (
-              <div key={i} className="flex flex-col gap-1.5">
+              <div key={i} className="space-y-1.5">
                 <MsgMeta related={m.relatedCases} hits={m.codeHits} />
-                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 min-w-0 break-words">
+                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 break-words">
                   <MarkdownContent content={m.content} variant="reading" />
                 </div>
               </div>
@@ -410,10 +410,10 @@ export function CasesTab() {
           )}
 
           {isStreaming && (
-            <div className="flex flex-col gap-1.5">
+            <div className="space-y-1.5">
               <MsgMeta related={curRelated} hits={curHits} />
               {streamingText ? (
-                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 min-w-0 break-words">
+                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 break-words">
                   <StreamingText
                     text={streamingText}
                     streaming={isStreaming}
