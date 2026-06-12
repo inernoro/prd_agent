@@ -41,8 +41,8 @@ export interface VisualCreationMiniPanelProps {
   onResultChange?: (url: string | null) => void;
   /** 插入图片到文档 */
   onInsertImage: (url: string, name?: string) => void;
-  /** 插入「原文片段+配图」 */
-  onInsertImageWithText: (url: string, text: string) => void;
+  /** 插入「原文片段+配图」。不传则隐藏该按钮（如划词配图场景：原文已在文档里，再插一遍是重复） */
+  onInsertImageWithText?: (url: string, text: string) => void;
 }
 
 // ============ 内部类型 ============
@@ -374,7 +374,7 @@ export function VisualCreationMiniPanel({
   }, [resultUrl, onInsertImage]);
 
   const handleInsertWithText = useCallback(() => {
-    if (!resultUrl) return;
+    if (!resultUrl || !onInsertImageWithText) return;
     // 取文档前 300 字作为配套文本（避免正文过长）
     const snippet = docContent.trim().slice(0, 300);
     onInsertImageWithText(resultUrl, snippet);
@@ -748,14 +748,16 @@ export function VisualCreationMiniPanel({
               <FileDown size={13} />
               插入文档
             </button>
-            <button
-              type="button"
-              style={{ ...btnGhost, flex: 1, justifyContent: 'center' }}
-              onClick={handleInsertWithText}
-            >
-              <ImagePlus size={13} />
-              插入原文+配图
-            </button>
+            {onInsertImageWithText && (
+              <button
+                type="button"
+                style={{ ...btnGhost, flex: 1, justifyContent: 'center' }}
+                onClick={handleInsertWithText}
+              >
+                <ImagePlus size={13} />
+                插入原文+配图
+              </button>
+            )}
             <button
               type="button"
               style={{ ...btnGhost, padding: '6px 10px' }}

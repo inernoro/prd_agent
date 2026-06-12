@@ -946,6 +946,17 @@ public static class DocumentStoreAgent
         )]
         public const string Generate = "document-store.reprocess::chat";
     }
+
+    public static class Selection
+    {
+        [AppCallerMetadata(
+            "知识库划词局部改写",
+            "对文档中用户划选的片段做局部 AI 改写（润色/精简/扩写/纠错等），结合选区上下文输出可直接替换的 Markdown 片段",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DocumentStore"
+        )]
+        public const string Rewrite = "document-store.selection-rewrite::chat";
+    }
 }
 
 /// <summary>

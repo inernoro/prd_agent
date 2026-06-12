@@ -290,6 +290,7 @@ docs:
   debt.speech-agent: 演讲智能体 · 债务台账（MVP 已知边界 + Phase 2 backlog）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.kb-inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
+  debt.kb-selection-ai: 知识库划词 AI 局部编辑（AI 改写 + 选区配图）债务台账
   debt.web-hosting: 网页托管 · 债务台账（幻灯片翻页方向兼容垫片边界）
   debt.share-link-security: 分享链接安全债务台账
   debt.web-hosting-client-ip: 网页托管真实客户端 IP（XFF 解析）债务台账

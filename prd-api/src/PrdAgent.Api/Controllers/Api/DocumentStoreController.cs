@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -7,6 +8,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -38,6 +40,7 @@ public class DocumentStoreController : ControllerBase
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
     private readonly DocStoreServices.MentionService _mentions;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -62,6 +65,7 @@ public class DocumentStoreController : ControllerBase
         ITeamActivityService teamActivity,
         DocStoreServices.MentionService mentions,
         IAdminPermissionService adminPermissions,
+        ILlmGateway gateway,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -74,6 +78,7 @@ public class DocumentStoreController : ControllerBase
         _teamActivity = teamActivity;
         _mentions = mentions;
         _adminPermissions = adminPermissions;
+        _gateway = gateway;
         _logger = logger;
     }
 
@@ -2355,6 +2360,284 @@ public class DocumentStoreController : ControllerBase
             description = t.Description,
         }).ToList();
         return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 知识库 Agent：划词局部改写（选区级 AI 编辑）
+    // ─────────────────────────────────────────────
+
+    /// <summary>列出划词改写的内置动作（后端 SSOT，前端只渲染）</summary>
+    [HttpGet("selection-rewrite/actions")]
+    public IActionResult ListSelectionRewriteActions()
+    {
+        var items = SelectionRewriteActionRegistry.Actions.Select(a => new
+        {
+            key = a.Key,
+            label = a.Label,
+            description = a.Description,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 划词局部改写（SSE 直流）。对用户划选的片段按动作/自定义指令做 AI 改写，
+    /// 服务端从原文中定位选区并截取上下文窗口一起喂给 LLM，输出可直接替换选区的 Markdown 片段。
+    /// 改写结果不在服务端落库——前端预览 diff、用户确认后走既有 PUT entries/{id}/content 写回
+    /// （写回会自动触发行内评论重锚定 + 双链账本重算）。
+    /// </summary>
+    [HttpPost("entries/{entryId}/selection-rewrite")]
+    [Produces("text/event-stream")]
+    public async Task SelectionRewrite(string entryId, [FromBody] SelectionRewriteRequest request)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        async Task EmitAsync(string eventName, object payload)
+        {
+            try
+            {
+                await WriteSseEventAsync(null, eventName,
+                    System.Text.Json.JsonSerializer.Serialize(payload, AgentRunJsonOptions), CancellationToken.None);
+            }
+            catch (OperationCanceledException) { /* 客户端断开，跳过写入 */ }
+            catch (ObjectDisposedException) { /* 连接已关闭 */ }
+        }
+
+        var selectedText = (request.SelectedText ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(selectedText))
+        {
+            await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = "selectedText 不能为空" });
+            return;
+        }
+        if (selectedText.Length > 12000)
+        {
+            await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = "选区过长（上限 12000 字符），请缩小选区" });
+            return;
+        }
+
+        // 指令解析：内置动作 or custom 自定义指令（后端 SSOT，拒绝未知 key）
+        string instruction;
+        var actionKey = (request.ActionKey ?? string.Empty).Trim();
+        if (actionKey == "custom")
+        {
+            instruction = (request.Instruction ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(instruction))
+            {
+                await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = "自定义改写需要填写指令" });
+                return;
+            }
+            if (instruction.Length > 2000) instruction = instruction[..2000];
+        }
+        else
+        {
+            var action = SelectionRewriteActionRegistry.FindByKey(actionKey);
+            if (action == null)
+            {
+                await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = $"未知改写动作: {actionKey}" });
+                return;
+            }
+            instruction = action.Instruction;
+        }
+
+        // 改写会被写回正文 → 按可写权限校验（同 UpdateEntryContent 口径）
+        var userId = GetUserId();
+        var (entry, _, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null || entry == null)
+        {
+            await EmitAsync("error", new { code = ErrorCodes.NOT_FOUND, message = "文档条目不存在或无编辑权限" });
+            return;
+        }
+        if (entry.IsFolder)
+        {
+            await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = "文件夹不支持划词改写" });
+            return;
+        }
+
+        // 服务端读取原文，定位选区并截取上下文窗口（不信任客户端截的 50 字短上下文）
+        var (docTitle, content) = await LoadEntryMarkdownAsync(entry);
+        var contextBefore = request.ContextBefore ?? string.Empty;
+        var contextAfter = request.ContextAfter ?? string.Empty;
+        if (!string.IsNullOrEmpty(content))
+        {
+            var (start, end) = LocateSelectionInContent(
+                content, selectedText, contextBefore, request.StartOffset,
+                request.OccurrenceIndex, request.OccurrenceTotal);
+            if (start >= 0)
+            {
+                const int window = 1200;
+                contextBefore = content[Math.Max(0, start - window)..start];
+                contextAfter = content[end..Math.Min(content.Length, end + window)];
+            }
+        }
+
+        var systemPrompt =
+            "你是知识库 Markdown 文档的局部改写引擎。用户在文档中划选了一个片段，你只负责改写这个片段。\n" +
+            "硬性要求：\n" +
+            "1. 只输出改写后的片段本身——不要任何解释、前后缀，不要用代码围栏包裹，不要重复选区前后文\n" +
+            "2. 输出必须是能直接替换原片段的合法 Markdown，与上下文的格式（标题层级、列表符号、表格结构）、术语、语气保持一致\n" +
+            "3. 除非指令明确要求，不得改变事实、数字、链接与代码\n" +
+            "4. 选区若以完整段落/列表项/标题开头结尾，输出保持同样的块级结构";
+
+        var userPrompt =
+            $"文档标题：{docTitle}\n\n" +
+            (string.IsNullOrWhiteSpace(contextBefore) ? "" : $"【选区前文（仅供参考，不要输出）】\n{contextBefore}\n\n") +
+            $"【选中片段（待改写）】\n{selectedText}\n\n" +
+            (string.IsNullOrWhiteSpace(contextAfter) ? "" : $"【选区后文（仅供参考，不要输出）】\n{contextAfter}\n\n") +
+            $"【改写指令】\n{instruction}";
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Selection.Rewrite,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            IncludeThinking = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                },
+                ["temperature"] = 0.4,
+                ["max_tokens"] = 6000,
+            },
+            Context = new GatewayRequestContext
+            {
+                UserId = userId,
+                QuestionText = $"[selection-rewrite:{(actionKey == "custom" ? "custom" : actionKey)}] {selectedText[..Math.Min(120, selectedText.Length)]}",
+            },
+        };
+
+        _logger.LogInformation(
+            "[doc-store-selection] rewrite start: entry={EntryId} action={Action} selLen={Len}",
+            entryId, actionKey, selectedText.Length);
+
+        try
+        {
+            GatewayTokenUsage? tokenUsage = null;
+            // 服务器权威：LLM 调用用 CancellationToken.None，客户端断开不中断生成（server-authority.md）
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start)
+                {
+                    // ai-model-visibility：start 事件携带实际调度到的模型，前端顶部展示
+                    await EmitAsync("start", new
+                    {
+                        model = chunk.Resolution?.ActualModel,
+                        platform = chunk.Resolution?.ActualPlatformName,
+                    });
+                }
+                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    await EmitAsync("thinking", new { content = chunk.Content });
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    await EmitAsync("text", new { content = chunk.Content });
+                }
+                else if (chunk.Type == GatewayChunkType.Done)
+                {
+                    tokenUsage = chunk.TokenUsage;
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    await EmitAsync("error", new { message = chunk.Error ?? "LLM 调用失败" });
+                    return;
+                }
+            }
+
+            await EmitAsync("done", new
+            {
+                promptTokens = tokenUsage?.InputTokens,
+                completionTokens = tokenUsage?.OutputTokens,
+                totalTokens = tokenUsage?.TotalTokens,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[doc-store-selection] rewrite failed: entry={EntryId}", entryId);
+            await EmitAsync("error", new { message = "服务处理异常，请稍后重试" });
+        }
+    }
+
+    /// <summary>读取条目的 Markdown 正文（同 GetEntryContent 口径：ParsedPrd 优先，Attachment.ExtractedText 兜底）</summary>
+    private async Task<(string title, string? content)> LoadEntryMarkdownAsync(DocumentEntry entry)
+    {
+        string? content = null;
+        string? title = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null)
+            {
+                content = doc.RawContent;
+                title = doc.Title;
+            }
+        }
+        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            if (att != null)
+            {
+                content = att.ExtractedText;
+                title ??= att.FileName;
+            }
+        }
+        return (title ?? entry.Title, content);
+    }
+
+    /// <summary>
+    /// 在原文中定位选区（仅用于截上下文窗口，不落库，定位失败可容忍）。
+    /// 唯一出现 → 直接命中；多处出现 → 优先用前端从真实 DOM Range 数出的出现序号
+    /// （offset/contextBefore 都源自 useContentSelection 的"首处 indexOf"，多处场景会指错位置，
+    /// Bugbot High 2026-06-12），序号不可用时退回 offset 验证 → contextBefore 消歧 → 首处。
+    /// </summary>
+    internal static (int start, int end) LocateSelectionInContent(
+        string content, string selectedText, string contextBefore, int startOffsetHint,
+        int occurrenceIndex = -1, int occurrenceTotal = -1)
+    {
+        if (string.IsNullOrEmpty(content) || string.IsNullOrEmpty(selectedText)) return (-1, -1);
+
+        // 非重叠收集全部出现位置（封顶 100，防超长重复文本拖慢）
+        var occurrences = new List<int>();
+        var idx = content.IndexOf(selectedText, StringComparison.Ordinal);
+        while (idx >= 0 && occurrences.Count < 100)
+        {
+            occurrences.Add(idx);
+            idx = content.IndexOf(selectedText, idx + selectedText.Length, StringComparison.Ordinal);
+        }
+        if (occurrences.Count == 0) return (-1, -1);
+        if (occurrences.Count == 1) return (occurrences[0], occurrences[0] + selectedText.Length);
+
+        // 多处出现：DOM 序号优先（要求 DOM 总数与正文总数一致，防 DOM 里混入同文副本）
+        if (occurrenceIndex >= 0 && occurrenceIndex < occurrences.Count
+            && (occurrenceTotal < 0 || occurrenceTotal == occurrences.Count))
+        {
+            var s = occurrences[occurrenceIndex];
+            return (s, s + selectedText.Length);
+        }
+
+        if (startOffsetHint >= 0
+            && startOffsetHint + selectedText.Length <= content.Length
+            && string.CompareOrdinal(content, startOffsetHint, selectedText, 0, selectedText.Length) == 0)
+        {
+            return (startOffsetHint, startOffsetHint + selectedText.Length);
+        }
+
+        // contextBefore 尾部片段消歧（最后兜底，仅影响上下文窗口质量）
+        var ctx = (contextBefore ?? string.Empty).TrimEnd();
+        if (ctx.Length > 0)
+        {
+            var probe = ctx.Length > 30 ? ctx[^30..] : ctx;
+            var anchor = content.IndexOf(probe + selectedText, StringComparison.Ordinal);
+            if (anchor >= 0)
+            {
+                var start = anchor + probe.Length;
+                return (start, start + selectedText.Length);
+            }
+        }
+        return (occurrences[0], occurrences[0] + selectedText.Length);
     }
 
     /// <summary>
@@ -4706,6 +4989,36 @@ public class ReprocessChatRequest
 
     /// <summary>若由模板 chip 触发，记录所选模板 key（仅首条消息生效，决定 system prompt）</summary>
     public string? TemplateKey { get; set; }
+}
+
+public class SelectionRewriteRequest
+{
+    /// <summary>用户划选的原文片段（非空，≤12000 字符）</summary>
+    public string SelectedText { get; set; } = string.Empty;
+
+    /// <summary>选区前文（前端 useContentSelection 截取的短上下文，服务端定位成功后会换成更宽的窗口）</summary>
+    public string? ContextBefore { get; set; }
+
+    /// <summary>选区后文（同上）</summary>
+    public string? ContextAfter { get; set; }
+
+    /// <summary>选区起点在正文中的字符偏移提示（-1 表示前端未能精确定位）</summary>
+    public int StartOffset { get; set; } = -1;
+
+    /// <summary>选区终点偏移提示</summary>
+    public int EndOffset { get; set; } = -1;
+
+    /// <summary>DOM 选区前同文出现次数（0-based 序号）。同文多处出现时 offset/context 恒指向第一处，只有它能指认用户真正选的是第几处；-1 表示未知</summary>
+    public int OccurrenceIndex { get; set; } = -1;
+
+    /// <summary>DOM 全文同文出现总数（与正文统计交叉校验用）；-1 表示未知</summary>
+    public int OccurrenceTotal { get; set; } = -1;
+
+    /// <summary>改写动作 key（polish/concise/expand/formal/fix 或 custom）</summary>
+    public string ActionKey { get; set; } = string.Empty;
+
+    /// <summary>actionKey=custom 时的自定义改写指令</summary>
+    public string? Instruction { get; set; }
 }
 
 /// <summary>覆盖式保存智能体抽屉对话。三个字段都是前端拥有形状的 JSON，后端不解析。</summary>
