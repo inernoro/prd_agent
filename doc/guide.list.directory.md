@@ -139,6 +139,10 @@
   > 产品-版本-需求-功能-缺陷-客户全链路串联、版本化管理、分级追溯与知识图谱（参考 TAPD / RTM）
 - [产品管理 Agent 债务台账](debt.product-agent) `debt.product-agent`
   > 产品管理智能体已知边界与后续波次债务
+- [伊利 VOC 用户原声闭环垂直切片设计](design.voc-vertical-slice) `design.voc-vertical-slice`
+  > 监测→预警→诊断→追踪→洞察→需求池闭环，80% 复用现有积木，唯一新代码是涌现→需求池流转
+- [伊利 VOC 闭环债务台账](debt.voc) `debt.voc`
+  > 垂直切片有意未做的 BI 下钻看板 / 情感管道 / RAG 检索 / 本竞品矩阵
 - [缺陷管理 Agent 功能设计](design.defect-agent) `design.defect-agent`
   > 缺陷提交、跟踪与升级流程的功能设计
 
