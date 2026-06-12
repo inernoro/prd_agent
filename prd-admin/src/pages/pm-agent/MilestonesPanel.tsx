@@ -150,6 +150,9 @@ export function MilestonesPanel({ projectId, milestones, goals, tasks, canManage
                         </button>
                       )}
                       <span className="text-[13px] font-medium truncate flex-1" style={{ color: 'var(--text-primary)' }}>{m.title}</span>
+                      {m.autoFromGoal && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-1" style={{ background: 'rgba(168,85,247,0.14)', color: '#A855F7' }} title="由目标「设为里程碑」联动创建，与目标同步（取消即移除）"><Target size={9} />来自目标</span>
+                      )}
                       {m.blocked && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-1" style={{ background: 'rgba(239,68,68,0.14)', color: '#EF4444' }} title={`受阻：${(m.blockedBy ?? []).join('、')} 未达成`}><Lock size={9} />受阻</span>
                       )}

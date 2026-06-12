@@ -71,6 +71,14 @@ import type {
   UpdatePmRiskContract,
   DeletePmRiskContract,
   GetPmBurndownContract,
+  ListPmBriefingsContract,
+  GetPmBriefingContract,
+  DeletePmBriefingContract,
+  ToggleBriefingShareContract,
+  SaveBriefingToHostingContract,
+  ListBriefingStylesContract,
+  RestylePmBriefingContract,
+  RenamePmBriefingContract,
   GetPmMyTodosContract,
   GetPmAgentPreferencesContract,
   UpdatePmQuickActionsContract,
@@ -301,6 +309,32 @@ export const deletePmRiskReal: DeletePmRiskContract = async (riskId) => {
 
 export const getPmBurndownReal: GetPmBurndownContract = async (projectId) => {
   return await apiRequest(api.pm.projects.burndown(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+// ── 项目简报 ──
+export const listPmBriefingsReal: ListPmBriefingsContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.briefings(encodeURIComponent(projectId)), { method: 'GET' });
+};
+export const getPmBriefingReal: GetPmBriefingContract = async (briefingId) => {
+  return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'GET' });
+};
+export const deletePmBriefingReal: DeletePmBriefingContract = async (briefingId) => {
+  return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'DELETE' });
+};
+export const toggleBriefingShareReal: ToggleBriefingShareContract = async (briefingId, enabled) => {
+  return await apiRequest(api.pm.briefings.share(encodeURIComponent(briefingId)), { method: 'POST', body: { enabled } });
+};
+export const saveBriefingToHostingReal: SaveBriefingToHostingContract = async (briefingId) => {
+  return await apiRequest(api.pm.briefings.saveToHosting(encodeURIComponent(briefingId)), { method: 'POST', body: {} });
+};
+export const listBriefingStylesReal: ListBriefingStylesContract = async () => {
+  return await apiRequest(api.pm.briefings.styles(), { method: 'GET' });
+};
+export const restylePmBriefingReal: RestylePmBriefingContract = async (briefingId, style) => {
+  return await apiRequest(api.pm.briefings.restyle(encodeURIComponent(briefingId)), { method: 'POST', body: { style } });
+};
+export const renamePmBriefingReal: RenamePmBriefingContract = async (briefingId, title) => {
+  return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'PUT', body: { title } });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

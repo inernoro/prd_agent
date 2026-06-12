@@ -285,6 +285,11 @@ export async function getSite(id: string): Promise<ApiResponse<HostedSite>> {
   return apiRequest(api.webPages.byId(encodeURIComponent(id)), { method: 'GET' });
 }
 
+/** 读取站点入口 HTML 原文（服务端代理，绕开 CORS）。供知识库「从网页托管导入」使用。 */
+export async function getSiteContent(id: string): Promise<ApiResponse<{ siteId: string; title: string; contentType: string; html: string }>> {
+  return apiRequest(api.webPages.content(encodeURIComponent(id)), { method: 'GET' });
+}
+
 export async function updateSite(id: string, data: {
   title?: string;
   description?: string;

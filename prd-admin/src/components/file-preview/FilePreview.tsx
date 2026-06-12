@@ -84,23 +84,25 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
     );
   }
 
-  // HTML 文件预览：用 sandbox iframe 渲染原始文件（fileUrl），实现真预览，
-  // 而非剥标签后的纯文本。sandbox="" 禁用脚本/表单/同源，仅渲染静态 HTML+CSS，防 XSS。
-  const isHtmlFile = (entry.contentType ?? '').toLowerCase().includes('html') || /\.html?$/i.test(entry.title);
-  if (isHtmlFile && fileUrl) {
+  // HTML 预览：sandbox iframe 真渲染（禁脚本/表单/同源，仅静态 HTML+CSS，防 XSS）。
+  // 上传的 .html 文件走 fileUrl；导入/手写的 HTML 正文（存于 document content）走 srcDoc，
+  // 两者都渲染成页面而非源码（编辑态仍可改源码）。registry kind 之外再兜底按 contentType/扩展名识别。
+  const isHtmlFile = kind === 'html'
+    || (entry.contentType ?? '').toLowerCase().includes('html') || /\.html?$/i.test(entry.title);
+  if (isHtmlFile && (fileUrl || text)) {
     return (
       <iframe
-        src={fileUrl}
+        {...(fileUrl ? { src: fileUrl } : { srcDoc: text ?? '' })}
         title={entry.title}
         sandbox=""
         className="w-full rounded-lg"
-        style={{ height: '100%', minHeight: 420, border: '1px solid rgba(255,255,255,0.06)', background: '#fff' }}
+        style={{ height: '100%', minHeight: 480, border: '1px solid rgba(255,255,255,0.06)', background: '#fff' }}
       />
     );
   }
 
   // 文本预览（Markdown / 提取后的 Office 文本 / 代码）
-  if (kind === 'text' && text) {
+  if ((kind === 'text' || kind === 'html') && text) {
     return <MarkdownViewer content={text} />;
   }
 

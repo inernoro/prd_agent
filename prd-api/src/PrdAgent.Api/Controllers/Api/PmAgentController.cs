@@ -192,6 +192,9 @@ public class PmAgentController : ControllerBase
         if (request.ActualCost.HasValue) update = update.Set(p => p.ActualCost, request.ActualCost);
         if (request.ValueCoefficient.HasValue) update = update.Set(p => p.ValueCoefficient, Math.Max(0, request.ValueCoefficient.Value));
         if (request.WipLimits != null) update = update.Set(p => p.WipLimits, request.WipLimits.Where(kv => PmTaskStatus.All.Contains(kv.Key) && kv.Value > 0).ToDictionary(kv => kv.Key, kv => kv.Value));
+        if (request.DeliverableTypes != null)
+            update = update.Set(p => p.DeliverableTypes,
+                request.DeliverableTypes.Select(t => (t ?? string.Empty).Trim()).Where(t => t.Length is > 0 and <= 20).Distinct().Take(30).ToList());
         if (request.MemberIds != null) update = update.Set(p => p.MemberIds, request.MemberIds);
         if (request.Lifecycle != null && PmProjectLifecycle.All.Contains(request.Lifecycle))
         {
@@ -1271,6 +1274,8 @@ public class PmAgentController : ControllerBase
         }
         await _db.PmGoals.DeleteManyAsync(x => toDelete.Contains(x.Id));
         await _db.PmGoalCheckIns.DeleteManyAsync(x => toDelete.Contains(x.GoalId));
+        // 「设为里程碑」联动创建的里程碑与目标同生命周期，目标删除时一并清理（手动建的关联里程碑不动）
+        await _db.PmMilestones.DeleteManyAsync(x => x.AutoFromGoal && x.GoalId != null && toDelete.Contains(x.GoalId!));
         return Ok(ApiResponse<object>.Ok(new { deleted = true, count = toDelete.Count }));
     }
 
@@ -1511,6 +1516,7 @@ public class PmAgentController : ControllerBase
                 blockedBy = blockedByTitles,
                 status = m.Status,
                 orderKey = m.OrderKey,
+                autoFromGoal = m.AutoFromGoal,
                 taskTotal = total,
                 taskDone = done,
                 progress,
@@ -3224,6 +3230,455 @@ public class PmAgentController : ControllerBase
         return sb.ToString();
     }
 
+    // ── AI 项目简报 ──
+
+    /// <summary>AI 生成项目简报（SSE 流式，仅 owner/leader）。硬数据服务端统计，LLM 产出结构化内容，
+    /// 服务端渲染为自包含 HTML 落库。事件：stage / model / thinking / typing / error / done(briefingId)。</summary>
+    [HttpPost("projects/{projectId}/briefings/generate")]
+    [Produces("text/event-stream")]
+    public async Task GenerateBriefing(string projectId, [FromQuery] string? style, [FromBody] GenerateBriefingRequest? request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null) { Response.StatusCode = 404; return; }
+        if (project.OwnerId != userId && project.LeaderId != userId) { Response.StatusCode = 403; return; }
+        var styleRaw = request?.Style ?? style;
+        var briefingStyle = PmBriefingRenderer.IsValidStyle(styleRaw) ? styleRaw! : "classic";
+        // 报告周期：yyyy-MM-dd（中国时区自然日），from..to 含两端；缺省 = 全周期（截至当前状态）
+        var (periodFromUtc, periodToUtcEx) = ParseBriefingPeriod(request?.From, request?.To);
+
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        await WriteSseEvent("stage", new { stage = "collecting", message = "正在汇总项目实时数据…" });
+
+        var (renderData, statsSummary) = await BuildBriefingDataAsync(project, periodFromUtc, periodToUtcEx);
+
+        await WriteSseEvent("stage", new { stage = "generating", message = "AI 正在撰写简报内容…" });
+        string? err = null;
+        string? model = null;
+        var ai = await _pmService.GenerateBriefingAsync(project, statsSummary, userId,
+            onContent: async text => await WriteSseEvent("typing", new { text }),
+            onThinking: async text => await WriteSseEvent("thinking", new { text }),
+            onError: e => err = e,
+            onModel: m => model = m,
+            userNote: request?.Note);
+        if (model != null) await WriteSseEvent("model", new { model });
+        if (ai == null)
+        {
+            await WriteSseEvent("error", new { message = err ?? "简报生成失败" });
+            await WriteSseEvent("done", new { error = err ?? "简报生成失败" });
+            return;
+        }
+
+        await WriteSseEvent("stage", new { stage = "rendering", message = "正在渲染简报页面…" });
+        renderData.Ai = ai;
+        renderData.Model = model;
+        renderData.Style = briefingStyle;
+        var html = PmBriefingRenderer.Render(renderData);
+
+        var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var titleSuffix = (periodFromUtc.HasValue && periodToUtcEx.HasValue)
+            ? $"{PmBriefingRenderer.ToCst(periodFromUtc.Value):yyyy-MM-dd} ~ {PmBriefingRenderer.ToCst(periodToUtcEx.Value.AddSeconds(-1)):yyyy-MM-dd}"
+            : $"{PmBriefingRenderer.ToCst(DateTime.UtcNow):yyyy-MM-dd}";
+        var briefing = new PmBriefing
+        {
+            ProjectId = projectId,
+            Title = $"{project.Title} 项目简报 · {titleSuffix}",
+            Html = html,
+            Model = model,
+            Style = briefingStyle,
+            PeriodFrom = periodFromUtc,
+            PeriodTo = periodToUtcEx?.AddSeconds(-1),
+            RenderDataJson = JsonSerializer.Serialize(renderData),
+            CreatedBy = userId,
+            CreatedByName = creatorName,
+        };
+        await _db.PmBriefings.InsertOneAsync(briefing);
+        await WriteSseEvent("done", new { briefingId = briefing.Id, title = briefing.Title, model });
+    }
+
+    /// <summary>按自然语言意图调整简报内容（SSE，owner/leader 或创建人）。
+    /// 复用落库硬数据快照（数字不变），LLM 按用户要求改写结构化内容后原地更新该简报（不保留旧版本）。</summary>
+    [HttpPost("briefings/{briefingId}/refine")]
+    [Produces("text/event-stream")]
+    public async Task RefineBriefing(string briefingId, [FromBody] RefineBriefingRequest? request)
+    {
+        var userId = GetUserId();
+        var instruction = request?.Instruction?.Trim();
+        if (string.IsNullOrWhiteSpace(instruction)) { Response.StatusCode = 400; return; }
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) { Response.StatusCode = 404; return; }
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) { Response.StatusCode = 404; return; }
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId) { Response.StatusCode = 403; return; }
+
+        PmBriefingRenderer.RenderData? data = null;
+        if (!string.IsNullOrWhiteSpace(b.RenderDataJson))
+        {
+            try { data = JsonSerializer.Deserialize<PmBriefingRenderer.RenderData>(b.RenderDataJson); }
+            catch { data = null; }
+        }
+        if (data == null) { Response.StatusCode = 400; return; } // 旧版本简报无渲染快照，提示重新生成
+
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        await WriteSseEvent("stage", new { stage = "refining", message = "AI 正在按你的要求改写简报…" });
+
+        string? err = null;
+        string? model = null;
+        var ai = await _pmService.RefineBriefingAsync(
+            project, BuildSummaryFromRenderData(data), JsonSerializer.Serialize(data.Ai), instruction!, userId,
+            onContent: async text => await WriteSseEvent("typing", new { text }),
+            onThinking: async text => await WriteSseEvent("thinking", new { text }),
+            onError: e => err = e,
+            onModel: m => model = m);
+        if (model != null) await WriteSseEvent("model", new { model });
+        if (ai == null)
+        {
+            await WriteSseEvent("error", new { message = err ?? "简报调整失败" });
+            await WriteSseEvent("done", new { error = err ?? "简报调整失败" });
+            return;
+        }
+
+        await WriteSseEvent("stage", new { stage = "rendering", message = "正在重新渲染简报页面…" });
+        data.Ai = ai;
+        if (model != null) data.Model = model;
+        var html = PmBriefingRenderer.Render(data);
+        var update = Builders<PmBriefing>.Update
+            .Set(x => x.Html, html)
+            .Set(x => x.RenderDataJson, JsonSerializer.Serialize(data))
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (model != null) update = update.Set(x => x.Model, model);
+        await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId, update);
+        await WriteSseEvent("done", new { briefingId, model });
+    }
+
+    /// <summary>把渲染数据快照拼回文本摘要（供「调整」时给 LLM 当硬数据上下文，与生成时口径一致）。</summary>
+    private static string BuildSummaryFromRenderData(PmBriefingRenderer.RenderData d)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"项目名称：{d.ProjectTitle}（{d.ProjectNo}）");
+        if (!string.IsNullOrWhiteSpace(d.PeriodText)) sb.AppendLine($"计划周期：{d.PeriodText}");
+        if (d.ReportFrom.HasValue && d.ReportTo.HasValue)
+            sb.AppendLine($"报告周期：{PmBriefingRenderer.ToCst(d.ReportFrom.Value):yyyy-MM-dd} ~ {PmBriefingRenderer.ToCst(d.ReportTo.Value):yyyy-MM-dd}");
+        sb.AppendLine($"任务：有效 {d.TaskTotal}，完成 {d.TaskDone}（完成率 {d.TaskDoneRate}%）");
+        sb.AppendLine($"里程碑：共 {d.MilestoneTotal}，已达成 {d.MilestoneReached}");
+        foreach (var m in d.Milestones)
+            sb.AppendLine($"  - {m.Title}（{(m.DueAt.HasValue ? $"计划 {PmBriefingRenderer.ToCst(m.DueAt.Value):yyyy-MM-dd}" : "未排期")}，进度 {m.Progress}%，健康 {m.Health}）");
+        sb.AppendLine($"在跟团队目标：{d.GoalCount}，未关闭风险：{d.RiskOpen}");
+        return sb.ToString();
+    }
+
+    /// <summary>解析报告周期（yyyy-MM-dd，中国时区自然日）→ (fromUtc, toUtcExclusive)。无效/缺省 = 全周期。</summary>
+    private static (DateTime? fromUtc, DateTime? toUtcEx) ParseBriefingPeriod(string? from, string? to)
+    {
+        if (!DateTime.TryParseExact(from, "yyyy-MM-dd", CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var f)
+            || !DateTime.TryParseExact(to, "yyyy-MM-dd", CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var t)
+            || f > t)
+            return (null, null);
+        return (PmBriefingRenderer.CstToUtc(f.Date), PmBriefingRenderer.CstToUtc(t.Date.AddDays(1)));
+    }
+
+    /// <summary>简报可选风格清单（SSOT，前端选择器消费）。</summary>
+    [HttpGet("briefings/styles")]
+    public IActionResult ListBriefingStyles()
+        => Ok(ApiResponse<object>.Ok(new { items = PmBriefingRenderer.Styles.Select(s => new { key = s.Key, label = s.Label, accent = s.Accent, pageBg = s.PageBg }).ToList() }));
+
+    /// <summary>切换简报风格 —— 用落库的渲染数据快照重渲染，不重新调 LLM（owner/leader 或创建人）。</summary>
+    [HttpPost("briefings/{briefingId}/restyle")]
+    public async Task<IActionResult> RestyleBriefing(string briefingId, [FromBody] RestyleBriefingRequest request)
+    {
+        var userId = GetUserId();
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人/负责人或创建者可切换风格"));
+        if (!PmBriefingRenderer.IsValidStyle(request.Style))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未知的简报风格"));
+        if (string.IsNullOrWhiteSpace(b.RenderDataJson))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该简报为旧版本生成，不支持切换风格，请重新生成"));
+
+        PmBriefingRenderer.RenderData? data;
+        try { data = JsonSerializer.Deserialize<PmBriefingRenderer.RenderData>(b.RenderDataJson); }
+        catch { data = null; }
+        if (data == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "简报渲染数据损坏，请重新生成"));
+
+        data.Style = request.Style!;
+        var html = PmBriefingRenderer.Render(data);
+        await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+            Builders<PmBriefing>.Update
+                .Set(x => x.Html, html)
+                .Set(x => x.Style, request.Style!)
+                .Set(x => x.RenderDataJson, JsonSerializer.Serialize(data))
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { style = request.Style, html }));
+    }
+
+    /// <summary>简报列表（项目成员可见；不含 html 大字段）。</summary>
+    [HttpGet("projects/{projectId}/briefings")]
+    public async Task<IActionResult> ListBriefings(string projectId)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProjectAsync(projectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        var briefings = await _db.PmBriefings.Find(b => b.ProjectId == projectId)
+            .SortByDescending(b => b.CreatedAt).Limit(50).ToListAsync();
+        var items = briefings.Select(b => new
+        {
+            id = b.Id,
+            projectId = b.ProjectId,
+            title = b.Title,
+            model = b.Model,
+            style = b.Style,
+            canRestyle = !string.IsNullOrWhiteSpace(b.RenderDataJson),
+            periodFrom = b.PeriodFrom,
+            periodTo = b.PeriodTo,
+            shared = !string.IsNullOrEmpty(b.ShareToken),
+            shareToken = b.ShareToken,
+            hostedSiteId = b.HostedSiteId,
+            hostedSiteUrl = b.HostedSiteUrl,
+            createdBy = b.CreatedBy,
+            createdByName = b.CreatedByName,
+            createdAt = b.CreatedAt,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>简报详情（含 html，项目成员可见）。</summary>
+    [HttpGet("briefings/{briefingId}")]
+    public async Task<IActionResult> GetBriefing(string briefingId)
+    {
+        var userId = GetUserId();
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        if (await FindAccessibleProjectAsync(b.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id = b.Id,
+            projectId = b.ProjectId,
+            title = b.Title,
+            html = b.Html,
+            model = b.Model,
+            style = b.Style,
+            canRestyle = !string.IsNullOrWhiteSpace(b.RenderDataJson),
+            periodFrom = b.PeriodFrom,
+            periodTo = b.PeriodTo,
+            shared = !string.IsNullOrEmpty(b.ShareToken),
+            shareToken = b.ShareToken,
+            hostedSiteId = b.HostedSiteId,
+            hostedSiteUrl = b.HostedSiteUrl,
+            createdBy = b.CreatedBy,
+            createdByName = b.CreatedByName,
+            createdAt = b.CreatedAt,
+        }));
+    }
+
+    /// <summary>重命名简报（owner/leader 或创建人）。自动生成的标题可改为有业务含义的名字。</summary>
+    [HttpPut("briefings/{briefingId}")]
+    public async Task<IActionResult> RenameBriefing(string briefingId, [FromBody] RenameBriefingRequest request)
+    {
+        var userId = GetUserId();
+        var title = request.Title?.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题不能为空"));
+        if (title.Length > 120)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题不能超过 120 字"));
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人/负责人或创建者可重命名"));
+        await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+            Builders<PmBriefing>.Update.Set(x => x.Title, title).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { updated = true, title }));
+    }
+
+    /// <summary>删除简报（owner/leader 或创建人）。</summary>
+    [HttpDelete("briefings/{briefingId}")]
+    public async Task<IActionResult> DeleteBriefing(string briefingId)
+    {
+        var userId = GetUserId();
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人/负责人或创建者可删除"));
+        await _db.PmBriefings.DeleteOneAsync(x => x.Id == briefingId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>开启/关闭简报分享（owner/leader 或创建人）。开启生成可撤销 token；关闭置空即失效。</summary>
+    [HttpPost("briefings/{briefingId}/share")]
+    public async Task<IActionResult> ToggleBriefingShare(string briefingId, [FromBody] ToggleBriefingShareRequest request)
+    {
+        var userId = GetUserId();
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人/负责人或创建者可操作分享"));
+
+        if (request.Enabled)
+        {
+            var token = string.IsNullOrEmpty(b.ShareToken) ? PmBriefing.GenerateShareToken() : b.ShareToken;
+            await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+                Builders<PmBriefing>.Update.Set(x => x.ShareToken, token).Set(x => x.UpdatedAt, DateTime.UtcNow));
+            return Ok(ApiResponse<object>.Ok(new { shared = true, shareToken = token }));
+        }
+        await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+            Builders<PmBriefing>.Update.Set(x => x.ShareToken, (string?)null).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { shared = false, shareToken = (string?)null }));
+    }
+
+    /// <summary>匿名查看分享简报 —— 直接返回 text/html，浏览器可直接打开；token 被撤销即 404。</summary>
+    [HttpGet("briefings/shared/{token}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ViewSharedBriefing(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+        var b = await _db.PmBriefings.Find(x => x.ShareToken == token).FirstOrDefaultAsync();
+        if (b == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+        return Content(b.Html, "text/html; charset=utf-8");
+    }
+
+    /// <summary>把简报保存到网页托管（owner/leader 或创建人）。复用 HostedSite 体系，SourceType=api。</summary>
+    [HttpPost("briefings/{briefingId}/save-to-hosting")]
+    public async Task<IActionResult> SaveBriefingToHosting(string briefingId)
+    {
+        var userId = GetUserId();
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人/负责人或创建者可保存到网页托管"));
+
+        var site = await _hostedSites.CreateFromContentAsync(
+            userId, b.Html, b.Title, $"项目简报 · {project.Title}",
+            sourceType: "api", sourceRef: $"pm-briefing:{b.Id}",
+            tags: new List<string> { "项目简报" }, folder: null, CancellationToken.None);
+        await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+            Builders<PmBriefing>.Update
+                .Set(x => x.HostedSiteId, site.Id)
+                .Set(x => x.HostedSiteUrl, site.SiteUrl)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, siteUrl = site.SiteUrl }));
+    }
+
+    /// <summary>统计简报硬数据（渲染模板用）并拼装 LLM 输入摘要 —— 同一次查询出两份产物，保证模板数字与 LLM 所见一致。
+    /// 指定报告周期时：总体指标仍为截至当前的全量状态（保真，不用近似时间字段编造「本期完成数」），
+    /// 叙事数据按周期取（周期内达成的里程碑 / 周期内周报 / 周期口径说明给 LLM）。</summary>
+    private async Task<(PmBriefingRenderer.RenderData data, string statsSummary)> BuildBriefingDataAsync(
+        PmProject p, DateTime? periodFromUtc = null, DateTime? periodToUtcEx = null)
+    {
+        var now = DateTime.UtcNow;
+        var hasPeriod = periodFromUtc.HasValue && periodToUtcEx.HasValue;
+        var tasks = await _db.PmTasks.Find(t => t.ProjectId == p.Id).ToListAsync();
+        var active = tasks.Where(t => t.Status != PmTaskStatus.Cancelled).ToList();
+        var done = active.Count(t => t.Status == PmTaskStatus.Done);
+        var overdue = active.Where(t => t.DueAt.HasValue && t.DueAt.Value < now && t.Status != PmTaskStatus.Done).ToList();
+
+        var milestones = await _db.PmMilestones.Find(m => m.ProjectId == p.Id).ToListAsync();
+        var msRows = milestones
+            .OrderBy(m => m.DueAt ?? DateTime.MaxValue).ThenBy(m => m.OrderKey)
+            .Take(10)
+            .Select(m =>
+            {
+                var mine = active.Where(t => t.MilestoneId == m.Id).ToList();
+                var mineDone = mine.Count(t => t.Status == PmTaskStatus.Done);
+                return new PmBriefingRenderer.MilestoneRow
+                {
+                    Title = m.Title,
+                    DueAt = m.DueAt,
+                    Progress = mine.Count > 0 ? (int)Math.Round(mineDone * 100.0 / mine.Count) : (m.Status == PmMilestoneStatus.Reached ? 100 : 0),
+                    Health = MilestoneHealth(m, mine.Count, mineDone),
+                };
+            }).ToList();
+
+        var goals = await _db.PmGoals.Find(g => g.ProjectId == p.Id && g.Scope == PmGoalScope.Team).ToListAsync();
+        var risks = await _db.PmRisks.Find(r => r.ProjectId == p.Id).ToListAsync();
+        var openRisks = risks.Where(r => r.Status != PmRiskStatus.Closed).ToList();
+
+        var data = new PmBriefingRenderer.RenderData
+        {
+            ProjectTitle = p.Title,
+            ProjectNo = p.ProjectNo,
+            LeaderName = p.LeaderName,
+            PeriodText = (p.PlannedStartAt.HasValue || p.PlannedEndAt.HasValue)
+                ? $"{p.PlannedStartAt:yyyy-MM-dd} ~ {p.PlannedEndAt:yyyy-MM-dd}" : null,
+            GeneratedAt = now,
+            TaskTotal = active.Count,
+            TaskDone = done,
+            TaskDoneRate = active.Count > 0 ? (int)Math.Round(done * 100.0 / active.Count) : 0,
+            MilestoneTotal = milestones.Count,
+            MilestoneReached = milestones.Count(m => m.Status == PmMilestoneStatus.Reached),
+            GoalCount = goals.Count,
+            RiskOpen = openRisks.Count,
+            Milestones = msRows,
+            ReportFrom = periodFromUtc,
+            ReportTo = periodToUtcEx?.AddSeconds(-1),
+        };
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"项目名称：{p.Title}（{p.ProjectNo}）");
+        sb.AppendLine($"业务目标：{p.BusinessGoal}");
+        if (data.PeriodText != null) sb.AppendLine($"计划周期：{data.PeriodText}");
+        if (hasPeriod)
+        {
+            sb.AppendLine($"报告周期：{PmBriefingRenderer.ToCst(periodFromUtc!.Value):yyyy-MM-dd} ~ {PmBriefingRenderer.ToCst(periodToUtcEx!.Value.AddSeconds(-1)):yyyy-MM-dd}（叙事请聚焦本周期内的进展与变化；任务完成率等总体指标为截至当前的全量状态）");
+            var reachedInPeriod = milestones.Where(m => m.ReachedAt.HasValue && m.ReachedAt.Value >= periodFromUtc.Value && m.ReachedAt.Value < periodToUtcEx.Value).ToList();
+            if (reachedInPeriod.Count > 0)
+            {
+                sb.AppendLine($"本周期内达成的里程碑：{reachedInPeriod.Count}");
+                foreach (var m in reachedInPeriod.Take(8))
+                    sb.AppendLine($"  - {m.Title}（达成于 {PmBriefingRenderer.ToCst(m.ReachedAt!.Value):yyyy-MM-dd}）");
+            }
+        }
+        sb.AppendLine($"任务：有效 {active.Count}，完成 {done}（完成率 {data.TaskDoneRate}%），逾期未完成 {overdue.Count}");
+        foreach (var t in overdue.OrderBy(t => t.DueAt).Take(6))
+            sb.AppendLine($"  - 逾期任务：{t.Title}（截止 {t.DueAt:yyyy-MM-dd}）");
+        if (milestones.Count > 0)
+        {
+            sb.AppendLine($"里程碑：共 {milestones.Count}，已达成 {data.MilestoneReached}");
+            foreach (var m in msRows)
+                sb.AppendLine($"  - {m.Title}（{(m.DueAt.HasValue ? $"计划 {m.DueAt:yyyy-MM-dd}" : "未排期")}，进度 {m.Progress}%，健康 {m.Health}）");
+        }
+        if (goals.Count > 0)
+        {
+            sb.AppendLine($"团队目标：共 {goals.Count}（进度均值约 {(int)Math.Round(goals.Average(g => g.Progress))}%）");
+            foreach (var g in goals.OrderBy(g => g.Progress).Take(8))
+                sb.AppendLine($"  - {g.Title}（进度 {g.Progress}%，状态 {g.Status}{(string.IsNullOrWhiteSpace(g.Metric) ? "" : $"，指标 {g.Metric}")}）");
+        }
+        if (openRisks.Count > 0)
+        {
+            sb.AppendLine($"未关闭风险：{openRisks.Count}");
+            foreach (var r in openRisks.Where(r => r.Probability == PmRiskLevel.High || r.Impact == PmRiskLevel.High).Take(6))
+                sb.AppendLine($"  - {r.Title}（概率 {r.Probability}/影响 {r.Impact}）");
+        }
+        var reportsQuery = hasPeriod
+            ? _db.PmWeeklyReports.Find(w => w.ProjectId == p.Id && w.WeekStart >= periodFromUtc!.Value.AddDays(-6) && w.WeekStart < periodToUtcEx!.Value)
+            : _db.PmWeeklyReports.Find(w => w.ProjectId == p.Id);
+        var recentReports = await reportsQuery.SortByDescending(w => w.WeekStart).Limit(hasPeriod ? 5 : 2).ToListAsync();
+        foreach (var w in recentReports)
+        {
+            var body = string.IsNullOrWhiteSpace(w.Content) ? w.Title : w.Content.Trim();
+            if (body.Length > 600) body = body[..600] + "…(已截取)";
+            sb.AppendLine($"{(hasPeriod ? "周期内周报" : "最近周报")}（{w.WeekStart:yyyy-MM-dd} 起始周）：{body}");
+        }
+        sb.AppendLine();
+        sb.AppendLine("请基于以上实时数据撰写对外项目简报（严格按系统提示词的 JSON 格式输出）。");
+        return (data, sb.ToString());
+    }
+
     // ── 辅助方法 ──
 
     private async Task<PmProject?> FindAccessibleProjectAsync(string projectId, string userId)
@@ -4088,6 +4543,8 @@ public class UpdatePmProjectRequest
     public double? ValueCoefficient { get; set; }
     public Dictionary<string, int>? WipLimits { get; set; }
     public List<string>? MemberIds { get; set; }
+    /// <summary>里程碑交付物类型字典（整表替换；去空去重，至多 30 个）</summary>
+    public List<string>? DeliverableTypes { get; set; }
 }
 
 public class AddCommentRequest
@@ -4210,6 +4667,40 @@ public class UpdateWorkLogRequest
 public class ToggleGoalMilestoneRequest
 {
     public bool Enabled { get; set; }
+}
+
+public class ToggleBriefingShareRequest
+{
+    public bool Enabled { get; set; }
+}
+
+public class RenameBriefingRequest
+{
+    public string? Title { get; set; }
+}
+
+public class GenerateBriefingRequest
+{
+    /// <summary>风格 key（classic | dark | warm | minimal | vivid）</summary>
+    public string? Style { get; set; }
+    /// <summary>报告周期起 yyyy-MM-dd（中国时区自然日，含当日；与 To 成对出现）</summary>
+    public string? From { get; set; }
+    /// <summary>报告周期止 yyyy-MM-dd（含当日）</summary>
+    public string? To { get; set; }
+    /// <summary>可选补充要求（自然语言，如「突出风险」「语气更正式」）</summary>
+    public string? Note { get; set; }
+}
+
+public class RefineBriefingRequest
+{
+    /// <summary>自然语言调整要求</summary>
+    public string? Instruction { get; set; }
+}
+
+public class RestyleBriefingRequest
+{
+    /// <summary>目标风格 key（classic | dark | warm | minimal | vivid）</summary>
+    public string? Style { get; set; }
 }
 
 public class ReparentGoalRequest
