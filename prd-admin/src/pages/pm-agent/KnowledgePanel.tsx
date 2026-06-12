@@ -43,16 +43,10 @@ export function KnowledgePanel({ projectId }: Props) {
   if (!storeId) return <div className="flex-1 min-h-0 flex items-center justify-center text-[13px]" style={{ color: 'var(--text-muted)' }}>知识库加载失败，请刷新重试</div>;
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-2">
-      {canWrite && (
-        <div className="shrink-0 flex items-center justify-end">
-          <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)} title="选择你有权限的托管站点，把 HTML 内容导入为知识文档">
-            <Globe size={13} />从网页托管导入
-          </Button>
-        </div>
-      )}
+    <div className="flex-1 min-h-0 flex flex-col">
       <div className="flex-1 min-h-0">
-        <DocumentStoreBrowser key={browserKey} storeId={storeId} canWrite={canWrite} />
+        <DocumentStoreBrowser key={browserKey} storeId={storeId} canWrite={canWrite}
+          onImportFromHosting={canWrite ? () => setImportOpen(true) : undefined} />
       </div>
       {importOpen && (
         <HostedSiteImportModal storeId={storeId}

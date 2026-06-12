@@ -8,7 +8,7 @@ import {
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck,
+  ClipboardCheck, Globe,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -387,6 +387,8 @@ export type DocBrowserProps = {
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
   onCreateDocument?: () => void;
   onUploadFile?: () => void;
+  /** 「添加」菜单项：从网页托管导入（提供时显示）。具体选择/导入流程由调用方实现。 */
+  onImportFromHosting?: () => void;
   /**
    * 加载文档预览数据。
    * 返回包含文本内容 + 二进制文件 URL + MIME 类型的对象，
@@ -1058,6 +1060,7 @@ function TreeNode({
   onToggleFolder,
   onSelectEntry,
   onContextMenu,
+  onRequestRename,
   onShareEntry,
   onMoveEntry,
   onOpenSubscription,
@@ -1088,6 +1091,8 @@ function TreeNode({
   onToggleFolder: (id: string) => void;
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
+  /** 双击文件名触发重命名（不传则双击无操作） */
+  onRequestRename?: (entry: DocBrowserEntry) => void;
   onShareEntry?: (entryId: string) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onOpenSubscription?: (entryId: string) => void;
@@ -1135,6 +1140,10 @@ function TreeNode({
         onContextMenu={(e) => {
           e.preventDefault();
           onContextMenu(e, entry);
+        }}
+        onDoubleClick={() => {
+          // 双击文件名重命名（文件夹双击仍是展开/收起，不抢交互）
+          if (!isFolder && onRequestRename) onRequestRename(entry);
         }}
         draggable={!isFolder}
         onDragStart={(e) => {
@@ -1384,6 +1393,7 @@ function TreeNode({
           onToggleFolder={onToggleFolder}
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
+          onRequestRename={onRequestRename}
           onShareEntry={onShareEntry}
           onMoveEntry={onMoveEntry}
           onOpenSubscription={onOpenSubscription}
@@ -1462,6 +1472,7 @@ export function DocBrowser({
   onCreateFolder,
   onCreateDocument,
   onUploadFile,
+  onImportFromHosting,
   onSearch,
   onOpenSubscription,
   onGenerateSubtitle,
@@ -1993,6 +2004,8 @@ export function DocBrowser({
     const lines = new Map<string, string>();
     for (const e of entries) {
       if (e.isFolder || !e.summary) continue;
+      // HTML 等非纯文本文档的 summary 是源码片段（首行常为 <!DOCTYPE html>），不参与正文标题推导
+      if (getFileTypeConfig(e.title, e.contentType).preview !== 'text') continue;
       const { title, body } = parseFrontmatter(e.summary);
       let display = (title ?? '').trim();
       if (!display) {
@@ -2478,6 +2491,14 @@ export function DocBrowser({
                       上传文件
                     </button>
                   )}
+                  {onImportFromHosting && (
+                    <button
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+                      onClick={() => { onImportFromHosting(); setShowAddMenu(false); }}>
+                      <Globe size={12} className="text-token-accent" />
+                      从网页托管导入
+                    </button>
+                  )}
                   {onCreateFolder && (
                     <button
                       className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
@@ -2698,6 +2719,7 @@ export function DocBrowser({
               onToggleFolder={toggleFolder}
               onSelectEntry={handleSelectEntry}
               onContextMenu={handleContextMenu}
+              onRequestRename={onRenameEntry ? (entry) => setRenameEntry(entry) : undefined}
               onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}

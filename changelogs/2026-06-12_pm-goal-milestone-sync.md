@@ -21,3 +21,6 @@
 | feat | prd-api | 网页托管新增 GET /api/web-pages/:id/content：服务端代理读取站点入口 HTML（owner/团队成员可读，2MB 上限，包装资产站拒绝），供知识库导入绕开浏览器跨域 |
 | feat | prd-admin | 项目知识库新增「从网页托管导入」：选择我的/团队共享站点，HTML 内容一键导入为知识文档（可预览） |
 | revert | prd-admin | 按用户要求下线简报「调整内容」入口（预览弹窗按钮/面板/流式重写 UI 移除；后端 refine 端点暂留无入口，记入债务台账） |
+| feat | prd-admin | 知识库 HTML 文档真渲染：fileTypeRegistry 新增 html 类型（Globe 图标 + html 预览），FilePreview 对 HTML 正文用 sandbox iframe srcDoc 渲染页面而非源码（编辑态仍可改源码） |
+| feat | prd-admin | 知识库双击文件名即可重命名（复用既有重命名弹窗，文件夹双击仍为展开/收起） |
+| polish | prd-admin | 「从网页托管导入」并入文档列表统一「添加」菜单（与新建文档/上传文件/新建文件夹同级），移除右上角独立按钮，内容区上移；HTML 文档不再被 <!DOCTYPE html> 源码首行污染「正文标题」 |
