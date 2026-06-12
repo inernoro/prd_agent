@@ -5,7 +5,6 @@ const base = {
   title: '测试需求',
   description: '<p>描述内容</p>',
   assigneeId: 'u1',
-  versionIds: ['v1'],
   templateFields: [],
   formData: {},
 };
@@ -21,10 +20,6 @@ describe('validateRequirementCreateInput', () => {
 
   it('未选处理人报错', () => {
     expect(validateRequirementCreateInput({ ...base, assigneeId: '' })).toBe('请选择处理人');
-  });
-
-  it('未选归属版本报错', () => {
-    expect(validateRequirementCreateInput({ ...base, versionIds: [] })).toBe('请选择归属版本');
   });
 
   it('必填自定义字段缺失报错', () => {

@@ -2,22 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, Save, Sparkles } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { ItemMultiSearchSelect } from '@/components/ItemMultiSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { CustomerSearchSelect } from './CustomerSearchSelect';
 import { useSseStream } from '@/lib/useSseStream';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { TapdPropertyPanel, TapdPropertyRow } from './TapdPropertyPanel';
-import { toRequirementOptions, toVersionOptions } from './comboboxOptions';
+import { toRequirementOptions } from './comboboxOptions';
 import { REQUIREMENT_ORIGIN_FORM_KEY, REQUIREMENT_ORIGIN_OPTIONS, type RequirementOriginValue } from './requirementOriginCatalog';
 import { validateRequirementCreateInput } from './requirementCreateValidation';
 import { createRequirement, listDescTemplates } from '@/services/real/productAgent';
-import type { Customer, DescTemplate, ItemGrade, ProductVersion, Requirement } from './types';
+import type { Customer, DescTemplate, ItemGrade, Requirement } from './types';
 import { ITEM_GRADE_LABEL } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
-const RESERVED_TEMPLATE_LABELS = new Set(['需求来源', '客户名称', '客户', '标题', '名称', '描述', '需求名称', '需求描述']);
+const RESERVED_TEMPLATE_LABELS = new Set(['需求来源', '客户名称', '客户', '归属版本', '标题', '名称', '描述', '需求名称', '需求描述']);
 const RESERVED_TEMPLATE_KEYS = new Set(['title', 'name', 'description', 'desc', 'requirementSource', 'customerName']);
 
 interface AiFillResult { title?: string; description?: string; grade?: string; formData?: Record<string, string> }
@@ -125,13 +124,11 @@ function GradePicker({ grade, setGrade }: { grade: ItemGrade; setGrade: (g: Item
 export function RequirementCreateForm({
   productId,
   requirements,
-  versions,
   customers,
   onCreated,
 }: {
   productId: string;
   requirements: Requirement[];
-  versions: ProductVersion[];
   customers: Customer[];
   onCreated: (newId: string) => void;
 }) {
@@ -144,7 +141,6 @@ export function RequirementCreateForm({
   const [requirementOrigin, setRequirementOrigin] = useState<RequirementOriginValue>('');
   const [customerIds, setCustomerIds] = useState<string[]>([]);
   const [customerList, setCustomerList] = useState(customers);
-  const [versionIds, setVersionIds] = useState<string[]>([]);
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -188,10 +184,9 @@ export function RequirementCreateForm({
     title,
     description,
     assigneeId,
-    versionIds,
     templateFields: [...split.others, ...split.files],
     formData: mergedFormData,
-  }), [title, description, assigneeId, versionIds, split.others, split.files, mergedFormData]);
+  }), [title, description, assigneeId, split.others, split.files, mergedFormData]);
 
   const onAiFill = (r: AiFillResult) => {
     if (r.title) setTitle(r.title);
@@ -212,7 +207,6 @@ export function RequirementCreateForm({
       assigneeId: assigneeId || null,
       parentId: parentId || null,
       customerIds,
-      versionIds,
       formData: mergedFormData,
       templateId: template?.id,
       workflowDefId: workflow?.id,
@@ -298,20 +292,6 @@ export function RequirementCreateForm({
                 onCustomerCreated={(c) => setCustomerList((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]))}
                 uiSize="md"
               />
-            </TapdPropertyRow>
-            <TapdPropertyRow label="归属版本" required>
-              {versions.length === 0 ? (
-                <span className="text-[12px] text-amber-300/70 pt-1.5 block">请先在版本 tab 新建</span>
-              ) : (
-                <ItemMultiSearchSelect
-                  value={versionIds}
-                  onChange={setVersionIds}
-                  options={toVersionOptions(versions)}
-                  placeholder="搜索版本..."
-                  countUnit="个"
-                  uiSize="md"
-                />
-              )}
             </TapdPropertyRow>
             {split.others.map((field) => (
               <TapdPropertyRow key={field.key} label={field.label || field.key} required={field.required}>

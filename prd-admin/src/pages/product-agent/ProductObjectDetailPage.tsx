@@ -164,7 +164,6 @@ export function ProductObjectDetailPage() {
               <RequirementCreateForm
                 productId={productId}
                 requirements={requirements}
-                versions={versions}
                 customers={customers}
                 onCreated={(newId) => navigate(`/product-agent/p/${productId}/requirement/${newId}`, { replace: true })}
               />
