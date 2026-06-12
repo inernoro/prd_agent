@@ -7,3 +7,4 @@
 | fix | prd-admin | 新建需求表单全宽布局，右侧属性栏加宽减压 |
 | fix | prd-admin | UserSearchSelect 改为单输入框 combobox，移除下拉内第二层搜索 |
 | test | prd-admin | 新增 requirementCreateValidation 与 customerRecentStorage 单元测试 |
+| fix | prd-admin | 新建需求关联功能改为非必填，RelationField 改用单层 combobox 输入 |

@@ -1247,6 +1247,100 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    // ════════════════════════ 需求类型 RequirementType ════════════════════════
+
+    private async Task EnsureRequirementTypesSeededAsync()
+    {
+        var existingIds = (await _db.RequirementTypes.Find(_ => true).Project(t => t.Id).ToListAsync())
+            .ToHashSet();
+        var missing = RequirementType.BuiltinSeeds.Where(s => !existingIds.Contains(s.Id)).ToList();
+        if (missing.Count > 0)
+            await _db.RequirementTypes.InsertManyAsync(missing);
+    }
+
+    /// <summary>需求类型列表（首次访问自动补齐内置 5 项）。</summary>
+    [HttpGet("requirement-types")]
+    public async Task<IActionResult> ListRequirementTypes()
+    {
+        await EnsureRequirementTypesSeededAsync();
+        var items = await _db.RequirementTypes.Find(t => !t.IsDeleted)
+            .SortBy(t => t.SortOrder).ThenBy(t => t.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新需求类型（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("requirement-types")]
+    public async Task<IActionResult> UpsertRequirementType([FromBody] UpsertRequirementTypeRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "类型名称不能为空"));
+        await EnsureRequirementTypesSeededAsync();
+        var name = request.Name.Trim();
+        var definition = (request.Definition ?? "").Trim();
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.RequirementTypes.Find(t => t.Id == request.Id && !t.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "需求类型不存在"));
+            var dup = await _db.RequirementTypes.Find(t => t.Name == name && t.Id != request.Id && !t.IsDeleted).AnyAsync();
+            if (dup)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已存在同名需求类型"));
+            var oldName = existing.Name;
+            var u = Builders<RequirementType>.Update
+                .Set(t => t.Name, name)
+                .Set(t => t.Definition, definition)
+                .Set(t => t.SortOrder, request.SortOrder)
+                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+            await _db.RequirementTypes.UpdateOneAsync(t => t.Id == request.Id, u);
+            if (!string.Equals(oldName, name, StringComparison.Ordinal))
+            {
+                await _db.Requirements.UpdateManyAsync(
+                    r => r.FormData != null && r.FormData.ContainsKey(RequirementType.FormDataKey) && r.FormData[RequirementType.FormDataKey] == oldName,
+                    Builders<Requirement>.Update.Set($"FormData.{RequirementType.FormDataKey}", name));
+            }
+            var updated = await _db.RequirementTypes.Find(t => t.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var dup = await _db.RequirementTypes.Find(t => t.Name == name && !t.IsDeleted).AnyAsync();
+        if (dup)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已存在同名需求类型"));
+        var maxOrder = (await _db.RequirementTypes.Find(t => !t.IsDeleted).SortByDescending(t => t.SortOrder)
+            .FirstOrDefaultAsync())?.SortOrder ?? -1;
+        var item = new RequirementType
+        {
+            Name = name,
+            Definition = definition,
+            SortOrder = request.SortOrder > 0 ? request.SortOrder : maxOrder + 1,
+            IsBuiltin = false,
+        };
+        await _db.RequirementTypes.InsertOneAsync(item);
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    /// <summary>删除需求类型（软删除，需管理权限）。内置项 / 被需求占用时禁止删除。</summary>
+    [HttpDelete("requirement-types/{typeId}")]
+    public async Task<IActionResult> DeleteRequirementType(string typeId)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var item = await _db.RequirementTypes.Find(t => t.Id == typeId && !t.IsDeleted).FirstOrDefaultAsync();
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "需求类型不存在"));
+        if (item.IsBuiltin)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "内置类型不可删除，可修改名称与定义"));
+        var inUse = await _db.Requirements.CountDocumentsAsync(
+            r => r.FormData != null && r.FormData.ContainsKey(RequirementType.FormDataKey) && r.FormData[RequirementType.FormDataKey] == item.Name);
+        if (inUse > 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"该类型正被 {inUse} 条需求使用，无法删除"));
+        await _db.RequirementTypes.UpdateOneAsync(t => t.Id == typeId,
+            Builders<RequirementType>.Update.Set(t => t.IsDeleted, true).Set(t => t.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
     // ════════════════════════ 详情描述模板 ProductDescTemplate ════════════════════════
 
     /// <summary>描述模板列表（按对象类型过滤）。</summary>
@@ -2983,6 +3077,11 @@ public class ProductAgentController : ControllerBase
         var template = !string.IsNullOrEmpty(request.TemplateId)
             ? await _db.ProductFormTemplates.Find(t => t.Id == request.TemplateId && !t.IsDeleted).FirstOrDefaultAsync()
             : null;
+        await EnsureRequirementTypesSeededAsync();
+        var requirementTypes = await _db.RequirementTypes.Find(t => !t.IsDeleted)
+            .SortBy(t => t.SortOrder).ThenBy(t => t.CreatedAt).ToListAsync();
+        var requirementTypeNames = requirementTypes.Select(t => t.Name).Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+
         var fields = (template?.Fields ?? new List<ProductFormField>())
             .Where(f => f.Type != ProductFormFieldType.File).ToList();
 
@@ -2992,13 +3091,21 @@ public class ProductAgentController : ControllerBase
             return $"- {f.Key}（{f.Label}，类型 {f.Type}{(f.Required ? "，必填" : "")}{opts}）";
         }));
 
+        var typeSpec = requirementTypes.Count > 0
+            ? string.Join("\n", requirementTypes.Select(t =>
+                $"- {t.Name}：{(string.IsNullOrWhiteSpace(t.Definition) ? "（无额外说明）" : t.Definition)}"))
+            : "";
+
         var systemPrompt =
             "你是产品需求结构化助手。用户会给一段需求原始文本，请抽取并整理为一条规范需求。\n" +
             "严格只输出一个 JSON 对象（不要任何解释、不要 markdown 代码块），结构：\n" +
             "{\"title\": 简洁标题, \"description\": 需求描述(可含背景/目标/验收标准，纯文本), \"grade\": 分级(p0/p1/p2/p3，按紧急重要程度推断，默认 p2), \"formData\": {模板字段key: 值}}\n" +
+            (requirementTypeNames.Count > 0
+                ? $"必须在 formData 中填写 key「{RequirementType.FormDataKey}」，值从以下类型名称中选一（按定义判断，无法判断时选「其他」）：\n{typeSpec}\n"
+                : "") +
             (fields.Count > 0
-                ? $"formData 仅可包含以下字段的 key（无法从文本判断的可省略）：\n{fieldSpec}\n"
-                : "没有自定义模板字段时 formData 返回空对象 {}。\n") +
+                ? $"formData 还可包含以下模板字段 key（无法从文本判断的可省略）：\n{fieldSpec}\n"
+                : requirementTypeNames.Count == 0 ? "没有自定义模板字段时 formData 返回空对象 {}。\n" : "") +
             "select/radio 类字段的值必须取给定可选值之一。";
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -3050,14 +3157,14 @@ public class ProductAgentController : ControllerBase
             return;
         }
 
-        var parsed = ExtractFillJson(sb.ToString(), fields);
+        var parsed = ExtractFillJson(sb.ToString(), fields, requirementTypeNames);
         if (parsed == null) { await Sse("error", new { message = "AI 返回无法解析，请重试或精简文本" }); return; }
         await Sse("result", parsed);
         await Sse("done", new { });
     }
 
     /// <summary>从 LLM 原始输出里抽取并规范化填充 JSON（容错 markdown 代码块/前后缀文本）。</summary>
-    private static object? ExtractFillJson(string raw, List<ProductFormField> fields)
+    private static object? ExtractFillJson(string raw, List<ProductFormField> fields, IReadOnlyList<string>? requirementTypeNames = null)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         var start = raw.IndexOf('{');
@@ -3075,11 +3182,13 @@ public class ProductAgentController : ControllerBase
             if (grade != "p0" && grade != "p1" && grade != "p2" && grade != "p3") grade = "p2";
             var formData = new Dictionary<string, string>();
             var allowed = fields.Select(f => f.Key).ToHashSet();
+            allowed.Add(RequirementType.FormDataKey);
+            var typeNameSet = requirementTypeNames?.Where(n => !string.IsNullOrWhiteSpace(n)).ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>();
             if (root.TryGetProperty("formData", out var fd) && fd.ValueKind == System.Text.Json.JsonValueKind.Object)
             {
                 foreach (var p in fd.EnumerateObject())
                 {
-                    if (allowed.Count > 0 && !allowed.Contains(p.Name)) continue;
+                    if (!allowed.Contains(p.Name)) continue;
                     var val = p.Value.ValueKind switch
                     {
                         System.Text.Json.JsonValueKind.String => p.Value.GetString() ?? "",
@@ -3088,7 +3197,12 @@ public class ProductAgentController : ControllerBase
                         System.Text.Json.JsonValueKind.False => "false",
                         _ => "",
                     };
-                    if (!string.IsNullOrEmpty(val)) formData[p.Name] = val;
+                    if (string.IsNullOrEmpty(val)) continue;
+                    if (p.Name == RequirementType.FormDataKey && typeNameSet.Count > 0 && !typeNameSet.Contains(val))
+                    {
+                        val = typeNameSet.Contains("其他") ? "其他" : typeNameSet.First();
+                    }
+                    formData[p.Name] = val;
                 }
             }
             if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(description) && formData.Count == 0) return null;
@@ -4246,6 +4360,14 @@ public class UpsertCategoryRequest
     public string? Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? Color { get; set; }
+    public int SortOrder { get; set; }
+}
+
+public class UpsertRequirementTypeRequest
+{
+    public string? Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? Definition { get; set; }
     public int SortOrder { get; set; }
 }
 

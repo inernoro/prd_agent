@@ -18,6 +18,7 @@ import type {
   WorkflowDefinition,
   ProductEntityType,
   ProductCategory,
+  RequirementType,
   DescTemplate,
   ProductMembersResult,
   ProductInitiation,
@@ -237,6 +238,17 @@ export function upsertProductCategory(body: Partial<ProductCategory> & { id?: st
 }
 export function deleteProductCategory(categoryId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/categories/${categoryId}`, { method: 'DELETE' });
+}
+
+// ── 需求类型（AI 分类 + 新建表单）──
+export function listRequirementTypes() {
+  return apiRequest<ListWrap<RequirementType>>('/api/product/requirement-types');
+}
+export function upsertRequirementType(body: Partial<RequirementType> & { id?: string }) {
+  return apiRequest<RequirementType>('/api/product/requirement-types', { method: 'POST', body });
+}
+export function deleteRequirementType(typeId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/requirement-types/${typeId}`, { method: 'DELETE' });
 }
 
 // ── 详情描述模板 ──

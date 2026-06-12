@@ -28,6 +28,15 @@ export interface ProductCategory {
   isBuiltin: boolean;
 }
 
+/** 需求类型（可增删改查；内置 5 项不可删除；AI 按 Definition 识别） */
+export interface RequirementType {
+  id: string;
+  name: string;
+  definition: string;
+  sortOrder: number;
+  isBuiltin: boolean;
+}
+
 /** 详情描述模板（按对象类型，富文本骨架，方便一键套用） */
 export interface DescTemplate {
   id: string;

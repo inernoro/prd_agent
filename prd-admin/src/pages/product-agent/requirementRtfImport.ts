@@ -55,7 +55,6 @@ const SKIPPED_DESTINATIONS = new Set([
 ]);
 
 const IMAGE_MARKER = (index: number) => `[[IMPORT_IMAGE_${index}]]`;
-const LEGACY_IMAGE_MARKER = (index: number) => `[[TAPD_IMAGE_${index}]]`;
 
 function findGroupStart(input: string, controlIndex: number): number {
   for (let index = controlIndex; index >= 0; index -= 1) {

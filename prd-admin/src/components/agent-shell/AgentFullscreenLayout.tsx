@@ -15,6 +15,8 @@ export interface NavItem<K extends string = string> {
   hidden?: boolean;
   /** 分隔线（在该项之前画一条分隔） */
   dividerBefore?: boolean;
+  /** 分隔线上方显示的组标题（如「应用」） */
+  groupLabel?: string;
 }
 
 export function AgentFullscreenLayout<K extends string>({
@@ -54,7 +56,15 @@ export function AgentFullscreenLayout<K extends string>({
               const isActive = it.key === active;
               return (
                 <div key={it.key}>
-                  {it.dividerBefore && <div className="my-1.5 mx-2 border-t border-white/10" />}
+                  {it.dividerBefore && (
+                    <>
+                      {it.groupLabel ? (
+                        <div className="px-3 pt-3 pb-1 text-[11px] font-medium text-white/40">{it.groupLabel}</div>
+                      ) : (
+                        <div className="my-1.5 mx-2 border-t border-white/10" />
+                      )}
+                    </>
+                  )}
                   <button
                     onClick={() => onSelect(it.key)}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors border-l-2 ${

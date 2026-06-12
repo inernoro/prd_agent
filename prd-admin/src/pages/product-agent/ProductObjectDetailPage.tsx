@@ -16,6 +16,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSseStream } from '@/lib/useSseStream';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { RequirementCreateForm } from './RequirementCreateForm';
+import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
+import { RequirementTypeSelect } from './RequirementTypeSelect';
 import { VersionKnowledgeCard } from './knowledge/VersionKnowledgeCard';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
@@ -57,7 +59,7 @@ const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
 
 // ── 自定义字段去重 / 分栏 ──
 const NATIVE_DUP_KEYS = new Set(['title', 'name', 'description', 'desc']);
-const NATIVE_DUP_LABELS = ['标题', '名称', '描述', '需求名称', '需求描述', '功能名称', '功能描述', '缺陷标题'];
+const NATIVE_DUP_LABELS = ['标题', '名称', '描述', '需求名称', '需求描述', '功能名称', '功能描述', '缺陷标题', '需求类型', '需求来源'];
 
 /** 与系统原生字段（标题/描述）重名的模板字段视为重复，详情页不再渲染。 */
 function isNativeDuplicate(f: FormField): boolean {
@@ -625,6 +627,7 @@ function CreateObjectForm({
   const [keyRules, setKeyRules] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [remark, setRemark] = useState('');
+  const [requirementType, setRequirementType] = useState('');
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -653,6 +656,14 @@ function CreateObjectForm({
     if (currentUserId && !ownerId) setOwnerId(currentUserId);
   }, [currentUserId, ownerId]);
 
+  const requirementFormData = useMemo(() => {
+    if (isFeature) return formData;
+    return {
+      ...formData,
+      ...(requirementType ? { [REQUIREMENT_TYPE_FORM_KEY]: requirementType } : {}),
+    };
+  }, [formData, requirementType, isFeature]);
+
   if (kind !== 'requirement' && kind !== 'feature') {
     return <div className="text-white/40 text-sm text-center py-10">该类型不支持在此新建</div>;
   }
@@ -664,7 +675,11 @@ function CreateObjectForm({
     if (r.title) setTitle(r.title);
     if (r.description) { descAutoFilledRef.current = true; setDescription(r.description); }
     if (r.grade && ITEM_GRADES.includes(r.grade as ItemGrade)) setGrade(r.grade as ItemGrade);
-    if (r.formData) setFormData((prev) => ({ ...prev, ...r.formData }));
+    if (r.formData) {
+      const typeVal = r.formData[REQUIREMENT_TYPE_FORM_KEY];
+      if (typeVal) setRequirementType(typeVal);
+      setFormData((prev) => ({ ...prev, ...r.formData }));
+    }
   };
 
   const create = async () => {
@@ -694,7 +709,7 @@ function CreateObjectForm({
           templateId: template?.id,
           workflowDefId: workflow?.id,
         }
-      : { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData, templateId: template?.id, workflowDefId: workflow?.id };
+      : { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData: requirementFormData, templateId: template?.id, workflowDefId: workflow?.id };
     const res = kind === 'requirement' ? await createRequirement(productId, payload) : await createFeature(productId, payload);
     setSaving(false);
     if (res.success && res.data) onCreated(res.data.id);
@@ -808,6 +823,12 @@ function CreateObjectForm({
                   <UserSearchSelect value={ownerId} onChange={setOwnerId} />
                 </div>
               </>
+            )}
+            {!isFeature && (
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>需求类型</FieldLabel>
+                <RequirementTypeSelect value={requirementType} onChange={setRequirementType} />
+              </div>
             )}
             <div className="flex flex-col gap-1.5">
               <FieldLabel required>分级</FieldLabel>
@@ -1105,6 +1126,13 @@ function RequirementDetail({
                   </button>
                 </div>
               )}
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>需求类型</FieldLabel>
+                <RequirementTypeSelect
+                  value={formData[REQUIREMENT_TYPE_FORM_KEY] ?? ''}
+                  onChange={(v) => setField(REQUIREMENT_TYPE_FORM_KEY, v)}
+                />
+              </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>分级</FieldLabel>
                 <GradeField grade={grade} setGrade={setGrade} />

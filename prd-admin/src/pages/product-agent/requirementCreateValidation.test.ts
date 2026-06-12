@@ -30,6 +30,14 @@ describe('validateRequirementCreateInput', () => {
     })).toBe('请填写业务线');
   });
 
+  it('关联功能为空仍可通过（新建时非必填）', () => {
+    expect(validateRequirementCreateInput({
+      ...base,
+      templateFields: [{ key: 'relatedFeature', label: '关联功能', type: 'relation', required: true, sortOrder: 0 }],
+      formData: {},
+    })).toBeNull();
+  });
+
   it('全部合法返回 null', () => {
     expect(validateRequirementCreateInput(base)).toBeNull();
   });

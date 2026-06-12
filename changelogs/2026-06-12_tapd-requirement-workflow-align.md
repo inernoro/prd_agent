@@ -21,3 +21,4 @@
 | feat | prd-api | 流转支持 versionIds/initiationId/releaseId；已排期种子必填归属版本 |
 | feat | prd-admin | 流转弹窗支持选择立项单、上线单、归属版本 |
 | test | prd-api | RequirementWorkflowTransitionGates 单元测试 |
+| refactor | prd-admin | 流程模板从「设置」拆至主页「应用」菜单独立入口 |

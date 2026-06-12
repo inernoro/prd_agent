@@ -2,7 +2,7 @@
  * 产品管理智能体 — 管理层总览 shell（默认着陆，公司层视角）。
  *
  * 路由：/product-agent
- * 左侧持久导航：概览 / 产品 / 需求 / 功能 / 缺陷 / 知识库 / 图谱 / 设置(限 admin)。
+ * 左侧持久导航：概览 / 产品 / … / 图谱 / 应用(流程模板+设置，限 admin)。
  * 概览仪表盘：KPI 卡片 + ECharts 图表 + 最近活动流。需求/功能/缺陷为跨产品数据表。
  * 数据按可访问范围（admin 看全部），后端 /api/product/overview/*。
  */
@@ -20,6 +20,7 @@ import {
   BookOpen,
   Share2,
   Settings,
+  GitBranch,
   Upload,
   ArrowLeft,
   Search,
@@ -36,6 +37,7 @@ import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLa
 import { GlobalSearch } from './GlobalSearch';
 import { ProductsSection } from './ProductsSection';
 import { SettingsSection } from './SettingsSection';
+import { WorkflowTemplateSection } from './WorkflowTemplateSection';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
@@ -61,7 +63,7 @@ import type { Customer, Product } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade, defectStatusLabel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 
-type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
+type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
@@ -98,7 +100,8 @@ export function OverviewShell() {
     { key: 'customers', label: '客户', icon: Users },
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
-    { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin, dividerBefore: true },
+    { key: 'workflow', label: '流程模板', icon: GitBranch, hidden: !isAdmin, dividerBefore: true, groupLabel: '应用' },
+    { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin },
   ];
 
   return (
@@ -171,8 +174,13 @@ export function OverviewShell() {
           </div>
         </div>
       )}
+      {active === 'workflow' && (
+        <SectionShell title="流程模板" desc="状态与流转规则；全局默认，可按产品覆盖（管理层）">
+          <WorkflowTemplateSection />
+        </SectionShell>
+      )}
       {active === 'settings' && (
-        <SectionShell title="全局设置" desc="表单模板 + 流程模板，所有产品共用，可按产品覆盖（管理层）">
+        <SectionShell title="全局设置" desc="表单/描述模板、产品类型、需求类型与应用管理员（管理层）">
           <SettingsSection />
         </SectionShell>
       )}

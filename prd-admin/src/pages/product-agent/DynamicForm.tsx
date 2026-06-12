@@ -11,6 +11,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Upload, X, FileText, Bold, Italic, Underline, List, ListOrdered, Heading, RemoveFormatting } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { ItemSearchOption } from '@/components/itemSearchCombobox';
+import { ItemMultiSearchSelect } from '@/components/ItemMultiSearchSelect';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { sanitizeHtml, cleanPastedHtml } from '@/lib/sanitizeHtml';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -359,11 +361,19 @@ function inferRelationTarget(label?: string): string | undefined {
   return undefined;
 }
 
+function relationComboboxMeta(entityType: string): { placeholder: string; countUnit: string } {
+  switch (entityType) {
+    case 'feature': return { placeholder: '搜索功能...', countUnit: '个' };
+    case 'requirement': return { placeholder: '搜索需求...', countUnit: '条' };
+    case 'version': return { placeholder: '搜索版本...', countUnit: '个' };
+    case 'customer': return { placeholder: '搜索客户...', countUnit: '个' };
+    default: return { placeholder: '搜索并选择...', countUnit: '项' };
+  }
+}
+
 function RelationField({ value, onChange, entityType, productId }: { value: string; onChange: (v: string) => void; entityType?: string | null; productId: string | null }) {
-  const [options, setOptions] = useState<{ id: string; label: string }[]>([]);
+  const [options, setOptions] = useState<ItemSearchOption[]>([]);
   const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
   const selected = value ? value.split(',').filter(Boolean) : [];
 
   useEffect(() => {
@@ -371,10 +381,10 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
     let alive = true;
     setLoading(true);
     void (async () => {
-      let opts: { id: string; label: string }[] = [];
+      let opts: ItemSearchOption[] = [];
       if (entityType === 'requirement') {
         const r = await listRequirements(productId);
-        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.title }));
+        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.title, subLabel: x.requirementNo }));
       } else if (entityType === 'feature') {
         const r = await listFeatures(productId);
         if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.title }));
@@ -383,7 +393,7 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
         if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.versionName }));
       } else if (entityType === 'customer') {
         const r = await listCustomers();
-        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.name }));
+        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.name, subLabel: x.company ?? undefined }));
       }
       if (alive) {
         setOptions(opts);
@@ -396,54 +406,17 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
   }, [productId, entityType]);
 
   if (!entityType) return <div className="text-[11px] text-white/30">未配置关联对象类型</div>;
-  const labelOf = (id: string) => options.find((o) => o.id === id)?.label ?? id;
-  const toggle = (id: string) => {
-    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
-    onChange(next.join(','));
-  };
-  const q = query.trim().toLowerCase();
-  const filtered = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
+  const { placeholder, countUnit } = relationComboboxMeta(entityType);
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-white/70">
-        <span className="flex flex-wrap gap-1 min-w-0">
-          {selected.length === 0 ? <span className="text-white/40">点击选择关联对象</span> : selected.map((id) => (
-            <span key={id} className="text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-200 inline-flex items-center gap-1 max-w-[160px]">
-              <span className="truncate">{labelOf(id)}</span>
-              <X size={11} className="shrink-0 hover:text-white" onClick={(e) => { e.stopPropagation(); toggle(id); }} />
-            </span>
-          ))}
-        </span>
-        <span className="text-white/30 text-xs shrink-0">{open ? '收起' : selected.length > 0 ? `已选 ${selected.length}` : '展开'}</span>
-      </button>
-      {open && (
-        <div className="border-t border-white/10">
-          <div className="p-1.5">
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={`搜索${options.length > 0 ? `（共 ${options.length} 项）` : ''}…`}
-              className="w-full px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white outline-none focus:border-cyan-500/40"
-            />
-          </div>
-          <div className="max-h-60 overflow-y-auto px-1 pb-1" style={{ overscrollBehavior: 'contain' }}>
-            {loading ? (
-              <div className="text-[11px] text-white/40 py-3 text-center">加载中…</div>
-            ) : filtered.length === 0 ? (
-              <div className="text-[11px] text-white/30 py-3 text-center">{options.length === 0 ? '没有可选对象' : '无匹配结果'}</div>
-            ) : (
-              filtered.map((o) => (
-                <label key={o.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
-                  <input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggle(o.id)} className="accent-cyan-500 shrink-0" />
-                  <span className="text-sm text-white/80 truncate">{o.label}</span>
-                </label>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+    <ItemMultiSearchSelect
+      value={selected}
+      onChange={(ids) => onChange(ids.join(','))}
+      options={options}
+      placeholder={placeholder}
+      countUnit={countUnit}
+      uiSize="md"
+      emptyText={loading ? '加载中…' : '暂无可选项'}
+    />
   );
 }

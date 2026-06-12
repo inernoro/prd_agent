@@ -11,6 +11,9 @@ const mockWorkflow: WorkflowDefinition = {
   name: '米多需求收集工作流',
   entityType: 'requirement',
   isDefault: true,
+  createdBy: 'test',
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
   states: [
     { key: 'new', label: '待评审', isInitial: true, isFinal: false, sortOrder: 0 },
     { key: 'planning', label: '待规划', isInitial: false, isFinal: false, sortOrder: 1 },
@@ -41,6 +44,9 @@ describe('requirementWorkflowUtils', () => {
       name: '自定义',
       entityType: 'requirement',
       isDefault: false,
+      createdBy: 'test',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
       states: [{ key: 'custom_a', label: '自定义A', isInitial: true, isFinal: false, sortOrder: 0 }],
       transitions: [],
     };

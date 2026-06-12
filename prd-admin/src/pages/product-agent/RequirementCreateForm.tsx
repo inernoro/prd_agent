@@ -10,13 +10,15 @@ import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWo
 import { TapdPropertyPanel, TapdPropertyRow } from './TapdPropertyPanel';
 import { toRequirementOptions } from './comboboxOptions';
 import { REQUIREMENT_ORIGIN_FORM_KEY, REQUIREMENT_ORIGIN_OPTIONS, type RequirementOriginValue } from './requirementOriginCatalog';
+import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
+import { RequirementTypeSelect } from './RequirementTypeSelect';
 import { validateRequirementCreateInput } from './requirementCreateValidation';
 import { createRequirement, listDescTemplates } from '@/services/real/productAgent';
 import type { Customer, DescTemplate, ItemGrade, Requirement } from './types';
 import { ITEM_GRADE_LABEL } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
-const RESERVED_TEMPLATE_LABELS = new Set(['需求来源', '客户名称', '客户', '归属版本', '标题', '名称', '描述', '需求名称', '需求描述']);
+const RESERVED_TEMPLATE_LABELS = new Set(['需求来源', '需求类型', '客户名称', '客户', '归属版本', '标题', '名称', '描述', '需求名称', '需求描述']);
 const RESERVED_TEMPLATE_KEYS = new Set(['title', 'name', 'description', 'desc', 'requirementSource', 'customerName']);
 
 interface AiFillResult { title?: string; description?: string; grade?: string; formData?: Record<string, string> }
@@ -139,6 +141,7 @@ export function RequirementCreateForm({
   const [assigneeId, setAssigneeId] = useState('');
   const [parentId, setParentId] = useState('');
   const [requirementOrigin, setRequirementOrigin] = useState<RequirementOriginValue>('');
+  const [requirementType, setRequirementType] = useState('');
   const [customerIds, setCustomerIds] = useState<string[]>([]);
   const [customerList, setCustomerList] = useState(customers);
   const [formData, setFormData] = useState<Record<string, string>>({});
@@ -158,13 +161,23 @@ export function RequirementCreateForm({
       if (label.endsWith('默认表单') || (templateName && label === templateName)) return false;
       return true;
     });
-    return { files: usable.filter((f) => f.type === 'file'), others: usable.filter((f) => f.type !== 'file') };
+    const relaxCreateRequired = (f: (typeof usable)[number]) => {
+      const label = (f.label || '').trim();
+      // 新建时未必能立刻关联功能，创建场景一律非必填
+      if (label === '关联功能') return { ...f, required: false };
+      return f;
+    };
+    return {
+      files: usable.filter((f) => f.type === 'file').map(relaxCreateRequired),
+      others: usable.filter((f) => f.type !== 'file').map(relaxCreateRequired),
+    };
   }, [template]);
 
   const mergedFormData = useMemo(() => ({
     ...formData,
     [REQUIREMENT_ORIGIN_FORM_KEY]: requirementOrigin,
-  }), [formData, requirementOrigin]);
+    ...(requirementType ? { [REQUIREMENT_TYPE_FORM_KEY]: requirementType } : {}),
+  }), [formData, requirementOrigin, requirementType]);
 
   const descAutoFilledRef = useRef(false);
   useEffect(() => {
@@ -192,7 +205,11 @@ export function RequirementCreateForm({
     if (r.title) setTitle(r.title);
     if (r.description) { descAutoFilledRef.current = true; setDescription(r.description); }
     if (r.grade && ITEM_GRADES.includes(r.grade as ItemGrade)) setGrade(r.grade as ItemGrade);
-    if (r.formData) setFormData((prev) => ({ ...prev, ...r.formData }));
+    if (r.formData) {
+      const typeVal = r.formData[REQUIREMENT_TYPE_FORM_KEY];
+      if (typeVal) setRequirementType(typeVal);
+      setFormData((prev) => ({ ...prev, ...r.formData }));
+    }
   };
 
   const create = async () => {
@@ -266,6 +283,9 @@ export function RequirementCreateForm({
           <TapdPropertyPanel title="基本信息">
             <TapdPropertyRow label="需求来源">
               <RequirementOriginSelect value={requirementOrigin} onChange={setRequirementOrigin} />
+            </TapdPropertyRow>
+            <TapdPropertyRow label="需求类型">
+              <RequirementTypeSelect value={requirementType} onChange={setRequirementType} />
             </TapdPropertyRow>
             <TapdPropertyRow label="分级" required>
               <GradePicker grade={grade} setGrade={setGrade} />
