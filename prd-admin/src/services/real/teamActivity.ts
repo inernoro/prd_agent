@@ -5,11 +5,14 @@ import type {
   GetTeamActivityLogsContract,
   GetTeamActivityModulesContract,
   GetTeamActivityParams,
+  GetTeamActivityStatsContract,
+  GetTeamActivityStatsParams,
   TeamActivityListData,
   TeamActivityModulesData,
+  TeamActivityStatsData,
 } from '@/services/contracts/teamActivity';
 
-function toQuery(params?: GetTeamActivityParams) {
+function toQuery(params?: GetTeamActivityParams | GetTeamActivityStatsParams) {
   const sp = new URLSearchParams();
   if (!params) return '';
   Object.entries(params).forEach(([k, v]) => {
@@ -32,4 +35,10 @@ export const getTeamActivityModulesReal: GetTeamActivityModulesContract = async 
   ApiResponse<TeamActivityModulesData>
 > => {
   return await apiRequest<TeamActivityModulesData>(api.teamActivity.modules(), { method: 'GET' });
+};
+
+export const getTeamActivityStatsReal: GetTeamActivityStatsContract = async (
+  params?: GetTeamActivityStatsParams
+): Promise<ApiResponse<TeamActivityStatsData>> => {
+  return await apiRequest<TeamActivityStatsData>(`${api.teamActivity.stats()}${toQuery(params)}`, { method: 'GET' });
 };

@@ -36,6 +36,32 @@ export type ActivityModuleOption = {
   label: string;
 };
 
+export type TeamActivityModuleStat = {
+  key: string;
+  label: string;
+  count: number;
+};
+
+export type TeamActivityActorStat = {
+  actorId: string;
+  actorName?: string | null;
+  actorAvatarFileName?: string | null;
+  count: number;
+};
+
+export type TeamActivityStatsData = {
+  total: number;
+  activeMembers: number;
+  modules: TeamActivityModuleStat[];
+  actors: TeamActivityActorStat[];
+  /** 24 桶 UTC 小时直方图（基于最近样本），前端按本地时区旋转后渲染 */
+  hourlyUtc: number[];
+  /** 小时直方图是否因数据量过大而采样（其余统计为精确值） */
+  sampled: boolean;
+};
+
+export type GetTeamActivityStatsParams = Omit<GetTeamActivityParams, 'page' | 'pageSize'>;
+
 export type TeamActivityModulesData = {
   items: ActivityModuleOption[];
 };
@@ -45,3 +71,7 @@ export type GetTeamActivityLogsContract = (
 ) => Promise<ApiResponse<TeamActivityListData>>;
 
 export type GetTeamActivityModulesContract = () => Promise<ApiResponse<TeamActivityModulesData>>;
+
+export type GetTeamActivityStatsContract = (
+  params?: GetTeamActivityStatsParams
+) => Promise<ApiResponse<TeamActivityStatsData>>;

@@ -1,0 +1,190 @@
+/**
+ * 团队脉搏聚合面板：动作总量（滚动数字）+ 模块能量条 + 24h 活跃热力 + 成员排行。
+ * 只消费后端 /api/team-activity/stats 的聚合结果，天然不暴露具体工作内容；
+ * 成员姓名受隐私脱敏开关控制。
+ */
+import { useEffect, useRef, useState } from 'react';
+import { GlassCard } from '@/components/design';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import type { TeamActivityStatsData } from '@/services/contracts/teamActivity';
+import { getModuleMeta } from './moduleMeta';
+import { maskName, rotateHourlyToLocal } from './pulse';
+
+/** 数字滚动动效（ease-out cubic），让总量有「跳动的脉搏」体感 */
+function useCountUp(value: number, duration = 700): number {
+  const [display, setDisplay] = useState(0);
+  const fromRef = useRef(0);
+  useEffect(() => {
+    const from = fromRef.current;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      const next = Math.round(from + (value - from) * eased);
+      setDisplay(next);
+      if (p < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = value;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value, duration]);
+  return display;
+}
+
+const RANK_COLORS = ['#fbbf24', '#cbd5e1', '#fb923c'];
+
+export function PulseBand({
+  stats,
+  loading,
+  privacy,
+}: {
+  stats: TeamActivityStatsData | null;
+  loading: boolean;
+  privacy: boolean;
+}) {
+  const total = useCountUp(stats?.total ?? 0);
+
+  if (loading && !stats) {
+    return (
+      <GlassCard className="shrink-0">
+        <div className="px-5 py-6">
+          <MapSectionLoader text="脉搏汇总中…" />
+        </div>
+      </GlassCard>
+    );
+  }
+  if (!stats) return null;
+
+  const hourly = rotateHourlyToLocal(stats.hourlyUtc);
+  const hourMax = Math.max(1, ...hourly);
+  const currentHour = new Date().getHours();
+  const actorMax = Math.max(1, ...stats.actors.map((a) => a.count));
+  const topActors = stats.actors.slice(0, 5);
+
+  return (
+    <GlassCard className="shrink-0">
+      <div
+        className="px-5 py-4 grid gap-x-6 gap-y-4 items-stretch"
+        style={{ gridTemplateColumns: 'minmax(150px, 190px) minmax(0, 1fr) minmax(210px, 260px)' }}
+      >
+        {/* 左：核心大数字 */}
+        <div className="flex flex-col justify-center gap-1 min-w-0">
+          <div className="text-[11px] tracking-widest text-white/40">动作总量</div>
+          <div
+            className="text-[42px] leading-none font-bold tabular-nums bg-clip-text text-transparent"
+            style={{ backgroundImage: 'linear-gradient(120deg, #22d3ee, #a78bfa)' }}
+          >
+            {total}
+          </div>
+          <div className="text-[12px] text-white/50 pt-1">
+            <span className="text-white/85 font-semibold tabular-nums">{stats.activeMembers}</span> 位成员活跃 ·{' '}
+            <span className="text-white/85 font-semibold tabular-nums">{stats.modules.length}</span> 个模块
+          </div>
+        </div>
+
+        {/* 中：模块能量条 + 时段热力 */}
+        <div className="flex flex-col justify-center gap-3 min-w-0">
+          <div className="flex flex-col gap-1.5">
+            <div className="text-[11px] tracking-widest text-white/40">模块能量</div>
+            <div className="h-2.5 rounded-full overflow-hidden flex bg-white/[0.04]">
+              {stats.modules.map((m) => (
+                <div
+                  key={m.key}
+                  title={`${m.label} ${m.count} 条`}
+                  className="h-full transition-all duration-700"
+                  style={{
+                    width: `${(m.count / Math.max(1, stats.total)) * 100}%`,
+                    minWidth: m.count > 0 ? 4 : 0,
+                    background: getModuleMeta(m.key).accent,
+                  }}
+                />
+              ))}
+            </div>
+            <div className="flex items-center gap-x-3 gap-y-1 flex-wrap">
+              {stats.modules.map((m) => (
+                <span key={m.key} className="inline-flex items-center gap-1.5 text-[11px] text-white/55">
+                  <span className="w-2 h-2 rounded-full" style={{ background: getModuleMeta(m.key).accent }} />
+                  {m.label}
+                  <span className="text-white/85 font-semibold tabular-nums">{m.count}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] tracking-widest text-white/40">活跃时段</span>
+              {stats.sampled ? <span className="text-[10px] text-white/30">（近 5000 条采样）</span> : null}
+            </div>
+            <div className="flex items-end gap-[3px] h-8">
+              {hourly.map((count, h) => {
+                const ratio = count / hourMax;
+                const isNow = h === currentHour;
+                return (
+                  <div
+                    key={h}
+                    title={`${h}:00 — ${count} 条`}
+                    className="flex-1 rounded-sm transition-all duration-500"
+                    style={{
+                      height: count === 0 ? 3 : Math.max(5, Math.round(ratio * 32)),
+                      background: isNow
+                        ? '#22d3ee'
+                        : `rgba(34, 211, 238, ${count === 0 ? 0.1 : 0.25 + ratio * 0.65})`,
+                    }}
+                  />
+                );
+              })}
+            </div>
+            <div className="flex justify-between text-[10px] text-white/25 tabular-nums">
+              <span>0时</span>
+              <span>6时</span>
+              <span>12时</span>
+              <span>18时</span>
+              <span>23时</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 右：成员排行 */}
+        <div className="flex flex-col justify-center gap-1.5 min-w-0">
+          <div className="text-[11px] tracking-widest text-white/40 pb-0.5">成员排行</div>
+          {topActors.length === 0 ? (
+            <div className="text-[12px] text-white/35">该范围内暂无动作</div>
+          ) : (
+            topActors.map((a, idx) => (
+              <div key={a.actorId} className="flex items-center gap-2 min-w-0">
+                <span
+                  className="w-4 text-[11px] font-bold tabular-nums text-center shrink-0"
+                  style={{ color: RANK_COLORS[idx] ?? 'rgba(255,255,255,0.3)' }}
+                >
+                  {idx + 1}
+                </span>
+                <UserAvatar
+                  src={resolveAvatarUrl({ avatarFileName: a.actorAvatarFileName })}
+                  alt={a.actorName ?? ''}
+                  className="w-5 h-5 rounded-full shrink-0 object-cover"
+                />
+                <span className="text-[12px] text-white/75 w-14 truncate shrink-0">
+                  {privacy ? maskName(a.actorName || a.actorId) : a.actorName || a.actorId}
+                </span>
+                <div className="flex-1 h-1.5 rounded-full bg-white/[0.05] overflow-hidden min-w-0">
+                  <div
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{
+                      width: `${(a.count / actorMax) * 100}%`,
+                      backgroundImage: 'linear-gradient(90deg, #22d3ee, #a78bfa)',
+                    }}
+                  />
+                </div>
+                <span className="text-[11px] text-white/55 tabular-nums w-8 text-right shrink-0">{a.count}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </GlassCard>
+  );
+}
