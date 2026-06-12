@@ -192,6 +192,9 @@ export const api = {
   teamActivity: {
     logs: () => '/api/team-activity/logs',
     modules: () => '/api/team-activity/modules',
+    stats: () => '/api/team-activity/stats',
+    insights: () => '/api/team-activity/insights',
+    insightState: () => '/api/team-activity/insights/state',
   },
 
   // ============ Skills 技能管理 ============

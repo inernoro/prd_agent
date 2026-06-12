@@ -1047,6 +1047,17 @@ public static class Admin
         public const string Reclassify = "prd-agent-web.platforms.reclassify::intent";
     }
 
+    public static class TeamActivity
+    {
+        [AppCallerMetadata(
+            "团队动态-行为洞察简报",
+            "把行为洞察（报错/慢端点/停留/秒退/横跳）聚合结果生成给产品负责人的中文简报（SSE 流式）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string InsightBrief = "prd-admin.team-activity.insight-brief::chat";
+    }
+
     public static class Changelog
     {
         [AppCallerMetadata(

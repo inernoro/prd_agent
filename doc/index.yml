@@ -288,6 +288,7 @@ docs:
   debt.cds-tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
   debt.cds-visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
   debt.speech-agent: 演讲智能体 · 债务台账（MVP 已知边界 + Phase 2 backlog）
+  debt.team-activity: 团队动态（团队脉搏）· 债务台账（排行刷量计分 / 直方图采样 / 深链下钻未通）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.kb-inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
   debt.kb-selection-ai: 知识库划词 AI 局部编辑（AI 改写 + 选区配图）债务台账

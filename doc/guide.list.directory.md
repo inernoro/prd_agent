@@ -740,6 +740,9 @@
   > 5 条 open：--write 重序列化丢注释 / 自愈覆盖面有限 / 占位值需人工 / 真机冒烟依赖 CDS / 发布脚本需真实 owner
 
 - [演讲智能体 · 债务台账](debt.speech-agent) `debt.speech-agent`
+
+- [团队动态（团队脉搏）· 债务台账](debt.team-activity) `debt.team-activity`
+  > 6 条边界：排行按原始计数可刷量 / 直方图近 5000 条采样 / 整小时时区近似 / 环比同长上一窗 / TargetUrl 深链未通 / 鉴权态验收依赖人工
   > 11 条 open：输入仅支持粘贴 / 视图非画布 / 无 Run-Worker / 无配图 / 无备注 / 无播放态 / 无发布 / 白天主题待适配 / 无节点增删 / 无 chunk / CDS 自测待补
 
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
