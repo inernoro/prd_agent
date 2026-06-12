@@ -1624,6 +1624,8 @@ function VersionDetail({
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [showTrace, setShowTrace] = useState(false);
+  const [detailTab, setDetailTab] = useState<'basic' | 'requirements' | 'features'>('basic');
+  const navigate = useNavigate();
   const { template } = useEffectiveTemplate('version', productId);
   const { workflow } = useEffectiveWorkflow('version', productId);
   const split = useMemo(() => splitFields(template?.fields), [template]);
@@ -1697,8 +1699,23 @@ function VersionDetail({
     await reloadFv();
   };
 
+  const linkedReqCount = selReqs.size;
+  const linkedFeatCount = featureVersions.length;
+
   return (
-    <DetailScaffold
+    <>
+      <div className="mb-4 flex border-b border-white/10">
+        <VersionDetailTab active={detailTab === 'basic'} onClick={() => setDetailTab('basic')}>基础信息</VersionDetailTab>
+        <VersionDetailTab active={detailTab === 'requirements'} onClick={() => setDetailTab('requirements')}>
+          需求
+          {linkedReqCount > 0 && <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-cyan-200">{linkedReqCount}</span>}
+        </VersionDetailTab>
+        <VersionDetailTab active={detailTab === 'features'} onClick={() => setDetailTab('features')}>
+          功能
+          {linkedFeatCount > 0 && <span className="ml-1.5 rounded-full bg-violet-400/20 px-1.5 text-[10px] text-violet-200">{linkedFeatCount}</span>}
+        </VersionDetailTab>
+      </div>
+      <DetailScaffold
       no={VERSION_LIFECYCLE_LABEL[version.lifecycle]}
       kindLabel="版本"
       kindColor="#34D399"
@@ -1722,110 +1739,143 @@ function VersionDetail({
         ) : undefined
       }
       main={
-        <>
-          <Card title="版本描述" action={<DescTemplatePicker entityType="version" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
-            <DescriptionField value={description} onChange={setDescription} />
-          </Card>
-          {split.files.length > 0 && (
-            <Card title="附件">
-              <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
+        detailTab === 'basic' ? (
+          <>
+            <Card title="版本描述" action={<DescTemplatePicker entityType="version" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+              <DescriptionField value={description} onChange={setDescription} />
             </Card>
-          )}
-          <Card title="动态">
-            <ActivityTimeline entityType="version" entityId={version.id} />
-          </Card>
-        </>
-      }
-      sidebar={
-        <>
-          <Card title="属性">
-            <div className="flex flex-col gap-3.5">
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>生命周期</FieldLabel>
-                <div className="flex flex-wrap gap-1.5">
-                  {(Object.keys(VERSION_LIFECYCLE_LABEL) as VersionLifecycle[]).map((lc) => (
-                    <button
-                      key={lc}
-                      onClick={() => setLifecycle(lc)}
-                      className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
-                    >
-                      {VERSION_LIFECYCLE_LABEL[lc]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={isMajor} onChange={(e) => setIsMajor(e.target.checked)} className="accent-cyan-500" />
-                <span className="text-sm text-white/70">标记为大版本</span>
-              </label>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>父版本</FieldLabel>
-                <ParentSelect
-                  value={parentVersionId}
-                  onChange={setParentVersionId}
-                  options={allVersions.filter((v) => v.id !== version.id).map((v) => ({ id: v.id, label: v.versionName }))}
-                  placeholder="无（顶层版本）"
-                />
-              </div>
-              {version.currentState && (
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>状态</FieldLabel>
-                  <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 self-start">
-                    {workflow?.states.find((s) => s.key === version.currentState)?.label ?? version.currentState}
-                  </span>
-                </div>
-              )}
-              {split.others.length > 0 && (
-                <div className="pt-1 border-t border-white/5">
-                  <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
-                </div>
-              )}
-            </div>
-          </Card>
-          <Card title="本版本知识（从产品知识库调取）">
-            <VersionKnowledgeCard productId={productId} versionId={version.id} />
-          </Card>
-          <Card title="关联需求（本版本要做哪些需求）">
+            {split.files.length > 0 && (
+              <Card title="附件">
+                <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
+              </Card>
+            )}
+            <Card title="动态">
+              <ActivityTimeline entityType="version" entityId={version.id} />
+            </Card>
+          </>
+        ) : detailTab === 'requirements' ? (
+          <Card title="关联需求（勾选后点顶部保存）">
             {requirements.length === 0 ? (
               <div className="text-[11px] text-white/30">该产品还没有需求</div>
             ) : (
-              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+              <div className="flex flex-col gap-0.5 max-h-[32rem] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                 {requirements.map((r) => (
-                  <label key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
-                    <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggleReq(r.id)} className="accent-cyan-500" />
-                    <span className="text-sm text-white/80 truncate">{r.title}</span>
-                  </label>
+                  <div key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5">
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                      <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggleReq(r.id)} className="accent-cyan-500 shrink-0" />
+                      <span className="text-sm text-white/80 truncate">{r.title}</span>
+                    </label>
+                    <button type="button" onClick={() => navigate(`/product-agent/p/${productId}/requirement/${r.id}`)} className="shrink-0 text-[11px] text-cyan-300 hover:underline">详情</button>
+                  </div>
                 ))}
               </div>
             )}
           </Card>
-          <Card title="纳入功能（功能版本化，即勾即存）">
+        ) : (
+          <Card title="纳入功能（即勾即存，无需点保存）">
             {features.length === 0 ? (
               <div className="text-[11px] text-white/30">该产品还没有功能</div>
             ) : (
-              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+              <div className="flex flex-col gap-0.5 max-h-[32rem] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                 {features.map((f) => (
-                  <label key={f.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
-                    <input type="checkbox" checked={!!featureIncluded(f.id)} onChange={() => void toggleFeature(f.id)} className="accent-cyan-500" />
-                    <span className="text-sm text-white/80 truncate">{f.title}</span>
-                  </label>
+                  <div key={f.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5">
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                      <input type="checkbox" checked={!!featureIncluded(f.id)} onChange={() => void toggleFeature(f.id)} className="accent-cyan-500 shrink-0" />
+                      <span className="text-sm text-white/80 truncate">{f.title}</span>
+                    </label>
+                    <button type="button" onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)} className="shrink-0 text-[11px] text-cyan-300 hover:underline">详情</button>
+                  </div>
                 ))}
               </div>
             )}
           </Card>
-          <Card title="信息">
-            <div className="flex flex-col gap-2">
-              <InfoRow label="计划发布" value={fmtDate(version.plannedReleaseAt)} />
-              <InfoRow label="创建时间" value={fmtDate(version.createdAt)} />
-              <InfoRow label="更新时间" value={fmtDate(version.updatedAt)} />
-            </div>
+        )
+      }
+      sidebar={
+        detailTab === 'basic' ? (
+          <>
+            <Card title="属性">
+              <div className="flex flex-col gap-3.5">
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>生命周期</FieldLabel>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(Object.keys(VERSION_LIFECYCLE_LABEL) as VersionLifecycle[]).map((lc) => (
+                      <button
+                        key={lc}
+                        onClick={() => setLifecycle(lc)}
+                        className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
+                      >
+                        {VERSION_LIFECYCLE_LABEL[lc]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={isMajor} onChange={(e) => setIsMajor(e.target.checked)} className="accent-cyan-500" />
+                  <span className="text-sm text-white/70">标记为大版本</span>
+                </label>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>父版本</FieldLabel>
+                  <ParentSelect
+                    value={parentVersionId}
+                    onChange={setParentVersionId}
+                    options={allVersions.filter((v) => v.id !== version.id).map((v) => ({ id: v.id, label: v.versionName }))}
+                    placeholder="无（顶层版本）"
+                  />
+                </div>
+                {version.currentState && (
+                  <div className="flex flex-col gap-1.5">
+                    <FieldLabel>状态</FieldLabel>
+                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 self-start">
+                      {workflow?.states.find((s) => s.key === version.currentState)?.label ?? version.currentState}
+                    </span>
+                  </div>
+                )}
+                {split.others.length > 0 && (
+                  <div className="pt-1 border-t border-white/5">
+                    <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
+                  </div>
+                )}
+              </div>
+            </Card>
+            <Card title="本版本知识（从产品知识库调取）">
+              <VersionKnowledgeCard productId={productId} versionId={version.id} />
+            </Card>
+            <Card title="信息">
+              <div className="flex flex-col gap-2">
+                <InfoRow label="计划发布" value={fmtDate(version.plannedReleaseAt)} />
+                <InfoRow label="创建时间" value={fmtDate(version.createdAt)} />
+                <InfoRow label="更新时间" value={fmtDate(version.updatedAt)} />
+              </div>
+            </Card>
+          </>
+        ) : (
+          <Card title="提示">
+            <p className="text-xs leading-5 text-white/45">
+              {detailTab === 'requirements'
+                ? '勾选本版本要纳入的需求后，回到顶部点击「保存」。'
+                : '功能纳入会立即写入，无需点保存。'}
+            </p>
           </Card>
-        </>
+        )
       }
     >
       {showTrace && (
         <TraceRelationDrawer productId={productId} nodeId={`version:${version.id}`} title={version.versionName} onClose={() => setShowTrace(false)} />
       )}
     </DetailScaffold>
+    </>
+  );
+}
+
+function VersionDetailTab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40 hover:text-white/60'}`}
+    >
+      {children}
+    </button>
   );
 }

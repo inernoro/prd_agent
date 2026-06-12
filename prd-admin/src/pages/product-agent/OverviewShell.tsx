@@ -34,7 +34,6 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
-import { GlobalSearch } from './GlobalSearch';
 import { ProductsSection } from './ProductsSection';
 import { SettingsSection } from './SettingsSection';
 import { WorkflowTemplateSection } from './WorkflowTemplateSection';
@@ -48,6 +47,10 @@ import {
   listProducts,
   getOverviewRequirements,
   getOverviewVersions,
+  getOverviewReleases,
+  getOverviewInitiations,
+  type OverviewReleaseRow,
+  type OverviewInitiationRow,
   getOverviewDefects,
   listCustomers,
   createCustomer,
@@ -61,6 +64,7 @@ import {
 import type { Customer, Product } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade, defectStatusLabel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
+import { distinctOptions, useListFilter, type FilterFieldDef } from './listFilter';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
 
@@ -108,15 +112,12 @@ export function OverviewShell() {
       title="产品管理"
       subtitle="全局总览"
       topSlot={
-        <div className="flex flex-col gap-2 mb-2">
-          <button
-            onClick={() => navigate('/')}
-            className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white"
-          >
-            <ArrowLeft size={13} /> 返回首页
-          </button>
-          <GlobalSearch />
-        </div>
+        <button
+          onClick={() => navigate('/')}
+          className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white mb-2"
+        >
+          <ArrowLeft size={13} /> 返回首页
+        </button>
       }
       items={navItems}
       active={active}
@@ -154,8 +155,8 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'versions' && (
-        <SectionShell title="版本（跨产品）" desc="所有产品的版本汇总，点击进入所属产品的版本页面">
-          <VersionsTable isAdmin={isAdmin} products={products} />
+        <SectionShell title="版本（跨产品）" desc="正式版本、内部立项、历史版本分 tab 展示；点击行进入三标签详情页（基础信息 / 需求 / 功能）">
+          <VersionOverviewSection isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
       {active === 'customers' && (
@@ -327,6 +328,7 @@ interface Column<T> {
   header: string;
   render: (row: T) => React.ReactNode;
   className?: string;
+  width?: string;
 }
 
 function DataTable<T extends { id: string }>({
@@ -339,8 +341,15 @@ function DataTable<T extends { id: string }>({
   onRowClick?: (row: T) => void;
 }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-white/10">
-      <table className="min-w-full whitespace-nowrap text-sm">
+    <div className="w-full min-w-0 overflow-x-auto rounded-xl border border-white/10">
+      <table className="w-full min-w-full table-fixed whitespace-nowrap text-sm">
+        {columns.some((c) => c.width) && (
+          <colgroup>
+            {columns.map((c, i) => (
+              <col key={i} style={c.width ? { width: c.width } : undefined} />
+            ))}
+          </colgroup>
+        )}
         <thead>
           <tr className="bg-white/[0.03] text-white/45 text-[11px]">
             {columns.map((c, i) => (
@@ -432,8 +441,6 @@ function MineToggle({ mine, setMine }: { mine: boolean; setMine: (v: boolean) =>
 const GRADE_BADGE = (g: string) => (
   <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] ?? g}</span>
 );
-const ITEM_GRADE_FILTERS = ['p0', 'p1', 'p2', 'p3'].map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] }));
-
 function AdminImportButton({ onClick }: { onClick: () => void }) {
   return (
     <button onClick={onClick} className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20">
@@ -446,41 +453,101 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewRequirementRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
-  const [grade, setGrade] = useState('');
   const [mine, setMine] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
+  const productNameMap = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
+  const fields = useMemo<FilterFieldDef<OverviewRequirementRow>[]>(() => [
+    {
+      key: 'grade',
+      label: '分级',
+      defaultVisible: true,
+      options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })),
+      test: (r, v) => r.grade === v,
+    },
+    {
+      key: 'product',
+      label: '产品',
+      defaultVisible: true,
+      options: (its) => distinctOptions(
+        its,
+        (r) => r.productId,
+        (id) => productNameMap.get(id) ?? its.find((r) => r.productId === id)?.productName ?? id,
+      ),
+      test: (r, v) => r.productId === v,
+    },
+    {
+      key: 'assignee',
+      label: '处理人',
+      defaultVisible: true,
+      options: (its) => distinctOptions(
+        its,
+        (r) => r.assigneeId ?? '',
+        (id) => its.find((r) => r.assigneeId === id)?.assigneeName ?? id,
+      ),
+      test: (r, v) => (r.assigneeId ?? '') === v,
+    },
+    {
+      key: 'state',
+      label: '状态',
+      defaultVisible: true,
+      options: (its) => distinctOptions(
+        its,
+        (r) => r.currentState ?? '',
+        (id) => {
+          const hit = its.find((r) => (r.currentState ?? '') === id);
+          return hit?.stateLabel ?? resolveRequirementStateLabel(id) || id;
+        },
+      ),
+      test: (r, v) => (r.currentState ?? '') === v,
+    },
+  ], [productNameMap]);
+
+  const { bar, filtered } = useListFilter({
+    items: rows,
+    storageKey: 'pa-list-filters:overview-requirement',
+    fields,
+    keywordOf: (r) => `${r.requirementNo} ${r.title} ${r.productName}`,
+    keywordPlaceholder: '搜索标题 / 编号',
+    showFilterSettings: false,
+  });
+
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await getOverviewRequirements({ keyword: keyword.trim() || undefined, grade: grade || undefined, mine: mine || undefined });
+    const res = await getOverviewRequirements({ mine: mine || undefined });
     if (res.success) setRows(res.data.items);
     setLoading(false);
-  }, [keyword, grade, mine]);
+  }, [mine]);
   useEffect(() => {
     void reload();
   }, [reload]);
 
   if (loading) return <MapSectionLoader text="正在加载需求…" />;
   return (
-    <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} extra={<><MineToggle mine={mine} setMine={setMine} />{isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}</>} />
-      {rows.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的需求' : '没有需求'}</div>
+    <div className="w-full min-w-0">
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <div className="flex-1 min-w-0">{bar}</div>
+        <div className="flex items-center gap-2 shrink-0">
+          <MineToggle mine={mine} setMine={setMine} />
+          {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
+        </div>
+      </div>
+      {filtered.length === 0 ? (
+        <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}</div>
       ) : (
         <DataTable
-          rows={rows}
+          rows={filtered}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/requirement/${r.id}`)}
           columns={[
-            { header: '编号', render: (r) => <span className="text-white/40 text-xs">{r.requirementNo}</span> },
-            { header: '标题', render: (r) => <span className="text-white/90">{r.title}</span> },
-            { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
-            { header: '分级', render: (r) => GRADE_BADGE(r.grade) },
-            { header: '状态', render: (r) => <span className="text-white/55 text-xs">{(r.stateLabel ?? resolveRequirementStateLabel(r.currentState)) || '-'}</span> },
-            { header: '处理人', render: (r) => <span className="text-white/55 text-xs">{r.assigneeName || '-'}</span> },
-            { header: '版本', render: (r) => <span className="text-white/55 text-xs">{r.versionCount}</span> },
-            { header: '客户', render: (r) => <span className="text-white/55 text-xs">{r.customerCount}</span> },
-            { header: '更新', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
+            { header: '编号', width: '10%', className: 'truncate', render: (r) => <span className="text-white/40 text-xs">{r.requirementNo}</span> },
+            { header: '标题', width: '28%', className: 'truncate', render: (r) => <span className="text-white/90 truncate block" title={r.title}>{r.title}</span> },
+            { header: '产品', width: '12%', className: 'truncate', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
+            { header: '分级', width: '7%', render: (r) => GRADE_BADGE(r.grade) },
+            { header: '状态', width: '10%', className: 'truncate', render: (r) => <span className="text-white/55 text-xs">{(r.stateLabel ?? resolveRequirementStateLabel(r.currentState)) || '-'}</span> },
+            { header: '处理人', width: '10%', className: 'truncate', render: (r) => <span className="text-white/55 text-xs">{r.assigneeName || '-'}</span> },
+            { header: '版本', width: '7%', render: (r) => <span className="text-white/55 text-xs">{r.versionCount}</span> },
+            { header: '客户', width: '7%', render: (r) => <span className="text-white/55 text-xs">{r.customerCount}</span> },
+            { header: '更新', width: '9%', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
           ]}
         />
       )}
@@ -569,7 +636,123 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
   );
 }
 
-function VersionsTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+const VERSION_SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
+const WORKFLOW_STATUS_LABEL: Record<string, string> = {
+  draft: '草稿',
+  review_pending: 'Agent 评审中',
+  review_failed: '评审未通过',
+  decision_pending: '待确认评审方式',
+  owner_pending: '待负责人同意',
+  approved: '已取得立项号',
+  announcement_pending: '待填写上线公告',
+  released: '已上线',
+};
+
+function VersionOverviewSection({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+  const [tab, setTab] = useState<'release' | 'initiation' | 'legacy'>('release');
+  return (
+    <div>
+      <div className="mb-3 flex border-b border-white/10">
+        <OverviewSubTab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</OverviewSubTab>
+        <OverviewSubTab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部立项</OverviewSubTab>
+        <OverviewSubTab active={tab === 'legacy'} onClick={() => setTab('legacy')}>历史版本</OverviewSubTab>
+      </div>
+      {tab === 'release' && <ReleaseOverviewTable />}
+      {tab === 'initiation' && <InitiationOverviewTable />}
+      {tab === 'legacy' && <LegacyVersionsTable isAdmin={isAdmin} products={products} />}
+    </div>
+  );
+}
+
+function OverviewSubTab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`border-b-2 px-4 py-2 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40 hover:text-white/60'}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ReleaseOverviewTable() {
+  const navigate = useNavigate();
+  const [rows, setRows] = useState<OverviewReleaseRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [keyword, setKeyword] = useState('');
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const result = await getOverviewReleases({ keyword: keyword.trim() || undefined });
+    if (result.success) setRows(result.data.items);
+    setLoading(false);
+  }, [keyword]);
+  useEffect(() => { void reload(); }, [reload]);
+
+  if (loading) return <MapSectionLoader text="正在加载正式版本…" />;
+  return (
+    <div>
+      <TableToolbar keyword={keyword} setKeyword={setKeyword} />
+      {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有正式版本</div> : (
+        <DataTable
+          rows={rows}
+          onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/release/${row.id}`)}
+          columns={[
+            { header: 'V 号', render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
+            { header: 'T 号', render: (r) => <span className="font-mono text-xs text-white/55">{r.tCode ?? '临时优化'}</span> },
+            { header: '方案', render: (r) => <span className="text-white/85">{r.planName}</span> },
+            { header: '产品', render: (r) => <span className="text-xs text-white/55">{r.productName}</span> },
+            { header: '级别', render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { header: '需求数', render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
+            { header: '上线日期', render: (r) => <span className="text-xs text-white/45">{r.plannedReleaseAt ? new Date(r.plannedReleaseAt).toLocaleDateString('zh-CN') : '-'}</span> },
+            { header: '状态', render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
+            { header: '更新', render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
+          ]}
+        />
+      )}
+    </div>
+  );
+}
+
+function InitiationOverviewTable() {
+  const navigate = useNavigate();
+  const [rows, setRows] = useState<OverviewInitiationRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [keyword, setKeyword] = useState('');
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const result = await getOverviewInitiations({ keyword: keyword.trim() || undefined });
+    if (result.success) setRows(result.data.items);
+    setLoading(false);
+  }, [keyword]);
+  useEffect(() => { void reload(); }, [reload]);
+
+  if (loading) return <MapSectionLoader text="正在加载内部立项…" />;
+  return (
+    <div>
+      <TableToolbar keyword={keyword} setKeyword={setKeyword} />
+      {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有内部立项</div> : (
+        <DataTable
+          rows={rows}
+          onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
+          columns={[
+            { header: 'T 号', render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '—'}</span> },
+            { header: '方案', render: (r) => <span className="text-white/85">{r.planName}</span> },
+            { header: '产品', render: (r) => <span className="text-xs text-white/55">{r.productName}</span> },
+            { header: '级别', render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { header: '需求数', render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
+            { header: '状态', render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
+            { header: '更新', render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
+          ]}
+        />
+      )}
+    </div>
+  );
+}
+
+function LegacyVersionsTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewVersionRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -593,9 +776,9 @@ function VersionsTable({ isAdmin, products }: { isAdmin: boolean; products: Prod
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有版本</div> : (
         <DataTable
           rows={rows}
-          onRowClick={(row) => navigate(`/product-agent/p/${row.productId}`)}
+          onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/version/${row.id}`)}
           columns={[
-            { header: '版本名', render: (row) => <span className="text-white/90">{row.versionName}</span> },
+            { header: '版本名', render: (row) => <span className="text-cyan-200/90">{row.versionName}</span> },
             { header: '外部 ID', render: (row) => <span className="text-xs text-white/40">{row.externalId || '-'}</span> },
             { header: '产品', render: (row) => <span className="text-xs text-white/55">{row.productName}</span> },
             { header: '生命周期', render: (row) => <span className="text-xs text-white/55">{VERSION_LIFECYCLE_LABEL[row.lifecycle as keyof typeof VERSION_LIFECYCLE_LABEL] ?? row.lifecycle}</span> },

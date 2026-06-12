@@ -40,8 +40,10 @@ export function useListFilter<T>(opts: {
   fields: FilterFieldDef<T>[];
   keywordOf: (item: T) => string;
   keywordPlaceholder?: string;
+  /** 是否显示「筛选设置」齿轮（跨产品需求等固定筛选项场景可关闭） */
+  showFilterSettings?: boolean;
 }): { bar: ReactNode; filtered: T[]; activeCount: number } {
-  const { items, storageKey, fields, keywordOf, keywordPlaceholder } = opts;
+  const { items, storageKey, fields, keywordOf, keywordPlaceholder, showFilterSettings = true } = opts;
   const [kw, setKw] = useState('');
   const [values, setValues] = useState<Record<string, string>>({});
   const [visible, setVisible] = useState<string[]>(() => loadVisible(storageKey, fields));
@@ -88,6 +90,7 @@ export function useListFilter<T>(opts: {
       activeCount={activeCount}
       resultCount={filtered.length}
       total={items.length}
+      showFilterSettings={showFilterSettings}
     />
   );
 
@@ -108,6 +111,7 @@ function FilterBar<T>({
   activeCount,
   resultCount,
   total,
+  showFilterSettings,
 }: {
   items: T[];
   fields: FilterFieldDef<T>[];
@@ -122,6 +126,7 @@ function FilterBar<T>({
   activeCount: number;
   resultCount: number;
   total: number;
+  showFilterSettings: boolean;
 }) {
   const [gearOpen, setGearOpen] = useState(false);
   const gearRef = useRef<HTMLDivElement>(null);
@@ -179,36 +184,38 @@ function FilterBar<T>({
           <X size={12} /> 清空({activeCount})
         </button>
       )}
-      <div ref={gearRef} className="relative">
-        <button
-          onClick={() => setGearOpen((v) => !v)}
-          className="h-8 flex items-center gap-1 px-2 rounded-lg border border-white/10 text-xs text-white/55 hover:text-white hover:bg-white/5"
-          title="筛选设置：选择显示哪些筛选项"
-        >
-          <SlidersHorizontal size={13} /> 筛选设置
-        </button>
-        {gearOpen && (
-          <div className="absolute z-50 right-0 mt-1 w-48 rounded-lg border border-white/10 bg-[#16171c] p-2 shadow-xl">
-            <div className="text-[11px] text-white/40 px-1 pb-1">显示哪些筛选项</div>
-            <div className="max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-              {fields.map((f) => (
-                <label
-                  key={f.key}
-                  className="flex items-center gap-2 px-1 py-1 rounded hover:bg-white/5 cursor-pointer text-xs text-white/75"
-                >
-                  <input
-                    type="checkbox"
-                    checked={visible.includes(f.key)}
-                    onChange={() => toggle(f.key)}
-                    className="accent-cyan-500"
-                  />
-                  {f.label}
-                </label>
-              ))}
+      {showFilterSettings && (
+        <div ref={gearRef} className="relative">
+          <button
+            onClick={() => setGearOpen((v) => !v)}
+            className="h-8 flex items-center gap-1 px-2 rounded-lg border border-white/10 text-xs text-white/55 hover:text-white hover:bg-white/5"
+            title="筛选设置：选择显示哪些筛选项"
+          >
+            <SlidersHorizontal size={13} /> 筛选设置
+          </button>
+          {gearOpen && (
+            <div className="absolute z-50 right-0 mt-1 w-48 rounded-lg border border-white/10 bg-[#16171c] p-2 shadow-xl">
+              <div className="text-[11px] text-white/40 px-1 pb-1">显示哪些筛选项</div>
+              <div className="max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {fields.map((f) => (
+                  <label
+                    key={f.key}
+                    className="flex items-center gap-2 px-1 py-1 rounded hover:bg-white/5 cursor-pointer text-xs text-white/75"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visible.includes(f.key)}
+                      onChange={() => toggle(f.key)}
+                      className="accent-cyan-500"
+                    />
+                    {f.label}
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
       <span className="text-[11px] text-white/30 ml-auto shrink-0">
         {resultCount}/{total}
       </span>

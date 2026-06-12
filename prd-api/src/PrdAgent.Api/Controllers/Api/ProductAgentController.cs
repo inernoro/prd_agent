@@ -4673,6 +4673,66 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
     }
 
+    /// <summary>跨产品正式版本（V 号）列表。</summary>
+    [HttpGet("overview/releases")]
+    public async Task<IActionResult> OverviewReleases([FromQuery] string? keyword = null)
+    {
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var items = await FindInScopeAsync<ProductRelease>(scope, r => r.ProductId, r => r.IsDeleted);
+        var names = await ProductNamesAsync(items.Select(r => r.ProductId));
+        var rows = items
+            .Where(r => string.IsNullOrWhiteSpace(keyword) ||
+                r.VCode.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                (r.TCode?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                r.PlanName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(r => r.UpdatedAt)
+            .Select(r => new
+            {
+                r.Id,
+                r.ProductId,
+                productName = names.GetValueOrDefault(r.ProductId, ""),
+                r.VCode,
+                r.TCode,
+                r.PlanName,
+                r.VersionType,
+                r.Status,
+                r.PlannedReleaseAt,
+                requirementCount = r.RequirementIds.Count,
+                r.InitiationId,
+                r.UpdatedAt,
+            })
+            .Take(1000).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    /// <summary>跨产品内部版本立项（T 号）列表。</summary>
+    [HttpGet("overview/initiations")]
+    public async Task<IActionResult> OverviewInitiations([FromQuery] string? keyword = null)
+    {
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var items = await FindInScopeAsync<ProductInitiation>(scope, i => i.ProductId, i => i.IsDeleted);
+        var names = await ProductNamesAsync(items.Select(i => i.ProductId));
+        var rows = items
+            .Where(i => string.IsNullOrWhiteSpace(keyword) ||
+                (i.TCode?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                i.PlanName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(i => i.UpdatedAt)
+            .Select(i => new
+            {
+                i.Id,
+                i.ProductId,
+                productName = names.GetValueOrDefault(i.ProductId, ""),
+                i.TCode,
+                i.PlanName,
+                i.VersionType,
+                i.Status,
+                requirementCount = i.RequirementIds.Count,
+                i.UpdatedAt,
+            })
+            .Take(1000).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
     /// <summary>跨产品功能列表（含所属产品名）。</summary>
     [HttpGet("overview/features")]
     public async Task<IActionResult> OverviewFeatures([FromQuery] string? grade = null, [FromQuery] string? keyword = null, [FromQuery] bool mine = false)

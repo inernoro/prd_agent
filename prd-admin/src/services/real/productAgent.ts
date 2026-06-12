@@ -691,6 +691,43 @@ export function getOverviewVersions(params?: { lifecycle?: string; keyword?: str
   const qs = q.toString();
   return apiRequest<ListWrap<OverviewVersionRow>>(`/api/product/overview/versions${qs ? `?${qs}` : ''}`);
 }
+export interface OverviewReleaseRow {
+  id: string;
+  productId: string;
+  productName: string;
+  vCode: string;
+  tCode?: string | null;
+  planName: string;
+  versionType: string;
+  status: string;
+  plannedReleaseAt?: string | null;
+  requirementCount: number;
+  initiationId?: string | null;
+  updatedAt: string;
+}
+export interface OverviewInitiationRow {
+  id: string;
+  productId: string;
+  productName: string;
+  tCode?: string | null;
+  planName: string;
+  versionType: string;
+  status: string;
+  requirementCount: number;
+  updatedAt: string;
+}
+export function getOverviewReleases(params?: { keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewReleaseRow>>(`/api/product/overview/releases${qs ? `?${qs}` : ''}`);
+}
+export function getOverviewInitiations(params?: { keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewInitiationRow>>(`/api/product/overview/initiations${qs ? `?${qs}` : ''}`);
+}
 export interface OverviewFeatureRow {
   id: string; productId: string; productName: string; featureNo: string; title: string;
   grade: string; currentState?: string | null; requirementCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;

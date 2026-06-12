@@ -244,14 +244,14 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
   const names = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
   return <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']}>
-    {items.map((item) => <tr key={item.id} className="border-t border-white/5">
+    {items.map((item) => <tr key={item.id} className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]" onClick={() => openDetail(item.id)}>
       <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
-        ? <button type="button" onClick={() => openDetail(item.id)} className="text-cyan-300 hover:underline">{item.tCode}</button>
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
         : '-'}</Td>
       <Td>{SCALE_LABEL[item.versionType]}</Td>
-      <Td><button type="button" onClick={() => openDetail(item.id)} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
+      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
         <div>{names.get(item.primaryOwnerId ?? item.createdBy) ?? item.primaryOwnerId ?? item.createdBy ?? '-'}</div>
@@ -290,18 +290,23 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
     });
     return () => { cancelled = true; };
   }, [items]);
+  const openRelease = (id: string) => navigate(`/product-agent/p/${productId}/release/${id}`);
+  const openInitiation = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
   return <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']}>
-    {items.map((item) => <tr key={item.id} className="border-t border-white/5 align-top">
+    {items.map((item) => <tr key={item.id} className="border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]" onClick={() => openRelease(item.id)}>
       <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
-      <Td mono><button type="button" onClick={() => navigate(`/product-agent/p/${productId}/release/${item.id}`)} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
-      <Td mono>{item.tCode ?? '临时优化需求'}</Td>
-      <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{SCALE_LABEL[item.versionType]}</Td><Td>{item.planName}</Td>
+      <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
+      <Td mono>{item.initiationId && item.tCode
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item.initiationId!); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
+        : (item.tCode ?? '临时优化需求')}</Td>
+      <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{SCALE_LABEL[item.versionType]}</Td>
+      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.departmentName || '-'}</Td><Td>{names.get(item.ownerId ?? '') ?? item.ownerId ?? '-'}</Td>
       <Td>{item.teamMemberIds.map((id) => names.get(id) ?? id).join('、')}</Td>
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{formatDate(item.plannedReleaseAt)}</Td>
       <Td>{item.openBrandScope || '上线全域开放'}</Td><Td>{item.requirementIds.map((id) => reqNames.get(id) ?? id).join('、') || '-'}</Td>
-      <Td>{item.status === 'announcement_pending' ? !readOnly && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
+      <Td onClick={(e) => e.stopPropagation()}>{item.status === 'announcement_pending' ? !readOnly && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
         : readOnly ? <span className="text-white/35">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-white/50">填写地址</button></div>
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
