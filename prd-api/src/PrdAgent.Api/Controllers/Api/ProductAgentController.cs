@@ -3478,6 +3478,15 @@ public class ProductAgentController : ControllerBase
         var fields = (template?.Fields ?? new List<ProductFormField>())
             .Where(f => f.Type != ProductFormFieldType.File).ToList();
 
+        var existingRequirements = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted)
+            .SortByDescending(r => r.UpdatedAt).Limit(60).ToListAsync();
+        var existingFeatures = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted)
+            .SortByDescending(f => f.UpdatedAt).Limit(60).ToListAsync();
+        var existingVersions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted)
+            .SortByDescending(v => v.UpdatedAt).Limit(30).ToListAsync();
+        var existingCustomers = await _db.Customers.Find(c => !c.IsDeleted)
+            .SortByDescending(c => c.UpdatedAt).Limit(80).ToListAsync();
+
         var fieldSpec = string.Join("\n", fields.Select(f =>
         {
             var opts = (f.Options != null && f.Options.Count > 0) ? $"，可选值: {string.Join(" / ", f.Options.Select(o => o.Value))}" : "";
@@ -3489,10 +3498,41 @@ public class ProductAgentController : ControllerBase
                 $"- {t.Name}：{(string.IsNullOrWhiteSpace(t.Definition) ? "（无额外说明）" : t.Definition)}"))
             : "";
 
+        var reqCatalog = existingRequirements.Count > 0
+            ? string.Join("\n", existingRequirements.Select(r => $"- {r.Title}"))
+            : "（暂无已有需求）";
+        var featCatalog = existingFeatures.Count > 0
+            ? string.Join("\n", existingFeatures.Select(f =>
+                string.IsNullOrWhiteSpace(f.ModuleName) ? $"- {f.Title}" : $"- {f.Title}（模块：{f.ModuleName}）"))
+            : "（暂无已有功能）";
+        var custCatalog = existingCustomers.Count > 0
+            ? string.Join("\n", existingCustomers.Select(c => $"- {c.Name}"))
+            : "（暂无客户档案，若文本提到客户名仍填入 customerNames）";
+        var verCatalog = existingVersions.Count > 0
+            ? string.Join("\n", existingVersions.Select(v => $"- {v.VersionName}"))
+            : "（暂无版本）";
+
+        const string originSpec = "客户反馈 / 内部规划 / 运营活动 / 竞品调研 / 其他（无法判断则空字符串）";
+
         var systemPrompt =
-            "你是产品需求结构化助手。用户会给一段需求原始文本，请抽取并整理为一条规范需求。\n" +
+            "你是产品需求结构化助手。用户会给一段需求原始文本（可能来自口头描述、会议纪要、客户反馈），请尽可能抽取全部可识别字段。\n" +
+            "原则：能从文本推断的字段必须填写；无法推断的省略或留空，不要编造。\n" +
             "严格只输出一个 JSON 对象（不要任何解释、不要 markdown 代码块），结构：\n" +
-            "{\"title\": 简洁标题, \"description\": 需求描述(可含背景/目标/验收标准，纯文本), \"grade\": 分级(p0/p1/p2/p3，按紧急重要程度推断，默认 p2), \"formData\": {模板字段key: 值}}\n" +
+            "{\n" +
+            "  \"title\": \"简洁标题\",\n" +
+            "  \"description\": \"需求描述（背景/目标/验收标准，纯文本）\",\n" +
+            "  \"grade\": \"p0|p1|p2|p3（按紧急重要程度，默认 p2）\",\n" +
+            "  \"requirementOrigin\": \"需求来源，取值 " + originSpec + "\",\n" +
+            "  \"customerNames\": [\"文本中明确提到的客户/品牌/公司名称\"],\n" +
+            "  \"parentRequirementTitle\": \"若是子需求或补充项，填父需求标题（与下列已有需求匹配）\",\n" +
+            "  \"relatedFeatureTitles\": [\"提到的功能名、模块名或要改的功能范围\"],\n" +
+            "  \"versionName\": \"若提到计划版本/迭代/归属版本则填版本名\",\n" +
+            "  \"formData\": { 模板自定义字段 key: 值 }\n" +
+            "}\n" +
+            "已有需求（parentRequirementTitle 从中匹配）：\n" + reqCatalog + "\n" +
+            "已有功能（relatedFeatureTitles 从中匹配，也可填模块名）：\n" + featCatalog + "\n" +
+            "已有客户（customerNames 优先从中匹配）：\n" + custCatalog + "\n" +
+            "已有版本（versionName 从中匹配）：\n" + verCatalog + "\n" +
             (requirementTypeNames.Count > 0
                 ? $"必须在 formData 中填写 key「{RequirementType.FormDataKey}」，值从以下类型名称中选一（按定义判断，无法判断时选「其他」）：\n{typeSpec}\n"
                 : "") +
@@ -3515,7 +3555,7 @@ public class ProductAgentController : ControllerBase
                 new JsonObject { ["role"] = "user", ["content"] = $"需求原始文本：\n{text}" },
             },
             ["temperature"] = 0.2,
-            ["max_tokens"] = 1200,
+            ["max_tokens"] = 2000,
         };
 
         await Sse("phase", new { message = "AI 正在分析需求文本…" });
@@ -3550,14 +3590,28 @@ public class ProductAgentController : ControllerBase
             return;
         }
 
-        var parsed = ExtractFillJson(sb.ToString(), fields, requirementTypeNames);
+        var parsed = ResolveRequirementAiFill(
+            sb.ToString(), fields, requirementTypeNames,
+            existingRequirements, existingFeatures, existingVersions, existingCustomers);
         if (parsed == null) { await Sse("error", new { message = "AI 返回无法解析，请重试或精简文本" }); return; }
         await Sse("result", parsed);
         await Sse("done", new { });
     }
 
-    /// <summary>从 LLM 原始输出里抽取并规范化填充 JSON（容错 markdown 代码块/前后缀文本）。</summary>
-    private static object? ExtractFillJson(string raw, List<ProductFormField> fields, IReadOnlyList<string>? requirementTypeNames = null)
+  private static readonly HashSet<string> RequirementOriginValues = new(StringComparer.Ordinal)
+    {
+        "客户反馈", "内部规划", "运营活动", "竞品调研", "其他",
+    };
+
+    /// <summary>从 LLM 原始输出抽取需求智能填充结果，并解析客户/父需求/功能/版本为 ID。</summary>
+    private static object? ResolveRequirementAiFill(
+        string raw,
+        List<ProductFormField> fields,
+        IReadOnlyList<string>? requirementTypeNames,
+        List<Requirement> requirements,
+        List<Feature> features,
+        List<ProductVersion> versions,
+        List<Customer> customers)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         var start = raw.IndexOf('{');
@@ -3569,14 +3623,30 @@ public class ProductAgentController : ControllerBase
             using var doc = System.Text.Json.JsonDocument.Parse(s);
             var root = doc.RootElement;
             string GetStr(string k) => root.TryGetProperty(k, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? (v.GetString() ?? "") : "";
+            List<string> GetStrList(string k)
+            {
+                if (!root.TryGetProperty(k, out var arr) || arr.ValueKind != System.Text.Json.JsonValueKind.Array) return new();
+                return arr.EnumerateArray()
+                    .Where(e => e.ValueKind == System.Text.Json.JsonValueKind.String)
+                    .Select(e => (e.GetString() ?? "").Trim())
+                    .Where(x => x.Length > 0)
+                    .ToList();
+            }
+
             var title = GetStr("title").Trim();
             var description = GetStr("description").Trim();
             var grade = GetStr("grade").Trim().ToLowerInvariant();
             if (grade != "p0" && grade != "p1" && grade != "p2" && grade != "p3") grade = "p2";
+
+            var requirementOrigin = GetStr("requirementOrigin").Trim();
+            if (!string.IsNullOrEmpty(requirementOrigin) && !RequirementOriginValues.Contains(requirementOrigin))
+                requirementOrigin = "";
+
             var formData = new Dictionary<string, string>();
-            var allowed = fields.Select(f => f.Key).ToHashSet();
+            var allowed = fields.Select(f => f.Key).ToHashSet(StringComparer.Ordinal);
             allowed.Add(RequirementType.FormDataKey);
-            var typeNameSet = requirementTypeNames?.Where(n => !string.IsNullOrWhiteSpace(n)).ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>();
+            allowed.Add("需求来源");
+            var typeNameSet = requirementTypeNames?.Where(n => !string.IsNullOrWhiteSpace(n)).ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
             if (root.TryGetProperty("formData", out var fd) && fd.ValueKind == System.Text.Json.JsonValueKind.Object)
             {
                 foreach (var p in fd.EnumerateObject())
@@ -3592,16 +3662,104 @@ public class ProductAgentController : ControllerBase
                     };
                     if (string.IsNullOrEmpty(val)) continue;
                     if (p.Name == RequirementType.FormDataKey && typeNameSet.Count > 0 && !typeNameSet.Contains(val))
-                    {
                         val = typeNameSet.Contains("其他") ? "其他" : typeNameSet.First();
-                    }
                     formData[p.Name] = val;
                 }
             }
-            if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(description) && formData.Count == 0) return null;
-            return new { title, description, grade, formData };
+
+            if (!string.IsNullOrEmpty(requirementOrigin))
+                formData["需求来源"] = requirementOrigin;
+            else if (formData.TryGetValue("需求来源", out var originInForm) && !RequirementOriginValues.Contains(originInForm))
+                formData.Remove("需求来源");
+
+            var customerNames = GetStrList("customerNames");
+            var customerIds = customerNames
+                .Select(name => MatchCustomerId(customers, name))
+                .Where(id => !string.IsNullOrEmpty(id))
+                .Distinct()
+                .ToList();
+
+            var parentTitle = GetStr("parentRequirementTitle").Trim();
+            var parentId = MatchRequirementId(requirements, parentTitle);
+
+            var featureTitles = GetStrList("relatedFeatureTitles");
+            var featureIds = featureTitles
+                .Select(t => MatchFeatureId(features, t))
+                .Where(id => !string.IsNullOrEmpty(id))
+                .Distinct()
+                .ToList();
+            var featureField = fields.FirstOrDefault(f =>
+                string.Equals(f.Label, "关联功能", StringComparison.Ordinal)
+                || string.Equals(f.RelationEntityType, ProductEntityType.Feature, StringComparison.OrdinalIgnoreCase));
+            if (featureField != null && featureIds.Count > 0)
+                formData[featureField.Key] = string.Join(",", featureIds);
+
+            var versionName = GetStr("versionName").Trim();
+            var versionId = MatchVersionId(versions, versionName);
+            var versionField = fields.FirstOrDefault(f =>
+                string.Equals(f.Label, "归属版本", StringComparison.Ordinal)
+                || string.Equals(f.RelationEntityType, ProductEntityType.Version, StringComparison.OrdinalIgnoreCase));
+            if (versionField != null && !string.IsNullOrEmpty(versionId))
+                formData[versionField.Key] = versionId;
+
+            if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(description) && formData.Count == 0
+                && customerIds.Count == 0 && string.IsNullOrEmpty(parentId)) return null;
+
+            return new
+            {
+                title,
+                description,
+                grade,
+                requirementOrigin,
+                customerIds,
+                parentId,
+                formData,
+            };
         }
         catch { return null; }
+    }
+
+    private static string? MatchCustomerId(List<Customer> customers, string name)
+    {
+        var q = name.Trim();
+        if (q.Length == 0) return null;
+        var exact = customers.FirstOrDefault(c => string.Equals(c.Name.Trim(), q, StringComparison.Ordinal));
+        if (exact != null) return exact.Id;
+        return customers.FirstOrDefault(c => c.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || q.Contains(c.Name, StringComparison.OrdinalIgnoreCase))?.Id;
+    }
+
+    private static string? MatchRequirementId(List<Requirement> requirements, string title)
+    {
+        var q = title.Trim();
+        if (q.Length == 0) return null;
+        var exact = requirements.FirstOrDefault(r => string.Equals(r.Title.Trim(), q, StringComparison.Ordinal));
+        if (exact != null) return exact.Id;
+        return requirements.FirstOrDefault(r => r.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || q.Contains(r.Title, StringComparison.OrdinalIgnoreCase))?.Id;
+    }
+
+    private static string? MatchFeatureId(List<Feature> features, string title)
+    {
+        var q = title.Trim();
+        if (q.Length == 0) return null;
+        var exact = features.FirstOrDefault(f => string.Equals(f.Title.Trim(), q, StringComparison.Ordinal));
+        if (exact != null) return exact.Id;
+        var byModule = features.FirstOrDefault(f => !string.IsNullOrWhiteSpace(f.ModuleName)
+            && (f.ModuleName.Contains(q, StringComparison.OrdinalIgnoreCase) || q.Contains(f.ModuleName, StringComparison.OrdinalIgnoreCase)));
+        if (byModule != null) return byModule.Id;
+        return features.FirstOrDefault(f => f.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || q.Contains(f.Title, StringComparison.OrdinalIgnoreCase))?.Id;
+    }
+
+    private static string? MatchVersionId(List<ProductVersion> versions, string name)
+    {
+        var q = name.Trim();
+        if (q.Length == 0) return null;
+        var exact = versions.FirstOrDefault(v => string.Equals(v.VersionName.Trim(), q, StringComparison.Ordinal));
+        if (exact != null) return exact.Id;
+        return versions.FirstOrDefault(v => v.VersionName.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || q.Contains(v.VersionName, StringComparison.OrdinalIgnoreCase))?.Id;
     }
 
     // ════════════════════════ 批量导入 ════════════════════════
