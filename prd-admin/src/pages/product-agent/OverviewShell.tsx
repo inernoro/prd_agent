@@ -41,13 +41,13 @@ import { WorkflowTemplateSection } from './WorkflowTemplateSection';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
+import { FeatureCatalogTab } from './FeatureCatalogTab';
 import './product-cards.css';
 import {
   getOverviewStats,
   listProducts,
   getOverviewRequirements,
   getOverviewVersions,
-  getOverviewFeatures,
   getOverviewDefects,
   listCustomers,
   createCustomer,
@@ -56,7 +56,6 @@ import {
   type OverviewStats,
   type OverviewRequirementRow,
   type OverviewVersionRow,
-  type OverviewFeatureRow,
   type OverviewDefectRow,
 } from '@/services/real/productAgent';
 import type { Customer, Product } from './types';
@@ -139,8 +138,8 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'features' && (
-        <SectionShell title="功能（跨产品）" desc="所有产品的功能汇总，点击进入功能详情">
-          <FeaturesTable isAdmin={isAdmin} products={products} />
+        <SectionShell title="功能" desc="按产品查看功能目录；与单产品内功能 tab 布局一致，支持版本筛选">
+          <OverviewFeaturesPanel isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
       {active === 'defects' && (
@@ -484,46 +483,52 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
   );
 }
 
-function FeaturesTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
-  const navigate = useNavigate();
-  const [rows, setRows] = useState<OverviewFeatureRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
-  const [mine, setMine] = useState(false);
-  const [showImport, setShowImport] = useState(false);
+/** 主页功能面板：先选产品，再复用单产品内的 FeatureCatalogTab（目录树 + 表格） */
+function OverviewFeaturesPanel({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+  const [productId, setProductId] = useState('');
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const res = await getOverviewFeatures({ keyword: keyword.trim() || undefined, mine: mine || undefined });
-    if (res.success) setRows(res.data.items);
-    setLoading(false);
-  }, [keyword, mine]);
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    if (products.length === 0) {
+      setProductId('');
+      return;
+    }
+    setProductId((prev) => (prev && products.some((p) => p.id === prev) ? prev : products[0].id));
+  }, [products]);
 
-  if (loading) return <MapSectionLoader text="正在加载功能…" />;
+  if (products.length === 0) {
+    return <div className="text-center text-white/40 text-sm py-12">还没有可查看的产品，请先在「产品」中创建。</div>;
+  }
+
   return (
-    <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={<><MineToggle mine={mine} setMine={setMine} />{isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}</>} />
-      {rows.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的功能' : '没有功能'}</div>
-      ) : (
-        <DataTable
-          rows={rows}
-          onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/feature/${r.id}`)}
-          columns={[
-            { header: '编号', render: (r) => <span className="text-white/40 text-xs">{r.featureNo}</span> },
-            { header: '名称', render: (r) => <span className="text-white/90">{r.title}</span> },
-            { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
-            { header: '状态', render: (r) => <span className="text-white/55 text-xs">{r.currentState || '-'}</span> },
-            { header: '处理人', render: (r) => <span className="text-white/55 text-xs">{r.assigneeName || '-'}</span> },
-            { header: '实现需求', render: (r) => <span className="text-white/55 text-xs">{r.requirementCount}</span> },
-            { header: '更新', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
-          ]}
-        />
-      )}
-      {showImport && <ProductHistoryImportDialog type="feature" products={products} onClose={() => setShowImport(false)} onImported={reload} />}
+    <div className="flex min-h-[640px] flex-col overflow-hidden rounded-lg border border-white/10">
+      <div className="shrink-0 flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-[#13151a] px-4 py-2.5">
+        <span className="mr-1 self-center text-[11px] text-white/40">产品</span>
+        {products.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => setProductId(p.id)}
+            className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
+              productId === p.id
+                ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-100'
+                : 'border-white/10 text-white/55 hover:bg-white/5'
+            }`}
+          >
+            {p.name}
+          </button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1">
+        {productId && (
+          <FeatureCatalogTab
+            key={productId}
+            productId={productId}
+            showImport={isAdmin}
+            showCreate
+            showReleaseLink={false}
+          />
+        )}
+      </div>
     </div>
   );
 }
