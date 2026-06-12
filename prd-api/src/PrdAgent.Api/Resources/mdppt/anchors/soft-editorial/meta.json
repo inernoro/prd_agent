@@ -1,6 +1,6 @@
 {
   "name": "soft-editorial",
-  "upstream": "zarazhangrui/beautiful-html-templates (soft-editorial)",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-soft-editorial)",
   "license": "MIT",
   "slideCount": 12,
   "layouts": [

@@ -1,6 +1,6 @@
 {
   "name": "bold-poster",
-  "upstream": "zarazhangrui/beautiful-html-templates (bold-poster)",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-bold-poster)",
   "license": "MIT",
   "slideCount": 10,
   "layouts": [

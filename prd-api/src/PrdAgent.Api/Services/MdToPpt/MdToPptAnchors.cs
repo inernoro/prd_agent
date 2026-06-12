@@ -37,8 +37,8 @@ public static class MdToPptAnchors
         ["sunset-bold"] = "bold-poster",
         ["editorial-ink"] = "soft-editorial",
         ["kami-paper"] = "vellum",
-        ["tech-dark"] = "monochrome",
-        ["aurora-gradient"] = "bold-poster",
+        ["tech-dark"] = "cyber-terminal",
+        ["aurora-gradient"] = "dark-graph",
         ["royal-velvet"] = "vellum",
         ["ocean-glass"] = "soft-editorial",
     };
@@ -98,9 +98,10 @@ public static class MdToPptAnchors
             (new[] { "数据", "数字", "指标", "看板", "stat" }, new[] { "stats", "data", "numbers", "chart", "pie", "financial" }),
             (new[] { "对比", "比较", "vs" }, new[] { "compare", "split", "matrix" }),
             (new[] { "引用", "金句", "观点", "quote" }, new[] { "quote", "statement", "manifesto" }),
-            (new[] { "时间线", "里程碑", "排期", "流程", "步骤" }, new[] { "timeline", "process", "roadmap", "cycle", "method" }),
+            (new[] { "时间线", "里程碑", "排期", "流程", "步骤" }, new[] { "timeline", "process", "roadmap", "cycle", "method", "pipeline" }),
             (new[] { "列表", "清单", "要点", "功能" }, new[] { "list", "grid", "index", "services", "pillars", "insights" }),
             (new[] { "表格", "table" }, new[] { "table", "dense", "financial" }),
+            (new[] { "代码", "命令", "终端", "code" }, new[] { "code", "terminal" }),
         };
         foreach (var (keys, hints) in keywordMap)
         {

@@ -1,6 +1,6 @@
 {
   "name": "retro-zine",
-  "upstream": "zarazhangrui/beautiful-html-templates (retro-zine)",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-retro-zine)",
   "license": "MIT",
   "slideCount": 10,
   "layouts": [

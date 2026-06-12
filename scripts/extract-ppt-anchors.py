@@ -22,12 +22,49 @@ from pathlib import Path
 SRC = Path(sys.argv[1] if len(sys.argv) > 1 else '/tmp/open-design')
 DST = Path(__file__).resolve().parent.parent / 'prd-api/src/PrdAgent.Api/Resources/mdppt'
 
+# (锚定名, 源目录名)。zhangzara 系列自带导航运行时；hermes/graphify 是纯 CSS
+# is-active 静态 deck（无 script），提取时由 NAV_RUNTIME 补一段通用键盘导航。
 ANCHORS = [
-    'cobalt-grid', 'retro-zine', 'coral', 'monochrome',
-    'grove', 'bold-poster', 'soft-editorial', 'vellum',
+    ('cobalt-grid', 'html-ppt-zhangzara-cobalt-grid'),
+    ('retro-zine', 'html-ppt-zhangzara-retro-zine'),
+    ('coral', 'html-ppt-zhangzara-coral'),
+    ('monochrome', 'html-ppt-zhangzara-monochrome'),
+    ('grove', 'html-ppt-zhangzara-grove'),
+    ('bold-poster', 'html-ppt-zhangzara-bold-poster'),
+    ('soft-editorial', 'html-ppt-zhangzara-soft-editorial'),
+    ('vellum', 'html-ppt-zhangzara-vellum'),
+    ('cyber-terminal', 'html-ppt-hermes-cyber-terminal'),
+    ('dark-graph', 'html-ppt-graphify-dark-graph'),
 ]
 
-MODIFIERS = {'slide', 'active', 'hairlines', 'dark', 'light', 'on'}
+MODIFIERS = {'slide', 'active', 'is-active', 'hairlines', 'dark', 'light', 'on'}
+
+# 给无运行时模板补的通用导航（toggling is-active；兼容装配端给首块加的 active）
+NAV_RUNTIME = """
+<script>
+(function () {
+  var slides = [].slice.call(document.querySelectorAll('.slide'));
+  if (!slides.length) return;
+  var i = slides.findIndex(function (s) { return s.classList.contains('is-active'); });
+  if (i < 0) {
+    i = Math.max(0, slides.findIndex(function (s) { return s.classList.contains('active'); }));
+    slides[i].classList.add('is-active');
+  }
+  function go(n) {
+    if (n < 0 || n >= slides.length || n === i) return;
+    slides[i].classList.remove('is-active');
+    i = n;
+    slides[i].classList.add('is-active');
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(i + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(i - 1); }
+    else if (e.key === 'Home') { go(0); }
+    else if (e.key === 'End') { go(slides.length - 1); }
+  });
+})();
+</script>
+"""
 TAG_RE = re.compile(r'<(/?)(div|section|article)\b[^>]*?(/?)>', re.I)
 OPEN_RE = re.compile(r'<(div|section|article)\b[^>]*class="([^"]*)"[^>]*>', re.I)
 
@@ -62,10 +99,20 @@ def find_slide_blocks(html: str):
     return blocks
 
 
-def layout_name(cls: str, idx: int) -> str:
+COMMENT_RE = re.compile(r'<!--\s*\d+\.\s*([A-Za-z][^>]*?)\s*-->')
+
+
+def layout_name(cls: str, idx: int, preceding: str = '') -> str:
     for token in cls.split():
         if token not in MODIFIERS:
             return token
+    # 类名只有 slide 的模板（hermes/graphify）：从紧邻的编号注释取版式名
+    # （<!-- 6. STATS --> -> stats）
+    comments = COMMENT_RE.findall(preceding)
+    if comments:
+        name = re.sub(r'[^a-z0-9]+', '-', comments[-1].lower()).strip('-')
+        if name:
+            return name
     return f'layout-{idx + 1:02d}'
 
 
@@ -76,8 +123,12 @@ def text_summary(block: str, limit: int = 90) -> str:
     return t[:limit]
 
 
-def extract_anchor(name: str) -> None:
-    src_dir = SRC / 'design-templates' / f'html-ppt-zhangzara-{name}'
+def clean_class_attr(cls: str) -> str:
+    return ' '.join(t for t in cls.split() if t not in ('active', 'is-active'))
+
+
+def extract_anchor(name: str, src_name: str) -> None:
+    src_dir = SRC / 'design-templates' / src_name
     html = (src_dir / 'example.html').read_text(encoding='utf-8')
     out = DST / 'anchors' / name
     if out.exists():
@@ -90,21 +141,35 @@ def extract_anchor(name: str) -> None:
 
     prefix = html[:blocks[0][0]]
     suffix = html[blocks[-1][1]:]
+    # 无导航运行时的静态 deck：补通用键盘导航（插在 </body> 前，无则追加）
+    if '<script' not in html.lower():
+        if '</body>' in suffix:
+            suffix = suffix.replace('</body>', NAV_RUNTIME + '\n</body>', 1)
+        else:
+            suffix = suffix + NAV_RUNTIME
     (out / 'prefix.html').write_text(prefix, encoding='utf-8')
     (out / 'suffix.html').write_text(suffix, encoding='utf-8')
 
     layouts = []
+    # 首块的编号注释在 prefix 尾部，回看 300 字符以便命名 cover
+    prev_end = max(0, blocks[0][0] - 300)
     for i, (s, e, cls) in enumerate(blocks):
-        block = html[s:e].replace(' active"', '"').replace('"slide active ', '"slide ')
-        lname = layout_name(cls, i)
+        block = (html[s:e]
+                 .replace(' is-active"', '"').replace('"slide is-active ', '"slide ')
+                 .replace(' active"', '"').replace('"slide active ', '"slide '))
+        lname = layout_name(cls, i, preceding=html[prev_end:s])
+        prev_end = e
         fname = f'{i + 1:02d}-{lname}.html'
         (out / 'slides' / fname).write_text(block, encoding='utf-8')
-        layouts.append({'file': fname, 'layout': lname, 'classAttr': cls.replace('active', '').strip(),
+        layouts.append({'file': fname, 'layout': lname, 'classAttr': clean_class_attr(cls),
                         'chars': len(block), 'summary': text_summary(block)})
 
-    shutil.copyfile(src_dir / 'LICENSE', out / 'LICENSE')
+    license_src = src_dir / 'LICENSE'
+    if not license_src.exists():
+        license_src = SRC / 'LICENSE'
+    shutil.copyfile(license_src, out / 'LICENSE')
     (out / 'meta.json').write_text(
-        json.dumps({'name': name, 'upstream': f'zarazhangrui/beautiful-html-templates ({name})',
+        json.dumps({'name': name, 'upstream': f'nexu-io/open-design ({src_name})',
                     'license': 'MIT', 'slideCount': len(blocks), 'layouts': layouts},
                    ensure_ascii=False, indent=2),
         encoding='utf-8')
@@ -113,8 +178,8 @@ def extract_anchor(name: str) -> None:
 
 def main() -> None:
     DST.mkdir(parents=True, exist_ok=True)
-    for name in ANCHORS:
-        extract_anchor(name)
+    for name, src_name in ANCHORS:
+        extract_anchor(name, src_name)
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 {
   "name": "vellum",
-  "upstream": "zarazhangrui/beautiful-html-templates (vellum)",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-vellum)",
   "license": "MIT",
   "slideCount": 9,
   "layouts": [

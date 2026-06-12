@@ -1,6 +1,6 @@
 {
   "name": "coral",
-  "upstream": "zarazhangrui/beautiful-html-templates (coral)",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-coral)",
   "license": "MIT",
   "slideCount": 10,
   "layouts": [

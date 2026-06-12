@@ -1,6 +1,6 @@
 {
   "name": "grove",
-  "upstream": "zarazhangrui/beautiful-html-templates (grove)",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-grove)",
   "license": "MIT",
   "slideCount": 12,
   "layouts": [

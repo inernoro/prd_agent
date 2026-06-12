@@ -1,6 +1,6 @@
 {
   "name": "monochrome",
-  "upstream": "zarazhangrui/beautiful-html-templates (monochrome)",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-monochrome)",
   "license": "MIT",
   "slideCount": 16,
   "layouts": [
