@@ -21,6 +21,11 @@ const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'version', label: '版本' },
 ];
 
+function defaultWorkflowName(entityType: ProductEntityType): string {
+  const label = ENTITY_TYPES.find((e) => e.value === entityType)?.label ?? '对象';
+  return `${label}工作流`;
+}
+
 export function WorkflowTemplateSection() {
   const [entityType, setEntityType] = useState<ProductEntityType>('requirement');
   const [productScope, setProductScope] = useState('');
@@ -64,7 +69,8 @@ export function WorkflowTemplateSection() {
 
 function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityType; productId: string | null }) {
   const [id, setId] = useState<string | undefined>(undefined);
-  const [name, setName] = useState('');
+  /** 仅用于保存时回写 DB 已有名称，不在 UI 展示 */
+  const [persistedName, setPersistedName] = useState('');
   const [states, setStates] = useState<WorkflowState[]>([]);
   const [transitions, setTransitions] = useState<WorkflowTransition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,12 +96,12 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
         ?? res.data.items.find((w) => (w.productId ?? null) === productId);
       if (match) {
         setId(match.id);
-        setName(match.name);
+        setPersistedName(match.name);
         setStates([...match.states].sort((a, b) => a.sortOrder - b.sortOrder));
         setTransitions([...match.transitions]);
       } else {
         setId(undefined);
-        setName(`${ENTITY_TYPES.find((e) => e.value === entityType)?.label}默认流程`);
+        setPersistedName('');
         setStates([]);
         setTransitions([]);
       }
@@ -169,7 +175,7 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
     setMsg(null);
     const res = await upsertWorkflowDefinition({
       id,
-      name: name.trim() || '默认流程',
+      name: persistedName.trim() || defaultWorkflowName(entityType),
       entityType,
       states: states.map((s, idx) => ({ ...s, sortOrder: idx })),
       transitions,
@@ -198,16 +204,7 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
       )}
 
       <div className="flex items-center gap-3 flex-wrap">
-        <h3 className="text-sm font-medium text-white/85">
-          流转设置
-          {name.trim() ? <span className="text-white/40 font-normal">（{name.trim()}）</span> : null}
-        </h3>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="流程名称"
-          className="flex-1 min-w-[160px] max-w-xs px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white outline-none focus:border-cyan-500/40"
-        />
+        <h3 className="text-sm font-medium text-white/85">流转设置</h3>
         <button
           type="button"
           onClick={() => void save()}
