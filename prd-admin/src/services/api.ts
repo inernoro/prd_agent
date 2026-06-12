@@ -1231,6 +1231,18 @@ export const api = {
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
+    // 双链 + 反向链接 + 宇宙图（mentions 账本）
+    mentions: {
+      documentLinks: (entryId: string) => `/api/mentions/documents/${entryId}/links`,
+      storeGraph: (storeId: string) => `/api/mentions/stores/${storeId}/graph`,
+      suggest: (storeId: string, q?: string, limit?: number) => {
+        const qs = new URLSearchParams();
+        if (q) qs.set('q', q);
+        if (limit) qs.set('limit', String(limit));
+        const s = qs.toString();
+        return `/api/mentions/stores/${storeId}/suggest${s ? `?${s}` : ''}`;
+      },
+    },
     // 跨环境 / 本地库↔库 同步
     sync: {
       listAll: () => '/api/document-store/sync/links',

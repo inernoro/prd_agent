@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>双链 + 反向链接 原型预览</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f6f3ee;
+    color: #2b2a28;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .app { display: flex; height: 100vh; }
+
+  /* 左侧文档列表 */
+  .sidebar {
+    width: 240px;
+    background: #efe7df;
+    border-right: 1px solid #e0d6cc;
+    padding: 20px 0;
+    overflow-y: auto;
+  }
+  .sidebar h2 {
+    font-size: 12px;
+    color: #8a7e72;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 0 20px 12px;
+  }
+  .doc-item {
+    padding: 10px 20px;
+    cursor: pointer;
+    font-size: 14px;
+    border-left: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  .doc-item:hover { background: #e6dcd1; }
+  .doc-item.active {
+    background: #ffffff;
+    border-left-color: #3b82f6;
+    font-weight: 600;
+  }
+  .doc-item .meta {
+    font-size: 11px;
+    color: #9a8e82;
+    margin-top: 2px;
+  }
+
+  /* 主区域 */
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .toolbar {
+    padding: 12px 32px;
+    background: #ffffff;
+    border-bottom: 1px solid #e8e0d6;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .mode-tabs {
+    display: flex;
+    gap: 4px;
+    background: #f3ede5;
+    padding: 4px;
+    border-radius: 8px;
+  }
+  .mode-tab {
+    padding: 6px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 6px;
+    color: #6b6157;
+    transition: all 0.15s;
+  }
+  .mode-tab.active {
+    background: #ffffff;
+    color: #2b2a28;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .toolbar .hint {
+    font-size: 12px;
+    color: #9a8e82;
+  }
+
+  .doc-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 40px 80px;
+    background: #fbf8f3;
+  }
+  .doc-title {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .doc-meta {
+    font-size: 12px;
+    color: #9a8e82;
+    margin-bottom: 32px;
+  }
+  .doc-content {
+    font-size: 15px;
+    line-height: 1.9;
+    color: #3a3733;
+  }
+  .doc-content p { margin-bottom: 16px; }
+  .doc-content h2 { font-size: 20px; margin: 24px 0 12px; }
+
+  /* 双链 */
+  .wikilink {
+    color: #3b82f6;
+    text-decoration: none;
+    border-bottom: 1px solid #93c5fd;
+    cursor: pointer;
+    padding: 0 2px;
+    border-radius: 3px;
+    position: relative;
+  }
+  .wikilink:hover {
+    background: #dbeafe;
+    border-bottom-color: #3b82f6;
+  }
+  .wikilink-broken {
+    color: #c2410c;
+    border-bottom: 1px dashed #fdba74;
+  }
+
+  /* 悬停预览卡片 */
+  .preview-card {
+    position: absolute;
+    z-index: 1000;
+    width: 320px;
+    background: #ffffff;
+    border: 1px solid #e0d6cc;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    padding: 16px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .preview-card.show { opacity: 1; }
+  .preview-card .title { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  .preview-card .summary { font-size: 12px; color: #6b6157; line-height: 1.5; }
+  .preview-card .meta { font-size: 11px; color: #9a8e82; margin-top: 8px; }
+
+  /* 反向链接面板 */
+  .backlinks {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 2px solid #e8e0d6;
+  }
+  .backlinks-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: #4a4541;
+    cursor: pointer;
+  }
+  .backlinks-count {
+    background: #e8e0d6;
+    color: #6b6157;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .backlink-card {
+    background: #ffffff;
+    border: 1px solid #e8e0d6;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .backlink-card:hover {
+    border-color: #3b82f6;
+    box-shadow: 0 2px 8px rgba(59,130,246,0.1);
+  }
+  .backlink-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .backlink-excerpt {
+    font-size: 13px;
+    color: #6b6157;
+    line-height: 1.6;
+  }
+  .backlink-excerpt mark {
+    background: #fef3c7;
+    color: #92400e;
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+  .backlink-meta {
+    font-size: 11px;
+    color: #9a8e82;
+    margin-top: 8px;
+  }
+
+  /* 编辑器 */
+  .editor-wrap {
+    position: relative;
+    background: #ffffff;
+    border: 1px solid #e0d6cc;
+    border-radius: 8px;
+    padding: 20px;
+  }
+  .editor {
+    width: 100%;
+    min-height: 400px;
+    border: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 15px;
+    line-height: 1.9;
+    resize: none;
+    background: transparent;
+  }
+
+  /* 双链自动补全下拉 */
+  .autocomplete {
+    position: absolute;
+    background: #ffffff;
+    border: 1px solid #d4c8bb;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    width: 320px;
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 100;
+    display: none;
+  }
+  .autocomplete.show { display: block; }
+  .autocomplete-search {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f0e8de;
+    font-size: 12px;
+    color: #9a8e82;
+  }
+  .autocomplete-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid #f5efe6;
+  }
+  .autocomplete-item:hover, .autocomplete-item.focused {
+    background: #eff6ff;
+  }
+  .autocomplete-item:last-child { border-bottom: none; }
+  .autocomplete-item .title { font-size: 14px; font-weight: 500; }
+  .autocomplete-item .meta { font-size: 11px; color: #9a8e82; margin-top: 2px; }
+  .autocomplete-create {
+    padding: 10px 14px;
+    cursor: pointer;
+    color: #3b82f6;
+    font-size: 13px;
+    background: #f9fafb;
+    border-top: 1px solid #f0e8de;
+  }
+  .autocomplete-create:hover { background: #eff6ff; }
+
+  /* AI 推荐气泡 */
+  .ai-suggest {
+    position: fixed;
+    right: 32px;
+    bottom: 32px;
+    background: #ffffff;
+    border: 1px solid #c7d2fe;
+    border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(99,102,241,0.18);
+    padding: 18px 20px;
+    width: 340px;
+    z-index: 200;
+    display: none;
+  }
+  .ai-suggest.show { display: block; }
+  .ai-suggest .badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: white;
+    font-size: 11px;
+    padding: 2px 10px;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .ai-suggest .question {
+    font-size: 14px;
+    color: #2b2a28;
+    line-height: 1.6;
+    margin-bottom: 12px;
+  }
+  .ai-suggest .question strong {
+    background: #fef3c7;
+    padding: 0 4px;
+    border-radius: 3px;
+  }
+  .ai-suggest .actions { display: flex; gap: 8px; }
+  .ai-suggest button {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #e0d6cc;
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .ai-suggest button.primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: white;
+    border: none;
+  }
+  .ai-suggest button:hover { opacity: 0.9; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #2b2a28;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <h2>知识库</h2>
+    <div class="doc-item active" data-id="d1">
+      知识库设计文档
+      <div class="meta">我的知识库 · 3 天前</div>
+    </div>
+    <div class="doc-item" data-id="d2">
+      Obsidian 调研报告
+      <div class="meta">技术调研 · 今天</div>
+    </div>
+    <div class="doc-item" data-id="d3">
+      2026-Q2 产品规划
+      <div class="meta">产品规划 · 上周</div>
+    </div>
+    <div class="doc-item" data-id="d4">
+      Graph View 调研
+      <div class="meta">Obsidian 子项目 · 今天</div>
+    </div>
+    <div class="doc-item" data-id="d5">
+      周报 2026-W23
+      <div class="meta">日报周报 · 昨天</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <div class="mode-tabs">
+        <div class="mode-tab active" data-mode="read">阅读模式</div>
+        <div class="mode-tab" data-mode="edit">编辑模式</div>
+      </div>
+      <div class="hint">提示：编辑模式下输入 <code>[[</code> 试试看</div>
+    </div>
+
+    <div class="doc-area" id="docArea"></div>
+  </main>
+</div>
+
+<div class="preview-card" id="previewCard"></div>
+
+<div class="ai-suggest" id="aiSuggest">
+  <span class="badge">AI 推荐链接</span>
+  <div class="question">
+    检测到你在正文中提到了 <strong>反向链接</strong>，知识库里有同名文档<br>
+    要不要把它链到 <strong>《反向链接设计草案》</strong>？
+  </div>
+  <div class="actions">
+    <button onclick="dismissAi()">忽略</button>
+    <button class="primary" onclick="acceptAi()">链上</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// 假数据：5 篇文档 + 反向链接关系
+const DOCS = {
+  d1: {
+    title: '知识库设计文档',
+    meta: '张三 · 3 天前更新',
+    summary: '阐述本系统知识库的整体架构、数据模型、访问控制三轴和扩展点。',
+    content: `<h2>背景</h2>
+<p>我们当前的知识库基于 <span class="wikilink" data-target="d4">文档空间架构 v2</span> 设计，已经支持上传、标签、分类、订阅源同步等核心能力，但<strong>缺少文档与文档之间的引用关系</strong>。</p>
+<p>这导致每篇文档都是孤岛——用户写完丢那儿，再也没人记得它和别的文档有什么关联。</p>
+<h2>核心目标</h2>
+<p>引入 wiki 风格的双向链接（双链），让用户可以在写作时 @ 其他文档，系统自动维护反向索引。详细技术方案见 <span class="wikilink" data-target="d2">Obsidian 调研报告</span>，可视化方案见 <span class="wikilink" data-target="d4">Graph View 调研</span>。</p>
+<h2>访问控制</h2>
+<p>双链不引入新的访问轴，沿用现有「我的 / 团队 / 公开」三轴。如果引用了你没权限看的文档，蓝色链接显示但点击提示无权限。</p>`,
+    raw: `# 知识库设计文档
+
+## 背景
+我们当前的知识库基于 [[文档空间架构 v2]] 设计，已经支持上传、标签、分类、订阅源同步等核心能力，但缺少文档与文档之间的引用关系。
+
+## 核心目标
+引入 wiki 风格的双向链接（双链），让用户可以在写作时 @ 其他文档。详细技术方案见 [[Obsidian 调研报告]]。
+`
+  },
+  d2: {
+    title: 'Obsidian 调研报告',
+    meta: '李四 · 今天',
+    summary: '调研 Obsidian 是否开源、核心玩法、能否融入我们的知识库。',
+    content: `<h2>开源状态</h2>
+<p>Obsidian 本体不开源，但插件生态全部开源。我们不能直接 fork 代码，但可以借鉴它的交互范式和 markdown 双链语法。</p>
+<h2>核心玩法</h2>
+<p>三件事撑起整个产品：双向链接、反向链接面板、宇宙图（Graph View）。详见 <span class="wikilink" data-target="d4">Graph View 调研</span> 子文档。</p>
+<h2>融入计划</h2>
+<p>分两步走：先做 <strong>双链 + 反向链接</strong>（这是地基），再做 Graph View。整体方案对齐 <span class="wikilink" data-target="d1">知识库设计文档</span> 的扩展点章节。</p>
+<p>本季度优先级见 <span class="wikilink" data-target="d3">2026-Q2 产品规划</span>。</p>`,
+    raw: `# Obsidian 调研报告
+
+## 核心玩法
+三件事撑起整个产品：双向链接、反向链接面板、宇宙图（Graph View）。详见 [[Graph View 调研]] 子文档。
+
+## 融入计划
+对齐 [[知识库设计文档]] 的扩展点章节。本季度优先级见 [[2026-Q2 产品规划]]。
+`
+  },
+  d3: {
+    title: '2026-Q2 产品规划',
+    meta: '王五 · 上周',
+    summary: '本季度核心目标与优先级排序。',
+    content: `<h2>本季度核心目标</h2>
+<p>本季度核心目标基于 <span class="wikilink" data-target="d1">知识库设计文档</span> 推进，重点交付双链能力。</p>
+<p>技术方案对标 <span class="wikilink" data-target="d2">Obsidian 调研报告</span> 提出的三步路线图。</p>
+<h2>里程碑</h2>
+<p>4 月底：双链 + 反向链接上线；5 月底：Graph View 上线；6 月：AI 推荐潜在链接。</p>`,
+    raw: `# 2026-Q2 产品规划
+
+本季度核心目标基于 [[知识库设计文档]] 推进。
+技术方案对标 [[Obsidian 调研报告]] 路线图。`
+  },
+  d4: {
+    title: 'Graph View 调研',
+    meta: '李四 · 今天',
+    summary: '宇宙图的实现技术选型和交互设计。',
+    content: `<h2>技术选型</h2>
+<p>复用涌现探索器的 ReactFlow 基础，节点是文档、边是双链关系。手势遵循统一规范（两指拖动平移、捏合缩放）。</p>
+<h2>交互亮点</h2>
+<p>按标签自动上色，被引用越多节点越大，鼠标悬停弹出预览卡片——和 <span class="wikilink" data-target="d2">Obsidian 调研报告</span> 中描述的 Obsidian 行为一致。</p>
+<p>AI 加分项：自动推荐潜在连线（虚线），详见 <span class="wikilink" data-target="d1">知识库设计文档</span> 扩展章节。</p>`,
+    raw: '# Graph View 调研\n\n复用 [[Obsidian 调研报告]] 中描述的范式。'
+  },
+  d5: {
+    title: '周报 2026-W23',
+    meta: '张三 · 昨天',
+    summary: '本周关键进展和下周计划。',
+    content: `<h2>本周完成</h2>
+<p>完成 <span class="wikilink" data-target="d1">知识库设计文档</span> 第二轮评审，对齐了 <span class="wikilink" data-target="d3">2026-Q2 产品规划</span> 的优先级。</p>
+<h2>下周计划</h2>
+<p>开始双链 MVP 开发，验收标准见 <span class="wikilink" data-target="d2">Obsidian 调研报告</span>。</p>`,
+    raw: '# 周报\n\n完成 [[知识库设计文档]] 评审。'
+  }
+};
+
+// 反向链接索引（哪些文档引用了 key）
+const BACKLINKS = {
+  d1: [
+    { from: 'd2', excerpt: '整体方案对齐 <mark>知识库设计文档</mark> 的扩展点章节。' },
+    { from: 'd3', excerpt: '本季度核心目标基于 <mark>知识库设计文档</mark> 推进，重点交付双链能力。' },
+    { from: 'd4', excerpt: 'AI 加分项：自动推荐潜在连线，详见 <mark>知识库设计文档</mark> 扩展章节。' },
+    { from: 'd5', excerpt: '完成 <mark>知识库设计文档</mark> 第二轮评审，对齐了优先级。' }
+  ],
+  d2: [
+    { from: 'd3', excerpt: '技术方案对标 <mark>Obsidian 调研报告</mark> 提出的三步路线图。' },
+    { from: 'd4', excerpt: '和 <mark>Obsidian 调研报告</mark> 中描述的 Obsidian 行为一致。' },
+    { from: 'd5', excerpt: '开始双链 MVP 开发，验收标准见 <mark>Obsidian 调研报告</mark>。' }
+  ],
+  d3: [
+    { from: 'd5', excerpt: '对齐了 <mark>2026-Q2 产品规划</mark> 的优先级。' }
+  ],
+  d4: [
+    { from: 'd1', excerpt: '可视化方案见 <mark>Graph View 调研</mark>。' },
+    { from: 'd2', excerpt: '详见 <mark>Graph View 调研</mark> 子文档。' }
+  ],
+  d5: []
+};
+
+let currentDocId = 'd1';
+let currentMode = 'read';
+
+function renderDoc() {
+  const doc = DOCS[currentDocId];
+  const area = document.getElementById('docArea');
+
+  if (currentMode === 'read') {
+    const backlinks = BACKLINKS[currentDocId] || [];
+    const backlinkHtml = backlinks.length ? `
+      <div class="backlinks">
+        <div class="backlinks-header">
+          被以下文档引用 <span class="backlinks-count">${backlinks.length}</span>
+        </div>
+        ${backlinks.map(bl => {
+          const fromDoc = DOCS[bl.from];
+          return `<div class="backlink-card" onclick="switchDoc('${bl.from}')">
+            <div class="backlink-title">${fromDoc.title}</div>
+            <div class="backlink-excerpt">${bl.excerpt}</div>
+            <div class="backlink-meta">${fromDoc.meta}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    ` : `<div class="backlinks"><div class="backlinks-header" style="color:#9a8e82;">还没有文档引用这篇</div></div>`;
+
+    area.innerHTML = `
+      <div class="doc-title">${doc.title}</div>
+      <div class="doc-meta">${doc.meta}</div>
+      <div class="doc-content">${doc.content}</div>
+      ${backlinkHtml}
+    `;
+    bindWikilinks();
+  } else {
+    area.innerHTML = `
+      <div class="doc-title">${doc.title}</div>
+      <div class="doc-meta">${doc.meta} · 编辑中</div>
+      <div class="editor-wrap">
+        <textarea class="editor" id="editor" placeholder="开始写作... 输入 [[ 弹出文档选择">${doc.raw}</textarea>
+        <div class="autocomplete" id="autocomplete"></div>
+      </div>
+      <div style="margin-top:16px;font-size:12px;color:#9a8e82;">
+        提示：把光标移到末尾，输入 <code style="background:#f0e8de;padding:2px 6px;border-radius:3px;">[[</code> 试试自动补全
+      </div>
+    `;
+    bindEditor();
+    setTimeout(() => maybeShowAi(), 800);
+  }
+}
+
+function bindWikilinks() {
+  document.querySelectorAll('.wikilink').forEach(el => {
+    el.addEventListener('click', e => {
+      const target = el.dataset.target;
+      if (DOCS[target]) switchDoc(target);
+      else toast('该文档不存在');
+    });
+    el.addEventListener('mouseenter', e => showPreview(el));
+    el.addEventListener('mouseleave', hidePreview);
+  });
+}
+
+function showPreview(el) {
+  const target = el.dataset.target;
+  const doc = DOCS[target];
+  if (!doc) return;
+  const card = document.getElementById('previewCard');
+  card.innerHTML = `
+    <div class="title">${doc.title}</div>
+    <div class="summary">${doc.summary}</div>
+    <div class="meta">${doc.meta}</div>
+  `;
+  const rect = el.getBoundingClientRect();
+  card.style.left = (rect.left) + 'px';
+  card.style.top = (rect.bottom + 8) + 'px';
+  card.classList.add('show');
+}
+
+function hidePreview() {
+  document.getElementById('previewCard').classList.remove('show');
+}
+
+function switchDoc(id) {
+  currentDocId = id;
+  document.querySelectorAll('.doc-item').forEach(it => {
+    it.classList.toggle('active', it.dataset.id === id);
+  });
+  renderDoc();
+  hidePreview();
+  hideAi();
+}
+
+function setMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.mode === mode);
+  });
+  renderDoc();
+}
+
+// 编辑器：[[ 弹出自动补全
+function bindEditor() {
+  const editor = document.getElementById('editor');
+  const ac = document.getElementById('autocomplete');
+  let activeQuery = '';
+
+  editor.addEventListener('input', e => {
+    const text = editor.value;
+    const pos = editor.selectionStart;
+    const before = text.substring(0, pos);
+    const match = before.match(/\[\[([^\[\]]*)$/);
+    if (match) {
+      activeQuery = match[1];
+      showAutocomplete(activeQuery, editor);
+    } else {
+      hideAutocomplete();
+    }
+  });
+
+  editor.addEventListener('blur', () => {
+    setTimeout(hideAutocomplete, 200);
+  });
+}
+
+function showAutocomplete(query, editor) {
+  const ac = document.getElementById('autocomplete');
+  const matches = Object.entries(DOCS).filter(([id, doc]) =>
+    doc.title.toLowerCase().includes(query.toLowerCase()) && id !== currentDocId
+  );
+
+  let html = `<div class="autocomplete-search">搜索：${query || '(空)'} · 找到 ${matches.length} 篇</div>`;
+  matches.forEach(([id, doc]) => {
+    html += `<div class="autocomplete-item" onclick="insertLink('${id}', '${doc.title}')">
+      <div class="title">${doc.title}</div>
+      <div class="meta">${doc.meta}</div>
+    </div>`;
+  });
+  if (query.trim()) {
+    html += `<div class="autocomplete-create" onclick="createNewDoc('${query.replace(/'/g, "\\'")}')">
+      + 创建新文档 "${query}"
+    </div>`;
+  }
+  ac.innerHTML = html;
+
+  const rect = editor.getBoundingClientRect();
+  const wrapper = editor.parentElement.getBoundingClientRect();
+  ac.style.left = '20px';
+  ac.style.top = '60px';
+  ac.classList.add('show');
+}
+
+function hideAutocomplete() {
+  document.getElementById('autocomplete').classList.remove('show');
+}
+
+function insertLink(id, title) {
+  const editor = document.getElementById('editor');
+  const text = editor.value;
+  const pos = editor.selectionStart;
+  const before = text.substring(0, pos);
+  const after = text.substring(pos);
+  const newBefore = before.replace(/\[\[[^\[\]]*$/, `[[${title}]]`);
+  editor.value = newBefore + after;
+  hideAutocomplete();
+  editor.focus();
+  toast(`已链接到《${title}》`);
+}
+
+function createNewDoc(title) {
+  hideAutocomplete();
+  toast(`将创建新文档《${title}》并自动链上`);
+}
+
+// AI 推荐气泡
+function maybeShowAi() {
+  if (currentDocId === 'd2' && currentMode === 'edit') {
+    document.getElementById('aiSuggest').classList.add('show');
+  }
+}
+function dismissAi() { hideAi(); }
+function acceptAi() { hideAi(); toast('已添加链接到《反向链接设计草案》'); }
+function hideAi() { document.getElementById('aiSuggest').classList.remove('show'); }
+
+// Toast
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+// 绑事件
+document.querySelectorAll('.doc-item').forEach(it => {
+  it.addEventListener('click', () => switchDoc(it.dataset.id));
+});
+document.querySelectorAll('.mode-tab').forEach(t => {
+  t.addEventListener('click', () => setMode(t.dataset.mode));
+});
+
+renderDoc();
+</script>
+</body>
+</html>

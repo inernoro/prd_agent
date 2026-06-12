@@ -14,6 +14,7 @@ import { parseFrontmatter } from '@/lib/frontmatter';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
 import { MermaidDiagram } from '@/components/ui/MermaidDiagram';
 import { UpdateTimeline, parseMermaidTimeline } from '@/components/ui/UpdateTimeline';
+import { lookupWikilinkTitle } from '@/lib/wikilinkCache';
 // SSOT：与 TOC（markdownToc.ts）共用同一套「标题文本 → slug」规则，
 // 保证目录点击能精确跳到带内嵌 HTML 的标题（rehypeRaw 渲染后）。
 import { headingTextToSlug } from '@/lib/markdownToc';
@@ -84,6 +85,8 @@ const docSanitizeSchema = {
   attributes: {
     ...defaultSchema.attributes,
     '*': [...(defaultSchema.attributes?.['*'] || []), 'id'],
+    // 允许 wikilink: 协议的 href（双链渲染走自定义 a 组件拦截）
+    a: [...(defaultSchema.attributes?.a || []), ['href', /^(?:#|https?:|mailto:|wikilink:).+/]],
     math: ['xmlns'],
   },
   tagNames: [
@@ -91,12 +94,41 @@ const docSanitizeSchema = {
     'math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub',
     'mfrac', 'msqrt', 'mover', 'munder', 'mtable', 'mtr', 'mtd', 'mtext', 'annotation',
   ],
+  // 同时把 wikilink 加进协议白名单（双重保险：有些版本走 protocols，有些走 attribute pattern）
+  protocols: {
+    ...(defaultSchema.protocols ?? {}),
+    href: [
+      ...((defaultSchema.protocols as { href?: string[] } | undefined)?.href ?? ['http', 'https', 'mailto']),
+      'wikilink',
+    ],
+  },
 };
+
+/**
+ * 把 wiki 链接语法 [[标题]] / [[标题|别名]] 转成标准 markdown 链接 [文本](wikilink:标题)
+ * 这样 ReactMarkdown 视为普通链接渲染，由下方 a 组件的自定义 renderer 拦截 wikilink: href
+ * 渲染为可点击的双链样式。点击发送 CustomEvent('wikilink:click')，由上层（DocumentStorePage）
+ * 监听并跳转到对应 entry。详见 doc/design.knowledge-base-mention-network.md。
+ */
+function preprocessWikilinks(body: string): string {
+  if (!body) return body;
+  // 故意不识别嵌套/换行/管道符里的内容，与后端 WikiLinkParser 行为一致。
+  // 用 #wikilink/ 前缀 hash 锚（sanitize 永远放行 # 协议），下方 a 组件 renderer
+  // 优先匹配此前缀。曾尝试自定义 wikilink: 协议，被 rehypeSanitize 协议白名单剥掉
+  // 失败（即使把 wikilink 写进 protocols.href 仍然不稳）。hash 锚最简单可靠。
+  return body.replace(/\[\[([^\[\]\|\n]+?)(?:\|([^\[\]\n]+?))?\]\]/g, (_, title: string, alias?: string) => {
+    const display = (alias ?? title).trim();
+    const target = title.trim();
+    if (!target) return '';
+    return `[${display}](#wikilink/${encodeURIComponent(target)})`;
+  });
+}
 
 function MarkdownViewerBase({ content }: { content: string }) {
   // 剥离首个 YAML frontmatter 块，避免 ---/title:/description: 被当正文渲染。
   // 与左侧标题提取共用 parseFrontmatter（SSOT）。
-  const body = useMemo(() => parseFrontmatter(content).body, [content]);
+  // 同时把 [[xxx]] 双链预处理成标准 markdown 链接（wikilink: 协议）。
+  const body = useMemo(() => preprocessWikilinks(parseFrontmatter(content).body), [content]);
 
   // 图片 lightbox：点击 markdown 中任意 <img> 打开放大模态，支持 ← → 切换。
   // 注意：不能用"每次渲染重置 ref + img renderer 中 push"的方式收集图片！
@@ -190,6 +222,48 @@ function MarkdownViewerBase({ content }: { content: string }) {
           h6: mkHeading('h6'),
           p: ({ children }) => <p className="my-3.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
           a: ({ href, children }) => {
+            // 双链 [[xxx]] → #wikilink/ hash 锚（preprocessWikilinks 转出）。
+            // 必须放在通用 # 锚点分支之前，否则会被当成 in-page anchor 处理。
+            if (href && href.startsWith('#wikilink/')) {
+              const title = decodeURIComponent(href.slice('#wikilink/'.length));
+              // 查缓存判断目标是否存在 → 不存在时改用"虚链接"样式（橙色虚线下划线）
+              const cached = lookupWikilinkTitle(title);
+              const exists = cached !== null;
+              return (
+                <a
+                  href={href}
+                  className={exists ? 'wikilink-anchor' : 'wikilink-anchor wikilink-broken'}
+                  data-wikilink={title}
+                  style={{
+                    color: exists ? 'rgba(124,156,255,0.95)' : 'rgba(255,156,77,0.85)',
+                    background: exists ? 'rgba(124,156,255,0.08)' : 'rgba(255,156,77,0.06)',
+                    padding: '0 4px',
+                    borderRadius: 3,
+                    borderBottom: exists
+                      ? '1px solid rgba(124,156,255,0.45)'
+                      : '1px dashed rgba(255,156,77,0.5)',
+                    textDecoration: 'none',
+                    cursor: 'pointer',
+                  }}
+                  title={exists ? undefined : `「${title}」尚不存在`}
+                  onMouseEnter={(e) => {
+                    document.dispatchEvent(new CustomEvent('wikilink:hover', {
+                      detail: { title, x: e.clientX, y: e.clientY, exists },
+                    }));
+                  }}
+                  onMouseLeave={() => {
+                    document.dispatchEvent(new CustomEvent('wikilink:unhover'));
+                  }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    // 派发到全局，由消费方（DocumentStorePage 等）监听并跳转
+                    document.dispatchEvent(new CustomEvent('wikilink:click', { detail: { title } }));
+                  }}
+                >
+                  {children}
+                </a>
+              );
+            }
             // 锚点 → SPA 内 scroll，不新开标签页
             if (href && href.startsWith('#')) {
               return (
