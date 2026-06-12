@@ -24,3 +24,6 @@
 | feat | prd-admin | 知识库 HTML 文档真渲染：fileTypeRegistry 新增 html 类型（Globe 图标 + html 预览），FilePreview 对 HTML 正文用 sandbox iframe srcDoc 渲染页面而非源码（编辑态仍可改源码） |
 | feat | prd-admin | 知识库双击文件名即可重命名（复用既有重命名弹窗，文件夹双击仍为展开/收起） |
 | polish | prd-admin | 「从网页托管导入」并入文档列表统一「添加」菜单（与新建文档/上传文件/新建文件夹同级），移除右上角独立按钮，内容区上移；HTML 文档不再被 <!DOCTYPE html> 源码首行污染「正文标题」 |
+| fix | prd-api | 知识库上传/编辑被拦 403「无权限」：document-store 的 stores/entries 业务路由从 AdminPermissionMiddleware 豁免（登录 + 业务层 CanRead/CanWrite 鉴权保留）；控制器权限位改为权限服务回查兜底（豁免后中间件不再注入 claims，避免识途/产品知识库管理员判定失效） |
+| fix | prd-admin | 任务开始/截止日期保存后少一天（看似保存不了）：日期改为纯日期字符串提交（与里程碑同口径），不再经本地时区转 UTC ISO |
+| fix | prd-admin | 普通用户搜不到人：成员/干系人/会议参会人三处面板弃用管理员 /api/users 预取，统一走 UserSearchSelect 的 directory 搜索（仅需登录）；组件新增 onSelectUser 回传用户对象供记录姓名快照 |
