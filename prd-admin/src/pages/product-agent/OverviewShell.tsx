@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
 import {
   LayoutDashboard,
@@ -68,11 +68,33 @@ import { distinctOptions, useListFilter, type FilterFieldDef } from './listFilte
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
 
+const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'workflow', 'settings']);
+
+function parseOverviewSection(value: string | null): Section {
+  if (value && SECTION_KEYS.has(value as Section)) return value as Section;
+  return 'dashboard';
+}
+
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
 export function OverviewShell() {
   const navigate = useNavigate();
-  const [active, setActive] = useState<Section>('dashboard');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [active, setActive] = useState<Section>(() => parseOverviewSection(searchParams.get('section')));
+
+  useEffect(() => {
+    setActive(parseOverviewSection(searchParams.get('section')));
+  }, [searchParams]);
+
+  const selectSection = useCallback((section: Section) => {
+    setActive(section);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (section === 'dashboard') next.delete('section');
+      else next.set('section', section);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
