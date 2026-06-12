@@ -100,3 +100,4 @@
 | fix | - | 验收技能 L0 档步骤式证据门禁按档位缩放（Bugbot Medium）：L0 轻量验收不再被「>=3 步骤」硬卡，下限=min(档位截图下限,3) |
 | security | cds | MongoDB 只读 Console $where 正则修复（PR #799 Codex P2）：去掉前导 \b 边界（{/空格后永不成立），堵 db.find({$where:...}) 服务端 JS 谓词绕过 |
 | fix | cds | 部署日志 entrypoint 空格警告字符串去 emoji（⚠ → [警告]，PR #799 Codex P1，铁律 §0） |
+| chore | - | 清理仓库存量验收图片与废弃设计原型：删 doc/acceptance/（43 文件 1.7M 历史验收报告+截图，违反 doc/ 扁平+前缀规则）+ design-mockups/（7 文件 1.1M 零引用设计探索），共减约 2.8M/12 图；gitignore doc/acceptance/ 防本地验收产物再入库 |
