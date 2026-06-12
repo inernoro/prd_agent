@@ -336,8 +336,12 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             || string.IsNullOrWhiteSpace(model.ModelName))
         {
             throw new InfraAgentRuntimeProfileException(
-                InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
-                $"系统模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
+                resolved.KeyUnreadable
+                    ? InfraAgentRuntimeProfileErrorCodes.ApiKeyUnreadable
+                    : InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
+                resolved.KeyUnreadable
+                    ? $"系统模型「{model.Name}」的平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请在 模型平台 重新保存该平台的 key 后重试"
+                    : $"系统模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
                 StatusCodes.Status409Conflict);
         }
 
@@ -423,8 +427,12 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             || string.IsNullOrWhiteSpace(model.ModelName))
         {
             throw new InfraAgentRuntimeProfileException(
-                InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
-                $"模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
+                resolved.KeyUnreadable
+                    ? InfraAgentRuntimeProfileErrorCodes.ApiKeyUnreadable
+                    : InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
+                resolved.KeyUnreadable
+                    ? $"模型「{model.Name}」的平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请在 模型平台 重新保存该平台的 key 后重试"
+                    : $"模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
                 StatusCodes.Status409Conflict);
         }
 
@@ -841,12 +849,16 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return $"模型上游返回 HTTP {statusCode}: {trimmed}";
     }
 
-    private async Task<(string? ApiUrl, string? ApiKey, string? PlatformType)> ResolveModelApiConfigAsync(LLMModel model, CancellationToken ct)
+    private async Task<(string? ApiUrl, string? ApiKey, string? PlatformType, bool KeyUnreadable)> ResolveModelApiConfigAsync(LLMModel model, CancellationToken ct)
     {
         var apiUrl = NormalizeOptional(model.ApiUrl);
-        var apiKey = string.IsNullOrWhiteSpace(model.ApiKeyEncrypted)
-            ? null
-            : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, GetJwtSecret());
+        var keyUnreadable = false;
+        string? apiKey = null;
+        if (!string.IsNullOrWhiteSpace(model.ApiKeyEncrypted))
+        {
+            apiKey = NormalizeOptional(ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, GetJwtSecret()));
+            keyUnreadable |= apiKey == null; // 密文存在但解不出 = 加密密钥不匹配
+        }
         string? platformType = null;
 
         if (!string.IsNullOrWhiteSpace(model.PlatformId))
@@ -855,12 +867,16 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             if (platform != null)
             {
                 apiUrl ??= NormalizeOptional(platform.ApiUrl);
-                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret());
+                if (apiKey == null && !string.IsNullOrWhiteSpace(platform.ApiKeyEncrypted))
+                {
+                    apiKey = NormalizeOptional(ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret()));
+                    keyUnreadable |= apiKey == null;
+                }
                 platformType = NormalizeOptional(platform.PlatformType);
             }
         }
 
-        return (apiUrl, apiKey, platformType);
+        return (apiUrl, apiKey, platformType, apiKey == null && keyUnreadable);
     }
 
     private static string InferProtocol(string? platformType, string apiUrl)

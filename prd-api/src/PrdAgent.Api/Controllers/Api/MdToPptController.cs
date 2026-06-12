@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -40,6 +41,7 @@ public class MdToPptController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<MdToPptController> _logger;
 
     // PPT 系统提示词（按风格主题生成不同设计系统）。
@@ -317,6 +319,7 @@ public class MdToPptController : ControllerBase
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IInfraAgentRuntimeProfileService runtimeProfiles,
+        IConfiguration configuration,
         ILogger<MdToPptController> logger)
     {
         _sessions = sessions;
@@ -324,6 +327,7 @@ public class MdToPptController : ControllerBase
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _runtimeProfiles = runtimeProfiles;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -900,14 +904,40 @@ public class MdToPptController : ControllerBase
         // 已物化为运行配置的池模型标记出来（弹层里直接显示「已就绪」）
         var profiles = await ListVisibleRuntimeProfilesAsync(userId, CancellationToken.None);
         var readyModels = profiles.Select(p => p.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return Ok(models.Select(m => new
+
+        // 凭据预检（2026-06-12 用户报「选 Qwen 报缺少 API key」）：物化运行配置需要解出
+        // 平台/模型 key 的明文，部署环境的加密密钥若与存量密文不匹配会解密为空——
+        // 这种模型在弹层里必须提前标记不可用并给出原因，不能让用户点了才撞 4xx。
+        var jwtSecret = _configuration["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
+        var platformById = platforms.ToDictionary(p => p.Id, p => p);
+        string? UnavailableReason(LLMModel m)
         {
-            id = m.Id,
-            name = m.Name,
-            model = m.ModelName,
-            platform = m.PlatformId != null && platformNames.TryGetValue(m.PlatformId, out var pn) ? pn : "",
-            isMain = m.IsMain,
-            ready = readyModels.Contains(m.ModelName.Trim()),
+            // 已有运行配置的模型不依赖现解密（key 已物化），始终可选
+            if (readyModels.Contains(m.ModelName.Trim())) return null;
+            var cipher = m.ApiKeyEncrypted;
+            if (string.IsNullOrWhiteSpace(cipher) && m.PlatformId != null
+                && platformById.TryGetValue(m.PlatformId, out var plat))
+                cipher = plat.ApiKeyEncrypted;
+            if (string.IsNullOrWhiteSpace(cipher)) return "平台未配置 API key";
+            if (string.IsNullOrWhiteSpace(ApiKeyCrypto.Decrypt(cipher, jwtSecret)))
+                return "平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请在 模型平台 重新保存该平台的 key";
+            return null;
+        }
+
+        return Ok(models.Select(m =>
+        {
+            var reason = UnavailableReason(m);
+            return new
+            {
+                id = m.Id,
+                name = m.Name,
+                model = m.ModelName,
+                platform = m.PlatformId != null && platformNames.TryGetValue(m.PlatformId, out var pn) ? pn : "",
+                isMain = m.IsMain,
+                ready = readyModels.Contains(m.ModelName.Trim()),
+                available = reason == null,
+                unavailableReason = reason,
+            };
         }));
     }
 

@@ -2697,10 +2697,14 @@ export function MdToPptAgentPage() {
                               return m.model.toLowerCase().includes(q) || m.name.toLowerCase().includes(q) || m.platform.toLowerCase().includes(q);
                             })
                             .slice(0, 30)
-                            .map((m) => (
+                            .map((m) => {
+                              // 凭据预检不过的模型置灰（点了必撞「缺少 API key」4xx），原因放 title
+                              const blocked = m.available === false;
+                              return (
                               <button
                                 key={m.id}
-                                disabled={poolBusyId != null}
+                                disabled={poolBusyId != null || blocked}
+                                title={blocked ? (m.unavailableReason ?? '该模型当前不可用') : undefined}
                                 onClick={async () => {
                                   setPoolBusyId(m.id);
                                   const created = await createMdToPptProfileFromPool(m.id);
@@ -2713,21 +2717,26 @@ export function MdToPptAgentPage() {
                                   setShowModelPicker(false);
                                   if (outlineDraft) prewarmMdToPpt(created.id);
                                 }}
-                                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-white/5 disabled:opacity-50"
+                                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
                               >
                                 <div className="min-w-0 flex-1">
                                   <div className="text-[11px] font-mono truncate text-[var(--text-secondary)]">{m.model}</div>
-                                  <div className="text-[9px] text-[var(--text-tertiary)] truncate">{m.platform}{m.isMain ? ' · 系统主模型' : ''}</div>
+                                  <div className="text-[9px] text-[var(--text-tertiary)] truncate">
+                                    {blocked ? (m.unavailableReason ?? '不可用') : `${m.platform}${m.isMain ? ' · 系统主模型' : ''}`}
+                                  </div>
                                 </div>
                                 {poolBusyId === m.id ? (
                                   <MapSpinner size={10} />
+                                ) : blocked ? (
+                                  <span className="shrink-0 text-[9px] text-amber-300/70">不可用</span>
                                 ) : m.ready ? (
                                   <span className="shrink-0 text-[9px] text-emerald-300/80">已就绪</span>
                                 ) : (
                                   <span className="shrink-0 text-[9px] text-[var(--text-tertiary)]">点选即用</span>
                                 )}
                               </button>
-                            ))}
+                              );
+                            })}
                           {poolModels.length === 0 && (
                             <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)]">模型池加载中或为空...</div>
                           )}

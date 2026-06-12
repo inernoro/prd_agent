@@ -205,6 +205,9 @@ export interface MdToPptPoolModelItem {
   platform: string;
   isMain: boolean;
   ready: boolean;
+  /** 凭据预检：false = 物化必失败（平台 key 缺失/解密失败），弹层置灰 */
+  available?: boolean;
+  unavailableReason?: string | null;
 }
 
 /** 模型池候选（弹层「从模型池直选」）：选中即物化为运行配置，配置原样传给 CDS */
