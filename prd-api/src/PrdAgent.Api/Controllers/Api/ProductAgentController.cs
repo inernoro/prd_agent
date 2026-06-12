@@ -1285,8 +1285,8 @@ public class ProductAgentController : ControllerBase
             var existing = await _db.RequirementTypes.Find(t => t.Id == request.Id && !t.IsDeleted).FirstOrDefaultAsync();
             if (existing == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "需求类型不存在"));
-            var dup = await _db.RequirementTypes.Find(t => t.Name == name && t.Id != request.Id && !t.IsDeleted).AnyAsync();
-            if (dup)
+            var nameConflict = await _db.RequirementTypes.Find(t => t.Name == name && t.Id != request.Id && !t.IsDeleted).AnyAsync();
+            if (nameConflict)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已存在同名需求类型"));
             var oldName = existing.Name;
             var u = Builders<RequirementType>.Update
@@ -1305,8 +1305,8 @@ public class ProductAgentController : ControllerBase
             return Ok(ApiResponse<object>.Ok(updated));
         }
 
-        var dup = await _db.RequirementTypes.Find(t => t.Name == name && !t.IsDeleted).AnyAsync();
-        if (dup)
+        var nameExists = await _db.RequirementTypes.Find(t => t.Name == name && !t.IsDeleted).AnyAsync();
+        if (nameExists)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已存在同名需求类型"));
         var maxOrder = (await _db.RequirementTypes.Find(t => !t.IsDeleted).SortByDescending(t => t.SortOrder)
             .FirstOrDefaultAsync())?.SortOrder ?? -1;
