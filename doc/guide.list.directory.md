@@ -263,6 +263,9 @@
 - [知识库跨环境同步设计](design.document-store-sync) `design.document-store-sync`
   > 任一知识库与另一处库（跨环境/本环境两库）永久令牌配对、单/双向手动同步、血缘 ID 幂等 upsert、签名快照改动检测；含组件架构/数据流/双向决策架构图
 
+- [知识库引用网络设计](design.knowledge-base-mention-network) `design.knowledge-base-mention-network`
+  > mentions 通用 @ 账本 + WikiLinkParser 双链解析 + 反向链接面板 + WikilinkHoverCard + 宇宙图 Graph View 架构设计；MVP 仅 document→document，v2 候选跨实体/AI 补链
+
 - [涌现探索器设计](design.emergence-explorer) `design.emergence-explorer`
   > 种子→探索→涌现三维度 + SSE 流式 + ReactFlow 画布的架构设计
 
@@ -747,6 +750,9 @@
 
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
+
+- [知识库引用网络 · 债务台账](debt.knowledge-base-mention-network) `debt.knowledge-base-mention-network`
+  > 双链/反向链接/宇宙图 MVP 后续债务：跨实体引用、AI 自动补链、时间轴回放等候选项
 
 - [网页托管 · 债务台账](debt.web-hosting) `debt.web-hosting`
   > 3 条 open：reveal 纵向子页 remap / 合成事件 isTrusted=false 长尾 / 未覆盖工作流生成内容
