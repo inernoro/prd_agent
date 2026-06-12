@@ -331,7 +331,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-front-end-agent',
     name: '前端搭档智能体',
     description: '给后端同事用的前端交付助手：接 API、写组件、修报错、看截图现象',
-    icon: 'Code2',
+    icon: 'FolderKanban',
     category: 'builtin',
     type: 'builtin',
     kind: 'agent',
