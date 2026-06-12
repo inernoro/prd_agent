@@ -55,29 +55,32 @@ export function CustomerSearchSelect({
     setQuickOpen(false);
   };
 
+  const quickCreateBtn = (
+    <button
+      type="button"
+      title="快速新建客户"
+      aria-label="快速新建客户"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => { setQuickOpen(true); setQuickName(''); setQuickError(''); }}
+      className="shrink-0 flex items-center justify-center w-7 h-7 rounded-[6px] border border-white/12 bg-white/[0.04] text-white/55 hover:text-cyan-200 hover:border-cyan-500/35 hover:bg-cyan-500/10 transition-colors"
+    >
+      <Plus size={14} />
+    </button>
+  );
+
   return (
-    <div className="flex items-start gap-1.5 w-full">
-      <div className="flex-1 min-w-0">
-        <ItemMultiSearchSelect
-          value={value}
-          onChange={handleChange}
-          options={options}
-          placeholder="搜索客户名称..."
-          countUnit="个"
-          uiSize={uiSize}
-          priorityIds={recentIds}
-          emptyText="暂无客户，可点右侧 + 快速新建"
-        />
-      </div>
-      <button
-        type="button"
-        title="快速新建客户"
-        aria-label="快速新建客户"
-        onClick={() => { setQuickOpen(true); setQuickName(''); setQuickError(''); }}
-        className="shrink-0 flex items-center justify-center w-8 h-8 rounded-[8px] border border-white/12 bg-white/[0.04] text-white/55 hover:text-cyan-200 hover:border-cyan-500/35 hover:bg-cyan-500/10 transition-colors"
-      >
-        <Plus size={15} />
-      </button>
+    <div className="w-full">
+      <ItemMultiSearchSelect
+        value={value}
+        onChange={handleChange}
+        options={options}
+        placeholder="搜索客户名称..."
+        countUnit="个"
+        uiSize={uiSize}
+        priorityIds={recentIds}
+        emptyText="暂无客户，可点 + 快速新建"
+        panelHeaderRight={quickCreateBtn}
+      />
 
       {quickOpen && createPortal(
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/45" onClick={() => setQuickOpen(false)}>

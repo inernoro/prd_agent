@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   comboboxRadius,
@@ -30,11 +30,13 @@ export interface ItemMultiSearchSelectProps {
   lockedIds?: string[];
   /** 无关键词时置顶（如最近使用客户） */
   priorityIds?: string[];
+  /** 下拉面板顶栏右侧（如快速新建） */
+  panelHeaderRight?: ReactNode;
 }
 
 export function ItemMultiSearchSelect({
   value, onChange, options, placeholder = '搜索并选择...', uiSize = 'md', className, style,
-  disabled = false, emptyText = '暂无可选项', countUnit = '项', lockedIds = [], priorityIds = [],
+  disabled = false, emptyText = '暂无可选项', countUnit = '项', lockedIds = [], priorityIds = [], panelHeaderRight,
 }: ItemMultiSearchSelectProps) {
   const { open, setOpen, filter, setFilter, triggerRef, panelRef, inputRef, pos, closePanel } = useItemComboboxPanel(disabled);
   const lockedSet = useMemo(() => new Set(lockedIds), [lockedIds]);
@@ -58,10 +60,20 @@ export function ItemMultiSearchSelect({
 
   const dropdownPanel = open && pos && !disabled && createPortal(
     <div ref={panelRef} className="rounded-[8px] flex flex-col overflow-hidden" style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight, ...itemComboboxPanelStyle }}>
+      {(panelHeaderRight || (!q && priorityIds.length > 0 && filtered.length > 0)) && (
+        <div
+          className="flex items-center justify-between gap-2 px-2 py-1.5 shrink-0"
+          style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+        >
+          {!q && priorityIds.length > 0 && filtered.length > 0 ? (
+            <span className="text-[10px] text-white/35 pl-1">最近使用</span>
+          ) : (
+            <span />
+          )}
+          {panelHeaderRight}
+        </div>
+      )}
       <div className="overflow-auto flex-1 py-1" style={{ minHeight: 0 }}>
-        {!q && priorityIds.length > 0 && filtered.length > 0 && (
-          <div className="px-3 pt-1 pb-0.5 text-[10px] text-white/35">最近使用</div>
-        )}
         {filtered.length === 0 ? (
           <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>{q ? `未找到匹配「${filter}」的${countUnit}` : emptyText}</div>
         ) : filtered.map((o) => (
