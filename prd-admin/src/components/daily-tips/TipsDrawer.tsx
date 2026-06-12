@@ -237,8 +237,11 @@ export function TipsDrawer() {
   useEffect(() => {
     if (!loaded) return;
     if (pageGuideHere) return; // 本页有未走完教程 → 由 Spotlight 自动开讲,不抢着展开抽屉(避免叠加)
-    // 本页有未学会的「轻微提醒更新」→ 由下面的 Spotlight 气泡 effect 独占自动弹,抽屉不抢(避免双弹)
-    if (pageTips.some((t) => isUpdateReminderTip(t) && !t.learned)) return;
+    // 本页有未学会的「轻微提醒更新」且其精确目标页正是当前页 → 由下面的 Spotlight 气泡 effect 独占
+    // 自动弹,抽屉不抢(避免双弹)。必须带精确路由判断:filterPageTips 会把 reminder 前缀匹配到子路由
+    // (/visual-agent/:id),但 reminder 只在精确列表页弹;不判精确路由的话,子路由上的周更新教程抽屉会被
+    // 这条「其实不会弹」的 reminder 误抑制(Bugbot Medium)。
+    if (pageTips.some((t) => isUpdateReminderTip(t) && !t.learned && location.pathname === routePathOf(t.actionUrl))) return;
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     const opened = readAutoOpenedIds();
     const updateTip = pickAutoOpenUpdateTip(pageTips, opened);
@@ -256,7 +259,7 @@ export function TipsDrawer() {
     // pageGuideHere 必须进 deps:否则首屏若落在「有教程页」early-return 后,
     // 切到「有更新页」时本 effect 不再 fire,更新提醒整 session 失效(Bugbot)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, pageTips, pageGuideHere]);
+  }, [loaded, pageTips, pageGuideHere, location.pathname]);
 
   // ── 轻微提醒更新:进入页面自动「悬浮气泡」弹一次,看过即不再显示 ──────────────
   // 用户诉求(2026-06-11):刚上线的小功能(如视觉创作首页可粘贴图片),用一个轻量悬浮气泡
@@ -272,15 +275,14 @@ export function TipsDrawer() {
     if (pageGuideHere) return; // 本页有未走完的新手教程 → 先让 Spotlight 走完整套,不抢
     const reminder = pageTips.find((t) => isUpdateReminderTip(t) && !t.learned);
     if (!reminder || !reminder.sourceId) return;
-    // 只在「精确目标页」且锚点确实在 DOM 里才弹/标记学会(Codex P2):
-    // reminder 是非 page-guide,filterPageTips 会把它匹配到子路由(如 /visual-agent/:id 编辑器),
-    // 但锚点(visual-image-btn)只在列表页存在。若在编辑器子路由弹,会「定位不到目标」走失败卡,
-    // 且 markLearned 永久消费掉,用户再没机会在列表页看到该新功能提醒。故双重门:精确路由 + 目标存在。
+    // 只在「精确目标页」弹/标记学会(Codex P2):reminder 是非 page-guide,filterPageTips 会把它
+    // 前缀匹配到子路由(如 /visual-agent/:id 编辑器),但锚点(visual-image-btn)只在列表页存在。
+    // 精确路由(非子路由前缀)即可阻止「在编辑器子路由弹空目标 + markLearned 永久消费」。
+    // 不在此处再 document.querySelector(锚点):列表页走 Suspense 懒加载,本 effect 首次跑时锚点可能
+    // 还没挂上;若因找不到锚点就 return 且不再重试(deps 不含 DOM 就绪信号),reminder 可能永远不自动弹
+    // (Bugbot High)。锚点就绪交给 SpotlightOverlay 自身轮询(最多 10s + 「正在定位」提示)兜底:
+    // 写 payload 后它会等锚点出现再画气泡;精确路由已保证锚点终会出现,不会误消费。
     if (location.pathname !== routePathOf(reminder.actionUrl)) return;
-    let targetEl: Element | null = null;
-    try { targetEl = reminder.targetSelector ? document.querySelector(reminder.targetSelector) : null; }
-    catch { targetEl = null; }
-    if (!targetEl) return;
     // 同 session 内本页 *-page-guide 刚自动开讲/走完(完成时 markLearned 让 pageGuideHere 同 session 变 null)
     // → 不要紧接着再弹更新提醒:新人刚走完整套教程(里面已讲到该新功能),立刻又弹气泡是重复打断(Codex P2)。
     // 留到「下次进页」(page-guide 非本 session 新开)再弹。filterPageTips 不按 learned 过滤,

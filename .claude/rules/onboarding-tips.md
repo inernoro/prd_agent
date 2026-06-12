@@ -111,7 +111,8 @@
 - **三条防重叠/防重复/防错页约束(2026-06-12,回应 PR #788 review)**:
   1. **同 session 不紧跟 page-guide 弹**:若本页 `*-page-guide` 在本 session 已自动开讲(`tipsAutoStartedGuides` 命中),reminder 当 session **跳过**——新人刚走完整套教程(里面已讲到该新功能),不再立刻弹气泡重复打断;留到下次进页再弹(Codex P2)。
   2. **占当天自动弹额度**:reminder 弹出当下即 `markLearned`,会把自己移出 `pageTips`,使抽屉自动展开 effect 的「有未学会 reminder 就跳过」守卫失效;若本页同时有未学会的周更新教程,抽屉会在气泡上层再自动展开。故 reminder 触发时调 `markAutoOpenedToday()` 占掉日额度,抽屉本 session 不再自动弹(Bugbot Medium)。
-  3. **精确路由 + 目标存在双重门**:reminder 是非 page-guide,`filterPageTips` 会把它匹配到**子路由**(如 `/visual-agent/:id` 编辑器),但锚点(`visual-image-btn`)只在列表页存在。若在子路由弹会走「定位不到目标」失败卡,且 `markLearned` 永久消费掉、用户再没机会在列表页看到。故 reminder 弹出前必须:`location.pathname === routePathOf(actionUrl)`(精确,非子路由前缀)且 `document.querySelector(targetSelector)` 命中,否则不弹也不消费(Codex P2 第二条)。
+  3. **精确路由门(非子路由前缀)**:reminder 是非 page-guide,`filterPageTips` 会把它前缀匹配到**子路由**(如 `/visual-agent/:id` 编辑器),但锚点(`visual-image-btn`)只在列表页存在。故 reminder 弹出前必须 `location.pathname === routePathOf(actionUrl)`(精确等于,非前缀),阻止「在子路由弹空目标 + `markLearned` 永久消费」(Codex P2)。**注意不要在此再 `document.querySelector(锚点)` 当门**:列表页 Suspense 懒加载,effect 首跑时锚点可能未挂,查不到就 return 且 deps 不含 DOM 就绪信号会导致 reminder **永不自动弹**(Bugbot High)。锚点就绪交给 `SpotlightOverlay` 自身轮询(≤10s + 「正在定位」)兜底——精确路由已保证锚点终会出现,不会误消费。
+  4. **抽屉抑制也要判精确路由**:抽屉自动展开 effect 的「本页有未学会 reminder 就跳过」守卫必须带 `location.pathname === routePathOf(t.actionUrl)`,否则子路由(`/visual-agent/:id`)上那条**其实不会弹**的 reminder 会误抑制子路由的周更新教程抽屉(Bugbot Medium)。
 - 判定函数 SSOT:`pageGuideMatch.ts` 的 `isUpdateReminderTip`;守卫测试见 `pageGuideMatch.test.ts` 的「isUpdateReminderTip / 轻微提醒更新走 Spotlight 气泡而非抽屉」套件。
 
 ## 六、相关
