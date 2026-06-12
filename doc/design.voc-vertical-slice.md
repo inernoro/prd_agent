@@ -110,9 +110,12 @@ Body: { productId: string }
 ```
 
 **权限校验（必须在查重/insert 之前，跨两个权限域）**：adopt 横跨涌现与产品两个域，两侧鉴权都要显式做、缺一即越权（IDOR）：
-- **节点侧**：读节点 → 取其 `TreeId` → 校验 `EmergenceTree.OwnerId == 当前 userId`（与 `EmergenceController` 既有变更端点一致，按树属主，不是按节点）。不通过 → 404/403，禁止用猜测的私有 node id 流转他人树的节点。
-- **产品侧**：`FindAccessibleProductAsync(productId, userId)`（与 `ProductAgentController` 创建/转换路径一致）。不通过 → 404/403，禁止把需求塞进无权产品。
-- 两道校验**先于**幂等查重和 insert，避免"先建后拒"泄漏或脏写。即便是命中幂等返回既有需求的分支，也要先过节点属主校验，防止凭 node id 探测他人已流转的需求。
+- **节点侧（两分支都要）**：读节点 → 取其 `TreeId` → 校验 `EmergenceTree.OwnerId == 当前 userId`（与 `EmergenceController` 既有变更端点一致，按树属主，不是按节点）。不通过 → 404/403，禁止用猜测的私有 node id 流转/探测他人树的节点。
+- **产品侧（分支不同，校验对象不同）**：关键——命中幂等分支会**忽略**调用方传入的 `productId`，所以**不能**只校验调用方 productId，否则用户对已有需求所在产品 A 失权后，塞一个自己能访问的产品 B 就能拿回产品 A 的需求（泄漏）。规则：
+  - **insert 分支**（新建）：校验**调用方 `productId`** 可访问（需求要落进这个产品）；
+  - **命中分支**（返回既有需求）：校验**既有需求自身的 `existing.ProductId`** 可访问，而非调用方传入的 productId；不可访问 → 403/conflict，不返回。
+  - 统一用 `FindAccessibleProductAsync(targetProductId, userId)`，`targetProductId` 按分支取调用方 productId 或 `existing.ProductId`。
+- 节点属主校验先于查重；产品校验在确定走哪个分支后、返回/insert 之前。避免"先建后拒"泄漏或脏写。
 
 **幂等语义（一节点只流转一次）**：与缺陷转需求不同——缺陷天然归属一个产品（productId 固定在缺陷上），而涌现节点是产品无关的，productId 由调用方在 adopt 时传入。为避免"同一节点用不同 productId 重复调用却各返回/各新建需求"的歧义，一个节点最多对应一条需求。
 
@@ -120,7 +123,7 @@ Body: { productId: string }
 
 **实现顺序（insert-first + 唯一索引）**：
 
-1. **查重**：`Requirements.Find(SourceEmergenceNodeId == nodeId && !IsDeleted)`，命中即返回既有需求（忽略本次 productId），结束；
+1. **查重**：`Requirements.Find(SourceEmergenceNodeId == nodeId && !IsDeleted)`，命中 → 先校验 `existing.ProductId` 可访问（见上节命中分支规则），通过才返回既有需求（忽略本次 productId），结束；
 2. **insert 需求**（`SourceEmergenceNodeId=nodeId`、`SourceSystem="emergence"`、`ProductId=productId`）——这一步才是"占位"动作；
 3. **并发兜底**：`Requirement.SourceEmergenceNodeId` 上有 **partial unique index，过滤条件 = 非空 且 `IsDeleted: false`**（即只对"活跃且有来源节点"的行唯一）。两个请求同时过了第 1 步查重时，第二条 insert 会被唯一约束拒绝（duplicate key）→ 捕获后回到第 1 步查重、返回已存在的那条，绝不产生两条；
 4. **best-effort 回填节点**：insert 成功后再 `UpdateOne(node, { AdoptedRequirementId: reqId, Status: planned })`。此步**失败也无害**——需求已建成且经 `SourceEmergenceNodeId` 可反查，`AdoptedRequirementId` 只是给 UI 用的反范化指针，可在下次读节点或下次 adopt（会命中第 1 步查重、再次尝试回填）时懒修复。任何一步失败重试都收敛到同一条需求，不卡死、不劈裂。
@@ -147,4 +150,4 @@ Body: { productId: string }
 | 对接伊利存量工单系统 | 中 | 需对方提供 API 与资料，属外部依赖，不可自产，明确为前置条件 |
 | 改善项目追踪字段不全 | 低 | DefectProject 当前仅容器，里程碑/进度/成本为演示态，后续按需补字段 |
 | 需求池来源多样导致口径混乱 | 低 | 统一 `SourceSystem` 枚举（defect/emergence/tapd/manual），前端按来源打标 |
-| adopt 跨权限域越权（IDOR） | 中 | 必须前置双校验：节点按树 `OwnerId == userId` + 产品 `FindAccessibleProductAsync`，先于查重/insert（见 7 节） |
+| adopt 跨权限域越权（IDOR） | 中 | 必须前置双校验：节点按树 `OwnerId == userId`；产品校验**按分支取对象**——insert 校调用方 productId、命中校 `existing.ProductId`（命中分支忽略入参 productId，故不能只校入参，否则失权后可借他产品取回需求）。先于返回/insert（见 7 节） |
