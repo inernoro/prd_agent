@@ -16,3 +16,5 @@
 | fix | prd-admin | 应用配置恢复功能标签（流转矩阵+状态定义），功能详情恢复 WorkflowBar |
 | feat | prd-api | 新增产品批量导入 API（应用管理员，同名跳过） |
 | feat | prd-admin | 产品列表新增导入产品（CSV/Excel）及 19 个应用初始模板 |
+| feat | prd-api | 功能工作流「已取消」改为「已下架」并补全 5 状态说明种子（FeatureWorkflowRevision 1） |
+| feat | prd-admin | 新增 featureWorkflowCatalog 兜底目录与已下架展示名 |

@@ -15,6 +15,9 @@ public static class ProductWorkflowDefaults
     /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认需求流程定义。</summary>
     public const int RequirementWorkflowRevision = 7;
 
+    /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认功能流程定义。</summary>
+    public const int FeatureWorkflowRevision = 1;
+
     /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认缺陷流程定义。</summary>
     public const int DefectWorkflowRevision = 1;
 
@@ -85,26 +88,26 @@ public static class ProductWorkflowDefaults
     public static ProductWorkflowDefinition Feature() => new()
     {
         Id = FeatureDefId,
-        Name = "标准功能流程",
-        Description = "规划中 → 开发中 → 测试中 → 已发布 / 已取消",
+        Name = FeatureWorkflowCatalog.WorkflowName,
+        Description = "规划中 → 开发中 → 测试中 → 已发布 / 已下架",
         EntityType = ProductEntityType.Feature,
         IsDefault = true,
         ProductId = null,
         States = new()
         {
-            new() { Key = "planned",    Label = "规划中", Color = "#9ca3af", IsInitial = true, Category = "todo",  SortOrder = 0 },
-            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 1, SlaHours = 120, WipLimit = 3 },
-            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 2, SlaHours = 48 },
-            new() { Key = "released",   Label = "已发布", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 3 },
-            new() { Key = "cancelled",  Label = "已取消", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 4 },
+            new() { Key = FeatureWorkflowCatalog.Planned, Label = "规划中", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Planned], Color = "#9ca3af", IsInitial = true, Category = "todo", SortOrder = 0 },
+            new() { Key = FeatureWorkflowCatalog.Developing, Label = "开发中", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Developing], Color = "#f59e0b", Category = "doing", SortOrder = 1, SlaHours = 120, WipLimit = 3 },
+            new() { Key = FeatureWorkflowCatalog.Testing, Label = "测试中", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Testing], Color = "#a78bfa", Category = "doing", SortOrder = 2, SlaHours = 48 },
+            new() { Key = FeatureWorkflowCatalog.Released, Label = "已发布", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Released], Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 3 },
+            new() { Key = FeatureWorkflowCatalog.Delisted, Label = "已下架", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Delisted], Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 4 },
         },
         Transitions = new()
         {
-            new() { Key = "start-dev", Label = "开始开发", FromState = "planned",    ToState = "developing", AutoAssignToActor = true },
-            new() { Key = "to-test",   Label = "提交测试", FromState = "developing", ToState = "testing" },
-            new() { Key = "release",   Label = "发布",     FromState = "testing",    ToState = "released" },
-            new() { Key = "cancel",    Label = "取消",     FromState = null,         ToState = "cancelled", RequireComment = true },
-            new() { Key = "reopen",    Label = "重新打开", FromState = null,         ToState = "planned" },
+            new() { Key = "start-dev", Label = "开始开发", FromState = FeatureWorkflowCatalog.Planned, ToState = FeatureWorkflowCatalog.Developing, AutoAssignToActor = true },
+            new() { Key = "to-test", Label = "提交测试", FromState = FeatureWorkflowCatalog.Developing, ToState = FeatureWorkflowCatalog.Testing },
+            new() { Key = "release", Label = "发布", FromState = FeatureWorkflowCatalog.Testing, ToState = FeatureWorkflowCatalog.Released },
+            new() { Key = "delist", Label = "下架", FromState = null, ToState = FeatureWorkflowCatalog.Delisted, RequireComment = true },
+            new() { Key = "reopen", Label = "重新打开", FromState = null, ToState = FeatureWorkflowCatalog.Planned },
         },
     };
 

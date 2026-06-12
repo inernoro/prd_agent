@@ -1638,6 +1638,30 @@ public class ProductAgentController : ControllerBase
                     .Set(w => w.UpdatedAt, DateTime.UtcNow));
         }
 
+        var featDef = ProductWorkflowDefaults.Feature();
+        var existingFeat = await _db.ProductWorkflowDefinitions
+            .Find(w => w.Id == ProductWorkflowDefaults.FeatureDefId && !w.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (existingFeat == null)
+        {
+            featDef.SeedRevision = ProductWorkflowDefaults.FeatureWorkflowRevision;
+            featDef.IsUserCustomized = false;
+            await _db.ProductWorkflowDefinitions.InsertOneAsync(featDef);
+        }
+        else if (!existingFeat.IsUserCustomized
+                 && existingFeat.SeedRevision < ProductWorkflowDefaults.FeatureWorkflowRevision)
+        {
+            await _db.ProductWorkflowDefinitions.UpdateOneAsync(
+                w => w.Id == featDef.Id,
+                Builders<ProductWorkflowDefinition>.Update
+                    .Set(w => w.Name, featDef.Name)
+                    .Set(w => w.Description, featDef.Description)
+                    .Set(w => w.States, featDef.States)
+                    .Set(w => w.Transitions, featDef.Transitions)
+                    .Set(w => w.SeedRevision, ProductWorkflowDefaults.FeatureWorkflowRevision)
+                    .Set(w => w.UpdatedAt, DateTime.UtcNow));
+        }
+
         var defectDef = ProductWorkflowDefaults.Defect();
         var existingDefect = await _db.ProductWorkflowDefinitions
             .Find(w => w.Id == ProductWorkflowDefaults.DefectDefId && !w.IsDeleted)
@@ -1662,12 +1686,13 @@ public class ProductAgentController : ControllerBase
                     .Set(w => w.UpdatedAt, DateTime.UtcNow));
         }
 
-        var seedIds = new[] { ProductWorkflowDefaults.FeatureDefId, ProductWorkflowDefaults.DefectDefId };
+        var seedIds = new[] { ProductWorkflowDefaults.DefectDefId };
         var existingIds = (await _db.ProductWorkflowDefinitions
             .Find(Builders<ProductWorkflowDefinition>.Filter.In(w => w.Id, seedIds))
             .Project(w => w.Id).ToListAsync()).ToHashSet();
         var missingBuiltin = ProductWorkflowDefaults.All()
-            .Where(w => w.Id != ProductWorkflowDefaults.RequirementDefId && !existingIds.Contains(w.Id))
+            .Where(w => w.Id is not (ProductWorkflowDefaults.RequirementDefId or ProductWorkflowDefaults.FeatureDefId)
+                         && !existingIds.Contains(w.Id))
             .ToList();
         if (missingBuiltin.Count > 0)
             await _db.ProductWorkflowDefinitions.InsertManyAsync(missingBuiltin);
