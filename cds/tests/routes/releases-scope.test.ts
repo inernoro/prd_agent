@@ -226,4 +226,45 @@ describe('release control plane project-scope isolation', () => {
       check.id === 'project-scope' && check.status === 'fail'
     ))).toBe(true);
   });
+
+  it('creates a rollback run for the selected successful target version', async () => {
+    const now = new Date().toISOString();
+    stateService.addReleaseRun({
+      releaseId: 'run-a-current',
+      projectId: 'proj-a',
+      branchId: 'branch-a',
+      commitSha: 'branch-a-current',
+      artifact: { type: 'branch-preview', commitSha: 'branch-a-current', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      targetId: 'target-a',
+      planId: 'proj-a:ssh-script',
+      status: 'failed',
+      startedAt: now,
+      logs: [],
+      seq: 0,
+    } as ReleaseRun);
+    stateService.addReleaseRun({
+      releaseId: 'run-a-previous',
+      projectId: 'proj-a',
+      branchId: 'branch-a',
+      commitSha: 'branch-a-previous',
+      artifact: { type: 'branch-preview', commitSha: 'branch-a-previous', branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      targetId: 'target-a',
+      planId: 'proj-a:ssh-script',
+      status: 'success',
+      startedAt: now,
+      finishedAt: now,
+      logs: [],
+      seq: 0,
+    } as ReleaseRun);
+
+    const res = await request(server, 'POST', '/api/releases/runs/run-a-current/rollback', { 'X-Test-Key': KEY_A }, {
+      targetReleaseId: 'run-a-previous',
+    });
+
+    expect(res.status).toBe(202);
+    expect(res.body.run.status).toBe('rollback_running');
+    expect(res.body.run.rollbackOf).toBe('run-a-current');
+    expect(res.body.run.rollbackTargetReleaseId).toBe('run-a-previous');
+    expect(res.body.run.commitSha).toBe('branch-a-previous');
+  });
 });

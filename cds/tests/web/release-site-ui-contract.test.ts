@@ -71,6 +71,9 @@ describe('release site publishing UI contract', () => {
     expect(branchListSource).toContain('进入站点目录');
     expect(branchListSource).toContain('执行 ${scriptOne.replace');
     expect(branchListSource).toContain('执行 ${scriptTwo.replace');
+    expect(branchListSource).toContain('releaseScriptPhase(scriptOne)');
+    expect(releaseCenterSource).toContain("releaseScriptPhase('./fast.sh')");
+    expect(releaseCenterSource).toContain("releaseScriptPhase('./exec_dep.sh')");
     expect(branchListSource).toContain('检查上线地址');
     expect(branchListSource).toContain('标记完成');
     expect(branchListSource).toContain('ReleaseRunStepList');

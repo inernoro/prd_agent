@@ -1056,25 +1056,38 @@ interface StepState {
 function releaseSteps(run: ReleaseRun): StepState[] {
   const failed = run.status.includes('failed');
   const phaseSet = new Set(run.logs.map((log) => log.phase).filter(Boolean));
-  const deployOutput = run.logs.map((log) => log.message).join('\n');
+  const failedPhase = [...run.logs].reverse().find((log) => log.level === 'error')?.phase;
+  const fastPhase = releaseScriptPhase('./fast.sh');
+  const execPhase = releaseScriptPhase('./exec_dep.sh');
+  const fastSeen = phaseSet.has(fastPhase);
+  const execSeen = phaseSet.has(execPhase);
+  const healthSeen = phaseSet.has('healthcheck');
+  const success = run.status === 'success' || run.status === 'rollback_success';
   const base: StepState[] = [
     { id: 'connect', label: '连接服务器', state: phaseSet.has('connect') ? 'done' : 'pending' },
-    { id: 'path', label: '进入站点目录', state: phaseSet.has('prepare') || phaseSet.has('deploy') ? 'done' : 'pending' },
-    { id: 'fast', label: '执行 fast.sh', state: deployOutput.includes('fast.sh') || phaseSet.has('deploy') ? 'done' : 'pending' },
-    { id: 'exec', label: '执行 exec_dep.sh', state: deployOutput.includes('exec_dep.sh') || phaseSet.has('deploy') ? 'done' : 'pending' },
-    { id: 'health', label: '检查上线地址', state: phaseSet.has('healthcheck') ? (failed ? 'failed' : 'done') : 'pending' },
-    { id: 'record', label: '标记完成', state: run.status === 'success' || run.status === 'rollback_success' ? 'done' : 'pending' },
+    { id: 'path', label: '进入站点目录', state: phaseSet.has('prepare') || fastSeen || execSeen || healthSeen || success ? 'done' : 'pending' },
+    { id: 'fast', label: '执行 fast.sh', state: failedPhase === fastPhase ? 'failed' : execSeen || healthSeen || success ? 'done' : fastSeen ? 'running' : 'pending' },
+    { id: 'exec', label: '执行 exec_dep.sh', state: failedPhase === execPhase ? 'failed' : healthSeen || success ? 'done' : execSeen ? 'running' : 'pending' },
+    { id: 'health', label: '检查上线地址', state: failedPhase === 'healthcheck' ? 'failed' : healthSeen ? (failed ? 'failed' : 'done') : 'pending' },
+    { id: 'record', label: '标记完成', state: success ? 'done' : 'pending' },
   ];
   if (failed) {
-    const lastDone = [...base].reverse().find((step) => step.state === 'done');
-    const next = base.find((step) => step.state === 'pending');
-    if (next) next.state = 'failed';
-    if (!next && lastDone) lastDone.state = 'failed';
+    const hasLocatedFailure = base.some((step) => step.state === 'failed');
+    if (!hasLocatedFailure) {
+      const lastDone = [...base].reverse().find((step) => step.state === 'done');
+      const next = base.find((step) => step.state === 'running' || step.state === 'pending');
+      if (next) next.state = 'failed';
+      if (!next && lastDone) lastDone.state = 'failed';
+    }
   } else if (!isTerminal(run.status)) {
-    const next = base.find((step) => step.state === 'pending');
+    const next = base.find((step) => step.state === 'running' || step.state === 'pending');
     if (next) next.state = 'running';
   }
   return base;
+}
+
+function releaseScriptPhase(script: string): string {
+  return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
 }
 
 function dedupeLogs(items: ReleaseLogEntry[]): ReleaseLogEntry[] {

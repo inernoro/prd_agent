@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import http from 'node:http';
 import type { ReleaseTarget } from '../../src/types.js';
-import { buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, probeHealthcheckStatus } from '../../src/services/release-service.js';
+import { buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, probeHealthcheckStatus, releaseScriptPhase } from '../../src/services/release-service.js';
 
 function target(appPath = '/opt/prd agent'): ReleaseTarget {
   const now = new Date().toISOString();
@@ -41,6 +41,12 @@ describe('release service script preflight helpers', () => {
     expect(isDefaultScriptChain('./fast.sh && ./exec_dep.sh')).toBe(true);
     expect(isDefaultScriptChain('./fast.sh && ./exec_dep.sh && ./notify.sh')).toBe(false);
     expect(isDefaultScriptChain('CDS_ENV=prod ./fast.sh && ./exec_dep.sh')).toBe(false);
+  });
+
+  it('uses stable script phases for release progress and streamed script output', () => {
+    expect(releaseScriptPhase('./fast.sh')).toBe('script:fast.sh');
+    expect(releaseScriptPhase('./exec_dep.sh')).toBe('script:exec_dep.sh');
+    expect(releaseScriptPhase('./scripts/deploy.prod.sh')).toBe('script:scripts-deploy.prod.sh');
   });
 
   it('builds a remote command that checks script files without executing them', () => {

@@ -286,7 +286,7 @@ export class ReleaseService {
     if (!target?.ssh) throw new Error('SSH target not found');
     this.patchStatus(releaseId, 'running');
     this.emitLog(releaseId, 'info', `连接目标 ${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`, 'connect');
-    await this.sshExec(target, 'echo cds-release-connect-ok', releaseId);
+    await this.sshExec(target, 'echo cds-release-connect-ok', releaseId, 'connect');
     this.emitLog(releaseId, 'info', `进入站点目录 ${target.ssh.appPath || '.'}`, 'prepare');
     await this.runDeployCommand(releaseId, target, run, target.ssh.deployCommand);
     this.patchStatus(releaseId, 'healthchecking');
@@ -308,7 +308,7 @@ export class ReleaseService {
     const rollbackCommand = ssh.rollbackCommand?.trim();
     if (rollbackCommand) {
       this.emitLog(releaseId, 'info', `执行回滚命令，目标版本 ${previous.releaseId}`, 'rollback');
-      await this.sshExec(target, buildReleaseCommand(target, rollbackRun, rollbackCommand), releaseId);
+      await this.sshExec(target, buildReleaseCommand(target, rollbackRun, rollbackCommand), releaseId, 'rollback');
     } else {
       const deployCommand = ssh.deployCommand?.trim();
       if (!deployCommand) throw new Error('未配置发布命令，无法重新发布历史版本');
@@ -344,13 +344,19 @@ export class ReleaseService {
     const scripts = extractReleaseScriptPaths(rawCommand);
     if (isDefaultScriptChain(rawCommand, scripts)) {
       for (const script of scripts) {
-        this.emitLog(releaseId, 'info', `执行 ${script}`, 'deploy');
-        await this.sshExec(target, buildReleaseCommand(target, run, script), releaseId);
+        const phase = releaseScriptPhase(script);
+        this.emitLog(releaseId, 'info', `执行 ${script}`, phase);
+        try {
+          await this.sshExec(target, buildReleaseCommand(target, run, script), releaseId, phase);
+        } catch (err) {
+          this.emitLog(releaseId, 'error', `脚本 ${script} 执行失败: ${(err as Error).message}`, phase);
+          throw err;
+        }
       }
       return;
     }
     this.emitLog(releaseId, 'info', '执行发布命令', 'deploy');
-    await this.sshExec(target, buildReleaseCommand(target, run, rawCommand), releaseId);
+    await this.sshExec(target, buildReleaseCommand(target, run, rawCommand), releaseId, 'deploy');
   }
 
   private emitLog(releaseId: string, level: 'info' | 'warn' | 'error', message: string, phase?: string): void {
@@ -359,7 +365,7 @@ export class ReleaseService {
     releaseEvents.emitEvent({ type: 'release.log', payload: { releaseId, log } });
   }
 
-  private async sshExec(target: ReleaseTarget, cmd: string, releaseId?: string): Promise<string> {
+  private async sshExec(target: ReleaseTarget, cmd: string, releaseId?: string, logPhase = 'ssh'): Promise<string> {
     if (!target.ssh) throw new Error('target is not SSH');
     const keyHost = this.stateService.getRemoteHost(target.ssh.privateKeyRef);
     if (!keyHost) throw new Error(`privateKeyRef not found: ${target.ssh.privateKeyRef}`);
@@ -389,7 +395,7 @@ export class ReleaseService {
         else stderr += text;
         if (releaseId) {
           for (const line of text.split(/\r?\n/).filter(Boolean)) {
-            this.emitLog(releaseId, level, line.slice(0, 1000), 'ssh');
+            this.emitLog(releaseId, level, line.slice(0, 1000), logPhase);
           }
         }
       };
@@ -455,6 +461,10 @@ export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]
   }
   const renderedScripts = uniqueScripts.map((script) => shellQuote(script)).join(' ');
   return `cd ${shellQuote(target.ssh.appPath || '.')} && for f in ${renderedScripts}; do test -f "$f" || { echo "missing script: $f"; exit 41; }; test -x "$f" || { echo "script is not executable: $f"; exit 42; }; done`;
+}
+
+export function releaseScriptPhase(script: string): string {
+  return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
 }
 
 function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {

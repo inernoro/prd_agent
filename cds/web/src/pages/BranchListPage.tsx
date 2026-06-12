@@ -4401,33 +4401,37 @@ function releaseStepsForRun(
   const failed = run.status === 'failed' || run.status === 'rollback_failed';
   const success = run.status === 'success' || run.status === 'rollback_success';
   const failurePhase = [...logs].reverse().find((log) => log.level === 'error')?.phase;
-  const sshSeen = phases.has('ssh');
+  const prepareSeen = phases.has('prepare');
   const healthSeen = phases.has('healthcheck');
   const scriptOne = scripts[0] || './fast.sh';
   const scriptTwo = scripts[1] || './exec_dep.sh';
+  const scriptOnePhase = releaseScriptPhase(scriptOne);
+  const scriptTwoPhase = releaseScriptPhase(scriptTwo);
+  const scriptOneSeen = phases.has(scriptOnePhase);
+  const scriptTwoSeen = phases.has(scriptTwoPhase);
 
   return [
     {
       id: 'connect',
       label: '连接服务器',
-      state: failurePhase === 'connect' ? 'failed' : phases.has('connect') || sshSeen || healthSeen || success ? 'done' : 'running',
+      state: failurePhase === 'connect' ? 'failed' : phases.has('connect') || prepareSeen || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : 'running',
     },
     {
       id: 'directory',
       label: '进入站点目录',
-      state: failurePhase === 'connect' ? 'pending' : sshSeen || healthSeen || success ? 'done' : phases.has('connect') ? 'running' : 'pending',
+      state: failurePhase === 'connect' ? 'pending' : prepareSeen || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : phases.has('connect') ? 'running' : 'pending',
     },
     {
       id: 'script-one',
       label: `执行 ${scriptOne.replace(/^\.\//, '')}`,
       detail: scriptOne,
-      state: failurePhase === 'ssh' && failed ? 'failed' : healthSeen || success ? 'done' : sshSeen ? 'running' : 'pending',
+      state: failurePhase === scriptOnePhase && failed ? 'failed' : scriptTwoSeen || healthSeen || success ? 'done' : scriptOneSeen ? 'running' : 'pending',
     },
     {
       id: 'script-two',
       label: `执行 ${scriptTwo.replace(/^\.\//, '')}`,
       detail: scriptTwo,
-      state: failurePhase === 'ssh' && failed ? 'failed' : healthSeen || success ? 'done' : sshSeen ? 'running' : 'pending',
+      state: failurePhase === scriptTwoPhase && failed ? 'failed' : healthSeen || success ? 'done' : scriptTwoSeen ? 'running' : 'pending',
     },
     {
       id: 'health',
@@ -4440,6 +4444,10 @@ function releaseStepsForRun(
       state: success ? 'done' : failed ? 'failed' : 'pending',
     },
   ];
+}
+
+function releaseScriptPhase(script: string): string {
+  return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
 }
 
 function releaseStatusLabel(status: string): string {
