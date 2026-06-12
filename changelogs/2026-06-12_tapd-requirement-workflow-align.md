@@ -6,7 +6,8 @@
 | refactor | prd-api | 流转/标签解析改为 workflowDef 优先，支持用户自定义状态；MapImportedStatusLabel 仅 import 路径 |
 | docs | prd-api | requirement-workflow.seed.json 替代 tapd-requirement-workflow.seed.json（MAP 内置种子文档） |
 | refactor | prd-admin | requirementWorkflowCatalog + utils：工作流 API 优先，内置目录仅兜底 |
-| polish | prd-admin | 全局需求状态展示统一：Overview/看板/详情/RTM/图谱使用 TAPD 对齐标签；流转按钮短文案 |
+| polish | prd-admin | 需求模块去外部品牌：RTF 导入/字段/列表/详情统一为 MAP 原生文案与命名 |
+| refactor | prd-admin | tapdRtf* 重命名为 requirementRtfImport*；sourceSystem 新写入 rtf |
 | test | prd-admin | requirementWorkflowUtils 单元测试 |
 | test | prd-api | RequirementWorkflowCatalog 单元测试（31 边、短标签、workflowDef 优先解析） |
 | polish | prd-api | 跨产品 overview/requirements 返回 stateLabel；存量状态 Key 幂等规范化迁移 |

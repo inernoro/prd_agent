@@ -1,17 +1,17 @@
-export interface TapdRtfImage {
+export interface RtfImportImage {
   fileName: string;
   mimeType: string;
   bytes: Uint8Array;
 }
 
-export interface TapdImportedComment {
+export interface RtfImportComment {
   author: string;
   title: string;
   content: string;
   createdAt?: string;
 }
 
-export interface TapdRtfRequirement {
+export interface RtfImportRequirement {
   externalId: string;
   title: string;
   description: string;
@@ -23,11 +23,11 @@ export interface TapdRtfRequirement {
   developerNames: string[];
   creatorNames: string[];
   ccNames: string[];
-  comments: TapdImportedComment[];
+  comments: RtfImportComment[];
   sourceCreatedAt?: string;
   sourceModifiedAt?: string;
   sourceCompletedAt?: string;
-  images: TapdRtfImage[];
+  images: RtfImportImage[];
 }
 
 interface RtfState {
@@ -54,7 +54,8 @@ const SKIPPED_DESTINATIONS = new Set([
   'themedata',
 ]);
 
-const IMAGE_MARKER = (index: number) => `[[TAPD_IMAGE_${index}]]`;
+const IMAGE_MARKER = (index: number) => `[[IMPORT_IMAGE_${index}]]`;
+const LEGACY_IMAGE_MARKER = (index: number) => `[[TAPD_IMAGE_${index}]]`;
 
 function findGroupStart(input: string, controlIndex: number): number {
   for (let index = controlIndex; index >= 0; index -= 1) {
@@ -72,9 +73,9 @@ function findGroupEnd(input: string, start: number): number {
   return input.length;
 }
 
-function extractImages(input: string): { rtf: string; images: TapdRtfImage[] } {
+function extractImages(input: string): { rtf: string; images: RtfImportImage[] } {
   const groups: { start: number; end: number; replacement: string }[] = [];
-  const images: TapdRtfImage[] = [];
+  const images: RtfImportImage[] = [];
   let cursor = 0;
 
   while (cursor < input.length) {
@@ -101,7 +102,7 @@ function extractImages(input: string): { rtf: string; images: TapdRtfImage[] } {
       }
       const imageIndex = images.length;
       images.push({
-        fileName: `tapd-import-${imageIndex + 1}.${extension}`,
+        fileName: `import-${imageIndex + 1}.${extension}`,
         mimeType,
         bytes,
       });
@@ -230,8 +231,8 @@ function descriptionToHtml(value: string): string {
     .map((line) => {
       const trimmed = line.trim();
       if (!trimmed) return '';
-      const marker = trimmed.match(/^\[\[TAPD_IMAGE_(\d+)]]$/);
-      if (marker) return `<p data-tapd-image="${marker[1]}"></p>`;
+      const marker = trimmed.match(/^\[\[(?:IMPORT_IMAGE|TAPD_IMAGE)_(\d+)]]$/);
+      if (marker) return `<p data-import-image="${marker[1]}"></p>`;
       if (/^\d+[、.]/.test(trimmed)) return `<h3>${escapeHtml(trimmed)}</h3>`;
       return `<p>${escapeHtml(trimmed)}</p>`;
     })
@@ -254,7 +255,7 @@ function mapPriorityToGrade(priority: string): 'p0' | 'p1' | 'p2' | 'p3' {
   return 'p2';
 }
 
-function parseComment(value: string): TapdImportedComment | null {
+function parseComment(value: string): RtfImportComment | null {
   const lines = value.split('\n').map((line) => line.trim()).filter(Boolean);
   if (lines.length === 0 || !lines[0].startsWith('【评论:')) return null;
   const header = lines[0].match(/^【评论:([^\s]+)\s+(.+?)(?:\s+\(([^)]+)\))?】$/);
@@ -266,7 +267,8 @@ function parseComment(value: string): TapdImportedComment | null {
   };
 }
 
-export function parseTapdRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fileName = 'tapd-export.rtf'): TapdRtfRequirement {
+/** 解析需求导出 RTF（表格字段 + 评论 + 内嵌图片）。 */
+export function parseRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fileName = 'requirement-export.rtf'): RtfImportRequirement {
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const raw = new TextDecoder('windows-1252').decode(data);
   if (!raw.trimStart().startsWith('{\\rtf')) throw new Error(`${fileName} 不是有效的 RTF 文件`);
@@ -276,7 +278,7 @@ export function parseTapdRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fi
     .split('\u001e')
     .map((row) => row.split('\u001f').map((cell) => cell.trim()))
     .filter((row) => row.some(Boolean));
-  if (rows.length < 3) throw new Error(`${fileName} 没有识别到 TAPD 需求表格`);
+  if (rows.length < 3) throw new Error(`${fileName} 没有识别到需求表格`);
 
   const fields: Record<string, string> = {};
   const fullWidthValues: string[] = [];
@@ -306,8 +308,8 @@ export function parseTapdRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fi
     .sort((a, b) => b.length - a.length)[0] ?? '';
   const comments = fullWidthValues
     .map(parseComment)
-    .filter((comment): comment is TapdImportedComment => comment !== null);
-  if (!fields.ID || !title) throw new Error(`${fileName} 缺少 TAPD ID 或需求标题`);
+    .filter((comment): comment is RtfImportComment => comment !== null);
+  if (!fields.ID || !title) throw new Error(`${fileName} 缺少需求 ID 或标题`);
 
   return {
     externalId: fields.ID,
@@ -329,15 +331,20 @@ export function parseTapdRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fi
   };
 }
 
-export function replaceTapdImageMarkers(
+export function replaceImportImageMarkers(
   html: string,
   uploadedImages: { index: number; url: string; fileName: string }[],
 ): string {
   let result = html;
   for (const image of uploadedImages) {
-    const marker = `<p data-tapd-image="${image.index}"></p>`;
+    const markers = [
+      `<p data-import-image="${image.index}"></p>`,
+      `<p data-tapd-image="${image.index}"></p>`,
+    ];
     const replacement = `<p><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.fileName)}" style="max-width:100%;border-radius:8px;margin:8px 0;" /></p>`;
-    result = result.replace(marker, replacement);
+    for (const marker of markers) {
+      result = result.replace(marker, replacement);
+    }
   }
   return result;
 }

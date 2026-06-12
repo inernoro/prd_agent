@@ -1,7 +1,7 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 产品管理智能体 — 通用状态机 / 流程流转定义（参考 TAPD）。
+/// 产品管理智能体 — 通用状态机 / 流程流转定义。
 ///
 /// 设计目标：替代 defect-agent 那种"状态流转硬编码在 Controller switch"的反模式。
 /// 每类对象（需求 / 功能 / 缺陷 / 版本 / 升级申请）绑定一个 WorkflowDefinition，

@@ -4,15 +4,16 @@ import { AlertCircle, CheckCircle2, FileText, Image, Upload, X } from 'lucide-re
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import { importRequirements, type ImportRequirementRow } from '@/services/real/productAgent';
-import { parseTapdRequirementRtfBytes, replaceTapdImageMarkers, type TapdRtfRequirement } from './tapdRtf';
+import { parseRequirementRtfBytes, replaceImportImageMarkers, type RtfImportRequirement } from './requirementRtfImport';
+import { REQUIREMENT_SOURCE_RTF } from './requirementSource';
 
 interface ParsedFile {
   file: File;
-  requirement?: TapdRtfRequirement;
+  requirement?: RtfImportRequirement;
   error?: string;
 }
 
-export function TapdRtfImportDialog({
+export function RequirementRtfImportDialog({
   productId,
   files,
   onClose,
@@ -34,7 +35,7 @@ export function TapdRtfImportDialog({
     let active = true;
     void Promise.all(files.map(async (file): Promise<ParsedFile> => {
       try {
-        return { file, requirement: parseTapdRequirementRtfBytes(await file.arrayBuffer(), file.name) };
+        return { file, requirement: parseRequirementRtfBytes(await file.arrayBuffer(), file.name) };
       } catch (error) {
         return { file, error: error instanceof Error ? error.message : 'RTF 解析失败' };
       }
@@ -83,8 +84,8 @@ export function TapdRtfImportDialog({
       rows.push({
         title: requirement.title,
         grade: requirement.grade,
-        description: replaceTapdImageMarkers(requirement.description, uploadedImages),
-        sourceSystem: 'tapd',
+        description: replaceImportImageMarkers(requirement.description, uploadedImages),
+        sourceSystem: REQUIREMENT_SOURCE_RTF,
         externalId: requirement.externalId,
         sourceStatus: requirement.sourceStatus,
         sourcePriority: requirement.sourcePriority,
@@ -103,7 +104,7 @@ export function TapdRtfImportDialog({
       });
     }
 
-    setProgress(`正在写入 ${rows.length} 条 TAPD 需求`);
+    setProgress(`正在写入 ${rows.length} 条需求`);
     const imported = await importRequirements(productId, rows);
     setImporting(false);
     if (!imported.success) {
@@ -123,8 +124,8 @@ export function TapdRtfImportDialog({
       >
         <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
           <div>
-            <div className="text-base font-semibold text-white">导入 TAPD RTF 需求</div>
-            <div className="text-xs text-white/45 mt-1">先预览字段与图片，再批量写入；相同 TAPD ID 会更新原记录。</div>
+            <div className="text-base font-semibold text-white">导入 RTF 需求</div>
+            <div className="text-xs text-white/45 mt-1">先预览字段与图片，再批量写入；相同需求 ID 会更新原记录。</div>
           </div>
           <button onClick={onClose} disabled={importing} className="p-1.5 rounded-lg text-white/45 hover:text-white hover:bg-white/10 disabled:opacity-40" title="关闭">
             <X size={17} />
@@ -153,7 +154,7 @@ export function TapdRtfImportDialog({
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-white truncate">{item.requirement!.title}</div>
                         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-white/50">
-                          <span>TAPD ID：{item.requirement!.externalId}</span>
+                          <span>需求 ID：{item.requirement!.externalId}</span>
                           <span>状态：{item.requirement!.sourceStatus || '空'}</span>
                           <span>优先级：{item.requirement!.sourcePriority || '空'}</span>
                           <span>字段：{Object.keys(item.requirement!.fields).length}</span>

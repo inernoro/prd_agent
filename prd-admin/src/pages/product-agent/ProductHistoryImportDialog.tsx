@@ -10,7 +10,7 @@ import {
   type ImportSimpleItemRow,
 } from '@/services/real/productAgent';
 import type { Product } from './types';
-import { TapdRtfImportDialog } from './TapdRtfImportDialog';
+import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
 
 export type HistoryImportType = 'requirement' | 'feature' | 'defect' | 'version';
 
@@ -63,7 +63,7 @@ export function parseProductHistoryCsv(text: string): ImportSimpleItemRow[] {
   const descriptionIndex = indexOf('描述', '内容', 'description', 'desc');
   const gradeIndex = indexOf('分级', '等级', '级别', 'grade');
   const statusIndex = indexOf('状态', '生命周期', 'status', 'lifecycle');
-  const externalIdIndex = indexOf('tapd id', '外部id', '外部 id', 'externalid', 'external id', '编号', 'id');
+  const externalIdIndex = indexOf('需求 id', '外部id', '外部 id', 'externalid', 'external id', '编号', 'id');
   const plannedIndex = indexOf('计划发布时间', '预计结束', 'planned');
   const completedIndex = indexOf('实际发布时间', '完成时间', 'released', 'completed');
   const effectiveTitleIndex = titleIndex >= 0 ? titleIndex : 0;
@@ -112,7 +112,7 @@ export function ProductHistoryImportDialog({
     }
     const csv = files.find((file) => file.name.toLowerCase().endsWith('.csv'));
     if (!csv) {
-      setMessage('请选择 CSV 文件。需求还可选择 TAPD 导出的 RTF 文件。');
+      setMessage('请选择 CSV 文件。需求还可选择 RTF 导出文件。');
       return;
     }
     const parsedRows = parseProductHistoryCsv(await csv.text());
@@ -141,7 +141,7 @@ export function ProductHistoryImportDialog({
 
   if (rtfFiles.length > 0 && productId) {
     return (
-      <TapdRtfImportDialog
+      <RequirementRtfImportDialog
         productId={productId}
         files={rtfFiles}
         onClose={onClose}
@@ -169,7 +169,7 @@ export function ProductHistoryImportDialog({
           </label>
           <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025]">
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
-            <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 TAPD RTF' : 'CSV'} 文件</div>
+            <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 RTF' : 'CSV'} 文件</div>
             <div className="mt-1 text-xs text-white/35">需求 RTF 支持多选；CSV 首行需为字段名</div>
           </button>
           <input

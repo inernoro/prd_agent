@@ -12,7 +12,8 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
 import { ProductAssistantPanel } from './ProductAssistantPanel';
 import { QuickActionsCard } from './QuickActionsCard';
-import { TapdRtfImportDialog } from './TapdRtfImportDialog';
+import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
+import { requirementSourceLabel } from './requirementSource';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { KnowledgeModule } from './knowledge/KnowledgeModule';
@@ -365,7 +366,7 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [tapdRtfFiles, setTapdRtfFiles] = useState<File[]>([]);
+  const [rtfImportFiles, setRtfImportFiles] = useState<File[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -387,8 +388,7 @@ function RequirementsTab({ productId }: { productId: string }) {
     { key: 'state', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.currentState ?? '', stateLabel), test: (r, v) => (r.currentState ?? '') === v },
     { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.assigneeId ?? '', nameOf), test: (r, v) => (r.assigneeId ?? '') === v },
     { key: 'owner', label: '负责人', options: (its) => distinctOptions(its, (r) => r.ownerId ?? '', nameOf), test: (r, v) => (r.ownerId ?? '') === v },
-    { key: 'source', label: '数据来源', options: (its) => distinctOptions(its, (r) => r.sourceSystem ?? '', (value) => value === 'tapd' ? 'TAPD 导入' : value), test: (r, v) => (r.sourceSystem ?? '') === v },
-    { key: 'sourceState', label: 'TAPD 状态', options: (its) => distinctOptions(its, (r) => r.sourceSnapshot?.status ?? '', (value) => value), test: (r, v) => (r.sourceSnapshot?.status ?? '') === v },
+    { key: 'source', label: '数据来源', options: (its) => distinctOptions(its, (r) => r.sourceSystem ?? '', requirementSourceLabel), test: (r, v) => (r.sourceSystem ?? '') === v },
     { key: 'version', label: '关联版本', options: (its) => distinctMultiOptions(its, (r) => r.versionIds, (id) => versionName.get(id) ?? id), test: (r, v) => r.versionIds.includes(v) },
     { key: 'customer', label: '关联客户', options: (its) => distinctMultiOptions(its, (r) => r.customerIds, (id) => customerName.get(id) ?? id), test: (r, v) => r.customerIds.includes(v) },
     { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (r, v) => inTimeRange(r.createdAt, v) },
@@ -398,12 +398,12 @@ function RequirementsTab({ productId }: { productId: string }) {
     storageKey: 'pa-list-filters:requirement',
     fields,
     keywordOf: (r) => `${r.requirementNo} ${r.externalId ?? ''} ${r.title} ${r.description ?? ''} ${Object.values(r.sourceSnapshot?.fields ?? {}).join(' ')}`,
-    keywordPlaceholder: '搜索 MAP/TAPD 编号、标题、描述',
+    keywordPlaceholder: '搜索编号、标题、描述',
   });
 
   const exportCsv = () => {
     const rows = items.map((r) => [r.requirementNo, r.externalId ?? '', r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
-    downloadCSV(`需求-${productId}.csv`, toCSV(['MAP编号', 'TAPD ID', '标题', '分级', 'MAP状态', 'TAPD状态', '描述'], rows));
+    downloadCSV(`需求-${productId}.csv`, toCSV(['编号', '需求ID', '标题', '分级', '状态', '描述'], rows));
   };
 
   const reload = useCallback(async () => {
@@ -431,7 +431,7 @@ function RequirementsTab({ productId }: { productId: string }) {
             className="hidden"
             onChange={(e) => {
               const rtfFiles = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith('.rtf'));
-              if (rtfFiles.length > 0) setTapdRtfFiles(rtfFiles);
+              if (rtfFiles.length > 0) setRtfImportFiles(rtfFiles);
               e.target.value = '';
             }}
           />
@@ -439,7 +439,7 @@ function RequirementsTab({ productId }: { productId: string }) {
             onClick={() => fileRef.current?.click()}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs"
           >
-            <Upload size={13} /> 导入 TAPD RTF
+            <Upload size={13} /> 导入 RTF
           </button>
           <button onClick={exportCsv} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
             <Download size={13} /> 导出CSV
@@ -460,7 +460,7 @@ function RequirementsTab({ productId }: { productId: string }) {
         <GradeBoard
           items={filtered}
           onCardClick={(r) => openDetail(r.id)}
-          renderSub={(r) => `${r.requirementNo}${r.externalId ? ` · TAPD ${r.externalId}` : ''} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
+          renderSub={(r) => `${r.requirementNo}${r.externalId ? ` · ${r.externalId}` : ''} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
         />
       ) : (
         <div className="flex flex-col gap-2">
@@ -485,11 +485,11 @@ function RequirementsTab({ productId }: { productId: string }) {
       )}
         </>
       )}
-      {tapdRtfFiles.length > 0 && (
-        <TapdRtfImportDialog
+      {rtfImportFiles.length > 0 && (
+        <RequirementRtfImportDialog
           productId={productId}
-          files={tapdRtfFiles}
-          onClose={() => setTapdRtfFiles([])}
+          files={rtfImportFiles}
+          onClose={() => setRtfImportFiles([])}
           onImported={reload}
         />
       )}
@@ -531,7 +531,7 @@ function RequirementDataTable({
           <tr>
             <th className="w-10 px-3 py-2 font-medium">选择</th>
             <th className="px-3 py-2 font-medium">MAP 编号</th>
-            <th className="px-3 py-2 font-medium">TAPD ID</th>
+            <th className="px-3 py-2 font-medium">需求 ID</th>
             <th className="min-w-72 px-3 py-2 font-medium">标题</th>
             <th className="px-3 py-2 font-medium">分级</th>
             <th className="px-3 py-2 font-medium">MAP 状态</th>
