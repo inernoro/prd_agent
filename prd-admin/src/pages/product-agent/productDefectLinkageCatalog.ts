@@ -7,8 +7,8 @@ export const PRODUCT_DEFECT_CLASSIFICATION = '缺陷';
 export const NON_PRODUCT_DEFECT_CLASSIFICATION = '非产品缺陷';
 
 export const WORKFLOW_LINK_ENTITY_LABELS: Record<string, string> = {
-  requirement: '联动：转为需求',
-  defect: '联动：转为缺陷（标记产品缺陷）',
+  requirement: '联动：转需求（非产品缺陷）',
+  defect: '联动：转缺陷（转为缺陷）',
 };
 
 export function isRequirementProductDefect(formData: Record<string, string> | undefined | null): boolean {

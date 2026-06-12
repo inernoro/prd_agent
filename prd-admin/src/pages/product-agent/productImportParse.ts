@@ -1,6 +1,7 @@
 /**
  * 产品批量导入 — CSV / Excel 解析（列：产品名称、产品类型、产品描述、产品标识）。
  */
+import * as XLSX from 'xlsx';
 import type { ImportProductRow } from '@/services/real/productAgent';
 
 export function parseProductImportCsv(text: string): ImportProductRow[] {
@@ -9,21 +10,32 @@ export function parseProductImportCsv(text: string): ImportProductRow[] {
   return mapProductImportRows(rows[0], rows.slice(1));
 }
 
+export function parseProductImportXlsxBuffer(buffer: ArrayBuffer): ImportProductRow[] {
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+  const sheet = workbook.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' });
+  if (matrix.length < 2) return [];
+  const headers = (matrix[0] ?? []).map(cellStr);
+  const body = matrix.slice(1).map((row) => (row ?? []).map(cellStr));
+  return mapProductImportRows(headers, body);
+}
+
 export async function parseProductImportFile(file: File): Promise<ImportProductRow[]> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith('.csv')) {
     return parseProductImportCsv(await file.text());
   }
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-    const XLSX = await import('xlsx');
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const matrix = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '' }) as string[][];
-    if (matrix.length < 2) return [];
-    return mapProductImportRows(matrix[0], matrix.slice(1));
+    return parseProductImportXlsxBuffer(await file.arrayBuffer());
   }
-  return [];
+  throw new Error('不支持的文件格式，请上传 CSV 或 Excel（.xlsx）');
+}
+
+function cellStr(value: unknown): string {
+  if (value == null) return '';
+  return String(value).trim();
 }
 
 function mapProductImportRows(headers: string[], body: string[][]): ImportProductRow[] {
@@ -31,7 +43,7 @@ function mapProductImportRows(headers: string[], body: string[][]): ImportProduc
   const indexOf = (...names: string[]) =>
     normalized.findIndex((header) => names.some((name) => header.includes(name)));
 
-  const nameIndex = indexOf('产品名称', '名称', '应用', 'name');
+  const nameIndex = indexOf('产品名称', '名称', 'name');
   const gradeIndex = indexOf('产品类型', '类型', 'grade', 'category');
   const descriptionIndex = indexOf('产品描述', '描述', 'description', 'desc');
   const codeIndex = indexOf('产品标识', '标识', '短码', 'code');

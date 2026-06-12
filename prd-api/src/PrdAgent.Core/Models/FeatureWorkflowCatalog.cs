@@ -1,34 +1,103 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// MAP 内置「标准功能流程」目录：种子写入 MongoDB 与状态说明 SSOT。
+/// MAP 内置「标准功能流程」目录：7 个需求同名状态 + 已下架；种子与状态说明 SSOT。
 /// </summary>
 public static class FeatureWorkflowCatalog
 {
     public const string WorkflowName = "标准功能流程";
 
-    public const string Planned = "planned";
-    public const string Developing = "developing";
-    public const string Testing = "testing";
-    public const string Released = "released";
-    /// <summary>终态 Key 沿用 cancelled，展示名为「已下架」。</summary>
+    /// <summary>终态 Key 沿用 cancelled，展示名为「已下架」；仅能从已上线流转进入。</summary>
     public const string Delisted = "cancelled";
 
-    public static readonly IReadOnlyDictionary<string, string> StateLabels = new Dictionary<string, string>
+    public static readonly IReadOnlyDictionary<string, string> StateLabels = BuildStateLabels();
+
+    public static readonly IReadOnlyDictionary<string, string> StateDescriptions = BuildStateDescriptions();
+
+    /// <summary>旧功能流程状态 → 当前内置 Key。</summary>
+    public static readonly IReadOnlyDictionary<string, string> LegacyStateMap = new Dictionary<string, string>
     {
-        [Planned] = "规划中",
-        [Developing] = "开发中",
-        [Testing] = "测试中",
-        [Released] = "已发布",
-        [Delisted] = "已下架",
+        ["planned"] = RequirementWorkflowCatalog.New,
+        ["testing"] = RequirementWorkflowCatalog.Developing,
+        ["released"] = RequirementWorkflowCatalog.Released,
+        ["cancelled"] = Delisted,
     };
 
-    public static readonly IReadOnlyDictionary<string, string> StateDescriptions = new Dictionary<string, string>
+    public static readonly IReadOnlyDictionary<string, string[]> TransitionMatrix = BuildTransitionMatrix();
+
+    public const int ExpectedTransitionCount = 37;
+
+    private static Dictionary<string, string> BuildStateLabels()
     {
-        [Planned] = "功能已登记并纳入产品能力库，待排入本版本开发计划",
-        [Developing] = "功能正在本版本内开发实现",
-        [Testing] = "功能开发已完成，进入测试与验收",
-        [Released] = "功能已随本版本正式发布上线",
-        [Delisted] = "功能规划调整或不再提供，已从产品中下架（保留历史记录）",
-    };
+        var labels = new Dictionary<string, string>(RequirementWorkflowCatalog.StateLabels
+            .Where(p => p.Key != RequirementWorkflowCatalog.ToDefect));
+        labels[Delisted] = "已下架";
+        return labels;
+    }
+
+    private static Dictionary<string, string> BuildStateDescriptions()
+    {
+        var desc = new Dictionary<string, string>(RequirementWorkflowCatalog.StateDescriptions
+            .Where(p => p.Key != RequirementWorkflowCatalog.ToDefect));
+        desc[Delisted] = "功能在本版本中不再提供，由已上线状态下架（可重新打开回到待规划等状态）";
+        return desc;
+    }
+
+    private static Dictionary<string, string[]> BuildTransitionMatrix()
+    {
+        var matrix = RequirementWorkflowCatalog.TransitionMatrix
+            .Where(p => p.Key != RequirementWorkflowCatalog.ToDefect)
+            .ToDictionary(p => p.Key, p => p.Value.Where(t => t != RequirementWorkflowCatalog.ToDefect).ToArray());
+
+        var releasedTos = matrix[RequirementWorkflowCatalog.Released].ToList();
+        if (!releasedTos.Contains(Delisted)) releasedTos.Add(Delisted);
+        matrix[RequirementWorkflowCatalog.Released] = releasedTos.ToArray();
+
+        matrix[Delisted] = new[]
+        {
+            RequirementWorkflowCatalog.New,
+            RequirementWorkflowCatalog.Planning,
+            RequirementWorkflowCatalog.Approved,
+            RequirementWorkflowCatalog.Developing,
+            RequirementWorkflowCatalog.Scheduled,
+        };
+        return matrix;
+    }
+
+    public static string NormalizeStateKey(string? stateKey, ProductWorkflowDefinition? workflowDef = null)
+    {
+        if (string.IsNullOrWhiteSpace(stateKey))
+            return workflowDef?.GetInitialStateKey() ?? RequirementWorkflowCatalog.New;
+
+        var key = stateKey.Trim();
+        if (LegacyStateMap.TryGetValue(key, out var legacyMapped))
+            key = legacyMapped;
+
+        if (workflowDef?.States.Any(s => s.Key == key) == true)
+            return key;
+
+        if (StateLabels.ContainsKey(key))
+            return key;
+
+        return RequirementWorkflowCatalog.NormalizeStateKey(key, workflowDef);
+    }
+
+    public static string ResolveStateLabel(string? stateKey, ProductWorkflowDefinition? workflowDef = null)
+    {
+        if (string.IsNullOrWhiteSpace(stateKey)) return "未设置";
+        var key = NormalizeStateKey(stateKey, workflowDef);
+        if (workflowDef != null)
+        {
+            var fromDef = workflowDef.States.FirstOrDefault(s => s.Key == key)?.Label;
+            if (!string.IsNullOrEmpty(fromDef)) return fromDef;
+        }
+        return StateLabels.TryGetValue(key, out var label) ? label : key;
+    }
+
+    public static string BuildTransitionActionLabel(string toStateKey, ProductWorkflowDefinition? workflowDef = null)
+    {
+        var key = NormalizeStateKey(toStateKey, workflowDef);
+        if (key == Delisted) return "下架";
+        return RequirementWorkflowCatalog.BuildTransitionActionLabel(key, workflowDef);
+    }
 }

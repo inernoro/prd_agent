@@ -406,8 +406,16 @@ export const ITEM_GRADE_LABEL: Record<ItemGrade, string> = {
   p3: 'P3 低',
 };
 
-/** 缺陷状态英文值 → 中文标签（与后端 DefectStatus 同口径，工作台/列表/图表统一展示用）。 */
+/** 缺陷状态 Key → 中文标签（产品缺陷工作流与需求对齐；含旧缺陷智能体状态兜底）。 */
 export const DEFECT_STATUS_LABEL: Record<string, string> = {
+  new: '待评审',
+  planning: '待规划',
+  status_2: '已立项',
+  developing: '开发中',
+  resolved: '已上线',
+  rejected: '已拒绝',
+  status_3: '已排期',
+  to_requirement: '非产品缺陷',
   draft: '草稿',
   reviewing: '评审中',
   awaiting: '待处理',
@@ -415,8 +423,6 @@ export const DEFECT_STATUS_LABEL: Record<string, string> = {
   assigned: '已分配',
   processing: '处理中',
   verifying: '待验收',
-  resolved: '已解决',
-  rejected: '已拒绝',
   closed: '已关闭',
 };
 
@@ -424,7 +430,8 @@ export const DEFECT_STATUS_LABEL: Record<string, string> = {
 export function defectStatusLabel(status?: string | null): string {
   const s = (status ?? '').trim();
   if (!s) return '—';
-  return DEFECT_STATUS_LABEL[s] ?? DEFECT_STATUS_LABEL[s.toLowerCase()] ?? s;
+  const lower = s.toLowerCase();
+  return DEFECT_STATUS_LABEL[s] ?? DEFECT_STATUS_LABEL[lower] ?? s;
 }
 
 /** 旧缺陷「严重度」→ 统一「等级」兜底映射（与后端 ProductAgentController.SeverityToGrade 同口径）。 */

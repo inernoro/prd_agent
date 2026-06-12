@@ -16,6 +16,8 @@ public static class RequirementWorkflowCatalog
     public const string Released = "resolved";
     public const string Rejected = "rejected";
     public const string Scheduled = "status_3";
+    /// <summary>终态：需求转入缺陷列表（联动创建缺陷记录）。</summary>
+    public const string ToDefect = "to_defect";
 
     public static readonly IReadOnlyDictionary<string, string> StateLabels = new Dictionary<string, string>
     {
@@ -26,6 +28,7 @@ public static class RequirementWorkflowCatalog
         [Released] = "已上线",
         [Rejected] = "已拒绝",
         [Scheduled] = "已排期",
+        [ToDefect] = "转为缺陷",
     };
 
     /// <summary>内置状态说明（流程模板「状态定义」初始展示文案）。</summary>
@@ -38,6 +41,13 @@ public static class RequirementWorkflowCatalog
         [Released] = "需求已经实现，并且项目已经上线",
         [Rejected] = "经过产品经理评审，认为此需求不合理",
         [Scheduled] = "需求经过产品经理规划，已申请立项，待评审",
+        [ToDefect] = "经评审认定应作为缺陷跟进，需求记录转入缺陷列表",
+    };
+
+    /// <summary>可流转到「转为缺陷」的源状态（不含已上线终态）。</summary>
+    public static readonly string[] ToDefectSourceStates =
+    {
+        New, Planning, Approved, Developing, Rejected, Scheduled,
     };
 
     /// <summary>MAP 旧默认流程状态 → 当前内置状态 Key。</summary>
@@ -92,18 +102,30 @@ public static class RequirementWorkflowCatalog
     }
 
     /// <summary>内置默认流程的流转边（from → to 列表），仅种子构建使用。</summary>
-    public static IReadOnlyDictionary<string, string[]> TransitionMatrix { get; } = new Dictionary<string, string[]>
-    {
-        [New] = new[] { Planning, Approved, Developing, Released, Rejected, Scheduled },
-        [Planning] = new[] { New, Approved, Developing, Released, Rejected, Scheduled },
-        [Approved] = new[] { Planning, Developing, Released, Rejected },
-        [Developing] = new[] { Planning, Approved, Released, Rejected },
-        [Released] = new[] { Planning, Approved, Developing, Rejected },
-        [Rejected] = new[] { New, Planning },
-        [Scheduled] = new[] { Approved, Developing, Released, Rejected },
-    };
+    public static IReadOnlyDictionary<string, string[]> TransitionMatrix { get; } = BuildTransitionMatrix();
 
-    public const int ExpectedTransitionCount = 31;
+    private static Dictionary<string, string[]> BuildTransitionMatrix()
+    {
+        var matrix = new Dictionary<string, string[]>
+        {
+            [New] = new[] { Planning, Approved, Developing, Released, Rejected, Scheduled },
+            [Planning] = new[] { New, Approved, Developing, Released, Rejected, Scheduled },
+            [Approved] = new[] { Planning, Developing, Released, Rejected },
+            [Developing] = new[] { Planning, Approved, Released, Rejected },
+            [Released] = new[] { Planning, Approved, Developing, Rejected },
+            [Rejected] = new[] { New, Planning },
+            [Scheduled] = new[] { Approved, Developing, Released, Rejected },
+        };
+        foreach (var from in ToDefectSourceStates)
+        {
+            var tos = matrix[from].ToList();
+            if (!tos.Contains(ToDefect)) tos.Add(ToDefect);
+            matrix[from] = tos.ToArray();
+        }
+        return matrix;
+    }
+
+    public const int ExpectedTransitionCount = 37;
 
     public static string BuildTransitionActionLabel(string toStateKey, ProductWorkflowDefinition? workflowDef = null)
     {

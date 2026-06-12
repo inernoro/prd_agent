@@ -1708,6 +1708,8 @@ public class ProductAgentController : ControllerBase
             await _db.ProductWorkflowDefinitions.InsertManyAsync(missingBuiltin);
 
         await MigrateLegacyRequirementStatesAsync();
+        await MigrateLegacyFeatureStatesAsync();
+        await MigrateLegacyProductDefectStatesAsync();
     }
 
     /// <summary>将旧版 MAP 需求状态 Key 迁移为当前内置 Key（幂等）。</summary>
@@ -1730,6 +1732,53 @@ public class ProductAgentController : ControllerBase
             await _db.Requirements.UpdateManyAsync(
                 r => r.CurrentState == state && !r.IsDeleted,
                 Builders<Requirement>.Update.Set(r => r.CurrentState, normalized).Set(r => r.UpdatedAt, DateTime.UtcNow));
+        }
+    }
+
+    /// <summary>将旧版功能流程状态 Key 迁移为与需求对齐的 Key（幂等）。</summary>
+    private async Task MigrateLegacyFeatureStatesAsync()
+    {
+        foreach (var (legacy, modern) in FeatureWorkflowCatalog.LegacyStateMap)
+        {
+            if (legacy == modern) continue;
+            await _db.Features.UpdateManyAsync(
+                f => f.CurrentState == legacy && !f.IsDeleted,
+                Builders<Feature>.Update.Set(f => f.CurrentState, modern).Set(f => f.UpdatedAt, DateTime.UtcNow));
+        }
+
+        var distinctStates = await _db.Features.Find(f => !f.IsDeleted && f.CurrentState != null)
+            .Project(f => f.CurrentState).ToListAsync();
+        foreach (var state in distinctStates.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct())
+        {
+            var normalized = FeatureWorkflowCatalog.NormalizeStateKey(state);
+            if (normalized == state) continue;
+            await _db.Features.UpdateManyAsync(
+                f => f.CurrentState == state && !f.IsDeleted,
+                Builders<Feature>.Update.Set(f => f.CurrentState, normalized).Set(f => f.UpdatedAt, DateTime.UtcNow));
+        }
+    }
+
+    /// <summary>将旧版产品缺陷状态 Key 迁移为与需求对齐的 Key（幂等；仅处理已绑定产品工作流的缺陷）。</summary>
+    private async Task MigrateLegacyProductDefectStatesAsync()
+    {
+        foreach (var (legacy, modern) in DefectWorkflowCatalog.LegacyStateMap)
+        {
+            if (legacy == modern) continue;
+            await _db.DefectReports.UpdateManyAsync(
+                d => d.Status == legacy && d.WorkflowDefId != null && !d.IsDeleted,
+                Builders<DefectReport>.Update.Set(d => d.Status, modern).Set(d => d.UpdatedAt, DateTime.UtcNow));
+        }
+
+        var distinctStates = await _db.DefectReports
+            .Find(d => !d.IsDeleted && d.WorkflowDefId != null && d.Status != null)
+            .Project(d => d.Status).ToListAsync();
+        foreach (var state in distinctStates.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct())
+        {
+            var normalized = DefectWorkflowCatalog.NormalizeStateKey(state);
+            if (normalized == state) continue;
+            await _db.DefectReports.UpdateManyAsync(
+                d => d.Status == state && d.WorkflowDefId != null && !d.IsDeleted,
+                Builders<DefectReport>.Update.Set(d => d.Status, normalized).Set(d => d.UpdatedAt, DateTime.UtcNow));
         }
     }
 
@@ -1987,6 +2036,13 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该流转需要填写备注"));
         }
 
+        if (request.EntityType == ProductEntityType.Feature
+            && transition.ToState == FeatureWorkflowCatalog.Delisted
+            && currentState != RequirementWorkflowCatalog.Released)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅已上线状态的功能可下架"));
+        }
+
         // 落库新状态。自动化：流转可显式转交，或 AutoAssignToActor 自动 claim 给操作人
         var now = DateTime.UtcNow;
         var effectiveAssignee = request.AssigneeId ?? (transition.AutoAssignToActor ? userId : null);
@@ -2079,14 +2135,21 @@ public class ProductAgentController : ControllerBase
     /// <summary>流转成功后按规则触发需求 ↔ 缺陷联动。</summary>
     private async Task HandleTransitionCrossLinkAsync(string entityType, string entityId, string productId, string userId, ProductWorkflowTransition transition)
     {
-        if (string.IsNullOrWhiteSpace(transition.LinkEntityType)) return;
+        var linksDefect = entityType == ProductEntityType.Requirement
+            && (transition.ToState == RequirementWorkflowCatalog.ToDefect
+                || transition.LinkEntityType == ProductEntityType.Defect);
+        var linksRequirement = entityType == ProductEntityType.Defect
+            && (transition.ToState == DefectWorkflowCatalog.ToRequirement
+                || transition.LinkEntityType == ProductEntityType.Requirement);
 
-        if (entityType == ProductEntityType.Requirement && transition.LinkEntityType == ProductEntityType.Defect)
+        if (!linksDefect && !linksRequirement) return;
+
+        if (linksDefect)
         {
             var req = await _db.Requirements.Find(r => r.Id == entityId && !r.IsDeleted).FirstOrDefaultAsync();
             if (req != null) await EnsureDefectFromRequirementAsync(req, productId, userId);
         }
-        else if (entityType == ProductEntityType.Defect && transition.LinkEntityType == ProductEntityType.Requirement)
+        else if (linksRequirement)
         {
             var defect = await _db.DefectReports.Find(d => d.Id == entityId && !d.IsDeleted).FirstOrDefaultAsync();
             if (defect != null) await ConvertDefectToRequirementInternalAsync(defect, userId);
@@ -2119,7 +2182,6 @@ public class ProductAgentController : ControllerBase
             Grade = req.Grade,
             AssigneeId = req.AssigneeId,
             AssigneeName = assigneeName,
-            Status = DefectStatus.Submitted,
             ReporterId = userId,
             ReporterName = user?.DisplayName,
             TracedProductId = productId,
@@ -2128,6 +2190,7 @@ public class ProductAgentController : ControllerBase
         };
         var (_, workflowDefId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
         defect.WorkflowDefId = workflowDefId;
+        defect.Status = await ResolveInitialStateAsync(workflowDefId) ?? RequirementWorkflowCatalog.New;
         await _db.DefectReports.InsertOneAsync(defect);
         await RecalcDefectCountAsync(productId);
         var actorName = user?.DisplayName;
@@ -2162,7 +2225,10 @@ public class ProductAgentController : ControllerBase
         await _db.Requirements.InsertOneAsync(req);
 
         await _db.DefectReports.UpdateOneAsync(d => d.Id == defect.Id,
-            Builders<DefectReport>.Update.Set(d => d.TracedRequirementId, req.Id));
+            Builders<DefectReport>.Update
+                .Set(d => d.TracedRequirementId, req.Id)
+                .Set(d => d.ProductDefectClassification, ProductDefectLinkageCatalog.NonProductDefect)
+                .Set(d => d.UpdatedAt, DateTime.UtcNow));
         var convActor = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
         await RecordActivityAsync(ProductEntityType.Requirement, req.Id, productId, ProductActivityType.Convert, userId, convActor,
             content: $"由缺陷 {defect.DefectNo} 转化生成");
@@ -2466,6 +2532,8 @@ public class ProductAgentController : ControllerBase
         var assigneeActive = new HashSet<string>
         {
             DefectStatus.Reviewing, DefectStatus.Awaiting, DefectStatus.Submitted, DefectStatus.Assigned, DefectStatus.Processing,
+            RequirementWorkflowCatalog.New, RequirementWorkflowCatalog.Planning, RequirementWorkflowCatalog.Approved,
+            RequirementWorkflowCatalog.Developing, RequirementWorkflowCatalog.Scheduled,
         };
         var reporterActive = new HashSet<string> { DefectStatus.Draft, DefectStatus.Verifying };
         bool DefectMine(DefectReport d)
@@ -2554,7 +2622,6 @@ public class ProductAgentController : ControllerBase
             Grade = ProductItemGrade.All.Contains(request.Grade ?? "") ? request.Grade : ProductItemGrade.P2,
             AssigneeId = string.IsNullOrWhiteSpace(request.AssigneeId) ? null : request.AssigneeId,
             AssigneeName = assigneeName,
-            Status = DefectStatus.Submitted,
             ReporterId = userId,
             ReporterName = user?.DisplayName,
             TracedProductId = productId,
@@ -2565,6 +2632,7 @@ public class ProductAgentController : ControllerBase
         };
         var (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
         defect.WorkflowDefId = defectWfId;
+        defect.Status = await ResolveInitialStateAsync(defectWfId) ?? RequirementWorkflowCatalog.New;
         await _db.DefectReports.InsertOneAsync(defect);
         await RecalcDefectCountAsync(productId);
         return Ok(ApiResponse<object>.Ok(defect));
@@ -3347,16 +3415,18 @@ public class ProductAgentController : ControllerBase
                 default:
                 {
                     var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+                    var (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
                     var defect = new DefectReport
                     {
                         DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
                         Title = title,
                         RawContent = description ?? string.Empty,
                         Grade = grade,
-                        Status = DefectStatus.Submitted,
                         ReporterId = userId,
                         ReporterName = user?.DisplayName,
                         TracedProductId = productId,
+                        WorkflowDefId = defectWfId,
+                        Status = await ResolveInitialStateAsync(defectWfId) ?? RequirementWorkflowCatalog.New,
                     };
                     await _db.DefectReports.InsertOneAsync(defect);
                     await RecalcDefectCountAsync(productId);
@@ -3762,7 +3832,9 @@ public class ProductAgentController : ControllerBase
         {
             var sourceSystem = NormalizeImportSource(row.SourceSystem);
             var externalId = row.ExternalId?.Trim();
-            var status = DefectStatus.All.Contains(row.Status ?? "") ? row.Status! : DefectStatus.Submitted;
+            var status = RequirementWorkflowCatalog.MapImportedStatusLabel(row.Status)
+                ?? DefectWorkflowCatalog.NormalizeStateKey(row.Status)
+                ?? (DefectStatus.All.Contains(row.Status ?? "") ? DefectWorkflowCatalog.LegacyStateMap.GetValueOrDefault(row.Status!, RequirementWorkflowCatalog.New) : RequirementWorkflowCatalog.New);
             var existing = string.IsNullOrWhiteSpace(externalId)
                 ? null
                 : await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
@@ -3779,6 +3851,7 @@ public class ProductAgentController : ControllerBase
                 updated++;
                 continue;
             }
+            var (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
             await _db.DefectReports.InsertOneAsync(new DefectReport
             {
                 DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
@@ -3789,6 +3862,7 @@ public class ProductAgentController : ControllerBase
                 ReporterId = userId,
                 ReporterName = user?.DisplayName,
                 TracedProductId = productId,
+                WorkflowDefId = defectWfId,
                 ProductSourceSystem = sourceSystem,
                 ProductExternalId = externalId,
             });
@@ -4558,7 +4632,7 @@ public class ProductAgentController : ControllerBase
                 break;
             case ProductEntityType.Defect:
                 await _db.DefectReports.UpdateOneAsync(x => x.Id == entityId,
-                    Builders<DefectReport>.Update.Set(x => x.WorkflowDefId, workflowDefId).Set(x => x.Status, currentState ?? DefectStatus.Submitted));
+                    Builders<DefectReport>.Update.Set(x => x.WorkflowDefId, workflowDefId).Set(x => x.Status, currentState ?? RequirementWorkflowCatalog.New));
                 break;
         }
     }

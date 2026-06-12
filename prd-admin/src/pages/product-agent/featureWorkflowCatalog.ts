@@ -1,24 +1,37 @@
 /**
  * MAP 内置功能工作流目录（与后端 FeatureWorkflowCatalog 一致）。
- * 仅作 API 未返回流程定义时的兜底。
+ * 7 个需求同名状态 + 已下架；仅作 API 未返回流程定义时的兜底。
  */
+import { BUILTIN_REQUIREMENT_STATE_LABEL } from './requirementWorkflowCatalog';
+
 export const BUILTIN_FEATURE_STATE_LABEL: Record<string, string> = {
-  planned: '规划中',
-  developing: '开发中',
-  testing: '测试中',
-  released: '已发布',
+  ...Object.fromEntries(
+    Object.entries(BUILTIN_REQUIREMENT_STATE_LABEL).filter(([k]) => k !== 'to_defect'),
+  ),
   cancelled: '已下架',
 };
 
 export const BUILTIN_FEATURE_STATE_DESCRIPTION: Record<string, string> = {
-  planned: '功能已登记并纳入产品能力库，待排入本版本开发计划',
-  developing: '功能正在本版本内开发实现',
-  testing: '功能开发已完成，进入测试与验收',
-  released: '功能已随本版本正式发布上线',
-  cancelled: '功能规划调整或不再提供，已从产品中下架（保留历史记录）',
+  new: '新提交的需求，待评审',
+  planning: '经过产品经理评审，认为此需求合理，待排期规划',
+  status_2: '需求已出产品方案，待开发',
+  developing: '该需求正在开发中，待上线',
+  resolved: '需求已经实现，并且项目已经上线',
+  rejected: '经过产品经理评审，认为此需求不合理',
+  status_3: '需求经过产品经理规划，已申请立项，待评审',
+  cancelled: '功能在本版本中不再提供，由已上线状态下架（可重新打开回到待规划等状态）',
+};
+
+/** 旧功能流程 Key → 当前 Key */
+export const FEATURE_LEGACY_STATE_MAP: Record<string, string> = {
+  planned: 'new',
+  testing: 'developing',
+  released: 'resolved',
+  cancelled: 'cancelled',
 };
 
 export function builtinFeatureStateLabel(key?: string | null): string {
   if (!key) return '未设置';
-  return BUILTIN_FEATURE_STATE_LABEL[key] ?? key;
+  const normalized = FEATURE_LEGACY_STATE_MAP[key] ?? key;
+  return BUILTIN_FEATURE_STATE_LABEL[normalized] ?? normalized;
 }

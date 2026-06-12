@@ -13,23 +13,32 @@ public static class ProductWorkflowDefaults
     public const string DefectDefId = "wf-default-defect";
 
     /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认需求流程定义。</summary>
-    public const int RequirementWorkflowRevision = 7;
+    public const int RequirementWorkflowRevision = 8;
 
     /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认功能流程定义。</summary>
-    public const int FeatureWorkflowRevision = 1;
+    public const int FeatureWorkflowRevision = 2;
 
     /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认缺陷流程定义。</summary>
-    public const int DefectWorkflowRevision = 1;
+    public const int DefectWorkflowRevision = 2;
 
     public static ProductWorkflowDefinition Requirement() => new()
     {
         Id = RequirementDefId,
         Name = RequirementWorkflowCatalog.WorkflowName,
-        Description = "MAP 内置米多需求收集工作流（7 状态 + 流转矩阵，可在设置中自定义）",
+        Description = "MAP 内置米多需求收集工作流（7 状态 + 转为缺陷 + 流转矩阵，可在设置中自定义）",
         EntityType = ProductEntityType.Requirement,
         IsDefault = true,
         ProductId = null,
-        States = new()
+        States = BuildSharedLifecycleStates(includeToDefect: true, includeDelisted: false, includeToRequirement: false),
+        Transitions = BuildRequirementTransitions(),
+    };
+
+    private static List<ProductWorkflowState> BuildSharedLifecycleStates(
+        bool includeToDefect,
+        bool includeDelisted,
+        bool includeToRequirement)
+    {
+        var states = new List<ProductWorkflowState>
         {
             new() { Key = RequirementWorkflowCatalog.New, Label = "待评审", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.New], Color = "#9ca3af", IsInitial = true, Category = "todo", SortOrder = 0, SlaHours = 48 },
             new() { Key = RequirementWorkflowCatalog.Planning, Label = "待规划", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Planning], Color = "#38bdf8", Category = "todo", SortOrder = 1, SlaHours = 48 },
@@ -38,9 +47,48 @@ public static class ProductWorkflowDefaults
             new() { Key = RequirementWorkflowCatalog.Released, Label = "已上线", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Released], Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
             new() { Key = RequirementWorkflowCatalog.Rejected, Label = "已拒绝", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Rejected], Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
             new() { Key = RequirementWorkflowCatalog.Scheduled, Label = "已排期", Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.Scheduled], Color = "#a78bfa", Category = "todo", SortOrder = 6 },
-        },
-        Transitions = BuildRequirementTransitions(),
-    };
+        };
+        if (includeToDefect)
+        {
+            states.Add(new()
+            {
+                Key = RequirementWorkflowCatalog.ToDefect,
+                Label = "转为缺陷",
+                Description = RequirementWorkflowCatalog.StateDescriptions[RequirementWorkflowCatalog.ToDefect],
+                Color = "#f97316",
+                IsFinal = true,
+                Category = "done",
+                SortOrder = 7,
+            });
+        }
+        if (includeDelisted)
+        {
+            states.Add(new()
+            {
+                Key = FeatureWorkflowCatalog.Delisted,
+                Label = "已下架",
+                Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Delisted],
+                Color = "#ef4444",
+                IsFinal = true,
+                Category = "done",
+                SortOrder = 7,
+            });
+        }
+        if (includeToRequirement)
+        {
+            states.Add(new()
+            {
+                Key = DefectWorkflowCatalog.ToRequirement,
+                Label = ProductDefectLinkageCatalog.NonProductDefect,
+                Description = DefectWorkflowCatalog.StateDescriptions[DefectWorkflowCatalog.ToRequirement],
+                Color = "#f97316",
+                IsFinal = true,
+                Category = "done",
+                SortOrder = 7,
+            });
+        }
+        return states;
+    }
 
     private static List<ProductWorkflowTransition> BuildRequirementTransitions()
     {
@@ -55,7 +103,7 @@ public static class ProductWorkflowDefaults
                     Label = RequirementWorkflowCatalog.BuildTransitionActionLabel(toKey),
                     FromState = fromKey,
                     ToState = toKey,
-                    RequireComment = toKey == RequirementWorkflowCatalog.Rejected,
+                    RequireComment = toKey is RequirementWorkflowCatalog.Rejected or RequirementWorkflowCatalog.ToDefect,
                     AutoAssignToActor = toKey == RequirementWorkflowCatalog.Developing,
                 };
                 ApplyRequirementTransitionDefaults(edge);
@@ -79,7 +127,7 @@ public static class ProductWorkflowDefaults
         {
             edge.RequiredFieldKeys = new() { ProductWorkflowTransitionFieldKeys.VersionIds };
         }
-        if (edge.ToState == RequirementWorkflowCatalog.Rejected)
+        if (edge.ToState == RequirementWorkflowCatalog.ToDefect)
         {
             edge.LinkEntityType = ProductEntityType.Defect;
         }
@@ -89,46 +137,57 @@ public static class ProductWorkflowDefaults
     {
         Id = FeatureDefId,
         Name = FeatureWorkflowCatalog.WorkflowName,
-        Description = "规划中 → 开发中 → 测试中 → 已发布 / 已下架",
+        Description = "与需求同名的 7 状态 + 已下架（仅能从已上线下架，可重新打开）",
         EntityType = ProductEntityType.Feature,
         IsDefault = true,
         ProductId = null,
-        States = new()
-        {
-            new() { Key = FeatureWorkflowCatalog.Planned, Label = "规划中", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Planned], Color = "#9ca3af", IsInitial = true, Category = "todo", SortOrder = 0 },
-            new() { Key = FeatureWorkflowCatalog.Developing, Label = "开发中", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Developing], Color = "#f59e0b", Category = "doing", SortOrder = 1, SlaHours = 120, WipLimit = 3 },
-            new() { Key = FeatureWorkflowCatalog.Testing, Label = "测试中", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Testing], Color = "#a78bfa", Category = "doing", SortOrder = 2, SlaHours = 48 },
-            new() { Key = FeatureWorkflowCatalog.Released, Label = "已发布", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Released], Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 3 },
-            new() { Key = FeatureWorkflowCatalog.Delisted, Label = "已下架", Description = FeatureWorkflowCatalog.StateDescriptions[FeatureWorkflowCatalog.Delisted], Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 4 },
-        },
-        Transitions = new()
-        {
-            new() { Key = "start-dev", Label = "开始开发", FromState = FeatureWorkflowCatalog.Planned, ToState = FeatureWorkflowCatalog.Developing, AutoAssignToActor = true },
-            new() { Key = "to-test", Label = "提交测试", FromState = FeatureWorkflowCatalog.Developing, ToState = FeatureWorkflowCatalog.Testing },
-            new() { Key = "release", Label = "发布", FromState = FeatureWorkflowCatalog.Testing, ToState = FeatureWorkflowCatalog.Released },
-            new() { Key = "delist", Label = "下架", FromState = null, ToState = FeatureWorkflowCatalog.Delisted, RequireComment = true },
-            new() { Key = "reopen", Label = "重新打开", FromState = null, ToState = FeatureWorkflowCatalog.Planned },
-        },
+        States = BuildSharedLifecycleStates(includeToDefect: false, includeDelisted: true, includeToRequirement: false),
+        Transitions = BuildFeatureTransitions(),
     };
+
+    private static List<ProductWorkflowTransition> BuildFeatureTransitions()
+    {
+        var list = new List<ProductWorkflowTransition>();
+        foreach (var (fromKey, toKeys) in FeatureWorkflowCatalog.TransitionMatrix)
+        {
+            foreach (var toKey in toKeys)
+            {
+                var edge = new ProductWorkflowTransition
+                {
+                    Key = $"{fromKey}-to-{toKey}",
+                    Label = FeatureWorkflowCatalog.BuildTransitionActionLabel(toKey),
+                    FromState = fromKey,
+                    ToState = toKey,
+                    RequireComment = toKey is RequirementWorkflowCatalog.Rejected or FeatureWorkflowCatalog.Delisted,
+                    AutoAssignToActor = toKey == RequirementWorkflowCatalog.Developing,
+                };
+                if (toKey == RequirementWorkflowCatalog.Released)
+                {
+                    edge.AllowedRoles = new()
+                    {
+                        ProductWorkflowTransitionRoles.ProductAdmin,
+                        ProductWorkflowTransitionRoles.Owner,
+                    };
+                }
+                if (toKey == RequirementWorkflowCatalog.Scheduled)
+                {
+                    edge.RequiredFieldKeys = new() { ProductWorkflowTransitionFieldKeys.VersionIds };
+                }
+                list.Add(edge);
+            }
+        }
+        return list;
+    }
 
     public static ProductWorkflowDefinition Defect() => new()
     {
         Id = DefectDefId,
         Name = DefectWorkflowCatalog.WorkflowName,
-        Description = "已提交 → 已分配 → 处理中 → 待验收 → 已解决 / 已拒绝 / 已关闭（可在应用配置中自定义）",
+        Description = "与需求同名的 7 状态 + 非产品缺陷（转需求），可在应用配置中自定义",
         EntityType = ProductEntityType.Defect,
         IsDefault = true,
         ProductId = null,
-        States = new()
-        {
-            new() { Key = DefectStatus.Submitted, Label = "已提交", Color = "#9ca3af", IsInitial = true, Category = "todo", SortOrder = 0, SlaHours = 24 },
-            new() { Key = DefectStatus.Assigned, Label = "已分配", Color = "#60a5fa", Category = "todo", SortOrder = 1, SlaHours = 24 },
-            new() { Key = DefectStatus.Processing, Label = "处理中", Color = "#f59e0b", Category = "doing", SortOrder = 2, SlaHours = 72, WipLimit = 10 },
-            new() { Key = DefectStatus.Verifying, Label = "待验收", Color = "#a78bfa", Category = "doing", SortOrder = 3, SlaHours = 48 },
-            new() { Key = DefectStatus.Resolved, Label = "已解决", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
-            new() { Key = DefectStatus.Rejected, Label = "已拒绝", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
-            new() { Key = DefectStatus.Closed, Label = "已关闭", Color = "#6b7280", IsFinal = true, Category = "done", SortOrder = 6 },
-        },
+        States = BuildSharedLifecycleStates(includeToDefect: false, includeDelisted: false, includeToRequirement: true),
         Transitions = BuildDefectTransitions(),
     };
 
@@ -145,10 +204,10 @@ public static class ProductWorkflowDefaults
                     Label = DefectWorkflowCatalog.BuildTransitionActionLabel(toKey),
                     FromState = fromKey,
                     ToState = toKey,
-                    RequireComment = toKey == DefectStatus.Rejected,
-                    AutoAssignToActor = toKey == DefectStatus.Processing,
+                    RequireComment = toKey is RequirementWorkflowCatalog.Rejected or DefectWorkflowCatalog.ToRequirement,
+                    AutoAssignToActor = toKey == RequirementWorkflowCatalog.Developing,
                 };
-                if (toKey == DefectStatus.Rejected)
+                if (toKey == DefectWorkflowCatalog.ToRequirement)
                     edge.LinkEntityType = ProductEntityType.Requirement;
                 list.Add(edge);
             }

@@ -53,10 +53,13 @@ public class RequirementWorkflowCatalogTests
     public void Default_requirement_workflow_matches_builtin_state_count()
     {
         var def = ProductWorkflowDefaults.Requirement();
-        Assert.Equal(7, def.States.Count);
+        Assert.Equal(8, def.States.Count);
+        Assert.Contains(def.States, s => s.Key == RequirementWorkflowCatalog.ToDefect && s.Label == "转为缺陷");
         Assert.Equal("new", def.States.First(s => s.IsInitial).Key);
         Assert.Contains(def.Transitions, t => t.Key == "new-to-planning" && t.FromState == "new" && t.ToState == "planning");
         Assert.DoesNotContain(def.Transitions, t => t.FromState == t.ToState);
+        var toDefect = def.Transitions.First(t => t.ToState == RequirementWorkflowCatalog.ToDefect);
+        Assert.Equal(ProductEntityType.Defect, toDefect.LinkEntityType);
     }
 
     [Fact]

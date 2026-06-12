@@ -10,6 +10,7 @@ export const BUILTIN_REQUIREMENT_STATE_LABEL: Record<string, string> = {
   resolved: '已上线',
   rejected: '已拒绝',
   status_3: '已排期',
+  to_defect: '转为缺陷',
 };
 
 export const BUILTIN_REQUIREMENT_STATE_ORDER = [
@@ -20,6 +21,7 @@ export const BUILTIN_REQUIREMENT_STATE_ORDER = [
   'resolved',
   'rejected',
   'status_3',
+  'to_defect',
 ] as const;
 
 /** 与后端 RequirementWorkflowCatalog 状态 Key 对齐（闸门 / 流转用） */
@@ -31,6 +33,7 @@ export const REQUIREMENT_STATE_KEYS = {
   released: 'resolved',
   rejected: 'rejected',
   scheduled: 'status_3',
+  toDefect: 'to_defect',
 } as const;
 
 export function builtinRequirementStateLabel(key?: string | null): string {
