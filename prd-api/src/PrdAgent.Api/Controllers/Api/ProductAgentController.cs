@@ -211,6 +211,69 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(product));
     }
 
+    /// <summary>批量导入产品（应用管理员）：名称去重，已存在同名产品跳过。</summary>
+    [HttpPost("products/import")]
+    public async Task<IActionResult> ImportProducts([FromBody] ImportProductsRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+
+        var rows = (request.Rows ?? new()).Where(r => !string.IsNullOrWhiteSpace(r.Name)).ToList();
+        if (rows.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有可导入的有效行（产品名称不能为空）"));
+        if (rows.Count > 500)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单次最多导入 500 条"));
+
+        var userId = GetUserId();
+        var owner = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var defaultGrade = await ResolveGradeIdAsync(request.DefaultGrade, ProductGrade.Normal);
+
+        var existingNames = (await _db.Products.Find(p => !p.IsDeleted).Project(p => p.Name).ToListAsync())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var seenInBatch = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var created = 0;
+        var skipped = 0;
+        var skippedNames = new List<string>();
+
+        foreach (var row in rows)
+        {
+            var name = row.Name!.Trim();
+            if (!seenInBatch.Add(name))
+            {
+                skipped++;
+                continue;
+            }
+            if (existingNames.Contains(name))
+            {
+                skipped++;
+                if (skippedNames.Count < 30) skippedNames.Add(name);
+                continue;
+            }
+
+            var grade = await ResolveGradeIdAsync(row.Grade, defaultGrade);
+            var product = new Product
+            {
+                ProductNo = await GenerateNoAsync("PRD", _db.Products, "ProductNo"),
+                Name = name,
+                Code = row.Code?.Trim(),
+                Description = row.Description?.Trim(),
+                Grade = grade,
+                OwnerId = userId,
+                OwnerName = owner?.DisplayName,
+                MemberIds = new List<string> { userId },
+            };
+            product.CurrentState = await ResolveInitialStateAsync(null);
+
+            await _db.Products.InsertOneAsync(product);
+            existingNames.Add(name);
+            created++;
+        }
+
+        _logger.LogInformation("[product-agent] Products imported: created={Created}, skipped={Skipped} by {User}", created, skipped, userId);
+        return Ok(ApiResponse<object>.Ok(new { created, skipped, skippedNames }));
+    }
+
     /// <summary>产品列表（我负责的 / 我参与的 / 管理员看全部）</summary>
     [HttpGet("products")]
     public async Task<IActionResult> ListProducts([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? grade = null, [FromQuery] string? keyword = null)
@@ -1239,6 +1302,18 @@ public class ProductAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(grade)) return true;
         await EnsureCategoriesSeededAsync();
         return await _db.ProductCategories.Find(c => c.Id == grade && !c.IsDeleted).AnyAsync();
+    }
+
+    /// <summary>解析产品类型：支持 Id 或名称；未匹配时返回 fallback。</summary>
+    private async Task<string> ResolveGradeIdAsync(string? gradeInput, string fallback)
+    {
+        await EnsureCategoriesSeededAsync();
+        if (string.IsNullOrWhiteSpace(gradeInput)) return fallback;
+        var trimmed = gradeInput.Trim();
+        var byId = await _db.ProductCategories.Find(c => c.Id == trimmed && !c.IsDeleted).FirstOrDefaultAsync();
+        if (byId != null) return byId.Id;
+        var byName = await _db.ProductCategories.Find(c => c.Name == trimmed && !c.IsDeleted).FirstOrDefaultAsync();
+        return byName?.Id ?? fallback;
     }
 
     /// <summary>产品类型列表（首次访问自动补齐内置 4 项）。</summary>
@@ -4918,6 +4993,21 @@ public class ImportRequirementComment
     public string? Title { get; set; }
     public string? Content { get; set; }
     public string? CreatedAt { get; set; }
+}
+
+public class ImportProductsRequest
+{
+    /// <summary>行内未指定产品类型时的默认值（支持类型 Id 或名称，如「应用」）。</summary>
+    public string? DefaultGrade { get; set; }
+    public List<ImportProductRow> Rows { get; set; } = new();
+}
+
+public class ImportProductRow
+{
+    public string? Name { get; set; }
+    public string? Grade { get; set; }
+    public string? Description { get; set; }
+    public string? Code { get; set; }
 }
 
 public class ImportSimpleItemsRequest

@@ -4,10 +4,11 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Upload } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
-import { listProducts, createProduct, updateProduct, deleteProduct } from '@/services/real/productAgent';
+import { listProducts, createProduct, updateProduct, deleteProduct, getOverviewStats } from '@/services/real/productAgent';
+import { ProductImportDialog } from './ProductImportDialog';
 import type { Product, ProductGrade, ProductCategory } from './types';
 import { useProductCategories, categoryLabel, categoryColor } from './productCategories';
 import './product-cards.css';
@@ -20,6 +21,8 @@ export function ProductsSection() {
   const [keyword, setKeyword] = useState('');
   const [gradeFilter, setGradeFilter] = useState<ProductGrade | ''>('');
   const [editing, setEditing] = useState<Product | 'new' | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [canImport, setCanImport] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -31,6 +34,12 @@ export function ProductsSection() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    void getOverviewStats().then((res) => {
+      if (res.success) setCanImport(res.data.isAdmin);
+    });
+  }, []);
 
   return (
     <div className="flex flex-col gap-4">
@@ -66,12 +75,22 @@ export function ProductsSection() {
             </button>
           ))}
         </div>
-        <button
-          onClick={() => setEditing('new')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
-        >
-          <Plus size={15} /> 新建产品
-        </button>
+        <div className="flex items-center gap-2">
+          {canImport && (
+            <button
+              onClick={() => setImportOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-white/70 hover:bg-white/10 text-sm"
+            >
+              <Upload size={15} /> 导入产品
+            </button>
+          )}
+          <button
+            onClick={() => setEditing('new')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
+          >
+            <Plus size={15} /> 新建产品
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -140,6 +159,15 @@ export function ProductsSection() {
             </div>
           ))}
         </div>
+      )}
+
+      {importOpen && (
+        <ProductImportDialog
+          onClose={() => setImportOpen(false)}
+          onImported={async () => {
+            await reload();
+          }}
+        />
       )}
 
       {editing && (

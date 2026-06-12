@@ -14,3 +14,5 @@
 | refactor | prd-admin | 应用配置移除功能流转页，功能状态改读所属计划版本 |
 | feat | prd-api | 需求工作流 7 状态补全状态说明种子文案（SeedRevision 7） |
 | fix | prd-admin | 应用配置恢复功能标签（流转矩阵+状态定义），功能详情恢复 WorkflowBar |
+| feat | prd-api | 新增产品批量导入 API（应用管理员，同名跳过） |
+| feat | prd-admin | 产品列表新增导入产品（CSV/Excel）及 19 个应用初始模板 |

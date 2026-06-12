@@ -59,6 +59,20 @@ export function deleteProduct(id: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/products/${id}`, { method: 'DELETE' });
 }
 
+export interface ImportProductRow {
+  name: string;
+  grade?: string;
+  description?: string;
+  code?: string;
+}
+
+export function importProducts(rows: ImportProductRow[], defaultGrade?: string) {
+  return apiRequest<{ created: number; skipped: number; skippedNames: string[] }>('/api/product/products/import', {
+    method: 'POST',
+    body: { rows, defaultGrade },
+  });
+}
+
 // ── 产品团队成员 ──
 export function listProductMembers(productId: string): Promise<ApiResponse<ProductMembersResult>> {
   return apiRequest<ProductMembersResult>(`/api/product/products/${productId}/members`);

@@ -57,6 +57,7 @@
     "tailwind-merge": "^2.6.0",
     "three": "^0.175.0",
     "wavesurfer.js": "^7.12.6",
+    "xlsx": "^0.18.5",
     "zustand": "^5.0.1"
   },
   "devDependencies": {
