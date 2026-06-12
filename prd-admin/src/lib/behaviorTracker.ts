@@ -97,6 +97,18 @@ export function trackRouteChange(pathname: string) {
   visibleSince = typeof document !== 'undefined' && document.visibilityState === 'visible' ? now : 0;
 }
 
+/**
+ * 登出时调用：结清当前页停留并冲刷，清空路由计时状态。
+ * 不重置则重新登录落在同一路由时 trackRouteChange 早退，登出间隙会被整段计入停留时长。
+ */
+export function resetBehaviorTracker() {
+  closeDwell(Date.now());
+  flush(true);
+  currentRoute = null;
+  accumVisibleMs = 0;
+  visibleSince = 0;
+}
+
 /** 全局只初始化一次：可见性计时 + 定时冲刷 + 离开页面兜底上报 */
 export function initBehaviorTracker() {
   if (started) return;

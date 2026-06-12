@@ -15,7 +15,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 import { NAV_REGISTRY } from '@/app/navRegistry';
-import { initBehaviorTracker, trackRouteChange } from '@/lib/behaviorTracker';
+import { initBehaviorTracker, resetBehaviorTracker, trackRouteChange } from '@/lib/behaviorTracker';
 
 /**
  * BehaviorTrackerMount — 行为信号采集（行为洞察面板的数据来源）。
@@ -29,6 +29,8 @@ function BehaviorTrackerMount() {
   }, []);
   useEffect(() => {
     if (isAuthenticated) trackRouteChange(location.pathname);
+    // 登出即结清停留并重置计时（幂等），避免登出间隙污染 route-dwell
+    else resetBehaviorTracker();
   }, [location.pathname, isAuthenticated]);
   return null;
 }

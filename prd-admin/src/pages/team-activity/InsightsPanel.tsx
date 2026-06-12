@@ -201,7 +201,7 @@ export function InsightsPanel({ from }: { from?: string }) {
         return;
       }
       const defect = res.data.defect;
-      await setTeamActivityInsightState({
+      const linkRes = await setTeamActivityInsightState({
         kind: item.kind,
         target: item.target,
         status: 'confirmed',
@@ -209,7 +209,15 @@ export function InsightsPanel({ from }: { from?: string }) {
         defectTitle: defect.title,
       });
       setBusyKey(null);
-      toast.success(`已创建缺陷《${defect.title}》，可在缺陷管理中跟进`);
+      if (!linkRes.success) {
+        // 缺陷已真实创建但关联失败（如缺 team-activity.manage 权限）：必须明示，避免重复点击重复建缺陷
+        toast.warning(
+          `缺陷《${defect.title}》已创建，但洞察状态关联失败`,
+          `${linkRes.error?.message ?? '请检查 team-activity.manage 权限'}。请勿重复转换，可直接在缺陷管理中跟进`
+        );
+      } else {
+        toast.success(`已创建缺陷《${defect.title}》，可在缺陷管理中跟进`);
+      }
       reload();
     },
     [data, reload]
