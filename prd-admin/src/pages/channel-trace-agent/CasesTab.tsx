@@ -83,6 +83,8 @@ export function CasesTab() {
   const [importPwOpen, setImportPwOpen] = useState(false);
   const streamRef = useRef('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 是否「钉」在底部：用户向上滑离开底部后置 false，停止自动滚动（避免与用户滚动打架）
+  const pinnedRef = useRef(true);
 
   const { phase, phaseMessage, isStreaming, start } = useSseStream({
     url: diagnoseAskUrl,
@@ -160,13 +162,24 @@ export function CasesTab() {
     void loadSessions();
   }, [load, loadSessions]);
 
+  // 用户滚动时记录是否仍贴着底部（阈值 80px）。一旦向上滑离开底部，pinned=false。
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  // 仅在用户处于底部时才自动滚动；用即时滚动避免流式高频更新下 smooth 抖动/与用户滚动冲突。
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    if (!pinnedRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages, streamingText]);
 
   const send = () => {
     if (!input.trim() || isStreaming) return;
     const text = input.trim();
+    pinnedRef.current = true;
     setInput('');
     setModel(null);
     setCurRelated([]);
@@ -230,6 +243,7 @@ export function CasesTab() {
 
   const newSession = () => {
     if (isStreaming) return;
+    pinnedRef.current = true;
     setSessionId(null);
     setMessages([]);
     setCurRelated([]);
@@ -241,6 +255,7 @@ export function CasesTab() {
 
   const openSession = async (id: string) => {
     setHistoryOpen(false);
+    pinnedRef.current = true;
     const res = await getDiagnoseSession(id);
     if (res.success && res.data) {
       const s = res.data.item;
@@ -381,6 +396,7 @@ export function CasesTab() {
 
         <div
           ref={scrollRef}
+          onScroll={handleScroll}
           className="flex-1 px-6 py-3 space-y-3"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
