@@ -550,11 +550,11 @@ public class TeamActivityController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: "[TeamActivity-InsightBrief]",
             RequestType: "chat",
-            AppCallerCode: Admin.TeamActivity.InsightBrief));
+            AppCallerCode: AppCallerRegistry.Admin.TeamActivity.InsightBrief));
 
         var gatewayRequest = new GatewayRequest
         {
-            AppCallerCode = Admin.TeamActivity.InsightBrief,
+            AppCallerCode = AppCallerRegistry.Admin.TeamActivity.InsightBrief,
             ModelType = ModelTypes.Chat,
             Stream = true,
             TimeoutSeconds = 180,
