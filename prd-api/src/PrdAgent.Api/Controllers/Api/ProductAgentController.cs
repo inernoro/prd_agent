@@ -3758,6 +3758,136 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { created, updated }));
     }
 
+    /// <summary>按目录路径导入功能树（无限层级，路径分隔符 / 或 &gt;）。缺省上级节点自动补齐。</summary>
+    [HttpPost("products/{productId}/features/import-tree")]
+    public async Task<IActionResult> ImportFeatureTree(string productId, [FromBody] ImportFeatureTreeRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (!await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).AnyAsync())
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        if (request.Rows == null || request.Rows.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "导入数据不能为空"));
+
+        var userId = GetUserId();
+        var (_, workflowId) = await ResolveDefaultsAsync(ProductEntityType.Feature, productId);
+        var initialState = await ResolveInitialStateAsync(workflowId);
+        const string treeSource = "tree-import";
+        var pathToId = new Dictionary<string, string>(StringComparer.Ordinal);
+        var existingTree = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted && f.SourceSystem == treeSource).ToListAsync();
+        foreach (var feat in existingTree)
+        {
+            if (!string.IsNullOrWhiteSpace(feat.ExternalId) && feat.ExternalId.StartsWith("tree:", StringComparison.Ordinal))
+                pathToId[feat.ExternalId["tree:".Length..]] = feat.Id;
+        }
+
+        var ordered = request.Rows
+            .Select(r =>
+            {
+                var path = NormalizeFeatureTreePath(r.Path);
+                return new { Row = r, Path = path, Segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries) };
+            })
+            .Where(x => x.Segments.Length > 0)
+            .OrderBy(x => x.Segments.Length)
+            .ThenBy(x => x.Path, StringComparer.Ordinal)
+            .ToList();
+
+        var created = 0;
+        var updated = 0;
+        foreach (var item in ordered)
+        {
+            var row = item.Row;
+            var segments = item.Segments;
+            string? parentId = null;
+            for (var depth = 0; depth < segments.Length; depth++)
+            {
+                var partialPath = string.Join('/', segments.Take(depth + 1));
+                var isLeaf = depth == segments.Length - 1;
+                if (pathToId.TryGetValue(partialPath, out var knownId))
+                {
+                    if (isLeaf)
+                    {
+                        var title = string.IsNullOrWhiteSpace(row.Title) ? segments[^1] : row.Title!.Trim();
+                        await _db.Features.UpdateOneAsync(f => f.Id == knownId,
+                            Builders<Feature>.Update
+                                .Set(f => f.Title, title)
+                                .Set(f => f.ParentId, parentId)
+                                .Set(f => f.Description, row.Description?.Trim())
+                                .Set(f => f.ModuleName, ResolveTreeModuleName(row.ModuleName, segments))
+                                .Set(f => f.FeatureType, NormalizeImportFeatureType(row.FeatureType))
+                                .Set(f => f.Grade, NormalizeImportGrade(row.Grade))
+                                .Set(f => f.KeyRules, row.KeyRules?.Trim() ?? "")
+                                .Set(f => f.AcceptanceCriteria, row.AcceptanceCriteria?.Trim() ?? "")
+                                .Set(f => f.UpdatedAt, DateTime.UtcNow));
+                        updated++;
+                    }
+                    parentId = knownId;
+                    continue;
+                }
+
+                var nodeTitle = isLeaf && !string.IsNullOrWhiteSpace(row.Title) ? row.Title!.Trim() : segments[depth];
+                var lookupExternal = isLeaf && !string.IsNullOrWhiteSpace(row.ExternalId)
+                    ? row.ExternalId.Trim()
+                    : $"tree:{partialPath}";
+                var matched = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted && f.SourceSystem == treeSource &&
+                    (f.ExternalId == lookupExternal || f.ExternalId == $"tree:{partialPath}")).FirstOrDefaultAsync();
+                if (matched != null)
+                {
+                    pathToId[partialPath] = matched.Id;
+                    if (isLeaf)
+                    {
+                        await _db.Features.UpdateOneAsync(f => f.Id == matched.Id,
+                            Builders<Feature>.Update
+                                .Set(f => f.Title, nodeTitle)
+                                .Set(f => f.ParentId, parentId)
+                                .Set(f => f.Description, row.Description?.Trim())
+                                .Set(f => f.ModuleName, ResolveTreeModuleName(row.ModuleName, segments))
+                                .Set(f => f.FeatureType, NormalizeImportFeatureType(row.FeatureType))
+                                .Set(f => f.Grade, NormalizeImportGrade(row.Grade))
+                                .Set(f => f.KeyRules, row.KeyRules?.Trim() ?? "")
+                                .Set(f => f.AcceptanceCriteria, row.AcceptanceCriteria?.Trim() ?? "")
+                                .Set(f => f.UpdatedAt, DateTime.UtcNow));
+                        updated++;
+                    }
+                    else if (matched.ParentId != parentId)
+                    {
+                        await _db.Features.UpdateOneAsync(f => f.Id == matched.Id,
+                            Builders<Feature>.Update.Set(f => f.ParentId, parentId).Set(f => f.UpdatedAt, DateTime.UtcNow));
+                    }
+                    parentId = matched.Id;
+                    continue;
+                }
+
+                var feature = new Feature
+                {
+                    ProductId = productId,
+                    FeatureNo = await GenerateNoAsync("FEA", _db.Features, "FeatureNo"),
+                    Title = nodeTitle,
+                    Description = isLeaf ? row.Description?.Trim() : null,
+                    ModuleName = ResolveTreeModuleName(row.ModuleName, segments),
+                    FeatureType = isLeaf ? NormalizeImportFeatureType(row.FeatureType) : FeatureBusinessType.Basic,
+                    Grade = isLeaf ? NormalizeImportGrade(row.Grade) : ProductItemGrade.P3,
+                    KeyRules = isLeaf ? row.KeyRules?.Trim() ?? "" : "",
+                    AcceptanceCriteria = isLeaf ? row.AcceptanceCriteria?.Trim() ?? "" : "",
+                    ParentId = parentId,
+                    WorkflowDefId = workflowId,
+                    CurrentState = initialState,
+                    StateEnteredAt = DateTime.UtcNow,
+                    OwnerId = userId,
+                    SourceSystem = treeSource,
+                    ExternalId = lookupExternal,
+                };
+                await _db.Features.InsertOneAsync(feature);
+                pathToId[partialPath] = feature.Id;
+                parentId = feature.Id;
+                created++;
+            }
+        }
+
+        await RecalcProductCountsAsync(productId);
+        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+    }
+
     [HttpPost("products/{productId}/versions/import")]
     public async Task<IActionResult> ImportVersions(string productId, [FromBody] ImportSimpleItemsRequest request)
     {
@@ -3884,6 +4014,32 @@ public class ProductAgentController : ControllerBase
 
     private static string NormalizeImportSource(string? value)
         => string.IsNullOrWhiteSpace(value) ? "csv" : value.Trim().ToLowerInvariant();
+
+    private static string NormalizeFeatureTreePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        var normalized = path.Trim()
+            .Replace('\\', '/')
+            .Replace(">", "/");
+        var parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return string.Join('/', parts);
+    }
+
+    private static string ResolveTreeModuleName(string? moduleName, string[] segments)
+        => string.IsNullOrWhiteSpace(moduleName) ? (segments.Length > 0 ? segments[0] : "") : moduleName.Trim();
+
+    private static string NormalizeImportFeatureType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return FeatureBusinessType.Basic;
+        var v = value.Trim().ToLowerInvariant();
+        return v switch
+        {
+            "core" or "核心" or "核心功能" => FeatureBusinessType.Core,
+            "value_added" or "value-added" or "增值" or "增值功能" => FeatureBusinessType.ValueAdded,
+            "basic" or "基础" or "基础功能" => FeatureBusinessType.Basic,
+            _ => FeatureBusinessType.All.Contains(v) ? v : FeatureBusinessType.Basic,
+        };
+    }
 
     private static string NormalizeImportGrade(string? value)
         => ProductItemGrade.All.Contains(value ?? "") ? value! : ProductItemGrade.P2;
@@ -5127,6 +5283,24 @@ public class ImportProductRow
     public string? Grade { get; set; }
     public string? Description { get; set; }
     public string? Code { get; set; }
+}
+
+public class ImportFeatureTreeRequest
+{
+    public List<ImportFeatureTreeRow> Rows { get; set; } = new();
+}
+
+public class ImportFeatureTreeRow
+{
+    public string Path { get; set; } = string.Empty;
+    public string? Title { get; set; }
+    public string? Grade { get; set; }
+    public string? FeatureType { get; set; }
+    public string? ModuleName { get; set; }
+    public string? Description { get; set; }
+    public string? ExternalId { get; set; }
+    public string? KeyRules { get; set; }
+    public string? AcceptanceCriteria { get; set; }
 }
 
 public class ImportSimpleItemsRequest

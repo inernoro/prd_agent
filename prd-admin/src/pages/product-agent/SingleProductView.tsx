@@ -26,6 +26,7 @@ import { BatchBar } from './BatchBar';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import './product-cards.css';
 import { VersionWorkflowTab } from './VersionWorkflowTab';
+import { FeatureCatalogTab } from './FeatureCatalogTab';
 import {
   getProduct,
   listVersions,
@@ -34,8 +35,6 @@ import {
   listRequirements,
   deleteRequirement,
   listFeatures,
-  listReleases,
-  listInitiations,
   listTracedDefects,
   listCustomers,
   untraceDefect,
@@ -45,8 +44,7 @@ import {
   type MyTodoItem,
 } from '@/services/real/productAgent';
 import { searchDirectoryUsers } from '@/services';
-import { FEATURE_CHANGE_LABEL } from './ReleaseWorkflowDetail';
-import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer, ProductRelease } from './types';
+import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, effectiveDefectGrade } from './types';
 import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, type FilterFieldDef } from './listFilter';
 import { toCSV, downloadCSV } from '@/lib/csv';
@@ -180,6 +178,10 @@ export function SingleProductView() {
         <div className="flex-1 min-h-0">
           <ProductGraphCanvas productId={product.id} />
         </div>
+      ) : active === 'features' ? (
+        <div className="flex-1 min-h-0">
+          <FeatureCatalogTab productId={product.id} />
+        </div>
       ) : active === 'board' ? (
         <div className="flex-1 min-h-0 p-4">
           <BoardTab productId={product.id} />
@@ -192,7 +194,6 @@ export function SingleProductView() {
         <SectionShell title={SECTION_TITLE[active]}>
           {active === 'versions' && <VersionsTab productId={product.id} />}
           {active === 'requirements' && <RequirementsTab productId={product.id} />}
-          {active === 'features' && <FeaturesTab productId={product.id} />}
           {active === 'reports' && <ReportsTab productId={product.id} />}
           {active === 'defects' && <DefectsTab productId={product.id} />}
           {active === 'team' && <ProductTeamTab productId={product.id} />}
@@ -572,110 +573,6 @@ function RequirementDataTable({
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-// ── 功能 tab（按正式版本号组织功能清单）──
-const RELEASE_STATUS_LABEL: Record<string, string> = {
-  announcement_pending: '待公告',
-  released: '已上线',
-};
-
-function manifestChangeSummary(manifest: ProductRelease['featureManifest']) {
-  const stats = { added: 0, modified: 0, deprecated: 0, unchanged: 0 };
-  (manifest ?? []).forEach((m) => { stats[m.changeType] += 1; });
-  const parts: string[] = [];
-  if (stats.added) parts.push(`${FEATURE_CHANGE_LABEL.added} ${stats.added}`);
-  if (stats.modified) parts.push(`${FEATURE_CHANGE_LABEL.modified} ${stats.modified}`);
-  if (stats.deprecated) parts.push(`${FEATURE_CHANGE_LABEL.deprecated} ${stats.deprecated}`);
-  if (stats.unchanged) parts.push(`${FEATURE_CHANGE_LABEL.unchanged} ${stats.unchanged}`);
-  return parts.join(' · ') || '—';
-}
-
-function FeaturesTab({ productId }: { productId: string }) {
-  const navigate = useNavigate();
-  const [releases, setReleases] = useState<ProductRelease[]>([]);
-  const [canApplyRelease, setCanApplyRelease] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const nameOf = useDirectoryNames();
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const [relRes, initRes] = await Promise.all([
-      listReleases(productId, 'all'),
-      listInitiations(productId, 'mine'),
-    ]);
-    if (relRes.success) setReleases(relRes.data.items);
-    if (initRes.success) {
-      setCanApplyRelease(initRes.data.items.some((i) => i.status === 'approved' && i.tCode));
-    }
-    setLoading(false);
-  }, [productId]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  const fields = useMemo<FilterFieldDef<ProductRelease>[]>(() => [
-    { key: 'status', label: '状态', defaultVisible: true, options: () => Object.entries(RELEASE_STATUS_LABEL).map(([value, label]) => ({ value, label })), test: (r, v) => r.status === v },
-    { key: 'owner', label: '申领人', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.ownerId ?? '', nameOf), test: (r, v) => (r.ownerId ?? '') === v },
-    { key: 'scale', label: '版本类别', options: () => [{ value: 'major', label: '大版本' }, { value: 'medium', label: '中版本' }, { value: 'minor', label: '小版本' }], test: (r, v) => r.versionType === v },
-    { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (r, v) => inTimeRange(r.createdAt, v) },
-  ], [nameOf]);
-  const { bar, filtered } = useListFilter({
-    items: releases,
-    storageKey: 'pa-list-filters:release-manifest',
-    fields,
-    keywordOf: (r) => `${r.vCode} ${r.tCode ?? ''} ${r.planName}`,
-    keywordPlaceholder: '搜索版本号/方案名称',
-  });
-
-  if (loading) return <MapSectionLoader text="正在加载功能清单…" />;
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <NewButton
-          label="申领正式版本号"
-          onClick={() => navigate(`/product-agent/p/${productId}/release/new`)}
-          disabled={!canApplyRelease}
-        />
-        <button
-          type="button"
-          onClick={() => navigate(`/product-agent/p/${productId}/feature/new`)}
-          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/55 hover:bg-white/8"
-        >
-          新建功能条目
-        </button>
-      </div>
-      {!canApplyRelease && (
-        <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-xs text-white/40">
-          需先完成内部版本立项并取得 T 号后，才能申领正式版本号并填写功能清单。
-        </div>
-      )}
-      {releases.length === 0 ? (
-        <EmptyHint text="还没有正式版本功能清单。每个正式版对应一份功能清单，新版本默认继承上一版并标注变更。" />
-      ) : (
-        <>
-          {bar}
-          {filtered.length === 0 ? (
-            <div className="text-center text-white/35 text-sm py-10">没有匹配的版本，调整筛选条件试试。</div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {filtered.map((r) => (
-                <Row
-                  key={r.id}
-                  title={r.vCode}
-                  badge={RELEASE_STATUS_LABEL[r.status] ?? r.status}
-                  sub={`${r.planName} · 功能 ${(r.featureManifest ?? []).length} 项 · ${manifestChangeSummary(r.featureManifest)}`}
-                  onClick={() => navigate(`/product-agent/p/${productId}/release/${r.id}`)}
-                  actionLabel="查看清单"
-                />
-              ))}
-            </div>
-          )}
-        </>
-      )}
     </div>
   );
 }

@@ -337,6 +337,25 @@ export interface ImportSimpleItemRow {
 export function importFeatures(productId: string, rows: ImportSimpleItemRow[]) {
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/features/import`, { method: 'POST', body: { rows } });
 }
+
+export interface ImportFeatureTreeRow {
+  path: string;
+  title?: string;
+  grade?: string;
+  featureType?: string;
+  moduleName?: string;
+  description?: string;
+  externalId?: string;
+  keyRules?: string;
+  acceptanceCriteria?: string;
+}
+
+export function importFeatureTree(productId: string, rows: ImportFeatureTreeRow[]) {
+  return apiRequest<{ created: number; updated: number }>(
+    `/api/product/products/${productId}/features/import-tree`,
+    { method: 'POST', body: { rows } },
+  );
+}
 export function importDefects(productId: string, rows: ImportSimpleItemRow[]) {
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/defects/import`, { method: 'POST', body: { rows } });
 }
