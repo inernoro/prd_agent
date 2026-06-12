@@ -95,3 +95,4 @@
 | fix | prd-admin | 刷新中断对账：大纲规划（客户端 SSE 无服务端 run）被刷新打断后，气泡不再永远停在「正在规划大纲」，挂载时翻转为可重试的中断提示 |
 | fix | prd-api | dark-graph 锚定模板范本去 emoji（PR #799 Codex P1）：图标位 pictograph 全部替换为终端风等宽字符标记，全锚定资产 emoji 清零 |
 | fix | - | AGENTS.md 修正 cdscli 路径（.Codex/skills 不存在，实际在 .claude/skills，Bugbot Medium）；cdscli 去重 _repo_name_from_git_ref 双定义并让 _fallback_project_slug 与 _project_slug_hints 共用同一优先序（Bugbot Medium/Low），pytest 125 绿 |
+| security | cds | 只读 SQL Console 危险关键字检查扩到全部放行语句头：堵 PostgreSQL EXPLAIN ANALYZE UPDATE 绕过写权限门（PR #799 Codex P1，main 既有） |
