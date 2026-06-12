@@ -79,3 +79,4 @@
 | fix | prd-api | 暗色锚定 deck 翻页失效修复：提取时剥掉模板自带 Static-preview fallback 样式块（强制所有 slide 可见），导航运行时类切换即可真实翻页 |
 | fix | prd-api | 模型池直选凭据预检：pool-models 返回 available/unavailableReason，平台 key 缺失或解密失败的模型提前标记；from-pool 报错区分「未配 key」与「key 解密失败（环境加密密钥不匹配）」并给出修复指引 |
 | fix | prd-admin | 模型池弹层把凭据预检不过的模型置灰显示原因，不再让用户点了才撞「缺少 API key」报错 |
+| fix | cds | Jwt__Secret 注入改为项目环境变量优先、CDS 全局值仅兜底：根治换 CDS_JWT_SECRET 跨项目穿透打哑其他项目存量密文的联动事故 |

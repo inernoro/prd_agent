@@ -708,9 +708,16 @@ export class ContainerService {
       Object.assign(mergedEnv, customEnv);
     }
 
-    // JWT
-    mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
-    mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
+    // JWT — 项目环境变量优先，CDS master 自己的 secret 只做兜底。
+    // 历史行为是无条件用 CDS 进程的 CDS_JWT_SECRET 覆盖所有项目容器的
+    // Jwt__Secret：一把全局钥匙同时耦合了 CDS 自身鉴权、各应用的 JWT 签名、
+    // 以及 prd-agent 用同一值做的 API key AES 加密。2026-06-12 为修
+    // miduo-backend HS512 弱钥换了 CDS_JWT_SECRET，连带把 prd-agent 全部
+    // 平台 key 存量密文打成不可解密（跨项目穿透事故）。
+    // 按 scope-naming 规则 JWT_SECRET 是项目级配置：项目 customEnv 显式
+    // 定义了 Jwt__Secret/Jwt__Issuer 就尊重它，未定义才注入全局值。
+    if (!mergedEnv['Jwt__Secret']) mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
+    if (!mergedEnv['Jwt__Issuer']) mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
     // Inject git metadata so frontend build tools can stamp bundle URLs.
     // Branch containers often mount only a subdirectory (e.g. prd-admin -> /app),
