@@ -5,11 +5,22 @@
  * 数据源：apirequestlogs（报错/慢端点，历史即有）+ behavior_events（路由信号，自采集上线起累积）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bug, Check, CheckCircle2, EyeOff as IgnoreIcon, Radar, RotateCcw, Users } from 'lucide-react';
+import { BookOpen, Bug, Check, CheckCircle2, EyeOff as IgnoreIcon, Radar, RotateCcw, ScrollText, Users, X } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { StreamingText } from '@/components/streaming/StreamingText';
+import { useSseStream } from '@/lib/useSseStream';
 import { toast } from '@/lib/toast';
-import { createDefect, getTeamActivityInsights, setTeamActivityInsightState } from '@/services';
+import {
+  addDocumentEntry,
+  createDefect,
+  createDocumentStore,
+  getTeamActivityInsights,
+  listDocumentStores,
+  setTeamActivityInsightState,
+  updateDocumentContent,
+} from '@/services';
 import type { BehaviorInsight, TeamActivityInsightsData } from '@/services/contracts/teamActivity';
 import { getInsightKindMeta } from './insightKinds';
 
@@ -52,7 +63,66 @@ export function InsightsPanel({ from }: { from?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [includeIgnored, setIncludeIgnored] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [briefModel, setBriefModel] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState(false);
   const fetchIdRef = useRef(0);
+
+  // AI 简报：SSE 流式生成（model/delta/done/error 事件由后端 insights/brief 推送）
+  const brief = useSseStream({
+    url: '/api/team-activity/insights/brief',
+    typingEvent: 'delta',
+    onEvent: {
+      model: (data) => {
+        const d = data as { model?: string; platform?: string };
+        setBriefModel(d.model ? `${d.model}${d.platform ? ` · ${d.platform}` : ''}` : null);
+      },
+    },
+    onError: (msg) => toast.error(msg),
+  });
+
+  const startBrief = useCallback(() => {
+    setBriefOpen(true);
+    setBriefModel(null);
+    void brief.start({ url: `/api/team-activity/insights/brief${from ? `?from=${encodeURIComponent(from)}` : ''}` });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from]);
+
+  const publishBrief = useCallback(async () => {
+    const markdown = brief.typing.trim();
+    if (!markdown) return;
+    setPublishing(true);
+    const storeName = '行为洞察简报';
+    let storeId: string | null = null;
+    const list = await listDocumentStores(1, 100);
+    if (list.success) storeId = list.data.items.find((st) => st.name === storeName)?.id ?? null;
+    if (!storeId) {
+      const created = await createDocumentStore({ name: storeName, description: '团队动态 - 行为洞察自动生成的 AI 简报存档' });
+      if (created.success) storeId = created.data.id;
+    }
+    if (!storeId) {
+      setPublishing(false);
+      toast.error('知识库创建失败，请稍后重试');
+      return;
+    }
+    const now = new Date();
+    const title = `行为洞察简报 ${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const entry = await addDocumentEntry(storeId, {
+      title,
+      sourceType: 'import',
+      contentType: 'text/markdown',
+      summary: markdown.slice(0, 200),
+    });
+    if (!entry.success) {
+      setPublishing(false);
+      toast.error(entry.error?.message ?? '创建文档失败');
+      return;
+    }
+    const content = await updateDocumentContent(entry.data.id, markdown);
+    setPublishing(false);
+    if (content.success) toast.success(`已发布《${title}》到知识库「${storeName}」`);
+    else toast.error(content.error?.message ?? '写入文档内容失败');
+  }, [brief.typing]);
 
   const reload = useCallback(() => {
     const fetchId = ++fetchIdRef.current;
@@ -145,6 +215,14 @@ export function InsightsPanel({ from }: { from?: string }) {
             </span>
             <span className="w-px h-3 bg-white/10" />
             <span>报错/等待信号来自 API 请求日志（含历史）</span>
+            <button
+              type="button"
+              onClick={startBrief}
+              className="inline-flex items-center gap-1 px-2 h-[20px] rounded text-[11px] border bg-cyan-500/10 text-cyan-200/90 border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer"
+            >
+              <ScrollText size={11} />
+              AI 简报
+            </button>
             {data.ignoredCount > 0 || includeIgnored ? (
               <button
                 type="button"
@@ -154,6 +232,48 @@ export function InsightsPanel({ from }: { from?: string }) {
                 <IgnoreIcon size={11} />
                 {includeIgnored ? '隐藏已忽略' : `查看已忽略（${data.ignoredCount}）`}
               </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {briefOpen ? (
+          <div className="px-5 py-4 border-b border-white/[0.05] flex flex-col gap-2.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="text-[11px] font-semibold text-cyan-200/90">AI 洞察简报</span>
+              {briefModel ? <span className="text-[10px] text-white/30 font-mono">{briefModel}</span> : null}
+              {brief.phase === 'connecting' || brief.phase === 'streaming' ? (
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-white/40">
+                  <MapSpinner size={12} />
+                  {brief.phaseMessage || '生成中…'}
+                </span>
+              ) : null}
+              <span className="ml-auto flex items-center gap-1.5">
+                {brief.phase === 'done' && brief.typing.trim() ? (
+                  <ActionButton
+                    onClick={() => void publishBrief()}
+                    icon={BookOpen}
+                    label={publishing ? '发布中…' : '发布到知识库'}
+                    emphasis
+                  />
+                ) : null}
+                <ActionButton
+                  onClick={() => {
+                    brief.abort();
+                    setBriefOpen(false);
+                  }}
+                  icon={X}
+                  label="关闭"
+                />
+              </span>
+            </div>
+            {brief.typing ? (
+              <div className="rounded-md px-3.5 py-3 bg-white/[0.02] border border-white/[0.05] text-[12.5px] leading-relaxed text-white/75 max-h-[360px]" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                {brief.phase === 'done' ? (
+                  <MarkdownContent content={brief.typing} variant="reading" />
+                ) : (
+                  <StreamingText text={brief.typing} streaming mode="blur" />
+                )}
+              </div>
             ) : null}
           </div>
         ) : null}

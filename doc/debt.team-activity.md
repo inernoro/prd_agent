@@ -27,7 +27,12 @@
 |------|------|------|
 | 搜索无果信号未接入 | 待解决 | 「搜了又搜没有结果」需要各搜索入口统一埋点（系统无中央搜索抽象），MVP 未覆盖；后续可从 Cmd+K / 各列表搜索框收口 |
 | 中途放弃为秒退近似 | 设计取舍 | 真实「漏斗放弃」（打开创建弹窗未提交等）需业务级漏斗定义；MVP 用「5 秒内离开」近似，命名诚实为「秒退放弃」 |
-| 改进建议为规则模板 | 待升级 | suggestion 由 kind 级模板生成；v2 可经 ILlmGateway 结合证据生成个性化建议（需登记 AppCallerCode + SSE 可视化） |
+| 改进建议为规则模板 | 部分偿还 | 单条洞察 suggestion 仍为模板；整体「AI 简报」已接 ILlmGateway（insight-brief caller，SSE 流式 + 可发布知识库）。单条级 AI 建议待做 |
 | 停留时长不区分「阅读」与「卡住」 | 设计取舍 | 已剔除标签页隐藏时间，但页面内挂机无法区分；长停留洞察文案已提示由产品负责人结合页面性质判断 |
 | 路由信号自上线起累积 | 事实声明 | behavior_events 无历史回填；报错/慢端点洞察来自 apirequestlogs（含历史）。UI 已展示采集起点 |
 | behavior_events 无索引 | 待 DBA | 按 no-auto-index 规则不自动建索引；数据量上来后需 DBA 手动建 (OccurredAt desc) + (Type, OccurredAt) 索引并更新 guide.mongodb-indexes |
+
+## 涌现第二波留尾（2026-06-12）
+
+- E5 洞察主动推送（admin_notifications + webhook）未做：需要定时 Worker 对比洞察快照（新出现/严重度跃升才推），避免「看页面才知道」。洞察计算已抽成 ComputeInsightsAsync，Worker 可直接复用。
+- AI 简报发布后未自动出分享链：知识库分享链需调 document_store_share_links 流程，目前发布后由人工在知识库页开分享。

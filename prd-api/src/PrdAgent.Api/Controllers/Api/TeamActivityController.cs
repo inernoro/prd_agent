@@ -1,11 +1,16 @@
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Filters;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -20,10 +25,14 @@ namespace PrdAgent.Api.Controllers.Api;
 public class TeamActivityController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly ILlmGateway _gateway;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
 
-    public TeamActivityController(MongoDbContext db)
+    public TeamActivityController(MongoDbContext db, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext)
     {
         _db = db;
+        _gateway = gateway;
+        _llmRequestContext = llmRequestContext;
     }
 
     /// <summary>
@@ -245,6 +254,13 @@ public class TeamActivityController : ControllerBase
         var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
         // 未指定范围时取近 30 天：洞察是「最近哪里不好用」，扫全史既慢又稀释信号
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+        var (insights, behaviorEventCount) = await ComputeInsightsAsync(fromUtc, endUtc);
+        return await BuildInsightsResponseAsync(insights, behaviorEventCount, fromUtc, endUtc, includeIgnored);
+    }
+
+    /// <summary>规则式信号聚类（供 insights 查询与 AI 简报共用）</summary>
+    private async Task<(List<Insight> Insights, int BehaviorEventCount)> ComputeInsightsAsync(DateTime fromUtc, DateTime endUtc)
+    {
         var insights = new List<Insight>();
 
         // ── 信号 A：报错热点（apirequestlogs，排除鉴权噪音 401）──
@@ -422,6 +438,12 @@ public class TeamActivityController : ControllerBase
                 Severity: agg.Trips * 4 + agg.Users.Count * 3));
         }
 
+        return (insights, events.Count);
+    }
+
+    private async Task<IActionResult> BuildInsightsResponseAsync(
+        List<Insight> insights, int behaviorEventCount, DateTime fromUtc, DateTime endUtc, bool includeIgnored)
+    {
         // 采集起点：让前端能诚实告知「路由级信号从何时开始有数据」
         var earliest = await _db.BehaviorEvents.Find(FilterDefinition<BehaviorEvent>.Empty)
             .SortBy(x => x.CreatedAt)
@@ -470,11 +492,130 @@ public class TeamActivityController : ControllerBase
         {
             items = visible,
             ignoredCount,
-            behaviorEventCount = events.Count,
+            behaviorEventCount,
             trackedSince = earliest == default ? (DateTime?)null : earliest,
             windowFrom = fromUtc,
             windowTo = endUtc,
         }));
+    }
+
+    /// <summary>
+    /// AI 行为洞察简报（SSE 流式）：把当前窗口的洞察聚合结果交给 LLM，
+    /// 生成面向产品负责人的中文简报。事件：model / delta / done / error。
+    /// 遵循 server-authority：LLM 调用用 CancellationToken.None，客户端断开只停写不停算。
+    /// </summary>
+    [HttpGet("insights/brief")]
+    public async Task InsightBriefStream([FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache, no-transform";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        var userId = this.GetRequiredUserId();
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+
+        await WriteSseAsync("phase", new { message = "正在聚合行为信号…" });
+        var (insights, behaviorEventCount) = await ComputeInsightsAsync(fromUtc, endUtc);
+        var top = insights.OrderByDescending(i => i.Severity).Take(15).ToList();
+        if (top.Count == 0)
+        {
+            await WriteSseAsync("error", new { message = "当前窗口没有形成任何洞察，无需生成简报" });
+            return;
+        }
+
+        var lines = new StringBuilder();
+        lines.AppendLine($"分析窗口：{fromUtc:yyyy-MM-dd} ~ {endUtc:yyyy-MM-dd}，路由级行为事件 {behaviorEventCount} 条。");
+        foreach (var i in top)
+        {
+            lines.AppendLine($"- [{i.KindLabel}] {i.Target} | {i.Metric} | {i.UserCount} 人 / {i.EventCount} 次 | 证据: {string.Join("；", i.Evidence)}");
+        }
+
+        var systemPrompt =
+            "你是产品团队的行为洞察分析师。下面是从用户真实操作轨迹聚合出的洞察清单" +
+            "（频繁报错 / 等待过久 / 停留过久 / 秒退放弃 / 反复横跳）。" +
+            "请用中文写一份给产品负责人的简报（Markdown，禁止使用 emoji）：" +
+            "1) 一段 80 字以内的总体判断；2) 按影响度排出 3-5 个最值得处理的问题，" +
+            "每个问题给出现象、影响面、最可能的根因猜想、建议动作；3) 一段「本期可以不管」的说明，" +
+            "解释哪些信号可能是正常行为（如内容消费页停留长）。证据不足时如实说明，禁止编造数据。";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: lines.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[TeamActivity-InsightBrief]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.TeamActivity.InsightBrief));
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.TeamActivity.InsightBrief,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            TimeoutSeconds = 180,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = lines.ToString() },
+                },
+                ["temperature"] = 0.4,
+                ["max_tokens"] = 4096,
+            },
+        };
+
+        var clientGone = false;
+        var sentModel = false;
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && !sentModel && chunk.Resolution != null)
+                {
+                    sentModel = true;
+                    if (!clientGone)
+                    {
+                        try { await WriteSseAsync("model", new { model = chunk.Resolution.ActualModel, platform = chunk.Resolution.ActualPlatformName }); }
+                        catch (ObjectDisposedException) { clientGone = true; }
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    if (!clientGone)
+                    {
+                        try { await WriteSseAsync("delta", new { text = chunk.Content }); }
+                        catch (ObjectDisposedException) { clientGone = true; }
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    if (!clientGone) { try { await WriteSseAsync("error", new { message = chunk.Error ?? "LLM 网关返回未知错误" }); } catch { } }
+                    return;
+                }
+            }
+            if (!clientGone) { try { await WriteSseAsync("done", new { }); } catch (ObjectDisposedException) { } }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex)
+        {
+            if (!clientGone) { try { await WriteSseAsync("error", new { message = ex.Message }); } catch { } }
+        }
+    }
+
+    private async Task WriteSseAsync(string eventName, object? data)
+    {
+        var dataLine = data == null
+            ? "null"
+            : JsonSerializer.Serialize(data, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        await Response.WriteAsync($"event: {eventName}\ndata: {dataLine}\n\n", CancellationToken.None);
+        await Response.Body.FlushAsync(CancellationToken.None);
     }
 
     public record SetInsightStateRequest(string Kind, string Target, string Status, string? DefectId, string? DefectTitle);

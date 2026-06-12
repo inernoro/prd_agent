@@ -12,3 +12,5 @@
 | feat | prd-admin | 行为洞察处理闭环：洞察可「转为缺陷 / 确认待改 / 已修复 / 忽略」，忽略项指纹级持久化不再打扰，可一键恢复；转缺陷自动携带证据生成缺陷内容并关联展示 |
 | feat | prd-api | 新增 behavior_insight_states 集合与 POST /api/team-activity/insights/state 端点；insights 查询按指纹挂载处理状态并默认过滤已忽略项 |
 | style | prd-admin | 洞察面板视觉去 AI 感：单卡分隔行替代漂浮盒子、左缘信号色条、目标/指标走 mono 字体、琥珀色强调主操作；脉搏大数字改实色微光、排行条单色化 |
+| feat | prd-admin | 行为洞察新增 AI 简报：一键流式生成面向产品负责人的洞察简报（SSE 打字效果 + 顶部模型可见），完成后可一键发布到知识库「行为洞察简报」存档 |
+| feat | prd-api | 新增 GET /api/team-activity/insights/brief SSE 端点（ILlmGateway 流式 + LlmRequestContext + AppCallerRegistry 登记 insight-brief），洞察计算抽出 ComputeInsightsAsync 供查询与简报共用 |
