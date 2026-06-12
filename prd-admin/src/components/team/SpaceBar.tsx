@@ -5,7 +5,7 @@ import { TeamManagerPanel } from '@/components/team/TeamManagerPanel';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { toast } from '@/lib/toast';
-import { createTeam, getTeam, joinTeam, type TeamMember, type WebHostingRole } from '@/services/real/teams';
+import { createTeam, getTeam, joinTeam, updateTeam, type TeamMember, type WebHostingRole } from '@/services/real/teams';
 
 /** 当前空间：个人空间 或 某个团队空间 */
 export type Space = { kind: 'personal' } | { kind: 'team'; teamId: string };
@@ -31,6 +31,19 @@ export function SpaceBar({
   const [newName, setNewName] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const addRef = useRef<HTMLDivElement | null>(null);
+  // 双击团队 chip 就地改名（仅团队管理员）
+  const [renaming, setRenaming] = useState<{ teamId: string; value: string } | null>(null);
+
+  const commitTeamRename = async () => {
+    if (!renaming) return;
+    const t = teams.find((x) => x.team.id === renaming.teamId);
+    const next = renaming.value.trim();
+    setRenaming(null);
+    if (!t || !next || next === t.team.name) return;
+    const res = await updateTeam(t.team.id, { name: next });
+    if (res.success) await loadTeams(true);
+    else toast.error('重命名失败', res.error?.message);
+  };
 
   useEffect(() => { void loadTeams(); }, [loadTeams]);
 
@@ -81,20 +94,6 @@ export function SpaceBar({
     </button>
   );
 
-  const teamChip = (label: React.ReactNode, on: boolean, onClick: () => void, key: string) => (
-    <button
-      key={key}
-      type="button"
-      onClick={onClick}
-      className="h-7 px-2.5 rounded-full text-[12px] flex items-center gap-1 shrink-0 transition-colors"
-      style={on
-        ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
-        : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
-    >
-      {label}
-    </button>
-  );
-
   return (
     <div data-tour-id="webpages-space-bar" className="flex flex-col gap-2 w-full">
       {/* 一级导航：个人空间 | 团队空间 */}
@@ -138,14 +137,41 @@ export function SpaceBar({
       {/* 二级：团队标签 chips（仅团队空间下展示，平铺不下拉） */}
       {current.kind === 'team' && teams.length > 0 && (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
-          {teams.map((t) =>
-            teamChip(
-              <><Users size={11} /> {t.team.name} <span className="opacity-60">{t.memberCount}</span></>,
-              current.teamId === t.team.id,
-              () => onChange({ kind: 'team', teamId: t.team.id }),
-              t.team.id,
-            ),
-          )}
+          {teams.map((t) => {
+            if (renaming?.teamId === t.team.id) {
+              return (
+                <input
+                  key={t.team.id}
+                  autoFocus
+                  value={renaming.value}
+                  onChange={(e) => setRenaming({ teamId: t.team.id, value: e.target.value })}
+                  onBlur={() => void commitTeamRename()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void commitTeamRename();
+                    if (e.key === 'Escape') setRenaming(null);
+                  }}
+                  className="h-7 px-2.5 rounded-full text-[12px] outline-none w-[160px] shrink-0"
+                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)' }}
+                />
+              );
+            }
+            const canRename = t.myRole === 'admin';
+            return (
+              <button
+                key={t.team.id}
+                type="button"
+                onClick={() => onChange({ kind: 'team', teamId: t.team.id })}
+                onDoubleClick={() => { if (canRename) setRenaming({ teamId: t.team.id, value: t.team.name }); }}
+                title={canRename ? '双击重命名空间' : undefined}
+                className="h-7 px-2.5 rounded-full text-[12px] flex items-center gap-1 shrink-0 transition-colors"
+                style={current.teamId === t.team.id
+                  ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
+                  : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+              >
+                <Users size={11} /> {t.team.name} <span className="opacity-60">{t.memberCount}</span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

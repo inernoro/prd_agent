@@ -28,6 +28,7 @@ import {
   setSiteTeams,
   listSiteGroups,
   createSiteGroup,
+  updateSiteGroup,
   deleteSiteGroup,
   setSiteGroup,
   copySiteToTeam,
@@ -657,6 +658,16 @@ export default function WebPagesPage() {
     }
   };
 
+  const handleRenameGroup = async (g: WebPageGroup, name: string) => {
+    const res = await updateSiteGroup(g.id, { name });
+    if (res.success) {
+      toast.success('已重命名', `「${g.name}」已改为「${name}」`);
+      await loadGroups();
+    } else {
+      toast.error('重命名失败', res.error?.message);
+    }
+  };
+
   const handleDeleteGroup = async (g: WebPageGroup) => {
     if (!confirm(`删除${g.kind === 'topic' ? '专题' : '分类'}「${g.name}」？组内网页不会被删除，只会回到「未分组」。`)) return;
     const res = await deleteSiteGroup(g.id);
@@ -995,6 +1006,7 @@ export default function WebPagesPage() {
               onSelect={setActiveGroupId}
               onCreate={handleCreateGroup}
               onDelete={handleDeleteGroup}
+              onRename={handleRenameGroup}
             />
           ) : spaceFolders.length > 0 ? (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
@@ -1318,6 +1330,7 @@ function TeamGroupsBar({
   onSelect,
   onCreate,
   onDelete,
+  onRename,
 }: {
   groups: WebPageGroup[];
   activeGroupId: string | null;
@@ -1325,10 +1338,22 @@ function TeamGroupsBar({
   onSelect: (groupId: string | null) => void;
   onCreate: (kind: 'topic' | 'daily', name: string) => void | Promise<void>;
   onDelete: (group: WebPageGroup) => void | Promise<void>;
+  onRename: (group: WebPageGroup, name: string) => void | Promise<void>;
 }) {
   const [creating, setCreating] = useState<'topic' | 'daily' | null>(null);
   const [name, setName] = useState('');
   const createRef = useRef<HTMLDivElement | null>(null);
+  // 双击分组 chip 进入就地改名（编辑权限门控）
+  const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
+
+  const commitRename = async () => {
+    if (!editing) return;
+    const g = groups.find((x) => x.id === editing.id);
+    const next = editing.value.trim();
+    setEditing(null);
+    if (!g || !next || next === g.name) return;
+    await onRename(g, next);
+  };
 
   useEffect(() => {
     if (!creating) return;
@@ -1347,11 +1372,31 @@ function TeamGroupsBar({
 
   const chip = (g: WebPageGroup) => {
     const on = activeGroupId === g.id;
+    if (editing?.id === g.id) {
+      return (
+        <span key={g.id} className="inline-flex items-center shrink-0">
+          <input
+            autoFocus
+            value={editing.value}
+            onChange={(e) => setEditing({ id: g.id, value: e.target.value })}
+            onBlur={() => void commitRename()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void commitRename();
+              if (e.key === 'Escape') setEditing(null);
+            }}
+            className="h-7 px-2.5 rounded-full text-[12px] outline-none w-[140px]"
+            style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)' }}
+          />
+        </span>
+      );
+    }
     return (
       <span key={g.id} className="inline-flex items-center shrink-0">
         <button
           type="button"
           onClick={() => onSelect(on ? null : g.id)}
+          onDoubleClick={() => { if (canEdit) setEditing({ id: g.id, value: g.name }); }}
+          title={canEdit ? '双击重命名' : undefined}
           className="h-7 px-2.5 rounded-full text-[12px] flex items-center gap-1 transition-colors"
           style={on
             ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
