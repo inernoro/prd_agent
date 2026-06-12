@@ -244,6 +244,8 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
 
   // ── 角色标签（仅作授权分组用，本身不产生权限）──
   const [labelInput, setLabelInput] = useState<{ userId: string; value: string } | null>(null);
+  // 双击标签 chip 就地改名
+  const [labelEdit, setLabelEdit] = useState<{ userId: string; oldLabel: string; value: string } | null>(null);
 
   const saveLabels = async (userId: string, labels: string[]) => {
     if (!selectedId) return;
@@ -268,6 +270,17 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
 
   const handleRemoveLabel = async (m: TeamMember, label: string) => {
     await saveLabels(m.userId, (m.labels ?? []).filter((l) => l !== label));
+  };
+
+  const commitLabelRename = async (m: TeamMember) => {
+    if (!labelEdit) return;
+    const { oldLabel } = labelEdit;
+    const next = labelEdit.value.trim();
+    setLabelEdit(null);
+    if (!next || next === oldLabel) return;
+    // 同名标签已存在 → 等价于合并：移除旧标签即可
+    const renamed = (m.labels ?? []).map((l) => (l === oldLabel ? next : l));
+    await saveLabels(m.userId, [...new Set(renamed)]);
   };
 
   // 团队内已有标签字典（union），加标签时可快速复用
@@ -442,10 +455,32 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                             {/* 角色标签：如「前端组」「测试组」，供分组权限按标签批量授权 */}
                             <div className="flex flex-wrap items-center gap-1 mt-0.5">
                               {(m.labels ?? []).map((label) => (
+                                labelEdit?.userId === m.userId && labelEdit.oldLabel === label ? (
+                                  <input
+                                    key={label}
+                                    autoFocus
+                                    value={labelEdit.value}
+                                    onChange={(e) => setLabelEdit({ userId: m.userId, oldLabel: label, value: e.target.value })}
+                                    onBlur={() => void commitLabelRename(m)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') void commitLabelRename(m);
+                                      if (e.key === 'Escape') setLabelEdit(null);
+                                    }}
+                                    className="h-5 px-1.5 rounded-full text-[10px] outline-none"
+                                    style={{
+                                      width: `${Math.min(24, Math.max(5, [...labelEdit.value].reduce((w, c) => w + (c.charCodeAt(0) > 255 ? 2 : 1), 0) + 3))}ch`,
+                                      background: 'var(--bg-input)',
+                                      border: '1px solid rgba(212,175,55,0.5)',
+                                      color: 'var(--text-primary)',
+                                    }}
+                                  />
+                                ) : (
                                 <span
                                   key={label}
+                                  onDoubleClick={() => { if (isAdmin) setLabelEdit({ userId: m.userId, oldLabel: label, value: label }); }}
+                                  title={isAdmin ? '双击重命名标签' : undefined}
                                   className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-px rounded-full"
-                                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+                                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', cursor: isAdmin ? 'default' : undefined }}
                                 >
                                   {label}
                                   {isAdmin && (
@@ -460,6 +495,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                                     </button>
                                   )}
                                 </span>
+                                )
                               ))}
                               {isAdmin && (
                                 labelInput?.userId === m.userId ? (

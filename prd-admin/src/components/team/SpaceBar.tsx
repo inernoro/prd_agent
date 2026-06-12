@@ -125,20 +125,33 @@ export function SpaceBar({
           {adding ? <X size={15} /> : <Plus size={15} />}
         </button>
         {adding && (
-          <input
-            autoFocus
-            value={addValue}
-            disabled={addBusy}
-            onChange={(e) => setAddValue(e.target.value)}
-            placeholder="输入名称创建团队，或粘贴 INV- 邀请码加入"
-            className="h-8 px-3 rounded-[8px] text-[13px] outline-none shrink-0 w-[280px]"
-            style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)', opacity: addBusy ? 0.6 : 1 }}
-            onBlur={() => { if (!addValue.trim()) setAdding(false); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submitAdd();
-              if (e.key === 'Escape') { setAdding(false); setAddValue(''); }
-            }}
-          />
+          <>
+            <input
+              autoFocus
+              value={addValue}
+              disabled={addBusy}
+              onChange={(e) => setAddValue(e.target.value)}
+              placeholder="输入团队空间名称"
+              title="输入名称回车或点「创建」；粘贴 INV- 邀请码可直接加入"
+              className="h-8 px-3 rounded-[8px] text-[13px] outline-none shrink-0 w-[240px]"
+              style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)', opacity: addBusy ? 0.6 : 1 }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitAdd();
+                if (e.key === 'Escape') { setAdding(false); setAddValue(''); }
+              }}
+            />
+            <button
+              type="button"
+              disabled={!addValue.trim() || addBusy}
+              onClick={() => void submitAdd()}
+              className="h-8 px-3 rounded-[8px] text-[13px] shrink-0"
+              style={addValue.trim() && !addBusy
+                ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }
+                : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
+            >
+              {addBusy ? '处理中…' : /^INV-/i.test(addValue.trim()) ? '加入' : '创建'}
+            </button>
+          </>
         )}
       </div>
 
