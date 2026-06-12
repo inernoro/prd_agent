@@ -175,7 +175,7 @@ export function OverviewShell() {
         </div>
       )}
       {active === 'workflow' && (
-        <SectionShell title="应用配置" desc="需求与缺陷的状态及流转规则；功能无独立流转，跟随所属版本。全局默认，可按产品覆盖（管理层）">
+        <SectionShell title="应用配置" desc="需求、功能、缺陷的状态及流转规则；全局默认，可按产品覆盖（管理层）">
           <WorkflowTemplateSection />
         </SectionShell>
       )}
@@ -489,16 +489,15 @@ function FeaturesTable({ isAdmin, products }: { isAdmin: boolean; products: Prod
   const [rows, setRows] = useState<OverviewFeatureRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
-  const [grade, setGrade] = useState('');
   const [mine, setMine] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await getOverviewFeatures({ keyword: keyword.trim() || undefined, grade: grade || undefined, mine: mine || undefined });
+    const res = await getOverviewFeatures({ keyword: keyword.trim() || undefined, mine: mine || undefined });
     if (res.success) setRows(res.data.items);
     setLoading(false);
-  }, [keyword, grade, mine]);
+  }, [keyword, mine]);
   useEffect(() => {
     void reload();
   }, [reload]);
@@ -506,7 +505,7 @@ function FeaturesTable({ isAdmin, products }: { isAdmin: boolean; products: Prod
   if (loading) return <MapSectionLoader text="正在加载功能…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} extra={<><MineToggle mine={mine} setMine={setMine} />{isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}</>} />
+      <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={<><MineToggle mine={mine} setMine={setMine} />{isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}</>} />
       {rows.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的功能' : '没有功能'}</div>
       ) : (
@@ -517,7 +516,6 @@ function FeaturesTable({ isAdmin, products }: { isAdmin: boolean; products: Prod
             { header: '编号', render: (r) => <span className="text-white/40 text-xs">{r.featureNo}</span> },
             { header: '名称', render: (r) => <span className="text-white/90">{r.title}</span> },
             { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
-            { header: '分级', render: (r) => GRADE_BADGE(r.grade) },
             { header: '状态', render: (r) => <span className="text-white/55 text-xs">{r.currentState || '-'}</span> },
             { header: '处理人', render: (r) => <span className="text-white/55 text-xs">{r.assigneeName || '-'}</span> },
             { header: '实现需求', render: (r) => <span className="text-white/55 text-xs">{r.requirementCount}</span> },

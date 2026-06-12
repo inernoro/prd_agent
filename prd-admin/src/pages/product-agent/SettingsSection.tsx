@@ -75,7 +75,6 @@ const PRESET_FIELDS: Partial<Record<ProductEntityType, { label: string; type: st
   feature: [
     { label: '名称', type: '单行文本' },
     { label: '描述', type: '多行文本' },
-    { label: '分级', type: 'P0-P3' },
     { label: '状态', type: '流程驱动' },
     { label: '实现需求', type: '关联需求' },
     { label: '纳入版本', type: '功能版本化' },

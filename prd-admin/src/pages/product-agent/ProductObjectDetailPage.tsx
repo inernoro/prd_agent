@@ -691,7 +691,7 @@ function CreateObjectForm({
   const onAiFill = (r: AiFillResult) => {
     if (r.title) setTitle(r.title);
     if (r.description) { descAutoFilledRef.current = true; setDescription(r.description); }
-    if (r.grade && ITEM_GRADES.includes(r.grade as ItemGrade)) setGrade(r.grade as ItemGrade);
+    if (!isFeature && r.grade && ITEM_GRADES.includes(r.grade as ItemGrade)) setGrade(r.grade as ItemGrade);
     if (r.formData) {
       const typeVal = r.formData[REQUIREMENT_TYPE_FORM_KEY];
       if (typeVal) setRequirementType(typeVal);
@@ -720,7 +720,6 @@ function CreateObjectForm({
           keyRules,
           acceptanceCriteria,
           remark,
-          grade,
           assigneeId: assigneeId || null,
           formData,
           templateId: template?.id,
@@ -836,15 +835,17 @@ function CreateObjectForm({
               </>
             )}
             {!isFeature && (
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>需求类型</FieldLabel>
-                <RequirementTypeSelect value={requirementType} onChange={setRequirementType} />
-              </div>
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>需求类型</FieldLabel>
+                  <RequirementTypeSelect value={requirementType} onChange={setRequirementType} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>分级</FieldLabel>
+                  <GradeField grade={grade} setGrade={setGrade} />
+                </div>
+              </>
             )}
-            <div className="flex flex-col gap-1.5">
-              <FieldLabel required>分级</FieldLabel>
-              <GradeField grade={grade} setGrade={setGrade} />
-            </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel>处理人</FieldLabel>
               <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
@@ -1347,7 +1348,6 @@ function FeatureDetail({
   const [keyRules, setKeyRules] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [remark, setRemark] = useState('');
-  const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
   const [parentId, setParentId] = useState('');
   const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
@@ -1355,12 +1355,8 @@ function FeatureDetail({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const { template } = useEffectiveTemplate('feature', feature?.productId ?? null);
-  const { workflow: versionWorkflow } = useEffectiveWorkflow('version', feature?.productId ?? null);
+  const { workflow } = useEffectiveWorkflow('feature', feature?.productId ?? null);
   const split = useMemo(() => splitFields(template?.fields), [template]);
-  const linkedVersion = useMemo(() => {
-    const vid = plannedVersionId || featureVersions[0]?.versionId || feature?.plannedVersionId;
-    return vid ? versions.find((v) => v.id === vid) : undefined;
-  }, [plannedVersionId, featureVersions, feature?.plannedVersionId, versions]);
 
   const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
   const [showDefectLinker, setShowDefectLinker] = useState(false);
@@ -1387,7 +1383,6 @@ function FeatureDetail({
       setKeyRules(feature.keyRules ?? '');
       setAcceptanceCriteria(feature.acceptanceCriteria ?? '');
       setRemark(feature.remark ?? '');
-      setGrade(feature.grade);
       setAssigneeId(feature.assigneeId ?? '');
       setParentId(feature.parentId ?? '');
       setSelReqs(new Set(feature.requirementIds));
@@ -1410,13 +1405,12 @@ function FeatureDetail({
       keyRules !== (feature.keyRules ?? '') ||
       acceptanceCriteria !== (feature.acceptanceCriteria ?? '') ||
       remark !== (feature.remark ?? '') ||
-      grade !== feature.grade ||
       assigneeId !== (feature.assigneeId ?? '') ||
       parentId !== (feature.parentId ?? '') ||
       !reqSetEqual(selReqs, feature.requirementIds) ||
       !recordEqual(formData, feature.formData ?? {})
     );
-  }, [feature, title, description, moduleName, featureType, mainRequirementId, plannedVersionId, officialReleaseId, ownerId, keyRules, acceptanceCriteria, remark, grade, assigneeId, parentId, selReqs, formData]);
+  }, [feature, title, description, moduleName, featureType, mainRequirementId, plannedVersionId, officialReleaseId, ownerId, keyRules, acceptanceCriteria, remark, assigneeId, parentId, selReqs, formData]);
 
   if (!feature) return <NotFound />;
   const productId = feature.productId;
@@ -1441,7 +1435,6 @@ function FeatureDetail({
       keyRules,
       acceptanceCriteria,
       remark,
-      grade,
       assigneeId: assigneeId || null,
       parentId,
       requirementIds: Array.from(new Set([mainRequirementId, ...selReqs])),
@@ -1467,7 +1460,19 @@ function FeatureDetail({
       saving={saving}
       onSave={save}
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
-      workflow={undefined}
+      workflow={
+        workflow ? (
+          <WorkflowBar
+            workflow={workflow}
+            entityType="feature"
+            entityId={feature.id}
+            productId={feature.productId}
+            currentState={feature.currentState}
+            entitySnapshot={{ ownerId: ownerId || feature.ownerId, assigneeId, title, grade }}
+            onChanged={onReload}
+          />
+        ) : undefined
+      }
       main={
         <>
           <Card title="功能说明" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
@@ -1517,10 +1522,6 @@ function FeatureDetail({
                 <UserSearchSelect value={ownerId} onChange={setOwnerId} />
               </div>
               <div className="flex flex-col gap-1.5">
-                <FieldLabel required>分级</FieldLabel>
-                <GradeField grade={grade} setGrade={setGrade} />
-              </div>
-              <div className="flex flex-col gap-1.5">
                 <FieldLabel>处理人</FieldLabel>
                 <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
               </div>
@@ -1547,14 +1548,14 @@ function FeatureDetail({
                   {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
                 </select>
               </div>
-              {linkedVersion?.currentState && (
+              {feature.currentState && (
                 <div className="flex flex-col gap-1.5">
-                  <FieldLabel>状态（跟随计划版本）</FieldLabel>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 w-fit">
-                      {versionWorkflow?.states.find((s) => s.key === linkedVersion.currentState)?.label ?? linkedVersion.currentState}
+                  <FieldLabel>状态</FieldLabel>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
+                      {workflow?.states.find((s) => s.key === feature.currentState)?.label ?? feature.currentState}
                     </span>
-                    <span className="text-[11px] text-white/40">计划版本：{linkedVersion.versionName}</span>
+                    <SlaBadge stateEnteredAt={feature.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === feature.currentState)?.slaHours} />
                   </div>
                 </div>
               )}

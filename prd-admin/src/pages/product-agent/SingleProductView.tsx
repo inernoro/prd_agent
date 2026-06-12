@@ -34,7 +34,6 @@ import {
   listRequirements,
   deleteRequirement,
   listFeatures,
-  deleteFeature,
   listReleases,
   listInitiations,
   listTracedDefects,
@@ -845,7 +844,7 @@ function Row({
   title: string;
   sub?: string;
   badge?: string;
-  onDelete: () => void;
+  onDelete?: () => void;
   onClick?: () => void;
   actionLabel?: string;
 }) {
@@ -866,12 +865,14 @@ function Row({
         {onClick && actionLabel && (
           <span className="opacity-0 group-hover:opacity-100 text-[11px] text-cyan-300/70 transition-opacity">{actionLabel}</span>
         )}
-        <button
-          onClick={onDelete}
-          className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity"
-        >
-          <Trash2 size={14} />
-        </button>
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity"
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
     </div>
   );

@@ -862,7 +862,7 @@ function NodeDrawer({
       } else if (type === 'feature') {
         const res = await listFeatures(productId);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
-        if (o) { r.push({ label: '编号', value: o.featureNo }, { label: '分级', value: o.grade }, { label: '状态', value: o.currentState || '-' }, { label: '实现需求', value: String(o.requirementIds.length) }); d = o.description ?? ''; }
+        if (o) { r.push({ label: '编号', value: o.featureNo }, { label: '状态', value: o.currentState || '-' }, { label: '实现需求', value: String(o.requirementIds.length) }); d = o.description ?? ''; }
       } else if (type === 'version') {
         const res = await listVersions(productId);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;

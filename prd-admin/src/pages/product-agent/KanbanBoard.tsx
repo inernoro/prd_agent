@@ -36,6 +36,10 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   const [dragId, setDragId] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [swimlane, setSwimlane] = useState<'none' | 'assignee' | 'grade'>('none');
+  const showGrade = entityType === 'requirement';
+  useEffect(() => {
+    if (!showGrade) setSwimlane((s) => (s === 'grade' ? 'none' : s));
+  }, [showGrade]);
   const [product, setProduct] = useState<Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'> | null>(null);
   const [pendingTransition, setPendingTransition] = useState<{ item: Item; transition: WorkflowTransition } | null>(null);
 
@@ -136,7 +140,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   // 泳道分组
   const lanes = useMemo<{ key: string; label: string; items: Item[] }[]>(() => {
     if (swimlane === 'none') return [{ key: 'all', label: '', items }];
-    if (swimlane === 'grade') {
+    if (showGrade && swimlane === 'grade') {
       return ['p0', 'p1', 'p2', 'p3']
         .map((g) => ({ key: g, label: ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] ?? g, items: items.filter((i) => i.grade === g) }))
         .filter((l) => l.items.length > 0);
@@ -148,7 +152,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
       (groups.get(k) ?? groups.set(k, []).get(k)!).push(it);
     }
     return [...groups.entries()].map(([k, its]) => ({ key: k, label: k === '__none__' ? '未指派' : nameOf(k), items: its }));
-  }, [swimlane, items, nameOf]);
+  }, [swimlane, items, nameOf, showGrade]);
 
   const totalOf = (stateKey: string) => items.filter((it) => colKeyOf(it) === stateKey).length;
 
@@ -162,7 +166,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
       <div className="shrink-0 flex items-center gap-2">
         <span className="text-[11px] text-white/40">泳道</span>
         <div className="flex rounded-lg border border-white/10 overflow-hidden">
-          {(['none', 'assignee', 'grade'] as const).map((m) => (
+          {(['none', 'assignee', ...(showGrade ? (['grade'] as const) : [])] as const).map((m) => (
             <button key={m} onClick={() => setSwimlane(m)} className={`px-2.5 py-1 text-xs ${swimlane === m ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>
               {m === 'none' ? '无' : m === 'assignee' ? '按处理人' : '按分级'}
             </button>
@@ -226,7 +230,9 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
                           >
                             <div className="text-sm text-white/90 line-clamp-2">{it.title}</div>
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[it.grade as keyof typeof ITEM_GRADE_LABEL] ?? it.grade}</span>
+                              {showGrade && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[it.grade as keyof typeof ITEM_GRADE_LABEL] ?? it.grade}</span>
+                              )}
                               {it.assigneeId && swimlane !== 'assignee' && (
                                 <span className="text-[10px] text-white/50 inline-flex items-center gap-0.5"><User size={10} /> {nameOf(it.assigneeId)}</span>
                               )}
