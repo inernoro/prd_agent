@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -58,7 +59,11 @@ public class PeerSyncController : ControllerBase
     // node-to-node（被对端调用，HMAC 验签 / 配对码验证）
     // ═══════════════════════════════════════════════════════════════
 
-    /// <summary>接收握手：校验配对码 → 生成共享密钥 → 落 PeerNode(发起方) → 返回密钥。</summary>
+    /// <summary>
+    /// 接收握手。
+    /// 新路径：prepare 只校验配对码 + 暂存共享密钥；confirm 成功后才落 PeerNode。
+    /// 旧路径：commit=true 时保持兼容，直接落 PeerNode。
+    /// </summary>
     [AllowAnonymous]
     [HttpPost("handshake")]
     public async Task<IActionResult> Handshake(CancellationToken ct)
@@ -101,31 +106,30 @@ public class PeerSyncController : ControllerBase
             return StatusCode(401, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "配对码无效、已使用或已过期"));
 
         var secret = PrdAgent.Infrastructure.Services.PeerNodeService.GenerateSharedSecret();
-        // PR #742 review P2 fix：原子 upsert by RemoteNodeId，避免并发握手（两个 admin 同时配同一对端
-        // 各拿新配对码）产生两行同 RemoteNodeId 但不同 SharedSecret 的脏数据 — VerifyPeerAsync 的
-        // FirstOrDefault 会随机选一行 HMAC 校验失败。需配套在 peer_nodes 集合的 RemoteNodeId 上加唯一
-        // 索引（CLAUDE 项目禁自动建索引，DBA 手动创建：见 doc/guide.mongodb-indexes.md）。
-        var existing = await _db.PeerNodes.Find(n => n.RemoteNodeId == payload.InitiatorNodeId).FirstOrDefaultAsync(ct);
-        // 握手发起方/接受方都用配对管理员；接受方无登录上下文，用配对码创建者作为兜底归属操作者。
-        var fallbackUser = code.CreatedBy;
-        var displayNameToSet = string.IsNullOrWhiteSpace(payload.InitiatorDisplayName)
-            ? (existing?.DisplayName ?? "对端节点")
-            : payload.InitiatorDisplayName;
-        await _db.PeerNodes.UpdateOneAsync(
-            n => n.RemoteNodeId == payload.InitiatorNodeId,
-            Builders<PeerNode>.Update
-                .SetOnInsert(n => n.Id, Guid.NewGuid().ToString("N"))
-                .SetOnInsert(n => n.RemoteNodeId, payload.InitiatorNodeId)
-                .SetOnInsert(n => n.CreatedAt, DateTime.UtcNow)
-                .Set(n => n.DisplayName, displayNameToSet)
-                .Set(n => n.BaseUrl, initiatorBaseUrl)
-                .Set(n => n.SharedSecret, secret)
-                .Set(n => n.Status, PeerNodeStatus.Connected)
-                .Set(n => n.LastError, (string?)null)
-                .Set(n => n.LastContactAt, DateTime.UtcNow)
-                .Set(n => n.CreatedBy, fallbackUser)
-                .Set(n => n.UpdatedAt, DateTime.UtcNow),
-            new UpdateOptions { IsUpsert = true }, ct);
+        var displayName = string.IsNullOrWhiteSpace(payload.InitiatorDisplayName)
+            ? "对端节点"
+            : payload.InitiatorDisplayName.Trim();
+
+        if (!payload.Commit)
+        {
+            await _db.PeerPairingCodes.UpdateOneAsync(
+                c => c.Id == payload.PairingCode && c.UsedByNodeId == payload.InitiatorNodeId,
+                Builders<PeerPairingCode>.Update
+                    .Set(c => c.PendingInitiatorBaseUrl, initiatorBaseUrl)
+                    .Set(c => c.PendingInitiatorDisplayName, displayName)
+                    .Set(c => c.PendingSharedSecret, secret),
+                cancellationToken: ct);
+        }
+        else
+        {
+            await UpsertPeerNodeAsync(
+                payload.InitiatorNodeId,
+                initiatorBaseUrl,
+                displayName,
+                secret,
+                code.CreatedBy,
+                ct);
+        }
 
         // 配对码已在上面 FindOneAndUpdate 时原子 claim，不需要再 set Used。
         var settings = await _db.AppSettings.Find(s => s.Id == "global").FirstOrDefaultAsync(ct);
@@ -135,6 +139,186 @@ public class PeerSyncController : ControllerBase
             DisplayName = settings?.DesktopName ?? "MAP 节点",
             SharedSecret = secret,
         }));
+    }
+
+    /// <summary>两阶段握手确认：只有 confirm 成功后，接收端才正式写入 PeerNode。</summary>
+    [AllowAnonymous]
+    [HttpPost("handshake/confirm")]
+    public async Task<IActionResult> ConfirmHandshake([FromBody] HandshakeConfirmPayload payload, CancellationToken ct)
+    {
+        if (payload == null || string.IsNullOrWhiteSpace(payload.PairingCode)
+            || string.IsNullOrWhiteSpace(payload.InitiatorNodeId)
+            || string.IsNullOrWhiteSpace(payload.SharedSecret))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "确认请求缺少必要信息"));
+
+        var code = await _db.PeerPairingCodes.Find(c =>
+            c.Id == payload.PairingCode.Trim()
+            && c.Used
+            && c.UsedByNodeId == payload.InitiatorNodeId.Trim()
+            && c.PendingSharedSecret == payload.SharedSecret).FirstOrDefaultAsync(ct);
+        if (code == null)
+            return StatusCode(401, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "握手确认无效或已失效"));
+
+        var baseUrl = !string.IsNullOrWhiteSpace(payload.InitiatorBaseUrl)
+            ? payload.InitiatorBaseUrl.Trim().TrimEnd('/')
+            : code.PendingInitiatorBaseUrl?.Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "确认请求缺少发起方地址"));
+        try { await _urlValidator.EnsureSafeHttpUrlAsync(baseUrl, "peer-sync", ct); }
+        catch (Exception ex) { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"发起方地址不合法：{ex.Message}")); }
+
+        var displayName = !string.IsNullOrWhiteSpace(payload.InitiatorDisplayName)
+            ? payload.InitiatorDisplayName.Trim()
+            : (string.IsNullOrWhiteSpace(code.PendingInitiatorDisplayName) ? "对端节点" : code.PendingInitiatorDisplayName!);
+
+        var initiatorNodeId = payload.InitiatorNodeId.Trim();
+        var existing = await _db.PeerNodes.Find(n => n.RemoteNodeId == initiatorNodeId).FirstOrDefaultAsync(ct);
+
+        await UpsertPeerNodeAsync(initiatorNodeId, baseUrl!, displayName, payload.SharedSecret, code.CreatedBy, ct);
+        await _db.PeerPairingCodes.UpdateOneAsync(c => c.Id == code.Id,
+            Builders<PeerPairingCode>.Update
+                .Set(c => c.ConfirmedAt, DateTime.UtcNow)
+                .Set(c => c.PendingReplacedPeerNodeId, existing?.Id)
+                .Set(c => c.PendingPreviousDisplayName, existing?.DisplayName)
+                .Set(c => c.PendingPreviousBaseUrl, existing?.BaseUrl)
+                .Set(c => c.PendingPreviousSharedSecret, existing?.SharedSecret)
+                .Set(c => c.PendingPreviousStatus, existing?.Status)
+                .Set(c => c.PendingPreviousLastError, existing?.LastError)
+                .Set(c => c.PendingPreviousLastContactAt, existing?.LastContactAt)
+                .Set(c => c.PendingPreviousCreatedBy, existing?.CreatedBy),
+            cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { ok = true }));
+    }
+
+    /// <summary>两阶段握手完成：发起端已探活并本地落库，之后 cancel 不再允许撤销正式连接。</summary>
+    [AllowAnonymous]
+    [HttpPost("handshake/finalize")]
+    public async Task<IActionResult> FinalizeHandshake([FromBody] HandshakeConfirmPayload payload, CancellationToken ct)
+    {
+        if (payload == null || string.IsNullOrWhiteSpace(payload.PairingCode)
+            || string.IsNullOrWhiteSpace(payload.InitiatorNodeId)
+            || string.IsNullOrWhiteSpace(payload.SharedSecret))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "完成请求缺少必要信息"));
+
+        var code = await _db.PeerPairingCodes.Find(c =>
+            c.Id == payload.PairingCode.Trim()
+            && c.Used
+            && c.UsedByNodeId == payload.InitiatorNodeId.Trim()
+            && c.PendingSharedSecret == payload.SharedSecret
+            && c.ConfirmedAt != null
+            && c.FinalizedAt == null).FirstOrDefaultAsync(ct);
+        if (code == null)
+            return StatusCode(409, ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "握手完成请求无效或已处理"));
+
+        await _db.PeerPairingCodes.UpdateOneAsync(c => c.Id == code.Id,
+            Builders<PeerPairingCode>.Update
+                .Set(c => c.FinalizedAt, DateTime.UtcNow)
+                .Set(c => c.PendingSharedSecret, (string?)null)
+                .Set(c => c.PendingInitiatorBaseUrl, (string?)null)
+                .Set(c => c.PendingInitiatorDisplayName, (string?)null)
+                .Set(c => c.PendingReplacedPeerNodeId, (string?)null)
+                .Set(c => c.PendingPreviousDisplayName, (string?)null)
+                .Set(c => c.PendingPreviousBaseUrl, (string?)null)
+                .Set(c => c.PendingPreviousSharedSecret, (string?)null)
+                .Set(c => c.PendingPreviousStatus, (string?)null)
+                .Set(c => c.PendingPreviousLastError, (string?)null)
+                .Set(c => c.PendingPreviousLastContactAt, (DateTime?)null)
+                .Set(c => c.PendingPreviousCreatedBy, (string?)null),
+            cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { finalized = true }));
+    }
+
+    /// <summary>两阶段握手失败清理：confirm 后探活失败或发起端落库失败时撤销接收端正式记录。</summary>
+    [AllowAnonymous]
+    [HttpPost("handshake/cancel")]
+    public async Task<IActionResult> CancelHandshake([FromBody] HandshakeConfirmPayload payload, CancellationToken ct)
+    {
+        if (payload == null || string.IsNullOrWhiteSpace(payload.PairingCode)
+            || string.IsNullOrWhiteSpace(payload.InitiatorNodeId)
+            || string.IsNullOrWhiteSpace(payload.SharedSecret))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "撤销请求缺少必要信息"));
+
+        var code = await _db.PeerPairingCodes.Find(c =>
+            c.Id == payload.PairingCode.Trim()
+            && c.UsedByNodeId == payload.InitiatorNodeId.Trim()
+            && c.PendingSharedSecret == payload.SharedSecret
+            && c.FinalizedAt == null).FirstOrDefaultAsync(ct);
+        if (code == null)
+            return Ok(ApiResponse<object>.Ok(new { cancelled = false }));
+
+        if (code.ConfirmedAt != null
+            && !string.IsNullOrWhiteSpace(code.PendingReplacedPeerNodeId)
+            && !string.IsNullOrWhiteSpace(code.PendingPreviousSharedSecret))
+        {
+            await _db.PeerNodes.UpdateOneAsync(
+                n => n.Id == code.PendingReplacedPeerNodeId
+                    && n.RemoteNodeId == payload.InitiatorNodeId.Trim()
+                    && n.SharedSecret == payload.SharedSecret,
+                Builders<PeerNode>.Update
+                    .Set(n => n.DisplayName, code.PendingPreviousDisplayName ?? "对端节点")
+                    .Set(n => n.BaseUrl, code.PendingPreviousBaseUrl ?? string.Empty)
+                    .Set(n => n.SharedSecret, code.PendingPreviousSharedSecret)
+                    .Set(n => n.Status, code.PendingPreviousStatus ?? PeerNodeStatus.Connected)
+                    .Set(n => n.LastError, code.PendingPreviousLastError)
+                    .Set(n => n.LastContactAt, code.PendingPreviousLastContactAt)
+                    .Set(n => n.CreatedBy, code.PendingPreviousCreatedBy ?? code.CreatedBy)
+                    .Set(n => n.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
+        else if (code.ConfirmedAt != null)
+        {
+            await _db.PeerNodes.DeleteOneAsync(n =>
+                n.RemoteNodeId == payload.InitiatorNodeId.Trim()
+                && n.SharedSecret == payload.SharedSecret, ct);
+        }
+        await _db.PeerPairingCodes.UpdateOneAsync(c => c.Id == code.Id,
+            Builders<PeerPairingCode>.Update
+                .Set(c => c.Used, false)
+                .Set(c => c.UsedByNodeId, (string?)null)
+                .Set(c => c.PendingSharedSecret, (string?)null)
+                .Set(c => c.PendingInitiatorBaseUrl, (string?)null)
+                .Set(c => c.PendingInitiatorDisplayName, (string?)null)
+                .Set(c => c.PendingReplacedPeerNodeId, (string?)null)
+                .Set(c => c.PendingPreviousDisplayName, (string?)null)
+                .Set(c => c.PendingPreviousBaseUrl, (string?)null)
+                .Set(c => c.PendingPreviousSharedSecret, (string?)null)
+                .Set(c => c.PendingPreviousStatus, (string?)null)
+                .Set(c => c.PendingPreviousLastError, (string?)null)
+                .Set(c => c.PendingPreviousLastContactAt, (DateTime?)null)
+                .Set(c => c.PendingPreviousCreatedBy, (string?)null)
+                .Set(c => c.FinalizedAt, (DateTime?)null)
+                .Set(c => c.ConfirmedAt, (DateTime?)null),
+            cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { cancelled = true }));
+    }
+
+    private async Task UpsertPeerNodeAsync(
+        string remoteNodeId,
+        string baseUrl,
+        string displayName,
+        string sharedSecret,
+        string fallbackUser,
+        CancellationToken ct)
+    {
+        var existing = await _db.PeerNodes.Find(n => n.RemoteNodeId == remoteNodeId).FirstOrDefaultAsync(ct);
+        var displayNameToSet = string.IsNullOrWhiteSpace(displayName)
+            ? (existing?.DisplayName ?? "对端节点")
+            : displayName;
+        await _db.PeerNodes.UpdateOneAsync(
+            n => n.RemoteNodeId == remoteNodeId,
+            Builders<PeerNode>.Update
+                .SetOnInsert(n => n.Id, Guid.NewGuid().ToString("N"))
+                .SetOnInsert(n => n.RemoteNodeId, remoteNodeId)
+                .SetOnInsert(n => n.CreatedAt, DateTime.UtcNow)
+                .Set(n => n.DisplayName, displayNameToSet)
+                .Set(n => n.BaseUrl, baseUrl)
+                .Set(n => n.SharedSecret, sharedSecret)
+                .Set(n => n.Status, PeerNodeStatus.Connected)
+                .Set(n => n.LastError, (string?)null)
+                .Set(n => n.LastContactAt, DateTime.UtcNow)
+                .Set(n => n.CreatedBy, fallbackUser)
+                .Set(n => n.UpdatedAt, DateTime.UtcNow),
+            new UpdateOptions { IsUpsert = true }, ct);
     }
 
     /// <summary>连通 + 验签自检。</summary>
@@ -419,18 +603,62 @@ public class PeerSyncController : ControllerBase
         var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
         var (ts, sign) = _peer.Sign(node.SharedSecret, method.Method, path, bodyStr);
 
-        var req = new HttpRequestMessage(method, baseLeft + path);
-        req.Headers.TryAddWithoutValidation("X-Peer-Node", selfNodeId);
-        req.Headers.TryAddWithoutValidation("X-Peer-Ts", ts);
-        req.Headers.TryAddWithoutValidation("X-Peer-Sign", sign);
-        if (body != null)
-            req.Content = new StringContent(bodyStr, Encoding.UTF8, "application/json");
-
         var client = _httpFactory.CreateClient("PeerSync");
         client.Timeout = TimeSpan.FromSeconds(120);
-        using var resp = await client.SendAsync(req, ct);
+        using var resp = await SendSignedPeerRequestAsync(client, node, method, baseLeft, path, bodyStr, selfNodeId, ts, sign, ct);
         var json = await resp.Content.ReadAsStringAsync(ct);
         return (resp.IsSuccessStatusCode, json, (int)resp.StatusCode);
+    }
+
+    private async Task<HttpResponseMessage> SendSignedPeerRequestAsync(
+        HttpClient client,
+        PeerNode node,
+        HttpMethod method,
+        string baseUrl,
+        string path,
+        string bodyStr,
+        string selfNodeId,
+        string ts,
+        string sign,
+        CancellationToken ct)
+    {
+        HttpRequestMessage BuildRequest(string requestUrl)
+        {
+            var req = new HttpRequestMessage(method, requestUrl);
+            req.Headers.TryAddWithoutValidation("X-Peer-Node", selfNodeId);
+            req.Headers.TryAddWithoutValidation("X-Peer-Ts", ts);
+            req.Headers.TryAddWithoutValidation("X-Peer-Sign", sign);
+            if (!string.IsNullOrEmpty(bodyStr))
+                req.Content = new StringContent(bodyStr, Encoding.UTF8, "application/json");
+            return req;
+        }
+
+        var url = baseUrl + path;
+        var resp = await client.SendAsync(BuildRequest(url), ct);
+        if (!PeerSyncRedirectHelper.IsRedirect(resp.StatusCode))
+            return resp;
+
+        if (!PeerSyncRedirectHelper.TryBuildSameHostHttpsRedirect(
+                new Uri(url), resp.Headers.Location, path,
+                out var redirectedBaseUrl, out var redirectedUrl, out var reason))
+            return resp;
+
+        await _urlValidator.EnsureSafeHttpUrlAsync(redirectedBaseUrl, "peer-sync", ct);
+        _logger.LogInformation("[peer-sync] normalized peer call baseUrl via redirect {NodeId}: {Original} -> {Redirected}",
+            node.RemoteNodeId, baseUrl, redirectedBaseUrl);
+        resp.Dispose();
+
+        var redirectedResp = await client.SendAsync(BuildRequest(redirectedUrl), ct);
+        if (redirectedResp.IsSuccessStatusCode && !string.Equals(node.BaseUrl, redirectedBaseUrl, StringComparison.Ordinal))
+        {
+            await _db.PeerNodes.UpdateOneAsync(n => n.Id == node.Id,
+                Builders<PeerNode>.Update
+                    .Set(n => n.BaseUrl, redirectedBaseUrl)
+                    .Set(n => n.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+            node.BaseUrl = redirectedBaseUrl;
+        }
+        return redirectedResp;
     }
 
     /// <summary>
@@ -526,6 +754,16 @@ public class PeerSyncController : ControllerBase
         public string InitiatorNodeId { get; set; } = string.Empty;
         public string InitiatorBaseUrl { get; set; } = string.Empty;
         public string InitiatorDisplayName { get; set; } = string.Empty;
+        public bool Commit { get; set; } = true;
+    }
+
+    public class HandshakeConfirmPayload
+    {
+        public string PairingCode { get; set; } = string.Empty;
+        public string InitiatorNodeId { get; set; } = string.Empty;
+        public string? InitiatorBaseUrl { get; set; }
+        public string? InitiatorDisplayName { get; set; }
+        public string SharedSecret { get; set; } = string.Empty;
     }
 
     public class HandshakeResult

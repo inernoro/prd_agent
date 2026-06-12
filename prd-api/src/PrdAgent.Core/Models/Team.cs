@@ -83,6 +83,13 @@ public class TeamMember
     /// </summary>
     public string? WebHostingRole { get; set; }
 
+    /// <summary>
+    /// 角色标签（团队内自定义，如「前端组」「测试组」）。
+    /// 仅作授权分组用：网页托管分组级权限规则可按标签批量授权（见 WebPageGroupAccess），
+    /// 标签本身不直接产生权限。自由文本，团队内按 union 汇总成标签字典。
+    /// </summary>
+    public List<string> Labels { get; set; } = new();
+
     /// <summary>加入时间</summary>
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
 }

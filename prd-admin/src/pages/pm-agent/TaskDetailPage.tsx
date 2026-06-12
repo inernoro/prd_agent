@@ -214,7 +214,7 @@ export function TaskDetailPage() {
   const remove = async () => {
     if (!window.confirm('确定删除该任务（含子任务）？')) return;
     const res = await deletePmTask(taskId);
-    if (res.success) { toast.success('已删除', ''); navigate(`/pm-agent`); }
+    if (res.success) { toast.success('已删除', ''); navigate(`/pm-agent/p/${projectId}?tab=tasks`); }
     else toast.error('删除失败', res.error?.message || '');
   };
 
@@ -240,7 +240,7 @@ export function TaskDetailPage() {
     <div className="h-screen min-h-0 flex flex-col" style={{ background: 'var(--bg-primary)' }}>
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-        <button onClick={() => navigate(`/pm-agent?project=${projectId}`)} className="flex items-center justify-center w-8 h-8 rounded-lg border hover:opacity-70 shrink-0"
+        <button onClick={() => navigate(`/pm-agent/p/${projectId}?tab=tasks`)} className="flex items-center justify-center w-8 h-8 rounded-lg border hover:opacity-70 shrink-0"
           style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }} title="返回项目">
           <ArrowLeft size={16} />
         </button>

@@ -45,6 +45,7 @@ docs:
   spec.cds-project-model: CDS 多项目数据字典
   spec.short-links: 统一短链系统规格
   spec.speech-agent: 演讲智能体（长文本 → 思维导图演讲）产品规格
+  spec.front-end-agent: 前端搭档智能体产品规格
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
@@ -54,6 +55,7 @@ docs:
   design.agent-universe: 智能体宇宙设计（能力契约 SSOT + 统一调用信封 + 漫威宇宙式互通）
   design.knowledge-agent-architecture: 知识库智能体架构设计（三层模型 + map/cds-agent 命名 + 借运行时不重建 + KB-as-files 进、diff 闸出）
   design.server-authority: 服务器权威性设计
+  design.team-activity: 团队动态设计（全局白名单审计 Filter + 标题快照 + 管理员时间线）
   design.unified-skill-system: 技能系统统一设计
   design.llm-gateway: LLM Gateway 统一调用架构设计
   design.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
@@ -112,6 +114,7 @@ docs:
   design.visual-agent: Visual Agent (视觉创作) 架构设计
   design.document-store: 文档空间设计
   design.document-store-sync: 知识库跨环境/本地库双向同步设计（令牌配对+血缘幂等+签名改动检测，含架构图）
+  design.knowledge-base-mention-network: 知识库引用网络（双链 + 反向链接 + 宇宙图）通用 mention 账本基础设施
   design.emergence-explorer: 涌现探索器设计
   design.pr-review-v2: PR Review V2 设计（OAuth 最小可审查工作台）
   design.page-agent-bridge: Page Agent Bridge 设计（编码 Agent 浏览器之眼）
@@ -129,6 +132,8 @@ docs:
   design.cds-railway-onboarding-flow: CDS Railway 式部署向导设计
   design.cds-visual-deploy: CDS 绝对可视化一键部署设计（检测回填+把握度+试运行沙箱+多DB实例+env粘贴+应用已上线，含架构图）
   design.speech-agent: 演讲智能体技术设计（数据模型 / Controller / Service / SSE 协议）
+  design.peer-sync: 系统级跨节点互传（Peer Sync）设计
+  design.reprocess-chat-routing: 文档再加工 · 智能体调用路由设计
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
@@ -148,6 +153,7 @@ docs:
   guide.workflow-agent: 工作流引擎使用教程
   guide.shortcuts-agent: 快捷指令使用教程
   guide.marketplace: 海鲜市场（配置市场）使用教程
+  guide.visual-acceptance-skill: 视觉验收技能跨仓库使用教程
   guide.workflow-canvas: 工作流画布操作手册
   guide.weekly-report: 周报功能完整操作指南
   guide.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
@@ -261,10 +267,12 @@ docs:
   plan.emergence-1-tiktok-douyin-poster: 涌现 1 · TikTok / 抖音博主订阅首页广告海报
   plan.prd-admin-surface-style-migration: prd-admin 样式统一迁移看板
   plan.video-agent-list-detail-rebuild: 视频创作 Agent 列表 / 详情页全面重做交接
+  plan.cds-pr684-review-remediation: CDS PR #684 审查修复计划
 
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
   debt.agent-universe: 智能体宇宙 · 债务台账
+  debt.knowledge-base-mention-network: 知识库引用网络 · MVP 已知边界与遗留事项
   debt.onboarding-tips: 页面教程(小技巧)系统 · 债务台账
   debt.pm-agent: 项目管理智能体 · 债务台账
   debt.product-agent: 产品管理智能体 · 债务台账
@@ -294,6 +302,10 @@ docs:
   debt.report-detail: 周报详情页（异构数据 + 多 tabs + 右栏面板）保留独立实现的债务台账
   debt.open-api: 开放接口对外网关债务台账（伞形 code 不变量 + 限流/降级/预警/配额 Phase 2 留尾）
   debt.document-store-sync: 知识库跨环境/本地库↔库同步 · 债务台账（删除传播/附件/冲突合并/教程未补）
+  debt.daily-report: 日报技能（daily-report-summary）债务台账
+  debt.peer-sync: 系统级跨节点互传（Peer Sync）债务台账
+  debt.task-tree: 个人任务树 Agent · 债务台账
+  debt.web-hosting-comments: 网页托管评论 · 债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.agent-universe-completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
@@ -345,3 +357,18 @@ docs:
   report.skill-eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出
   report.cds-mongo-log-split-incident-2026-05-23: CDS Mongo 日志拆分事故复盘（2026-05-23）
   report.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）
+  debt.cds-nginx-loading-pages:
+    title: "CDS loading pages 债务台账"
+    status: partial
+  design.cds-skill-version-update:
+    title: "CDS 技能版本与更新架构"
+    status: active
+  report.cds-agent-ux-acceptance-2026-06-06:
+    title: "CDS Agent 体验修复验收报告（2026-06-06）"
+    status: active
+  plan.product-agent-version-workflow:
+    title: "产品管理智能体版本流程整改计划"
+    status: draft
+  report.version-20260610-1-summary:
+    title: "version-20260610-1 分支改动说明"
+    status: active

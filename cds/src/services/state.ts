@@ -1,12 +1,14 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
+import fs from 'node:fs';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
+import { isGenericPreviewProjectSlug, repoNameFromGitRef } from './preview-slug.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -21,6 +23,41 @@ const PORT_ALLOC_STRIDE = 17;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
 const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 const SYSTEM_PROJECT_ID = '__system__';
+function readGitOriginUrl(repoRoot?: string): string {
+  if (!repoRoot) return '';
+  try {
+    const dotGit = path.join(repoRoot, '.git');
+    let gitDir = dotGit;
+    const stat = fs.statSync(dotGit);
+    if (stat.isFile()) {
+      const marker = fs.readFileSync(dotGit, 'utf8').trim();
+      const match = marker.match(/^gitdir:\s*(.+)$/i);
+      if (!match) return '';
+      gitDir = path.resolve(repoRoot, match[1]);
+    }
+    const config = fs.readFileSync(path.join(gitDir, 'config'), 'utf8');
+    const lines = config.split(/\r?\n/);
+    let inOrigin = false;
+    for (const raw of lines) {
+      const line = raw.trim();
+      const section = line.match(/^\[remote\s+"([^"]+)"\]$/);
+      if (section) {
+        inOrigin = section[1] === 'origin';
+        continue;
+      }
+      if (line.startsWith('[')) {
+        inOrigin = false;
+        continue;
+      }
+      if (!inOrigin) continue;
+      const url = line.match(/^url\s*=\s*(.+)$/);
+      if (url?.[1]) return url[1].trim();
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
 
 function classifyInfraScope(service: Partial<InfraService>): 'project' | 'system' {
   if (service.scope === 'project' || service.scope === 'system') return service.scope;
@@ -94,8 +131,13 @@ function emptyState(): CdsState {
     defaultBranch: null,
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
+    releaseTargets: {},
+    releasePlans: {},
+    releaseRuns: {},
     previewMode: 'multi',
     activityLogs: {},
+    resourceExternalAccess: {},
+    resourceCloneTasks: [],
   };
 }
 
@@ -223,6 +265,9 @@ export class StateService {
       this.state = loaded;
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
+      if (!this.state.releaseTargets) this.state.releaseTargets = {};
+      if (!this.state.releasePlans) this.state.releasePlans = {};
+      if (!this.state.releaseRuns) this.state.releaseRuns = {};
       if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
       if (!this.state.routingRules) this.state.routingRules = [];
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
@@ -238,6 +283,8 @@ export class StateService {
       if (!this.state.activityLogs) this.state.activityLogs = {};
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
+      if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
+      if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
       if (!this.state.projects) this.state.projects = [];
       // Migrate: backfill cacheMounts for existing build profiles
@@ -250,6 +297,11 @@ export class StateService {
       // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
       // the legacy default projectId. See migrateProjectScoping().
       this.migrateProjectScoping();
+      // Legacy CDS instances sometimes ran from a generic checkout dir
+      // (`workspace`, `cursor-workspace`). Keep the immutable project slug
+      // intact, but set a preview alias from the Git repo so new URLs do
+      // not keep exposing the container/workspace folder name.
+      this.migrateLegacyPreviewAlias();
       // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
       // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
       this.migrateGlobalsToProjects();
@@ -403,6 +455,27 @@ export class StateService {
     if (changed) {
       this.save();
     }
+  }
+
+  private migrateLegacyPreviewAlias(): void {
+    const projects = this.state.projects || [];
+    const legacy = projects.find((p) => p.legacyFlag === true);
+    if (!legacy || legacy.aliasSlug || !isGenericPreviewProjectSlug(legacy.slug)) return;
+
+    const candidate =
+      repoNameFromGitRef(legacy.gitRepoUrl) ||
+      repoNameFromGitRef(legacy.githubRepoFullName) ||
+      repoNameFromGitRef(readGitOriginUrl(this.repoRoot));
+    if (!candidate || candidate === legacy.slug) return;
+
+    const collides = projects.some(
+      (p) => p.id !== legacy.id && (p.slug === candidate || p.aliasSlug === candidate),
+    );
+    if (collides) return;
+
+    legacy.aliasSlug = candidate;
+    legacy.updatedAt = new Date().toISOString();
+    this.save();
   }
 
   /**
@@ -1240,6 +1313,7 @@ export class StateService {
         | 'githubAutoDeploy'
         | 'githubLinkedAt'
         | 'autoSmokeEnabled'
+        | 'resourceChipDisplay'
         | 'composeYaml'
         | 'composeUpdatedAt'
         | 'composeVersion'
@@ -1442,6 +1516,120 @@ export class StateService {
     this.state.serviceDeployments[id] = merged;
     this.save();
     return merged;
+  }
+
+  // ── Release targets / plans / runs (preview → production control plane) ──
+
+  getReleaseTargets(projectId?: string): ReleaseTarget[] {
+    if (!this.state.releaseTargets) return [];
+    return Object.values(this.state.releaseTargets)
+      .filter((target) => !projectId || target.projectId === projectId);
+  }
+
+  getReleaseTarget(id: string): ReleaseTarget | undefined {
+    return this.state.releaseTargets?.[id];
+  }
+
+  upsertReleaseTarget(target: ReleaseTarget): ReleaseTarget {
+    if (!this.state.releaseTargets) this.state.releaseTargets = {};
+    const now = new Date().toISOString();
+    const existing = this.state.releaseTargets[target.id];
+    this.state.releaseTargets[target.id] = {
+      ...existing,
+      ...target,
+      createdAt: existing?.createdAt || target.createdAt || now,
+      updatedAt: now,
+    };
+    this.save();
+    return this.state.releaseTargets[target.id];
+  }
+
+  removeReleaseTarget(id: string): boolean {
+    if (!this.state.releaseTargets?.[id]) return false;
+    delete this.state.releaseTargets[id];
+    this.save();
+    return true;
+  }
+
+  getReleasePlans(projectId?: string): ReleasePlan[] {
+    if (!this.state.releasePlans) return [];
+    return Object.values(this.state.releasePlans)
+      .filter((plan) => !projectId || plan.projectId === projectId);
+  }
+
+  getReleasePlan(id: string): ReleasePlan | undefined {
+    return this.state.releasePlans?.[id];
+  }
+
+  upsertReleasePlan(plan: ReleasePlan): ReleasePlan {
+    if (!this.state.releasePlans) this.state.releasePlans = {};
+    this.state.releasePlans[plan.id] = plan;
+    this.save();
+    return plan;
+  }
+
+  getReleaseRuns(filter: { projectId?: string; targetId?: string; branchId?: string } = {}): ReleaseRun[] {
+    if (!this.state.releaseRuns) return [];
+    return Object.values(this.state.releaseRuns)
+      .filter((run) => !filter.projectId || run.projectId === filter.projectId)
+      .filter((run) => !filter.targetId || run.targetId === filter.targetId)
+      .filter((run) => !filter.branchId || run.branchId === filter.branchId)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+
+  getReleaseRun(id: string): ReleaseRun | undefined {
+    return this.state.releaseRuns?.[id];
+  }
+
+  addReleaseRun(run: ReleaseRun): ReleaseRun {
+    if (!this.state.releaseRuns) this.state.releaseRuns = {};
+    if (this.state.releaseRuns[run.releaseId]) {
+      throw new Error(`ReleaseRun already exists: ${run.releaseId}`);
+    }
+    this.state.releaseRuns[run.releaseId] = run;
+    this.save();
+    return run;
+  }
+
+  patchReleaseRun(id: string, fields: Partial<ReleaseRun>): ReleaseRun {
+    if (!this.state.releaseRuns?.[id]) {
+      throw new Error(`ReleaseRun not found: ${id}`);
+    }
+    const current = this.state.releaseRuns[id];
+    const merged = { ...current, ...fields, releaseId: id, logs: current.logs };
+    this.state.releaseRuns[id] = merged;
+    this.save();
+    return merged;
+  }
+
+  appendReleaseRunLog(
+    id: string,
+    entry: Omit<ReleaseLogEntry, 'seq' | 'at'> & { at?: string },
+  ): ReleaseRun {
+    if (!this.state.releaseRuns?.[id]) {
+      throw new Error(`ReleaseRun not found: ${id}`);
+    }
+    const run = this.state.releaseRuns[id];
+    const nextSeq = (run.seq || 0) + 1;
+    run.logs.push({
+      seq: nextSeq,
+      at: entry.at || new Date().toISOString(),
+      level: entry.level,
+      message: entry.message,
+      phase: entry.phase,
+    });
+    run.seq = nextSeq;
+    this.save();
+    return run;
+  }
+
+  getLatestSuccessfulReleaseRun(targetId: string, beforeReleaseId?: string): ReleaseRun | undefined {
+    const runs = this.getReleaseRuns({ targetId })
+      .filter((run) => run.status === 'success');
+    if (!beforeReleaseId) return runs[0];
+    const current = this.getReleaseRun(beforeReleaseId);
+    const beforeTs = current?.startedAt;
+    return runs.find((run) => run.releaseId !== beforeReleaseId && (!beforeTs || run.startedAt < beforeTs));
   }
 
   // ── CDS configuration pairing connections (MAP / CLI partners, 2026-05-06) ──
@@ -2783,6 +2971,77 @@ export class StateService {
 
   removeDataMigration(id: string): void {
     this.state.dataMigrations = (this.state.dataMigrations || []).filter(m => m.id !== id);
+  }
+
+  // ── Branch resource state ──
+
+  resourcePolicyKey(projectId: string, branchId: string, resourceId: string): string {
+    return `${projectId}:${branchId}:${resourceId}`;
+  }
+
+  getResourceExternalAccess(projectId: string, branchId: string, resourceId: string): ResourceExternalAccessPolicy | undefined {
+    const key = this.resourcePolicyKey(projectId, branchId, resourceId);
+    return (this.state.resourceExternalAccess || {})[key];
+  }
+
+  getResourceExternalAccessForBranch(projectId: string, branchId: string): ResourceExternalAccessPolicy[] {
+    const prefix = `${projectId}:${branchId}:`;
+    return Object.entries(this.state.resourceExternalAccess || {})
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, policy]) => policy);
+  }
+
+  upsertResourceExternalAccess(policy: Omit<ResourceExternalAccessPolicy, 'id' | 'createdAt' | 'updatedAt'>): ResourceExternalAccessPolicy {
+    if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
+    const key = this.resourcePolicyKey(policy.projectId, policy.branchId, policy.resourceId);
+    const existing = this.state.resourceExternalAccess[key];
+    const now = new Date().toISOString();
+    const next: ResourceExternalAccessPolicy = {
+      ...existing,
+      ...policy,
+      id: existing?.id || key,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    };
+    this.state.resourceExternalAccess[key] = next;
+    return next;
+  }
+
+  listResourceCloneTasks(filter: { projectId?: string; branchId?: string; resourceId?: string } = {}): ResourceCloneTask[] {
+    return (this.state.resourceCloneTasks || []).filter((task) => {
+      if (filter.projectId && task.projectId !== filter.projectId) return false;
+      if (filter.branchId && task.branchId !== filter.branchId) return false;
+      if (filter.resourceId && task.resourceId !== filter.resourceId) return false;
+      return true;
+    });
+  }
+
+  getResourceCloneTask(id: string): ResourceCloneTask | undefined {
+    return (this.state.resourceCloneTasks || []).find((task) => task.id === id);
+  }
+
+  addResourceCloneTask(task: Omit<ResourceCloneTask, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): ResourceCloneTask {
+    if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
+    const now = new Date().toISOString();
+    const next: ResourceCloneTask = {
+      ...task,
+      id: task.id || crypto.randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.state.resourceCloneTasks.push(next);
+    if (this.state.resourceCloneTasks.length > 200) {
+      this.state.resourceCloneTasks = this.state.resourceCloneTasks.slice(-200);
+    }
+    return next;
+  }
+
+  updateResourceCloneTask(id: string, updates: Partial<ResourceCloneTask>): ResourceCloneTask {
+    const list = this.state.resourceCloneTasks || [];
+    const task = list.find((item) => item.id === id);
+    if (!task) throw new Error(`资源克隆任务 "${id}" 不存在`);
+    Object.assign(task, updates, { updatedAt: new Date().toISOString() });
+    return task;
   }
 
   // ── CDS peers (remote CDS instances trusted for data migration) ──

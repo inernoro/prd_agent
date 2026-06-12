@@ -5,10 +5,13 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
+using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.Changelog;
 
@@ -39,17 +42,23 @@ public class ChangelogController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IChangelogPushHub _pushHub;
+    private readonly MongoDbContext _db;
+    private readonly IMemoryCache _cache;
 
     public ChangelogController(
         IChangelogReader reader,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
-        IChangelogPushHub pushHub)
+        IChangelogPushHub pushHub,
+        MongoDbContext db,
+        IMemoryCache cache)
     {
         _reader = reader;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _pushHub = pushHub;
+        _db = db;
+        _cache = cache;
     }
 
     /// <summary>
@@ -118,8 +127,56 @@ public class ChangelogController : ControllerBase
         if (limit <= 0 || limit > 1000) limit = 80;
         // reader 永远拿全量（1000 上限），controller 切片
         var view = await _reader.GetGitHubLogsAsync(1000, force).ConfigureAwait(false);
+        var matchIndex = await GetUserMatchIndexAsync().ConfigureAwait(false);
         if (!force) SetClientCacheHeaders();
-        return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view, limit, before)));
+        return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view, limit, before, matchIndex)));
+    }
+
+    // ── GitHub 作者名 ↔ 系统用户 彩蛋匹配 ────────────────────────────
+
+    private sealed record GitHubUserMatchCandidate(
+        string Username,
+        string DisplayName,
+        string NormUsername,
+        string NormDisplayName);
+
+    private const string UserMatchIndexCacheKey = "changelog:github-author-match-index";
+
+    /// <summary>
+    /// 活跃人类用户的归一化名字索引（10 分钟内存缓存）。
+    /// 供 GitHub 提交作者名匹配「这是系统里的谁」彩蛋使用，失败时返回空表不影响主流程。
+    /// </summary>
+    private async Task<IReadOnlyList<GitHubUserMatchCandidate>> GetUserMatchIndexAsync()
+    {
+        if (_cache.TryGetValue(UserMatchIndexCacheKey, out IReadOnlyList<GitHubUserMatchCandidate>? cached) && cached != null)
+        {
+            return cached;
+        }
+
+        try
+        {
+            var users = await _db.Users
+                .Find(u => u.Status == UserStatus.Active && u.UserType == UserType.Human)
+                .Project(u => new { u.Username, u.DisplayName })
+                .ToListAsync()
+                .ConfigureAwait(false);
+
+            IReadOnlyList<GitHubUserMatchCandidate> index = users
+                .Select(u => new GitHubUserMatchCandidate(
+                    u.Username ?? string.Empty,
+                    u.DisplayName ?? string.Empty,
+                    GitHubAuthorMatcher.Normalize(u.Username),
+                    GitHubAuthorMatcher.Normalize(u.DisplayName)))
+                .Where(c => c.NormUsername.Length >= 2 || c.NormDisplayName.Length >= 2)
+                .ToList();
+
+            _cache.Set(UserMatchIndexCacheKey, index, TimeSpan.FromMinutes(10));
+            return index;
+        }
+        catch
+        {
+            return Array.Empty<GitHubUserMatchCandidate>();
+        }
     }
 
     /// <summary>
@@ -405,7 +462,11 @@ public class ChangelogController : ControllerBase
             }),
     };
 
-    private static GitHubLogsDto MapGitHubLogs(GitHubLogsView view, int limit, string? before)
+    private static GitHubLogsDto MapGitHubLogs(
+        GitHubLogsView view,
+        int limit,
+        string? before,
+        IReadOnlyList<GitHubUserMatchCandidate> matchIndex)
     {
         var totalCount = view.Logs.Count;
         var startIdx = 0;
@@ -418,23 +479,62 @@ public class ChangelogController : ControllerBase
         var hasMore = (startIdx + slice.Count) < totalCount;
         var nextCursor = slice.Count > 0 ? slice[^1].Sha : null;
 
+        // 同一作者在一页里反复出现，按作者名做请求内 memo，避免重复扫描索引
+        var matchMemo = new Dictionary<string, GitHubUserMatchCandidate?>(StringComparer.Ordinal);
+        GitHubUserMatchCandidate? ResolveMatch(string authorName)
+        {
+            if (matchMemo.TryGetValue(authorName, out var memo)) return memo;
+            GitHubUserMatchCandidate? hit = null;
+            // 变体含「剥掉通用组织后缀」的版本（如 yurenping-miduo → yurenping）
+            var variants = GitHubAuthorMatcher.NormalizedVariants(authorName);
+            if (variants.Count > 0)
+            {
+                hit = matchIndex.FirstOrDefault(c => variants.Any(v =>
+                    GitHubAuthorMatcher.IsMatch(v, c.NormUsername) ||
+                    GitHubAuthorMatcher.IsMatch(v, c.NormDisplayName)));
+            }
+            matchMemo[authorName] = hit;
+            return hit;
+        }
+
         return new GitHubLogsDto
         {
             DataSourceAvailable = view.DataSourceAvailable,
             Source = view.Source,
             FetchedAt = view.FetchedAt.ToString("o"),
             TotalCount = totalCount,
+            RepoTotalCommitCount = view.RepoTotalCommitCount,
             HasMore = hasMore,
             NextCursor = hasMore ? nextCursor : null,
-            Logs = slice.ConvertAll(l => new GitHubLogEntryDto
+            Logs = slice.ConvertAll(l =>
             {
-                Sha = l.Sha,
-                ShortSha = l.ShortSha,
-                Message = l.Message,
-                AuthorName = l.AuthorName,
-                AuthorAvatarUrl = l.AuthorAvatarUrl,
-                CommitTimeUtc = l.CommitTimeUtc.ToString("o"),
-                HtmlUrl = l.HtmlUrl,
+                var match = ResolveMatch(l.AuthorName);
+                return new GitHubLogEntryDto
+                {
+                    Sha = l.Sha,
+                    ShortSha = l.ShortSha,
+                    Message = l.Message,
+                    AuthorName = l.AuthorName,
+                    AuthorAvatarUrl = l.AuthorAvatarUrl,
+                    CommitTimeUtc = l.CommitTimeUtc.ToString("o"),
+                    HtmlUrl = l.HtmlUrl,
+                    MatchedUsername = match?.Username,
+                    MatchedDisplayName = match == null
+                        ? null
+                        : (string.IsNullOrWhiteSpace(match.DisplayName) ? match.Username : match.DisplayName),
+                    CoAuthors = l.CoAuthorNames.ConvertAll(name =>
+                    {
+                        var coMatch = ResolveMatch(name);
+                        return new GitHubCoAuthorDto
+                        {
+                            Name = name,
+                            MatchedUsername = coMatch?.Username,
+                            MatchedDisplayName = coMatch == null
+                                ? null
+                                : (string.IsNullOrWhiteSpace(coMatch.DisplayName) ? coMatch.Username : coMatch.DisplayName),
+                        };
+                    }),
+                };
             }),
         };
     }
@@ -677,6 +777,19 @@ public class ChangelogController : ControllerBase
         public string? AuthorAvatarUrl { get; set; }
         public string CommitTimeUtc { get; set; } = string.Empty;
         public string HtmlUrl { get; set; } = string.Empty;
+        /// <summary>彩蛋：作者名匹配到的系统用户登录名（去数字 + 颠倒容忍 + 通用后缀剥离），null=未匹配</summary>
+        public string? MatchedUsername { get; set; }
+        /// <summary>彩蛋：匹配到的系统用户显示名（为空时回退登录名），null=未匹配</summary>
+        public string? MatchedDisplayName { get; set; }
+        /// <summary>Co-authored-by 联合作者（已剔除与主作者同人），每位同样做系统用户匹配</summary>
+        public List<GitHubCoAuthorDto> CoAuthors { get; set; } = new();
+    }
+
+    public sealed class GitHubCoAuthorDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? MatchedUsername { get; set; }
+        public string? MatchedDisplayName { get; set; }
     }
 
     public sealed class GitHubLogsDto
@@ -684,8 +797,10 @@ public class ChangelogController : ControllerBase
         public bool DataSourceAvailable { get; set; }
         public string Source { get; set; } = "none";
         public string FetchedAt { get; set; } = string.Empty;
-        /// <summary>全量 commit 总数（不受 limit 影响，用于 chip 计数）</summary>
+        /// <summary>「最近一周」窗口内的 commit 总数（不受 limit 影响，列表数据上限）</summary>
         public int TotalCount { get; set; }
+        /// <summary>仓库全历史提交总数（不限窗口），null=暂未统计成功，前端降级用 TotalCount</summary>
+        public int? RepoTotalCommitCount { get; set; }
         /// <summary>是否还有更多，前端据此触发 loadMore</summary>
         public bool HasMore { get; set; }
         /// <summary>下一页 cursor（=本批次最后一条的 sha），前端传给 before 参数取下一批</summary>

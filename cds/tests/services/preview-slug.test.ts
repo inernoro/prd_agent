@@ -5,6 +5,7 @@ import {
   previewProjectSlugCandidates,
   previewSlugMatchPercent,
   repoNameFromGitRef,
+  resolvePreviewProjectIdentity,
   slugifyForPreview,
 } from '../../src/services/preview-slug.js';
 
@@ -127,6 +128,40 @@ describe('preview project identity helpers', () => {
       slug: 'workspace',
       gitRepoUrl: 'git@github.com:inernoro/prd_agent.git',
     })).toBe('workspace');
+  });
+
+  it('uses aliasSlug before the immutable project slug for new preview URLs', () => {
+    expect(previewProjectSlug({
+      id: 'default',
+      slug: 'workspace',
+      aliasSlug: 'prd-agent',
+      gitRepoUrl: 'git@github.com:inernoro/prd_agent.git',
+    })).toBe('prd-agent');
+  });
+
+  it('returns identity source diagnostics for aliasSlug', () => {
+    expect(resolvePreviewProjectIdentity({
+      id: 'default',
+      slug: 'workspace',
+      aliasSlug: 'prd-agent',
+    })).toEqual({
+      slug: 'prd-agent',
+      source: 'aliasSlug',
+      degraded: false,
+    });
+  });
+
+  it('keeps generic legacy project slug unless collision-checked alias exists', () => {
+    expect(resolvePreviewProjectIdentity({
+      id: 'default',
+      slug: 'workspace',
+      legacyFlag: true,
+      gitRepoUrl: 'git@github.com:inernoro/prd_agent.git',
+    })).toMatchObject({
+      slug: 'workspace',
+      source: 'slug',
+      degraded: true,
+    });
   });
 
   it('keeps different CDS projects unique even when they bind the same git repo', () => {

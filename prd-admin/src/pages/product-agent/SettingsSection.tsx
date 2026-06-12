@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Trash2, Save, GripVertical, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
 import {
   listProducts,
   listFormTemplates,
@@ -19,6 +20,10 @@ import {
   listDescTemplates,
   upsertDescTemplate,
   deleteDescTemplate,
+  listProductApplicationAdmins,
+  addProductApplicationAdmin,
+  removeProductApplicationAdmin,
+  type ProductApplicationAdmin,
 } from '@/services/real/productAgent';
 import type { Product, FormField, FormFieldType, WorkflowState, WorkflowTransition, ProductEntityType, ProductCategory, DescTemplate } from './types';
 import { useProductCategories } from './productCategories';
@@ -103,7 +108,7 @@ const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]
 };
 
 export function SettingsSection() {
-  const [mode, setMode] = useState<'form' | 'workflow' | 'desc' | 'category'>('form');
+  const [mode, setMode] = useState<'form' | 'workflow' | 'desc' | 'category' | 'admins'>('form');
   const [entityType, setEntityType] = useState<ProductEntityType>('requirement');
   const [productScope, setProductScope] = useState(''); // '' = 全局
   const [products, setProducts] = useState<Product[]>([]);
@@ -124,8 +129,9 @@ export function SettingsSection() {
           <button onClick={() => setMode('workflow')} className={`px-3 py-1.5 text-sm ${mode === 'workflow' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>流程模板</button>
           <button onClick={() => setMode('desc')} className={`px-3 py-1.5 text-sm ${mode === 'desc' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>描述模板</button>
           <button onClick={() => setMode('category')} className={`px-3 py-1.5 text-sm ${mode === 'category' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>产品类型</button>
+          <button onClick={() => setMode('admins')} className={`px-3 py-1.5 text-sm ${mode === 'admins' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>管理员</button>
         </div>
-        {mode !== 'category' && (
+        {mode !== 'category' && mode !== 'admins' && (
           <>
             <div className="w-px h-6 bg-white/10" />
             {ENTITY_TYPES.map((e) => (
@@ -156,7 +162,9 @@ export function SettingsSection() {
         )}
       </div>
 
-      {mode === 'form' ? (
+      {mode === 'admins' ? (
+        <ApplicationAdminManager />
+      ) : mode === 'form' ? (
         <FormTemplateEditor key={`f-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
       ) : mode === 'workflow' ? (
         <WorkflowEditor key={`w-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
@@ -165,6 +173,80 @@ export function SettingsSection() {
       ) : (
         <CategoryManager />
       )}
+    </div>
+  );
+}
+
+function ApplicationAdminManager() {
+  const [items, setItems] = useState<ProductApplicationAdmin[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const result = await listProductApplicationAdmins();
+    if (result.success) setItems(result.data.items);
+    else setMessage(result.error?.message ?? '管理员名单加载失败');
+    setLoading(false);
+  }, []);
+  useEffect(() => { void reload(); }, [reload]);
+
+  const add = async () => {
+    if (!selectedUserId) return;
+    setBusy(true);
+    const result = await addProductApplicationAdmin(selectedUserId);
+    setBusy(false);
+    if (!result.success) {
+      setMessage(result.error?.message ?? '添加失败');
+      return;
+    }
+    setItems(result.data.items);
+    setSelectedUserId('');
+    setMessage('管理员已添加');
+  };
+
+  const remove = async (userId: string) => {
+    setBusy(true);
+    const result = await removeProductApplicationAdmin(userId);
+    setBusy(false);
+    if (!result.success) {
+      setMessage(result.error?.message ?? '移除失败');
+      return;
+    }
+    setMessage('管理员已移除');
+    await reload();
+  };
+
+  if (loading) return <MapSectionLoader text="正在加载管理员…" />;
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <div className="text-sm font-medium text-white/75">产品管理应用管理员</div>
+        <div className="mt-1 text-xs leading-5 text-white/40">只有名单内管理员可看到并执行需求、功能、缺陷、版本的历史数据导入。管理员可重复导入，带外部 ID 的数据按原记录更新。</div>
+        <div className="mt-4 flex items-center gap-2">
+          <div className="min-w-0 flex-1"><UserSearchSelect value={selectedUserId} onChange={setSelectedUserId} placeholder="搜索 MAP 用户" showAllOption={false} /></div>
+          <button onClick={() => void add()} disabled={!selectedUserId || busy} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-3 py-2 text-sm text-cyan-100 disabled:opacity-40">
+            {busy ? <MapSpinner size={14} /> : <Plus size={14} />} 添加管理员
+          </button>
+        </div>
+        {message && <div className="mt-2 text-xs text-white/50">{message}</div>}
+      </div>
+      <div className="overflow-hidden rounded-xl border border-white/10">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-white/[0.03] text-xs text-white/45"><tr><th className="px-4 py-2.5 font-medium">姓名</th><th className="px-4 py-2.5 font-medium">账号</th><th className="w-24 px-4 py-2.5 font-medium">操作</th></tr></thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.userId} className="border-t border-white/5">
+                <td className="px-4 py-3 text-white/80">{item.displayName}</td>
+                <td className="px-4 py-3 text-xs text-white/45">{item.username || item.userId}</td>
+                <td className="px-4 py-3"><button onClick={() => void remove(item.userId)} disabled={busy || items.length <= 1} title={items.length <= 1 ? '至少保留一位管理员' : '移除管理员'} className="text-white/35 hover:text-red-300 disabled:opacity-25"><Trash2 size={14} /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

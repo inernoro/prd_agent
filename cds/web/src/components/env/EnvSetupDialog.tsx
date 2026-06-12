@@ -77,6 +77,17 @@ interface EnvBundle {
   missingRequiredEnvKeys?: string[];
 }
 
+interface DatabaseInitRecommendation {
+  kind: string;
+  label: string;
+  command?: string;
+  files?: string[];
+  signals?: string[];
+  confidence?: number;
+  summary: string;
+  autoExecutable?: boolean;
+}
+
 interface Props {
   /** 项目 ID — 决定 /api/env 的 scope。null = 关闭对话框 */
   projectId: string | null;
@@ -111,6 +122,11 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
   const initScriptInputRef = useRef<HTMLInputElement | null>(null);
   const [initScriptHint, setInitScriptHint] = useState<string | null>(null);
   const [initScriptUploading, setInitScriptUploading] = useState(false);
+  const [databaseInit, setDatabaseInit] = useState<{
+    status: 'idle' | 'loading' | 'ready' | 'error';
+    recommendation?: DatabaseInitRecommendation | null;
+    message?: string;
+  }>({ status: 'idle' });
 
   const toggleReveal = useCallback((key: string) => {
     setRevealed((current) => {
@@ -175,6 +191,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
     else {
       setState({ status: 'idle' });
       setDraft({});
+      setDatabaseInit({ status: 'idle' });
     }
   }, [projectId, load]);
 
@@ -254,6 +271,42 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
     return infraImageList.some((img) => /(mysql|mariadb|postgres)/.test(img));
   }, [state, infraImageList]);
 
+  useEffect(() => {
+    if (state.status !== 'ready' || !projectId) {
+      if (!projectId) setDatabaseInit({ status: 'idle' });
+      return;
+    }
+    let aborted = false;
+    setDatabaseInit({ status: 'loading' });
+    (async () => {
+      try {
+        const res = await apiRequest<{
+          databaseInit?: DatabaseInitRecommendation | null;
+          summary?: string;
+        }>('/api/detect-stack', {
+          method: 'POST',
+          body: { projectId },
+        });
+        if (aborted) return;
+        setDatabaseInit({
+          status: 'ready',
+          recommendation: res.databaseInit || null,
+          message: res.summary,
+        });
+      } catch (err) {
+        if (aborted) return;
+        setDatabaseInit({
+          status: 'error',
+          recommendation: null,
+          message: err instanceof ApiError ? err.message : String(err),
+        });
+      }
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [state.status, projectId]);
+
   // Bugbot fix(2026-05-04 PR #523):用 file.name 而非硬编码 'init.sql'。
   // 之前所有上传都写到仓库根的 `init.sql`,但 compose 里可能挂的是
   // `./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql` — 用户上传
@@ -291,7 +344,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
         );
         const bytes = res.written?.[0]?.bytes ?? text.length;
         setInitScriptHint(
-          `已上传 ${fileName}(${bytes} 字节)到仓库根目录 → 请确认 cds-compose.yml 里 mysql/postgres infra 有 \`./${fileName}:/docker-entrypoint-initdb.d/${fileName}\` 挂载,下次 deploy 容器才会执行`,
+          `已导入 ${fileName}(${bytes} 字节)到仓库根目录；可作为自动识别失败后的手动 SQL 兜底`,
         );
       } catch (err) {
         const msg = err instanceof ApiError ? err.message : String(err);
@@ -374,46 +427,72 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
           </div>
         </div>
 
-        {/* F12 — 仅在项目检测到 mysql/postgres 这类 schemaful DB 时显示 */}
-        {hasSchemafulDb ? (
-          <div className="flex items-center justify-between gap-2 rounded-md border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-xs">
-            <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
-              <Database className="h-3.5 w-3.5 flex-shrink-0 text-sky-500" />
-              <span className="min-w-0">
-                检测到 mysql/postgres infra。上传的 <strong>.sql 文件</strong>会按原名写入仓库根目录,
-                cds-compose.yml 里需对应配 <code>./{'<file>'}:/docker-entrypoint-initdb.d/{'<file>'}</code> 挂载,
-                下次 deploy 容器才会执行。
-              </span>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {initScriptHint ? (
-                <span className="text-[10px] text-muted-foreground">{initScriptHint}</span>
-              ) : null}
-              <input
-                ref={initScriptInputRef}
-                type="file"
-                accept=".sql,text/plain,application/sql"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0] || null;
-                  void onPickInitScript(file);
-                  e.target.value = '';
-                }}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => initScriptInputRef.current?.click()}
-                disabled={initScriptUploading || state.status !== 'ready'}
-              >
-                {initScriptUploading ? (
-                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Upload className="mr-1 h-3.5 w-3.5" />
-                )}
-                上传 init.sql
-              </Button>
+        {(hasSchemafulDb || databaseInit.recommendation || databaseInit.status === 'loading') ? (
+          <div className="rounded-md border border-sky-500/35 bg-sky-500/5 px-3 py-2 text-xs">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 gap-2 text-muted-foreground">
+                <Database className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-sky-500" />
+                <div className="min-w-0 space-y-1">
+                  <div className="font-medium text-foreground">数据库初始化</div>
+                  {databaseInit.status === 'loading' ? (
+                    <div className="flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      正在扫描 Prisma、Drizzle、Django、Alembic、schema.sql 等初始化信号...
+                    </div>
+                  ) : databaseInit.recommendation ? (
+                    <div>
+                      {databaseInit.recommendation.command ? (
+                        <>
+                          检测到 <strong>{databaseInit.recommendation.label}</strong>，推荐初始化命令：
+                          <code>{databaseInit.recommendation.command}</code>
+                        </>
+                      ) : (
+                        <>{databaseInit.recommendation.summary}</>
+                      )}
+                      {databaseInit.recommendation.files?.length ? (
+                        <span className="ml-1">
+                          信号：{databaseInit.recommendation.files.slice(0, 3).join('、')}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div>
+                      暂未识别到 ORM 迁移或 SQL 脚本。第一阶段只给出推荐方式；初始化失败时，可在数据库服务卡片里导入 SQL、重试或填写迁移命令。
+                    </div>
+                  )}
+                  {initScriptHint ? (
+                    <div className="text-[10px] text-muted-foreground">{initScriptHint}</div>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex flex-shrink-0 items-center gap-2">
+                <input
+                  ref={initScriptInputRef}
+                  type="file"
+                  accept=".sql,text/plain,application/sql"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    void onPickInitScript(file);
+                    e.target.value = '';
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => initScriptInputRef.current?.click()}
+                  disabled={initScriptUploading || state.status !== 'ready'}
+                  title="自动识别失败时的手动兜底"
+                >
+                  {initScriptUploading ? (
+                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="mr-1 h-3.5 w-3.5" />
+                  )}
+                  导入 SQL
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}

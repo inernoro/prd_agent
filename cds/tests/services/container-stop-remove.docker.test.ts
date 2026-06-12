@@ -27,7 +27,23 @@ function dockerAvailable(): boolean {
   }
 }
 
+function dockerImageAvailable(image: string): boolean {
+  try {
+    execSync(`docker image inspect ${image}`, { stdio: 'ignore', timeout: 10_000 });
+    return true;
+  } catch {
+    try {
+      execSync(`docker pull ${image}`, { stdio: 'ignore', timeout: 30_000 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 const DOCKER_OK = dockerAvailable();
+const TEST_IMAGE = 'alpine:3';
+const TEST_IMAGE_OK = DOCKER_OK && dockerImageAvailable(TEST_IMAGE);
 
 const makeConfig = (): CdsConfig => ({
   repoRoot: '/repo',
@@ -40,7 +56,7 @@ const makeConfig = (): CdsConfig => ({
   jwt: { secret: 'test-secret', issuer: 'prdagent' },
 });
 
-describe.skipIf(!DOCKER_OK)('ContainerService stop/remove against real docker', () => {
+describe.skipIf(!TEST_IMAGE_OK)('ContainerService stop/remove against real docker', () => {
   const shell = new ShellExecutor();
   const svc = new ContainerService(shell, makeConfig());
   const name = `cds-verify-${Date.now()}`;
@@ -59,7 +75,7 @@ describe.skipIf(!DOCKER_OK)('ContainerService stop/remove against real docker', 
     'stop keeps the container (exited) + writes [CDS-STOP] sentinel; docker restart revives it; remove deletes it',
     async () => {
       // 起一个长睡眠容器(有 sh,哨兵可写;sleep 让它不会自己退出)
-      const run = await shell.exec(`docker run -d --name ${name} alpine:3 sleep 600`);
+      const run = await shell.exec(`docker run -d --name ${name} ${TEST_IMAGE} sleep 600`);
       expect(run.exitCode, `docker run failed: ${run.stderr}`).toBe(0);
 
       // 1) stop() —— 仅 docker stop + 哨兵,不得 rm

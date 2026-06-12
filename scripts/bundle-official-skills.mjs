@@ -43,6 +43,7 @@ const INCLUDE = new Set([
   'code-hygiene',            // 通用代码卫生方法论
   'conflict-resolution',     // 通用 git 冲突解决
   'acceptance-checklist',    // 通用 UAT 清单
+  'create-visual-test-to-kb',// 通用视觉验收取证 + 报告归档
   'task-handoff-checklist',  // 通用交接清单
 ]);
 
@@ -53,6 +54,7 @@ const DISPLAY_NAME = {
   'code-hygiene': 'code-hygiene · 代码卫生体检',
   'conflict-resolution': 'conflict-resolution · Git 冲突解决',
   'create-skill-file': 'create-skill-file · 技能文件生成',
+  'create-visual-test-to-kb': 'create-visual-test-to-kb · 视觉验收归档',
   'find-skills': 'find-skills · 技能发现',
   'human-verify': 'human-verify · 多视角人工验证',
   'laowang': '老王 · 米多解决问题五步法',
@@ -119,19 +121,22 @@ function collectFiles(skillDir) {
 }
 
 function parseFrontmatter(md) {
-  // 取首个 --- ... --- 块里的 name / description（description 可能是多行 > 折叠）
+  // 取首个 --- ... --- 块里的 name / version / description（description 可能是多行 > 折叠）
   const lines = md.split('\n');
   let i = 0;
   while (i < lines.length && lines[i].trim() === '') i++;
-  if (lines[i]?.trim() !== '---') return { name: null, description: null };
+  if (lines[i]?.trim() !== '---') return { name: null, version: null, description: null };
   i++;
   let name = null;
+  let version = null;
   let description = null;
   for (; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === '---') break;
     const mName = line.match(/^name:\s*(.+?)\s*$/);
     if (mName && !name) { name = mName[1].replace(/^["']|["']$/g, ''); continue; }
+    const mVersion = line.match(/^version:\s*(.+?)\s*$/);
+    if (mVersion && !version) { version = mVersion[1].replace(/^["']|["']$/g, ''); continue; }
     const mDesc = line.match(/^description:\s*(.*)$/);
     if (mDesc && description === null) {
       let val = mDesc[1].trim();
@@ -150,7 +155,7 @@ function parseFrontmatter(md) {
       description = val;
     }
   }
-  return { name, description };
+  return { name, version, description };
 }
 
 function deriveTags(key, name, description) {
@@ -188,11 +193,12 @@ function main() {
     const skillDir = join(SKILLS_DIR, key);
     const files = collectFiles(skillDir);
     const md = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
-    const { name, description } = parseFrontmatter(md);
+    const { name, description, version } = parseFrontmatter(md);
     const title = DISPLAY_NAME[key] || name || key;
     skills.push({
       key,
       title,
+      version: version || null,
       description: shortDesc(description, title),
       tags: deriveTags(key, name, description),
       files, // 完整目录（含 SKILL.md + reference/ + scripts/ 等文本文件）

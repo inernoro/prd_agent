@@ -27,7 +27,7 @@
 import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
-import { detectStack, detectModules, type StackDetection } from '../services/stack-detector.js';
+import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
@@ -1718,10 +1718,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           stack: d.stack,
           confidence: typeof d.confidence === 'number' ? d.confidence : 0,
           signals: Array.isArray(d.signals) ? d.signals.slice(0, 6) : [],
+          databaseInit: d.databaseInit || null,
+          databaseInitCandidates: d.databaseInitCandidates || [],
           manualSetupRequired: Boolean(d.manualSetupRequired),
         };
       });
-      res.json({ services, moduleCount: modules.length });
+      const databaseInitCandidates = [
+        ...detectDatabaseInitialization(dir),
+        ...modules.flatMap((m) => m.detection.databaseInitCandidates || []),
+      ];
+      res.json({
+        services,
+        moduleCount: modules.length,
+        databaseInit: databaseInitCandidates[0] || null,
+        databaseInitCandidates,
+      });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     } finally {
@@ -2249,6 +2260,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
+      resourceChipDisplay: {
+        icon?: boolean;
+        name?: boolean;
+        port?: boolean;
+      };
       defaultDeployModes: Record<string, string>;
       autoPublishAfterMinutes: number;
       autoStopAfterMinutes: number;
@@ -2334,7 +2350,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes'>> = {};
     // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
     // 对显式传入的 key 更新，不影响其它 key）。
     if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {
@@ -2351,6 +2367,23 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // Booleans come in as true / false / 'true' / 'false' depending on
       // the UI; coerce everything truthy but 'false' into a real boolean.
       patch.autoSmokeEnabled = body.autoSmokeEnabled === true || body.autoSmokeEnabled === 'true' as unknown as boolean;
+    }
+    if (body.resourceChipDisplay !== undefined) {
+      const incoming = body.resourceChipDisplay;
+      if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+        res.status(400).json({ error: 'validation', field: 'resourceChipDisplay', message: '资源标签显示设置格式不正确' });
+        return;
+      }
+      const next = {
+        icon: incoming.icon !== false,
+        name: incoming.name === true,
+        port: incoming.port !== false,
+      };
+      if (!next.icon && !next.name && !next.port) {
+        res.status(400).json({ error: 'validation', field: 'resourceChipDisplay', message: '资源标签至少要显示图标、名称、端口中的一项' });
+        return;
+      }
+      patch.resourceChipDisplay = next;
     }
     if (body.defaultDeployModes !== undefined) {
       const incoming = body.defaultDeployModes;

@@ -4,6 +4,7 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 export type BranchOperationKind =
   | 'deploy'
   | 'deploy-profile'
+  | 'database-init'
   | 'restart'
   | 'force-rebuild'
   | 'stop'

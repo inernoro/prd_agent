@@ -412,4 +412,63 @@ describe('stack-detector', () => {
       expect(r.framework).toBeUndefined();
     });
   });
+
+  describe('database initialization recommendation', () => {
+    it('detects Prisma schema and recommends migrate deploy', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'prisma-app',
+        packageManager: 'pnpm@9.0.0',
+        dependencies: { prisma: '^5.0.0' },
+      }));
+      fs.mkdirSync(path.join(tmp, 'prisma'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, 'prisma', 'schema.prisma'), 'datasource db { provider = "postgresql" url = env("DATABASE_URL") }\n');
+
+      const r = detectStack(tmp);
+      expect(r.databaseInit?.kind).toBe('prisma');
+      expect(r.databaseInit?.command).toBe('pnpm exec prisma migrate deploy');
+      expect(r.databaseInit?.files).toContain('prisma/schema.prisma');
+      expect(r.signals).toContain('prisma/schema.prisma');
+    });
+
+    it('detects Django migrate from manage.py', () => {
+      fs.writeFileSync(path.join(tmp, 'requirements.txt'), 'django==5.0\n');
+      fs.writeFileSync(path.join(tmp, 'manage.py'), '#!/usr/bin/env python\n');
+
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('django');
+      expect(r.databaseInit?.kind).toBe('django');
+      expect(r.databaseInit?.command).toBe('python manage.py migrate');
+    });
+
+    it('falls back to SQL scripts when no ORM signal exists', () => {
+      fs.writeFileSync(path.join(tmp, 'schema.sql'), 'create table items(id int);\n');
+
+      const r = detectStack(tmp);
+      expect(r.stack).toBe('unknown');
+      expect(r.databaseInit?.kind).toBe('sql');
+      expect(r.databaseInit?.autoExecutable).toBe(true);
+      expect(r.databaseInit?.summary).toContain('schema.sql');
+    });
+
+    it('keeps arbitrary SQL files as manual fallback', () => {
+      fs.writeFileSync(path.join(tmp, 'seed-dev.sql'), 'insert into items values (1);\n');
+
+      const r = detectStack(tmp);
+      expect(r.databaseInit?.kind).toBe('sql');
+      expect(r.databaseInit?.autoExecutable).toBe(false);
+    });
+
+    it('prefers ORM migrations over SQL fallback but keeps both candidates', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'drizzle-app',
+        dependencies: { 'drizzle-kit': '^0.30.0' },
+      }));
+      fs.writeFileSync(path.join(tmp, 'drizzle.config.ts'), 'export default {};\n');
+      fs.writeFileSync(path.join(tmp, 'init.sql'), 'select 1;\n');
+
+      const r = detectStack(tmp);
+      expect(r.databaseInit?.kind).toBe('drizzle');
+      expect(r.databaseInitCandidates?.map((item) => item.kind)).toContain('sql');
+    });
+  });
 });

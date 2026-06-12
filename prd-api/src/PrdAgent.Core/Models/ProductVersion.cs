@@ -62,6 +62,12 @@ public class ProductVersion
 
     public string OwnerId { get; set; } = string.Empty;
 
+    /// <summary>历史导入来源系统。</summary>
+    public string? SourceSystem { get; set; }
+
+    /// <summary>来源系统中的唯一 ID，用于幂等导入。</summary>
+    public string? ExternalId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

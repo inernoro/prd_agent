@@ -335,6 +335,38 @@ public class TeamController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 设置成员的角色标签（如「前端组」「测试组」）。仅团队管理员可操作。
+    /// 标签仅作授权分组用（网页托管分组级权限可按标签批量授权），本身不产生权限。
+    /// 传空数组 = 清空标签。
+    /// </summary>
+    [HttpPut("{id}/members/{memberUserId}/labels")]
+    public async Task<IActionResult> UpdateMemberLabels(
+        string id, string memberUserId, [FromBody] UpdateMemberLabelsRequest req)
+    {
+        var userId = GetUserId();
+        if (!await _teams.IsAdminAsync(id, userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要管理员权限"));
+
+        var labels = (req.Labels ?? new List<string>())
+            .Select(l => l?.Trim() ?? string.Empty)
+            .Where(l => l.Length > 0)
+            .Distinct()
+            .ToList();
+        if (labels.Count > 20)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标签数量最多 20 个"));
+        if (labels.Any(l => l.Length > 24))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单个标签最长 24 字"));
+
+        var result = await _db.TeamMembers.UpdateOneAsync(
+            m => m.TeamId == id && m.UserId == memberUserId,
+            Builders<TeamMember>.Update.Set(m => m.Labels, labels));
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "成员不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { updated = true, labels }));
+    }
+
     // ─────────────────────────────────────────────
     // 邀请
     // ─────────────────────────────────────────────
@@ -505,6 +537,12 @@ public class UpdateWebHostingRoleRequest
 {
     /// <summary>owner | editor | viewer；null/空 = 重置为继承</summary>
     public string? Role { get; set; }
+}
+
+public class UpdateMemberLabelsRequest
+{
+    /// <summary>角色标签全量列表（空数组 = 清空）</summary>
+    public List<string>? Labels { get; set; }
 }
 
 public class CreateInviteCodeRequest

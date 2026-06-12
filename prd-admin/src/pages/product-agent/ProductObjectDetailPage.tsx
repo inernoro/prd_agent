@@ -9,16 +9,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen, Share2, X, Sparkles } from 'lucide-react';
+import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, Share2, X, Sparkles, ExternalLink, MessageSquareText } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { useAuthStore } from '@/stores/authStore';
 import { useSseStream } from '@/lib/useSseStream';
-import { RequirementRelationModal, DefectLinkerModal, KnowledgeStoreModal } from './ProductRelationModals';
+import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
+import { VersionKnowledgeCard } from './knowledge/VersionKnowledgeCard';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
 import { slaInfo } from './sla';
+import './product-cards.css';
 import {
   listRequirements,
   createRequirement,
@@ -27,10 +30,10 @@ import {
   createFeature,
   updateFeature,
   listVersions,
+  listReleases,
   updateVersion,
   createFeatureVersion,
   deleteFeatureVersion,
-  getVersionKnowledgeStore,
   listCustomers,
   listFeatureVersions,
   listTracedDefects,
@@ -40,10 +43,15 @@ import {
   listDescTemplates,
   type TracedDefect,
 } from '@/services/real/productAgent';
-import type { Requirement, Feature, ProductVersion, Customer, FeatureVersion, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import type { Requirement, Feature, ProductVersion, ProductRelease, Customer, FeatureVersion, FeatureBusinessType, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
+const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
+  { value: 'basic', label: '基础功能' },
+  { value: 'core', label: '核心功能' },
+  { value: 'value_added', label: '增值功能' },
+];
 
 // ── 自定义字段去重 / 分栏 ──
 const NATIVE_DUP_KEYS = new Set(['title', 'name', 'description', 'desc']);
@@ -88,22 +96,25 @@ export function ProductObjectDetailPage() {
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [features, setFeatures] = useState<Feature[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
+  const [releases, setReleases] = useState<ProductRelease[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
   const [featureVersions, setFeatureVersions] = useState<FeatureVersion[]>([]);
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [r, f, v, c, d] = await Promise.all([
+    const [r, f, v, release, c, d] = await Promise.all([
       listRequirements(productId),
       listFeatures(productId),
       listVersions(productId),
+      listReleases(productId, 'all'),
       listCustomers(),
       listTracedDefects(productId),
     ]);
     if (r.success) setRequirements(r.data.items);
     if (f.success) setFeatures(f.data.items);
     if (v.success) setVersions(v.data.items);
+    if (release.success) setReleases(release.data.items);
     if (c.success) setCustomers(c.data.items);
     if (d.success) setTracedDefects(d.data.items);
     if (kind === 'feature') {
@@ -151,6 +162,9 @@ export function ProductObjectDetailPage() {
               <CreateObjectForm
                 productId={productId}
                 kind={kind}
+                requirements={requirements}
+                versions={versions}
+                releases={releases}
                 onCreated={(newId) => navigate(`/product-agent/p/${productId}/${kind}/${newId}`, { replace: true })}
               />
             )
@@ -174,6 +188,8 @@ export function ProductObjectDetailPage() {
               allFeatures={features}
               featureVersions={featureVersions}
               versionName={versionName}
+              versions={versions}
+              releases={releases}
               onReload={reload}
             />
           ) : kind === 'version' ? (
@@ -364,6 +380,19 @@ function ParentSelect({ value, onChange, options, placeholder }: { value: string
 /** 描述字段：富文本（排版工具栏 + 截图粘贴/拖拽上传），对齐 Jira / TAPD / Linear。 */
 function DescriptionField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return <RichTextField value={value} onChange={onChange} minHeight={420} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴 / 点右上角套用模板）" />;
+}
+
+function PlainTextArea({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
+  return (
+    <textarea
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={placeholder}
+      rows={6}
+      className="w-full resize-y rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40"
+      style={{ minHeight: 132, overscrollBehavior: 'contain' }}
+    />
+  );
 }
 
 /** 详情页头部「追溯关系路径」触发按钮。 */
@@ -560,18 +589,36 @@ function AiFillCard({ productId, templateId, onFill }: { productId: string; temp
 function CreateObjectForm({
   productId,
   kind,
+  requirements,
+  versions,
+  releases,
   onCreated,
 }: {
   productId: string;
   kind: string;
+  requirements: Requirement[];
+  versions: ProductVersion[];
+  releases: ProductRelease[];
   onCreated: (newId: string) => void;
 }) {
+  const currentUserId = useAuthStore((state) => state.user?.userId ?? '');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
+  const [moduleName, setModuleName] = useState('');
+  const [featureType, setFeatureType] = useState<FeatureBusinessType>('basic');
+  const [mainRequirementId, setMainRequirementId] = useState('');
+  const [requirementIds, setRequirementIds] = useState<Set<string>>(new Set());
+  const [plannedVersionId, setPlannedVersionId] = useState('');
+  const [officialReleaseId, setOfficialReleaseId] = useState('');
+  const [ownerId, setOwnerId] = useState(currentUserId);
+  const [keyRules, setKeyRules] = useState('');
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
+  const [remark, setRemark] = useState('');
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
   const entityType = kind === 'feature' ? 'feature' : 'requirement';
   const { template } = useEffectiveTemplate(entityType, productId);
   const { workflow } = useEffectiveWorkflow(entityType, productId);
@@ -589,6 +636,13 @@ function CreateObjectForm({
   }, [defaultDescContent, description]);
   const kindLabel = kind === 'feature' ? '功能' : '需求';
   const kindColor = kind === 'feature' ? '#A78BFA' : '#FBBF24';
+  const isFeature = kind === 'feature';
+  const inputCls = 'w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40';
+  const selectCls = 'w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40';
+
+  useEffect(() => {
+    if (currentUserId && !ownerId) setOwnerId(currentUserId);
+  }, [currentUserId, ownerId]);
 
   if (kind !== 'requirement' && kind !== 'feature') {
     return <div className="text-white/40 text-sm text-center py-10">该类型不支持在此新建</div>;
@@ -605,12 +659,37 @@ function CreateObjectForm({
   };
 
   const create = async () => {
-    if (!title.trim()) return;
+    if (!title.trim()) return setMessage(`${kindLabel}名称不能为空`);
+    if (isFeature && (!description.trim() || !moduleName.trim() || !mainRequirementId || !plannedVersionId || !ownerId || !keyRules.trim() || !acceptanceCriteria.trim())) {
+      return setMessage('请完整填写功能说明、所属模块、主需求、计划版本、负责人、关键规则和验收标准');
+    }
     setSaving(true);
-    const payload = { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData, templateId: template?.id, workflowDefId: workflow?.id };
+    setMessage('');
+    const payload = isFeature
+      ? {
+          title: title.trim(),
+          description,
+          moduleName: moduleName.trim(),
+          featureType,
+          mainRequirementId,
+          requirementIds: Array.from(new Set([mainRequirementId, ...requirementIds])),
+          plannedVersionId,
+          officialReleaseId: officialReleaseId || null,
+          ownerId,
+          keyRules,
+          acceptanceCriteria,
+          remark,
+          grade,
+          assigneeId: assigneeId || null,
+          formData,
+          templateId: template?.id,
+          workflowDefId: workflow?.id,
+        }
+      : { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData, templateId: template?.id, workflowDefId: workflow?.id };
     const res = kind === 'requirement' ? await createRequirement(productId, payload) : await createFeature(productId, payload);
     setSaving(false);
     if (res.success && res.data) onCreated(res.data.id);
+    else setMessage(res.error?.message ?? `创建${kindLabel}失败`);
   };
 
   return (
@@ -629,20 +708,98 @@ function CreateObjectForm({
           {entityType === 'requirement' && (
             <AiFillCard productId={productId} templateId={template?.id} onFill={onAiFill} />
           )}
-          <Card title="描述" action={<DescTemplatePicker entityType={entityType} onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+          <Card title={isFeature ? '功能说明' : '描述'} action={<DescTemplatePicker entityType={entityType} onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
+          {isFeature && (
+            <>
+              <Card title="关键规则">
+                <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="填写核心业务规则、限制条件和边界" />
+              </Card>
+              <Card title="验收标准">
+                <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="填写可判断功能成立和交付完成的验收标准" />
+              </Card>
+              <Card title="备注">
+                <PlainTextArea value={remark} onChange={setRemark} placeholder="补充特殊情况或例外说明，可不填" />
+              </Card>
+            </>
+          )}
           {split.files.length > 0 && (
             <Card title={template?.name || '附件'}>
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
-          <p className="text-[11px] text-white/35 px-1">创建后进入详情页，可继续关联客户 / 版本 / 缺陷追溯。</p>
+          {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
+          <p className="text-[11px] text-white/35 px-1">创建后进入详情页，可继续维护关联关系与流转状态。</p>
         </>
       }
       sidebar={
         <Card title="属性">
           <div className="flex flex-col gap-3.5">
+            {isFeature && (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>所属功能模块</FieldLabel>
+                  <input value={moduleName} onChange={(event) => setModuleName(event.target.value)} placeholder="如：营销活动 / 权限中心" className={inputCls} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>功能类型</FieldLabel>
+                  <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className={selectCls}>
+                    {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>主需求</FieldLabel>
+                  <select value={mainRequirementId} onChange={(event) => {
+                    const value = event.target.value;
+                    setMainRequirementId(value);
+                    if (value) setRequirementIds((prev) => new Set([...prev, value]));
+                  }} className={selectCls}>
+                    <option value="">请选择主需求</option>
+                    {requirements.map((requirement) => <option key={requirement.id} value={requirement.id}>{requirement.requirementNo} · {requirement.title}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>关联需求</FieldLabel>
+                  <div className="max-h-44 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] p-2" style={{ overscrollBehavior: 'contain' }}>
+                    {requirements.map((requirement) => (
+                      <label key={requirement.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 hover:bg-white/5">
+                        <input
+                          type="checkbox"
+                          checked={requirementIds.has(requirement.id) || mainRequirementId === requirement.id}
+                          disabled={mainRequirementId === requirement.id}
+                          onChange={() => setRequirementIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(requirement.id)) next.delete(requirement.id); else next.add(requirement.id);
+                            return next;
+                          })}
+                          className="mt-0.5 accent-cyan-500"
+                        />
+                        <span className="min-w-0 text-xs text-white/65">{requirement.title}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>计划版本</FieldLabel>
+                  <select value={plannedVersionId} onChange={(event) => setPlannedVersionId(event.target.value)} className={selectCls}>
+                    <option value="">请选择内部版本</option>
+                    {versions.map((version) => <option key={version.id} value={version.id}>{version.versionName}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>正式上线版本号</FieldLabel>
+                  <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className={selectCls}>
+                    <option value="">上线后回写</option>
+                    {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>负责人</FieldLabel>
+                  <UserSearchSelect value={ownerId} onChange={setOwnerId} />
+                </div>
+              </>
+            )}
             <div className="flex flex-col gap-1.5">
               <FieldLabel required>分级</FieldLabel>
               <GradeField grade={grade} setGrade={setGrade} />
@@ -664,19 +821,6 @@ function CreateObjectForm({
 }
 
 // ════════════════════════ 新建缺陷（独立页，对齐新建需求）════════════════════════
-const DEFECT_SEVERITIES: { v: string; label: string }[] = [
-  { v: 'blocker', label: '阻断' },
-  { v: 'critical', label: '严重' },
-  { v: 'major', label: '主要' },
-  { v: 'minor', label: '次要' },
-  { v: 'trivial', label: '轻微' },
-  { v: 'suggestion', label: '建议' },
-];
-const DEFECT_PRIORITIES: { v: string; label: string }[] = [
-  { v: 'high', label: '高' },
-  { v: 'medium', label: '中' },
-  { v: 'low', label: '低' },
-];
 const DEFECT_STATUSES: { v: string; label: string }[] = [
   { v: 'draft', label: '草稿' },
   { v: 'reviewing', label: '评审中' },
@@ -694,8 +838,7 @@ const DEFECT_STATUS_LABEL: Record<string, string> = Object.fromEntries(DEFECT_ST
 function CreateDefectForm({ productId, onCreated }: { productId: string; onCreated: (newId: string) => void }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [severity, setSeverity] = useState('');
-  const [priority, setPriority] = useState('');
+  const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
   const [featureId, setFeatureId] = useState('');
   const [versionId, setVersionId] = useState('');
@@ -732,7 +875,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
     if (!versionTouched) setVersionId(defaultVersionForFeature(fid));
   };
 
-  const canSubmit = !!title.trim() && !!priority && !!featureId;
+  const canSubmit = !!title.trim() && !!featureId;
 
   const create = async () => {
     if (!canSubmit) return;
@@ -740,8 +883,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
     const res = await createProductDefect(productId, {
       title: title.trim(),
       description: description || undefined,
-      severity: severity || undefined,
-      priority,
+      grade,
       assigneeId: assigneeId || null,
       featureId,
       versionId: versionId || undefined,
@@ -750,7 +892,6 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
     if (res.success && res.data) onCreated(res.data.id);
   };
 
-  const chip = (active: boolean) => `px-2.5 py-1 rounded-md text-xs border ${active ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/45 border-white/10 hover:bg-white/5'}`;
   const selectCls = 'w-full px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
 
   return (
@@ -770,7 +911,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
           {!canSubmit && (
-            <p className="text-[11px] text-amber-300/70 px-1">请填写「标题」「优先级」「关联功能」后才能提交。</p>
+            <p className="text-[11px] text-amber-300/70 px-1">请填写「标题」「关联功能」后才能提交。</p>
           )}
           <p className="text-[11px] text-white/35 px-1">创建后进入缺陷详情页，自动追溯到本产品与所选功能；可在缺陷管理智能体继续处理流转。</p>
         </>
@@ -779,20 +920,8 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
         <Card title="属性">
           <div className="flex flex-col gap-3.5">
             <div className="flex flex-col gap-1.5">
-              <FieldLabel>严重度</FieldLabel>
-              <div className="flex flex-wrap gap-1.5">
-                {DEFECT_SEVERITIES.map((s) => (
-                  <button key={s.v} type="button" onClick={() => setSeverity(severity === s.v ? '' : s.v)} className={chip(severity === s.v)}>{s.label}</button>
-                ))}
-              </div>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <FieldLabel required>优先级</FieldLabel>
-              <div className="flex gap-1.5">
-                {DEFECT_PRIORITIES.map((p) => (
-                  <button key={p.v} type="button" onClick={() => setPriority(p.v)} className={chip(priority === p.v)}>{p.label}</button>
-                ))}
-              </div>
+              <FieldLabel>等级</FieldLabel>
+              <GradeField grade={grade} setGrade={setGrade} />
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel>处理人</FieldLabel>
@@ -889,7 +1018,7 @@ function RequirementDetail({
 
   return (
     <DetailScaffold
-      no={requirement.requirementNo}
+      no={`${requirement.requirementNo}${requirement.externalId ? ` · TAPD ${requirement.externalId}` : ''}`}
       kindLabel="需求"
       kindColor="#FBBF24"
       title={title}
@@ -913,6 +1042,29 @@ function RequirementDetail({
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
+          {requirement.sourceSnapshot?.comments?.length ? (
+            <Card title={`TAPD 评论与流转 · ${requirement.sourceSnapshot.comments.length}`}>
+              <div className="flex flex-col gap-3">
+                {requirement.sourceSnapshot.comments.map((comment, index) => (
+                  <div key={`${comment.author}-${comment.createdAt ?? index}`} className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+                    <div className="flex items-start gap-2">
+                      <MessageSquareText size={15} className="text-cyan-300 mt-0.5 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm text-white/80">
+                            <span className="font-medium">{comment.author || '未知用户'}</span>
+                            <span className="text-white/40 ml-2">{comment.title}</span>
+                          </div>
+                          <span className="text-[11px] text-white/35 shrink-0">{fmtDate(comment.createdAt)}</span>
+                        </div>
+                        {comment.content && <div className="mt-2 text-sm text-white/65 whitespace-pre-wrap leading-6">{comment.content}</div>}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ) : null}
           <Card title="动态">
             <ActivityTimeline entityType="requirement" entityId={requirement.id} />
           </Card>
@@ -920,6 +1072,18 @@ function RequirementDetail({
       }
       sidebar={
         <>
+          {requirement.sourceSystem === 'tapd' && requirement.sourceSnapshot && (
+            <Card
+              title="TAPD 属性"
+              action={requirement.sourceUrl ? (
+                <a href={requirement.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
+                  打开原需求 <ExternalLink size={11} />
+                </a>
+              ) : undefined}
+            >
+              <TapdSourceProperties requirement={requirement} />
+            </Card>
+          )}
           <Card title="属性">
             <div className="flex flex-col gap-3.5">
               {requirement.sourceDefectId && (
@@ -1009,6 +1173,58 @@ function RequirementDetail({
   );
 }
 
+const TAPD_FIELD_ORDER = [
+  '状态',
+  '优先级',
+  '模块',
+  '规模',
+  '分类',
+  '业务价值',
+  '需求来源',
+  '需求类型',
+  '需求类别',
+  '功能',
+  '处理人',
+  '开发人员',
+  '创建人',
+  '抄送人',
+  '客户名称',
+  '责任团队',
+  '所属产品',
+  '所属团队',
+  '预计开始',
+  '预计结束',
+  '完成时间',
+  '开发实际排期',
+  '评审时效',
+  '评审明确性',
+  '每月排期优化',
+  '需求联系人',
+  '期望排期时间',
+] as const;
+
+function TapdSourceProperties({ requirement }: { requirement: Requirement }) {
+  const snapshot = requirement.sourceSnapshot!;
+  const fields = snapshot.fields ?? {};
+  const visibleFields = TAPD_FIELD_ORDER
+    .map((label) => ({ label, value: fields[label] }))
+    .filter((item) => item.value);
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      {visibleFields.map((item) => (
+        <InfoRow key={item.label} label={item.label} value={item.value} />
+      ))}
+      <div className="pt-2 mt-1 border-t border-white/8 flex flex-col gap-2">
+        <InfoRow label="来源文件" value={snapshot.importedFileName || '—'} />
+        <InfoRow label="TAPD 创建" value={fmtDate(snapshot.sourceCreatedAt)} />
+        <InfoRow label="TAPD 修改" value={fmtDate(snapshot.sourceModifiedAt)} />
+        <InfoRow label="导入时间" value={fmtDate(snapshot.importedAt)} />
+      </div>
+    </div>
+  );
+}
+
 function DefectList({ defects, onClick, empty }: { defects: TracedDefect[]; onClick: (id: string) => void; empty: string }) {
   if (defects.length === 0) return <div className="text-[11px] text-white/30">{empty}</div>;
   return (
@@ -1017,7 +1233,7 @@ function DefectList({ defects, onClick, empty }: { defects: TracedDefect[]; onCl
         <button
           key={d.id}
           onClick={() => onClick(d.id)}
-          className="text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
+          className="pa-row text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-white/10 bg-white/[0.02]"
         >
           <span className="text-sm text-white/80 truncate">
             <span className="text-[10px] text-white/40 mr-1.5 font-mono">{d.defectNo}</span>
@@ -1037,6 +1253,8 @@ function FeatureDetail({
   allFeatures,
   featureVersions,
   versionName,
+  versions,
+  releases,
   onReload,
 }: {
   feature?: Feature;
@@ -1044,17 +1262,29 @@ function FeatureDetail({
   allFeatures: Feature[];
   featureVersions: FeatureVersion[];
   versionName: Map<string, string>;
+  versions: ProductVersion[];
+  releases: ProductRelease[];
   onReload: () => void;
 }) {
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [moduleName, setModuleName] = useState('');
+  const [featureType, setFeatureType] = useState<FeatureBusinessType>('basic');
+  const [mainRequirementId, setMainRequirementId] = useState('');
+  const [plannedVersionId, setPlannedVersionId] = useState('');
+  const [officialReleaseId, setOfficialReleaseId] = useState('');
+  const [ownerId, setOwnerId] = useState('');
+  const [keyRules, setKeyRules] = useState('');
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
+  const [remark, setRemark] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
   const [parentId, setParentId] = useState('');
   const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
   const { template } = useEffectiveTemplate('feature', feature?.productId ?? null);
   const { workflow } = useEffectiveWorkflow('feature', feature?.productId ?? null);
   const split = useMemo(() => splitFields(template?.fields), [template]);
@@ -1075,6 +1305,15 @@ function FeatureDetail({
     if (feature) {
       setTitle(feature.title);
       setDescription(feature.description ?? '');
+      setModuleName(feature.moduleName ?? '');
+      setFeatureType(feature.featureType ?? 'basic');
+      setMainRequirementId(feature.mainRequirementId ?? feature.requirementIds[0] ?? '');
+      setPlannedVersionId(feature.plannedVersionId ?? '');
+      setOfficialReleaseId(feature.officialReleaseId ?? '');
+      setOwnerId(feature.ownerId ?? '');
+      setKeyRules(feature.keyRules ?? '');
+      setAcceptanceCriteria(feature.acceptanceCriteria ?? '');
+      setRemark(feature.remark ?? '');
       setGrade(feature.grade);
       setAssigneeId(feature.assigneeId ?? '');
       setParentId(feature.parentId ?? '');
@@ -1089,26 +1328,62 @@ function FeatureDetail({
     return (
       title !== feature.title ||
       description !== (feature.description ?? '') ||
+      moduleName !== (feature.moduleName ?? '') ||
+      featureType !== (feature.featureType ?? 'basic') ||
+      mainRequirementId !== (feature.mainRequirementId ?? feature.requirementIds[0] ?? '') ||
+      plannedVersionId !== (feature.plannedVersionId ?? '') ||
+      officialReleaseId !== (feature.officialReleaseId ?? '') ||
+      ownerId !== (feature.ownerId ?? '') ||
+      keyRules !== (feature.keyRules ?? '') ||
+      acceptanceCriteria !== (feature.acceptanceCriteria ?? '') ||
+      remark !== (feature.remark ?? '') ||
       grade !== feature.grade ||
       assigneeId !== (feature.assigneeId ?? '') ||
       parentId !== (feature.parentId ?? '') ||
       !reqSetEqual(selReqs, feature.requirementIds) ||
       !recordEqual(formData, feature.formData ?? {})
     );
-  }, [feature, title, description, grade, assigneeId, parentId, selReqs, formData]);
+  }, [feature, title, description, moduleName, featureType, mainRequirementId, plannedVersionId, officialReleaseId, ownerId, keyRules, acceptanceCriteria, remark, grade, assigneeId, parentId, selReqs, formData]);
 
   if (!feature) return <NotFound />;
   const productId = feature.productId;
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
 
   const save = async () => {
+    if (!title.trim() || !description.trim() || !moduleName.trim() || !mainRequirementId || !plannedVersionId || !ownerId || !keyRules.trim() || !acceptanceCriteria.trim()) {
+      setMessage('请完整填写功能名称、功能说明、所属模块、主需求、计划版本、负责人、关键规则和验收标准');
+      return;
+    }
     setSaving(true);
-    await updateFeature(feature.id, { title: title.trim(), description, grade, assigneeId: assigneeId || null, parentId, requirementIds: Array.from(selReqs), formData });
+    setMessage('');
+    const result = await updateFeature(feature.id, {
+      title: title.trim(),
+      description,
+      moduleName: moduleName.trim(),
+      featureType,
+      mainRequirementId,
+      plannedVersionId,
+      officialReleaseId: officialReleaseId || null,
+      ownerId,
+      keyRules,
+      acceptanceCriteria,
+      remark,
+      grade,
+      assigneeId: assigneeId || null,
+      parentId,
+      requirementIds: Array.from(new Set([mainRequirementId, ...selReqs])),
+      formData,
+    });
     setSaving(false);
+    if (!result.success) {
+      setMessage(result.error?.message ?? '保存功能失败');
+      return;
+    }
     onReload();
   };
 
   const toggle = (id: string) => {
+    if (id === mainRequirementId) return;
     setSelReqs((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -1136,8 +1411,17 @@ function FeatureDetail({
       }
       main={
         <>
-          <Card title="描述" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+          <Card title="功能说明" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
+          </Card>
+          <Card title="关键规则">
+            <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="填写核心业务规则、限制条件和边界" />
+          </Card>
+          <Card title="验收标准">
+            <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="填写可判断功能成立和交付完成的验收标准" />
+          </Card>
+          <Card title="备注">
+            <PlainTextArea value={remark} onChange={setRemark} placeholder="补充特殊情况或例外说明，可不填" />
           </Card>
           {split.files.length > 0 && (
             <Card title={template?.name || '附件'}>
@@ -1147,12 +1431,32 @@ function FeatureDetail({
           <Card title="动态">
             <ActivityTimeline entityType="feature" entityId={feature.id} />
           </Card>
+          {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
         </>
       }
       sidebar={
         <>
           <Card title="属性">
             <div className="flex flex-col gap-3.5">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>所属功能模块</FieldLabel>
+                <input
+                  value={moduleName}
+                  onChange={(event) => setModuleName(event.target.value)}
+                  placeholder="如：营销活动 / 权限中心"
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>功能类型</FieldLabel>
+                <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                  {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>负责人</FieldLabel>
+                <UserSearchSelect value={ownerId} onChange={setOwnerId} />
+              </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>分级</FieldLabel>
                 <GradeField grade={grade} setGrade={setGrade} />
@@ -1169,6 +1473,20 @@ function FeatureDetail({
                   options={allFeatures.filter((f) => f.id !== feature.id).map((f) => ({ id: f.id, label: f.title }))}
                   placeholder="无（顶层功能）"
                 />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>计划版本</FieldLabel>
+                <select value={plannedVersionId} onChange={(event) => setPlannedVersionId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                  <option value="">请选择内部版本</option>
+                  {versions.map((version) => <option key={version.id} value={version.id}>{version.versionName}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>正式上线版本号</FieldLabel>
+                <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                  <option value="">上线后回写</option>
+                  {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
+                </select>
               </div>
               {feature.currentState && (
                 <div className="flex flex-col gap-1.5">
@@ -1188,17 +1506,40 @@ function FeatureDetail({
               )}
             </div>
           </Card>
-          <Card title="实现的需求">
+          <Card title="主需求与关联需求">
             {requirements.length === 0 ? (
               <div className="text-[11px] text-white/30">该产品还没有需求</div>
             ) : (
-              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                {requirements.map((r) => (
-                  <label key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
-                    <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggle(r.id)} className="accent-cyan-500" />
-                    <span className="text-sm text-white/80 truncate">{r.title}</span>
-                  </label>
-                ))}
+              <div className="space-y-3">
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>主需求</FieldLabel>
+                  <select
+                    value={mainRequirementId}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setMainRequirementId(value);
+                      if (value) setSelReqs((prev) => new Set([...prev, value]));
+                    }}
+                    className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none"
+                  >
+                    <option value="">请选择主需求</option>
+                    {requirements.map((requirement) => <option key={requirement.id} value={requirement.id}>{requirement.requirementNo} · {requirement.title}</option>)}
+                  </select>
+                </div>
+                <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                  {requirements.map((requirement) => (
+                    <label key={requirement.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-white/5">
+                      <input
+                        type="checkbox"
+                        checked={selReqs.has(requirement.id) || mainRequirementId === requirement.id}
+                        disabled={mainRequirementId === requirement.id}
+                        onChange={() => toggle(requirement.id)}
+                        className="accent-cyan-500"
+                      />
+                      <span className="truncate text-sm text-white/80">{requirement.title}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </Card>
@@ -1258,7 +1599,6 @@ function VersionDetail({
   const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const [showKnowledge, setShowKnowledge] = useState(false);
   const [showTrace, setShowTrace] = useState(false);
   const { template } = useEffectiveTemplate('version', productId);
   const { workflow } = useEffectiveWorkflow('version', productId);
@@ -1411,15 +1751,8 @@ function VersionDetail({
               )}
             </div>
           </Card>
-          <Card
-            title="版本知识库"
-            action={
-              <button onClick={() => setShowKnowledge(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
-                <BookOpen size={12} /> 打开
-              </button>
-            }
-          >
-            <div className="text-[11px] text-white/40">MRD / SRS / PRD 等版本文档，支持分类筛选与快速新建。</div>
+          <Card title="本版本知识（从产品知识库调取）">
+            <VersionKnowledgeCard productId={productId} versionId={version.id} />
           </Card>
           <Card title="关联需求（本版本要做哪些需求）">
             {requirements.length === 0 ? (
@@ -1459,13 +1792,6 @@ function VersionDetail({
         </>
       }
     >
-      {showKnowledge && (
-        <KnowledgeStoreModal
-          title={`${version.versionName} · 版本知识库`}
-          fetcher={() => getVersionKnowledgeStore(version.id)}
-          onClose={() => setShowKnowledge(false)}
-        />
-      )}
       {showTrace && (
         <TraceRelationDrawer productId={productId} nodeId={`version:${version.id}`} title={version.versionName} onClose={() => setShowTrace(false)} />
       )}
@@ -1498,8 +1824,7 @@ function DefectDetail({
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [severity, setSeverity] = useState('');
-  const [priority, setPriority] = useState('');
+  const [grade, setGrade] = useState<ItemGrade>('p2');
   const [status, setStatus] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
   const [featureId, setFeatureId] = useState('');
@@ -1513,8 +1838,7 @@ function DefectDetail({
     if (defect) {
       setTitle(defect.title ?? '');
       setDescription(defect.rawContent ?? '');
-      setSeverity(defect.severity ?? '');
-      setPriority(defect.priority ?? '');
+      setGrade(effectiveDefectGrade(defect));
       setStatus(defect.status ?? '');
       setAssigneeId(defect.assigneeId ?? '');
       setFeatureId(defect.tracedFeatureId ?? '');
@@ -1529,14 +1853,13 @@ function DefectDetail({
     return (
       title !== (defect.title ?? '') ||
       description !== (defect.rawContent ?? '') ||
-      severity !== (defect.severity ?? '') ||
-      priority !== (defect.priority ?? '') ||
+      grade !== effectiveDefectGrade(defect) ||
       status !== (defect.status ?? '') ||
       assigneeId !== (defect.assigneeId ?? '') ||
       featureId !== (defect.tracedFeatureId ?? '') ||
       versionId !== (defect.tracedVersionId ?? '')
     );
-  }, [defect, title, description, severity, priority, status, assigneeId, featureId, versionId]);
+  }, [defect, title, description, grade, status, assigneeId, featureId, versionId]);
 
   if (!defect) return <NotFound />;
 
@@ -1549,8 +1872,7 @@ function DefectDetail({
     await updateProductDefect(productId, defect.id, {
       title: title.trim(),
       description,
-      severity: severity || undefined,
-      priority: priority || undefined,
+      grade,
       status: status || undefined,
       assigneeId: assigneeId || null,
       featureId: featureId || undefined,
@@ -1629,20 +1951,8 @@ function DefectDetail({
           <Card title="属性">
             <div className="flex flex-col gap-3.5">
               <div className="flex flex-col gap-1.5">
-                <FieldLabel>严重度</FieldLabel>
-                <div className="flex flex-wrap gap-1.5">
-                  {DEFECT_SEVERITIES.map((s) => (
-                    <button key={s.v} type="button" onClick={() => setSeverity(severity === s.v ? '' : s.v)} className={chip(severity === s.v)}>{s.label}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>优先级</FieldLabel>
-                <div className="flex gap-1.5">
-                  {DEFECT_PRIORITIES.map((p) => (
-                    <button key={p.v} type="button" onClick={() => setPriority(priority === p.v ? '' : p.v)} className={chip(priority === p.v)}>{p.label}</button>
-                  ))}
-                </div>
+                <FieldLabel>等级</FieldLabel>
+                <GradeField grade={grade} setGrade={setGrade} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>处理人</FieldLabel>

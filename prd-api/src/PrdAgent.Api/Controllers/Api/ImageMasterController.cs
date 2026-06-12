@@ -277,7 +277,11 @@ public class ImageMasterController : ControllerBase
         {
             var cacheKey = $"imageMaster:workspaces:create:{adminId}:{idemKey}";
             var cached = await _cache.GetAsync<object>(cacheKey);
-            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+            if (cached != null)
+            {
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+                return Ok(ApiResponse<object>.Ok(cached));
+            }
         }
 
         var title = (request?.Title ?? string.Empty).Trim();
@@ -500,7 +504,11 @@ public class ImageMasterController : ControllerBase
         {
             var cacheKey = $"imageMaster:workspaces:delete:{adminId}:{wid}:{idemKey}";
             var cached = await _cache.GetAsync<object>(cacheKey);
-            if (cached != null) return Ok(ApiResponse<object>.Ok(cached));
+            if (cached != null)
+            {
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+                return Ok(ApiResponse<object>.Ok(cached));
+            }
         }
 
         // 1) 删除画布
@@ -1519,7 +1527,11 @@ public class ImageMasterController : ControllerBase
             if (!string.IsNullOrWhiteSpace(idemKey))
             {
                 var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
-                if (existed != null) return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+                if (existed != null)
+                {
+                    PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+                    return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+                }
             }
 
             var prompt = (request?.Prompt ?? string.Empty).Trim();
@@ -1653,7 +1665,11 @@ public class ImageMasterController : ControllerBase
             catch (MongoWriteException mw) when (mw.WriteError?.Category == ServerErrorCategory.DuplicateKey && !string.IsNullOrWhiteSpace(idemKey))
             {
                 var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
-                if (existed != null) return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+                if (existed != null)
+                {
+                    PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+                    return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+                }
                 throw;
             }
 

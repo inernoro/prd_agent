@@ -55,7 +55,9 @@ function FlyingToken({
         },
         { transform: `translate(-50%,-50%) translate(${dx}px, ${dy}px) scale(0.3)`, opacity: 0 },
       ],
-      { duration: 720, easing: 'cubic-bezier(.4,0,.2,1)' },
+      // 半速(1440ms,原 720 的两倍):用户反馈关闭教程时飞回动画太快「看不见」,
+      // 放慢一倍让毕业帽明显地飞回右上角入口,提醒以后从这里重看。
+      { duration: 1440, easing: 'cubic-bezier(.4,0,.2,1)' },
     );
     anim.onfinish = onDone;
     return () => {
@@ -179,6 +181,38 @@ export function SpotlightOverlay() {
   const currentSelector =
     steps && steps[stepIndex] ? steps[stepIndex].selector : payload?.selector ?? null;
 
+  // ---- 飞回右上角「本页教程」pill 动画(任何关闭路径都播一次)----
+  // 历史:飞回动画原先只在「完成」末步触发,且 720ms 太快 —— 用户关闭/取消教程时
+  // 「看不见」入口在哪。现在抽成公共函数,X / 点空白 / ESC / 我已学会 / 完成 全部复用,
+  // 半速播放(见 FlyingToken),让用户每次关闭都看到毕业帽飞回入口。
+  const flyBackToEntry = useCallback(() => {
+    const entry = document.querySelector('[data-tour-entry]');
+    if (!entry) return;
+    // 优先从当前光圈起飞;光圈不在(定位中/超时态)则从气泡卡片起飞;都没有就不播。
+    const src = safeQuery(currentSelector) ?? bubbleRef.current;
+    if (!src) return;
+    const sr = src.getBoundingClientRect();
+    const er = entry.getBoundingClientRect();
+    setFlyBack({
+      from: { x: sr.left + sr.width / 2, y: sr.top + sr.height / 2 },
+      to: { x: er.left + er.width / 2, y: er.top + er.height / 2 },
+    });
+  }, [currentSelector]);
+
+  // 统一关闭:先播飞回动画,再隐藏卡片。flyBack 与 dismissed 同帧设置,
+  // FlyingToken 在 dismissed 后仍由 flyBackNode 续播(见底部渲染)。
+  const closeWithFlyBack = useCallback(() => {
+    flyBackToEntry();
+    setDismissed(true);
+  }, [flyBackToEntry]);
+
+  // 「我已学会」:标记该教程已学会(该页不再自动开讲/脉冲),再播飞回动画关闭。
+  // 给「觉得每天弹窗烦」的用户一个一键退出口,无需走完整套步骤。
+  const handleLearnedClose = useCallback(() => {
+    if (payload?.id) void useDailyTipsStore.getState().markLearned(payload.id);
+    closeWithFlyBack();
+  }, [payload, closeWithFlyBack]);
+
   // ---- 推进到下一步(下一步按钮 / 用户亲手点高亮目标 共用)----
   // fromUserClick=true:用户已经亲手点了高亮目标(镂空可点),不再自动 click 揭示。
   const goNext = useCallback(
@@ -218,19 +252,10 @@ export function SpotlightOverlay() {
         if (payload?.id) void useDailyTipsStore.getState().markLearned(payload.id);
       }
       // 飞回右上角「本页教程」入口,提醒以后从这里重看(诉求 6)
-      const entry = document.querySelector('[data-tour-entry]');
-      const ringEl = safeQuery(currentSelector);
-      if (entry && ringEl) {
-        const er = entry.getBoundingClientRect();
-        const rr = ringEl.getBoundingClientRect();
-        setFlyBack({
-          from: { x: rr.left + rr.width / 2, y: rr.top + rr.height / 2 },
-          to: { x: er.left + er.width / 2, y: er.top + er.height / 2 },
-        });
-      }
+      flyBackToEntry();
       setDismissed(true);
     },
-    [payload, currentSelector],
+    [payload, flyBackToEntry],
   );
 
   // ---- 镂空可点:用户亲手点高亮目标即推进/完成(诉求 8「跟我做」)----
@@ -367,10 +392,12 @@ export function SpotlightOverlay() {
     const autoAction = payload?.autoAction ?? null;
     const hasSteps = (autoAction?.steps?.length ?? 0) > 0;
 
-    // 单步模式:无 step + 无 autoClick 时,5s 自动淡出(保持旧行为)
+    // 单步模式:无 step + 无 autoClick 时,5s 自动淡出。也走 closeWithFlyBack ——
+    // 单步提示(如 *-update-reminder 粘贴气泡)自动淡出同样属于「关闭」,要播飞回动画,
+    // 与手动关闭口径一致(否则 reminder 不交互、5s 后静默消失,不提示入口位置;Bugbot)。
     let fadeTimer: number | null = null;
     if (!hasSteps && !autoAction?.autoClick) {
-      fadeTimer = window.setTimeout(() => setDismissed(true), 5000);
+      fadeTimer = window.setTimeout(() => closeWithFlyBack(), 5000);
     }
 
     // autoClick:延迟后自动点击目标(光圈已显示一段时间,让用户看清)
@@ -388,12 +415,12 @@ export function SpotlightOverlay() {
         } catch {
           /* noop */
         }
-        setDismissed(true);
+        closeWithFlyBack(); // autoClick 完成后关闭也走飞回(口径统一;若已导航离开则 flyBackToEntry 取不到光圈静默跳过)
       }, delay);
     }
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDismissed(true);
+      if (e.key === 'Escape') closeWithFlyBack();
     };
     const onResize = () => {
       if (!currentSelector) return;
@@ -416,7 +443,7 @@ export function SpotlightOverlay() {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('scroll', onResize, true);
     };
-  }, [rect, currentSelector, payload, dismissed]);
+  }, [rect, currentSelector, payload, dismissed, closeWithFlyBack]);
 
   // 渲染后实测气泡高度,供下面的定位逻辑把整张卡片（含底部按钮行）夹在视口内。
   // 只在高度真正变化(>1px)时 setState,守住「setState → 重渲染 → 再测」不成死循环;
@@ -521,7 +548,7 @@ export function SpotlightOverlay() {
           )}
           <button
             type="button"
-            onClick={() => setDismissed(true)}
+            onClick={closeWithFlyBack}
             style={{
               fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 999,
               border: 'none', background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.8)',
@@ -608,7 +635,7 @@ export function SpotlightOverlay() {
           <div
             key={i}
             aria-label="关闭高亮引导"
-            onClick={() => setDismissed(true)}
+            onClick={closeWithFlyBack}
             style={{ position: 'fixed', zIndex: 9997, cursor: 'pointer', background: 'transparent', ...p }}
           />
         ));
@@ -643,7 +670,7 @@ export function SpotlightOverlay() {
         >
           <button
             type="button"
-            onClick={() => setDismissed(true)}
+            onClick={closeWithFlyBack}
             title="关闭"
             style={{
               position: 'absolute',
@@ -730,6 +757,32 @@ export function SpotlightOverlay() {
               gap: 10,
             }}
           >
+            {/* 「我已学会」:多步教程提供一键退出口。觉得每天弹窗烦的用户点这里即标记学会,
+                该页不再自动开讲(markLearned),并播飞回动画提示入口位置。仅多步教程显示
+                (单步/零步的「知道了」本身就是确认,无需再加)。 */}
+            {steps && steps.length > 0 && payload?.id && (
+              <button
+                type="button"
+                onClick={handleLearnedClose}
+                title="我已学会,该页不再自动弹出(可从右上角入口重看)"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  padding: '5px 10px',
+                  border: 'none',
+                  borderRadius: 999,
+                  background: 'rgba(52,211,153,0.12)',
+                  color: 'rgba(52,211,153,0.95)',
+                  cursor: 'pointer',
+                }}
+              >
+                <GraduationCap size={12} strokeWidth={2.4} />
+                我已学会
+              </button>
+            )}
             {/* 多步教程的进度在上方任务进度条展示;单步/零步无需「步骤 N/M」计数(1/1、1/0 都无意义,Bugbot)。 */}
             <div style={{ flex: 1 }} />
             {steps && !isLastStep && (
