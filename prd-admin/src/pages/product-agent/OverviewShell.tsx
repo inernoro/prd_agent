@@ -505,36 +505,23 @@ function OverviewFeaturesPanel({ isAdmin, products }: { isAdmin: boolean; produc
     return <div className="text-center text-white/40 text-sm py-12">还没有可查看的产品，请先在「产品」中创建。</div>;
   }
 
+  if (!productId) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center text-sm text-white/40">
+        正在加载产品列表…
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-[#13151a] px-4 py-2.5">
-        <span className="mr-1 self-center text-[11px] text-white/40">产品</span>
-        {products.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setProductId(p.id)}
-            className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
-              productId === p.id
-                ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-100'
-                : 'border-white/10 text-white/55 hover:bg-white/5'
-            }`}
-          >
-            {p.name}
-          </button>
-        ))}
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col">
-        {productId && (
-          <FeatureCatalogTab
-            key={productId}
-            productId={productId}
-            showImport={isAdmin}
-            showCreate
-            showReleaseLink={false}
-          />
-        )}
-      </div>
+      <FeatureCatalogTab
+        productId={productId}
+        productPicker={{ products, productId, onProductIdChange: setProductId }}
+        showImport={isAdmin}
+        showCreate
+        showReleaseLink={false}
+      />
     </div>
   );
 }

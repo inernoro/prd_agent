@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronRight, FolderTree, Plus, Search, Upload } from 'lucide-react';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { searchDirectoryUsers } from '@/services';
 import { listFeatures, listVersions } from '@/services/real/productAgent';
@@ -18,7 +19,8 @@ import {
   type FeatureTreeNode,
 } from './featureTreeUtils';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
-import type { Feature, FeatureBusinessType } from './types';
+import { toProductOptions } from './comboboxOptions';
+import type { Feature, FeatureBusinessType, Product } from './types';
 
 const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
   basic: '基础功能',
@@ -89,11 +91,18 @@ function FeatureTreeNodeRow({
 
 export function FeatureCatalogTab({
   productId,
+  productPicker,
   showImport = true,
   showCreate = true,
   showReleaseLink = true,
 }: {
   productId: string;
+  /** 主页跨产品：在工具栏「全部版本」左侧展示可搜索的产品下拉 */
+  productPicker?: {
+    products: Product[];
+    productId: string;
+    onProductIdChange: (id: string) => void;
+  };
   /** 导入目录结构（主页仅管理员展示） */
   showImport?: boolean;
   showCreate?: boolean;
@@ -158,6 +167,10 @@ export function FeatureCatalogTab({
   }, [features, subtreeIds, keyword, versionId]);
 
   const versionName = useMemo(() => new Map(versions.map((v) => [v.id, v.versionName])), [versions]);
+  const productOptions = useMemo(
+    () => (productPicker ? toProductOptions(productPicker.products) : []),
+    [productPicker],
+  );
 
   const selectedNode = selectedId ? features.find((f) => f.id === selectedId) : null;
 
@@ -237,6 +250,19 @@ export function FeatureCatalogTab({
             </div>
           </div>
           <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-white/10 px-4 py-2.5">
+            {productPicker && (
+              <div className="h-8 w-[min(100%,200px)] min-w-[140px] shrink-0">
+                <ItemSearchSelect
+                  value={productPicker.productId}
+                  onChange={productPicker.onProductIdChange}
+                  options={productOptions}
+                  placeholder="搜索产品名称/编号"
+                  uiSize="sm"
+                  countUnit="个产品"
+                  emptyText="暂无产品"
+                />
+              </div>
+            )}
             <select
               value={versionId}
               onChange={(e) => setVersionId(e.target.value)}
