@@ -76,3 +76,4 @@
 | fix | prd-api | 单页故障绝不杀整本：RunAgentOnceAsync 永不抛（传输异常折叠为页错误走重试/兜底）+ 并行任务体全链路兜底页（实测单页 HttpClient 100s 超时异常逃逸炸掉整个 deck） |
 | fix | prd-admin | PPT 工作台修复加号菜单「引用知识库/添加文件」点不动：composer 卡 focus-within transform 创建 stacking context 导致 z-10 菜单被 z-5 关闭蒙层盖住，移除 translate 保留光环动效 |
 | feat | prd-api | PPT 锚定模板新增 2 套暗色 deck（cyber-terminal/dark-graph，来自 open-design hermes/graphify）：Tech 极黑、极光渐变不再映射到浅色锚，提取器 v3 支持非 zhangzara 目录、is-active 修饰符、注释取版式名并为无运行时静态 deck 附加通用键盘导航 |
+| fix | prd-api | 暗色锚定 deck 翻页失效修复：提取时剥掉模板自带 Static-preview fallback 样式块（强制所有 slide 可见），导航运行时类切换即可真实翻页 |

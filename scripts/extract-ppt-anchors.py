@@ -141,8 +141,13 @@ def extract_anchor(name: str, src_name: str) -> None:
 
     prefix = html[:blocks[0][0]]
     suffix = html[blocks[-1][1]:]
-    # 无导航运行时的静态 deck：补通用键盘导航（插在 </body> 前，无则追加）
+    # 无导航运行时的静态 deck：补通用键盘导航（插在 </body> 前，无则追加），
+    # 并剥掉模板自带的「Static-preview fallback」样式块——它会把所有 slide
+    # 强制 position:relative 全部可见（专为无运行时静态预览准备），留着会让
+    # 导航形同虚设（类切换了但页面是纵向堆叠）
     if '<script' not in html.lower():
+        prefix = re.sub(
+            r'<style>\s*/\*\s*Static-preview fallback[\s\S]*?</style>', '', prefix, count=1)
         if '</body>' in suffix:
             suffix = suffix.replace('</body>', NAV_RUNTIME + '\n</body>', 1)
         else:
