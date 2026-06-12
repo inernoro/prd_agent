@@ -279,6 +279,27 @@ export function importRequirements(productId: string, rows: ImportRequirementRow
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
 }
 
+export interface ImportSimpleItemRow {
+  title: string;
+  description?: string;
+  grade?: string;
+  status?: string;
+  sourceSystem?: string;
+  externalId?: string;
+  plannedAt?: string;
+  completedAt?: string;
+}
+
+export function importFeatures(productId: string, rows: ImportSimpleItemRow[]) {
+  return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/features/import`, { method: 'POST', body: { rows } });
+}
+export function importDefects(productId: string, rows: ImportSimpleItemRow[]) {
+  return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/defects/import`, { method: 'POST', body: { rows } });
+}
+export function importVersions(productId: string, rows: ImportSimpleItemRow[]) {
+  return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/versions/import`, { method: 'POST', body: { rows } });
+}
+
 // ── 报表 / 统计分析 ──
 export interface ProductAnalytics {
   releaseProgress: { versionId: string; versionName: string; total: number; done: number; doing: number; todo: number }[];
@@ -549,6 +570,18 @@ export function getOverviewRequirements(params?: { grade?: string; keyword?: str
   const qs = q.toString();
   return apiRequest<ListWrap<OverviewRequirementRow>>(`/api/product/overview/requirements${qs ? `?${qs}` : ''}`);
 }
+export interface OverviewVersionRow {
+  id: string; productId: string; productName: string; versionName: string; lifecycle: string;
+  isMajor: boolean; requirementCount: number; featureCount: number; externalId?: string | null;
+  plannedReleaseAt?: string | null; releasedAt?: string | null; updatedAt: string;
+}
+export function getOverviewVersions(params?: { lifecycle?: string; keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.lifecycle) q.set('lifecycle', params.lifecycle);
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewVersionRow>>(`/api/product/overview/versions${qs ? `?${qs}` : ''}`);
+}
 export interface OverviewFeatureRow {
   id: string; productId: string; productName: string; featureNo: string; title: string;
   grade: string; currentState?: string | null; requirementCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
@@ -580,6 +613,21 @@ export function getOverviewKnowledge() {
 }
 export function getOverviewGraph() {
   return apiRequest<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/product/overview/graph');
+}
+
+export interface ProductApplicationAdmin {
+  userId: string;
+  displayName: string;
+  username: string;
+}
+export function listProductApplicationAdmins() {
+  return apiRequest<{ items: ProductApplicationAdmin[]; canManage: boolean }>('/api/product/settings/admins');
+}
+export function addProductApplicationAdmin(userId: string) {
+  return apiRequest<{ items: ProductApplicationAdmin[]; canManage: boolean }>('/api/product/settings/admins', { method: 'POST', body: { userId } });
+}
+export function removeProductApplicationAdmin(userId: string) {
+  return apiRequest<{ removed: boolean }>(`/api/product/settings/admins/${userId}`, { method: 'DELETE' });
 }
 export function createProductDefect(productId: string, body: { title: string; description?: string; grade?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });

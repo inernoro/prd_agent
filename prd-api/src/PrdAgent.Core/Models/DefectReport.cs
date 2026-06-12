@@ -179,6 +179,12 @@ public class DefectReport
     /// <summary>追溯到的功能 ID（product-agent.features）</summary>
     public string? TracedFeatureId { get; set; }
 
+    /// <summary>产品管理历史导入来源系统。</summary>
+    public string? ProductSourceSystem { get; set; }
+
+    /// <summary>来源系统中的唯一 ID，用于幂等导入。</summary>
+    public string? ProductExternalId { get; set; }
+
     // ===== Phase 2: 待验收 =====
 
     /// <summary>验收人 UserId（通常是 reporter）</summary>

@@ -42,6 +42,7 @@ export type VersionLifecycle = 'planning' | 'developing' | 'testing' | 'released
 
 /** 功能版本变更类型 */
 export type FeatureChangeType = 'added' | 'modified' | 'deprecated';
+export type FeatureBusinessType = 'basic' | 'core' | 'value_added';
 
 export interface Product {
   id: string;
@@ -99,6 +100,8 @@ export interface ProductVersion {
   workflowDefId?: string | null;
   formData: Record<string, string>;
   ownerId: string;
+  sourceSystem?: string | null;
+  externalId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -225,6 +228,14 @@ export interface Feature {
   featureNo: string;
   title: string;
   description?: string | null;
+  moduleName: string;
+  featureType: FeatureBusinessType;
+  mainRequirementId: string;
+  plannedVersionId: string;
+  officialReleaseId?: string | null;
+  keyRules: string;
+  acceptanceCriteria: string;
+  remark?: string | null;
   grade: ItemGrade;
   parentId?: string | null;
   requirementIds: string[];
@@ -234,6 +245,8 @@ export interface Feature {
   formData: Record<string, string>;
   ownerId: string;
   assigneeId?: string | null;
+  sourceSystem?: string | null;
+  externalId?: string | null;
   stateEnteredAt?: string | null;
   createdAt: string;
   updatedAt: string;

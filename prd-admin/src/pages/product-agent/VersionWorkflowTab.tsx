@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, FileSpreadsheet, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
-import JSZip from 'jszip';
+import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, createRelease, decideInitiation,
-  importVersionWorkflow, listInitiations, listProductMembers, listReleases, listRequirements,
+  listInitiations, listProductMembers, listReleases, listRequirements,
   listVersions, syncInitiationReview,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -15,7 +14,6 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import type { ProductInitiation, ProductMember, ProductRelease, ProductVersion, Requirement } from './types';
 
 type MainTab = 'release' | 'initiation';
-type ImportKind = 'initiation' | 'release';
 type RecordScope = 'mine' | 'all';
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -34,7 +32,6 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [legacyVersions, setLegacyVersions] = useState<ProductVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState<'initiation' | 'release' | 'temporary' | null>(null);
-  const [importKind, setImportKind] = useState<ImportKind | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
   const [releaseOwnerId, setReleaseOwnerId] = useState(currentUserId ?? '');
   const [query, setQuery] = useState('');
@@ -97,7 +94,6 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
               月度常规计划外、紧急且工作量较小的优化。产品工作量原则上不超过 3 天，研发不超过 5 天；无需 T 号，按小版本自动审批。
             </span>
           </span>
-          <Secondary onClick={() => setImportKind('release')}><Upload size={14} />导入历史上线</Secondary>
         </div>
       </div>
       <ReleaseTable items={filteredReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
@@ -107,7 +103,6 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses} />
         <div className="flex gap-2">
           <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
-          <Secondary onClick={() => setImportKind('initiation')}><Upload size={14} />导入历史立项</Secondary>
         </div>
       </div>
       <InitiationTable items={filteredInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
@@ -121,7 +116,6 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
     </details>
     {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
     {(dialog === 'release' || dialog === 'temporary') && <ReleaseDialog productId={productId} approved={approved} requirements={requirements} members={members} temporary={dialog === 'temporary'} onClose={() => setDialog(null)} onChanged={reload} />}
-    {importKind && <ImportDialog productId={productId} kind={importKind} onClose={() => setImportKind(null)} onChanged={reload} />}
   </div>;
 }
 
@@ -404,136 +398,6 @@ function ReleaseTable({ items, requirements, members, onChanged, readOnly }: {
       <Td><Status value={item.status} /></Td>
     </tr>)}{items.length === 0 && <Empty cols={16}>暂无上线记录</Empty>}
   </Table>;
-}
-
-function ImportDialog({ productId, kind, onClose, onChanged }: { productId: string; kind: ImportKind; onClose: () => void; onChanged: () => Promise<void> }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
-  const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState(false);
-  const read = async (file: File) => {
-    if (file.name.toLowerCase().endsWith('.xls')) return setMessage('旧版 .xls 请先在 Excel 中另存为 .xlsx 后导入。');
-    try {
-      const raw = file.name.toLowerCase().endsWith('.csv') ? await readCsv(file) : await readXlsx(file);
-      setRows(raw.map((row) => normalizeRow(row, kind))); setMessage(`已读取 ${raw.length} 行，请确认后导入。`);
-    } catch (error) { setMessage(error instanceof Error ? error.message : '文件解析失败'); }
-  };
-  const commit = async () => {
-    setBusy(true); const res = await importVersionWorkflow(productId, { kind, rows }); setBusy(false);
-    if (!res.success) return setMessage(res.error?.message ?? '导入失败');
-    setMessage(`成功 ${res.data.created} 条，失败 ${res.data.errors.length} 条。`); await onChanged();
-    if (res.data.errors.length === 0) onClose();
-  };
-  return <Modal title={`导入历史${kind === 'initiation' ? '立项' : '上线'}数据`} onClose={onClose} width="max-w-4xl">
-    <div onClick={() => inputRef.current?.click()} className="cursor-pointer rounded-xl border border-dashed border-white/20 p-8 text-center">
-      <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" /><div className="text-sm text-white/70">选择 Excel 或 CSV 文件</div><div className="mt-1 text-xs text-white/35">支持 .xlsx、.csv；先预览再写入</div>
-      <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void read(f); }} />
-    </div>
-    {rows.length > 0 && <div className="mt-4 max-h-72 overflow-auto rounded-lg border border-white/10"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-[#1a1c22] text-white/45"><tr>{Object.keys(rows[0]).filter((k) => k !== 'legacyData').map((k) => <th key={k} className="px-3 py-2">{k}</th>)}</tr></thead><tbody>{rows.slice(0, 20).map((row, index) => <tr key={index} className="border-t border-white/5">{Object.entries(row).filter(([k]) => k !== 'legacyData').map(([k, value]) => <td key={k} className="max-w-52 truncate px-3 py-2 text-white/60">{String(value ?? '')}</td>)}</tr>)}</tbody></table></div>}
-    {message && <div className="mt-3 text-xs text-white/55">{message}</div>}
-    <div className="mt-6 flex justify-end gap-2"><Secondary onClick={onClose}>取消</Secondary><Primary onClick={commit} disabled={busy || rows.length === 0}>{busy ? '导入中...' : `确认导入 ${rows.length} 条`}</Primary></div>
-  </Modal>;
-}
-
-async function readCsv(file: File) {
-  const lines = (await file.text()).replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(',').map((v) => v.trim());
-  return lines.slice(1).map((line) => Object.fromEntries(line.split(',').map((value, index) => [headers[index], value.trim()])));
-}
-
-async function readXlsx(file: File) {
-  const zip = await JSZip.loadAsync(await file.arrayBuffer());
-  const parser = new DOMParser();
-  const workbook = await zip.file('xl/workbook.xml')?.async('text');
-  const rels = await zip.file('xl/_rels/workbook.xml.rels')?.async('text');
-  if (!workbook || !rels) throw new Error('无法读取 Excel 工作簿');
-  const sharedXml = await zip.file('xl/sharedStrings.xml')?.async('text');
-  const shared = sharedXml ? Array.from(parser.parseFromString(sharedXml, 'text/xml').getElementsByTagName('si')).map((n) => n.textContent ?? '') : [];
-  const relationMap = new Map(Array.from(parser.parseFromString(rels, 'text/xml').getElementsByTagName('Relationship')).map((n) => [n.getAttribute('Id'), n.getAttribute('Target')]));
-  const sheet = parser.parseFromString(workbook, 'text/xml').getElementsByTagName('sheet')[0];
-  const rid = sheet?.getAttribute('r:id') ?? sheet?.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
-  const target = rid ? relationMap.get(rid) : null;
-  if (!target) throw new Error('Excel 中没有可读取的工作表');
-  const path = target.startsWith('/') ? target.slice(1) : `xl/${target.replace(/^\.?\//, '')}`;
-  const sheetXml = await zip.file(path)?.async('text');
-  if (!sheetXml) throw new Error('无法读取第一张工作表');
-  const doc = parser.parseFromString(sheetXml, 'text/xml');
-  const matrix = Array.from(doc.getElementsByTagName('row')).map((row) => {
-    const values: string[] = [];
-    Array.from(row.getElementsByTagName('c')).forEach((cell) => {
-      const letters = (cell.getAttribute('r') ?? 'A1').replace(/\d/g, '');
-      let index = 0; for (const char of letters) index = index * 26 + char.charCodeAt(0) - 64;
-      const raw = cell.getElementsByTagName('v')[0]?.textContent ?? cell.getElementsByTagName('t')[0]?.textContent ?? '';
-      values[index - 1] = cell.getAttribute('t') === 's' ? shared[Number(raw)] ?? '' : raw;
-    });
-    return values;
-  }).filter((row) => row.some(Boolean));
-  const knownHeaders = ['平台', '系统', '应用', '项目类别', '版本类别', '产品立项方案名称', '正式版本号', '上线时间'];
-  let headerIndex = 0;
-  let bestScore = -1;
-  matrix.slice(0, 20).forEach((row, index) => {
-    const score = row.filter((cell) => knownHeaders.some((header) => String(cell).replace(/\s/g, '').includes(header.replace(/\s/g, '')))).length;
-    if (score > bestScore) { bestScore = score; headerIndex = index; }
-  });
-  const headers = [...(matrix[headerIndex] ?? [])];
-  if (headers.includes('项目类别') && headers.includes('版本类别')) {
-    const projectIndex = headers.indexOf('项目类别');
-    const versionIndex = headers.indexOf('版本类别');
-    if (versionIndex === projectIndex + 2 && !headers[projectIndex + 1]) headers[projectIndex + 1] = 'T立项号';
-  }
-  return matrix.slice(headerIndex + 1)
-    .filter((row) => row.some((value) => String(value ?? '').trim()))
-    .map((row) => Object.fromEntries(headers.map((header, index) => [String(header || `未命名列${index + 1}`).replace(/\s+/g, ''), row[index] ?? ''])));
-}
-
-function normalizeRow(raw: Record<string, string>, kind: ImportKind): Record<string, unknown> {
-  const get = (...keys: string[]) => Object.entries(raw).find(([key]) => keys.some((candidate) => key.trim().toLowerCase() === candidate.toLowerCase()))?.[1]?.trim() ?? '';
-  return {
-    code: get(kind === 'initiation' ? 'T立项号' : '正式版本号', kind === 'initiation' ? '立项号' : '上线号', kind === 'initiation' ? 'T号' : 'V号', '版本号', 'code'),
-    tCode: get('内部版本号', '立项号', 'T立项号', 'T号', 'tCode'),
-    systemName: get('系统', 'systemName'), appName: get('应用', 'appName'),
-    planName: get('产品立项方案名称', '方案名称', '产品方案名称', '项目名称', '版本名称', '需求名称', 'planName'),
-    versionType: get('版本级别', '版本类型', 'versionType') || 'minor',
-    projectType: get('项目类别', '是否定制', 'projectType').includes('定制项目') && !get('项目类别', '是否定制', 'projectType').includes('非定制') ? 'custom' : 'standard',
-    customerSource: get('客户来源', '客户', 'customerSource'),
-    requirementDescription: get('项目需求描述', '需求描述', 'requirementDescription'),
-    departmentName: get('所属部门', '部门', 'departmentName'),
-    ownerId: get('产品负责人', '产品负责人（即申领人）', '产品负责人(即申领人)', '申领人', 'ownerId'),
-    teamMemberIds: splitMembers(get('项目组成员', 'teamMembers')),
-    planUrl: get('方案地址', '方案地址（URL）', '方案链接', 'planUrl'),
-    firstDraftMeetingAt: toImportDate(get('第一稿会议时间', '第一稿时间')),
-    secondDraftMeetingAt: toImportDate(get('第二稿会议时间', '第二稿时间')),
-    thirdDraftMeetingAt: toImportDate(get('第三稿会议时间', '第三稿时间')),
-    projectAt: toImportDate(get('立项时间（三稿通过）', '立项时间')),
-    plannedProjectAt: toImportDate(get('计划立项时间')),
-    needUiDesign: toImportBool(get('是否需要UI设计')),
-    isAiPoc: toImportBool(get('是否属于AIPOC项目', '是否属于AI POC项目')),
-    developmentStatus: get('开发状态', 'developmentStatus'),
-    remark: get('备注', 'remark'),
-    openBrandScope: get('当前开放品牌', 'openBrandScope') || '上线全域开放',
-    announcementUrl: get('上线公告地址', '公告地址', 'announcementUrl'),
-    date: toImportDate(get('上线时间', '日期', 'date')), legacyData: raw,
-  };
-}
-
-function toImportDate(value: string) {
-  if (!value) return undefined;
-  const serial = Number(value);
-  if (Number.isFinite(serial) && serial > 20000 && serial < 100000) {
-    return new Date(Date.UTC(1899, 11, 30) + serial * 86400000).toISOString();
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
-}
-
-function toImportBool(value: string) {
-  if (!value) return undefined;
-  return ['是', 'yes', 'true', '1'].includes(value.trim().toLowerCase());
-}
-
-function splitMembers(value: string) {
-  return value ? value.split(/[、,，;；\s]+/).map((item) => item.trim()).filter(Boolean) : [];
 }
 
 function formatDate(value?: string | null) {

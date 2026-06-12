@@ -6,10 +6,10 @@
  * 需求/功能 的「新建」走独立页面（/product-agent/p/:productId/:kind/new）；查看走详情页。
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload, Sparkles } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Sparkles } from 'lucide-react';
 import { ProductAssistantDrawer } from './ProductAssistantDrawer';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -31,7 +31,6 @@ import {
   deleteVersion,
   listRequirements,
   deleteRequirement,
-  importRequirements,
   listFeatures,
   deleteFeature,
   listTracedDefects,
@@ -42,12 +41,11 @@ import {
   type TracedDefect,
   type MyTodoItem,
 } from '@/services/real/productAgent';
-import { TapdRtfImportDialog } from './TapdRtfImportDialog';
 import { searchDirectoryUsers } from '@/services';
 import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, effectiveDefectGrade } from './types';
 import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, type FilterFieldDef } from './listFilter';
-import { toCSV, downloadCSV, parseCSV } from '@/lib/csv';
+import { toCSV, downloadCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 
@@ -478,11 +476,8 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [importing, setImporting] = useState(false);
-  const [tapdRtfFiles, setTapdRtfFiles] = useState<File[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const fileRef = useRef<HTMLInputElement>(null);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const nameOf = useDirectoryNames();
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
@@ -520,31 +515,6 @@ function RequirementsTab({ productId }: { productId: string }) {
     downloadCSV(`需求-${productId}.csv`, toCSV(['MAP编号', 'TAPD ID', '标题', '分级', 'MAP状态', 'TAPD状态', '描述'], rows));
   };
 
-  const importCsv = async (file: File) => {
-    setImporting(true);
-    const text = await file.text();
-    const parsed = parseCSV(text);
-    if (parsed.length > 1) {
-      const header = parsed[0].map((h) => h.trim());
-      const col = (names: string[]) => header.findIndex((h) => names.some((n) => h.includes(n)));
-      let ti = col(['标题', 'title']);
-      let gi = col(['分级', 'grade']);
-      let di = col(['描述', 'desc']);
-      let body = parsed.slice(1);
-      // 无可识别表头则按位置 标题,分级,描述
-      if (ti < 0) { ti = 0; gi = gi < 0 ? 1 : gi; di = di < 0 ? 2 : di; body = parsed; }
-      const parseGrade = (s?: string) => { const l = (s ?? '').toLowerCase(); return ['p0', 'p1', 'p2', 'p3'].find((g) => l.includes(g)); };
-      const rows = body
-        .map((r) => ({ title: (r[ti] ?? '').trim(), grade: gi >= 0 ? parseGrade(r[gi]) : undefined, description: di >= 0 ? (r[di] ?? '').trim() : undefined }))
-        .filter((r) => r.title);
-      if (rows.length > 0) {
-        const res = await importRequirements(productId, rows);
-        if (res.success) await reload();
-      }
-    }
-    setImporting(false);
-  };
-
   const reload = useCallback(async () => {
     setLoading(true);
     const res = await listRequirements(productId);
@@ -562,17 +532,6 @@ function RequirementsTab({ productId }: { productId: string }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">
-          <input ref={fileRef} type="file" accept=".csv,.rtf,text/csv,application/rtf,text/rtf" multiple className="hidden" onChange={(e) => {
-            const selectedFiles = Array.from(e.target.files ?? []);
-            const rtfFiles = selectedFiles.filter((file) => file.name.toLowerCase().endsWith('.rtf'));
-            const csvFile = selectedFiles.find((file) => file.name.toLowerCase().endsWith('.csv'));
-            if (rtfFiles.length > 0) setTapdRtfFiles(rtfFiles);
-            else if (csvFile) void importCsv(csvFile);
-            e.target.value = '';
-          }} />
-          <button onClick={() => fileRef.current?.click()} disabled={importing} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-50">
-            {importing ? <MapSpinner size={13} /> : <Upload size={13} />} 导入 CSV / TAPD RTF
-          </button>
           <button onClick={exportCsv} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
             <Download size={13} /> 导出CSV
           </button>
@@ -599,36 +558,97 @@ function RequirementsTab({ productId }: { productId: string }) {
           {selected.size > 0 && (
             <BatchBar entityType="requirement" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
           )}
-          {orderByHierarchy(filtered).map(({ item: r, depth }) => (
-            <div key={r.id} style={{ marginLeft: depth * 24 }} className="flex items-center gap-2">
-              <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} className="accent-cyan-500 shrink-0" />
-              <div className={`flex-1 min-w-0 ${depth > 0 ? 'border-l-2 border-white/10 pl-2' : ''}`}>
-                <Row
-                  title={r.title}
-                  badge={ITEM_GRADE_LABEL[r.grade]}
-                  sub={`${r.requirementNo}${r.externalId ? ` · TAPD ${r.externalId}` : ''} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
-                  onClick={() => openDetail(r.id)}
-                  actionLabel="查看详情"
-                  onDelete={async () => {
-                    await deleteRequirement(r.id);
-                    await reload();
-                  }}
-                />
-              </div>
-            </div>
-          ))}
+          <RequirementDataTable
+            items={filtered}
+            selected={selected}
+            toggleSelected={toggleSel}
+            openDetail={openDetail}
+            stateLabel={stateLabel}
+            nameOf={nameOf}
+            versionName={versionName}
+            customerName={customerName}
+            onDelete={async (id) => {
+              await deleteRequirement(id);
+              await reload();
+            }}
+          />
         </div>
       )}
         </>
       )}
-      {tapdRtfFiles.length > 0 && (
-        <TapdRtfImportDialog
-          productId={productId}
-          files={tapdRtfFiles}
-          onClose={() => setTapdRtfFiles([])}
-          onImported={reload}
-        />
-      )}
+    </div>
+  );
+}
+
+function RequirementDataTable({
+  items,
+  selected,
+  toggleSelected,
+  openDetail,
+  stateLabel,
+  nameOf,
+  versionName,
+  customerName,
+  onDelete,
+}: {
+  items: Requirement[];
+  selected: Set<string>;
+  toggleSelected: (id: string) => void;
+  openDetail: (id: string) => void;
+  stateLabel: (key: string) => string;
+  nameOf: (id?: string | null) => string;
+  versionName: Map<string, string>;
+  customerName: Map<string, string>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const sourceFields = useMemo(() => Array.from(new Set(items.flatMap((item) => Object.keys(item.sourceSnapshot?.fields ?? {}))))
+    .filter((field) => field !== 'ID')
+    .sort((left, right) => left.localeCompare(right, 'zh-CN')), [items]);
+  const rows = orderByHierarchy(items);
+  const cell = 'max-w-56 truncate px-3 py-2 text-xs text-white/60';
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-white/10">
+      <table className="min-w-max whitespace-nowrap text-left text-sm">
+        <thead className="sticky top-0 z-10 bg-[#181a20] text-[11px] text-white/45">
+          <tr>
+            <th className="w-10 px-3 py-2 font-medium">选择</th>
+            <th className="px-3 py-2 font-medium">MAP 编号</th>
+            <th className="px-3 py-2 font-medium">TAPD ID</th>
+            <th className="min-w-72 px-3 py-2 font-medium">标题</th>
+            <th className="px-3 py-2 font-medium">分级</th>
+            <th className="px-3 py-2 font-medium">MAP 状态</th>
+            <th className="px-3 py-2 font-medium">处理人</th>
+            <th className="px-3 py-2 font-medium">负责人</th>
+            <th className="px-3 py-2 font-medium">关联版本</th>
+            <th className="px-3 py-2 font-medium">关联客户</th>
+            {sourceFields.map((field) => <th key={field} className="px-3 py-2 font-medium">{field}</th>)}
+            <th className="px-3 py-2 font-medium">创建时间</th>
+            <th className="px-3 py-2 font-medium">更新时间</th>
+            <th className="w-16 px-3 py-2 font-medium">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ item, depth }) => (
+            <tr key={item.id} onClick={() => openDetail(item.id)} className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]">
+              <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} className="accent-cyan-500" /></td>
+              <td className={cell}>{item.requirementNo}</td>
+              <td className={cell}>{item.externalId || '-'}</td>
+              <td className="max-w-96 px-3 py-2 text-white/85"><div className="truncate" style={{ paddingLeft: depth * 20 }}>{depth > 0 && <span className="mr-1 text-white/25">└</span>}{item.title}</div></td>
+              <td className={cell}>{ITEM_GRADE_LABEL[item.grade]}</td>
+              <td className={cell}>{stateLabel(item.currentState ?? '') || '-'}</td>
+              <td className={cell}>{nameOf(item.assigneeId)}</td>
+              <td className={cell}>{nameOf(item.ownerId)}</td>
+              <td className={cell}>{item.versionIds.map((id) => versionName.get(id) ?? id).join('、') || '-'}</td>
+              <td className={cell}>{item.customerIds.map((id) => customerName.get(id) ?? id).join('、') || '-'}</td>
+              {sourceFields.map((field) => <td key={field} className={cell} title={item.sourceSnapshot?.fields?.[field]}>{item.sourceSnapshot?.fields?.[field] || '-'}</td>)}
+              <td className={cell}>{new Date(item.createdAt).toLocaleString('zh-CN')}</td>
+              <td className={cell}>{new Date(item.updatedAt).toLocaleString('zh-CN')}</td>
+              <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}><button onClick={() => void onDelete(item.id)} className="text-white/30 hover:text-red-300" title="删除"><Trash2 size={14} /></button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

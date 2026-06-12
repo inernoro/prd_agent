@@ -12,6 +12,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, Share2, X, Sparkles, ExternalLink, MessageSquareText } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { useAuthStore } from '@/stores/authStore';
 import { useSseStream } from '@/lib/useSseStream';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { VersionKnowledgeCard } from './knowledge/VersionKnowledgeCard';
@@ -29,6 +30,7 @@ import {
   createFeature,
   updateFeature,
   listVersions,
+  listReleases,
   updateVersion,
   createFeatureVersion,
   deleteFeatureVersion,
@@ -41,10 +43,15 @@ import {
   listDescTemplates,
   type TracedDefect,
 } from '@/services/real/productAgent';
-import type { Requirement, Feature, ProductVersion, Customer, FeatureVersion, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
+import type { Requirement, Feature, ProductVersion, ProductRelease, Customer, FeatureVersion, FeatureBusinessType, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
+const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
+  { value: 'basic', label: '基础功能' },
+  { value: 'core', label: '核心功能' },
+  { value: 'value_added', label: '增值功能' },
+];
 
 // ── 自定义字段去重 / 分栏 ──
 const NATIVE_DUP_KEYS = new Set(['title', 'name', 'description', 'desc']);
@@ -89,22 +96,25 @@ export function ProductObjectDetailPage() {
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [features, setFeatures] = useState<Feature[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
+  const [releases, setReleases] = useState<ProductRelease[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
   const [featureVersions, setFeatureVersions] = useState<FeatureVersion[]>([]);
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [r, f, v, c, d] = await Promise.all([
+    const [r, f, v, release, c, d] = await Promise.all([
       listRequirements(productId),
       listFeatures(productId),
       listVersions(productId),
+      listReleases(productId, 'all'),
       listCustomers(),
       listTracedDefects(productId),
     ]);
     if (r.success) setRequirements(r.data.items);
     if (f.success) setFeatures(f.data.items);
     if (v.success) setVersions(v.data.items);
+    if (release.success) setReleases(release.data.items);
     if (c.success) setCustomers(c.data.items);
     if (d.success) setTracedDefects(d.data.items);
     if (kind === 'feature') {
@@ -152,6 +162,9 @@ export function ProductObjectDetailPage() {
               <CreateObjectForm
                 productId={productId}
                 kind={kind}
+                requirements={requirements}
+                versions={versions}
+                releases={releases}
                 onCreated={(newId) => navigate(`/product-agent/p/${productId}/${kind}/${newId}`, { replace: true })}
               />
             )
@@ -175,6 +188,8 @@ export function ProductObjectDetailPage() {
               allFeatures={features}
               featureVersions={featureVersions}
               versionName={versionName}
+              versions={versions}
+              releases={releases}
               onReload={reload}
             />
           ) : kind === 'version' ? (
@@ -365,6 +380,19 @@ function ParentSelect({ value, onChange, options, placeholder }: { value: string
 /** 描述字段：富文本（排版工具栏 + 截图粘贴/拖拽上传），对齐 Jira / TAPD / Linear。 */
 function DescriptionField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return <RichTextField value={value} onChange={onChange} minHeight={420} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴 / 点右上角套用模板）" />;
+}
+
+function PlainTextArea({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
+  return (
+    <textarea
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={placeholder}
+      rows={6}
+      className="w-full resize-y rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40"
+      style={{ minHeight: 132, overscrollBehavior: 'contain' }}
+    />
+  );
 }
 
 /** 详情页头部「追溯关系路径」触发按钮。 */
@@ -561,18 +589,36 @@ function AiFillCard({ productId, templateId, onFill }: { productId: string; temp
 function CreateObjectForm({
   productId,
   kind,
+  requirements,
+  versions,
+  releases,
   onCreated,
 }: {
   productId: string;
   kind: string;
+  requirements: Requirement[];
+  versions: ProductVersion[];
+  releases: ProductRelease[];
   onCreated: (newId: string) => void;
 }) {
+  const currentUserId = useAuthStore((state) => state.user?.userId ?? '');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
+  const [moduleName, setModuleName] = useState('');
+  const [featureType, setFeatureType] = useState<FeatureBusinessType>('basic');
+  const [mainRequirementId, setMainRequirementId] = useState('');
+  const [requirementIds, setRequirementIds] = useState<Set<string>>(new Set());
+  const [plannedVersionId, setPlannedVersionId] = useState('');
+  const [officialReleaseId, setOfficialReleaseId] = useState('');
+  const [ownerId, setOwnerId] = useState(currentUserId);
+  const [keyRules, setKeyRules] = useState('');
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
+  const [remark, setRemark] = useState('');
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
   const entityType = kind === 'feature' ? 'feature' : 'requirement';
   const { template } = useEffectiveTemplate(entityType, productId);
   const { workflow } = useEffectiveWorkflow(entityType, productId);
@@ -590,6 +636,13 @@ function CreateObjectForm({
   }, [defaultDescContent, description]);
   const kindLabel = kind === 'feature' ? '功能' : '需求';
   const kindColor = kind === 'feature' ? '#A78BFA' : '#FBBF24';
+  const isFeature = kind === 'feature';
+  const inputCls = 'w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40';
+  const selectCls = 'w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40';
+
+  useEffect(() => {
+    if (currentUserId && !ownerId) setOwnerId(currentUserId);
+  }, [currentUserId, ownerId]);
 
   if (kind !== 'requirement' && kind !== 'feature') {
     return <div className="text-white/40 text-sm text-center py-10">该类型不支持在此新建</div>;
@@ -606,12 +659,37 @@ function CreateObjectForm({
   };
 
   const create = async () => {
-    if (!title.trim()) return;
+    if (!title.trim()) return setMessage(`${kindLabel}名称不能为空`);
+    if (isFeature && (!description.trim() || !moduleName.trim() || !mainRequirementId || !plannedVersionId || !ownerId || !keyRules.trim() || !acceptanceCriteria.trim())) {
+      return setMessage('请完整填写功能说明、所属模块、主需求、计划版本、负责人、关键规则和验收标准');
+    }
     setSaving(true);
-    const payload = { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData, templateId: template?.id, workflowDefId: workflow?.id };
+    setMessage('');
+    const payload = isFeature
+      ? {
+          title: title.trim(),
+          description,
+          moduleName: moduleName.trim(),
+          featureType,
+          mainRequirementId,
+          requirementIds: Array.from(new Set([mainRequirementId, ...requirementIds])),
+          plannedVersionId,
+          officialReleaseId: officialReleaseId || null,
+          ownerId,
+          keyRules,
+          acceptanceCriteria,
+          remark,
+          grade,
+          assigneeId: assigneeId || null,
+          formData,
+          templateId: template?.id,
+          workflowDefId: workflow?.id,
+        }
+      : { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData, templateId: template?.id, workflowDefId: workflow?.id };
     const res = kind === 'requirement' ? await createRequirement(productId, payload) : await createFeature(productId, payload);
     setSaving(false);
     if (res.success && res.data) onCreated(res.data.id);
+    else setMessage(res.error?.message ?? `创建${kindLabel}失败`);
   };
 
   return (
@@ -630,20 +708,98 @@ function CreateObjectForm({
           {entityType === 'requirement' && (
             <AiFillCard productId={productId} templateId={template?.id} onFill={onAiFill} />
           )}
-          <Card title="描述" action={<DescTemplatePicker entityType={entityType} onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+          <Card title={isFeature ? '功能说明' : '描述'} action={<DescTemplatePicker entityType={entityType} onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
+          {isFeature && (
+            <>
+              <Card title="关键规则">
+                <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="填写核心业务规则、限制条件和边界" />
+              </Card>
+              <Card title="验收标准">
+                <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="填写可判断功能成立和交付完成的验收标准" />
+              </Card>
+              <Card title="备注">
+                <PlainTextArea value={remark} onChange={setRemark} placeholder="补充特殊情况或例外说明，可不填" />
+              </Card>
+            </>
+          )}
           {split.files.length > 0 && (
             <Card title={template?.name || '附件'}>
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
-          <p className="text-[11px] text-white/35 px-1">创建后进入详情页，可继续关联客户 / 版本 / 缺陷追溯。</p>
+          {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
+          <p className="text-[11px] text-white/35 px-1">创建后进入详情页，可继续维护关联关系与流转状态。</p>
         </>
       }
       sidebar={
         <Card title="属性">
           <div className="flex flex-col gap-3.5">
+            {isFeature && (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>所属功能模块</FieldLabel>
+                  <input value={moduleName} onChange={(event) => setModuleName(event.target.value)} placeholder="如：营销活动 / 权限中心" className={inputCls} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>功能类型</FieldLabel>
+                  <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className={selectCls}>
+                    {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>主需求</FieldLabel>
+                  <select value={mainRequirementId} onChange={(event) => {
+                    const value = event.target.value;
+                    setMainRequirementId(value);
+                    if (value) setRequirementIds((prev) => new Set([...prev, value]));
+                  }} className={selectCls}>
+                    <option value="">请选择主需求</option>
+                    {requirements.map((requirement) => <option key={requirement.id} value={requirement.id}>{requirement.requirementNo} · {requirement.title}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>关联需求</FieldLabel>
+                  <div className="max-h-44 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] p-2" style={{ overscrollBehavior: 'contain' }}>
+                    {requirements.map((requirement) => (
+                      <label key={requirement.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 hover:bg-white/5">
+                        <input
+                          type="checkbox"
+                          checked={requirementIds.has(requirement.id) || mainRequirementId === requirement.id}
+                          disabled={mainRequirementId === requirement.id}
+                          onChange={() => setRequirementIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(requirement.id)) next.delete(requirement.id); else next.add(requirement.id);
+                            return next;
+                          })}
+                          className="mt-0.5 accent-cyan-500"
+                        />
+                        <span className="min-w-0 text-xs text-white/65">{requirement.title}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>计划版本</FieldLabel>
+                  <select value={plannedVersionId} onChange={(event) => setPlannedVersionId(event.target.value)} className={selectCls}>
+                    <option value="">请选择内部版本</option>
+                    {versions.map((version) => <option key={version.id} value={version.id}>{version.versionName}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>正式上线版本号</FieldLabel>
+                  <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className={selectCls}>
+                    <option value="">上线后回写</option>
+                    {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>负责人</FieldLabel>
+                  <UserSearchSelect value={ownerId} onChange={setOwnerId} />
+                </div>
+              </>
+            )}
             <div className="flex flex-col gap-1.5">
               <FieldLabel required>分级</FieldLabel>
               <GradeField grade={grade} setGrade={setGrade} />
@@ -1097,6 +1253,8 @@ function FeatureDetail({
   allFeatures,
   featureVersions,
   versionName,
+  versions,
+  releases,
   onReload,
 }: {
   feature?: Feature;
@@ -1104,17 +1262,29 @@ function FeatureDetail({
   allFeatures: Feature[];
   featureVersions: FeatureVersion[];
   versionName: Map<string, string>;
+  versions: ProductVersion[];
+  releases: ProductRelease[];
   onReload: () => void;
 }) {
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [moduleName, setModuleName] = useState('');
+  const [featureType, setFeatureType] = useState<FeatureBusinessType>('basic');
+  const [mainRequirementId, setMainRequirementId] = useState('');
+  const [plannedVersionId, setPlannedVersionId] = useState('');
+  const [officialReleaseId, setOfficialReleaseId] = useState('');
+  const [ownerId, setOwnerId] = useState('');
+  const [keyRules, setKeyRules] = useState('');
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
+  const [remark, setRemark] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
   const [parentId, setParentId] = useState('');
   const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
   const { template } = useEffectiveTemplate('feature', feature?.productId ?? null);
   const { workflow } = useEffectiveWorkflow('feature', feature?.productId ?? null);
   const split = useMemo(() => splitFields(template?.fields), [template]);
@@ -1135,6 +1305,15 @@ function FeatureDetail({
     if (feature) {
       setTitle(feature.title);
       setDescription(feature.description ?? '');
+      setModuleName(feature.moduleName ?? '');
+      setFeatureType(feature.featureType ?? 'basic');
+      setMainRequirementId(feature.mainRequirementId ?? feature.requirementIds[0] ?? '');
+      setPlannedVersionId(feature.plannedVersionId ?? '');
+      setOfficialReleaseId(feature.officialReleaseId ?? '');
+      setOwnerId(feature.ownerId ?? '');
+      setKeyRules(feature.keyRules ?? '');
+      setAcceptanceCriteria(feature.acceptanceCriteria ?? '');
+      setRemark(feature.remark ?? '');
       setGrade(feature.grade);
       setAssigneeId(feature.assigneeId ?? '');
       setParentId(feature.parentId ?? '');
@@ -1149,26 +1328,62 @@ function FeatureDetail({
     return (
       title !== feature.title ||
       description !== (feature.description ?? '') ||
+      moduleName !== (feature.moduleName ?? '') ||
+      featureType !== (feature.featureType ?? 'basic') ||
+      mainRequirementId !== (feature.mainRequirementId ?? feature.requirementIds[0] ?? '') ||
+      plannedVersionId !== (feature.plannedVersionId ?? '') ||
+      officialReleaseId !== (feature.officialReleaseId ?? '') ||
+      ownerId !== (feature.ownerId ?? '') ||
+      keyRules !== (feature.keyRules ?? '') ||
+      acceptanceCriteria !== (feature.acceptanceCriteria ?? '') ||
+      remark !== (feature.remark ?? '') ||
       grade !== feature.grade ||
       assigneeId !== (feature.assigneeId ?? '') ||
       parentId !== (feature.parentId ?? '') ||
       !reqSetEqual(selReqs, feature.requirementIds) ||
       !recordEqual(formData, feature.formData ?? {})
     );
-  }, [feature, title, description, grade, assigneeId, parentId, selReqs, formData]);
+  }, [feature, title, description, moduleName, featureType, mainRequirementId, plannedVersionId, officialReleaseId, ownerId, keyRules, acceptanceCriteria, remark, grade, assigneeId, parentId, selReqs, formData]);
 
   if (!feature) return <NotFound />;
   const productId = feature.productId;
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
 
   const save = async () => {
+    if (!title.trim() || !description.trim() || !moduleName.trim() || !mainRequirementId || !plannedVersionId || !ownerId || !keyRules.trim() || !acceptanceCriteria.trim()) {
+      setMessage('请完整填写功能名称、功能说明、所属模块、主需求、计划版本、负责人、关键规则和验收标准');
+      return;
+    }
     setSaving(true);
-    await updateFeature(feature.id, { title: title.trim(), description, grade, assigneeId: assigneeId || null, parentId, requirementIds: Array.from(selReqs), formData });
+    setMessage('');
+    const result = await updateFeature(feature.id, {
+      title: title.trim(),
+      description,
+      moduleName: moduleName.trim(),
+      featureType,
+      mainRequirementId,
+      plannedVersionId,
+      officialReleaseId: officialReleaseId || null,
+      ownerId,
+      keyRules,
+      acceptanceCriteria,
+      remark,
+      grade,
+      assigneeId: assigneeId || null,
+      parentId,
+      requirementIds: Array.from(new Set([mainRequirementId, ...selReqs])),
+      formData,
+    });
     setSaving(false);
+    if (!result.success) {
+      setMessage(result.error?.message ?? '保存功能失败');
+      return;
+    }
     onReload();
   };
 
   const toggle = (id: string) => {
+    if (id === mainRequirementId) return;
     setSelReqs((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -1196,8 +1411,17 @@ function FeatureDetail({
       }
       main={
         <>
-          <Card title="描述" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+          <Card title="功能说明" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
+          </Card>
+          <Card title="关键规则">
+            <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="填写核心业务规则、限制条件和边界" />
+          </Card>
+          <Card title="验收标准">
+            <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="填写可判断功能成立和交付完成的验收标准" />
+          </Card>
+          <Card title="备注">
+            <PlainTextArea value={remark} onChange={setRemark} placeholder="补充特殊情况或例外说明，可不填" />
           </Card>
           {split.files.length > 0 && (
             <Card title={template?.name || '附件'}>
@@ -1207,12 +1431,32 @@ function FeatureDetail({
           <Card title="动态">
             <ActivityTimeline entityType="feature" entityId={feature.id} />
           </Card>
+          {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
         </>
       }
       sidebar={
         <>
           <Card title="属性">
             <div className="flex flex-col gap-3.5">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>所属功能模块</FieldLabel>
+                <input
+                  value={moduleName}
+                  onChange={(event) => setModuleName(event.target.value)}
+                  placeholder="如：营销活动 / 权限中心"
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>功能类型</FieldLabel>
+                <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                  {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>负责人</FieldLabel>
+                <UserSearchSelect value={ownerId} onChange={setOwnerId} />
+              </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>分级</FieldLabel>
                 <GradeField grade={grade} setGrade={setGrade} />
@@ -1229,6 +1473,20 @@ function FeatureDetail({
                   options={allFeatures.filter((f) => f.id !== feature.id).map((f) => ({ id: f.id, label: f.title }))}
                   placeholder="无（顶层功能）"
                 />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>计划版本</FieldLabel>
+                <select value={plannedVersionId} onChange={(event) => setPlannedVersionId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                  <option value="">请选择内部版本</option>
+                  {versions.map((version) => <option key={version.id} value={version.id}>{version.versionName}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>正式上线版本号</FieldLabel>
+                <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                  <option value="">上线后回写</option>
+                  {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
+                </select>
               </div>
               {feature.currentState && (
                 <div className="flex flex-col gap-1.5">
@@ -1248,17 +1506,40 @@ function FeatureDetail({
               )}
             </div>
           </Card>
-          <Card title="实现的需求">
+          <Card title="主需求与关联需求">
             {requirements.length === 0 ? (
               <div className="text-[11px] text-white/30">该产品还没有需求</div>
             ) : (
-              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                {requirements.map((r) => (
-                  <label key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
-                    <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggle(r.id)} className="accent-cyan-500" />
-                    <span className="text-sm text-white/80 truncate">{r.title}</span>
-                  </label>
-                ))}
+              <div className="space-y-3">
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel required>主需求</FieldLabel>
+                  <select
+                    value={mainRequirementId}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setMainRequirementId(value);
+                      if (value) setSelReqs((prev) => new Set([...prev, value]));
+                    }}
+                    className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none"
+                  >
+                    <option value="">请选择主需求</option>
+                    {requirements.map((requirement) => <option key={requirement.id} value={requirement.id}>{requirement.requirementNo} · {requirement.title}</option>)}
+                  </select>
+                </div>
+                <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                  {requirements.map((requirement) => (
+                    <label key={requirement.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-white/5">
+                      <input
+                        type="checkbox"
+                        checked={selReqs.has(requirement.id) || mainRequirementId === requirement.id}
+                        disabled={mainRequirementId === requirement.id}
+                        onChange={() => toggle(requirement.id)}
+                        className="accent-cyan-500"
+                      />
+                      <span className="truncate text-sm text-white/80">{requirement.title}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </Card>
