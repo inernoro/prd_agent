@@ -123,6 +123,8 @@ interface KbEntry {
 }
 
 const SESSION_KEY = 'md-to-ppt-chat-v1';
+// 服务器权威：进行中大纲 run 的 id（刷新后取回结果，不再"刷新即丢"）
+const OUTLINE_RUN_KEY = 'md-to-ppt-outline-run-v1';
 
 // dotBg/dotRing 用于预览工具栏的风格色点；preview 用于画廊迷你幻灯预览。
 // 「风格」语义（2026-06-10 用户纠偏）：风格是 AI 生成 HTML 时参照的设计语言（提示词里的
@@ -1314,26 +1316,69 @@ export function MdToPptAgentPage() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ─── 刷新中断对账（2026-06-12 用户实测「一直在规划大纲」）：大纲是客户端 SSE、
-  //     没有服务端 run，刷新即流断——恢复的消息里残留的进行中气泡没人翻转，
-  //     spinner 永远转。挂载时一次性把无主进行中气泡翻成可重试的中断提示；
-  //     有 activeRunId 的 generating/patching 由上面的 run 对账 effect 处理。
+  // ─── 大纲刷新恢复（服务器权威性 server-authority.md）：大纲也是一次 Run，
+  //     gateway 用 CancellationToken.None + SSE 写入吞断开异常 → 客户端刷新/断开后
+  //     大纲仍在后台跑完并存库。挂载时若有进行中的 outline run，按 runId 取回：
+  //     done → 用 outlineJson 重建草稿；running → 轮询；error → 翻转气泡。
+  //     无 run 兜底的 generating/patching 由上面的 run 对账 effect 处理。
   useEffect(() => {
-    const hasRun = !!savedSession?.activeRunId;
-    setMessages((prev) =>
-      prev.map((m) => {
-        if (m.role !== 'assistant') return m;
-        if (m.phase === 'outline')
-          return {
-            ...m,
-            phase: 'error' as const,
-            content: '大纲规划被页面刷新打断了。重新发送一句需求即可继续——右侧的大纲草稿（如已生成）不会丢。',
-          };
-        if ((m.phase === 'generating' || m.phase === 'patching') && !hasRun)
-          return { ...m, phase: 'error' as const, content: '生成被页面刷新打断，请重新发起。' };
-        return m;
-      })
-    );
+    let cancelled = false;
+    let timer: number | undefined;
+    let saved: { id: string; msgId: string; sourceText: string } | null = null;
+    try {
+      const raw = sessionStorage.getItem(OUTLINE_RUN_KEY);
+      if (raw) saved = JSON.parse(raw);
+    } catch { saved = null; }
+
+    const flipOutlineMsg = (content: string, phase: MsgPhase) =>
+      setMessages((prev) => prev.map((m) => (m.phase === 'outline' ? { ...m, phase, content } : m)));
+
+    if (!saved?.id) {
+      // 没有大纲 run 记录：残留的 outline 气泡是真断了，翻成可重试
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === 'assistant' && m.phase === 'outline'
+            ? { ...m, phase: 'error' as const, content: '大纲规划被页面刷新打断了，重新发送一句需求即可继续。' }
+            : m
+        )
+      );
+    } else {
+      const recover = async () => {
+        const run = await getMdToPptRun(saved!.id).catch(() => null);
+        if (cancelled) return;
+        if (!run) { flipOutlineMsg('大纲规划已中断，重新发送一句需求即可继续。', 'error'); sessionStorage.removeItem(OUTLINE_RUN_KEY); return; }
+        if (run.status === 'done' && run.outlineJson) {
+          try {
+            const d = JSON.parse(run.outlineJson) as { totalPages?: number; summary?: string; clarify?: ClarifyQuestion[]; outline?: OutlineSlide[] };
+            const outline = (d.outline ?? []).filter(Boolean);
+            setOutlineDraft({
+              sourceText: saved!.sourceText,
+              summary: d.summary ?? '',
+              totalPages: outline.length || (d.totalPages ?? 0),
+              outline,
+              clarify: d.clarify?.slice(0, 3),
+              clarifyAnswers: {},
+              clarifySent: false,
+            });
+            setArtifactPhase('idle');
+            flipOutlineMsg('大纲已恢复（页面刷新前生成的结果已找回），可以继续编辑或点「确认，生成 PPT」。', 'text');
+          } catch {
+            flipOutlineMsg('大纲已生成但解析失败，请重新发起。', 'error');
+          }
+          sessionStorage.removeItem(OUTLINE_RUN_KEY);
+        } else if (run.status === 'error') {
+          flipOutlineMsg('大纲生成失败：' + (run.error ?? '未知错误'), 'error');
+          sessionStorage.removeItem(OUTLINE_RUN_KEY);
+        } else {
+          // 仍在后台生成：显示恢复中，轮询取回
+          flipOutlineMsg('正在找回刷新前的大纲生成（后台仍在进行）...', 'outline');
+          timer = window.setTimeout(recover, 2500);
+        }
+      };
+      void recover();
+    }
+
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1599,6 +1644,7 @@ export function MdToPptAgentPage() {
         setOutlineAdjusting(false);
         setOutlineStreaming(false);
         setArtifactPhase('idle');
+        try { sessionStorage.removeItem(OUTLINE_RUN_KEY); } catch { /* ignore */ }
       };
 
       streamMdToPptOutline({
@@ -1607,6 +1653,11 @@ export function MdToPptAgentPage() {
         kbContext: kbContext || undefined,
         chatHistory: chatHistory || undefined,
         targetPages,
+        // 服务器权威：记下大纲 runId。刷新/断开后大纲仍在后台跑完并存库，
+        // 挂载时按此 id 取回结果（见下方 outline-recover effect）
+        onRun: (id) => {
+          try { sessionStorage.setItem(OUTLINE_RUN_KEY, JSON.stringify({ id, msgId: assistantMsg.id, sourceText })); } catch { /* quota */ }
+        },
         onMeta: (meta) => {
           metaSeen = true;
           clarifyCount = meta.clarify?.length ?? 0;

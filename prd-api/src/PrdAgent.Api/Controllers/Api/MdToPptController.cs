@@ -534,11 +534,20 @@ public class MdToPptController : ControllerBase
             },
         };
 
+        // 服务器权威性（server-authority.md）：大纲也是一次 Run，结果落库。
+        // gateway 用 CancellationToken.None + WriteEventAsync 吞断开异常 → 客户端
+        // 刷新/断开后大纲仍在后台跑完并存库，前端按 runId 取回，不再"刷新即丢"。
+        var run = await CreateRunAsync(userId, "agent", null, "outline", req.Content);
+        await WriteEventAsync("run", new { runId = run.Id });
+
         var fullText = new StringBuilder();
         var lineBuf = new StringBuilder();   // 当前未闭合行
         var pendingLine = new StringBuilder(); // 解析失败的行（模型跨行输出 JSON 时拼接重试）
         var emittedPages = 0;
         var emittedMeta = false;
+        // 累积到内存，done 时序列化进 run.OutlineJson（刷新恢复的数据源）
+        JsonObject? metaObj = null;
+        var pageArr = new JsonArray();
 
         async Task TryEmitLineAsync(string line)
         {
@@ -555,11 +564,13 @@ public class MdToPptController : ControllerBase
                 if (type == "meta" && !emittedMeta)
                 {
                     emittedMeta = true;
+                    metaObj = JsonNode.Parse(root.GetRawText()) as JsonObject;
                     await WriteEventAsync("meta", root.Clone());
                 }
                 else if (type == "page")
                 {
                     emittedPages++;
+                    if (JsonNode.Parse(root.GetRawText()) is JsonObject pg) pageArr.Add(pg);
                     await WriteEventAsync("page", root.Clone());
                 }
             }
@@ -567,6 +578,41 @@ public class MdToPptController : ControllerBase
             {
                 // 行不完整（模型跨行）：保留 pendingLine 等下一行拼接；超长则丢弃防失控
                 if (pendingLine.Length > 8000) pendingLine.Clear();
+            }
+        }
+
+        // 把累积的 meta + pages 组装成前端 outlineDraft 同形 JSON，落库供刷新恢复
+        async Task PersistOutlineAsync()
+        {
+            try
+            {
+                var outline = new JsonArray();
+                foreach (var p in pageArr)
+                {
+                    if (p is not JsonObject po) continue;
+                    outline.Add(new JsonObject
+                    {
+                        ["title"] = po["title"]?.GetValue<string>() ?? "",
+                        ["bullets"] = po["bullets"]?.DeepClone() ?? new JsonArray(),
+                        ["design"] = po["design"]?.GetValue<string>(),
+                    });
+                }
+                var payload = new JsonObject
+                {
+                    ["totalPages"] = metaObj?["totalPages"]?.DeepClone() ?? outline.Count,
+                    ["summary"] = metaObj?["summary"]?.GetValue<string>(),
+                    ["clarify"] = metaObj?["clarify"]?.DeepClone(),
+                    ["outline"] = outline,
+                };
+                var update = Builders<MdToPptRun>.Update
+                    .Set(x => x.Status, "done")
+                    .Set(x => x.OutlineJson, payload.ToJsonString())
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow);
+                await _db.MdToPptRuns.UpdateOneAsync(x => x.Id == run.Id, update, cancellationToken: CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[MdToPpt-OutlineStream] persist outline failed runId={RunId}", run.Id);
             }
         }
 
@@ -591,6 +637,7 @@ public class MdToPptController : ControllerBase
                 {
                     var err = chunk.Error ?? chunk.Content ?? "大纲生成失败";
                     _logger.LogError("[MdToPpt-OutlineStream] gateway error userId={UserId}: {Error}", userId, err);
+                    await PersistRunErrorAsync(run, err);
                     await WriteEventAsync("error", new { message = err });
                     return;
                 }
@@ -642,14 +689,17 @@ public class MdToPptController : ControllerBase
 
             if (emittedPages == 0)
             {
+                await PersistRunErrorAsync(run, "大纲解析失败，请重试");
                 await WriteEventAsync("error", new { message = "大纲解析失败，请重试" });
                 return;
             }
-            await WriteEventAsync("done", new { pages = emittedPages });
+            await PersistOutlineAsync();
+            await WriteEventAsync("done", new { pages = emittedPages, runId = run.Id });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[MdToPpt-OutlineStream] unexpected error userId={UserId}", userId);
+            await PersistRunErrorAsync(run, ex.Message);
             await WriteEventAsync("error", new { message = ex.Message });
         }
     }
@@ -1186,6 +1236,7 @@ public class MdToPptController : ControllerBase
             op = run.Op,
             title = run.Title,
             html = run.Html,
+            outlineJson = run.OutlineJson,
             error = run.Error,
             model = run.Model,
             platform = run.Platform,

@@ -73,7 +73,9 @@ export interface OutlineStreamPageEvent {
 export interface MdToPptOutlineStreamOptions extends MdToPptOutlineRequest {
   onMeta?: (meta: OutlineStreamMeta) => void;
   onPage?: (page: OutlineStreamPageEvent) => void;
-  onDone?: (info: { pages: number }) => void;
+  /** 服务器权威：大纲也是一次 Run，runId 用于刷新后取回结果 */
+  onRun?: (runId: string) => void;
+  onDone?: (info: { pages: number; runId?: string }) => void;
   onError?: (message: string) => void;
 }
 
@@ -123,7 +125,9 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
           else if (line === '' && currentEvent && currentData) {
             try {
               const data = JSON.parse(currentData) as Record<string, unknown>;
-              if (currentEvent === 'meta') {
+              if (currentEvent === 'run') {
+                if (data.runId) options.onRun?.(data.runId as string);
+              } else if (currentEvent === 'meta') {
                 options.onMeta?.({
                   totalPages: (data.totalPages as number) ?? 0,
                   summary: (data.summary as string) ?? '',
@@ -139,7 +143,7 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
                 });
               } else if (currentEvent === 'done') {
                 resolved = true;
-                options.onDone?.({ pages: (data.pages as number) ?? 0 });
+                options.onDone?.({ pages: (data.pages as number) ?? 0, runId: data.runId as string | undefined });
                 break outer;
               } else if (currentEvent === 'error') {
                 resolved = true;
@@ -580,6 +584,8 @@ export interface MdToPptRunDetail {
   op: string;
   title: string;
   html: string;
+  /** op=outline 时填充：刷新恢复用的大纲结果 JSON（与 outlineDraft 同形） */
+  outlineJson?: string | null;
   error?: string | null;
   model?: string | null;
   platform?: string | null;

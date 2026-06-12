@@ -96,3 +96,5 @@
 | fix | prd-api | dark-graph 锚定模板范本去 emoji（PR #799 Codex P1）：图标位 pictograph 全部替换为终端风等宽字符标记，全锚定资产 emoji 清零 |
 | fix | - | AGENTS.md 修正 cdscli 路径（.Codex/skills 不存在，实际在 .claude/skills，Bugbot Medium）；cdscli 去重 _repo_name_from_git_ref 双定义并让 _fallback_project_slug 与 _project_slug_hints 共用同一优先序（Bugbot Medium/Low），pytest 125 绿 |
 | security | cds | 只读 SQL Console 危险关键字检查扩到全部放行语句头：堵 PostgreSQL EXPLAIN ANALYZE UPDATE 绕过写权限门（PR #799 Codex P1，main 既有） |
+| feat | prd-api,prd-admin | 大纲生成纳入服务器权威性（server-authority.md）：大纲也是一次 Run（op=outline），结果落库 OutlineJson，客户端刷新/断开后后台跑完仍可按 runId 取回，不再「刷新即丢」「永远转圈」 |
+| fix | - | 验收技能 L0 档步骤式证据门禁按档位缩放（Bugbot Medium）：L0 轻量验收不再被「>=3 步骤」硬卡，下限=min(档位截图下限,3) |
