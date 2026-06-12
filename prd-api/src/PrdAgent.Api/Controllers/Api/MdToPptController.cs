@@ -1369,7 +1369,9 @@ public class MdToPptController : ControllerBase
             "3. 禁止内联布局样式：style 属性里不得出现 position/width/height/min-/max-/margin/transform/z-index/inset，禁止 vh/vw 单位\n" +
             "4. 内容必须放得下：标题不超过范本对应位置字数的 1.3 倍；每条要点不超过 40 字；放不下就精炼文字，禁止缩字号硬塞\n" +
             "5. 颜色/字体不得偏离设计系统（不要写新的颜色值）\n" +
-            $"6. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
+            "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可少写一条也不让正文与底部页码/页脚文字重叠；范本里的页脚（如页码、栏目名）原样保留位置\n" +
+            "7. 视觉装置不得留空：范本里的图表/数据可视化/SVG/统计块/大数字等装置，必须用本页真实或代表性的数值与标签填满（数字来自要点、缺数据就给合理示意值），严禁留空容器、占位问号、或只有标题没有内容的空装置\n" +
+            $"8. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
             "不含 <html>/<head>/<style>/<script>，无解释无代码围栏，禁止任何 emoji，禁止调用工具\n\n" +
             "## 本页版式范本（完整源码，照此结构替换内容）\n" + layout.Html;
     }

@@ -384,9 +384,18 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
     'function slides(){var out=[];var els=document.querySelectorAll(".slide");for(var i=0;i<els.length;i++){var cl=(els[i].getAttribute("class")||"").split(" ");if(cl.indexOf("slide")>=0){out.push(els[i]);}}return out;}' +
     'function isAnchored(){return !window.Reveal&&slides().length>0;}' +
     'function tot(){if(window.Reveal){var s=document.querySelectorAll(".reveal .slides>section");return s.length||1;}return slides().length||1;}' +
-    'function cur(){try{if(window.Reveal&&Reveal.getIndices){return (Reveal.getIndices().h||0)+1;}var ss=slides();for(var i=0;i<ss.length;i++){var cl=ss[i].classList;if(cl.contains("active")||cl.contains("is-active")||cl.contains("current")){return i+1;}}' +
-    // 运行时不打类标（如平移轨道式）：视口中心 elementFromPoint 反查最近 .slide 祖先
-    'var el=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);while(el){if(el.classList&&el.classList.contains("slide")){for(var j=0;j<ss.length;j++){if(ss[j]===el){return j+1;}}}el=el.parentElement;}' +
+    'function cur(){try{if(window.Reveal&&Reveal.getIndices){return (Reveal.getIndices().h||0)+1;}var ss=slides();if(!ss.length){return 1;}' +
+    // 可见度优先：算每页在视口里的可见面积 x opacity，命中视口中心额外加权。对 opacity 过渡式
+    // （cyber-terminal）、滚动平铺式（编辑模式）、类切换式 deck 全部稳健，不再只靠 active 类名。
+    'var cx=window.innerWidth/2,cy=window.innerHeight/2,best=-1,bestScore=-1;' +
+    'for(var i=0;i<ss.length;i++){var r=ss[i].getBoundingClientRect();var st=window.getComputedStyle(ss[i]);' +
+    'var op=parseFloat(st.opacity||"1");if(st.visibility==="hidden"||st.display==="none"){op=0;}' +
+    'var inView=(r.left<cx&&r.right>cx&&r.top<cy&&r.bottom>cy)?1:0;' +
+    'var vis=Math.max(0,Math.min(r.bottom,window.innerHeight)-Math.max(r.top,0));' +
+    'var score=op*(inView?1e6:0)+op*vis;if(score>bestScore){bestScore=score;best=i;}}' +
+    'if(best>=0&&bestScore>0){return best+1;}' +
+    // 兜底：class 标记
+    'for(var k=0;k<ss.length;k++){var cl=ss[k].classList;if(cl.contains("active")||cl.contains("is-active")||cl.contains("current")){return k+1;}}' +
     '}catch(e){}return 1;}' +
     // 锚定模式翻页：派发方向键（各模板运行时都绑方向键），window+document 双目标、带 keyCode 兼容
     'function pressKey(key,code){var ev;try{ev=new KeyboardEvent("keydown",{key:key,keyCode:code,which:code,bubbles:true});}catch(e){return;}try{Object.defineProperty(ev,"keyCode",{get:function(){return code;}});}catch(e2){}document.dispatchEvent(ev);window.dispatchEvent(ev);}' +
@@ -434,6 +443,11 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
     ? ''
     : '<style data-map-inject>' +
       '.__map_editing__{outline:2px dashed #c084fc!important;outline-offset:4px!important;cursor:text;}' +
+      // 编辑模式：锚定 deck（div/section.slide）解除"仅当前页可见"，所有页平铺、可滚动、可点改。
+      // 否则非当前页 opacity:0/pointer-events:none，用户只能编辑第一页（用户原话"无法编辑"）。
+      // 仅作用于锚定结构；reveal deck 的 section 不被 .slide 规则命中，不受影响。
+      '.deck{height:auto!important;min-height:0!important;overflow:visible!important;display:block!important;}' +
+      'body .slide{position:relative!important;inset:auto!important;top:auto!important;left:auto!important;opacity:1!important;transform:none!important;pointer-events:auto!important;page-break-after:always;margin:0 auto 18px!important;}' +
       '#__map_editor_toolbar__{position:fixed;display:none;z-index:99999;gap:6px;align-items:center;background:#17181c;color:#eee;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:6px 8px;font:12px/1 Inter,system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.4);}' +
       '#__map_editor_toolbar__ button{all:unset;cursor:pointer;padding:4px 8px;border-radius:5px;background:rgba(255,255,255,.08);color:#fff;font-weight:600;}' +
       '#__map_editor_toolbar__ button:hover{background:rgba(255,255,255,.18);}' +
@@ -1073,6 +1087,30 @@ export function MdToPptAgentPage() {
     return out;
   }, [frameHead, frameAnchored, buildAnchoredDoc, pagesDoneIdxs, pagesDone]);
 
+  // 演示模式（全屏）底部缩略条：把最终整份 deck 按 .slide 拆成每页独立 mini-doc，
+  // 复用 deck 自带 <head> 样式（历史载入 / 新生成都通用，不依赖生成期的 frameHead）。
+  const deckThumbDocs = useMemo(() => {
+    if (!generatedHtml) return [] as string[];
+    try {
+      const doc = new DOMParser().parseFromString(generatedHtml, 'text/html');
+      const headHtml = doc.head?.innerHTML ?? '';
+      const bodyClass = doc.body?.getAttribute('class') ?? '';
+      const slides = Array.from(doc.querySelectorAll('.slide')).filter((el) => {
+        const cls = (el.getAttribute('class') || '').split(/\s+/);
+        return cls.includes('slide');
+      });
+      // 仅保留顶层 slide（排除嵌套在另一个 .slide 内的）
+      const topLevel = slides.filter((el) => !el.parentElement?.closest('.slide'));
+      return topLevel.map((el) => {
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.classList.add('active', 'is-active');
+        return `<!DOCTYPE html><html><head>${headHtml}</head><body class="${bodyClass}"><div class="deck">${clone.outerHTML}</div></body></html>`;
+      });
+    } catch {
+      return [];
+    }
+  }, [generatedHtml]);
+
   // ─── 思考过程流（推理模型先想后写：deepseek-v3.2 实测思考可占总耗时 90%，
   //     正文集中尾部爆发。思考期间产物无片段可渲染，就渲染思考本身——它就是此刻的产物）
   const [thinkingPreview, setThinkingPreview] = useState('');
@@ -1183,6 +1221,10 @@ export function MdToPptAgentPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // 演示模式（自定义全屏覆盖层 + 底部缩略条，诉求 9）
+  const [presentMode, setPresentMode] = useState(false);
+  const [presentIdx, setPresentIdx] = useState(0);
+  const presentIframeRef = useRef<HTMLIFrameElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -1376,10 +1418,29 @@ export function MdToPptAgentPage() {
     }
   }, [editMode, commitEdits]);
 
-  // ─── 全屏演示
+  // ─── 全屏演示：自定义覆盖层（含底部子页缩略条，诉求 9：不再只有一张全屏 ppt）
   const handleFullscreen = useCallback(() => {
-    void previewWrapRef.current?.requestFullscreen?.();
-  }, []);
+    setPresentIdx((slidePos?.cur ?? 1) - 1);
+    setPresentMode(true);
+  }, [slidePos]);
+
+  // 演示模式跳页：缩略条点击 / 方向键 → goto 主演示 iframe
+  const presentGoto = useCallback((idx0: number) => {
+    const n = Math.max(0, Math.min(idx0, Math.max(0, deckThumbDocs.length - 1)));
+    setPresentIdx(n);
+    presentIframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: n }, '*');
+  }, [deckThumbDocs.length]);
+
+  useEffect(() => {
+    if (!presentMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setPresentMode(false); }
+      else if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); presentGoto(presentIdx + 1); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); presentGoto(presentIdx - 1); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [presentMode, presentIdx, presentGoto]);
 
   // ─── 下载独立 HTML（含当前主题样式，可直接双击打开演示）
   const handleDownload = useCallback(() => {
@@ -3805,6 +3866,80 @@ export function MdToPptAgentPage() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 演示模式（自定义全屏）：主 deck + 底部子页缩略条（诉求 9）。Esc / 关闭按钮退出。 */}
+      {presentMode && generatedHtml && (
+        <div className="fixed inset-0 z-[300] flex flex-col bg-black" data-testid="present-overlay">
+          <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-black/80 border-b border-white/10">
+            <span className="text-[12px] text-white/70 tabular-nums">
+              第 {presentIdx + 1} / {deckThumbDocs.length || (slidePos?.total ?? 1)} 页
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => presentGoto(presentIdx - 1)}
+                disabled={presentIdx <= 0}
+                className="px-2 py-1 rounded-md bg-white/8 text-white/80 text-xs hover:bg-white/15 disabled:opacity-30"
+              >上一页</button>
+              <button
+                onClick={() => presentGoto(presentIdx + 1)}
+                disabled={presentIdx >= deckThumbDocs.length - 1}
+                className="px-2 py-1 rounded-md bg-white/8 text-white/80 text-xs hover:bg-white/15 disabled:opacity-30"
+              >下一页</button>
+              <button
+                onClick={() => setPresentMode(false)}
+                data-testid="present-close"
+                className="px-2 py-1 rounded-md bg-white/8 text-white/80 text-xs hover:bg-white/15"
+              >退出全屏 (Esc)</button>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 bg-black">
+            <iframe
+              ref={presentIframeRef}
+              srcDoc={prepareIframeHtml(generatedHtml)}
+              sandbox="allow-scripts"
+              title="全屏演示"
+              className="w-full h-full border-0"
+              onLoad={() => {
+                if (presentIdx > 0) {
+                  window.setTimeout(() => presentIframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: presentIdx }, '*'), 400);
+                }
+              }}
+            />
+          </div>
+          {/* 底部子页缩略条：每页真实缩略（deck 自带样式渲染），点击跳页，当前页高亮 */}
+          {deckThumbDocs.length > 0 && (
+            <div
+              data-testid="present-thumb-rail"
+              className="shrink-0 flex gap-2 px-3 py-2 bg-black/85 border-t border-white/10 overflow-x-auto"
+              style={{ overscrollBehavior: 'contain' }}
+            >
+              {deckThumbDocs.map((doc, i) => (
+                <button
+                  key={i}
+                  onClick={() => presentGoto(i)}
+                  title={`第 ${i + 1} 页`}
+                  className={[
+                    'relative shrink-0 rounded-md overflow-hidden border transition-all',
+                    i === presentIdx ? 'border-purple-400 ring-2 ring-purple-400/60' : 'border-white/15 hover:border-white/40',
+                  ].join(' ')}
+                  style={{ width: 132, height: 74 }}
+                >
+                  <iframe
+                    srcDoc={doc}
+                    sandbox=""
+                    tabIndex={-1}
+                    title={`缩略 ${i + 1}`}
+                    style={{ width: 528, height: 297, border: 0, transform: 'scale(0.25)', transformOrigin: 'top left', pointerEvents: 'none' }}
+                  />
+                  <span className="absolute bottom-0.5 right-1 text-[9px] tabular-nums text-white/80 bg-black/60 px-1 rounded">
+                    {i + 1}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
