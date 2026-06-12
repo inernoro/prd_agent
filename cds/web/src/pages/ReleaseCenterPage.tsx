@@ -20,6 +20,7 @@ import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/la
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ApiError, apiRequest, apiUrl } from '@/lib/api';
+import { initialReleaseCenterProject, rememberReleaseCenterProject } from '@/lib/releaseCenter';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 interface ReleaseTarget {
@@ -196,7 +197,10 @@ function emptyDraft(projectId: string): SiteDraft {
 
 export function ReleaseCenterPage(): JSX.Element {
   const [searchParams] = useSearchParams();
-  const initialProject = searchParams.get('project') || 'default';
+  const initialProject = initialReleaseCenterProject(
+    searchParams,
+    typeof window === 'undefined' ? undefined : window.localStorage,
+  );
   const [projectId, setProjectId] = useState(initialProject);
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [draft, setDraft] = useState<SiteDraft>(() => emptyDraft(initialProject));
@@ -222,6 +226,9 @@ export function ReleaseCenterPage(): JSX.Element {
   }, [projectId]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    rememberReleaseCenterProject(projectId, typeof window === 'undefined' ? undefined : window.localStorage);
+  }, [projectId]);
 
   const hosts = state.status === 'ok' ? state.hosts : [];
   const rows = state.status === 'ok' ? state.center.rows : [];
@@ -356,7 +363,7 @@ export function ReleaseCenterPage(): JSX.Element {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Project</span>
+                  <span className="text-muted-foreground">项目</span>
                   <input
                     value={projectId}
                     onChange={(event) => {

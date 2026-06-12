@@ -12,6 +12,11 @@ const branchListSource = fs.readFileSync(
   'utf8',
 );
 
+const releaseCenterLibSource = fs.readFileSync(
+  path.resolve(process.cwd(), '../cds/web/src/lib/releaseCenter.ts'),
+  'utf8',
+);
+
 function stringLiterals(source: string): string[] {
   const literals: string[] = [];
   const re = /(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
@@ -64,6 +69,16 @@ describe('release site publishing UI contract', () => {
     expect(branchListSource).toContain('开始发布');
     expect(branchListSource).toContain('等待发布日志');
     expect(branchListSource).toContain('calc(100vw - 32px)');
+  });
+
+  it('keeps the default release center entry clean while retaining project scoping', () => {
+    expect(releaseCenterLibSource).toContain("DEFAULT_RELEASE_CENTER_PROJECT_ID = 'prd-agent'");
+    expect(releaseCenterLibSource).toContain("return '/release-center'");
+    expect(releaseCenterLibSource).toContain('release-center?project=');
+    expect(releaseCenterSource).toContain('initialReleaseCenterProject(');
+    expect(releaseCenterSource).toContain('rememberReleaseCenterProject(');
+    expect(branchListSource).toContain('releaseCenterHref(branch.projectId)');
+    expect(branchListSource).not.toContain('/release-center?project=${encodeURIComponent(branch.projectId)}');
   });
 
   it('shows release run progress as business steps, not raw logs only', () => {

@@ -57,6 +57,7 @@ import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/co
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
+import { releaseCenterHref } from '@/lib/releaseCenter';
 import {
   buildBranchResources,
   ResourceIcon,
@@ -4245,7 +4246,7 @@ function ReleaseBranchDialog({
                 开始发布
               </Button>
               <Button asChild variant="outline">
-                <Link to={`/release-center?project=${encodeURIComponent(branch.projectId)}`}>发布中心</Link>
+                <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
               </Button>
             </div>
 
