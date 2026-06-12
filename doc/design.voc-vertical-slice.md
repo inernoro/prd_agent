@@ -130,7 +130,7 @@ Body: { productId: string }
 
 **软删除与唯一索引必须同口径（否则重新流转会卡死）**：查重过滤 `!IsDeleted`，索引也必须把 `IsDeleted: false` 写进 `partialFilterExpression`——两者口径一致是硬要求。若索引漏了 `IsDeleted: false`：需求被软删后，查重（`!IsDeleted`）查不到活跃行，但索引里软删行还占位，重新 adopt 的 insert 会撞 duplicate-key 却无活跃行可返回 → 该节点永久无法再流转。把软删行排除出索引后：软删 → 索引腾出 → 重新 adopt 可正常 insert 一条新活跃需求，"一节点一活跃需求"成立；同时节点 `AdoptedRequirementId` 若仍指向已删需求，按第 4 步懒修复重写为新需求 id（读取时校验目标需求 `!IsDeleted`，已删则视同未流转、允许重新 adopt）。
 
-唯一索引是本方案的承重件（不是可选防御）。按本仓库 `no-auto-index.md` 规则，索引由 DBA 手动创建、不在启动时自动建——本设计声明该索引为**实现前置条件**，需同步写入 `doc/guide.mongodb-indexes.md`。
+唯一索引是本方案的承重件（不是可选防御）。按本仓库 `no-auto-index.md` 规则，索引由 DBA 手动创建、不在启动时自动建——该索引已作为**实现前置条件**登记在 `doc/guide.mongodb-indexes.md`（`requirements` → `uniq_requirements_source_emergence_node`，DBA 上线 adopt 端点前必须先执行）。
 
 前端：涌现节点卡片底部新增"流转需求池"按钮（未 adopt 时可点）；已流转节点显示需求编号 chip，点击跳转 product-agent 对应需求。复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
 
