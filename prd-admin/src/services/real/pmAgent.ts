@@ -74,6 +74,8 @@ import type {
   ListPmBriefingsContract,
   GetPmBriefingContract,
   DeletePmBriefingContract,
+  ToggleBriefingShareContract,
+  SaveBriefingToHostingContract,
   GetPmMyTodosContract,
   GetPmAgentPreferencesContract,
   UpdatePmQuickActionsContract,
@@ -315,6 +317,12 @@ export const getPmBriefingReal: GetPmBriefingContract = async (briefingId) => {
 };
 export const deletePmBriefingReal: DeletePmBriefingContract = async (briefingId) => {
   return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'DELETE' });
+};
+export const toggleBriefingShareReal: ToggleBriefingShareContract = async (briefingId, enabled) => {
+  return await apiRequest(api.pm.briefings.share(encodeURIComponent(briefingId)), { method: 'POST', body: { enabled } });
+};
+export const saveBriefingToHostingReal: SaveBriefingToHostingContract = async (briefingId) => {
+  return await apiRequest(api.pm.briefings.saveToHosting(encodeURIComponent(briefingId)), { method: 'POST', body: {} });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

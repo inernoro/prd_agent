@@ -2067,6 +2067,8 @@ export {
   listPmBriefingsReal as listPmBriefings,
   getPmBriefingReal as getPmBriefing,
   deletePmBriefingReal as deletePmBriefing,
+  toggleBriefingShareReal as toggleBriefingShare,
+  saveBriefingToHostingReal as saveBriefingToHosting,
   getPmMyTodosReal as getPmMyTodos,
   getPmAgentPreferencesReal as getPmAgentPreferences,
   updatePmQuickActionsReal as updatePmQuickActions,

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Sparkles, Square, Download, Trash2, Eye, FileText, Cpu } from 'lucide-react';
+import { X, Sparkles, Square, Download, Trash2, Eye, FileText, Cpu, Share2, Link as LinkIcon, Globe } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { connectSse } from '@/lib/useSseStream';
 import { api } from '@/services/api';
-import { listPmBriefings, getPmBriefing, deletePmBriefing } from '@/services';
+import { listPmBriefings, getPmBriefing, deletePmBriefing, toggleBriefingShare, saveBriefingToHosting } from '@/services';
 import type { PmBriefing } from '@/services/contracts/pmAgent';
 import { toast } from '@/lib/toast';
 
@@ -102,6 +102,8 @@ export function PmBriefingSection({ projectId, canManage }: Props) {
                   <span>{fmtDateTime(b.createdAt)}</span>
                   {b.createdByName && <span>{b.createdByName}</span>}
                   {b.model && <span className="inline-flex items-center gap-1 font-mono"><Cpu size={9} />{b.model}</span>}
+                  {b.shared && <span className="inline-flex items-center gap-1" style={{ color: '#10B981' }}><Share2 size={9} />分享中</span>}
+                  {b.hostedSiteId && <span className="inline-flex items-center gap-1" style={{ color: '#2563EB' }}><Globe size={9} />已托管</span>}
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100" onClick={(e) => e.stopPropagation()}>
@@ -123,7 +125,7 @@ export function PmBriefingSection({ projectId, canManage }: Props) {
           onClose={() => setGenOpen(false)}
           onDone={(b) => { setGenOpen(false); setViewing(b); load(); }} />
       )}
-      {viewing && <BriefingViewModal briefing={viewing} onClose={() => setViewing(null)} />}
+      {viewing && <BriefingViewModal briefing={viewing} canManage={canManage} onChanged={load} onClose={() => setViewing(null)} />}
     </div>
   );
 }
@@ -209,22 +211,73 @@ function BriefingGenerateModal({ projectId, onClose, onDone }: { projectId: stri
   return createPortal(modal, document.body);
 }
 
-/** 简报预览模态 —— iframe 渲染自包含 HTML（sandbox 禁脚本），可下载单文件。 */
-function BriefingViewModal({ briefing, onClose }: { briefing: PmBriefing; onClose: () => void }) {
+/** 简报预览模态 —— iframe 渲染自包含 HTML（sandbox 禁脚本），可下载 / 分享（可撤销）/ 保存到网页托管。 */
+function BriefingViewModal({ briefing, canManage, onChanged, onClose }: { briefing: PmBriefing; canManage: boolean; onChanged: () => void; onClose: () => void }) {
+  const [b, setB] = useState(briefing);
+  const [sharing, setSharing] = useState(false);
+  const [hosting, setHosting] = useState(false);
+
+  const shareUrl = b.shareToken ? `${window.location.origin}${api.pm.briefings.sharedView(encodeURIComponent(b.shareToken))}` : '';
+
+  const copyShareUrl = async (url: string) => {
+    try { await navigator.clipboard.writeText(url); toast.success('分享链接已复制', '匿名可直接打开，撤销分享后失效'); }
+    catch { toast.error('复制失败', url); }
+  };
+
+  const toggleShare = async (enabled: boolean) => {
+    setSharing(true);
+    const res = await toggleBriefingShare(b.id, enabled);
+    setSharing(false);
+    if (!res.success) { toast.error('操作失败', res.error?.message || ''); return; }
+    setB((p) => ({ ...p, shared: res.data.shared, shareToken: res.data.shareToken ?? null }));
+    onChanged();
+    if (res.data.shared && res.data.shareToken) {
+      await copyShareUrl(`${window.location.origin}${api.pm.briefings.sharedView(encodeURIComponent(res.data.shareToken))}`);
+    } else if (!res.data.shared) {
+      toast.success('已撤销分享', '原链接立即失效');
+    }
+  };
+
+  const saveToHosting = async () => {
+    setHosting(true);
+    const res = await saveBriefingToHosting(b.id);
+    setHosting(false);
+    if (!res.success) { toast.error('保存失败', res.error?.message || ''); return; }
+    setB((p) => ({ ...p, hostedSiteId: res.data.siteId }));
+    onChanged();
+    toast.success('已保存到网页托管', '已在新标签页打开站点');
+    window.open(res.data.siteUrl, '_blank', 'noopener');
+  };
+
   const modal = (
     <div className="surface-backdrop fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onClose}>
       <div className="rounded-xl border flex flex-col w-full" style={{ maxWidth: 980, height: '90vh', maxHeight: '90vh', background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-3.5 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <FileText size={15} style={{ color: '#2563EB' }} />
-          <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{briefing.title}</div>
-          {briefing.model && <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>{briefing.model}</span>}
+          <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{b.title}</div>
+          {b.model && <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>{b.model}</span>}
           <div className="ml-auto flex items-center gap-1.5 shrink-0">
-            <Button variant="ghost" size="sm" onClick={() => briefing.html && downloadHtml(briefing.title, briefing.html)}><Download size={13} />下载 HTML</Button>
+            {canManage && (
+              b.shared ? (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => copyShareUrl(shareUrl)}><LinkIcon size={13} />复制分享链接</Button>
+                  <Button variant="ghost" size="sm" disabled={sharing} onClick={() => toggleShare(false)}>{sharing ? <MapSpinner size={13} /> : <X size={13} />}撤销分享</Button>
+                </>
+              ) : (
+                <Button variant="ghost" size="sm" disabled={sharing} onClick={() => toggleShare(true)}>{sharing ? <MapSpinner size={13} /> : <Share2 size={13} />}开启分享</Button>
+              )
+            )}
+            {canManage && (
+              <Button variant="ghost" size="sm" disabled={hosting} onClick={saveToHosting}>
+                {hosting ? <MapSpinner size={13} /> : <Globe size={13} />}{b.hostedSiteId ? '重新保存到托管' : '保存到网页托管'}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => b.html && downloadHtml(b.title, b.html)}><Download size={13} />下载 HTML</Button>
             <button onClick={onClose} className="p-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
           </div>
         </div>
         <div className="flex-1" style={{ minHeight: 0, background: '#F3F4F6' }}>
-          <iframe title={briefing.title} srcDoc={briefing.html || ''} sandbox="" style={{ width: '100%', height: '100%', border: 0, display: 'block' }} />
+          <iframe title={b.title} srcDoc={b.html || ''} sandbox="" style={{ width: '100%', height: '100%', border: 0, display: 'block' }} />
         </div>
       </div>
     </div>

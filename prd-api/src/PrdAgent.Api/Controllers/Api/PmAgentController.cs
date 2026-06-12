@@ -3346,6 +3346,64 @@ public class PmAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    /// <summary>开启/关闭简报分享（owner/leader 或创建人）。开启生成可撤销 token；关闭置空即失效。</summary>
+    [HttpPost("briefings/{briefingId}/share")]
+    public async Task<IActionResult> ToggleBriefingShare(string briefingId, [FromBody] ToggleBriefingShareRequest request)
+    {
+        var userId = GetUserId();
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人/负责人或创建者可操作分享"));
+
+        if (request.Enabled)
+        {
+            var token = string.IsNullOrEmpty(b.ShareToken) ? PmBriefing.GenerateShareToken() : b.ShareToken;
+            await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+                Builders<PmBriefing>.Update.Set(x => x.ShareToken, token).Set(x => x.UpdatedAt, DateTime.UtcNow));
+            return Ok(ApiResponse<object>.Ok(new { shared = true, shareToken = token }));
+        }
+        await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+            Builders<PmBriefing>.Update.Set(x => x.ShareToken, (string?)null).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { shared = false, shareToken = (string?)null }));
+    }
+
+    /// <summary>匿名查看分享简报 —— 直接返回 text/html，浏览器可直接打开；token 被撤销即 404。</summary>
+    [HttpGet("briefings/shared/{token}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ViewSharedBriefing(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+        var b = await _db.PmBriefings.Find(x => x.ShareToken == token).FirstOrDefaultAsync();
+        if (b == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+        return Content(b.Html, "text/html; charset=utf-8");
+    }
+
+    /// <summary>把简报保存到网页托管（owner/leader 或创建人）。复用 HostedSite 体系，SourceType=api。</summary>
+    [HttpPost("briefings/{briefingId}/save-to-hosting")]
+    public async Task<IActionResult> SaveBriefingToHosting(string briefingId)
+    {
+        var userId = GetUserId();
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人/负责人或创建者可保存到网页托管"));
+
+        var site = await _hostedSites.CreateFromContentAsync(
+            userId, b.Html, b.Title, $"项目简报 · {project.Title}",
+            sourceType: "api", sourceRef: $"pm-briefing:{b.Id}",
+            tags: new List<string> { "项目简报" }, folder: null, CancellationToken.None);
+        await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+            Builders<PmBriefing>.Update.Set(x => x.HostedSiteId, site.Id).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, siteUrl = site.SiteUrl }));
+    }
+
     /// <summary>统计简报硬数据（渲染模板用）并拼装 LLM 输入摘要 —— 同一次查询出两份产物，保证模板数字与 LLM 所见一致。</summary>
     private async Task<(PmBriefingRenderer.RenderData data, string statsSummary)> BuildBriefingDataAsync(PmProject p)
     {
@@ -4416,6 +4474,11 @@ public class UpdateWorkLogRequest
 }
 
 public class ToggleGoalMilestoneRequest
+{
+    public bool Enabled { get; set; }
+}
+
+public class ToggleBriefingShareRequest
 {
     public bool Enabled { get; set; }
 }

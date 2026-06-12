@@ -1477,6 +1477,10 @@ export const api = {
     },
     briefings: {
       item: (briefingId: string) => `/api/pm/briefings/${briefingId}`,
+      share: (briefingId: string) => `/api/pm/briefings/${briefingId}/share`,
+      saveToHosting: (briefingId: string) => `/api/pm/briefings/${briefingId}/save-to-hosting`,
+      /** 匿名分享页（后端直接返回 text/html，可直接浏览器打开） */
+      sharedView: (token: string) => `/api/pm/briefings/shared/${token}`,
     },
     risks: {
       item: (riskId: string) => `/api/pm/risks/${riskId}`,

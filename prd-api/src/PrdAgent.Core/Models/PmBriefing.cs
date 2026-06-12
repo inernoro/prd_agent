@@ -30,4 +30,9 @@ public class PmBriefing
     public string? CreatedByName { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>生成 URL-safe 分享 token（与 DefectShareLink 同款约定）</summary>
+    public static string GenerateShareToken()
+        => Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(9))
+            .Replace("+", "-").Replace("/", "_").TrimEnd('=');
 }

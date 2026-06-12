@@ -652,6 +652,8 @@ export type PmBriefing = {
 export type ListPmBriefingsContract = (projectId: string) => Promise<ApiResponse<{ items: PmBriefing[] }>>;
 export type GetPmBriefingContract = (briefingId: string) => Promise<ApiResponse<PmBriefing>>;
 export type DeletePmBriefingContract = (briefingId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+export type ToggleBriefingShareContract = (briefingId: string, enabled: boolean) => Promise<ApiResponse<{ shared: boolean; shareToken?: string | null }>>;
+export type SaveBriefingToHostingContract = (briefingId: string) => Promise<ApiResponse<{ siteId: string; siteUrl: string }>>;
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
 export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
 export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;

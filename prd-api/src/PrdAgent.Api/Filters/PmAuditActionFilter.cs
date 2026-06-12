@@ -62,12 +62,15 @@ public sealed class PmAuditActionFilter : IAsyncActionFilter
         ["UpdateMilestone"] = "更新里程碑",
         ["DeleteMilestone"] = "删除里程碑",
         ["UpdateRewardConfig"] = "更新奖金配置",
+        ["DeleteBriefing"] = "删除项目简报",
+        ["ToggleBriefingShare"] = "开关简报分享",
+        ["SaveBriefingToHosting"] = "简报保存到网页托管",
     };
 
     /// <summary>路由里可能出现的子实体 id 键（取第一个命中的作为操作对象）</summary>
     private static readonly string[] TargetKeys =
     {
-        "taskId", "goalId", "milestoneId", "decisionId", "meetingId", "reportId", "fileId", "stakeholderId",
+        "taskId", "goalId", "milestoneId", "decisionId", "meetingId", "reportId", "fileId", "stakeholderId", "briefingId",
     };
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
