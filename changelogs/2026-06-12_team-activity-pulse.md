@@ -9,3 +9,6 @@
 | feat | prd-admin | 团队动态新增「行为洞察」视图：从沉默的行为信号聚合带证据的改进方向（频繁报错/等待过久/停留过久/秒退放弃/反复横跳），每条注明涉及人数、次数、位置与建议 |
 | feat | prd-admin | 新增全局行为信号采集器 behaviorTracker：路由级可见停留与跳转批量上报，标签页隐藏不计时，登录后生效 |
 | feat | prd-api | 新增 behavior_events 集合与 POST /api/behavior/events 批量采集端点；team-activity 新增 GET insights 聚合分析端点（API 日志 + 路由信号双数据源） |
+| feat | prd-admin | 行为洞察处理闭环：洞察可「转为缺陷 / 确认待改 / 已修复 / 忽略」，忽略项指纹级持久化不再打扰，可一键恢复；转缺陷自动携带证据生成缺陷内容并关联展示 |
+| feat | prd-api | 新增 behavior_insight_states 集合与 POST /api/team-activity/insights/state 端点；insights 查询按指纹挂载处理状态并默认过滤已忽略项 |
+| style | prd-admin | 洞察面板视觉去 AI 感：单卡分隔行替代漂浮盒子、左缘信号色条、目标/指标走 mono 字体、琥珀色强调主操作；脉搏大数字改实色微光、排行条单色化 |

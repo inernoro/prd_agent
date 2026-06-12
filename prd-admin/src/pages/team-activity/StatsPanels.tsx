@@ -90,8 +90,8 @@ export function MemberStatsPanel({
       <PanelCard title="团队脉搏">
         <div className="flex flex-col gap-1">
           <div
-            className="text-[38px] leading-none font-bold tabular-nums bg-clip-text text-transparent"
-            style={{ backgroundImage: 'linear-gradient(120deg, #22d3ee, #a78bfa)' }}
+            className="text-[38px] leading-none font-bold font-mono tabular-nums"
+            style={{ color: '#22d3ee', textShadow: '0 0 18px rgba(34,211,238,0.35)' }}
           >
             {total}
           </div>
@@ -153,7 +153,7 @@ export function MemberStatsPanel({
                         className="block h-full rounded-sm transition-all duration-700"
                         style={{
                           width: `${(a.count / actorMax) * 100}%`,
-                          backgroundImage: 'linear-gradient(90deg, #22d3ee, #a78bfa)',
+                          background: '#22d3ee',
                         }}
                       />
                     </span>

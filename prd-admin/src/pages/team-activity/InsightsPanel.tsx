@@ -1,15 +1,16 @@
 /**
- * 行为洞察面板：把「沉默的行为信号」聚合成带证据的改进方向。
- * 每条洞察注明：是什么行为（kind）、发生在哪（target）、涉及多少人/多少次（证据）、
- * 影响多大（severity 排序 + metric）、建议改什么（suggestion）。
+ * 行为洞察面板：把「沉默的行为信号」聚合成带证据的改进方向，并支持处理闭环。
+ * 每条洞察：是什么行为 / 发生在哪 / 涉及多少人多少次 / 影响多大 / 建议改什么，
+ * 操作：转为缺陷（接入 defect-agent 修复流水线）/ 标记已修复 / 忽略（指纹级持久化，不再打扰）。
  * 数据源：apirequestlogs（报错/慢端点，历史即有）+ behavior_events（路由信号，自采集上线起累积）。
  */
-import { useEffect, useRef, useState } from 'react';
-import { Radar, Users } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Bug, Check, CheckCircle2, EyeOff as IgnoreIcon, Radar, RotateCcw, Users } from 'lucide-react';
 import { GlassCard } from '@/components/design';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getTeamActivityInsights } from '@/services';
-import type { TeamActivityInsightsData } from '@/services/contracts/teamActivity';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { toast } from '@/lib/toast';
+import { createDefect, getTeamActivityInsights, setTeamActivityInsightState } from '@/services';
+import type { BehaviorInsight, TeamActivityInsightsData } from '@/services/contracts/teamActivity';
 import { getInsightKindMeta } from './insightKinds';
 
 function fmtDate(iso?: string | null): string {
@@ -19,16 +20,44 @@ function fmtDate(iso?: string | null): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+const STATUS_LABEL: Record<string, string> = {
+  confirmed: '已确认',
+  resolved: '已修复',
+  ignored: '已忽略',
+};
+
+function buildDefectContent(item: BehaviorInsight, window: string): string {
+  return [
+    '## 行为洞察转报（自动生成）',
+    '',
+    `- 信号类型：${item.kindLabel}`,
+    `- 发生位置：${item.target}`,
+    `- 量化指标：${item.metric}`,
+    `- 影响范围：${item.userCount} 人 / ${item.eventCount} 次`,
+    `- 分析窗口：${window}`,
+    '',
+    '### 证据',
+    ...item.evidence.map((e) => `- ${e}`),
+    '',
+    '### 改进建议',
+    item.suggestion,
+    '',
+    '> 来源：团队动态 - 行为洞察面板',
+  ].join('\n');
+}
+
 export function InsightsPanel({ from }: { from?: string }) {
   const [data, setData] = useState<TeamActivityInsightsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [includeIgnored, setIncludeIgnored] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const fetchIdRef = useRef(0);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     const fetchId = ++fetchIdRef.current;
     setLoading(true);
-    void getTeamActivityInsights({ from }).then((res) => {
+    void getTeamActivityInsights({ from, includeIgnored: includeIgnored || undefined }).then((res) => {
       if (fetchIdRef.current !== fetchId) return;
       if (res.success) {
         setData(res.data);
@@ -38,7 +67,57 @@ export function InsightsPanel({ from }: { from?: string }) {
       }
       setLoading(false);
     });
-  }, [from]);
+  }, [from, includeIgnored]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const setState = useCallback(
+    async (item: BehaviorInsight, status: 'confirmed' | 'resolved' | 'ignored' | 'open') => {
+      const key = `${item.kind}|${item.target}`;
+      setBusyKey(key);
+      const res = await setTeamActivityInsightState({ kind: item.kind, target: item.target, status });
+      setBusyKey(null);
+      if (!res.success) {
+        toast.error(res.error?.message ?? '操作失败');
+        return;
+      }
+      reload();
+    },
+    [reload]
+  );
+
+  const convertToDefect = useCallback(
+    async (item: BehaviorInsight) => {
+      const key = `${item.kind}|${item.target}`;
+      setBusyKey(key);
+      const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
+      const res = await createDefect({
+        title: `[行为洞察] ${item.kindLabel}：${item.target}`,
+        content: buildDefectContent(item, window),
+        assigneeUserId: '',
+        severity: item.kind === 'api-error' ? 'major' : 'minor',
+      });
+      if (!res.success) {
+        setBusyKey(null);
+        toast.error(res.error?.message ?? '创建缺陷失败');
+        return;
+      }
+      const defect = res.data.defect;
+      await setTeamActivityInsightState({
+        kind: item.kind,
+        target: item.target,
+        status: 'confirmed',
+        defectId: defect.id,
+        defectTitle: defect.title,
+      });
+      setBusyKey(null);
+      toast.success(`已创建缺陷《${defect.title}》，可在缺陷管理中跟进`);
+      reload();
+    },
+    [data, reload]
+  );
 
   if (loading && !data) {
     return (
@@ -52,20 +131,30 @@ export function InsightsPanel({ from }: { from?: string }) {
 
   return (
     <GlassCard className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
-      <div className="flex-1 px-5 py-4" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+      <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {/* 数据源状态行：诚实告知信号从哪来、采集到什么程度 */}
         {data ? (
-          <div className="flex items-center gap-3 flex-wrap pb-3 text-[11px] text-white/35">
-            <span>
-              分析窗口 {fmtDate(data.windowFrom)} ~ {fmtDate(data.windowTo)}
+          <div className="sticky top-0 z-10 flex items-center gap-3 flex-wrap px-5 py-2.5 text-[11px] text-white/40 border-b border-white/[0.05] backdrop-blur-md" style={{ background: 'rgba(16,17,19,0.72)' }}>
+            <span className="font-mono tabular-nums">
+              {fmtDate(data.windowFrom)} ~ {fmtDate(data.windowTo)}
             </span>
             <span className="w-px h-3 bg-white/10" />
             <span>
-              路由信号 {data.behaviorEventCount} 条
+              路由信号 <span className="text-white/70 font-mono tabular-nums">{data.behaviorEventCount}</span> 条
               {data.trackedSince ? `（自 ${fmtDate(data.trackedSince)} 起采集）` : '（采集器刚上线，数据从现在开始累积）'}
             </span>
             <span className="w-px h-3 bg-white/10" />
             <span>报错/等待信号来自 API 请求日志（含历史）</span>
+            {data.ignoredCount > 0 || includeIgnored ? (
+              <button
+                type="button"
+                onClick={() => setIncludeIgnored((v) => !v)}
+                className="ml-auto inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white/70 transition-colors cursor-pointer"
+              >
+                <IgnoreIcon size={11} />
+                {includeIgnored ? '隐藏已忽略' : `查看已忽略（${data.ignoredCount}）`}
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -75,7 +164,7 @@ export function InsightsPanel({ from }: { from?: string }) {
             <div className="text-sm text-white/60">{error}</div>
           </div>
         ) : !data || data.items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center px-5">
             <Radar size={36} className="text-white/15" />
             <div className="text-sm text-white/60">当前窗口还没有形成洞察</div>
             <div className="text-[12px] text-white/35 max-w-md leading-relaxed">
@@ -85,45 +174,76 @@ export function InsightsPanel({ from }: { from?: string }) {
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-2.5">
-            {data.items.map((item, idx) => {
+          <div className="divide-y divide-white/[0.04]">
+            {data.items.map((item) => {
               const meta = getInsightKindMeta(item.kind);
               const Icon = meta.icon;
+              const key = `${item.kind}|${item.target}`;
+              const busy = busyKey === key;
+              const status = item.status ?? null;
               return (
                 <div
-                  key={`${item.kind}-${item.target}`}
-                  className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex gap-3"
+                  key={key}
+                  className="relative px-5 py-3.5 flex gap-3.5 transition-colors hover:bg-white/[0.02]"
+                  style={{ opacity: status === 'ignored' ? 0.45 : 1 }}
                 >
+                  {/* 左缘严重度色条：扫一眼即可分辨信号类型 */}
+                  <span className="absolute left-0 top-3 bottom-3 w-[2px] rounded-r" style={{ background: meta.accent }} />
                   <span
-                    className="w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5"
+                    className="w-8 h-8 rounded-md flex items-center justify-center shrink-0 mt-0.5"
                     style={{ background: meta.soft }}
                   >
-                    <Icon size={14} style={{ color: meta.accent }} />
+                    <Icon size={15} style={{ color: meta.accent }} />
                   </span>
-                  <div className="flex-1 min-w-0 flex flex-col gap-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[11px] text-white/30 tabular-nums">#{idx + 1}</span>
-                      <span
-                        className="px-1.5 py-px rounded text-[11px] font-semibold"
-                        style={{ background: meta.soft, color: meta.accent }}
-                      >
+                  <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <span className="text-[11px] font-semibold" style={{ color: meta.accent }}>
                         {item.kindLabel}
                       </span>
-                      <span className="text-[13px] text-white/85 font-medium break-all">{item.target}</span>
-                      <span className="text-[11px] text-white/45 tabular-nums">{item.metric}</span>
-                      <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-white/40 tabular-nums shrink-0">
+                      <span className="text-[13px] text-white/90 font-mono break-all">{item.target}</span>
+                      <span className="text-[11px] text-amber-200/80 font-mono tabular-nums">{item.metric}</span>
+                      {status ? (
+                        <span className="px-1.5 py-px rounded text-[10px] font-medium bg-white/[0.06] text-white/55">
+                          {STATUS_LABEL[status] ?? status}
+                        </span>
+                      ) : null}
+                      {item.defectTitle ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-rose-200/70">
+                          <Bug size={11} />
+                          {item.defectTitle}
+                        </span>
+                      ) : null}
+                      <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-white/35 font-mono tabular-nums shrink-0">
                         <Users size={11} />
                         {item.userCount} 人 · {item.eventCount} 次
                       </span>
                     </div>
-                    <div className="text-[12px] text-white/60 leading-relaxed">{item.suggestion}</div>
-                    <div className="flex flex-col gap-0.5 pt-0.5">
+                    <div className="text-[12px] text-white/65 leading-relaxed">{item.suggestion}</div>
+                    <div className="flex items-center gap-x-4 gap-y-0.5 flex-wrap">
                       {item.evidence.map((line, i) => (
-                        <div key={i} className="flex items-baseline gap-1.5 text-[11px] text-white/35">
-                          <span className="w-1 h-1 rounded-full shrink-0" style={{ background: meta.accent }} />
+                        <span key={i} className="text-[11px] text-white/35">
                           {line}
-                        </div>
+                        </span>
                       ))}
+                    </div>
+                    {/* 处理闭环：洞察不该只能看 */}
+                    <div className="flex items-center gap-1.5 pt-1">
+                      {busy ? (
+                        <MapSpinner size={13} />
+                      ) : status === 'ignored' || status === 'resolved' ? (
+                        <ActionButton onClick={() => void setState(item, 'open')} icon={RotateCcw} label="恢复待处理" />
+                      ) : (
+                        <>
+                          {!item.defectId ? (
+                            <ActionButton onClick={() => void convertToDefect(item)} icon={Bug} label="转为缺陷" emphasis />
+                          ) : null}
+                          {status !== 'confirmed' ? (
+                            <ActionButton onClick={() => void setState(item, 'confirmed')} icon={Check} label="确认待改" />
+                          ) : null}
+                          <ActionButton onClick={() => void setState(item, 'resolved')} icon={CheckCircle2} label="已修复" />
+                          <ActionButton onClick={() => void setState(item, 'ignored')} icon={IgnoreIcon} label="忽略" />
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -133,5 +253,32 @@ export function InsightsPanel({ from }: { from?: string }) {
         )}
       </div>
     </GlassCard>
+  );
+}
+
+function ActionButton({
+  onClick,
+  icon: Icon,
+  label,
+  emphasis,
+}: {
+  onClick: () => void;
+  icon: typeof Bug;
+  label: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1 px-2 h-[22px] rounded text-[11px] border transition-colors cursor-pointer ${
+        emphasis
+          ? 'bg-amber-500/15 text-amber-200 border-amber-500/30 hover:bg-amber-500/25'
+          : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/80 hover:border-white/25'
+      }`}
+    >
+      <Icon size={11} />
+      {label}
+    </button>
   );
 }

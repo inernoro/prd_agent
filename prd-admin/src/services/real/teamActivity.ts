@@ -9,6 +9,8 @@ import type {
   GetTeamActivityParams,
   GetTeamActivityStatsContract,
   GetTeamActivityStatsParams,
+  SetInsightStateParams,
+  SetTeamActivityInsightStateContract,
   TeamActivityInsightsData,
   TeamActivityListData,
   TeamActivityModulesData,
@@ -51,5 +53,14 @@ export const getTeamActivityInsightsReal: GetTeamActivityInsightsContract = asyn
 ): Promise<ApiResponse<TeamActivityInsightsData>> => {
   return await apiRequest<TeamActivityInsightsData>(`${api.teamActivity.insights()}${toQuery(params)}`, {
     method: 'GET',
+  });
+};
+
+export const setTeamActivityInsightStateReal: SetTeamActivityInsightStateContract = async (
+  params: SetInsightStateParams
+) => {
+  return await apiRequest<{ fingerprint: string; status: string | null }>(api.teamActivity.insightState(), {
+    method: 'POST',
+    body: params,
   });
 };

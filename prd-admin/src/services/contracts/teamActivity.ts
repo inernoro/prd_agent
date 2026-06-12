@@ -97,10 +97,17 @@ export type BehaviorInsight = {
   metric: string;
   suggestion: string;
   evidence: string[];
+  /** 处理状态：confirmed / resolved / ignored；null = 待处理 */
+  status?: string | null;
+  /** 转缺陷后的关联缺陷 */
+  defectId?: string | null;
+  defectTitle?: string | null;
 };
 
 export type TeamActivityInsightsData = {
   items: BehaviorInsight[];
+  /** 被忽略而隐藏的洞察数 */
+  ignoredCount: number;
   /** 窗口内的行为事件数（路由级信号采集量） */
   behaviorEventCount: number;
   /** 路由级信号采集起点；null 表示尚无任何采集数据 */
@@ -112,7 +119,20 @@ export type TeamActivityInsightsData = {
 export type GetTeamActivityInsightsParams = {
   from?: string;
   to?: string;
+  includeIgnored?: boolean;
 };
+
+export type SetInsightStateParams = {
+  kind: string;
+  target: string;
+  status: 'confirmed' | 'resolved' | 'ignored' | 'open';
+  defectId?: string;
+  defectTitle?: string;
+};
+
+export type SetTeamActivityInsightStateContract = (
+  params: SetInsightStateParams
+) => Promise<ApiResponse<{ fingerprint: string; status: string | null }>>;
 
 export type GetTeamActivityInsightsContract = (
   params?: GetTeamActivityInsightsParams

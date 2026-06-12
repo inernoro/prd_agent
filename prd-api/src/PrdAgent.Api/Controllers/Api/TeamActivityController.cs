@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Filters;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -236,7 +237,10 @@ public class TeamActivityController : ControllerBase
     /// 全部为规则式聚类（阈值见各段注释），只输出聚合结果不含个体明细。
     /// </summary>
     [HttpGet("insights")]
-    public async Task<IActionResult> Insights([FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+    public async Task<IActionResult> Insights(
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
+        [FromQuery] bool includeIgnored = false)
     {
         var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
         // 未指定范围时取近 30 天：洞察是「最近哪里不好用」，扫全史既慢又稀释信号
@@ -425,30 +429,96 @@ public class TeamActivityController : ControllerBase
             .Project(x => x.CreatedAt)
             .FirstOrDefaultAsync();
 
-        var items = insights
+        // 洞察生命周期：按指纹挂处理状态（确认/已修复/忽略），忽略的默认不再出现
+        var fingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
+        var states = (await _db.BehaviorInsightStates
+                .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, fingerprints))
+                .ToListAsync())
+            .GroupBy(x => x.Fingerprint)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.UpdatedAt).First());
+
+        var visible = insights
+            .Where(i => includeIgnored
+                || !states.TryGetValue($"{i.Kind}|{i.Target}", out var st)
+                || st.Status != "ignored")
             .OrderByDescending(i => i.Severity)
             .Take(30)
-            .Select(i => new
+            .Select(i =>
             {
-                kind = i.Kind,
-                kindLabel = i.KindLabel,
-                target = i.Target,
-                userCount = i.UserCount,
-                eventCount = i.EventCount,
-                metric = i.Metric,
-                suggestion = i.Suggestion,
-                evidence = i.Evidence,
+                states.TryGetValue($"{i.Kind}|{i.Target}", out var st);
+                return new
+                {
+                    kind = i.Kind,
+                    kindLabel = i.KindLabel,
+                    target = i.Target,
+                    userCount = i.UserCount,
+                    eventCount = i.EventCount,
+                    metric = i.Metric,
+                    suggestion = i.Suggestion,
+                    evidence = i.Evidence,
+                    status = st?.Status,
+                    defectId = st?.DefectId,
+                    defectTitle = st?.DefectTitle,
+                };
             })
             .ToList();
 
+        var ignoredCount = insights.Count(i =>
+            states.TryGetValue($"{i.Kind}|{i.Target}", out var st) && st.Status == "ignored");
+
         return Ok(ApiResponse<object>.Ok(new
         {
-            items,
+            items = visible,
+            ignoredCount,
             behaviorEventCount = events.Count,
             trackedSince = earliest == default ? (DateTime?)null : earliest,
             windowFrom = fromUtc,
             windowTo = endUtc,
         }));
+    }
+
+    public record SetInsightStateRequest(string Kind, string Target, string Status, string? DefectId, string? DefectTitle);
+
+    /// <summary>
+    /// 设置洞察处理状态（洞察生命周期）。status: confirmed / resolved / ignored / open（open = 清除状态恢复待处理）。
+    /// </summary>
+    [HttpPost("insights/state")]
+    public async Task<IActionResult> SetInsightState([FromBody] SetInsightStateRequest request)
+    {
+        var allowed = new[] { "confirmed", "resolved", "ignored", "open" };
+        if (string.IsNullOrWhiteSpace(request.Kind) || string.IsNullOrWhiteSpace(request.Target)
+            || !allowed.Contains(request.Status))
+        {
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "kind/target/status 不合法"));
+        }
+
+        var fingerprint = $"{request.Kind}|{request.Target}";
+        if (request.Status == "open")
+        {
+            await _db.BehaviorInsightStates.DeleteManyAsync(x => x.Fingerprint == fingerprint);
+            return Ok(ApiResponse<object>.Ok(new { fingerprint, status = (string?)null }));
+        }
+
+        var userId = this.GetRequiredUserId();
+        var update = Builders<BehaviorInsightState>.Update
+            .Set(x => x.Kind, request.Kind)
+            .Set(x => x.Target, request.Target)
+            .Set(x => x.Status, request.Status)
+            .Set(x => x.UpdatedBy, userId)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow)
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(x => x.CreatedAt, DateTime.UtcNow);
+        // 转缺陷时记录关联；普通状态流转不覆盖已有关联
+        if (!string.IsNullOrWhiteSpace(request.DefectId))
+        {
+            update = update.Set(x => x.DefectId, request.DefectId).Set(x => x.DefectTitle, request.DefectTitle);
+        }
+        await _db.BehaviorInsightStates.UpdateOneAsync(
+            x => x.Fingerprint == fingerprint,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { fingerprint, status = request.Status }));
     }
 
     /// <summary>
