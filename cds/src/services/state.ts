@@ -2683,12 +2683,17 @@ export class StateService {
     }
   }
 
-  /** Agent 请求历史（观测台持久层）：ring buffer 500 条，会话 stop/fail 时落一条摘要 */
+  /** Agent 请求历史（观测台持久层）：ring buffer 500 条，会话终态时落一条摘要 */
   static readonly AGENT_REQUEST_HISTORY_MAX = 500;
 
   recordAgentRequest(record: import('../types.js').AgentRequestRecord): void {
     const list = this.state.agentRequestHistory || [];
-    list.push(record);
+    const existing = list.findIndex((item) => item.sessionId === record.sessionId);
+    if (existing >= 0) {
+      list[existing] = record;
+    } else {
+      list.push(record);
+    }
     while (list.length > StateService.AGENT_REQUEST_HISTORY_MAX) list.shift();
     this.state.agentRequestHistory = list;
     try {

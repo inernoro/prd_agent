@@ -78,6 +78,28 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     instanceDiscoverySoftQps,
     Number.parseInt(process.env.CDS_INSTANCE_DISCOVERY_SOFT_BURST || '3', 10) || 3,
   );
+  const recordAgentRequestHistory = (session: CdsAgentSession): void => {
+    try {
+      const summary = toAgentRequestSummary(session);
+      const finishedAt = session.stoppedAt ?? session.updatedAt ?? new Date().toISOString();
+      deps.stateService.recordAgentRequest({
+        sessionId: session.id,
+        projectId: session.projectId,
+        title: session.title,
+        clientUser: session.clientUser,
+        clientApp: session.clientApp,
+        runtime: session.runtime,
+        model: session.model,
+        status: session.status,
+        createdAt: session.createdAt,
+        finishedAt,
+        durationMs: (summary.durationMs as number) ?? 0,
+        eventCount: session.events.length,
+        requestPreview: (summary.requestPreview as string | null) ?? null,
+        responsePreview: (summary.responsePreview as string | null) ?? null,
+      });
+    } catch { /* 历史落盘失败不影响主链路 */ }
+  };
 
   router.get('/cds-system/remote-hosts', (_req, res) => {
     res.json({ hosts: service.list() });
@@ -752,7 +774,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       const transport = resolveCdsManagedRuntimeTransport(deps.stateService, project, session);
       if (transport) {
         session.status = 'running';
-        startCdsManagedOfficialSdkTransport(session, content, transport);
+        startCdsManagedOfficialSdkTransport(session, content, transport, () => recordAgentRequestHistory(session));
         session.updatedAt = new Date().toISOString();
         res.status(202).json({
           item: toCdsAgentSessionView(session),
@@ -773,6 +795,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         source: `${session.runtime}-runtime`,
       });
       session.logs.push(`[${session.updatedAt}] runtime unavailable runtime=${session.runtime} owner=cds-managed-runtime reason=${unavailable.code}`);
+      recordAgentRequestHistory(session);
       res.status(202).json({
         item: toCdsAgentSessionView(session),
         accepted: false,
@@ -797,6 +820,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         message: unavailable.message,
         source: `${session.runtime}-runtime`,
       });
+      recordAgentRequestHistory(session);
       res.status(202).json({
         item: toCdsAgentSessionView(session),
         accepted: false,
@@ -835,6 +859,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     session.messages.push({ role: 'assistant', content: answer, createdAt: new Date().toISOString() });
     session.logs.push(`[${new Date().toISOString()}] message processed chars=${content.length}`);
     session.updatedAt = new Date().toISOString();
+    if (session.status === 'running') session.status = 'idle';
+    recordAgentRequestHistory(session);
     res.status(202).json({ item: toCdsAgentSessionView(session), accepted: true });
   });
 
@@ -913,26 +939,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       source: session.runtime === 'fake' ? 'fake-runtime' : `${session.runtime}-runtime`,
     });
     session.logs.push(`[${session.updatedAt}] session stopped`);
-    // 观测台历史（2026-06-11）：会话终态时落一条摘要进持久层（重启后历史仍可查）
-    try {
-      const summary = toAgentRequestSummary(session);
-      deps.stateService.recordAgentRequest({
-        sessionId: session.id,
-        projectId: session.projectId,
-        title: session.title,
-        clientUser: session.clientUser,
-        clientApp: session.clientApp,
-        runtime: session.runtime,
-        model: session.model,
-        status: session.status,
-        createdAt: session.createdAt,
-        finishedAt: session.stoppedAt ?? session.updatedAt,
-        durationMs: (summary.durationMs as number) ?? 0,
-        eventCount: session.events.length,
-        requestPreview: (summary.requestPreview as string | null) ?? null,
-        responsePreview: (summary.responsePreview as string | null) ?? null,
-      });
-    } catch { /* 历史落盘失败不影响 stop 主链路 */ }
+    recordAgentRequestHistory(session);
     res.json({ item: toCdsAgentSessionView(session) });
   });
 
@@ -1922,11 +1929,15 @@ function startCdsManagedOfficialSdkTransport(
   session: CdsAgentSession,
   content: string,
   transport: CdsManagedRuntimeTransport,
+  onTerminal?: () => void,
 ): void {
   const runId = `${session.id}-${session.events.length + 1}`;
   session.activeRunId = runId;
   void Promise.resolve()
     .then(() => runCdsManagedOfficialSdkTransport(session, content, transport, runId))
+    .then(() => {
+      if (session.status === 'idle' || session.status === 'failed') onTerminal?.();
+    })
     .catch((err) => {
       if (session.status === 'stopped') return;
       const error = {
@@ -1941,6 +1952,7 @@ function startCdsManagedOfficialSdkTransport(
       session.updatedAt = new Date().toISOString();
       pushCdsAgentEvent(session, 'error', error);
       session.logs.push(`[${session.updatedAt}] runtime transport background failed owner=cds-managed-runtime`);
+      onTerminal?.();
     });
 }
 

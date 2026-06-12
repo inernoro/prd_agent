@@ -654,13 +654,15 @@ public class MdToPptController : ControllerBase
                     var root = doc.RootElement;
                     if (!emittedMeta)
                     {
-                        var meta = new Dictionary<string, object?>
+                        var meta = new JsonObject
                         {
                             ["type"] = "meta",
                             ["totalPages"] = root.TryGetProperty("totalPages", out var tpEl) ? tpEl.GetInt32() : 0,
                             ["summary"] = root.TryGetProperty("summary", out var smEl) ? smEl.GetString() : null,
                         };
-                        if (root.TryGetProperty("clarify", out var clEl)) meta["clarify"] = clEl.Clone();
+                        if (root.TryGetProperty("clarify", out var clEl)) meta["clarify"] = JsonNode.Parse(clEl.GetRawText());
+                        metaObj = meta.DeepClone() as JsonObject;
+                        emittedMeta = true;
                         await WriteEventAsync("meta", meta);
                     }
                     if (root.TryGetProperty("outline", out var olEl) && olEl.ValueKind == JsonValueKind.Array)
@@ -669,14 +671,16 @@ public class MdToPptController : ControllerBase
                         foreach (var pg in olEl.EnumerateArray())
                         {
                             idx++;
-                            await WriteEventAsync("page", new
+                            var page = new JsonObject
                             {
-                                type = "page",
-                                index = idx,
-                                title = pg.TryGetProperty("title", out var ti) ? ti.GetString() : null,
-                                bullets = pg.TryGetProperty("bullets", out var bu) ? bu.Clone() : default,
-                                design = pg.TryGetProperty("design", out var de) ? de.GetString() : null,
-                            });
+                                ["type"] = "page",
+                                ["index"] = idx,
+                                ["title"] = pg.TryGetProperty("title", out var ti) ? ti.GetString() : null,
+                                ["bullets"] = pg.TryGetProperty("bullets", out var bu) ? JsonNode.Parse(bu.GetRawText()) : new JsonArray(),
+                                ["design"] = pg.TryGetProperty("design", out var de) ? de.GetString() : null,
+                            };
+                            pageArr.Add(page.DeepClone());
+                            await WriteEventAsync("page", page);
                             emittedPages++;
                         }
                     }

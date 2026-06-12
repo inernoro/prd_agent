@@ -190,6 +190,38 @@ describe('Agent requests observability routes', () => {
     expect(record!.eventCount).toBeGreaterThan(0);
   });
 
+  it('completed agent message persists history before stop and stop updates the same record', async () => {
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const sessionId = await createSession(projectId, longToken, {
+      title: 'PPT 第3页',
+      clientUser: 'u-complete',
+      clientApp: 'md-to-ppt',
+    });
+
+    const accepted = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: '生成第三页' },
+    );
+    expect(accepted.status).toBe(202);
+
+    const historyAfterDone = stateService.listAgentRequests().filter((r) => r.sessionId === sessionId);
+    expect(historyAfterDone).toHaveLength(1);
+    expect(historyAfterDone[0].status).toBe('idle');
+    expect(historyAfterDone[0].requestPreview).toContain('生成第三页');
+    expect(historyAfterDone[0].responsePreview).toContain('Fake runtime received');
+
+    const stop = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions/${sessionId}/stop`, longToken, {});
+    expect(stop.status).toBe(200);
+
+    const historyAfterStop = stateService.listAgentRequests().filter((r) => r.sessionId === sessionId);
+    expect(historyAfterStop).toHaveLength(1);
+    expect(historyAfterStop[0].status).toBe('stopped');
+  });
+
   it('structural events publish agent-session.activity on the global bus', async () => {
     await startServer();
     const { projectId, longToken } = authorizeSharedServiceProject();

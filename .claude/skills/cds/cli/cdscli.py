@@ -1214,7 +1214,8 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         return
 
     project_slug_hints = _project_slug_hints(repo_root)
-    # 本地 v3 fallback 优先 git remote 仓库名（Cloud Agent workspace 目录名不可靠）
+    # 本地 v3 fallback 与 _project_slug_hints 共用优先序：
+    # CDS_PROJECT_SLUG > 普通目录名 > 泛型 workspace 目录名；不隐式采用 repo alias。
     fallback_project_slug = _fallback_project_slug(repo_root)
     root = _preview_root_from_host()
 
@@ -1310,9 +1311,11 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             "projectSlug": fallback_project_slug,
             "previewSlug": slug,
             "url": url,
-            "note": "本地 fallback 优先 git remote 仓库名，其次目录名/CDS_PROJECT_SLUG。"
-                    "generic workspace 目录下设置 CDS_HOST + (AI_ACCESS_KEY 或 "
-                    "CDS_PROJECT_KEY) 走 API 模式才能使用服务端 collision-checked alias。",
+            "note": "本地 fallback 与 _project_slug_hints 共用优先序："
+                    "CDS_PROJECT_SLUG > 普通目录名 > 泛型 workspace 目录名。"
+                    "generic workspace 目录不会隐式采用 git remote 仓库名；"
+                    "设置 CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY) 走 API 模式"
+                    "才能使用服务端 collision-checked alias。",
         })
 
 

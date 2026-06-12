@@ -1379,7 +1379,6 @@ export function MdToPptAgentPage() {
     }
 
     return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ─── Session persistence: save on state change
@@ -1647,7 +1646,7 @@ export function MdToPptAgentPage() {
         try { sessionStorage.removeItem(OUTLINE_RUN_KEY); } catch { /* ignore */ }
       };
 
-      streamMdToPptOutline({
+      const cleanup = streamMdToPptOutline({
         content: userText,
         attachmentText: attachmentText || undefined,
         kbContext: kbContext || undefined,
@@ -1742,6 +1741,7 @@ export function MdToPptAgentPage() {
         },
         onError: (err) => finish(err),
       });
+      cleanupRef.current = cleanup;
     },
     [messages, pushMsg, outlineDraft, selectedProfileId]
   );
@@ -2291,6 +2291,14 @@ export function MdToPptAgentPage() {
       const msgIdx = messages.findIndex((m) => m.id === outlineMsg.id);
       const userMsg = [...messages.slice(0, msgIdx)].reverse().find((m) => m.role === 'user');
       const userContent = userMsg?.content ?? '';
+      const attachmentText = (userMsg?.attachments ?? [])
+        .map((a) => `## 附件：${a.name}\n\n${a.content}`)
+        .join('\n\n');
+      const kbContext = (userMsg?.kbRefs ?? [])
+        .map((r) => `## KB「${r.storeName}」>「${r.entryTitle}」\n\n${r.content}`)
+        .join('\n\n');
+      const sourceText = [userContent, attachmentText, kbContext].filter(Boolean).join('\n\n---\n\n').trim();
+      const outlineText = serializeOutline(outlineMsg.outline ?? []);
 
       // 追加一条用户消息
       pushMsg({ role: 'user', content: instruction });
@@ -2298,12 +2306,16 @@ export function MdToPptAgentPage() {
       // 页数沿用上一版大纲（修 2026-06-10 实测 bug：调整一句结语，页数从 6 被重估成 4——
       // estimatePages 按文本长度估页对"调整"场景完全不适用；除非用户明确要求改页数）
       void requestOutline(
-        userContent + '\n\n调整要求：' + instruction + '\n（除非调整要求里明确提到增减页数，否则总页数保持不变）',
+        sourceText +
+          (outlineText ? `\n\n当前大纲（请在此基础上调整）：\n${outlineText}` : '') +
+          '\n\n调整要求：' + instruction +
+          '\n（除非调整要求里明确提到增减页数，否则总页数保持不变）',
         [], [],
-        outlineMsg.totalPages ?? outlineMsg.outline?.length
+        outlineMsg.totalPages ?? outlineMsg.outline?.length,
+        sourceText
       );
     },
-    [isProcessing, messages, pushMsg, requestOutline]
+    [isProcessing, messages, pushMsg, requestOutline, serializeOutline]
   );
 
   // ─── Main send handler
@@ -2366,7 +2378,10 @@ export function MdToPptAgentPage() {
   const handleAbort = useCallback(() => {
     cleanupRef.current?.();
     cleanupRef.current = null;
+    try { sessionStorage.removeItem(OUTLINE_RUN_KEY); } catch { /* ignore */ }
     setIsProcessing(false);
+    setOutlineAdjusting(false);
+    setOutlineStreaming(false);
     setArtifactPhase(generatedHtml ? 'done' : 'idle');
     resetStreamPreview();
     updateLastAssistantMsg({ content: '已中止。', phase: 'text' });
@@ -2389,6 +2404,8 @@ export function MdToPptAgentPage() {
     setSlidePos(null);
     setFeedbackMode(false);
     setOutlineDraft(null);
+    setOutlineAdjusting(false);
+    setOutlineStreaming(false);
     resetStreamPreview();
     editedHtmlRef.current = '';
     restoreSlideRef.current = 0;
@@ -2397,7 +2414,10 @@ export function MdToPptAgentPage() {
       window.clearTimeout(pendingRectRef.current.timer);
       pendingRectRef.current = null;
     }
-    try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+    try {
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(OUTLINE_RUN_KEY);
+    } catch { /* ignore */ }
   }, [resetStreamPreview]);
 
   const isStreaming = artifactPhase === 'generating' || artifactPhase === 'patching';
