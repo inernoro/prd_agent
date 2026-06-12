@@ -58,7 +58,9 @@
 
 系统里 `Requirement` 实体已经具备需求池所需的一切：编号、分级、状态机（绑 WorkflowDefinition）、负责人、来源溯源字段。更关键的是它已有 `SourceDefectId` + `ConvertDefectToRequirement` 端点——"缺陷转需求"已经跑通。
 
-**"涌现转需求"是它的同构兄弟**：缺陷转需求记 `SourceDefectId`，涌现转需求记 `SourceEmergenceNodeId`，两者共用 `SourceSystem` 标记来源、共用幂等检查与编号生成逻辑。这样需求池天然统一——无论需求来自缺陷、涌现、还是外部 TAPD 导入，都落在同一张 `requirements` 表，走同一套评审流程。
+**"涌现转需求"是它的同构兄弟**：缺陷转需求记 `SourceDefectId`，涌现转需求记 `SourceEmergenceNodeId`，共用幂等检查与编号生成逻辑。这样需求池天然统一——无论需求来自缺陷、涌现、还是外部 TAPD 导入，都落在同一张 `requirements` 表，走同一套评审流程。
+
+**关于来源标记 `SourceSystem`（一致性前置条件，勿想当然）**：现状不对称——缺陷转需求（`ConvertDefectToRequirement` ~`ProductAgentController.cs:2055`）当前**只设 `SourceDefectId`、并未设 `SourceSystem`**；TAPD 导入才会填 `SourceSystem="tapd"`。因此 `SourceSystem` **当前并非已跨流共享的统一来源枚举**，不能直接拿来当前端按来源筛选/打标的依据。若本期要把"来源"做成统一枚举（defect/emergence/tapd/manual），必须配套三件事，缺一即口径不一致：(1) emergence 转需求时显式写 `SourceSystem="emergence"`；(2) 给既有缺陷转需求补一行 `SourceSystem="defect"`；(3) 对存量 `requirements` 跑一次性回填（`SourceDefectId != null → "defect"`，已有 `SourceSystem` 的保留，其余 `"manual"`）。回填脚本与"统一来源枚举"已列入 `debt.voc`，本期不强制——前端若暂不依赖该枚举，可仅靠 `SourceDefectId` / `SourceEmergenceNodeId` 两个具体来源 id 判定，避免引入半成品枚举。
 
 ### 5.2 反向可回溯（双向链）
 
@@ -93,7 +95,7 @@ POST /api/emergence/nodes/{id}/adopt  { productId }
 | `Requirement` | `SourceEmergenceNodeId` | `string?` | 对照已有 `SourceDefectId`，记录来源涌现节点 |
 | `EmergenceNode` | `AdoptedRequirementId` | `string?` | 回填生成的需求 id；非空即"已流转" |
 
-`Requirement.SourceSystem` 复用既有字段，流转时填 `"emergence"`，无需新增。
+`Requirement.SourceSystem` 复用既有字段，emergence 流转时填 `"emergence"`。注意它当前并非跨流统一枚举（缺陷转需求未填，见 5.1）；若要作为统一来源依据，需按 5.1 的三步补丁 + 回填（已记 `debt.voc`）。
 
 ## 七、接口设计
 
@@ -102,9 +104,11 @@ POST /api/emergence/nodes/{id}/adopt  { productId }
 ```
 POST /api/emergence/nodes/{nodeId}/adopt
 Body: { productId: string }
-幂等：SourceEmergenceNodeId == nodeId 已存在 → 返回既有需求
+幂等：节点 AdoptedRequirementId 已非空 → 直接返回那条既有需求（忽略本次 productId）
 返回：ApiResponse<Requirement>
 ```
+
+**幂等语义（一节点只流转一次）**：与缺陷转需求不同——缺陷天然归属一个产品（productId 固定在缺陷上），而涌现节点是产品无关的，productId 由调用方在 adopt 时传入。为避免"同一节点用不同 productId 重复调用却各返回/各新建需求"的歧义，幂等**以节点自身的流转状态为准**：`AdoptedRequirementId` 一旦写入即锁定，后续任何 productId 的重复调用都返回首次生成的那条需求、不再新建（与单值 `AdoptedRequirementId` 字段语义一致）。若产品后续需要改挂，走需求的正常"移动产品"操作，而非重复 adopt。判定不查 `SourceEmergenceNodeId`（那是给需求侧反查溯源用的），直接读节点的 `AdoptedRequirementId`，省一次查询。
 
 前端：涌现节点卡片底部新增"流转需求池"按钮（未 adopt 时可点）；已流转节点显示需求编号 chip，点击跳转 product-agent 对应需求。复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
 
