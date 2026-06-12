@@ -15,9 +15,10 @@ import {
   findMatrixTransition,
 } from './WorkflowTransitionRuleModal';
 
-/** 应用配置维护需求与缺陷的状态流转（功能跟随版本；版本无独立矩阵）。 */
+/** 应用配置：需求 / 功能 / 缺陷 三类对象的状态与流转矩阵。 */
 const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'requirement', label: '需求' },
+  { value: 'feature', label: '功能' },
   { value: 'defect', label: '缺陷' },
 ];
 
@@ -196,13 +197,11 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
 
   return (
     <div className="flex flex-col gap-4">
-      {entityType === 'requirement' && (
-        <p className="text-xs text-white/45 leading-relaxed">
-          工作流流转设置用于配置各状态间的先后流转关系。在矩阵中勾选即可启用流转；点击
-          <Settings2 size={12} className="inline mx-0.5 -mt-px" />
-          可设置授权角色与必填字段。
-        </p>
-      )}
+      <p className="text-xs text-white/45 leading-relaxed">
+        工作流流转设置用于配置各状态间的先后流转关系。在矩阵中勾选即可启用流转；点击
+        <Settings2 size={12} className="inline mx-0.5 -mt-px" />
+        可设置授权角色与必填字段。
+      </p>
 
       <div className="flex items-center gap-3 flex-wrap">
         <h3 className="text-sm font-medium text-white/85">流转设置</h3>

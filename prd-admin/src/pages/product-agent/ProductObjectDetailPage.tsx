@@ -58,6 +58,7 @@ import {
 } from '@/services/real/productAgent';
 import type { Requirement, Feature, ProductVersion, ProductRelease, Customer, FeatureVersion, FeatureBusinessType, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade } from './types';
+import { slaInfo } from './sla';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
@@ -1468,7 +1469,7 @@ function FeatureDetail({
             entityId={feature.id}
             productId={feature.productId}
             currentState={feature.currentState}
-            entitySnapshot={{ ownerId: ownerId || feature.ownerId, assigneeId, title, grade }}
+            entitySnapshot={{ ownerId: ownerId || feature.ownerId, assigneeId, title, grade: feature.grade }}
             onChanged={onReload}
           />
         ) : undefined
@@ -1555,7 +1556,15 @@ function FeatureDetail({
                     <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
                       {workflow?.states.find((s) => s.key === feature.currentState)?.label ?? feature.currentState}
                     </span>
-                    <SlaBadge stateEnteredAt={feature.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === feature.currentState)?.slaHours} />
+                    {(() => {
+                      const sla = slaInfo(feature.stateEnteredAt, workflow?.states.find((s) => s.key === feature.currentState)?.slaHours);
+                      if (!sla) return null;
+                      return (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${sla.overdue ? 'text-red-300 border-red-500/30 bg-red-500/10' : 'text-white/40 border-white/10'}`}>
+                          停留 {sla.label}{sla.overdue ? ' · 超时' : ''}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
               )}
