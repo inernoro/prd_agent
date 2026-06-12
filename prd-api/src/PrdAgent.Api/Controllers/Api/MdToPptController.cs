@@ -10,6 +10,8 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 
+using PrdAgent.Api.Services.MdToPpt;
+
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
@@ -1321,6 +1323,155 @@ public class MdToPptController : ControllerBase
         return sb.ToString();
     }
 
+
+    // ─────────────────────────────────────────────
+    // 锚定 deck 模式（2026-06-12 质量目标）：open-design 工作流——
+    // 子智能体拿"人工精调版式范本"只换内容不造布局，从根上杜绝重叠/溢出
+    // ─────────────────────────────────────────────
+
+    private static string BuildAnchoredPageSystemPrompt(MdToPptAnchors.Anchor anchor, MdToPptAnchors.AnchorSlide layout, int index, int total)
+    {
+        return
+            "你在一套人工精调的成品演示设计系统内工作（不允许自由发挥布局）。\n" +
+            "## 铁律（违反会被系统剥离或整页重做）\n" +
+            "1. 下方版式范本的类名、结构层级、装饰元素一律保留——这是设计系统的身份，禁止改类名/删装饰/换结构\n" +
+            "2. 只把范本中的占位内容（标题/段落/数字/标签/列表项文字）替换为本页真实内容；同构列表项允许增删 1-2 个\n" +
+            "3. 禁止内联布局样式：style 属性里不得出现 position/width/height/min-/max-/margin/transform/z-index/inset，禁止 vh/vw 单位\n" +
+            "4. 内容必须放得下：标题不超过范本对应位置字数的 1.3 倍；每条要点不超过 40 字；放不下就精炼文字，禁止缩字号硬塞\n" +
+            "5. 颜色/字体不得偏离设计系统（不要写新的颜色值）\n" +
+            $"6. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
+            "不含 <html>/<head>/<style>/<script>，无解释无代码围栏，禁止任何 emoji，禁止调用工具\n\n" +
+            "## 本页版式范本（完整源码，照此结构替换内容）\n" + layout.Html;
+    }
+
+    private static string BuildAnchoredPageUserPrompt(MdToPptConvertRequest req, int index, int total)
+    {
+        var pages = req.OutlinePages!;
+        var page = pages[index];
+        var bullets = (page.Bullets ?? new List<string>()).Where(b => !string.IsNullOrWhiteSpace(b)).ToList();
+        var sb = new StringBuilder();
+        sb.Append("整份 PPT 主题：").Append(req.Summary ?? "（通用）").Append('\n');
+        sb.Append($"本页是第 {index + 1}/{total} 页：{page.Title}\n");
+        sb.Append("本页要点（信息必须全部呈现，可润色不可丢失）：\n");
+        foreach (var b in bullets) sb.Append("- ").Append(b).Append('\n');
+        if (!string.IsNullOrWhiteSpace(page.Design))
+            sb.Append("设计意图（在范本允许范围内体现）：").Append(page.Design.Trim()).Append('\n');
+        sb.Append("把范本占位内容替换为以上真实内容，输出整个 slide 块。");
+        return sb.ToString();
+    }
+
+
+
+    /// <summary>整篇 HTML 中平衡扫描全部顶层 slide 块（锚定 deck 的拆装用）</summary>
+    internal static List<(int Start, int Length)> FindSlideBlocks(string html)
+    {
+        var result = new List<(int, int)>();
+        var openRe = new System.Text.RegularExpressions.Regex(
+            "<(div|section|article)\\b[^>]*class=\"[^\"]*\\bslide\\b[^\"]*\"[^>]*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var pos = 0;
+        while (true)
+        {
+            var open = openRe.Match(html, pos);
+            if (!open.Success) break;
+            // class 列表必须含独立的 slide token（排除 slide-counter / slides-container 容器）
+            var clsM = System.Text.RegularExpressions.Regex.Match(open.Value, "class=\"([^\"]*)\"");
+            if (!clsM.Success || !clsM.Groups[1].Value.Split(' ').Contains("slide"))
+            {
+                pos = open.Index + open.Length;
+                continue;
+            }
+            var tag = open.Groups[1].Value.ToLowerInvariant();
+            var tagRe = new System.Text.RegularExpressions.Regex($"<(/?){tag}\\b[^>]*?(/?)>",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var depth = 1;
+            var scan = open.Index + open.Length;
+            while (depth > 0)
+            {
+                var t = tagRe.Match(html, scan);
+                if (!t.Success) return result; // 不平衡：放弃后续
+                if (t.Groups[2].Value != "/")
+                    depth += t.Groups[1].Value == "/" ? -1 : 1;
+                scan = t.Index + t.Length;
+            }
+            result.Add((open.Index, scan - open.Index));
+            pos = scan;
+        }
+        return result;
+    }
+
+    /// <summary>锚定兜底页：范本结构保留，正文区粗暴替换为标题+要点（结构不塌的最低限度退化）</summary>
+    internal static string AnchoredFallbackSlide(MdToPptAnchors.AnchorSlide layout, MdToPptOutlinePageDto page, int index)
+    {
+        var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
+        var lis = string.Join("", (page.Bullets ?? new List<string>())
+            .Where(b => !string.IsNullOrWhiteSpace(b))
+            .Select(b => $"<li>{enc(b)}</li>"));
+        return $"<div class=\"{layout.ClassAttr}\"><div style=\"padding:6% 8%\">" +
+               $"<h2>{enc(page.Title)}</h2><ul>{lis}</ul></div></div>";
+    }
+
+    /// <summary>模型输出中平衡提取第一个 slide 块（div/section 容器通用，支持嵌套）</summary>
+    internal static string? ExtractSlideBlock(string text)
+    {
+        var cleaned = StripCodeFences(text);
+        var open = System.Text.RegularExpressions.Regex.Match(cleaned,
+            "<(div|section|article)\\b[^>]*class=\"[^\"]*\\bslide\\b[^\"]*\"[^>]*>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!open.Success) return null;
+        var tag = open.Groups[1].Value.ToLowerInvariant();
+        var tagRe = new System.Text.RegularExpressions.Regex($"<(/?){tag}\\b[^>]*?(/?)>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var depth = 1;
+        var scan = open.Index + open.Length;
+        while (depth > 0)
+        {
+            var t = tagRe.Match(cleaned, scan);
+            if (!t.Success) return null;
+            if (t.Groups[2].Value != "/")
+                depth += t.Groups[1].Value == "/" ? -1 : 1;
+            scan = t.Index + t.Length;
+        }
+        return cleaned[open.Index..scan];
+    }
+
+    /// <summary>锚定 slide 消毒：去 active、剥内联布局属性、防 vh/vw、复用碎片守卫</summary>
+    internal static string? SanitizeAnchoredSlide(string? block)
+    {
+        if (string.IsNullOrWhiteSpace(block)) return null;
+        if (LooksCorruptedSection(block)) return null;
+        block = block.Replace(" active\"", "\"").Replace("\"slide active ", "\"slide ").Replace(" active ", " ");
+        block = block.Replace("100vh", "100%").Replace("100vw", "100%");
+        // 全元素内联样式剥离禁用属性（范本靠类名排版，模型加的内联布局多半就是事故源）
+        block = System.Text.RegularExpressions.Regex.Replace(block, "style=\"([^\"]*)\"", m =>
+        {
+            var kept = new List<string>();
+            foreach (var decl in m.Groups[1].Value.Split(';'))
+            {
+                var d = decl.Trim();
+                if (d.Length == 0) continue;
+                var name = d.Split(':')[0].Trim().ToLowerInvariant();
+                if (name is "position" or "top" or "left" or "right" or "bottom" or "width" or "height"
+                    or "margin" or "transform" or "z-index" or "inset"
+                    || name.StartsWith("min-") || name.StartsWith("max-") || name.StartsWith("margin-"))
+                    continue;
+                kept.Add(d);
+            }
+            return kept.Count > 0 ? $"style=\"{string.Join(";", kept)}\"" : string.Empty;
+        });
+        return block;
+    }
+
+    /// <summary>给装配后的第一个 slide 块补 active（各 zhangzara 运行时以 .active 为当前页）</summary>
+    internal static string AddActiveToFirstSlide(string block)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(block, "class=\"([^\"]*)\"");
+        if (!m.Success) return block;
+        var cls = m.Groups[1].Value;
+        if (cls.Split(' ').Contains("active")) return block;
+        return block[..m.Index] + $"class=\"{cls} active\"" + block[(m.Index + m.Length)..];
+    }
+
     private static string ExtractSection(string text)
     {
         var cleaned = StripCodeFences(text);
@@ -1523,8 +1674,20 @@ public class MdToPptController : ControllerBase
         await EmitAsync("model", new { model = profile.Model, platform = "CDS Agent" });
 
         var deckTitle = pages[0].Title is { Length: > 0 } t ? t : (req.Summary ?? "PPT 演示");
-        var (head, suffix) = BuildDeckShell(req.Theme, deckTitle);
-        await EmitAsync("frame", new { head, total });
+        // 锚定 deck 模式（2026-06-12）：人工精调成品模板做壳子与版式范本；
+        // 锚定资产缺失时回落旧 reveal 壳子（不应发生，保险）
+        var anchor = MdToPptAnchors.Resolve(req.Theme);
+        string head, suffix;
+        if (anchor != null)
+        {
+            head = anchor.Prefix;
+            suffix = anchor.Suffix;
+        }
+        else
+        {
+            (head, suffix) = BuildDeckShell(req.Theme, deckTitle);
+        }
+        await EmitAsync("frame", new { head, suffix, total, anchored = anchor != null, anchor = anchor?.Name });
         await EmitAsync("diag", new { stage = "pages_start", total, parallel = 4 });
         _logger.LogInformation("[MdToPpt-Pages] start userId={UserId} total={Total}", userId, total);
 
@@ -1564,20 +1727,38 @@ public class MdToPptController : ControllerBase
                 await gate.WaitAsync();
                 try
                 {
-                    var sys = BuildPageSystemPrompt(req.Theme, i, total);
-                    var usr = BuildPageUserPrompt(req, i, total);
+                    string sys, usr;
+                    MdToPptAnchors.AnchorSlide? layout = null;
+                    if (anchor != null)
+                    {
+                        layout = MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design);
+                        sys = BuildAnchoredPageSystemPrompt(anchor, layout, i, total);
+                        usr = BuildAnchoredPageUserPrompt(req, i, total);
+                    }
+                    else
+                    {
+                        sys = BuildPageSystemPrompt(req.Theme, i, total);
+                        usr = BuildPageUserPrompt(req, i, total);
+                    }
                     var (text, err) = await RunAgentOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
-                    var section = text != null ? ExtractSection(text) : string.Empty;
+                    var section = text != null
+                        ? (anchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text)) ?? string.Empty : ExtractSection(text))
+                        : string.Empty;
                     if (string.IsNullOrEmpty(section))
                     {
-                        // 单页失败重试一次，再失败用大纲兜底页（绝不让整份卡死）
+                        // 单页失败重试一次，再失败用范本兜底（结构不塌，内容退化为范本+标题要点）
                         if (err == null || text != null)
-                            _logger.LogWarning("[MdToPpt-Pages] page {Idx} invalid section, retrying", i);
+                            _logger.LogWarning("[MdToPpt-Pages] page {Idx} invalid block, retrying", i);
                         var (text2, _) = await RunAgentOnceAsync(
                             userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", null);
-                        section = text2 != null ? ExtractSection(text2) : string.Empty;
-                        if (string.IsNullOrEmpty(section)) section = SanitizeSection(FallbackSection(pages[i], i));
+                        section = text2 != null
+                            ? (anchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text2)) ?? string.Empty : ExtractSection(text2))
+                            : string.Empty;
+                        if (string.IsNullOrEmpty(section))
+                            section = anchor != null && layout != null
+                                ? AnchoredFallbackSlide(layout, pages[i], i)
+                                : SanitizeSection(FallbackSection(pages[i], i));
                     }
                     sections[i] = section;
                     var n = Interlocked.Increment(ref doneCount);
@@ -1590,6 +1771,8 @@ public class MdToPptController : ControllerBase
 
             await Task.WhenAll(tasks);
 
+            if (anchor != null && sections.Length > 0 && !string.IsNullOrEmpty(sections[0]))
+                sections[0] = AddActiveToFirstSlide(sections[0]);
             var html = head + string.Join("\n", sections) + suffix;
             var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
             _logger.LogInformation("[MdToPpt-Pages] DONE userId={UserId} totalMs={Ms} htmlLen={Len}", userId, totalMs, html.Length);
@@ -1617,17 +1800,23 @@ public class MdToPptController : ControllerBase
     private async Task<bool> TryRunSinglePagePatchAsync(string userId, MdToPptPatchRequest req, MdToPptRun run, int oneBasedIndex)
     {
         var html = req.CurrentHtml!;
-        var matches = System.Text.RegularExpressions.Regex.Matches(html, "<section[\\s\\S]*?</section>",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (matches.Count == 0 || oneBasedIndex < 1 || oneBasedIndex > matches.Count) return false;
+        // 锚定 deck（div.slide 嵌套）与旧 reveal（顶层 section）统一走平衡扫描
+        var blocks = FindSlideBlocks(html);
+        if (blocks.Count == 0)
+        {
+            var legacy = System.Text.RegularExpressions.Regex.Matches(html, "<section[\\s\\S]*?</section>",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            blocks = legacy.Select(m => (m.Index, m.Length)).ToList();
+        }
+        if (blocks.Count == 0 || oneBasedIndex < 1 || oneBasedIndex > blocks.Count) return false;
 
         var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
         var profile = connection == null ? null : await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
         if (connection == null || profile == null) return false; // 回落整篇路径（它有自己的错误提示）
 
         await WriteEventAsync("model", new { model = profile.Model, platform = "CDS Agent" });
-        await WriteDiagAsync(new { stage = "page_patch_start", page = oneBasedIndex, total = matches.Count });
-        _logger.LogInformation("[MdToPpt-PagePatch] start userId={UserId} page={Page}/{Total}", userId, oneBasedIndex, matches.Count);
+        await WriteDiagAsync(new { stage = "page_patch_start", page = oneBasedIndex, total = blocks.Count });
+        _logger.LogInformation("[MdToPpt-PagePatch] start userId={UserId} page={Page}/{Total}", userId, oneBasedIndex, blocks.Count);
 
         // 心跳：单页重画 1-3 分钟，SSE 不能断流（Cloudflare 100s 缓冲）
         using var kaCts = new CancellationTokenSource();
@@ -1652,21 +1841,29 @@ public class MdToPptController : ControllerBase
         try
         {
             var idx = oneBasedIndex - 1;
-            var current = matches[idx].Value;
-            var sys = BuildPageSystemPrompt(req.Theme, idx, matches.Count);
+            var current = html.Substring(blocks[idx].Start, blocks[idx].Length);
+            var patchAnchor = MdToPptAnchors.Resolve(req.Theme);
+            var sys = patchAnchor != null
+                ? BuildAnchoredPageSystemPrompt(patchAnchor,
+                    MdToPptAnchors.PickLayout(patchAnchor, idx, blocks.Count, null), idx, blocks.Count)
+                : BuildPageSystemPrompt(req.Theme, idx, blocks.Count);
             var usr =
-                $"这是第 {oneBasedIndex}/{matches.Count} 页当前的 HTML：\n{current}\n\n" +
+                $"这是第 {oneBasedIndex}/{blocks.Count} 页当前的 HTML：\n{current}\n\n" +
                 $"修改要求（只动这一页）：\n{req.SlideRequest?.Trim()}\n\n" +
                 "硬约束：未被修改要求点名的信息内容必须逐字保留（数字、名称、要点一字不差）；" +
                 "重新设计排版时严格遵守画布与版面硬约束。";
 
             var (text, err) = await RunAgentOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", null);
-            var section = text != null ? ExtractSection(text) : string.Empty;
+            var section = text != null
+                ? (patchAnchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text)) ?? string.Empty : ExtractSection(text))
+                : string.Empty;
             if (string.IsNullOrEmpty(section))
             {
                 _logger.LogWarning("[MdToPpt-PagePatch] invalid section, retrying page={Page} err={Err}", oneBasedIndex, err);
                 var (text2, err2) = await RunAgentOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", null);
-                section = text2 != null ? ExtractSection(text2) : string.Empty;
+                section = text2 != null
+                    ? (patchAnchor != null ? SanitizeAnchoredSlide(ExtractSlideBlock(text2)) ?? string.Empty : ExtractSection(text2))
+                    : string.Empty;
                 if (string.IsNullOrEmpty(section))
                 {
                     var msg = err2 ?? err ?? "单页重绘失败，请重试";
@@ -1676,9 +1873,9 @@ public class MdToPptController : ControllerBase
                 }
             }
 
-            var newHtml = html[..matches[idx].Index] + section + html[(matches[idx].Index + matches[idx].Length)..];
+            var newHtml = html[..blocks[idx].Start] + section + html[(blocks[idx].Start + blocks[idx].Length)..];
             await PersistRunDoneAsync(run, newHtml, profile.Model, "CDS Agent");
-            await WriteEventAsync("page", new { index = idx, total = matches.Count, html = section, done = 1 });
+            await WriteEventAsync("page", new { index = idx, total = blocks.Count, html = section, done = 1 });
             await WriteEventAsync("done", new { html = newHtml });
             _logger.LogInformation("[MdToPpt-PagePatch] DONE userId={UserId} page={Page} newLen={Len}", userId, oneBasedIndex, newHtml.Length);
             return true;

@@ -1,0 +1,120 @@
+{
+  "name": "monochrome",
+  "upstream": "zarazhangrui/beautiful-html-templates (monochrome)",
+  "license": "MIT",
+  "slideCount": 16,
+  "layouts": [
+    {
+      "file": "01-slide--cover.html",
+      "layout": "slide--cover",
+      "classAttr": "slide slide--cover light",
+      "chars": 1782,
+      "summary": "Research Synthesis [Month, Year] User Research Synthesis / [Month, Year] User Research Syn"
+    },
+    {
+      "file": "02-slide--chapter.html",
+      "layout": "slide--chapter",
+      "classAttr": "slide slide--chapter dark",
+      "chars": 1205,
+      "summary": "Context Part One 01 · Context Why we went back to users Three months after launch, retenti"
+    },
+    {
+      "file": "03-slide--statement.html",
+      "layout": "slide--statement",
+      "classAttr": "slide slide--statement light",
+      "chars": 1661,
+      "summary": "[Month, Year] Round [N] Objective Key Finding 03 Primary objective · Round [N] synthesis U"
+    },
+    {
+      "file": "04-slide--split.html",
+      "layout": "slide--split",
+      "classAttr": "slide slide--split light",
+      "chars": 2037,
+      "summary": "User Behavior [Month, Year] User Behavior 04 The Pattern The first 48 hours determine ever"
+    },
+    {
+      "file": "05-slide--stats.html",
+      "layout": "slide--stats",
+      "classAttr": "slide slide--stats light",
+      "chars": 2111,
+      "summary": "By the Numbers [Month, Year] By the Numbers 05 What the data showed 68% of users churned w"
+    },
+    {
+      "file": "06-slide--list.html",
+      "layout": "slide--list",
+      "classAttr": "slide slide--list light",
+      "chars": 1817,
+      "summary": "Recommendations [Month, Year] Recommendations 06 What to fix Five changes, ordered by impa"
+    },
+    {
+      "file": "07-slide--compare.html",
+      "layout": "slide--compare",
+      "classAttr": "slide slide--compare light",
+      "chars": 2104,
+      "summary": "Current vs Proposed [Month, Year] Current · Proposed 07 Current Onboarding 9-step setup, a"
+    },
+    {
+      "file": "08-slide--quote.html",
+      "layout": "slide--quote",
+      "classAttr": "slide slide--quote dark",
+      "chars": 1038,
+      "summary": "Participant Voice [Month of study] \"I kept opening the app and then closing it again. I di"
+    },
+    {
+      "file": "09-slide--dense.html",
+      "layout": "slide--dense",
+      "classAttr": "slide slide--dense light",
+      "chars": 3537,
+      "summary": "Analysis [Month, Year] Analysis 09 Why onboarding problems compound over time The Activati"
+    },
+    {
+      "file": "10-slide--chart.html",
+      "layout": "slide--chart",
+      "classAttr": "slide slide--chart light",
+      "chars": 2210,
+      "summary": "Retention Analysis 11 90-day retention by onboarding cohort % retained · n=480 · [Q1 of st"
+    },
+    {
+      "file": "11-slide--diagram.html",
+      "layout": "slide--diagram",
+      "classAttr": "slide slide--diagram light",
+      "chars": 2123,
+      "summary": "Methodology 12 How this research was conducted 01 Recruit 24 participants screened from th"
+    },
+    {
+      "file": "12-slide--pie.html",
+      "layout": "slide--pie",
+      "classAttr": "slide slide--pie light",
+      "chars": 3276,
+      "summary": "Participants [Month, Year] Participant Breakdown 13 Who we spoke with Power Users 38% Casu"
+    },
+    {
+      "file": "13-slide--vtimeline.html",
+      "layout": "slide--vtimeline",
+      "classAttr": "slide slide--vtimeline light",
+      "chars": 2411,
+      "summary": "Process [Month, Year] Process 14 From research to recommendation [Week 1] Recruitment Scre"
+    },
+    {
+      "file": "14-slide--cycle.html",
+      "layout": "slide--cycle",
+      "classAttr": "slide slide--cycle light",
+      "chars": 2846,
+      "summary": "Design Process [Month, Year] Design Process 15 The design thinking cycle 01 Empathise Unde"
+    },
+    {
+      "file": "15-slide--pyramid.html",
+      "layout": "slide--pyramid",
+      "classAttr": "slide slide--pyramid light",
+      "chars": 1492,
+      "summary": "Research Framework [Month, Year] Research Framework 17 Research Framework Analysis Hierarc"
+    },
+    {
+      "file": "16-slide--end.html",
+      "layout": "slide--end",
+      "classAttr": "slide slide--end light",
+      "chars": 1149,
+      "summary": "Research Team [Month, Year] Research Team Questions, feedback, and next steps [research@or"
+    }
+  ]
+}

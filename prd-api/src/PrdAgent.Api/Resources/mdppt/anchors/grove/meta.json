@@ -1,0 +1,92 @@
+{
+  "name": "grove",
+  "upstream": "zarazhangrui/beautiful-html-templates (grove)",
+  "license": "MIT",
+  "slideCount": 12,
+  "layouts": [
+    {
+      "file": "01-slide--cover.html",
+      "layout": "slide--cover",
+      "classAttr": "slide dark slide--cover",
+      "chars": 2189,
+      "summary": "Strategy · Presentation 01 [Studio Name] · [Year] [Presentation Title Goes Here ] A [type "
+    },
+    {
+      "file": "02-slide--chapter.html",
+      "layout": "slide--chapter",
+      "classAttr": "slide dark slide--chapter",
+      "chars": 1067,
+      "summary": "01 01 / Context The landscape has shifted. Now we must decide where to stand . An honest a"
+    },
+    {
+      "file": "03-slide--statement.html",
+      "layout": "slide--statement",
+      "classAttr": "slide dark slide--statement",
+      "chars": 1340,
+      "summary": "The Thesis Core Insight 03 The Argument The brands that will lead the next decade are not "
+    },
+    {
+      "file": "04-slide--split.html",
+      "layout": "slide--split",
+      "classAttr": "slide light slide--split",
+      "chars": 2480,
+      "summary": "The Evidence Research · Insight 04 What We Found Audiences have outgrown the stories being"
+    },
+    {
+      "file": "05-slide--stats.html",
+      "layout": "slide--stats",
+      "classAttr": "slide dark slide--stats",
+      "chars": 2041,
+      "summary": "By The Numbers Market · Metrics 05 Three numbers that define the opportunity 73 % Of consu"
+    },
+    {
+      "file": "06-slide--list.html",
+      "layout": "slide--list",
+      "classAttr": "slide light slide--list",
+      "chars": 2141,
+      "summary": "Our Approach Framework 06 What Changes Five principles that reframe how we think about bra"
+    },
+    {
+      "file": "07-slide--quote.html",
+      "layout": "slide--quote",
+      "classAttr": "slide dark slide--quote",
+      "chars": 739,
+      "summary": "\" The most radical thing a brand can do right now is simply tell the truth about what it i"
+    },
+    {
+      "file": "08-slide--compare.html",
+      "layout": "slide--compare",
+      "classAttr": "slide light slide--compare",
+      "chars": 2680,
+      "summary": "Before / After The Shift 08 The Old Model Brand as broadcaster — pushing messages outward "
+    },
+    {
+      "file": "09-slide--chapter.html",
+      "layout": "slide--chapter",
+      "classAttr": "slide dark slide--chapter",
+      "chars": 858,
+      "summary": "02 02 / Recommendation What we propose — and why we believe it will work A practical frame"
+    },
+    {
+      "file": "10-slide--statement.html",
+      "layout": "slide--statement",
+      "classAttr": "slide light slide--statement",
+      "chars": 1876,
+      "summary": "The Recommendation Strategic Direction 10 The Path Forward Stop managing perception. Start"
+    },
+    {
+      "file": "11-slide--chart.html",
+      "layout": "slide--chart",
+      "classAttr": "slide dark slide--chart",
+      "chars": 2736,
+      "summary": "The Data Trust Index · Category Benchmarks 11 Consumer trust by category Score out of 100 "
+    },
+    {
+      "file": "12-slide--end.html",
+      "layout": "slide--end",
+      "classAttr": "slide dark slide--end",
+      "chars": 1236,
+      "summary": "12 [Organization] The work begins when the presentation ends . [Author Name] · [author@org"
+    }
+  ]
+}

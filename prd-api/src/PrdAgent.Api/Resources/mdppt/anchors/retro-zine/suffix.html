@@ -1,0 +1,74 @@
+
+
+  </div>
+
+  <script>
+    (function() {
+      const slides = document.querySelectorAll('.slide');
+      const progressBar = document.getElementById('progressBar');
+      const slideCounter = document.getElementById('slideCounter');
+      const totalSlides = slides.length;
+      let current = 0;
+
+      function updateSlide(index) {
+        slides.forEach((slide, i) => {
+          slide.classList.toggle('active', i === index);
+        });
+        const pct = ((index + 1) / totalSlides) * 100;
+        progressBar.style.width = pct + '%';
+        slideCounter.textContent = String(index + 1).padStart(2, '0') + ' / ' + String(totalSlides).padStart(2, '0');
+      }
+
+      function next() {
+        if (current < totalSlides - 1) {
+          current++;
+          updateSlide(current);
+        }
+      }
+
+      function prev() {
+        if (current > 0) {
+          current--;
+          updateSlide(current);
+        }
+      }
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ' || e.key === 'Enter' || e.key === 'PageDown') {
+          e.preventDefault();
+          next();
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+          e.preventDefault();
+          prev();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        const x = e.clientX;
+        const w = window.innerWidth;
+        if (x > w / 2) {
+          next();
+        } else {
+          prev();
+        }
+      });
+
+      // Touch support
+      let touchStartX = 0;
+      document.addEventListener('touchstart', (e) => {
+        touchStartX = e.changedTouches[0].screenX;
+      });
+      document.addEventListener('touchend', (e) => {
+        const touchEndX = e.changedTouches[0].screenX;
+        if (touchStartX - touchEndX > 50) {
+          next();
+        } else if (touchEndX - touchStartX > 50) {
+          prev();
+        }
+      });
+
+      updateSlide(0);
+    })();
+  </script>
+</body>
+</html>

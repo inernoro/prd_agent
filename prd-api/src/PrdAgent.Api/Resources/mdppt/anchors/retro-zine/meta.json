@@ -1,0 +1,78 @@
+{
+  "name": "retro-zine",
+  "upstream": "zarazhangrui/beautiful-html-templates (retro-zine)",
+  "license": "MIT",
+  "slideCount": 10,
+  "layouts": [
+    {
+      "file": "01-slide-hero.html",
+      "layout": "slide-hero",
+      "classAttr": "slide slide-hero",
+      "chars": 1725,
+      "summary": "Q3 Strategic Overview NEXUS VENTURES Growth &mdash; Innovation &mdash; Partnership 2026"
+    },
+    {
+      "file": "02-slide-split.html",
+      "layout": "slide-split",
+      "classAttr": "slide slide-split",
+      "chars": 668,
+      "summary": "Our Mission Building Tomorrow We partner with ambitious teams to turn complex challenges i"
+    },
+    {
+      "file": "03-slide-statement.html",
+      "layout": "slide-statement",
+      "classAttr": "slide slide-statement",
+      "chars": 410,
+      "summary": "\"The companies that thrive are not the ones that predict the future. They are the ones tha"
+    },
+    {
+      "file": "04-slide-grid.html",
+      "layout": "slide-grid",
+      "classAttr": "slide slide-grid",
+      "chars": 897,
+      "summary": "At a Glance Founded 2019 &mdash; San Francisco, CA Team 120 people across 4 continents Cli"
+    },
+    {
+      "file": "05-slide-visual.html",
+      "layout": "slide-visual",
+      "classAttr": "slide slide-visual",
+      "chars": 1361,
+      "summary": "Q3 Target $18M ARR by December Fiscal year ending March 2027"
+    },
+    {
+      "file": "06-slide-editorial.html",
+      "layout": "slide-editorial",
+      "classAttr": "slide slide-editorial",
+      "chars": 1532,
+      "summary": "Product Roadmap FY 2026 / 2027 P hase one is about foundation — refining our core platform"
+    },
+    {
+      "file": "07-slide-numbers.html",
+      "layout": "slide-numbers",
+      "classAttr": "slide slide-numbers",
+      "chars": 810,
+      "summary": "Our Core Values 01 Clarity Complex problems deserve simple explanations. 02 Velocity Ship "
+    },
+    {
+      "file": "08-slide-collage.html",
+      "layout": "slide-collage",
+      "classAttr": "slide slide-collage",
+      "chars": 1297,
+      "summary": "Capabilities Strategy Market analysis, competitive positioning, and roadmaps that bridge a"
+    },
+    {
+      "file": "09-slide-rsvp.html",
+      "layout": "slide-rsvp",
+      "classAttr": "slide slide-rsvp",
+      "chars": 975,
+      "summary": "Let's Talk Ready to explore what we can build together? Name _____________________________"
+    },
+    {
+      "file": "10-slide-closing.html",
+      "layout": "slide-closing",
+      "classAttr": "slide slide-closing",
+      "chars": 459,
+      "summary": "Thank You Let's Build Together hello@nexusventures.co &mdash; San Francisco &mdash; Worldw"
+    }
+  ]
+}

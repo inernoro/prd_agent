@@ -1,0 +1,154 @@
+
+
+    </div>
+    <!-- /#deck -->
+
+    <!-- Navigation dots: built dynamically by JS -->
+    <nav id="nav-dots" aria-label="Slide navigation"></nav>
+
+    <!-- Slide counter: bottom-right, barely visible -->
+    <div id="slide-counter"></div>
+
+    <script>
+      (function () {
+        /* ── DOM references ─────────────────────────────────────────────── */
+        const deck = document.getElementById("deck");
+        const dotsNav = document.getElementById("nav-dots");
+        const counter = document.getElementById("slide-counter");
+        const slides = Array.from(deck.querySelectorAll(".slide"));
+        const total = slides.length;
+        let current = 0;
+        let isAnimating = false;
+
+        /* ── Size the deck to fit all slides in a single horizontal row ── */
+        deck.style.width = "calc(" + total + " * 100vw)";
+
+        /* ── Build one nav dot per slide ─────────────────────────────────  */
+        slides.forEach(function (_, i) {
+          var dot = document.createElement("button");
+          dot.className = "nav-dot";
+          dot.setAttribute("aria-label", "Slide " + (i + 1));
+          dot.addEventListener("click", function () {
+            goTo(i);
+          });
+          dotsNav.appendChild(dot);
+        });
+
+        /* ── Helpers ─────────────────────────────────────────────────────  */
+        function pad(n) {
+          return String(n).padStart(2, "0");
+        }
+
+        /* ── goTo: the central navigation function ───────────────────────  */
+        function goTo(index) {
+          /* Guard: no double-firing while a transition is running */
+          if (isAnimating) return;
+          if (index < 0 || index >= total) return;
+          if (
+            index === current &&
+            slides[current].classList.contains("is-active")
+          )
+            return;
+
+          isAnimating = true;
+
+          /* Remove active state from the outgoing slide */
+          slides[current].classList.remove("is-active");
+
+          current = index;
+          var slide = slides[current];
+
+          /*
+           * Animation reset: force the browser to forget the current animation
+           * state by setting animation:none, triggering a reflow, then clearing.
+           * This makes re-visiting a slide replay the entrance animation.
+           */
+          slide.querySelectorAll("[data-anim]").forEach(function (el) {
+            el.style.animation = "none";
+            void el.offsetHeight; /* force reflow — critical for reset to work */
+            el.style.animation = "";
+          });
+
+          /* Activate the incoming slide and scroll the deck */
+          slide.classList.add("is-active");
+          deck.style.transform = "translateX(calc(-" + current + " * 100vw))";
+
+          /* ── Update nav dots ─────────────────────────────────────────── */
+          dotsNav.querySelectorAll(".nav-dot").forEach(function (d, i) {
+            d.classList.toggle("is-active", i === current);
+            d.style.background =
+              i === current ? "rgba(26,26,22,0.8)" : "rgba(26,26,22,0.3)";
+          });
+
+          /* ── Update slide counter ────────────────────────────────────── */
+          counter.textContent = pad(current + 1) + " / " + pad(total);
+          counter.style.color = "rgba(26,26,22,0.28)";
+
+          /* Unlock after the slide transition completes */
+          setTimeout(function () {
+            isAnimating = false;
+          }, 950);
+        }
+
+        /* ── Keyboard navigation ─────────────────────────────────────────  */
+        document.addEventListener("keydown", function (e) {
+          if (
+            e.key === "ArrowRight" ||
+            e.key === " " ||
+            e.key === "ArrowDown"
+          ) {
+            e.preventDefault();
+            goTo(current + 1);
+          }
+          if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+            e.preventDefault();
+            goTo(current - 1);
+          }
+          if (e.key === "Home") goTo(0);
+          if (e.key === "End") goTo(total - 1);
+        });
+
+        /* ── Touch swipe ─────────────────────────────────────────────────  */
+        var touchStartX = 0;
+        document.addEventListener(
+          "touchstart",
+          function (e) {
+            touchStartX = e.touches[0].clientX;
+          },
+          { passive: true },
+        );
+        document.addEventListener(
+          "touchend",
+          function (e) {
+            var dx = e.changedTouches[0].clientX - touchStartX;
+            /* Require at least 40px swipe to trigger navigation */
+            if (Math.abs(dx) > 40) goTo(current + (dx < 0 ? 1 : -1));
+          },
+          { passive: true },
+        );
+
+        /* ── Mouse wheel ─────────────────────────────────────────────────  */
+        var wheelLocked = false;
+        document.addEventListener(
+          "wheel",
+          function (e) {
+            if (wheelLocked) return;
+            /* Use whichever axis has greater delta */
+            var primary =
+              Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+            goTo(current + (primary > 0 ? 1 : -1));
+            /* Lock for 1 second to prevent runaway scroll */
+            wheelLocked = true;
+            setTimeout(function () {
+              wheelLocked = false;
+            }, 1000);
+          },
+          { passive: true },
+        );
+
+        /* ── Initialize on slide 1 ───────────────────────────────────────  */
+        goTo(0);
+      })();
+    </script>
+  </body>
+</html>

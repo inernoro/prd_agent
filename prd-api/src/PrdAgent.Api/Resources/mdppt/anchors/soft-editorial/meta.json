@@ -1,0 +1,92 @@
+{
+  "name": "soft-editorial",
+  "upstream": "zarazhangrui/beautiful-html-templates (soft-editorial)",
+  "license": "MIT",
+  "slideCount": 12,
+  "layouts": [
+    {
+      "file": "01-s-cover.html",
+      "layout": "s-cover",
+      "classAttr": "slide s-cover",
+      "chars": 748,
+      "summary": "Field Notes A research debrief, vol. iii What we learned this&nbsp;quarter. A short, hones"
+    },
+    {
+      "file": "02-s-foreword.html",
+      "layout": "s-foreword",
+      "classAttr": "slide s-foreword",
+      "chars": 987,
+      "summary": "Foreword ii We spent eight weeks listening, and what we heard surprised us in the kindest "
+    },
+    {
+      "file": "03-s-method.html",
+      "layout": "s-method",
+      "classAttr": "slide s-method",
+      "chars": 1241,
+      "summary": "The Method iii i. Listen Twenty-eight long-form conversations with customers across four s"
+    },
+    {
+      "file": "04-s-insights.html",
+      "layout": "s-insights",
+      "classAttr": "slide s-insights",
+      "chars": 1285,
+      "summary": "Insights iv Insight #1 Trust is the onboarding Customers don't churn on day one because th"
+    },
+    {
+      "file": "05-s-closer.html",
+      "layout": "s-closer",
+      "classAttr": "slide s-closer",
+      "chars": 597,
+      "summary": "A closer look · 1 of 3 v on insight #1 Trust is the onboarding. The product can be perfect"
+    },
+    {
+      "file": "06-s-numbers.html",
+      "layout": "s-numbers",
+      "classAttr": "slide s-numbers",
+      "chars": 828,
+      "summary": "By the numbers vi of new accounts open the third email, up from 41% last quarter. 68 % 28 "
+    },
+    {
+      "file": "07-s-quote.html",
+      "layout": "s-quote",
+      "classAttr": "slide s-quote",
+      "chars": 586,
+      "summary": "In their words vii \" I did not need a better product. I needed it to behave like it rememb"
+    },
+    {
+      "file": "08-s-next.html",
+      "layout": "s-next",
+      "classAttr": "slide s-next",
+      "chars": 1392,
+      "summary": "What we'll do next viii Three small moves, before the next debrief. Each one is small enou"
+    },
+    {
+      "file": "09-s-consult.html",
+      "layout": "s-consult",
+      "classAttr": "slide s-consult",
+      "chars": 2506,
+      "summary": "Findings · Detail ix Action title The trust gap is built in the first 72 hours, not the fi"
+    },
+    {
+      "file": "10-s-chart.html",
+      "layout": "s-chart",
+      "classAttr": "slide s-chart",
+      "chars": 2145,
+      "summary": "Retention, by cohort x The curve bends around day three. Cohorts that received a written w"
+    },
+    {
+      "file": "11-s-process.html",
+      "layout": "s-process",
+      "classAttr": "slide s-process",
+      "chars": 2235,
+      "summary": "How we'll work xi From insight to shipped change. A five-step path each pilot follows, end"
+    },
+    {
+      "file": "12-s-matrix.html",
+      "layout": "s-matrix",
+      "classAttr": "slide s-matrix",
+      "chars": 1854,
+      "summary": "The three pilots, side by side xii Where each pilot earns its keep. Scored against the fou"
+    }
+  ]
+}
