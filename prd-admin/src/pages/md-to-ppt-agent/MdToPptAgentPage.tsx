@@ -379,8 +379,15 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
   //    桥就绪后上报 map-ppt-ready（ready-signal 模式），防止父页面在桥未装好时发指令被丢。
   const controlScript =
     '<script data-map-inject>(function(){' +
-    'function tot(){var s=document.querySelectorAll(".reveal .slides>section");return s.length||1;}' +
-    'function cur(){try{if(window.Reveal&&Reveal.getIndices){return (Reveal.getIndices().h||0)+1;}}catch(e){}return 1;}' +
+    // 双模式：reveal（旧 deck）与锚定 zhangzara 运行时（div.slide + .active + 方向键）通吃
+    'function slides(){var out=[];var els=document.querySelectorAll(".slide");for(var i=0;i<els.length;i++){var cl=(els[i].getAttribute("class")||"").split(" ");if(cl.indexOf("slide")>=0){out.push(els[i]);}}return out;}' +
+    'function isAnchored(){return !window.Reveal&&slides().length>0;}' +
+    'function tot(){if(window.Reveal){var s=document.querySelectorAll(".reveal .slides>section");return s.length||1;}return slides().length||1;}' +
+    'function cur(){try{if(window.Reveal&&Reveal.getIndices){return (Reveal.getIndices().h||0)+1;}var ss=slides();for(var i=0;i<ss.length;i++){if(ss[i].classList.contains("active")){return i+1;}}}catch(e){}return 1;}' +
+    // 锚定模式翻页：派发方向键（各模板运行时都绑方向键），window+document 双目标、带 keyCode 兼容
+    'function pressKey(key,code){var ev;try{ev=new KeyboardEvent("keydown",{key:key,keyCode:code,which:code,bubbles:true});}catch(e){return;}try{Object.defineProperty(ev,"keyCode",{get:function(){return code;}});}catch(e2){}document.dispatchEvent(ev);window.dispatchEvent(ev);}' +
+    'function anchoredNav(dir){pressKey(dir==="prev"?"ArrowLeft":"ArrowRight",dir==="prev"?37:39);}' +
+    'function anchoredGoto(h){var guard=0;while(cur()>1&&guard<60){anchoredNav("prev");guard++;}for(var i=0;i<h&&i<60;i++){anchoredNav("next");}}' +
     'function rep(){try{parent.postMessage({type:"map-ppt-slide",cur:cur(),total:tot()},"*");}catch(e){}}' +
     // 圈选信息桥：父页面发来视口百分比矩形，换算像素后在中心点 + 四角内缩 10% 共 5 个采样点
     // elementFromPoint 取元素，向上找最近的语义祖先（到 .slides 为止），去重收集至多 5 条描述回传。
@@ -400,14 +407,16 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
     '}catch(e){}' +
     'try{parent.postMessage({type:"map-ppt-rect-info",id:d.id,slide:cur(),texts:texts},"*");}catch(e){}}' +
     'window.addEventListener("message",function(e){var d=e.data||{};try{' +
-    'if(d.type==="map-ppt-nav"&&window.Reveal){if(d.dir==="prev"){Reveal.prev();}else{Reveal.next();}setTimeout(rep,80);}' +
+    'if(d.type==="map-ppt-nav"){if(window.Reveal){if(d.dir==="prev"){Reveal.prev();}else{Reveal.next();}}else{anchoredNav(d.dir);}setTimeout(rep,80);}' +
     // 页位恢复：父页面指定 0-based 横向索引直接跳页
-    'if(d.type==="map-ppt-goto"&&window.Reveal&&typeof d.h==="number"){Reveal.slide(d.h);setTimeout(rep,80);}' +
+    'if(d.type==="map-ppt-goto"&&typeof d.h==="number"){if(window.Reveal){Reveal.slide(d.h);}else{anchoredGoto(d.h);}setTimeout(rep,80);}' +
     'if(d.type==="map-ppt-rect-query"){rectInfo(d);}' +
     '}catch(err){if(d.type==="map-ppt-rect-query"){try{parent.postMessage({type:"map-ppt-rect-info",id:d.id,slide:1,texts:[]},"*");}catch(e2){}}}});' +
     'var n=0;var iv=setInterval(function(){n++;var R=window.Reveal;' +
     'if(R&&R.getIndices){clearInterval(iv);rep();try{if(R.on){R.on("slidechanged",rep);}else if(R.addEventListener){R.addEventListener("slidechanged",rep);}}catch(e){}' +
-    // 桥安装完成（找到 Reveal 且首次 rep 已发）→ 通知父页面可以下发指令了
+    'try{parent.postMessage({type:"map-ppt-ready"},"*");}catch(e){}}' +
+    // 锚定运行时：找到 .slide 即就绪；active 类翻转走 MutationObserver 上报页码
+    'else if(isAnchored()){clearInterval(iv);rep();try{var ss=slides();var mo=new MutationObserver(function(){rep();});for(var i=0;i<ss.length;i++){mo.observe(ss[i],{attributes:true,attributeFilter:["class"]});}}catch(e){}' +
     'try{parent.postMessage({type:"map-ppt-ready"},"*");}catch(e){}}' +
     'else if(n>60){clearInterval(iv);}},250);' +
     '})();</script>';
@@ -432,7 +441,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
       // 撤销栈（最多 20 条）+ dirty 标志：beforeinput 首次触发时压栈（即"首次 input 前"的修改前快照），
       // blur/换目标/按钮操作后复位 dirty
       'var hist=[];var dirty=false;' +
-      'function slidesEl(){return document.querySelector(".reveal .slides");}' +
+      'function slidesEl(){return document.querySelector(".reveal .slides")||document.body;}' +
       'function snap(){try{var s=slidesEl();if(s){hist.push(s.innerHTML);if(hist.length>20){hist.shift();}}}catch(e){}}' +
       'function onBI(){if(!dirty){snap();dirty=true;}}' +
       'function serialize(){try{' +
@@ -993,6 +1002,9 @@ export function MdToPptAgentPage() {
 
   // ─── 并行逐页生成进度（pages 模式）：壳子 head + 每页完成即点亮（真实进度，不依赖 token 流）
   const [frameHead, setFrameHead] = useState('');
+  // 锚定 deck 模式（zhangzara 成品模板）：suffix 含自带导航运行时，实况/缩略图用完整单页 deck
+  const [frameSuffix, setFrameSuffix] = useState('');
+  const [frameAnchored, setFrameAnchored] = useState(false);
   const [pagesTotal, setPagesTotal] = useState(0);
   const [pagesDone, setPagesDone] = useState<Record<number, string>>({});
 
@@ -1023,20 +1035,35 @@ export function MdToPptAgentPage() {
       : pagesDoneIdxs.length > 0
         ? pagesDoneIdxs[pagesDoneIdxs.length - 1]
         : -1;
+  // 锚定模式：完整单页 deck（prefix + active slide + suffix，模板自带运行时负责缩放居中）
+  const buildAnchoredDoc = useCallback((slide: string) => {
+    const m = /class="([^"]*)"/.exec(slide);
+    const withActive = m && !m[1].split(' ').includes('active')
+      ? slide.slice(0, m.index) + `class="${m[1]} active"` + slide.slice(m.index + m[0].length)
+      : slide;
+    return frameHead + withActive + frameSuffix;
+  }, [frameHead, frameSuffix]);
+
   const pagesLiveDoc = useMemo(() => {
     if (!frameHead || pagesLiveIdx < 0) return '';
-    return buildLiveSlideDoc(extractHeadAssets(frameHead + '<body>'), pagesDone[pagesLiveIdx] ?? '');
-  }, [frameHead, pagesLiveIdx, pagesDone]);
+    const slide = pagesDone[pagesLiveIdx] ?? '';
+    if (frameAnchored) return buildAnchoredDoc(slide);
+    return buildLiveSlideDoc(extractHeadAssets(frameHead + '<body>'), slide);
+  }, [frameHead, frameAnchored, buildAnchoredDoc, pagesLiveIdx, pagesDone]);
 
   // 页卡真缩略图（诉求 1：底部页卡要一眼看到真实效果，不是文字卡）——
   // 每个完成页用同一套设计系统渲成迷你实况文档，iframe 等比缩放展示
   const pageThumbDocs = useMemo(() => {
     if (!frameHead) return {} as Record<number, string>;
-    const assets = extractHeadAssets(frameHead + '<body>');
     const out: Record<number, string> = {};
+    if (frameAnchored) {
+      for (const i of pagesDoneIdxs) out[i] = buildAnchoredDoc(pagesDone[i] ?? '');
+      return out;
+    }
+    const assets = extractHeadAssets(frameHead + '<body>');
     for (const i of pagesDoneIdxs) out[i] = buildLiveSlideDoc(assets, pagesDone[i] ?? '');
     return out;
-  }, [frameHead, pagesDoneIdxs, pagesDone]);
+  }, [frameHead, frameAnchored, buildAnchoredDoc, pagesDoneIdxs, pagesDone]);
 
   // ─── 思考过程流（推理模型先想后写：deepseek-v3.2 实测思考可占总耗时 90%，
   //     正文集中尾部爆发。思考期间产物无片段可渲染，就渲染思考本身——它就是此刻的产物）
@@ -1059,6 +1086,8 @@ export function MdToPptAgentPage() {
     setThinkingPreview('');
     setLiveSlideSel(null);
     setFrameHead('');
+    setFrameSuffix('');
+    setFrameAnchored(false);
     setPagesTotal(0);
     setPagesDone({});
   }, []);
@@ -1582,6 +1611,49 @@ export function MdToPptAgentPage() {
         phase: 'generating',
       });
 
+      let liveRunId = '';
+      // SSE 断线恢复轮询：连接没了但 run 还活着（服务器权威性）→ 跟踪到终态，不误报失败
+      const resumePolling = () => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === genMsg.id
+              ? { ...m, content: '连接有点波动，已转入后台跟踪（生成没有中断）...' }
+              : m
+          )
+        );
+        const tick = async () => {
+          const run = await getMdToPptRun(liveRunId);
+          if (!run) return;
+          if (run.status === 'done' && run.html) {
+            setGeneratedHtml(run.html);
+            setArtifactPhase('done');
+            setIsProcessing(false);
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === genMsg.id
+                  ? { ...m, content: 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。', phase: 'done' }
+                  : m
+              )
+            );
+            return;
+          }
+          if (run.status === 'error') {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === genMsg.id
+                  ? { ...m, content: '生成失败：' + (run.error ?? '未知错误'), phase: 'error' }
+                  : m
+              )
+            );
+            setIsProcessing(false);
+            setArtifactPhase('idle');
+            return;
+          }
+          window.setTimeout(() => void tick(), 3000);
+        };
+        void tick();
+      };
+
       const cleanup = streamMdToPptConvert({
         content: fullContent,
         theme,
@@ -1592,6 +1664,8 @@ export function MdToPptAgentPage() {
         runtimeProfileId: selectedProfileId ?? undefined,
         onFrame: (f) => {
           setFrameHead(f.head);
+          setFrameSuffix(f.suffix ?? '');
+          setFrameAnchored(f.anchored === true);
           setPagesTotal(f.total);
           // 左侧对话保持主力语言交互（诉求 2）：阶段事件同步进聊天气泡
           setMessages((prev) =>
@@ -1620,6 +1694,7 @@ export function MdToPptAgentPage() {
           );
         },
         onRun: (runId) => {
+          liveRunId = runId;
           if (runId) setActiveRunId(runId);
           try {
             sessionStorage.setItem(SESSION_KEY + '-run', runId);
@@ -1665,15 +1740,38 @@ export function MdToPptAgentPage() {
           );
         },
         onError: (err) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === genMsg.id
-                ? { ...m, content: '生成失败：' + err, phase: 'error', error: err }
-                : m
-            )
-          );
-          setIsProcessing(false);
-          setArtifactPhase('idle');
+          // 断线 ≠ 失败（2026-06-12 用户截图实锤误报）：先对账 run 真实状态
+          void (async () => {
+            if (liveRunId) {
+              const run = await getMdToPptRun(liveRunId).catch(() => null);
+              if (run && run.status === 'running') {
+                resumePolling();
+                return;
+              }
+              if (run && run.status === 'done' && run.html) {
+                setGeneratedHtml(run.html);
+                setArtifactPhase('done');
+                setIsProcessing(false);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === genMsg.id
+                      ? { ...m, content: 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。', phase: 'done' }
+                      : m
+                  )
+                );
+                return;
+              }
+            }
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === genMsg.id
+                  ? { ...m, content: '生成失败：' + err, phase: 'error', error: err }
+                  : m
+              )
+            );
+            setIsProcessing(false);
+            setArtifactPhase('idle');
+          })();
         },
       });
 
@@ -3255,7 +3353,7 @@ export function MdToPptAgentPage() {
                       <iframe
                         data-testid="live-slide-preview"
                         srcDoc={effLiveDoc}
-                        sandbox=""
+                        sandbox={frameAnchored ? 'allow-scripts' : ''}
                         title="生成实况预览"
                         className="w-full h-full border-0"
                       />
@@ -3351,7 +3449,7 @@ export function MdToPptAgentPage() {
                             {isDone && thumb ? (
                               <iframe
                                 srcDoc={thumb}
-                                sandbox=""
+                                sandbox={frameAnchored ? 'allow-scripts' : ''}
                                 tabIndex={-1}
                                 title={`第 ${i + 1} 页缩略图`}
                                 style={{

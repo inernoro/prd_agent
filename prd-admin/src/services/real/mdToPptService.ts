@@ -285,7 +285,7 @@ async function readSseStream(
     onDiag?: (data: MdToPptDiagEvent) => void;
     onThinking?: (text: string) => void;
     onDelta?: (text: string) => void;
-    onFrame?: (data: { head: string; total: number }) => void;
+    onFrame?: (data: { head: string; suffix?: string; total: number; anchored?: boolean }) => void;
     onPage?: (data: { index: number; total: number; html: string; done: number }) => void;
     onDone?: (data: Record<string, unknown>) => void;
     onError?: (message: string) => void;
@@ -332,7 +332,7 @@ async function readSseStream(
           } else if (currentEvent === 'thinking') {
             handlers.onThinking?.((data.text as string) ?? '');
           } else if (currentEvent === 'frame') {
-            handlers.onFrame?.({ head: (data.head as string) ?? '', total: (data.total as number) ?? 0 });
+            handlers.onFrame?.({ head: (data.head as string) ?? '', suffix: (data.suffix as string) ?? undefined, total: (data.total as number) ?? 0, anchored: data.anchored === true });
           } else if (currentEvent === 'page') {
             handlers.onPage?.({
               index: (data.index as number) ?? 0,
@@ -374,7 +374,7 @@ export interface MdToPptConvertSseOptions {
   /** 模型运行配置 ID（用户在 PPT 页切换的模型；缺省走后端默认链） */
   runtimeProfileId?: string;
   /** 壳子就绪（head 含完整设计系统，实况渲染用） */
-  onFrame?: (data: { head: string; total: number }) => void;
+  onFrame?: (data: { head: string; suffix?: string; total: number; anchored?: boolean }) => void;
   /** 单页完成（并行，真实进度） */
   onPage?: (data: { index: number; total: number; html: string; done: number }) => void;
   onStart?: (info: { slideCount?: number; theme?: string }) => void;
