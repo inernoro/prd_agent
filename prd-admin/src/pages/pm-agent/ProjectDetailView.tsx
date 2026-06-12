@@ -26,6 +26,7 @@ import { MilestonesBar } from './MilestonesBar';
 import { MilestonesPanel } from './MilestonesPanel';
 import { RiskPanel } from './RiskPanel';
 import { BurndownPanel } from './BurndownPanel';
+import { PmBriefingSection } from './PmBriefingSection';
 import { ClosureReportPanel } from './ClosureReportPanel';
 import { HealthDiagnosisPanel } from './HealthDiagnosisPanel';
 import { EvaluatePanel } from './EvaluatePanel';
@@ -572,7 +573,12 @@ export function ProjectDetailPage() {
 
       {tab === 'risks' && <RiskPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId || project.memberIds.includes(myId)} goals={goals} tasks={tasks} milestones={milestones} />}
 
-      {tab === 'report' && <BurndownPanel projectId={projectId} />}
+      {tab === 'report' && (
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4" style={{ overscrollBehavior: 'contain' }}>
+          <PmBriefingSection projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId} />
+          <BurndownPanel projectId={projectId} />
+        </div>
+      )}
 
       {tab === 'stakeholders' && (
         <StakeholderPanel projectId={projectId} stakeholders={project.stakeholders} onSaved={() => load()} />

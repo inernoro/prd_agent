@@ -71,6 +71,9 @@ import type {
   UpdatePmRiskContract,
   DeletePmRiskContract,
   GetPmBurndownContract,
+  ListPmBriefingsContract,
+  GetPmBriefingContract,
+  DeletePmBriefingContract,
   GetPmMyTodosContract,
   GetPmAgentPreferencesContract,
   UpdatePmQuickActionsContract,
@@ -301,6 +304,17 @@ export const deletePmRiskReal: DeletePmRiskContract = async (riskId) => {
 
 export const getPmBurndownReal: GetPmBurndownContract = async (projectId) => {
   return await apiRequest(api.pm.projects.burndown(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+// ── 项目简报 ──
+export const listPmBriefingsReal: ListPmBriefingsContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.briefings(encodeURIComponent(projectId)), { method: 'GET' });
+};
+export const getPmBriefingReal: GetPmBriefingContract = async (briefingId) => {
+  return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'GET' });
+};
+export const deletePmBriefingReal: DeletePmBriefingContract = async (briefingId) => {
+  return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'DELETE' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

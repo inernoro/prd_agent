@@ -3,3 +3,5 @@
 | fix | prd-api | 删除目标时级联清理 AutoFromGoal 联动里程碑，不再留孤儿数据（手动建的关联里程碑不动） |
 | feat | prd-api | 里程碑列表返回 autoFromGoal 字段，前端可区分目标联动里程碑 |
 | feat | prd-admin | 目标/里程碑视觉区分：联动里程碑在时间轴/日历/管理条/详情抽屉显示 Target 图标 + 「来自目标」紫色标记；设为里程碑的目标在列表卡与画布节点常显紫色 Flag 标记 |
+| feat | prd-api | AI 项目简报：POST /api/pm/projects/:id/briefings/generate SSE 生成（硬数据服务端统计 + LLM 结构化内容 + 模板渲染自包含 HTML），简报列表/详情/删除端点，pm_briefings 集合，注册 pm-agent.briefing::chat |
+| feat | prd-admin | 报表 tab 新增「项目简报」区块：生成（SSE 阶段/思考/逐字全程可视化 + 模型名展示）、历史列表、iframe 预览、下载 HTML 单文件 |

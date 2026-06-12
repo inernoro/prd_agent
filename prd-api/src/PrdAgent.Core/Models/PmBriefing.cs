@@ -1,0 +1,33 @@
+namespace PrdAgent.Core.Models;
+
+/// <summary>
+/// 项目简报 — AI 基于项目实时数据生成的对外汇报页（自包含 HTML 单文件）。
+/// 生成即落库；分享走 ShareToken（可撤销），保存到网页托管记 HostedSiteId。
+/// </summary>
+public class PmBriefing
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>所属项目</summary>
+    public string ProjectId { get; set; } = string.Empty;
+
+    /// <summary>简报标题（如「XX 项目简报 · 2026-06-12」）</summary>
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>自包含 HTML 正文（内联样式，可直接下载/托管）</summary>
+    public string Html { get; set; } = string.Empty;
+
+    /// <summary>生成所用模型（取自 Gateway Resolution，规则 ai-model-visibility 要求落库）</summary>
+    public string? Model { get; set; }
+
+    /// <summary>分享 token：非空 = 分享已开启，匿名可通过 /api/pm/briefings/shared/{token} 查看；置空即撤销</summary>
+    public string? ShareToken { get; set; }
+
+    /// <summary>保存到网页托管后的站点 Id（HostedSite，可空）</summary>
+    public string? HostedSiteId { get; set; }
+
+    public string CreatedBy { get; set; } = string.Empty;
+    public string? CreatedByName { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}

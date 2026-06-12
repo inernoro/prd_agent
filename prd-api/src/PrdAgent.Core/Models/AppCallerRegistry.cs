@@ -1331,6 +1331,17 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.assistant::chat";
     }
+
+    public static class Briefing
+    {
+        [AppCallerMetadata(
+            "AI 项目简报",
+            "基于项目实时数据(目标/里程碑/任务/风险)生成对外汇报简报内容，服务端渲染为自包含 HTML 页，可分享/下载/托管",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.briefing::chat";
+    }
 }
 
 /// <summary>

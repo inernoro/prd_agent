@@ -350,6 +350,7 @@ public class MongoDbContext
     public IMongoCollection<PmMilestone> PmMilestones => _database.GetCollection<PmMilestone>("pm_milestones");
     public IMongoCollection<PmRisk> PmRisks => _database.GetCollection<PmRisk>("pm_risks");
     public IMongoCollection<PmAuditLog> PmAuditLogs => _database.GetCollection<PmAuditLog>("pm_audit_logs");
+    public IMongoCollection<PmBriefing> PmBriefings => _database.GetCollection<PmBriefing>("pm_briefings");
 
     // 团队动态（全平台白名单写操作留痕，ActivityLogActionFilter 写入）
     public IMongoCollection<ActivityLog> ActivityLogs => _database.GetCollection<ActivityLog>("activity_logs");

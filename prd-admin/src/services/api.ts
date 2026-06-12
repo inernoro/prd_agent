@@ -1416,6 +1416,8 @@ export const api = {
       risks: (projectId: string) => `/api/pm/projects/${projectId}/risks`,
       burndown: (projectId: string) => `/api/pm/projects/${projectId}/burndown`,
       closureReport: (projectId: string) => `/api/pm/projects/${projectId}/closure-report`,
+      briefings: (projectId: string) => `/api/pm/projects/${projectId}/briefings`,
+      briefingsGenerate: (projectId: string) => `/api/pm/projects/${projectId}/briefings/generate`,
       healthDiagnosis: (projectId: string) => `/api/pm/projects/${projectId}/health-diagnosis`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
@@ -1472,6 +1474,9 @@ export const api = {
     },
     milestones: {
       item: (milestoneId: string) => `/api/pm/milestones/${milestoneId}`,
+    },
+    briefings: {
+      item: (briefingId: string) => `/api/pm/briefings/${briefingId}`,
     },
     risks: {
       item: (riskId: string) => `/api/pm/risks/${riskId}`,

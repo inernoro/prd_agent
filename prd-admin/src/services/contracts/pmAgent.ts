@@ -631,6 +631,27 @@ export type SavePmMilestoneInput = Partial<{
 }>;
 /** AI 建议的里程碑草稿 */
 export type PmMilestoneDraft = { title: string; description?: string; acceptanceCriteria?: string[]; dueDate?: string };
+
+// ── 项目简报 ──
+export type PmBriefing = {
+  id: string;
+  projectId: string;
+  title: string;
+  /** 自包含 HTML（列表接口不返回，详情接口返回） */
+  html?: string;
+  /** 生成所用模型 */
+  model?: string | null;
+  /** 分享是否开启（P2） */
+  shared: boolean;
+  shareToken?: string | null;
+  hostedSiteId?: string | null;
+  createdBy: string;
+  createdByName?: string | null;
+  createdAt: string;
+};
+export type ListPmBriefingsContract = (projectId: string) => Promise<ApiResponse<{ items: PmBriefing[] }>>;
+export type GetPmBriefingContract = (briefingId: string) => Promise<ApiResponse<PmBriefing>>;
+export type DeletePmBriefingContract = (briefingId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
 export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
 export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;

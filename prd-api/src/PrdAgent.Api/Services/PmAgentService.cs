@@ -238,6 +238,90 @@ public class PmAgentService
         return full;
     }
 
+    // ── AI 项目简报 ──
+
+    /// <summary>基于项目实时数据摘要生成结构化简报内容（JSON），由调用方渲染进固定 HTML 模板。
+    /// onModel 回传实际调度到的模型名（落库 + 前端可见，规则 ai-model-visibility）。</summary>
+    public async Task<PmBriefingAiContent?> GenerateBriefingAsync(
+        PmProject project, string statsSummary, string userId,
+        Func<string, Task>? onContent, Func<string, Task>? onThinking, Action<string>? onError, Action<string>? onModel = null)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ProjectManagement.Briefing.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildBriefingSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = statsSummary }
+                },
+                ["temperature"] = 0.4,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+            TimeoutSeconds = 180,
+            IncludeThinking = true,
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+        var (full, err) = await StreamAndAccumulateAsync(request, onContent, onThinking, onModel);
+        if (err != null) { onError?.Invoke(err); return null; }
+        if (string.IsNullOrWhiteSpace(full)) { onError?.Invoke("LLM 返回空内容（模型响应为空）"); return null; }
+        var parsed = ParseBriefingContent(full);
+        if (parsed == null) onError?.Invoke("简报内容解析失败（LLM 未按 JSON 格式输出）");
+        return parsed;
+    }
+
+    private static string BuildBriefingSystemPrompt()
+        => "你是资深项目经理，正在为项目干系人（领导/客户/协作团队）撰写一份对外【项目简报】。"
+         + "基于用户提供的项目实时数据（业务目标、目标与 KR、里程碑健康、任务完成、风险、近期周报），提炼出干系人最关心的信息。"
+         + "语言克制、专业、基于事实，引用真实数据，不空话不夸大。禁止使用任何 emoji 字符。"
+         + "输出严格 JSON（只输出 JSON，不要任何额外说明、不要 markdown 代码围栏之外的文字）：\n"
+         + "{\n"
+         + "  \"summary\": \"项目整体进展摘要，2-4 句，给没时间看细节的领导\",\n"
+         + "  \"status\": \"on_track|at_risk|off_track\",\n"
+         + "  \"statusNote\": \"一句话状态判定依据\",\n"
+         + "  \"highlights\": [\"本期进展亮点，3-6 条，每条一句话，可引用数据\"],\n"
+         + "  \"risks\": [{\"text\": \"风险/问题描述及影响\", \"level\": \"high|medium|low\"}],\n"
+         + "  \"nextSteps\": [\"下一步计划，2-5 条，具体可验收\"]\n"
+         + "}";
+
+    private static PmBriefingAiContent? ParseBriefingContent(string content)
+    {
+        try
+        {
+            var start = content.IndexOf('{');
+            var end = content.LastIndexOf('}');
+            if (start < 0 || end <= start) return null;
+            var obj = JsonSerializer.Deserialize<JsonObject>(content[start..(end + 1)]);
+            if (obj == null) return null;
+            var result = new PmBriefingAiContent
+            {
+                Summary = obj["summary"]?.GetValue<string>() ?? string.Empty,
+                Status = obj["status"]?.GetValue<string>() ?? "on_track",
+                StatusNote = obj["statusNote"]?.GetValue<string>() ?? string.Empty,
+            };
+            if (obj["highlights"] is JsonArray hs)
+                foreach (var h in hs) { var v = h?.GetValue<string>(); if (!string.IsNullOrWhiteSpace(v)) result.Highlights.Add(v); }
+            if (obj["risks"] is JsonArray rs)
+                foreach (var r in rs)
+                {
+                    if (r is not JsonObject ro) continue;
+                    var text = ro["text"]?.GetValue<string>();
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    result.Risks.Add(new PmBriefingRisk { Text = text, Level = ro["level"]?.GetValue<string>() ?? "medium" });
+                }
+            if (obj["nextSteps"] is JsonArray ns)
+                foreach (var n in ns) { var v = n?.GetValue<string>(); if (!string.IsNullOrWhiteSpace(v)) result.NextSteps.Add(v); }
+            return string.IsNullOrWhiteSpace(result.Summary) ? null : result;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string BuildHealthDiagnosisSystemPrompt()
         => "你是资深项目管理顾问（PMO），正在为一个【进行中】的项目做健康诊断（注意：不是结案总结，而是发现当前问题、给出可立即执行的纠偏建议）。"
          + "基于用户提供的项目实时数据（进度、逾期任务、里程碑健康、风险概率×影响分布、未决决策、预算使用、计划周期、最近周报趋势），输出结构化 Markdown 诊断。"
@@ -252,7 +336,8 @@ public class PmAgentService
     private async Task<(string content, string? error)> StreamAndAccumulateAsync(
         GatewayRequest request,
         Func<string, Task>? onContent,
-        Func<string, Task>? onThinking)
+        Func<string, Task>? onThinking,
+        Action<string>? onModel = null)
     {
         var buffer = new StringBuilder();
         try
@@ -261,6 +346,13 @@ public class PmAgentService
             {
                 if (chunk.Type == GatewayChunkType.Error)
                     return (buffer.ToString(), $"LLM 流式失败: {chunk.Error ?? "未知错误"}");
+
+                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null && !string.IsNullOrEmpty(chunk.Resolution.ActualModel))
+                {
+                    try { onModel?.Invoke(chunk.Resolution.ActualModel); }
+                    catch (Exception cbEx) { _logger.LogDebug(cbEx, "[pm-agent] onModel callback ignored"); }
+                    continue;
+                }
 
                 if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
                 {
@@ -553,6 +645,25 @@ public class PmGoalDraft
     public string? Description { get; set; }
     public string? Metric { get; set; }
     public string? Period { get; set; }
+}
+
+/// <summary>AI 生成的简报结构化内容（不直接落库，由 PmBriefingRenderer 渲染进 HTML 模板后落 PmBriefing）。</summary>
+public class PmBriefingAiContent
+{
+    public string Summary { get; set; } = string.Empty;
+    /// <summary>整体状态：on_track | at_risk | off_track</summary>
+    public string Status { get; set; } = "on_track";
+    public string StatusNote { get; set; } = string.Empty;
+    public List<string> Highlights { get; set; } = new();
+    public List<PmBriefingRisk> Risks { get; set; } = new();
+    public List<string> NextSteps { get; set; } = new();
+}
+
+public class PmBriefingRisk
+{
+    public string Text { get; set; } = string.Empty;
+    /// <summary>high | medium | low</summary>
+    public string Level { get; set; } = "medium";
 }
 
 /// <summary>AI 建议的里程碑草稿（不落库，前端审核后批量创建）。</summary>
