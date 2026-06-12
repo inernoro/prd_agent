@@ -1,5 +1,5 @@
 /**
- * 正式版本申领 / 详情 — 基础信息 + 功能清单双标签页。
+ * 正式版本申领 / 详情 — 基础信息 + 需求 + 功能三标签页。
  * 路由：/product-agent/p/:productId/release/:id（id=new 为新建）
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -8,9 +8,11 @@ import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
+import { getUserCards } from '@/services/real/teams';
 import {
   completeRelease,
   createRelease,
+  getInitiation,
   getInheritReleaseManifest,
   getRelease,
   listFeatures,
@@ -28,6 +30,7 @@ import type {
   ReleaseFeatureItem,
   Requirement,
 } from './types';
+import { RequirementLinkList } from './WorkflowObjectLinkList';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -49,7 +52,7 @@ const CHANGE_BADGE_CLASS: Record<FeatureChangeType, string> = {
   unchanged: 'border-white/15 bg-white/5 text-white/45',
 };
 
-type DetailTab = 'basic' | 'manifest';
+type DetailTab = 'basic' | 'requirements' | 'manifest';
 
 export function ReleaseWorkflowDetail({
   productId,
@@ -76,6 +79,8 @@ export function ReleaseWorkflowDetail({
   const [previousVCode, setPreviousVCode] = useState<string | null>(null);
   const [manifest, setManifest] = useState<ReleaseFeatureItem[]>([]);
   const [baselineManifest, setBaselineManifest] = useState<ReleaseFeatureItem[]>([]);
+  const [linkedInitiation, setLinkedInitiation] = useState<ProductInitiation | null>(null);
+  const [userDisplayNames, setUserDisplayNames] = useState<Map<string, string>>(new Map());
 
   const [initiationId, setInitiationId] = useState('');
   const [ownerId, setOwnerId] = useState(currentUser?.userId ?? '');
@@ -126,6 +131,13 @@ export function ReleaseWorkflowDetail({
         setPreviousReleaseId(relRes.data.previousReleaseId ?? null);
         setManifest(relRes.data.featureManifest ?? []);
         setAnnouncementUrl(relRes.data.announcementUrl ?? '');
+        if (relRes.data.initiationId) {
+          const initDetail = await getInitiation(relRes.data.initiationId);
+          if (initDetail.success) setLinkedInitiation(initDetail.data);
+          else setLinkedInitiation(null);
+        } else {
+          setLinkedInitiation(null);
+        }
         if (relRes.data.previousReleaseId) {
           const prevRes = await getRelease(relRes.data.previousReleaseId);
           if (prevRes.success) {
@@ -207,6 +219,41 @@ export function ReleaseWorkflowDetail({
     [manifest],
   );
 
+  const releaseRequirements = useMemo(
+    () => (release ? requirements.filter((r) => release.requirementIds.includes(r.id)) : []),
+    [release, requirements],
+  );
+  const inheritedFromInitiationIds = useMemo(
+    () => new Set(linkedInitiation?.requirementIds ?? []),
+    [linkedInitiation?.requirementIds],
+  );
+  const viewInheritedRequirements = useMemo(
+    () => releaseRequirements.filter((r) => inheritedFromInitiationIds.has(r.id)),
+    [inheritedFromInitiationIds, releaseRequirements],
+  );
+  const viewAdditionalRequirements = useMemo(
+    () => releaseRequirements.filter((r) => !inheritedFromInitiationIds.has(r.id)),
+    [inheritedFromInitiationIds, releaseRequirements],
+  );
+  const memberNameMap = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
+
+  useEffect(() => {
+    if (!release) return;
+    const ids = [release.ownerId, ...release.teamMemberIds].filter(Boolean) as string[];
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void getUserCards(ids).then((res) => {
+      if (cancelled || !res.success) return;
+      setUserDisplayNames(new Map(res.data.items.map((u) => [u.userId, u.displayName])));
+    });
+    return () => { cancelled = true; };
+  }, [release]);
+
+  const resolveUserName = (userId?: string | null) => {
+    if (!userId) return '—';
+    return userDisplayNames.get(userId) ?? memberNameMap.get(userId) ?? userId;
+  };
+
   const saveNew = async () => {
     setBusy(true);
     setMessage('');
@@ -283,8 +330,20 @@ export function ReleaseWorkflowDetail({
 
       <div className="flex border-b border-white/10">
         <TabButton active={tab === 'basic'} onClick={() => setTab('basic')}>基础信息</TabButton>
+        <TabButton active={tab === 'requirements'} onClick={() => setTab('requirements')}>
+          需求
+          {(isNew
+            ? (temporary ? extraIds.length : inheritedRequirementIds.length + extraIds.length)
+            : releaseRequirements.length) > 0 && (
+            <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-cyan-200">
+              {isNew
+                ? (temporary ? extraIds.length : inheritedRequirementIds.length + extraIds.length)
+                : releaseRequirements.length}
+            </span>
+          )}
+        </TabButton>
         <TabButton active={tab === 'manifest'} onClick={() => setTab('manifest')}>
-          功能清单
+          功能
           {changeStats.added + changeStats.modified + changeStats.deprecated > 0 && (
             <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-cyan-200">
               {changeStats.added + changeStats.modified + changeStats.deprecated}
@@ -312,11 +371,7 @@ export function ReleaseWorkflowDetail({
                   )}
                 </div>
               </Field>
-              {temporary ? (
-                <Field label="搜索需求 *">
-                  <RequirementChecks requirements={requirements} selected={extraIds} onChange={setExtraIds} />
-                </Field>
-              ) : (
+              {!temporary && (
                 <>
                   <Field label="立项号 *">
                     <Select value={initiationId} onChange={(e) => setInitiationId(e.target.value)} disabled={readOnly}>
@@ -327,35 +382,14 @@ export function ReleaseWorkflowDetail({
                   {selectedInitiation && (
                     <InfoBox>
                       <b>方案：</b>{selectedInitiation.planName}<br />
-                      <b>级别：</b>{SCALE_LABEL[selectedInitiation.versionType]}
+                      <b>级别：</b>{SCALE_LABEL[selectedInitiation.versionType]}<br />
+                      <b>关联需求：</b>{inheritedRequirementIds.length} 条（在「需求」标签页查看与追加）
                     </InfoBox>
-                  )}
-                  {selectedInitiation && (
-                    <RequirementSummary title="内部版本关联需求" requirements={inheritedRequirements} emptyText="该内部版本暂未关联需求" />
                   )}
                 </>
               )}
-              {!temporary && (
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs text-white/50">新增需求</span>
-                    <button type="button" onClick={() => setShowRequirementPicker((v) => !v)} aria-label="搜索并新增需求"
-                      className="flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/60 hover:border-cyan-400/40 hover:text-cyan-200">
-                      <Plus size={14} />
-                    </button>
-                  </div>
-                  {selectedAdditionalRequirements.length > 0
-                    ? <div className="mb-2 flex flex-wrap gap-2">{selectedAdditionalRequirements.map((r) =>
-                        <span key={r.id} className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-100">
-                          {r.requirementNo} {r.title}
-                          <button type="button" onClick={() => setExtraIds((ids) => ids.filter((id) => id !== r.id))} className="text-cyan-100/55 hover:text-cyan-100"><X size={12} /></button>
-                        </span>)}
-                    </div>
-                    : <div className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-white/35">点击右侧 + 搜索并选择需要追加的需求</div>}
-                  {showRequirementPicker && (
-                    <RequirementChecks requirements={additionalRequirements} selected={extraIds} onChange={setExtraIds} />
-                  )}
-                </div>
+              {temporary && (
+                <InfoBox>临时优化需求请在「需求」标签页选择要上线的需求条目。</InfoBox>
               )}
               <Field label="项目组成员 *"><MemberChecks members={members} selected={teamIds} onChange={setTeamIds} /></Field>
               <Field label="上线日期 *"><Input type="date" value={releaseAt} onChange={(e) => setReleaseAt(e.target.value)} /></Field>
@@ -368,9 +402,33 @@ export function ReleaseWorkflowDetail({
               <InfoRow label="内部版本号" value={release.tCode ?? '临时优化需求'} mono />
               <InfoRow label="方案名称" value={release.planName} />
               <InfoRow label="版本类别" value={SCALE_LABEL[release.versionType]} />
+              <InfoRow label="项目类别" value={release.projectType === 'custom' ? '定制项目' : '非定制项目'} />
+              <InfoRow label="系统" value={release.systemName || '—'} />
+              <InfoRow label="应用" value={release.appName || '—'} />
+              <InfoRow label="所属部门" value={release.departmentName || '—'} />
+              <InfoRow label="产品负责人" value={resolveUserName(release.ownerId)} />
+              <InfoRow label="项目组成员" value={release.teamMemberIds.map((uid) => resolveUserName(uid)).join('、') || '—'} />
               <InfoRow label="上线日期" value={release.plannedReleaseAt ? new Date(release.plannedReleaseAt).toLocaleDateString() : '—'} />
               <InfoRow label="开放品牌" value={release.openBrandScope || '上线全域开放'} />
-              <InfoRow label="关联需求" value={`${release.requirementIds.length} 条`} />
+              <InfoRow label="状态" value={STATUS_LABEL[release.status] ?? release.status} />
+              {release.planUrl && (
+                <div>
+                  <div className="text-[11px] text-white/40">方案地址</div>
+                  <a href={release.planUrl} target="_blank" rel="noreferrer" className="mt-0.5 inline-block text-sm text-cyan-300">查看方案</a>
+                </div>
+              )}
+              {linkedInitiation && (
+                <div>
+                  <div className="text-[11px] text-white/40">来源立项</div>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/product-agent/p/${productId}/initiation/${linkedInitiation.id}`)}
+                    className="mt-0.5 font-mono text-sm text-cyan-300 hover:underline"
+                  >
+                    {linkedInitiation.tCode}
+                  </button>
+                </div>
+              )}
               {release.status === 'announcement_pending' && (
                 <div className="md:col-span-2">
                   <Field label="上线公告地址 *">
@@ -388,8 +446,68 @@ export function ReleaseWorkflowDetail({
             <div className="text-sm text-white/35">未找到上线记录</div>
           )}
         </div>
+      ) : tab === 'requirements' ? (
+        <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-5">
+          {isNew ? (
+            temporary ? (
+              <Field label="选择要上线的需求 *">
+                <RequirementChecks requirements={requirements} selected={extraIds} onChange={setExtraIds} />
+              </Field>
+            ) : (
+              <>
+                <RequirementSummary title="立项继承需求（只读）" requirements={inheritedRequirements} emptyText="所选立项暂未关联需求" />
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-xs text-white/50">追加需求</span>
+                    <button type="button" onClick={() => setShowRequirementPicker((v) => !v)} aria-label="搜索并新增需求"
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/60 hover:border-cyan-400/40 hover:text-cyan-200">
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                  {selectedAdditionalRequirements.length > 0
+                    ? <div className="mb-2 flex flex-wrap gap-2">{selectedAdditionalRequirements.map((r) =>
+                        <span key={r.id} className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-100">
+                          {r.requirementNo} {r.title}
+                          <button type="button" onClick={() => setExtraIds((ids) => ids.filter((id) => id !== r.id))} className="text-cyan-100/55 hover:text-cyan-100"><X size={12} /></button>
+                        </span>)}
+                    </div>
+                    : <div className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-white/35">点击右侧 + 搜索并选择需要追加的需求</div>}
+                  {showRequirementPicker && (
+                    <RequirementChecks requirements={additionalRequirements} selected={extraIds} onChange={setExtraIds} />
+                  )}
+                </div>
+              </>
+            )
+          ) : release ? (
+            <>
+              {releaseRequirements.length === 0 ? (
+                <RequirementLinkList productId={productId} requirements={[]} emptyText="该正式版本未关联需求" />
+              ) : linkedInitiation ? (
+                <div className="space-y-4">
+                  {viewInheritedRequirements.length > 0 && (
+                    <RequirementLinkList
+                      productId={productId}
+                      requirements={viewInheritedRequirements}
+                      sectionTitle={`立项继承（${linkedInitiation.tCode}）`}
+                    />
+                  )}
+                  {viewAdditionalRequirements.length > 0 && (
+                    <RequirementLinkList
+                      productId={productId}
+                      requirements={viewAdditionalRequirements}
+                      sectionTitle="申领时追加"
+                    />
+                  )}
+                </div>
+              ) : (
+                <RequirementLinkList productId={productId} requirements={releaseRequirements} />
+              )}
+            </>
+          ) : null}
+        </div>
       ) : (
         <FeatureManifestPanel
+          navigate={navigate}
           productId={productId}
           features={features}
           featureById={featureById}
@@ -433,6 +551,8 @@ export function ReleaseWorkflowDetail({
 }
 
 function FeatureManifestPanel({
+  navigate,
+  productId,
   features,
   featureById,
   manifest,
@@ -444,6 +564,7 @@ function FeatureManifestPanel({
   onChangeType,
   onChangeNote,
 }: {
+  navigate: ReturnType<typeof useNavigate>;
   productId: string;
   features: Feature[];
   featureById: Map<string, Feature>;
@@ -520,6 +641,7 @@ function FeatureManifestPanel({
               requirementCount={feature?.requirementIds.length ?? 0}
               item={item}
               readOnly={readOnly}
+              onOpen={() => navigate(`/product-agent/p/${productId}/feature/${item.featureId}`)}
               onChangeType={onChangeType}
               onChangeNote={onChangeNote}
               onRemove={onRemove}
@@ -557,6 +679,7 @@ function ManifestRow({
   requirementCount,
   item,
   readOnly,
+  onOpen,
   onChangeType,
   onChangeNote,
   onRemove,
@@ -566,6 +689,7 @@ function ManifestRow({
   requirementCount: number;
   item: ReleaseFeatureItem;
   readOnly: boolean;
+  onOpen?: () => void;
   onChangeType: (featureId: string, changeType: FeatureChangeType) => void;
   onChangeNote: (featureId: string, changeNote: string) => void;
   onRemove: (featureId: string) => void;
@@ -575,7 +699,11 @@ function ManifestRow({
       <div className="flex flex-wrap items-start gap-2">
         <ChangeBadge changeType={item.changeType} />
         <div className="min-w-0 flex-1">
-          <div className="text-sm text-white/85 truncate">{title}</div>
+          {onOpen ? (
+            <button type="button" onClick={onOpen} className="text-left text-sm text-cyan-200/90 truncate hover:underline">{title}</button>
+          ) : (
+            <div className="text-sm text-white/85 truncate">{title}</div>
+          )}
           <div className="text-[11px] text-white/35 font-mono mt-0.5">{featureNo} · 实现需求 {requirementCount}</div>
         </div>
         {!readOnly && (

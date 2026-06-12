@@ -13,11 +13,13 @@ import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, S
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ItemMultiSearchSelect } from '@/components/ItemMultiSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
+import { FeatureModuleSearchSelect } from '@/components/FeatureModuleSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { useAuthStore } from '@/stores/authStore';
 import { useSseStream } from '@/lib/useSseStream';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { RequirementCreateForm } from './RequirementCreateForm';
+import { InitiationWorkflowDetail } from './InitiationWorkflowDetail';
 import { ReleaseWorkflowDetail } from './ReleaseWorkflowDetail';
 import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
 import {
@@ -158,6 +160,24 @@ export function ProductObjectDetailPage() {
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           <div className="mx-auto w-full max-w-4xl py-5 px-5">
             <ReleaseWorkflowDetail productId={productId} releaseId={id} isNew={isNew} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === 'initiation') {
+    return (
+      <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
+        <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
+          <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 hover:bg-white/5 hover:text-white shrink-0" title="返回">
+            <ArrowLeft size={16} />
+          </button>
+          <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">内部版本立项</span>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+          <div className="mx-auto w-full max-w-4xl py-5 px-5">
+            <InitiationWorkflowDetail productId={productId} initiationId={id} />
           </div>
         </div>
       </div>
@@ -734,12 +754,7 @@ function FeatureCreateForm({
             <div className="flex flex-col gap-3.5">
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>所属功能模块</FieldLabel>
-                <input
-                  value={moduleName}
-                  onChange={(event) => setModuleName(event.target.value)}
-                  placeholder="如：营销活动 / 权限中心"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40"
-                />
+                <FeatureModuleSearchSelect value={moduleName} onChange={setModuleName} features={allFeatures} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>功能类型</FieldLabel>
@@ -1453,12 +1468,7 @@ function FeatureDetail({
             <div className="flex flex-col gap-3.5">
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>所属功能模块</FieldLabel>
-                <input
-                  value={moduleName}
-                  onChange={(event) => setModuleName(event.target.value)}
-                  placeholder="如：营销活动 / 权限中心"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40"
-                />
+                <FeatureModuleSearchSelect value={moduleName} onChange={setModuleName} features={allFeatures} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>功能类型</FieldLabel>

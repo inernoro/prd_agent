@@ -220,6 +220,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
     () => Object.fromEntries(ALL_TYPES.map((t) => [t, true])) as Record<NodeType, boolean>,
   );
   const [stateFilter, setStateFilter] = useState('');
+  const [productFilter, setProductFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
   const [keyword, setKeyword] = useState('');
   const [mode, setMode] = useState<'collapse' | 'trace'>('collapse');
@@ -311,11 +312,29 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       }
     }
 
+    const effectiveProductId = productId ?? (productFilter ? productFilter.replace(/^product:/, '') : '');
+
+    // 产品过滤（跨产品总览）：从产品根 BFS 可达子图
+    let productScope: Set<string> | null = null;
+    if (overview && productFilter) {
+      productScope = new Set<string>([productFilter]);
+      const queue = [productFilter];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        for (const nb of derived.adj.get(cur) ?? []) {
+          if (!productScope.has(nb)) {
+            productScope.add(nb);
+            queue.push(nb);
+          }
+        }
+      }
+    }
+
     // 版本过滤：以版本为中心 2 跳可达 + 产品根
     let versionScope: Set<string> | null = null;
     if (versionFilter) {
       versionScope = new Set<string>([versionFilter]);
-      if (productId) versionScope.add(`product:${productId}`);
+      if (effectiveProductId) versionScope.add(`product:${effectiveProductId}`);
       let frontier = [versionFilter];
       for (let hop = 0; hop < 2; hop++) {
         const next: string[] = [];
@@ -345,11 +364,12 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       }
       if (!typeOn[n.type]) continue;
       if (stateFilter && (n.state ?? '') !== stateFilter) continue;
+      if (productScope && !productScope.has(n.id)) continue;
       if (versionScope && !versionScope.has(n.id)) continue;
       vis.add(n.id);
     }
     return { visibleIds: vis, matchIds: match };
-  }, [raw, derived, typeOn, stateFilter, versionFilter, keyword, productId]);
+  }, [raw, derived, typeOn, stateFilter, productFilter, versionFilter, keyword, productId, overview]);
 
   // ── 追溯集合：从锚点沿关系路径(无向)可达 ──
   const traceIds = useMemo(() => {
@@ -587,7 +607,23 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
     raw?.nodes.forEach((n) => n.state && s.add(n.state));
     return Array.from(s).sort();
   }, [raw]);
-  const versionOptions = useMemo(() => (raw?.nodes ?? []).filter((n) => n.type === 'version'), [raw]);
+  const productOptions = useMemo(
+    () => (raw?.nodes ?? []).filter((n) => n.type === 'product').sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')),
+    [raw],
+  );
+  const versionOptions = useMemo(() => {
+    const versions = (raw?.nodes ?? []).filter((n) => n.type === 'version');
+    if (!overview || !productFilter) return versions;
+    const pid = productFilter.replace(/^product:/, '');
+    return versions.filter((v) => v.productId === pid);
+  }, [raw, overview, productFilter]);
+
+  useEffect(() => {
+    if (!productFilter || !versionFilter) return;
+    const pid = productFilter.replace(/^product:/, '');
+    const vNode = raw?.nodes.find((n) => n.id === versionFilter);
+    if (vNode?.productId && vNode.productId !== pid) setVersionFilter('');
+  }, [productFilter, versionFilter, raw]);
 
   if (loading) return <MapSectionLoader text="正在生成知识图谱…" />;
   if (error) return <div className="text-sm text-red-300/80 text-center py-10">{error}</div>;
@@ -633,6 +669,21 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
             {stateOptions.map((s) => (
               <option key={s} value={s}>
                 {s}
+              </option>
+            ))}
+          </select>
+        )}
+        {/* 产品过滤（跨产品总览） */}
+        {overview && productOptions.length > 0 && (
+          <select
+            value={productFilter}
+            onChange={(e) => setProductFilter(e.target.value)}
+            className="px-2 py-1 rounded-md text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none max-w-[160px]"
+          >
+            <option value="">全部产品</option>
+            {productOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
               </option>
             ))}
           </select>

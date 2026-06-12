@@ -107,7 +107,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
         </div>
       </div>
-      <InitiationTable items={filteredInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
+      <InitiationTable productId={productId} items={filteredInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
     </>}
     <details className="rounded-xl border border-white/10 bg-white/[0.02]">
       <summary className="cursor-pointer px-4 py-3 text-xs text-white/45">旧版版本数据（保留，共 {legacyVersions.length} 条）</summary>
@@ -236,15 +236,22 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
   </Modal>;
 }
 
-function InitiationTable({ items, members, onChanged, readOnly }: {
+function InitiationTable({ productId, items, members, onChanged, readOnly }: {
+  productId: string;
   items: ProductInitiation[]; members: ProductMember[]; onChanged: () => Promise<void>; readOnly: boolean;
 }) {
+  const navigate = useNavigate();
   const names = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
+  const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
   return <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']}>
     {items.map((item) => <tr key={item.id} className="border-t border-white/5">
       <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
-      <Td mono>{item.tCode ?? '-'}</Td><Td>{SCALE_LABEL[item.versionType]}</Td><Td>{item.planName}</Td>
+      <Td mono>{item.tCode
+        ? <button type="button" onClick={() => openDetail(item.id)} className="text-cyan-300 hover:underline">{item.tCode}</button>
+        : '-'}</Td>
+      <Td>{SCALE_LABEL[item.versionType]}</Td>
+      <Td><button type="button" onClick={() => openDetail(item.id)} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
         <div>{names.get(item.primaryOwnerId ?? item.createdBy) ?? item.primaryOwnerId ?? item.createdBy ?? '-'}</div>

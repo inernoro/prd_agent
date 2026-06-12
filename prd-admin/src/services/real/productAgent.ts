@@ -104,6 +104,9 @@ export function deleteVersion(versionId: string) {
 export function listInitiations(productId: string, scope: 'mine' | 'all' = 'mine') {
   return apiRequest<ListWrap<ProductInitiation>>(`/api/product/products/${productId}/initiations?scope=${scope}`);
 }
+export function getInitiation(id: string) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}`);
+}
 export function createInitiation(productId: string, body: {
   projectType: 'standard' | 'custom';
   systemName?: string;

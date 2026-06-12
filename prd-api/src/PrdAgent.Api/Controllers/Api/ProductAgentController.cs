@@ -566,6 +566,15 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    [HttpGet("initiations/{id}")]
+    public async Task<IActionResult> GetInitiation(string id)
+    {
+        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
     [HttpPost("products/{productId}/initiations")]
     public async Task<IActionResult> CreateInitiation(string productId, [FromBody] CreateInitiationRequest request)
     {
