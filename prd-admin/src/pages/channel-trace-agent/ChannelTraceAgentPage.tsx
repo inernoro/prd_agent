@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { PackageSearch, BookOpen, Stethoscope, GitCompare, ListChecks } from 'lucide-react';
 import { KnowledgeTab } from './KnowledgeTab';
 import { CasesTab } from './CasesTab';
@@ -7,8 +8,33 @@ import { ChecklistTab } from './ChecklistTab';
 
 type Tab = 'knowledge' | 'cases' | 'checklist' | 'diff';
 
+function parseTab(value: string | null): Tab | null {
+  return value === 'knowledge' || value === 'cases' || value === 'checklist' || value === 'diff' ? value : null;
+}
+
 export function ChannelTraceAgentPage() {
-  const [tab, setTab] = useState<Tab>('knowledge');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => parseTab(searchParams.get('tab')) ?? 'knowledge');
+
+  useEffect(() => {
+    setTab(parseTab(searchParams.get('tab')) ?? 'knowledge');
+  }, [searchParams]);
+
+  const selectTab = (next: Tab) => {
+    setTab(next);
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next === 'knowledge') {
+          params.delete('tab');
+        } else {
+          params.set('tab', next);
+        }
+        return params;
+      },
+      { replace: true },
+    );
+  };
 
   return (
     <div className="h-full min-h-0 flex flex-col">
@@ -25,25 +51,25 @@ export function ChannelTraceAgentPage() {
           </div>
         </div>
         <div className="flex items-center gap-1 mt-4">
-          <TabButton active={tab === 'knowledge'} onClick={() => setTab('knowledge')}>
+          <TabButton active={tab === 'knowledge'} onClick={() => selectTab('knowledge')}>
             <span className="inline-flex items-center gap-1.5">
               <BookOpen className="w-3.5 h-3.5" />
               业务知识
             </span>
           </TabButton>
-          <TabButton active={tab === 'cases'} onClick={() => setTab('cases')}>
+          <TabButton active={tab === 'cases'} onClick={() => selectTab('cases')}>
             <span className="inline-flex items-center gap-1.5">
               <Stethoscope className="w-3.5 h-3.5" />
               问题排查
             </span>
           </TabButton>
-          <TabButton active={tab === 'checklist'} onClick={() => setTab('checklist')}>
+          <TabButton active={tab === 'checklist'} onClick={() => selectTab('checklist')}>
             <span className="inline-flex items-center gap-1.5">
               <ListChecks className="w-3.5 h-3.5" />
               排查清单
             </span>
           </TabButton>
-          <TabButton active={tab === 'diff'} onClick={() => setTab('diff')}>
+          <TabButton active={tab === 'diff'} onClick={() => selectTab('diff')}>
             <span className="inline-flex items-center gap-1.5">
               <GitCompare className="w-3.5 h-3.5" />
               代码对比
