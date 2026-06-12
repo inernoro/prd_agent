@@ -379,7 +379,34 @@ public class PmAgentService
 
     // ── 工具方法 ──
 
+    /// <summary>带自动重试的流式调用：上游偶发 401/超时（如模型池中某平台密钥失效返回
+    /// "No cookie auth credentials found"）时，在尚无任何产出的前提下重试 —— 每次重试都重新走
+    /// 模型解析，有机会切换到池内健康平台。已有部分产出则不重试，避免内容重复。</summary>
     private async Task<(string content, string? error)> StreamAndAccumulateAsync(
+        GatewayRequest request,
+        Func<string, Task>? onContent,
+        Func<string, Task>? onThinking,
+        Action<string>? onModel = null)
+    {
+        const int maxAttempts = 3;
+        string? lastError = null;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            var (content, error) = await StreamOnceAsync(request, onContent, onThinking, onModel);
+            if (error == null) return (content, null);
+            lastError = error;
+            if (content.Length > 0) return (content, error);
+            if (attempt < maxAttempts)
+            {
+                _logger.LogWarning("[pm-agent] LLM 流式失败（第 {Attempt}/{Max} 次）：{Error}，800ms 后重试",
+                    attempt, maxAttempts, error);
+                await Task.Delay(TimeSpan.FromMilliseconds(800));
+            }
+        }
+        return (string.Empty, lastError);
+    }
+
+    private async Task<(string content, string? error)> StreamOnceAsync(
         GatewayRequest request,
         Func<string, Task>? onContent,
         Func<string, Task>? onThinking,

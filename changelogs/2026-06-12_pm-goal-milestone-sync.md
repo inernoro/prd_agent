@@ -16,3 +16,7 @@
 | feat | prd-api | 简报报告周期：生成接受 from/to（中国时区自然日），叙事数据按周期取（周期内达成里程碑/周期内周报），总体指标保持截至当前真值；标题与页头带报告周期，periodFrom/To 落库 |
 | feat | prd-api | 简报调整：POST /briefings/:id/refine（SSE），复用落库硬数据快照 + 原内容 + 自然语言指令重写并原地覆盖（不重调统计、不留旧版本）；生成端点支持可选补充要求 note |
 | feat | prd-admin | 生成弹窗新增报告周期选择（本周/上周/本月/上月/全周期/自定义）与「补充要求」输入；预览弹窗新增「调整内容」：自然语言描述 → SSE 流式重写 → 原地刷新 |
+| fix | prd-api | 简报调整偶发「LLM 流式失败: No cookie auth credentials found」：PM 智能体所有 LLM 流式调用在零产出失败时自动重试（至多 3 次，每次重新走模型解析切换池内健康平台） |
+| refactor | prd-admin | 项目知识库移除「成员作品」子视图与二级标题，只保留知识文档直出 |
+| feat | prd-api | 网页托管新增 GET /api/web-pages/:id/content：服务端代理读取站点入口 HTML（owner/团队成员可读，2MB 上限，包装资产站拒绝），供知识库导入绕开浏览器跨域 |
+| feat | prd-admin | 项目知识库新增「从网页托管导入」：选择我的/团队共享站点，HTML 内容一键导入为知识文档（可预览） |

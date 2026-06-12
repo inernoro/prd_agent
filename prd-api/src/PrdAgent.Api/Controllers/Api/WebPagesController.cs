@@ -39,15 +39,18 @@ public class WebPagesController : ControllerBase
 
     private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
     private readonly ITeamService _teams;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public WebPagesController(
         IHostedSiteService siteService,
         PrdAgent.Infrastructure.Database.MongoDbContext db,
-        ITeamService teams)
+        ITeamService teams,
+        IHttpClientFactory httpClientFactory)
     {
         _siteService = siteService;
         _db = db;
         _teams = teams;
+        _httpClientFactory = httpClientFactory;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -709,6 +712,42 @@ public class WebPagesController : ControllerBase
         var site = await _siteService.GetByIdAsync(id, GetUserId());
         if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
         return Ok(ApiResponse<object>.Ok(site));
+    }
+
+    /// <summary>读取站点入口 HTML 原文（owner / 共享团队成员可读）。
+    /// 服务端代理取回，绕开浏览器跨域限制；供「知识库从网页托管导入」等场景使用。
+    /// 仅适用 HTML 入口的站点；包装资产站（pdf/video/markdown）与超大文件拒绝。</summary>
+    [HttpGet("{id}/content")]
+    public async Task<IActionResult> GetSiteContent(string id)
+    {
+        var site = await _siteService.GetByIdAsync(id, GetUserId());
+        if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+        if (!string.IsNullOrEmpty(site.WrappedAssetType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频/Markdown 包装站，不支持以 HTML 导入"));
+        if (string.IsNullOrWhiteSpace(site.SiteUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
+
+        const long maxBytes = 2L * 1024 * 1024; // 知识库正文按文本存储，2MB 足够覆盖单文件 HTML
+        try
+        {
+            var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
+            var url = $"{site.SiteUrl}{(site.SiteUrl.Contains('?') ? "&" : "?")}v={version.Ticks}";
+            var http = _httpClientFactory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(20);
+            using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            if (!resp.IsSuccessStatusCode)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"站点内容读取失败（HTTP {(int)resp.StatusCode}）"));
+            if (resp.Content.Headers.ContentLength is > maxBytes)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持导入"));
+            var html = await resp.Content.ReadAsStringAsync();
+            if (html.Length > maxBytes)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持导入"));
+            return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, title = site.Title, contentType = "text/html", html }));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点内容读取超时或失败，请稍后重试"));
+        }
     }
 
     /// <summary>更新站点元信息</summary>

@@ -1691,6 +1691,7 @@ export {
   reuploadSite,
   createFromContent,
   listSites,
+  getSiteContent,
   getSite,
   updateSite,
   deleteSite,
