@@ -106,6 +106,25 @@ public class TeamActivityController : ControllerBase
 
         var total = await _db.ActivityLogs.CountDocumentsAsync(filter);
 
+        // 环比：取「同长度的上一个时间窗」总量（如今天 vs 昨天同窗、本周 vs 上周）。
+        // 无 from（全部范围）时没有可比窗口，返回 null 前端不展示。
+        long? previousTotal = null;
+        if (from.HasValue)
+        {
+            var fromUtc = from.Value.ToUniversalTime();
+            var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+            var span = endUtc - fromUtc;
+            if (span > TimeSpan.Zero)
+            {
+                var prevFilters = new List<FilterDefinition<ActivityLog>>();
+                if (!string.IsNullOrWhiteSpace(userId)) prevFilters.Add(b.Eq(x => x.ActorId, userId));
+                if (!string.IsNullOrWhiteSpace(module)) prevFilters.Add(b.Eq(x => x.Module, module));
+                prevFilters.Add(b.Gte(x => x.CreatedAt, fromUtc - span));
+                prevFilters.Add(b.Lt(x => x.CreatedAt, fromUtc));
+                previousTotal = await _db.ActivityLogs.CountDocumentsAsync(b.And(prevFilters));
+            }
+        }
+
         var moduleGroups = await _db.ActivityLogs.Aggregate()
             .Match(filter)
             .Group(x => x.Module, g => new { Module = g.Key, Count = g.Count() })
@@ -154,6 +173,7 @@ public class TeamActivityController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             total,
+            previousTotal,
             activeMembers = actorGroups.Count,
             modules,
             actors,

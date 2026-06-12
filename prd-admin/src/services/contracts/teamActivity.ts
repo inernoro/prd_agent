@@ -51,6 +51,8 @@ export type TeamActivityActorStat = {
 
 export type TeamActivityStatsData = {
   total: number;
+  /** 同长度上一时间窗的总量（今天 vs 昨天 / 本周 vs 上周）；范围为「全部」时为 null */
+  previousTotal?: number | null;
   activeMembers: number;
   modules: TeamActivityModuleStat[];
   actors: TeamActivityActorStat[];

@@ -32,6 +32,14 @@ const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
   { key: 'month', label: '本月' },
 ];
 
+/** 环比文案：脉搏的对照窗口与所选范围同长（昨天/上周/上月）；「全部」无环比 */
+const COMPARE_LABELS: Record<RangeKey, string | null> = {
+  all: null,
+  today: '较昨日',
+  week: '较上周',
+  month: '较上月',
+};
+
 function rangeFrom(key: RangeKey): string | undefined {
   if (key === 'all') return undefined;
   const now = new Date();
@@ -84,7 +92,8 @@ export default function TeamActivityPage() {
 
   const [filterUserId, setFilterUserId] = useState('');
   const [filterModule, setFilterModule] = useState('');
-  const [filterRange, setFilterRange] = useState<RangeKey>('all');
+  // 默认「今天」：脉搏回答的是「团队此刻在干嘛」，历史全量是查询场景而非默认视图
+  const [filterRange, setFilterRange] = useState<RangeKey>('today');
 
   // 过期响应守卫：快速切换筛选 / 加载更多与刷新竞态时，丢弃晚到的旧请求结果
   const fetchIdRef = useRef(0);
@@ -161,6 +170,14 @@ export default function TeamActivityPage() {
     });
   }, []);
 
+  // 聚合即导航：脉搏面板里点模块/成员 = 切换对应筛选（再点一次取消）
+  const pickModule = useCallback((key: string) => {
+    setFilterModule((prev) => (prev === key ? '' : key));
+  }, []);
+  const pickActor = useCallback((actorId: string) => {
+    setFilterUserId((prev) => (prev === actorId ? '' : actorId));
+  }, []);
+
   const hasMore = items.length < total;
 
   const dayGroups = useMemo(() => {
@@ -218,7 +235,16 @@ export default function TeamActivityPage() {
       </div>
 
       {/* 团队脉搏聚合面板 */}
-      <PulseBand stats={stats} loading={statsLoading} privacy={privacy} />
+      <PulseBand
+        stats={stats}
+        loading={statsLoading}
+        privacy={privacy}
+        compareLabel={COMPARE_LABELS[filterRange]}
+        activeModule={filterModule}
+        activeActorId={filterUserId}
+        onPickModule={pickModule}
+        onPickActor={pickActor}
+      />
 
       {/* 时间线主体 */}
       <GlassCard className="flex-1 flex flex-col" style={{ minHeight: 0 }}>

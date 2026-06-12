@@ -17,10 +17,10 @@ function item(over: Partial<TeamActivityItem>): TeamActivityItem {
 
 describe('maskTitle / maskName 隐私脱敏', () => {
   it('长标题保留首尾字、中间打码', () => {
-    expect(maskTitle('全球运动鞋服行业商业模式变革')).toBe('全***革');
+    expect(maskTitle('全球运动鞋服行业商业模式变革')).toBe('全···革');
   });
   it('短标题只保留首字', () => {
-    expect(maskTitle('周报')).toBe('周***');
+    expect(maskTitle('周报')).toBe('周···');
     expect(maskTitle('A')).toBe('A*');
     expect(maskTitle('')).toBe('');
   });

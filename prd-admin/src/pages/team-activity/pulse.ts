@@ -7,7 +7,8 @@
  */
 import type { TeamActivityItem } from '@/services/contracts/teamActivity';
 
-const MASK = '***';
+// 中圆点比星号安静：脱敏后的标题应该「读得出被隐藏」而不是「像系统乱码」
+const MASK = '···';
 
 /** 标题脱敏：保留首（尾）字，中间打码。空串原样返回。 */
 export function maskTitle(text: string): string {
