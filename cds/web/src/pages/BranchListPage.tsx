@@ -7,7 +7,9 @@ import {
   AlertTriangle,
   ArrowLeft,
   Bot,
+  CheckCircle2,
   ChevronDown,
+  Circle,
   Copy,
   Cpu,
   ExternalLink,
@@ -34,6 +36,7 @@ import {
   Tags,
   Trash2,
   X,
+  XCircle,
 } from 'lucide-react';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -193,6 +196,10 @@ interface ReleaseTargetSummary {
     host: string;
     port: number;
     user: string;
+    privateKeyRef?: string;
+    appPath?: string;
+    deployCommand?: string;
+    rollbackCommand?: string;
     healthcheckUrl: string;
   };
 }
@@ -4138,6 +4145,18 @@ function ReleaseBranchDialog({
     return () => source.close();
   }, [run?.releaseId, run?.status]);
 
+  const selectedTarget = useMemo(
+    () => targets.find((target) => target.id === targetId),
+    [targetId, targets],
+  );
+  const selectedScripts = useMemo(
+    () => releaseScriptsFromCommand(selectedTarget?.ssh?.deployCommand),
+    [selectedTarget?.ssh?.deployCommand],
+  );
+  const selectedServer = selectedTarget?.ssh
+    ? `${selectedTarget.ssh.user}@${selectedTarget.ssh.host}:${selectedTarget.ssh.port}`
+    : '-';
+
   const runPreflight = async (): Promise<void> => {
     if (!branch || !targetId) return;
     setPreflightState('running');
@@ -4175,10 +4194,10 @@ function ReleaseBranchDialog({
 
   return (
     <Dialog open={!!branch} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-none" style={{ width: 'min(768px, calc(100vw - 32px))' }}>
         <DialogHeader>
           <DialogTitle>发布 {branch?.branch}</DialogTitle>
-          <DialogDescription>从已验收预览分支发布到指定 SSH 目标。</DialogDescription>
+          <DialogDescription>从已验收预览分支发布到站点。</DialogDescription>
         </DialogHeader>
         {!branch ? null : (
           <div className="space-y-4">
@@ -4188,18 +4207,18 @@ function ReleaseBranchDialog({
                 <div className="mt-1 font-mono">{shortCommitSha(branch) || '-'}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">Preview</div>
+                <div className="text-xs text-muted-foreground">预览地址</div>
                 <div className="mt-1 truncate font-mono">{previewUrl || '-'}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">Status</div>
+                <div className="text-xs text-muted-foreground">分支状态</div>
                 <div className="mt-1">{statusLabel(branch.status)}</div>
               </div>
             </div>
 
             <div className="flex flex-wrap items-end gap-3">
               <label className="grid min-w-[260px] flex-1 gap-1 text-sm">
-                <span className="text-muted-foreground">发布目标</span>
+                <span className="text-muted-foreground">发布站点</span>
                 <select
                   value={targetId}
                   onChange={(event) => {
@@ -4209,10 +4228,10 @@ function ReleaseBranchDialog({
                   disabled={loadingTargets || targets.length === 0}
                   className="h-9 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
                 >
-                  {targets.length === 0 ? <option value="">没有可用 SSH target</option> : null}
+                  {targets.length === 0 ? <option value="">没有可用站点发布目标</option> : null}
                   {targets.map((target) => (
                     <option key={target.id} value={target.id}>
-                      {target.name} · {target.ssh?.user}@{target.ssh?.host}
+                      {target.name} · {target.ssh?.host || '-'} · {target.ssh?.appPath || '-'}
                     </option>
                   ))}
                 </select>
@@ -4232,7 +4251,32 @@ function ReleaseBranchDialog({
 
             {targets.length === 0 && !loadingTargets ? (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
-                当前项目没有 SSH ReleaseTarget。先到发布中心创建目标。
+                当前项目没有站点发布目标。先到发布中心添加站点发布。
+              </div>
+            ) : null}
+
+            {selectedTarget ? (
+              <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface))] p-3">
+                <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+                  <Server className="h-4 w-4 text-primary" />
+                  发布确认
+                </div>
+                <div className="grid gap-3 text-sm md:grid-cols-2">
+                  <ReleaseConfirmItem label="发布目标" value={selectedTarget.name} />
+                  <ReleaseConfirmItem label="服务器" value={selectedServer} mono />
+                  <ReleaseConfirmItem label="目录" value={selectedTarget.ssh?.appPath || '-'} mono />
+                  <ReleaseConfirmItem label="上线地址" value={selectedTarget.ssh?.healthcheckUrl || '-'} mono />
+                  <div className="md:col-span-2">
+                    <div className="text-xs text-muted-foreground">执行脚本</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {selectedScripts.map((script, index) => (
+                        <span key={`${script}-${index}`} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-xs">
+                          {script}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : null}
 
@@ -4250,23 +4294,24 @@ function ReleaseBranchDialog({
                     }`}
                   >
                     <div>
-                      <div className="font-medium">{check.label}</div>
+                      <div className="font-medium">{releaseCheckLabel(check)}</div>
                       <div className="mt-0.5 text-xs text-muted-foreground">{check.message}</div>
                     </div>
-                    <span className="font-mono text-xs">{check.status}</span>
+                    <span className="font-mono text-xs">{releaseCheckStatusLabel(check.status)}</span>
                   </div>
                 ))}
               </div>
             ) : null}
 
             {run ? (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-mono">{run.releaseId}</span>
-                  <span className="rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-xs">{run.status}</span>
+                  <span className="rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-xs">{releaseStatusLabel(run.status)}</span>
                 </div>
+                <ReleaseRunStepList run={run} logs={logs} scripts={selectedScripts} />
                 <pre className="max-h-72 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs leading-5">
-                  {logs.map((log) => `[${formatShortTime(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`).join('\n') || '等待日志...'}
+                  {logs.map((log) => `[${formatShortTime(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`).join('\n') || '等待发布日志...'}
                 </pre>
               </div>
             ) : null}
@@ -4277,6 +4322,60 @@ function ReleaseBranchDialog({
   );
 }
 
+function ReleaseConfirmItem({ label, value, mono }: { label: string; value: string; mono?: boolean }): JSX.Element {
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={`mt-1 min-w-0 break-words ${mono ? 'font-mono text-xs' : 'font-medium'}`}>{value || '-'}</div>
+    </div>
+  );
+}
+
+type ReleaseStepState = 'pending' | 'running' | 'done' | 'failed';
+
+function ReleaseRunStepList({
+  run,
+  logs,
+  scripts,
+}: {
+  run: ReleaseRunSummary;
+  logs: ReleaseLogEntry[];
+  scripts: string[];
+}): JSX.Element {
+  const steps = releaseStepsForRun(run, logs, scripts);
+  return (
+    <div className="grid gap-2 md:grid-cols-2">
+      {steps.map((step) => (
+        <div
+          key={step.id}
+          className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+            step.state === 'failed'
+              ? 'border-red-500/30 bg-red-500/10'
+              : step.state === 'done'
+                ? 'border-emerald-500/30 bg-emerald-500/10'
+                : step.state === 'running'
+                  ? 'border-primary/30 bg-primary/10'
+                  : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40'
+          }`}
+        >
+          <ReleaseStepIcon state={step.state} />
+          <div className="min-w-0">
+            <div className="font-medium">{step.label}</div>
+            {step.detail ? <div className="mt-0.5 text-xs text-muted-foreground">{step.detail}</div> : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReleaseStepIcon({ state }: { state: ReleaseStepState }): JSX.Element {
+  if (state === 'done') return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />;
+  if (state === 'failed') return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />;
+  if (state === 'running') return <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />;
+  return <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />;
+}
+
 function dedupeReleaseLogs(items: ReleaseLogEntry[]): ReleaseLogEntry[] {
   const bySeq = new Map<number, ReleaseLogEntry>();
   for (const item of items) bySeq.set(item.seq, item);
@@ -4285,6 +4384,98 @@ function dedupeReleaseLogs(items: ReleaseLogEntry[]): ReleaseLogEntry[] {
 
 function isReleaseTerminal(status: string): boolean {
   return ['success', 'failed', 'rollback_success', 'rollback_failed'].includes(status);
+}
+
+function releaseScriptsFromCommand(command?: string): string[] {
+  const source = command?.trim() || './fast.sh && ./exec_dep.sh';
+  const matches = Array.from(new Set((source.match(/\.\/[^\s&|;]+/g) || []).map((item) => item.trim())));
+  return matches.length > 0 ? matches : [source];
+}
+
+function releaseStepsForRun(
+  run: ReleaseRunSummary,
+  logs: ReleaseLogEntry[],
+  scripts: string[],
+): Array<{ id: string; label: string; state: ReleaseStepState; detail?: string }> {
+  const phases = new Set(logs.map((log) => log.phase).filter(Boolean));
+  const failed = run.status === 'failed' || run.status === 'rollback_failed';
+  const success = run.status === 'success' || run.status === 'rollback_success';
+  const failurePhase = [...logs].reverse().find((log) => log.level === 'error')?.phase;
+  const sshSeen = phases.has('ssh');
+  const healthSeen = phases.has('healthcheck');
+  const scriptOne = scripts[0] || './fast.sh';
+  const scriptTwo = scripts[1] || './exec_dep.sh';
+
+  return [
+    {
+      id: 'connect',
+      label: '连接服务器',
+      state: failurePhase === 'connect' ? 'failed' : phases.has('connect') || sshSeen || healthSeen || success ? 'done' : 'running',
+    },
+    {
+      id: 'directory',
+      label: '进入站点目录',
+      state: failurePhase === 'connect' ? 'pending' : sshSeen || healthSeen || success ? 'done' : phases.has('connect') ? 'running' : 'pending',
+    },
+    {
+      id: 'script-one',
+      label: `执行 ${scriptOne.replace(/^\.\//, '')}`,
+      detail: scriptOne,
+      state: failurePhase === 'ssh' && failed ? 'failed' : healthSeen || success ? 'done' : sshSeen ? 'running' : 'pending',
+    },
+    {
+      id: 'script-two',
+      label: `执行 ${scriptTwo.replace(/^\.\//, '')}`,
+      detail: scriptTwo,
+      state: failurePhase === 'ssh' && failed ? 'failed' : healthSeen || success ? 'done' : sshSeen ? 'running' : 'pending',
+    },
+    {
+      id: 'health',
+      label: '检查上线地址',
+      state: failurePhase === 'healthcheck' ? 'failed' : success ? 'done' : run.status === 'healthchecking' || healthSeen ? 'running' : 'pending',
+    },
+    {
+      id: 'record',
+      label: '标记完成',
+      state: success ? 'done' : failed ? 'failed' : 'pending',
+    },
+  ];
+}
+
+function releaseStatusLabel(status: string): string {
+  const map: Record<string, string> = {
+    queued: '排队中',
+    running: '发布中',
+    healthchecking: '检查上线地址',
+    success: '发布成功',
+    failed: '发布失败',
+    rollback_running: '回滚中',
+    rollback_success: '回滚成功',
+    rollback_failed: '回滚失败',
+  };
+  return map[status] || status;
+}
+
+function releaseCheckLabel(check: ReleasePreflightCheck): string {
+  const map: Record<string, string> = {
+    branch: '分支部署成功',
+    commit: 'commit 明确',
+    artifact: '可发布产物',
+    target: '站点发布目标',
+    'project-scope': '项目一致',
+    ssh: '服务器可连接',
+    'deploy-command': '发布脚本已配置',
+    scripts: '发布脚本可执行',
+    healthcheck: '上线地址可访问',
+    'rollback-version': '可回滚版本',
+  };
+  return map[check.id] || check.label;
+}
+
+function releaseCheckStatusLabel(status: ReleasePreflightCheck['status']): string {
+  if (status === 'pass') return '通过';
+  if (status === 'warn') return '提醒';
+  return '失败';
 }
 
 function BranchCard({
