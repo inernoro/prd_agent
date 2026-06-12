@@ -80,14 +80,10 @@ const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#6
 export function OverviewShell() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [active, setActive] = useState<Section>(() => parseOverviewSection(searchParams.get('section')));
-
-  useEffect(() => {
-    setActive(parseOverviewSection(searchParams.get('section')));
-  }, [searchParams]);
+  // 与 SingleProductView 一致：分区由 URL ?section= 派生，避免 state 与地址栏不同步
+  const active: Section = parseOverviewSection(searchParams.get('section'));
 
   const selectSection = useCallback((section: Section) => {
-    setActive(section);
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (section === 'dashboard') next.delete('section');
@@ -143,11 +139,11 @@ export function OverviewShell() {
       }
       items={navItems}
       active={active}
-      onSelect={setActive}
+      onSelect={selectSection}
     >
       {active === 'dashboard' && (
         <SectionShell title="概览仪表盘" desc={isAdmin ? '全局视角，跨全部产品' : '全局视角，跨我参与的产品'}>
-          <DashboardSection stats={stats} loading={statsLoading} onGoto={(s) => setActive(s)} />
+          <DashboardSection stats={stats} loading={statsLoading} onGoto={selectSection} />
         </SectionShell>
       )}
       {active === 'products' && (
