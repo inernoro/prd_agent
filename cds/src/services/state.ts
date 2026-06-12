@@ -1625,7 +1625,7 @@ export class StateService {
 
   getLatestSuccessfulReleaseRun(targetId: string, beforeReleaseId?: string): ReleaseRun | undefined {
     const runs = this.getReleaseRuns({ targetId })
-      .filter((run) => run.status === 'success');
+      .filter((run) => run.status === 'success' || run.status === 'rollback_success');
     if (!beforeReleaseId) return runs[0];
     const current = this.getReleaseRun(beforeReleaseId);
     const beforeTs = current?.startedAt;
