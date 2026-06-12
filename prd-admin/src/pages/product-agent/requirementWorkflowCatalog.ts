@@ -22,6 +22,17 @@ export const BUILTIN_REQUIREMENT_STATE_ORDER = [
   'status_3',
 ] as const;
 
+/** 与后端 RequirementWorkflowCatalog 状态 Key 对齐（闸门 / 流转用） */
+export const REQUIREMENT_STATE_KEYS = {
+  new: 'new',
+  planning: 'planning',
+  approved: 'status_2',
+  developing: 'developing',
+  released: 'resolved',
+  rejected: 'rejected',
+  scheduled: 'status_3',
+} as const;
+
 export function builtinRequirementStateLabel(key?: string | null): string {
   if (!key) return '未设置';
   return BUILTIN_REQUIREMENT_STATE_LABEL[key] ?? key;

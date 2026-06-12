@@ -12,7 +12,7 @@ public static class ProductWorkflowDefaults
     public const string FeatureDefId = "wf-default-feature";
 
     /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认需求流程定义。</summary>
-    public const int RequirementWorkflowRevision = 4;
+    public const int RequirementWorkflowRevision = 6;
 
     public static ProductWorkflowDefinition Requirement() => new()
     {
@@ -42,7 +42,7 @@ public static class ProductWorkflowDefaults
         {
             foreach (var toKey in toKeys)
             {
-                list.Add(new ProductWorkflowTransition
+                var edge = new ProductWorkflowTransition
                 {
                     Key = $"{fromKey}-to-{toKey}",
                     Label = RequirementWorkflowCatalog.BuildTransitionActionLabel(toKey),
@@ -50,10 +50,28 @@ public static class ProductWorkflowDefaults
                     ToState = toKey,
                     RequireComment = toKey == RequirementWorkflowCatalog.Rejected,
                     AutoAssignToActor = toKey == RequirementWorkflowCatalog.Developing,
-                });
+                };
+                ApplyRequirementTransitionDefaults(edge);
+                list.Add(edge);
             }
         }
         return list;
+    }
+
+    private static void ApplyRequirementTransitionDefaults(ProductWorkflowTransition edge)
+    {
+        if (edge.ToState == RequirementWorkflowCatalog.Released)
+        {
+            edge.AllowedRoles = new()
+            {
+                ProductWorkflowTransitionRoles.ProductAdmin,
+                ProductWorkflowTransitionRoles.Owner,
+            };
+        }
+        if (edge.ToState == RequirementWorkflowCatalog.Scheduled)
+        {
+            edge.RequiredFieldKeys = new() { ProductWorkflowTransitionFieldKeys.VersionIds };
+        }
     }
 
     public static ProductWorkflowDefinition Feature() => new()

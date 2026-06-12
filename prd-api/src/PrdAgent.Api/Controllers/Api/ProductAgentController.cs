@@ -590,6 +590,8 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.Status, request.ReviewMeetingRequired ? "approved" : "owner_pending")
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (request.ReviewMeetingRequired)
+            await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Approved, GetUserId(), "立项评审通过，自动流转到已立项");
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -612,6 +614,7 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.ApprovalComment, request.Comment?.Trim())
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
+        await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Approved, GetUserId(), "立项负责人审批通过，自动流转到已立项");
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -706,6 +709,7 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.ReleasedAt, DateTime.UtcNow)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
         var updated = await _db.ProductReleases.Find(x => x.Id == id).FirstOrDefaultAsync();
+        await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, GetUserId(), $"上线完成（{updated?.VCode}），自动流转到已上线");
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -1561,8 +1565,10 @@ public class ProductAgentController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的对象类型"));
         }
 
-        if (await FindAccessibleProductAsync(productId, userId) == null)
+        if (await FindAccessibleProductAsync(productId, userId) is not { } product)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "无权访问该对象"));
+
+        var isGlobalAdmin = await CanManageAsync(userId);
 
         // 历史对象未绑定流程时：惰性绑定默认流程 + 补初始状态（让存量数据也能流转）
         if (string.IsNullOrWhiteSpace(workflowDefId))
@@ -1589,8 +1595,89 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"当前状态({currentState ?? "未设置"})不允许该流转"));
         if (def.States.All(s => s.Key != transition.ToState))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标状态非法"));
-        if (transition.RequireComment && string.IsNullOrWhiteSpace(request.Comment))
+
+        string entityOwnerId = product.OwnerId;
+        string? entityAssigneeId = null;
+        string entityTitle = string.Empty;
+        string entityGrade = string.Empty;
+        Requirement? requirementEntity = null;
+
+        if (request.EntityType == ProductEntityType.Requirement)
+        {
+            requirementEntity = await _db.Requirements.Find(x => x.Id == request.EntityId && !x.IsDeleted).FirstOrDefaultAsync();
+            if (requirementEntity == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
+            entityOwnerId = requirementEntity.OwnerId;
+            entityAssigneeId = requirementEntity.AssigneeId;
+            entityTitle = requirementEntity.Title;
+            entityGrade = requirementEntity.Grade;
+        }
+        else if (request.EntityType == ProductEntityType.Feature)
+        {
+            var featEntity = await _db.Features.Find(x => x.Id == request.EntityId && !x.IsDeleted).FirstOrDefaultAsync();
+            if (featEntity == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
+            entityOwnerId = featEntity.OwnerId;
+            entityAssigneeId = featEntity.AssigneeId;
+            entityTitle = featEntity.Title;
+            entityGrade = featEntity.Grade;
+        }
+
+        if (request.EntityType is ProductEntityType.Requirement or ProductEntityType.Feature)
+        {
+            if (!ProductWorkflowTransitionGuard.CanExecuteTransition(userId, transition, product, isGlobalAdmin, entityOwnerId, entityAssigneeId))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前用户无权执行该流转"));
+
+            var assigneeForCheck = request.AssigneeId ?? entityAssigneeId;
+            if (transition.AutoAssignToActor && string.IsNullOrWhiteSpace(assigneeForCheck))
+                assigneeForCheck = userId;
+
+            var mergedTitle = string.IsNullOrWhiteSpace(request.Title) ? entityTitle : request.Title.Trim();
+            var mergedGrade = string.IsNullOrWhiteSpace(request.Grade) ? entityGrade : request.Grade.Trim();
+            var mergedVersionIds = requirementEntity != null
+                ? ((request.VersionIds?.Count > 0 ? request.VersionIds : requirementEntity.VersionIds) ?? new List<string>())
+                : null;
+            var fieldError = ProductWorkflowTransitionGuard.ValidateRequiredFields(
+                transition, mergedTitle, mergedGrade, assigneeForCheck, request.Comment, transition.AutoAssignToActor, mergedVersionIds);
+            if (fieldError != null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, fieldError));
+
+            if (request.EntityType == ProductEntityType.Requirement && requirementEntity != null)
+            {
+                var (inApprovedInitiation, inCompletedRelease) = await LoadRequirementLinkageAsync(productId, requirementEntity.Id);
+                var initiationValid = false;
+                if (!string.IsNullOrWhiteSpace(request.InitiationId))
+                {
+                    initiationValid = await ValidateInitiationForRequirementAsync(productId, requirementEntity.Id, request.InitiationId);
+                    if (initiationValid)
+                        await LinkRequirementToInitiationAsync(request.InitiationId, requirementEntity.Id);
+                }
+                var releaseValid = false;
+                if (!string.IsNullOrWhiteSpace(request.ReleaseId))
+                {
+                    releaseValid = await ValidateReleaseForRequirementAsync(productId, requirementEntity.Id, request.ReleaseId);
+                    if (releaseValid)
+                        await LinkRequirementToReleaseAsync(request.ReleaseId, requirementEntity.Id);
+                }
+
+                if (RequirementWorkflowTransitionGates.IsStateGatedTarget(transition.ToState))
+                {
+                    var gateError = RequirementWorkflowTransitionGates.ValidateStateGate(
+                        transition.ToState,
+                        mergedVersionIds,
+                        inApprovedInitiation || initiationValid,
+                        request.InitiationId,
+                        initiationValid,
+                        inCompletedRelease || releaseValid,
+                        request.ReleaseId,
+                        releaseValid);
+                    if (gateError != null)
+                        return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, gateError));
+                }
+            }
+        }
+        else if (transition.RequireComment && string.IsNullOrWhiteSpace(request.Comment))
+        {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该流转需要填写备注"));
+        }
 
         // 落库新状态。自动化：流转可显式转交，或 AutoAssignToActor 自动 claim 给操作人
         var now = DateTime.UtcNow;
@@ -1609,13 +1696,21 @@ public class ProductAgentController : ControllerBase
             {
                 var ru = Builders<Requirement>.Update.Set(x => x.CurrentState, transition.ToState).Set(x => x.StateEnteredAt, now).Set(x => x.UpdatedAt, now);
                 if (effectiveAssignee != null) ru = ru.Set(x => x.AssigneeId, effectiveAssignee);
+                if (!string.IsNullOrWhiteSpace(request.Title)) ru = ru.Set(x => x.Title, request.Title.Trim());
+                if (!string.IsNullOrWhiteSpace(request.Grade)) ru = ru.Set(x => x.Grade, request.Grade.Trim());
+                if (request.VersionIds is { Count: > 0 })
+                    ru = ru.Set(x => x.VersionIds, request.VersionIds.Distinct().ToList());
                 await _db.Requirements.UpdateOneAsync(x => x.Id == request.EntityId, ru);
+                if (request.VersionIds is { Count: > 0 })
+                    await SyncRequirementToVersionsAsync(productId, request.EntityId, request.VersionIds.Distinct().ToList());
                 break;
             }
             case ProductEntityType.Feature:
             {
                 var fu = Builders<Feature>.Update.Set(x => x.CurrentState, transition.ToState).Set(x => x.StateEnteredAt, now).Set(x => x.UpdatedAt, now);
                 if (effectiveAssignee != null) fu = fu.Set(x => x.AssigneeId, effectiveAssignee);
+                if (!string.IsNullOrWhiteSpace(request.Title)) fu = fu.Set(x => x.Title, request.Title.Trim());
+                if (!string.IsNullOrWhiteSpace(request.Grade)) fu = fu.Set(x => x.Grade, request.Grade.Trim());
                 await _db.Features.UpdateOneAsync(x => x.Id == request.EntityId, fu);
                 break;
             }
@@ -4068,6 +4163,80 @@ public class ProductAgentController : ControllerBase
             await _db.ProductVersions.UpdateManyAsync(v => versionIds.Contains(v.Id),
                 Builders<ProductVersion>.Update.AddToSet(v => v.RequirementIds, requirementId));
     }
+
+    private async Task<(bool InApprovedInitiation, bool InCompletedRelease)> LoadRequirementLinkageAsync(string productId, string requirementId)
+    {
+        var inApproved = await _db.ProductInitiations.Find(x =>
+                x.ProductId == productId && !x.IsDeleted && x.Status == "approved"
+                && !string.IsNullOrWhiteSpace(x.TCode) && x.RequirementIds.Contains(requirementId))
+            .AnyAsync();
+        var inReleased = await _db.ProductReleases.Find(x =>
+                x.ProductId == productId && !x.IsDeleted && x.Status == "released"
+                && x.RequirementIds.Contains(requirementId))
+            .AnyAsync();
+        return (inApproved, inReleased);
+    }
+
+    private async Task<bool> ValidateInitiationForRequirementAsync(string productId, string requirementId, string initiationId)
+    {
+        var item = await _db.ProductInitiations.Find(x => x.Id == initiationId && x.ProductId == productId && !x.IsDeleted).FirstOrDefaultAsync();
+        return item != null && item.Status == "approved" && !string.IsNullOrWhiteSpace(item.TCode);
+    }
+
+    private Task LinkRequirementToInitiationAsync(string initiationId, string requirementId)
+        => _db.ProductInitiations.UpdateOneAsync(x => x.Id == initiationId,
+            Builders<ProductInitiation>.Update.AddToSet(x => x.RequirementIds, requirementId).Set(x => x.UpdatedAt, DateTime.UtcNow));
+
+    private async Task<bool> ValidateReleaseForRequirementAsync(string productId, string requirementId, string releaseId)
+    {
+        var item = await _db.ProductReleases.Find(x => x.Id == releaseId && x.ProductId == productId && !x.IsDeleted).FirstOrDefaultAsync();
+        return item != null && item.Status == "released";
+    }
+
+    private Task LinkRequirementToReleaseAsync(string releaseId, string requirementId)
+        => _db.ProductReleases.UpdateOneAsync(x => x.Id == releaseId,
+            Builders<ProductRelease>.Update.AddToSet(x => x.RequirementIds, requirementId).Set(x => x.UpdatedAt, DateTime.UtcNow));
+
+    private async Task AdvanceRequirementsToStateAsync(
+        string productId,
+        IEnumerable<string> requirementIds,
+        string targetStateKey,
+        string userId,
+        string activityContent)
+    {
+        var ids = requirementIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        if (ids.Count == 0) return;
+
+        var reqs = await _db.Requirements.Find(r => ids.Contains(r.Id) && r.ProductId == productId && !r.IsDeleted).ToListAsync();
+        if (reqs.Count == 0) return;
+
+        var defId = reqs.Select(r => r.WorkflowDefId).FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        if (string.IsNullOrWhiteSpace(defId))
+            (_, defId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
+        if (string.IsNullOrWhiteSpace(defId)) return;
+
+        var def = await _db.ProductWorkflowDefinitions.Find(w => w.Id == defId && !w.IsDeleted).FirstOrDefaultAsync();
+        if (def == null) return;
+
+        var actorName = (await _db.Users.Find(uu => uu.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        string LabelOf(string? key) => def.States.FirstOrDefault(s => s.Key == key)?.Label ?? key ?? "未设置";
+        var toLabel = LabelOf(targetStateKey);
+        var now = DateTime.UtcNow;
+
+        foreach (var req in reqs)
+        {
+            var fromKey = RequirementWorkflowCatalog.NormalizeStateKey(req.CurrentState, def);
+            if (fromKey == targetStateKey) continue;
+            var hasEdge = def.Transitions.Any(t =>
+                t.ToState == targetStateKey && (string.IsNullOrWhiteSpace(t.FromState) || t.FromState == fromKey));
+            if (!hasEdge) continue;
+
+            await _db.Requirements.UpdateOneAsync(x => x.Id == req.Id,
+                Builders<Requirement>.Update.Set(x => x.CurrentState, targetStateKey).Set(x => x.StateEnteredAt, now).Set(x => x.UpdatedAt, now));
+            await RecordActivityAsync(ProductEntityType.Requirement, req.Id, productId, ProductActivityType.Transition, userId, actorName,
+                content: activityContent, fromValue: LabelOf(fromKey), toValue: toLabel);
+        }
+    }
 }
 
 // ════════════════════════ 请求 DTO ════════════════════════
@@ -4306,6 +4475,16 @@ public class TransitionRequest
     public string? Comment { get; set; }
     /// <summary>可选：流转时同时转交处理人（仅需求 / 功能）</summary>
     public string? AssigneeId { get; set; }
+    /// <summary>可选：流转时补填标题（RequiredFieldKeys 含 title 时）</summary>
+    public string? Title { get; set; }
+    /// <summary>可选：流转时补填分级（RequiredFieldKeys 含 grade 时）</summary>
+    public string? Grade { get; set; }
+    /// <summary>可选：流转到已排期时关联归属版本</summary>
+    public List<string>? VersionIds { get; set; }
+    /// <summary>可选：流转到已立项时关联已通过立项单</summary>
+    public string? InitiationId { get; set; }
+    /// <summary>可选：流转到已上线时关联已完成上线单</summary>
+    public string? ReleaseId { get; set; }
 }
 
 public class ProductCommentRequest

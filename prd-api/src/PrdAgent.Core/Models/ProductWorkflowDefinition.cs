@@ -112,4 +112,10 @@ public class ProductWorkflowTransition
 
     /// <summary>自动化：触发该流转时把处理人自动指派给操作人本人（claim）。</summary>
     public bool AutoAssignToActor { get; set; }
+
+    /// <summary>
+    /// 流转前必须已填写的字段 Key（如 title / assigneeId / grade / comment）。
+    /// comment 与 RequireComment 等价；为空表示除 RequireComment 外无额外字段要求。
+    /// </summary>
+    public List<string>? RequiredFieldKeys { get; set; }
 }

@@ -11,3 +11,13 @@
 | test | prd-admin | requirementWorkflowUtils 单元测试 |
 | test | prd-api | RequirementWorkflowCatalog 单元测试（31 边、短标签、workflowDef 优先解析） |
 | polish | prd-api | 跨产品 overview/requirements 返回 stateLabel；存量状态 Key 幂等规范化迁移 |
+| feat | prd-api | Wave3：流转 AllowedRoles/RequiredFieldKeys 校验 + ProductWorkflowTransitionGuard |
+| feat | prd-api | 流转到已上线默认限制 product_admin/owner；种子 revision 升至 5 |
+| feat | prd-admin | WorkflowTransitionDialog 替代 window.prompt；WorkflowBar/看板按权限过滤 |
+| feat | prd-admin | 设置页流转编辑支持角色多选与必填字段配置 |
+| test | prd-api | ProductWorkflowTransitionGuard 单元测试 |
+| test | prd-admin | workflowTransitionGuard 单元测试 |
+| feat | prd-api | Wave4：已立项/已排期/已上线闸门 + 立项/上线通过自动流转需求状态 |
+| feat | prd-api | 流转支持 versionIds/initiationId/releaseId；已排期种子必填归属版本 |
+| feat | prd-admin | 流转弹窗支持选择立项单、上线单、归属版本 |
+| test | prd-api | RequirementWorkflowTransitionGates 单元测试 |

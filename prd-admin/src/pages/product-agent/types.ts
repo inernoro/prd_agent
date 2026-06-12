@@ -355,6 +355,8 @@ export interface WorkflowTransition {
   requireComment: boolean;
   /** 自动化：触发时把处理人自动指派给操作人本人 */
   autoAssignToActor?: boolean;
+  /** 流转前必须已填写的字段（title / assigneeId / grade / comment） */
+  requiredFieldKeys?: string[] | null;
 }
 
 export interface WorkflowDefinition {

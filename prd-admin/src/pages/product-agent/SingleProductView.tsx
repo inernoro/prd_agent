@@ -51,6 +51,14 @@ import { toCSV, downloadCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
+import { useAuthStore } from '@/stores/authStore';
+import { WorkflowTransitionDialog } from './WorkflowTransitionDialog';
+import {
+  canExecuteWorkflowTransition,
+  isGlobalProductAdmin,
+  transitionNeedsDialog,
+} from './workflowTransitionGuard';
+import type { WorkflowTransition } from './types';
 
 type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
 
@@ -455,7 +463,7 @@ function RequirementsTab({ productId }: { productId: string }) {
         {filtered.length === 0 ? (
           <div className="text-center text-white/35 text-sm py-10">没有匹配的需求，调整筛选条件试试。</div>
         ) : view === 'board' && workflow && workflow.states.length > 0 ? (
-        <StateBoard items={filtered} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
+        <StateBoard items={filtered} productId={productId} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
       ) : view === 'board' ? (
         <GradeBoard
           items={filtered}
@@ -848,19 +856,32 @@ function EmptyHint({ text }: { text: string }) {
 /** 按工作流状态分列的看板，支持拖拽卡片改状态（走合法流转）。 */
 function StateBoard({
   items,
+  productId,
   workflow,
   onCardClick,
   onChanged,
 }: {
   items: Requirement[];
+  productId: string;
   workflow: WorkflowDefinition;
   onCardClick: (r: Requirement) => void;
   onChanged: () => void;
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overState, setOverState] = useState<string | null>(null);
+  const [product, setProduct] = useState<Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'> | null>(null);
+  const [pendingTransition, setPendingTransition] = useState<{ item: Requirement; transition: WorkflowTransition } | null>(null);
+  const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
+  const permissions = useAuthStore((s) => s.permissions);
+  const isGlobalAdmin = isGlobalProductAdmin(permissions);
   const states = [...workflow.states].sort((a, b) => a.sortOrder - b.sortOrder);
   const initial = states.find((s) => s.isInitial)?.key ?? states[0]?.key;
+
+  useEffect(() => {
+    void getProduct(productId).then((res) => {
+      if (res.success) setProduct({ ownerId: res.data.ownerId, adminIds: res.data.adminIds, memberIds: res.data.memberIds });
+    });
+  }, [productId]);
 
   const drop = async (toState: string) => {
     const r = items.find((x) => x.id === dragId);
@@ -870,12 +891,19 @@ function StateBoard({
     const from = normalizeRequirementStateKey(r.currentState ?? initial, workflow);
     if (from === toState) return;
     const t = workflow.transitions.find((tr) => tr.toState === toState && (!tr.fromState || tr.fromState === from));
-    if (!t) return; // 没有合法流转
-    const res = await transition({ entityType: 'requirement', entityId: r.id, transitionKey: t.key, comment: t.requireComment ? '看板拖拽流转' : undefined });
+    if (!t) return;
+    const entity = { ownerId: r.ownerId, assigneeId: r.assigneeId, title: r.title, grade: r.grade, versionIds: r.versionIds };
+    if (product && currentUserId && !canExecuteWorkflowTransition(currentUserId, t, product, isGlobalAdmin, entity)) return;
+    if (transitionNeedsDialog(t, entity)) {
+      setPendingTransition({ item: r, transition: t });
+      return;
+    }
+    const res = await transition({ entityType: 'requirement', entityId: r.id, transitionKey: t.key });
     if (res.success) onChanged();
   };
 
   return (
+    <>
     <div className="flex gap-3 overflow-x-auto pb-2" style={{ overscrollBehavior: 'contain' }}>
       {states.map((s) => {
         const list = items.filter((r) => normalizeRequirementStateKey(r.currentState ?? initial, workflow) === s.key);
@@ -914,6 +942,26 @@ function StateBoard({
         );
       })}
     </div>
+    {pendingTransition && (
+      <WorkflowTransitionDialog
+        open
+        productId={productId}
+        workflow={workflow}
+        entityType="requirement"
+        entityId={pendingTransition.item.id}
+        transition={pendingTransition.transition}
+        entity={{
+          ownerId: pendingTransition.item.ownerId,
+          assigneeId: pendingTransition.item.assigneeId,
+          title: pendingTransition.item.title,
+          grade: pendingTransition.item.grade,
+          versionIds: pendingTransition.item.versionIds,
+        }}
+        onClose={() => setPendingTransition(null)}
+        onDone={onChanged}
+      />
+    )}
+    </>
   );
 }
 

@@ -15,6 +15,7 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { useAuthStore } from '@/stores/authStore';
 import { useSseStream } from '@/lib/useSseStream';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
+import { RequirementCreateForm } from './RequirementCreateForm';
 import { VersionKnowledgeCard } from './knowledge/VersionKnowledgeCard';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
@@ -152,12 +153,20 @@ export function ProductObjectDetailPage() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-        <div className="mx-auto py-5" style={{ width: '80%' }}>
+        <div className={`mx-auto py-5 ${isNew && kind === 'requirement' ? 'w-full max-w-[1280px] px-4' : ''}`} style={isNew && kind === 'requirement' ? undefined : { width: '80%' }}>
           {isNew ? (
             kind === 'defect' ? (
               <CreateDefectForm
                 productId={productId}
                 onCreated={(newId) => navigate(`/product-agent/p/${productId}/defect/${newId}`, { replace: true })}
+              />
+            ) : kind === 'requirement' ? (
+              <RequirementCreateForm
+                productId={productId}
+                requirements={requirements}
+                versions={versions}
+                customers={customers}
+                onCreated={(newId) => navigate(`/product-agent/p/${productId}/requirement/${newId}`, { replace: true })}
               />
             ) : (
               <CreateObjectForm
@@ -1030,7 +1039,15 @@ function RequirementDetail({
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
-          <WorkflowBar workflow={workflow} entityType="requirement" entityId={requirement.id} currentState={requirement.currentState} onChanged={onReload} />
+          <WorkflowBar
+            workflow={workflow}
+            entityType="requirement"
+            entityId={requirement.id}
+            productId={productId}
+            currentState={requirement.currentState}
+            entitySnapshot={{ ownerId: requirement.ownerId, assigneeId, title, grade, versionIds: requirement.versionIds }}
+            onChanged={onReload}
+          />
         ) : undefined
       }
       main={
@@ -1421,7 +1438,15 @@ function FeatureDetail({
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
-          <WorkflowBar workflow={workflow} entityType="feature" entityId={feature.id} currentState={feature.currentState} onChanged={onReload} />
+          <WorkflowBar
+            workflow={workflow}
+            entityType="feature"
+            entityId={feature.id}
+            productId={feature.productId}
+            currentState={feature.currentState}
+            entitySnapshot={{ ownerId: ownerId || feature.ownerId, assigneeId, title, grade }}
+            onChanged={onReload}
+          />
         ) : undefined
       }
       main={
@@ -1702,7 +1727,14 @@ function VersionDetail({
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
-          <WorkflowBar workflow={workflow} entityType="version" entityId={version.id} currentState={version.currentState} onChanged={onReload} />
+          <WorkflowBar
+            workflow={workflow}
+            entityType="version"
+            entityId={version.id}
+            productId={productId}
+            currentState={version.currentState}
+            onChanged={onReload}
+          />
         ) : undefined
       }
       main={

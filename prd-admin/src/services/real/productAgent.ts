@@ -392,7 +392,18 @@ export function deleteWorkflowDefinition(definitionId: string) {
 }
 
 // ── 通用状态流转 ──
-export function transition(body: { entityType: ProductEntityType; entityId: string; transitionKey: string; comment?: string; assigneeId?: string | null }) {
+export function transition(body: {
+  entityType: ProductEntityType;
+  entityId: string;
+  transitionKey: string;
+  comment?: string;
+  assigneeId?: string | null;
+  title?: string;
+  grade?: string;
+  versionIds?: string[];
+  initiationId?: string;
+  releaseId?: string;
+}) {
   return apiRequest<{ entityId: string; newState: string }>('/api/product/transition', { method: 'POST', body });
 }
 

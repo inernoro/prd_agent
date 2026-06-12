@@ -28,6 +28,22 @@ import {
 import type { Product, FormField, FormFieldType, WorkflowState, WorkflowTransition, ProductEntityType, ProductCategory, DescTemplate } from './types';
 import { useProductCategories } from './productCategories';
 import { RichTextField } from './DynamicForm';
+import {
+  WORKFLOW_TRANSITION_FIELD_KEYS,
+  WORKFLOW_TRANSITION_FIELD_LABELS,
+  WORKFLOW_TRANSITION_ROLE_LABELS,
+  WORKFLOW_TRANSITION_ROLES,
+  type WorkflowTransitionFieldKey,
+  type WorkflowTransitionRole,
+} from './workflowTransitionGuard';
+
+const WORKFLOW_ROLE_OPTIONS = Object.values(WORKFLOW_TRANSITION_ROLES);
+const WORKFLOW_FIELD_OPTIONS = Object.values(WORKFLOW_TRANSITION_FIELD_KEYS);
+
+function toggleWorkflowListItem(list: string[] | null | undefined, item: string): string[] {
+  const base = list ?? [];
+  return base.includes(item) ? base.filter((x) => x !== item) : [...base, item];
+}
 
 const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'requirement', label: '需求' },
@@ -793,7 +809,8 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
         <div className="text-sm font-medium text-white/70">流转（from → to）</div>
         {transitions.length === 0 && <div className="text-xs text-white/35 py-2 text-center">还没有流转动作。</div>}
         {transitions.map((t, i) => (
-          <div key={i} className="flex items-center gap-2 flex-wrap">
+          <div key={i} className="flex flex-col gap-2 rounded-lg border border-white/8 bg-black/15 p-3">
+            <div className="flex items-center gap-2 flex-wrap">
             <input value={t.label} onChange={(e) => updateTransition(i, { label: e.target.value })} placeholder="动作名（如：提交评审）" className="flex-1 min-w-[140px] px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40" />
             <input value={t.key} onChange={(e) => updateTransition(i, { key: e.target.value })} placeholder="key" className="w-24 px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none" />
             <select value={t.fromState ?? ''} onChange={(e) => updateTransition(i, { fromState: e.target.value || null })} className="px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none">
@@ -807,6 +824,39 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
             <label className="flex items-center gap-1 text-xs text-white/50"><input type="checkbox" checked={t.requireComment} onChange={(e) => updateTransition(i, { requireComment: e.target.checked })} className="accent-cyan-500" /> 需备注</label>
             <label className="flex items-center gap-1 text-xs text-white/50" title="触发该流转时自动把处理人指派给操作人本人"><input type="checkbox" checked={t.autoAssignToActor ?? false} onChange={(e) => updateTransition(i, { autoAssignToActor: e.target.checked })} className="accent-cyan-500" /> 自动认领</label>
             <button onClick={() => removeTransition(i)} className="text-white/30 hover:text-red-300"><Trash2 size={14} /></button>
+            </div>
+            <div className="flex flex-col gap-1.5 pl-0.5">
+              <span className="text-[11px] text-white/40">允许角色（不选=不限）</span>
+              <div className="flex flex-wrap gap-x-3 gap-y-1">
+                {WORKFLOW_ROLE_OPTIONS.map((role) => (
+                  <label key={role} className="flex items-center gap-1 text-[11px] text-white/50">
+                    <input
+                      type="checkbox"
+                      checked={(t.allowedRoles ?? []).includes(role)}
+                      onChange={() => updateTransition(i, { allowedRoles: toggleWorkflowListItem(t.allowedRoles, role) })}
+                      className="accent-cyan-500"
+                    />
+                    {WORKFLOW_TRANSITION_ROLE_LABELS[role as WorkflowTransitionRole]}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 pl-0.5">
+              <span className="text-[11px] text-white/40">流转前必填字段</span>
+              <div className="flex flex-wrap gap-x-3 gap-y-1">
+                {WORKFLOW_FIELD_OPTIONS.map((fieldKey) => (
+                  <label key={fieldKey} className="flex items-center gap-1 text-[11px] text-white/50">
+                    <input
+                      type="checkbox"
+                      checked={(t.requiredFieldKeys ?? []).includes(fieldKey)}
+                      onChange={() => updateTransition(i, { requiredFieldKeys: toggleWorkflowListItem(t.requiredFieldKeys, fieldKey) })}
+                      className="accent-cyan-500"
+                    />
+                    {WORKFLOW_TRANSITION_FIELD_LABELS[fieldKey as WorkflowTransitionFieldKey]}
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
         ))}
         <button onClick={addTransition} disabled={states.length === 0} className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm disabled:opacity-40">

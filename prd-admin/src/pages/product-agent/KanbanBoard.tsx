@@ -10,12 +10,19 @@ import { Clock, AlertTriangle, User } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
-import { listRequirements, listFeatures, transition } from '@/services/real/productAgent';
+import { getProduct, listRequirements, listFeatures, transition } from '@/services/real/productAgent';
+import { useAuthStore } from '@/stores/authStore';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { ITEM_GRADE_LABEL } from './types';
-import type { Requirement, Feature } from './types';
+import type { Requirement, Feature, Product, WorkflowTransition } from './types';
 import { slaInfo } from './sla';
 import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
+import {
+  canExecuteWorkflowTransition,
+  isGlobalProductAdmin,
+  transitionNeedsDialog,
+} from './workflowTransitionGuard';
+import { WorkflowTransitionDialog } from './WorkflowTransitionDialog';
 import './product-cards.css';
 
 type Item = (Requirement | Feature) & { title: string; currentState?: string | null; grade: string; assigneeId?: string | null; stateEnteredAt?: string | null };
@@ -29,6 +36,18 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   const [dragId, setDragId] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [swimlane, setSwimlane] = useState<'none' | 'assignee' | 'grade'>('none');
+  const [product, setProduct] = useState<Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'> | null>(null);
+  const [pendingTransition, setPendingTransition] = useState<{ item: Item; transition: WorkflowTransition } | null>(null);
+
+  const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
+  const permissions = useAuthStore((s) => s.permissions);
+  const isGlobalAdmin = isGlobalProductAdmin(permissions);
+
+  useEffect(() => {
+    void getProduct(productId).then((res) => {
+      if (res.success) setProduct({ ownerId: res.data.ownerId, adminIds: res.data.adminIds, memberIds: res.data.memberIds });
+    });
+  }, [productId]);
 
   const reload = useCallback(async () => {
     const res = entityType === 'requirement' ? await listRequirements(productId) : await listFeatures(productId);
@@ -80,16 +99,28 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
       setTimeout(() => setHint(null), 3500);
       return;
     }
-    if (tr.requireComment) {
-      const c = window.prompt(`「${tr.label}」需要填写备注`);
-      if (c == null) return;
-      const res = await transition({ entityType, entityId: item.id, transitionKey: tr.key, comment: c });
-      if (res.success) await reload();
+    const entity = {
+      ownerId: 'ownerId' in item ? item.ownerId : undefined,
+      assigneeId: item.assigneeId,
+      title: item.title,
+      grade: item.grade,
+      versionIds: 'versionIds' in item ? item.versionIds : [],
+    };
+    if (product && currentUserId && !canExecuteWorkflowTransition(currentUserId, tr, product, isGlobalAdmin, entity)) {
+      setHint('当前账号无权执行该流转');
+      setTimeout(() => setHint(null), 3500);
+      return;
+    }
+    if (transitionNeedsDialog(tr, entity)) {
+      setPendingTransition({ item, transition: tr });
       return;
     }
     const res = await transition({ entityType, entityId: item.id, transitionKey: tr.key });
     if (res.success) await reload();
-    else setHint(res.error?.message ?? '流转失败');
+    else {
+      setHint(res.error?.message ?? '流转失败');
+      setTimeout(() => setHint(null), 3500);
+    }
   };
 
   const stateLabel = (key?: string | null) => {
@@ -216,6 +247,25 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
           ))}
         </div>
       </div>
+      {pendingTransition && (
+        <WorkflowTransitionDialog
+          open
+          productId={productId}
+          workflow={workflow}
+          entityType={entityType}
+          entityId={pendingTransition.item.id}
+          transition={pendingTransition.transition}
+          entity={{
+            ownerId: 'ownerId' in pendingTransition.item ? pendingTransition.item.ownerId : undefined,
+            assigneeId: pendingTransition.item.assigneeId,
+            title: pendingTransition.item.title,
+            grade: pendingTransition.item.grade,
+            versionIds: 'versionIds' in pendingTransition.item ? pendingTransition.item.versionIds : [],
+          }}
+          onClose={() => setPendingTransition(null)}
+          onDone={() => void reload()}
+        />
+      )}
     </div>
   );
 }

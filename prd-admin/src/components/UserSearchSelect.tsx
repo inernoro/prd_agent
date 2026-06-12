@@ -2,7 +2,7 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { getRoleMeta } from '@/lib/roleConfig';
 import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
-import { Check, ChevronDown, Search, User, Users } from 'lucide-react';
+import { Check, ChevronDown, Search, Users, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -69,7 +69,7 @@ export function UserSearchSelect({
 }: UserSearchSelectProps) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -204,9 +204,17 @@ export function UserSearchSelect({
   }, [open]);
 
   const isCompact = uiSize === 'sm';
-  const triggerHeight = isCompact ? 'h-9' : 'h-10';
-  const triggerRadius = isCompact ? 'rounded-[12px]' : 'rounded-[10px]';
+  const triggerHeight = isCompact ? 'h-8' : 'h-9';
+  const triggerRadius = isCompact ? 'rounded-[8px]' : 'rounded-[8px]';
   const triggerFontSize = 'text-[13px]';
+  const closedLabel = value && selected ? selected.displayName : '';
+  const inputDisplayValue = open ? filter : closedLabel;
+  const inputPlaceholder = showAllOption && !value ? allOptionLabel : placeholder;
+
+  const closePanel = () => {
+    setOpen(false);
+    setFilter('');
+  };
 
   const dropdownPanel = open && pos && createPortal(
     <div
@@ -227,29 +235,8 @@ export function UserSearchSelect({
         WebkitBackdropFilter: 'blur(40px) saturate(180%)',
       }}
     >
-      {/* Search input */}
-      <div className="px-3 pt-2.5 pb-2 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-        <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
-          <input
-            ref={inputRef}
-            type="text"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="w-full h-[32px] rounded-[8px] pl-8 pr-3 text-[13px] outline-none"
-            style={{
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: 'var(--text-primary)',
-            }}
-            placeholder={placeholder}
-            autoFocus
-          />
-        </div>
-      </div>
-
       {/* User list */}
-      <div className="overflow-auto flex-1 py-1">
+      <div className="overflow-auto flex-1 py-1" style={{ minHeight: 0 }}>
         {/* 全部用户（清除选择）选项 */}
         {showAllOption && !q && (
           <>
@@ -258,8 +245,7 @@ export function UserSearchSelect({
               style={!value ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
               onClick={() => {
                 onChange('');
-                setOpen(false);
-                setFilter('');
+                closePanel();
               }}
             >
               <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: 'rgba(255,255,255,0.08)' }}>
@@ -294,8 +280,7 @@ export function UserSearchSelect({
                 style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
                 onClick={() => {
                   onChange(u.userId);
-                  setOpen(false);
-                  setFilter('');
+                  closePanel();
                 }}
               >
                 <img src={ava} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
@@ -347,45 +332,50 @@ export function UserSearchSelect({
 
   return (
     <div className={`relative ${className ?? ''}`}>
-      {/* Trigger button */}
-      <button
+      <div
         ref={triggerRef}
-        type="button"
-        className={`flex items-center gap-2 ${triggerHeight} w-full ${triggerRadius} px-3 cursor-pointer transition-all duration-200 text-left ${triggerFontSize}`}
+        className={`flex items-center gap-2 ${triggerHeight} w-full ${triggerRadius} px-2.5 ${triggerFontSize}`}
         style={{
           background: 'var(--bg-input)',
           border: open ? '1px solid var(--accent-gold)' : '1px solid rgba(255,255,255,0.12)',
           color: 'var(--text-primary)',
           ...style,
         }}
-        onClick={() => {
-          setOpen(!open);
-          if (!open) setFilter('');
-        }}
       >
-        <User size={isCompact ? 14 : 14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-        {value && selected ? (
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <img
-              src={resolveAvatarUrl({ username: selected.username, userType: selected.userType, botKind: selected.botKind, avatarFileName: selected.avatarFileName })}
-              alt=""
-              className={`${isCompact ? 'w-4 h-4' : 'w-5 h-5'} rounded-full object-cover shrink-0`}
-              referrerPolicy="no-referrer"
-            />
-            <span className="truncate">{selected.displayName}</span>
-            {!isCompact && <span className="text-[11px] opacity-50 truncate">@{selected.username}</span>}
-          </div>
-        ) : (
-          <span className="flex-1" style={{ color: 'var(--text-muted)' }}>
-            {showAllOption ? allOptionLabel : placeholder}
-          </span>
+        <Search size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+        <input
+          ref={inputRef}
+          type="text"
+          value={inputDisplayValue}
+          title={!open && selected ? `${selected.displayName} @${selected.username}` : undefined}
+          onChange={(e) => { setFilter(e.target.value); setOpen(true); }}
+          onFocus={() => { setOpen(true); setFilter(''); }}
+          placeholder={inputPlaceholder}
+          className="flex-1 min-w-0 bg-transparent outline-none border-none p-0 h-full"
+          style={{ color: 'var(--text-primary)' }}
+        />
+        {value && !open && (
+          <button
+            type="button"
+            className="shrink-0 p-0 border-none bg-transparent cursor-pointer"
+            aria-label="清除"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onChange('')}
+          >
+            <X size={11} style={{ color: 'var(--text-muted)' }} />
+          </button>
         )}
         <ChevronDown
           size={14}
-          className="shrink-0 transition-transform duration-150"
+          className="shrink-0 transition-transform duration-150 cursor-pointer"
           style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : undefined }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            if (open) { closePanel(); inputRef.current?.blur(); }
+            else { setOpen(true); setFilter(''); inputRef.current?.focus(); }
+          }}
         />
-      </button>
+      </div>
 
       {dropdownPanel}
     </div>
