@@ -12,6 +12,7 @@ import { useEffectiveWorkflow } from './DynamicForm';
 import { FeatureImportDialog } from './FeatureImportDialog';
 import {
   buildFeatureTree,
+  collectDefaultExpandedIds,
   collectSubtreeIds,
   countDescendants,
   featurePathLabel,
@@ -152,6 +153,10 @@ export function FeatureCatalogTab({
   );
 
   const tree = useMemo(() => buildFeatureTree(scopedFeatures), [scopedFeatures]);
+
+  useEffect(() => {
+    setExpanded(collectDefaultExpandedIds(tree, 3));
+  }, [tree, productId, releaseId]);
 
   const subtreeIds = useMemo(
     () => collectSubtreeIds(scopedFeatures, selectedId),

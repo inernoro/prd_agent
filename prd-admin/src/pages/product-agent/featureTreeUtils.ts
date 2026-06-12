@@ -94,3 +94,19 @@ export function countDescendants(node: FeatureTreeNode): number {
   for (const c of node.children) n += countDescendants(c);
   return n;
 }
+
+/** 默认展开前 N 级：展开有子节点的祖先直至可见层级达到 maxVisibleLevels */
+export function collectDefaultExpandedIds(tree: FeatureTreeNode[], maxVisibleLevels = 3): Set<string> {
+  const out = new Set<string>();
+  const maxExpandDepth = Math.max(0, maxVisibleLevels - 1);
+  const walk = (nodes: FeatureTreeNode[], depth: number) => {
+    for (const node of nodes) {
+      if (node.children.length > 0 && depth < maxExpandDepth) {
+        out.add(node.feature.id);
+        walk(node.children, depth + 1);
+      }
+    }
+  };
+  walk(tree, 0);
+  return out;
+}

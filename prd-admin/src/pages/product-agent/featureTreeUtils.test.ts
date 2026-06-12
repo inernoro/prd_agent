@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Feature } from './types';
 import {
   buildFeatureTree,
+  collectDefaultExpandedIds,
   collectDescendantIds,
   collectSubtreeIds,
   featurePathLabel,
@@ -78,5 +79,18 @@ describe('featurePathLabel', () => {
       feat('b', '优惠券', 'a'),
     ];
     expect(featurePathLabel(features, 'b')).toBe('营销活动 / 优惠券');
+  });
+});
+
+describe('collectDefaultExpandedIds', () => {
+  it('expands ancestors for 3 visible levels', () => {
+    const features = [
+      feat('a', 'L1'),
+      feat('b', 'L2', 'a'),
+      feat('c', 'L3', 'b'),
+      feat('d', 'L4', 'c'),
+    ];
+    const tree = buildFeatureTree(features);
+    expect(collectDefaultExpandedIds(tree, 3)).toEqual(new Set(['a', 'b']));
   });
 });
