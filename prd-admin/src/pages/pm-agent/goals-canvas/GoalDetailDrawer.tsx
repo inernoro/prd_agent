@@ -225,7 +225,14 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
       >
         <div className="flex items-center gap-2 px-5 py-4 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <span className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{titleText}</span>
-          <button onClick={onClose} className="ml-auto p-1 rounded hover:opacity-70 shrink-0" style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
+          {/* 高频操作上移到头部常驻（用户反馈：埋在正文中部根本看不到）；删除收进底部危险区 */}
+          {!isCreate && canWrite && (
+            <div className="ml-auto flex items-center gap-1.5 shrink-0">
+              {onDecompose && <Button variant="ghost" size="sm" onClick={() => onDecompose(goal!)} disabled={!canHaveChildren} title={canHaveChildren ? 'AI 拆细为子目标' : '已达最大层级'}><Sparkles size={13} />AI 拆细</Button>}
+              {onAddChild && <Button variant="ghost" size="sm" onClick={() => onAddChild(goal!)} disabled={!canHaveChildren} title={canHaveChildren ? '手动加子目标' : '已达最大层级'}><Plus size={13} />加子目标</Button>}
+            </div>
+          )}
+          <button onClick={onClose} className={`${!isCreate && canWrite ? '' : 'ml-auto '}p-1 rounded hover:opacity-70 shrink-0`} style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
         </div>
 
         <div className="flex-1 px-5 py-4 flex flex-col gap-3" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
@@ -355,14 +362,6 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
             </div>
           </div>
 
-          {!isCreate && canWrite && (
-            <div className="flex items-center gap-2 pt-1 flex-wrap">
-              <Button variant="ghost" size="sm" onClick={() => onDecompose?.(goal!)} disabled={!canHaveChildren}><Sparkles size={13} />AI 拆细</Button>
-              <Button variant="ghost" size="sm" onClick={() => onAddChild?.(goal!)} disabled={!canHaveChildren}><Plus size={13} />加子目标</Button>
-              <Button variant="ghost" size="sm" onClick={remove}><Trash2 size={13} />删除</Button>
-            </div>
-          )}
-
           {!isCreate && (
             <div className="flex flex-col gap-3 pt-3 mt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
               {/* 进展 check-in（更新 + 信心 + 讨论） */}
@@ -475,6 +474,11 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
                   );
                 })}
               </div>
+            </div>
+          )}
+          {!isCreate && canWrite && (
+            <div className="pt-3 mt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+              <Button variant="ghost" size="sm" onClick={remove} style={{ color: '#EF4444' }}><Trash2 size={13} />删除目标（连同子目标）</Button>
             </div>
           )}
         </div>

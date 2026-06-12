@@ -27,7 +27,9 @@ const fmtTime = (iso: string) => { const d = new Date(iso); return `${d.getMonth
 const STATUSES: PmTaskStatus[] = ['backlog', 'todo', 'in_progress', 'done', 'cancelled'];
 const PRIORITIES: PmTaskPriority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 const toDateInput = (iso?: string | null) => (iso ? iso.slice(0, 10) : '');
-const fromDateInput = (v: string) => (v ? new Date(v + 'T00:00:00').toISOString() : undefined);
+// 日期按纯日期字符串提交（后端存 UTC 零点），与里程碑同口径。
+// 此前转本地 00:00 再 toISOString 会在东八区变成前一天 16:00Z，回显 slice(0,10) 少一天，看似「保存不了」。
+const fromDateInput = (v: string) => (v ? v : undefined);
 
 /**
  * 任务独立详情页（全屏路由 /pm-agent/p/:projectId/task/:taskId）。

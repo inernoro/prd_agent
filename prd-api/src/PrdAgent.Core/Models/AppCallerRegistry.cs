@@ -946,6 +946,17 @@ public static class DocumentStoreAgent
         )]
         public const string Generate = "document-store.reprocess::chat";
     }
+
+    public static class Selection
+    {
+        [AppCallerMetadata(
+            "知识库划词局部改写",
+            "对文档中用户划选的片段做局部 AI 改写（润色/精简/扩写/纠错等），结合选区上下文输出可直接替换的 Markdown 片段",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DocumentStore"
+        )]
+        public const string Rewrite = "document-store.selection-rewrite::chat";
+    }
 }
 
 /// <summary>
@@ -1034,6 +1045,17 @@ public static class Admin
             Category = "Management"
         )]
         public const string Reclassify = "prd-agent-web.platforms.reclassify::intent";
+    }
+
+    public static class TeamActivity
+    {
+        [AppCallerMetadata(
+            "团队动态-行为洞察简报",
+            "把行为洞察（报错/慢端点/停留/秒退/横跳）聚合结果生成给产品负责人的中文简报（SSE 流式）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string InsightBrief = "prd-admin.team-activity.insight-brief::chat";
     }
 
     public static class Changelog
@@ -1330,6 +1352,17 @@ public static class ProjectManagement
             Category = "Analysis"
         )]
         public const string Chat = "pm-agent.assistant::chat";
+    }
+
+    public static class Briefing
+    {
+        [AppCallerMetadata(
+            "AI 项目简报",
+            "基于项目实时数据(目标/里程碑/任务/风险)生成对外汇报简报内容，服务端渲染为自包含 HTML 页，可分享/下载/托管",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.briefing::chat";
     }
 }
 

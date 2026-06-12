@@ -78,6 +78,8 @@ export type PmProject = {
   isExcellent: boolean;
   excellenceAwardedAt?: string | null;
   wipLimits?: Partial<Record<PmTaskStatus, number>> | null;
+  /** 里程碑交付物类型字典（空 = 前端用内置默认） */
+  deliverableTypes?: string[];
   stakeholders: PmStakeholder[];
   evaluation?: PmEvaluation | null;
   evaluationRound?: PmEvaluationRound | null;
@@ -289,6 +291,7 @@ export type UpdatePmProjectInput = Partial<{
   plannedEndAt: string;
   budget: number;
   actualCost: number;
+  deliverableTypes: string[];
   valueCoefficient: number;
   wipLimits: Record<string, number>;
   memberIds: string[];
@@ -579,7 +582,8 @@ export type ListPmAuditLogsContract = (opts?: { projectId?: string; page?: numbe
 export type PmMilestoneStatus = 'planned' | 'reached' | 'cancelled';
 export type PmMilestoneHealth = 'on_track' | 'at_risk' | 'overdue' | 'reached' | 'cancelled';
 export type PmMilestoneCriterion = { id: string; text: string; done: boolean };
-export type PmDeliverableType = 'weekly' | 'decision' | 'link';
+/** 内置 weekly/decision/link/doc/other + 项目级自定义类型（自由字符串，字典见 PmProject.deliverableTypes） */
+export type PmDeliverableType = string;
 export type PmDeliverableRef = { type: PmDeliverableType; refId?: string | null; title: string; url?: string | null };
 export type PmMilestone = {
   id: string;
@@ -606,6 +610,8 @@ export type PmMilestone = {
   blockedBy?: string[];
   status: PmMilestoneStatus;
   orderKey: number;
+  /** 由目标「设为里程碑」联动创建（与目标同生命周期，取消即删除） */
+  autoFromGoal?: boolean;
   taskTotal: number;
   taskDone: number;
   progress: number;
@@ -629,6 +635,42 @@ export type SavePmMilestoneInput = Partial<{
 }>;
 /** AI 建议的里程碑草稿 */
 export type PmMilestoneDraft = { title: string; description?: string; acceptanceCriteria?: string[]; dueDate?: string };
+
+// ── 项目简报 ──
+export type PmBriefing = {
+  id: string;
+  projectId: string;
+  title: string;
+  /** 自包含 HTML（列表接口不返回，详情接口返回） */
+  html?: string;
+  /** 生成所用模型 */
+  model?: string | null;
+  /** 简报风格 key（classic/dark/warm/minimal/vivid） */
+  style?: string;
+  /** 是否支持切换风格（有渲染数据快照；旧版本简报为 false） */
+  canRestyle?: boolean;
+  /** 分享是否开启（P2） */
+  shared: boolean;
+  shareToken?: string | null;
+  hostedSiteId?: string | null;
+  /** 托管站点入口 URL（保存到网页托管后回填） */
+  hostedSiteUrl?: string | null;
+  /** 报告周期（可空=全周期简报） */
+  periodFrom?: string | null;
+  periodTo?: string | null;
+  createdBy: string;
+  createdByName?: string | null;
+  createdAt: string;
+};
+export type PmBriefingStyle = { key: string; label: string; accent: string; pageBg: string };
+export type ListPmBriefingsContract = (projectId: string) => Promise<ApiResponse<{ items: PmBriefing[] }>>;
+export type GetPmBriefingContract = (briefingId: string) => Promise<ApiResponse<PmBriefing>>;
+export type DeletePmBriefingContract = (briefingId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+export type ToggleBriefingShareContract = (briefingId: string, enabled: boolean) => Promise<ApiResponse<{ shared: boolean; shareToken?: string | null }>>;
+export type SaveBriefingToHostingContract = (briefingId: string) => Promise<ApiResponse<{ siteId: string; siteUrl: string }>>;
+export type ListBriefingStylesContract = () => Promise<ApiResponse<{ items: PmBriefingStyle[] }>>;
+export type RestylePmBriefingContract = (briefingId: string, style: string) => Promise<ApiResponse<{ style: string; html: string }>>;
+export type RenamePmBriefingContract = (briefingId: string, title: string) => Promise<ApiResponse<{ updated: boolean; title: string }>>;
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
 export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
 export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;

@@ -15,6 +15,23 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 import { NAV_REGISTRY } from '@/app/navRegistry';
+import { initBehaviorTracker, trackRouteChange } from '@/lib/behaviorTracker';
+
+/**
+ * BehaviorTrackerMount — 行为信号采集（行为洞察面板的数据来源）。
+ * 挂在 Router 内、Routes 外：记录全站路由停留/跳转，登录后才上报。
+ */
+function BehaviorTrackerMount() {
+  const location = useLocation();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  useEffect(() => {
+    initBehaviorTracker();
+  }, []);
+  useEffect(() => {
+    if (isAuthenticated) trackRouteChange(location.pathname);
+  }, [location.pathname, isAuthenticated]);
+  return null;
+}
 
 /**
  * NavigationBridge — Exposes React Router's navigate() to non-React code.
@@ -186,6 +203,7 @@ export default function App() {
       <ToastContainer />
       <BranchBadge />
       <NavigationBridge />
+      <BehaviorTrackerMount />
       {/* 路由切换顶栏进度条：绕过 Suspense transition 语义，立刻给用户视觉反馈 */}
       <NavigationProgressBar />
       <Suspense fallback={<SuspenseVideoLoader />}>
