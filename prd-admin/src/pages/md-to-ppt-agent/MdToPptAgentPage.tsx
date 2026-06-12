@@ -1087,25 +1087,35 @@ export function MdToPptAgentPage() {
     return out;
   }, [frameHead, frameAnchored, buildAnchoredDoc, pagesDoneIdxs, pagesDone]);
 
-  // 演示模式（全屏）底部缩略条：把最终整份 deck 按 .slide 拆成每页独立 mini-doc，
-  // 复用 deck 自带 <head> 样式（历史载入 / 新生成都通用，不依赖生成期的 frameHead）。
+  // 演示模式（全屏）底部缩略条：把最终整份 deck 拆成每页独立 mini-doc。
+  // 双结构通吃：锚定 deck（顶层 .slide 块，复用自带 <head> 样式）与
+  // 旧版 reveal deck（.reveal .slides > section，复用 buildLiveSlideDoc 静态铺版）。
+  // 历史载入 / 新生成都通用，不依赖生成期的 frameHead。
   const deckThumbDocs = useMemo(() => {
     if (!generatedHtml) return [] as string[];
     try {
       const doc = new DOMParser().parseFromString(generatedHtml, 'text/html');
-      const headHtml = doc.head?.innerHTML ?? '';
-      const bodyClass = doc.body?.getAttribute('class') ?? '';
       const slides = Array.from(doc.querySelectorAll('.slide')).filter((el) => {
         const cls = (el.getAttribute('class') || '').split(/\s+/);
-        return cls.includes('slide');
+        return cls.includes('slide') && !el.parentElement?.closest('.slide');
       });
-      // 仅保留顶层 slide（排除嵌套在另一个 .slide 内的）
-      const topLevel = slides.filter((el) => !el.parentElement?.closest('.slide'));
-      return topLevel.map((el) => {
-        const clone = el.cloneNode(true) as HTMLElement;
-        clone.classList.add('active', 'is-active');
-        return `<!DOCTYPE html><html><head>${headHtml}</head><body class="${bodyClass}"><div class="deck">${clone.outerHTML}</div></body></html>`;
-      });
+      if (slides.length >= 2) {
+        const headHtml = doc.head?.innerHTML ?? '';
+        const bodyClass = doc.body?.getAttribute('class') ?? '';
+        return slides.map((el) => {
+          const clone = el.cloneNode(true) as HTMLElement;
+          clone.classList.add('active', 'is-active');
+          return `<!DOCTYPE html><html><head>${headHtml}</head><body class="${bodyClass}"><div class="deck">${clone.outerHTML}</div></body></html>`;
+        });
+      }
+      const sections = Array.from(doc.querySelectorAll('.reveal .slides > section'));
+      if (sections.length > 0) {
+        const assets = extractHeadAssets(generatedHtml);
+        return sections.map((s) => buildLiveSlideDoc(assets, s.outerHTML));
+      }
+      return slides.length === 1
+        ? [generatedHtml]
+        : [];
     } catch {
       return [];
     }
