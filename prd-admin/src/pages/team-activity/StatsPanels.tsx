@@ -105,8 +105,14 @@ export function MemberStatsPanel({
                 {compareLabel} {deltaPct >= 0 ? '+' : ''}
                 {deltaPct}%（{prev} 条）
               </div>
+            ) : stats.total > 0 ? (
+              // 零基线：上一窗为 0 时百分比无意义，明示「全为新增」而非误标为无动作
+              <div className="flex items-center gap-1 text-[11px] font-medium" style={{ color: '#6ee7b7' }}>
+                <TrendingUp size={12} />
+                {compareLabel}为 0 · 本期全为新增
+              </div>
             ) : (
-              <div className="text-[11px] text-white/40">{compareLabel}无动作</div>
+              <div className="text-[11px] text-white/40">{compareLabel}与本期均无动作</div>
             )
           ) : null}
           <div className="text-[12px] text-white/50 pt-0.5">

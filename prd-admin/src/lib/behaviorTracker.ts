@@ -35,7 +35,7 @@ const MIN_DWELL_MS = 1_000;
 const SKIP_ROUTES = new Set(['/login', '/']);
 
 let started = false;
-let queue: PendingBehaviorEvent[] = [];
+const queue: PendingBehaviorEvent[] = [];
 let currentRoute: string | null = null;
 let visibleSince = 0; // 0 = 当前不可见
 let accumVisibleMs = 0;
@@ -53,10 +53,9 @@ function push(event: PendingBehaviorEvent) {
 function flush(keepalive = false) {
   if (queue.length === 0) return;
   const token = useAuthStore.getState().token;
-  if (!token) {
-    queue = [];
-    return;
-  }
+  // 无 token（登出/过期瞬间）不丢队列：事件留在内存，重新登录后随下次冲刷补传。
+  // push 已按登录态闸门，登出期间不会新增事件，队列不会无界增长。
+  if (!token) return;
   const events = queue.splice(0, 100);
   // 不走 apiRequest：pagehide 场景需要 keepalive，且采集失败不需要任何错误处理链路
   void fetch('/api/behavior/events', {

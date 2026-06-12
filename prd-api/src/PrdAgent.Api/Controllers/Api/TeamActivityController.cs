@@ -21,7 +21,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/team-activity")]
 [Authorize]
-[AdminController("team-activity", AdminPermissionCatalog.TeamActivityRead)]
+[AdminController("team-activity", AdminPermissionCatalog.TeamActivityRead, WritePermission = AdminPermissionCatalog.TeamActivityManage)]
 public class TeamActivityController : ControllerBase
 {
     private readonly MongoDbContext _db;
@@ -518,7 +518,19 @@ public class TeamActivityController : ControllerBase
 
         await WriteSseAsync("phase", new { message = "正在聚合行为信号…" });
         var (insights, behaviorEventCount) = await ComputeInsightsAsync(fromUtc, endUtc);
-        var top = insights.OrderByDescending(i => i.Severity).Take(15).ToList();
+        // 尊重洞察生命周期：被管理者忽略的洞察不进简报（与 insights 查询口径一致）
+        var allFingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
+        var ignored = (await _db.BehaviorInsightStates
+                .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, allFingerprints))
+                .ToListAsync())
+            .Where(x => x.Status == "ignored")
+            .Select(x => x.Fingerprint)
+            .ToHashSet();
+        var top = insights
+            .Where(i => !ignored.Contains($"{i.Kind}|{i.Target}"))
+            .OrderByDescending(i => i.Severity)
+            .Take(15)
+            .ToList();
         if (top.Count == 0)
         {
             await WriteSseAsync("error", new { message = "当前窗口没有形成任何洞察，无需生成简报" });

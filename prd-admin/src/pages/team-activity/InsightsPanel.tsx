@@ -234,6 +234,7 @@ export function InsightsPanel({ from }: { from?: string }) {
             <span className="font-mono tabular-nums">
               {fmtDate(data.windowFrom)} ~ {fmtDate(data.windowTo)}
             </span>
+            {!from ? <span className="text-amber-200/60">「全部」在洞察视图取近 30 天（更早的信号无行动价值）</span> : null}
             <span className="w-px h-3 bg-white/10" />
             <span>
               路由信号 <span className="text-white/70 font-mono tabular-nums">{data.behaviorEventCount}</span> 条
