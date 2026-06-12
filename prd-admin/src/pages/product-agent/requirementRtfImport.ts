@@ -2,6 +2,8 @@ export interface RtfImportImage {
   fileName: string;
   mimeType: string;
   bytes: Uint8Array;
+  /** 文件内全局图片序号，与描述中的 [[IMPORT_IMAGE_N]] 对应 */
+  refIndex: number;
 }
 
 export interface RtfImportComment {
@@ -104,6 +106,7 @@ function extractImages(input: string): { rtf: string; images: RtfImportImage[] }
         fileName: `import-${imageIndex + 1}.${extension}`,
         mimeType,
         bytes,
+        refIndex: imageIndex,
       });
       groups.push({ start, end, replacement: IMAGE_MARKER(imageIndex) });
     } else {
@@ -266,19 +269,48 @@ function parseComment(value: string): RtfImportComment | null {
   };
 }
 
-/** 解析需求导出 RTF（表格字段 + 评论 + 内嵌图片）。 */
-export function parseRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fileName = 'requirement-export.rtf'): RtfImportRequirement {
-  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  const raw = new TextDecoder('windows-1252').decode(data);
-  if (!raw.trimStart().startsWith('{\\rtf')) throw new Error(`${fileName} 不是有效的 RTF 文件`);
+function isRequirementIdRow(values: string[]): boolean {
+  return values[0]?.trim() === 'ID' && values.length >= 2 && Boolean(values[1]?.trim());
+}
 
-  const extracted = extractImages(raw);
-  const rows = decodeRtf(extracted.rtf)
-    .split('\u001e')
-    .map((row) => row.split('\u001f').map((cell) => cell.trim()))
-    .filter((row) => row.some(Boolean));
-  if (rows.length < 3) throw new Error(`${fileName} 没有识别到需求表格`);
+/** TAPD 批量导出：按「ID」行切分为多条需求表格块。 */
+export function splitRequirementRtfRows(rows: string[][]): string[][][] {
+  const blocks: string[][][] = [];
+  let current: string[][] = [];
 
+  for (const row of rows) {
+    const values = row.filter((cell, index) => cell || index < row.length - 1);
+    if (isRequirementIdRow(values) && current.length > 0) {
+      blocks.push(current);
+      current = [];
+    }
+    current.push(row);
+  }
+  if (current.length > 0) blocks.push(current);
+  return blocks.filter((block) => block.some((r) => r.some(Boolean)));
+}
+
+function collectReferencedImageIndices(text: string): number[] {
+  const indices = new Set<number>();
+  for (const match of text.matchAll(/\[\[IMPORT_IMAGE_(\d+)]]|data-import-image="(\d+)"/g)) {
+    const index = Number(match[1] ?? match[2]);
+    if (!Number.isNaN(index)) indices.add(index);
+  }
+  return Array.from(indices).sort((a, b) => a - b);
+}
+
+function imagesForRequirement(descriptionHtml: string, allImages: RtfImportImage[]): RtfImportImage[] {
+  return collectReferencedImageIndices(descriptionHtml)
+    .map((index) => allImages[index])
+    .filter((image): image is RtfImportImage => Boolean(image?.bytes?.length));
+}
+
+function parseRequirementRows(
+  rows: string[][],
+  allImages: RtfImportImage[],
+  fileName: string,
+  blockIndex?: number,
+): RtfImportRequirement {
   const fields: Record<string, string> = {};
   const fullWidthValues: string[] = [];
   let title = '';
@@ -308,12 +340,14 @@ export function parseRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fileNa
   const comments = fullWidthValues
     .map(parseComment)
     .filter((comment): comment is RtfImportComment => comment !== null);
-  if (!fields.ID || !title) throw new Error(`${fileName} 缺少需求 ID 或标题`);
+  const suffix = blockIndex === undefined ? '' : ` 第 ${blockIndex + 1} 条`;
+  if (!fields.ID || !title) throw new Error(`${fileName}${suffix} 缺少需求 ID 或标题`);
 
+  const description = descriptionToHtml(descriptionText);
   return {
     externalId: fields.ID,
     title,
-    description: descriptionToHtml(descriptionText),
+    description,
     grade: mapPriorityToGrade(fields.优先级 ?? ''),
     sourceStatus: fields.状态 ?? '',
     sourcePriority: fields.优先级 ?? '',
@@ -326,8 +360,27 @@ export function parseRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fileNa
     sourceCreatedAt: fields.创建时间 || undefined,
     sourceModifiedAt: fields.最后修改时间 || undefined,
     sourceCompletedAt: fields.完成时间 || undefined,
-    images: extracted.images,
+    images: imagesForRequirement(description, allImages),
   };
+}
+
+/** 解析需求导出 RTF（单文件可含多条需求：表格字段 + 评论 + 内嵌图片）。 */
+export function parseRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fileName = 'requirement-export.rtf'): RtfImportRequirement[] {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const raw = new TextDecoder('windows-1252').decode(data);
+  if (!raw.trimStart().startsWith('{\\rtf')) throw new Error(`${fileName} 不是有效的 RTF 文件`);
+
+  const extracted = extractImages(raw);
+  const rows = decodeRtf(extracted.rtf)
+    .split('\u001e')
+    .map((row) => row.split('\u001f').map((cell) => cell.trim()))
+    .filter((row) => row.some(Boolean));
+  if (rows.length < 3) throw new Error(`${fileName} 没有识别到需求表格`);
+
+  const blocks = splitRequirementRtfRows(rows);
+  if (blocks.length === 0) throw new Error(`${fileName} 没有识别到需求记录`);
+
+  return blocks.map((block, index) => parseRequirementRows(block, extracted.images, fileName, index));
 }
 
 export function replaceImportImageMarkers(

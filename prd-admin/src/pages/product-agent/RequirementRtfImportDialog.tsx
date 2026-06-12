@@ -7,9 +7,16 @@ import { importRequirements, type ImportRequirementRow } from '@/services/real/p
 import { parseRequirementRtfBytes, replaceImportImageMarkers, type RtfImportRequirement } from './requirementRtfImport';
 import { REQUIREMENT_SOURCE_RTF } from './requirementSource';
 
+interface ParsedRequirementItem {
+  file: File;
+  requirement: RtfImportRequirement;
+  indexInFile: number;
+  totalInFile: number;
+}
+
 interface ParsedFile {
   file: File;
-  requirement?: RtfImportRequirement;
+  requirements: ParsedRequirementItem[];
   error?: string;
 }
 
@@ -29,15 +36,29 @@ export function RequirementRtfImportDialog({
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState('');
   const [result, setResult] = useState<{ created: number; updated: number } | null>(null);
-  const validFiles = useMemo(() => parsedFiles.filter((item) => item.requirement), [parsedFiles]);
+
+  const validItems = useMemo(
+    () => parsedFiles.flatMap((item) => item.requirements),
+    [parsedFiles],
+  );
+  const totalRequirementCount = validItems.length;
 
   useEffect(() => {
     let active = true;
     void Promise.all(files.map(async (file): Promise<ParsedFile> => {
       try {
-        return { file, requirement: parseRequirementRtfBytes(await file.arrayBuffer(), file.name) };
+        const requirements = parseRequirementRtfBytes(await file.arrayBuffer(), file.name);
+        return {
+          file,
+          requirements: requirements.map((requirement, indexInFile) => ({
+            file,
+            requirement,
+            indexInFile,
+            totalInFile: requirements.length,
+          })),
+        };
       } catch (error) {
-        return { file, error: error instanceof Error ? error.message : 'RTF 解析失败' };
+        return { file, requirements: [], error: error instanceof Error ? error.message : 'RTF 解析失败' };
       }
     })).then((items) => {
       if (!active) return;
@@ -63,13 +84,17 @@ export function RequirementRtfImportDialog({
     const batchId = crypto.randomUUID();
     const rows: ImportRequirementRow[] = [];
 
-    for (let fileIndex = 0; fileIndex < validFiles.length; fileIndex += 1) {
-      const item = validFiles[fileIndex];
-      const requirement = item.requirement!;
+    for (let itemIndex = 0; itemIndex < validItems.length; itemIndex += 1) {
+      const item = validItems[itemIndex];
+      const requirement = item.requirement;
       const uploadedImages: { index: number; url: string; fileName: string }[] = [];
       const attachmentIds: string[] = [];
+      const fileHint = item.totalInFile > 1
+        ? `${item.file.name}（${item.indexInFile + 1}/${item.totalInFile}）`
+        : item.file.name;
+
       for (let imageIndex = 0; imageIndex < requirement.images.length; imageIndex += 1) {
-        setProgress(`正在上传第 ${fileIndex + 1}/${validFiles.length} 条需求的图片 ${imageIndex + 1}/${requirement.images.length}`);
+        setProgress(`正在上传 ${fileHint} 第 ${itemIndex + 1}/${validItems.length} 条需求的图片 ${imageIndex + 1}/${requirement.images.length}`);
         const image = requirement.images[imageIndex];
         const imageFile = new File([image.bytes.slice().buffer], image.fileName, { type: image.mimeType });
         const uploaded = await uploadAttachment(imageFile);
@@ -78,7 +103,7 @@ export function RequirementRtfImportDialog({
           setImporting(false);
           return;
         }
-        uploadedImages.push({ index: imageIndex, url: uploaded.data.url, fileName: uploaded.data.fileName });
+        uploadedImages.push({ index: image.refIndex, url: uploaded.data.url, fileName: uploaded.data.fileName });
         attachmentIds.push(uploaded.data.attachmentId);
       }
       rows.push({
@@ -116,6 +141,8 @@ export function RequirementRtfImportDialog({
     await onImported();
   };
 
+  const failedFileCount = parsedFiles.filter((item) => item.error).length;
+
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
       <div
@@ -125,7 +152,7 @@ export function RequirementRtfImportDialog({
         <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
           <div>
             <div className="text-base font-semibold text-white">导入 RTF 需求</div>
-            <div className="text-xs text-white/45 mt-1">先预览字段与图片，再批量写入；相同需求 ID 会更新原记录。</div>
+            <div className="text-xs text-white/45 mt-1">支持 TAPD 单文件批量导出：一个 RTF 可解析为多条需求；相同需求 ID 会更新原记录。</div>
           </div>
           <button onClick={onClose} disabled={importing} className="p-1.5 rounded-lg text-white/45 hover:text-white hover:bg-white/10 disabled:opacity-40" title="关闭">
             <X size={17} />
@@ -147,23 +174,32 @@ export function RequirementRtfImportDialog({
                       <div><div className="font-medium">{item.file.name}</div><div className="text-xs text-red-200/65 mt-1">{item.error}</div></div>
                     </div>
                   ) : (
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-300 shrink-0">
-                        <FileText size={17} />
+                    <div className="flex flex-col gap-2.5">
+                      <div className="text-[11px] text-white/40 font-mono truncate">
+                        {item.file.name}
+                        {item.requirements.length > 1 && (
+                          <span className="ml-2 text-cyan-300/80">共 {item.requirements.length} 条需求</span>
+                        )}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-white truncate">{item.requirement!.title}</div>
-                        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-white/50">
-                          <span>需求 ID：{item.requirement!.externalId}</span>
-                          <span>状态：{item.requirement!.sourceStatus || '空'}</span>
-                          <span>优先级：{item.requirement!.sourcePriority || '空'}</span>
-                          <span>字段：{Object.keys(item.requirement!.fields).length}</span>
-                          <span className="flex items-center gap-1"><Image size={12} /> 图片：{item.requirement!.images.length}</span>
-                          <span>评论：{item.requirement!.comments.length}</span>
+                      {item.requirements.map((reqItem) => (
+                        <div key={`${reqItem.requirement.externalId}-${reqItem.indexInFile}`} className="flex items-start gap-3 pl-1">
+                          <div className="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-300 shrink-0">
+                            <FileText size={17} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-medium text-white truncate">{reqItem.requirement.title}</div>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-white/50">
+                              <span>需求 ID：{reqItem.requirement.externalId}</span>
+                              <span>状态：{reqItem.requirement.sourceStatus || '空'}</span>
+                              <span>优先级：{reqItem.requirement.sourcePriority || '空'}</span>
+                              <span>字段：{Object.keys(reqItem.requirement.fields).length}</span>
+                              <span className="flex items-center gap-1"><Image size={12} /> 图片：{reqItem.requirement.images.length}</span>
+                              <span>评论：{reqItem.requirement.comments.length}</span>
+                            </div>
+                          </div>
+                          <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
                         </div>
-                        <div className="text-[11px] text-white/30 mt-2 truncate">{item.file.name}</div>
-                      </div>
-                      <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                      ))}
                     </div>
                   )}
                 </div>
@@ -180,7 +216,10 @@ export function RequirementRtfImportDialog({
             </div>
           )}
           <div className="flex items-center justify-between gap-3">
-            <div className="text-xs text-white/40">有效 {validFiles.length} 个，失败 {parsedFiles.length - validFiles.length} 个</div>
+            <div className="text-xs text-white/40">
+              {files.length} 个文件，识别 {totalRequirementCount} 条需求
+              {failedFileCount > 0 ? `，失败 ${failedFileCount} 个文件` : ''}
+            </div>
             <div className="flex items-center gap-2">
               <button onClick={onClose} disabled={importing} className="px-3.5 py-2 rounded-lg border border-white/10 text-sm text-white/60 hover:text-white hover:bg-white/5 disabled:opacity-40">
                 {result ? '完成' : '取消'}
@@ -188,11 +227,11 @@ export function RequirementRtfImportDialog({
               {!result && (
                 <button
                   onClick={() => void runImport()}
-                  disabled={parsing || importing || validFiles.length === 0}
+                  disabled={parsing || importing || totalRequirementCount === 0}
                   className="px-4 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/35 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40 flex items-center gap-1.5"
                 >
                   {importing ? <MapSpinner size={14} /> : <Upload size={14} />}
-                  导入 {validFiles.length} 条需求
+                  导入 {totalRequirementCount} 条需求
                 </button>
               )}
             </div>

@@ -19,13 +19,34 @@ describe('parseRequirementRtfBytes', () => {
     }`;
     const parsed = parseRequirementRtfBytes(rtf(input), 'sample.rtf');
 
-    expect(parsed.externalId).toBe('1164054517001006299');
-    expect(parsed.title).toBe('需求标题示例');
-    expect(parsed.sourceStatus).toBe('待评审');
-    expect(parsed.handlerNames).toEqual(['张三']);
-    expect(parsed.developerNames).toEqual(['李四']);
-    expect(parsed.comments).toHaveLength(1);
-    expect(parsed.comments[0].author).toBe('王五');
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].externalId).toBe('1164054517001006299');
+    expect(parsed[0].title).toBe('需求标题示例');
+    expect(parsed[0].sourceStatus).toBe('待评审');
+    expect(parsed[0].handlerNames).toEqual(['张三']);
+    expect(parsed[0].developerNames).toEqual(['李四']);
+    expect(parsed[0].comments).toHaveLength(1);
+    expect(parsed[0].comments[0].author).toBe('王五');
+  });
+
+  it('splits multi-requirement TAPD export RTF by ID rows', () => {
+    const input = String.raw`{\rtf1\ansi
+      \intbl ID\cell 1001\cell\row
+      \intbl \u38656?\u27714?A\cell\row
+      \intbl \u29366?\u24577?\cell \u24453?\u35780?\u23457?\cell \u20248?\u20808?\u32423?\cell Middle\cell\row
+      \intbl \u27491?\u25991?A\cell\row
+      \intbl ID\cell 1002\cell\row
+      \intbl \u38656?\u27714?B\cell\row
+      \intbl \u29366?\u24577?\cell \u24050?\u19978?\u32447?\cell \u20248?\u20808?\u32423?\cell High\cell\row
+      \intbl \u27491?\u25991?B\cell\row
+    }`;
+    const parsed = parseRequirementRtfBytes(rtf(input), 'batch.rtf');
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].externalId).toBe('1001');
+    expect(parsed[0].title).toBe('需求A');
+    expect(parsed[1].externalId).toBe('1002');
+    expect(parsed[1].title).toBe('需求B');
+    expect(parsed[1].sourceStatus).toBe('已上线');
   });
 
   it('replaces import image markers in html', () => {
