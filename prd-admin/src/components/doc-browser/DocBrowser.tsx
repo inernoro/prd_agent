@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
 import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
@@ -313,7 +313,7 @@ import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
-import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft, PanelRight, MessageSquare } from 'lucide-react';
+import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft, PanelRight, MessageSquare, ImagePlus } from 'lucide-react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
@@ -327,6 +327,15 @@ import { InlineCommentOverlay } from './InlineCommentOverlay';
 import { InlineCommentMargin } from './InlineCommentMargin';
 import { InlineCommentComposer } from './InlineCommentComposer';
 import { InlineCommentConnector } from './InlineCommentConnector';
+import { SelectionAiPopover } from './SelectionAiPopover';
+import { SelectionImagePopover } from './SelectionImagePopover';
+import {
+  resolveSelectionRange,
+  replaceSelectionInBody,
+  insertBlockAfterSelection,
+  frontmatterPrefixOf,
+  buildImageMarkdown,
+} from './selectionEdit';
 import { threadColor, groupKey } from './inlineCommentShared';
 import { useDocReaderPrefs } from '@/stores/docReaderPrefsStore';
 import { BulkActionBar } from './BulkActionBar';
@@ -389,6 +398,11 @@ export type DocBrowserProps = {
   onRenameEntry?: (entryId: string, newTitle: string) => Promise<void>;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onSaveContent?: (entryId: string, content: string) => Promise<void>;
+  /**
+   * 划词 AI 局部编辑（改写选区 / 为选区配图）。仅在可写场景（如私人知识库）开启；
+   * 需同时提供 onSaveContent（写回走同一条 PUT content 路径，服务端自动重锚定行内评论）。
+   */
+  enableSelectionAi?: boolean;
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
   onCreateDocument?: () => void;
   onUploadFile?: () => void;
@@ -1507,6 +1521,7 @@ export function DocBrowser({
   onRenameEntry,
   onMoveEntry,
   onSaveContent,
+  enableSelectionAi,
   loadContent,
   onCreateFolder,
   onCreateDocument,
@@ -1756,14 +1771,34 @@ export function DocBrowser({
     rect: { top: number; left: number; width: number; height: number };
     rects: Array<{ top: number; left: number; width: number; height: number }>;
   } | null>(null);
+  // 划词 AI 改写浮层（与 composer 同构：捕获选区快照 + rect，portal 到 body）
+  const [aiPopover, setAiPopover] = useState<{
+    entryId: string;
+    sel: PendingSelection;
+    rect: { top: number; left: number; width: number; height: number };
+    rects: Array<{ top: number; left: number; width: number; height: number }>;
+    canReplace: boolean;
+  } | null>(null);
+  // 划词配图浮层（右侧悬浮卡片内嵌视觉创作 mini 面板）
+  const [imagePopover, setImagePopover] = useState<{
+    entryId: string;
+    sel: PendingSelection;
+    rects: Array<{ top: number; left: number; width: number; height: number }>;
+  } | null>(null);
   // 进入编辑模式 / 切到别的条目时强制收掉 composer 状态，避免 rect 与已经被 textarea
   // 替换 / 已经卸载的正文不同步（Bugbot Medium）。只渲染守卫不够：退出 editMode 时
-  // composer 状态还在会让覆盖层"复活"在过时位置。
+  // composer 状态还在会让覆盖层"复活"在过时位置。AI 浮层同理。
   useEffect(() => {
-    if (editMode) setComposer(null);
+    if (editMode) {
+      setComposer(null);
+      setAiPopover(null);
+      setImagePopover(null);
+    }
   }, [editMode]);
   useEffect(() => {
     setComposer(null);
+    setAiPopover(null);
+    setImagePopover(null);
   }, [selectedEntryId]);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
@@ -1850,6 +1885,92 @@ export function DocBrowser({
     (c: DocumentInlineComment) => commentsIsOwner || (!!commentsViewerId && c.authorUserId === commentsViewerId),
     [commentsIsOwner, commentsViewerId],
   );
+
+  // ── 划词 AI 局部编辑（改写选区 / 为选区配图）──
+  // 仅当：开关开 + 可保存 + 当前条目是可编辑的文本类型 + 正文已加载，才在划词浮层露出 AI 按钮。
+  // 非文本类型（PDF/图片等）改不了正文，不露入口。
+  const selectionAiAvailable = useMemo(() => {
+    if (!enableSelectionAi || !onSaveContent) return false;
+    const e = selectedEntryData;
+    if (!e || e.isFolder) return false;
+    const cfg = getFileTypeConfig(e.title, e.contentType);
+    return cfg.editable && cfg.preview === 'text' && typeof selectionRawContent === 'string' && !!preview?.text;
+  }, [enableSelectionAi, onSaveContent, selectedEntryData, selectionRawContent, preview]);
+
+  // 捕获当前选区快照（选区文本 + 偏移 + 所有 client rect），供评论 composer 与 AI 浮层共用。
+  // rects 用于打开浮层后保留正文高亮（浏览器选区会在浮层拿 focus 后被清掉）。
+  const captureSelectionSnapshot = useCallback(() => {
+    if (!liveSelection || !trackedEntryForComments) return null;
+    const r = liveSelection.rect;
+    const sel = window.getSelection();
+    const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+    const clientRects = range ? Array.from(range.getClientRects()) : [];
+    const rects = clientRects.length > 0
+      ? clientRects.map((cr) => ({ top: cr.top, left: cr.left, width: cr.width, height: cr.height }))
+      : [{ top: r.top, left: r.left, width: r.width, height: r.height }];
+    return {
+      entryId: trackedEntryForComments.id,
+      sel: {
+        selectedText: liveSelection.selectedText,
+        contextBefore: liveSelection.contextBefore,
+        contextAfter: liveSelection.contextAfter,
+        startOffset: liveSelection.startOffset,
+        endOffset: liveSelection.endOffset,
+      },
+      rect: { top: r.top, left: r.left, width: r.width, height: r.height },
+      rects,
+    };
+  }, [liveSelection, trackedEntryForComments]);
+
+  // AI 编辑写回：基于选区在正文 body 中重定位（offset 校验 → 唯一 indexOf → 上下文消歧），
+  // 替换/插入后拼回 frontmatter 前缀，走既有 onSaveContent（PUT content，服务端自动
+  // 重锚定行内评论 + 重算双链账本）。歧义无法消除时拒绝替换，宁缺毋错。
+  const applySelectionAiEdit = useCallback(async (
+    target: { entryId: string; sel: PendingSelection },
+    mode: 'replace' | 'insert-after',
+    newText: string,
+  ): Promise<boolean> => {
+    if (!onSaveContent) return false;
+    if (target.entryId !== selectedEntryId || !preview?.text || typeof selectionRawContent !== 'string') {
+      toast.error('文档已切换', '请重新划选后再试');
+      return false;
+    }
+    const raw = preview.text;
+    const body = selectionRawContent;
+    const range = resolveSelectionRange(body, target.sel);
+    let newBody: string;
+    if (mode === 'replace') {
+      if (!range) {
+        toast.error('无法定位选区', '原文可能已变化，请重新划选');
+        return false;
+      }
+      newBody = replaceSelectionInBody(body, range, newText);
+    } else {
+      newBody = range
+        ? insertBlockAfterSelection(body, range, newText)
+        : `${body.replace(/\n+$/, '')}\n\n${newText}\n`;
+    }
+    const newFull = frontmatterPrefixOf(raw, body) + newBody;
+    try {
+      await onSaveContent(target.entryId, newFull);
+    } catch {
+      return false; // 失败提示由 onSaveContent 调用方（页面层）toast
+    }
+    setPreview(prev => (prev ? { ...prev, text: newFull } : prev));
+    // 写回已触发服务端行内评论重锚定，重拉一次让本地高亮位置跟上
+    void refreshComments();
+    return true;
+  }, [onSaveContent, selectedEntryId, preview, selectionRawContent, refreshComments]);
+
+  // 划词配图：生成的图片以 markdown 形式插入选区所在段落之后
+  const handleInsertSelectionImage = useCallback(async (url: string, name?: string) => {
+    if (!imagePopover) return;
+    const ok = await applySelectionAiEdit(imagePopover, 'insert-after', buildImageMarkdown(url, name));
+    if (ok) {
+      toast.success('配图已插入', '已插入到选中段落之后');
+      setImagePopover(null);
+    }
+  }, [imagePopover, applySelectionAiEdit]);
 
   const handleCreateComment = useCallback(async (input: {
     selectedText: string;
@@ -3276,46 +3397,35 @@ export function DocBrowser({
                     {contentFooter(selectedEntryId)}
                   </div>
                 )}
-                {/* 划词选中时的浮层"添加评论"按钮——仅有写权限时出现；只读访客（私有分享/匿名公开）不弹，
-                    避免写了提交才 403（Codex P2：read-only viewers 不该拿到写入框） */}
-                {liveSelection && !composer && !editMode && commentsCanCreate && (
+                {/* 划词选中时的浮层动作条——评论按钮仅有评论权限时出现（只读访客不弹，
+                    避免写了提交才 403，Codex P2）；AI 改写/配图按钮仅可写 + 文本类条目时出现 */}
+                {liveSelection && !composer && !aiPopover && !imagePopover && !editMode
+                  && (commentsCanCreate || selectionAiAvailable) && (
                   <SelectionActionPopover
                     selection={liveSelection}
-                    onAddComment={() => {
-                      // 就地输入：在选区旁展开 composer，不再甩到右侧抽屉
-                      if (!trackedEntryForComments) return;
-                      const r = liveSelection.rect;
-                      // 捕获选区所有 client rect（多行选区需要多个矩形）用于保留高亮覆盖层
-                      // 用户反馈：打开浮层后正文选区被清掉，写到一半就忘了自己选了哪段
-                      const sel = window.getSelection();
-                      const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-                      // range 存在但 getClientRects() 空（折叠 / 不可见行 / 被 display:none 包裹）也要回退到
-                      // liveSelection.rect 的 bounding box，否则 PendingSelectionHighlight 渲染不出来（Bugbot Low）
-                      const clientRects = range ? Array.from(range.getClientRects()) : [];
-                      const rects = clientRects.length > 0
-                        ? clientRects.map((cr) => ({
-                            top: cr.top,
-                            left: cr.left,
-                            width: cr.width,
-                            height: cr.height,
-                          }))
-                        : [{ top: r.top, left: r.left, width: r.width, height: r.height }];
-                      setComposer({
-                        entryId: trackedEntryForComments.id,
-                        sel: {
-                          selectedText: liveSelection.selectedText,
-                          contextBefore: liveSelection.contextBefore,
-                          contextAfter: liveSelection.contextAfter,
-                          startOffset: liveSelection.startOffset,
-                          endOffset: liveSelection.endOffset,
-                        },
-                        rect: { top: r.top, left: r.left, width: r.width, height: r.height },
-                        rects,
-                      });
-                      // 不主动清浏览器选区——textarea 拿到 focus 时浏览器自己会清，
-                      // 我们用 PendingSelectionHighlight 覆盖层兜底，保证正文高亮不消失
+                    onAddComment={commentsCanCreate ? () => {
+                      // 就地输入：在选区旁展开 composer，不再甩到右侧抽屉。
+                      // 捕获选区所有 client rect（多行选区需要多个矩形）用于保留高亮覆盖层：
+                      // 浮层拿 focus 后浏览器选区被清，PendingSelectionHighlight 兜底高亮不消失
+                      const snap = captureSelectionSnapshot();
+                      if (!snap) return;
+                      setComposer(snap);
                       clearLiveSelection();
-                    }}
+                    } : undefined}
+                    onAiRewrite={selectionAiAvailable ? () => {
+                      const snap = captureSelectionSnapshot();
+                      if (!snap) return;
+                      // 打开浮层时就判定选区能否安全替换（唯一定位），结果传给浮层控制按钮可用性
+                      const canReplace = resolveSelectionRange(selectionRawContent ?? '', snap.sel) != null;
+                      setAiPopover({ ...snap, canReplace });
+                      clearLiveSelection();
+                    } : undefined}
+                    onAiImage={selectionAiAvailable ? () => {
+                      const snap = captureSelectionSnapshot();
+                      if (!snap) return;
+                      setImagePopover({ entryId: snap.entryId, sel: snap.sel, rects: snap.rects });
+                      clearLiveSelection();
+                    } : undefined}
                   />
                 )}
                 {/* 行内评论高亮 + 气泡/内联展开：把他人评论锚回正文，边读边可见 */}
@@ -3355,6 +3465,34 @@ export function DocBrowser({
                         content,
                       }, composer.entryId)}
                       onClose={() => setComposer(null)}
+                    />
+                  </>
+                )}
+                {/* 划词 AI 改写浮层（流式生成 + diff 预览 + 替换/插入） */}
+                {aiPopover && !editMode && (
+                  <>
+                    <PendingSelectionHighlight rects={aiPopover.rects} scrollRef={contentAreaRef} />
+                    <SelectionAiPopover
+                      entryId={aiPopover.entryId}
+                      anchor={aiPopover.sel}
+                      anchorRect={aiPopover.rect}
+                      scrollRef={contentAreaRef}
+                      canReplace={aiPopover.canReplace}
+                      onApply={(mode, text) => applySelectionAiEdit(aiPopover, mode, text)}
+                      onClose={() => setAiPopover(null)}
+                    />
+                  </>
+                )}
+                {/* 划词配图浮层（真实视觉创作 mini 面板，生成后插入选区段落之后） */}
+                {imagePopover && !editMode && (
+                  <>
+                    <PendingSelectionHighlight rects={imagePopover.rects} scrollRef={contentAreaRef} />
+                    <SelectionImagePopover
+                      docTitle={selectedEntryData?.title ?? ''}
+                      docContent={(selectionRawContent ?? '').slice(0, 40000)}
+                      selectedText={imagePopover.sel.selectedText}
+                      onInsertImage={handleInsertSelectionImage}
+                      onClose={() => setImagePopover(null)}
                     />
                   </>
                 )}
@@ -3607,16 +3745,31 @@ function PendingSelectionHighlight({
 function SelectionActionPopover({
   selection,
   onAddComment,
+  onAiRewrite,
+  onAiImage,
 }: {
   selection: ContentSelectionInfo;
-  onAddComment: () => void;
+  /** 有评论权限时提供 */
+  onAddComment?: () => void;
+  /** 可写 + 文本类条目时提供：划词 AI 改写 */
+  onAiRewrite?: () => void;
+  /** 可写 + 文本类条目时提供：为选中内容配图 */
+  onAiImage?: () => void;
 }) {
-  // 浮层定位：选中区上方；跨出视口时转到下方
+  const actions = [
+    onAddComment && { key: 'comment', icon: <MessageSquarePlus size={13} />, label: '评论', onClick: onAddComment },
+    onAiRewrite && { key: 'rewrite', icon: <Sparkles size={13} />, label: 'AI 改写', onClick: onAiRewrite },
+    onAiImage && { key: 'image', icon: <ImagePlus size={13} />, label: '配图', onClick: onAiImage },
+  ].filter(Boolean) as Array<{ key: string; icon: ReactNode; label: string; onClick: () => void }>;
+  if (actions.length === 0) return null;
+
+  // 浮层定位：选中区上方；按动作数估宽，贴边时夹紧
+  const estWidth = actions.length * 86 + 16;
   const top = Math.max(8, selection.rect.top - 38);
-  const left = Math.max(8, Math.min(window.innerWidth - 140, selection.rect.left + selection.rect.width / 2 - 60));
+  const left = Math.max(8, Math.min(window.innerWidth - estWidth - 8, selection.rect.left + selection.rect.width / 2 - estWidth / 2));
   return (
     <div
-      className="fixed z-40 h-8 px-3 rounded-[10px] flex items-center gap-1.5 cursor-pointer transition-all"
+      className="fixed z-40 h-8 px-1.5 rounded-[10px] flex items-center transition-all"
       style={{
         top,
         left,
@@ -3626,12 +3779,20 @@ function SelectionActionPopover({
         backdropFilter: 'blur(12px)',
       }}
       onMouseDown={(e) => e.preventDefault()}
-      onClick={onAddComment}
     >
-      <MessageSquarePlus size={13} style={{ color: 'rgba(216,180,254,0.95)' }} />
-      <span className="text-[11px] font-semibold" style={{ color: 'rgba(216,180,254,0.95)' }}>
-        添加评论
-      </span>
+      {actions.map((a, i) => (
+        <Fragment key={a.key}>
+          {i > 0 && <span className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />}
+          <button
+            onClick={a.onClick}
+            className="h-6.5 px-2 rounded-[8px] flex items-center gap-1.5 cursor-pointer hover:bg-white/8 transition-colors"
+            style={{ color: 'rgba(216,180,254,0.95)' }}
+          >
+            {a.icon}
+            <span className="text-[11px] font-semibold whitespace-nowrap">{a.label}</span>
+          </button>
+        </Fragment>
+      ))}
     </div>
   );
 }

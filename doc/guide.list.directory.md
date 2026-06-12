@@ -711,6 +711,8 @@
   > 4 条 open：OpenRouter CDN 7 天过期、混合渲染 ffmpeg normalize、直出心跳文案分级、成本预估 tooltip
 - [知识库划词评论（批注栏/内联 + 就地输入 + 回读闭环）· 债务台账](debt.kb-inline-comment) `debt.kb-inline-comment`
   > 6 条边界：图片批注未做、inline 卡片定位 MVP、批注栏按时间非锚点排序、批注栏/TOC 互斥、回读为轮询、偏好走 localStorage
+- [知识库划词 AI 局部编辑（AI 改写 + 选区配图）· 债务台账](debt.kb-selection-ai) `debt.kb-selection-ai`
+  > 8 条边界：歧义选区禁替换、无撤销、无乐观锁、配图定位失败落文末、动作集首批 5 个、仅文本类条目、编辑态无入口、后端编译依赖 CDS
 
 - [工作流 Agent · 债务台账](debt.workflow-agent) `debt.workflow-agent`
   > 7 条 open：video-to-text asr 模式 ASR 池绑定 / maxItems 硬编码 / LlmRequestContext / 转写失败兜底 / ffmpeg 检测 / Play 后无返回 / count 与 maxItems 联动

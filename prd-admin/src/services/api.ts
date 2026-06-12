@@ -1230,6 +1230,9 @@ export const api = {
       // 批次 D：划词评论
       inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
       inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
+      // 划词 AI 局部改写（SSE 直流）
+      selectionRewrite: (entryId: string) => `/api/document-store/entries/${entryId}/selection-rewrite`,
+      selectionRewriteActions: () => '/api/document-store/selection-rewrite/actions',
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },

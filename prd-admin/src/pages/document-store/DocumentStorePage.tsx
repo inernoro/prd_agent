@@ -1140,6 +1140,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           onRenameEntry={handleRenameEntry}
           onMoveEntry={handleMoveEntry}
           onSaveContent={handleSaveContent}
+          enableSelectionAi
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
           onCreateDocument={handleCreateDocument}

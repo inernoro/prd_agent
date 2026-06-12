@@ -706,3 +706,126 @@ export async function deleteInlineComment(commentId: string) {
     { method: 'DELETE' },
   );
 }
+
+// ─────────────────────────────────────────────
+// 划词 AI 局部改写（选区级 AI 编辑）
+// ─────────────────────────────────────────────
+
+export interface SelectionRewriteActionItem {
+  key: string;
+  label: string;
+  description: string;
+}
+
+/** 列出划词改写的内置动作（后端 SSOT，前端只渲染 chips） */
+export async function listSelectionRewriteActions() {
+  return await apiRequest<{ items: SelectionRewriteActionItem[] }>(
+    api.documentStore.entries.selectionRewriteActions(),
+    { method: 'GET' },
+  );
+}
+
+export interface SelectionRewriteStreamOptions {
+  selectedText: string;
+  contextBefore?: string;
+  contextAfter?: string;
+  startOffset?: number;
+  endOffset?: number;
+  /** polish/concise/expand/formal/fix 或 custom */
+  actionKey: string;
+  /** actionKey=custom 时必填 */
+  instruction?: string;
+  onStart?: (info: { model?: string; platform?: string }) => void;
+  onThinking?: (content: string) => void;
+  onText: (content: string) => void;
+  onError?: (message: string) => void;
+  onDone?: () => void;
+}
+
+/**
+ * 划词改写 SSE 直流。返回取消函数（abort fetch）。
+ * 事件协议：start{model,platform} / thinking{content} / text{content} / done / error{message}
+ */
+export function streamSelectionRewrite(
+  entryId: string,
+  options: SelectionRewriteStreamOptions,
+): () => void {
+  const abortController = new AbortController();
+
+  (async () => {
+    try {
+      const { useAuthStore } = await import('@/stores/authStore');
+      const token = useAuthStore.getState().token;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const response = await fetch(api.documentStore.entries.selectionRewrite(entryId), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          selectedText: options.selectedText,
+          contextBefore: options.contextBefore,
+          contextAfter: options.contextAfter,
+          startOffset: options.startOffset ?? -1,
+          endOffset: options.endOffset ?? -1,
+          actionKey: options.actionKey,
+          instruction: options.instruction,
+        }),
+        signal: abortController.signal,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let currentData = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            currentData = line.slice(5).trim();
+          } else if (line === '' && currentEvent && currentData) {
+            try {
+              const data = JSON.parse(currentData);
+              if (currentEvent === 'start') {
+                options.onStart?.({ model: data.model, platform: data.platform });
+              } else if (currentEvent === 'thinking' && data.content) {
+                options.onThinking?.(data.content);
+              } else if (currentEvent === 'text' && data.content) {
+                options.onText(data.content);
+              } else if (currentEvent === 'error') {
+                options.onError?.(data.message || '改写失败');
+                return;
+              } else if (currentEvent === 'done') {
+                options.onDone?.();
+                return;
+              }
+            } catch {
+              // 忽略坏帧，继续读
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+      options.onDone?.();
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        options.onError?.((e as Error).message || '网络异常');
+      }
+    }
+  })();
+
+  return () => abortController.abort();
+}
