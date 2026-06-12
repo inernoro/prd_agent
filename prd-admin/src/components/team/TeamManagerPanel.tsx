@@ -247,9 +247,14 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
 
   const saveLabels = async (userId: string, labels: string[]) => {
     if (!selectedId) return;
+    // 乐观更新：chips 立即增删，不走 loadDetail（避免整个面板 loading 闪刷）；失败回滚
+    const prev = members;
+    setMembers(prev.map((m) => (m.userId === userId ? { ...m, labels } : m)));
     const res = await updateMemberLabels(selectedId, userId, labels);
-    if (res.success) await loadDetail(selectedId);
-    else alert(res.error?.message ?? '标签更新失败');
+    if (!res.success) {
+      setMembers(prev);
+      alert(res.error?.message ?? '标签更新失败');
+    }
   };
 
   const handleAddLabel = async (m: TeamMember) => {
@@ -444,8 +449,14 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                                 >
                                   {label}
                                   {isAdmin && (
-                                    <button type="button" title="移除标签" onClick={() => void handleRemoveLabel(m, label)} style={{ color: 'var(--text-muted)' }}>
-                                      <X size={9} />
+                                    <button
+                                      type="button"
+                                      title="移除标签"
+                                      className="cursor-pointer p-1 -m-1 opacity-70 hover:opacity-100"
+                                      onClick={() => void handleRemoveLabel(m, label)}
+                                      style={{ color: 'var(--text-muted)' }}
+                                    >
+                                      <X size={10} />
                                     </button>
                                   )}
                                 </span>

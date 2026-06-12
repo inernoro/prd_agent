@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Plus, Settings, User, UserPlus, Users } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Plus, Settings, User, UserPlus, Users, X } from 'lucide-react';
 import { useTeamStore } from '@/stores/teamStore';
 import { TeamManagerPanel } from '@/components/team/TeamManagerPanel';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -26,11 +26,11 @@ export function SpaceBar({
   current: Space;
   onChange: (s: Space) => void;
 }) {
-  const { teams, loadTeams } = useTeamStore();
+  const { teams, loadTeams, renameTeamLocal } = useTeamStore();
+  // 行内新建/加入：单输入框，输名称回车创建，粘贴 INV- 邀请码回车加入（无浮层，零布局跳动）
   const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [joinCode, setJoinCode] = useState('');
-  const addRef = useRef<HTMLDivElement | null>(null);
+  const [addValue, setAddValue] = useState('');
+  const [addBusy, setAddBusy] = useState(false);
   // 双击团队 chip 就地改名（仅团队管理员）
   const [renaming, setRenaming] = useState<{ teamId: string; value: string } | null>(null);
 
@@ -40,9 +40,13 @@ export function SpaceBar({
     const next = renaming.value.trim();
     setRenaming(null);
     if (!t || !next || next === t.team.name) return;
+    const prev = t.team.name;
+    renameTeamLocal(t.team.id, next); // 乐观更新：chip 立即显示新名
     const res = await updateTeam(t.team.id, { name: next });
-    if (res.success) await loadTeams(true);
-    else toast.error('重命名失败', res.error?.message);
+    if (!res.success) {
+      renameTeamLocal(t.team.id, prev); // 失败回滚
+      toast.error('重命名失败', res.error?.message);
+    }
   };
 
   useEffect(() => { void loadTeams(); }, [loadTeams]);
@@ -51,27 +55,36 @@ export function SpaceBar({
     if (current.kind === 'team') sessionStorage.setItem(LAST_TEAM_KEY, current.teamId);
   }, [current]);
 
-  useEffect(() => {
-    if (!adding) return;
-    const h = (e: MouseEvent) => { if (addRef.current && !addRef.current.contains(e.target as Node)) setAdding(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [adding]);
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    const res = await createTeam({ name: newName.trim() });
-    if (res.success) { setNewName(''); setAdding(false); await loadTeams(true); onChange({ kind: 'team', teamId: res.data.team.id }); }
-    else toast.error('创建失败', res.error?.message);
+  const submitAdd = async () => {
+    const v = addValue.trim();
+    if (!v || addBusy) return;
+    setAddBusy(true);
+    if (/^INV-/i.test(v)) {
+      const res = await joinTeam(v);
+      setAddBusy(false);
+      if (res.success) {
+        setAddValue('');
+        setAdding(false);
+        await loadTeams(true);
+        onChange({ kind: 'team', teamId: res.data.teamId });
+      } else {
+        toast.error('加入失败', res.error?.message);
+      }
+      return;
+    }
+    const res = await createTeam({ name: v });
+    setAddBusy(false);
+    if (res.success) {
+      setAddValue('');
+      setAdding(false);
+      await loadTeams(true);
+      onChange({ kind: 'team', teamId: res.data.team.id });
+    } else {
+      toast.error('创建失败', res.error?.message);
+    }
   };
-  const handleJoin = async () => {
-    if (!joinCode.trim()) return;
-    const res = await joinTeam(joinCode.trim());
-    if (res.success) { setJoinCode(''); setAdding(false); await loadTeams(true); onChange({ kind: 'team', teamId: res.data.teamId }); }
-    else toast.error('加入失败', res.error?.message);
-  };
 
-  // 点一级「团队空间」：回到最近停留的团队（无记忆则第一个）；一个团队都没有时直接打开新建/加入面板
+  // 点一级「团队空间」：回到最近停留的团队（无记忆则第一个）；一个团队都没有时直接展开新建输入框
   const enterTeamSection = () => {
     if (current.kind === 'team') return;
     const remembered = sessionStorage.getItem(LAST_TEAM_KEY);
@@ -100,38 +113,33 @@ export function SpaceBar({
       <div className="flex items-center gap-2 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
         {pill(<><User size={13} /> 个人空间</>, current.kind === 'personal', () => onChange({ kind: 'personal' }), 'personal')}
         {pill(<><Users size={13} /> 团队空间{teams.length > 0 && <span className="opacity-60">{teams.length}</span>}</>, current.kind === 'team', enterTeamSection, 'team-section')}
-        {/* 「+」常驻一级行：没有任何团队时也能从这里新建/加入 */}
-        <div className="relative shrink-0" ref={addRef}>
-          <button
-            type="button"
-            data-tour-id="webpages-space-add"
-            title="新建 / 加入团队空间"
-            onClick={() => setAdding((o) => !o)}
-            className="h-8 w-8 rounded-[8px] flex items-center justify-center"
-            style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.2)', color: 'var(--text-muted)' }}
-          >
-            <Plus size={15} />
-          </button>
-          {adding && (
-            <div className="absolute left-0 top-[38px] z-[130] w-[300px] rounded-[12px] p-3 space-y-2"
-              style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}>
-              <div className="flex gap-1.5">
-                <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="新建团队空间名称"
-                  className="flex-1 h-8 px-2 rounded-[8px] text-[13px] outline-none"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
-                <button type="button" className="px-3 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }} onClick={handleCreate}>创建</button>
-              </div>
-              <div className="flex gap-1.5">
-                <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="或输入邀请码加入"
-                  className="flex-1 h-8 px-2 rounded-[8px] text-[12px] outline-none"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  onKeyDown={(e) => e.key === 'Enter' && handleJoin()} />
-                <button type="button" className="px-3 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }} onClick={handleJoin}>加入</button>
-              </div>
-            </div>
-          )}
-        </div>
+        {/* 「+」常驻一级行：没有任何团队时也能从这里新建/加入；点开后行内展开输入框，不弹浮层 */}
+        <button
+          type="button"
+          data-tour-id="webpages-space-add"
+          title="新建 / 加入团队空间"
+          onClick={() => { setAdding((o) => !o); setAddValue(''); }}
+          className="h-8 w-8 rounded-[8px] flex items-center justify-center shrink-0"
+          style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.2)', color: 'var(--text-muted)' }}
+        >
+          {adding ? <X size={15} /> : <Plus size={15} />}
+        </button>
+        {adding && (
+          <input
+            autoFocus
+            value={addValue}
+            disabled={addBusy}
+            onChange={(e) => setAddValue(e.target.value)}
+            placeholder="输入名称创建团队，或粘贴 INV- 邀请码加入"
+            className="h-8 px-3 rounded-[8px] text-[13px] outline-none shrink-0 w-[280px]"
+            style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)', opacity: addBusy ? 0.6 : 1 }}
+            onBlur={() => { if (!addValue.trim()) setAdding(false); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void submitAdd();
+              if (e.key === 'Escape') { setAdding(false); setAddValue(''); }
+            }}
+          />
+        )}
       </div>
 
       {/* 二级：团队标签 chips（仅团队空间下展示，平铺不下拉） */}
@@ -150,8 +158,14 @@ export function SpaceBar({
                     if (e.key === 'Enter') void commitTeamRename();
                     if (e.key === 'Escape') setRenaming(null);
                   }}
-                  className="h-7 px-2.5 rounded-full text-[12px] outline-none w-[160px] shrink-0"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)' }}
+                  className="h-7 px-2.5 rounded-full text-[12px] outline-none shrink-0"
+                  style={{
+                    // 宽度随内容自适应（中文按 2ch 估），改名时 chip 不跳位
+                    width: `${Math.min(30, Math.max(6, [...renaming.value].reduce((w, c) => w + (c.charCodeAt(0) > 255 ? 2 : 1), 0) + 4))}ch`,
+                    background: 'var(--bg-input)',
+                    border: '1px solid rgba(212,175,55,0.5)',
+                    color: 'var(--text-primary)',
+                  }}
                 />
               );
             }

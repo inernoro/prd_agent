@@ -44,6 +44,8 @@ interface TeamState {
   currentMyWebHostingRole: WebHostingRole | null;
 
   loadTeams: (force?: boolean) => Promise<void>;
+  /** 本地乐观改名（双击重命名即时生效，API 失败由调用方回滚） */
+  renameTeamLocal: (teamId: string, name: string) => void;
   loadTeamDetail: (teamId: string) => Promise<void>;
   clearDetail: () => void;
 
@@ -72,6 +74,11 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     }
     set({ loading: false });
   },
+
+  renameTeamLocal: (teamId: string, name: string) =>
+    set((s) => ({
+      teams: s.teams.map((t) => (t.team.id === teamId ? { ...t, team: { ...t.team, name } } : t)),
+    })),
 
   loadTeamDetail: async (teamId: string) => {
     const res = await getTeam(teamId);

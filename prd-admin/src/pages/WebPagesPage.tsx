@@ -654,6 +654,8 @@ export default function WebPagesPage() {
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 260;
 
   const enterSpace = (s: Space) => {
+    // 幂等守卫：点的就是当前空间则不动（双击当前团队改名时，两次 click 不应触发整页重载）
+    if (s.kind === currentSpace.kind && (s.kind === 'personal' || (currentSpace.kind === 'team' && s.teamId === currentSpace.teamId))) return;
     setCurrentSpace(s);
     setActiveFolder(null);
     setActiveGroupId(null);
@@ -679,11 +681,11 @@ export default function WebPagesPage() {
   const [accessGroup, setAccessGroup] = useState<WebPageGroup | null>(null);
 
   const handleRenameGroup = async (g: WebPageGroup, name: string) => {
+    // 乐观更新：树上立即显示新名，API 失败再回滚（不整列表刷新）
+    setTeamGroups((prev) => prev.map((x) => (x.id === g.id ? { ...x, name } : x)));
     const res = await updateSiteGroup(g.id, { name });
-    if (res.success) {
-      toast.success('已重命名', `「${g.name}」已改为「${name}」`);
-      await loadGroups();
-    } else {
+    if (!res.success) {
+      setTeamGroups((prev) => prev.map((x) => (x.id === g.id ? { ...x, name: g.name } : x)));
       toast.error('重命名失败', res.error?.message);
     }
   };
