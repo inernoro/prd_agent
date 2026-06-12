@@ -48,6 +48,7 @@ const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
 const FrontEndAgentPage = lazy(() => import('@/pages/front-end-agent').then(m => ({ default: m.FrontEndAgentPage })));
 const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
+const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
@@ -413,6 +414,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'front-end-agent',
       wip: true,
       tags: ['前端', 'API', '组件', '报错', 'CSS', '智能体'],
+    },
+  },
+  {
+    path: '/tapd-bug-agent',
+    permission: 'tapd-bug-agent.use',
+    element: shellGuarded('tapd-bug-agent.use', <TapdBugReportPage />),
+    nav: {
+      label: 'TAPD 缺陷自动提报',
+      shortLabel: '提缺陷',
+      description: '口语描述转标准四要素，确认后自动创建 TAPD 缺陷',
+      icon: 'Bug',
+      section: 'toolbox',
+      appKey: 'tapd-bug-agent',
+      wip: true,
+      tags: ['TAPD', '缺陷', '提单', '测试', '智能体'],
     },
   },
   {

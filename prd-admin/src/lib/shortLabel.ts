@@ -43,6 +43,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'workflow-agent': '工作流',
   'md-to-ppt-agent': 'PPT',
   'front-end-agent': '前端',
+  'tapd-bug-agent': '提缺陷',
 
   // ── 基础设施 ──────────────────────────
   'marketplace': '市场',

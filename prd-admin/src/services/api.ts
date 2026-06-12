@@ -579,6 +579,12 @@ export const api = {
     },
   },
 
+  // ============ TAPD Bug Agent 缺陷自动提报 ============
+  tapdBugAgent: {
+    previewStream: () => '/api/tapd-bug-agent/preview/stream',
+    submit: () => '/api/tapd-bug-agent/submit',
+  },
+
   // ============ Report Agent 周报管理 ============
   reportAgent: {
     teams: {

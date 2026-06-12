@@ -381,6 +381,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceService>();
 
 // Defect Agent: 催办 Worker + Webhook 通知服务
+builder.Services.AddScoped<PrdAgent.Api.Services.TapdBugAgentService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DefectWebhookService>();
 
@@ -1199,6 +1200,14 @@ builder.Services.AddHttpClient("WebhookClient")
 builder.Services.AddHttpClient("webhook")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddHttpClient("TapdBugAgent", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+})
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false
+    });
 builder.Services.AddHttpClient("GitHubApi", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);

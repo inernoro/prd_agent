@@ -1,6 +1,6 @@
 # PRD Agent
 
-> Full-stack AI workspace — **8 specialized agents** behind an LLM gateway, a configuration marketplace, and a CDS branch-preview platform. Vision: **"文档即共识"** — ship AI so teams stop re-narrating PRDs.
+> Full-stack AI workspace — specialized agents behind an LLM gateway, a configuration marketplace, and a CDS branch-preview platform. Vision: **"文档即共识"** — ship AI so teams stop re-narrating PRDs.
 
 ## New here? Start in this order
 
@@ -91,13 +91,29 @@ See each sub-directory's `CLAUDE.md` for module-specific build commands.
 | **Visual Agent** | Advanced visual creation workspace — text-to-image generation, multi-image vision analysis, canvas editing, and watermark management |
 | **Literary Agent** | Article illustration and literary creation — prompt templates, reference image configs, and image generation tailored for written content |
 | **Defect Agent** | Issue tracking and defect management — project-scoped templates, escalation workflows, webhook notifications, timeout reminders, and statistics dashboard |
+| **TAPD Bug Agent** | TAPD defect auto-reporting — turn natural language bug descriptions into standard four-part defect drafts, require confirmation, then create a TAPD bug |
 | **Video Agent** | Article-to-video tutorial generation powered by Remotion 4.0 — scene composition, animated text, particle effects, SVG path drawing, and transitions |
 | **Report Agent** | Weekly report management — team structure, daily logs, data source integration, AI-assisted summaries, and review workflows |
 | **Review Agent** | Product review bot — dimension-scored evaluation of submissions, webhook-driven feedback loops, reviewer routing |
 | **PR Review** | GitHub PR review workbench — per-user OAuth Device Flow, PR snapshots, reviewer notes, CI-aware triage |
 | **Workflow Agent** | Visual workflow builder — drag-and-drop capsules, scheduled execution, secret management, and video generation integration |
 
-> **Current appKeys (8)**: `prd-agent`, `visual-agent`, `literary-agent`, `defect-agent`, `video-agent`, `report-agent`, `review-agent`, `pr-review`. Authoritative list: [`.claude/rules/app-identity.md`](.claude/rules/app-identity.md).
+> **Current appKeys**: `prd-agent`, `visual-agent`, `literary-agent`, `defect-agent`, `tapd-bug-agent`, `video-agent`, `report-agent`, `review-agent`, `pr-review`, `project-route-agent`, `front-end-agent`. Authoritative list: [`.claude/rules/app-identity.md`](.claude/rules/app-identity.md).
+
+#### TAPD Bug Agent
+
+Purpose: help testers report defects like filling a shipping label. The user writes what went wrong in plain language; the agent organizes the title, preconditions, reproduction steps, actual result, and expected result; then the user confirms before anything is sent to TAPD.
+
+Usage:
+1. Open **AI Toolbox → TAPD 缺陷自动提报**.
+2. Select an active TAPD external authorization.
+3. Fill `workspaceId` and the temporary TAPD `add_bug_token` from the TAPD add-bug page request.
+4. Enter the bug description and click **生成缺陷草稿**.
+5. Review the draft and click **确认提交到 TAPD**.
+
+Main API:
+- `POST /api/tapd-bug-agent/preview/stream`: SSE preview, returns model/stage/thinking/typing/draft events.
+- `POST /api/tapd-bug-agent/submit`: create-only TAPD submission. It requires `confirmed: true`; no update/delete endpoint is exposed.
 
 #### Workflow Agent Template Update: TAPD Defect Collection & Analysis
 

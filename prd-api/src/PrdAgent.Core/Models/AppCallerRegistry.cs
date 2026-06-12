@@ -1260,6 +1260,25 @@ public static class TaskTreeAgent
 }
 
 /// <summary>
+/// TAPD 缺陷自动提报智能体
+/// </summary>
+public static class TapdBugAgent
+{
+    public const string AppName = "TAPD 缺陷自动提报智能体";
+
+    public static class Extract
+    {
+        [AppCallerMetadata(
+            "TAPD 缺陷草稿整理",
+            "把用户口语化缺陷描述整理为 TAPD 标准缺陷四要素和固定字段",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Extract"
+        )]
+        public const string Chat = "tapd-bug-agent.extract::chat";
+    }
+}
+
+/// <summary>
 /// 项目管理智能体（PM Agent）
 /// </summary>
 public static class ProjectManagement
