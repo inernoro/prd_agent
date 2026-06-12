@@ -21,9 +21,14 @@ function feat(id: string, title: string, parentId?: string): Feature {
     featureType: 'basic',
     moduleName: '',
     requirementIds: [],
+    mainRequirementId: '',
+    plannedVersionId: '',
+    keyRules: '',
+    acceptanceCriteria: '',
+    formData: {},
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
-  } as Feature;
+  };
 }
 
 describe('normalizeFeaturePath', () => {

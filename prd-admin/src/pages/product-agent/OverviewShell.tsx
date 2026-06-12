@@ -496,7 +496,7 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
         (r) => r.currentState ?? '',
         (id) => {
           const hit = its.find((r) => (r.currentState ?? '') === id);
-          return hit?.stateLabel ?? resolveRequirementStateLabel(id) || id;
+          return hit?.stateLabel ?? (resolveRequirementStateLabel(id) || id);
         },
       ),
       test: (r, v) => (r.currentState ?? '') === v,

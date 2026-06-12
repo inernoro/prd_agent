@@ -3,10 +3,14 @@ import { readFavoriteProductIds, toggleFavoriteProductId } from './productFavori
 
 describe('productFavoriteStorage', () => {
   beforeEach(() => {
+    const store: Record<string, string> = {};
     vi.stubGlobal('sessionStorage', {
-      store: {} as Record<string, string>,
-      getItem(key: string) { return this.store[key] ?? null; },
-      setItem(key: string, value: string) { this.store[key] = value; },
+      getItem: (key: string) => store[key] ?? null,
+      setItem: (key: string, value: string) => { store[key] = value; },
+      removeItem: (key: string) => { delete store[key]; },
+      clear: () => { Object.keys(store).forEach((key) => { delete store[key]; }); },
+      key: () => null,
+      get length() { return Object.keys(store).length; },
     });
   });
 
