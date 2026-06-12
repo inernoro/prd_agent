@@ -70,3 +70,5 @@
 | fix | prd-api | CDS 会话失联秒级对账：CDS 自更新/重启清空内存会话后，MAP 轮询撞 session_not_found 立即标记会话 failed + 落 error 事件（此前空转 4 分钟才超时）——页级重试随即重建新会话（两次真实事故根因：并行 agent 频繁 self-update 生产 CDS） |
 | feat | prd-admin | 锚定 deck 前端适配：实况/缩略图改为完整单页 deck（prefix+active slide+suffix，模板自带运行时缩放居中）；iframe 控制协议双模式（reveal + zhangzara 方向键/active 类，MutationObserver 报页码）；编辑器序列化兼容无 reveal 结构 |
 | fix | prd-admin | SSE 断线不再误报"生成失败"：error 前先对账 run 真实状态，活着转后台跟踪轮询到终态（修用户截图实锤的 network error 误报） |
+| fix | prd-admin | 锚定 deck 页码桥 v2：active/is-active/current 类 + 视口中心 elementFromPoint 反查 + 800ms 兜底轮询（monochrome 等不打类标的运行时页码也跟手） |
+| feat | prd-admin | 输入框大气化（用户点名）：composer 加高加圆角、聚焦上浮+饱满光环；页卡缩略图 hover 浮起投影（交互灵动） |

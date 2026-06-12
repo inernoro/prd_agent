@@ -383,7 +383,10 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
     'function slides(){var out=[];var els=document.querySelectorAll(".slide");for(var i=0;i<els.length;i++){var cl=(els[i].getAttribute("class")||"").split(" ");if(cl.indexOf("slide")>=0){out.push(els[i]);}}return out;}' +
     'function isAnchored(){return !window.Reveal&&slides().length>0;}' +
     'function tot(){if(window.Reveal){var s=document.querySelectorAll(".reveal .slides>section");return s.length||1;}return slides().length||1;}' +
-    'function cur(){try{if(window.Reveal&&Reveal.getIndices){return (Reveal.getIndices().h||0)+1;}var ss=slides();for(var i=0;i<ss.length;i++){if(ss[i].classList.contains("active")){return i+1;}}}catch(e){}return 1;}' +
+    'function cur(){try{if(window.Reveal&&Reveal.getIndices){return (Reveal.getIndices().h||0)+1;}var ss=slides();for(var i=0;i<ss.length;i++){var cl=ss[i].classList;if(cl.contains("active")||cl.contains("is-active")||cl.contains("current")){return i+1;}}' +
+    // 运行时不打类标（如平移轨道式）：视口中心 elementFromPoint 反查最近 .slide 祖先
+    'var el=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);while(el){if(el.classList&&el.classList.contains("slide")){for(var j=0;j<ss.length;j++){if(ss[j]===el){return j+1;}}}el=el.parentElement;}' +
+    '}catch(e){}return 1;}' +
     // 锚定模式翻页：派发方向键（各模板运行时都绑方向键），window+document 双目标、带 keyCode 兼容
     'function pressKey(key,code){var ev;try{ev=new KeyboardEvent("keydown",{key:key,keyCode:code,which:code,bubbles:true});}catch(e){return;}try{Object.defineProperty(ev,"keyCode",{get:function(){return code;}});}catch(e2){}document.dispatchEvent(ev);window.dispatchEvent(ev);}' +
     'function anchoredNav(dir){pressKey(dir==="prev"?"ArrowLeft":"ArrowRight",dir==="prev"?37:39);}' +
@@ -416,7 +419,8 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
     'if(R&&R.getIndices){clearInterval(iv);rep();try{if(R.on){R.on("slidechanged",rep);}else if(R.addEventListener){R.addEventListener("slidechanged",rep);}}catch(e){}' +
     'try{parent.postMessage({type:"map-ppt-ready"},"*");}catch(e){}}' +
     // 锚定运行时：找到 .slide 即就绪；active 类翻转走 MutationObserver 上报页码
-    'else if(isAnchored()){clearInterval(iv);rep();try{var ss=slides();var mo=new MutationObserver(function(){rep();});for(var i=0;i<ss.length;i++){mo.observe(ss[i],{attributes:true,attributeFilter:["class"]});}}catch(e){}' +
+    'else if(isAnchored()){clearInterval(iv);rep();try{var ss=slides();var mo=new MutationObserver(function(){rep();});for(var i=0;i<ss.length;i++){mo.observe(ss[i],{attributes:true,attributeFilter:["class","style"]});}}catch(e){}' +
+    'setInterval(rep,800);' +
     'try{parent.postMessage({type:"map-ppt-ready"},"*");}catch(e){}}' +
     'else if(n>60){clearInterval(iv);}},250);' +
     '})();</script>';
@@ -2500,7 +2504,7 @@ export function MdToPptAgentPage() {
           <div className="shrink-0 border-t border-white/8 px-3 pt-3" style={{ paddingBottom: 34 }}>
             <div
               data-testid="composer-shell"
-              className="flex flex-col gap-1.5 rounded-xl border border-white/10 bg-white/4 px-2.5 pt-2.5 pb-2 transition-all focus-within:border-purple-400/70 focus-within:bg-white/6 focus-within:ring-2 focus-within:ring-purple-500/30 focus-within:shadow-[0_0_18px_rgba(168,85,247,.15)]"
+              className="flex flex-col gap-2 rounded-2xl border border-white/12 bg-white/4 px-3.5 pt-3 pb-2.5 transition-all duration-300 focus-within:border-purple-400/80 focus-within:bg-white/7 focus-within:ring-2 focus-within:ring-purple-500/35 focus-within:shadow-[0_8px_32px_rgba(168,85,247,.22)] focus-within:-translate-y-0.5"
             >
               {/* Pending attachments & KB refs（卡内顶部） */}
               {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
@@ -2556,7 +2560,7 @@ export function MdToPptAgentPage() {
                 rows={3}
                 disabled={isProcessing}
                 className="w-full resize-none text-xs leading-relaxed bg-transparent text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border-0 outline-none focus:outline-none focus-visible:outline-none disabled:opacity-50"
-                style={{ minHeight: 60, maxHeight: 180, overflowY: 'auto', overscrollBehavior: 'contain', outline: 'none', boxShadow: 'none' }}
+                style={{ minHeight: 84, maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain', outline: 'none', boxShadow: 'none', fontSize: 13, lineHeight: 1.7 }}
               />
 
               {/* 底部工具行 */}
@@ -3433,9 +3437,9 @@ export function MdToPptAgentPage() {
                           }}
                           title={isDone ? `第 ${i + 1} 页${title ? '：' + title : ''}（点击查看）` : undefined}
                           className={[
-                            'shrink-0 rounded-md border overflow-hidden text-left transition-all duration-500',
+                            'shrink-0 rounded-md border overflow-hidden text-left transition-all duration-300',
                             isDone
-                              ? 'bg-purple-500/12 border-purple-500/35 cursor-pointer hover:border-purple-400/70'
+                              ? 'bg-purple-500/12 border-purple-500/35 cursor-pointer hover:border-purple-400/70 hover:-translate-y-1 hover:shadow-[0_8px_20px_rgba(168,85,247,.25)]'
                               : isCurrent
                                 ? 'bg-white/6 border-purple-500/40 animate-pulse'
                                 : 'bg-transparent border-dashed border-white/10',
