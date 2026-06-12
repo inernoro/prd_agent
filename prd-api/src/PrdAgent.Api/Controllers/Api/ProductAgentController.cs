@@ -3936,17 +3936,23 @@ public class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
         if (request.Rows == null || request.Rows.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "导入数据不能为空"));
+        var releaseId = request.OfficialReleaseId?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(releaseId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择归属的正式版本"));
+        if (!await _db.ProductReleases.Find(r => r.Id == releaseId && r.ProductId == productId && !r.IsDeleted).AnyAsync())
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "正式版本不存在"));
 
         var userId = GetUserId();
         var (_, workflowId) = await ResolveDefaultsAsync(ProductEntityType.Feature, productId);
         var initialState = await ResolveInitialStateAsync(workflowId);
         const string treeSource = "tree-import";
+        var treePrefix = $"tree:{releaseId}:";
         var pathToId = new Dictionary<string, string>(StringComparer.Ordinal);
-        var existingTree = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted && f.SourceSystem == treeSource).ToListAsync();
+        var existingTree = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted && f.SourceSystem == treeSource && f.OfficialReleaseId == releaseId).ToListAsync();
         foreach (var feat in existingTree)
         {
-            if (!string.IsNullOrWhiteSpace(feat.ExternalId) && feat.ExternalId.StartsWith("tree:", StringComparison.Ordinal))
-                pathToId[feat.ExternalId["tree:".Length..]] = feat.Id;
+            if (!string.IsNullOrWhiteSpace(feat.ExternalId) && feat.ExternalId.StartsWith(treePrefix, StringComparison.Ordinal))
+                pathToId[feat.ExternalId[treePrefix.Length..]] = feat.Id;
         }
 
         var ordered = request.Rows
@@ -3980,6 +3986,7 @@ public class ProductAgentController : ControllerBase
                             Builders<Feature>.Update
                                 .Set(f => f.Title, title)
                                 .Set(f => f.ParentId, parentId)
+                                .Set(f => f.OfficialReleaseId, releaseId)
                                 .Set(f => f.Description, row.Description?.Trim())
                                 .Set(f => f.ModuleName, ResolveTreeModuleName(row.ModuleName, segments))
                                 .Set(f => f.FeatureType, NormalizeImportFeatureType(row.FeatureType))
@@ -3989,6 +3996,14 @@ public class ProductAgentController : ControllerBase
                                 .Set(f => f.UpdatedAt, DateTime.UtcNow));
                         updated++;
                     }
+                    else
+                    {
+                        await _db.Features.UpdateOneAsync(f => f.Id == knownId,
+                            Builders<Feature>.Update
+                                .Set(f => f.ParentId, parentId)
+                                .Set(f => f.OfficialReleaseId, releaseId)
+                                .Set(f => f.UpdatedAt, DateTime.UtcNow));
+                    }
                     parentId = knownId;
                     continue;
                 }
@@ -3996,9 +4011,10 @@ public class ProductAgentController : ControllerBase
                 var nodeTitle = isLeaf && !string.IsNullOrWhiteSpace(row.Title) ? row.Title!.Trim() : segments[depth];
                 var lookupExternal = isLeaf && !string.IsNullOrWhiteSpace(row.ExternalId)
                     ? row.ExternalId.Trim()
-                    : $"tree:{partialPath}";
-                var matched = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted && f.SourceSystem == treeSource &&
-                    (f.ExternalId == lookupExternal || f.ExternalId == $"tree:{partialPath}")).FirstOrDefaultAsync();
+                    : $"{treePrefix}{partialPath}";
+                var matched = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted && f.SourceSystem == treeSource
+                    && f.OfficialReleaseId == releaseId
+                    && (f.ExternalId == lookupExternal || f.ExternalId == $"{treePrefix}{partialPath}")).FirstOrDefaultAsync();
                 if (matched != null)
                 {
                     pathToId[partialPath] = matched.Id;
@@ -4008,6 +4024,7 @@ public class ProductAgentController : ControllerBase
                             Builders<Feature>.Update
                                 .Set(f => f.Title, nodeTitle)
                                 .Set(f => f.ParentId, parentId)
+                                .Set(f => f.OfficialReleaseId, releaseId)
                                 .Set(f => f.Description, row.Description?.Trim())
                                 .Set(f => f.ModuleName, ResolveTreeModuleName(row.ModuleName, segments))
                                 .Set(f => f.FeatureType, NormalizeImportFeatureType(row.FeatureType))
@@ -4020,7 +4037,10 @@ public class ProductAgentController : ControllerBase
                     else if (matched.ParentId != parentId)
                     {
                         await _db.Features.UpdateOneAsync(f => f.Id == matched.Id,
-                            Builders<Feature>.Update.Set(f => f.ParentId, parentId).Set(f => f.UpdatedAt, DateTime.UtcNow));
+                            Builders<Feature>.Update
+                                .Set(f => f.ParentId, parentId)
+                                .Set(f => f.OfficialReleaseId, releaseId)
+                                .Set(f => f.UpdatedAt, DateTime.UtcNow));
                     }
                     parentId = matched.Id;
                     continue;
@@ -4038,6 +4058,7 @@ public class ProductAgentController : ControllerBase
                     KeyRules = isLeaf ? row.KeyRules?.Trim() ?? "" : "",
                     AcceptanceCriteria = isLeaf ? row.AcceptanceCriteria?.Trim() ?? "" : "",
                     ParentId = parentId,
+                    OfficialReleaseId = releaseId,
                     WorkflowDefId = workflowId,
                     CurrentState = initialState,
                     StateEnteredAt = DateTime.UtcNow,
@@ -4053,7 +4074,7 @@ public class ProductAgentController : ControllerBase
         }
 
         await RecalcProductCountsAsync(productId);
-        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+        return Ok(ApiResponse<object>.Ok(new { created, updated, officialReleaseId = releaseId }));
     }
 
     [HttpPost("products/{productId}/versions/import")]
@@ -5455,6 +5476,8 @@ public class ImportProductRow
 
 public class ImportFeatureTreeRequest
 {
+    /// <summary>归属正式版本（ProductRelease.Id），导入的功能清单全部挂在此版本下</summary>
+    public string OfficialReleaseId { get; set; } = string.Empty;
     public List<ImportFeatureTreeRow> Rows { get; set; } = new();
 }
 

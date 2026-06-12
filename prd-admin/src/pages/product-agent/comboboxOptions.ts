@@ -1,4 +1,4 @@
-import type { Customer, Feature, Product, ProductVersion, Requirement } from './types';
+import type { Customer, Feature, Product, ProductRelease, ProductVersion, Requirement } from './types';
 import type { ItemSearchOption } from '@/components/ItemSearchSelect';
 
 export function toRequirementOptions(requirements: Requirement[]): ItemSearchOption[] {
@@ -19,4 +19,8 @@ export function toCustomerOptions(customers: Customer[]): ItemSearchOption[] {
 
 export function toProductOptions(products: Product[]): ItemSearchOption[] {
   return products.map((p) => ({ id: p.id, label: p.name, subLabel: p.productNo }));
+}
+
+export function toReleaseOptions(releases: ProductRelease[]): ItemSearchOption[] {
+  return releases.map((r) => ({ id: r.id, label: r.vCode, subLabel: r.planName }));
 }

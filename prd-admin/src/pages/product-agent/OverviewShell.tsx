@@ -141,7 +141,7 @@ export function OverviewShell() {
         <div className="flex h-full min-h-0 flex-col">
           <div className="shrink-0 border-b border-white/10 px-6 py-3">
             <h2 className="text-base font-semibold text-white">功能</h2>
-            <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；与单产品内功能 tab 布局一致，支持版本筛选</p>
+            <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；功能清单归属正式版本，导入时需选择 V 号</p>
           </div>
           <div className="min-h-0 flex-1">
             <OverviewFeaturesPanel isAdmin={isAdmin} products={products} />

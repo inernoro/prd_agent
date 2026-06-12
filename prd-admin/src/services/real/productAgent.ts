@@ -350,10 +350,10 @@ export interface ImportFeatureTreeRow {
   acceptanceCriteria?: string;
 }
 
-export function importFeatureTree(productId: string, rows: ImportFeatureTreeRow[]) {
-  return apiRequest<{ created: number; updated: number }>(
+export function importFeatureTree(productId: string, officialReleaseId: string, rows: ImportFeatureTreeRow[]) {
+  return apiRequest<{ created: number; updated: number; officialReleaseId: string }>(
     `/api/product/products/${productId}/features/import-tree`,
-    { method: 'POST', body: { rows } },
+    { method: 'POST', body: { officialReleaseId, rows } },
   );
 }
 export function importDefects(productId: string, rows: ImportSimpleItemRow[]) {

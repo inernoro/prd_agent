@@ -7,8 +7,7 @@ import { ChevronDown, ChevronRight, FolderTree, Plus, Search, Upload } from 'luc
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { searchDirectoryUsers } from '@/services';
-import { listFeatures, listVersions } from '@/services/real/productAgent';
-import type { ProductVersion } from './types';
+import { listFeatures, listReleases } from '@/services/real/productAgent';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { FeatureImportDialog } from './FeatureImportDialog';
 import {
@@ -20,7 +19,7 @@ import {
 } from './featureTreeUtils';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { toProductOptions } from './comboboxOptions';
-import type { Feature, FeatureBusinessType, Product } from './types';
+import type { Feature, FeatureBusinessType, Product, ProductRelease } from './types';
 
 const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
   basic: '基础功能',
@@ -110,21 +109,21 @@ export function FeatureCatalogTab({
 }) {
   const navigate = useNavigate();
   const [features, setFeatures] = useState<Feature[]>([]);
-  const [versions, setVersions] = useState<ProductVersion[]>([]);
+  const [releases, setReleases] = useState<ProductRelease[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [keyword, setKeyword] = useState('');
-  const [versionId, setVersionId] = useState('');
+  const [releaseId, setReleaseId] = useState('');
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
   const { workflow } = useEffectiveWorkflow('feature', productId);
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [featRes, verRes] = await Promise.all([listFeatures(productId), listVersions(productId)]);
+    const [featRes, relRes] = await Promise.all([listFeatures(productId), listReleases(productId, 'all')]);
     if (featRes.success) setFeatures(featRes.data.items);
-    if (verRes.success) setVersions(verRes.data.items);
+    if (relRes.success) setReleases(relRes.data.items);
     setLoading(false);
   }, [productId]);
 
@@ -132,7 +131,7 @@ export function FeatureCatalogTab({
 
   useEffect(() => {
     setSelectedId(null);
-    setVersionId('');
+    setReleaseId('');
     setKeyword('');
   }, [productId]);
 
@@ -147,32 +146,36 @@ export function FeatureCatalogTab({
     return () => { cancelled = true; };
   }, [features]);
 
-  const tree = useMemo(() => buildFeatureTree(features), [features]);
+  const scopedFeatures = useMemo(
+    () => (releaseId ? features.filter((f) => f.officialReleaseId === releaseId) : features),
+    [features, releaseId],
+  );
+
+  const tree = useMemo(() => buildFeatureTree(scopedFeatures), [scopedFeatures]);
 
   const subtreeIds = useMemo(
-    () => collectSubtreeIds(features, selectedId),
-    [features, selectedId],
+    () => collectSubtreeIds(scopedFeatures, selectedId),
+    [scopedFeatures, selectedId],
   );
 
   const tableRows = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
-    return features
+    return scopedFeatures
       .filter((f) => subtreeIds.has(f.id))
-      .filter((f) => !versionId || f.plannedVersionId === versionId)
       .filter((f) => {
         if (!kw) return true;
         return `${f.featureNo} ${f.title} ${f.moduleName} ${f.description ?? ''}`.toLowerCase().includes(kw);
       })
-      .sort((a, b) => featurePathLabel(features, a.id).localeCompare(featurePathLabel(features, b.id), 'zh'));
-  }, [features, subtreeIds, keyword, versionId]);
+      .sort((a, b) => featurePathLabel(scopedFeatures, a.id).localeCompare(featurePathLabel(scopedFeatures, b.id), 'zh'));
+  }, [scopedFeatures, subtreeIds, keyword]);
 
-  const versionName = useMemo(() => new Map(versions.map((v) => [v.id, v.versionName])), [versions]);
+  const releaseName = useMemo(() => new Map(releases.map((r) => [r.id, r.vCode])), [releases]);
   const productOptions = useMemo(
     () => (productPicker ? toProductOptions(productPicker.products) : []),
     [productPicker],
   );
 
-  const selectedNode = selectedId ? features.find((f) => f.id === selectedId) : null;
+  const selectedNode = selectedId ? scopedFeatures.find((f) => f.id === selectedId) : null;
 
   const toggleExpand = (id: string) => {
     setExpanded((prev) => {
@@ -218,7 +221,7 @@ export function FeatureCatalogTab({
               }`}
             >
               全部功能
-              <span className="ml-auto text-[10px] text-white/30">{features.length}</span>
+              <span className="ml-auto text-[10px] text-white/30">{scopedFeatures.length}</span>
             </button>
             {tree.length === 0 ? (
               <div className="px-2 py-6 text-center text-[11px] text-white/30">
@@ -264,13 +267,13 @@ export function FeatureCatalogTab({
               </div>
             )}
             <select
-              value={versionId}
-              onChange={(e) => setVersionId(e.target.value)}
+              value={releaseId}
+              onChange={(e) => { setReleaseId(e.target.value); setSelectedId(null); }}
               className="h-8 min-w-[140px] max-w-[200px] rounded-lg border border-white/10 bg-[#15171c] px-2.5 text-xs text-white outline-none focus:border-cyan-400/50"
             >
-              <option value="">全部版本</option>
-              {versions.map((v) => (
-                <option key={v.id} value={v.id}>{v.versionName}</option>
+              <option value="">全部正式版本</option>
+              {releases.map((r) => (
+                <option key={r.id} value={r.id}>{r.vCode}{r.planName ? ` · ${r.planName}` : ''}</option>
               ))}
             </select>
             <label className="relative block min-w-[200px] flex-1">
@@ -314,7 +317,7 @@ export function FeatureCatalogTab({
           <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
             {tableRows.length === 0 ? (
               <div className="flex h-full items-center justify-center text-sm text-white/35">
-                {features.length === 0 ? '还没有功能记录，请先导入或新建。' : '当前目录下没有匹配的记录。'}
+                {scopedFeatures.length === 0 ? '还没有功能记录，请先选择正式版本并导入或新建。' : '当前目录下没有匹配的记录。'}
               </div>
             ) : (
               <table className="w-full min-w-[1100px] text-left text-xs">
@@ -323,7 +326,7 @@ export function FeatureCatalogTab({
                     <th className="px-3 py-2.5 font-medium whitespace-nowrap">编号</th>
                     <th className="px-3 py-2.5 font-medium">目录路径</th>
                     <th className="px-3 py-2.5 font-medium">功能名称</th>
-                    <th className="px-3 py-2.5 font-medium">计划版本</th>
+                    <th className="px-3 py-2.5 font-medium">正式版本</th>
                     <th className="px-3 py-2.5 font-medium">状态</th>
                     <th className="px-3 py-2.5 font-medium">类型</th>
                     <th className="px-3 py-2.5 font-medium">所属模块</th>
@@ -341,11 +344,11 @@ export function FeatureCatalogTab({
                       className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]"
                     >
                       <td className="px-3 py-2.5 font-mono text-cyan-200/80 whitespace-nowrap">{f.featureNo}</td>
-                      <td className="px-3 py-2.5 text-white/50 max-w-[200px] truncate" title={featurePathLabel(features, f.id)}>
-                        {featurePathLabel(features, f.id)}
+                      <td className="px-3 py-2.5 text-white/50 max-w-[200px] truncate" title={featurePathLabel(scopedFeatures, f.id)}>
+                        {featurePathLabel(scopedFeatures, f.id)}
                       </td>
                       <td className="px-3 py-2.5 text-white/85">{f.title}</td>
-                      <td className="px-3 py-2.5 text-white/55">{versionName.get(f.plannedVersionId) ?? '—'}</td>
+                      <td className="px-3 py-2.5 text-white/55">{f.officialReleaseId ? releaseName.get(f.officialReleaseId) ?? '—' : '—'}</td>
                       <td className="px-3 py-2.5 text-white/55">
                         {resolveRequirementStateLabel(f.currentState ?? '', workflow) || '—'}
                       </td>
@@ -369,8 +372,12 @@ export function FeatureCatalogTab({
       {showImportDialog && (
         <FeatureImportDialog
           productId={productId}
+          defaultReleaseId={releaseId}
           onClose={() => setShowImportDialog(false)}
-          onImported={reload}
+          onImported={async (importedReleaseId) => {
+            setReleaseId(importedReleaseId);
+            await reload();
+          }}
         />
       )}
     </div>

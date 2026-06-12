@@ -1,35 +1,63 @@
-import { useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Download, FileSpreadsheet, Upload, X } from 'lucide-react';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
-import { importFeatureTree, type ImportFeatureTreeRow } from '@/services/real/productAgent';
+import { importFeatureTree, listReleases, type ImportFeatureTreeRow } from '@/services/real/productAgent';
+import { toReleaseOptions } from './comboboxOptions';
 import { parseFeatureTreeImportFile } from './featureImportParse';
+import type { ProductRelease } from './types';
 
 const TEMPLATE_CSV = '/templates/feature-import-structure.csv';
 
 export function FeatureImportDialog({
   productId,
+  defaultReleaseId = '',
   onClose,
   onImported,
 }: {
   productId: string;
+  /** 默认选中的正式版本（与功能清单当前筛选一致） */
+  defaultReleaseId?: string;
   onClose: () => void;
-  onImported: () => Promise<void>;
+  onImported: (officialReleaseId: string) => Promise<void>;
 }) {
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState('');
   const [rows, setRows] = useState<ImportFeatureTreeRow[]>([]);
+  const [releases, setReleases] = useState<ProductRelease[]>([]);
+  const [releasesLoading, setReleasesLoading] = useState(true);
+  const [officialReleaseId, setOfficialReleaseId] = useState(defaultReleaseId);
   const [busy, setBusy] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [message, setMessage] = useState('');
+
+  const releaseOptions = useMemo(() => toReleaseOptions(releases), [releases]);
+  const selectedRelease = releases.find((r) => r.id === officialReleaseId);
+
+  const loadReleases = useCallback(async () => {
+    setReleasesLoading(true);
+    const res = await listReleases(productId, 'all');
+    if (res.success) {
+      setReleases(res.data.items);
+      setOfficialReleaseId((prev) => {
+        if (prev && res.data.items.some((r) => r.id === prev)) return prev;
+        if (defaultReleaseId && res.data.items.some((r) => r.id === defaultReleaseId)) return defaultReleaseId;
+        return res.data.items[0]?.id ?? '';
+      });
+    }
+    setReleasesLoading(false);
+  }, [productId, defaultReleaseId]);
+
+  useEffect(() => { void loadReleases(); }, [loadReleases]);
 
   const applyParsed = (name: string, parsed: ImportFeatureTreeRow[]) => {
     setFileName(name);
     setRows(parsed);
     if (parsed.length > 0) {
-      const hint = `已读取 ${parsed.length} 条目录节点，确认后写入功能树。`;
+      const hint = `已读取 ${parsed.length} 条目录节点，确认后写入所选正式版本下的功能树。`;
       setMessage(hint);
       toast.success(hint);
       return;
@@ -40,6 +68,10 @@ export function FeatureImportDialog({
   };
 
   const readFile = async (file: File) => {
+    if (!officialReleaseId) {
+      toast.warning('请先选择归属的正式版本');
+      return;
+    }
     setParsing(true);
     setMessage('');
     try {
@@ -56,9 +88,9 @@ export function FeatureImportDialog({
   };
 
   const commit = async () => {
-    if (rows.length === 0) return;
+    if (rows.length === 0 || !officialReleaseId) return;
     setBusy(true);
-    const result = await importFeatureTree(productId, rows);
+    const result = await importFeatureTree(productId, officialReleaseId, rows);
     setBusy(false);
     if (!result.success) {
       const errMsg = result.error?.message ?? '导入失败';
@@ -66,10 +98,11 @@ export function FeatureImportDialog({
       toast.error(errMsg);
       return;
     }
-    const doneMsg = `导入完成：新增 ${result.data.created} 条，更新 ${result.data.updated} 条`;
+    const releaseLabel = selectedRelease?.vCode ?? officialReleaseId;
+    const doneMsg = `导入完成（${releaseLabel}）：新增 ${result.data.created} 条，更新 ${result.data.updated} 条`;
     setMessage(doneMsg);
     toast.success(doneMsg);
-    await onImported();
+    await onImported(result.data.officialReleaseId ?? officialReleaseId);
     onClose();
   };
 
@@ -84,7 +117,7 @@ export function FeatureImportDialog({
           <div>
             <div className="text-base font-semibold text-white">导入功能目录结构</div>
             <div className="mt-1 text-xs text-white/45">
-              用「目录路径」列描述无限层级树（如 营销活动/优惠券/满减）。缺省上级会自动补齐；同路径重复导入会更新。
+              功能清单须归属某一正式版本。用「目录路径」列描述无限层级树；缺省上级会自动补齐；同版本下同路径重复导入会更新。
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭">
@@ -93,6 +126,39 @@ export function FeatureImportDialog({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" style={{ overscrollBehavior: 'contain' }}>
+          <div className="mb-4">
+            <div className="mb-1.5 text-xs font-medium text-white/70">
+              归属正式版本 <span className="text-rose-300/80">*</span>
+            </div>
+            {releasesLoading ? (
+              <div className="flex h-8 items-center text-xs text-white/40">
+                <MapSpinner size={14} /> <span className="ml-2">正在加载正式版本…</span>
+              </div>
+            ) : releases.length === 0 ? (
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200/75">
+                还没有正式版本。请先在单产品「版本」中申领正式版本号后再导入功能目录。
+              </div>
+            ) : (
+              <div className="h-9 max-w-md">
+                <ItemSearchSelect
+                  value={officialReleaseId}
+                  onChange={setOfficialReleaseId}
+                  options={releaseOptions}
+                  placeholder="搜索 V 号 / 方案名称"
+                  uiSize="sm"
+                  countUnit="个正式版本"
+                  emptyText="暂无正式版本"
+                />
+              </div>
+            )}
+            {selectedRelease && (
+              <div className="mt-1.5 text-[11px] text-white/40">
+                {selectedRelease.planName}
+                {selectedRelease.status === 'released' ? ' · 已上线' : ' · 待公告'}
+              </div>
+            )}
+          </div>
+
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <a
               href={TEMPLATE_CSV}
@@ -103,7 +169,11 @@ export function FeatureImportDialog({
             </a>
             <label
               htmlFor={inputId}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-500/25"
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs ${
+                officialReleaseId
+                  ? 'cursor-pointer border-cyan-500/35 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25'
+                  : 'cursor-not-allowed border-white/10 bg-white/5 text-white/30'
+              }`}
             >
               {parsing ? <MapSpinner size={14} /> : <Upload size={14} />} 选择 CSV / Excel
             </label>
@@ -113,6 +183,7 @@ export function FeatureImportDialog({
               type="file"
               accept=".csv,.xlsx,.xls"
               className="hidden"
+              disabled={!officialReleaseId}
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) void readFile(f);
@@ -128,6 +199,7 @@ export function FeatureImportDialog({
             <ul className="mt-2 list-disc pl-4 space-y-0.5">
               <li>目录路径：必填，层级用 <code className="text-white/60">/</code> 分隔，层级深度不限</li>
               <li>功能名称：可空，默认取路径最后一段</li>
+              <li>正式版本：在上方下拉框选择，不需写入 Excel</li>
               <li>功能类型：basic / core / value_added（或中文：基础功能、核心功能、增值功能）</li>
             </ul>
           </div>
@@ -171,7 +243,7 @@ export function FeatureImportDialog({
           <button onClick={onClose} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-white/65 hover:bg-white/5">取消</button>
           <button
             onClick={() => void commit()}
-            disabled={busy || rows.length === 0}
+            disabled={busy || rows.length === 0 || !officialReleaseId}
             className="rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40"
           >
             {busy ? '导入中…' : `确认导入 ${rows.length} 条`}
