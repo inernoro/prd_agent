@@ -72,3 +72,4 @@
 | fix | prd-admin | SSE 断线不再误报"生成失败"：error 前先对账 run 真实状态，活着转后台跟踪轮询到终态（修用户截图实锤的 network error 误报） |
 | fix | prd-admin | 锚定 deck 页码桥 v2：active/is-active/current 类 + 视口中心 elementFromPoint 反查 + 800ms 兜底轮询（monochrome 等不打类标的运行时页码也跟手） |
 | feat | prd-admin | 输入框大气化（用户点名）：composer 加高加圆角、聚焦上浮+饱满光环；页卡缩略图 hover 浮起投影（交互灵动） |
+| fix | prd-admin | looksLikeDeck 识别锚定 deck（div.slide）：retro-zine 等 div 容器模板生成完被误判"结果异常"丢弃的问题 |

@@ -317,7 +317,8 @@ function looksLikeDeck(html: string): boolean {
   const low = html.toLowerCase();
   if (!low.includes('<!doctype html') && !low.includes('<html')) return false;
   if (low.includes('id="root"')) return false;
-  return low.includes('reveal') || low.includes('<section');
+  // reveal 旧 deck / 锚定 zhangzara deck（div.slide + 自带运行时）都算有效
+  return low.includes('reveal') || low.includes('<section') || low.includes('class="slide');
 }
 
 // ─── 安全 iframe 渲染（P1 安全债偿还）─────────────────────────────────────────
