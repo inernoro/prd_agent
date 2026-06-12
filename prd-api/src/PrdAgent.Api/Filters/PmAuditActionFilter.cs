@@ -65,6 +65,7 @@ public sealed class PmAuditActionFilter : IAsyncActionFilter
         ["DeleteBriefing"] = "删除项目简报",
         ["ToggleBriefingShare"] = "开关简报分享",
         ["SaveBriefingToHosting"] = "简报保存到网页托管",
+        ["RestyleBriefing"] = "切换简报风格",
     };
 
     /// <summary>路由里可能出现的子实体 id 键（取第一个命中的作为操作对象）</summary>

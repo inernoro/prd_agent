@@ -20,11 +20,20 @@ public class PmBriefing
     /// <summary>生成所用模型（取自 Gateway Resolution，规则 ai-model-visibility 要求落库）</summary>
     public string? Model { get; set; }
 
+    /// <summary>简报风格：classic | dark | warm | minimal | vivid（PmBriefingRenderer 主题 key）</summary>
+    public string Style { get; set; } = "classic";
+
+    /// <summary>渲染数据快照 JSON（硬数据 + AI 结构化内容）。切换风格时据此重渲染，不重新调 LLM；旧数据为空则不支持切换</summary>
+    public string? RenderDataJson { get; set; }
+
     /// <summary>分享 token：非空 = 分享已开启，匿名可通过 /api/pm/briefings/shared/{token} 查看；置空即撤销</summary>
     public string? ShareToken { get; set; }
 
     /// <summary>保存到网页托管后的站点 Id（HostedSite，可空）</summary>
     public string? HostedSiteId { get; set; }
+
+    /// <summary>托管站点入口 URL（冗余，便于列表/详情直接展示可点链接）</summary>
+    public string? HostedSiteUrl { get; set; }
 
     public string CreatedBy { get; set; } = string.Empty;
     public string? CreatedByName { get; set; }

@@ -641,19 +641,28 @@ export type PmBriefing = {
   html?: string;
   /** 生成所用模型 */
   model?: string | null;
+  /** 简报风格 key（classic/dark/warm/minimal/vivid） */
+  style?: string;
+  /** 是否支持切换风格（有渲染数据快照；旧版本简报为 false） */
+  canRestyle?: boolean;
   /** 分享是否开启（P2） */
   shared: boolean;
   shareToken?: string | null;
   hostedSiteId?: string | null;
+  /** 托管站点入口 URL（保存到网页托管后回填） */
+  hostedSiteUrl?: string | null;
   createdBy: string;
   createdByName?: string | null;
   createdAt: string;
 };
+export type PmBriefingStyle = { key: string; label: string; accent: string; pageBg: string };
 export type ListPmBriefingsContract = (projectId: string) => Promise<ApiResponse<{ items: PmBriefing[] }>>;
 export type GetPmBriefingContract = (briefingId: string) => Promise<ApiResponse<PmBriefing>>;
 export type DeletePmBriefingContract = (briefingId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type ToggleBriefingShareContract = (briefingId: string, enabled: boolean) => Promise<ApiResponse<{ shared: boolean; shareToken?: string | null }>>;
 export type SaveBriefingToHostingContract = (briefingId: string) => Promise<ApiResponse<{ siteId: string; siteUrl: string }>>;
+export type ListBriefingStylesContract = () => Promise<ApiResponse<{ items: PmBriefingStyle[] }>>;
+export type RestylePmBriefingContract = (briefingId: string, style: string) => Promise<ApiResponse<{ style: string; html: string }>>;
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
 export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
 export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;

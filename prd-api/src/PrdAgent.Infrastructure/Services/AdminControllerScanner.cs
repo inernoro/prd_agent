@@ -34,6 +34,9 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         "/api/web-pages/comments/",
         // 知识库公开端点（智识殿堂浏览/详情/分享）
         "/api/document-store/public/",
+        // 项目简报匿名分享页（token 即凭证，Controller 端点 [AllowAnonymous] + token 查库校验；
+        // 不豁免会被本中间件在认证前拦成 401「未授权」）
+        "/api/pm/briefings/shared/",
     };
 
     // 站点维度评论相关路由（siteId 在路径中段，无法用 PublicRoutes 的 StartsWith 前缀命中）：

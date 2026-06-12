@@ -7,3 +7,6 @@
 | feat | prd-admin | 报表 tab 新增「项目简报」区块：生成（SSE 阶段/思考/逐字全程可视化 + 模型名展示）、历史列表、iframe 预览、下载 HTML 单文件 |
 | feat | prd-api | 简报分享与托管：POST /briefings/:id/share 开关分享（可撤销 token），GET /briefings/shared/:token 匿名直出 HTML，POST /briefings/:id/save-to-hosting 一键存网页托管；审计过滤器登记简报动作 |
 | feat | prd-admin | 简报预览弹窗新增「开启分享/复制链接/撤销分享」「保存到网页托管」操作，列表显示分享中/已托管标记 |
+| fix | prd-api | 简报匿名分享被 AdminPermissionMiddleware 拦成 401：/api/pm/briefings/shared/ 加入扫描器 PublicRoutes 白名单（token 即凭证） |
+| feat | prd-api | 简报 5 套风格主题（经典商务/暗夜科技/暖纸杂志/极简黑白/活力渐变）：生成时可选，落库渲染数据快照，POST /briefings/:id/restyle 切换风格即时重渲染不重调 LLM；styles 清单端点 SSOT |
+| feat | prd-admin | 简报生成弹窗新增风格选择卡；预览弹窗新增全屏切换、切换风格面板；保存到托管成功后按钮变「打开托管站点」+ 列表「已托管」可点击直达，反馈不再依赖弹窗 |

@@ -3233,12 +3233,13 @@ public class PmAgentController : ControllerBase
     /// 服务端渲染为自包含 HTML 落库。事件：stage / model / thinking / typing / error / done(briefingId)。</summary>
     [HttpPost("projects/{projectId}/briefings/generate")]
     [Produces("text/event-stream")]
-    public async Task GenerateBriefing(string projectId)
+    public async Task GenerateBriefing(string projectId, [FromQuery] string? style)
     {
         var userId = GetUserId();
         var project = await FindAccessibleProjectAsync(projectId, userId);
         if (project == null) { Response.StatusCode = 404; return; }
         if (project.OwnerId != userId && project.LeaderId != userId) { Response.StatusCode = 403; return; }
+        var briefingStyle = PmBriefingRenderer.IsValidStyle(style) ? style! : "classic";
 
         Response.ContentType = "text/event-stream; charset=utf-8";
         Response.Headers.CacheControl = "no-cache";
@@ -3265,20 +3266,61 @@ public class PmAgentController : ControllerBase
         await WriteSseEvent("stage", new { stage = "rendering", message = "正在渲染简报页面…" });
         renderData.Ai = ai;
         renderData.Model = model;
+        renderData.Style = briefingStyle;
         var html = PmBriefingRenderer.Render(renderData);
 
         var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
         var briefing = new PmBriefing
         {
             ProjectId = projectId,
-            Title = $"{project.Title} 项目简报 · {DateTime.UtcNow.ToLocalTime():yyyy-MM-dd}",
+            Title = $"{project.Title} 项目简报 · {PmBriefingRenderer.ToCst(DateTime.UtcNow):yyyy-MM-dd}",
             Html = html,
             Model = model,
+            Style = briefingStyle,
+            RenderDataJson = JsonSerializer.Serialize(renderData),
             CreatedBy = userId,
             CreatedByName = creatorName,
         };
         await _db.PmBriefings.InsertOneAsync(briefing);
         await WriteSseEvent("done", new { briefingId = briefing.Id, title = briefing.Title, model });
+    }
+
+    /// <summary>简报可选风格清单（SSOT，前端选择器消费）。</summary>
+    [HttpGet("briefings/styles")]
+    public IActionResult ListBriefingStyles()
+        => Ok(ApiResponse<object>.Ok(new { items = PmBriefingRenderer.Styles.Select(s => new { key = s.Key, label = s.Label, accent = s.Accent, pageBg = s.PageBg }).ToList() }));
+
+    /// <summary>切换简报风格 —— 用落库的渲染数据快照重渲染，不重新调 LLM（owner/leader 或创建人）。</summary>
+    [HttpPost("briefings/{briefingId}/restyle")]
+    public async Task<IActionResult> RestyleBriefing(string briefingId, [FromBody] RestyleBriefingRequest request)
+    {
+        var userId = GetUserId();
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人/负责人或创建者可切换风格"));
+        if (!PmBriefingRenderer.IsValidStyle(request.Style))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未知的简报风格"));
+        if (string.IsNullOrWhiteSpace(b.RenderDataJson))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该简报为旧版本生成，不支持切换风格，请重新生成"));
+
+        PmBriefingRenderer.RenderData? data;
+        try { data = JsonSerializer.Deserialize<PmBriefingRenderer.RenderData>(b.RenderDataJson); }
+        catch { data = null; }
+        if (data == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "简报渲染数据损坏，请重新生成"));
+
+        data.Style = request.Style!;
+        var html = PmBriefingRenderer.Render(data);
+        await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+            Builders<PmBriefing>.Update
+                .Set(x => x.Html, html)
+                .Set(x => x.Style, request.Style!)
+                .Set(x => x.RenderDataJson, JsonSerializer.Serialize(data))
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { style = request.Style, html }));
     }
 
     /// <summary>简报列表（项目成员可见；不含 html 大字段）。</summary>
@@ -3296,9 +3338,12 @@ public class PmAgentController : ControllerBase
             projectId = b.ProjectId,
             title = b.Title,
             model = b.Model,
+            style = b.Style,
+            canRestyle = !string.IsNullOrWhiteSpace(b.RenderDataJson),
             shared = !string.IsNullOrEmpty(b.ShareToken),
             shareToken = b.ShareToken,
             hostedSiteId = b.HostedSiteId,
+            hostedSiteUrl = b.HostedSiteUrl,
             createdBy = b.CreatedBy,
             createdByName = b.CreatedByName,
             createdAt = b.CreatedAt,
@@ -3322,9 +3367,12 @@ public class PmAgentController : ControllerBase
             title = b.Title,
             html = b.Html,
             model = b.Model,
+            style = b.Style,
+            canRestyle = !string.IsNullOrWhiteSpace(b.RenderDataJson),
             shared = !string.IsNullOrEmpty(b.ShareToken),
             shareToken = b.ShareToken,
             hostedSiteId = b.HostedSiteId,
+            hostedSiteUrl = b.HostedSiteUrl,
             createdBy = b.CreatedBy,
             createdByName = b.CreatedByName,
             createdAt = b.CreatedAt,
@@ -3400,7 +3448,10 @@ public class PmAgentController : ControllerBase
             sourceType: "api", sourceRef: $"pm-briefing:{b.Id}",
             tags: new List<string> { "项目简报" }, folder: null, CancellationToken.None);
         await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
-            Builders<PmBriefing>.Update.Set(x => x.HostedSiteId, site.Id).Set(x => x.UpdatedAt, DateTime.UtcNow));
+            Builders<PmBriefing>.Update
+                .Set(x => x.HostedSiteId, site.Id)
+                .Set(x => x.HostedSiteUrl, site.SiteUrl)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, siteUrl = site.SiteUrl }));
     }
 
@@ -4481,6 +4532,12 @@ public class ToggleGoalMilestoneRequest
 public class ToggleBriefingShareRequest
 {
     public bool Enabled { get; set; }
+}
+
+public class RestyleBriefingRequest
+{
+    /// <summary>目标风格 key（classic | dark | warm | minimal | vivid）</summary>
+    public string? Style { get; set; }
 }
 
 public class ReparentGoalRequest
