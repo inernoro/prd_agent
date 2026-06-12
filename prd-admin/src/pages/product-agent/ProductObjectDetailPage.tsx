@@ -153,7 +153,7 @@ export function ProductObjectDetailPage() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-        <div className={`mx-auto py-5 ${isNew && kind === 'requirement' ? 'w-full max-w-[1280px] px-4' : ''}`} style={isNew && kind === 'requirement' ? undefined : { width: '80%' }}>
+        <div className={`${isNew && kind === 'requirement' ? 'w-full px-5 xl:px-8 py-5' : 'mx-auto py-5'}`} style={isNew && kind === 'requirement' ? undefined : { width: '80%' }}>
           {isNew ? (
             kind === 'defect' ? (
               <CreateDefectForm

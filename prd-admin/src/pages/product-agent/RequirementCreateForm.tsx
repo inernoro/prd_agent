@@ -5,16 +5,20 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { ItemMultiSearchSelect } from '@/components/ItemMultiSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { CustomerSearchSelect } from './CustomerSearchSelect';
 import { useSseStream } from '@/lib/useSseStream';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { TapdPropertyPanel, TapdPropertyRow } from './TapdPropertyPanel';
-import { toCustomerOptions, toRequirementOptions, toVersionOptions } from './comboboxOptions';
+import { toRequirementOptions, toVersionOptions } from './comboboxOptions';
+import { REQUIREMENT_ORIGIN_FORM_KEY, REQUIREMENT_ORIGIN_OPTIONS, type RequirementOriginValue } from './requirementOriginCatalog';
 import { validateRequirementCreateInput } from './requirementCreateValidation';
 import { createRequirement, listDescTemplates } from '@/services/real/productAgent';
 import type { Customer, DescTemplate, ItemGrade, ProductVersion, Requirement } from './types';
 import { ITEM_GRADE_LABEL } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
+const RESERVED_TEMPLATE_LABELS = new Set(['需求来源', '客户名称', '客户', '标题', '名称', '描述', '需求名称', '需求描述']);
+const RESERVED_TEMPLATE_KEYS = new Set(['title', 'name', 'description', 'desc', 'requirementSource', 'customerName']);
 
 interface AiFillResult { title?: string; description?: string; grade?: string; formData?: Record<string, string> }
 
@@ -87,6 +91,20 @@ function AiFillBar({ productId, templateId, onFill }: { productId: string; templ
   );
 }
 
+function RequirementOriginSelect({ value, onChange }: { value: RequirementOriginValue; onChange: (v: RequirementOriginValue) => void }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as RequirementOriginValue)}
+      className="w-full h-9 rounded-[8px] border border-white/12 bg-[var(--bg-input)] px-2.5 text-[13px] text-white outline-none focus:border-cyan-500/40 no-focus-ring"
+    >
+      {REQUIREMENT_ORIGIN_OPTIONS.map((o) => (
+        <option key={o.value || '__empty'} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  );
+}
+
 function GradePicker({ grade, setGrade }: { grade: ItemGrade; setGrade: (g: ItemGrade) => void }) {
   return (
     <div className="flex flex-wrap gap-1">
@@ -123,21 +141,30 @@ export function RequirementCreateForm({
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
   const [parentId, setParentId] = useState('');
+  const [requirementOrigin, setRequirementOrigin] = useState<RequirementOriginValue>('');
   const [customerIds, setCustomerIds] = useState<string[]>([]);
+  const [customerList, setCustomerList] = useState(customers);
   const [versionIds, setVersionIds] = useState<string[]>([]);
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const { template } = useEffectiveTemplate('requirement', productId);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
+  useEffect(() => { setCustomerList(customers); }, [customers]);
+
   const split = useMemo(() => {
     const usable = (template?.fields ?? []).filter((f) => {
       const key = (f.key || '').toLowerCase();
       const label = (f.label || '').trim();
-      return !['title', 'name', 'description', 'desc'].includes(key) && !['标题', '名称', '描述', '需求名称', '需求描述'].includes(label);
+      return !RESERVED_TEMPLATE_KEYS.has(key) && !RESERVED_TEMPLATE_LABELS.has(label);
     });
     return { files: usable.filter((f) => f.type === 'file'), others: usable.filter((f) => f.type !== 'file') };
   }, [template]);
+
+  const mergedFormData = useMemo(() => ({
+    ...formData,
+    [REQUIREMENT_ORIGIN_FORM_KEY]: requirementOrigin,
+  }), [formData, requirementOrigin]);
 
   const descAutoFilledRef = useRef(false);
   useEffect(() => {
@@ -159,8 +186,8 @@ export function RequirementCreateForm({
     assigneeId,
     versionIds,
     templateFields: split.others,
-    formData,
-  }), [title, description, assigneeId, versionIds, split.others, formData]);
+    formData: mergedFormData,
+  }), [title, description, assigneeId, versionIds, split.others, mergedFormData]);
 
   const onAiFill = (r: AiFillResult) => {
     if (r.title) setTitle(r.title);
@@ -182,7 +209,7 @@ export function RequirementCreateForm({
       parentId: parentId || null,
       customerIds,
       versionIds,
-      formData,
+      formData: mergedFormData,
       templateId: template?.id,
       workflowDefId: workflow?.id,
     });
@@ -197,7 +224,7 @@ export function RequirementCreateForm({
   };
 
   return (
-    <div className="flex flex-col gap-0 rounded-lg border border-white/10 bg-[#0f1014] overflow-hidden">
+    <div className="flex flex-col gap-0 w-full rounded-lg border border-white/10 bg-[#0f1014] overflow-hidden">
       {/* TAPD 顶栏：类型 + 操作 */}
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/8 bg-[#13151a]">
         <span className="text-[12px] px-2 py-0.5 rounded text-amber-200 bg-amber-500/15 border border-amber-500/25">需求</span>
@@ -221,9 +248,9 @@ export function RequirementCreateForm({
         />
       </div>
 
-      {/* 双栏：左描述 / 右属性（TAPD 7:3） */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-0 lg:gap-0 items-start">
-        <div className="flex flex-col gap-3 p-4 border-b lg:border-b-0 lg:border-r border-white/8 min-h-[520px]">
+      {/* 双栏：左描述 / 右属性（全宽 TAPD 约 7:3） */}
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] gap-0 items-stretch">
+        <div className="flex flex-col gap-4 p-5 xl:p-6 border-b xl:border-b-0 xl:border-r border-white/8 min-h-[560px]">
           <AiFillBar productId={productId} templateId={template?.id} onFill={onAiFill} />
           <div className="flex-1 flex flex-col rounded-lg border border-white/10 bg-[#13151a] overflow-hidden min-h-[460px]">
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/8 shrink-0">
@@ -243,13 +270,16 @@ export function RequirementCreateForm({
           {message && <div className="rounded-md border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
         </div>
 
-        <div className="p-4 bg-[#0f1014]">
+        <div className="p-5 xl:p-6 bg-[#0f1014]">
           <TapdPropertyPanel title="基本信息">
+            <TapdPropertyRow label="需求来源">
+              <RequirementOriginSelect value={requirementOrigin} onChange={setRequirementOrigin} />
+            </TapdPropertyRow>
             <TapdPropertyRow label="分级" required>
               <GradePicker grade={grade} setGrade={setGrade} />
             </TapdPropertyRow>
             <TapdPropertyRow label="处理人" required>
-              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} placeholder="搜索用户名或昵称..." uiSize="sm" />
+              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} placeholder="搜索用户名或昵称..." uiSize="md" />
             </TapdPropertyRow>
             <TapdPropertyRow label="父需求">
               <ItemSearchSelect
@@ -259,22 +289,17 @@ export function RequirementCreateForm({
                 placeholder="搜索需求..."
                 clearOptionLabel="无（顶层）"
                 countUnit="条"
-                uiSize="sm"
+                uiSize="md"
               />
             </TapdPropertyRow>
-            <TapdPropertyRow label="客户">
-              {customers.length === 0 ? (
-                <span className="text-[12px] text-white/30 pt-1.5 block">暂无客户</span>
-              ) : (
-                <ItemMultiSearchSelect
-                  value={customerIds}
-                  onChange={setCustomerIds}
-                  options={toCustomerOptions(customers)}
-                  placeholder="搜索客户..."
-                  countUnit="个"
-                  uiSize="sm"
-                />
-              )}
+            <TapdPropertyRow label="客户名称">
+              <CustomerSearchSelect
+                value={customerIds}
+                onChange={setCustomerIds}
+                customers={customerList}
+                onCustomerCreated={(c) => setCustomerList((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]))}
+                uiSize="md"
+              />
             </TapdPropertyRow>
             <TapdPropertyRow label="归属版本" required>
               {versions.length === 0 ? (
@@ -286,7 +311,7 @@ export function RequirementCreateForm({
                   options={toVersionOptions(versions)}
                   placeholder="搜索版本..."
                   countUnit="个"
-                  uiSize="sm"
+                  uiSize="md"
                 />
               )}
             </TapdPropertyRow>

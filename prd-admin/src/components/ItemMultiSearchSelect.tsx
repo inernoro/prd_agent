@@ -28,18 +28,27 @@ export interface ItemMultiSearchSelectProps {
   emptyText?: string;
   countUnit?: string;
   lockedIds?: string[];
+  /** 无关键词时置顶（如最近使用客户） */
+  priorityIds?: string[];
 }
 
 export function ItemMultiSearchSelect({
   value, onChange, options, placeholder = '搜索并选择...', uiSize = 'md', className, style,
-  disabled = false, emptyText = '暂无可选项', countUnit = '项', lockedIds = [],
+  disabled = false, emptyText = '暂无可选项', countUnit = '项', lockedIds = [], priorityIds = [],
 }: ItemMultiSearchSelectProps) {
   const { open, setOpen, filter, setFilter, triggerRef, panelRef, inputRef, pos, closePanel } = useItemComboboxPanel(disabled);
   const lockedSet = useMemo(() => new Set(lockedIds), [lockedIds]);
   const optionMap = useMemo(() => new Map(options.map((o) => [o.id, o])), [options]);
   const selectedOptions = useMemo(() => value.map((id) => optionMap.get(id)).filter(Boolean) as ItemSearchOption[], [value, optionMap]);
   const q = filter.trim().toLowerCase();
-  const filtered = useMemo(() => (q ? options.filter((o) => matchItemSearchOption(o, q)) : options), [options, q]);
+  const filtered = useMemo(() => {
+    const matched = q ? options.filter((o) => matchItemSearchOption(o, q)) : options;
+    if (q || priorityIds.length === 0) return matched;
+    const priSet = new Set(priorityIds);
+    const boosted = priorityIds.map((id) => optionMap.get(id)).filter(Boolean) as typeof options;
+    const rest = matched.filter((o) => !priSet.has(o.id));
+    return [...boosted, ...rest];
+  }, [options, q, priorityIds, optionMap]);
   const radius = comboboxRadius(uiSize);
 
   const toggleOption = (id: string) => {
@@ -50,6 +59,9 @@ export function ItemMultiSearchSelect({
   const dropdownPanel = open && pos && !disabled && createPortal(
     <div ref={panelRef} className="rounded-[8px] flex flex-col overflow-hidden" style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight, ...itemComboboxPanelStyle }}>
       <div className="overflow-auto flex-1 py-1" style={{ minHeight: 0 }}>
+        {!q && priorityIds.length > 0 && filtered.length > 0 && (
+          <div className="px-3 pt-1 pb-0.5 text-[10px] text-white/35">最近使用</div>
+        )}
         {filtered.length === 0 ? (
           <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>{q ? `未找到匹配「${filter}」的${countUnit}` : emptyText}</div>
         ) : filtered.map((o) => (

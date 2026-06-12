@@ -14,8 +14,8 @@ export function TapdPropertyPanel({ title, children }: { title?: string; childre
 
 export function TapdPropertyRow({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
-    <div className="flex items-start gap-2 py-2.5 border-b border-white/[0.06] last:border-b-0 min-h-[40px]">
-      <div className="w-[68px] shrink-0 pt-1.5 text-[12px] text-white/45 text-right leading-snug">
+    <div className="flex items-start gap-3 py-3 border-b border-white/[0.06] last:border-b-0 min-h-[44px]">
+      <div className="w-[92px] shrink-0 pt-2 text-[13px] text-white/45 text-right leading-snug">
         {label}
         {required && <span className="text-red-300/80 ml-0.5">*</span>}
       </div>
