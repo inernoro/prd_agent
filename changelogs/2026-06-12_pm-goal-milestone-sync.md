@@ -27,3 +27,7 @@
 | fix | prd-api | 知识库上传/编辑被拦 403「无权限」：document-store 的 stores/entries 业务路由从 AdminPermissionMiddleware 豁免（登录 + 业务层 CanRead/CanWrite 鉴权保留）；控制器权限位改为权限服务回查兜底（豁免后中间件不再注入 claims，避免识途/产品知识库管理员判定失效） |
 | fix | prd-admin | 任务开始/截止日期保存后少一天（看似保存不了）：日期改为纯日期字符串提交（与里程碑同口径），不再经本地时区转 UTC ISO |
 | fix | prd-admin | 普通用户搜不到人：成员/干系人/会议参会人三处面板弃用管理员 /api/users 预取，统一走 UserSearchSelect 的 directory 搜索（仅需登录）；组件新增 onSelectUser 回传用户对象供记录姓名快照 |
+| fix | prd-admin | 知识库编辑/预览区铺满高度（KnowledgePanel 内层 wrapper 补 flex 容器，DocBrowser flex-1 生效） |
+| feat | prd-admin | 知识库阅读区「全屏」按钮（原生 Fullscreen API，ESC 退出，MD/HTML 通用） |
+| feat | prd-admin | 双击重命名改为行内编辑（原地 input，Enter 保存/Esc 取消/失焦保存），不再弹框；右键菜单弹框保留 |
+| feat | prd-admin | Markdown 富文本编辑：引入 @uiw/react-md-editor（懒加载独立 chunk），富文本（所见即所得）/源码双模式切换，源码模式保留 [[ 引用自动补全；HTML 等仍编辑源码 |

@@ -44,7 +44,8 @@ export function KnowledgePanel({ projectId }: Props) {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0">
+      {/* 必须是 flex 容器，DocumentStoreBrowser 根的 flex-1 才能吃满高度（否则编辑/预览区塌成内容高） */}
+      <div className="flex-1 min-h-0 flex flex-col">
         <DocumentStoreBrowser key={browserKey} storeId={storeId} canWrite={canWrite}
           onImportFromHosting={canWrite ? () => setImportOpen(true) : undefined} />
       </div>

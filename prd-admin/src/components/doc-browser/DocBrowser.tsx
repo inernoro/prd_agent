@@ -8,10 +8,15 @@ import {
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe,
+  ClipboardCheck, Globe, Maximize2,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
+import { lazy, Suspense } from 'react';
+import '@uiw/react-md-editor/markdown-editor.css';
+
+// Markdown 所见即所得编辑器（懒加载独立 chunk）。富文本仅对 markdown 类型启用，源码模式仍为 textarea。
+const MDEditor = lazy(() => import('@uiw/react-md-editor'));
 import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
 import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '@/lib/tagPalette';
 
@@ -1061,6 +1066,9 @@ function TreeNode({
   onSelectEntry,
   onContextMenu,
   onRequestRename,
+  inlineRenameId,
+  onInlineRenameSubmit,
+  onInlineRenameCancel,
   onShareEntry,
   onMoveEntry,
   onOpenSubscription,
@@ -1093,6 +1101,10 @@ function TreeNode({
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
   /** 双击文件名触发重命名（不传则双击无操作） */
   onRequestRename?: (entry: DocBrowserEntry) => void;
+  /** 行内重命名中的条目 id（双击触发，原地 input 改名，不弹框） */
+  inlineRenameId?: string | null;
+  onInlineRenameSubmit?: (entryId: string, title: string) => Promise<void>;
+  onInlineRenameCancel?: () => void;
   onShareEntry?: (entryId: string) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onOpenSubscription?: (entryId: string) => void;
@@ -1232,7 +1244,30 @@ function TreeNode({
             <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
           </span>
 
-          {/* 非文件夹标题不再 flex-1 撑满：取自然宽度，让 NEW 紧贴标题末尾（时间靠 ml-auto 顶右） */}
+          {/* 非文件夹标题不再 flex-1 撑满：取自然宽度，让 NEW 紧贴标题末尾（时间靠 ml-auto 顶右）。
+              双击进入行内重命名（原地 input，Enter 保存 / Esc 取消，不弹框） */}
+          {!isFolder && inlineRenameId === entry.id ? (
+            <input
+              autoFocus
+              defaultValue={entry.title}
+              className="flex-1 min-w-0 text-[13px] rounded-[6px] px-1.5 py-0.5 outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--accent-primary, #818cf8)', color: 'var(--text-primary)' }}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const v = (e.target as HTMLInputElement).value.trim();
+                  if (v && v !== entry.title) void onInlineRenameSubmit?.(entry.id, v);
+                  else onInlineRenameCancel?.();
+                } else if (e.key === 'Escape') onInlineRenameCancel?.();
+              }}
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                if (v && v !== entry.title) void onInlineRenameSubmit?.(entry.id, v);
+                else onInlineRenameCancel?.();
+              }}
+            />
+          ) : (
           <span className={`${isFolder ? 'flex-1 ' : ''}truncate min-w-0`}
             style={{
               color: isFolder ? 'var(--text-muted)' : 'var(--text-primary)',
@@ -1243,6 +1278,7 @@ function TreeNode({
             }}>
             {displayTitle}
           </span>
+          )}
 
           {/* NEW 与标题同行、贴标题末尾：标题过长截断时与标题一起省略，并与右侧时间归为"近期"信号 */}
           {isFreshForRow && (
@@ -1394,6 +1430,9 @@ function TreeNode({
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
           onRequestRename={onRequestRename}
+          inlineRenameId={inlineRenameId}
+          onInlineRenameSubmit={onInlineRenameSubmit}
+          onInlineRenameCancel={onInlineRenameCancel}
           onShareEntry={onShareEntry}
           onMoveEntry={onMoveEntry}
           onOpenSubscription={onOpenSubscription}
@@ -1528,6 +1567,18 @@ export function DocBrowser({
   const [saving, setSaving] = useState(false);
   const [tagEditEntry, setTagEditEntry] = useState<DocBrowserEntry | null>(null);
   const [renameEntry, setRenameEntry] = useState<DocBrowserEntry | null>(null);
+  // 双击行内重命名中的条目（与右键菜单的弹框重命名并存）
+  const [inlineRenameId, setInlineRenameId] = useState<string | null>(null);
+  // Markdown 编辑模式：rich=所见即所得（MDEditor），source=纯文本（保留 [[wikilink]] 自动补全）
+  const [mdEditRich, setMdEditRich] = useState(true);
+  // 阅读区全屏（原生 Fullscreen API：保持 React 树不动，ESC 退出）
+  const readerSectionRef = useRef<HTMLDivElement>(null);
+  const toggleReaderFullscreen = useCallback(() => {
+    const el = readerSectionRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void el.requestFullscreen().catch(() => toast.error('当前浏览器不支持全屏', ''));
+  }, []);
   // 左侧面板宽度（可拖拽调整，sessionStorage 持久化）
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const saved = sessionStorage.getItem('doc-browser-sidebar-width');
@@ -2719,7 +2770,12 @@ export function DocBrowser({
               onToggleFolder={toggleFolder}
               onSelectEntry={handleSelectEntry}
               onContextMenu={handleContextMenu}
-              onRequestRename={onRenameEntry ? (entry) => setRenameEntry(entry) : undefined}
+              onRequestRename={onRenameEntry ? (entry) => setInlineRenameId(entry.id) : undefined}
+              inlineRenameId={inlineRenameId}
+              onInlineRenameSubmit={onRenameEntry ? async (entryId, title) => {
+                try { await onRenameEntry(entryId, title); } finally { setInlineRenameId(null); }
+              } : undefined}
+              onInlineRenameCancel={() => setInlineRenameId(null)}
               onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}
@@ -3061,6 +3117,16 @@ export function DocBrowser({
                   {commentCount > 0 ? `${commentCount} 条评论` : '评论'}
                 </button>
               )}
+              {/* 全屏阅读（原生全屏，ESC 退出） */}
+              {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
+                <button
+                  onClick={toggleReaderFullscreen}
+                  className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
+                  title="全屏阅读（ESC 退出）">
+                  <Maximize2 size={11} /> 全屏
+                </button>
+              )}
               {/* 编辑/保存按钮（仅对可编辑类型显示） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
@@ -3071,6 +3137,16 @@ export function DocBrowser({
                   <div className="flex items-center gap-1.5">
                     {editMode ? (
                       <>
+                        {/* Markdown：富文本（所见即所得）/ 源码（支持 [[ 自动补全）双模式 */}
+                        {getFileTypeConfig(sel.title, sel.contentType).label === 'Markdown' && (
+                          <button
+                            onClick={() => setMdEditRich((v) => !v)}
+                            className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                            style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.18)', color: 'rgba(216,180,254,0.95)' }}
+                            title={mdEditRich ? '切换到源码模式（支持 [[ 引用自动补全）' : '切换到富文本（所见即所得）'}>
+                            {mdEditRich ? '源码' : '富文本'}
+                          </button>
+                        )}
                         <button
                           onClick={async () => {
                             if (!selectedEntryId) return;
@@ -3108,8 +3184,8 @@ export function DocBrowser({
                 );
               })()}
             </div>
-            {/* 内容区 + 右侧本页章节导航（F1） */}
-            <div className="flex-1 flex min-w-0 relative" style={{ minHeight: 0 }}>
+            {/* 内容区 + 右侧本页章节导航（F1）。ref 供「全屏」用原生 Fullscreen API 放大本区 */}
+            <div ref={readerSectionRef} className="flex-1 flex min-w-0 relative" style={{ minHeight: 0, background: 'var(--bg-card)' }}>
               {/* 内容列包裹：让进度条 absolute 限定在本列宽度内，不跨到右侧 TOC 列（Bugbot Low） */}
               <div className="flex-1 min-w-0 relative flex flex-col" style={{ minHeight: 0 }}>
               {/* 阅读进度条（仅正文预览态）；切文档时按 key 重挂归零 */}
@@ -3124,6 +3200,26 @@ export function DocBrowser({
                 {contentLoading ? (
                   <MapSectionLoader text="加载文档内容…" />
                 ) : editMode ? (
+                  (() => {
+                    const selEntry = entries.find(e => e.id === selectedEntryId);
+                    const isMd = !!selEntry && getFileTypeConfig(selEntry.title, selEntry.contentType).label === 'Markdown';
+                    if (isMd && mdEditRich) {
+                      const colorMode = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+                      return (
+                        <div data-color-mode={colorMode} className="h-full" style={{ minHeight: 0 }}>
+                          <Suspense fallback={<MapSectionLoader text="加载编辑器…" />}>
+                            <MDEditor
+                              value={editContent}
+                              onChange={(v) => setEditContent(v ?? '')}
+                              height="100%"
+                              preview="live"
+                              visibleDragbar={false}
+                            />
+                          </Suspense>
+                        </div>
+                      );
+                    }
+                    return (
                   <>
                     <textarea
                       ref={editTextareaRef}
@@ -3159,6 +3255,8 @@ export function DocBrowser({
                       />
                     )}
                   </>
+                    );
+                  })()
                 ) : (preview
                       || selectedEntryData?.sourceType === 'github_directory'
                       || selectedEntryData?.contentType === 'application/x-github-directory') ? (

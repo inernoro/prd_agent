@@ -29,6 +29,7 @@
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "@tailwindcss/vite": "^4.1.17",
+    "@uiw/react-md-editor": "^4.1.1",
     "@xyflow/react": "^12.10.0",
     "clsx": "^2.1.1",
     "dayjs": "^1.11.13",
