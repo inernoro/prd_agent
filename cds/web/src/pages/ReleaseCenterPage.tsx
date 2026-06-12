@@ -45,6 +45,15 @@ interface ReleaseRun {
   projectId: string;
   branchId: string;
   commitSha: string;
+  artifact: {
+    type: string;
+    commitSha: string;
+    branchId?: string;
+    branchName?: string;
+    previewUrl?: string;
+    imageDigest?: string;
+    artifactPath?: string;
+  };
   targetId: string;
   status: string;
   startedAt: string;
@@ -52,6 +61,7 @@ interface ReleaseRun {
   operator?: string;
   previousReleaseId?: string;
   rollbackOf?: string;
+  rollbackTargetReleaseId?: string;
   logs: ReleaseLogEntry[];
 }
 
@@ -79,9 +89,12 @@ interface CenterRow {
   currentCommit: string;
   latestRun?: ReleaseRun;
   lastReleasedAt?: string;
+  health?: ReleaseHealthProbe;
   healthStatus: string;
   lastOperator?: string;
   canRollback: boolean;
+  successfulRuns?: ReleaseRun[];
+  rollbackDefaultReleaseId?: string;
 }
 
 interface CenterResponse {
@@ -92,6 +105,14 @@ interface CenterResponse {
 interface TargetsResponse {
   targets: ReleaseTarget[];
   remoteHosts: RemoteHostOption[];
+}
+
+interface ReleaseHealthProbe {
+  status: 'healthy' | 'failed' | 'unknown';
+  url: string;
+  checkedAt: string;
+  responseTimeMs?: number;
+  message?: string;
 }
 
 type LoadState =
@@ -132,11 +153,22 @@ interface SiteView {
   currentCommit: string;
   lastReleasedAt?: string;
   healthStatus: string;
+  health?: ReleaseHealthProbe;
+  responseTimeMs?: number;
+  checkedAt?: string;
+  healthMessage?: string;
   lastOperator?: string;
   latestRun?: ReleaseRun;
   canRollback: boolean;
-  hasRollback: boolean;
+  rollbackMethod: string;
+  successfulRuns: ReleaseRun[];
+  rollbackDefaultReleaseId: string;
   isEnabled: boolean;
+}
+
+interface RollbackState {
+  site: SiteView;
+  sourceRun: ReleaseRun;
 }
 
 const DEFAULT_SITE_PATH = '/opt/prd_agent';
@@ -173,6 +205,8 @@ export function ReleaseCenterPage(): JSX.Element {
   const [savingSite, setSavingSite] = useState(false);
   const [toast, setToast] = useState('');
   const [logRun, setLogRun] = useState<ReleaseRun | null>(null);
+  const [rollbackState, setRollbackState] = useState<RollbackState | null>(null);
+  const [retryingRunId, setRetryingRunId] = useState('');
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -241,16 +275,53 @@ export function ReleaseCenterPage(): JSX.Element {
     }
   };
 
-  const rollback = async (run: ReleaseRun): Promise<void> => {
+  const openRollback = (site: SiteView, sourceRun?: ReleaseRun): void => {
+    const run = sourceRun || site.latestRun;
+    if (!run) {
+      setToast('还没有可回滚的发布记录');
+      return;
+    }
+    setRollbackState({ site, sourceRun: run });
+  };
+
+  const rollback = async (sourceRun: ReleaseRun, targetReleaseId: string): Promise<void> => {
     setToast('');
     try {
-      const res = await apiRequest<{ run: ReleaseRun }>(`/api/releases/runs/${encodeURIComponent(run.releaseId)}/rollback`, { method: 'POST' });
+      const res = await apiRequest<{ run: ReleaseRun }>(`/api/releases/runs/${encodeURIComponent(sourceRun.releaseId)}/rollback`, {
+        method: 'POST',
+        body: { targetReleaseId },
+      });
       setLogRun(res.run);
+      setRollbackState(null);
       setToast('回滚已开始');
       await load();
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : String(err));
     }
+  };
+
+  const retryRelease = async (run: ReleaseRun): Promise<void> => {
+    setRetryingRunId(run.releaseId);
+    setToast('');
+    try {
+      const res = await apiRequest<{ run: ReleaseRun }>(`/api/releases/runs/${encodeURIComponent(run.releaseId)}/retry`, { method: 'POST' });
+      setLogRun(res.run);
+      setToast('重试发布已开始');
+      await load();
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setRetryingRunId('');
+    }
+  };
+
+  const openRollbackForRun = (run: ReleaseRun): void => {
+    const site = sites.find((item) => item.id === run.targetId);
+    if (!site) {
+      setToast('没有找到这条记录对应的站点');
+      return;
+    }
+    openRollback(site, run);
   };
 
   return (
@@ -317,7 +388,7 @@ export function ReleaseCenterPage(): JSX.Element {
                       key={site.id}
                       site={site}
                       onLogs={() => site.latestRun && setLogRun(site.latestRun)}
-                      onRollback={() => site.latestRun && void rollback(site.latestRun)}
+                      onRollback={() => openRollback(site)}
                       onConfigure={() => openConfigureWizard(site.target)}
                     />
                   ))}
@@ -340,7 +411,19 @@ export function ReleaseCenterPage(): JSX.Element {
         onSelectHost={selectHost}
         onSave={() => void saveSite()}
       />
-      <ReleaseLogDialog run={logRun} onClose={() => setLogRun(null)} />
+      <RollbackDialog
+        state={rollbackState}
+        onClose={() => setRollbackState(null)}
+        onConfirm={(sourceRun, targetReleaseId) => void rollback(sourceRun, targetReleaseId)}
+      />
+      <ReleaseLogDialog
+        run={logRun}
+        retryingRunId={retryingRunId}
+        canRollback={Boolean(logRun && sites.some((site) => site.id === logRun.targetId && site.successfulRuns.length > 0))}
+        onClose={() => setLogRun(null)}
+        onRetry={(run) => void retryRelease(run)}
+        onRollback={openRollbackForRun}
+      />
     </AppShell>
   );
 }
@@ -413,7 +496,14 @@ function SiteCard({
         <InfoBlock label="当前 commit"><CodeText>{site.currentCommit ? site.currentCommit.slice(0, 12) : '-'}</CodeText></InfoBlock>
         <InfoBlock label="最近发布时间">{formatDate(site.lastReleasedAt)}</InfoBlock>
         <InfoBlock label="最近发布人">{site.lastOperator || '-'}</InfoBlock>
+        <InfoBlock label="响应时间">{formatResponseTime(site.responseTimeMs)}</InfoBlock>
+        <InfoBlock label="最近检查">{formatDate(site.checkedAt)}</InfoBlock>
       </div>
+      {site.healthMessage ? (
+        <div className="mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-500">
+          {site.healthMessage}
+        </div>
+      ) : null}
 
       <div className="mt-4 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 p-3">
         <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
@@ -428,6 +518,7 @@ function SiteCard({
             </span>
           ))}
         </div>
+        <div className="mt-2 text-xs text-muted-foreground">回滚策略：{site.rollbackMethod}</div>
       </div>
 
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
@@ -445,14 +536,10 @@ function SiteCard({
             <FileText />
             查看日志
           </Button>
-          {site.hasRollback && site.latestRun ? (
-            <Button variant="outline" size="sm" onClick={onRollback} disabled={!site.canRollback}>
-              <RotateCcw />
-              回滚
-            </Button>
-          ) : (
-            <span className="inline-flex h-9 items-center rounded-md border border-[hsl(var(--hairline))] px-3 text-xs text-muted-foreground">未配置回滚</span>
-          )}
+          <Button variant="outline" size="sm" onClick={onRollback} disabled={!site.canRollback || !site.latestRun}>
+            <RotateCcw />
+            回滚
+          </Button>
           <Button variant="outline" size="sm" onClick={onConfigure}>
             <Settings />
             配置
@@ -662,7 +749,83 @@ function ReleaseRecords({ runs, onOpen }: { runs: ReleaseRun[]; onOpen: (run: Re
   );
 }
 
-function ReleaseLogDialog({ run, onClose }: { run: ReleaseRun | null; onClose: () => void }): JSX.Element {
+function RollbackDialog({
+  state,
+  onClose,
+  onConfirm,
+}: {
+  state: RollbackState | null;
+  onClose: () => void;
+  onConfirm: (sourceRun: ReleaseRun, targetReleaseId: string) => void;
+}): JSX.Element {
+  const defaultVersionId = state ? defaultRollbackVersionId(state.site, state.sourceRun) : '';
+  const [selectedVersionId, setSelectedVersionId] = useState(defaultVersionId);
+  useEffect(() => setSelectedVersionId(defaultVersionId), [defaultVersionId]);
+  const versions = state?.site.successfulRuns || [];
+  const selected = versions.find((run) => run.releaseId === selectedVersionId);
+  return (
+    <Dialog open={!!state} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(720px, calc(100vw - 32px))' }}>
+        <DialogHeader>
+          <DialogTitle>回滚站点版本</DialogTitle>
+        </DialogHeader>
+        {state ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <InfoBlock label="站点">{state.site.name}</InfoBlock>
+              <InfoBlock label="当前记录"><CodeText>{state.sourceRun.releaseId}</CodeText></InfoBlock>
+              <InfoBlock label="当前 commit"><CodeText>{state.sourceRun.commitSha.slice(0, 12)}</CodeText></InfoBlock>
+              <InfoBlock label="回滚策略">{state.site.rollbackMethod}</InfoBlock>
+            </div>
+            <label className="grid gap-1 text-sm">
+              <span className="text-muted-foreground">选择目标版本</span>
+              <select
+                value={selectedVersionId}
+                onChange={(event) => setSelectedVersionId(event.target.value)}
+                className="h-10 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
+              >
+                {versions.map((run) => (
+                  <option key={run.releaseId} value={run.releaseId}>
+                    {run.releaseId} · {run.commitSha.slice(0, 12)} · {formatDate(run.finishedAt || run.startedAt)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm">
+              <div className="text-muted-foreground">确认后将执行</div>
+              <div className="mt-1">
+                回滚到 <CodeText>{selected?.releaseId || '-'}</CodeText>，执行脚本后会立即做健康检查，并生成新的回滚记录。
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[hsl(var(--hairline))] pt-4">
+              <Button variant="outline" onClick={onClose}>取消</Button>
+              <Button onClick={() => selectedVersionId && onConfirm(state.sourceRun, selectedVersionId)} disabled={!selectedVersionId}>
+                <RotateCcw />
+                确认回滚
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReleaseLogDialog({
+  run,
+  retryingRunId,
+  canRollback,
+  onClose,
+  onRetry,
+  onRollback,
+}: {
+  run: ReleaseRun | null;
+  retryingRunId: string;
+  canRollback: boolean;
+  onClose: () => void;
+  onRetry: (run: ReleaseRun) => void;
+  onRollback: (run: ReleaseRun) => void;
+}): JSX.Element {
   const [current, setCurrent] = useState<ReleaseRun | null>(run);
   useEffect(() => setCurrent(run), [run]);
   useEffect(() => {
@@ -684,6 +847,7 @@ function ReleaseLogDialog({ run, onClose }: { run: ReleaseRun | null; onClose: (
     return () => source.close();
   }, [run]);
   const steps = current ? releaseSteps(current) : [];
+  const canActOnFailure = Boolean(current && (current.status === 'failed' || current.status === 'rollback_failed'));
   return (
     <Dialog open={!!run} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-none" style={{ width: 'min(768px, calc(100vw - 32px))' }}>
@@ -706,6 +870,18 @@ function ReleaseLogDialog({ run, onClose }: { run: ReleaseRun | null; onClose: (
         <pre className="max-h-[42vh] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs leading-5">
           {(current?.logs || []).map((log) => `[${formatTime(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`).join('\n') || '等待发布日志...'}
         </pre>
+        {current && canActOnFailure ? (
+          <div className="flex flex-wrap justify-end gap-2 border-t border-[hsl(var(--hairline))] pt-3">
+            <Button variant="outline" onClick={() => onRollback(current)} disabled={!canRollback}>
+              <RotateCcw />
+              回滚到历史版本
+            </Button>
+            <Button onClick={() => onRetry(current)} disabled={retryingRunId === current.releaseId}>
+              {retryingRunId === current.releaseId ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              重试发布
+            </Button>
+          </div>
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -766,6 +942,8 @@ function toSiteView(row: CenterRow): SiteView {
   const target = row.target;
   const ssh = target.ssh;
   const healthUrl = ssh?.healthcheckUrl || '';
+  const successfulRuns = row.successfulRuns || [];
+  const rollbackCommand = ssh?.rollbackCommand?.trim();
   return {
     id: target.id,
     target,
@@ -780,10 +958,16 @@ function toSiteView(row: CenterRow): SiteView {
     currentCommit: row.currentCommit,
     lastReleasedAt: row.lastReleasedAt,
     healthStatus: row.healthStatus,
+    health: row.health,
+    responseTimeMs: row.health?.responseTimeMs,
+    checkedAt: row.health?.checkedAt,
+    healthMessage: row.health?.status === 'failed' ? row.health.message : '',
     lastOperator: row.lastOperator,
     latestRun: row.latestRun,
     canRollback: row.canRollback,
-    hasRollback: Boolean(ssh?.rollbackCommand?.trim()),
+    rollbackMethod: rollbackCommand ? `执行 ${rollbackCommand}` : '重新发布历史成功版本',
+    successfulRuns,
+    rollbackDefaultReleaseId: row.rollbackDefaultReleaseId || successfulRuns[0]?.releaseId || '',
     isEnabled: target.isEnabled,
   };
 }
@@ -905,10 +1089,26 @@ function formatDate(value?: string): string {
   return date.toLocaleString();
 }
 
+function formatResponseTime(value?: number): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
+  return `${value} ms`;
+}
+
 function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleTimeString();
+}
+
+function defaultRollbackVersionId(site: SiteView, sourceRun: ReleaseRun): string {
+  const versions = site.successfulRuns;
+  if (versions.length === 0) return '';
+  if (site.rollbackDefaultReleaseId && versions.some((run) => run.releaseId === site.rollbackDefaultReleaseId)) {
+    return site.rollbackDefaultReleaseId;
+  }
+  const sourceTs = new Date(sourceRun.startedAt).getTime();
+  const previous = versions.find((run) => run.releaseId !== sourceRun.releaseId && new Date(run.startedAt).getTime() < sourceTs);
+  return previous?.releaseId || versions.find((run) => run.releaseId !== sourceRun.releaseId)?.releaseId || versions[0].releaseId;
 }
 
 function statusLabel(status: string): string {

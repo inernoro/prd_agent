@@ -769,6 +769,7 @@ export interface ReleaseRun {
   seq: number;
   previousReleaseId?: string;
   rollbackOf?: string;
+  rollbackTargetReleaseId?: string;
   errorMessage?: string;
 }
 

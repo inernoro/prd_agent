@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import http from 'node:http';
 import type { ReleaseTarget } from '../../src/types.js';
-import { buildScriptCheckCommand, extractReleaseScriptPaths } from '../../src/services/release-service.js';
+import { buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, probeHealthcheckStatus } from '../../src/services/release-service.js';
 
 function target(appPath = '/opt/prd agent'): ReleaseTarget {
   const now = new Date().toISOString();
@@ -36,6 +37,12 @@ describe('release service script preflight helpers', () => {
     ]);
   });
 
+  it('recognizes the default site publish scripts as individually traceable steps', () => {
+    expect(isDefaultScriptChain('./fast.sh && ./exec_dep.sh')).toBe(true);
+    expect(isDefaultScriptChain('./fast.sh && ./exec_dep.sh && ./notify.sh')).toBe(false);
+    expect(isDefaultScriptChain('CDS_ENV=prod ./fast.sh && ./exec_dep.sh')).toBe(false);
+  });
+
   it('builds a remote command that checks script files without executing them', () => {
     const cmd = buildScriptCheckCommand(target(), ['./fast.sh', './exec_dep.sh']);
 
@@ -44,5 +51,29 @@ describe('release service script preflight helpers', () => {
     expect(cmd).toContain('test -f "$f"');
     expect(cmd).toContain('test -x "$f"');
     expect(cmd).not.toContain('CDS_COMMIT_SHA=');
+  });
+
+  it('reports healthcheck response timing and failure details', async () => {
+    const server = http.createServer((req, res) => {
+      if (req.url === '/ok') {
+        res.writeHead(200).end('ok');
+        return;
+      }
+      res.writeHead(503).end('down');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const addr = server.address() as { port: number };
+      const healthy = await probeHealthcheckStatus(`http://127.0.0.1:${addr.port}/ok`, 500);
+      expect(healthy.status).toBe('healthy');
+      expect(typeof healthy.responseTimeMs).toBe('number');
+      expect(healthy.checkedAt).toBeTruthy();
+
+      const failed = await probeHealthcheckStatus(`http://127.0.0.1:${addr.port}/down`, 500);
+      expect(failed.status).toBe('failed');
+      expect(failed.message).toBe('healthcheck HTTP 503');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

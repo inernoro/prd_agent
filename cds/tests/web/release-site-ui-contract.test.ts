@@ -33,7 +33,12 @@ describe('release site publishing UI contract', () => {
     expect(releaseCenterSource).toContain('./exec_dep.sh');
     expect(releaseCenterSource).toContain('上线地址');
     expect(releaseCenterSource).toContain('发布记录');
-    expect(releaseCenterSource).toContain('未配置回滚');
+    expect(releaseCenterSource).toContain('响应时间');
+    expect(releaseCenterSource).toContain('最近检查');
+    expect(releaseCenterSource).toContain('回滚策略');
+    expect(releaseCenterSource).toContain('选择目标版本');
+    expect(releaseCenterSource).toContain('确认回滚');
+    expect(releaseCenterSource).toContain('重试发布');
     expect(releaseCenterSource).toContain('calc(100vw - 32px)');
   });
 
