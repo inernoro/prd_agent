@@ -152,7 +152,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
 
   const totalOf = (stateKey: string) => items.filter((it) => colKeyOf(it) === stateKey).length;
 
-  if (!workflow) return <div className="text-sm text-white/40 py-10 text-center">该对象类型还没有可用的工作流，去「设置 → 流程模板」配置。</div>;
+  if (!workflow) return <div className="text-sm text-white/40 py-10 text-center">该对象类型还没有可用的工作流，去「应用 → 应用配置」配置。</div>;
   if (loading) return <MapSectionLoader text="正在加载看板…" />;
 
   const showLane = swimlane !== 'none';

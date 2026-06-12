@@ -1,8 +1,8 @@
 /**
- * 产品管理智能体 — 全局设置（表单 / 描述 / 产品类型 / 需求类型 / 管理员；流程模板见 WorkflowTemplateSection）。
+ * 产品管理智能体 — 全局设置（表单 / 描述 / 产品类型 / 需求类型 / 管理员；流转规则见「应用 → 应用配置」）。
  *
  * 全局默认（ProductId 留空）+ 允许选某产品覆盖。复用后端 form-templates / desc-templates CRUD。
- * 作用对象类型：需求 / 功能 / 缺陷 / 版本 / 客户 / 升级申请。
+ * 作用对象类型：需求 / 功能 / 版本 / 客户。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -35,7 +35,6 @@ const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'feature', label: '功能' },
   { value: 'version', label: '版本' },
   { value: 'customer', label: '客户' },
-  { value: 'upgrade-request', label: '升级申请' },
 ];
 
 const FIELD_TYPES: { value: FormFieldType; label: string }[] = [
@@ -62,7 +61,7 @@ const RELATION_TARGETS: { value: string; label: string }[] = [
 ];
 
 // 各对象类型的系统预置字段（由页面原生渲染，不可在表单里增删改；这里仅展示让配置者知晓）
-const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]> = {
+const PRESET_FIELDS: Partial<Record<ProductEntityType, { label: string; type: string }[]>> = {
   requirement: [
     { label: '标题', type: '单行文本' },
     { label: '描述', type: '多行文本' },
@@ -94,13 +93,6 @@ const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]
     { label: '公司', type: '单行文本' },
     { label: '联系方式', type: '单行文本' },
     { label: '描述', type: '多行文本' },
-  ],
-  'upgrade-request': [
-    { label: '标题', type: '单行文本' },
-    { label: '理由', type: '多行文本' },
-    { label: '关联需求', type: '关联需求' },
-    { label: '关联功能', type: '关联功能' },
-    { label: '状态', type: '流程驱动' },
   ],
   product: [
     { label: '名称', type: '单行文本' },

@@ -1,7 +1,7 @@
 /**
- * 产品管理智能体 — 流程模板（状态 + 流转边可视化编辑）。
+ * 产品管理智能体 — 应用配置（状态 + 流转边可视化编辑）。
  *
- * 从「设置」拆出，挂在主页左侧「应用」菜单下。全局默认 + 可按产品覆盖。
+ * 主页左侧一级「应用」入口，页标题为「应用配置」。全局默认 + 可按产品覆盖。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, Save } from 'lucide-react';
@@ -24,7 +24,6 @@ const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'requirement', label: '需求' },
   { value: 'feature', label: '功能' },
   { value: 'version', label: '版本' },
-  { value: 'upgrade-request', label: '升级申请' },
 ];
 
 function toggleWorkflowListItem(list: string[] | null | undefined, item: string): string[] {
