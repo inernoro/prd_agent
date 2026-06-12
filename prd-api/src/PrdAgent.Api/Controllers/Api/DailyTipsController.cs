@@ -635,7 +635,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=webpages-sort-pills]", Title = "第 8 步：排序", Body = "最新 / 最早 / 标题 / 浏览 / 体积 五种排序平铺成 pill，单击直接切。" },
                         new() { Selector = "[data-tour-id=webpages-group-pills]", Title = "第 9 步：分组", Body = "「日期 / 文件夹」二选一，把站点按时间或自建文件夹归类。" },
                         new() { Selector = "[data-tour-id=webpages-view-toggle]", Title = "第 10 步：网格 / 列表视图", Body = "右侧 ⊞ / ☰ 切换；网格有缩略图，列表更紧凑。" },
-                        new() { Selector = "[data-tour-id=webpages-folders]", Title = "第 11 步：文件夹", Body = "用文件夹把同类站点收纳到一起，点文件夹名快速过滤。" },
+                        new() { Selector = "[data-tour-id=webpages-folders]", Title = "第 11 步：文件夹 / 分组", Body = "个人空间用文件夹收纳同类站点，点文件夹名快速过滤；团队空间则是左侧树导航，按专题 / 分类组织，双击可改名，受限分组带锁标识。" },
                         new() { Selector = "[data-tour-id=webpages-card]", Title = "第 12 步：站点卡片", Body = "每个站点一张卡，显示标题、缩略图、访问量和快捷操作。" },
                         new() { Selector = "[data-tour-id=webpages-viewcount]", Title = "第 13 步：访问量", Body = "卡片底部的眼睛图标 + 数字，是该站点累计被打开的次数。" },
                         new() { Selector = "[data-tour-id=share-dock-panel]", Title = "第 14 步：投放面板", Body = "右侧悬浮面板可把文件直接拖进来上传，并提供「公开 / 分享 / 回收」快捷槽位（折叠时先点一下展开）。看完点「完成」就上手啦" },

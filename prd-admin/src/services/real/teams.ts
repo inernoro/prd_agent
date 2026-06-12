@@ -31,6 +31,8 @@ export interface TeamMember {
   role: TeamRole;
   /** 网页托管角色覆盖；null/缺省 = 继承团队角色（admin→owner / member→editor） */
   webHostingRole?: WebHostingRole | null;
+  /** 角色标签（如「前端组」「测试组」）：仅作授权分组用，本身不产生权限 */
+  labels?: string[];
   joinedAt: string;
 }
 
@@ -137,6 +139,18 @@ export async function updateMemberWebHostingRole(
   return apiRequest(api.teams.memberWebHostingRole(encodeURIComponent(id), encodeURIComponent(userId)), {
     method: 'PUT',
     body: { role },
+  });
+}
+
+/** 设置成员角色标签（全量覆盖，空数组 = 清空）。仅团队管理员可调。 */
+export async function updateMemberLabels(
+  id: string,
+  userId: string,
+  labels: string[],
+): Promise<ApiResponse<{ updated: boolean; labels: string[] }>> {
+  return apiRequest(api.teams.memberLabels(encodeURIComponent(id), encodeURIComponent(userId)), {
+    method: 'PUT',
+    body: { labels },
   });
 }
 
