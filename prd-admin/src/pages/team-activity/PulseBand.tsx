@@ -12,7 +12,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import type { TeamActivityStatsData } from '@/services/contracts/teamActivity';
 import { getModuleMeta } from './moduleMeta';
-import { maskName, rotateHourlyToLocal } from './pulse';
+import { maskName, rotateHourlyToLocal, smoothAreaPath } from './pulse';
 
 /** 数字滚动动效（ease-out cubic），让总量有「跳动的脉搏」体感 */
 function useCountUp(value: number, duration = 700): number {
@@ -72,8 +72,10 @@ export function PulseBand({
   if (!stats) return null;
 
   const hourly = rotateHourlyToLocal(stats.hourlyUtc);
-  const hourMax = Math.max(1, ...hourly);
   const currentHour = new Date().getHours();
+  const peakCount = Math.max(...hourly);
+  const peakHour = hourly.indexOf(peakCount);
+  const hourPath = smoothAreaPath(hourly, 240, 44, 3);
   const actorMax = Math.max(1, ...stats.actors.map((a) => a.count));
   const topActors = stats.actors.slice(0, 5);
   // 只有一个模块时比例条是零信息量像素（100% = 100%），直接不画，图例仍可点击下钻
@@ -85,10 +87,20 @@ export function PulseBand({
 
   return (
     <GlassCard className="shrink-0">
-      <div
-        className="px-5 py-4 grid gap-x-6 gap-y-4 items-stretch"
-        style={{ gridTemplateColumns: 'minmax(150px, 190px) minmax(0, 1fr) minmax(210px, 260px)' }}
-      >
+      <div className="relative overflow-hidden">
+        {/* 氛围光：低饱和径向渐变，给玻璃卡一点纵深，不参与交互 */}
+        <div
+          className="pointer-events-none absolute -top-24 -left-16 w-72 h-72 rounded-full"
+          style={{ background: 'radial-gradient(circle, rgba(34,211,238,0.07), transparent 70%)' }}
+        />
+        <div
+          className="pointer-events-none absolute -bottom-28 right-12 w-80 h-80 rounded-full"
+          style={{ background: 'radial-gradient(circle, rgba(167,139,250,0.06), transparent 70%)' }}
+        />
+        <div
+          className="relative px-5 py-4 grid gap-x-6 gap-y-4 items-stretch"
+          style={{ gridTemplateColumns: 'minmax(150px, 190px) minmax(0, 1fr) minmax(210px, 260px)' }}
+        >
         {/* 左：核心大数字 + 环比 */}
         <div className="flex flex-col justify-center gap-1 min-w-0">
           <div className="text-[11px] tracking-widest text-white/40">动作总量</div>
@@ -119,7 +131,7 @@ export function PulseBand({
         </div>
 
         {/* 中：模块能量条 + 时段热力 */}
-        <div className="flex flex-col justify-center gap-3 min-w-0">
+        <div className="flex flex-col justify-center gap-3 min-w-0 border-l border-white/[0.06] pl-6">
           <div className="flex flex-col gap-1.5">
             <div className="text-[11px] tracking-widest text-white/40">模块能量（点击下钻）</div>
             {showEnergyBar ? (
@@ -168,45 +180,54 @@ export function PulseBand({
             </div>
           </div>
 
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] tracking-widest text-white/40">活跃时段</span>
-              {stats.sampled ? <span className="text-[10px] text-white/30">（近 5000 条采样）</span> : null}
+          {/* 活跃时段：平滑面积曲线（限宽，避免在超宽中栏被拉变形） */}
+          <div className="flex flex-col gap-1" style={{ width: 'min(100%, 400px)' }}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] tracking-widest text-white/40">活跃时段</span>
+                {stats.sampled ? <span className="text-[10px] text-white/30">（近 5000 条采样）</span> : null}
+              </div>
+              {peakCount > 0 ? (
+                <span className="text-[10px] text-white/30 tabular-nums">
+                  峰值 {peakHour}时 · {peakCount} 条
+                </span>
+              ) : null}
             </div>
-            {/* 限宽：中间栏可能非常宽，柱子不限宽会被 flex-1 拉成胖药丸 */}
-            <div className="flex flex-col gap-1" style={{ width: 'min(100%, 400px)' }}>
-              <div className="flex items-end gap-[3px] h-8">
-                {hourly.map((count, h) => {
-                  const ratio = count / hourMax;
-                  const isNow = h === currentHour;
-                  return (
-                    <div
-                      key={h}
-                      title={`${h}:00 — ${count} 条`}
-                      className="flex-1 rounded-[2px] transition-all duration-500"
-                      style={{
-                        height: count === 0 ? 3 : Math.max(6, Math.round(ratio * 32)),
-                        background: isNow
-                          ? '#22d3ee'
-                          : `rgba(34, 211, 238, ${count === 0 ? 0.1 : 0.25 + ratio * 0.65})`,
-                      }}
-                    />
-                  );
-                })}
+            <div className="relative" style={{ height: 44 }}>
+              <svg className="absolute inset-0 w-full h-full" viewBox="0 0 240 44" preserveAspectRatio="none" aria-hidden>
+                <defs>
+                  <linearGradient id="pulse-hour-fill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="rgba(34,211,238,0.4)" />
+                    <stop offset="100%" stopColor="rgba(34,211,238,0.02)" />
+                  </linearGradient>
+                </defs>
+                <path d={hourPath.area} fill="url(#pulse-hour-fill)" />
+                <path d={hourPath.line} fill="none" stroke="#22d3ee" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+              </svg>
+              {/* 当前小时游标 */}
+              <div
+                className="absolute top-0 bottom-0 w-px bg-cyan-300/40"
+                style={{ left: `${(currentHour / 23) * 100}%` }}
+              />
+              {/* 每小时 tooltip 热区 */}
+              <div className="absolute inset-0 flex">
+                {hourly.map((count, h) => (
+                  <div key={h} className="flex-1" title={`${h}:00 — ${count} 条`} />
+                ))}
               </div>
-              <div className="flex justify-between text-[10px] text-white/25 tabular-nums">
-                <span>0时</span>
-                <span>6时</span>
-                <span>12时</span>
-                <span>18时</span>
-                <span>23时</span>
-              </div>
+            </div>
+            <div className="flex justify-between text-[10px] text-white/25 tabular-nums">
+              <span>0时</span>
+              <span>6时</span>
+              <span>12时</span>
+              <span>18时</span>
+              <span>23时</span>
             </div>
           </div>
         </div>
 
         {/* 右：成员排行（点击下钻） */}
-        <div className="flex flex-col justify-center gap-0.5 min-w-0">
+        <div className="flex flex-col justify-center gap-0.5 min-w-0 border-l border-white/[0.06] pl-6">
           <div className="text-[11px] tracking-widest text-white/40 pb-1">成员排行（点击下钻）</div>
           {topActors.length === 0 ? (
             <div className="text-[12px] text-white/35">该范围内暂无动作</div>
@@ -251,6 +272,7 @@ export function PulseBand({
               );
             })
           )}
+        </div>
         </div>
       </div>
     </GlassCard>

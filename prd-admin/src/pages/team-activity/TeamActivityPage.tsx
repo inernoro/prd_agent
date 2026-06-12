@@ -16,7 +16,8 @@ import { getTeamActivityLogs, getTeamActivityModules, getTeamActivityStats } fro
 import type { ActivityModuleOption, TeamActivityItem, TeamActivityStatsData } from '@/services/contracts/teamActivity';
 import { PulseBand } from './PulseBand';
 import { getModuleMeta } from './moduleMeta';
-import { aggregateConsecutive, maskName, maskTitle, type AggregatedActivity } from './pulse';
+import { getActionIcon } from './actionIcons';
+import { aggregateConsecutive, maskName, type AggregatedActivity } from './pulse';
 
 const PAGE_SIZE = 30;
 
@@ -221,7 +222,7 @@ export default function TeamActivityPage() {
           <button
             type="button"
             onClick={togglePrivacy}
-            title={privacy ? '当前已脱敏：标题与姓名打码，点击显示明文' : '当前为明文：点击开启脱敏'}
+            title={privacy ? '匿名模式：隐藏成员姓名（文档标题保持明文），点击切换实名' : '实名模式：点击切换匿名（隐藏成员姓名）'}
             className={`inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-full text-[12px] border transition-colors ${
               privacy
                 ? 'bg-violet-500/20 text-violet-200 border-violet-500/40'
@@ -229,7 +230,7 @@ export default function TeamActivityPage() {
             }`}
           >
             {privacy ? <EyeOff size={13} /> : <Eye size={13} />}
-            {privacy ? '已脱敏' : '明文'}
+            {privacy ? '匿名' : '实名'}
           </button>
         </div>
       </div>
@@ -272,17 +273,25 @@ export default function TeamActivityPage() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-4">
               {dayGroups.map((g) => (
-                <div key={g.key} className="flex flex-col gap-1">
-                  <div className="flex items-center gap-3 pb-1">
+                <div key={g.key} className="flex flex-col">
+                  {/* 吸顶日期头：长流滚动时始终知道自己看到哪一天 */}
+                  <div
+                    className="sticky top-0 z-10 flex items-center gap-3 py-1.5 -mx-5 px-5 backdrop-blur-md"
+                    style={{ background: 'rgba(16,17,19,0.72)' }}
+                  >
                     <span className="text-[12px] font-semibold text-white/70">{dayLabelOf(g.key)}</span>
                     <span className="flex-1 h-px bg-white/5" />
                     <span className="text-[11px] text-white/30">{g.total} 条</span>
                   </div>
-                  {g.rows.map((row) => (
-                    <ActivityRow key={row.id} group={row} privacy={privacy} />
-                  ))}
+                  <div className="relative">
+                    {/* 时间线 rail：把同一天的事件串成一条线（GitLab 式） */}
+                    <span className="absolute left-4 top-3 bottom-3 w-px bg-white/[0.06]" aria-hidden />
+                    {g.rows.map((row) => (
+                      <ActivityRow key={row.id} group={row} privacy={privacy} />
+                    ))}
+                  </div>
                 </div>
               ))}
 
@@ -322,36 +331,39 @@ function FilterChip({ active, label, onClick }: { active: boolean; label: string
 function ActivityRow({ group, privacy }: { group: AggregatedActivity; privacy: boolean }) {
   const item = group.head;
   const meta = getModuleMeta(item.module);
+  const ActionIcon = getActionIcon(item.action);
   const actorName = item.actorName || item.actorId;
-  const titles = privacy ? group.titles.map(maskTitle) : group.titles;
+  // 标题按业界惯例全文显示（GitHub/GitLab 的对象名都是明文链接），隐私脱敏只作用于人名
+  const titles = group.titles;
   // 折叠条数超过去重标题数时补「等」，提示还有同类对象未列出
   const hasMoreTargets = group.count > titles.length && titles.length > 0;
 
   return (
-    <div className="flex items-center gap-3 py-2 px-1 rounded-lg hover:bg-white/[0.03] transition-colors">
-      <UserAvatar
-        src={resolveAvatarUrl({ avatarFileName: item.actorAvatarFileName })}
-        alt={actorName}
-        className="w-8 h-8 rounded-full shrink-0 object-cover"
-      />
-      <div className="flex-1 min-w-0 text-[13px] leading-relaxed">
-        <span className="text-white/85 font-medium">{privacy ? maskName(actorName) : actorName}</span>
-        <span className="text-white/45"> 在 </span>
+    <div className="relative flex items-start gap-3 py-2 rounded-lg hover:bg-white/[0.03] transition-colors">
+      {/* 头像 + 模块色动作图标徽章（GitLab 时间线式事件类型标识） */}
+      <span className="relative z-10 shrink-0">
+        <UserAvatar
+          src={resolveAvatarUrl({ avatarFileName: item.actorAvatarFileName })}
+          alt={actorName}
+          className="w-8 h-8 rounded-full object-cover block"
+        />
         <span
-          className="inline-flex items-center gap-1.5 px-1.5 py-px rounded-md text-[12px] align-[1px]"
-          style={{ background: meta.soft, color: meta.accent, border: `1px solid ${meta.border}` }}
+          className="absolute -bottom-0.5 -right-1 w-4 h-4 rounded-full flex items-center justify-center"
+          style={{ background: '#16171a', border: `1px solid ${meta.border}` }}
         >
-          <span className="w-1.5 h-1.5 rounded-full" style={{ background: meta.accent }} />
-          {item.moduleLabel}
+          <ActionIcon size={9} style={{ color: meta.accent }} />
         </span>
-        <span className="text-white/45"> {item.actionLabel}</span>
+      </span>
+      <div className="flex-1 min-w-0 text-[13px] leading-relaxed pt-1">
+        <span className="text-white/90 font-semibold">{privacy ? maskName(actorName) : actorName}</span>
+        <span className="text-white/50"> {item.actionLabel}</span>
         {titles.map((t, i) => (
           <span key={i} className="text-cyan-200/90">
             {' '}
             《{t}》
           </span>
         ))}
-        {hasMoreTargets ? <span className="text-white/45"> 等</span> : null}
+        {hasMoreTargets ? <span className="text-white/50"> 等</span> : null}
         {group.count > 1 ? (
           <span
             className="inline-block ml-2 px-1.5 py-px rounded-full text-[11px] font-semibold tabular-nums align-[1px]"
@@ -361,8 +373,15 @@ function ActivityRow({ group, privacy }: { group: AggregatedActivity; privacy: b
           </span>
         ) : null}
       </div>
-      {/* 列表场景关闭逐行自刷新定时器（项目惯例，长列表 N 行 N 个 interval 会拖性能） */}
-      <RelativeTime value={item.createdAt} refreshIntervalMs={0} className="text-[11px] text-white/35 shrink-0" />
+      {/* 右侧元信息：模块归属 + 时间戳（第三优先级，弱化） */}
+      <div className="flex items-center gap-2.5 shrink-0 pt-1.5">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-white/35">
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: meta.accent }} />
+          {item.moduleLabel}
+        </span>
+        {/* 列表场景关闭逐行自刷新定时器（项目惯例，长列表 N 行 N 个 interval 会拖性能） */}
+        <RelativeTime value={item.createdAt} refreshIntervalMs={0} className="text-[11px] text-white/35" />
+      </div>
     </div>
   );
 }

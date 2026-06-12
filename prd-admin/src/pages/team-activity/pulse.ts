@@ -1,23 +1,12 @@
 /**
  * 团队动态「脉搏」纯函数工具：
- * - 隐私脱敏（标题 / 姓名打码）
- * - 连续同类动作聚合折叠（治「同一个人刷屏 N 条相同动态」）
+ * - 姓名脱敏（业界惯例：对象标题全文显示，隐私保护只作用于「人」）
+ * - 连续同类动作聚合折叠（治「同一个人刷屏 N 条相同动态」，对标 GitHub "pushed 5 commits"）
  * - 小时直方图 UTC → 本地时区旋转
+ * - 平滑面积曲线 SVG path（Catmull-Rom 转 Bezier，活跃时段图用）
  * 全部为纯函数，可被 vitest 直接断言。
  */
 import type { TeamActivityItem } from '@/services/contracts/teamActivity';
-
-// 中圆点比星号安静：脱敏后的标题应该「读得出被隐藏」而不是「像系统乱码」
-const MASK = '···';
-
-/** 标题脱敏：保留首（尾）字，中间打码。空串原样返回。 */
-export function maskTitle(text: string): string {
-  const chars = Array.from(text.trim());
-  if (chars.length === 0) return '';
-  if (chars.length === 1) return `${chars[0]}*`;
-  if (chars.length <= 3) return `${chars[0]}${MASK}`;
-  return `${chars[0]}${MASK}${chars[chars.length - 1]}`;
-}
 
 /** 姓名脱敏：保留首字 + 两位掩码（周泽腾 → 周**）。 */
 export function maskName(name: string): string {
@@ -78,4 +67,42 @@ export function rotateHourlyToLocal(hourlyUtc: number[], tzOffsetMinutes?: numbe
     out[local] = hourlyUtc[utc] ?? 0;
   }
   return out;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * 把一组数值变成平滑面积曲线的 SVG path（Catmull-Rom 转 Bezier）。
+ * 返回 line（描边用）与 area（渐变填充用，闭合到底边）。
+ * 控制点 y 做 clamp，避免尖峰数据的插值过冲越出画布。
+ */
+export function smoothAreaPath(
+  values: number[],
+  width: number,
+  height: number,
+  pad = 2
+): { line: string; area: string } {
+  const n = values.length;
+  if (n === 0) return { line: '', area: '' };
+  const max = Math.max(1, ...values);
+  const usable = height - pad * 2;
+  const yOf = (v: number) => round2(height - pad - (v / max) * usable);
+  const xOf = (i: number) => round2(n === 1 ? width / 2 : (i * width) / (n - 1));
+  const clampY = (y: number) => Math.min(height, Math.max(0, round2(y)));
+
+  const pts = values.map((v, i) => [xOf(i), yOf(v)] as const);
+  let line = `M ${pts[0][0]},${pts[0][1]}`;
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[Math.min(n - 1, i + 2)];
+    const c1x = round2(p1[0] + (p2[0] - p0[0]) / 6);
+    const c1y = clampY(p1[1] + (p2[1] - p0[1]) / 6);
+    const c2x = round2(p2[0] - (p3[0] - p1[0]) / 6);
+    const c2y = clampY(p2[1] - (p3[1] - p1[1]) / 6);
+    line += ` C ${c1x},${c1y} ${c2x},${c2y} ${p2[0]},${p2[1]}`;
+  }
+  const area = `${line} L ${round2(width)},${height} L ${pts[0][0]},${height} Z`;
+  return { line, area };
 }

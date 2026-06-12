@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateConsecutive, maskName, maskTitle, rotateHourlyToLocal } from '../pulse';
+import { aggregateConsecutive, maskName, rotateHourlyToLocal, smoothAreaPath } from '../pulse';
 import type { TeamActivityItem } from '@/services/contracts/teamActivity';
 
 function item(over: Partial<TeamActivityItem>): TeamActivityItem {
@@ -15,18 +15,29 @@ function item(over: Partial<TeamActivityItem>): TeamActivityItem {
   };
 }
 
-describe('maskTitle / maskName 隐私脱敏', () => {
-  it('长标题保留首尾字、中间打码', () => {
-    expect(maskTitle('全球运动鞋服行业商业模式变革')).toBe('全···革');
-  });
-  it('短标题只保留首字', () => {
-    expect(maskTitle('周报')).toBe('周···');
-    expect(maskTitle('A')).toBe('A*');
-    expect(maskTitle('')).toBe('');
-  });
+describe('maskName 隐私脱敏（标题按业界惯例全文显示，只脱敏人名）', () => {
   it('姓名保留姓氏', () => {
     expect(maskName('周泽腾')).toBe('周**');
     expect(maskName('')).toBe('');
+  });
+});
+
+describe('smoothAreaPath 平滑面积曲线', () => {
+  it('生成 Bezier line 与闭合 area', () => {
+    const { line, area } = smoothAreaPath([0, 5, 2, 8], 240, 48);
+    expect(line.startsWith('M ')).toBe(true);
+    expect(line).toContain(' C ');
+    expect(area.endsWith('Z')).toBe(true);
+    expect(area.startsWith(line)).toBe(true);
+  });
+  it('全零数据画在底边附近且不越界', () => {
+    const { line } = smoothAreaPath([0, 0, 0], 100, 40, 2);
+    const ys = [...line.matchAll(/,([\d.]+)/g)].map((m) => Number(m[1]));
+    expect(ys.every((y) => y >= 0 && y <= 40)).toBe(true);
+    expect(ys.every((y) => y === 38)).toBe(true);
+  });
+  it('空数组返回空串', () => {
+    expect(smoothAreaPath([], 100, 40)).toEqual({ line: '', area: '' });
   });
 });
 
