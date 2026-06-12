@@ -14,3 +14,6 @@
 | style | prd-admin | 洞察面板视觉去 AI 感：单卡分隔行替代漂浮盒子、左缘信号色条、目标/指标走 mono 字体、琥珀色强调主操作；脉搏大数字改实色微光、排行条单色化 |
 | feat | prd-admin | 行为洞察新增 AI 简报：一键流式生成面向产品负责人的洞察简报（SSE 打字效果 + 顶部模型可见），完成后可一键发布到知识库「行为洞察简报」存档 |
 | feat | prd-api | 新增 GET /api/team-activity/insights/brief SSE 端点（ILlmGateway 流式 + LlmRequestContext + AppCallerRegistry 登记 insight-brief），洞察计算抽出 ComputeInsightsAsync 供查询与简报共用 |
+| fix | prd-admin | AI 简报发布防重复：发布成功后按钮变「已发布」徽章，同日重复发布幂等更新同一篇文档而非新建；发布中禁用按钮 |
+| fix | prd-api | AI 简报流式中断治理：SSE 每 10 秒心跳防代理空闲断连（写锁防交叉写入）、max_tokens 提至 8192、超时放宽 300s、done 事件带 complete 标记 |
+| fix | prd-admin | AI 简报前端识别中断：未收到显式 done 即结束时提示「生成被中断」并提供重新生成，半截简报不允许发布 |

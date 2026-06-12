@@ -17,6 +17,7 @@ import {
   createDefect,
   createDocumentStore,
   getTeamActivityInsights,
+  listDocumentEntries,
   listDocumentStores,
   setTeamActivityInsightState,
   updateDocumentContent,
@@ -66,6 +67,9 @@ export function InsightsPanel({ from }: { from?: string }) {
   const [briefOpen, setBriefOpen] = useState(false);
   const [briefModel, setBriefModel] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [publishedTitle, setPublishedTitle] = useState<string | null>(null);
+  // 收到后端显式 done 事件才算完整；流自然断开（代理掐线/超长截断）不会触发 onDone
+  const [briefComplete, setBriefComplete] = useState(false);
   const fetchIdRef = useRef(0);
 
   // AI 简报：SSE 流式生成（model/delta/done/error 事件由后端 insights/brief 推送）
@@ -79,18 +83,21 @@ export function InsightsPanel({ from }: { from?: string }) {
       },
     },
     onError: (msg) => toast.error(msg),
+    onDone: () => setBriefComplete(true),
   });
 
   const startBrief = useCallback(() => {
     setBriefOpen(true);
     setBriefModel(null);
+    setPublishedTitle(null);
+    setBriefComplete(false);
     void brief.start({ url: `/api/team-activity/insights/brief${from ? `?from=${encodeURIComponent(from)}` : ''}` });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from]);
 
   const publishBrief = useCallback(async () => {
     const markdown = brief.typing.trim();
-    if (!markdown) return;
+    if (!markdown || publishing || publishedTitle) return;
     setPublishing(true);
     const storeName = '行为洞察简报';
     let storeId: string | null = null;
@@ -107,22 +114,41 @@ export function InsightsPanel({ from }: { from?: string }) {
     }
     const now = new Date();
     const title = `行为洞察简报 ${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const entry = await addDocumentEntry(storeId, {
-      title,
-      sourceType: 'import',
-      contentType: 'text/markdown',
-      summary: markdown.slice(0, 200),
-    });
-    if (!entry.success) {
-      setPublishing(false);
-      toast.error(entry.error?.message ?? '创建文档失败');
-      return;
+
+    // 幂等发布：当日已有同名简报则更新内容，不再新建重复文档
+    let entryId: string | null = null;
+    let isUpdate = false;
+    const existing = await listDocumentEntries(storeId, 1, 200);
+    if (existing.success) {
+      const hit = existing.data.items.find((e) => e.title === title);
+      if (hit) {
+        entryId = hit.id;
+        isUpdate = true;
+      }
     }
-    const content = await updateDocumentContent(entry.data.id, markdown);
+    if (!entryId) {
+      const entry = await addDocumentEntry(storeId, {
+        title,
+        sourceType: 'import',
+        contentType: 'text/markdown',
+        summary: markdown.slice(0, 200),
+      });
+      if (!entry.success) {
+        setPublishing(false);
+        toast.error(entry.error?.message ?? '创建文档失败');
+        return;
+      }
+      entryId = entry.data.id;
+    }
+    const content = await updateDocumentContent(entryId, markdown);
     setPublishing(false);
-    if (content.success) toast.success(`已发布《${title}》到知识库「${storeName}」`);
-    else toast.error(content.error?.message ?? '写入文档内容失败');
-  }, [brief.typing]);
+    if (content.success) {
+      setPublishedTitle(title);
+      toast.success(`${isUpdate ? '已更新' : '已发布'}《${title}》到知识库「${storeName}」`);
+    } else {
+      toast.error(content.error?.message ?? '写入文档内容失败');
+    }
+  }, [brief.typing, publishing, publishedTitle]);
 
   const reload = useCallback(() => {
     const fetchId = ++fetchIdRef.current;
@@ -247,14 +273,30 @@ export function InsightsPanel({ from }: { from?: string }) {
                   {brief.phaseMessage || '生成中…'}
                 </span>
               ) : null}
+              {brief.phase === 'done' && !briefComplete ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-200/80">
+                  生成被中断（连接断开或超长截断），建议重新生成
+                </span>
+              ) : null}
               <span className="ml-auto flex items-center gap-1.5">
-                {brief.phase === 'done' && brief.typing.trim() ? (
-                  <ActionButton
-                    onClick={() => void publishBrief()}
-                    icon={BookOpen}
-                    label={publishing ? '发布中…' : '发布到知识库'}
-                    emphasis
-                  />
+                {brief.phase === 'done' ? (
+                  <ActionButton onClick={startBrief} icon={RotateCcw} label="重新生成" />
+                ) : null}
+                {brief.phase === 'done' && briefComplete && brief.typing.trim() ? (
+                  publishedTitle ? (
+                    <span className="inline-flex items-center gap-1 px-2 h-[22px] rounded text-[11px] bg-emerald-500/10 text-emerald-200/80 border border-emerald-500/25">
+                      <CheckCircle2 size={11} />
+                      已发布
+                    </span>
+                  ) : (
+                    <ActionButton
+                      onClick={() => void publishBrief()}
+                      icon={BookOpen}
+                      label={publishing ? '发布中…' : '发布到知识库'}
+                      emphasis
+                      disabled={publishing}
+                    />
+                  )
                 ) : null}
                 <ActionButton
                   onClick={() => {
@@ -381,15 +423,19 @@ function ActionButton({
   icon: Icon,
   label,
   emphasis,
+  disabled,
 }: {
   onClick: () => void;
   icon: typeof Bug;
   label: string;
   emphasis?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
+      style={disabled ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
       onClick={onClick}
       className={`inline-flex items-center gap-1 px-2 h-[22px] rounded text-[11px] border transition-colors cursor-pointer ${
         emphasis

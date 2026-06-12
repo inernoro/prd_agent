@@ -557,7 +557,7 @@ public class TeamActivityController : ControllerBase
             AppCallerCode = AppCallerRegistry.Admin.TeamActivity.InsightBrief,
             ModelType = ModelTypes.Chat,
             Stream = true,
-            TimeoutSeconds = 180,
+            TimeoutSeconds = 300,
             RequestBody = new JsonObject
             {
                 ["messages"] = new JsonArray
@@ -566,12 +566,43 @@ public class TeamActivityController : ControllerBase
                     new JsonObject { ["role"] = "user", ["content"] = lines.ToString() },
                 },
                 ["temperature"] = 0.4,
-                ["max_tokens"] = 4096,
+                ["max_tokens"] = 8192,
             },
         };
 
         var clientGone = false;
         var sentModel = false;
+        // SSE 心跳：长思考间隙没有任何字节会被代理按空闲连接掐断（server-authority 规则要求 10s 心跳）
+        var writeLock = new SemaphoreSlim(1, 1);
+        using var heartbeatCts = new CancellationTokenSource();
+        var heartbeat = Task.Run(async () =>
+        {
+            try
+            {
+                while (!heartbeatCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(10), heartbeatCts.Token);
+                    if (clientGone) continue;
+                    await writeLock.WaitAsync(heartbeatCts.Token);
+                    try
+                    {
+                        await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
+                        await Response.Body.FlushAsync(CancellationToken.None);
+                    }
+                    catch (ObjectDisposedException) { clientGone = true; }
+                    finally { writeLock.Release(); }
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+
+        async Task SendAsync(string eventName, object? payload)
+        {
+            await writeLock.WaitAsync();
+            try { await WriteSseAsync(eventName, payload); }
+            finally { writeLock.Release(); }
+        }
+
         try
         {
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
@@ -581,7 +612,7 @@ public class TeamActivityController : ControllerBase
                     sentModel = true;
                     if (!clientGone)
                     {
-                        try { await WriteSseAsync("model", new { model = chunk.Resolution.ActualModel, platform = chunk.Resolution.ActualPlatformName }); }
+                        try { await SendAsync("model", new { model = chunk.Resolution.ActualModel, platform = chunk.Resolution.ActualPlatformName }); }
                         catch (ObjectDisposedException) { clientGone = true; }
                     }
                 }
@@ -589,23 +620,28 @@ public class TeamActivityController : ControllerBase
                 {
                     if (!clientGone)
                     {
-                        try { await WriteSseAsync("delta", new { text = chunk.Content }); }
+                        try { await SendAsync("delta", new { text = chunk.Content }); }
                         catch (ObjectDisposedException) { clientGone = true; }
                     }
                 }
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
-                    if (!clientGone) { try { await WriteSseAsync("error", new { message = chunk.Error ?? "LLM 网关返回未知错误" }); } catch { } }
+                    if (!clientGone) { try { await SendAsync("error", new { message = chunk.Error ?? "LLM 网关返回未知错误" }); } catch { } }
                     return;
                 }
             }
-            if (!clientGone) { try { await WriteSseAsync("done", new { }); } catch (ObjectDisposedException) { } }
+            if (!clientGone) { try { await SendAsync("done", new { complete = true }); } catch (ObjectDisposedException) { } }
         }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
         catch (Exception ex)
         {
-            if (!clientGone) { try { await WriteSseAsync("error", new { message = ex.Message }); } catch { } }
+            if (!clientGone) { try { await SendAsync("error", new { message = ex.Message }); } catch { } }
+        }
+        finally
+        {
+            heartbeatCts.Cancel();
+            try { await heartbeat; } catch { /* 心跳收尾异常不影响响应 */ }
         }
     }
 
