@@ -138,9 +138,15 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'features' && (
-        <SectionShell title="功能" desc="按产品查看功能目录；与单产品内功能 tab 布局一致，支持版本筛选">
-          <OverviewFeaturesPanel isAdmin={isAdmin} products={products} />
-        </SectionShell>
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="shrink-0 border-b border-white/10 px-6 py-3">
+            <h2 className="text-base font-semibold text-white">功能</h2>
+            <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；与单产品内功能 tab 布局一致，支持版本筛选</p>
+          </div>
+          <div className="min-h-0 flex-1">
+            <OverviewFeaturesPanel isAdmin={isAdmin} products={products} />
+          </div>
+        </div>
       )}
       {active === 'defects' && (
         <SectionShell title="缺陷（跨产品）" desc="全部产品追溯到产品的缺陷汇总，点击进入缺陷详情">
@@ -500,7 +506,7 @@ function OverviewFeaturesPanel({ isAdmin, products }: { isAdmin: boolean; produc
   }
 
   return (
-    <div className="flex min-h-[640px] flex-col overflow-hidden rounded-lg border border-white/10">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="shrink-0 flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-[#13151a] px-4 py-2.5">
         <span className="mr-1 self-center text-[11px] text-white/40">产品</span>
         {products.map((p) => (
@@ -518,7 +524,7 @@ function OverviewFeaturesPanel({ isAdmin, products }: { isAdmin: boolean; produc
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col">
         {productId && (
           <FeatureCatalogTab
             key={productId}

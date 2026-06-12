@@ -179,15 +179,18 @@ export function FeatureCatalogTab({
     });
   };
 
-  if (loading) return <MapSectionLoader text="正在加载功能目录…" />;
+  if (loading) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center">
+        <MapSectionLoader text="正在加载功能目录…" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-0 flex-1">
-        <aside
-          className="flex w-60 shrink-0 flex-col border-r border-white/10 bg-[#121317]"
-          style={{ minHeight: 0 }}
-        >
+      <div className="flex h-full min-h-0 flex-1">
+        <aside className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-white/10 bg-[#121317]">
           <div className="shrink-0 border-b border-white/10 px-3 py-2">
             <div className="flex items-center gap-1.5 text-[11px] text-white/40">
               <FolderTree size={13} /> 功能目录
@@ -222,7 +225,7 @@ export function FeatureCatalogTab({
           </div>
         </aside>
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-[#0f1014]">
           <div className="shrink-0 border-b border-white/10 px-4 py-2.5">
             <div className="text-sm font-medium text-white/85 truncate">
               {selectedNode ? selectedNode.title : '全部功能'}
