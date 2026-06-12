@@ -321,6 +321,7 @@ export function ReleaseCenterPage(): JSX.Element {
       setToast('没有找到这条记录对应的站点');
       return;
     }
+    setLogRun(null);
     openRollback(site, run);
   };
 
