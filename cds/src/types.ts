@@ -1017,8 +1017,8 @@ export interface CdsState {
   selfUpdateHistory?: SelfUpdateRecord[];
   /**
    * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
-   * HTML 真是远程 agent 返回的」)。会话 stop/fail 时由 remote-hosts 落一条摘要
-   * (收发预览各截 2000 字),ring buffer 500 条;全量事件仍在内存随重启丢失。
+   * HTML 真是远程 agent 返回的」)。会话 done/fail/stop 时由 remote-hosts
+   * 落一条摘要(收发预览各截 2000 字),ring buffer 500 条;全量事件仍在内存随重启丢失。
    */
   agentRequestHistory?: AgentRequestRecord[];
   /**
