@@ -506,7 +506,7 @@ public class WebPagesController : ControllerBase
                     return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "subjectId 不能为空"));
                 if (role != WebHostingRoles.Viewer && role != WebHostingRoles.Editor)
                     return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分组角色只能是 viewer 或 editor"));
-                rules.Add(new WebPageGroupAccessRule { SubjectType = subjectType, SubjectId = subjectId, Role = role });
+                rules.Add(new WebPageGroupAccessRule { SubjectType = subjectType!, SubjectId = subjectId!, Role = role! });
             }
             if (rules.Count > 100)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "授权规则最多 100 条"));
@@ -515,7 +515,7 @@ public class WebPagesController : ControllerBase
         await _db.WebPageGroups.UpdateOneAsync(
             g => g.Id == groupId,
             Builders<WebPageGroup>.Update
-                .Set(g => g.Visibility, visibility)
+                .Set(g => g.Visibility, visibility!)
                 .Set(g => g.AccessRules, rules)
                 .Set(g => g.UpdatedAt, DateTime.UtcNow));
         var updated = await _db.WebPageGroups.Find(g => g.Id == groupId).FirstOrDefaultAsync();
