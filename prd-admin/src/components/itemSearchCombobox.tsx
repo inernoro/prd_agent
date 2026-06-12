@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 export const ITEM_COMBOBOX_SELECTED_MAX_PX = 72;
 export const ITEM_COMBOBOX_LABEL_MAX_LEN = 15;
 
+/** combobox 内嵌 input：透明、无边框，禁止全局 focus-visible 内环（避免「框中框」） */
+export const itemComboboxInputClass =
+  'flex-1 min-w-0 bg-transparent outline-none border-none p-0 h-full shadow-none no-focus-ring';
+
 export interface ItemSearchOption {
   id: string;
   label: string;
@@ -168,8 +172,8 @@ export function ItemComboboxSearchRow(props: {
         onChange={(e) => props.onChange(e.target.value)}
         onFocus={props.onFocus}
         placeholder={props.placeholder}
-        className="flex-1 min-w-0 bg-transparent outline-none border-none p-0 h-full disabled:cursor-not-allowed"
-        style={{ color: 'var(--text-primary)' }}
+        className={`${itemComboboxInputClass} disabled:cursor-not-allowed`}
+        style={{ color: 'var(--text-primary)', boxShadow: 'none' }}
       />
       <ItemComboboxChevron open={props.open} disabled={props.disabled} onToggle={props.onChevronToggle} />
     </div>

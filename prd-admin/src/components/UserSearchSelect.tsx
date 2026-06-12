@@ -5,6 +5,7 @@ import type { AdminUser } from '@/types/admin';
 import { Check, ChevronDown, Search, Users, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { itemComboboxInputClass } from './itemSearchCombobox';
 
 /** 相对时间格式化 */
 function fmtRelative(v?: string | null) {
@@ -351,8 +352,8 @@ export function UserSearchSelect({
           onChange={(e) => { setFilter(e.target.value); setOpen(true); }}
           onFocus={() => { setOpen(true); setFilter(''); }}
           placeholder={inputPlaceholder}
-          className="flex-1 min-w-0 bg-transparent outline-none border-none p-0 h-full"
-          style={{ color: 'var(--text-primary)' }}
+          className={itemComboboxInputClass}
+          style={{ color: 'var(--text-primary)', boxShadow: 'none' }}
         />
         {value && !open && (
           <button
