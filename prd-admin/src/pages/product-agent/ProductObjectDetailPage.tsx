@@ -11,6 +11,8 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, Share2, X, Sparkles, ExternalLink, MessageSquareText } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { ItemMultiSearchSelect } from '@/components/ItemMultiSearchSelect';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { useAuthStore } from '@/stores/authStore';
 import { useSseStream } from '@/lib/useSseStream';
@@ -26,6 +28,7 @@ import {
   REQUIREMENT_PRODUCT_DEFECT_VALUE,
 } from './productDefectLinkageCatalog';
 import { RequirementTypeSelect } from './RequirementTypeSelect';
+import { toRequirementOptions } from './comboboxOptions';
 import { VersionKnowledgeCard } from './knowledge/VersionKnowledgeCard';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
@@ -788,35 +791,29 @@ function CreateObjectForm({
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <FieldLabel required>主需求</FieldLabel>
-                  <select value={mainRequirementId} onChange={(event) => {
-                    const value = event.target.value;
-                    setMainRequirementId(value);
-                    if (value) setRequirementIds((prev) => new Set([...prev, value]));
-                  }} className={selectCls}>
-                    <option value="">请选择主需求</option>
-                    {requirements.map((requirement) => <option key={requirement.id} value={requirement.id}>{requirement.requirementNo} · {requirement.title}</option>)}
-                  </select>
+                  <ItemSearchSelect
+                    value={mainRequirementId}
+                    onChange={(id) => {
+                      setMainRequirementId(id);
+                      if (id) setRequirementIds((prev) => new Set([...prev, id]));
+                    }}
+                    options={toRequirementOptions(requirements)}
+                    placeholder="搜索需求标题或编号..."
+                    clearOptionLabel="请选择主需求"
+                    countUnit="条需求"
+                  />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <FieldLabel>关联需求</FieldLabel>
-                  <div className="max-h-44 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] p-2" style={{ overscrollBehavior: 'contain' }}>
-                    {requirements.map((requirement) => (
-                      <label key={requirement.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 hover:bg-white/5">
-                        <input
-                          type="checkbox"
-                          checked={requirementIds.has(requirement.id) || mainRequirementId === requirement.id}
-                          disabled={mainRequirementId === requirement.id}
-                          onChange={() => setRequirementIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(requirement.id)) next.delete(requirement.id); else next.add(requirement.id);
-                            return next;
-                          })}
-                          className="mt-0.5 accent-cyan-500"
-                        />
-                        <span className="min-w-0 text-xs text-white/65">{requirement.title}</span>
-                      </label>
-                    ))}
-                  </div>
+                  <ItemMultiSearchSelect
+                    value={Array.from(requirementIds).filter((id) => id !== mainRequirementId)}
+                    onChange={(ids) => setRequirementIds(new Set(mainRequirementId ? [mainRequirementId, ...ids] : ids))}
+                    options={toRequirementOptions(requirements)}
+                    placeholder="搜索并选择关联需求..."
+                    countUnit="条需求"
+                    lockedIds={mainRequirementId ? [mainRequirementId] : []}
+                    emptyText="暂无其他需求可选"
+                  />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <FieldLabel required>计划版本</FieldLabel>
@@ -1458,16 +1455,6 @@ function FeatureDetail({
     onReload();
   };
 
-  const toggle = (id: string) => {
-    if (id === mainRequirementId) return;
-    setSelReqs((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   return (
     <DetailScaffold
       no={feature.featureNo}
@@ -1585,32 +1572,29 @@ function FeatureDetail({
               <div className="space-y-3">
                 <div className="flex flex-col gap-1.5">
                   <FieldLabel required>主需求</FieldLabel>
-                  <select
+                  <ItemSearchSelect
                     value={mainRequirementId}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setMainRequirementId(value);
-                      if (value) setSelReqs((prev) => new Set([...prev, value]));
+                    onChange={(id) => {
+                      setMainRequirementId(id);
+                      if (id) setSelReqs((prev) => new Set([...prev, id]));
                     }}
-                    className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none"
-                  >
-                    <option value="">请选择主需求</option>
-                    {requirements.map((requirement) => <option key={requirement.id} value={requirement.id}>{requirement.requirementNo} · {requirement.title}</option>)}
-                  </select>
+                    options={toRequirementOptions(requirements)}
+                    placeholder="搜索需求标题或编号..."
+                    clearOptionLabel="请选择主需求"
+                    countUnit="条需求"
+                  />
                 </div>
-                <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                  {requirements.map((requirement) => (
-                    <label key={requirement.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-white/5">
-                      <input
-                        type="checkbox"
-                        checked={selReqs.has(requirement.id) || mainRequirementId === requirement.id}
-                        disabled={mainRequirementId === requirement.id}
-                        onChange={() => toggle(requirement.id)}
-                        className="accent-cyan-500"
-                      />
-                      <span className="truncate text-sm text-white/80">{requirement.title}</span>
-                    </label>
-                  ))}
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>关联需求</FieldLabel>
+                  <ItemMultiSearchSelect
+                    value={Array.from(selReqs).filter((id) => id !== mainRequirementId)}
+                    onChange={(ids) => setSelReqs(new Set(mainRequirementId ? [mainRequirementId, ...ids] : ids))}
+                    options={toRequirementOptions(requirements)}
+                    placeholder="搜索并选择关联需求..."
+                    countUnit="条需求"
+                    lockedIds={mainRequirementId ? [mainRequirementId] : []}
+                    emptyText="暂无其他需求可选"
+                  />
                 </div>
               </div>
             )}
