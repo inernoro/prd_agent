@@ -26,26 +26,32 @@ const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ 
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
+const UniverseGraphPage = lazy(() => import('@/pages/document-store/UniverseGraphPage').then(m => ({ default: m.UniverseGraphPage })));
 const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
 const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
 const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.TaskDetailPage })));
+const PmProjectDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.ProjectDetailPage })));
 const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
 const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
 const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
+const KnowledgeDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.KnowledgeDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
+const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ default: m.ShituAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
+const FrontEndAgentPage = lazy(() => import('@/pages/front-end-agent').then(m => ({ default: m.FrontEndAgentPage })));
 const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
+const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
 const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
 const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
@@ -352,6 +358,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/shitu-agent',
+    permission: 'shitu-agent.use',
+    element: shellGuarded('shitu-agent.use', <ShituAgentPage />),
+    nav: {
+      label: '识途',
+      shortLabel: '识途',
+      description: '新人文化与制度问答：企业文化 / 事故教训 / 规章制度 / 奖赏表彰',
+      icon: 'BookOpen',
+      section: 'toolbox',
+      appKey: 'shitu-agent',
+      tags: ['识途', '新人', '文化', '制度', '问答'],
+      wip: true,
+    },
+  },
+  {
     path: '/pr-review',
     permission: 'pr-review.use',
     element: shellGuarded('pr-review.use', <PrReviewPage />),
@@ -381,6 +402,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/front-end-agent',
+    permission: 'front-end-agent.use',
+    element: shellGuarded('front-end-agent.use', <FrontEndAgentPage />),
+    nav: {
+      label: '前端搭档智能体',
+      shortLabel: '前端',
+      description: '给后端同事用的前端交付助手：接 API、写组件、修报错、看截图现象',
+      icon: 'Code2',
+      section: 'toolbox',
+      appKey: 'front-end-agent',
+      wip: true,
+      tags: ['前端', 'API', '组件', '报错', 'CSS', '智能体'],
+    },
+  },
+  {
     // 任务独立详情页（全屏路由，参数化子路由，不进导航）
     path: '/pm-agent/p/:projectId/task/:taskId',
     placement: 'fullscreen',
@@ -388,9 +424,17 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     element: fullscreenGuarded('pm-agent.use', <PmTaskDetailPage />),
   },
   {
-    path: '/pm-agent',
+    // 项目层视图（进入某个具体项目：目标/里程碑/任务等 9 大模块），参数化子路由，全屏，不进导航
+    path: '/pm-agent/p/:projectId',
+    placement: 'fullscreen',
     permission: 'pm-agent.use',
-    element: shellGuarded('pm-agent.use', <PmAgentPage />),
+    element: fullscreenGuarded('pm-agent.use', <PmProjectDetailPage />),
+  },
+  {
+    path: '/pm-agent',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmAgentPage />),
     nav: {
       label: '项目管理智能体',
       shortLabel: '项目',
@@ -408,6 +452,13 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <SingleProductView />),
+  },
+  {
+    // 知识详情页（独立路由，静态段 knowledge 优先于下方 :kind 通配），全屏，不进导航
+    path: '/product-agent/p/:productId/knowledge/:entryId',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
   },
   {
     // 对象独立详情/新建页（需求/功能/缺陷，:id 为 new 时是新建），参数化子路由，全屏，不进导航
@@ -559,6 +610,19 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       tags: ['日志', 'logs', '审计'],
     },
   },
+  {
+    path: '/team-activity',
+    permission: 'team-activity.read',
+    element: shellGuarded('team-activity.read', <TeamActivityPage />),
+    nav: {
+      label: '团队动态',
+      shortLabel: '动态',
+      description: '全员工作动态时间线（管理员）',
+      icon: 'Activity',
+      section: 'utility',
+      tags: ['动态', '活动', '工作日志', 'activity'],
+    },
+  },
 
   // ╔══════════════ 基础设施（9）═══════════════════════════
   {
@@ -573,6 +637,26 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'infra',
       tags: ['文档', '知识', '知识库', 'docs'],
     },
+  },
+  {
+    path: '/document-store/:storeId/universe',
+    permission: ['document-store.read', 'document-store.write'],
+    element: shellGuarded(['document-store.read', 'document-store.write'], <UniverseGraphPage />),
+    nav: {
+      label: '知识宇宙图',
+      shortLabel: '宇宙图',
+      description: '基于双链构建的知识星图（Obsidian Graph View 风格）',
+      icon: 'Network',
+      section: 'infra',
+      wip: true,
+      tags: ['宇宙图', '图谱', 'graph', '双链', '反向链接'],
+    },
+  },
+  {
+    path: '/document-store/universe',
+    permission: ['document-store.read', 'document-store.write'],
+    element: shellGuarded(['document-store.read', 'document-store.write'], <UniverseGraphPage />),
+    // 顶层入口默认走第一个库；nav 字段省略以避免重复占用导航位
   },
   {
     path: '/admin-web-pages',

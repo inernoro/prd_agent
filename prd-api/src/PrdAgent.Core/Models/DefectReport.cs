@@ -46,6 +46,13 @@ public class DefectReport
     /// <summary>优先级：high, medium, low</summary>
     public string? Priority { get; set; }
 
+    /// <summary>
+    /// 产品管理智能体内的缺陷分级：见 ProductItemGrade（p0/p1/p2/p3）。
+    /// 与需求/功能统一口径，取代产品侧的「严重度」展示；缺陷管理智能体不使用该字段。
+    /// 旧数据为 null 时由 Severity 经 SeverityToGrade 兜底推算。
+    /// </summary>
+    public string? Grade { get; set; }
+
     /// <summary>当前缺失的必填字段</summary>
     public List<string> MissingFields { get; set; } = new();
 
@@ -171,6 +178,12 @@ public class DefectReport
 
     /// <summary>追溯到的功能 ID（product-agent.features）</summary>
     public string? TracedFeatureId { get; set; }
+
+    /// <summary>产品管理历史导入来源系统。</summary>
+    public string? ProductSourceSystem { get; set; }
+
+    /// <summary>来源系统中的唯一 ID，用于幂等导入。</summary>
+    public string? ProductExternalId { get; set; }
 
     // ===== Phase 2: 待验收 =====
 

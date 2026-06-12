@@ -106,6 +106,17 @@ brew install python@3
 
 ### Q: 如何升级 cds 技能
 
+优先用 `cdscli update`，它会从当前 CDS 的 `/api/export-skill` 下载最新包并原地替换 `.claude/skills/cds`，`~/.cdsrc` 不受影响。
+
+```bash
+cd your-project
+cdscli version
+cdscli update
+cdscli version
+```
+
+如果你的旧包还没有 `cdscli update`，再手动重装：
+
 ```bash
 # 重新从 Dashboard 下载最新 tar.gz
 cd your-project

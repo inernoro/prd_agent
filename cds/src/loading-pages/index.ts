@@ -42,24 +42,24 @@ const DUAL_THEME_TOKENS = `
 }
 @media(prefers-color-scheme:light){
   :root{
-    --bg-page:#f4efe9;
-    --bg-card:#ffffff;
-    --bg-elevated:#f1eae4;
-    --bg-base:#efe7df;
-    --bg-terminal:#efe7df;
-    --border:#d8cfc6;
-    --border-subtle:#e6ddd3;
-    --text-primary:#2a1f19;
-    --text-secondary:#3f3128;
-    --text-muted:#7a6a5e;
-    --text-subtle:#9c8e82;
-    --accent:#1f6feb;
-    --accent-bg:rgba(31,111,235,.10);
-    --success:#1a7f37;
-    --success-bg:rgba(26,127,55,.10);
-    --danger:#cf222e;
-    --danger-bg:rgba(207,34,46,.08);
-    --shadow-card:0 8px 24px rgba(43,33,28,.10);
+    --bg-page:#0d1117;
+    --bg-card:#161b22;
+    --bg-elevated:#21262d;
+    --bg-base:#0d1117;
+    --bg-terminal:#010409;
+    --border:#30363d;
+    --border-subtle:#21262d;
+    --text-primary:#f0f6fc;
+    --text-secondary:#c9d1d9;
+    --text-muted:#8b949e;
+    --text-subtle:#6e7681;
+    --accent:#58a6ff;
+    --accent-bg:rgba(88,166,255,.14);
+    --success:#3fb950;
+    --success-bg:rgba(63,185,80,.14);
+    --danger:#f85149;
+    --danger-bg:rgba(248,81,73,.12);
+    --shadow-card:0 12px 32px rgba(0,0,0,.45);
   }
 }`.trim();
 
@@ -90,7 +90,7 @@ const GRID_CANVAS_SCRIPT = `
     }
     var ox=((offset.x%size)+size)%size;
     var oy=((offset.y%size)+size)%size;
-    ctx.strokeStyle='rgba(232,237,242,.085)';
+ctx.strokeStyle='rgba(77,101,128,.16)';
     ctx.lineWidth=1;
     for(var x=-size+ox;x<w+size;x+=size){
       for(var y=-size+oy;y<h+size;y+=size){
@@ -137,24 +137,26 @@ export function buildNginxWaitingHtml(): string {
 <style>
 ${DUAL_THEME_TOKENS}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg-page);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:.44}
-.shape-grid-vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 24% 18%,rgba(255,255,255,.08),transparent 60%),radial-gradient(circle at center,transparent 0%,rgba(0,0,0,.2) 56%,rgba(0,0,0,.78) 100%)}
-.card{position:relative;z-index:1;max-width:480px;width:100%;padding:28px 30px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-card)}
-.header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
-.spinner{width:22px;height:22px;border:2.5px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#070a0f;color:var(--text-secondary);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;color-scheme:dark}
+.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:.7}
+.shape-grid-vignette{position:fixed;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(7,10,15,.22),rgba(7,10,15,.88)),radial-gradient(900px 620px at 24% 18%,rgba(88,166,255,.14),transparent 60%),radial-gradient(circle at center,transparent 0%,rgba(0,0,0,.35) 58%,rgba(0,0,0,.84) 100%)}
+.card{position:relative;z-index:1;max-width:760px;width:100%;overflow:hidden;padding:34px 36px;background:rgba(22,27,34,.92);border:1px solid rgba(139,148,158,.28);border-radius:18px;box-shadow:0 30px 90px rgba(0,0,0,.45),0 0 0 1px rgba(88,166,255,.04)}
+.card::before{content:"";position:absolute;inset:0 0 auto;height:3px;background:linear-gradient(90deg,#22c55e,#58a6ff,#a78bfa)}
+.header{display:flex;align-items:flex-start;gap:16px;margin-bottom:10px}
+.spinner{width:32px;height:32px;border:3px solid rgba(139,148,158,.28);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0;margin-top:2px}
 @keyframes spin{to{transform:rotate(360deg)}}
-h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
-.subtitle{font-size:12px;color:var(--text-muted);margin-bottom:18px;padding-left:34px;line-height:1.55}
-.status-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
-.chip{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;color:var(--accent);background:var(--accent-bg);padding:4px 10px;border-radius:99px;border:1px solid rgba(88,166,255,.22)}
+h1{font-size:28px;font-weight:750;color:var(--text-primary);letter-spacing:.1px;line-height:1.2}
+.subtitle{font-size:15px;color:var(--text-muted);margin:6px 0 24px;padding-left:48px;line-height:1.7}
+.status-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:22px}
+.chip{display:inline-flex;min-height:42px;align-items:center;gap:8px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#9ecbff;background:rgba(88,166,255,.12);padding:8px 12px;border-radius:10px;border:1px solid rgba(88,166,255,.24)}
 .chip::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-bg);flex-shrink:0;animation:pulse 1.6s ease-in-out infinite}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 3px var(--accent-bg)}50%{box-shadow:0 0 0 6px var(--accent-bg)}}
-.hint{font-size:12px;color:var(--text-subtle);line-height:1.6}
-.hint code{font-family:ui-monospace,monospace;background:var(--bg-elevated);color:var(--text-secondary);padding:1px 6px;border-radius:4px;font-size:11px}
-.refresh-bar{margin-top:18px;height:2px;border-radius:1px;background:var(--border-subtle);overflow:hidden}
-.refresh-bar-fill{height:100%;width:0%;background:var(--accent);border-radius:1px;animation:refill 3s linear forwards}
+.hint{font-size:13px;color:var(--text-muted);line-height:1.7;border-top:1px solid rgba(139,148,158,.18);padding-top:18px}
+.hint code{font-family:ui-monospace,monospace;background:rgba(139,148,158,.13);color:var(--text-secondary);padding:2px 7px;border-radius:5px;font-size:12px}
+.refresh-bar{margin-top:22px;height:3px;border-radius:99px;background:rgba(139,148,158,.18);overflow:hidden}
+.refresh-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#58a6ff);border-radius:99px;animation:refill 3s linear forwards}
 @keyframes refill{to{width:100%}}
+@media(max-width:640px){.card{padding:28px 22px}.status-row{grid-template-columns:1fr}.subtitle{padding-left:0}h1{font-size:24px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}.refresh-bar-fill{width:100%}}
 </style>
 </head><body>
@@ -169,6 +171,7 @@ h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
   <div class="status-row">
     <span class="chip">自动升级进行中</span>
     <span class="chip">3s 后刷新</span>
+    <span class="chip">控制面重启中</span>
   </div>
   <div class="hint">如持续停留，请在 <code>PR Checks</code> 面板查看 CDS Deploy 状态。</div>
   <div class="refresh-bar"><div class="refresh-bar-fill"></div></div>

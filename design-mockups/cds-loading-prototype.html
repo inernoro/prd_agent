@@ -1,0 +1,1036 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CDS Loading Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0c10;
+      --surface: #12161b;
+      --surface-raised: #191e24;
+      --surface-sunken: #07090b;
+      --hairline: rgba(221, 229, 239, 0.15);
+      --hairline-strong: rgba(221, 229, 239, 0.26);
+      --text: #f2f5f8;
+      --muted: rgba(221, 229, 239, 0.62);
+      --faint: rgba(221, 229, 239, 0.38);
+      --primary: #ff8a3d;
+      --primary-soft: rgba(255, 138, 61, 0.16);
+      --ok: #49d17c;
+      --info: #8fb8ff;
+      --warn: #ffd166;
+      --danger: #ff6b6b;
+      --radius: 8px;
+      font-family: Inter, "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, rgba(255, 138, 61, 0.05), transparent 220px),
+        linear-gradient(135deg, #0b0c10 0%, #111318 48%, #0c0d10 100%);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page {
+      min-height: 100vh;
+      padding: 28px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin: 0 auto 22px;
+      max-width: 1440px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .brand-subtitle {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .pill-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      border: 1px solid var(--hairline);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.035);
+      padding: 6px 10px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0 4px rgba(73, 209, 124, 0.12);
+      flex: none;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.95fr);
+      gap: 18px;
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+
+    .panel {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+        var(--surface);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
+    }
+
+    .waiting-room {
+      min-height: 650px;
+      display: grid;
+      grid-template-columns: minmax(340px, 0.92fr) minmax(360px, 1.08fr);
+    }
+
+    .waiting-room.preview-locked {
+      display: block;
+      min-height: 650px;
+      background: #000;
+    }
+
+    .shape-field {
+      position: absolute;
+      inset: 0;
+      opacity: 0.48;
+      background-image:
+        linear-gradient(rgba(221, 229, 239, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(221, 229, 239, 0.07) 1px, transparent 1px);
+      background-size: 42px 42px;
+      mask-image: radial-gradient(circle at 40% 44%, #000 0 36%, transparent 76%);
+      animation: grid-drift 18s linear infinite;
+      pointer-events: none;
+    }
+
+    .preview-locked .shape-field {
+      opacity: 0.82;
+      background:
+        repeating-linear-gradient(104deg, transparent 0 42px, rgba(255, 255, 255, 0.14) 43px, transparent 46px),
+        radial-gradient(900px 520px at 54% 50%, rgba(3, 179, 195, 0.15), transparent 36%),
+        #000;
+      background-size: 360px 100%, 100% 100%, 100% 100%;
+      mask-image: linear-gradient(90deg, transparent 0%, #000 30%, #000 100%);
+      transform: perspective(760px) rotateX(58deg) translateY(18%);
+      transform-origin: 50% 100%;
+      animation: hyperspeed-drift 1.8s linear infinite;
+    }
+
+    .panel-sheen {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(580px 380px at 22% 18%, rgba(255, 255, 255, 0.08), transparent 62%),
+        linear-gradient(90deg, rgba(11, 12, 16, 0.2), rgba(11, 12, 16, 0.7));
+    }
+
+    .preview-locked .panel-sheen {
+      background:
+        radial-gradient(900px 520px at 52% 50%, rgba(255, 255, 255, 0.10), transparent 34%),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.88), rgba(0, 0, 0, 0.26) 50%, rgba(0, 0, 0, 0.72));
+    }
+
+    .hero-copy {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 48px;
+      min-width: 0;
+    }
+
+    .preview-locked .hero-copy {
+      min-height: 650px;
+      max-width: 1120px;
+      padding: clamp(36px, 7vw, 92px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 22px;
+      color: rgba(242, 245, 248, 0.72);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0;
+      max-width: 540px;
+      font-size: 42px;
+      line-height: 1.08;
+      letter-spacing: 0;
+      font-weight: 720;
+    }
+
+    .preview-locked h2 {
+      max-width: 780px;
+      color: rgba(255, 255, 255, 0.88);
+      font-size: clamp(50px, 6vw, 88px);
+      line-height: 0.96;
+      text-shadow: 0 2px 34px rgba(0, 0, 0, 0.72);
+    }
+
+    .lead {
+      margin: 18px 0 0;
+      max-width: 560px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    .preview-locked .lead {
+      margin-top: 28px;
+      max-width: 660px;
+      color: rgba(255, 255, 255, 0.72);
+      font-size: clamp(16px, 1.55vw, 22px);
+      line-height: 1.78;
+    }
+
+    .status-stack {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 14px;
+      padding: 36px;
+      min-width: 0;
+    }
+
+    .preview-locked .status-stack {
+      position: absolute;
+      z-index: 2;
+      right: clamp(24px, 4vw, 54px);
+      bottom: clamp(24px, 4vw, 54px);
+      width: min(430px, calc(100% - 48px));
+      display: block;
+      padding: 0;
+    }
+
+    .preview-side-meter {
+      padding: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      background: rgba(0, 0, 0, 0.24);
+      backdrop-filter: blur(14px);
+    }
+
+    .preview-services {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .preview-service {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      padding: 9px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.10);
+      color: rgba(255, 255, 255, 0.74);
+      font-size: 13px;
+    }
+
+    .preview-service:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .preview-service .service-dot {
+      width: 7px;
+      height: 7px;
+      flex: none;
+      border-radius: 50%;
+      background: #03b3c3;
+      box-shadow: 0 0 14px rgba(3, 179, 195, 0.72);
+      animation: active-pulse 1.5s ease-in-out infinite;
+    }
+
+    .preview-service span:last-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .glass-block {
+      border: 1px solid rgba(221, 229, 239, 0.13);
+      border-radius: var(--radius);
+      background: rgba(7, 9, 11, 0.48);
+      backdrop-filter: blur(12px);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+
+    .timeline {
+      padding: 18px;
+    }
+
+    .step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      gap: 11px;
+      align-items: start;
+      min-height: 42px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .step:not(:last-child)::before {
+      content: "";
+      position: absolute;
+      top: 21px;
+      left: 7px;
+      width: 1px;
+      height: calc(100% - 14px);
+      background: rgba(221, 229, 239, 0.12);
+    }
+
+    .step-mark {
+      position: relative;
+      z-index: 1;
+      width: 15px;
+      height: 15px;
+      margin-top: 2px;
+      border-radius: 50%;
+      border: 1px solid var(--hairline-strong);
+      background: #11151a;
+    }
+
+    .step.done .step-mark {
+      border-color: rgba(73, 209, 124, 0.65);
+      background: var(--ok);
+      box-shadow: 0 0 0 4px rgba(73, 209, 124, 0.12);
+    }
+
+    .step.active .step-mark {
+      border-color: rgba(255, 138, 61, 0.82);
+      box-shadow: 0 0 0 4px var(--primary-soft);
+      animation: active-pulse 1.5s ease-in-out infinite;
+    }
+
+    .step-title {
+      color: var(--text);
+      font-weight: 620;
+    }
+
+    .step-note {
+      margin-top: 4px;
+      color: var(--faint);
+      line-height: 1.45;
+    }
+
+    .step-time {
+      color: var(--faint);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .progress-card {
+      padding: 16px 18px;
+    }
+
+    .progress-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .bar {
+      position: relative;
+      overflow: hidden;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(221, 229, 239, 0.12);
+    }
+
+    .bar > span {
+      display: block;
+      width: 64%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--primary), #f1c66c, var(--ok));
+      box-shadow: 0 0 22px rgba(255, 138, 61, 0.22);
+    }
+
+    .preview-locked .bar > span {
+      width: 68%;
+      background: linear-gradient(90deg, #f8fafc, #03b3c3, #d856bf);
+      box-shadow: 0 0 18px rgba(3, 179, 195, 0.35);
+    }
+
+    .bar::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32), transparent);
+      transform: translateX(-100%);
+      animation: bar-sweep 1.8s ease-in-out infinite;
+    }
+
+    .right-column {
+      display: grid;
+      gap: 18px;
+    }
+
+    .scope-lock {
+      min-height: 650px;
+      padding: 34px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 28px;
+    }
+
+    .scope-lock-main {
+      max-width: 760px;
+    }
+
+    .scope-lock-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 22px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .scope-lock h2 {
+      max-width: 760px;
+      font-size: clamp(34px, 4.7vw, 66px);
+      line-height: 1.02;
+    }
+
+    .scope-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .scope-item {
+      min-height: 112px;
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.035);
+      padding: 14px;
+    }
+
+    .scope-item strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .scope-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .scope-note {
+      border: 1px solid rgba(73, 209, 124, 0.2);
+      border-radius: var(--radius);
+      background: rgba(73, 209, 124, 0.06);
+      padding: 16px;
+      color: rgba(215, 255, 228, 0.78);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--hairline);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .card-subtitle {
+      margin-top: 3px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    .terminal {
+      min-height: 278px;
+      padding: 14px;
+      background: var(--surface-sunken);
+    }
+
+    .terminal-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+      color: var(--faint);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+    }
+
+    .terminal-body {
+      position: relative;
+      min-height: 206px;
+      overflow: hidden;
+      border: 1px solid rgba(221, 229, 239, 0.1);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+        #050607;
+      padding: 18px;
+    }
+
+    .terminal-lines {
+      position: absolute;
+      inset: 18px;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+      opacity: 0.42;
+    }
+
+    .line {
+      height: 10px;
+      border-radius: 999px;
+      background:
+        linear-gradient(90deg, transparent, rgba(221, 229, 239, 0.08), transparent),
+        rgba(221, 229, 239, 0.055);
+      background-size: 220% 100%, 100% 100%;
+      animation: skeleton 2.2s ease-in-out infinite;
+    }
+
+    .line:nth-child(2) { width: 74%; animation-delay: 0.12s; }
+    .line:nth-child(3) { width: 58%; animation-delay: 0.24s; }
+    .line:nth-child(4) { width: 88%; animation-delay: 0.36s; }
+    .line:nth-child(5) { width: 66%; animation-delay: 0.48s; }
+    .line:nth-child(6) { width: 81%; animation-delay: 0.6s; }
+
+    .terminal-loader {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      min-height: 170px;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: rgba(242, 245, 248, 0.78);
+      font-size: 13px;
+    }
+
+    .inline-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .mini-loader {
+      min-height: 126px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px dashed var(--hairline);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01)),
+        var(--surface-raised);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .button-demo {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 14px 16px 16px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      min-height: 36px;
+      border: 1px solid var(--hairline);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.045);
+      color: var(--text);
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+    }
+
+    .btn:hover {
+      border-color: var(--hairline-strong);
+      background: rgba(255, 255, 255, 0.07);
+      transform: translateY(-1px);
+    }
+
+    .btn.primary {
+      border-color: rgba(255, 138, 61, 0.35);
+      background: var(--primary-soft);
+      color: #ffe4d1;
+    }
+
+    .cds-mark {
+      position: relative;
+      display: inline-flex;
+      flex: none;
+      width: 42px;
+      height: 42px;
+      align-items: center;
+      justify-content: center;
+      color: var(--text);
+    }
+
+    .cds-mark.small {
+      width: 22px;
+      height: 22px;
+    }
+
+    .cds-mark.tiny {
+      width: 16px;
+      height: 16px;
+    }
+
+    .cds-mark::before {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border-radius: 999px;
+      background:
+        radial-gradient(circle, rgba(255, 138, 61, 0.13), transparent 56%),
+        conic-gradient(from 210deg, transparent 0 68%, rgba(255, 138, 61, 0.52) 78%, rgba(241, 198, 108, 0.64) 86%, transparent 94% 100%);
+      mask: radial-gradient(circle, transparent 0 57%, #000 58% 69%, transparent 70%);
+      animation: orbit 4.8s linear infinite;
+    }
+
+    .cds-mark svg {
+      position: relative;
+      z-index: 1;
+      overflow: visible;
+      width: 100%;
+      height: 100%;
+      filter: drop-shadow(0 0 12px rgba(255, 138, 61, 0.22));
+      animation: metallic-drift 6.5s ease-in-out infinite;
+    }
+
+    .cds-mark .orbits {
+      fill: none;
+      stroke: url(#cdsPaint);
+      stroke-width: 3.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 100 34;
+      animation: stroke-flow 7.5s ease-in-out infinite;
+    }
+
+    .cds-mark .core {
+      fill: url(#cdsPaint);
+      animation: core-pulse 3.8s ease-in-out infinite;
+    }
+
+    .loader-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .micro-copy {
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .footer-note {
+      max-width: 1440px;
+      margin: 16px auto 0;
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    @keyframes orbit {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes metallic-drift {
+      0%, 100% { transform: rotate(-5deg) scale(0.98); }
+      50% { transform: rotate(4deg) scale(1.03); }
+    }
+
+    @keyframes stroke-flow {
+      0%, 100% { stroke-dashoffset: 0; opacity: 0.86; }
+      50% { stroke-dashoffset: 42; opacity: 1; }
+    }
+
+    @keyframes core-pulse {
+      0%, 100% { transform: scale(0.92); opacity: 0.76; transform-origin: 32px 32px; }
+      50% { transform: scale(1.16); opacity: 1; transform-origin: 32px 32px; }
+    }
+
+    @keyframes grid-drift {
+      to { background-position: 42px 42px; }
+    }
+
+    @keyframes hyperspeed-drift {
+      to { background-position: 360px 0, 0 0, 0 0; }
+    }
+
+    @keyframes active-pulse {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(255, 138, 61, 0.12); }
+      50% { box-shadow: 0 0 0 7px rgba(255, 138, 61, 0.08); }
+    }
+
+    @keyframes bar-sweep {
+      to { transform: translateX(100%); }
+    }
+
+    @keyframes skeleton {
+      0%, 100% { background-position: 160% 0, 0 0; }
+      50% { background-position: -60% 0, 0 0; }
+    }
+
+    @media (max-width: 1120px) {
+      .layout,
+      .waiting-room {
+        grid-template-columns: 1fr;
+      }
+
+      .waiting-room {
+        min-height: 0;
+      }
+
+      .hero-copy {
+        padding: 36px;
+      }
+
+      .preview-locked .hero-copy {
+        min-height: 700px;
+        padding-bottom: 260px;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 16px;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      h2 {
+        font-size: 30px;
+      }
+
+      .preview-locked h2 {
+        font-size: 46px;
+      }
+
+      .hero-copy,
+      .status-stack {
+        padding: 24px;
+      }
+
+      .preview-locked .status-stack {
+        right: 20px;
+        bottom: 20px;
+        width: calc(100% - 40px);
+        padding: 0;
+      }
+
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .inline-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .scope-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="cdsPaint" x1="0%" y1="18%" x2="100%" y2="82%">
+        <stop offset="0%" stop-color="#ffffff" />
+        <stop offset="22%" stop-color="#c8d0dd" />
+        <stop offset="42%" stop-color="#f8fafc" />
+        <stop offset="58%" stop-color="#868f9f" />
+        <stop offset="76%" stop-color="#fff1df" />
+        <stop offset="100%" stop-color="#ff8a3d" />
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <main class="page">
+    <header class="topbar">
+      <div class="brand">
+        <span class="cds-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64">
+            <g class="orbits">
+              <ellipse cx="32" cy="32" rx="24" ry="9.5"></ellipse>
+              <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(60 32 32)"></ellipse>
+              <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(120 32 32)"></ellipse>
+            </g>
+            <circle class="core" cx="32" cy="32" r="5.3"></circle>
+          </svg>
+        </span>
+        <div class="brand-copy">
+          <h1 class="brand-title">CDS Loading System</h1>
+          <div class="brand-subtitle">用于替换散落的 Loader2、裸文本和容器日志空白态</div>
+        </div>
+      </div>
+      <div class="pill-row">
+        <span class="pill"><span class="dot"></span> 页面级等待</span>
+        <span class="pill">容器日志</span>
+        <span class="pill">区块加载</span>
+        <span class="pill">行内忙碌</span>
+      </div>
+    </header>
+
+    <section class="layout">
+      <article class="panel scope-lock">
+        <div class="shape-field"></div>
+        <div class="panel-sheen"></div>
+        <section class="scope-lock-main">
+          <div class="scope-lock-label">
+            <span class="dot"></span>
+            Scope locked
+          </div>
+          <h2>预览环境准备页保持现状</h2>
+          <p class="lead">你已经调好的 Hyperspeed 全屏准备页不纳入本轮修改。本稿只用于看其它等待场景：容器日志、分支详情、运行模式、按钮忙碌态。</p>
+          <div class="scope-grid">
+            <div class="scope-item">
+              <strong>不动</strong>
+              <span>预览环境准备中页面、Hyperspeed 背景、大标题布局、进度条和现有整体调性。</span>
+            </div>
+            <div class="scope-item">
+              <strong>本轮要改</strong>
+              <span>截图里那种孤立小圈、裸文本 loading、容器日志空白、抽屉局部读取态。</span>
+            </div>
+            <div class="scope-item">
+              <strong>替换原则</strong>
+              <span>长等待给信息密度，短等待给品牌 mark；失败态不用 loading，直接给明确错误块。</span>
+            </div>
+            <div class="scope-item">
+              <strong>后续扫描</strong>
+              <span>通过后再做全量 rg + AST 级清单，避免再漏十几个加载点。</span>
+            </div>
+          </div>
+        </section>
+        <div class="scope-note">
+          当前左侧只是范围说明，不代表要改你的预览准备页。右侧才是需要评审的新加载样式。
+        </div>
+      </article>
+
+      <aside class="right-column">
+        <article class="panel">
+          <header class="card-head">
+            <div>
+              <div class="card-title">容器日志加载态</div>
+              <div class="card-subtitle">替代截图里的孤立小圈和“正在加载容器日志…”</div>
+            </div>
+            <span class="pill">log panel</span>
+          </header>
+          <div class="terminal">
+            <div class="terminal-top">
+              <span>docker logs --tail=220 api</span>
+              <span>stream pending</span>
+            </div>
+            <div class="terminal-body">
+              <div class="terminal-lines">
+                <span class="line" style="width: 92%;"></span>
+                <span class="line"></span>
+                <span class="line"></span>
+                <span class="line"></span>
+                <span class="line"></span>
+                <span class="line"></span>
+              </div>
+              <div class="terminal-loader">
+                <span class="cds-mark small" aria-hidden="true">
+                  <svg viewBox="0 0 64 64">
+                    <g class="orbits">
+                      <ellipse cx="32" cy="32" rx="24" ry="9.5"></ellipse>
+                      <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(60 32 32)"></ellipse>
+                      <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(120 32 32)"></ellipse>
+                    </g>
+                    <circle class="core" cx="32" cy="32" r="5.3"></circle>
+                  </svg>
+                </span>
+                <span>正在读取容器日志</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <header class="card-head">
+            <div>
+              <div class="card-title">区块与行内加载态</div>
+              <div class="card-subtitle">同一品牌动效，按场景缩放</div>
+            </div>
+          </header>
+          <div class="inline-grid">
+            <div class="mini-loader">
+              <span class="loader-label">
+                <span class="cds-mark small" aria-hidden="true">
+                  <svg viewBox="0 0 64 64">
+                    <g class="orbits">
+                      <ellipse cx="32" cy="32" rx="24" ry="9.5"></ellipse>
+                      <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(60 32 32)"></ellipse>
+                      <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(120 32 32)"></ellipse>
+                    </g>
+                    <circle class="core" cx="32" cy="32" r="5.3"></circle>
+                  </svg>
+                </span>
+                加载分支详情
+              </span>
+            </div>
+            <div class="mini-loader">
+              <span class="loader-label">
+                <span class="cds-mark small" aria-hidden="true">
+                  <svg viewBox="0 0 64 64">
+                    <g class="orbits">
+                      <ellipse cx="32" cy="32" rx="24" ry="9.5"></ellipse>
+                      <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(60 32 32)"></ellipse>
+                      <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(120 32 32)"></ellipse>
+                    </g>
+                    <circle class="core" cx="32" cy="32" r="5.3"></circle>
+                  </svg>
+                </span>
+                读取运行模式
+              </span>
+            </div>
+          </div>
+          <div class="button-demo">
+            <button class="btn primary" type="button">
+              <span class="cds-mark tiny" aria-hidden="true">
+                <svg viewBox="0 0 64 64">
+                  <g class="orbits">
+                    <ellipse cx="32" cy="32" rx="24" ry="9.5"></ellipse>
+                    <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(60 32 32)"></ellipse>
+                    <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(120 32 32)"></ellipse>
+                  </g>
+                  <circle class="core" cx="32" cy="32" r="5.3"></circle>
+                </svg>
+              </span>
+              重新部署中
+            </button>
+            <button class="btn" type="button">
+              <span class="cds-mark tiny" aria-hidden="true">
+                <svg viewBox="0 0 64 64">
+                  <g class="orbits">
+                    <ellipse cx="32" cy="32" rx="24" ry="9.5"></ellipse>
+                    <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(60 32 32)"></ellipse>
+                    <ellipse cx="32" cy="32" rx="24" ry="9.5" transform="rotate(120 32 32)"></ellipse>
+                  </g>
+                  <circle class="core" cx="32" cy="32" r="5.3"></circle>
+                </svg>
+              </span>
+              读取备份列表
+            </button>
+          </div>
+        </article>
+
+        <article class="panel" style="padding: 16px;">
+          <div class="card-title">落地规则</div>
+          <p class="micro-copy">长等待用带网格背景的区块加载；容器日志保留终端容器尺寸并叠加日志骨架；按钮只用 16px 品牌 mark；失败态不复用 loading，改为明确错误块。</p>
+        </article>
+      </aside>
+    </section>
+
+    <p class="footer-note">这个稿子是评审用静态 HTML，下一步如果风格通过，再把它抽成 CDS 的 `CdsLoading` 组件体系并批量替换运行时加载点。</p>
+  </main>
+</body>
+</html>

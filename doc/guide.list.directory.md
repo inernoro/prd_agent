@@ -81,6 +81,9 @@
 - [演讲智能体产品规格](spec.speech-agent) `spec.speech-agent`
   > 长文本/文档转思维导图风格的可演讲材料，首期 mindmap 模式（MVP 已落地）
 
+- [前端搭档智能体产品规格](spec.front-end-agent) `spec.front-end-agent`
+  > 面向后端同事的前端交付助手：接 API、写组件、修报错、看截图现象
+
 ### 二、设计文档
 
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
@@ -96,6 +99,8 @@
   > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
+- [团队动态设计](design.team-activity) `design.team-activity`
+  > 全局白名单审计 Filter 自动留痕 + TargetTitle 标题快照（删除前预读）+ 管理员时间线页（/team-activity）
 
 - [LLM Gateway 统一调用架构设计](design.llm-gateway) `design.llm-gateway`
   > 所有 LLM 调用通过统一网关，三级调度 + 健康管理
@@ -316,6 +321,12 @@
 - [缺陷分享与 Agent 技能修复架构](design.defect-agent-share-skill-architecture) `design.defect-agent-share-skill-architecture`
   > 缺陷分享中心、外部 Agent 技能接入与修复报告闭环的架构设计
 
+- [系统级跨节点互传（Peer Sync）设计](design.peer-sync) `design.peer-sync`
+  > 多节点间消息互传的协议设计、数据模型与同步机制
+
+- [文档再加工 · 智能体调用路由设计](design.reprocess-chat-routing) `design.reprocess-chat-routing`
+  > 文档再加工功能中不同智能体（视觉/文学）的调用路由与分发设计
+
 ### 三、指南
 
 - [Agent 开发入门指南（新手必读）](guide.agent-onboarding) `guide.agent-onboarding`
@@ -371,6 +382,9 @@
 
 - [海鲜市场（配置市场）使用教程](guide.marketplace) `guide.marketplace`
   > 配置浏览、筛选、Fork 与发布的完整流程
+
+- [视觉验收技能跨仓库使用教程](guide.visual-acceptance-skill) `guide.visual-acceptance-skill`
+  > 用个人 AgentApiKey + 海鲜市场安装、更新 `create-visual-test-to-kb`，避免借用个人 accesskey
 
 - [工作流画布操作手册](guide.workflow-canvas) `guide.workflow-canvas`
   > 工作流画布的详细操作参考
@@ -680,6 +694,9 @@
 - [视频创作 Agent 列表/详情页全面重做交接](plan.video-agent-list-detail-rebuild) `plan.video-agent-list-detail-rebuild`
   > 视频创作 Agent 列表与详情页全面重做的交接文档
 
+- [CDS PR #684 审查修复计划](plan.cds-pr684-review-remediation) `plan.cds-pr684-review-remediation`
+  > CDS PR #684 代码审查发现问题的分阶段修复计划与进度追踪
+
 ### 六、技术债务台账
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
@@ -753,6 +770,18 @@
   > ReportDetailPage 900 行业务实体（成员×周次矩阵 + 多 tabs + 计划对比 + 右栏面板），不是文档库语义；融合需先给 DocBrowser 加 leftSidebar/rightPanel/entryBadges 三 slot 系统
 - [开放接口对外网关债务台账](debt.open-api) `debt.open-api`
   > Phase 1 落地网关 + 按 Key 绑定 + 默认回落 + 导航修复；伞形 appCallerCode 静态注册不变量（守卫测试）；限流按 Key 桶 / 降级预警 / 配额 / embeddings 分到 Phase 2
+
+- [日报技能债务台账](debt.daily-report) `debt.daily-report`
+  > daily-report-summary 技能与 reference/publish.py 的已知边界与待补项
+
+- [系统级跨节点互传（Peer Sync）债务台账](debt.peer-sync) `debt.peer-sync`
+  > prd-api PeerSync + prd-admin 系统互联的已知边界与 Phase 2 待补功能
+
+- [个人任务树 Agent · 债务台账](debt.task-tree) `debt.task-tree`
+  > TaskTreeController + prd-admin pages/task-tree 的已知边界与后续可补项
+
+- [网页托管评论 · 债务台账](debt.web-hosting-comments) `debt.web-hosting-comments`
+  > 网页托管评论功能的已知边界与待补实现
 
 ### 七、周报
 
@@ -989,3 +1018,7 @@
 | 2026-03-11 | 重排 | `index.yml` + `guide.list.directory.md` | 按阅读优先级重新排序文档索引 |
 | 2026-03-10 | 新增 | `index.yml` | 文档元数据索引 |
 | 2026-03-10 | 新增 | `guide.list.directory.md` | 文档索引目录页 |
+| 2026-06-10 | 新增 | `debt.cds-nginx-loading-pages` | CDS loading pages 债务台账 |
+| 2026-06-10 | 新增 | `design.cds-skill-version-update` | CDS 技能版本与更新架构 |
+| 2026-06-10 | 新增 | `plan.product-agent-version-workflow` | 产品管理智能体版本流程整改计划 |
+| 2026-06-11 | 新增 | `report.version-20260610-1-summary` | version-20260610-1 分支改动说明 |

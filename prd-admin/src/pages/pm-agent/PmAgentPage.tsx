@@ -1,29 +1,37 @@
+/**
+ * 项目管理智能体 — 工作台层（全屏，左侧一级导航）。
+ *
+ * 信息架构：工作台层（项目 / NPSS 看板 / 审计日志）+ 项目层（/pm-agent/p/:projectId，
+ * 项目内 9 个模块在项目层左侧导航）。布局复用 AgentFullscreenLayout，蓝色强调。
+ */
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck, Home, BarChart3, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { AgentFullscreenLayout, type NavItem } from '@/components/agent-shell/AgentFullscreenLayout';
+import '@/components/agent-shell/agent-cards.css';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import { listPmProjects, deletePmProject } from '@/services';
 import type { PmProject, PmProjectScope } from '@/services/contracts/pmAgent';
 import { CreateProjectDialog } from './CreateProjectDialog';
-import { ProjectDetailView } from './ProjectDetailView';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { DashboardView } from './DashboardView';
 import { AuditLogView } from './AuditLogView';
-import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, GRADE_REGISTRY } from './pmConstants';
+import { PmAssistantPanel } from './PmAssistantPanel';
+import { PmTodosCard } from './PmTodosCard';
+import { PmQuickActionsCard } from './PmQuickActionsCard';
+import { PmReportsSection } from './PmReportsSection';
+import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, GRADE_REGISTRY, PM_ACCENT } from './pmConstants';
+
+type WorkspaceNav = 'home' | 'projects' | 'reports' | 'dashboard' | 'audit';
+
+const NAV_KEYS = new Set<WorkspaceNav>(['home', 'projects', 'reports', 'dashboard', 'audit']);
 
 export function PmAgentPage() {
-  const [projects, setProjects] = useState<PmProject[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  // 支持从任务详情页等深链 ?project=xxx 直接回到该项目
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('project'));
-  const [showDashboard, setShowDashboard] = useState(false);
-  const [showAudit, setShowAudit] = useState(false);
-  const [scope, setScope] = useState<PmProjectScope>('managed');
   // 组织 NPSS 看板仅对管理层开放（pm-agent.dashboard），与普通的 pm-agent.use 区分
   const canViewDashboard = useAuthStore((s) => {
     const perms = Array.isArray(s.permissions) ? s.permissions : [];
@@ -34,6 +42,91 @@ export function PmAgentPage() {
     const perms = Array.isArray(s.permissions) ? s.permissions : [];
     return perms.includes('pm-agent.audit') || perms.includes('super');
   });
+
+  // 一级导航记录在 URL（?nav=），刷新/返回不丢位置；默认落在首页（AI 工作台）
+  const navParam = searchParams.get('nav');
+  const active: WorkspaceNav = navParam && NAV_KEYS.has(navParam as WorkspaceNav) ? (navParam as WorkspaceNav) : 'home';
+  const setActive = (key: WorkspaceNav) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('nav', key);
+      return next;
+    }, { replace: true });
+  };
+
+  // 旧深链兼容：/pm-agent?project=xxx → 项目层独立路由
+  const legacyProject = searchParams.get('project');
+  useEffect(() => {
+    if (legacyProject) navigate(`/pm-agent/p/${legacyProject}`, { replace: true });
+  }, [legacyProject, navigate]);
+
+  // 便捷操作：立项弹窗（页面级宿主）+ AI 助手输入预填（nonce 保证同模板可重复触发）
+  const [showCreate, setShowCreate] = useState(false);
+  const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  const fillAssistant = (text: string) => setPrefill({ text, nonce: Date.now() });
+
+  const NAV: NavItem<WorkspaceNav>[] = [
+    { key: 'home', label: '首页', icon: Home },
+    { key: 'projects', label: '项目', icon: FolderKanban },
+    { key: 'reports', label: '报表', icon: BarChart3 },
+    { key: 'dashboard', label: 'NPSS 看板', icon: TrendingUp, hidden: !canViewDashboard, dividerBefore: true },
+    { key: 'audit', label: '审计日志', icon: ShieldCheck, hidden: !canViewAudit },
+  ];
+
+  return (
+    <AgentFullscreenLayout
+      title="项目管理"
+      subtitle="立项 → 目标 → 里程碑 / 任务 → 结案"
+      topSlot={
+        <div className="mb-2">
+          <button
+            onClick={() => navigate('/')}
+            className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white"
+          >
+            <ArrowLeft size={13} /> 返回首页
+          </button>
+        </div>
+      }
+      items={NAV}
+      active={active}
+      onSelect={setActive}
+      accent={PM_ACCENT}
+    >
+      {active === 'home' ? (
+        // 首页：AI 助手主区（70%）+ 右栏待办/便捷操作（30%），撑满高度各自滚动
+        <div className="flex-1 min-h-0 flex pa-accent-blue">
+          <div className="h-full min-h-0 min-w-0 flex flex-col border-r border-white/10" style={{ width: '70%' }}>
+            <PmAssistantPanel prefill={prefill} />
+          </div>
+          <aside className="h-full min-h-0 min-w-0 flex flex-col gap-4 p-4" style={{ width: '30%' }}>
+            <PmTodosCard />
+            <PmQuickActionsCard ctx={{ openCreateProject: () => setShowCreate(true), fillAssistant, gotoNav: (n) => setActive(n as WorkspaceNav) }} />
+          </aside>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 flex flex-col p-5 pa-accent-blue">
+          {active === 'projects' && <ProjectsSection onOpen={(id) => navigate(`/pm-agent/p/${id}`)} />}
+          {active === 'reports' && <PmReportsSection />}
+          {active === 'dashboard' && canViewDashboard && <DashboardView />}
+          {active === 'audit' && canViewAudit && <AuditLogView />}
+        </div>
+      )}
+      {showCreate && (
+        <CreateProjectDialog
+          onClose={() => setShowCreate(false)}
+          onCreated={(project) => { setShowCreate(false); navigate(`/pm-agent/p/${project.id}`); }}
+        />
+      )}
+    </AgentFullscreenLayout>
+  );
+}
+
+/** 项目列表（使用说明 + 范围分段 + 卡片网格） */
+function ProjectsSection({ onOpen }: { onOpen: (id: string) => void }) {
+  const [projects, setProjects] = useState<PmProject[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [scope, setScope] = useState<PmProjectScope>('managed');
   const [guideOpen, setGuideOpen] = useState(() => sessionStorage.getItem('pm-guide-collapsed') !== '1');
   const toggleGuide = () => setGuideOpen((v) => { sessionStorage.setItem('pm-guide-collapsed', v ? '1' : '0'); return !v; });
 
@@ -45,7 +138,7 @@ export function PmAgentPage() {
     setLoading(false);
   }, [scope]);
 
-  useEffect(() => { if (!selectedId) load(); }, [load, selectedId]);
+  useEffect(() => { load(); }, [load]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -54,55 +147,18 @@ export function PmAgentPage() {
     else toast.error('删除失败', res.error?.message || '');
   };
 
-  // 详情视图
-  if (selectedId) {
-    return (
-      <div className="h-full min-h-0 p-5">
-        <ProjectDetailView projectId={selectedId} onBack={() => {
-          setSelectedId(null);
-          if (searchParams.has('project')) { searchParams.delete('project'); setSearchParams(searchParams, { replace: true }); }
-        }} />
-      </div>
-    );
-  }
-
-  // 组织 NPSS 看板
-  if (showDashboard) {
-    return (
-      <div className="h-full min-h-0 p-5">
-        <DashboardView onBack={() => setShowDashboard(false)} />
-      </div>
-    );
-  }
-
-  // 审计日志
-  if (showAudit) {
-    return (
-      <div className="h-full min-h-0 p-5">
-        <AuditLogView onBack={() => setShowAudit(false)} />
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-4 h-full min-h-0 p-5">
+    <div className="flex flex-col gap-4 h-full min-h-0">
       {/* 头部 */}
       <div className="shrink-0 flex items-center gap-3">
-        <FolderKanban size={22} style={{ color: '#3B82F6' }} />
         <div className="flex-1 min-w-0">
-          <h1 className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目管理</h1>
-          <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>立项 → 目标 → 里程碑 / 任务 → 推进 → 结案</p>
+          <h1 className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目</h1>
+          <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>把「有明确目标、有起止时间」的临时性工作当作项目来管</p>
         </div>
         <TipsEntryButton compact />
         <button onClick={toggleGuide} className="flex items-center gap-1 text-[12px] px-2 py-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }} title="使用说明">
           <Lightbulb size={14} />说明{guideOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>
-        {canViewAudit && (
-          <Button variant="secondary" onClick={() => setShowAudit(true)}><ShieldCheck size={15} />审计日志</Button>
-        )}
-        {canViewDashboard && (
-          <Button variant="secondary" onClick={() => setShowDashboard(true)}><TrendingUp size={15} />NPSS 看板</Button>
-        )}
         <Button variant="primary" onClick={() => setShowCreate(true)}><Plus size={15} />立项</Button>
       </div>
 
@@ -180,8 +236,8 @@ export function PmAgentPage() {
               return (
                 <div
                   key={p.id}
-                  onClick={() => setSelectedId(p.id)}
-                  className="group rounded-xl border p-4 cursor-pointer transition-colors hover:border-current"
+                  onClick={() => onOpen(p.id)}
+                  className="pa-card group rounded-xl border p-4 cursor-pointer"
                   style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
                 >
                   <div className="flex items-center gap-2">
@@ -213,7 +269,7 @@ export function PmAgentPage() {
       {showCreate && (
         <CreateProjectDialog
           onClose={() => setShowCreate(false)}
-          onCreated={(project) => { setShowCreate(false); setSelectedId(project.id); }}
+          onCreated={(project) => { setShowCreate(false); onOpen(project.id); }}
         />
       )}
     </div>

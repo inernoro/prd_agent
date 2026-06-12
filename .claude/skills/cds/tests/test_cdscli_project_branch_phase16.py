@@ -125,6 +125,87 @@ def test_project_create_empty_name_dies(monkeypatch):
     assert "--name" in payload["error"]
 
 
+# ── preview identity helpers ─────────────────────────────────────────
+
+
+def test_generic_workspace_uses_directory_slug_for_local_fallback(monkeypatch):
+    """generic checkout 不能无条件把本地 fallback 改成 repo slug。
+
+    服务端未持久化 collision-checked alias 时,安全身份仍可能是 workspace。
+    """
+    monkeypatch.setattr(cdscli, "_git_origin_slug", lambda: "prd-agent")
+
+    assert cdscli._project_slug_hint("/tmp/workspace") == "workspace"
+    assert cdscli._project_slug_hints("/tmp/workspace") == ["workspace"]
+
+
+def test_preview_branch_match_rejects_unverified_repo_alias(monkeypatch):
+    """generic checkout 只接受 directory slug,不隐式接受 repo alias。"""
+    branch = "cursor/frontend-agent-1685"
+    candidates = ["workspace"]
+
+    workspace_row = {
+        "id": "workspace-cursor-frontend-agent-1685",
+        "projectSlug": "workspace",
+        "branch": branch,
+        "previewSlug": "frontend-agent-1685-cursor-workspace",
+    }
+    alias_row = {
+        "id": "prd-agent-cursor-frontend-agent-1685",
+        "projectSlug": "prd-agent",
+        "branch": branch,
+        "previewSlug": "frontend-agent-1685-cursor-prd-agent",
+    }
+    other_row = {
+        "id": "app-cursor-frontend-agent-1685",
+        "projectSlug": "app",
+        "branch": branch,
+        "previewSlug": "frontend-agent-1685-cursor-app",
+    }
+
+    assert cdscli._match_branches_for_project(
+        [workspace_row], branch, candidates, already_scoped=False) == [workspace_row]
+    assert cdscli._match_branches_for_project(
+        [alias_row], branch, candidates, already_scoped=False) == []
+    assert cdscli._match_branches_for_project(
+        [other_row], branch, candidates, already_scoped=False) == []
+
+
+def test_ambiguous_project_matches_die_instead_of_picking_first(monkeypatch):
+    """同一 git branch 同时命中多个候选时不能取第一条。"""
+    branch = "cursor/frontend-agent-1685"
+    matches = [
+        {
+            "id": "workspace-cursor-frontend-agent-1685",
+            "projectSlug": "workspace",
+            "branch": branch,
+            "previewSlug": "frontend-agent-1685-cursor-workspace",
+        },
+        {
+            "id": "prd-agent-cursor-frontend-agent-1685",
+            "projectSlug": "prd-agent",
+            "branch": branch,
+            "previewSlug": "frontend-agent-1685-cursor-prd-agent",
+        },
+    ]
+    buf = io.StringIO()
+    real_stdout = sys.stdout
+    sys.stdout = buf
+    try:
+        with pytest.raises(SystemExit) as exc:
+            cdscli._die_if_ambiguous_project_matches(
+                matches, branch, ["workspace", "prd-agent"])
+    finally:
+        sys.stdout = real_stdout
+
+    assert exc.value.code == 2
+    out = buf.getvalue()
+    payload = json.loads(out.strip().split("\n")[-1])
+    assert payload["ok"] is False
+    assert "同时匹配" in payload["error"]
+    assert payload["projectHints"] == ["workspace", "prd-agent"]
+
+
 # ── project clone (SSE) ──────────────────────────────────────────────
 
 

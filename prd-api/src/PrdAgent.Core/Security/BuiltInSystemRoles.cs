@@ -40,7 +40,10 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.TaskTreeUse,
                 AdminPermissionCatalog.PmAgentUse,
                 AdminPermissionCatalog.CcasAgentUse,
+                AdminPermissionCatalog.ShituAgentUse,
+                AdminPermissionCatalog.ShituAgentManage,
                 AdminPermissionCatalog.PaAgentUse,
+                AdminPermissionCatalog.FrontEndAgentUse,
                 AdminPermissionCatalog.ProjectRouteAgentUse,
                 AdminPermissionCatalog.TaskTreeViewAll,
                 // 管理权限
@@ -84,7 +87,9 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.TaskTreeUse,
                 AdminPermissionCatalog.PmAgentUse,
                 AdminPermissionCatalog.CcasAgentUse,
+                AdminPermissionCatalog.ShituAgentUse,
                 AdminPermissionCatalog.PaAgentUse,
+                AdminPermissionCatalog.FrontEndAgentUse,
                 AdminPermissionCatalog.ProjectRouteAgentUse,
                 // 只读管理权限
                 AdminPermissionCatalog.UsersRead,
@@ -123,7 +128,9 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.TaskTreeUse,
                 AdminPermissionCatalog.PmAgentUse,
                 AdminPermissionCatalog.CcasAgentUse,
+                AdminPermissionCatalog.ShituAgentUse,
                 AdminPermissionCatalog.PaAgentUse,
+                AdminPermissionCatalog.FrontEndAgentUse,
                 AdminPermissionCatalog.ProjectRouteAgentUse,
                 // PRD Agent 读取提示词需要 settings.read，但不应默认展示"提示词管理"（前端已改为 prompts.write 才可见）
                 AdminPermissionCatalog.SettingsRead,

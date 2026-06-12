@@ -764,29 +764,36 @@ write_waiting_html() {
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CDS 自升级中</title>
 <style>
-:root{--bg-page:#0d1117;--bg-card:#161b22;--bg-elevated:#21262d;--border:#30363d;--border-subtle:#21262d;--text-primary:#f0f6fc;--text-muted:#8b949e;--text-subtle:#6e7681;--accent:#58a6ff;--accent-bg:rgba(88,166,255,.14);--shadow-card:0 12px 32px rgba(0,0,0,.45)}
-@media(prefers-color-scheme:light){:root{--bg-page:#f4efe9;--bg-card:#ffffff;--bg-elevated:#f1eae4;--border:#d8cfc6;--border-subtle:#e6ddd3;--text-primary:#2a1f19;--text-muted:#7a6a5e;--text-subtle:#9c8e82;--accent:#1f6feb;--accent-bg:rgba(31,111,235,.10);--shadow-card:0 8px 24px rgba(43,33,28,.10)}}
+:root{--bg-page:#070a0f;--bg-card:#161b22;--bg-elevated:#21262d;--border:#30363d;--border-subtle:#21262d;--text-primary:#f0f6fc;--text-muted:#8b949e;--text-subtle:#6e7681;--accent:#58a6ff;--accent-bg:rgba(88,166,255,.14);--shadow-card:0 30px 90px rgba(0,0,0,.45)}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg-page);color:var(--text-muted);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{max-width:480px;width:100%;padding:28px 30px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-card)}
-.header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
-.spinner{width:22px;height:22px;border:2.5px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg-page);color:var(--text-muted);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;color-scheme:dark}
+.card{position:relative;max-width:760px;width:100%;overflow:hidden;padding:34px 36px;background:rgba(22,27,34,.94);border:1px solid rgba(139,148,158,.28);border-radius:18px;box-shadow:var(--shadow-card)}
+.card:before{content:"";position:absolute;inset:0 0 auto;height:3px;background:linear-gradient(90deg,#22c55e,#58a6ff,#a78bfa)}
+.header{display:flex;align-items:flex-start;gap:16px;margin-bottom:10px}
+.spinner{width:32px;height:32px;border:3px solid rgba(139,148,158,.28);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0;margin-top:2px}
 @keyframes spin{to{transform:rotate(360deg)}}
-h1{font-size:18px;font-weight:600;color:var(--text-primary)}
-.sub{font-size:12px;color:var(--text-muted);margin-bottom:18px;padding-left:34px;line-height:1.55}
-.chip{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,monospace;font-size:11px;color:var(--accent);background:var(--accent-bg);padding:4px 10px;border-radius:99px;border:1px solid rgba(88,166,255,.22);margin-bottom:18px}
-.hint{font-size:12px;color:var(--text-subtle);line-height:1.6}
-.hint code{font-family:ui-monospace,monospace;background:var(--bg-elevated);color:var(--text-muted);padding:1px 6px;border-radius:4px;font-size:11px}
-.bar{margin-top:18px;height:2px;border-radius:1px;background:var(--border-subtle);overflow:hidden}
-.bar-fill{height:100%;width:0%;background:var(--accent);border-radius:1px;animation:fill 3s linear forwards}
+h1{font-size:28px;font-weight:750;color:var(--text-primary);line-height:1.2}
+.sub{font-size:15px;color:var(--text-muted);margin:6px 0 24px;padding-left:48px;line-height:1.7}
+.status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:22px}
+.chip{display:inline-flex;min-height:42px;align-items:center;gap:8px;font-family:ui-monospace,monospace;font-size:13px;color:#9ecbff;background:rgba(88,166,255,.12);padding:8px 12px;border-radius:10px;border:1px solid rgba(88,166,255,.24)}
+.chip:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
+.hint{font-size:13px;color:var(--text-muted);line-height:1.7;border-top:1px solid rgba(139,148,158,.18);padding-top:18px}
+.hint code{font-family:ui-monospace,monospace;background:rgba(139,148,158,.13);color:#c9d1d9;padding:2px 7px;border-radius:5px;font-size:12px}
+.bar{margin-top:22px;height:3px;border-radius:99px;background:rgba(139,148,158,.18);overflow:hidden}
+.bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#58a6ff);border-radius:99px;animation:fill 3s linear forwards}
 @keyframes fill{to{width:100%}}
+@media(max-width:640px){.card{padding:28px 22px}.status{grid-template-columns:1fr}.sub{padding-left:0}h1{font-size:24px}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important}.bar-fill{width:100%}}
 </style>
 </head><body>
 <div class="card">
   <div class="header"><div class="spinner"></div><h1>CDS 自升级中</h1></div>
   <div class="sub">控制面正在重启，分支预览几秒后自动恢复</div>
-  <div class="chip">自动升级进行中</div>
+  <div class="status">
+    <div class="chip">自动升级进行中</div>
+    <div class="chip">3s 后刷新</div>
+    <div class="chip">控制面重启中</div>
+  </div>
   <div class="hint">如持续停留，请在 <code>PR Checks</code> 面板查看 CDS Deploy 状态。</div>
   <div class="bar"><div class="bar-fill"></div></div>
 </div>

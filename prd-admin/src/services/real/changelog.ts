@@ -75,6 +75,12 @@ export interface ReleasesView {
   releases: ChangelogRelease[];
 }
 
+export interface GitHubCoAuthor {
+  name: string;
+  matchedUsername?: string | null;
+  matchedDisplayName?: string | null;
+}
+
 export interface GitHubLogEntry {
   sha: string;
   shortSha: string;
@@ -83,14 +89,22 @@ export interface GitHubLogEntry {
   authorAvatarUrl?: string | null;
   commitTimeUtc: string;
   htmlUrl: string;
+  /** 彩蛋：GitHub 作者名匹配到的系统用户登录名（去数字 + 颠倒容忍 + 通用后缀剥离），null=未匹配 */
+  matchedUsername?: string | null;
+  /** 彩蛋：匹配到的系统用户显示名（为空时后端回退登录名），null=未匹配 */
+  matchedDisplayName?: string | null;
+  /** Co-authored-by 联合作者（已剔除与主作者同人），每位同样带系统用户匹配结果 */
+  coAuthors?: GitHubCoAuthor[];
 }
 
 export interface GitHubLogsView {
   dataSourceAvailable: boolean;
   source: 'local' | 'github' | 'none';
   fetchedAt: string;
-  /** 全量 commit 总数，用于 chip 计数 */
+  /** 「最近一周」窗口内的 commit 总数（列表数据上限） */
   totalCount?: number;
+  /** 仓库全历史提交总数（不限窗口），null=暂未统计成功，展示时降级用 totalCount */
+  repoTotalCommitCount?: number | null;
   hasMore?: boolean;
   /** 下一页 cursor，传给 before 参数取下一批 */
   nextCursor?: string | null;

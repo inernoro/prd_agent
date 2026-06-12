@@ -128,6 +128,16 @@ interface GithubReposResponse {
 type RuntimeId = 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'go' | 'rust' | 'php' | 'static' | 'dockerfile' | 'custom';
 type AppServiceRole = 'frontend' | 'backend' | 'worker';
 
+interface DatabaseInitRecommendation {
+  kind: string;
+  label: string;
+  command?: string;
+  files?: string[];
+  summary: string;
+  confidence?: number;
+  autoExecutable?: boolean;
+}
+
 interface AppServiceDraft {
   id: string;
   name: string;
@@ -3144,7 +3154,25 @@ function CreateProjectDialog({
     setDetecting(true);
     setDetectMsg('正在克隆并分析你的仓库…(几秒到几十秒)');
     try {
-      const res = await apiRequest<{ services: Array<{ id: string; name: string; role: AppServiceRole; runtime: RuntimeId; dockerImage: string; command: string; port: number; summary?: string; stack?: string; confidence?: number; signals?: string[]; manualSetupRequired?: boolean }>; moduleCount: number }>(
+      const res = await apiRequest<{
+        services: Array<{
+          id: string;
+          name: string;
+          role: AppServiceRole;
+          runtime: RuntimeId;
+          dockerImage: string;
+          command: string;
+          port: number;
+          summary?: string;
+          stack?: string;
+          confidence?: number;
+          signals?: string[];
+          databaseInit?: DatabaseInitRecommendation | null;
+          manualSetupRequired?: boolean;
+        }>;
+        moduleCount: number;
+        databaseInit?: DatabaseInitRecommendation | null;
+      }>(
         '/api/detect-runtime',
         { method: 'POST', body: { gitRepoUrl: url, gitRef: gitDefaultBranch.trim() || undefined } },
       );
@@ -3163,7 +3191,11 @@ function CreateProjectDialog({
       const conf = (c?: number): string => ((c ?? 0) >= 0.8 ? '高' : (c ?? 0) >= 0.5 ? '中' : '低');
       const lines = svcs.map((s) => `${s.name}：${s.summary || s.runtime}(把握${conf(s.confidence)})`);
       const uncertain = svcs.some((s) => (s.confidence ?? 0) < 0.6 || s.stack === 'unknown' || s.manualSetupRequired);
-      setDetectMsg(`检测到 ${svcs.length} 个服务并已填好：${lines.join('；')}。${uncertain ? '部分把握不高或未完全识别——强烈建议点「试运行验证」确认，或手改命令/镜像后再部署。' : '把握较高，点「试运行验证」确认一下就能部署。'}`);
+      const dbInit = res.databaseInit || svcs.find((s) => s.databaseInit)?.databaseInit || null;
+      const dbInitText = dbInit
+        ? `数据库初始化：${dbInit.command ? `${dbInit.label}，推荐 ${dbInit.command}` : dbInit.summary}。`
+        : '未检测到数据库迁移信号；如果后续初始化失败，可在数据库服务卡片里导入 SQL 或填写迁移命令。';
+      setDetectMsg(`检测到 ${svcs.length} 个服务并已填好：${lines.join('；')}。${dbInitText}${uncertain ? '部分把握不高或未完全识别——强烈建议点「试运行验证」确认，或手改命令/镜像后再部署。' : '把握较高，点「试运行验证」确认一下就能部署。'}`);
     } catch (e) {
       setDetectMsg(e instanceof ApiError ? `检测失败：${e.message}` : `检测失败：${String(e)}`);
     } finally {
@@ -3517,15 +3549,15 @@ function CreateProjectDialog({
                         ) : null}
                         {preset.supportsInitSql ? (
                           <label className="mt-2 block space-y-1.5">
-                            <span className="text-xs font-medium text-muted-foreground">初始化 SQL（可选）</span>
+                            <span className="text-xs font-medium text-muted-foreground">手动 SQL 兜底（可选）</span>
                             <textarea
                               className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                               value={infraConfig[preset.id]?.initSql || ''}
                               onChange={(event) => setInfraConfigField(preset.id, 'initSql', event.target.value)}
-                              placeholder={'CREATE TABLE items (id serial primary key, name text);'}
+                              placeholder={'自动识别失败时再填，例如 CREATE TABLE items (id serial primary key, name text);'}
                             />
                             <span className="block text-[11px] leading-4 text-muted-foreground">
-                              随项目保存；数据库就绪后进入拓扑页数据面板，预填这段 SQL 一键执行初始化。
+                              普通部署优先使用仓库扫描出的 Prisma / Django / Alembic / schema.sql 推荐方式；这里仅作为高级兜底，保存后可在拓扑页数据面板执行。
                             </span>
                           </label>
                         ) : null}
@@ -3557,7 +3589,7 @@ function CreateProjectDialog({
                                   className="mt-1.5 min-h-16 w-full resize-y rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                                   value={inst.initSql || ''}
                                   onChange={(event) => updateExtraInstance(preset.id, idx, 'initSql', event.target.value)}
-                                  placeholder="初始化 SQL（可选）"
+                                  placeholder="手动 SQL 兜底（可选）"
                                 />
                               </div>
                             ))}

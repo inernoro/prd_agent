@@ -188,6 +188,12 @@ export const api = {
     },
   },
 
+  // ============ Team Activity 团队动态 ============
+  teamActivity: {
+    logs: () => '/api/team-activity/logs',
+    modules: () => '/api/team-activity/modules',
+  },
+
   // ============ Skills 技能管理 ============
   skills: {
     list: () => '/api/skills',
@@ -1126,6 +1132,11 @@ export const api = {
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
     setTeams: (id: string) => `/api/web-pages/${id}/teams`,
+    groups: () => '/api/web-pages/groups',
+    groupById: (groupId: string) => `/api/web-pages/groups/${groupId}`,
+    groupAccess: (groupId: string) => `/api/web-pages/groups/${groupId}/access`,
+    setGroup: (id: string) => `/api/web-pages/${id}/group`,
+    copyToTeam: (id: string) => `/api/web-pages/${id}/copy-to-team`,
     // 波1 访客痕迹：记录一次访问 + owner 查本页访客名单。
     // 走独立前缀 /api/web-page-analytics 避开 AdminPermissionMiddleware 对 /api/web-pages/* 的写权限拦截。
     recordView: (id: string) => `/api/web-page-analytics/${id}/record-view`,
@@ -1140,6 +1151,7 @@ export const api = {
     viewLogs: '/api/web-pages/shares/view-logs',
     shareLogsForSite: (siteId: string) => `/api/web-pages/${siteId}/share-logs`,
     renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
+    shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
   },
   // ============ 公开主页（/u/:username 无需登录） ============
@@ -1255,6 +1267,18 @@ export const api = {
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
+    // 双链 + 反向链接 + 宇宙图（mentions 账本）
+    mentions: {
+      documentLinks: (entryId: string) => `/api/mentions/documents/${entryId}/links`,
+      storeGraph: (storeId: string) => `/api/mentions/stores/${storeId}/graph`,
+      suggest: (storeId: string, q?: string, limit?: number) => {
+        const qs = new URLSearchParams();
+        if (q) qs.set('q', q);
+        if (limit) qs.set('limit', String(limit));
+        const s = qs.toString();
+        return `/api/mentions/stores/${storeId}/suggest${s ? `?${s}` : ''}`;
+      },
+    },
     // 跨环境 / 本地库↔库 同步
     sync: {
       listAll: () => '/api/document-store/sync/links',
@@ -1302,6 +1326,8 @@ export const api = {
     member: (id: string, userId: string) => `/api/teams/${id}/members/${userId}`,
     memberWebHostingRole: (id: string, userId: string) =>
       `/api/teams/${id}/members/${userId}/web-hosting-role`,
+    memberLabels: (id: string, userId: string) =>
+      `/api/teams/${id}/members/${userId}/labels`,
     inviteCode: (id: string) => `/api/teams/${id}/invite-code`,
     join: () => '/api/teams/join',
     activity: (id: string) => `/api/teams/${id}/activity`,
@@ -1446,6 +1472,13 @@ export const api = {
     knowledge: {
       file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
     },
+    // 首页工作台（跨项目）
+    myTodos: () => '/api/pm/my-todos',
+    reportsSummary: (scope?: string) => `/api/pm/reports/summary${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`,
+    preferences: () => '/api/pm/preferences',
+    quickActions: () => '/api/pm/preferences/quick-actions',
+    assistantAsk: () => '/api/pm/assistant/ask',
+    assistantAttachments: () => '/api/pm/assistant/attachments',
     weeklyReportsImportable: (params?: { weekYear?: number; weekNumber?: number }) => {
       const q = new URLSearchParams();
       if (params?.weekYear) q.set('weekYear', String(params.weekYear));

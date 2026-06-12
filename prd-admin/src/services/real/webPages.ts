@@ -32,6 +32,8 @@ export interface HostedSite {
   ownerUserId: string;
   /** 分享到的团队 ID 列表（仅网页托管消费） */
   sharedTeamIds?: string[];
+  /** 团队空间分组归属（专题/日常分类的 WebPageGroup.Id；null/undefined = 未分组） */
+  groupId?: string | null;
   viewCount: number;
   /** 可见性：private = 仅自己可见 | public = 出现在 /u/:username 公开页 */
   visibility?: 'private' | 'public';
@@ -270,9 +272,10 @@ export async function listSites(params?: {
   if (params?.sort) sp.set('sort', params.sort);
   if (params?.skip) sp.set('skip', String(params.skip));
   if (params?.limit) sp.set('limit', String(params.limit));
-  if (params?.scope === 'team' && params?.teamId) {
+  if (params?.scope === 'team') {
     sp.set('scope', 'team');
-    sp.set('teamId', params.teamId);
+    // teamId 缺省 = 跨团队聚合视图（我加入的所有团队的共享站点）
+    if (params.teamId) sp.set('teamId', params.teamId);
   }
   const q = sp.toString();
   return apiRequest(`${api.webPages.list()}${q ? `?${q}` : ''}`, { method: 'GET' });
@@ -318,6 +321,93 @@ export async function listTags(): Promise<ApiResponse<{ tags: TagCount[] }>> {
   return apiRequest(api.webPages.tags(), { method: 'GET' });
 }
 
+// ─── Team Groups（团队空间专题 / 日常分类） ───
+
+export type WebPageGroupVisibility = 'inherit' | 'restricted';
+export type WebPageGroupSubjectType = 'user' | 'label';
+/** 分组级角色档位（owner 不下放到分组级） */
+export type WebPageGroupRole = 'viewer' | 'editor';
+
+export interface WebPageGroupAccessRule {
+  /** user = 具体成员 | label = 角色标签 */
+  subjectType: WebPageGroupSubjectType;
+  /** user 时为成员 UserId；label 时为标签文本 */
+  subjectId: string;
+  role: WebPageGroupRole;
+}
+
+export interface WebPageGroup {
+  id: string;
+  teamId: string;
+  /** topic = 专题 | daily = 日常分类 */
+  kind: 'topic' | 'daily';
+  name: string;
+  sortOrder: number;
+  createdBy: string;
+  /** inherit = 跟随空间角色（默认）| restricted = 仅授权成员与空间 owner 可见 */
+  visibility?: WebPageGroupVisibility;
+  /** 授权规则（仅空间 owner 拿得到；普通成员为 null） */
+  accessRules?: WebPageGroupAccessRule[] | null;
+  /** 我对该分组的有效角色（后端解析；受限分组未授权时整条分组不会返回） */
+  myGroupRole?: 'owner' | 'editor' | 'viewer';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listSiteGroups(teamId: string): Promise<ApiResponse<{ groups: WebPageGroup[] }>> {
+  return apiRequest(`${api.webPages.groups()}?teamId=${encodeURIComponent(teamId)}`, { method: 'GET' });
+}
+
+export async function createSiteGroup(input: {
+  teamId: string;
+  kind: 'topic' | 'daily';
+  name: string;
+  sortOrder?: number;
+}): Promise<ApiResponse<WebPageGroup>> {
+  return apiRequest(api.webPages.groups(), { method: 'POST', body: input });
+}
+
+export async function updateSiteGroup(
+  groupId: string,
+  input: { name?: string; sortOrder?: number },
+): Promise<ApiResponse<WebPageGroup>> {
+  return apiRequest(api.webPages.groupById(encodeURIComponent(groupId)), { method: 'PUT', body: input });
+}
+
+export async function deleteSiteGroup(groupId: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(api.webPages.groupById(encodeURIComponent(groupId)), { method: 'DELETE' });
+}
+
+/** 设置分组可见性与授权规则（仅空间 owner 可调）。inherit 时 rules 被清空。 */
+export async function updateSiteGroupAccess(
+  groupId: string,
+  input: { visibility: WebPageGroupVisibility; rules?: WebPageGroupAccessRule[] },
+): Promise<ApiResponse<WebPageGroup>> {
+  return apiRequest(api.webPages.groupAccess(encodeURIComponent(groupId)), {
+    method: 'PUT',
+    body: input,
+  });
+}
+
+export async function setSiteGroup(siteId: string, groupId: string | null): Promise<ApiResponse<HostedSite>> {
+  return apiRequest(api.webPages.setGroup(encodeURIComponent(siteId)), {
+    method: 'PATCH',
+    body: { groupId },
+  });
+}
+
+/** 把自己的网页物理复制一份进团队空间（副本独立，原件不受影响） */
+export async function copySiteToTeam(
+  siteId: string,
+  teamId: string,
+  groupId?: string | null,
+): Promise<ApiResponse<HostedSite>> {
+  return apiRequest(api.webPages.copyToTeam(encodeURIComponent(siteId)), {
+    method: 'POST',
+    body: { teamId, groupId: groupId ?? null },
+  });
+}
+
 // ─── Share ───
 
 export async function createShareLink(data: {
@@ -334,6 +424,8 @@ export async function createShareLink(data: {
   forceNew?: boolean;
   /** 访问可见性：owner-only（默认）/ logged-in / public */
   visibility?: 'owner-only' | 'logged-in' | 'public';
+  /** 是否分配数字短链 /s/{seq}。默认 false：只发 /s/wp/{token} 长链，不污染 short_links */
+  allocateShortLink?: boolean;
 }): Promise<ApiResponse<{
   id: string;
   token: string;
@@ -356,6 +448,17 @@ export async function createShareLink(data: {
 
 export async function listShares(): Promise<ApiResponse<{ items: ShareLinkItem[] }>> {
   return apiRequest(api.webPages.shares(), { method: 'GET' });
+}
+
+/**
+ * 事后为某条已存在的分享按需生成数字短链 /s/{seq}（用户点「生成数字短链」时调用）。
+ * 幂等：已有则返回原 seq。
+ */
+export async function ensureShareShortLink(shareId: string): Promise<ApiResponse<{
+  shortSeq: number;
+  shortShareUrl: string | null;
+}>> {
+  return apiRequest(api.webPages.shareShortLink(encodeURIComponent(shareId)), { method: 'POST' });
 }
 
 export async function revokeShare(shareId: string): Promise<ApiResponse<{ revoked: boolean }>> {

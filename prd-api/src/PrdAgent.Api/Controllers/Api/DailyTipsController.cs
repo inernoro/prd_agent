@@ -143,10 +143,12 @@ public sealed class DailyTipsController : ControllerBase
         // 上方 seedFillers 已经覆盖空 DB 场景（dbSourceIds 为空集，seedFillers = 全套合规 seed），
         // 旧 fallback 会绕过 dbSourceIds 让 admin 禁用 (IsActive=false) 的 seed 复活 (Codex P2)。
 
-        // 定向 tip / 被投递 tip 永远置顶,保证「为你修复」类消息被最先看到
+        // 定向 tip(TargetUserId = 当前用户)置顶,保证「为你修复」类消息被最先看到。
+        // 注意:Deliveries 里有当前用户 != 被定向推送 —— Track 端点会给「看过一眼」的用户补一条
+        // Delivery 记录纯做统计(seen/viewCount),若把它算进置顶/isTargeted,任何被浏览过的普通教程
+        // 都会变成「为你推送」,并触发前端定向自动弹窗(2026-06-11 用户反馈:无教程页面弹「全部教程」)。
         var ordered = items
-            .OrderByDescending(x => x.TargetUserId == userId
-                                    || (x.Deliveries != null && x.Deliveries.Any(d => d.UserId == userId)))
+            .OrderByDescending(x => x.TargetUserId == userId)
             .ThenBy(x => x.DisplayOrder)
             .ThenByDescending(x => x.CreatedAt)
             .Select(x =>
@@ -164,7 +166,8 @@ public sealed class DailyTipsController : ControllerBase
                     x.CtaText,
                     x.TargetSelector,
                     x.AutoAction,
-                    isTargeted = x.TargetUserId == userId || mine != null,
+                    // 仅 TargetUserId 命中才算定向;mine(Delivery)只是 Track 统计记录,不代表被推送
+                    isTargeted = x.TargetUserId == userId,
                     x.SourceType,
                     x.SourceId,
                     x.Version,
@@ -623,8 +626,8 @@ public sealed class DailyTipsController : ControllerBase
                     Steps = new List<DailyTipTourStep>
                     {
                         new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 1 步：欢迎来到网页托管", Body = "这里集中托管并分享你的 HTML/ZIP/Markdown/PDF/视频。先认识顶部的空间切换：个人空间放自己的，团队空间与成员共享。下面 14 步走一遍整页。", NavigateTo = "/web-pages" },
-                        new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 2 步：先认识空间", Body = "「个人空间」放自己的，「团队空间」与成员共享；chip 后的数字是该空间站点数，单击切换。" },
-                        new() { Selector = "[data-tour-id=webpages-space-add]", Title = "第 3 步：新建或加入团队", Body = "最右侧虚线「+」可新建团队空间，或用邀请码加入别人的；团队空间内成员互相可见。" },
+                        new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 2 步：先认识空间", Body = "一级导航只有两项：「个人空间」放自己的，「团队空间」与成员共享；进入团队空间后，已加入的团队会以标签平铺在第二行，点标签即可切换团队。" },
+                        new() { Selector = "[data-tour-id=webpages-space-add]", Title = "第 3 步：新建或加入团队", Body = "虚线「+」可新建团队空间（命名后自动成为管理员，可拉成员进来），或用邀请码加入别人的；团队空间内成员互相可见。" },
                         new() { Selector = "[data-tour-id=webpages-header-actions]", Title = "第 4 步：顶部工具栏", Body = "右上角集中了「分享统计 / 分享管理 / 上传站点」三个入口。" },
                         new() { Selector = "[data-tour-id=webpages-stats-btn]", Title = "第 5 步：分享数据统计", Body = "点图表图标查看每个站点的 PV、独立访客、访问时间线。" },
                         new() { Selector = "[data-tour-id=webpages-share-mgmt-btn]", Title = "第 6 步：分享链接管理", Body = "点链接图标统一管理所有分享链接的密码、有效期和开关。" },
@@ -632,7 +635,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=webpages-sort-pills]", Title = "第 8 步：排序", Body = "最新 / 最早 / 标题 / 浏览 / 体积 五种排序平铺成 pill，单击直接切。" },
                         new() { Selector = "[data-tour-id=webpages-group-pills]", Title = "第 9 步：分组", Body = "「日期 / 文件夹」二选一，把站点按时间或自建文件夹归类。" },
                         new() { Selector = "[data-tour-id=webpages-view-toggle]", Title = "第 10 步：网格 / 列表视图", Body = "右侧 ⊞ / ☰ 切换；网格有缩略图，列表更紧凑。" },
-                        new() { Selector = "[data-tour-id=webpages-folders]", Title = "第 11 步：文件夹", Body = "用文件夹把同类站点收纳到一起，点文件夹名快速过滤。" },
+                        new() { Selector = "[data-tour-id=webpages-folders]", Title = "第 11 步：文件夹 / 分组", Body = "个人空间用文件夹收纳同类站点，点文件夹名快速过滤；团队空间则是左侧树导航，按专题 / 分类组织，双击可改名，受限分组带锁标识。" },
                         new() { Selector = "[data-tour-id=webpages-card]", Title = "第 12 步：站点卡片", Body = "每个站点一张卡，显示标题、缩略图、访问量和快捷操作。" },
                         new() { Selector = "[data-tour-id=webpages-viewcount]", Title = "第 13 步：访问量", Body = "卡片底部的眼睛图标 + 数字，是该站点累计被打开的次数。" },
                         new() { Selector = "[data-tour-id=share-dock-panel]", Title = "第 14 步：投放面板", Body = "右侧悬浮面板可把文件直接拖进来上传，并提供「公开 / 分享 / 回收」快捷槽位（折叠时先点一下展开）。看完点「完成」就上手啦" },

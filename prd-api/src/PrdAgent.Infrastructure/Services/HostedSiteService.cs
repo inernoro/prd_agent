@@ -119,7 +119,55 @@ public class HostedSiteService : IHostedSiteService
         if (site.OwnerUserId == userId) return WebHostingRoles.Owner;
         if (site.SharedTeamIds is not { Count: > 0 }) return null;
         var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
-        return WebHostingPermission.ResolveSiteRole(isSiteOwner: false, site.SharedTeamIds, roles);
+
+        // 站点挂在受限分组下时，分组所属团队那一路的角色按授权规则裁剪/升格
+        // （其他共享团队的角色不受影响），解析逻辑见 WebPageGroupAccess。
+        WebPageGroup? group = null;
+        List<string>? myLabels = null;
+        if (!string.IsNullOrWhiteSpace(site.GroupId))
+        {
+            group = await _db.WebPageGroups.Find(g => g.Id == site.GroupId).FirstOrDefaultAsync(ct);
+            if (WebPageGroupAccess.IsRestricted(group))
+            {
+                var member = await _db.TeamMembers
+                    .Find(m => m.TeamId == group!.TeamId && m.UserId == userId)
+                    .FirstOrDefaultAsync(ct);
+                myLabels = member?.Labels ?? new List<string>();
+            }
+        }
+        return WebPageGroupAccess.ResolveSiteRoleWithGroup(
+            isSiteOwner: false, site.SharedTeamIds, roles, group, userId, myLabels);
+    }
+
+    /// <summary>
+    /// 计算这些团队里「对我不可见」的受限分组 ID（用于列表过滤）。
+    /// 注意：列表过滤是分组粒度的近似 —— 站点同时共享给多个团队时，单站点的精确判定
+    /// 以 ResolveSiteRoleAsync 为准（见 doc/debt 记录的已知边界）。
+    /// </summary>
+    private async Task<List<string>> GetInvisibleGroupIdsAsync(string userId, List<string> teamIds, CancellationToken ct)
+    {
+        if (teamIds.Count == 0) return new List<string>();
+        var restricted = await _db.WebPageGroups
+            .Find(g => teamIds.Contains(g.TeamId) && g.Visibility == WebPageGroupVisibility.Restricted)
+            .ToListAsync(ct);
+        if (restricted.Count == 0) return new List<string>();
+
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        var memberTeamIds = restricted.Select(g => g.TeamId).Distinct().ToList();
+        var members = await _db.TeamMembers
+            .Find(m => memberTeamIds.Contains(m.TeamId) && m.UserId == userId)
+            .ToListAsync(ct);
+        var labelsByTeam = members.ToDictionary(m => m.TeamId, m => (IReadOnlyCollection<string>)(m.Labels ?? new List<string>()));
+
+        var invisible = new List<string>();
+        foreach (var g in restricted)
+        {
+            roles.TryGetValue(g.TeamId, out var spaceRole);
+            labelsByTeam.TryGetValue(g.TeamId, out var labels);
+            if (WebPageGroupAccess.ResolveGroupRole(spaceRole, g, userId, labels) == null)
+                invisible.Add(g.Id);
+        }
+        return invisible;
     }
 
     // ─────────────────────────────────────────────
@@ -365,7 +413,16 @@ public class HostedSiteService : IHostedSiteService
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
         var fb = Builders<HostedSite>.Filter;
         var filter = fb.And(fb.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds));
-        return await _db.HostedSites.Find(filter).FirstOrDefaultAsync(ct);
+        var site = await _db.HostedSites.Find(filter).FirstOrDefaultAsync(ct);
+        if (site == null) return null;
+
+        // 受限分组隔离：站点挂在我无权访问的受限分组下时，直查单站点同样不可见
+        if (site.OwnerUserId != userId && !string.IsNullOrWhiteSpace(site.GroupId))
+        {
+            var role = await ResolveSiteRoleAsync(site, userId, ct);
+            if (role == null) return null;
+        }
+        return site;
     }
 
     public async Task<(List<HostedSite> Items, long Total)> ListAsync(
@@ -376,13 +433,35 @@ public class HostedSiteService : IHostedSiteService
         var fb = Builders<HostedSite>.Filter;
         FilterDefinition<HostedSite> filter;
 
-        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase))
         {
-            // 团队作用域：必须是我所在的团队，且站点已分享到该团队
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-            if (!myTeamIds.Contains(teamId))
-                return (new List<HostedSite>(), 0);
-            filter = fb.AnyEq(x => x.SharedTeamIds, teamId);
+            List<string> scopeTeamIds;
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                // 团队作用域：必须是我所在的团队，且站点已分享到该团队
+                if (!myTeamIds.Contains(teamId))
+                    return (new List<HostedSite>(), 0);
+                filter = fb.AnyEq(x => x.SharedTeamIds, teamId);
+                scopeTeamIds = new List<string> { teamId };
+            }
+            else
+            {
+                // 团队聚合视图：不传 teamId = 我加入的所有团队的共享站点（知识库团队空间消费）
+                if (myTeamIds.Count == 0)
+                    return (new List<HostedSite>(), 0);
+                filter = fb.AnyIn(x => x.SharedTeamIds, myTeamIds);
+                scopeTeamIds = myTeamIds;
+            }
+
+            // 受限分组隔离：挂在「对我不可见的受限分组」下的站点不进列表（我自己创建的除外）
+            var invisibleGroupIds = await GetInvisibleGroupIdsAsync(userId, scopeTeamIds, ct);
+            if (invisibleGroupIds.Count > 0)
+            {
+                filter &= fb.Or(
+                    fb.Eq(x => x.OwnerUserId, userId),
+                    fb.Not(fb.In(x => x.GroupId, invisibleGroupIds.Cast<string?>())));
+            }
         }
         else
         {
@@ -596,6 +675,85 @@ public class HostedSiteService : IHostedSiteService
         return site;
     }
 
+    public async Task<HostedSite> CopyToTeamAsync(string siteId, string userId, string teamId, string? groupId, CancellationToken ct)
+    {
+        // 只能复制自己拥有的站点（「复用个人空间的网页」是所有权动作）
+        var source = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        if (source == null)
+            throw new KeyNotFoundException("站点不存在或无权限");
+
+        // 目标团队必须有网页托管编辑权限（与 SetSharedTeamsAsync 同款门控，viewer 不可投放）
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        if (!(roles.TryGetValue(teamId, out var role)
+              && (role == WebHostingRoles.Owner || role == WebHostingRoles.Editor)))
+            throw new UnauthorizedAccessException("无权将网页复制到该团队：你在该团队是只读或非成员角色");
+
+        // 分组归属（可选）：必须是目标团队下的分组，防止跨团队挂靠
+        if (!string.IsNullOrWhiteSpace(groupId))
+        {
+            var group = await _db.WebPageGroups.Find(g => g.Id == groupId && g.TeamId == teamId).FirstOrDefaultAsync(ct);
+            if (group == null)
+                throw new KeyNotFoundException("目标分组不存在或不属于该团队");
+        }
+
+        // 物理复制 COS 文件：副本与原件彻底独立（删除/重传互不影响），
+        // 与 SaveSharedSiteAsync 的「引用复用」刻意不同 —— 团队副本的规则与团队内新建站点一致。
+        var newSiteId = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
+        var newFiles = new List<HostedSiteFile>();
+        long totalSize = 0;
+        foreach (var f in source.Files)
+        {
+            var bytes = await _storage.TryDownloadBytesAsync(f.CosKey, ct);
+            if (bytes == null)
+            {
+                _logger.LogWarning("复制站点 {SiteId} 时源文件缺失，跳过: {CosKey}", siteId, f.CosKey);
+                continue;
+            }
+            var newKey = _storage.BuildSiteKey(newSiteId, f.Path);
+            await _storage.UploadToKeyAsync(newKey, bytes, f.MimeType, CancellationToken.None, SiteCacheControl);
+            newFiles.Add(new HostedSiteFile { Path = f.Path, CosKey = newKey, Size = bytes.Length, MimeType = f.MimeType });
+            totalSize += bytes.Length;
+        }
+        if (newFiles.Count == 0)
+            throw new InvalidOperationException("源站点文件已不可读，无法复制");
+        if (!newFiles.Any(f => string.Equals(f.Path, source.EntryFile, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("源站点入口文件缺失，无法复制");
+
+        var copy = new HostedSite
+        {
+            Id = newSiteId,
+            Title = source.Title,
+            Description = source.Description,
+            SourceType = "team-copy",
+            SourceRef = source.Id,
+            CosPrefix = $"web-hosting/sites/{newSiteId}/",
+            EntryFile = source.EntryFile,
+            SiteUrl = AppendVersion(_storage.BuildUrlForKey(_storage.BuildSiteKey(newSiteId, source.EntryFile)), now),
+            Files = newFiles,
+            TotalSize = totalSize,
+            Tags = source.Tags.ToList(),
+            CoverImageUrl = source.CoverImageUrl,
+            WrappedAssetType = source.WrappedAssetType,
+            OwnerUserId = userId,
+            SharedTeamIds = new List<string> { teamId },
+            GroupId = string.IsNullOrWhiteSpace(groupId) ? null : groupId,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ContentVersion = now,
+            SlideNavCompatVersion = source.SlideNavCompatVersion,
+        };
+
+        await _db.HostedSites.InsertOneAsync(copy, cancellationToken: ct);
+        await _teamActivity.LogForTeamsAsync(
+            new List<string> { teamId }, TeamAppKey.WebHosting, userId,
+            TeamActivityAction.SiteShared, "site", copy.Id, copy.Title, ct);
+
+        _logger.LogInformation("用户 {UserId} 将站点 {SourceId} 复制进团队 {TeamId} 为新站点 {NewId}（{FileCount} 个文件, {TotalSize} bytes）",
+            userId, siteId, teamId, newSiteId, newFiles.Count, totalSize);
+        return copy;
+    }
+
     // ─────────────────────────────────────────────
     // 可见性
     // ─────────────────────────────────────────────
@@ -653,7 +811,8 @@ public class HostedSiteService : IHostedSiteService
         CancellationToken ct = default,
         string purpose = "share",
         bool forceNew = false,
-        string visibility = "owner-only")
+        string visibility = "owner-only",
+        bool allocateShortLink = false)
     {
         // 规范化 visibility 入参（白名单），缺省回退 owner-only
         var normalizedVisibility = visibility?.ToLowerInvariant() switch
@@ -823,6 +982,10 @@ public class HostedSiteService : IHostedSiteService
                     Builders<WebPageShareLink>.Update.Combine(ups),
                     cancellationToken: ct);
             }
+            // 复用旧分享时若用户本次显式要数字短链、而旧链还没分配过 seq，则补分配
+            // （AllocateAsync 幂等：已有则返回原 seq，不会重复占号）。
+            if (allocateShortLink && reuse.Purpose != "visit" && reuse.ShortSeq <= 0)
+                await TryAllocateShortSeqAsync(reuse, ct);
             _logger.LogInformation("用户 {UserId} 复用站点分享 {ShareId}, type={Type}",
                 userId, reuse.Id, reuse.ShareType);
             return reuse;
@@ -861,31 +1024,62 @@ public class HostedSiteService : IHostedSiteService
 
         await _db.WebPageShareLinks.InsertOneAsync(share, cancellationToken: ct);
 
-        // visit 便捷链只通过不可猜测的 /s/wp/{token} 暴露，绝不分配数字短链 /s/{seq}：
-        // /api/short-links/{seq} 匿名且可枚举，若给 visit 链分配 seq，攻击者枚举数字即可
-        // 访问到从未被主动分享的私有站点。仅 share 用户主动分享才分配数字短链。
-        if (effPurpose != "visit")
-        {
-            // 分配统一短链 Seq（/s/{seq}）；失败不影响主流程（用户仍可用 /s/wp/{token}）
-            try
-            {
-                var seq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.WebPage, share.Token, ct);
-                await _db.WebPageShareLinks.UpdateOneAsync(
-                    x => x.Id == share.Id,
-                    Builders<WebPageShareLink>.Update.Set(x => x.ShortSeq, seq),
-                    cancellationToken: ct);
-                share.ShortSeq = seq;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "为分享 {ShareId} 分配短链失败，将仅提供旧链接", share.Id);
-            }
-        }
+        // 数字短链 /s/{seq} 改为「按需懒分配」（2026-06-11）：用户意图里没有短链就不强制
+        // 生成，否则 short_links 集合被每条分享污染、管理员页面冒出几百条用户从没要过的短链。
+        // 默认创建的分享 ShortSeq=0，对外只用不可枚举的 /s/wp/{token} 长链即可独立访问
+        // （ViewShareAsync 直接按 token 查 WebPageShareLink，不依赖 short_links）。
+        // 仅当调用方显式 allocateShortLink=true（用户在分享面板主动选「数字短链」或事后点
+        // 「生成数字短链」）才分配 seq。
+        // visit 便捷链恒不分配：/api/short-links/{seq} 匿名且可枚举，给 visit 链分配 seq
+        // 会让攻击者枚举数字即可访问从未被主动分享的私有站点。
+        if (effPurpose != "visit" && allocateShortLink)
+            await TryAllocateShortSeqAsync(share, ct);
 
         _logger.LogInformation("用户 {UserId} 创建站点分享 {ShareId}, type={Type}, shortSeq={Seq}",
             userId, share.Id, share.ShareType, share.ShortSeq);
 
         return share;
+    }
+
+    /// <summary>
+    /// 为指定分享按需分配统一短链 Seq（/s/{seq}），并回写 ShortSeq。
+    /// AllocateAsync 幂等（同一 token 已有则返回原 seq）；失败不抛出，只记日志——
+    /// 因为分享主路径不依赖 short_links，用户仍可用 /s/wp/{token} 长链访问。
+    /// </summary>
+    private async Task TryAllocateShortSeqAsync(WebPageShareLink share, CancellationToken ct)
+    {
+        try
+        {
+            var seq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.WebPage, share.Token, ct);
+            await _db.WebPageShareLinks.UpdateOneAsync(
+                x => x.Id == share.Id,
+                Builders<WebPageShareLink>.Update.Set(x => x.ShortSeq, seq),
+                cancellationToken: ct);
+            share.ShortSeq = seq;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "为分享 {ShareId} 分配短链失败，将仅提供长链 /s/wp/{Token}", share.Id, share.Token);
+        }
+    }
+
+    /// <summary>
+    /// 事后为某条已存在的分享分配数字短链（用户在分享面板点「生成数字短链」时调用）。
+    /// 返回分配后的 ShortSeq（&gt;0 成功）；找不到 / 无权 / visit 链返回 0 或抛权限异常。
+    /// </summary>
+    public async Task<long> EnsureShortLinkAsync(string userId, string shareId, CancellationToken ct = default)
+    {
+        var share = await _db.WebPageShareLinks.Find(x => x.Id == shareId).FirstOrDefaultAsync(ct);
+        if (share == null)
+            throw new KeyNotFoundException("分享不存在");
+        if (share.CreatedBy != userId)
+            throw new UnauthorizedAccessException("只能为自己创建的分享生成短链");
+        if (share.Purpose == "visit")
+            throw new InvalidOperationException("访问便捷链不支持数字短链");
+        if (share.ShortSeq > 0)
+            return share.ShortSeq; // 已有则幂等返回
+        await TryAllocateShortSeqAsync(share, ct);
+        return share.ShortSeq;
     }
 
     public async Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct)
@@ -1006,14 +1200,42 @@ public class HostedSiteService : IHostedSiteService
     }
 
     /// <summary>
+    /// 团队内部人判定：登录用户对分享指向的全部站点都具备成员关系
+    /// （分享创建者本人 / 站点创建者 / 站点已共享到我所在的团队）。
+    /// 合集分享按「全部站点」判定，防止混入他团队站点时被部分成员免密带过。
+    /// </summary>
+    private async Task<bool> IsTeamInsiderForShareAsync(WebPageShareLink share, string viewerUserId, CancellationToken ct)
+    {
+        if (share.CreatedBy == viewerUserId) return true;
+
+        var targetIds = new List<string>(share.SiteIds ?? new List<string>());
+        if (share.SiteId != null && !targetIds.Contains(share.SiteId))
+            targetIds.Insert(0, share.SiteId);
+        if (targetIds.Count == 0) return false;
+
+        var sites = await _db.HostedSites.Find(x => targetIds.Contains(x.Id)).ToListAsync(ct);
+        if (sites.Count == 0) return false;
+
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(viewerUserId, ct);
+        return sites.All(s =>
+            s.OwnerUserId == viewerUserId
+            || (s.SharedTeamIds ?? new List<string>()).Any(myTeamIds.Contains));
+    }
+
+    /// <summary>
     /// 分享访问统一关卡：滑动窗口速率限制 + Hash 优先校验 + 持久化窗口状态。
     /// 返回 null 表示通过；返回 tuple 时调用方应直接 short-circuit 用对应 HttpStatus 回客户端。
     /// 不绑定 IP：容器反代下 IP 不可靠，NAT 局域网下会一锅端 —— 改按 shareLink 全局限速。
+    /// 团队成员免密：登录用户若是分享目标站点的团队内部人（IsTeamInsiderForShareAsync），
+    /// 视同内部访问直接放行密码门控；外部访客（未登录 / 非成员）仍需密码。
     /// </summary>
     private async Task<(string Error, int HttpStatus, int? RetryAfter)?> EnforceShareAccessAsync(
-        WebPageShareLink share, string? password, CancellationToken ct)
+        WebPageShareLink share, string? password, string? viewerUserId, CancellationToken ct)
     {
         if (share.AccessLevel != "password") return null;
+
+        if (!string.IsNullOrEmpty(viewerUserId) && await IsTeamInsiderForShareAsync(share, viewerUserId, ct))
+            return null;
 
         var rl = _sharePwd.CheckRateLimit(share.RecentAttempts);
         if (!rl.Allowed)
@@ -1083,7 +1305,7 @@ public class HostedSiteService : IHostedSiteService
             return new ShareViewResult { Error = vg.Error, HttpStatus = vg.HttpStatus, ErrorCode = vg.ErrorCode };
         // "public" + 通过 visibility 校验后：下面 password gate 仍然生效
 
-        var gate = await EnforceShareAccessAsync(share, password, ct);
+        var gate = await EnforceShareAccessAsync(share, password, viewerUserId, ct);
         if (gate is { } g)
             return new ShareViewResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter, ErrorCode = g.HttpStatus == 429 ? "rate_limited" : "wrong_password" };
 
@@ -1931,7 +2153,7 @@ public class HostedSiteService : IHostedSiteService
         if (visGate is { } vg)
             return new SaveSharedSiteResult { Error = vg.Error, HttpStatus = vg.HttpStatus };
 
-        var gate = await EnforceShareAccessAsync(share, password, ct);
+        var gate = await EnforceShareAccessAsync(share, password, userId, ct);
         if (gate is { } g)
             return new SaveSharedSiteResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter };
 
@@ -2611,7 +2833,7 @@ public class HostedSiteService : IHostedSiteService
 
         // 密码门控：复用 ViewShareAsync 同款 EnforceShareAccessAsync —— 它内置滑动窗口速率限制
         // （10 次/分钟）+ 持久化 RecentAttempts + 恒时比对。直接手写比对会绕过防爆破（Codex P1）。
-        var gate = await EnforceShareAccessAsync(share, password, ct);
+        var gate = await EnforceShareAccessAsync(share, password, viewerUserId, ct);
         if (gate is { } g)
         {
             var code = g.HttpStatus == 429 ? "rate_limited" : "UNAUTHORIZED";

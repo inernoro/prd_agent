@@ -142,6 +142,14 @@ public static class Product
         Category = "Analysis"
     )]
     public const string TraceRelationAnalysis = "product-agent.trace-relation-analysis::chat";
+
+    [AppCallerMetadata(
+        "产品管理-AI助手",
+        "工作台右侧抽屉 AI 助手问答：以该产品全量数据 + 知识库文档为上下文，回答需求/缺陷/矩阵/人员等分析问题（SSE 流式）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string WorkAssistant = "product-agent.work-assistant::chat";
 }
 
 /// <summary>
@@ -1312,6 +1320,36 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.milestone-suggest::chat";
     }
+
+    public static class Assistant
+    {
+        [AppCallerMetadata(
+            "项目管理-AI助手",
+            "首页工作台 AI 助手：以当前用户全部相关项目(目标/里程碑/任务/风险)为上下文，跨项目问答分析，并可通过对话创建项目/目标/里程碑/任务(SSE 流式)",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string Chat = "pm-agent.assistant::chat";
+    }
+}
+
+/// <summary>
+/// 识途 Agent — 新人文化与制度问答
+/// </summary>
+public static class ShituAgent
+{
+    public const string AppName = "识途 Agent";
+
+    public static class Qa
+    {
+        [AppCallerMetadata(
+            "识途-知识库问答",
+            "基于分类知识库（企业文化/事故教训/规章制度/奖赏表彰）的严格 RAG 多轮问答",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Chat = "shitu-agent.qa::chat";
+    }
 }
 
 /// <summary>
@@ -1391,6 +1429,33 @@ public static class PageAgent
         Category = "Workflow"
     )]
     public const string Generate = "page-agent.generate::chat";
+}
+
+/// <summary>
+/// 前端搭档智能体 — API 接入、组件生成、前端报错诊断和视觉样式建议
+/// </summary>
+public static class FrontEndAgent
+{
+    public const string AppName = "前端搭档智能体";
+
+    public static class Assistant
+    {
+        [AppCallerMetadata(
+            "前端搭档-流式助手",
+            "面向后端同事生成前端类型、service、组件代码、报错修复方案和验收清单",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Code"
+        )]
+        public const string Chat = "front-end-agent.assistant::chat";
+
+        [AppCallerMetadata(
+            "前端搭档-截图视觉诊断",
+            "根据截图识别布局/CSS 问题并输出修复方案",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Code"
+        )]
+        public const string VisualDiagnosis = "front-end-agent.assistant::vision";
+    }
 }
 
 /// <summary>
