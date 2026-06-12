@@ -409,20 +409,117 @@ public class WebPagesController : ControllerBase
                && (r == WebHostingRoles.Owner || r == WebHostingRoles.Editor);
     }
 
-    /// <summary>列出团队空间的分组（专题 + 日常分类，团队成员可见）</summary>
+    /// <summary>我在该团队的空间级网页托管角色（null = 非成员）</summary>
+    private async Task<string?> GetMySpaceRoleAsync(string userId, string teamId)
+    {
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
+        return roles.TryGetValue(teamId, out var r) ? r : null;
+    }
+
+    /// <summary>我在该团队的角色标签（非成员 = 空列表）</summary>
+    private async Task<List<string>> GetMyLabelsAsync(string userId, string teamId)
+    {
+        var member = await _db.TeamMembers.Find(m => m.TeamId == teamId && m.UserId == userId).FirstOrDefaultAsync();
+        return member?.Labels ?? new List<string>();
+    }
+
+    /// <summary>解析我对某分组的有效角色（受限分组按授权规则裁剪；null = 不可见）</summary>
+    private async Task<string?> ResolveMyGroupRoleAsync(string userId, WebPageGroup group)
+    {
+        var spaceRole = await GetMySpaceRoleAsync(userId, group.TeamId);
+        if (spaceRole == null) return null;
+        if (!WebPageGroupAccess.IsRestricted(group)) return spaceRole;
+        var labels = await GetMyLabelsAsync(userId, group.TeamId);
+        return WebPageGroupAccess.ResolveGroupRole(spaceRole, group, userId, labels);
+    }
+
+    /// <summary>列出团队空间的分组（专题 + 日常分类；受限分组仅对授权成员与空间 owner 可见）</summary>
     [HttpGet("groups")]
     public async Task<IActionResult> ListGroups([FromQuery] string teamId)
     {
         var userId = GetUserId();
         if (string.IsNullOrWhiteSpace(teamId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "teamId 不能为空"));
-        if (!await _teams.IsMemberAsync(teamId, userId))
+        var spaceRole = await GetMySpaceRoleAsync(userId, teamId);
+        if (spaceRole == null)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你不是该团队成员"));
 
         var groups = await _db.WebPageGroups.Find(g => g.TeamId == teamId)
             .Sort(Builders<WebPageGroup>.Sort.Ascending(g => g.SortOrder).Ascending(g => g.CreatedAt))
             .ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { groups }));
+
+        var labels = await GetMyLabelsAsync(userId, teamId);
+        var visible = new List<object>();
+        foreach (var g in groups)
+        {
+            var myGroupRole = WebPageGroupAccess.ResolveGroupRole(spaceRole, g, userId, labels);
+            if (myGroupRole == null) continue; // 受限分组未授权：完全不可见
+            visible.Add(new
+            {
+                g.Id,
+                g.TeamId,
+                g.Kind,
+                g.Name,
+                g.SortOrder,
+                g.CreatedBy,
+                g.Visibility,
+                // 授权规则仅回给能管理分组权限的空间 owner（避免向普通成员泄露授权名单）
+                AccessRules = spaceRole == WebHostingRoles.Owner ? g.AccessRules : null,
+                g.CreatedAt,
+                g.UpdatedAt,
+                MyGroupRole = myGroupRole,
+            });
+        }
+        return Ok(ApiResponse<object>.Ok(new { groups = visible }));
+    }
+
+    /// <summary>
+    /// 设置分组的可见性与授权规则（仅空间 owner 可调）。
+    /// visibility=inherit 时规则被清空；restricted 时按 rules 授权（user 按成员、label 按角色标签）。
+    /// </summary>
+    [HttpPut("groups/{groupId}/access")]
+    public async Task<IActionResult> UpdateGroupAccess(string groupId, [FromBody] UpdateGroupAccessRequest req)
+    {
+        var userId = GetUserId();
+        var group = await _db.WebPageGroups.Find(g => g.Id == groupId).FirstOrDefaultAsync();
+        if (group == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分组不存在"));
+        var spaceRole = await GetMySpaceRoleAsync(userId, group.TeamId);
+        if (spaceRole != WebHostingRoles.Owner)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅空间所有者可设置分组权限"));
+
+        var visibility = req.Visibility?.Trim().ToLowerInvariant();
+        if (visibility != WebPageGroupVisibility.Inherit && visibility != WebPageGroupVisibility.Restricted)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "visibility 必须是 inherit 或 restricted"));
+
+        var rules = new List<WebPageGroupAccessRule>();
+        if (visibility == WebPageGroupVisibility.Restricted)
+        {
+            foreach (var r in req.Rules ?? new List<GroupAccessRuleInput>())
+            {
+                var subjectType = r.SubjectType?.Trim().ToLowerInvariant();
+                var subjectId = r.SubjectId?.Trim();
+                var role = r.Role?.Trim().ToLowerInvariant();
+                if (subjectType != WebPageGroupSubjectType.User && subjectType != WebPageGroupSubjectType.Label)
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "subjectType 必须是 user 或 label"));
+                if (string.IsNullOrWhiteSpace(subjectId))
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "subjectId 不能为空"));
+                if (role != WebHostingRoles.Viewer && role != WebHostingRoles.Editor)
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分组角色只能是 viewer 或 editor"));
+                rules.Add(new WebPageGroupAccessRule { SubjectType = subjectType, SubjectId = subjectId, Role = role });
+            }
+            if (rules.Count > 100)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "授权规则最多 100 条"));
+        }
+
+        await _db.WebPageGroups.UpdateOneAsync(
+            g => g.Id == groupId,
+            Builders<WebPageGroup>.Update
+                .Set(g => g.Visibility, visibility)
+                .Set(g => g.AccessRules, rules)
+                .Set(g => g.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.WebPageGroups.Find(g => g.Id == groupId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
     }
 
     /// <summary>创建团队空间分组（可先建空分组再加内容；需团队内网页托管编辑权）</summary>
@@ -467,6 +564,14 @@ public class WebPagesController : ControllerBase
         if (!await CanEditInTeamAsync(userId, group.TeamId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该团队是只读或非成员角色，无法修改分组"));
 
+        // 受限分组：还需分组级编辑权（空间 editor 未被授权时同样不可改）
+        if (WebPageGroupAccess.IsRestricted(group))
+        {
+            var myGroupRole = await ResolveMyGroupRoleAsync(userId, group);
+            if (myGroupRole != WebHostingRoles.Owner && myGroupRole != WebHostingRoles.Editor)
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该受限分组没有编辑权"));
+        }
+
         var update = Builders<WebPageGroup>.Update.Set(g => g.UpdatedAt, DateTime.UtcNow);
         var name = req.Name?.Trim();
         if (!string.IsNullOrWhiteSpace(name)) update = update.Set(g => g.Name, name);
@@ -486,6 +591,13 @@ public class WebPagesController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分组不存在"));
         if (!await CanEditInTeamAsync(userId, group.TeamId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该团队是只读或非成员角色，无法删除分组"));
+        // 受限分组：还需分组级编辑权
+        if (WebPageGroupAccess.IsRestricted(group))
+        {
+            var myGroupRole = await ResolveMyGroupRoleAsync(userId, group);
+            if (myGroupRole != WebHostingRoles.Owner && myGroupRole != WebHostingRoles.Editor)
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该受限分组没有编辑权"));
+        }
 
         await _db.HostedSites.UpdateManyAsync(
             s => s.GroupId == groupId,
@@ -514,6 +626,13 @@ public class WebPagesController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点未共享到该分组所属团队"));
             if (site.OwnerUserId != userId && !await CanEditInTeamAsync(userId, group.TeamId))
                 return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该团队是只读角色，无法调整分组"));
+            // 受限分组：任何人（含站点创建者）往里放内容都需分组级编辑权
+            if (WebPageGroupAccess.IsRestricted(group))
+            {
+                var myGroupRole = await ResolveMyGroupRoleAsync(userId, group);
+                if (myGroupRole != WebHostingRoles.Owner && myGroupRole != WebHostingRoles.Editor)
+                    return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你在该受限分组没有编辑权，无法将网页移入"));
+            }
             targetGroupId = group.Id;
         }
         else
@@ -1105,6 +1224,27 @@ public class UpdateWebPageGroupRequest
 {
     public string? Name { get; set; }
     public int? SortOrder { get; set; }
+}
+
+public class UpdateGroupAccessRequest
+{
+    /// <summary>inherit | restricted</summary>
+    public string? Visibility { get; set; }
+
+    /// <summary>visibility=restricted 时的授权规则；inherit 时忽略</summary>
+    public List<GroupAccessRuleInput>? Rules { get; set; }
+}
+
+public class GroupAccessRuleInput
+{
+    /// <summary>user | label</summary>
+    public string? SubjectType { get; set; }
+
+    /// <summary>user 时为成员 UserId；label 时为角色标签文本</summary>
+    public string? SubjectId { get; set; }
+
+    /// <summary>viewer | editor</summary>
+    public string? Role { get; set; }
 }
 
 public class SetSiteGroupRequest

@@ -14,6 +14,7 @@ import {
   listTeamActivity,
   removeTeamMember,
   searchTeamUsers,
+  updateMemberLabels,
   updateMemberWebHostingRole,
   updateTeamMemberRole,
   type Team,
@@ -241,6 +242,32 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
     else alert(res.error?.message ?? '调整失败');
   };
 
+  // ── 角色标签（仅作授权分组用，本身不产生权限）──
+  const [labelInput, setLabelInput] = useState<{ userId: string; value: string } | null>(null);
+
+  const saveLabels = async (userId: string, labels: string[]) => {
+    if (!selectedId) return;
+    const res = await updateMemberLabels(selectedId, userId, labels);
+    if (res.success) await loadDetail(selectedId);
+    else alert(res.error?.message ?? '标签更新失败');
+  };
+
+  const handleAddLabel = async (m: TeamMember) => {
+    const value = labelInput?.value.trim();
+    setLabelInput(null);
+    if (!value) return;
+    const current = m.labels ?? [];
+    if (current.includes(value)) return;
+    await saveLabels(m.userId, [...current, value]);
+  };
+
+  const handleRemoveLabel = async (m: TeamMember, label: string) => {
+    await saveLabels(m.userId, (m.labels ?? []).filter((l) => l !== label));
+  };
+
+  // 团队内已有标签字典（union），加标签时可快速复用
+  const teamLabelDict = [...new Set(members.flatMap((m) => m.labels ?? []))];
+
   const handleDeleteTeam = async () => {
     if (!selectedId || !team) return;
     if (!confirm(
@@ -405,6 +432,56 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                               {m.userName ?? m.userId}
                               {m.userId === team.ownerUserId && (
                                 <span className="ml-1.5 text-[10px] px-1 py-px rounded" style={{ background: 'rgba(212,175,55,0.15)', color: 'var(--accent-gold)' }}>创建者</span>
+                              )}
+                            </div>
+                            {/* 角色标签：如「前端组」「测试组」，供分组权限按标签批量授权 */}
+                            <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                              {(m.labels ?? []).map((label) => (
+                                <span
+                                  key={label}
+                                  className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-px rounded-full"
+                                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+                                >
+                                  {label}
+                                  {isAdmin && (
+                                    <button type="button" title="移除标签" onClick={() => void handleRemoveLabel(m, label)} style={{ color: 'var(--text-muted)' }}>
+                                      <X size={9} />
+                                    </button>
+                                  )}
+                                </span>
+                              ))}
+                              {isAdmin && (
+                                labelInput?.userId === m.userId ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <input
+                                      autoFocus
+                                      list={`team-label-dict-${team.id}`}
+                                      value={labelInput.value}
+                                      onChange={(e) => setLabelInput({ userId: m.userId, value: e.target.value })}
+                                      onBlur={() => void handleAddLabel(m)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') void handleAddLabel(m);
+                                        if (e.key === 'Escape') setLabelInput(null);
+                                      }}
+                                      placeholder="如：前端组"
+                                      className="h-5 w-[100px] px-1.5 rounded-full text-[10px] outline-none"
+                                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)' }}
+                                    />
+                                    <datalist id={`team-label-dict-${team.id}`}>
+                                      {teamLabelDict.map((l) => <option key={l} value={l} />)}
+                                    </datalist>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    title="添加角色标签（如「前端组」），分组权限可按标签批量授权"
+                                    className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-px rounded-full"
+                                    style={{ border: '1px dashed rgba(255,255,255,0.2)', color: 'var(--text-muted)' }}
+                                    onClick={() => setLabelInput({ userId: m.userId, value: '' })}
+                                  >
+                                    <Plus size={9} /> 标签
+                                  </button>
+                                )
                               )}
                             </div>
                           </div>

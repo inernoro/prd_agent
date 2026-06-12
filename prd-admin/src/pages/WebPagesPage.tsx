@@ -41,6 +41,7 @@ import {
   canShareInWebHosting,
 } from '@/lib/webHostingRole';
 import { SpaceBar, TeamSpaceHeader, type Space } from '@/components/team/SpaceBar';
+import { GroupAccessDialog } from '@/components/team/GroupAccessDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
@@ -658,6 +659,9 @@ export default function WebPagesPage() {
     }
   };
 
+  // 分组权限设置弹窗（仅空间 owner 入口可见）
+  const [accessGroup, setAccessGroup] = useState<WebPageGroup | null>(null);
+
   const handleRenameGroup = async (g: WebPageGroup, name: string) => {
     const res = await updateSiteGroup(g.id, { name });
     if (res.success) {
@@ -1007,6 +1011,8 @@ export default function WebPagesPage() {
               onCreate={handleCreateGroup}
               onDelete={handleDeleteGroup}
               onRename={handleRenameGroup}
+              canManageAccess={myWebHostingRole === 'owner'}
+              onOpenAccess={setAccessGroup}
             />
           ) : spaceFolders.length > 0 ? (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
@@ -1317,6 +1323,15 @@ export default function WebPagesPage() {
           onCopied={() => { void load(); }}
         />
       )}
+
+      {accessGroup && currentSpace.kind === 'team' && (
+        <GroupAccessDialog
+          group={accessGroup}
+          teamId={currentSpace.teamId}
+          onClose={() => setAccessGroup(null)}
+          onSaved={() => { void loadGroups(); void load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -1331,6 +1346,8 @@ function TeamGroupsBar({
   onCreate,
   onDelete,
   onRename,
+  canManageAccess,
+  onOpenAccess,
 }: {
   groups: WebPageGroup[];
   activeGroupId: string | null;
@@ -1339,6 +1356,8 @@ function TeamGroupsBar({
   onCreate: (kind: 'topic' | 'daily', name: string) => void | Promise<void>;
   onDelete: (group: WebPageGroup) => void | Promise<void>;
   onRename: (group: WebPageGroup, name: string) => void | Promise<void>;
+  canManageAccess: boolean;
+  onOpenAccess: (group: WebPageGroup) => void;
 }) {
   const [creating, setCreating] = useState<'topic' | 'daily' | null>(null);
   const [name, setName] = useState('');
@@ -1403,6 +1422,17 @@ function TeamGroupsBar({
             : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
         >
           <Folder size={11} /> {g.name}
+          {g.visibility === 'restricted' && (
+            <Lock size={9} className="opacity-70" aria-label="受限分组" />
+          )}
+          {on && canManageAccess && (
+            <Settings2
+              size={11}
+              className="ml-0.5 opacity-70 hover:opacity-100"
+              aria-label="访问权限"
+              onClick={(e) => { e.stopPropagation(); onOpenAccess(g); }}
+            />
+          )}
           {on && canEdit && (
             <X
               size={11}

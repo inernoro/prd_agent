@@ -1099,6 +1099,7 @@ export const api = {
     setTeams: (id: string) => `/api/web-pages/${id}/teams`,
     groups: () => '/api/web-pages/groups',
     groupById: (groupId: string) => `/api/web-pages/groups/${groupId}`,
+    groupAccess: (groupId: string) => `/api/web-pages/groups/${groupId}/access`,
     setGroup: (id: string) => `/api/web-pages/${id}/group`,
     copyToTeam: (id: string) => `/api/web-pages/${id}/copy-to-team`,
     // 波1 访客痕迹：记录一次访问 + owner 查本页访客名单。
@@ -1278,6 +1279,8 @@ export const api = {
     member: (id: string, userId: string) => `/api/teams/${id}/members/${userId}`,
     memberWebHostingRole: (id: string, userId: string) =>
       `/api/teams/${id}/members/${userId}/web-hosting-role`,
+    memberLabels: (id: string, userId: string) =>
+      `/api/teams/${id}/members/${userId}/labels`,
     inviteCode: (id: string) => `/api/teams/${id}/invite-code`,
     join: () => '/api/teams/join',
     activity: (id: string) => `/api/teams/${id}/activity`,
