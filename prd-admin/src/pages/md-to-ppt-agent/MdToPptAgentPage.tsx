@@ -1314,6 +1314,29 @@ export function MdToPptAgentPage() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ─── 刷新中断对账（2026-06-12 用户实测「一直在规划大纲」）：大纲是客户端 SSE、
+  //     没有服务端 run，刷新即流断——恢复的消息里残留的进行中气泡没人翻转，
+  //     spinner 永远转。挂载时一次性把无主进行中气泡翻成可重试的中断提示；
+  //     有 activeRunId 的 generating/patching 由上面的 run 对账 effect 处理。
+  useEffect(() => {
+    const hasRun = !!savedSession?.activeRunId;
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.role !== 'assistant') return m;
+        if (m.phase === 'outline')
+          return {
+            ...m,
+            phase: 'error' as const,
+            content: '大纲规划被页面刷新打断了。重新发送一句需求即可继续——右侧的大纲草稿（如已生成）不会丢。',
+          };
+        if ((m.phase === 'generating' || m.phase === 'patching') && !hasRun)
+          return { ...m, phase: 'error' as const, content: '生成被页面刷新打断，请重新发起。' };
+        return m;
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ─── Session persistence: save on state change
   useEffect(() => {
     saveSession({ messages, activeRunId, theme, templateId, outlineDraft });
