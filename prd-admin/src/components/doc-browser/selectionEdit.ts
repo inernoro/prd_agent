@@ -2,17 +2,22 @@
 //
 // 为什么独立成纯函数模块：
 // 1. 写回是破坏性操作 —— 定位必须可单测（vitest），不能埋在组件里靠人肉回归
-// 2. useContentSelection 的 offset 是"提示"而非保证（blockquote/标题/列表场景可能为 -1
-//    或漂移），替换前必须重新校验 offset 与原文一致，校验不过走 indexOf + 上下文消歧，
-//    歧义无法消除时返回 null（宁可禁用替换按钮，不可替换错位置）
+// 2. useContentSelection 的 offset/contextBefore 都来自「全文第一处 indexOf」而非用户真实
+//    的 DOM 选区（Bugbot High 2026-06-12）：同样的文字出现多次时，用户选第二处、offset 却
+//    指向第一处且"校验恰好通过"。所以多处出现时这两个信号一律不可信，只认 DOM 序号
+//    （选区前同文出现次数），序号对不上就返回 null（宁可禁用替换，不可替换错位置）
 
 export interface SelectionAnchor {
   selectedText: string;
-  /** useContentSelection 解析的偏移提示；-1 表示未能定位 */
+  /** useContentSelection 解析的偏移提示；多处出现时不可信（恒指向第一处），仅唯一出现时是冗余信息 */
   startOffset: number;
   endOffset: number;
   contextBefore?: string;
   contextAfter?: string;
+  /** DOM 选区之前同文出现的次数（0-based 序号）。多处出现时唯一可信的"用户选的是第几处" */
+  domOccurrenceIndex?: number;
+  /** DOM 全文中同文出现总数。与正文统计不一致（评论气泡等副本混入）时拒绝定位 */
+  domOccurrenceTotal?: number;
 }
 
 export interface ResolvedRange {
@@ -20,38 +25,44 @@ export interface ResolvedRange {
   end: number;
 }
 
+/** 非重叠地列出 needle 在 body 中的全部出现位置 */
+function findAllOccurrences(body: string, needle: string): number[] {
+  const out: number[] = [];
+  let i = body.indexOf(needle);
+  while (i >= 0) {
+    out.push(i);
+    i = body.indexOf(needle, i + needle.length);
+  }
+  return out;
+}
+
 /**
- * 在正文中定位选区。分级：offset 精确命中 → 唯一 indexOf → contextBefore 尾部消歧 → null。
- * 返回 null 表示无法安全定位（多处出现且消歧失败 / 原文已变），调用方应禁用"替换"。
+ * 在正文中定位选区。唯一出现 → 直接命中；多处出现 → 只信 DOM 序号（且要求 DOM 总数与
+ * 正文总数一致）；其余一律 null。返回 null 表示无法安全定位，调用方应禁用"替换"。
  */
 export function resolveSelectionRange(body: string, sel: SelectionAnchor): ResolvedRange | null {
   const text = sel.selectedText;
   if (!body || !text) return null;
 
-  // 1) offset 提示精确命中
-  if (
-    sel.startOffset >= 0 &&
-    sel.startOffset + text.length <= body.length &&
-    body.slice(sel.startOffset, sel.startOffset + text.length) === text
-  ) {
-    return { start: sel.startOffset, end: sel.startOffset + text.length };
+  const occurrences = findAllOccurrences(body, text);
+  if (occurrences.length === 0) return null;
+  if (occurrences.length === 1) {
+    return { start: occurrences[0], end: occurrences[0] + text.length };
   }
 
-  // 2) 唯一出现
-  const first = body.indexOf(text);
-  if (first < 0) return null;
-  const second = body.indexOf(text, first + 1);
-  if (second < 0) return { start: first, end: first + text.length };
-
-  // 3) 多处出现：用 contextBefore 尾部片段消歧
-  const ctx = (sel.contextBefore ?? '').trimEnd();
-  if (ctx) {
-    const probe = ctx.length > 30 ? ctx.slice(-30) : ctx;
-    const joint = body.indexOf(probe + text);
-    if (joint >= 0) {
-      const start = joint + probe.length;
-      return { start, end: start + text.length };
-    }
+  // 多处出现：offset 提示与 contextBefore 都源自 useContentSelection 的"第一处 indexOf"，
+  // 会把"用户选第二处"指认成第一处（Bugbot High），一律不采信。
+  // 只有 DOM 序号（捕获自真实 Range）能指认用户选的是第几处；
+  // DOM 总数 ≠ 正文总数说明 DOM 里混入了同文副本（评论气泡/浮层引用块），同样拒绝。
+  if (
+    sel.domOccurrenceIndex != null &&
+    sel.domOccurrenceTotal != null &&
+    sel.domOccurrenceTotal === occurrences.length &&
+    sel.domOccurrenceIndex >= 0 &&
+    sel.domOccurrenceIndex < occurrences.length
+  ) {
+    const start = occurrences[sel.domOccurrenceIndex];
+    return { start, end: start + text.length };
   }
   return null;
 }

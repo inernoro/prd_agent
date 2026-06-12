@@ -731,6 +731,10 @@ export interface SelectionRewriteStreamOptions {
   contextAfter?: string;
   startOffset?: number;
   endOffset?: number;
+  /** DOM 选区前同文出现次数（0-based）：同文多处出现时服务端按它截取正确的上下文窗口 */
+  occurrenceIndex?: number;
+  /** DOM 全文同文出现总数（与正文统计交叉校验） */
+  occurrenceTotal?: number;
   /** polish/concise/expand/formal/fix 或 custom */
   actionKey: string;
   /** actionKey=custom 时必填 */
@@ -771,6 +775,8 @@ export function streamSelectionRewrite(
           contextAfter: options.contextAfter,
           startOffset: options.startOffset ?? -1,
           endOffset: options.endOffset ?? -1,
+          occurrenceIndex: options.occurrenceIndex ?? -1,
+          occurrenceTotal: options.occurrenceTotal ?? -1,
           actionKey: options.actionKey,
           instruction: options.instruction,
         }),

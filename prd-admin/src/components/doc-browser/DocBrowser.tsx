@@ -1771,10 +1771,11 @@ export function DocBrowser({
     rect: { top: number; left: number; width: number; height: number };
     rects: Array<{ top: number; left: number; width: number; height: number }>;
   } | null>(null);
-  // 划词 AI 改写浮层（与 composer 同构：捕获选区快照 + rect，portal 到 body）
+  // 划词 AI 改写浮层（与 composer 同构：捕获选区快照 + rect，portal 到 body）。
+  // sel 比评论多带 domOccurrence*（DOM 序号）：同文多处出现时指认用户真正选的是第几处
   const [aiPopover, setAiPopover] = useState<{
     entryId: string;
-    sel: PendingSelection;
+    sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number };
     rect: { top: number; left: number; width: number; height: number };
     rects: Array<{ top: number; left: number; width: number; height: number }>;
     canReplace: boolean;
@@ -1782,7 +1783,7 @@ export function DocBrowser({
   // 划词配图浮层（右侧悬浮卡片内嵌视觉创作 mini 面板）
   const [imagePopover, setImagePopover] = useState<{
     entryId: string;
-    sel: PendingSelection;
+    sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number };
     rects: Array<{ top: number; left: number; width: number; height: number }>;
   } | null>(null);
   // 进入编辑模式 / 切到别的条目时强制收掉 composer 状态，避免 rect 与已经被 textarea
@@ -1899,6 +1900,9 @@ export function DocBrowser({
 
   // 捕获当前选区快照（选区文本 + 偏移 + 所有 client rect），供评论 composer 与 AI 浮层共用。
   // rects 用于打开浮层后保留正文高亮（浏览器选区会在浮层拿 focus 后被清掉）。
+  // domOccurrence*：同样的文字在正文出现多次时，useContentSelection 的 offset/contextBefore
+  // 恒指向"第一处 indexOf"而非用户真实选区（Bugbot High 2026-06-12）——唯一可信的指认是
+  // 从真实 DOM Range 数出"选区之前同文出现了几次"。在这里捕获，喂给 resolveSelectionRange。
   const captureSelectionSnapshot = useCallback(() => {
     if (!liveSelection || !trackedEntryForComments) return null;
     const r = liveSelection.rect;
@@ -1908,6 +1912,26 @@ export function DocBrowser({
     const rects = clientRects.length > 0
       ? clientRects.map((cr) => ({ top: cr.top, left: cr.left, width: cr.width, height: cr.height }))
       : [{ top: r.top, left: r.left, width: r.width, height: r.height }];
+    let domOccurrenceIndex: number | undefined;
+    let domOccurrenceTotal: number | undefined;
+    const container = contentAreaRef.current;
+    if (range && container && liveSelection.selectedText) {
+      try {
+        const pre = document.createRange();
+        pre.selectNodeContents(container);
+        pre.setEnd(range.startContainer, range.startOffset);
+        const prefixText = pre.toString();
+        const fullText = container.textContent ?? '';
+        const needle = liveSelection.selectedText;
+        const countIn = (s: string) => {
+          let i = 0; let n = 0;
+          while ((i = s.indexOf(needle, i)) >= 0) { n += 1; i += needle.length; }
+          return n;
+        };
+        domOccurrenceIndex = countIn(prefixText);
+        domOccurrenceTotal = countIn(fullText);
+      } catch { /* 序号算不出就不带，resolveSelectionRange 会按"无法定位"禁用替换 */ }
+    }
     return {
       entryId: trackedEntryForComments.id,
       sel: {
@@ -1916,6 +1940,8 @@ export function DocBrowser({
         contextAfter: liveSelection.contextAfter,
         startOffset: liveSelection.startOffset,
         endOffset: liveSelection.endOffset,
+        domOccurrenceIndex,
+        domOccurrenceTotal,
       },
       rect: { top: r.top, left: r.left, width: r.width, height: r.height },
       rects,
@@ -1926,7 +1952,7 @@ export function DocBrowser({
   // 替换/插入后拼回 frontmatter 前缀，走既有 onSaveContent（PUT content，服务端自动
   // 重锚定行内评论 + 重算双链账本）。歧义无法消除时拒绝替换，宁缺毋错。
   const applySelectionAiEdit = useCallback(async (
-    target: { entryId: string; sel: PendingSelection },
+    target: { entryId: string; sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number } },
     mode: 'replace' | 'insert-after',
     newText: string,
   ): Promise<boolean> => {

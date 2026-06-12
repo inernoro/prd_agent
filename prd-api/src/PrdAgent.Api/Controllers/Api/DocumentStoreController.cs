@@ -2460,7 +2460,9 @@ public class DocumentStoreController : ControllerBase
         var contextAfter = request.ContextAfter ?? string.Empty;
         if (!string.IsNullOrEmpty(content))
         {
-            var (start, end) = LocateSelectionInContent(content, selectedText, contextBefore, request.StartOffset);
+            var (start, end) = LocateSelectionInContent(
+                content, selectedText, contextBefore, request.StartOffset,
+                request.OccurrenceIndex, request.OccurrenceTotal);
             if (start >= 0)
             {
                 const int window = 1200;
@@ -2586,13 +2588,35 @@ public class DocumentStoreController : ControllerBase
     }
 
     /// <summary>
-    /// 在原文中定位选区：offset hint 精确命中优先 → 唯一 indexOf → contextBefore 消歧 → 首处。
-    /// 与 InlineCommentRebinder 同思路的轻量版（这里只为截上下文窗口，定位失败可容忍）。
+    /// 在原文中定位选区（仅用于截上下文窗口，不落库，定位失败可容忍）。
+    /// 唯一出现 → 直接命中；多处出现 → 优先用前端从真实 DOM Range 数出的出现序号
+    /// （offset/contextBefore 都源自 useContentSelection 的"首处 indexOf"，多处场景会指错位置，
+    /// Bugbot High 2026-06-12），序号不可用时退回 offset 验证 → contextBefore 消歧 → 首处。
     /// </summary>
     internal static (int start, int end) LocateSelectionInContent(
-        string content, string selectedText, string contextBefore, int startOffsetHint)
+        string content, string selectedText, string contextBefore, int startOffsetHint,
+        int occurrenceIndex = -1, int occurrenceTotal = -1)
     {
         if (string.IsNullOrEmpty(content) || string.IsNullOrEmpty(selectedText)) return (-1, -1);
+
+        // 非重叠收集全部出现位置（封顶 100，防超长重复文本拖慢）
+        var occurrences = new List<int>();
+        var idx = content.IndexOf(selectedText, StringComparison.Ordinal);
+        while (idx >= 0 && occurrences.Count < 100)
+        {
+            occurrences.Add(idx);
+            idx = content.IndexOf(selectedText, idx + selectedText.Length, StringComparison.Ordinal);
+        }
+        if (occurrences.Count == 0) return (-1, -1);
+        if (occurrences.Count == 1) return (occurrences[0], occurrences[0] + selectedText.Length);
+
+        // 多处出现：DOM 序号优先（要求 DOM 总数与正文总数一致，防 DOM 里混入同文副本）
+        if (occurrenceIndex >= 0 && occurrenceIndex < occurrences.Count
+            && (occurrenceTotal < 0 || occurrenceTotal == occurrences.Count))
+        {
+            var s = occurrences[occurrenceIndex];
+            return (s, s + selectedText.Length);
+        }
 
         if (startOffsetHint >= 0
             && startOffsetHint + selectedText.Length <= content.Length
@@ -2601,33 +2625,19 @@ public class DocumentStoreController : ControllerBase
             return (startOffsetHint, startOffsetHint + selectedText.Length);
         }
 
-        var first = content.IndexOf(selectedText, StringComparison.Ordinal);
-        if (first < 0) return (-1, -1);
-        var second = content.IndexOf(selectedText, first + 1, StringComparison.Ordinal);
-        if (second < 0) return (first, first + selectedText.Length);
-
-        // 多处出现：用 contextBefore 尾部片段消歧
+        // contextBefore 尾部片段消歧（最后兜底，仅影响上下文窗口质量）
         var ctx = (contextBefore ?? string.Empty).TrimEnd();
         if (ctx.Length > 0)
         {
             var probe = ctx.Length > 30 ? ctx[^30..] : ctx;
             var anchor = content.IndexOf(probe + selectedText, StringComparison.Ordinal);
-            if (anchor < 0)
-            {
-                var anchorCtx = content.IndexOf(probe, StringComparison.Ordinal);
-                if (anchorCtx >= 0)
-                {
-                    var after = content.IndexOf(selectedText, anchorCtx, StringComparison.Ordinal);
-                    if (after >= 0) return (after, after + selectedText.Length);
-                }
-            }
-            else
+            if (anchor >= 0)
             {
                 var start = anchor + probe.Length;
                 return (start, start + selectedText.Length);
             }
         }
-        return (first, first + selectedText.Length);
+        return (occurrences[0], occurrences[0] + selectedText.Length);
     }
 
     /// <summary>
@@ -4997,6 +5007,12 @@ public class SelectionRewriteRequest
 
     /// <summary>选区终点偏移提示</summary>
     public int EndOffset { get; set; } = -1;
+
+    /// <summary>DOM 选区前同文出现次数（0-based 序号）。同文多处出现时 offset/context 恒指向第一处，只有它能指认用户真正选的是第几处；-1 表示未知</summary>
+    public int OccurrenceIndex { get; set; } = -1;
+
+    /// <summary>DOM 全文同文出现总数（与正文统计交叉校验用）；-1 表示未知</summary>
+    public int OccurrenceTotal { get; set; } = -1;
 
     /// <summary>改写动作 key（polish/concise/expand/formal/fix 或 custom）</summary>
     public string ActionKey { get; set; } = string.Empty;

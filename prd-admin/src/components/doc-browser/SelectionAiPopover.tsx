@@ -23,6 +23,10 @@ export interface SelectionAiAnchor {
   contextAfter?: string;
   startOffset: number;
   endOffset: number;
+  /** DOM 选区前同文出现次数（0-based）：同文多处出现时指认用户真正选的是第几处 */
+  domOccurrenceIndex?: number;
+  /** DOM 全文同文出现总数：与正文统计交叉校验用 */
+  domOccurrenceTotal?: number;
 }
 
 type Phase = 'pick' | 'streaming' | 'done' | 'error';
@@ -52,6 +56,8 @@ export function SelectionAiPopover({
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [customInstruction, setCustomInstruction] = useState('');
   const [output, setOutput] = useState('');
+  // 模型 thinking 流（CLAUDE.md §6：支持 thinking 的模型必须展示思考过程，不能只有 spinner）
+  const [thinking, setThinking] = useState('');
   const [model, setModel] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [showDiff, setShowDiff] = useState(false);
@@ -93,30 +99,35 @@ export function SelectionAiPopover({
   // 卸载时中断未完成的流
   useEffect(() => () => { abortRef.current?.(); }, []);
 
-  // 流式输出时让结果区贴底滚动
+  // 流式输出时让结果区贴底滚动（thinking 与正文都驱动）
   useEffect(() => {
     if (phase === 'streaming' && outputBoxRef.current) {
       outputBoxRef.current.scrollTop = outputBoxRef.current.scrollHeight;
     }
-  }, [output, phase]);
+  }, [output, thinking, phase]);
 
   const run = useCallback((actionKey: string, instruction?: string) => {
     abortRef.current?.();
     setPhase('streaming');
     setActiveAction(actionKey);
     setOutput('');
+    setThinking('');
     setErrorMsg('');
     setShowDiff(false);
     let acc = '';
+    let thinkAcc = '';
     abortRef.current = streamSelectionRewrite(entryId, {
       selectedText: anchor.selectedText,
       contextBefore: anchor.contextBefore,
       contextAfter: anchor.contextAfter,
       startOffset: anchor.startOffset,
       endOffset: anchor.endOffset,
+      occurrenceIndex: anchor.domOccurrenceIndex,
+      occurrenceTotal: anchor.domOccurrenceTotal,
       actionKey,
       instruction,
       onStart: (info) => setModel(info.model ?? ''),
+      onThinking: (c) => { thinkAcc += c; setThinking(thinkAcc); },
       onText: (c) => { acc += c; setOutput(acc); },
       onError: (msg) => { setErrorMsg(msg); setPhase('error'); },
       onDone: () => {
@@ -278,8 +289,23 @@ export function SelectionAiPopover({
             <MiniDiff lines={computeLineDiff(anchor.selectedText, output)} />
           ) : (
             <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {/* thinking 流：支持推理的模型先吐思考，必须可见（CLAUDE.md §6），只在流式期间展示尾部窗口 */}
+              {busy && thinking && (
+                <div
+                  className="mb-1.5 pb-1.5 text-[11px]"
+                  style={{
+                    color: 'var(--text-muted)',
+                    borderBottom: '1px dashed rgba(255,255,255,0.1)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  <span className="font-semibold">思考中 · </span>
+                  {thinking.length > 400 ? '…' + thinking.slice(-400) : thinking}
+                </div>
+              )}
               <StreamingText text={output || (busy ? '' : '')} streaming={busy} />
-              {busy && !output && (
+              {busy && !output && !thinking && (
                 <span className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   <MapSpinner size={11} /> 正在分析选区与上下文…
                 </span>

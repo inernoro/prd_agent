@@ -10,7 +10,7 @@ import {
 describe('resolveSelectionRange', () => {
   const body = '第一段开头。这里是目标句子。第一段结尾。\n\n第二段也有目标句子。第二段结尾。';
 
-  it('offset 提示精确命中时直接使用', () => {
+  it('唯一出现时直接命中（offset 提示只是冗余信息）', () => {
     const start = body.indexOf('这里是目标句子。');
     const r = resolveSelectionRange(body, {
       selectedText: '这里是目标句子。',
@@ -20,7 +20,7 @@ describe('resolveSelectionRange', () => {
     expect(r).toEqual({ start, end: start + 8 });
   });
 
-  it('offset 失效（-1）但全文唯一出现时回退 indexOf', () => {
+  it('offset 失效（-1）但全文唯一出现时仍能定位', () => {
     const r = resolveSelectionRange(body, {
       selectedText: '第一段结尾。',
       startOffset: -1,
@@ -30,7 +30,7 @@ describe('resolveSelectionRange', () => {
     expect(body.slice(r!.start, r!.end)).toBe('第一段结尾。');
   });
 
-  it('offset 漂移（指向错误位置）时不盲信，回退重定位', () => {
+  it('offset 漂移（指向错误位置）时不盲信，按唯一出现重定位', () => {
     const real = body.indexOf('第一段结尾。');
     const r = resolveSelectionRange(body, {
       selectedText: '第一段结尾。',
@@ -40,22 +40,51 @@ describe('resolveSelectionRange', () => {
     expect(r).toEqual({ start: real, end: real + 6 });
   });
 
-  it('多处出现 + contextBefore 可消歧 → 命中第二处', () => {
+  it('多处出现 + DOM 序号一致 → 命中用户真正选的第二处', () => {
+    const r = resolveSelectionRange(body, {
+      selectedText: '目标句子。',
+      startOffset: -1,
+      endOffset: -1,
+      domOccurrenceIndex: 1,
+      domOccurrenceTotal: 2,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.start).toBeGreaterThan(body.indexOf('第二段'));
+    expect(body.slice(r!.start, r!.end)).toBe('目标句子。');
+  });
+
+  it('Bugbot High 回归：用户选第二处但 offset 提示指向第一处（且校验恰好通过）→ 信 DOM 序号，不信 offset', () => {
+    const firstHit = body.indexOf('目标句子。'); // useContentSelection 的 indexOf 首处结果
+    const r = resolveSelectionRange(body, {
+      selectedText: '目标句子。',
+      startOffset: firstHit, // 第一处的"看似有效"偏移
+      endOffset: firstHit + 5,
+      contextBefore: '这里是', // 同样源自第一处的上下文
+      domOccurrenceIndex: 1,
+      domOccurrenceTotal: 2,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.start).not.toBe(firstHit);
+    expect(r!.start).toBeGreaterThan(body.indexOf('第二段'));
+  });
+
+  it('多处出现且 DOM 总数与正文总数不一致（评论气泡副本干扰）→ null', () => {
+    const r = resolveSelectionRange(body, {
+      selectedText: '目标句子。',
+      startOffset: -1,
+      endOffset: -1,
+      domOccurrenceIndex: 1,
+      domOccurrenceTotal: 3, // DOM 里多数出来一份副本
+    });
+    expect(r).toBeNull();
+  });
+
+  it('多处出现且无 DOM 序号 → null（禁用替换，宁缺毋错；offset/contextBefore 不可信）', () => {
     const r = resolveSelectionRange(body, {
       selectedText: '目标句子。',
       startOffset: -1,
       endOffset: -1,
       contextBefore: '第二段也有',
-    });
-    expect(r).not.toBeNull();
-    expect(r!.start).toBeGreaterThan(body.indexOf('第二段'));
-  });
-
-  it('多处出现且无法消歧 → 返回 null（禁用替换，宁缺毋错）', () => {
-    const r = resolveSelectionRange(body, {
-      selectedText: '目标句子。',
-      startOffset: -1,
-      endOffset: -1,
     });
     expect(r).toBeNull();
   });
