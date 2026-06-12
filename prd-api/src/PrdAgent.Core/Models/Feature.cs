@@ -23,6 +23,30 @@ public class Feature
     /// <summary>功能描述</summary>
     public string? Description { get; set; }
 
+    /// <summary>所属功能模块或能力域</summary>
+    public string ModuleName { get; set; } = string.Empty;
+
+    /// <summary>业务价值分类，见 FeatureBusinessType</summary>
+    public string FeatureType { get; set; } = FeatureBusinessType.Basic;
+
+    /// <summary>主需求 ID</summary>
+    public string MainRequirementId { get; set; } = string.Empty;
+
+    /// <summary>计划交付的内部版本 ID</summary>
+    public string PlannedVersionId { get; set; } = string.Empty;
+
+    /// <summary>正式上线记录 ID，上线后回写</summary>
+    public string? OfficialReleaseId { get; set; }
+
+    /// <summary>核心业务规则、限制条件或边界</summary>
+    public string KeyRules { get; set; } = string.Empty;
+
+    /// <summary>判断功能是否成立、是否交付完成的标准</summary>
+    public string AcceptanceCriteria { get; set; } = string.Empty;
+
+    /// <summary>特殊情况或例外说明</summary>
+    public string? Remark { get; set; }
+
     /// <summary>功能分级，见 ProductItemGrade</summary>
     public string Grade { get; set; } = ProductItemGrade.P2;
 
@@ -48,6 +72,12 @@ public class Feature
 
     /// <summary>处理人（负责推进该功能的 MAP 用户）</summary>
     public string? AssigneeId { get; set; }
+
+    /// <summary>历史导入来源系统。</summary>
+    public string? SourceSystem { get; set; }
+
+    /// <summary>来源系统中的唯一 ID，用于幂等导入。</summary>
+    public string? ExternalId { get; set; }
 
     /// <summary>进入当前状态的时间（SLA 时效计算用）</summary>
     public DateTime? StateEnteredAt { get; set; }
@@ -104,4 +134,14 @@ public static class FeatureChangeType
     public const string Deprecated = "deprecated";
 
     public static readonly string[] All = { Added, Modified, Deprecated };
+}
+
+/// <summary>功能按业务价值分类</summary>
+public static class FeatureBusinessType
+{
+    public const string Basic = "basic";
+    public const string Core = "core";
+    public const string ValueAdded = "value_added";
+
+    public static readonly string[] All = { Basic, Core, ValueAdded };
 }

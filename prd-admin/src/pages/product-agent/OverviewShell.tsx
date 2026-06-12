@@ -20,6 +20,7 @@ import {
   BookOpen,
   Share2,
   Settings,
+  Upload,
   ArrowLeft,
   Search,
   Plus,
@@ -36,26 +37,30 @@ import { GlobalSearch } from './GlobalSearch';
 import { ProductsSection } from './ProductsSection';
 import { SettingsSection } from './SettingsSection';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
+import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
+import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
+import './product-cards.css';
 import {
   getOverviewStats,
+  listProducts,
   getOverviewRequirements,
+  getOverviewVersions,
   getOverviewFeatures,
   getOverviewDefects,
-  getOverviewKnowledge,
   listCustomers,
   createCustomer,
   updateCustomer,
   deleteCustomer,
   type OverviewStats,
   type OverviewRequirementRow,
+  type OverviewVersionRow,
   type OverviewFeatureRow,
   type OverviewDefectRow,
-  type OverviewKnowledgeRow,
 } from '@/services/real/productAgent';
-import type { Customer } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import type { Customer, Product } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade, defectStatusLabel } from './types';
 
-type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'customers' | 'knowledge' | 'graph' | 'settings';
+type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
@@ -64,6 +69,7 @@ export function OverviewShell() {
   const [active, setActive] = useState<Section>('dashboard');
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
+  const [products, setProducts] = useState<Product[]>([]);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -74,6 +80,9 @@ export function OverviewShell() {
 
   useEffect(() => {
     void loadStats();
+    void listProducts({ pageSize: 100 }).then((result) => {
+      if (result.success) setProducts(result.data.items);
+    });
   }, [loadStats]);
 
   const isAdmin = stats?.isAdmin ?? false;
@@ -84,6 +93,7 @@ export function OverviewShell() {
     { key: 'requirements', label: '需求', icon: ListChecks },
     { key: 'features', label: '功能', icon: Puzzle },
     { key: 'defects', label: '缺陷', icon: Bug },
+    { key: 'versions', label: '版本', icon: Boxes },
     { key: 'customers', label: '客户', icon: Users },
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
@@ -121,17 +131,22 @@ export function OverviewShell() {
       )}
       {active === 'requirements' && (
         <SectionShell title="需求（跨产品）" desc="所有产品的需求汇总，点击进入需求详情">
-          <RequirementsTable />
+          <RequirementsTable isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
       {active === 'features' && (
         <SectionShell title="功能（跨产品）" desc="所有产品的功能汇总，点击进入功能详情">
-          <FeaturesTable />
+          <FeaturesTable isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
       {active === 'defects' && (
         <SectionShell title="缺陷（跨产品）" desc="追溯到产品的缺陷汇总，点击进入缺陷详情">
-          <DefectsTable />
+          <DefectsTable isAdmin={isAdmin} products={products} />
+        </SectionShell>
+      )}
+      {active === 'versions' && (
+        <SectionShell title="版本（跨产品）" desc="所有产品的版本汇总，点击进入所属产品的版本页面">
+          <VersionsTable isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
       {active === 'customers' && (
@@ -140,7 +155,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'knowledge' && (
-        <SectionShell title="知识库一览" desc="所有产品的知识库（含 MRD/SRS/PRD）">
+        <SectionShell title="知识库（跨产品）" desc="所有可访问产品的知识聚合列表，点击查看详情；新建 / 治理进入具体产品">
           <KnowledgeSection />
         </SectionShell>
       )}
@@ -214,7 +229,7 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
     { label: '需求', value: stats.counts.requirements, color: '#FBBF24', section: 'requirements' },
     { label: '功能', value: stats.counts.features, color: '#A78BFA', section: 'features' },
     { label: '缺陷', value: stats.counts.defects, color: '#F87171', section: 'defects' },
-    { label: '版本', value: stats.counts.versions, color: '#60A5FA', section: 'products' },
+            { label: '版本', value: stats.counts.versions, color: '#60A5FA', section: 'versions' },
     { label: '客户', value: stats.counts.customers, color: '#4ADE80', section: 'customers' },
   ];
 
@@ -222,11 +237,12 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
     <div className="flex flex-col gap-5">
       {/* KPI */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {kpis.map((k) => (
+        {kpis.map((k, i) => (
           <button
             key={k.label}
             onClick={() => onGoto(k.section)}
-            className="text-left rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 transition-colors"
+            style={{ animationDelay: `${Math.min(i, 14) * 45}ms` }}
+            className="pa-card text-left rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4"
           >
             <div className="text-2xl font-semibold" style={{ color: k.color }}>{k.value}</div>
             <div className="text-xs text-white/50 mt-1">{k.label}</div>
@@ -248,7 +264,7 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
       </div>
 
       {/* 最近活动 */}
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="pa-row rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <div className="text-sm font-medium text-white/70 mb-3">最近活动</div>
         {stats.recent.length === 0 ? (
           <div className="text-xs text-white/40 py-4 text-center">暂无活动</div>
@@ -281,7 +297,7 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div className="text-sm font-medium text-white/70 mb-2">{title}</div>
       {children}
     </div>
@@ -309,8 +325,8 @@ function DataTable<T extends { id: string }>({
   onRowClick?: (row: T) => void;
 }) {
   return (
-    <div className="rounded-xl border border-white/10 overflow-hidden">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto rounded-xl border border-white/10">
+      <table className="min-w-full whitespace-nowrap text-sm">
         <thead>
           <tr className="bg-white/[0.03] text-white/45 text-[11px]">
             {columns.map((c, i) => (
@@ -404,13 +420,22 @@ const GRADE_BADGE = (g: string) => (
 );
 const ITEM_GRADE_FILTERS = ['p0', 'p1', 'p2', 'p3'].map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] }));
 
-function RequirementsTable() {
+function AdminImportButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20">
+      <Upload size={13} /> 导入历史数据
+    </button>
+  );
+}
+
+function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewRequirementRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
   const [grade, setGrade] = useState('');
   const [mine, setMine] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -425,7 +450,7 @@ function RequirementsTable() {
   if (loading) return <MapSectionLoader text="正在加载需求…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} extra={<MineToggle mine={mine} setMine={setMine} />} />
+      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} extra={<><MineToggle mine={mine} setMine={setMine} />{isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}</>} />
       {rows.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的需求' : '没有需求'}</div>
       ) : (
@@ -445,17 +470,19 @@ function RequirementsTable() {
           ]}
         />
       )}
+      {showImport && <ProductHistoryImportDialog type="requirement" products={products} onClose={() => setShowImport(false)} onImported={reload} />}
     </div>
   );
 }
 
-function FeaturesTable() {
+function FeaturesTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewFeatureRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
   const [grade, setGrade] = useState('');
   const [mine, setMine] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -470,7 +497,7 @@ function FeaturesTable() {
   if (loading) return <MapSectionLoader text="正在加载功能…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} extra={<MineToggle mine={mine} setMine={setMine} />} />
+      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} extra={<><MineToggle mine={mine} setMine={setMine} />{isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}</>} />
       {rows.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的功能' : '没有功能'}</div>
       ) : (
@@ -489,15 +516,17 @@ function FeaturesTable() {
           ]}
         />
       )}
+      {showImport && <ProductHistoryImportDialog type="feature" products={products} onClose={() => setShowImport(false)} onImported={reload} />}
     </div>
   );
 }
 
-function DefectsTable() {
+function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewDefectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
+  const [showImport, setShowImport] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -512,7 +541,7 @@ function DefectsTable() {
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} />
+      <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
       {rows.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">没有追溯到产品的缺陷</div>
       ) : (
@@ -523,13 +552,58 @@ function DefectsTable() {
             { header: '编号', render: (r) => <span className="text-white/40 text-xs">{r.defectNo}</span> },
             { header: '标题', render: (r) => <span className="text-white/90">{r.title || '(无标题)'}</span> },
             { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
-            { header: '状态', render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{r.status}</span> },
-            { header: '严重度', render: (r) => <span className="text-white/55 text-xs">{r.severity || '-'}</span> },
+            { header: '状态', render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },
+            { header: '等级', render: (r) => GRADE_BADGE(effectiveDefectGrade(r)) },
             { header: '追溯', render: (r) => <span className="text-white/55 text-xs">{r.tracedRequirementId ? '需求' : r.tracedVersionId ? '版本' : '产品'}</span> },
             { header: '更新', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
           ]}
         />
       )}
+      {showImport && <ProductHistoryImportDialog type="defect" products={products} onClose={() => setShowImport(false)} onImported={reload} />}
+    </div>
+  );
+}
+
+function VersionsTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+  const navigate = useNavigate();
+  const [rows, setRows] = useState<OverviewVersionRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [keyword, setKeyword] = useState('');
+  const [lifecycle, setLifecycle] = useState('');
+  const [showImport, setShowImport] = useState(false);
+  const lifecycleFilters = Object.entries(VERSION_LIFECYCLE_LABEL).map(([value, label]) => ({ value, label }));
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const result = await getOverviewVersions({ keyword: keyword.trim() || undefined, lifecycle: lifecycle || undefined });
+    if (result.success) setRows(result.data.items);
+    setLoading(false);
+  }, [keyword, lifecycle]);
+  useEffect(() => { void reload(); }, [reload]);
+
+  if (loading) return <MapSectionLoader text="正在加载版本…" />;
+  return (
+    <div>
+      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部生命周期" filters={lifecycleFilters} filterValue={lifecycle} setFilterValue={setLifecycle} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
+      {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有版本</div> : (
+        <DataTable
+          rows={rows}
+          onRowClick={(row) => navigate(`/product-agent/p/${row.productId}`)}
+          columns={[
+            { header: '版本名', render: (row) => <span className="text-white/90">{row.versionName}</span> },
+            { header: '外部 ID', render: (row) => <span className="text-xs text-white/40">{row.externalId || '-'}</span> },
+            { header: '产品', render: (row) => <span className="text-xs text-white/55">{row.productName}</span> },
+            { header: '生命周期', render: (row) => <span className="text-xs text-white/55">{VERSION_LIFECYCLE_LABEL[row.lifecycle as keyof typeof VERSION_LIFECYCLE_LABEL] ?? row.lifecycle}</span> },
+            { header: '版本级别', render: (row) => <span className="text-xs text-white/55">{row.isMajor ? '大版本' : '普通版本'}</span> },
+            { header: '需求数', render: (row) => <span className="text-xs text-white/55">{row.requirementCount}</span> },
+            { header: '功能数', render: (row) => <span className="text-xs text-white/55">{row.featureCount}</span> },
+            { header: '计划发布', render: (row) => <span className="text-xs text-white/45">{row.plannedReleaseAt ? new Date(row.plannedReleaseAt).toLocaleDateString('zh-CN') : '-'}</span> },
+            { header: '实际发布', render: (row) => <span className="text-xs text-white/45">{row.releasedAt ? new Date(row.releasedAt).toLocaleDateString('zh-CN') : '-'}</span> },
+            { header: '更新', render: (row) => <span className="text-xs text-white/35">{relTime(row.updatedAt)}</span> },
+          ]}
+        />
+      )}
+      {showImport && <ProductHistoryImportDialog type="version" products={products} onClose={() => setShowImport(false)} onImported={reload} />}
     </div>
   );
 }
@@ -537,42 +611,8 @@ function DefectsTable() {
 // ════════════════════════ 知识库 / 图谱 / 设置 ════════════════════════
 
 function KnowledgeSection() {
-  const navigate = useNavigate();
-  const [rows, setRows] = useState<OverviewKnowledgeRow[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      const res = await getOverviewKnowledge();
-      if (alive && res.success) setRows(res.data.items);
-      if (alive) setLoading(false);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  if (loading) return <MapSectionLoader text="正在加载知识库…" />;
-  if (rows.length === 0) return <div className="text-center text-white/40 text-sm py-12">还没有产品知识库。进入产品的「知识库」tab 即可创建。</div>;
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      {rows.map((r) => (
-        <button
-          key={r.storeId}
-          onClick={() => navigate(`/product-agent/p/${r.productId}`)}
-          className="text-left rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 transition-colors flex flex-col gap-1.5"
-        >
-          <div className="flex items-center gap-2 text-white font-medium">
-            <BookOpen size={15} className="text-cyan-400 shrink-0" />
-            <span className="truncate">{r.name}</span>
-          </div>
-          <div className="text-[11px] text-white/40">{r.productName}</div>
-          <div className="text-[11px] text-white/50 mt-1">{r.documentCount} 篇文档 · 更新 {relTime(r.updatedAt)}</div>
-        </button>
-      ))}
-    </div>
-  );
+  // 跨产品聚合知识列表（与单产品知识列表同构，多「所属产品」列；治理操作落到具体产品库）
+  return <OverviewKnowledgeList />;
 }
 
 // ════════════════════════ 全局客户 ════════════════════════

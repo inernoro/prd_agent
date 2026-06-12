@@ -95,6 +95,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
   | feat | prd-admin | 新增XX功能 |
   | fix | prd-api | 修复XX问题 |
   ```
+- 类型枚举只允许：`feat` 新功能、`fix` 修复、`perf` 优化、`refactor` 重构、`docs` 文档、`chore` 杂项、`test` 测试、`ci` 构建、`security` 安全、`ops` 运维、`style` 样式、`polish` 润色、`rule` 规范、`merge` 合并、`revert` 回滚。
 - 同一 PR 的所有变更放在**一个碎片文件**中
 - 纯文档变更（`doc/`）、纯 CLAUDE.md 规则调整可选记录
 
@@ -110,7 +111,9 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 #### 5.1 Commit message 必须使用中文
 
-所有 `git commit` 信息**必须用中文**撰写（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal 等专有名词）和 Conventional Commits 前缀（`feat`/`fix`/`refactor`/`perf`/`docs`/`chore`/`test`），其余表述一律中文。
+所有 `git commit` 信息**必须用中文**撰写（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal 等专有名词）和 Conventional Commits 前缀，其余表述一律中文。
+
+提交标题类型枚举只允许：`feat`、`fix`、`perf`、`refactor`、`docs`、`chore`、`test`、`ci`、`build`、`release`、`revert`、`merge`、`security`、`ops`、`style`、`polish`、`rule`。
 
 ```
 ✅ fix(prd-admin): 修复周报弹窗样式错乱
@@ -342,7 +345,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 | 规则文件 | 触发范围 | 核心要点 |
 |----------|----------|----------|
-| `app-identity.md` | `prd-api/src/**/*.cs` | Controller 硬编码 appKey，6 个应用标识 |
+| `app-identity.md` | `prd-api/src/**/*.cs` | Controller 硬编码 appKey，应用标识清单 |
 | `data-audit.md` | `Models/**/*.cs`, `Controllers/**/*.cs` | 新增实体引用时审计所有消费端点 |
 | `llm-gateway.md` | `prd-api/src/**/*.cs` | 所有 LLM 调用必须通过 ILlmGateway |
 | `frontend-architecture.md` | `**/*.{ts,tsx}` | 前端无业务状态 + SSOT + 组件复用 + 默认可编辑 |
@@ -366,6 +369,8 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `gesture-unification.md` | 任何可平移/缩放的 2D 画布（ReactFlow / 自定义 DOM canvas / Konva 等） | 手势统一：两指拖动=平移、双指捏合或 ⌘/Ctrl+滚轮=缩放、禁止双击缩放；提供 ReactFlow + 自定义 canvas 两套标准配置 |
 | `compute-then-send.md` | `prd-api/src/**/*.cs` 里 LLM / 外部 API 调用类（ILlmGateway / OpenAIImageClient 等） | 外部调用必须分"算/发"两阶段：发送阶段接收已解析结果不得再 resolve；禁止用 DI 装饰器 / AsyncLocal / 实例字段 在兄弟调用间传递 state |
 | `blocked-state-circuit-breaker.md` | 长任务 / 多轮自动执行 Agent | 撞上自己无法提供的外部输入时必须熔断：≥8 提交或≥2h 无功能净进展即停止进度剧场、发一条合并升级、切纯代码或挂起；禁止 plan thrashing 和不眠 grinding |
+| `artifact-is-experience.md` | 生成类功能（PPT/图片/报告/网页）的等待体验与外观参数 | 产物即体验：等待期主视觉必须是产物本身在生长（流式解析到哪渲染到哪），状态面板/进度卡只配做配角；风格 = AI 生成参照，禁止 CSS 换皮；固有启动开销藏进用户已有动作（如大纲确认期预热）；架构取舍不替用户保守 |
+| `miduo-review-lens.md` | 任何 UI 交付 / 截图 / 验收前 | 米多审查镜头：等待期产物感 / 比例美感 / 交互成本 / 变化可感知（过渡动画义务）/ AI 最小惊讶（未点名内容逐字保留）/ 证据闭环——交付前用用户的眼睛六连问 |
 
 ---
 

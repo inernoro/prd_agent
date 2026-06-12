@@ -7,7 +7,8 @@ import { listPmAuditLogs } from '@/services';
 import type { PmAuditLog } from '@/services/contracts/pmAgent';
 
 interface Props {
-  onBack: () => void;
+  /** 作为独立视图嵌入工作台导航时不传（无返回按钮） */
+  onBack?: () => void;
 }
 
 const PAGE_SIZE = 50;
@@ -42,9 +43,11 @@ export function AuditLogView({ onBack }: Props) {
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
       <div className="shrink-0">
-        <button onClick={onBack} className="flex items-center gap-1 text-[12px] mb-2 hover:opacity-70" style={{ color: 'var(--text-muted)' }}>
-          <ArrowLeft size={14} /> 返回项目列表
-        </button>
+        {onBack && (
+          <button onClick={onBack} className="flex items-center gap-1 text-[12px] mb-2 hover:opacity-70" style={{ color: 'var(--text-muted)' }}>
+            <ArrowLeft size={14} /> 返回项目列表
+          </button>
+        )}
         <div className="flex items-center gap-2">
           <ShieldCheck size={20} style={{ color: '#10B981' }} />
           <h2 className="text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>操作审计日志</h2>

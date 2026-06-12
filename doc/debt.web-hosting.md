@@ -6,7 +6,7 @@
 
 | 指标 | 当前值 |
 |------|--------|
-| open | 5 |
+| open | 8 |
 | in-progress | 0 |
 | paid | 0 |
 
@@ -79,3 +79,25 @@
   - **存量回填取证（2026-06-03）**：用户原始 PPT（站点 264dfc，**从未重传**）经 startup
     backfill 后，COS 文件 marker=1、`?v` 已 bump；Playwright 直测该线上文件 ArrowDown
     `_index` 0→1→2、ArrowUp→1，零 console 错误 —— 零重传直接生效已验证。
+
+---
+
+## 分组级权限（受限专题/分类）已知边界（2026-06-12 引入）
+
+分组级数据权限上线（`WebPageGroup.Visibility=restricted` + `AccessRules` 按成员/角色标签授权，
+解析器 `PrdAgent.Core/Security/WebPageGroupAccess.cs`，xUnit 纯函数测试 15 例）。
+
+### 已知边界（open）
+
+| # | 边界 | 影响 | 后续可补 |
+|---|------|------|----------|
+| 8 | 列表过滤是「分组粒度」近似：站点同时共享给多个团队、且挂在 A 团队受限分组下时，B 团队成员在**列表**里也看不到它（单站点直查 `GetByIdAsync`/操作权限走 `ResolveSiteRoleWithGroup` 精确判定，B 团队角色不受 A 团队分组剥夺） | 多团队双重共享 + 受限分组的交叉场景（罕见）：列表隐藏与单查可见不一致 | 列表改聚合管道 join 分组做 per-site 判定，或接受为产品语义 |
+| 9 | 受限分组对「空间级 editor 但未被分组授权」者不可见，但其在树导航之外的入口（如分享链接、library 转存副本）不经过分组裁剪 | 分享链接体系本就独立于团队权限（密码/有效期），与既有语义一致 | 如需「受限分组站点禁止外发分享」，在 CreateShare 路径补分组角色校验 |
+| 10 | 角色标签改名无级联：成员标签是自由文本，改名/删除标签不会同步更新分组 AccessRules 里的 label 规则，旧规则变成「无人命中」 | 标签重命名后需到分组权限里重新授权 | 标签字典实体化（团队级 catalog + 引用计数 + 改名级联） |
+
+### 测试状态
+
+- 前端：pnpm tsc --noEmit 通过；eslint 改动文件零新增告警；vitest 404 例全绿
+- 后端：本地沙箱无 dotnet SDK（builds.dotnet.microsoft.com 不在网络白名单），已通过
+  workflow_dispatch 触发本分支 GitHub CI（dotnet build + dotnet test 含新增
+  WebPageGroupAccessTests 15 例）远端验证；CDS push 自动构建部署

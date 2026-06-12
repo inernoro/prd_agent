@@ -60,11 +60,25 @@
 @keyframes cdsh-logospin { to { transform: rotate(360deg); } }
 .cdsh-brand b { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
 .cdsh-navlinks { display: flex; align-items: center; gap: 4px; }
-.cdsh-navlinks a { color: var(--cdsh-muted); text-decoration: none; font-size: 14px; font-weight: 500; padding: 8px 14px; border-radius: 9px; transition: .18s; }
-.cdsh-navlinks a:hover { color: var(--cdsh-text); background: var(--cdsh-panel-2); }
+.cdsh-navlinks a,
+.cdsh-navlinks button {
+  color: var(--cdsh-muted);
+  text-decoration: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+  transition: .18s;
+}
+.cdsh-navlinks a:hover,
+.cdsh-navlinks button:hover { color: var(--cdsh-text); background: var(--cdsh-panel-2); }
 .cdsh-navcta { display: flex; align-items: center; gap: 10px; }
 
-.cdsh-btn { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 10px; padding: 10px 18px; border: 1px solid transparent; transition: transform .18s, background .18s, border-color .18s, box-shadow .18s; white-space: nowrap; }
+.cdsh-btn { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 10px; padding: 10px 18px; border: 1px solid transparent; transition: transform .18s, background .18s, border-color .18s, box-shadow .18s; white-space: nowrap; }
 .cdsh-btn svg { width: 16px; height: 16px; }
 .cdsh-btn-ghost { color: var(--cdsh-text); border-color: var(--cdsh-line); background: var(--cdsh-panel); }
 .cdsh-btn-ghost:hover { background: var(--cdsh-panel-2); border-color: rgba(255,255,255,0.18); }
@@ -163,52 +177,339 @@
 .cdsh-feed { transition: opacity .35s; }
 .cdsh-feed.cdsh-off { opacity: 0; }
 
+.cdsh-login-title-shine {
+  text-shadow:
+    0 1px 0 rgba(255,255,255,0.16),
+    0 18px 46px rgba(255,255,255,0.09),
+    0 2px 30px rgba(0,0,0,0.72);
+  filter: saturate(1.12);
+}
+
 /* ---------- login access console ---------- */
 .cdsh-login-panel {
   position: relative;
-  border: 1px solid rgba(255,255,255,0.18);
-  border-radius: 22px;
-  padding: 7px;
-  background:
-    linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.025) 42%, rgba(255,255,255,0.08)),
-    rgba(12,11,16,0.54);
-  box-shadow:
-    0 36px 120px rgba(0,0,0,0.58),
-    inset 0 1px 0 rgba(255,255,255,0.08);
-  backdrop-filter: blur(20px);
+  overflow: visible;
+  min-height: 590px;
 }
 .cdsh-login-panel::before {
+  display: none;
+}
+.cdsh-access-sculpture {
+  position: relative;
+  min-height: 590px;
+  isolation: isolate;
+}
+.cdsh-access-sculpture::before {
+  content: '';
+  position: absolute;
+  left: 12%;
+  right: 8%;
+  top: 56px;
+  bottom: 34px;
+  z-index: 0;
+  pointer-events: none;
+  border-top: 1px solid rgba(255,255,255,0.075);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background:
+    linear-gradient(90deg, transparent, rgba(255,255,255,0.03) 48%, transparent 100%),
+    rgba(16,14,21,0.05);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+.cdsh-access-rails {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.82;
+}
+.cdsh-access-mark {
+  position: absolute;
+  left: 50%;
+  top: 36px;
+  z-index: 2;
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.02)),
+    rgba(16,14,21,0.36);
+  box-shadow:
+    0 14px 34px rgba(0,0,0,0.26),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(7px) saturate(1.05);
+}
+.cdsh-access-sculpture .cdsh-access-node {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  min-width: 142px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,0.11);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(26,26,31,0.72), rgba(14,14,18,0.68)),
+    rgba(16,14,21,0.28);
+  box-shadow:
+    0 14px 32px rgba(0,0,0,0.24),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  padding: 11px 12px;
+  color: rgba(246,246,248,0.68);
+  font-size: 11px;
+  text-transform: none;
+  backdrop-filter: blur(7px) saturate(1.03);
+  opacity: 0;
+  animation: cdsh-pop .6s cubic-bezier(.2,.8,.2,1) forwards;
+}
+.cdsh-access-sculpture .cdsh-access-node svg {
+  width: 16px;
+  height: 16px;
+}
+.cdsh-access-sculpture .cdsh-access-node .cdsh-title,
+.cdsh-access-sculpture .cdsh-access-node .cdsh-desc {
+  display: block;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+.cdsh-access-sculpture .cdsh-access-node .cdsh-title {
+  font-size: 12px;
+}
+.cdsh-access-sculpture .cdsh-access-node .cdsh-desc {
+  font-size: 10.5px;
+}
+.cdsh-access-node-session {
+  left: 6%;
+  top: 112px;
+  animation-delay: .45s;
+}
+.cdsh-access-node-console {
+  right: 3%;
+  top: 108px;
+  animation-delay: .65s;
+}
+.cdsh-access-node-github {
+  right: 8%;
+  top: 436px;
+  animation-delay: .85s;
+}
+.cdsh-credential-stack {
+  position: absolute;
+  left: 50%;
+  top: 138px;
+  z-index: 2;
+  width: min(360px, 72vw);
+  transform: translateX(-50%);
+  border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 17px;
+  background:
+    linear-gradient(180deg, rgba(28,28,34,0.72), rgba(15,15,19,0.82)),
+    rgba(16,14,21,0.36);
+  box-shadow:
+    0 22px 58px rgba(0,0,0,0.32),
+    inset 0 1px 0 rgba(255,255,255,0.055);
+  padding: 17px;
+  backdrop-filter: blur(12px) saturate(1.06);
+}
+.cdsh-credential-stack::before {
   content: '';
   position: absolute;
   inset: 1px;
   pointer-events: none;
-  border-radius: 20px;
-  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.045);
+}
+.cdsh-stack-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.075);
+}
+.cdsh-stack-title {
+  color: rgba(246,246,248,0.96);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.cdsh-stack-sub {
+  margin-top: 5px;
+  color: rgba(246,246,248,0.42);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.cdsh-stack-fields {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.cdsh-access-result {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin-top: 13px;
+  border: 1px solid rgba(255,255,255,0.105);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.028);
+  padding: 9px 10px;
+  color: rgba(246,246,248,0.58);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.cdsh-access-result span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cdsh-access-result-error {
+  border-color: rgba(251,113,133,0.22);
+  background: rgba(244,63,94,0.08);
+  color: rgba(255,228,230,0.78);
 }
 .cdsh-login-console {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(255,255,255,0.11);
-  border-radius: 17px;
-  padding: 22px;
-  background:
-    radial-gradient(520px 280px at 20% 0%, rgba(255,255,255,0.08), transparent 58%),
-    linear-gradient(180deg, rgba(31,30,38,0.88), rgba(18,17,23,0.93));
+  border: 0;
+  border-radius: inherit;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .cdsh-login-console::before {
+  display: none;
+}
+.cdsh-login-console::after {
   content: '';
   position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
-  background-size: 44px 44px;
-  mask-image: linear-gradient(180deg, rgba(0,0,0,0.36), transparent 64%);
+  left: 18px;
+  right: 18px;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.62), transparent);
+  opacity: 0.24;
+}
+.cdsh-login-board-head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 92px;
+  padding: 18px 22px;
+  border-bottom: 1px solid rgba(255,255,255,0.075);
+}
+.cdsh-login-board-head .cdsh-left {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+}
+.cdsh-login-branch {
+  color: rgba(246,246,248,0.94);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.cdsh-login-canvas {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1000 / 720;
+}
+.cdsh-login-wires {
+  z-index: 0;
+}
+.cdsh-login-node {
+  position: absolute;
+  z-index: 1;
+  display: block;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(26,26,31,0.78), rgba(14,14,18,0.74)),
+    rgba(16,14,21,0.36);
+  box-shadow:
+    0 15px 38px rgba(0,0,0,0.34),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  padding: 12px;
+  backdrop-filter: blur(7px) saturate(1.04);
+  opacity: 0;
+  animation: cdsh-pop .6s cubic-bezier(.2,.8,.2,1) forwards;
+}
+.cdsh-login-node:hover,
+.cdsh-login-node:focus-within {
+  border-color: rgba(255,255,255,0.28);
+}
+.cdsh-login-node .cdsh-title,
+.cdsh-login-node .cdsh-desc {
+  display: block;
+}
+.cdsh-login-node-identity {
+  left: 4%;
+  top: 24%;
+  width: 33%;
+  animation-delay: .25s;
+}
+.cdsh-login-node-session {
+  left: 39%;
+  top: 13%;
+  width: 24%;
+  animation-delay: .45s;
+}
+.cdsh-login-node-console {
+  left: 70%;
+  top: 13%;
+  width: 25%;
+  animation-delay: .65s;
+}
+.cdsh-login-node-secret {
+  left: 39%;
+  top: 47%;
+  width: 33%;
+  animation-delay: .85s;
+}
+.cdsh-login-preview {
+  position: absolute;
+  z-index: 1;
+  left: 26%;
+  top: 86%;
+  display: flex;
+  width: 52%;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(32,32,38,0.78), rgba(18,18,22,0.76)),
+    rgba(16,14,21,0.35);
+  padding: 12px 14px;
+  box-shadow:
+    0 16px 42px rgba(0,0,0,0.34),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  backdrop-filter: blur(7px) saturate(1.04);
+  opacity: 0;
+  animation: cdsh-pop .6s cubic-bezier(.2,.8,.2,1) forwards;
+  animation-delay: 1.1s;
 }
 .cdsh-login-head,
 .cdsh-access-map,
+.cdsh-login-fields,
 .cdsh-login-field,
+.cdsh-login-submit,
 .cdsh-login-foot {
   position: relative;
   z-index: 1;
@@ -219,23 +520,12 @@
   justify-content: space-between;
   gap: 14px;
 }
-.cdsh-login-logo {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  flex: none;
-  border: 1px solid rgba(255,255,255,0.18);
-  border-radius: 13px;
-  background: linear-gradient(145deg, rgba(255,255,255,0.11), rgba(255,255,255,0.035));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
-}
 .cdsh-login-live {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  height: 28px;
-  padding: 0 10px;
+  height: 26px;
+  padding: 0 9px;
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 999px;
   background: rgba(255,255,255,0.035);
@@ -249,11 +539,12 @@
   grid-template-columns: 1fr 28px 1fr 28px 1fr;
   align-items: center;
   gap: 8px;
-  margin-top: 22px;
-  padding: 13px;
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 14px;
-  background: rgba(255,255,255,0.026);
+  margin-top: 16px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255,255,255,0.075);
+  border-bottom: 1px solid rgba(255,255,255,0.075);
+  background: transparent;
+  box-shadow: none;
 }
 .cdsh-access-node {
   display: flex;
@@ -277,16 +568,21 @@
 }
 .cdsh-access-link {
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.42), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
+}
+.cdsh-login-fields {
+  display: grid;
+  gap: 10px;
+  margin-top: 15px;
 }
 .cdsh-login-field {
   display: block;
 }
 .cdsh-login-label {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   color: rgba(246,246,248,0.5);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -294,28 +590,33 @@
 .cdsh-login-inputwrap {
   display: flex;
   align-items: center;
-  gap: 11px;
-  height: 48px;
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 13px;
-  background: rgba(7,7,10,0.36);
+  gap: 10px;
+  height: 42px;
+  margin-top: 11px;
+  border: 1px solid rgba(255,255,255,0.095);
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.024), rgba(255,255,255,0.006)),
+    rgba(24,24,29,0.3);
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.05),
-    0 10px 30px rgba(0,0,0,0.18);
+    inset 0 1px 0 rgba(255,255,255,0.035),
+    0 8px 22px rgba(0,0,0,0.1);
   transition: border-color .18s, background .18s, box-shadow .18s;
 }
 .cdsh-login-inputwrap:focus-within {
-  border-color: rgba(255,255,255,0.42);
-  background: rgba(12,12,16,0.62);
+  border-color: rgba(255,255,255,0.28);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.034), rgba(255,255,255,0.01)),
+    rgba(24,24,29,0.38);
   box-shadow:
-    0 0 0 3px rgba(255,255,255,0.08),
-    inset 0 1px 0 rgba(255,255,255,0.07),
-    0 14px 36px rgba(0,0,0,0.28);
+    0 0 0 2px rgba(255,255,255,0.045),
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    0 10px 24px rgba(0,0,0,0.12);
 }
 .cdsh-login-input-icon {
-  width: 18px;
-  height: 18px;
-  margin-left: 14px;
+  width: 16px;
+  height: 16px;
+  margin-left: 12px;
   flex: none;
   color: rgba(246,246,248,0.54);
 }
@@ -327,7 +628,7 @@
   background: transparent;
   color: #f6f6f8;
   outline: none;
-  font-size: 15px;
+  font-size: 14px;
 }
 .cdsh-login-input::placeholder {
   color: rgba(246,246,248,0.34);
@@ -341,24 +642,535 @@
   border-radius: 0 12px 12px 0;
   transition: background-color 9999s ease-in-out 0s;
 }
+.cdsh-login-submit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  height: 42px;
+  margin-top: 0;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 10px;
+  background: rgba(246,246,248,0.94);
+  color: #101014;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(255,255,255,0.08);
+  transition: transform .18s, box-shadow .18s, background .18s;
+}
+.cdsh-login-submit:hover {
+  transform: translateY(-1px);
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(255,255,255,0.12);
+}
+.cdsh-login-submit-prefix {
+  display: inline-flex;
+  min-width: 64px;
+  align-items: center;
+  gap: 7px;
+  color: rgba(16,16,20,0.72);
+  font-size: 12px;
+}
+.cdsh-credential-stack .cdsh-login-submit {
+  position: relative;
+  z-index: 1;
+  margin-top: 13px;
+}
+.cdsh-login-actions {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0 22px 16px;
+}
+.cdsh-login-actions .cdsh-login-submit {
+  grid-column: 1 / -1;
+}
+.cdsh-credential-stack .cdsh-login-actions {
+  margin-top: 10px;
+  padding: 0;
+}
+.cdsh-login-side-action {
+  height: 39px;
+  border-radius: 10px;
+  border-color: rgba(255,255,255,0.13);
+  background: rgba(255,255,255,0.032);
+  color: rgba(246,246,248,0.92);
+}
+.cdsh-login-side-action:hover {
+  background: rgba(255,255,255,0.09);
+  color: #fff;
+}
+.cdsh-login-ticker {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  margin: 0;
+  padding: 11px 22px;
+  border-top: 1px solid rgba(255,255,255,0.075);
+  color: rgba(246,246,248,0.46);
+  font-size: 12px;
+}
+.cdsh-login-ticker .cdsh-k {
+  color: rgba(246,246,248,0.9);
+}
+.cdsh-credential-stack .cdsh-login-ticker {
+  margin: 13px -17px -17px;
+  border-radius: 0 0 17px 17px;
+  padding: 10px 17px;
+  background: rgba(0,0,0,0.1);
+}
 .cdsh-login-foot {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 18px;
-  padding-top: 15px;
+  gap: 7px;
+  margin-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid rgba(255,255,255,0.09);
   color: rgba(246,246,248,0.42);
-  font-size: 11px;
+  font-size: 10.5px;
 }
 .cdsh-login-foot span {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  border: 1px solid rgba(255,255,255,0.08);
+  min-height: 20px;
+  border: 1px solid rgba(255,255,255,0.1);
   border-radius: 999px;
+  padding: 0 8px;
+  background: rgba(255,255,255,0.026);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.cdsh-login-board-stage {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.085);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(22,21,27,0.46), rgba(14,13,18,0.5)),
+    rgba(16,14,21,0.28);
+  box-shadow: 0 22px 60px rgba(0,0,0,0.26);
+  backdrop-filter: blur(6px) saturate(1.04);
+}
+.cdsh-login-board-stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  border: 1px solid rgba(255,255,255,0.04);
+  background: linear-gradient(180deg, rgba(255,255,255,0.035), transparent 22%);
+}
+.cdsh-login-board-stage .cdsh-login-board-head {
+  min-height: 88px;
+  padding: 17px 22px;
+}
+.cdsh-auth-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1000 / 850;
+}
+.cdsh-auth-wires {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.cdsh-auth-wires path {
+  fill: none;
+  stroke: rgba(255,255,255,0.18);
+  stroke-width: 1.35;
+  stroke-dasharray: 3 9;
+  vector-effect: non-scaling-stroke;
+}
+.cdsh-auth-wires .cdsh-auth-wire-soft {
+  stroke: rgba(255,255,255,0.08);
+  stroke-dasharray: none;
+}
+.cdsh-auth-node {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 158px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(25,25,30,0.66), rgba(15,15,19,0.7)),
+    rgba(16,14,21,0.28);
+  box-shadow:
+    0 14px 34px rgba(0,0,0,0.28),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  padding: 11px 12px;
+  backdrop-filter: blur(6px) saturate(1.03);
+}
+.cdsh-auth-node .cdsh-title,
+.cdsh-auth-node .cdsh-desc {
+  display: block;
+  white-space: nowrap;
+}
+.cdsh-auth-node-session {
+  left: 4%;
+  top: 14%;
+}
+.cdsh-auth-node-console {
+  right: 4%;
+  top: 14%;
+}
+.cdsh-auth-core {
+  position: absolute;
+  left: 50%;
+  top: 25%;
+  z-index: 2;
+  display: grid;
+  width: min(330px, 58%);
+  gap: 13px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(28,28,34,0.72), rgba(15,15,19,0.78)),
+    rgba(16,14,21,0.36);
+  box-shadow:
+    0 20px 46px rgba(0,0,0,0.34),
+    inset 0 1px 0 rgba(255,255,255,0.055);
+  padding: 15px;
+  backdrop-filter: blur(10px) saturate(1.06);
+}
+.cdsh-auth-core .cdsh-login-inputwrap {
+  margin-top: 7px;
+}
+.cdsh-auth-preview {
+  position: absolute;
+  left: 22%;
+  top: 64%;
+  z-index: 1;
+  display: flex;
+  width: 56%;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(31,31,37,0.74), rgba(18,18,22,0.75)),
+    rgba(16,14,21,0.3);
+  box-shadow:
+    0 14px 34px rgba(0,0,0,0.28),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  padding: 10px 12px;
+  backdrop-filter: blur(7px) saturate(1.04);
+}
+.cdsh-auth-preview-error {
+  border-color: rgba(251,113,133,0.22);
+  background:
+    linear-gradient(180deg, rgba(55,22,29,0.7), rgba(24,16,20,0.76)),
+    rgba(244,63,94,0.08);
+}
+.cdsh-auth-actions {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 18px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0;
+}
+.cdsh-auth-actions .cdsh-login-submit {
+  grid-column: 1 / -1;
+}
+.cdsh-login-board-stage > .cdsh-login-ticker {
+  margin: 0;
+  border-top-color: rgba(255,255,255,0.075);
+  background: rgba(0,0,0,0.08);
+}
+
+.cdsh-login-morph-board {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.085);
+  border-radius: 18px;
+  background: rgba(16,14,21,0.38);
+  box-shadow: 0 22px 60px rgba(0,0,0,0.26);
+  backdrop-filter: blur(5px) saturate(1.04);
+  animation: cdsh-board-from-runtime .9s cubic-bezier(.18,.78,.22,1) both;
+}
+.cdsh-login-morph-board::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  border: 1px solid rgba(255,255,255,0.045);
+  background: linear-gradient(180deg, rgba(255,255,255,0.035), transparent 24%);
+}
+.cdsh-login-morph-board .cdsh-login-board-head {
+  min-height: 86px;
+  padding: 17px 22px;
+}
+.cdsh-login-morph-canvas {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1000 / 640;
+}
+.cdsh-login-morph-wires {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.cdsh-login-morph-wires path {
+  fill: none;
+  stroke: rgba(255,255,255,0.18);
+  stroke-width: 1.4;
+  stroke-dasharray: 3 8;
+  vector-effect: non-scaling-stroke;
+}
+.cdsh-login-morph-board .cdsh-node {
+  opacity: 1;
+  animation: none;
+  backdrop-filter: blur(6px) saturate(1.03);
+}
+.cdsh-login-operator-node {
+  left: 2%;
+  top: 28%;
+  width: 30%;
+}
+.cdsh-login-identity-node {
+  left: 36%;
+  top: 12%;
+  width: 28%;
+}
+.cdsh-login-session-node {
+  left: 68%;
+  top: 12%;
+  width: 28%;
+}
+.cdsh-login-secret-node {
+  left: 36%;
+  top: 46%;
+  width: 28%;
+}
+.cdsh-login-console-node {
+  left: 68%;
+  top: 46%;
+  width: 28%;
+}
+.cdsh-login-oauth-node {
+  left: 2%;
+  top: 64%;
+  width: 30%;
+}
+.cdsh-login-inline-input {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  margin-top: 10px;
+  border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01)),
+    rgba(8,8,11,0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.045),
+    0 8px 18px rgba(0,0,0,0.14);
+  transform-origin: left center;
+  animation:
+    cdsh-input-unfold 1.15s cubic-bezier(.18,.78,.22,1) both,
+    cdsh-input-breathe 4.8s ease-in-out 1.2s infinite;
+}
+@keyframes cdsh-input-breathe {
+  0%, 100% { border-color: rgba(255,255,255,0.12); box-shadow: inset 0 1px 0 rgba(255,255,255,0.045), 0 8px 18px rgba(0,0,0,0.14); }
+  50% { border-color: rgba(255,255,255,0.24); box-shadow: 0 0 0 2px rgba(255,255,255,0.035), inset 0 1px 0 rgba(255,255,255,0.06), 0 10px 22px rgba(0,0,0,0.18); }
+}
+.cdsh-login-morph-input {
+  width: 100%;
+  height: 30px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(246,246,248,0.95);
+  outline: none;
   padding: 0 9px;
-  background: rgba(255,255,255,0.025);
+  font-size: 13px;
+}
+.cdsh-login-morph-input::placeholder {
+  color: rgba(246,246,248,0.38);
+}
+.cdsh-login-secret-node .cdsh-login-inline-input {
+  animation-delay: .16s, 1.36s;
+}
+.cdsh-login-access-node {
+  position: absolute;
+  left: 27%;
+  top: 78%;
+  z-index: 1;
+  display: flex;
+  width: 46%;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(30,30,36,0.86), rgba(18,18,22,0.9)),
+    rgba(16,14,21,0.34);
+  box-shadow:
+    0 16px 44px rgba(0,0,0,0.42),
+    inset 0 1px 0 rgba(255,255,255,0.055);
+  padding: 11px 12px;
+  backdrop-filter: blur(7px) saturate(1.04);
+  transform-origin: center;
+  animation: cdsh-access-contract 1.25s cubic-bezier(.18,.78,.22,1) .18s both;
+}
+.cdsh-login-access-node-error {
+  border-color: rgba(251,113,133,0.25);
+  background:
+    linear-gradient(180deg, rgba(55,22,29,0.78), rgba(24,16,20,0.9)),
+    rgba(244,63,94,0.08);
+}
+.cdsh-login-access-submit {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 999px;
+  background: rgba(246,246,248,0.94);
+  color: #101014;
+}
+.cdsh-login-access-submit:hover {
+  background: #fff;
+}
+.cdsh-login-morph-actions {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0 22px 16px;
+}
+.cdsh-login-morph-board > .cdsh-ticker {
+  margin: 0;
+  background: rgba(0,0,0,0.08);
+}
+.cdsh-home-access-board {
+  animation: cdsh-board-from-runtime .72s cubic-bezier(.18,.78,.22,1) both;
+}
+
+@keyframes cdsh-board-from-runtime {
+  from {
+    opacity: .92;
+    transform: translateY(4px) scale(.985);
+    filter: blur(.8px) saturate(.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@keyframes cdsh-input-unfold {
+  0% {
+    opacity: 0;
+    transform: scaleX(.12);
+    filter: blur(2px);
+  }
+  35% {
+    opacity: .58;
+  }
+  100% {
+    opacity: 1;
+    transform: scaleX(1);
+    filter: none;
+  }
+}
+
+@keyframes cdsh-access-contract {
+  0% {
+    opacity: .76;
+    transform: scaleX(1.22) translateY(10px);
+    filter: blur(1.6px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@supports (view-transition-name: cds-runtime-board) {
+  .cdsh-bg {
+    view-transition-name: cds-ambient-grid;
+    contain: paint;
+  }
+
+  .cdsh-board,
+  .cdsh-login-morph-board {
+    view-transition-name: cds-runtime-board;
+    contain: layout paint;
+  }
+
+  ::view-transition-group(cds-ambient-grid) {
+    animation-duration: .72s;
+    animation-timing-function: cubic-bezier(.2,.74,.2,1);
+  }
+
+  ::view-transition-group(cds-runtime-board) {
+    animation-duration: .82s;
+    animation-timing-function: cubic-bezier(.18,.78,.22,1);
+  }
+
+  ::view-transition-old(cds-runtime-board),
+  ::view-transition-new(cds-runtime-board),
+  ::view-transition-old(cds-ambient-grid),
+  ::view-transition-new(cds-ambient-grid) {
+    mix-blend-mode: normal;
+  }
+
+  ::view-transition-new(cds-runtime-board) {
+    animation-name: cdsh-board-materialize;
+  }
+
+  ::view-transition-old(cds-runtime-board) {
+    animation-name: cdsh-board-dissolve;
+  }
+}
+
+@keyframes cdsh-board-materialize {
+  from {
+    opacity: .88;
+    filter: blur(2px) saturate(.92);
+  }
+  to {
+    opacity: 1;
+    filter: none;
+  }
+}
+
+@keyframes cdsh-board-dissolve {
+  from {
+    opacity: 1;
+    filter: none;
+  }
+  to {
+    opacity: .72;
+    filter: blur(1.5px) saturate(.9);
+  }
 }
 
 /* ---------- strip ---------- */
@@ -387,10 +1199,47 @@
   .cdsh-cta .cdsh-btn-lg { flex: 1 1 auto; justify-content: center; }
   .cdsh-meta-row { margin-top: 24px; gap: 14px 22px; }
   .cdsh-strip { padding: 26px 0 56px; }
-  .cdsh-login-console { padding: 18px; }
-  .cdsh-access-map { grid-template-columns: 1fr; gap: 10px; }
-  .cdsh-access-link { display: none; }
-  .cdsh-access-node { justify-content: flex-start; }
+  .cdsh-login-panel,
+  .cdsh-access-sculpture {
+    min-height: auto;
+  }
+  .cdsh-access-sculpture {
+    display: grid;
+    gap: 12px;
+  }
+  .cdsh-access-sculpture::before,
+  .cdsh-access-rails,
+  .cdsh-access-mark {
+    display: none;
+  }
+  .cdsh-credential-stack,
+  .cdsh-access-sculpture .cdsh-access-node {
+    position: relative;
+    left: auto;
+    right: auto;
+    top: auto;
+    z-index: 1;
+    width: auto;
+    transform: none;
+  }
+  .cdsh-credential-stack { order: 1; }
+  .cdsh-access-node-session { order: 2; }
+  .cdsh-access-node-console { order: 3; }
+  .cdsh-access-node-github { order: 4; }
+  .cdsh-login-morph-canvas {
+    display: grid;
+    gap: 10px;
+    aspect-ratio: auto;
+  }
+  .cdsh-login-morph-wires { display: none; }
+  .cdsh-login-morph-board .cdsh-node,
+  .cdsh-login-access-node {
+    position: relative;
+    left: auto;
+    top: auto;
+    width: auto;
+  }
+  .cdsh-login-morph-actions { padding: 12px 18px 16px; }
 }
 /* On narrow phones the brand + two nav CTAs overflow the clipped nav; drop the
    secondary "Log in" button (the hero still exposes both entry points). */
@@ -410,7 +1259,8 @@
   .cdsh-rise,
   .cdsh-line > span,
   .cdsh-node,
-  .cdsh-preview { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+  .cdsh-preview,
+  .cdsh-access-sculpture .cdsh-access-node { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
 
   /* Continuous/looping motion must also stop for reduced-motion users
      (not just entrances). SVG <animateMotion> packets can't be disabled via
@@ -431,5 +1281,8 @@
   .cdsh-sheen,
   .cdsh-pulse::after,
   .cdsh-canvas::after,
-  .cdsh-sdot { animation: none !important; }
+  .cdsh-sdot,
+  .cdsh-login-inline-input,
+  .cdsh-login-access-node,
+  .cdsh-login-morph-board { animation: none !important; }
 }

@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
+import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
+  ClipboardCheck,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -412,6 +414,17 @@ export type DocBrowserProps = {
   sharedEntryIds?: Set<string>;
   emptyState?: React.ReactNode;
   loading?: boolean;
+  /**
+   * 内容区底部插槽：在文档正文渲染之后、还在可滚动内容区内挂载的 React 节点。
+   * MVP 用于挂载 BacklinksPanel（反向链接面板）。
+   * 不传则不渲染，对现有调用方无影响。
+   */
+  contentFooter?: (entryId: string) => React.ReactNode;
+  /**
+   * 启用双链编辑器自动补全：编辑模式下输入 [[ 或 @ 弹出本库文档候选。
+   * 不传则编辑器无补全。仅 DocumentStorePage 的私人编辑场景传入。
+   */
+  autocompleteStoreId?: string;
   /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
   sortMode?: DocBrowserSortMode;
   /**
@@ -523,11 +536,26 @@ export function buildDisplayItems(
 
 // ── 文件图标（所有类型映射通过 FILE_TYPE_REGISTRY 注册表） ──
 
+function isAcceptanceEntry(entry: DocBrowserEntry): boolean {
+  if (entry.isFolder) return false;
+  const metadata = entry.metadata ?? {};
+  if (metadata.kind === 'acceptance-report' || metadata.type === 'acceptance-report') return true;
+  if (getVerdictConfig(metadata.verdict)) return true;
+  return (entry.tags ?? []).some(tag => tag === '视觉验收' || tag === '验收报告');
+}
+
 function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEntry; isPrimary: boolean; isPinned: boolean; isOpen?: boolean }) {
   if (entry.isFolder) {
     return isOpen
       ? <FolderOpen size={14} style={{ color: 'rgba(234,179,8,0.7)' }} />
       : <FolderClosed size={14} style={{ color: 'rgba(234,179,8,0.6)' }} />;
+  }
+  if (isAcceptanceEntry(entry)) {
+    return (
+      <ClipboardCheck size={14} style={{ color: 'rgba(45,212,191,0.95)' }} aria-label="验收报告">
+        <title>验收报告</title>
+      </ClipboardCheck>
+    );
   }
   if (isPrimary) return <Star size={14} style={{ color: 'rgba(234,179,8,0.85)' }} />;
   if (isPinned) return <Pin size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
@@ -1163,27 +1191,6 @@ function TreeNode({
         }}
         title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
-        {/* 左侧状态色条：验收结论 → 绿/琥珀/红竖条，整列向下一扫即知通过率分布（颜色 + 文字双编码，满足无障碍） */}
-        {verdictForRow && (
-          <span
-            aria-hidden
-            className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r-full"
-            style={{ width: '3px', height: '64%', background: verdictForRow.color, opacity: isSelected ? 1 : 0.9 }}
-          />
-        )}
-        {/* 选中态：圆角块内侧细 accent 条（无验收色条时才显示，避免与状态色条重叠） */}
-        {isSelected && !isFolder && !verdictForRow && (
-          <span
-            aria-hidden
-            className="absolute left-[3px] top-1/2 -translate-y-1/2 rounded-full"
-            style={{
-              width: '3px',
-              height: '60%',
-              background: 'var(--accent-primary, var(--accent-gold))',
-              opacity: 0.85,
-            }}
-          />
-        )}
         {/* 第一行：图标 + 标题独占整行（标题增强：更亮更粗略放大），徽章移到第二行，避免挤占标题宽度 */}
         <div className="flex items-center gap-2 w-full min-w-0">
           {/* 批量多选勾选框：普通状态悬浮覆盖文件图标，不再永久占一列目录宽度。 */}
@@ -1478,6 +1485,8 @@ export function DocBrowser({
   tagColors: tagColorsProp,
   onTagColorsChange,
   inlineCommentShareToken,
+  contentFooter,
+  autocompleteStoreId,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
@@ -1647,6 +1656,8 @@ export function DocBrowser({
 
   // 批次 D：划词评论
   const contentAreaRef = useRef<HTMLDivElement>(null);
+  // 双链编辑器自动补全用的 textarea ref（只在编辑模式生效）
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [inlineCommentsOpen, setInlineCommentsOpen] = useState(false);
   const [evidenceGraphOpen, setEvidenceGraphOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
@@ -3091,20 +3102,41 @@ export function DocBrowser({
                 {contentLoading ? (
                   <MapSectionLoader text="加载文档内容…" />
                 ) : editMode ? (
-                  <textarea
-                    value={editContent}
-                    onChange={(e) => setEditContent(e.target.value)}
-                    spellCheck={false}
-                    className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
-                    style={{
-                      background: 'rgba(0,0,0,0.2)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      borderRadius: '8px',
-                      padding: '12px 16px',
-                      color: 'var(--text-primary)',
-                    }}
-                    placeholder="在此编辑文档内容..."
-                  />
+                  <>
+                    <textarea
+                      ref={editTextareaRef}
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      spellCheck={false}
+                      className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
+                      style={{
+                        background: 'rgba(0,0,0,0.2)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '8px',
+                        padding: '12px 16px',
+                        color: 'var(--text-primary)',
+                      }}
+                      placeholder={autocompleteStoreId ? '输入正文，可写 [[标题]] 引用其他文档（试试 [[ 自动补全）...' : '在此编辑文档内容...'}
+                    />
+                    {autocompleteStoreId && (
+                      <WikilinkAutocomplete
+                        textareaRef={editTextareaRef}
+                        value={editContent}
+                        storeId={autocompleteStoreId}
+                        onInsert={(next, cursor) => {
+                          setEditContent(next);
+                          // 异步把光标定位到插入后
+                          window.setTimeout(() => {
+                            const ta = editTextareaRef.current;
+                            if (ta) {
+                              ta.focus();
+                              ta.setSelectionRange(cursor, cursor);
+                            }
+                          }, 0);
+                        }}
+                      />
+                    )}
+                  </>
                 ) : (preview
                       || selectedEntryData?.sourceType === 'github_directory'
                       || selectedEntryData?.contentType === 'application/x-github-directory') ? (
@@ -3116,6 +3148,12 @@ export function DocBrowser({
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
                     <FolderOpen size={48} className="opacity-20 mb-2" />
                     <p className="text-[13px]">{selectedEntryData?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
+                  </div>
+                )}
+                {/* 内容底部插槽：阅读态 + 非文件夹 + 选中条目 时挂载（如反向链接面板） */}
+                {!editMode && !contentLoading && contentFooter && selectedEntryId && !selectedEntryData?.isFolder && (
+                  <div style={{ marginTop: 8 }}>
+                    {contentFooter(selectedEntryId)}
                   </div>
                 )}
                 {/* 划词选中时的浮层"添加评论"按钮——仅有写权限时出现；只读访客（私有分享/匿名公开）不弹，

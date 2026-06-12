@@ -85,7 +85,11 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 // 添加服务
 builder.Services.AddScoped<PrdAgent.Api.Filters.PmAuditActionFilter>();
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        // 团队动态：全局白名单审计（白名单外的动作一次字典查找即逃逸）
+        options.Filters.Add<PrdAgent.Api.Filters.ActivityLogActionFilter>();
+    })
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -141,6 +145,9 @@ builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncableResource,
 builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncResourceRegistry,
     PrdAgent.Infrastructure.Sync.SyncResourceRegistry>();
 
+// 双链 + 反向链接（详见 doc/design.knowledge-base-mention-network.md）
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.MentionService>();
+
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
 builder.Services.AddSingleton<LlmRequestLogBackground>();
@@ -182,6 +189,7 @@ builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 // 模型池故障通知与自动探活
 builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();
 builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHealthProbeService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWorker>();
 
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();

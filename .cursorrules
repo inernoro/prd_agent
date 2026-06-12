@@ -46,7 +46,7 @@
 
 ## Appkey 全量清单（8 个 + 持续扩展）
 
-`prd-agent` / `visual-agent` / `literary-agent` / `defect-agent` / `video-agent` / `report-agent` / `review-agent` / `pr-review`
+`prd-agent` / `visual-agent` / `literary-agent` / `defect-agent` / `video-agent` / `report-agent` / `review-agent` / `pr-review` / `project-route-agent` / `front-end-agent`
 
 新增 Agent 时：更新 `.claude/rules/app-identity.md` → 跑 `bash scripts/sync-cursor-rules.sh`。
 

@@ -90,4 +90,8 @@ public static class AppNames
     /// <summary>CCAS Agent - 赋码采集关联系统智能体（PRD 生成 + 设备素材库 + 流程示意图绘制）</summary>
     public const string CcasAgent = "ccas-agent";
     public const string CcasAgentDisplay = "赋码采集关联";
+
+    /// <summary>识途 Agent - 新人文化与制度问答</summary>
+    public const string ShituAgent = "shitu-agent";
+    public const string ShituAgentDisplay = "识途";
 }

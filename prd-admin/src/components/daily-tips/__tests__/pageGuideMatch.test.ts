@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { DailyTip } from '@/services/real/dailyTips';
-import { filterPageTips, matchPageGuide } from '../pageGuideMatch';
+import { filterPageTips, matchPageGuide, isUpdateTip, isUpdateReminderTip, pickAutoOpenUpdateTip } from '../pageGuideMatch';
 
 const NONE = new Set<string>();
 
@@ -66,6 +66,94 @@ describe('filterPageTips —— 被投递(isTargeted)的页面教程必须按页
 
   it('已 dismiss 的被投递 tip 不再出现', () => {
     expect(filterPageTips(all, new Set(['web-observability']), '/web-pages', '')).toEqual([]);
+  });
+});
+
+describe('pickAutoOpenUpdateTip —— 抽屉自动弹出严格按页(用户 2026-06-11 规则:推送只跟页面走)', () => {
+  const pageGuide = tip({
+    id: 'webpages-page-guide',
+    sourceId: 'webpages-page-guide',
+    actionUrl: '/web-pages',
+  });
+  const updateTip = tip({
+    id: 'web-update',
+    sourceId: 'webpages-update-2026w24',
+    actionUrl: '/web-pages',
+  });
+  const taskTip = tip({
+    id: 'defect-full-flow',
+    sourceId: 'defect-full-flow',
+    actionUrl: '/defect-agent',
+  });
+  const NO_OPENED = new Set<string>();
+
+  it('无教程页面(pageTips 为空)恒不弹 —— 根治「无教程页弹出全部教程」', () => {
+    // 复刻 bug 场景:全量 tips 里有被 Track 埋点污染成 isTargeted 的别页教程
+    const polluted = [{ ...updateTip, isTargeted: true }, { ...pageGuide, isTargeted: true }];
+    const pageTips = filterPageTips(polluted, NONE, '/document-store', '');
+    expect(pageTips).toEqual([]); // 别页教程不属于本页
+    expect(pickAutoOpenUpdateTip(pageTips, NO_OPENED)).toBeNull(); // → 绝不自动弹
+  });
+
+  it('本页有未学会的更新教程(*-update-*) → 弹', () => {
+    const pageTips = filterPageTips([updateTip, pageGuide], NONE, '/web-pages', '');
+    expect(pickAutoOpenUpdateTip(pageTips, NO_OPENED)?.id).toBe('web-update');
+  });
+
+  it('更新教程已学会 → 不弹', () => {
+    const learned = { ...updateTip, learned: true };
+    expect(pickAutoOpenUpdateTip([learned], NO_OPENED)).toBeNull();
+  });
+
+  it('本 session 已自动弹过(按 id 记忆) → 不再弹', () => {
+    expect(pickAutoOpenUpdateTip([updateTip], new Set(['web-update']))).toBeNull();
+  });
+
+  it('page-guide / 普通任务教程不触发抽屉自动弹(新人路径走 Spotlight,任务教程走手动入口)', () => {
+    expect(pickAutoOpenUpdateTip([pageGuide, taskTip], NO_OPENED)).toBeNull();
+  });
+
+  it('isTargeted 不再参与自动弹出决策(Track 埋点污染防护)', () => {
+    const pollutedTask = { ...taskTip, isTargeted: true };
+    expect(pickAutoOpenUpdateTip([pollutedTask], NO_OPENED)).toBeNull();
+  });
+
+  it('isUpdateTip:sourceId 带 -update- 或 sourceType=feature-release 才算更新教程', () => {
+    expect(isUpdateTip(updateTip)).toBe(true);
+    expect(isUpdateTip(tip({ id: 'x', actionUrl: '/a', sourceType: 'feature-release' }))).toBe(true);
+    expect(isUpdateTip(pageGuide)).toBe(false);
+    expect(isUpdateTip(taskTip)).toBe(false);
+  });
+});
+
+describe('isUpdateReminderTip / 轻微提醒更新走 Spotlight 气泡而非抽屉', () => {
+  const reminder = tip({
+    id: 'visual-paste',
+    sourceId: 'visual-agent-paste-update-reminder',
+    actionUrl: '/visual-agent',
+    targetSelector: '[data-tour-id=visual-image-btn]',
+  });
+  const weeklyUpdate = tip({
+    id: 'web-update',
+    sourceId: 'webpages-update-2026w24',
+    actionUrl: '/web-pages',
+  });
+
+  it('isUpdateReminderTip:仅 sourceId 含 -update-reminder 命中', () => {
+    expect(isUpdateReminderTip(reminder)).toBe(true);
+    expect(isUpdateReminderTip(weeklyUpdate)).toBe(false);
+  });
+
+  it('reminder 仍算 isUpdateTip(归类为更新),但被排除出抽屉自动展开(避免与气泡双弹)', () => {
+    expect(isUpdateTip(reminder)).toBe(true);
+    const pageTips = filterPageTips([reminder], NONE, '/visual-agent', '');
+    expect(pageTips.map((t) => t.id)).toEqual(['visual-paste']); // 仍属本页教程,出现在列表/入口
+    expect(pickAutoOpenUpdateTip(pageTips, new Set<string>())).toBeNull(); // 但抽屉路径不自动弹它
+  });
+
+  it('普通周更新教程不受影响,仍走抽屉自动展开', () => {
+    const pageTips = filterPageTips([weeklyUpdate], NONE, '/web-pages', '');
+    expect(pickAutoOpenUpdateTip(pageTips, new Set<string>())?.id).toBe('web-update');
   });
 });
 

@@ -32,6 +32,7 @@ import {
   FolderSync,
   BarChart3,
   Send,
+  Network,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -39,6 +40,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
+import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { useTeamStore } from '@/stores/teamStore';
@@ -82,6 +84,9 @@ import { RelativeTime } from '@/components/ui/RelativeTime';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import { DocEmptyState } from '@/components/doc-browser/DocEmptyState';
+import { BacklinksPanel } from '@/components/doc-browser/BacklinksPanel';
+import { WikilinkHoverCard } from '@/components/doc-browser/WikilinkHoverCard';
+import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import type {
   DocumentStore,
   DocumentStoreWithPreview,
@@ -599,12 +604,56 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
   initialEntryId?: string;
 }) {
+  const navigate = useNavigate();
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
+
+  // 从宇宙图等外部页面跳转过来时，sessionStorage 里可能有一个 pending entry：
+  // 在 entries 加载完成后消费一次（设置选中条目并清理 key，避免下次进入再次自动跳转）。
+  useEffect(() => {
+    if (entries.length === 0) return;
+    const pending = sessionStorage.getItem('doc-store-pending-entry');
+    if (!pending) return;
+    if (entries.some(e => e.id === pending)) {
+      setSelectedEntryId(pending);
+    }
+    sessionStorage.removeItem('doc-store-pending-entry');
+  }, [entries]);
+
+  // 喂 wikilink 缓存：每次 entries 变化（增删改、切库）都重灌一次，
+  // 让 MarkdownViewer 悬停预览 + WikilinkAutocomplete 走的"虚链接"判定能即时拿到最新映射。
+  useEffect(() => {
+    setWikilinkEntries(entries.filter(e => !e.isFolder).map(e => ({
+      id: e.id, title: e.title, summary: e.summary, updatedAt: e.updatedAt,
+    })));
+  }, [entries]);
+
+  // 双链跳转：监听 MarkdownViewer / BacklinksPanel 派发的 wikilink:click 事件，
+  // 在当前知识库的 entries 里按标题查 entryId 并切换选中。命中不到时降级为搜索关键字
+  // 提示（不报错，让用户去搜索栏继续找）。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ title?: string; entryId?: string }>;
+      const directId = ce.detail?.entryId;
+      if (directId && entries.some(en => en.id === directId)) {
+        setSelectedEntryId(directId);
+        return;
+      }
+      const title = (ce.detail?.title ?? '').trim();
+      if (!title) return;
+      const hit = entries.find(en => en.title === title);
+      if (hit) {
+        setSelectedEntryId(hit.id);
+      }
+      // 命中不到：当前 MVP 不自动跳转，未来可加 toast 或自动创建文档草稿
+    };
+    document.addEventListener('wikilink:click', handler);
+    return () => document.removeEventListener('wikilink:click', handler);
+  }, [entries]);
   // 从账号统计点击文档跳转而来：挂载时打开指定文档（组件按 storeId key 重挂载，仅消费一次）
   useEffect(() => {
     if (initialEntryId) setSelectedEntryId(initialEntryId);
@@ -1003,6 +1052,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
                 发布到智识殿堂
               </button>
             )}
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => navigate(`/document-store/${storeId}/universe`)}
+              title="打开知识宇宙图：Obsidian 风格力导向布局，看本库文档之间的双链关系网"
+            >
+              <Network size={13} /> 关系图谱
+            </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)} title="查看本知识库的访客统计报表">
               <BarChart3 size={13} /> 统计
             </Button>
@@ -1116,7 +1173,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               />
             </div>
           }
+          contentFooter={(entryId) => (
+            <BacklinksPanel
+              entryId={entryId}
+              onJumpToEntry={(id) => setSelectedEntryId(id)}
+            />
+          )}
+          autocompleteStoreId={storeId}
         />
+        <WikilinkHoverCard />
       </div>
 
       {/* 添加订阅对话框 */}
@@ -1588,17 +1653,11 @@ export function DocumentStorePage() {
     } else if (tab === 'team') {
       // 切到 team tab 时 teamScope 还未被 scope-sync effect 更新到记忆值,
       // 这里直接读 useTeamStore 兜底取记忆 teamId,避免"刚切过来闪一下未选 team 空态"。
+      // teamId 为 null = 「全部」聚合视图（我加入的所有团队），由后端 AnyIn 聚合查询支撑
       const remembered = useTeamStore.getState().getScope('document-store');
       const effectiveTeamId = teamScope.teamId
         ?? (remembered.scope === 'team' ? remembered.teamId : null);
-      if (effectiveTeamId) {
-        loadStores('team', effectiveTeamId);
-      } else {
-        // 团队空间未选具体空间时不拉数据，明确转为空态（而非永远 loading）
-        ++listFetchSeq.current; // 让任何 in-flight 请求作废
-        setStores([]);
-        setLoading(false);
-      }
+      loadStores('team', effectiveTeamId);
     } else if (tab === 'favorites') {
       loadFavorites();
     } else if (tab === 'likes') {
@@ -2082,7 +2141,7 @@ export function DocumentStorePage() {
               <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                 {teamScope.teamId
                   ? '当前团队空间还没有任何知识库，从「我的空间」把知识库分享过来吧'
-                  : '在上方选择或新建一个团队空间'}
+                  : '你加入的团队空间还没有任何知识库，从「我的空间」把知识库分享过来吧'}
               </p>
             )}
           </div>
@@ -2309,6 +2368,11 @@ export function DocumentStorePage() {
             })}
           </div>
         )}
+
+        {/* 团队空间：团队共享的网页托管站点（默认「全部」聚合，团队以标签展示在卡上） */}
+        {tab === 'team' && !loading && (
+          <TeamWebPagesSection key={teamScope.teamId ?? '__all__'} teamId={teamScope.teamId} />
+        )}
       </div>
 
       {/* 账号级访客统计抽屉（列表页「统计」入口，聚合全部知识库） */}
@@ -2332,6 +2396,9 @@ export function DocumentStorePage() {
             if (tab === 'team' && teamScope.teamId) {
               const res = await setStoreTeams(s.id, [teamScope.teamId]);
               if (!res.success) toast.error('已创建,但分享到团队空间失败', res.error?.message);
+            } else if (tab === 'team') {
+              // 「全部」聚合视图下无明确目标团队：建到我的空间并提示手动分享
+              toast.success('已创建到我的空间', '当前是「全部」视图，未自动分享到团队，可在卡片上点「分享到团队空间」');
             }
             setShowCreate(false);
             setSelectedStoreId(s.id);

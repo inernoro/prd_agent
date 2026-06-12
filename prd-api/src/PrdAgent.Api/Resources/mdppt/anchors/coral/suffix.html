@@ -1,0 +1,157 @@
+
+    </div>
+
+    <!-- Navigation -->
+    <div class="nav-dots" id="navDots"></div>
+    <div class="slide-counter" id="slideCounter">01 / 10</div>
+    <div class="nav-arrows" id="navArrows">
+        <div class="nav-arrow" id="prevArrow">&#8592;</div>
+        <div class="nav-arrow" id="nextArrow">&#8594;</div>
+    </div>
+
+    <script>
+        const slides = document.querySelectorAll('.slide');
+        const totalSlides = slides.length;
+        let currentSlide = 0;
+
+        const navDotsContainer = document.getElementById('navDots');
+        const slideCounter = document.getElementById('slideCounter');
+        const prevArrow = document.getElementById('prevArrow');
+        const nextArrow = document.getElementById('nextArrow');
+        const navArrows = document.getElementById('navArrows');
+
+        // Create dots
+        slides.forEach((_, index) => {
+            const dot = document.createElement('div');
+            dot.className = 'nav-dot' + (index === 0 ? ' active' : '');
+            dot.addEventListener('click', () => goToSlide(index));
+            navDotsContainer.appendChild(dot);
+        });
+
+        const dots = document.querySelectorAll('.nav-dot');
+
+        function updateNav() {
+            slides.forEach((slide, index) => {
+                slide.classList.toggle('active', index === currentSlide);
+            });
+            dots.forEach((dot, index) => {
+                dot.classList.toggle('active', index === currentSlide);
+            });
+            slideCounter.textContent = String(currentSlide + 1).padStart(2, '0') + ' / ' + String(totalSlides).padStart(2, '0');
+
+            // Check if current slide has light background for dark nav elements
+            const currentSlideEl = slides[currentSlide];
+            const isLight = currentSlideEl.classList.contains('slide-2') || 
+                           currentSlideEl.classList.contains('slide-4') || 
+                           currentSlideEl.classList.contains('slide-6') || 
+                           currentSlideEl.classList.contains('slide-8');
+            
+            dots.forEach(d => d.classList.toggle('dark', isLight));
+            slideCounter.classList.toggle('dark', isLight);
+            prevArrow.classList.toggle('dark', isLight);
+            nextArrow.classList.toggle('dark', isLight);
+        }
+
+        function goToSlide(index) {
+            if (index >= 0 && index < totalSlides) {
+                currentSlide = index;
+                updateNav();
+            }
+        }
+
+        function nextSlide() {
+            goToSlide((currentSlide + 1) % totalSlides);
+        }
+
+        function prevSlide() {
+            goToSlide((currentSlide - 1 + totalSlides) % totalSlides);
+        }
+
+        prevArrow.addEventListener('click', prevSlide);
+        nextArrow.addEventListener('click', nextSlide);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === ' ') {
+                e.preventDefault();
+                nextSlide();
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                prevSlide();
+            }
+        });
+
+        // Chart.js initialization for Slide 4
+        function initChart() {
+            const ctx = document.getElementById('growthChart');
+            if (!ctx) return;
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+                    datasets: [{
+                        label: 'Revenue (K)',
+                        data: [45, 62, 55, 78, 95, 112],
+                        backgroundColor: '#E85D5D',
+                        borderColor: '#1A1A1A',
+                        borderWidth: 2,
+                        borderRadius: 0,
+                        borderSkipped: false,
+                    }, {
+                        label: 'Target (K)',
+                        data: [50, 58, 65, 72, 85, 100],
+                        backgroundColor: '#1A1A1A',
+                        borderColor: '#1A1A1A',
+                        borderWidth: 2,
+                        borderRadius: 0,
+                        borderSkipped: false,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                font: { family: 'Inter', size: 12 },
+                                color: '#6B6B6B',
+                                usePointStyle: true,
+                                pointStyle: 'rect',
+                                padding: 20
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                font: { family: 'Inter', size: 12 },
+                                color: '#6B6B6B'
+                            }
+                        },
+                        y: {
+                            border: { display: false },
+                            grid: {
+                                color: 'rgba(26,26,26,0.08)',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                font: { family: 'Inter', size: 11 },
+                                color: '#B0B0B0',
+                                callback: function(value) { return '$' + value + 'K'; }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Initialize chart after a short delay to ensure canvas is visible
+        setTimeout(initChart, 300);
+
+        // Initial nav update
+        updateNav();
+    </script>
+</body>
+</html>

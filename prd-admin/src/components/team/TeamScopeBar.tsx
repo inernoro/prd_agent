@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, ChevronDown, FolderPlus, Plus, Search, Settings, UserPlus, Users, X } from 'lucide-react';
+import { Activity, FolderPlus, Plus, Search, Settings, UserPlus, Users, X } from 'lucide-react';
 import { useTeamStore } from '@/stores/teamStore';
 import { TeamManagerPanel } from '@/components/team/TeamManagerPanel';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -62,7 +62,6 @@ export function TeamScopeBar({
 }) {
   const { teams, loadTeams, setScope } = useTeamStore();
   const [managerOpen, setManagerOpen] = useState(false);
-  const [teamDropdownOpen, setTeamDropdownOpen] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -90,16 +89,15 @@ export function TeamScopeBar({
 
   // 点击外部关闭 popover
   useEffect(() => {
-    if (!panel && !teamDropdownOpen) return;
+    if (!panel) return;
     const h = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
         setPanel(null);
-        setTeamDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
-  }, [panel, teamDropdownOpen]);
+  }, [panel]);
 
   const selectedTeam = teams.find((t) => t.team.id === value.teamId);
   const isAdmin = myRole === 'admin';
@@ -110,10 +108,10 @@ export function TeamScopeBar({
     onChange({ scope: 'mine', teamId: null });
   };
 
-  const applyTeam = (teamId: string) => {
+  // teamId 为 null = 「全部」聚合视图（我加入的所有团队）
+  const applyTeam = (teamId: string | null) => {
     setScope(moduleKey, 'team', teamId);
     onChange({ scope: 'team', teamId });
-    setTeamDropdownOpen(false);
   };
 
   const onTeamPillClick = () => {
@@ -124,7 +122,7 @@ export function TeamScopeBar({
     }
     const target = value.teamId && teams.some((t) => t.team.id === value.teamId)
       ? value.teamId
-      : teams[0].team.id;
+      : null; // 默认进「全部」聚合视图
     applyTeam(target);
   };
 
@@ -251,49 +249,51 @@ export function TeamScopeBar({
           </div>
         )}
 
-        {/* 选择下拉（仅共享文件夹作用域且有空间时） */}
+        {/* 团队标签平铺（不下拉）：「全部」= 聚合我加入的所有团队 */}
         {inTeam && (
-          <div className="relative">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 max-w-[480px]" style={{ overscrollBehavior: 'contain' }}>
             <button
               type="button"
-              className="h-8 px-3 rounded-[8px] text-[13px] flex items-center gap-1.5"
-              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-              onClick={() => setTeamDropdownOpen((o) => !o)}
+              className="h-7 px-2.5 rounded-full text-[12px] shrink-0 transition-colors"
+              style={value.teamId === null
+                ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
+                : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+              onClick={() => applyTeam(null)}
             >
-              {selectedTeam?.team.name ?? '选择团队空间'}
-              <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+              全部
             </button>
-            {teamDropdownOpen && (
-              <div className="absolute left-0 top-[36px] z-[120] min-w-[200px] rounded-[10px] py-1 max-h-[300px] overflow-auto" style={popStyle}>
-                {teams.map((t) => (
-                  <button
-                    key={t.team.id}
-                    type="button"
-                    className="w-full text-left px-3 py-2 text-[13px] hover:bg-white/8 flex items-center justify-between"
-                    style={{ color: 'var(--text-primary)' }}
-                    onClick={() => applyTeam(t.team.id)}
-                  >
-                    <span className="truncate">{t.team.name}</span>
-                    <span className="text-[11px] shrink-0 ml-2" style={{ color: 'var(--text-muted)' }}>{t.memberCount} 人</span>
-                  </button>
-                ))}
-              </div>
-            )}
+            {teams.map((t) => (
+              <button
+                key={t.team.id}
+                type="button"
+                className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1 transition-colors"
+                style={value.teamId === t.team.id
+                  ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
+                  : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+                onClick={() => applyTeam(t.team.id)}
+              >
+                <Users size={11} /> {t.team.name} <span className="opacity-60">{t.memberCount}</span>
+              </button>
+            ))}
           </div>
         )}
 
-        {/* banner 操作行：仅团队空间页签出现 */}
+        {/* banner 操作行：仅团队空间页签出现；成员/邀请/活动需选中具体团队（「全部」视图下隐藏） */}
         {inTeam && (
           <div className="flex items-center gap-1.5">
-            <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('members')}>
-              <Users size={13} /> 成员{selectedTeam ? ` ${selectedTeam.memberCount}` : ''}
-            </button>
-            <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('invite')}>
-              <UserPlus size={13} /> 邀请
-            </button>
-            <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('activity')}>
-              <Activity size={13} /> 活动日志
-            </button>
+            {value.teamId && (
+              <>
+                <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('members')}>
+                  <Users size={13} /> 成员{selectedTeam ? ` ${selectedTeam.memberCount}` : ''}
+                </button>
+                <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('invite')}>
+                  <UserPlus size={13} /> 邀请
+                </button>
+                <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('activity')}>
+                  <Activity size={13} /> 活动日志
+                </button>
+              </>
+            )}
             <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('create')}>
               <FolderPlus size={13} /> 新建团队空间
             </button>

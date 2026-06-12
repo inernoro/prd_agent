@@ -26,6 +26,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'review-agent': '评审',
   'project-route-agent': '路由',
   'ccas-agent': '赋码',
+  'shitu-agent': '识途',
   'pr-review': 'PR审查',
   'report-agent': '周报',
   'arena-agent': '竞技场',
@@ -41,6 +42,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'skill-agent': '技能助手',
   'workflow-agent': '工作流',
   'md-to-ppt-agent': 'PPT',
+  'front-end-agent': '前端',
 
   // ── 基础设施 ──────────────────────────
   'marketplace': '市场',
@@ -52,6 +54,8 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'users': '团队',
   'teams': '团队',
   'document-store': '知识库',
+  'document-store-universe': '宇宙图',
+  'universe': '宇宙图',
   'web-pages': '网页',
   'changelog': '更新',
   'library': '殿堂',
@@ -61,6 +65,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'lab': '实验室',
   'automations': '自动化',
   'logs': '日志',
+  'team-activity': '动态',
 
   // ── 管理 / 其他 ───────────────────────
   'authz': '权限',

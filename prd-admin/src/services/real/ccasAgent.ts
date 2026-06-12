@@ -27,6 +27,7 @@ export interface CcasMeta {
   templates: CcasTemplateOption[];
   equipmentStyles: CcasStylePreset[];
   associationModes: CcasAssociationMode[];
+  authorName?: string;
 }
 
 export interface CcasEquipmentAsset {

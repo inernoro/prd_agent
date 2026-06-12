@@ -42,7 +42,8 @@ import {
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 import { CdsPairingService } from '../services/connection/pairing-service.js';
-import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
+import { cdsEventsBus } from '../services/cds-events-bus.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -625,6 +626,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const session: CdsAgentSession = {
       id: `cds-agent-${crypto.randomUUID().replace(/-/g, '')}`,
       projectId: req.params.id,
+      title: typeof req.body?.title === 'string' ? req.body.title.slice(0, 200) : null,
+      clientUser: typeof req.body?.clientUser === 'string' ? req.body.clientUser.slice(0, 120) : null,
+      clientApp: typeof req.body?.clientApp === 'string' ? req.body.clientApp.slice(0, 120) : null,
       runtime,
       model: typeof req.body?.model === 'string' ? req.body.model : null,
       modelBaseUrl,
@@ -909,7 +913,73 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       source: session.runtime === 'fake' ? 'fake-runtime' : `${session.runtime}-runtime`,
     });
     session.logs.push(`[${session.updatedAt}] session stopped`);
+    // 观测台历史（2026-06-11）：会话终态时落一条摘要进持久层（重启后历史仍可查）
+    try {
+      const summary = toAgentRequestSummary(session);
+      deps.stateService.recordAgentRequest({
+        sessionId: session.id,
+        projectId: session.projectId,
+        title: session.title,
+        clientUser: session.clientUser,
+        clientApp: session.clientApp,
+        runtime: session.runtime,
+        model: session.model,
+        status: session.status,
+        createdAt: session.createdAt,
+        finishedAt: session.stoppedAt ?? session.updatedAt,
+        durationMs: (summary.durationMs as number) ?? 0,
+        eventCount: session.events.length,
+        requestPreview: (summary.requestPreview as string | null) ?? null,
+        responsePreview: (summary.responsePreview as string | null) ?? null,
+      });
+    } catch { /* 历史落盘失败不影响 stop 主链路 */ }
     res.json({ item: toCdsAgentSessionView(session) });
+  });
+
+  // ── Agent 请求观测台（2026-06-11 用户信任诉求）──────────────────
+  // 聚合列表：live 会话（内存 Map）+ 持久历史合并，newest-first，
+  // 支持 user/app/q/status 筛选。详情走既有 per-session /stream（收发全文都在事件里）。
+  router.get('/projects/:id/agent-requests', (req, res) => {
+    const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['instance:read']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 300);
+    const fUser = typeof req.query.user === 'string' ? req.query.user.trim().toLowerCase() : '';
+    const fApp = typeof req.query.app === 'string' ? req.query.app.trim().toLowerCase() : '';
+    const fQ = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+    const fStatus = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : '';
+
+    const liveSummaries = Array.from(cdsAgentSessions.values())
+      .filter(sess => sess.projectId === req.params.id)
+      .map(toAgentRequestSummary);
+    const liveIds = new Set(liveSummaries.map(x => x.sessionId as string));
+    const history = deps.stateService.listAgentRequests()
+      .filter(r => r.projectId === req.params.id && !liveIds.has(r.sessionId))
+      .map(r => ({ ...r, live: false } as Record<string, unknown>));
+
+    const match = (item: Record<string, unknown>): boolean => {
+      const sv = (k: string) => String(item[k] ?? '').toLowerCase();
+      if (fUser && !sv('clientUser').includes(fUser)) return false;
+      if (fApp && !sv('clientApp').includes(fApp)) return false;
+      if (fStatus && sv('status') !== fStatus) return false;
+      if (fQ) {
+        const hay = [sv('title'), sv('model'), sv('requestPreview'), sv('responsePreview'), sv('sessionId')].join(' ');
+        if (!hay.includes(fQ)) return false;
+      }
+      return true;
+    };
+
+    const items = [...liveSummaries, ...history]
+      .filter(match)
+      .sort((a, b) => Date.parse(String(b.createdAt)) - Date.parse(String(a.createdAt)))
+      .slice(0, limit);
+    // 筛选项字典（下拉用）：当前可见的 user/app 去重
+    const all = [...liveSummaries, ...history];
+    const users = Array.from(new Set(all.map(x => x.clientUser).filter(Boolean))) as string[];
+    const apps = Array.from(new Set(all.map(x => x.clientApp).filter(Boolean))) as string[];
+    res.json({ items, users, apps, liveCount: liveSummaries.length, historyCount: history.length });
   });
 
   router.get('/projects/:projectId/agent-sessions/:sessionId/logs', (req, res) => {
@@ -1040,7 +1110,6 @@ function collectProjectRuntimeInstances(
   }
 
   if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
-    const projectSlug = previewProjectSlug(project, project.id);
     const previewRoot = resolvePreviewRootDomain();
     discovery.previewRootConfigured = Boolean(previewRoot);
     const branches = stateService.getBranchesForProject(project.id);
@@ -1057,8 +1126,9 @@ function collectProjectRuntimeInstances(
           continue;
         }
         discovery.runtimeBranchServiceCount += 1;
-        const previewSlug = computePreviewSlug(branch.branch, projectSlug);
-        const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
+        const preview = buildPreviewUrlForProject(previewRoot, branch.branch, project, project.id);
+        const previewSlug = preview.previewSlug;
+        const baseUrl = preview.url || undefined;
         const officialSdkRuntime = isOfficialSdkRuntimeService('claude-sdk', serviceState, profile);
         instances.push({
           deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
@@ -1520,6 +1590,10 @@ interface CdsAgentEvent {
 interface CdsAgentSession {
   id: string;
   projectId: string;
+  /** 请求标签（2026-06-11 观测台）：调用方自述的标题/用户/应用，用于列表与筛选 */
+  title: string | null;
+  clientUser: string | null;
+  clientApp: string | null;
   runtime: string;
   model: string | null;
   modelBaseUrl: string | null;
@@ -1641,13 +1715,84 @@ function pushCdsAgentEvent(
   };
   session.events.push(event);
   session.updatedAt = event.createdAt;
+  // 观测台实时流（2026-06-11）：结构性节点发布到全局总线（status/done/error/tool_*），
+  // text_delta/thinking 不逐 token 发（防总线洪水）——前端列表只需状态翻转与收发节点。
+  if (type === 'status' || type === 'done' || type === 'error' || type === 'tool_call' || type === 'tool_result') {
+    publishAgentActivity(session, type, payload);
+  }
   return event;
+}
+
+/** 向全局事件总线发布 agent 会话活动（观测台实时行内更新用） */
+function publishAgentActivity(
+  session: CdsAgentSession,
+  eventType: string,
+  payload: Record<string, unknown>,
+): void {
+  try {
+    const preview = typeof payload.finalText === 'string'
+      ? (payload.finalText as string).slice(0, 200)
+      : typeof payload.message === 'string'
+        ? (payload.message as string).slice(0, 200)
+        : null;
+    cdsEventsBus.publish('agent-session.activity', {
+      projectId: session.projectId,
+      sessionId: session.id,
+      eventType,
+      status: session.status,
+      title: session.title,
+      clientUser: session.clientUser,
+      clientApp: session.clientApp,
+      model: session.model,
+      preview,
+      eventCount: session.events.length,
+      updatedAt: session.updatedAt,
+    });
+  } catch { /* 总线发布失败不影响主链路 */ }
+}
+
+/** 请求摘要（观测台列表行）：收发预览 + 耗时 + 事件数，live 与历史共用同形 */
+function toAgentRequestSummary(session: CdsAgentSession): Record<string, unknown> {
+  const firstUser = session.messages.find(m => m.role === 'user');
+  let responsePreview: string | null = null;
+  for (let i = session.events.length - 1; i >= 0; i--) {
+    const ev = session.events[i];
+    if (ev.type === 'done' && typeof ev.payload.finalText === 'string') {
+      responsePreview = (ev.payload.finalText as string).slice(0, 2000);
+      break;
+    }
+    if (ev.type === 'error' && typeof ev.payload.message === 'string' && responsePreview === null) {
+      responsePreview = `[error] ${(ev.payload.message as string).slice(0, 500)}`;
+    }
+  }
+  const finished = session.stoppedAt ?? session.updatedAt;
+  const durationMs = Math.max(0, Date.parse(finished) - Date.parse(session.createdAt)) || 0;
+  return {
+    sessionId: session.id,
+    projectId: session.projectId,
+    title: session.title,
+    clientUser: session.clientUser,
+    clientApp: session.clientApp,
+    runtime: session.runtime,
+    model: session.model,
+    status: session.status,
+    createdAt: session.createdAt,
+    finishedAt: session.status === 'stopped' || session.status === 'failed' ? finished : null,
+    durationMs,
+    eventCount: session.events.length,
+    requestPreview: firstUser ? firstUser.content.slice(0, 2000) : null,
+    responsePreview,
+    live: cdsAgentSessions.has(session.id),
+  };
 }
 
 function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown> {
   return {
     id: session.id,
     projectId: session.projectId,
+    title: session.title,
+    clientUser: session.clientUser,
+    clientApp: session.clientApp,
     runtime: session.runtime,
     model: session.model,
     modelBaseUrl: session.modelBaseUrl,
@@ -1751,8 +1896,7 @@ function resolveCdsManagedRuntimeBaseUrl(
   }
   const previewRoot = resolvePreviewRootDomain();
   if (!previewRoot) return null;
-  const previewSlug = computePreviewSlug(branch.branch, previewProjectSlug(project, project.id));
-  return `https://${previewSlug}.${previewRoot}`;
+  return buildPreviewUrlForProject(previewRoot, branch.branch, project, project.id).url || null;
 }
 
 function toCdsManagedRuntimeTransportView(transport: CdsManagedRuntimeTransport): Record<string, unknown> {

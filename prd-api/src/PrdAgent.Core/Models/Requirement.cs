@@ -56,6 +56,18 @@ public class Requirement
     /// <summary>来源缺陷 Id（由缺陷转需求时记录，用于溯源追溯）</summary>
     public string? SourceDefectId { get; set; }
 
+    /// <summary>外部来源系统，如 tapd</summary>
+    public string? SourceSystem { get; set; }
+
+    /// <summary>外部系统中的需求 ID，用于幂等导入</summary>
+    public string? ExternalId { get; set; }
+
+    /// <summary>外部系统详情地址</summary>
+    public string? SourceUrl { get; set; }
+
+    /// <summary>TAPD RTF 导入时保留的原始字段、人员、评论和时间快照</summary>
+    public RequirementSourceSnapshot? SourceSnapshot { get; set; }
+
     /// <summary>进入当前状态的时间（SLA 时效计算用）</summary>
     public DateTime? StateEnteredAt { get; set; }
 
@@ -64,6 +76,33 @@ public class Requirement
 
     /// <summary>软删除标记</summary>
     public bool IsDeleted { get; set; }
+}
+
+public class RequirementSourceSnapshot
+{
+    public string Status { get; set; } = string.Empty;
+    public string Priority { get; set; } = string.Empty;
+    public Dictionary<string, string> Fields { get; set; } = new();
+    public List<string> HandlerNames { get; set; } = new();
+    public List<string> DeveloperNames { get; set; } = new();
+    public List<string> CreatorNames { get; set; } = new();
+    public List<string> CcNames { get; set; } = new();
+    public List<RequirementSourceComment> Comments { get; set; } = new();
+    public List<string> AttachmentIds { get; set; } = new();
+    public DateTime? SourceCreatedAt { get; set; }
+    public DateTime? SourceModifiedAt { get; set; }
+    public DateTime? SourceCompletedAt { get; set; }
+    public string ImportedFileName { get; set; } = string.Empty;
+    public string ImportBatchId { get; set; } = string.Empty;
+    public DateTime ImportedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class RequirementSourceComment
+{
+    public string Author { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public DateTime? CreatedAt { get; set; }
 }
 
 /// <summary>需求 / 功能 / 缺陷 通用分级常量（P0 最高，P3 最低）</summary>

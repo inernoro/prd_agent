@@ -14,6 +14,9 @@ import type {
   PmRiskStatus,
 } from '@/services/contracts/pmAgent';
 
+// ── 项目管理智能体强调色（左导航高亮 / 卡片辉光走 .pa-accent-blue）──
+export const PM_ACCENT = '#3B82F6';
+
 // ── 项目类型注册表（S / I / O）──
 export const PROJECT_TYPE_REGISTRY: Record<PmProjectType, { label: string; short: string; color: string; desc: string }> = {
   general: { label: '普通项目', short: '普', color: '#64748B', desc: '不分级的通用项目，适用于大多数日常工作' },

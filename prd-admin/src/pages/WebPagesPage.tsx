@@ -19,14 +19,21 @@ import {
   listSiteTags,
   createSiteShareLink,
   listSiteShares,
+  ensureSiteShareShortLink,
   revokeSiteShare,
   renewSiteShare,
   listShareViewLogs,
   listDocumentStores,
   addDocumentEntry,
   setSiteTeams,
+  listSiteGroups,
+  createSiteGroup,
+  updateSiteGroup,
+  deleteSiteGroup,
+  setSiteGroup,
+  copySiteToTeam,
 } from '@/services';
-import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard } from '@/services/real/webPages';
+import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
 import {
   canDeleteInWebHosting,
@@ -34,6 +41,7 @@ import {
   canShareInWebHosting,
 } from '@/lib/webHostingRole';
 import { SpaceBar, TeamSpaceHeader, type Space } from '@/components/team/SpaceBar';
+import { GroupAccessDialog } from '@/components/team/GroupAccessDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
@@ -45,6 +53,9 @@ import { ShareDock, useDockDrag } from '@/components/share-dock';
 
 /** 网页托管页面专用的 ShareDock MIME 类型 */
 const WEB_PAGE_MIME = 'application/x-map-site-id';
+
+// 树导航「未分组」虚拟节点 ID（仅前端过滤用，发往后端前必须还原成 null）
+const UNGROUPED_ID = '__ungrouped__';
 import { useAuthStore } from '@/stores/authStore';
 import {
   Upload,
@@ -58,6 +69,7 @@ import {
   FolderOpen,
   Eye,
   Copy,
+  Hash,
   Check,
   X,
   Lock,
@@ -157,14 +169,26 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 // ─── 分组方式（参考文学创作 LiteraryAgentWorkspaceListPage） ───
 
 type GroupMode = 'time' | 'folder';
+type WebPageCardSize = 'small' | 'medium' | 'large';
 
-// ─── 列表偏好持久化（排序/视图/分组）───
+const CARD_SIZE_OPTIONS: { value: WebPageCardSize; label: string; width: number }[] = [
+  { value: 'small', label: '小', width: 220 },
+  { value: 'medium', label: '中', width: 260 },
+  { value: 'large', label: '大', width: 320 },
+];
+
+function normalizeCardSize(v: string): WebPageCardSize {
+  return v === 'small' || v === 'large' || v === 'medium' ? v : 'medium';
+}
+
+// ─── 列表偏好持久化（排序/视图/分组/卡片尺寸）───
 // 用 localStorage：纯 UI 偏好（非敏感、设备本地、发版后用旧值无害），
 // 关浏览器重开也要记住用户的排序/视图选择。符合 .claude/rules/no-localstorage.md 的例外清单。
 const PREF_KEYS = {
   sort: 'webpages.pref.sort',
   viewMode: 'webpages.pref.viewMode',
   groupMode: 'webpages.pref.groupMode',
+  cardSize: 'webpages.pref.cardSize',
 } as const;
 
 function readPref(key: string, fallback: string): string {
@@ -204,15 +228,23 @@ interface SiteGroup {
 
 /** 按分组方式把（已排序的）站点列表切成分节。
  * 关键：保持传入数组的顺序（= 排序结果），只按 first-seen 顺序建组，
- * 因此「分组」与「排序」互不干扰 —— 排序决定顺序，分组只插标题。 */
-function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
+ * 因此「分组」与「排序」互不干扰 —— 排序决定顺序，分组只插标题。
+ * teamGroups 传入时（团队空间）按专题/分类实体切分节；否则按个人空间的 folder 字段。 */
+function buildSiteGroups(items: HostedSite[], mode: GroupMode, teamGroups?: WebPageGroup[]): SiteGroup[] {
+  const groupById = new Map((teamGroups ?? []).map((g) => [g.id, g]));
   const map = new Map<string, SiteGroup>();
   for (const site of items) {
     let key: string;
     let label: string;
     if (mode === 'folder') {
-      key = site.folder ? `f:${site.folder}` : 'f:__none__';
-      label = site.folder || '未分类';
+      if (teamGroups) {
+        const g = site.groupId ? groupById.get(site.groupId) : undefined;
+        key = g ? `g:${g.id}` : 'g:__none__';
+        label = g ? `${g.kind === 'topic' ? '专题' : '分类'} · ${g.name}` : '未分组';
+      } else {
+        key = site.folder ? `f:${site.folder}` : 'f:__none__';
+        label = site.folder || '未分类';
+      }
     } else {
       label = toDateBucketLabel(site.createdAt);
       key = `t:${label}`;
@@ -224,17 +256,9 @@ function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
     }
     g.items.push(site);
   }
-  const groups = [...map.values()];
-  // 文件夹分组：组顺序按文件夹名字母序，「未分类」置底（对齐文学创作可预测排序）。
-  // 时间分组：保持 first-seen（= 排序结果）顺序，让排序方向决定时间桶先后。
-  if (mode === 'folder') {
-    groups.sort((a, b) => {
-      if (a.key === 'f:__none__') return 1;
-      if (b.key === 'f:__none__') return -1;
-      return a.label.localeCompare(b.label, 'zh-Hans-CN');
-    });
-  }
-  return groups;
+  // 所有分组都保持 first-seen（= 后端排序结果）顺序。
+  // 这样“最新 / 最早 / 标题 / 浏览 / 体积”控制的是全局顺序，分组只负责插入标题。
+  return [...map.values()];
 }
 
 // ─── 排序循环：单击在 5 个选项之间下一步 ───
@@ -317,6 +341,11 @@ export default function WebPagesPage() {
   // SaaS 空间模型：个人空间 / 团队空间（协作边界）；空间内文件夹由内容派生（纯组织）
   const [currentSpace, setCurrentSpace] = useState<Space>({ kind: 'personal' });
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  // 团队空间分组（专题/日常分类）：团队级实体，可先建空分组再加内容
+  const [teamGroups, setTeamGroups] = useState<WebPageGroup[]>([]);
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  // 「从个人空间添加」复制选择器
+  const [showCopyFromPersonal, setShowCopyFromPersonal] = useState(false);
   const { teams, loadTeams } = useTeamStore();
   const [movingSite, setMovingSite] = useState<HostedSite | null>(null);
   const [ownerCards, setOwnerCards] = useState<Record<string, SiteOwnerCard>>({});
@@ -327,6 +356,9 @@ export default function WebPagesPage() {
   const [sort, setSort] = useState(() => readPref(PREF_KEYS.sort, 'newest'));
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(
     () => readPref(PREF_KEYS.viewMode, 'grid') as 'grid' | 'list',
+  );
+  const [cardSize, setCardSize] = useState<WebPageCardSize>(
+    () => normalizeCardSize(readPref(PREF_KEYS.cardSize, 'medium')),
   );
 
   // 空间 → 作用域（个人空间走 mine 再客户端剔除已进团队的；团队空间走 team）。下游隔离/角色门控不变
@@ -340,10 +372,11 @@ export default function WebPagesPage() {
     () => readPref(PREF_KEYS.groupMode, 'time') as GroupMode,
   );
 
-  // 排序/视图/分组偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
+  // 排序/视图/分组/卡片尺寸偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
   useEffect(() => { writePref(PREF_KEYS.sort, sort); }, [sort]);
   useEffect(() => { writePref(PREF_KEYS.viewMode, viewMode); }, [viewMode]);
   useEffect(() => { writePref(PREF_KEYS.groupMode, groupMode); }, [groupMode]);
+  useEffect(() => { writePref(PREF_KEYS.cardSize, cardSize); }, [cardSize]);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
@@ -421,6 +454,15 @@ export default function WebPagesPage() {
     if (fRes.success) setFolders(fRes.data.folders);
     if (tRes.success) setTags(tRes.data.tags);
   }, []);
+
+  // 团队空间分组列表（专题 + 日常分类）
+  const loadGroups = useCallback(async () => {
+    if (currentSpace.kind !== 'team') { setTeamGroups([]); return; }
+    const res = await listSiteGroups(currentSpace.teamId);
+    if (res.success) setTeamGroups(res.data.groups);
+  }, [currentSpace]);
+
+  useEffect(() => { void loadGroups(); }, [loadGroups]);
 
   // 拉真实分享列表（后端已排除 visit 便捷链 + 已撤销），刷新「已分享」标记
   const loadShares = useCallback(async () => {
@@ -585,18 +627,79 @@ export default function WebPagesPage() {
     () => Array.from(new Set(spaceSites.map((s) => s.folder).filter((f): f is string => !!f && !!f.trim()))).sort(),
     [spaceSites],
   );
-  const displaySites = useMemo(
-    () => (activeFolder ? spaceSites.filter((s) => s.folder === activeFolder) : spaceSites),
-    [spaceSites, activeFolder],
+  const displaySites = useMemo(() => {
+    // 团队空间按分组（专题/日常分类）过滤；个人空间沿用文件夹过滤
+    if (currentSpace.kind === 'team') {
+      if (activeGroupId === UNGROUPED_ID) return spaceSites.filter((s) => !s.groupId);
+      return activeGroupId ? spaceSites.filter((s) => s.groupId === activeGroupId) : spaceSites;
+    }
+    return activeFolder ? spaceSites.filter((s) => s.folder === activeFolder) : spaceSites;
+  }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind]);
+  // 「未分组」是树导航的虚拟节点：投送/移入分组时必须还原成 null
+  const activeRealGroupId = activeGroupId === UNGROUPED_ID ? null : activeGroupId;
+  // 树导航的分组计数（来自当前空间已加载的站点）
+  const groupCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    let ungrouped = 0;
+    for (const s of spaceSites) {
+      if (s.groupId) counts.set(s.groupId, (counts.get(s.groupId) ?? 0) + 1);
+      else ungrouped++;
+    }
+    return { counts, ungrouped };
+  }, [spaceSites]);
+  const siteGroups = useMemo(
+    () => buildSiteGroups(displaySites, groupMode, currentSpace.kind === 'team' ? teamGroups : undefined),
+    [displaySites, groupMode, currentSpace.kind, teamGroups],
   );
-  const siteGroups = useMemo(() => buildSiteGroups(displaySites, groupMode), [displaySites, groupMode]);
+  const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 260;
 
   const enterSpace = (s: Space) => {
+    // 幂等守卫：点的就是当前空间则不动（双击当前团队改名时，两次 click 不应触发整页重载）
+    if (s.kind === currentSpace.kind && (s.kind === 'personal' || (currentSpace.kind === 'team' && s.teamId === currentSpace.teamId))) return;
     setCurrentSpace(s);
     setActiveFolder(null);
+    setActiveGroupId(null);
     setSelectedIds(new Set());
     // 切空间立刻清空上一作用域的角色，避免用旧 scope 的角色误判权限（由随后的 load 重新填充）
     setMyWebHostingRole(null);
+  };
+
+  // ── 团队空间分组（专题/日常分类）操作 ──
+
+  const handleCreateGroup = async (kind: 'topic' | 'daily', name: string) => {
+    if (currentSpace.kind !== 'team') return;
+    const res = await createSiteGroup({ teamId: currentSpace.teamId, kind, name });
+    if (res.success) {
+      toast.success('已创建', `${kind === 'topic' ? '专题' : '分类'}「${name}」已创建，可向其中添加网页`);
+      await loadGroups();
+    } else {
+      toast.error('创建失败', res.error?.message);
+    }
+  };
+
+  // 分组权限设置弹窗（仅空间 owner 入口可见）
+  const [accessGroup, setAccessGroup] = useState<WebPageGroup | null>(null);
+
+  const handleRenameGroup = async (g: WebPageGroup, name: string) => {
+    // 乐观更新：树上立即显示新名，API 失败再回滚（不整列表刷新）
+    setTeamGroups((prev) => prev.map((x) => (x.id === g.id ? { ...x, name } : x)));
+    const res = await updateSiteGroup(g.id, { name });
+    if (!res.success) {
+      setTeamGroups((prev) => prev.map((x) => (x.id === g.id ? { ...x, name: g.name } : x)));
+      toast.error('重命名失败', res.error?.message);
+    }
+  };
+
+  const handleDeleteGroup = async (g: WebPageGroup) => {
+    if (!confirm(`删除${g.kind === 'topic' ? '专题' : '分类'}「${g.name}」？组内网页不会被删除，只会回到「未分组」。`)) return;
+    const res = await deleteSiteGroup(g.id);
+    if (res.success) {
+      if (activeGroupId === g.id) setActiveGroupId(null);
+      await loadGroups();
+      await load();
+    } else {
+      toast.error('删除失败', res.error?.message);
+    }
   };
 
   const handleMoveSite = async (targetSpace: Space, folder: string | null) => {
@@ -617,7 +720,7 @@ export default function WebPagesPage() {
       <div
         className="grid gap-3"
         style={{
-          gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 260px))',
+          gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), ${cardWidth}px))`,
           justifyContent: 'start',
         }}
       >
@@ -696,6 +799,8 @@ export default function WebPagesPage() {
             // 在 await 之前快照「发起上传时」的空间：上传期间用户若切换个人/其它团队空间，
             // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
             const targetSpace = currentSpace;
+            // 同步快照当前选中的分组：正停留在某专题/分类视图里拖拽上传 → 新网页直接归入该分组
+            const targetGroupId = targetSpace.kind === 'team' ? activeRealGroupId : null;
             // 权限闸门：团队空间内必须有编辑权限才能投放（与上传按钮的显隐条件一致）。
             // dropzone 始终挂载，不能让只读 viewer 通过拖拽绕过按钮把内容写进团队空间。
             // 仅在「角色已确切加载（非 null）」时硬拦截：刚切进团队空间 role 尚未就绪（null）时放行，
@@ -721,6 +826,11 @@ export default function WebPagesPage() {
                 loadMeta();
                 toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
                 return;
+              }
+              // 正在某专题/分类视图内上传 → 顺手归入该分组（失败不阻断，仅提示）
+              if (targetGroupId) {
+                const grouped = await setSiteGroup(site.id, targetGroupId);
+                if (!grouped.success) toast.error('已上传，但归入分组失败', grouped.error?.message || '可稍后通过批量操作移入分组');
               }
             }
             markSiteAsFresh(site.id);
@@ -820,6 +930,11 @@ export default function WebPagesPage() {
               <Link2 size={15} />
             </button>
             <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-default)' }} />
+            {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
+              <Button size="sm" variant="secondary" title="把个人空间的网页复制一份进当前团队（原网页不受影响）" onClick={() => setShowCopyFromPersonal(true)}>
+                <FolderInput size={14} className="mr-1" /> 从个人空间添加
+              </Button>
+            )}
             {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
               <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
                 <Upload size={14} className="mr-1" /> 上传站点
@@ -853,6 +968,15 @@ export default function WebPagesPage() {
             />
           </div>
 
+          {/* Card size */}
+          <div data-tour-id="webpages-card-size-pills" title="调整网页卡片大小，刷新后保持">
+            <SegmentPills
+              options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+              value={cardSize}
+              onChange={(v) => setCardSize(normalizeCardSize(v))}
+            />
+          </div>
+
           {/* 排序 segment pill group：当前项 pill 高亮，点击任意切到那个 */}
           <div data-tour-id="webpages-sort-pills">
             <SegmentPills
@@ -862,12 +986,12 @@ export default function WebPagesPage() {
             />
           </div>
 
-          {/* 分组 segment pill group：二选一 */}
+          {/* 分组 segment pill group：二选一（团队空间按专题/分类切分节，个人空间按文件夹） */}
           <div data-tour-id="webpages-group-pills">
             <SegmentPills
               options={[
                 { value: 'time', label: '日期' },
-                { value: 'folder', label: '文件夹' },
+                { value: 'folder', label: currentSpace.kind === 'team' ? '分组' : '文件夹' },
               ]}
               value={groupMode}
               onChange={(v) => setGroupMode(v as GroupMode)}
@@ -893,8 +1017,10 @@ export default function WebPagesPage() {
           </div>
         </div>
 
-        {/* 空间内文件夹（内容派生）：锚点容器永远渲染（教程引导依赖该 selector）；
-            有文件夹时显示全部 + 各文件夹按钮，无文件夹时显示一句空态引导。 */}
+        {/* 空间内组织（教程引导依赖 webpages-folders selector）：
+            个人空间 = 文件夹 chips（站点 folder 字段派生）；
+            团队空间 = 左侧分组树导航（见下方 TeamGroupsTree，锚点随之移动，同一时刻 DOM 里只有一个）。 */}
+        {currentSpace.kind !== 'team' && (
         <div data-tour-id="webpages-folders" className="mt-3">
           {spaceFolders.length > 0 ? (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
@@ -916,6 +1042,7 @@ export default function WebPagesPage() {
             </div>
           )}
         </div>
+        )}
 
         {/* 团队空间协作头部：放最下方，出现/消失不顶动上方搜索框（切换统一性） */}
         {currentSpace.kind === 'team' && (
@@ -959,6 +1086,33 @@ export default function WebPagesPage() {
             {(teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)) && (
               <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
             )}
+            {/* 团队空间：把选中的网页移入专题/分类（编辑权限） */}
+            {teamScope.scope === 'team' && canEditInWebHosting(myWebHostingRole) && teamGroups.length > 0 && (
+              <select
+                className="h-7 px-2 rounded-[8px] text-[12px] outline-none"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                value=""
+                onChange={async (e) => {
+                  const v = e.target.value;
+                  if (!v) return;
+                  const gid = v === '__none__' ? null : v;
+                  let ok = 0;
+                  for (const id of selectedIds) {
+                    const r = await setSiteGroup(id, gid);
+                    if (r.success) ok++;
+                  }
+                  toast.success('已更新分组', `${ok} 个网页已${gid ? '移入所选分组' : '移出分组'}`);
+                  setSelectedIds(new Set());
+                  await load();
+                }}
+              >
+                <option value="">移入分组…</option>
+                <option value="__none__">移出分组</option>
+                {teamGroups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.kind === 'topic' ? '专题' : '分类'} · {g.name}</option>
+                ))}
+              </select>
+            )}
             {(teamScope.scope !== 'team' || myWebHostingRole === 'owner') && (
               <Button size="xs" variant="danger" onClick={handleBatchDelete}><Trash2 size={12} className="mr-1" /> 批量删除</Button>
             )}
@@ -973,7 +1127,25 @@ export default function WebPagesPage() {
         {activeTag && <span>标签: {activeTag}</span>}
       </div>
 
-      {/* Content */}
+      {/* Content：团队空间左侧挂分组树导航（空间 → 专题 → 分类），个人空间保持原布局 */}
+      <div className={currentSpace.kind === 'team' ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}>
+        {currentSpace.kind === 'team' && (
+          <TeamGroupsTree
+            groups={teamGroups}
+            activeGroupId={activeGroupId}
+            canEdit={canEditInWebHosting(myWebHostingRole)}
+            canManageAccess={myWebHostingRole === 'owner'}
+            totalCount={spaceSites.length}
+            ungroupedCount={groupCounts.ungrouped}
+            counts={groupCounts.counts}
+            onSelect={setActiveGroupId}
+            onCreate={handleCreateGroup}
+            onDelete={handleDeleteGroup}
+            onRename={handleRenameGroup}
+            onOpenAccess={setAccessGroup}
+          />
+        )}
+        <div className="flex-1 min-w-0 flex flex-col">
       {loading && sites.length === 0 ? (
         <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
           加载中...
@@ -981,7 +1153,7 @@ export default function WebPagesPage() {
       ) : displaySites.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ color: 'var(--text-muted)' }}>
           <UploadCloud size={48} strokeWidth={1} />
-          <p>{currentSpace.kind === 'team' ? '这个团队空间还没有网页' : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
+          <p>{currentSpace.kind === 'team' ? (activeGroupId ? '这个分组还没有网页' : '这个团队空间还没有网页') : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
           {/* 与顶部上传按钮同款权限闸门：团队空间只读 viewer 不展示上传入口，
               避免点开弹窗 uploadSite 后被 setTeams 403、徒留站点在个人空间 */}
           {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
@@ -1021,6 +1193,8 @@ export default function WebPagesPage() {
           ))}
         </div>
       )}
+        </div>
+      </div>
 
       {/* Upload / Edit Dialog */}
       {showUploadDialog && (
@@ -1041,6 +1215,10 @@ export default function WebPagesPage() {
               // 归属失败不能静默：告知用户站点暂在个人空间（与 dropzone 路径一致）
               if (!assigned.success) {
                 toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
+              } else if (currentSpace.kind === 'team' && currentSpace.teamId === dialogSpace.teamId && activeRealGroupId) {
+                // 仍停留在同一团队的专题/分类视图 → 新网页顺手归入该分组
+                const grouped = await setSiteGroup(saved.id, activeRealGroupId);
+                if (!grouped.success) toast.error('已上传，但归入分组失败', grouped.error?.message || '可稍后通过批量操作移入分组');
               }
             }
             load();
@@ -1163,7 +1341,359 @@ export default function WebPagesPage() {
           onMove={handleMoveSite}
         />
       )}
+
+      {/* 从个人空间复制网页进当前团队（物理复制，原网页不受影响） */}
+      {showCopyFromPersonal && currentSpace.kind === 'team' && (
+        <CopyFromPersonalDialog
+          teamId={currentSpace.teamId}
+          initialGroupId={activeRealGroupId}
+          groups={teamGroups}
+          onClose={() => setShowCopyFromPersonal(false)}
+          onCopied={() => { void load(); }}
+        />
+      )}
+
+      {accessGroup && currentSpace.kind === 'team' && (
+        <GroupAccessDialog
+          group={accessGroup}
+          teamId={currentSpace.teamId}
+          onClose={() => setAccessGroup(null)}
+          onSaved={() => { void loadGroups(); void load(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ─── 团队空间分组树导航（空间 → 专题 → 分类） ───
+
+function TeamGroupsTree({
+  groups,
+  activeGroupId,
+  canEdit,
+  canManageAccess,
+  totalCount,
+  ungroupedCount,
+  counts,
+  onSelect,
+  onCreate,
+  onDelete,
+  onRename,
+  onOpenAccess,
+}: {
+  groups: WebPageGroup[];
+  activeGroupId: string | null;
+  canEdit: boolean;
+  canManageAccess: boolean;
+  totalCount: number;
+  ungroupedCount: number;
+  counts: Map<string, number>;
+  onSelect: (groupId: string | null) => void;
+  onCreate: (kind: 'topic' | 'daily', name: string) => void | Promise<void>;
+  onDelete: (group: WebPageGroup) => void | Promise<void>;
+  onRename: (group: WebPageGroup, name: string) => void | Promise<void>;
+  onOpenAccess: (group: WebPageGroup) => void;
+}) {
+  // 节内新建：点击节标题的 + 在该节底部展开输入框
+  const [creating, setCreating] = useState<'topic' | 'daily' | null>(null);
+  const [name, setName] = useState('');
+  // 双击分组行进入就地改名（编辑权限门控）
+  const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
+
+  const commitRename = async () => {
+    if (!editing) return;
+    const g = groups.find((x) => x.id === editing.id);
+    const next = editing.value.trim();
+    setEditing(null);
+    if (!g || !next || next === g.name) return;
+    await onRename(g, next);
+  };
+
+  const submitCreate = async () => {
+    const n = name.trim();
+    if (!n || !creating) return;
+    await onCreate(creating, n);
+    setName('');
+    setCreating(null);
+  };
+
+  const itemStyle = (on: boolean): React.CSSProperties => (on
+    ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' }
+    : { color: 'var(--text-muted)' });
+
+  const row = (g: WebPageGroup) => {
+    const on = activeGroupId === g.id;
+    if (editing?.id === g.id) {
+      return (
+        <input
+          key={g.id}
+          autoFocus
+          value={editing.value}
+          onChange={(e) => setEditing({ id: g.id, value: e.target.value })}
+          onBlur={() => void commitRename()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void commitRename();
+            if (e.key === 'Escape') setEditing(null);
+          }}
+          className="w-full h-7 px-2 rounded-[6px] text-[12px] outline-none"
+          style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)' }}
+        />
+      );
+    }
+    return (
+      <div
+        key={g.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => onSelect(on ? null : g.id)}
+        onDoubleClick={() => { if (canEdit) setEditing({ id: g.id, value: g.name }); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') onSelect(on ? null : g.id); }}
+        title={canEdit ? '双击重命名' : undefined}
+        className="group/tree-item w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-white/5"
+        style={itemStyle(on)}
+      >
+        <Folder size={11} className="shrink-0" />
+        <span className="flex-1 truncate" style={on ? undefined : { color: 'var(--text-primary)' }}>{g.name}</span>
+        {g.visibility === 'restricted' && (
+          <Lock size={9} className="shrink-0 opacity-70" aria-label="受限分组" />
+        )}
+        {canManageAccess && (
+          <button
+            type="button"
+            title="访问权限"
+            className="shrink-0 opacity-0 group-hover/tree-item:opacity-70 hover:!opacity-100"
+            style={{ color: 'inherit' }}
+            onClick={(e) => { e.stopPropagation(); onOpenAccess(g); }}
+          >
+            <Settings2 size={11} />
+          </button>
+        )}
+        {canEdit && (
+          <button
+            type="button"
+            title="删除分组（组内网页回到未分组）"
+            className="shrink-0 opacity-0 group-hover/tree-item:opacity-70 hover:!opacity-100"
+            style={{ color: 'inherit' }}
+            onClick={(e) => { e.stopPropagation(); void onDelete(g); }}
+          >
+            <X size={11} />
+          </button>
+        )}
+        <span className="shrink-0 text-[10px] opacity-60">{counts.get(g.id) ?? 0}</span>
+      </div>
+    );
+  };
+
+  const section = (kind: 'topic' | 'daily', label: string, items: WebPageGroup[]) => (
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between h-6 px-2">
+        <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
+        {canEdit && (
+          <button
+            type="button"
+            title={kind === 'topic' ? '新建专题（可先建空专题再加内容）' : '新建日常分类'}
+            className="opacity-60 hover:opacity-100"
+            style={{ color: 'var(--text-muted)' }}
+            onClick={() => { setCreating(kind); setName(''); }}
+          >
+            <Plus size={12} />
+          </button>
+        )}
+      </div>
+      {items.map(row)}
+      {items.length === 0 && creating !== kind && (
+        <div className="px-2 py-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          {canEdit ? `点 + 新建${label}` : `还没有${label}`}
+        </div>
+      )}
+      {creating === kind && (
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={kind === 'topic' ? '新专题名称，回车创建' : '新分类名称，回车创建'}
+          className="w-full h-7 px-2 rounded-[6px] text-[12px] outline-none"
+          style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)' }}
+          onBlur={() => { if (!name.trim()) setCreating(null); else void submitCreate(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') void submitCreate(); if (e.key === 'Escape') setCreating(null); }}
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <aside
+      data-tour-id="webpages-folders"
+      className="w-[212px] shrink-0 rounded-xl p-2 space-y-2"
+      style={{
+        position: 'sticky',
+        top: 0,
+        alignSelf: 'flex-start',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-default)',
+      }}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => onSelect(null)}
+        onKeyDown={(e) => { if (e.key === 'Enter') onSelect(null); }}
+        className="w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-white/5"
+        style={itemStyle(activeGroupId === null)}
+      >
+        <Grid3X3 size={11} className="shrink-0" />
+        <span className="flex-1" style={activeGroupId === null ? undefined : { color: 'var(--text-primary)' }}>全部</span>
+        <span className="shrink-0 text-[10px] opacity-60">{totalCount}</span>
+      </div>
+      {ungroupedCount > 0 && (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onSelect(activeGroupId === UNGROUPED_ID ? null : UNGROUPED_ID)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onSelect(activeGroupId === UNGROUPED_ID ? null : UNGROUPED_ID); }}
+          className="w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-white/5"
+          style={itemStyle(activeGroupId === UNGROUPED_ID)}
+        >
+          <FolderInput size={11} className="shrink-0" />
+          <span className="flex-1" style={activeGroupId === UNGROUPED_ID ? undefined : { color: 'var(--text-primary)' }}>未分组</span>
+          <span className="shrink-0 text-[10px] opacity-60">{ungroupedCount}</span>
+        </div>
+      )}
+      <div className="h-px" style={{ background: 'var(--border-default)' }} />
+      {section('topic', '专题', groups.filter((g) => g.kind === 'topic'))}
+      {section('daily', '分类', groups.filter((g) => g.kind === 'daily'))}
+    </aside>
+  );
+}
+
+// ─── 从个人空间复制网页进团队 ───
+
+function CopyFromPersonalDialog({
+  teamId,
+  initialGroupId,
+  groups,
+  onClose,
+  onCopied,
+}: {
+  teamId: string;
+  initialGroupId: string | null;
+  groups: WebPageGroup[];
+  onClose: () => void;
+  onCopied: () => void;
+}) {
+  const [items, setItems] = useState<HostedSite[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [keyword, setKeyword] = useState('');
+  const [copyingId, setCopyingId] = useState<string | null>(null);
+  const [copiedIds, setCopiedIds] = useState<Set<string>>(new Set());
+  const [targetGroupId, setTargetGroupId] = useState<string>(initialGroupId ?? '');
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      const res = await listSites({ limit: 200, scope: 'mine' });
+      if (alive && res.success) {
+        // 只列纯个人空间的网页（未进任何团队的），与个人空间视图口径一致
+        setItems(res.data.items.filter((s) => !(s.sharedTeamIds && s.sharedTeamIds.length)));
+      }
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const filtered = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    if (!kw) return items;
+    return items.filter((s) => s.title.toLowerCase().includes(kw) || (s.description ?? '').toLowerCase().includes(kw));
+  }, [items, keyword]);
+
+  const handleCopy = async (site: HostedSite) => {
+    if (copyingId) return;
+    setCopyingId(site.id);
+    const res = await copySiteToTeam(site.id, teamId, targetGroupId || null);
+    setCopyingId(null);
+    if (res.success) {
+      setCopiedIds((prev) => new Set(prev).add(site.id));
+      toast.success('已复制进团队', `「${site.title}」已复制为团队网页，原网页不受影响`);
+      onCopied();
+    } else {
+      toast.error('复制失败', res.error?.message);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
+      <div className="rounded-[14px] w-full flex flex-col" style={{ maxWidth: 560, height: '70vh', maxHeight: '70vh', background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 px-5 h-[52px] flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>从个人空间添加网页</span>
+          <button type="button" onClick={onClose} style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
+        </div>
+        <div className="shrink-0 px-4 pt-3 flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <input
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              placeholder="搜索个人空间的网页…"
+              className="w-full h-8 pl-8 pr-2 rounded-[8px] text-[13px] outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            />
+          </div>
+          {groups.length > 0 && (
+            <select
+              value={targetGroupId}
+              onChange={(e) => setTargetGroupId(e.target.value)}
+              title="副本归入的专题/分类（可选）"
+              className="h-8 px-2 rounded-[8px] text-[12px] outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            >
+              <option value="">不归入分组</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>{g.kind === 'topic' ? '专题' : '分类'} · {g.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+        <p className="shrink-0 px-4 pt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          复制 = 物理拷贝一份独立副本进团队空间，原个人网页的链接、分享、规则全部不受影响。
+        </p>
+        <div className="flex-1 p-4 space-y-1.5" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {loading ? (
+            <MapSectionLoader text="正在加载个人空间网页…" />
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-10" style={{ color: 'var(--text-muted)' }}>
+              <UploadCloud size={32} strokeWidth={1} />
+              <p className="text-[13px]">{keyword ? '没有匹配的网页' : '个人空间还没有可复制的网页'}</p>
+            </div>
+          ) : (
+            filtered.map((site) => {
+              const copied = copiedIds.has(site.id);
+              return (
+                <div key={site.id} className="flex items-center gap-3 px-3 py-2 rounded-[10px]"
+                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{site.title}</p>
+                    <p className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      {site.files.length} 个文件 · {fmtSize(site.totalSize)} · {relativeTime(site.updatedAt)}
+                    </p>
+                  </div>
+                  <Button size="xs" variant={copied ? 'ghost' : 'secondary'} disabled={copied || copyingId === site.id}
+                    onClick={() => handleCopy(site)}>
+                    {copyingId === site.id ? <MapSpinner size={12} className="mr-1" /> : copied ? <Check size={12} className="mr-1" /> : <Copy size={12} className="mr-1" />}
+                    {copied ? '已复制' : '复制进团队'}
+                  </Button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2198,6 +2728,10 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
         // 用户在面板中显式新建（PR 2026-05-28）：跳过服务端复用，每次都换新 token
         forceNew: true,
         visibility,
+        // 数字短链按需分配（2026-06-11）：只有用户在高级选项里主动选「数字短链」才生成
+        // /s/{seq}，否则后端不写 short_links，只发不可枚举的 /s/wp/{token} 长链——
+        // 杜绝「用户没选短链却拿到数字链」+「管理员短链页冒出几百条」。
+        allocateShortLink: isShort,
       });
       if (res.success) {
         onCreated?.();
@@ -2620,13 +3154,39 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
     }
   };
 
-  const shareUrlOf = (s: ShareLinkItem) =>
-    s.shortSeq && s.shortSeq > 0
-      ? `${window.location.origin}/s/${s.shortSeq}`
-      : `${window.location.origin}/s/wp/${s.token}`;
+  // 主链接恒为不可枚举的字母长链 /s/wp/{token}（2026-06-11）：
+  // 用户创建时默认选的就是长链，复制/点击/预览都应给长链，不再因「后端碰巧分配了
+  // shortSeq」就把数字短链当主链返回——那正是「我没选数字短链却总拿到数字链」的根因。
+  // 数字短链 /s/{seq} 仅作为用户主动生成后的次级可选项单独展示。
+  const shareUrlOf = (s: ShareLinkItem) => `${window.location.origin}/s/wp/${s.token}`;
+  const shortUrlOf = (s: ShareLinkItem) =>
+    s.shortSeq && s.shortSeq > 0 ? `${window.location.origin}/s/${s.shortSeq}` : null;
 
   const handleCopy = (s: ShareLinkItem) => {
     navigator.clipboard.writeText(shareUrlOf(s));
+  };
+
+  // 事后生成数字短链（懒分配入口）：用户在某条分享上主动点「生成数字短链」时调用，
+  // 成功后把返回的 shortSeq 写回该条分享并复制数字短链。
+  const [allocatingId, setAllocatingId] = useState<string | null>(null);
+  const handleShortLink = async (s: ShareLinkItem) => {
+    const existing = shortUrlOf(s);
+    if (existing) {
+      navigator.clipboard.writeText(existing);
+      return;
+    }
+    setAllocatingId(s.id);
+    try {
+      const res = await ensureSiteShareShortLink(s.id);
+      if (res.success && res.data.shortSeq > 0) {
+        setShares(shares.map(x => x.id === s.id ? { ...x, shortSeq: res.data.shortSeq } : x));
+        navigator.clipboard.writeText(`${window.location.origin}/s/${res.data.shortSeq}`);
+      } else {
+        alert(res.error?.message || '生成数字短链失败');
+      }
+    } finally {
+      setAllocatingId(null);
+    }
   };
 
   const handleShowLogs = async (token: string) => {
@@ -2706,16 +3266,19 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Link2 size={14} style={{ color: 'var(--text-muted)' }} />
-                        <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        <a
+                          href={shareUrlOf(share)}
+                          target="_blank"
+                          rel="noopener"
+                          className="text-sm font-medium truncate hover:underline"
+                          style={{ color: 'var(--text-primary)' }}
+                          title="预览分享链接"
+                        >
                           {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
-                        </span>
-                        {share.shortSeq && share.shortSeq > 0 ? (
-                          <span title={`/s/${share.shortSeq}`}>
+                        </a>
+                        {share.shortSeq && share.shortSeq > 0 && (
+                          <span title={`已生成数字短链 /s/${share.shortSeq}`}>
                             <Badge variant="subtle">#{share.shortSeq}</Badge>
-                          </span>
-                        ) : (
-                          <span title="老分享，仅长链可用">
-                            <Badge variant="subtle">长链</Badge>
                           </span>
                         )}
                         {visibilityChip(share.visibility)}
@@ -2736,7 +3299,7 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                       <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                         <span className="flex items-center gap-1"><Eye size={10} /> {share.viewCount} PV</span>
                         {(share.uniqueIpCount ?? 0) > 0 && (
-                          <span title="独立 IP 数">{share.uniqueIpCount} 个 IP</span>
+                          <span title="基于访问日志估算的访客线索">{share.uniqueIpCount} 位访客</span>
                         )}
                         <span>创建于 {fmtDate(share.createdAt)}</span>
                         {share.expiresAt && <span>{isExpired ? '过期于' : '到期'} {fmtDate(share.expiresAt)}</span>}
@@ -2765,9 +3328,24 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                       >
                         <Eye size={12} />
                       </Button>
-                      <Button size="xs" variant="ghost" onClick={() => handleCopy(share)} title="复制链接">
+                      <Button size="xs" variant="ghost" onClick={() => handleCopy(share)} title="复制链接（长链）">
                         <Copy size={12} />
                       </Button>
+                      {share.shortSeq && share.shortSeq > 0 ? (
+                        <Button size="xs" variant="ghost" onClick={() => handleShortLink(share)} title={`复制数字短链 /s/${share.shortSeq}`}>
+                          <Hash size={12} />
+                        </Button>
+                      ) : (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          disabled={allocatingId === share.id}
+                          onClick={() => handleShortLink(share)}
+                          title="生成数字短链（自用，可枚举，建议配密码）"
+                        >
+                          {allocatingId === share.id ? <MapSpinner size={12} /> : <Hash size={12} style={{ opacity: 0.45 }} />}
+                        </Button>
+                      )}
                       <Button size="xs" variant="ghost" onClick={() => window.open(shareUrlOf(share), '_blank')} title="预览">
                         <ExternalLink size={12} />
                       </Button>

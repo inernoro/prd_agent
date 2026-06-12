@@ -34,6 +34,7 @@
 | 周报 Agent | `report-agent.use` | 周报创建与管理 |
 | 工作流引擎 | `workflow-agent.use` | 自动化工作流 |
 | 数据迁移 Agent | `data-migration-agent.use` | 数据映射与迁移 |
+| 前端搭档 Agent | `front-end-agent.use` | API 接入、组件生成、前端报错诊断和视觉样式建议 |
 
 ### 1.2 Agent 管理权限（`{app-key}.manage`）
 

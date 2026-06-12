@@ -1,0 +1,64 @@
+{
+  "name": "cobalt-grid",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-cobalt-grid)",
+  "license": "MIT",
+  "slideCount": 8,
+  "layouts": [
+    {
+      "file": "01-s-cover.html",
+      "layout": "s-cover",
+      "classAttr": "slide s-cover hairlines",
+      "chars": 2121,
+      "summary": "Index 2026 Field Office Quarterly · Volume IV A field report on the state of things. issue"
+    },
+    {
+      "file": "02-s-manifesto.html",
+      "layout": "s-manifesto",
+      "classAttr": "slide s-manifesto hairlines",
+      "chars": 466,
+      "summary": "A trend is a quiet question that several rooms started asking at roughly the same time. Fr"
+    },
+    {
+      "file": "03-s-index.html",
+      "layout": "s-index",
+      "classAttr": "slide s-index hairlines",
+      "chars": 2192,
+      "summary": "The index, in six entries. Spring 2026 · selected trends 01. Slow software Tools that opt "
+    },
+    {
+      "file": "04-s-chapter.html",
+      "layout": "s-chapter",
+      "classAttr": "slide s-chapter hairlines",
+      "chars": 1574,
+      "summary": "Chapter one — the case for slow software Software is a room, and rooms are designed to be "
+    },
+    {
+      "file": "05-s-data.html",
+      "layout": "s-data",
+      "classAttr": "slide s-data hairlines",
+      "chars": 4798,
+      "summary": "Reader response, by quarter. Newsletter opens · 2024 Q1 — 2026 Q1 82% Open rate · Q1 2026 "
+    },
+    {
+      "file": "06-s-quote.html",
+      "layout": "s-quote",
+      "classAttr": "slide s-quote hairlines",
+      "chars": 1443,
+      "summary": "A note from the studio \"We started the bulletin because the loudest readings of design wer"
+    },
+    {
+      "file": "07-s-table.html",
+      "layout": "s-table",
+      "classAttr": "slide s-table hairlines",
+      "chars": 3384,
+      "summary": "Trend ledger, in long. All ten · with our reading on each No. Trend Reading Mood YoY 01. S"
+    },
+    {
+      "file": "08-s-colophon.html",
+      "layout": "s-colophon",
+      "classAttr": "slide s-colophon hairlines",
+      "chars": 3798,
+      "summary": "Colophon · Index 2026 See you in the autumn issue. Editors Lin Ito &amp; Anya Mehrotra wit"
+    }
+  ]
+}

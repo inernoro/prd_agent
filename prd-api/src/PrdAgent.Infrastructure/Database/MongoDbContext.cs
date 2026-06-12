@@ -247,6 +247,7 @@ public class MongoDbContext
 
     // MD 转网页 PPT 生成运行记录（server-authority：刷新可重连/查看）
     public IMongoCollection<MdToPptRun> MdToPptRuns => _database.GetCollection<MdToPptRun>("md_to_ppt_runs");
+    public IMongoCollection<MdToPptTemplate> MdToPptTemplates => _database.GetCollection<MdToPptTemplate>("md_to_ppt_templates");
 
     // Desktop 更新加速缓存
     public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
@@ -255,6 +256,7 @@ public class MongoDbContext
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
+    public IMongoCollection<WebPageGroup> WebPageGroups => _database.GetCollection<WebPageGroup>("web_page_groups");
 
     // 统一短链路由（所有分享系统共用 /s/{seq}）
     public IMongoCollection<ShortLink> ShortLinks => _database.GetCollection<ShortLink>("short_links");
@@ -300,6 +302,13 @@ public class MongoDbContext
     public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
     public IMongoCollection<DocumentStoreSyncLink> DocumentStoreSyncLinks => _database.GetCollection<DocumentStoreSyncLink>("document_store_sync_links");
 
+    /// <summary>
+    /// 通用 @ 账本（双链 + 反向链接 + 宇宙图 SSOT）。
+    /// MVP 仅记录 document → document，未来扩展到 defect/pr/report 等任意实体。
+    /// 详见 doc/design.knowledge-base-mention-network.md。
+    /// </summary>
+    public IMongoCollection<Mention> Mentions => _database.GetCollection<Mention>("mentions");
+
     // 系统级跨节点互传（Peer Sync）
     public IMongoCollection<PeerNode> PeerNodes => _database.GetCollection<PeerNode>("peer_nodes");
     public IMongoCollection<PeerPairingCode> PeerPairingCodes => _database.GetCollection<PeerPairingCode>("peer_pairing_codes");
@@ -343,9 +352,14 @@ public class MongoDbContext
     public IMongoCollection<PmRisk> PmRisks => _database.GetCollection<PmRisk>("pm_risks");
     public IMongoCollection<PmAuditLog> PmAuditLogs => _database.GetCollection<PmAuditLog>("pm_audit_logs");
 
+    // 团队动态（全平台白名单写操作留痕，ActivityLogActionFilter 写入）
+    public IMongoCollection<ActivityLog> ActivityLogs => _database.GetCollection<ActivityLog>("activity_logs");
+
     // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
     public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");
+    public IMongoCollection<ProductInitiation> ProductInitiations => _database.GetCollection<ProductInitiation>("product_initiations");
+    public IMongoCollection<ProductRelease> ProductReleases => _database.GetCollection<ProductRelease>("product_releases");
     public IMongoCollection<Requirement> Requirements => _database.GetCollection<Requirement>("requirements");
     public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
     public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");
@@ -357,6 +371,7 @@ public class MongoDbContext
     public IMongoCollection<ProductFormTemplate> ProductFormTemplates => _database.GetCollection<ProductFormTemplate>("product_form_templates");
     public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
     public IMongoCollection<VersionUpgradeRequest> VersionUpgradeRequests => _database.GetCollection<VersionUpgradeRequest>("version_upgrade_requests");
+    public IMongoCollection<ProductAgentSettings> ProductAgentSettings => _database.GetCollection<ProductAgentSettings>("product_agent_settings");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");

@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { reportDashboardRenderError } from '@/lib/client-diagnostics';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 
+const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
 const BranchListPage = lazy(() => import('@/pages/BranchListPage').then((m) => ({ default: m.BranchListPage })));
 const BranchTopologyPage = lazy(() => import('@/pages/BranchTopologyPage').then((m) => ({ default: m.BranchTopologyPage })));
@@ -14,6 +15,7 @@ const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default:
 const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').then((m) => ({ default: m.PreviewPreparingPage })));
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
+const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
 
 /**
  * 路由切换时 Suspense fallback。用品牌 logo + 加载文案,跟 CDS 视觉调性一致。
@@ -226,6 +228,7 @@ function shouldAutoReloadAfterChunkFailure(): boolean {
  *   /branch-list?project=   Back-compat entry to the React branch list
  *   /branch-panel/:branchId Branch detail + logs + single-service actions
  *   /branch-topology        Project service topology
+ *   /release-center         Release targets, runs, logs and rollback
  *   /settings/:projectId    Project settings
  */
 export function App(): JSX.Element {
@@ -245,7 +248,9 @@ export function App(): JSX.Element {
             <Route path="/branch-panel" element={<BranchDetailPage />} />
             <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
             <Route path="/branch-topology" element={<BranchTopologyPage />} />
+            <Route path="/release-center" element={<ReleaseCenterPage />} />
             <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
+            <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />
             <Route path="*" element={<Navigate to="/project-list" replace />} />
           </Routes>
         </Suspense>

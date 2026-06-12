@@ -315,6 +315,46 @@ def validate_inputs(a, body, manifest):
             for r0 in refs:
                 if not any(n.lower().startswith(r0.lower()) for n in mani_names):
                     errs.append(f"[断链] pass 用例引用「图{r0}」但 manifest 无以 {r0} 开头的截图：{ls[:70]}")
+
+    # ── v2.4 诉求连线（2026-06-10 第二波：用户在证据板上发现「诉求 3 由 0 张证据证明（无连线）」）──
+    # 「需求一一对应表」里状态为已落地/已实现/完成/pass 的行，最后一列必须连到证据：
+    # 引用「图XX」（manifest 有对应图）或「用例N」（用例行自身已被 v2.3 强制连图）。
+    # 没连线的"已落地"诉求 = 无证声称，整份报告拒收。
+    in_req_table = False
+    for line in body.splitlines():
+        ls = line.strip()
+        if ls.startswith("#"):
+            in_req_table = "需求一一对应" in ls
+            continue
+        if not in_req_table or not ls.startswith("|"):
+            continue
+        cells = [c.strip() for c in ls.strip("|").split("|")]
+        if len(cells) < 3:
+            continue
+        if not any(re.fullmatch(r"(已落地|已实现|已完成|完成|pass|done)", c, re.I) for c in cells):
+            continue  # 表头/分隔行/未落地行不查（未做的诉求本来就没有图）
+        tail = cells[-1]
+        img_refs = re.findall(r"图\s*([0-9]+[a-zA-Z]?)", tail)
+        case_refs = re.findall(r"用例\s*[0-9]+", tail)
+        if not img_refs and not case_refs:
+            errs.append(f"[断链] 已落地诉求 0 证据连线（需引用「图XX」或「用例N」）：{ls[:70]}")
+            continue
+        for r0 in img_refs:
+            if not any(n.lower().startswith(r0.lower()) for n in mani_names):
+                errs.append(f"[断链] 诉求引用「图{r0}」但 manifest 无以 {r0} 开头的截图：{ls[:70]}")
+
+    # ── v2.5 验收地址 + 步骤式证据（2026-06-11 用户指出：报告无标的物地址无法跳转；
+    #    集中 {{EVIDENCE}} 在证据板渲染成「没有可解析的证据步骤」）──
+    if "验收地址" not in body or "http" not in body:
+        errs.append("[结构] 报告缺「验收地址」段（被验收功能页的可点击深链 + 分支/commit）——读者必须能从报告一键跳到标的物")
+    # 步骤式证据门禁按档位缩放：与 TIER_MIN_SHOTS 一致，L0 轻量验收不应被
+    #「>=3 步骤」硬卡（Bugbot：L0 只要 1 图却被 3 步骤门拒）。下限 = min(档位截图下限, 3)。
+    step_floor = min(TIER_MIN_SHOTS.get(a.tier, 3), 3)
+    step_heads = re.findall(r"^## 步骤\s*\d+", body, re.M)
+    img_count = len(re.findall(r"\{\{IMG:", body))
+    if len(step_heads) < step_floor or img_count < step_floor:
+        errs.append(f"[结构] 证据必须步骤式：{a.tier} 档需 >={step_floor} 个「## 步骤 N」段且逐段 {{{{IMG:}}}} 配图（当前步骤={len(step_heads)} 配图={img_count}）。"
+                    "证据板按步骤解析，集中 {{EVIDENCE}} 会渲染成『没有可解析的证据步骤』")
     return errs
 
 

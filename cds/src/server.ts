@@ -19,6 +19,7 @@ import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
+import { createReleasesRouter } from './routes/releases.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
@@ -60,6 +61,7 @@ import {
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
+import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -492,6 +494,18 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /cds-system/github/app-whitelist': '获取 GitHub 白名单',
     'PUT /cds-system/github/app-whitelist': '更新 GitHub 白名单',
+    // 发布控制面（preview → release，2026-06-10）
+    'GET /releases/targets': '列出发布目标',
+    'POST /releases/targets': '创建发布目标',
+    'PATCH /releases/targets/:id': '更新发布目标',
+    'DELETE /releases/targets/:id': '删除发布目标',
+    'POST /releases/branches/:branchId/preflight': '执行发布前检查',
+    'POST /releases/branches/:branchId/runs': '启动分支发布',
+    'GET /releases/runs': '列出发布记录',
+    'GET /releases/runs/:id': '查看发布记录',
+    'POST /releases/runs/:id/rollback': '回滚发布记录',
+    'GET /releases/runs/:id/stream': '订阅发布日志流',
+    'GET /releases/center': '查看发布中心',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
@@ -690,6 +704,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/pull$/, '拉取分支代码'],
     [/^POST \/branches\/(.+)\/deploy\/(.+)$/, '部署单服务'],
     [/^POST \/branches\/(.+)\/deploy$/, '全量部署'],
+    [/^POST \/branches\/(.+)\/database-init\/run$/, '执行数据库初始化命令'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
     [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
     [/^GET \/branches\/(.+)\/activity-logs$/, '查看分支系统日志'],
@@ -723,6 +738,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
     [/^POST \/infra\/(.+)\/init-sql$/, '执行初始化 SQL'],
+    [/^POST \/branches\/(.+)\/resources\/(.+)\/data\/init-sql$/, '执行分支资源初始化 SQL'],
     [/^DELETE \/ai\/sessions\/(.+)$/, '撤销 AI 会话'],
     [/^POST \/ai\/approve\/(.+)$/, '批准 AI 连接'],
     [/^POST \/ai\/reject\/(.+)$/, '拒绝 AI 连接'],
@@ -741,6 +757,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
     // 项目级 Agent 会话
+    [/^GET \/projects\/[^/]+\/agent-requests$/, '列出 Agent 请求'],
     [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+\/stream$/, '订阅 Agent 会话事件流'],
     [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+\/logs$/, '查看 Agent 会话日志'],
     [/^POST \/projects\/[^/]+\/agent-sessions\/[^/]+\/stop$/, '停止 Agent 会话'],
@@ -1210,6 +1227,12 @@ export function createServer(deps: ServerDeps): express.Express {
     res.locals.cdsRequestId = requestId;
     if (!res.getHeader('X-CDS-Request-Id')) {
       res.setHeader('X-CDS-Request-Id', requestId);
+    }
+    if (!res.getHeader('X-Cds-Cli-Latest')) {
+      const latestCdsCliVersion = readBundledCdsCliVersion(deps.config.repoRoot);
+      if (latestCdsCliVersion) {
+        res.setHeader('X-Cds-Cli-Latest', latestCdsCliVersion);
+      }
     }
     res.once('finish', () => {
       if (res.statusCode < 400) return;
@@ -2845,6 +2868,9 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     containerService: deps.containerService,
     config: deps.config,
+  }));
+  app.use('/api', createReleasesRouter({
+    stateService: deps.stateService,
   }));
   // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
   app.use('/api', createCdsSystemConnectionsRouter({

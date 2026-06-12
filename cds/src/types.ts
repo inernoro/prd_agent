@@ -685,6 +685,93 @@ export interface OperationLog {
   events: OperationLogEvent[];
 }
 
+export interface ReleaseArtifact {
+  type: 'branch-preview' | 'image' | 'static' | 'generic';
+  commitSha: string;
+  branchId?: string;
+  branchName?: string;
+  previewUrl?: string;
+  imageDigest?: string;
+  artifactPath?: string;
+}
+
+export interface ReleaseTarget {
+  id: string;
+  projectId: string;
+  name: string;
+  type: 'ssh' | 'image-registry' | 'static-site' | 'webhook' | 'gitops' | 'k8s';
+  createdAt: string;
+  updatedAt?: string;
+  createdBy?: string;
+  isEnabled: boolean;
+  ssh?: {
+    host: string;
+    port: number;
+    user: string;
+    /** RemoteHost.id that owns the encrypted SSH private key. */
+    privateKeyRef: string;
+    appPath: string;
+    deployCommand: string;
+    rollbackCommand?: string;
+    healthcheckUrl: string;
+  };
+}
+
+export interface ReleasePlanStep {
+  id: string;
+  title: string;
+  kind: 'ssh' | 'healthcheck' | 'record' | 'manual';
+  command?: string;
+}
+
+export interface ReleasePlan {
+  id: string;
+  projectId: string;
+  name: string;
+  template: 'ssh-script' | 'docker-compose-remote' | 'image-push' | 'webhook';
+  targetType: ReleaseTarget['type'];
+  steps: ReleasePlanStep[];
+  failureStrategy: 'stop' | 'rollback';
+  rollbackStrategy: 'command' | 'previous-release' | 'none';
+  createdAt: string;
+}
+
+export interface ReleaseLogEntry {
+  seq: number;
+  at: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  phase?: string;
+}
+
+export interface ReleaseRun {
+  releaseId: string;
+  projectId: string;
+  branchId: string;
+  commitSha: string;
+  artifact: ReleaseArtifact;
+  targetId: string;
+  planId: string;
+  status:
+    | 'queued'
+    | 'prechecking'
+    | 'running'
+    | 'healthchecking'
+    | 'success'
+    | 'failed'
+    | 'rollback_running'
+    | 'rollback_success'
+    | 'rollback_failed';
+  startedAt: string;
+  finishedAt?: string;
+  operator?: string;
+  logs: ReleaseLogEntry[];
+  seq: number;
+  previousReleaseId?: string;
+  rollbackOf?: string;
+  errorMessage?: string;
+}
+
 /** Persisted state */
 /**
  * Scoped custom environment variable store.
@@ -713,6 +800,12 @@ export interface CdsState {
   nextPortIndex: number;
   /** Per-branch operation logs */
   logs: Record<string, OperationLog[]>;
+  /** Release targets keyed by id. */
+  releaseTargets?: Record<string, ReleaseTarget>;
+  /** Release plan templates keyed by id. */
+  releasePlans?: Record<string, ReleasePlan>;
+  /** Immutable release run records keyed by releaseId. */
+  releaseRuns?: Record<string, ReleaseRun>;
   /** Per-branch append-only container log archives owned by CDS. */
   containerLogArchives?: Record<string, ContainerLogArchiveEntry[]>;
   /**
@@ -783,6 +876,10 @@ export interface CdsState {
   schedulerMaxHotOverride?: number;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
+  /** Per-branch/per-resource external access policies. Keyed by projectId:branchId:resourceId. */
+  resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
+  /** Resource-scoped database clone / create / restore task history. */
+  resourceCloneTasks?: ResourceCloneTask[];
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
   cdsPeers?: CdsPeer[];
   /**
@@ -917,6 +1014,12 @@ export interface CdsState {
    * Per-instance 全局,与项目无关 → 系统级字段(参考 scope-naming.md §5)。
    */
   selfUpdateHistory?: SelfUpdateRecord[];
+  /**
+   * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
+   * HTML 真是远程 agent 返回的」)。会话 stop/fail 时由 remote-hosts 落一条摘要
+   * (收发预览各截 2000 字),ring buffer 500 条;全量事件仍在内存随重启丢失。
+   */
+  agentRequestHistory?: AgentRequestRecord[];
   /**
    * Daemon 启动完成时间戳(ISO),由 index.ts 的 server.listen() 回调写入。
    * 2026-05-07 用户反馈"在左下角卡了 1 小时"导致的 timing 体系审视
@@ -1160,6 +1263,24 @@ export interface ActiveSelfUpdate {
   interrupted?: boolean;
 }
 
+/** Agent 请求历史摘要（观测台持久层，重启可查） */
+export interface AgentRequestRecord {
+  sessionId: string;
+  projectId: string;
+  title: string | null;
+  clientUser: string | null;
+  clientApp: string | null;
+  runtime: string;
+  model: string | null;
+  status: string;
+  createdAt: string;
+  finishedAt: string;
+  durationMs: number;
+  eventCount: number;
+  requestPreview: string | null;
+  responsePreview: string | null;
+}
+
 export interface SelfUpdateRecord {
   /** ISO timestamp 当事件被记录(预检通过 / 出错时) */
   ts: string;
@@ -1324,6 +1445,16 @@ export interface ProjectActivityLog {
     | 'ai-release'     // AI agent 释放
     | 'branch-deleted' // DELETE /branches/:id
     | 'branch-created' // POST /branches
+    | 'resource-created'
+    | 'resource-deleted'
+    | 'resource-restart'
+    | 'resource-external-access'
+    | 'resource-db-clone'
+    | 'resource-backup'
+    | 'resource-restore'
+    | 'resource-credentials-reset'
+    | 'resource-connection-inject'
+    | 'resource-data-query'
   ;
   /** 关联分支（如有）。 */
   branchId?: string;
@@ -1333,6 +1464,61 @@ export interface ProjectActivityLog {
   actor?: string;
   /** 自由文本，可空。展示用，<= 200 字符。 */
   note?: string;
+  /** 关联资源（如 app:frontend / infra:mysql）。 */
+  resourceId?: string;
+  /** 资源显示名缓存，避免 UI 再 join。 */
+  resourceName?: string;
+  /** 操作结果。 */
+  result?: 'success' | 'failed' | 'pending';
+}
+
+export interface ResourceExternalAccessPolicy {
+  id: string;
+  projectId: string;
+  branchId: string;
+  resourceId: string;
+  enabled: boolean;
+  kind: 'https' | 'tcp';
+  address?: string;
+  host?: string;
+  port?: number;
+  connectionString?: string;
+  proxyContainerName?: string;
+  targetHost?: string;
+  targetPort?: number;
+  allowlistEnforced?: boolean;
+  firewallChain?: string;
+  allowlist: string[];
+  expiresAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface ResourceCloneTask {
+  id: string;
+  projectId: string;
+  branchId: string;
+  resourceId: string;
+  runtime: 'mysql' | 'postgres' | 'mongodb' | 'redis' | 'unknown';
+  mode: 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
+  strategy: 'branch-database' | 'mysqldump' | 'mysqlpump' | 'background-copy' | 'backup-restore' | 'external-connection';
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  progressMessage?: string;
+  sourceBranchId?: string;
+  sourceResourceId?: string;
+  targetDatabase?: string;
+  backupId?: string;
+  externalConnectionName?: string;
+  injectedEnv?: Record<string, string>;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  actor?: string;
+  log?: string;
 }
 
 /**
@@ -1533,6 +1719,16 @@ export interface Project {
    * 字段缺省时（老 project / fresh install）按 'shared' 处理。
    */
   infraIsolation?: 'shared' | 'per-branch';
+  /**
+   * 分支卡片资源 chip 的显示项。默认只显示技术图标 + 端口，避免
+   * Node.js / .NET / MongoDB 等名称把卡片撑成多行。项目设置可开启
+   * 运行时名称显示，但 icon/name/port 至少要保留一项。
+   */
+  resourceChipDisplay?: {
+    icon?: boolean;
+    name?: boolean;
+    port?: boolean;
+  };
   /**
    * Project kind. 'git' is the only value Part 1 creates; 'manual'
    * lands in P6 when users can upload their own compose.

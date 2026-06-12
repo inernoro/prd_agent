@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { nodeModulesVolumeName } from '../../src/util/node-modules-volume.js';
 import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
 
 const makeConfig = (): CdsConfig => ({
@@ -96,6 +97,27 @@ describe('ContainerService', () => {
       expect(envFileContent).toContain('Jwt__Issuer=prdagent');
       expect(envFileContent).toContain('VITE_GIT_BRANCH=feature/a');
       expect(envFileContent).toContain('VITE_BUILD_ID=47c74c1f5aab');
+
+      writeSpy.mockRestore();
+    });
+
+    it('project customEnv Jwt__Secret takes precedence over CDS global secret', async () => {
+      // 跨项目穿透回归（2026-06-12）：换 CDS_JWT_SECRET 不得再覆盖
+      // 显式配置了 Jwt__Secret 的项目容器
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid456', stderr: '', exitCode: 0 }));
+      const writeSpy = vi.spyOn(fs, 'writeFileSync');
+
+      await service.runService(
+        makeEntry(), makeProfile(), makeService(),
+        undefined, { Jwt__Secret: 'project-pinned-secret', OTHER: 'x' });
+
+      const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(envFileContent).toContain('Jwt__Secret=project-pinned-secret');
+      expect(envFileContent).not.toContain('Jwt__Secret=test-secret');
+      // 未显式配置 Issuer 仍走全局兜底
+      expect(envFileContent).toContain('Jwt__Issuer=prdagent');
 
       writeSpy.mockRestore();
     });
@@ -388,6 +410,46 @@ describe('ContainerService', () => {
 
       const profile = makeProfile({ command: undefined });
       await expect(service.runService(makeEntry(), profile, makeService())).rejects.toThrow('缺少 command 字段');
+    });
+  });
+
+  describe('runProfileCommand', () => {
+    it('runs a one-off command with the same source mount and resolved env', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run --rm/, () => ({ stdout: 'migration ok', stderr: '', exitCode: 0 }));
+
+      const writeSpy = vi.spyOn(fs, 'writeFileSync');
+      const profile = makeProfile({
+        dockerImage: 'node:20',
+        command: 'pnpm dev',
+        env: {
+          DATABASE_URL: '${CDS_DATABASE_URL}',
+        },
+      });
+
+      const result = await service.runProfileCommand(
+        { ...makeEntry(), projectId: 'default' },
+        profile,
+        'pnpm exec prisma migrate deploy',
+        undefined,
+        { CDS_DATABASE_URL: 'postgres://user:pass@postgres:5432/app' },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const runCmd = mock.commands.find(c => c.includes('docker run --rm'))!;
+      expect(runCmd).toBeDefined();
+      expect(runCmd).not.toContain('docker run -d');
+      expect(runCmd).toContain('--network cds-network');
+      expect(runCmd).toContain('-v "/wt/feature-a/prd-api":"/app"');
+      expect(runCmd).toContain(`-v "${nodeModulesVolumeName('feature-a', 'api')}":"/app/node_modules"`);
+      expect(runCmd).toContain('--label cds.type=job');
+      expect(runCmd).toContain('node:20');
+      expect(runCmd).toContain('sh -c "pnpm exec prisma migrate deploy"');
+
+      const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(envFileContent).toContain('DATABASE_URL=postgres://user:pass@postgres:5432/app');
+      expect(envFileContent).toContain('Jwt__Secret=test-secret');
+      writeSpy.mockRestore();
     });
   });
 

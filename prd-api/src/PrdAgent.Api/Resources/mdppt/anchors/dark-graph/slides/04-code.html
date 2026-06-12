@@ -1,0 +1,19 @@
+<section class="slide">
+    <div class="gd-ambient"><div class="gd-orb gd-orb-1"></div></div>
+    <div class="gd-snum">04 / 08</div>
+    <p class="gd-eyebrow">One command</p>
+    <h2 class="gd-h2">从 0 到图谱，<span class="gd-grad">大概 90 秒</span></h2>
+    <p class="gd-cmd" style="margin:16px 0 22px">$ graphify ~/notes --out ./graph</p>
+    <pre class="gd-codebox"><span class="cm"># graphify.config.yaml</span>
+<span class="kw">ingest</span>:
+  paths: [<span class="st">~/notes</span>, <span class="st">~/code/docs</span>]
+  include: [<span class="st">"*.md"</span>, <span class="st">"*.pdf"</span>, <span class="st">"*.py"</span>]
+
+<span class="kw">extract</span>:
+  model: <span class="st">claude-opus-4-6</span>
+  schema: [<span class="st">concept</span>, <span class="st">person</span>, <span class="st">event</span>, <span class="st">relation</span>]
+
+<span class="kw">render</span>:
+  engine: <span class="st">d3-force</span>
+  audit: <span class="fn">true</span>     <span class="cm"># 每条边带 source span</span></pre>
+  </section>

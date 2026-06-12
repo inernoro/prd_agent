@@ -1330,6 +1330,7 @@ public class ImageGenController : ControllerBase
             var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
             if (existed != null)
             {
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
                 return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
             }
         }
@@ -1521,7 +1522,11 @@ public class ImageGenController : ControllerBase
         {
             // 幂等键并发冲突：返回已存在的 run
             var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
-            if (existed != null) return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+            if (existed != null)
+            {
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+                return Ok(ApiResponse<object>.Ok(new { runId = existed.Id }));
+            }
             throw;
         }
 

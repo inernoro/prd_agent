@@ -45,6 +45,7 @@ public static class OfficialMarketplaceSkillInjector
         {
             Id = OfficialFindMapSkillsId,
             Title = "findmapskills · 海鲜市场操作技能",
+            version = OfficialSkillTemplates.FindMapSkillsVersion,
             Description = $"官方内置 · v{OfficialSkillTemplates.FindMapSkillsVersion} · AI 装上这一个就能搜索/下载/上传/订阅海鲜市场",
             iconEmoji = "🛡️",
             coverImageUrl = (string?)null,
@@ -136,7 +137,10 @@ public static class OfficialMarketplaceSkillInjector
         {
             Id = OfficialIdFor(e.Key),
             Title = e.Title,
-            Description = e.Description,
+            version = e.Version,
+            Description = string.IsNullOrWhiteSpace(e.Version)
+                ? e.Description
+                : $"官方内置 · v{e.Version} · {e.Description}",
             iconEmoji = "✦",
             coverImageUrl = (string?)null,
             previewUrl = (string?)null,
