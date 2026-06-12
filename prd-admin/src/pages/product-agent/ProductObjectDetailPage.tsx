@@ -21,9 +21,6 @@ import { RequirementCreateForm } from './RequirementCreateForm';
 import { ReleaseWorkflowDetail } from './ReleaseWorkflowDetail';
 import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
 import {
-  NON_PRODUCT_DEFECT_CLASSIFICATION,
-  normalizeDefectClassification,
-  PRODUCT_DEFECT_CLASSIFICATION,
   REQUIREMENT_PRODUCT_DEFECT_FORM_KEY,
   REQUIREMENT_PRODUCT_DEFECT_VALUE,
 } from './productDefectLinkageCatalog';
@@ -34,6 +31,7 @@ import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
+import { ProductDefectDetail } from './ProductDefectDetail';
 import './product-cards.css';
 import {
   listRequirements,
@@ -49,14 +47,12 @@ import {
   listCustomers,
   listFeatureVersions,
   listTracedDefects,
-  convertDefectToRequirement,
   createProductDefect,
-  updateProductDefect,
   listDescTemplates,
   type TracedDefect,
 } from '@/services/real/productAgent';
 import type { Requirement, Feature, ProductVersion, ProductRelease, Customer, FeatureVersion, FeatureBusinessType, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 import { slaInfo } from './sla';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
@@ -240,7 +236,7 @@ export function ProductObjectDetailPage() {
               onReload={reload}
             />
           ) : kind === 'defect' ? (
-            <DefectDetail
+            <ProductDefectDetail
               productId={productId}
               defect={tracedDefects.find((d) => d.id === id)}
               features={features}
@@ -830,20 +826,6 @@ function FeatureCreateForm({
 }
 
 // ════════════════════════ 新建缺陷（独立页，对齐新建需求）════════════════════════
-const DEFECT_STATUSES: { v: string; label: string }[] = [
-  { v: 'draft', label: '草稿' },
-  { v: 'reviewing', label: '评审中' },
-  { v: 'awaiting', label: '待处理' },
-  { v: 'submitted', label: '已提交' },
-  { v: 'assigned', label: '已分配' },
-  { v: 'processing', label: '处理中' },
-  { v: 'verifying', label: '待验收' },
-  { v: 'resolved', label: '已解决' },
-  { v: 'rejected', label: '已拒绝' },
-  { v: 'closed', label: '已关闭' },
-];
-const DEFECT_STATUS_LABEL: Record<string, string> = Object.fromEntries(DEFECT_STATUSES.map((s) => [s.v, s.label]));
-
 function CreateDefectForm({ productId, onCreated }: { productId: string; onCreated: (newId: string) => void }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -1833,222 +1815,6 @@ function VersionDetail({
     >
       {showTrace && (
         <TraceRelationDrawer productId={productId} nodeId={`version:${version.id}`} title={version.versionName} onClose={() => setShowTrace(false)} />
-      )}
-    </DetailScaffold>
-  );
-}
-
-// ════════════════════════ 缺陷详情（产品内可编辑，对齐需求详情）════════════════════════
-function DefectDetail({
-  productId,
-  defect,
-  features,
-  versions,
-  versionName,
-  requirementName,
-  onReload,
-  gotoRequirement,
-  gotoFeature,
-}: {
-  productId: string;
-  defect?: TracedDefect;
-  features: Feature[];
-  versions: ProductVersion[];
-  versionName: Map<string, string>;
-  requirementName: Map<string, string>;
-  onReload: () => void;
-  gotoRequirement: (id: string) => void;
-  gotoFeature: (id: string) => void;
-}) {
-  const navigate = useNavigate();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [grade, setGrade] = useState<ItemGrade>('p2');
-  const [assigneeId, setAssigneeId] = useState('');
-  const [featureId, setFeatureId] = useState('');
-  const [versionId, setVersionId] = useState('');
-  const [classification, setClassification] = useState(PRODUCT_DEFECT_CLASSIFICATION);
-  const [saving, setSaving] = useState(false);
-  const [converting, setConverting] = useState(false);
-  const [convertErr, setConvertErr] = useState<string | null>(null);
-  const [showTrace, setShowTrace] = useState(false);
-  const { workflow } = useEffectiveWorkflow('defect', productId);
-
-  useEffect(() => {
-    if (defect) {
-      setTitle(defect.title ?? '');
-      setDescription(defect.rawContent ?? '');
-      setGrade(effectiveDefectGrade(defect));
-      setAssigneeId(defect.assigneeId ?? '');
-      setFeatureId(defect.tracedFeatureId ?? '');
-      setVersionId(defect.tracedVersionId ?? '');
-      setClassification(normalizeDefectClassification(defect.productDefectClassification));
-    }
-  }, [defect]);
-
-  const featureName = useMemo(() => new Map(features.map((f) => [f.id, f.title])), [features]);
-
-  const dirty = useMemo(() => {
-    if (!defect) return false;
-    return (
-      title !== (defect.title ?? '') ||
-      description !== (defect.rawContent ?? '') ||
-      grade !== effectiveDefectGrade(defect) ||
-      assigneeId !== (defect.assigneeId ?? '') ||
-      featureId !== (defect.tracedFeatureId ?? '') ||
-      versionId !== (defect.tracedVersionId ?? '') ||
-      classification !== normalizeDefectClassification(defect.productDefectClassification)
-    );
-  }, [defect, title, description, grade, assigneeId, featureId, versionId, classification]);
-
-  if (!defect) return <NotFound />;
-
-  const selectCls = 'w-full px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
-
-  const save = async () => {
-    if (!title.trim()) return;
-    setSaving(true);
-    await updateProductDefect(productId, defect.id, {
-      title: title.trim(),
-      description,
-      grade,
-      assigneeId: assigneeId || null,
-      featureId: featureId || undefined,
-      versionId: versionId || undefined,
-      productDefectClassification: classification,
-    });
-    setSaving(false);
-    onReload();
-  };
-
-  const convert = async () => {
-    setConverting(true);
-    setConvertErr(null);
-    const res = await convertDefectToRequirement(defect.id);
-    setConverting(false);
-    if (res.success && res.data) navigate(`/product-agent/p/${res.data.productId}/requirement/${res.data.id}`);
-    else setConvertErr(res.error?.message ?? '转换失败');
-  };
-
-  return (
-    <DetailScaffold
-      no={defect.defectNo}
-      kindLabel="缺陷"
-      kindColor="#F87171"
-      title={title}
-      onTitleChange={setTitle}
-      titlePlaceholder="缺陷标题"
-      dirty={dirty}
-      saving={saving}
-      onSave={save}
-      headerActions={
-        <>
-          <button
-            onClick={convert}
-            disabled={converting}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-cyan-200 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50"
-          >
-            {converting ? <MapSpinner size={14} /> : <GitBranch size={14} />} 转为需求
-          </button>
-          <TraceButton onClick={() => setShowTrace(true)} />
-        </>
-      }
-      workflow={
-        workflow ? (
-          <WorkflowBar
-            workflow={workflow}
-            entityType="defect"
-            entityId={defect.id}
-            productId={productId}
-            currentState={defect.status}
-            entitySnapshot={{ ownerId: defect.reporterId ?? '', assigneeId, title, grade }}
-            onChanged={onReload}
-          />
-        ) : undefined
-      }
-      main={
-        <>
-          <Card title="描述 / 复现步骤">
-            <DescriptionField value={description} onChange={setDescription} />
-          </Card>
-          <Card title="追溯指向">
-            <div className="flex flex-col gap-2 text-sm">
-              {featureId ? (
-                <button onClick={() => gotoFeature(featureId)} className="text-left text-cyan-300 hover:underline">
-                  功能：{featureName.get(featureId) ?? featureId}
-                </button>
-              ) : null}
-              {defect.tracedRequirementId ? (
-                <button onClick={() => gotoRequirement(defect.tracedRequirementId!)} className="text-left text-cyan-300 hover:underline">
-                  需求：{requirementName.get(defect.tracedRequirementId) ?? defect.tracedRequirementId}
-                </button>
-              ) : null}
-              {versionId && <div className="text-white/70">版本：{versionName.get(versionId) ?? versionId}</div>}
-              {!featureId && !defect.tracedRequirementId && !versionId && <div className="text-white/50">仅追溯到产品</div>}
-            </div>
-          </Card>
-          {convertErr && <p className="text-xs text-red-300/80 px-1">{convertErr}</p>}
-          <p className="text-[11px] text-white/35 px-1">右上角「转为需求」会在本产品下生成一条需求，并把本缺陷追溯到该需求（已转过则直接跳转）。</p>
-        </>
-      }
-      sidebar={
-        <>
-          <Card title="属性">
-            <div className="flex flex-col gap-3.5">
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>等级</FieldLabel>
-                <GradeField grade={grade} setGrade={setGrade} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>处理人</FieldLabel>
-                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
-              </div>
-              <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={classification === NON_PRODUCT_DEFECT_CLASSIFICATION}
-                  onChange={(e) => setClassification(e.target.checked ? NON_PRODUCT_DEFECT_CLASSIFICATION : PRODUCT_DEFECT_CLASSIFICATION)}
-                  className="accent-cyan-500"
-                />
-                非产品缺陷
-              </label>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>关联功能</FieldLabel>
-                <select className={selectCls} value={featureId} onChange={(e) => setFeatureId(e.target.value)}>
-                  <option value="">不关联</option>
-                  {features.map((f) => <option key={f.id} value={f.id}>{f.title}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>关联版本</FieldLabel>
-                <select className={selectCls} value={versionId} onChange={(e) => setVersionId(e.target.value)}>
-                  <option value="">不关联</option>
-                  {versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}
-                </select>
-              </div>
-              {defect.status && (
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>状态</FieldLabel>
-                  <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 w-fit">
-                    {DEFECT_STATUS_LABEL[defect.status] ?? defect.status}
-                  </span>
-                </div>
-              )}
-            </div>
-          </Card>
-          <Card title="信息">
-            <div className="flex flex-col gap-2">
-              <InfoRow label="状态" value={DEFECT_STATUS_LABEL[status] ?? status ?? '—'} />
-              <InfoRow label="上报人" value={defect.reporterName || '—'} />
-              <InfoRow label="创建时间" value={fmtDate(defect.createdAt)} />
-              <InfoRow label="更新时间" value={fmtDate(defect.updatedAt)} />
-            </div>
-          </Card>
-        </>
-      }
-    >
-      {showTrace && (
-        <TraceRelationDrawer productId={productId} nodeId={`defect:${defect.id}`} title={defect.title || defect.defectNo} onClose={() => setShowTrace(false)} />
       )}
     </DetailScaffold>
   );

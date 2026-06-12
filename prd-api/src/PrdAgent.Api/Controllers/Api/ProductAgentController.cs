@@ -2672,6 +2672,16 @@ public class ProductAgentController : ControllerBase
         if (request.ProductDefectClassification != null)
             u = u.Set(d => d.ProductDefectClassification, ProductDefectLinkageCatalog.NormalizeClassification(request.ProductDefectClassification));
 
+        if (request.StructuredData != null)
+        {
+            var merged = TapdDefectFieldCatalog.MergeStructuredData(defect.StructuredData, request.StructuredData);
+            defect.StructuredData = merged;
+            defect.ProductDefectClassification = ProductDefectLinkageCatalog.NormalizeClassification(
+                merged.GetValueOrDefault(TapdDefectFieldCatalog.DefectDivision) ?? request.ProductDefectClassification);
+            u = u.Set(d => d.StructuredData, merged)
+                .Set(d => d.ProductDefectClassification, defect.ProductDefectClassification);
+        }
+
         await _db.DefectReports.UpdateOneAsync(d => d.Id == defectId, u);
         var updated = await _db.DefectReports.Find(d => d.Id == defectId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
@@ -5533,6 +5543,8 @@ public class UpdateProductDefectRequest
     public string? VersionId { get; set; }
     /// <summary>缺陷 / 非产品缺陷，见 ProductDefectLinkageCatalog</summary>
     public string? ProductDefectClassification { get; set; }
+    /// <summary>TAPD 对齐字段（中文 key），见 TapdDefectFieldCatalog</summary>
+    public Dictionary<string, string>? StructuredData { get; set; }
 }
 
 public class UpdateQuickActionsRequest

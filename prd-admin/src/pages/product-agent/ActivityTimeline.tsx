@@ -21,7 +21,16 @@ function fmt(s: string): string {
   return `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-export function ActivityTimeline({ entityType, entityId }: { entityType: string; entityId: string }) {
+export function ActivityTimeline({
+  entityType,
+  entityId,
+  filter = 'all',
+}: {
+  entityType: string;
+  entityId: string;
+  /** comment=仅评论；system=仅流转/指派等；all=全部 */
+  filter?: 'all' | 'comment' | 'system';
+}) {
   const [items, setItems] = useState<ProductActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [content, setContent] = useState('');
@@ -59,6 +68,12 @@ export function ActivityTimeline({ entityType, entityId }: { entityType: string;
     return (id: string) => map.get(id) ?? id;
   }, [users]);
 
+  const visibleItems = useMemo(() => {
+    if (filter === 'comment') return items.filter((a) => a.type === 'comment');
+    if (filter === 'system') return items.filter((a) => a.type !== 'comment');
+    return items;
+  }, [items, filter]);
+
   const empty = (content || '').replace(/<br\s*\/?>/gi, '').replace(/<div>\s*<\/div>/gi, '').replace(/&nbsp;/gi, '').trim() === '';
 
   const submit = async () => {
@@ -77,18 +92,20 @@ export function ActivityTimeline({ entityType, entityId }: { entityType: string;
     <div className="flex flex-col gap-4">
       {loading ? (
         <div className="text-[11px] text-white/30 py-2">加载动态…</div>
-      ) : items.length === 0 ? (
-        <div className="text-[11px] text-white/30">还没有动态。状态流转、指派、评论都会出现在这里。</div>
+      ) : visibleItems.length === 0 ? (
+        <div className="text-[11px] text-white/30">
+          {filter === 'comment' ? '还没有评论。' : filter === 'system' ? '还没有变更记录。' : '还没有动态。状态流转、指派、评论都会出现在这里。'}
+        </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {items.map((a) => (
+          {visibleItems.map((a) => (
             <ActivityRow key={a.id} a={a} />
           ))}
         </div>
       )}
 
       {/* 评论输入 */}
-      <div className="flex flex-col gap-2 pt-1 border-t border-white/5">
+      {filter !== 'system' ? <div className="flex flex-col gap-2 pt-1 border-t border-white/5">
         <RichTextField value={content} onChange={setContent} minHeight={90} placeholder="写下评论…（支持排版与截图粘贴）" />
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] text-white/40">提醒</span>
@@ -109,7 +126,7 @@ export function ActivityTimeline({ entityType, entityId }: { entityType: string;
             {posting ? <MapSpinner size={14} /> : <Send size={14} />} 评论
           </button>
         </div>
-      </div>
+      </div> : null}
     </div>
   );
 }

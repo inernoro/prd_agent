@@ -525,6 +525,14 @@ export interface TracedDefect {
   workflowDefId?: string | null;
   /** 缺陷 / 非产品缺陷 */
   productDefectClassification?: string | null;
+  structuredData?: Record<string, string>;
+  productExternalId?: string | null;
+  productSourceSystem?: string | null;
+  resolution?: string | null;
+  rejectReason?: string | null;
+  resolvedAt?: string | null;
+  closedAt?: string | null;
+  attachments?: Array<{ id?: string; fileName?: string; mimeType?: string; url?: string }>;
 }
 export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string; mine?: boolean }) {
   const q = new URLSearchParams();
@@ -730,6 +738,16 @@ export function removeProductApplicationAdmin(userId: string) {
 export function createProductDefect(productId: string, body: { title: string; description?: string; grade?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
 }
-export function updateProductDefect(productId: string, defectId: string, body: { title: string; description?: string; grade?: string; status?: string; assigneeId?: string | null; featureId?: string; versionId?: string; productDefectClassification?: string }) {
+export function updateProductDefect(productId: string, defectId: string, body: {
+  title: string;
+  description?: string;
+  grade?: string;
+  status?: string;
+  assigneeId?: string | null;
+  featureId?: string;
+  versionId?: string;
+  productDefectClassification?: string;
+  structuredData?: Record<string, string>;
+}) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects/${defectId}`, { method: 'PUT', body });
 }
