@@ -335,6 +335,7 @@ import {
   insertBlockAfterSelection,
   frontmatterPrefixOf,
   buildImageMarkdown,
+  isReplaceSafe,
 } from './selectionEdit';
 import { threadColor, groupKey } from './inlineCommentShared';
 import { useDocReaderPrefs } from '@/stores/docReaderPrefsStore';
@@ -1778,7 +1779,6 @@ export function DocBrowser({
     sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number };
     rect: { top: number; left: number; width: number; height: number };
     rects: Array<{ top: number; left: number; width: number; height: number }>;
-    canReplace: boolean;
   } | null>(null);
   // 划词配图浮层（右侧悬浮卡片内嵌视觉创作 mini 面板）
   const [imagePopover, setImagePopover] = useState<{
@@ -1968,6 +1968,10 @@ export function DocBrowser({
     if (mode === 'replace') {
       if (!range) {
         toast.error('无法定位选区', '原文可能已变化，请重新划选');
+        return false;
+      }
+      if (!isReplaceSafe(body, range)) {
+        toast.error('选区在链接/双链标记内部', '整段替换会破坏语法，请改用插入或调整选区');
         return false;
       }
       newBody = replaceSelectionInBody(body, range, newText);
@@ -3441,9 +3445,7 @@ export function DocBrowser({
                     onAiRewrite={selectionAiAvailable ? () => {
                       const snap = captureSelectionSnapshot();
                       if (!snap) return;
-                      // 打开浮层时就判定选区能否安全替换（唯一定位），结果传给浮层控制按钮可用性
-                      const canReplace = resolveSelectionRange(selectionRawContent ?? '', snap.sel) != null;
-                      setAiPopover({ ...snap, canReplace });
+                      setAiPopover(snap);
                       clearLiveSelection();
                     } : undefined}
                     onAiImage={selectionAiAvailable ? () => {
@@ -3494,21 +3496,29 @@ export function DocBrowser({
                     />
                   </>
                 )}
-                {/* 划词 AI 改写浮层（流式生成 + diff 预览 + 替换/插入） */}
-                {aiPopover && !editMode && (
-                  <>
-                    <PendingSelectionHighlight rects={aiPopover.rects} scrollRef={contentAreaRef} />
-                    <SelectionAiPopover
-                      entryId={aiPopover.entryId}
-                      anchor={aiPopover.sel}
-                      anchorRect={aiPopover.rect}
-                      scrollRef={contentAreaRef}
-                      canReplace={aiPopover.canReplace}
-                      onApply={(mode, text) => applySelectionAiEdit(aiPopover, mode, text)}
-                      onClose={() => setAiPopover(null)}
-                    />
-                  </>
-                )}
+                {/* 划词 AI 改写浮层（流式生成 + diff 预览 + 替换/插入）。
+                    canReplace 每次渲染按"当前正文"实时算（不在打开时冻结），正文变化后
+                    按钮可用性即时跟上（Bugbot Medium：stale canReplace）；并叠加
+                    isReplaceSafe 守卫（选区落在 wikilink/链接标记内部时禁替换） */}
+                {aiPopover && !editMode && (() => {
+                  const aiBody = selectionRawContent ?? '';
+                  const aiRange = resolveSelectionRange(aiBody, aiPopover.sel);
+                  const canReplaceNow = !!aiRange && isReplaceSafe(aiBody, aiRange);
+                  return (
+                    <>
+                      <PendingSelectionHighlight rects={aiPopover.rects} scrollRef={contentAreaRef} />
+                      <SelectionAiPopover
+                        entryId={aiPopover.entryId}
+                        anchor={aiPopover.sel}
+                        anchorRect={aiPopover.rect}
+                        scrollRef={contentAreaRef}
+                        canReplace={canReplaceNow}
+                        onApply={(mode, text) => applySelectionAiEdit(aiPopover, mode, text)}
+                        onClose={() => setAiPopover(null)}
+                      />
+                    </>
+                  );
+                })()}
                 {/* 划词配图浮层（真实视觉创作 mini 面板，生成后插入选区段落之后） */}
                 {imagePopover && !editMode && (
                   <>

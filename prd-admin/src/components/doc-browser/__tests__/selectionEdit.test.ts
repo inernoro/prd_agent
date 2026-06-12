@@ -5,6 +5,7 @@ import {
   insertBlockAfterSelection,
   frontmatterPrefixOf,
   buildImageMarkdown,
+  isReplaceSafe,
 } from '../selectionEdit';
 
 describe('resolveSelectionRange', () => {
@@ -96,6 +97,35 @@ describe('resolveSelectionRange', () => {
       endOffset: 7,
     });
     expect(r).toBeNull();
+  });
+});
+
+describe('isReplaceSafe', () => {
+  const body = '前文提到 [[知识库网络|双链显示名]] 的设计，详见 [设计文档](https://x/doc) 与 ![示意图](https://x/a.png)。普通句子可以随便替换。';
+
+  it('普通文本选区 → 安全', () => {
+    const start = body.indexOf('普通句子可以随便替换');
+    expect(isReplaceSafe(body, { start, end: start + 10 })).toBe(true);
+  });
+
+  it('选区落在 wikilink 内部（用户在 DOM 选中的是显示名）→ 不安全（Bugbot Medium 回归）', () => {
+    const start = body.indexOf('双链显示名');
+    expect(isReplaceSafe(body, { start, end: start + 5 })).toBe(false);
+  });
+
+  it('选区整体覆盖整个 wikilink → 安全（整块换掉不破坏语法）', () => {
+    const s = body.indexOf('[[知识库网络|双链显示名]]');
+    expect(isReplaceSafe(body, { start: s, end: s + '[[知识库网络|双链显示名]]'.length })).toBe(true);
+  });
+
+  it('选区落在 markdown 链接文本内部 → 不安全', () => {
+    const start = body.indexOf('设计文档');
+    expect(isReplaceSafe(body, { start, end: start + 4 })).toBe(false);
+  });
+
+  it('选区与图片标记部分相交（跨出边界）→ 不安全', () => {
+    const s = body.indexOf('![示意图]');
+    expect(isReplaceSafe(body, { start: s + 2, end: s + 20 })).toBe(false);
   });
 });
 

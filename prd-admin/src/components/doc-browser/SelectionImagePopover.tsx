@@ -70,13 +70,13 @@ export function SelectionImagePopover({
         </button>
       </div>
       <div className="px-3 pb-3 overflow-y-auto" style={{ flex: 1, minHeight: 0, overscrollBehavior: 'contain' }}>
+        {/* 不传 onInsertImageWithText：划词场景原文已在文档里，「插入原文+配图」语义不成立，隐藏该按钮（Codex P2） */}
         <VisualCreationMiniPanel
           appKey="visual-agent"
           docTitle={docTitle}
           docContent={docContent}
           initialPrompt={buildSelectionIllustrationPrompt(selectedText, docTitle)}
           onInsertImage={(url, name) => onInsertImage(url, name)}
-          onInsertImageWithText={(url) => onInsertImage(url)}
         />
       </div>
     </div>

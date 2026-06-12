@@ -72,6 +72,34 @@ export function replaceSelectionInBody(body: string, range: ResolvedRange, newTe
   return body.slice(0, range.start) + newText + body.slice(range.end);
 }
 
+// 替换会拼坏语法的"标记结构"：选区文本来自渲染后的 DOM（如双链只显示显示名），
+// 在源码里往往是 [[...]] / [文本](链接) 内部的子串——把 AI 结果拼进括号中间会破坏语法
+// （Bugbot Medium 2026-06-12）。选区与这些结构相交但不整体覆盖时，禁止替换。
+const MARKER_PATTERNS: RegExp[] = [
+  /\[\[[^\][\n]*\]\]/g, // wikilink [[xxx]] / [[xxx|显示名]]
+  /!?\[[^\]\n]*\]\([^()\n]*\)/g, // markdown 链接 [t](u) / 图片 ![t](u)
+];
+
+/**
+ * 已定位的选区能否安全整段替换：与 wikilink / markdown 链接（图片）结构相交
+ * 但不恰好整体覆盖时返回 false（替换会把 AI 输出拼进标记中间，拼坏语法）。
+ */
+export function isReplaceSafe(body: string, range: ResolvedRange): boolean {
+  for (const pattern of MARKER_PATTERNS) {
+    const re = new RegExp(pattern.source, 'g');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) {
+      const s = m.index;
+      const e = s + m[0].length;
+      const overlaps = range.start < e && range.end > s;
+      const coversWhole = range.start <= s && range.end >= e;
+      if (overlaps && !coversWhole) return false;
+      if (s >= range.end) break; // 结构按序匹配，已越过选区即可停
+    }
+  }
+  return true;
+}
+
 /**
  * 在选区所在段落之后插入一个块级片段（如配图 markdown），自成段落。
  * 插入点 = 选区结束后的第一个空行（段落边界）；选区在最后一段时追加到文末。
