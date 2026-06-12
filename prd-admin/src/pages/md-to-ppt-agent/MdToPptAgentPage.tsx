@@ -3936,12 +3936,15 @@ export function MdToPptAgentPage() {
                   ].join(' ')}
                   style={{ width: 132, height: 74 }}
                 >
+                  {/* 渲染微光占位：10 张 iframe 逐张渐进渲染（约 1 张/秒），
+                        未画出前显示呼吸占位而不是黑块 */}
+                  <span className="absolute inset-0 animate-pulse bg-white/6" aria-hidden style={{ zIndex: 0 }} />
                   <iframe
                     srcDoc={doc}
                     sandbox=""
                     tabIndex={-1}
                     title={`缩略 ${i + 1}`}
-                    style={{ width: 528, height: 297, border: 0, transform: 'scale(0.25)', transformOrigin: 'top left', pointerEvents: 'none' }}
+                    style={{ width: 528, height: 297, border: 0, transform: 'scale(0.25)', transformOrigin: 'top left', pointerEvents: 'none', position: 'relative', zIndex: 1, background: 'transparent' }}
                   />
                   <span className="absolute bottom-0.5 right-1 text-[9px] tabular-nums text-white/80 bg-black/60 px-1 rounded">
                     {i + 1}

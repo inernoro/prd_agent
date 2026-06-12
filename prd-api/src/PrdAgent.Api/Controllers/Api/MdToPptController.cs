@@ -1438,9 +1438,95 @@ public class MdToPptController : ControllerBase
         var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
         var lis = string.Join("", (page.Bullets ?? new List<string>())
             .Where(b => !string.IsNullOrWhiteSpace(b))
-            .Select(b => $"<li>{enc(b)}</li>"));
-        return $"<div class=\"{layout.ClassAttr}\"><div style=\"padding:6% 8%\">" +
-               $"<h2>{enc(page.Title)}</h2><ul>{lis}</ul></div></div>";
+            .Select(b => $"<li style=\"margin:0 0 10px\">{enc(b)}</li>"));
+        var content = $"<div style=\"padding:6% 8%;position:relative;z-index:2\">" +
+                      $"<h2>{enc(page.Title)}</h2><ul style=\"line-height:1.8\">{lis}</ul></div>";
+        // 兜底页不再裸奔（2026-06-12 用户视觉验收：兜底页无模板装饰、像贴了张白纸）：
+        // 从本页版式范本里继承"无文本装饰块"（网格/扫描线/窗饰/背景 SVG）与页脚，
+        // 即使子智能体两次输出都无效，这页也穿着设计系统的衣服降级。
+        var (lead, tail) = ExtractAnchorDecorations(layout.Html);
+        var rootOpen = System.Text.RegularExpressions.Regex.Match(layout.Html,
+            "<(div|section|article)\\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (rootOpen.Success)
+        {
+            var tag = rootOpen.Groups[1].Value.ToLowerInvariant();
+            return rootOpen.Value + lead + content + tail + $"</{tag}>";
+        }
+        return $"<div class=\"{layout.ClassAttr}\">{lead}{content}{tail}</div>";
+    }
+
+    /// <summary>
+    /// 从版式范本里提取可继承的装饰：顶层"无文本子块"（背景网格/扫描线/窗饰/SVG 装置）作 lead，
+    /// class 含 footer 的子块作 tail。供兜底页穿上设计系统的衣服。
+    /// </summary>
+    internal static (string Lead, string Tail) ExtractAnchorDecorations(string exemplarHtml)
+    {
+        var lead = new StringBuilder();
+        var tail = new StringBuilder();
+        try
+        {
+            var rootOpen = System.Text.RegularExpressions.Regex.Match(exemplarHtml,
+                "<(div|section|article)\\b[^>]*>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!rootOpen.Success) return ("", "");
+            var rootTag = rootOpen.Groups[1].Value.ToLowerInvariant();
+            // 根元素的闭合：平衡扫描
+            var tagRe = new System.Text.RegularExpressions.Regex($"<(/?){rootTag}\\b[^>]*?(/?)>",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var depth = 1;
+            var scan = rootOpen.Index + rootOpen.Length;
+            var innerEnd = -1;
+            while (depth > 0)
+            {
+                var t = tagRe.Match(exemplarHtml, scan);
+                if (!t.Success) return ("", "");
+                if (t.Groups[2].Value != "/")
+                    depth += t.Groups[1].Value == "/" ? -1 : 1;
+                if (depth == 0) innerEnd = t.Index;
+                scan = t.Index + t.Length;
+            }
+            var inner = exemplarHtml[(rootOpen.Index + rootOpen.Length)..innerEnd];
+
+            // 顶层子块扫描（div/section/article/footer/svg/aside）
+            var childRe = new System.Text.RegularExpressions.Regex(
+                "<(div|section|article|footer|svg|aside)\\b[^>]*>",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var pos = 0;
+            while (true)
+            {
+                var open = childRe.Match(inner, pos);
+                if (!open.Success) break;
+                var tag = open.Groups[1].Value.ToLowerInvariant();
+                var cRe = new System.Text.RegularExpressions.Regex($"<(/?){tag}\\b[^>]*?(/?)>",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                var d = 1;
+                var s = open.Index + open.Length;
+                var blockEnd = -1;
+                while (d > 0)
+                {
+                    var t = cRe.Match(inner, s);
+                    if (!t.Success) { blockEnd = -1; break; }
+                    if (t.Groups[2].Value != "/")
+                        d += t.Groups[1].Value == "/" ? -1 : 1;
+                    if (d == 0) blockEnd = t.Index + t.Length;
+                    s = t.Index + t.Length;
+                }
+                if (blockEnd < 0) break;
+                var block = inner[open.Index..blockEnd];
+                var clsM = System.Text.RegularExpressions.Regex.Match(open.Value, "class=\"([^\"]*)\"");
+                var cls = clsM.Success ? clsM.Groups[1].Value : "";
+                var text = System.Text.RegularExpressions.Regex.Replace(block, "<[^>]+>", " ").Trim();
+                if (cls.Contains("footer", StringComparison.OrdinalIgnoreCase))
+                    tail.Append(block);
+                else if (text.Length == 0)
+                    lead.Append(block);
+                pos = blockEnd;
+            }
+        }
+        catch
+        {
+            return ("", "");
+        }
+        return (lead.ToString(), tail.ToString());
     }
 
     /// <summary>模型输出中平衡提取第一个 slide 块（div/section 容器通用，支持嵌套）</summary>

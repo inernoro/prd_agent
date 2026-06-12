@@ -98,4 +98,36 @@ public class MdToPptAnchorTests
         var blocks = MdToPptController.FindSlideBlocks(html);
         Assert.Equal(2, blocks.Count);
     }
+
+    [Fact]
+    public void AnchoredFallbackSlide_InheritsTemplateDecorationsAndFooter()
+    {
+        // 兜底页不再裸奔：继承 cyber-terminal 范本的装饰块（网格/扫描线）与页脚
+        var anchor = MdToPptAnchors.Load("cyber-terminal")!;
+        var layout = anchor.ContentSlides[0];
+        var page = new MdToPptOutlinePageDto
+        {
+            Title = "测试标题",
+            Bullets = new List<string> { "要点一", "要点二" },
+        };
+        var slide = MdToPptController.AnchoredFallbackSlide(layout, page, 1);
+
+        Assert.Contains("测试标题", slide);
+        Assert.Contains("要点一", slide);
+        // 模板装饰（无文本块）被继承
+        Assert.Contains("hc-grid", slide);
+        // 页脚被继承（class 含 footer）
+        Assert.Contains("hc-footer", slide);
+        // 根元素仍是合法 slide 块（拆装扫描可识别）
+        var blocks = MdToPptController.FindSlideBlocks(slide);
+        Assert.Single(blocks);
+    }
+
+    [Fact]
+    public void ExtractAnchorDecorations_EmptyOnUnparsableHtml()
+    {
+        var (lead, tail) = MdToPptController.ExtractAnchorDecorations("plain text no tags");
+        Assert.Equal("", lead);
+        Assert.Equal("", tail);
+    }
 }
