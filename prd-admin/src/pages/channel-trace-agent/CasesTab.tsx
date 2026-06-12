@@ -100,13 +100,20 @@ export function CasesTab() {
       codeHits: (d) => setCurHits((d as { items: { repo: string; path: string }[] }).items ?? []),
     },
     onDone: () => {
+      // 关键：必须先把 streamRef.current 取到局部常量再 setMessages。
+      // setMessages 的函数式 updater 是「惰性」执行的（React 在随后的渲染阶段才调用它），
+      // 而下方 `streamRef.current = ''` 是「同步」执行的，会在 updater 真正运行前就把 ref 清空。
+      // 若 updater 内直接读 streamRef.current，落库的就是空串 → 气泡渲染空内容 → 回答塌缩成空框。
+      const finalText = streamRef.current;
+      const finalRelated = curRelated;
+      const finalHits = curHits;
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: streamRef.current,
-          relatedCases: curRelated,
-          codeHits: curHits,
+          content: finalText,
+          relatedCases: finalRelated,
+          codeHits: finalHits,
         },
       ]);
       streamRef.current = '';
@@ -115,8 +122,10 @@ export function CasesTab() {
     },
     onError: () => {
       // 出错时把已流出的内容固化为一条 assistant 消息，避免丢失
-      if (streamRef.current) {
-        setMessages((prev) => [...prev, { role: 'assistant', content: streamRef.current }]);
+      // 同 onDone：先取局部常量，避免惰性 updater 读到已被同步清空的 streamRef。
+      const finalText = streamRef.current;
+      if (finalText) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: finalText }]);
       }
       streamRef.current = '';
       setStreamingText('');
