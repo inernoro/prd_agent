@@ -104,11 +104,20 @@ POST /api/emergence/nodes/{id}/adopt  { productId }
 ```
 POST /api/emergence/nodes/{nodeId}/adopt
 Body: { productId: string }
-幂等：节点 AdoptedRequirementId 已非空 → 直接返回那条既有需求（忽略本次 productId）
+原子抢占：仅当节点 AdoptedRequirementId 为空时才创建需求并写入；否则返回既有需求
 返回：ApiResponse<Requirement>
 ```
 
-**幂等语义（一节点只流转一次）**：与缺陷转需求不同——缺陷天然归属一个产品（productId 固定在缺陷上），而涌现节点是产品无关的，productId 由调用方在 adopt 时传入。为避免"同一节点用不同 productId 重复调用却各返回/各新建需求"的歧义，幂等**以节点自身的流转状态为准**：`AdoptedRequirementId` 一旦写入即锁定，后续任何 productId 的重复调用都返回首次生成的那条需求、不再新建（与单值 `AdoptedRequirementId` 字段语义一致）。若产品后续需要改挂，走需求的正常"移动产品"操作，而非重复 adopt。判定不查 `SourceEmergenceNodeId`（那是给需求侧反查溯源用的），直接读节点的 `AdoptedRequirementId`，省一次查询。
+**幂等语义（一节点只流转一次）**：与缺陷转需求不同——缺陷天然归属一个产品（productId 固定在缺陷上），而涌现节点是产品无关的，productId 由调用方在 adopt 时传入。为避免"同一节点用不同 productId 重复调用却各返回/各新建需求"的歧义，一个节点最多对应一条需求，以节点的 `AdoptedRequirementId` 为锁。
+
+**并发安全（必须原子，不能先读后写）**：`AdoptedRequirementId` 是单值锁，但"先 read 判空、再 insert 需求、再 write 回填"这条朴素三步在并发/双击/重试下有 TOCTOU 竞态——两个请求都读到空就会各建一条需求、后写者只是盖住前者，需求池被劈成两条。因此实现**必须用原子抢占**，按下面顺序：
+
+1. 预生成 `reqId = Guid`；
+2. **原子声明节点**：`FindOneAndUpdate({ _id: nodeId, AdoptedRequirementId: null }, { $set: { AdoptedRequirementId: reqId, Status: planned } })`——MongoDB 单文档更新天然原子，`AdoptedRequirementId: null` 作为条件，并发下只有一个请求能匹配成功；
+3. 抢占成功（matched）→ 用预生成的 `reqId` insert 需求（`SourceEmergenceNodeId=nodeId`、`SourceSystem="emergence"`）；
+4. 抢占失败（matched=0，说明已被别的请求/历史 adopt 占用）→ 重新读节点，按其 `AdoptedRequirementId` 返回那条既有需求，**不 insert**。
+
+防御纵深（可选）：给 `Requirement.SourceEmergenceNodeId` 加 partial unique index（仅非空），即便上面逻辑被未来改坏，第二条 insert 也会被唯一约束拒绝。注意本仓库 `no-auto-index.md` 规则——索引由 DBA 手动建，设计仅声明需求，不在启动时自动创建。`SourceEmergenceNodeId` 本身仍保留作需求侧反查溯源用。
 
 前端：涌现节点卡片底部新增"流转需求池"按钮（未 adopt 时可点）；已流转节点显示需求编号 chip，点击跳转 product-agent 对应需求。复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
 
