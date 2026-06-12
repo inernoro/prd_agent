@@ -104,9 +104,15 @@ POST /api/emergence/nodes/{id}/adopt  { productId }
 ```
 POST /api/emergence/nodes/{nodeId}/adopt
 Body: { productId: string }
+鉴权：节点所属树 OwnerId == 当前用户 且 productId 经 FindAccessibleProductAsync 通过
 幂等键：Requirement.SourceEmergenceNodeId == nodeId（已存在则返回，不新建）
 返回：ApiResponse<Requirement>
 ```
+
+**权限校验（必须在查重/insert 之前，跨两个权限域）**：adopt 横跨涌现与产品两个域，两侧鉴权都要显式做、缺一即越权（IDOR）：
+- **节点侧**：读节点 → 取其 `TreeId` → 校验 `EmergenceTree.OwnerId == 当前 userId`（与 `EmergenceController` 既有变更端点一致，按树属主，不是按节点）。不通过 → 404/403，禁止用猜测的私有 node id 流转他人树的节点。
+- **产品侧**：`FindAccessibleProductAsync(productId, userId)`（与 `ProductAgentController` 创建/转换路径一致）。不通过 → 404/403，禁止把需求塞进无权产品。
+- 两道校验**先于**幂等查重和 insert，避免"先建后拒"泄漏或脏写。即便是命中幂等返回既有需求的分支，也要先过节点属主校验，防止凭 node id 探测他人已流转的需求。
 
 **幂等语义（一节点只流转一次）**：与缺陷转需求不同——缺陷天然归属一个产品（productId 固定在缺陷上），而涌现节点是产品无关的，productId 由调用方在 adopt 时传入。为避免"同一节点用不同 productId 重复调用却各返回/各新建需求"的歧义，一个节点最多对应一条需求。
 
@@ -141,3 +147,4 @@ Body: { productId: string }
 | 对接伊利存量工单系统 | 中 | 需对方提供 API 与资料，属外部依赖，不可自产，明确为前置条件 |
 | 改善项目追踪字段不全 | 低 | DefectProject 当前仅容器，里程碑/进度/成本为演示态，后续按需补字段 |
 | 需求池来源多样导致口径混乱 | 低 | 统一 `SourceSystem` 枚举（defect/emergence/tapd/manual），前端按来源打标 |
+| adopt 跨权限域越权（IDOR） | 中 | 必须前置双校验：节点按树 `OwnerId == userId` + 产品 `FindAccessibleProductAsync`，先于查重/insert（见 7 节） |
