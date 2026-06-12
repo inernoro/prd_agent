@@ -272,12 +272,26 @@ export function TipsDrawer() {
     if (pageGuideHere) return; // 本页有未走完的新手教程 → 先让 Spotlight 走完整套,不抢
     const reminder = pageTips.find((t) => isUpdateReminderTip(t) && !t.learned);
     if (!reminder || !reminder.sourceId) return;
+    // 同 session 内本页 *-page-guide 刚自动开讲/走完(完成时 markLearned 让 pageGuideHere 同 session 变 null)
+    // → 不要紧接着再弹更新提醒:新人刚走完整套教程(里面已讲到该新功能),立刻又弹气泡是重复打断(Codex P2)。
+    // 留到「下次进页」(page-guide 非本 session 新开)再弹。filterPageTips 不按 learned 过滤,
+    // 已学会的 page-guide 仍在 pageTips 里,可据此拿到本页 page-guide 的 sourceId。
+    let startedGuides: Set<string>;
+    try { startedGuides = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
+    catch { startedGuides = new Set(); }
+    const pageGuide = pageTips.find((t) => typeof t.sourceId === 'string' && t.sourceId.endsWith('-page-guide'));
+    if (pageGuide?.sourceId && startedGuides.has(pageGuide.sourceId)) return;
+
     let started: Set<string>;
     try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_REMINDERS_KEY) || '[]')); }
     catch { started = new Set(); }
     if (started.has(reminder.sourceId)) return;
     started.add(reminder.sourceId);
     try { sessionStorage.setItem(AUTO_STARTED_REMINDERS_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
+    // 占用当天「自动弹一次」额度:reminder 弹出当下即 markLearned 会把它移出 pageTips,
+    // 上方抽屉自动展开 effect 的「有未学会 reminder 就跳过」守卫随之失效;若本页同时还有未学会的
+    // 周更新教程,抽屉会在 reminder 气泡上层再自动展开(Bugbot Medium)。这里占掉日额度,抽屉本 session 不再自动弹。
+    markAutoOpenedToday();
     void trackTip(reminder.id, 'clicked');
     writeSpotlightPayload(reminder); // 在 [data-tour-id=...] 位置弹单步气泡
     void markLearned(reminder.id);   // 看过即标记学会 → 之后永不再弹(取消/知道了都一样)

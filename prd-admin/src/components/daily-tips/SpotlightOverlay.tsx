@@ -392,10 +392,12 @@ export function SpotlightOverlay() {
     const autoAction = payload?.autoAction ?? null;
     const hasSteps = (autoAction?.steps?.length ?? 0) > 0;
 
-    // 单步模式:无 step + 无 autoClick 时,5s 自动淡出(保持旧行为)
+    // 单步模式:无 step + 无 autoClick 时,5s 自动淡出。也走 closeWithFlyBack ——
+    // 单步提示(如 *-update-reminder 粘贴气泡)自动淡出同样属于「关闭」,要播飞回动画,
+    // 与手动关闭口径一致(否则 reminder 不交互、5s 后静默消失,不提示入口位置;Bugbot)。
     let fadeTimer: number | null = null;
     if (!hasSteps && !autoAction?.autoClick) {
-      fadeTimer = window.setTimeout(() => setDismissed(true), 5000);
+      fadeTimer = window.setTimeout(() => closeWithFlyBack(), 5000);
     }
 
     // autoClick:延迟后自动点击目标(光圈已显示一段时间,让用户看清)
@@ -413,7 +415,7 @@ export function SpotlightOverlay() {
         } catch {
           /* noop */
         }
-        setDismissed(true);
+        closeWithFlyBack(); // autoClick 完成后关闭也走飞回(口径统一;若已导航离开则 flyBackToEntry 取不到光圈静默跳过)
       }, delay);
     }
 

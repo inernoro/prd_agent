@@ -99,7 +99,7 @@
 - 点击 = `markLearned(payload.id)` + 飞回动画关闭。该页 `*-page-guide` 学会后不再自动开讲、入口不再脉冲(仍可手动重看)。给「觉得弹窗烦」的用户无需走完整套即可退出。
 
 ### 5.9.2 任何关闭都播「飞回入口」动画,半速(SpotlightOverlay)
-- 飞回动画(毕业帽 → 右上角 `[data-tour-entry]` pill)从「仅完成末步触发」扩展到**所有关闭路径**:X / 点空白遮罩 / ESC / 我已学会 / 完成。
+- 飞回动画(毕业帽 → 右上角 `[data-tour-entry]` pill)从「仅完成末步触发」扩展到**所有关闭路径**:X / 点空白遮罩 / ESC / 我已学会 / 完成 / **单步 5s 自动淡出** / **autoClick 完成**(后两条 2026-06-12 补,治「单步 reminder 不交互静默消失、不提示入口」;autoClick 若已导航离开则 `flyBackToEntry` 取不到光圈静默跳过)。
 - `FlyingToken` 时长 720ms → **1440ms(半速)**,解决「太快看不见」。统一走 `closeWithFlyBack()`(先 `flyBackToEntry()` 设 flyBack 再 `setDismissed`);`flyBackToEntry` 起点优先取当前光圈、退而取气泡卡片,取不到就不播(定位中/超时态无光圈时静默关闭)。
 - 注意:纯关闭(X/空白/ESC)**只播动画不 markLearned**;只有「我已学会」「完成」才标记学会。
 
@@ -108,6 +108,9 @@
 - 进入对应页 → 由 `TipsDrawer` 专用 effect 走 **Spotlight 悬浮气泡**(不是抽屉),在功能位置弹一次轻提醒「这里更新了」;弹出当下即 `markLearned` → 不管用户取消还是「知道了」都不再显示(跨 session 永不再弹,服务端持久化)。
 - 与 §5.7 第 2 类「周更新教程(`*-update-YYYYwNN`/`feature-release`)自动展开抽屉」互斥:`pickAutoOpenUpdateTip` 用 `isUpdateReminderTip` 把 reminder 排除出抽屉路径,避免同一条既弹抽屉又弹气泡。优先级低于本页 `*-page-guide` 强制开讲。
 - 首例:`visual-agent-paste-update-reminder`(视觉创作首页可粘贴图片),锚 `[data-tour-id=visual-image-btn]`,`endAt=2026-09-01` 后新用户不再看到。
+- **两条防重叠/防重复约束(2026-06-12,回应 PR #788 review)**:
+  1. **同 session 不紧跟 page-guide 弹**:若本页 `*-page-guide` 在本 session 已自动开讲(`tipsAutoStartedGuides` 命中),reminder 当 session **跳过**——新人刚走完整套教程(里面已讲到该新功能),不再立刻弹气泡重复打断;留到下次进页再弹(Codex P2)。
+  2. **占当天自动弹额度**:reminder 弹出当下即 `markLearned`,会把自己移出 `pageTips`,使抽屉自动展开 effect 的「有未学会 reminder 就跳过」守卫失效;若本页同时有未学会的周更新教程,抽屉会在气泡上层再自动展开。故 reminder 触发时调 `markAutoOpenedToday()` 占掉日额度,抽屉本 session 不再自动弹(Bugbot Medium)。
 - 判定函数 SSOT:`pageGuideMatch.ts` 的 `isUpdateReminderTip`;守卫测试见 `pageGuideMatch.test.ts` 的「isUpdateReminderTip / 轻微提醒更新走 Spotlight 气泡而非抽屉」套件。
 
 ## 六、相关

@@ -2,3 +2,5 @@
 | feat | prd-admin | 教程关闭飞回入口动画扩展到所有关闭路径（X/点空白/ESC/我已学会/完成），并放慢一倍（720ms→1440ms）解决「看不见」 |
 | feat | prd-admin | 新增「轻微提醒更新」(*-update-reminder) 第三类自动弹出：进页以单步悬浮气泡轻提醒新功能，看过即永不再弹 |
 | feat | prd-api | 新增 visual-agent-paste-update-reminder seed（视觉创作首页可粘贴图片提醒），并把视觉创作 page-guide 第 4 步同步补充粘贴/拖入说明 |
+| fix | prd-admin | 轻微提醒更新：同 session 内本页 page-guide 刚走完不再紧跟弹 reminder（避免重复打断），并占当天自动弹额度防抽屉在气泡上层展开 |
+| fix | prd-admin | 单步教程 5s 自动淡出 / autoClick 完成的关闭也走飞回动画，与手动关闭口径一致 |
