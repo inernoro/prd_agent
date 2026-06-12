@@ -49,6 +49,13 @@ export type TeamActivityActorStat = {
   count: number;
 };
 
+export type TeamActivityActionStat = {
+  action: string;
+  label: string;
+  module: string;
+  count: number;
+};
+
 export type TeamActivityStatsData = {
   total: number;
   /** 同长度上一时间窗的总量（今天 vs 昨天 / 本周 vs 上周）；范围为「全部」时为 null */
@@ -56,6 +63,8 @@ export type TeamActivityStatsData = {
   activeMembers: number;
   modules: TeamActivityModuleStat[];
   actors: TeamActivityActorStat[];
+  /** 动作类型分布 Top 10（标签来自白名单注册表） */
+  actions: TeamActivityActionStat[];
   /** 24 桶 UTC 小时直方图（基于最近样本），前端按本地时区旋转后渲染 */
   hourlyUtc: number[];
   /** 小时直方图是否因数据量过大而采样（其余统计为精确值） */

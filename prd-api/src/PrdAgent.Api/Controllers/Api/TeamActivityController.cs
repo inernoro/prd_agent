@@ -161,6 +161,25 @@ public class TeamActivityController : ControllerBase
             };
         }).ToList();
 
+        // 动作类型分布（右栏分类统计面板用）：标签/模块从白名单注册表解析，历史遗留动作兜底显示原始 key
+        var actionGroups = await _db.ActivityLogs.Aggregate()
+            .Match(filter)
+            .Group(x => x.Action, g => new { Action = g.Key, Count = g.Count() })
+            .SortByDescending(x => x.Count)
+            .Limit(10)
+            .ToListAsync();
+        var actions = actionGroups.Select(a =>
+        {
+            ActivityActionRegistry.Actions.TryGetValue(a.Action, out var def);
+            return new
+            {
+                action = a.Action,
+                label = def?.ActionLabel ?? a.Action,
+                module = def?.Module ?? string.Empty,
+                count = a.Count,
+            };
+        }).ToList();
+
         // 小时直方图：只投影 CreatedAt 在内存里数桶，避免依赖 $hour 表达式翻译；时区旋转交给前端
         var times = await _db.ActivityLogs.Find(filter)
             .SortByDescending(x => x.CreatedAt)
@@ -177,6 +196,7 @@ public class TeamActivityController : ControllerBase
             activeMembers = actorGroups.Count,
             modules,
             actors,
+            actions,
             hourlyUtc,
             sampled = total > HourSampleCap,
         }));

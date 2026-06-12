@@ -14,7 +14,7 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { getTeamActivityLogs, getTeamActivityModules, getTeamActivityStats } from '@/services';
 import type { ActivityModuleOption, TeamActivityItem, TeamActivityStatsData } from '@/services/contracts/teamActivity';
-import { PulseBand } from './PulseBand';
+import { CategoryStatsPanel, MemberStatsPanel } from './StatsPanels';
 import { getModuleMeta } from './moduleMeta';
 import { getActionIcon } from './actionIcons';
 import { aggregateConsecutive, maskName, type AggregatedActivity } from './pulse';
@@ -194,8 +194,8 @@ export default function TeamActivityPage() {
   }, [items]);
 
   return (
-    // 居中限宽：动态流在超宽屏上全幅拉伸会产生大片真空与超长视线距离（GitHub/Linear 的 feed 均为限宽列）
-    <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1240 }}>
+    // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡
+    <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1840 }}>
       <PageHeader title="团队动态" description="团队脉搏总览 + 工作动态时间线（按白名单动作自动留痕）" />
 
       {/* 筛选栏：人 / 模块 / 时间快捷段 / 隐私脱敏 */}
@@ -236,20 +236,28 @@ export default function TeamActivityPage() {
         </div>
       </div>
 
-      {/* 团队脉搏聚合面板 */}
-      <PulseBand
-        stats={stats}
-        loading={statsLoading}
-        privacy={privacy}
-        compareLabel={COMPARE_LABELS[filterRange]}
-        activeModule={filterModule}
-        activeActorId={filterUserId}
-        onPickModule={pickModule}
-        onPickActor={pickActor}
-      />
+      {/* 控制台三栏：两侧统计栏各自滚动，中间时间线吃满剩余宽度 */}
+      <div
+        className="flex-1 grid gap-4"
+        style={{ minHeight: 0, gridTemplateColumns: '264px minmax(0, 1fr) 300px' }}
+      >
+        {/* 左栏：成员统计 */}
+        <div
+          className="flex flex-col gap-4 min-h-0"
+          style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
+          <MemberStatsPanel
+            stats={stats}
+            loading={statsLoading}
+            privacy={privacy}
+            compareLabel={COMPARE_LABELS[filterRange]}
+            activeActorId={filterUserId}
+            onPickActor={pickActor}
+          />
+        </div>
 
-      {/* 时间线主体 */}
-      <GlassCard className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+        {/* 中栏：时间线主体 */}
+        <GlassCard className="flex flex-col" style={{ minHeight: 0 }}>
         <div
           className="flex-1 px-5 py-4"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
@@ -308,7 +316,21 @@ export default function TeamActivityPage() {
             </div>
           )}
         </div>
-      </GlassCard>
+        </GlassCard>
+
+        {/* 右栏：分类统计 */}
+        <div
+          className="flex flex-col gap-4 min-h-0"
+          style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
+          <CategoryStatsPanel
+            stats={stats}
+            loading={statsLoading}
+            activeModule={filterModule}
+            onPickModule={pickModule}
+          />
+        </div>
+      </div>
     </div>
   );
 }
