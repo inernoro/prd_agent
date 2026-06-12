@@ -31,6 +31,10 @@ public static class PmBriefingRenderer
         public string? Model { get; set; }
         /// <summary>主题 key：classic | dark | warm | minimal | vivid</summary>
         public string Style { get; set; } = "classic";
+        /// <summary>报告周期起（UTC，可空=全周期）</summary>
+        public DateTime? ReportFrom { get; set; }
+        /// <summary>报告周期止（UTC 含当日，可空）</summary>
+        public DateTime? ReportTo { get; set; }
     }
 
     public class MilestoneRow
@@ -95,6 +99,9 @@ public static class PmBriefingRenderer
     /// <summary>UTC → 中国时区（简报面向国内干系人，沿用 PmOverdueReminderWorker 同款时区约定）</summary>
     public static DateTime ToCst(DateTime utc) => TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), ChinaTimeZone);
 
+    /// <summary>中国时区本地时刻 → UTC（解析前端传来的 yyyy-MM-dd 周期日期用）</summary>
+    public static DateTime CstToUtc(DateTime cst) => TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(cst, DateTimeKind.Unspecified), ChinaTimeZone);
+
     private static string E(string? s) => WebUtility.HtmlEncode(s ?? string.Empty);
 
     private static (string label, string color, string bg) StatusMeta(string status, bool dark) => status switch
@@ -154,7 +161,6 @@ public static class PmBriefingRenderer
         sb.Append($".risk-item{{display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;font-size:14px;color:{t.TextSecondary}}}");
         sb.Append($".summary{{font-size:14.5px;color:{t.TextSecondary};white-space:pre-wrap}}");
         sb.Append($".status-note{{font-size:13px;color:{t.TextMuted};margin-top:8px}}");
-        sb.Append($"footer{{text-align:center;font-size:12px;color:{t.FooterColor};margin-top:24px}}");
         sb.Append($"@media print{{body{{background:{(t.Dark ? "#0F172A" : "#fff")}}}.card{{box-shadow:none}}}}");
         sb.Append("</style></head><body><div class=\"page\">");
 
@@ -166,6 +172,8 @@ public static class PmBriefingRenderer
         sb.Append($"<span>编号 {E(d.ProjectNo)}</span>");
         if (!string.IsNullOrWhiteSpace(d.LeaderName)) sb.Append($"<span>负责人 {E(d.LeaderName)}</span>");
         if (!string.IsNullOrWhiteSpace(d.PeriodText)) sb.Append($"<span>计划周期 {E(d.PeriodText)}</span>");
+        if (d.ReportFrom.HasValue && d.ReportTo.HasValue)
+            sb.Append($"<span>报告周期 {ToCst(d.ReportFrom.Value):yyyy-MM-dd} ~ {ToCst(d.ReportTo.Value):yyyy-MM-dd}</span>");
         sb.Append($"<span>简报日期 {dateText}</span>");
         sb.Append("</div>");
         if (!string.IsNullOrWhiteSpace(d.Ai.StatusNote))
@@ -228,12 +236,6 @@ public static class PmBriefingRenderer
             foreach (var n in d.Ai.NextSteps) sb.Append($"<li>{E(n)}</li>");
             sb.Append("</ul></div>");
         }
-
-        // 页脚
-        sb.Append("<footer>");
-        sb.Append($"由 PRD Agent 项目管理智能体生成 · {ToCst(d.GeneratedAt):yyyy-MM-dd HH:mm}");
-        if (!string.IsNullOrWhiteSpace(d.Model)) sb.Append($" · 模型 {E(d.Model)}");
-        sb.Append("</footer>");
 
         sb.Append("</div></body></html>");
         return sb.ToString();

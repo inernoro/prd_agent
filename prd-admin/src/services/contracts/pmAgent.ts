@@ -651,6 +651,9 @@ export type PmBriefing = {
   hostedSiteId?: string | null;
   /** 托管站点入口 URL（保存到网页托管后回填） */
   hostedSiteUrl?: string | null;
+  /** 报告周期（可空=全周期简报） */
+  periodFrom?: string | null;
+  periodTo?: string | null;
   createdBy: string;
   createdByName?: string | null;
   createdAt: string;

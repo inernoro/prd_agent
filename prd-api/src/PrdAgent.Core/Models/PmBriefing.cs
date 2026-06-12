@@ -23,6 +23,12 @@ public class PmBriefing
     /// <summary>简报风格：classic | dark | warm | minimal | vivid（PmBriefingRenderer 主题 key）</summary>
     public string Style { get; set; } = "classic";
 
+    /// <summary>报告周期起（UTC，可空=全周期简报）</summary>
+    public DateTime? PeriodFrom { get; set; }
+
+    /// <summary>报告周期止（UTC，可空）</summary>
+    public DateTime? PeriodTo { get; set; }
+
     /// <summary>渲染数据快照 JSON（硬数据 + AI 结构化内容）。切换风格时据此重渲染，不重新调 LLM；旧数据为空则不支持切换</summary>
     public string? RenderDataJson { get; set; }
 

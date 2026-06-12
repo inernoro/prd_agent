@@ -1480,6 +1480,7 @@ export const api = {
       share: (briefingId: string) => `/api/pm/briefings/${briefingId}/share`,
       saveToHosting: (briefingId: string) => `/api/pm/briefings/${briefingId}/save-to-hosting`,
       restyle: (briefingId: string) => `/api/pm/briefings/${briefingId}/restyle`,
+      refine: (briefingId: string) => `/api/pm/briefings/${briefingId}/refine`,
       styles: () => '/api/pm/briefings/styles',
       /** 匿名分享页（后端直接返回 text/html，可直接浏览器打开） */
       sharedView: (token: string) => `/api/pm/briefings/shared/${token}`,

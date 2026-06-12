@@ -244,8 +244,12 @@ public class PmAgentService
     /// onModel 回传实际调度到的模型名（落库 + 前端可见，规则 ai-model-visibility）。</summary>
     public async Task<PmBriefingAiContent?> GenerateBriefingAsync(
         PmProject project, string statsSummary, string userId,
-        Func<string, Task>? onContent, Func<string, Task>? onThinking, Action<string>? onError, Action<string>? onModel = null)
+        Func<string, Task>? onContent, Func<string, Task>? onThinking, Action<string>? onError, Action<string>? onModel = null,
+        string? userNote = null)
     {
+        var userMessage = string.IsNullOrWhiteSpace(userNote)
+            ? statsSummary
+            : statsSummary + "\n\n用户补充要求（优先满足，但不得编造数据）：" + userNote.Trim();
         var request = new GatewayRequest
         {
             AppCallerCode = AppCallerRegistry.ProjectManagement.Briefing.Chat,
@@ -255,7 +259,49 @@ public class PmAgentService
                 ["messages"] = new JsonArray
                 {
                     new JsonObject { ["role"] = "system", ["content"] = BuildBriefingSystemPrompt() },
-                    new JsonObject { ["role"] = "user", ["content"] = statsSummary }
+                    new JsonObject { ["role"] = "user", ["content"] = userMessage }
+                },
+                ["temperature"] = 0.4,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+            TimeoutSeconds = 180,
+            IncludeThinking = true,
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+        var (full, err) = await StreamAndAccumulateAsync(request, onContent, onThinking, onModel);
+        if (err != null) { onError?.Invoke(err); return null; }
+        if (string.IsNullOrWhiteSpace(full)) { onError?.Invoke("LLM 返回空内容（模型响应为空）"); return null; }
+        var parsed = ParseBriefingContent(full);
+        if (parsed == null) onError?.Invoke("简报内容解析失败（LLM 未按 JSON 格式输出）");
+        return parsed;
+    }
+
+    /// <summary>按用户自然语言意图改写既有简报内容：硬数据摘要 + 原结构化内容 + 调整要求 → 重新产出同 JSON 格式内容（数字以硬数据为准，不得编造）。</summary>
+    public async Task<PmBriefingAiContent?> RefineBriefingAsync(
+        PmProject project, string dataSummary, string previousContentJson, string instruction, string userId,
+        Func<string, Task>? onContent, Func<string, Task>? onThinking, Action<string>? onError, Action<string>? onModel = null)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("以下是该项目的硬数据摘要（数字以此为准，不得编造）：");
+        sb.AppendLine(dataSummary);
+        sb.AppendLine();
+        sb.AppendLine("以下是当前简报的结构化内容（JSON）：");
+        sb.AppendLine(previousContentJson);
+        sb.AppendLine();
+        sb.AppendLine("用户对当前内容不满意，调整要求如下，请在保持事实准确的前提下按要求改写，输出同格式 JSON：");
+        sb.AppendLine(instruction.Trim());
+
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ProjectManagement.Briefing.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildBriefingSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = sb.ToString() }
                 },
                 ["temperature"] = 0.4,
                 ["include_reasoning"] = true,

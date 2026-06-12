@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Sparkles, Square, Download, Trash2, Eye, FileText, Cpu, Share2, Link as LinkIcon, Globe, Maximize2, Minimize2, Palette, ExternalLink } from 'lucide-react';
+import { X, Sparkles, Square, Download, Trash2, Eye, FileText, Cpu, Share2, Link as LinkIcon, Globe, Maximize2, Minimize2, Palette, ExternalLink, Wand2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
@@ -30,6 +30,36 @@ export function downloadHtml(title: string, html: string) {
 export function fmtDateTime(s: string) {
   const d = new Date(s);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+// ── 报告周期预设 ──
+type PeriodPreset = 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'all' | 'custom';
+const PERIOD_PRESETS: { key: PeriodPreset; label: string }[] = [
+  { key: 'this_week', label: '本周' },
+  { key: 'last_week', label: '上周' },
+  { key: 'this_month', label: '本月' },
+  { key: 'last_month', label: '上月' },
+  { key: 'all', label: '全周期' },
+  { key: 'custom', label: '自定义' },
+];
+function ymd(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+/** 预设 → {from,to}（yyyy-MM-dd，含两端）；all 返回空对象 */
+function presetRange(p: PeriodPreset): { from?: string; to?: string } {
+  const now = new Date();
+  if (p === 'this_week' || p === 'last_week') {
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7) - (p === 'last_week' ? 7 : 0));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { from: ymd(monday), to: ymd(sunday) };
+  }
+  if (p === 'this_month') {
+    return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
+  }
+  if (p === 'last_month') {
+    return { from: ymd(new Date(now.getFullYear(), now.getMonth() - 1, 1)), to: ymd(new Date(now.getFullYear(), now.getMonth(), 0)) };
+  }
+  return {};
 }
 
 /**
@@ -181,6 +211,10 @@ export function StylePicker({ styles, value, onChange, disabled }: { styles: PmB
 export function BriefingGenerateModal({ projectId, styles, onClose, onDone }: { projectId: string; styles: PmBriefingStyle[]; onClose: () => void; onDone: (b: PmBriefing) => void }) {
   const [phase, setPhase] = useState<'idle' | 'streaming' | 'failed'>('idle');
   const [style, setStyle] = useState('classic');
+  const [period, setPeriod] = useState<PeriodPreset>('this_week');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [note, setNote] = useState('');
   const [stageMsg, setStageMsg] = useState('连接中…');
   const [model, setModel] = useState('');
   const [thinking, setThinking] = useState('');
@@ -190,6 +224,10 @@ export function BriefingGenerateModal({ projectId, styles, onClose, onDone }: { 
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const start = async () => {
+    const range = period === 'custom'
+      ? (customFrom && customTo && customFrom <= customTo ? { from: customFrom, to: customTo } : null)
+      : presetRange(period);
+    if (period === 'custom' && !range) { toast.error('自定义周期无效', '请选择起止日期，且起始不晚于结束'); return; }
     setPhase('streaming'); setStageMsg('连接中…'); setModel(''); setThinking(''); setContent('');
     const controller = new AbortController();
     abortRef.current = controller;
@@ -197,8 +235,9 @@ export function BriefingGenerateModal({ projectId, styles, onClose, onDone }: { 
     let failed: string | null = null;
     try {
       await connectSse({
-        url: `${api.pm.projects.briefingsGenerate(encodeURIComponent(projectId))}?style=${encodeURIComponent(style)}`,
+        url: api.pm.projects.briefingsGenerate(encodeURIComponent(projectId)),
         method: 'POST',
+        body: { style, from: range?.from, to: range?.to, note: note.trim() || undefined },
         signal: controller.signal,
         onEvent: (evt) => {
           if (!evt.data) return;
@@ -237,9 +276,40 @@ export function BriefingGenerateModal({ projectId, styles, onClose, onDone }: { 
           {phase === 'idle' && (
             <>
               <div className="text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
-                将汇总本项目的目标 / 里程碑 / 任务 / 风险实时数据，AI 撰写对外简报并渲染为可分享的 HTML 页。先选一个风格：
+                将汇总本项目的目标 / 里程碑 / 任务 / 风险实时数据，AI 撰写对外简报并渲染为可分享的 HTML 页。
               </div>
+              <div className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>报告周期</div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {PERIOD_PRESETS.map((pp) => {
+                  const active = period === pp.key;
+                  return (
+                    <button key={pp.key} onClick={() => setPeriod(pp.key)}
+                      className="px-3 py-1.5 rounded-lg border text-[12px]"
+                      style={{ borderColor: active ? '#2563EB' : 'var(--border-subtle)', background: active ? 'rgba(37,99,235,0.10)' : 'var(--bg-base)', color: active ? '#2563EB' : 'var(--text-secondary)', fontWeight: active ? 600 : 400 }}>
+                      {pp.label}
+                    </button>
+                  );
+                })}
+                {period !== 'custom' && period !== 'all' && (() => { const r = presetRange(period); return r.from ? (
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{r.from} ~ {r.to}</span>
+                ) : null; })()}
+              </div>
+              {period === 'custom' && (
+                <div className="flex items-center gap-2">
+                  <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} title="周期起始日"
+                    className="text-[12px] rounded-md px-2 py-1.5 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+                  <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>~</span>
+                  <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} title="周期结束日"
+                    className="text-[12px] rounded-md px-2 py-1.5 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+                </div>
+              )}
+              <div className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>风格</div>
               <StylePicker styles={styles} value={style} onChange={setStyle} />
+              <div className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>补充要求<span className="font-normal" style={{ color: 'var(--text-muted)' }}>（可选，自然语言）</span></div>
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+                placeholder="例如：突出风险与求助事项；语气更正式；给管理层看，少讲技术细节"
+                className="text-[12px] rounded-md px-2.5 py-2 outline-none border resize-none"
+                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
             </>
           )}
           {phase === 'streaming' && (
@@ -277,6 +347,14 @@ export function BriefingViewModal({ briefing, styles, canManage, onChanged, onCl
   const [restyling, setRestyling] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [stylePickerOpen, setStylePickerOpen] = useState(false);
+  // 「调整内容」：自然语言意图 → SSE 重写并原地更新简报
+  const [refineOpen, setRefineOpen] = useState(false);
+  const [refineText, setRefineText] = useState('');
+  const [refining, setRefining] = useState(false);
+  const [refineStage, setRefineStage] = useState('');
+  const [refineTyping, setRefineTyping] = useState('');
+  const refineAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { refineAbortRef.current?.abort(); }, []);
 
   const shareUrl = b.shareToken ? `${window.location.origin}${api.pm.briefings.sharedView(encodeURIComponent(b.shareToken))}` : '';
 
@@ -321,6 +399,47 @@ export function BriefingViewModal({ briefing, styles, canManage, onChanged, onCl
     toast.success('风格已切换', styles.find((s) => s.key === styleKey)?.label || styleKey);
   };
 
+  const refine = async () => {
+    const instruction = refineText.trim();
+    if (!instruction) { toast.error('请先描述要调整什么', '例如「突出风险，弱化亮点，语气更正式」'); return; }
+    setRefining(true); setRefineStage('连接中…'); setRefineTyping('');
+    const controller = new AbortController();
+    refineAbortRef.current = controller;
+    let done = false;
+    let failed: string | null = null;
+    try {
+      await connectSse({
+        url: api.pm.briefings.refine(encodeURIComponent(b.id)),
+        method: 'POST',
+        body: { instruction },
+        signal: controller.signal,
+        onEvent: (evt) => {
+          if (!evt.data) return;
+          try {
+            const data = JSON.parse(evt.data) as Record<string, string | undefined>;
+            if (evt.event === 'stage') setRefineStage(data.message || '');
+            else if (evt.event === 'typing') setRefineTyping((p) => p + (data.text || ''));
+            else if (evt.event === 'error') failed = data.message || '调整失败';
+            else if (evt.event === 'done' && data.briefingId) done = true;
+          } catch { /* ignore */ }
+        },
+      });
+    } catch { /* aborted / network */ }
+    refineAbortRef.current = null;
+    if (!done && !failed && !controller.signal.aborted) failed = '调整未完成（连接中断或服务拒绝），请重试';
+    if (done && !failed) {
+      const res = await getPmBriefing(b.id);
+      if (res.success) {
+        setB(res.data);
+        setRefineOpen(false); setRefineText('');
+        onChanged();
+        toast.success('简报已按要求调整', '原版本已被覆盖');
+      } else failed = res.error?.message || '简报刷新失败';
+    }
+    if (failed) toast.error('调整失败', failed);
+    setRefining(false);
+  };
+
   const containerStyle: React.CSSProperties = fullscreen
     ? { width: '100vw', height: '100vh', maxWidth: '100vw', maxHeight: '100vh', borderRadius: 0, background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' }
     : { maxWidth: 980, height: '90vh', maxHeight: '90vh', background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' };
@@ -333,6 +452,11 @@ export function BriefingViewModal({ briefing, styles, canManage, onChanged, onCl
           <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)', maxWidth: 320 }}>{b.title}</div>
           {b.model && <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>{b.model}</span>}
           <div className="ml-auto flex items-center gap-1.5 shrink-0 flex-wrap">
+            {canManage && b.canRestyle && (
+              <Button variant="ghost" size="sm" disabled={refining} onClick={() => setRefineOpen((v) => !v)}>
+                <Wand2 size={13} />调整内容
+              </Button>
+            )}
             {canManage && b.canRestyle && (
               <Button variant="ghost" size="sm" disabled={restyling} onClick={() => setStylePickerOpen((v) => !v)}>
                 {restyling ? <MapSpinner size={13} /> : <Palette size={13} />}风格：{styles.find((s) => s.key === b.style)?.label || '经典商务'}
@@ -366,8 +490,36 @@ export function BriefingViewModal({ briefing, styles, canManage, onChanged, onCl
             <StylePicker styles={styles} value={b.style || 'classic'} onChange={restyle} disabled={restyling} />
           </div>
         )}
+        {refineOpen && canManage && (
+          <div className="px-5 py-3 shrink-0 border-b flex flex-col gap-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)' }}>
+            <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>用自然语言描述要怎么调整，AI 将基于同一份项目数据重写内容并覆盖当前简报（数字不变，不重新统计）：</span>
+            <div className="flex items-start gap-2">
+              <textarea value={refineText} onChange={(e) => setRefineText(e.target.value)} rows={2} disabled={refining}
+                placeholder="例如：突出风险与求助事项；摘要压缩到两句话；语气更正式，面向客户汇报"
+                className="flex-1 text-[12px] rounded-md px-2.5 py-2 outline-none border resize-none"
+                style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <Button variant="primary" size="sm" disabled={refining || !refineText.trim()} onClick={refine}>
+                  {refining ? <MapSpinner size={13} /> : <Wand2 size={13} />}确认调整
+                </Button>
+                <Button variant="ghost" size="sm" disabled={refining} onClick={() => setRefineOpen(false)}>收起</Button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="flex-1" style={{ minHeight: 0, background: '#F3F4F6' }}>
-          <iframe title={b.title} srcDoc={b.html || ''} sandbox="" style={{ width: '100%', height: '100%', border: 0, display: 'block' }} />
+          {refining ? (
+            <div className="h-full flex flex-col gap-3 px-6 py-5 overflow-y-auto" style={{ background: 'var(--bg-elevated)', overscrollBehavior: 'contain' }}>
+              <div className="flex items-center gap-2 text-[12.5px]" style={{ color: '#2563EB' }}><MapSpinner size={14} /> {refineStage}</div>
+              {refineTyping && (
+                <div className="rounded-lg px-3 py-2 text-[12px] font-mono" style={{ background: 'var(--bg-base)', color: 'var(--text-secondary)' }}>
+                  <StreamingText text={refineTyping} streaming mode="blur" />
+                </div>
+              )}
+            </div>
+          ) : (
+            <iframe title={b.title} srcDoc={b.html || ''} sandbox="" style={{ width: '100%', height: '100%', border: 0, display: 'block' }} />
+          )}
         </div>
       </div>
     </div>
