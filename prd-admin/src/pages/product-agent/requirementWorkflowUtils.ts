@@ -33,11 +33,18 @@ export function normalizeRequirementStateKey(key?: string | null, workflow?: Wor
 export function resolveRequirementStateLabel(
   key?: string | null,
   workflow?: WorkflowDefinition | null,
+  importedStatusLabel?: string | null,
 ): string {
   const normalized = normalizeRequirementStateKey(key, workflow);
-  const fromWorkflow = workflow?.states.find((s) => s.key === normalized)?.label;
-  if (fromWorkflow) return fromWorkflow;
-  return builtinRequirementStateLabel(normalized);
+  const wfState = workflow?.states.find((s) => s.key === normalized);
+  const wfLabel = wfState?.label?.trim();
+  if (wfLabel && wfLabel !== wfState?.key) return wfLabel;
+  if (BUILTIN_REQUIREMENT_STATE_LABEL[normalized]) return BUILTIN_REQUIREMENT_STATE_LABEL[normalized];
+  const imported = importedStatusLabel?.trim();
+  if (imported && (/^state_\d+$/i.test(normalized) || wfLabel === normalized || normalized === key?.trim())) {
+    return imported;
+  }
+  return wfLabel || builtinRequirementStateLabel(normalized);
 }
 
 /** 流转按钮展示文案：优先后端短标签「到X」，兼容旧版「源→目标」格式。 */

@@ -17,14 +17,19 @@ import { useSseStream } from '@/lib/useSseStream';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { RequirementCreateForm } from './RequirementCreateForm';
 import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
+import {
+  NON_PRODUCT_DEFECT_CLASSIFICATION,
+  normalizeDefectClassification,
+  PRODUCT_DEFECT_CLASSIFICATION,
+  REQUIREMENT_PRODUCT_DEFECT_FORM_KEY,
+  REQUIREMENT_PRODUCT_DEFECT_VALUE,
+} from './productDefectLinkageCatalog';
 import { RequirementTypeSelect } from './RequirementTypeSelect';
 import { VersionKnowledgeCard } from './knowledge/VersionKnowledgeCard';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
-import { slaInfo } from './sla';
-import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import './product-cards.css';
 import {
   listRequirements,
@@ -524,16 +529,6 @@ function Chips({ items, empty }: { items: string[]; empty: string }) {
         </span>
       ))}
     </div>
-  );
-}
-
-function SlaBadge({ stateEnteredAt, slaHours }: { stateEnteredAt?: string | null; slaHours?: number | null }) {
-  const sla = slaInfo(stateEnteredAt, slaHours);
-  if (!sla) return null;
-  return (
-    <span className={`text-[11px] inline-flex items-center gap-1 ${sla.overdue ? 'text-red-300' : 'text-white/40'}`}>
-      停留 {sla.label}{sla.overdue ? ' · 超时' : ''}
-    </span>
   );
 }
 
@@ -1065,6 +1060,7 @@ function RequirementDetail({
             entityId={requirement.id}
             productId={productId}
             currentState={requirement.currentState}
+            importedStatusLabel={requirement.sourceSnapshot?.status || requirement.sourceSnapshot?.fields?.['状态']}
             entitySnapshot={{ ownerId: requirement.ownerId, assigneeId, title, grade, versionIds: requirement.versionIds }}
             onChanged={onReload}
           />
@@ -1141,6 +1137,15 @@ function RequirementDetail({
                 <FieldLabel>处理人</FieldLabel>
                 <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
               </div>
+              <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData[REQUIREMENT_PRODUCT_DEFECT_FORM_KEY] === REQUIREMENT_PRODUCT_DEFECT_VALUE}
+                  onChange={(e) => setField(REQUIREMENT_PRODUCT_DEFECT_FORM_KEY, e.target.checked ? REQUIREMENT_PRODUCT_DEFECT_VALUE : '')}
+                  className="accent-cyan-500"
+                />
+                产品缺陷
+              </label>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>父需求</FieldLabel>
                 <ParentSelect
@@ -1150,17 +1155,6 @@ function RequirementDetail({
                   placeholder="无（顶层需求）"
                 />
               </div>
-              {requirement.currentState && (
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>状态</FieldLabel>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
-                      {resolveRequirementStateLabel(requirement.currentState, workflow)}
-                    </span>
-                    <SlaBadge stateEnteredAt={requirement.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === normalizeRequirementStateKey(requirement.currentState, workflow))?.slaHours} />
-                  </div>
-                </div>
-              )}
               {split.others.length > 0 && (
                 <div className="pt-1 border-t border-white/5">
                   <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
@@ -1345,8 +1339,12 @@ function FeatureDetail({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const { template } = useEffectiveTemplate('feature', feature?.productId ?? null);
-  const { workflow } = useEffectiveWorkflow('feature', feature?.productId ?? null);
+  const { workflow: versionWorkflow } = useEffectiveWorkflow('version', feature?.productId ?? null);
   const split = useMemo(() => splitFields(template?.fields), [template]);
+  const linkedVersion = useMemo(() => {
+    const vid = plannedVersionId || featureVersions[0]?.versionId || feature?.plannedVersionId;
+    return vid ? versions.find((v) => v.id === vid) : undefined;
+  }, [plannedVersionId, featureVersions, feature?.plannedVersionId, versions]);
 
   const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
   const [showDefectLinker, setShowDefectLinker] = useState(false);
@@ -1463,19 +1461,7 @@ function FeatureDetail({
       saving={saving}
       onSave={save}
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
-      workflow={
-        workflow ? (
-          <WorkflowBar
-            workflow={workflow}
-            entityType="feature"
-            entityId={feature.id}
-            productId={feature.productId}
-            currentState={feature.currentState}
-            entitySnapshot={{ ownerId: ownerId || feature.ownerId, assigneeId, title, grade }}
-            onChanged={onReload}
-          />
-        ) : undefined
-      }
+      workflow={undefined}
       main={
         <>
           <Card title="功能说明" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
@@ -1555,14 +1541,14 @@ function FeatureDetail({
                   {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
                 </select>
               </div>
-              {feature.currentState && (
+              {linkedVersion?.currentState && (
                 <div className="flex flex-col gap-1.5">
-                  <FieldLabel>状态</FieldLabel>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
-                      {workflow?.states.find((s) => s.key === feature.currentState)?.label ?? feature.currentState}
+                  <FieldLabel>状态（跟随计划版本）</FieldLabel>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 w-fit">
+                      {versionWorkflow?.states.find((s) => s.key === linkedVersion.currentState)?.label ?? linkedVersion.currentState}
                     </span>
-                    <SlaBadge stateEnteredAt={feature.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === feature.currentState)?.slaHours} />
+                    <span className="text-[11px] text-white/40">计划版本：{linkedVersion.versionName}</span>
                   </div>
                 </div>
               )}
@@ -1899,24 +1885,25 @@ function DefectDetail({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
-  const [status, setStatus] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
   const [featureId, setFeatureId] = useState('');
   const [versionId, setVersionId] = useState('');
+  const [classification, setClassification] = useState(PRODUCT_DEFECT_CLASSIFICATION);
   const [saving, setSaving] = useState(false);
   const [converting, setConverting] = useState(false);
   const [convertErr, setConvertErr] = useState<string | null>(null);
   const [showTrace, setShowTrace] = useState(false);
+  const { workflow } = useEffectiveWorkflow('defect', productId);
 
   useEffect(() => {
     if (defect) {
       setTitle(defect.title ?? '');
       setDescription(defect.rawContent ?? '');
       setGrade(effectiveDefectGrade(defect));
-      setStatus(defect.status ?? '');
       setAssigneeId(defect.assigneeId ?? '');
       setFeatureId(defect.tracedFeatureId ?? '');
       setVersionId(defect.tracedVersionId ?? '');
+      setClassification(normalizeDefectClassification(defect.productDefectClassification));
     }
   }, [defect]);
 
@@ -1928,16 +1915,15 @@ function DefectDetail({
       title !== (defect.title ?? '') ||
       description !== (defect.rawContent ?? '') ||
       grade !== effectiveDefectGrade(defect) ||
-      status !== (defect.status ?? '') ||
       assigneeId !== (defect.assigneeId ?? '') ||
       featureId !== (defect.tracedFeatureId ?? '') ||
-      versionId !== (defect.tracedVersionId ?? '')
+      versionId !== (defect.tracedVersionId ?? '') ||
+      classification !== normalizeDefectClassification(defect.productDefectClassification)
     );
-  }, [defect, title, description, grade, status, assigneeId, featureId, versionId]);
+  }, [defect, title, description, grade, assigneeId, featureId, versionId, classification]);
 
   if (!defect) return <NotFound />;
 
-  const chip = (active: boolean) => `px-2.5 py-1 rounded-md text-xs border ${active ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/45 border-white/10 hover:bg-white/5'}`;
   const selectCls = 'w-full px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
 
   const save = async () => {
@@ -1947,10 +1933,10 @@ function DefectDetail({
       title: title.trim(),
       description,
       grade,
-      status: status || undefined,
       assigneeId: assigneeId || null,
       featureId: featureId || undefined,
       versionId: versionId || undefined,
+      productDefectClassification: classification,
     });
     setSaving(false);
     onReload();
@@ -1989,11 +1975,17 @@ function DefectDetail({
         </>
       }
       workflow={
-        <div className="flex flex-wrap items-center gap-1.5">
-          {DEFECT_STATUSES.map((s) => (
-            <button key={s.v} type="button" onClick={() => setStatus(s.v)} className={chip(status === s.v)}>{s.label}</button>
-          ))}
-        </div>
+        workflow ? (
+          <WorkflowBar
+            workflow={workflow}
+            entityType="defect"
+            entityId={defect.id}
+            productId={productId}
+            currentState={defect.status}
+            entitySnapshot={{ ownerId: defect.reporterId ?? '', assigneeId, title, grade }}
+            onChanged={onReload}
+          />
+        ) : undefined
       }
       main={
         <>
@@ -2032,6 +2024,15 @@ function DefectDetail({
                 <FieldLabel>处理人</FieldLabel>
                 <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
               </div>
+              <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={classification === NON_PRODUCT_DEFECT_CLASSIFICATION}
+                  onChange={(e) => setClassification(e.target.checked ? NON_PRODUCT_DEFECT_CLASSIFICATION : PRODUCT_DEFECT_CLASSIFICATION)}
+                  className="accent-cyan-500"
+                />
+                非产品缺陷
+              </label>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>关联功能</FieldLabel>
                 <select className={selectCls} value={featureId} onChange={(e) => setFeatureId(e.target.value)}>
@@ -2046,6 +2047,14 @@ function DefectDetail({
                   {versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}
                 </select>
               </div>
+              {defect.status && (
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>状态</FieldLabel>
+                  <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 w-fit">
+                    {DEFECT_STATUS_LABEL[defect.status] ?? defect.status}
+                  </span>
+                </div>
+              )}
             </div>
           </Card>
           <Card title="信息">

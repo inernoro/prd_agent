@@ -24,6 +24,7 @@ export function WorkflowBar({
   entityId,
   productId,
   currentState,
+  importedStatusLabel,
   entitySnapshot,
   onChanged,
 }: {
@@ -32,6 +33,8 @@ export function WorkflowBar({
   entityId: string;
   productId?: string;
   currentState?: string | null;
+  /** RTF/CSV 导入快照中的状态中文名，用于 generic state_N Key 的展示兜底 */
+  importedStatusLabel?: string | null;
   entitySnapshot?: WorkflowTransitionEntitySnapshot;
   onChanged: () => void;
 }) {
@@ -107,7 +110,7 @@ export function WorkflowBar({
           className="text-xs px-2 py-0.5 rounded font-medium"
           style={{ background: 'rgba(255,255,255,0.06)', color: state?.color ?? '#e8e8ec' }}
         >
-          {isRequirement ? resolveRequirementStateLabel(currentState, workflow) : (state?.label ?? currentState ?? '未设置')}
+          {isRequirement ? resolveRequirementStateLabel(currentState, workflow, importedStatusLabel) : (state?.label ?? currentState ?? '未设置')}
         </span>
         {available.length > 0 && <span className="text-white/20 mx-1">|</span>}
         {available.map((t) => (

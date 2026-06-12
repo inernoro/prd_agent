@@ -11,6 +11,7 @@
 | test | prd-admin | requirementWorkflowUtils 单元测试 |
 | test | prd-api | RequirementWorkflowCatalog 单元测试（31 边、短标签、workflowDef 优先解析） |
 | polish | prd-api | 跨产品 overview/requirements 返回 stateLabel；存量状态 Key 幂等规范化迁移 |
+| fix | prd-admin | 需求详情移除属性栏重复状态（state_N），顶部 WorkflowBar 用导入快照兜底展示中文状态 |
 | feat | prd-api | Wave3：流转 AllowedRoles/RequiredFieldKeys 校验 + ProductWorkflowTransitionGuard |
 | feat | prd-api | 流转到已上线默认限制 product_admin/owner；种子 revision 升至 5 |
 | feat | prd-admin | WorkflowTransitionDialog 替代 window.prompt；WorkflowBar/看板按权限过滤 |

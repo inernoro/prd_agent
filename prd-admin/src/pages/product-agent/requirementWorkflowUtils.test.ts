@@ -38,6 +38,21 @@ describe('requirementWorkflowUtils', () => {
     expect(requirementTransitionButtonLabel({ label: '待评审→待规划', toState: 'planning' }, mockWorkflow)).toBe('到待规划');
   });
 
+  it('resolveRequirementStateLabel uses import snapshot for generic state_N keys', () => {
+    const genericWorkflow: WorkflowDefinition = {
+      id: 'generic',
+      name: '通用流程',
+      entityType: 'requirement',
+      isDefault: false,
+      createdBy: 'test',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      states: [{ key: 'state_1', label: 'state_1', isInitial: true, isFinal: false, sortOrder: 0 }],
+      transitions: [],
+    };
+    expect(resolveRequirementStateLabel('state_1', genericWorkflow, '待规划')).toBe('待规划');
+  });
+
   it('normalizeRequirementStateKey keeps custom workflow state keys', () => {
     const custom: WorkflowDefinition = {
       id: 'custom',
