@@ -84,11 +84,17 @@ export function FormFieldsRenderer({
   values,
   onChange,
   productId,
+  hideLabels = false,
+  fileUploadHint,
 }: {
   fields: FormField[];
   values: Record<string, string>;
   onChange: (key: string, value: string) => void;
   productId?: string | null;
+  /** 用于右侧属性栏等已带标签的场景 */
+  hideLabels?: boolean;
+  /** 附件上传区文案；传空字符串则仅显示图标 */
+  fileUploadHint?: string;
 }) {
   if (fields.length === 0) return null;
   const sorted = [...fields].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -96,19 +102,21 @@ export function FormFieldsRenderer({
     <div className="flex flex-col gap-3">
       {sorted.map((f) => (
         <div key={f.key} className="flex flex-col gap-1">
-          <label className="text-xs text-white/55">
-            {f.label || f.key}
-            {f.required && <span className="text-red-300/70 ml-1">*</span>}
-          </label>
-          <FieldControl field={f} value={values[f.key] ?? f.defaultValue ?? ''} onChange={(v) => onChange(f.key, v)} productId={productId ?? null} />
-          {f.helpText && <span className="text-[11px] text-white/30">{f.helpText}</span>}
+          {!hideLabels && (
+            <label className="text-xs text-white/55">
+              {f.label || f.key}
+              {f.required && <span className="text-red-300/70 ml-1">*</span>}
+            </label>
+          )}
+          <FieldControl field={f} value={values[f.key] ?? f.defaultValue ?? ''} onChange={(v) => onChange(f.key, v)} productId={productId ?? null} fileUploadHint={fileUploadHint} />
+          {!hideLabels && f.helpText && <span className="text-[11px] text-white/30">{f.helpText}</span>}
         </div>
       ))}
     </div>
   );
 }
 
-function FieldControl({ field, value, onChange, productId }: { field: FormField; value: string; onChange: (v: string) => void; productId: string | null }) {
+function FieldControl({ field, value, onChange, productId, fileUploadHint }: { field: FormField; value: string; onChange: (v: string) => void; productId: string | null; fileUploadHint?: string }) {
   const base = 'px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
   switch (field.type) {
     case 'textarea':
@@ -116,7 +124,7 @@ function FieldControl({ field, value, onChange, productId }: { field: FormField;
     case 'richtext':
       return <RichTextField value={value} onChange={onChange} />;
     case 'file':
-      return <FileField value={value} onChange={onChange} />;
+      return <FileField value={value} onChange={onChange} uploadHint={fileUploadHint} />;
     case 'relation':
       return <RelationField value={value} onChange={onChange} entityType={field.relationEntityType || inferRelationTarget(field.label)} productId={productId} />;
     case 'user':
@@ -177,7 +185,7 @@ function parseAttachments(value: string): AttachItem[] {
   }
 }
 
-function FileField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function FileField({ value, onChange, uploadHint = '点击或拖拽上传附件（图片/文档等）' }: { value: string; onChange: (v: string) => void; uploadHint?: string }) {
   const items = parseAttachments(value);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -206,10 +214,10 @@ function FileField({ value, onChange }: { value: string; onChange: (v: string) =
           if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files);
         }}
         onClick={() => inputRef.current?.click()}
-        className="flex items-center justify-center gap-2 px-3 py-3 rounded-lg border border-dashed border-white/15 text-white/50 text-sm hover:border-cyan-500/40 hover:text-white/70 cursor-pointer"
+        className={`flex items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 text-white/50 text-sm hover:border-cyan-500/40 hover:text-white/70 cursor-pointer ${uploadHint === '' ? 'px-3 py-2' : 'px-3 py-3'}`}
       >
         {uploading ? <MapSpinner size={14} /> : <Upload size={15} />}
-        {uploading ? '上传中…' : '点击或拖拽上传附件（图片/文档等）'}
+        {uploading ? '上传中…' : uploadHint}
         <input
           ref={inputRef}
           type="file"

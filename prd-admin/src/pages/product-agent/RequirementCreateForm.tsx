@@ -185,9 +185,9 @@ export function RequirementCreateForm({
     description,
     assigneeId,
     versionIds,
-    templateFields: split.others,
+    templateFields: [...split.others, ...split.files],
     formData: mergedFormData,
-  }), [title, description, assigneeId, versionIds, split.others, mergedFormData]);
+  }), [title, description, assigneeId, versionIds, split.others, split.files, mergedFormData]);
 
   const onAiFill = (r: AiFillResult) => {
     if (r.title) setTitle(r.title);
@@ -261,16 +261,10 @@ export function RequirementCreateForm({
               <RichTextField value={description} onChange={setDescription} minHeight={440} placeholder="补充背景、目标、验收标准…" />
             </div>
           </div>
-          {split.files.length > 0 && (
-            <div className="rounded-lg border border-white/10 bg-[#13151a] p-3">
-              <div className="text-[12px] text-white/55 mb-2">{template?.name || '附件'}</div>
-              <FormFieldsRenderer fields={split.files} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} productId={productId} />
-            </div>
-          )}
           {message && <div className="rounded-md border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
         </div>
 
-        <div className="p-5 xl:p-6 bg-[#0f1014]">
+        <div className="p-5 xl:p-6 bg-[#0f1014] flex flex-col gap-4">
           <TapdPropertyPanel title="基本信息">
             <TapdPropertyRow label="需求来源">
               <RequirementOriginSelect value={requirementOrigin} onChange={setRequirementOrigin} />
@@ -321,6 +315,22 @@ export function RequirementCreateForm({
               </TapdPropertyRow>
             ))}
           </TapdPropertyPanel>
+          {split.files.length > 0 && (
+            <TapdPropertyPanel title="附件">
+              {split.files.map((field) => (
+                <TapdPropertyRow key={field.key} label={field.label || '附件'} required={field.required}>
+                  <FormFieldsRenderer
+                    fields={[field]}
+                    values={formData}
+                    onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))}
+                    productId={productId}
+                    hideLabels
+                    fileUploadHint=""
+                  />
+                </TapdPropertyRow>
+              ))}
+            </TapdPropertyPanel>
+          )}
         </div>
       </div>
     </div>
