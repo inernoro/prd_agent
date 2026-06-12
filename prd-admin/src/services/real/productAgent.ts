@@ -23,6 +23,7 @@ import type {
   ProductMembersResult,
   ProductInitiation,
   ProductRelease,
+  ReleaseFeatureItem,
 } from '@/pages/product-agent/types';
 
 interface ListWrap<T> {
@@ -130,8 +131,24 @@ export function createRelease(productId: string, body: {
   additionalRequirementIds?: string[];
   teamMemberIds: string[];
   plannedReleaseAt: string;
+  previousReleaseId?: string;
+  featureManifest?: ReleaseFeatureItem[];
 }) {
   return apiRequest<ProductRelease>(`/api/product/products/${productId}/releases`, { method: 'POST', body });
+}
+export function getRelease(id: string) {
+  return apiRequest<ProductRelease>(`/api/product/releases/${id}`);
+}
+export function getInheritReleaseManifest(productId: string) {
+  return apiRequest<{ previousReleaseId: string | null; previousVCode?: string | null; items: ReleaseFeatureItem[] }>(
+    `/api/product/products/${productId}/releases/inherit-manifest`,
+  );
+}
+export function updateReleaseFeatureManifest(id: string, body: {
+  previousReleaseId?: string;
+  featureManifest: ReleaseFeatureItem[];
+}) {
+  return apiRequest<ProductRelease>(`/api/product/releases/${id}/feature-manifest`, { method: 'PUT', body });
 }
 export function completeRelease(id: string, announcementUrl: string) {
   return apiRequest<ProductRelease>(`/api/product/releases/${id}/complete`, { method: 'POST', body: { announcementUrl } });

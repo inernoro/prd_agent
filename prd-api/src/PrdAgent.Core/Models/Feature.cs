@@ -132,8 +132,10 @@ public static class FeatureChangeType
     public const string Added = "added";
     public const string Modified = "modified";
     public const string Deprecated = "deprecated";
+    /// <summary>从上版正式版本继承且未改动</summary>
+    public const string Unchanged = "unchanged";
 
-    public static readonly string[] All = { Added, Modified, Deprecated };
+    public static readonly string[] All = { Added, Modified, Deprecated, Unchanged };
 }
 
 /// <summary>功能按业务价值分类</summary>

@@ -51,7 +51,13 @@ export interface DescTemplate {
 export type VersionLifecycle = 'planning' | 'developing' | 'testing' | 'released' | 'deprecated';
 
 /** 功能版本变更类型 */
-export type FeatureChangeType = 'added' | 'modified' | 'deprecated';
+export type FeatureChangeType = 'added' | 'modified' | 'deprecated' | 'unchanged';
+
+export interface ReleaseFeatureItem {
+  featureId: string;
+  changeType: FeatureChangeType;
+  changeNote?: string | null;
+}
 export type FeatureBusinessType = 'basic' | 'core' | 'value_added';
 
 export interface Product {
@@ -176,6 +182,8 @@ export interface ProductRelease {
   plannedReleaseAt?: string | null;
   releasedAt?: string | null;
   announcementUrl?: string | null;
+  previousReleaseId?: string | null;
+  featureManifest?: ReleaseFeatureItem[];
   status: string;
   createdBy: string;
   sourceType: 'system' | 'import';

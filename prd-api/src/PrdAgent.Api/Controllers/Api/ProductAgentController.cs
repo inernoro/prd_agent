@@ -678,6 +678,9 @@ public class ProductAgentController : ControllerBase
         var manifest = NormalizeReleaseFeatureManifest(request.FeatureManifest ?? new());
         if (manifest.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "功能清单不能为空"));
+        var manifestError = await ValidateReleaseFeatureManifestAsync(item.ProductId, manifest);
+        if (manifestError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, manifestError));
         await _db.ProductReleases.UpdateOneAsync(x => x.Id == id,
             Builders<ProductRelease>.Update
                 .Set(x => x.FeatureManifest, manifest)
@@ -720,6 +723,9 @@ public class ProductAgentController : ControllerBase
         var manifest = await ResolveReleaseFeatureManifestAsync(productId, request.FeatureManifest, previousRelease);
         if (manifest.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "功能清单不能为空，请至少纳入一项功能"));
+        var manifestError = await ValidateReleaseFeatureManifestAsync(productId, manifest);
+        if (manifestError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, manifestError));
         var item = new ProductRelease
         {
             ProductId = productId,
@@ -4529,7 +4535,7 @@ public class ProductAgentController : ControllerBase
         ProductRelease? previousRelease)
     {
         if (requested is { Count: > 0 })
-            return await ValidateReleaseFeatureManifestAsync(productId, NormalizeReleaseFeatureManifest(requested));
+            return NormalizeReleaseFeatureManifest(requested);
         if (previousRelease == null)
             return new List<ReleaseFeatureItem>();
         return previousRelease.FeatureManifest
@@ -4549,7 +4555,7 @@ public class ProductAgentController : ControllerBase
             .Select(g => g.Last())
             .ToList();
 
-    private async Task<List<ReleaseFeatureItem>> ValidateReleaseFeatureManifestAsync(string productId, List<ReleaseFeatureItem> manifest)
+    private async Task<string?> ValidateReleaseFeatureManifestAsync(string productId, List<ReleaseFeatureItem> manifest)
     {
         var featureIds = manifest.Select(x => x.FeatureId).Distinct().ToList();
         var existing = await _db.Features.Find(f => f.ProductId == productId && featureIds.Contains(f.Id) && !f.IsDeleted)
@@ -4558,11 +4564,11 @@ public class ProductAgentController : ControllerBase
         foreach (var item in manifest)
         {
             if (!existingSet.Contains(item.FeatureId))
-                throw new InvalidOperationException($"功能 {item.FeatureId} 不存在或已删除");
+                return $"功能 {item.FeatureId} 不存在或已删除";
             if (!string.IsNullOrWhiteSpace(item.ChangeType) && !FeatureChangeType.All.Contains(item.ChangeType))
-                throw new InvalidOperationException($"无效的功能变更类型：{item.ChangeType}");
+                return $"无效的功能变更类型：{item.ChangeType}";
         }
-        return manifest;
+        return null;
     }
 
     private async Task AdvanceRequirementsToStateAsync(

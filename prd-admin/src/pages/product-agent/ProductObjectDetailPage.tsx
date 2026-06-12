@@ -16,6 +16,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSseStream } from '@/lib/useSseStream';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { RequirementCreateForm } from './RequirementCreateForm';
+import { ReleaseWorkflowDetail } from './ReleaseWorkflowDetail';
 import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
 import {
   NON_PRODUCT_DEFECT_CLASSIFICATION,
@@ -145,6 +146,24 @@ export function ProductObjectDetailPage() {
     if (window.history.length > 1) navigate(-1);
     else navigate('/product-agent');
   };
+
+  if (kind === 'release') {
+    return (
+      <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
+        <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
+          <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 hover:bg-white/5 hover:text-white shrink-0" title="返回">
+            <ArrowLeft size={16} />
+          </button>
+          <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-200">正式版本</span>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+          <div className="mx-auto w-full max-w-4xl py-5 px-5">
+            <ReleaseWorkflowDetail productId={productId} releaseId={id} isNew={isNew} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">

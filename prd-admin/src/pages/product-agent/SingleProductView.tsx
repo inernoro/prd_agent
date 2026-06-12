@@ -35,6 +35,8 @@ import {
   deleteRequirement,
   listFeatures,
   deleteFeature,
+  listReleases,
+  listInitiations,
   listTracedDefects,
   listCustomers,
   untraceDefect,
@@ -44,7 +46,8 @@ import {
   type MyTodoItem,
 } from '@/services/real/productAgent';
 import { searchDirectoryUsers } from '@/services';
-import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer } from './types';
+import { FEATURE_CHANGE_LABEL } from './ReleaseWorkflowDetail';
+import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer, ProductRelease } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, effectiveDefectGrade } from './types';
 import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, type FilterFieldDef } from './listFilter';
 import { toCSV, downloadCSV } from '@/lib/csv';
@@ -573,22 +576,40 @@ function RequirementDataTable({
   );
 }
 
-// ── 功能 tab（新建走独立页）──
+// ── 功能 tab（按正式版本号组织功能清单）──
+const RELEASE_STATUS_LABEL: Record<string, string> = {
+  announcement_pending: '待公告',
+  released: '已上线',
+};
+
+function manifestChangeSummary(manifest: ProductRelease['featureManifest']) {
+  const stats = { added: 0, modified: 0, deprecated: 0, unchanged: 0 };
+  (manifest ?? []).forEach((m) => { stats[m.changeType] += 1; });
+  const parts: string[] = [];
+  if (stats.added) parts.push(`${FEATURE_CHANGE_LABEL.added} ${stats.added}`);
+  if (stats.modified) parts.push(`${FEATURE_CHANGE_LABEL.modified} ${stats.modified}`);
+  if (stats.deprecated) parts.push(`${FEATURE_CHANGE_LABEL.deprecated} ${stats.deprecated}`);
+  if (stats.unchanged) parts.push(`${FEATURE_CHANGE_LABEL.unchanged} ${stats.unchanged}`);
+  return parts.join(' · ') || '—';
+}
+
 function FeaturesTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
-  const [items, setItems] = useState<Feature[]>([]);
-  const [versions, setVersions] = useState<ProductVersion[]>([]);
+  const [releases, setReleases] = useState<ProductRelease[]>([]);
+  const [canApplyRelease, setCanApplyRelease] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const { workflow: versionWorkflow } = useEffectiveWorkflow('version', productId);
   const nameOf = useDirectoryNames();
-  const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [featRes, verRes] = await Promise.all([listFeatures(productId), listVersions(productId)]);
-    if (featRes.success) setItems(featRes.data.items);
-    if (verRes.success) setVersions(verRes.data.items);
+    const [relRes, initRes] = await Promise.all([
+      listReleases(productId, 'all'),
+      listInitiations(productId, 'mine'),
+    ]);
+    if (relRes.success) setReleases(relRes.data.items);
+    if (initRes.success) {
+      setCanApplyRelease(initRes.data.items.some((i) => i.status === 'approved' && i.tCode));
+    }
     setLoading(false);
   }, [productId]);
 
@@ -596,59 +617,63 @@ function FeaturesTab({ productId }: { productId: string }) {
     void reload();
   }, [reload]);
 
-  const versionById = useMemo(() => new Map(versions.map((v) => [v.id, v])), [versions]);
-  const featureVersionState = useCallback((f: Feature) => {
-    const v = f.plannedVersionId ? versionById.get(f.plannedVersionId) : undefined;
-    return v?.currentState ?? '';
-  }, [versionById]);
-  const stateLabel = useCallback((key: string) => versionWorkflow?.states.find((s) => s.key === key)?.label ?? key, [versionWorkflow]);
-  const featureTitle = useMemo(() => new Map(items.map((f) => [f.id, f.title])), [items]);
-  const fields = useMemo<FilterFieldDef<Feature>[]>(() => [
-    { key: 'grade', label: '等级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (f, v) => f.grade === v },
-    { key: 'state', label: '版本状态', defaultVisible: true, options: (its) => distinctOptions(its, (f) => featureVersionState(f), stateLabel), test: (f, v) => featureVersionState(f) === v },
-    { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (f) => f.assigneeId ?? '', nameOf), test: (f, v) => (f.assigneeId ?? '') === v },
-    { key: 'owner', label: '负责人', options: (its) => distinctOptions(its, (f) => f.ownerId ?? '', nameOf), test: (f, v) => (f.ownerId ?? '') === v },
-    { key: 'parent', label: '父功能', options: (its) => distinctOptions(its, (f) => f.parentId ?? '', (id) => featureTitle.get(id) ?? id), test: (f, v) => (f.parentId ?? '') === v },
-    { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (f, v) => inTimeRange(f.createdAt, v) },
-  ], [stateLabel, nameOf, featureTitle, featureVersionState]);
-  const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:feature', fields, keywordOf: (f) => `${f.featureNo} ${f.title} ${f.description ?? ''}`, keywordPlaceholder: '搜索编号/标题/描述' });
+  const fields = useMemo<FilterFieldDef<ProductRelease>[]>(() => [
+    { key: 'status', label: '状态', defaultVisible: true, options: () => Object.entries(RELEASE_STATUS_LABEL).map(([value, label]) => ({ value, label })), test: (r, v) => r.status === v },
+    { key: 'owner', label: '申领人', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.ownerId ?? '', nameOf), test: (r, v) => (r.ownerId ?? '') === v },
+    { key: 'scale', label: '版本类别', options: () => [{ value: 'major', label: '大版本' }, { value: 'medium', label: '中版本' }, { value: 'minor', label: '小版本' }], test: (r, v) => r.versionType === v },
+    { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (r, v) => inTimeRange(r.createdAt, v) },
+  ], [nameOf]);
+  const { bar, filtered } = useListFilter({
+    items: releases,
+    storageKey: 'pa-list-filters:release-manifest',
+    fields,
+    keywordOf: (r) => `${r.vCode} ${r.tCode ?? ''} ${r.planName}`,
+    keywordPlaceholder: '搜索版本号/方案名称',
+  });
 
-  if (loading) return <MapSectionLoader text="正在加载功能…" />;
+  if (loading) return <MapSectionLoader text="正在加载功能清单…" />;
   return (
     <div className="flex flex-col gap-3">
-      <NewButton label="新建功能" onClick={() => navigate(`/product-agent/p/${productId}/feature/new`)} />
-      {items.length === 0 ? (
-        <EmptyHint text="还没有功能。点「新建功能」打开独立页面填写。功能跨版本演进，可实现需求、被版本纳入（功能版本化）。" />
-      ) : (
-        <>
-        {bar}
-        {filtered.length === 0 ? (
-          <div className="text-center text-white/35 text-sm py-10">没有匹配的功能，调整筛选条件试试。</div>
-        ) : (
-        <div className="flex flex-col gap-2">
-          {selected.size > 0 && (
-            <BatchBar entityType="feature" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
-          )}
-          {orderByHierarchy(filtered).map(({ item: f, depth }) => (
-            <div key={f.id} style={{ marginLeft: depth * 24 }} className="flex items-center gap-2">
-              <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggleSel(f.id)} className="accent-cyan-500 shrink-0" />
-              <div className={`flex-1 min-w-0 ${depth > 0 ? 'border-l-2 border-white/10 pl-2' : ''}`}>
-                <Row
-                  title={f.title}
-                  badge={ITEM_GRADE_LABEL[f.grade]}
-                  sub={`${f.featureNo} · 实现需求 ${f.requirementIds.length}`}
-                  onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
-                  actionLabel="查看详情"
-                  onDelete={async () => {
-                    await deleteFeature(f.id);
-                    await reload();
-                  }}
-                />
-              </div>
-            </div>
-          ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <NewButton
+          label="申领正式版本号"
+          onClick={() => navigate(`/product-agent/p/${productId}/release/new`)}
+          disabled={!canApplyRelease}
+        />
+        <button
+          type="button"
+          onClick={() => navigate(`/product-agent/p/${productId}/feature/new`)}
+          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/55 hover:bg-white/8"
+        >
+          新建功能条目
+        </button>
+      </div>
+      {!canApplyRelease && (
+        <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-xs text-white/40">
+          需先完成内部版本立项并取得 T 号后，才能申领正式版本号并填写功能清单。
         </div>
       )}
+      {releases.length === 0 ? (
+        <EmptyHint text="还没有正式版本功能清单。每个正式版对应一份功能清单，新版本默认继承上一版并标注变更。" />
+      ) : (
+        <>
+          {bar}
+          {filtered.length === 0 ? (
+            <div className="text-center text-white/35 text-sm py-10">没有匹配的版本，调整筛选条件试试。</div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {filtered.map((r) => (
+                <Row
+                  key={r.id}
+                  title={r.vCode}
+                  badge={RELEASE_STATUS_LABEL[r.status] ?? r.status}
+                  sub={`${r.planName} · 功能 ${(r.featureManifest ?? []).length} 项 · ${manifestChangeSummary(r.featureManifest)}`}
+                  onClick={() => navigate(`/product-agent/p/${productId}/release/${r.id}`)}
+                  actionLabel="查看清单"
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -743,11 +768,12 @@ function DefectsTab({ productId }: { productId: string }) {
 
 // ════════════════════════ 复用小组件 ════════════════════════
 
-function NewButton({ label, onClick }: { label: string; onClick: () => void }) {
+function NewButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
+      disabled={disabled}
+      className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
     >
       <Plus size={15} /> {label}
     </button>
