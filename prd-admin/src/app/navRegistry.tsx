@@ -408,7 +408,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       label: '前端搭档智能体',
       shortLabel: '前端',
       description: '给后端同事用的前端交付助手：接 API、写组件、修报错、看截图现象',
-      icon: 'Code2',
+      icon: 'FolderKanban',
       section: 'toolbox',
       appKey: 'front-end-agent',
       wip: true,
