@@ -194,7 +194,8 @@ export default function TeamActivityPage() {
   }, [items]);
 
   return (
-    <div className="flex flex-col gap-4 h-full min-h-0">
+    // 居中限宽：动态流在超宽屏上全幅拉伸会产生大片真空与超长视线距离（GitHub/Linear 的 feed 均为限宽列）
+    <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1240 }}>
       <PageHeader title="团队动态" description="团队脉搏总览 + 工作动态时间线（按白名单动作自动留痕）" />
 
       {/* 筛选栏：人 / 模块 / 时间快捷段 / 隐私脱敏 */}
@@ -223,9 +224,9 @@ export default function TeamActivityPage() {
             type="button"
             onClick={togglePrivacy}
             title={privacy ? '匿名模式：隐藏成员姓名（文档标题保持明文），点击切换实名' : '实名模式：点击切换匿名（隐藏成员姓名）'}
-            className={`inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-full text-[12px] border transition-colors ${
+            className={`inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
               privacy
-                ? 'bg-violet-500/20 text-violet-200 border-violet-500/40'
+                ? 'bg-violet-500/15 text-violet-200 border-violet-500/35'
                 : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
             }`}
           >
@@ -317,9 +318,9 @@ function FilterChip({ active, label, onClick }: { active: boolean; label: string
     <button
       type="button"
       onClick={onClick}
-      className={`px-2.5 h-[26px] rounded-full text-[12px] border transition-colors ${
+      className={`px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
         active
-          ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40'
+          ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/35'
           : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
       }`}
     >
@@ -366,8 +367,8 @@ function ActivityRow({ group, privacy }: { group: AggregatedActivity; privacy: b
         {hasMoreTargets ? <span className="text-white/50"> 等</span> : null}
         {group.count > 1 ? (
           <span
-            className="inline-block ml-2 px-1.5 py-px rounded-full text-[11px] font-semibold tabular-nums align-[1px]"
-            style={{ background: meta.soft, color: meta.accent, border: `1px solid ${meta.border}` }}
+            className="inline-block ml-2 px-1.5 py-px rounded text-[11px] font-semibold tabular-nums align-[1px]"
+            style={{ background: meta.soft, color: meta.accent }}
           >
             ×{group.count}
           </span>

@@ -88,15 +88,6 @@ export function PulseBand({
   return (
     <GlassCard className="shrink-0">
       <div className="relative overflow-hidden">
-        {/* 氛围光：低饱和径向渐变，给玻璃卡一点纵深，不参与交互 */}
-        <div
-          className="pointer-events-none absolute -top-24 -left-16 w-72 h-72 rounded-full"
-          style={{ background: 'radial-gradient(circle, rgba(34,211,238,0.07), transparent 70%)' }}
-        />
-        <div
-          className="pointer-events-none absolute -bottom-28 right-12 w-80 h-80 rounded-full"
-          style={{ background: 'radial-gradient(circle, rgba(167,139,250,0.06), transparent 70%)' }}
-        />
         <div
           className="relative px-5 py-4 grid gap-x-6 gap-y-4 items-stretch"
           style={{ gridTemplateColumns: 'minmax(150px, 190px) minmax(0, 1fr) minmax(210px, 260px)' }}
@@ -135,7 +126,7 @@ export function PulseBand({
           <div className="flex flex-col gap-1.5">
             <div className="text-[11px] tracking-widest text-white/40">模块能量（点击下钻）</div>
             {showEnergyBar ? (
-              <div className="h-2.5 rounded-full overflow-hidden flex bg-white/[0.04]">
+              <div className="h-1.5 rounded-sm overflow-hidden flex gap-px bg-white/[0.04]">
                 {stats.modules.map((m) => (
                   <button
                     key={m.key}
@@ -162,7 +153,7 @@ export function PulseBand({
                     type="button"
                     onClick={() => onPickModule(m.key)}
                     title={active ? '点击取消筛选' : `只看「${m.label}」`}
-                    className="inline-flex items-center gap-1.5 px-2 h-[22px] rounded-full text-[11px] border transition-colors"
+                    className="inline-flex items-center gap-1.5 px-2 h-[22px] rounded-md text-[11px] border transition-colors"
                     style={
                       active
                         ? { background: meta.soft, color: meta.accent, borderColor: meta.border }
@@ -180,8 +171,8 @@ export function PulseBand({
             </div>
           </div>
 
-          {/* 活跃时段：平滑面积曲线（限宽，避免在超宽中栏被拉变形） */}
-          <div className="flex flex-col gap-1" style={{ width: 'min(100%, 400px)' }}>
+          {/* 活跃时段：平滑面积曲线（页面已居中限宽，曲线吃满中栏） */}
+          <div className="flex flex-col gap-1" style={{ width: 'min(100%, 560px)' }}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-[11px] tracking-widest text-white/40">活跃时段</span>
@@ -258,9 +249,9 @@ export function PulseBand({
                   <span className="text-[12px] text-white/75 w-14 truncate shrink-0">
                     {privacy ? maskName(a.actorName || a.actorId) : a.actorName || a.actorId}
                   </span>
-                  <span className="flex-1 h-1.5 rounded-full bg-white/[0.05] overflow-hidden min-w-0">
+                  <span className="flex-1 h-1 rounded-sm bg-white/[0.05] overflow-hidden min-w-0">
                     <span
-                      className="block h-full rounded-full transition-all duration-700"
+                      className="block h-full rounded-sm transition-all duration-700"
                       style={{
                         width: `${(a.count / actorMax) * 100}%`,
                         backgroundImage: 'linear-gradient(90deg, #22d3ee, #a78bfa)',
