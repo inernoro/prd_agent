@@ -663,6 +663,7 @@ export type ToggleBriefingShareContract = (briefingId: string, enabled: boolean)
 export type SaveBriefingToHostingContract = (briefingId: string) => Promise<ApiResponse<{ siteId: string; siteUrl: string }>>;
 export type ListBriefingStylesContract = () => Promise<ApiResponse<{ items: PmBriefingStyle[] }>>;
 export type RestylePmBriefingContract = (briefingId: string, style: string) => Promise<ApiResponse<{ style: string; html: string }>>;
+export type RenamePmBriefingContract = (briefingId: string, title: string) => Promise<ApiResponse<{ updated: boolean; title: string }>>;
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
 export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
 export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;

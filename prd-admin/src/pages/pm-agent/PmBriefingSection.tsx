@@ -13,9 +13,11 @@ import { toast } from '@/lib/toast';
 interface Props {
   projectId: string;
   canManage: boolean;
+  /** 跳转到「资料 → 简报」管理页（报表 tab 轻入口只露最近 3 条，管理走那边） */
+  onManageAll?: () => void;
 }
 
-function downloadHtml(title: string, html: string) {
+export function downloadHtml(title: string, html: string) {
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -25,7 +27,7 @@ function downloadHtml(title: string, html: string) {
   URL.revokeObjectURL(url);
 }
 
-function fmtDateTime(s: string) {
+export function fmtDateTime(s: string) {
   const d = new Date(s);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
@@ -34,7 +36,7 @@ function fmtDateTime(s: string) {
  * 项目简报 —— AI 基于项目实时数据生成对外汇报 HTML 页。
  * 列表 + 生成（风格可选 + SSE 流式过程可视化）+ iframe 预览（可全屏/切风格）+ 下载/分享/托管。
  */
-export function PmBriefingSection({ projectId, canManage }: Props) {
+export function PmBriefingSection({ projectId, canManage, onManageAll }: Props) {
   const [items, setItems] = useState<PmBriefing[]>([]);
   const [loading, setLoading] = useState(true);
   const [genOpen, setGenOpen] = useState(false);
@@ -84,9 +86,14 @@ export function PmBriefingSection({ projectId, canManage }: Props) {
         <FileText size={15} style={{ color: '#2563EB' }} />
         <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目简报</span>
         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>AI 汇总项目实时数据生成对外汇报页，可预览 / 分享 / 下载 / 存托管</span>
-        {canManage && (
-          <Button variant="primary" size="sm" className="ml-auto" onClick={() => setGenOpen(true)}><Sparkles size={13} />生成简报</Button>
-        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {onManageAll && items.length > 0 && (
+            <Button variant="ghost" size="sm" onClick={onManageAll}>管理全部 ({items.length})</Button>
+          )}
+          {canManage && (
+            <Button variant="primary" size="sm" onClick={() => setGenOpen(true)}><Sparkles size={13} />生成简报</Button>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -97,7 +104,7 @@ export function PmBriefingSection({ projectId, canManage }: Props) {
         </div>
       ) : (
         <div className="flex flex-col">
-          {items.map((b) => (
+          {(onManageAll ? items.slice(0, 3) : items).map((b) => (
             <div key={b.id} className="group flex items-center gap-3 py-2 px-2 rounded-md hover:bg-[var(--bg-base)] cursor-pointer" onClick={() => openView(b.id)}>
               <FileText size={14} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
               <div className="flex-1 min-w-0">
@@ -125,6 +132,11 @@ export function PmBriefingSection({ projectId, canManage }: Props) {
               </div>
             </div>
           ))}
+          {onManageAll && items.length > 3 && (
+            <button onClick={onManageAll} className="text-[11.5px] text-left py-1.5 px-2 rounded-md hover:bg-[var(--bg-base)]" style={{ color: 'var(--text-muted)' }}>
+              还有 {items.length - 3} 份简报，去「资料 - 简报」搜索 / 重命名 / 批量管理
+            </button>
+          )}
         </div>
       )}
 
@@ -139,7 +151,7 @@ export function PmBriefingSection({ projectId, canManage }: Props) {
 }
 
 /** 风格选择卡（生成前选择 + 预览弹窗内切换共用） */
-function StylePicker({ styles, value, onChange, disabled }: { styles: PmBriefingStyle[]; value: string; onChange: (k: string) => void; disabled?: boolean }) {
+export function StylePicker({ styles, value, onChange, disabled }: { styles: PmBriefingStyle[]; value: string; onChange: (k: string) => void; disabled?: boolean }) {
   return (
     <div className="flex items-center gap-2 flex-wrap">
       {styles.map((s) => {
@@ -166,7 +178,7 @@ function StylePicker({ styles, value, onChange, disabled }: { styles: PmBriefing
 }
 
 /** 生成简报模态 —— 先选风格，再 SSE 阶段 + 思考 + 逐字流，全程可视化（CLAUDE.md 规则 #6 禁止空白等待）。 */
-function BriefingGenerateModal({ projectId, styles, onClose, onDone }: { projectId: string; styles: PmBriefingStyle[]; onClose: () => void; onDone: (b: PmBriefing) => void }) {
+export function BriefingGenerateModal({ projectId, styles, onClose, onDone }: { projectId: string; styles: PmBriefingStyle[]; onClose: () => void; onDone: (b: PmBriefing) => void }) {
   const [phase, setPhase] = useState<'idle' | 'streaming' | 'failed'>('idle');
   const [style, setStyle] = useState('classic');
   const [stageMsg, setStageMsg] = useState('连接中…');
@@ -258,7 +270,7 @@ function BriefingGenerateModal({ projectId, styles, onClose, onDone }: { project
 }
 
 /** 简报预览模态 —— iframe 渲染（sandbox 禁脚本）；支持全屏、切换风格、下载、分享（可撤销）、保存到网页托管。 */
-function BriefingViewModal({ briefing, styles, canManage, onChanged, onClose }: { briefing: PmBriefing; styles: PmBriefingStyle[]; canManage: boolean; onChanged: () => void; onClose: () => void }) {
+export function BriefingViewModal({ briefing, styles, canManage, onChanged, onClose }: { briefing: PmBriefing; styles: PmBriefingStyle[]; canManage: boolean; onChanged: () => void; onClose: () => void }) {
   const [b, setB] = useState(briefing);
   const [sharing, setSharing] = useState(false);
   const [hosting, setHosting] = useState(false);

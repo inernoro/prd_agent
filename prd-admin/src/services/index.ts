@@ -2071,6 +2071,7 @@ export {
   saveBriefingToHostingReal as saveBriefingToHosting,
   listBriefingStylesReal as listBriefingStyles,
   restylePmBriefingReal as restylePmBriefing,
+  renamePmBriefingReal as renamePmBriefing,
   getPmMyTodosReal as getPmMyTodos,
   getPmAgentPreferencesReal as getPmAgentPreferences,
   updatePmQuickActionsReal as updatePmQuickActions,

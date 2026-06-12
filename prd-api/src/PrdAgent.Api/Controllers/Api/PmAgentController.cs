@@ -3379,6 +3379,27 @@ public class PmAgentController : ControllerBase
         }));
     }
 
+    /// <summary>重命名简报（owner/leader 或创建人）。自动生成的标题可改为有业务含义的名字。</summary>
+    [HttpPut("briefings/{briefingId}")]
+    public async Task<IActionResult> RenameBriefing(string briefingId, [FromBody] RenameBriefingRequest request)
+    {
+        var userId = GetUserId();
+        var title = request.Title?.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题不能为空"));
+        if (title.Length > 120)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题不能超过 120 字"));
+        var b = await _db.PmBriefings.Find(x => x.Id == briefingId).FirstOrDefaultAsync();
+        if (b == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "简报不存在"));
+        var project = await FindAccessibleProjectAsync(b.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && b.CreatedBy != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人/负责人或创建者可重命名"));
+        await _db.PmBriefings.UpdateOneAsync(x => x.Id == briefingId,
+            Builders<PmBriefing>.Update.Set(x => x.Title, title).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { updated = true, title }));
+    }
+
     /// <summary>删除简报（owner/leader 或创建人）。</summary>
     [HttpDelete("briefings/{briefingId}")]
     public async Task<IActionResult> DeleteBriefing(string briefingId)
@@ -4532,6 +4553,11 @@ public class ToggleGoalMilestoneRequest
 public class ToggleBriefingShareRequest
 {
     public bool Enabled { get; set; }
+}
+
+public class RenameBriefingRequest
+{
+    public string? Title { get; set; }
 }
 
 public class RestyleBriefingRequest

@@ -78,6 +78,7 @@ import type {
   SaveBriefingToHostingContract,
   ListBriefingStylesContract,
   RestylePmBriefingContract,
+  RenamePmBriefingContract,
   GetPmMyTodosContract,
   GetPmAgentPreferencesContract,
   UpdatePmQuickActionsContract,
@@ -331,6 +332,9 @@ export const listBriefingStylesReal: ListBriefingStylesContract = async () => {
 };
 export const restylePmBriefingReal: RestylePmBriefingContract = async (briefingId, style) => {
   return await apiRequest(api.pm.briefings.restyle(encodeURIComponent(briefingId)), { method: 'POST', body: { style } });
+};
+export const renamePmBriefingReal: RenamePmBriefingContract = async (briefingId, title) => {
+  return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'PUT', body: { title } });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

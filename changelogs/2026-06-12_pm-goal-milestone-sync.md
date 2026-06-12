@@ -10,3 +10,5 @@
 | fix | prd-api | 简报匿名分享被 AdminPermissionMiddleware 拦成 401：/api/pm/briefings/shared/ 加入扫描器 PublicRoutes 白名单（token 即凭证） |
 | feat | prd-api | 简报 5 套风格主题（经典商务/暗夜科技/暖纸杂志/极简黑白/活力渐变）：生成时可选，落库渲染数据快照，POST /briefings/:id/restyle 切换风格即时重渲染不重调 LLM；styles 清单端点 SSOT |
 | feat | prd-admin | 简报生成弹窗新增风格选择卡；预览弹窗新增全屏切换、切换风格面板；保存到托管成功后按钮变「打开托管站点」+ 列表「已托管」可点击直达，反馈不再依赖弹窗 |
+| feat | prd-api | 简报重命名端点 PUT /api/pm/briefings/:id（owner/leader/创建者，120 字上限），审计登记 |
+| feat | prd-admin | 「资料」tab 新增「简报」子 tab 管理主场：搜索/风格筛选/行内重命名/批量删除/超 10 条按月分组，?sub= 深链直达；报表 tab 简报区块瘦身为最近 3 条轻入口 + 「管理全部」跳转 |
