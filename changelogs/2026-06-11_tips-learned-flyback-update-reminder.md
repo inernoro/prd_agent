@@ -6,3 +6,4 @@
 | fix | prd-admin | 单步教程 5s 自动淡出 / autoClick 完成的关闭也走飞回动画，与手动关闭口径一致 |
 | fix | prd-admin | 轻微提醒更新只在精确目标页且锚点存在时才弹/标记学会，避免在编辑器子路由(/visual-agent/:id)弹空目标并永久消费 |
 | fix | prd-admin | 视觉创作首页拖拽：移入内部子元素(textarea等)不再误清拖拽高亮，消除提示蒙层闪烁 |
+| fix | prd-admin | markLearned 对非 page-guide 也记乐观学会版本，避免标记落库失败后陈旧刷新把 reminder 恢复成未学会、与 session 锁不一致 |
