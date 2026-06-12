@@ -1122,7 +1122,7 @@ function RequirementDetail({
                     <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
                       {resolveRequirementStateLabel(requirement.currentState, workflow)}
                     </span>
-                    <SlaBadge stateEnteredAt={requirement.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === normalizeRequirementStateKey(requirement.currentState))?.slaHours} />
+                    <SlaBadge stateEnteredAt={requirement.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === normalizeRequirementStateKey(requirement.currentState, workflow))?.slaHours} />
                   </div>
                 </div>
               )}

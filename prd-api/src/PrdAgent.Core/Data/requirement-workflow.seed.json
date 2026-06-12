@@ -1,8 +1,6 @@
 {
-  "_comment": "TAPD 米多需求收集工作流 SSOT。抓取于 workitem_type/config?tab=workflow + workflow_settings（2026-06-12）。ProductWorkflowDefaults.Requirement() 与此对齐。管理员在设置中保存后 IsUserCustomized=true，种子不再覆盖。",
+  "_comment": "MAP 内置「米多需求收集工作流」种子文档（RequirementWorkflowCatalog / ProductWorkflowDefaults）。落库后运行时 SSOT 为 MongoDB product_workflow_definitions；IsUserCustomized=true 后种子不再覆盖。",
   "workflow_name": "米多需求收集工作流",
-  "tapd_workspace": "64054517",
-  "workitem_type_id": "1164054517001000088",
   "state_keys": {
     "new": "待评审",
     "planning": "待规划",
@@ -30,7 +28,6 @@
     "已拒绝": ["待评审", "待规划"],
     "已排期": ["已立项", "开发中", "已上线", "已拒绝"]
   },
-  "advanced_transition_config": true,
   "seed_revision": 4,
   "transition_action_label_format": "到{目标状态中文名}"
 }

@@ -69,7 +69,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
     setDragId(null);
     if (!item) return;
     const fromKey = entityType === 'requirement'
-      ? normalizeRequirementStateKey(item.currentState ?? initialKey)
+      ? normalizeRequirementStateKey(item.currentState ?? initialKey, workflow)
       : (item.currentState ?? initialKey);
     if (fromKey === targetKey) return;
     const tr = (workflow?.transitions ?? []).find(
@@ -98,7 +98,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   };
   const colKeyOf = (it: Item) => {
     const raw = it.currentState ?? initialKey;
-    const key = entityType === 'requirement' ? normalizeRequirementStateKey(raw) : raw;
+    const key = entityType === 'requirement' ? normalizeRequirementStateKey(raw, workflow) : raw;
     return states.some((s) => s.key === key) ? key : initialKey;
   };
 

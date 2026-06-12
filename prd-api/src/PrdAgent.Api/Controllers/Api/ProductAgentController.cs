@@ -1415,10 +1415,10 @@ public class ProductAgentController : ControllerBase
         await MigrateLegacyRequirementStatesAsync();
     }
 
-    /// <summary>将旧版 MAP 需求状态 Key 迁移为 TAPD 对齐 Key（幂等）。</summary>
+    /// <summary>将旧版 MAP 需求状态 Key 迁移为当前内置 Key（幂等）。</summary>
     private async Task MigrateLegacyRequirementStatesAsync()
     {
-        foreach (var (legacy, modern) in TapdRequirementWorkflow.LegacyStateMap)
+        foreach (var (legacy, modern) in RequirementWorkflowCatalog.LegacyStateMap)
         {
             if (legacy == modern) continue;
             await _db.Requirements.UpdateManyAsync(
@@ -1430,7 +1430,7 @@ public class ProductAgentController : ControllerBase
             .Project(r => r.CurrentState).ToListAsync();
         foreach (var state in distinctStates.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct())
         {
-            var normalized = TapdRequirementWorkflow.NormalizeStateKey(state);
+            var normalized = RequirementWorkflowCatalog.NormalizeStateKey(state);
             if (normalized == state) continue;
             await _db.Requirements.UpdateManyAsync(
                 r => r.CurrentState == state && !r.IsDeleted,
@@ -1579,7 +1579,7 @@ public class ProductAgentController : ControllerBase
         if (def == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "流程定义不存在"));
 
         if (request.EntityType == ProductEntityType.Requirement)
-            currentState = TapdRequirementWorkflow.NormalizeStateKey(currentState);
+            currentState = RequirementWorkflowCatalog.NormalizeStateKey(currentState, def);
 
         var transition = def.Transitions.FirstOrDefault(t => t.Key == request.TransitionKey);
         if (transition == null)
@@ -1918,13 +1918,14 @@ public class ProductAgentController : ControllerBase
 
         bool IsFinal(string? defId, string? state)
             => !string.IsNullOrEmpty(state) && !string.IsNullOrEmpty(defId)
-               && defById.TryGetValue(defId, out var def) && def.States.Any(s => s.Key == state && s.IsFinal);
+               && defById.TryGetValue(defId, out var def)
+               && def.States.Any(s => s.Key == RequirementWorkflowCatalog.NormalizeStateKey(state, def) && s.IsFinal);
         string? StateLabel(string? defId, string? state, bool requirement = false)
         {
             if (string.IsNullOrEmpty(state)) return null;
             defById.TryGetValue(defId ?? "", out var def);
             if (requirement)
-                return TapdRequirementWorkflow.ResolveStateLabel(state, def);
+                return RequirementWorkflowCatalog.ResolveStateLabel(state, def);
             if (def != null)
                 return def.States.FirstOrDefault(s => s.Key == state)?.Label ?? state;
             return state;
@@ -1946,8 +1947,12 @@ public class ProductAgentController : ControllerBase
                || (d.ReporterId == userId && reporterActive.Contains(d.Status ?? ""));
 
         var items = new List<object>();
-        foreach (var r in reqs.Where(r => MineByState(r.AssigneeId, r.OwnerId) && !IsFinal(r.WorkflowDefId, TapdRequirementWorkflow.NormalizeStateKey(r.CurrentState))))
-            items.Add(new { kind = "requirement", id = r.Id, no = r.RequirementNo, title = r.Title, state = TapdRequirementWorkflow.NormalizeStateKey(r.CurrentState), stateLabel = StateLabel(r.WorkflowDefId, r.CurrentState, requirement: true) });
+        foreach (var r in reqs.Where(r => MineByState(r.AssigneeId, r.OwnerId) && !IsFinal(r.WorkflowDefId, r.CurrentState)))
+        {
+            defById.TryGetValue(r.WorkflowDefId ?? "", out var rDef);
+            var stateKey = RequirementWorkflowCatalog.NormalizeStateKey(r.CurrentState, rDef);
+            items.Add(new { kind = "requirement", id = r.Id, no = r.RequirementNo, title = r.Title, state = stateKey, stateLabel = StateLabel(r.WorkflowDefId, r.CurrentState, requirement: true) });
+        }
         foreach (var f in feats.Where(f => MineByState(f.AssigneeId, f.OwnerId) && !IsFinal(f.WorkflowDefId, f.CurrentState)))
             items.Add(new { kind = "feature", id = f.Id, no = f.FeatureNo, title = f.Title, state = f.CurrentState, stateLabel = StateLabel(f.WorkflowDefId, f.CurrentState) });
         foreach (var d in defects.Where(DefectMine))
@@ -3058,7 +3063,7 @@ public class ProductAgentController : ControllerBase
                     r.SourceSystem == sourceSystem &&
                     r.ExternalId == externalId).FirstOrDefaultAsync();
             }
-            var importedState = TapdRequirementWorkflow.MapTapdStatusLabel(row.SourceStatus) ?? initialState;
+            var importedState = RequirementWorkflowCatalog.MapImportedStatusLabel(row.SourceStatus) ?? initialState;
             if (existing != null)
             {
                 var update = Builders<Requirement>.Update
@@ -3312,7 +3317,7 @@ public class ProductAgentController : ControllerBase
         var reqStates = reqDef?.States.ToDictionary(s => s.Key, s => s) ?? new();
         string CatOf(string? key)
         {
-            var normalized = TapdRequirementWorkflow.NormalizeStateKey(key);
+            var normalized = RequirementWorkflowCatalog.NormalizeStateKey(key, reqDef);
             return normalized != null && reqStates.TryGetValue(normalized, out var s)
                 ? (s.Category ?? (s.IsFinal ? "done" : "todo"))
                 : "todo";
@@ -3654,7 +3659,7 @@ public class ProductAgentController : ControllerBase
             .Select(r =>
             {
                 defById.TryGetValue(r.WorkflowDefId ?? "", out var def);
-                var stateKey = TapdRequirementWorkflow.NormalizeStateKey(r.CurrentState);
+                var stateKey = RequirementWorkflowCatalog.NormalizeStateKey(r.CurrentState, def);
                 return new
                 {
                     r.Id,
@@ -3664,7 +3669,7 @@ public class ProductAgentController : ControllerBase
                     r.Title,
                     r.Grade,
                     currentState = stateKey,
-                    stateLabel = TapdRequirementWorkflow.ResolveStateLabel(stateKey, def),
+                    stateLabel = RequirementWorkflowCatalog.ResolveStateLabel(stateKey, def),
                     versionCount = r.VersionIds.Count,
                     customerCount = r.CustomerIds.Count,
                     r.AssigneeId,

@@ -740,7 +740,7 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
     <div className="flex flex-col gap-3">
       {entityType === 'requirement' && (
         <div className="text-xs text-white/40 px-1">
-          首次初始化对齐 TAPD「米多需求收集工作流」（7 状态 + 流转矩阵）。在此保存后视为自定义配置，系统不再用内置种子覆盖。
+          首次初始化写入 MAP 内置「米多需求收集工作流」（7 状态 + 流转矩阵）。保存后视为自定义配置，系统不再用内置种子覆盖；流转全程在 MAP 内执行，不依赖外部系统。
         </div>
       )}
       <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 flex items-center gap-3">

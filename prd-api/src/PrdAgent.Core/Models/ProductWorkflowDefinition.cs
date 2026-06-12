@@ -42,7 +42,7 @@ public class ProductWorkflowDefinition
     public bool IsDeleted { get; set; }
 
     /// <summary>
-    /// 内置种子版本（来自 TapdRequirementWorkflow / ProductWorkflowDefaults）。
+    /// 内置种子版本（来自 RequirementWorkflowCatalog / ProductWorkflowDefaults）。
     /// 仅当未用户自定义且 SeedRevision 低于代码版本时，EnsureDefaultWorkflowsSeededAsync 会覆盖状态与流转。
     /// </summary>
     public int SeedRevision { get; set; }

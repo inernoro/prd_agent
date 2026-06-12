@@ -28,7 +28,7 @@ export function WorkflowBar({
   if (!workflow || workflow.states.length === 0) return null;
 
   const isRequirement = entityType === 'requirement';
-  const effectiveStateKey = isRequirement ? normalizeRequirementStateKey(currentState) : (currentState ?? undefined);
+  const effectiveStateKey = isRequirement ? normalizeRequirementStateKey(currentState, workflow) : (currentState ?? undefined);
   const state = workflow.states.find((s) => s.key === effectiveStateKey) ?? workflow.states.find((s) => s.isInitial) ?? workflow.states[0];
   const available = workflow.transitions.filter((t) => !t.fromState || t.fromState === (effectiveStateKey ?? state?.key));
 

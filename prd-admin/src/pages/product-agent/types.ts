@@ -366,7 +366,7 @@ export interface WorkflowDefinition {
   transitions: WorkflowTransition[];
   isDefault: boolean;
   productId?: string | null;
-  /** 内置 TAPD 种子版本；用户保存流程模板后不再被种子覆盖 */
+  /** 内置种子版本；用户保存流程模板后不再被种子覆盖 */
   seedRevision?: number;
   isUserCustomized?: boolean;
   createdBy: string;

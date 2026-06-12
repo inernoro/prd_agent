@@ -867,7 +867,7 @@ function StateBoard({
     setDragId(null);
     setOverState(null);
     if (!r) return;
-    const from = normalizeRequirementStateKey(r.currentState ?? initial);
+    const from = normalizeRequirementStateKey(r.currentState ?? initial, workflow);
     if (from === toState) return;
     const t = workflow.transitions.find((tr) => tr.toState === toState && (!tr.fromState || tr.fromState === from));
     if (!t) return; // 没有合法流转
@@ -878,7 +878,7 @@ function StateBoard({
   return (
     <div className="flex gap-3 overflow-x-auto pb-2" style={{ overscrollBehavior: 'contain' }}>
       {states.map((s) => {
-        const list = items.filter((r) => normalizeRequirementStateKey(r.currentState ?? initial) === s.key);
+        const list = items.filter((r) => normalizeRequirementStateKey(r.currentState ?? initial, workflow) === s.key);
         return (
           <div
             key={s.key}

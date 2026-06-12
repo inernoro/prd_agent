@@ -1,10 +1,11 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// TAPD「米多需求收集工作流」与 MAP 需求状态的对齐约定。
-/// 状态 Key 与 TAPD 工作流内部 step 一致，便于导入与双系统对照。
+/// MAP 内置「米多需求收集工作流」目录：仅用于首次种子写入 MongoDB 与存量 Key 迁移。
+/// 运行时 SSOT 是 <see cref="ProductWorkflowDefinition"/>（设置 → 流程模板 / 产品覆盖）；
+/// 流转一律走 POST /transition 查库内 Transitions，不调用任何外部系统。
 /// </summary>
-public static class TapdRequirementWorkflow
+public static class RequirementWorkflowCatalog
 {
     public const string WorkflowName = "米多需求收集工作流";
 
@@ -27,7 +28,7 @@ public static class TapdRequirementWorkflow
         [Scheduled] = "已排期",
     };
 
-    /// <summary>MAP 旧默认流程状态 → TAPD 对齐状态。</summary>
+    /// <summary>MAP 旧默认流程状态 → 当前内置状态 Key。</summary>
     public static readonly IReadOnlyDictionary<string, string> LegacyStateMap = new Dictionary<string, string>
     {
         ["pending"] = New,
@@ -38,8 +39,10 @@ public static class TapdRequirementWorkflow
         ["rejected"] = Rejected,
     };
 
-    /// <summary>TAPD 中文状态 / 别名 → 工作流 Key。</summary>
-    public static string? MapTapdStatusLabel(string? label)
+    /// <summary>
+    /// 外部文件导入（CSV/RTF）时的中文状态名 → 工作流 Key。仅 import 路径使用。
+    /// </summary>
+    public static string? MapImportedStatusLabel(string? label)
     {
         if (string.IsNullOrWhiteSpace(label)) return null;
         var t = label.Trim();
@@ -55,15 +58,28 @@ public static class TapdRequirementWorkflow
         };
     }
 
-    public static string NormalizeStateKey(string? stateKey)
+    /// <summary>
+    /// 规范需求状态 Key：遗留 Key 映射 → 工作流定义内 Key → 内置目录 Key → 原样保留（支持用户自定义状态）。
+    /// </summary>
+    public static string NormalizeStateKey(string? stateKey, ProductWorkflowDefinition? workflowDef = null)
     {
-        if (string.IsNullOrWhiteSpace(stateKey)) return New;
+        if (string.IsNullOrWhiteSpace(stateKey))
+            return workflowDef?.GetInitialStateKey() ?? New;
+
         var key = stateKey.Trim();
-        if (StateLabels.ContainsKey(key)) return key;
-        return LegacyStateMap.TryGetValue(key, out var mapped) ? mapped : key;
+        if (LegacyStateMap.TryGetValue(key, out var legacyMapped))
+            key = legacyMapped;
+
+        if (workflowDef?.States.Any(s => s.Key == key) == true)
+            return key;
+
+        if (StateLabels.ContainsKey(key))
+            return key;
+
+        return key;
     }
 
-    /// <summary>fromKey → 可流转到的 toKey 列表（与 TAPD 流转矩阵一致，不含停留原状态）。</summary>
+    /// <summary>内置默认流程的流转边（from → to 列表），仅种子构建使用。</summary>
     public static IReadOnlyDictionary<string, string[]> TransitionMatrix { get; } = new Dictionary<string, string[]>
     {
         [New] = new[] { Planning, Approved, Developing, Released, Rejected, Scheduled },
@@ -75,21 +91,24 @@ public static class TapdRequirementWorkflow
         [Scheduled] = new[] { Approved, Developing, Released, Rejected },
     };
 
-    /// <summary>TAPD 对齐默认需求流程的流转边数量（7 状态矩阵，不含自环）。</summary>
     public const int ExpectedTransitionCount = 31;
 
-    /// <summary>流转按钮短文案（如「到待规划」），避免矩阵边过多时 UI 拥挤。</summary>
-    public static string BuildTransitionActionLabel(string toStateKey)
+    public static string BuildTransitionActionLabel(string toStateKey, ProductWorkflowDefinition? workflowDef = null)
     {
-        var key = NormalizeStateKey(toStateKey);
+        var key = NormalizeStateKey(toStateKey, workflowDef);
+        if (workflowDef != null)
+        {
+            var fromDef = workflowDef.States.FirstOrDefault(s => s.Key == key)?.Label;
+            if (!string.IsNullOrEmpty(fromDef)) return $"到{fromDef}";
+        }
         return StateLabels.TryGetValue(key, out var label) ? $"到{label}" : $"到{toStateKey}";
     }
 
-    /// <summary>解析需求状态中文标签：工作流定义优先，其次 TAPD 内置表，最后原样返回 Key。</summary>
+    /// <summary>解析状态中文标签：工作流定义（运行时 SSOT）优先，其次内置目录，最后原 Key。</summary>
     public static string ResolveStateLabel(string? stateKey, ProductWorkflowDefinition? workflowDef = null)
     {
         if (string.IsNullOrWhiteSpace(stateKey)) return "未设置";
-        var key = NormalizeStateKey(stateKey);
+        var key = NormalizeStateKey(stateKey, workflowDef);
         if (workflowDef != null)
         {
             var fromDef = workflowDef.States.FirstOrDefault(s => s.Key == key)?.Label;

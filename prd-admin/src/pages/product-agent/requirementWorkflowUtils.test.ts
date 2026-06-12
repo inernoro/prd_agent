@@ -24,7 +24,7 @@ describe('requirementWorkflowUtils', () => {
     expect(normalizeRequirementStateKey('done')).toBe('resolved');
   });
 
-  it('resolveRequirementStateLabel uses workflow then tapd fallback', () => {
+  it('resolveRequirementStateLabel uses workflow then builtin fallback', () => {
     expect(resolveRequirementStateLabel('new', mockWorkflow)).toBe('待评审');
     expect(resolveRequirementStateLabel('pending', mockWorkflow)).toBe('待评审');
     expect(resolveRequirementStateLabel('resolved', null)).toBe('已上线');
@@ -33,5 +33,18 @@ describe('requirementWorkflowUtils', () => {
   it('requirementTransitionButtonLabel prefers short label', () => {
     expect(requirementTransitionButtonLabel({ label: '到待规划', toState: 'planning' }, mockWorkflow)).toBe('到待规划');
     expect(requirementTransitionButtonLabel({ label: '待评审→待规划', toState: 'planning' }, mockWorkflow)).toBe('到待规划');
+  });
+
+  it('normalizeRequirementStateKey keeps custom workflow state keys', () => {
+    const custom: WorkflowDefinition = {
+      id: 'custom',
+      name: '自定义',
+      entityType: 'requirement',
+      isDefault: false,
+      states: [{ key: 'custom_a', label: '自定义A', isInitial: true, isFinal: false, sortOrder: 0 }],
+      transitions: [],
+    };
+    expect(normalizeRequirementStateKey('custom_a', custom)).toBe('custom_a');
+    expect(normalizeRequirementStateKey(undefined, custom)).toBe('custom_a');
   });
 });
