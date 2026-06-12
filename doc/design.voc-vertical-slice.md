@@ -78,10 +78,10 @@
    │ 用户点「流转需求池」，选目标 Product
    ▼
 POST /api/emergence/nodes/{id}/adopt  { productId }
-   │  幂等：已 adopt 直接返回既有需求
-   │  Requirement{ Title=节点标题, Description=节点描述+GroundingContent,
-   │               SourceSystem="emergence", SourceEmergenceNodeId=节点id }
-   │  EmergenceNode.AdoptedRequirementId = 需求id; Status → planned
+   │  查重：按 Requirement.SourceEmergenceNodeId == 节点id，命中即返回既有需求
+   │  insert Requirement{ Title=节点标题, Description=节点描述+GroundingContent,
+   │               SourceSystem="emergence", SourceEmergenceNodeId=节点id }（唯一索引兜底并发）
+   │  best-effort 回填 EmergenceNode.AdoptedRequirementId = 需求id; Status → planned
    ▼
 需求池（product-agent Requirement 列表）
 ```
@@ -92,8 +92,8 @@ POST /api/emergence/nodes/{id}/adopt  { productId }
 
 | 实体 | 新增字段 | 类型 | 说明 |
 |------|---------|------|------|
-| `Requirement` | `SourceEmergenceNodeId` | `string?` | 对照已有 `SourceDefectId`，记录来源涌现节点 |
-| `EmergenceNode` | `AdoptedRequirementId` | `string?` | 回填生成的需求 id；非空即"已流转" |
+| `Requirement` | `SourceEmergenceNodeId` | `string?` | 对照已有 `SourceDefectId`，记录来源涌现节点。**幂等键 + partial unique index 承重件**（见 7 节） |
+| `EmergenceNode` | `AdoptedRequirementId` | `string?` | 反范化便利指针（给 UI 显示"已流转" chip 用），可由 `Requirement.SourceEmergenceNodeId` 反查重建；**非权威**，不作幂等判定 |
 
 `Requirement.SourceSystem` 复用既有字段，emergence 流转时填 `"emergence"`。注意它当前并非跨流统一枚举（缺陷转需求未填，见 5.1）；若要作为统一来源依据，需按 5.1 的三步补丁 + 回填（已记 `debt.voc`）。
 
@@ -104,20 +104,22 @@ POST /api/emergence/nodes/{id}/adopt  { productId }
 ```
 POST /api/emergence/nodes/{nodeId}/adopt
 Body: { productId: string }
-原子抢占：仅当节点 AdoptedRequirementId 为空时才创建需求并写入；否则返回既有需求
+幂等键：Requirement.SourceEmergenceNodeId == nodeId（已存在则返回，不新建）
 返回：ApiResponse<Requirement>
 ```
 
-**幂等语义（一节点只流转一次）**：与缺陷转需求不同——缺陷天然归属一个产品（productId 固定在缺陷上），而涌现节点是产品无关的，productId 由调用方在 adopt 时传入。为避免"同一节点用不同 productId 重复调用却各返回/各新建需求"的歧义，一个节点最多对应一条需求，以节点的 `AdoptedRequirementId` 为锁。
+**幂等语义（一节点只流转一次）**：与缺陷转需求不同——缺陷天然归属一个产品（productId 固定在缺陷上），而涌现节点是产品无关的，productId 由调用方在 adopt 时传入。为避免"同一节点用不同 productId 重复调用却各返回/各新建需求"的歧义，一个节点最多对应一条需求。
 
-**并发安全（必须原子，不能先读后写）**：`AdoptedRequirementId` 是单值锁，但"先 read 判空、再 insert 需求、再 write 回填"这条朴素三步在并发/双击/重试下有 TOCTOU 竞态——两个请求都读到空就会各建一条需求、后写者只是盖住前者，需求池被劈成两条。因此实现**必须用原子抢占**，按下面顺序：
+**锁放在需求上，不放在节点上（避免孤儿锁）**：关键设计选择——幂等键是 **`Requirement.SourceEmergenceNodeId`**（与缺陷转需求用 `SourceDefectId` 查重完全同构），而**不是**节点的 `AdoptedRequirementId`。原因：若把锁放在节点字段、先把节点标记为已流转再去 insert 需求，一旦 insert 失败/超时，节点就锁向一个不存在的需求 id，后续全走"已流转"分支，永久卡死需人工修复。把锁放在"真正被创建出来的那条需求"上就没有这个空窗——需求要么建成（锁生效）、要么没建成（无锁可孤儿）。
 
-1. 预生成 `reqId = Guid`；
-2. **原子声明节点**：`FindOneAndUpdate({ _id: nodeId, AdoptedRequirementId: null }, { $set: { AdoptedRequirementId: reqId, Status: planned } })`——MongoDB 单文档更新天然原子，`AdoptedRequirementId: null` 作为条件，并发下只有一个请求能匹配成功；
-3. 抢占成功（matched）→ 用预生成的 `reqId` insert 需求（`SourceEmergenceNodeId=nodeId`、`SourceSystem="emergence"`）；
-4. 抢占失败（matched=0，说明已被别的请求/历史 adopt 占用）→ 重新读节点，按其 `AdoptedRequirementId` 返回那条既有需求，**不 insert**。
+**实现顺序（insert-first + 唯一索引）**：
 
-防御纵深（可选）：给 `Requirement.SourceEmergenceNodeId` 加 partial unique index（仅非空），即便上面逻辑被未来改坏，第二条 insert 也会被唯一约束拒绝。注意本仓库 `no-auto-index.md` 规则——索引由 DBA 手动建，设计仅声明需求，不在启动时自动创建。`SourceEmergenceNodeId` 本身仍保留作需求侧反查溯源用。
+1. **查重**：`Requirements.Find(SourceEmergenceNodeId == nodeId && !IsDeleted)`，命中即返回既有需求（忽略本次 productId），结束；
+2. **insert 需求**（`SourceEmergenceNodeId=nodeId`、`SourceSystem="emergence"`、`ProductId=productId`）——这一步才是"占位"动作；
+3. **并发兜底**：`Requirement.SourceEmergenceNodeId` 上有 **partial unique index（仅非空）**，两个请求同时过了第 1 步查重时，第二条 insert 会被唯一约束拒绝（duplicate key）→ 捕获后回到第 1 步查重、返回已存在的那条，绝不产生两条；
+4. **best-effort 回填节点**：insert 成功后再 `UpdateOne(node, { AdoptedRequirementId: reqId, Status: planned })`。此步**失败也无害**——需求已建成且经 `SourceEmergenceNodeId` 可反查，`AdoptedRequirementId` 只是给 UI 用的反范化指针，可在下次读节点或下次 adopt（会命中第 1 步查重、再次尝试回填）时懒修复。任何一步失败重试都收敛到同一条需求，不卡死、不劈裂。
+
+唯一索引是本方案的承重件（不是可选防御）。按本仓库 `no-auto-index.md` 规则，索引由 DBA 手动创建、不在启动时自动建——本设计声明该索引为**实现前置条件**，需同步写入 `doc/guide.mongodb-indexes.md`。
 
 前端：涌现节点卡片底部新增"流转需求池"按钮（未 adopt 时可点）；已流转节点显示需求编号 chip，点击跳转 product-agent 对应需求。复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
 
