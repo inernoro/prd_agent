@@ -153,10 +153,14 @@ export function RequirementCreateForm({
   useEffect(() => { setCustomerList(customers); }, [customers]);
 
   const split = useMemo(() => {
+    const templateName = (template?.name ?? '').trim();
     const usable = (template?.fields ?? []).filter((f) => {
       const key = (f.key || '').toLowerCase();
       const label = (f.label || '').trim();
-      return !RESERVED_TEMPLATE_KEYS.has(key) && !RESERVED_TEMPLATE_LABELS.has(label);
+      if (RESERVED_TEMPLATE_KEYS.has(key) || RESERVED_TEMPLATE_LABELS.has(label)) return false;
+      // 模板管理用内部名（如「需求默认表单」），不在用户表单展示
+      if (label.endsWith('默认表单') || (templateName && label === templateName)) return false;
+      return true;
     });
     return { files: usable.filter((f) => f.type === 'file'), others: usable.filter((f) => f.type !== 'file') };
   }, [template]);
@@ -311,24 +315,22 @@ export function RequirementCreateForm({
             </TapdPropertyRow>
             {split.others.map((field) => (
               <TapdPropertyRow key={field.key} label={field.label || field.key} required={field.required}>
-                <FormFieldsRenderer fields={[field]} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} productId={productId} />
+                <FormFieldsRenderer fields={[field]} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} productId={productId} hideLabels />
               </TapdPropertyRow>
             ))}
           </TapdPropertyPanel>
           {split.files.length > 0 && (
             <TapdPropertyPanel title="附件">
-              {split.files.map((field) => (
-                <TapdPropertyRow key={field.key} label={field.label || '附件'} required={field.required}>
-                  <FormFieldsRenderer
-                    fields={[field]}
-                    values={formData}
-                    onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))}
-                    productId={productId}
-                    hideLabels
-                    fileUploadHint=""
-                  />
-                </TapdPropertyRow>
-              ))}
+              <div className="px-3 py-2">
+                <FormFieldsRenderer
+                  fields={split.files}
+                  values={formData}
+                  onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))}
+                  productId={productId}
+                  hideLabels
+                  fileUploadHint=""
+                />
+              </div>
             </TapdPropertyPanel>
           )}
         </div>

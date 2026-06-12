@@ -735,7 +735,7 @@ function CreateObjectForm({
             </>
           )}
           {split.files.length > 0 && (
-            <Card title={template?.name || '附件'}>
+            <Card title="附件">
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
@@ -1056,7 +1056,7 @@ function RequirementDetail({
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
           {split.files.length > 0 && (
-            <Card title={template?.name || '附件'}>
+            <Card title="附件">
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
@@ -1464,7 +1464,7 @@ function FeatureDetail({
             <PlainTextArea value={remark} onChange={setRemark} placeholder="补充特殊情况或例外说明，可不填" />
           </Card>
           {split.files.length > 0 && (
-            <Card title={template?.name || '附件'}>
+            <Card title="附件">
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
@@ -1743,7 +1743,7 @@ function VersionDetail({
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
           {split.files.length > 0 && (
-            <Card title={template?.name || '附件'}>
+            <Card title="附件">
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
