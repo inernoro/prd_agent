@@ -80,3 +80,5 @@
 | fix | prd-api | 模型池直选凭据预检：pool-models 返回 available/unavailableReason，平台 key 缺失或解密失败的模型提前标记；from-pool 报错区分「未配 key」与「key 解密失败（环境加密密钥不匹配）」并给出修复指引 |
 | fix | prd-admin | 模型池弹层把凭据预检不过的模型置灰显示原因，不再让用户点了才撞「缺少 API key」报错 |
 | fix | cds | Jwt__Secret 注入改为项目环境变量优先、CDS 全局值仅兜底：根治换 CDS_JWT_SECRET 跨项目穿透打哑其他项目存量密文的联动事故 |
+| feat | prd-api | 新增 PlatformKeyIntegrityWorker：启动及每 6 小时自检平台 API key 可解密性，发现环境密钥不匹配立即 LogError + 全局站内告警（幂等，恢复后自动关闭），杜绝密钥哑掉两小时无人知的静默故障 |
+| chore | - | 删除过期验收驱动 e2e/lifecycle.mjs（写死旧分支 URL 的一次性脚本）；新增 .claude/rules/cross-project-isolation.md 跨项目隔离原则与共享通道清单 |
