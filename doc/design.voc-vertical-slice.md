@@ -104,35 +104,30 @@ POST /api/emergence/nodes/{id}/adopt  { productId }
 ```
 POST /api/emergence/nodes/{nodeId}/adopt
 Body: { productId: string }
-鉴权：节点所属树 OwnerId == 当前用户 且 productId 经 FindAccessibleProductAsync 通过
-幂等键：Requirement.SourceEmergenceNodeId == nodeId（已存在则返回，不新建）
+鉴权：节点所属树 OwnerId == 当前用户；产品按分支校验（命中分支校 existing.ProductId，
+      insert 分支校入参 productId）——详见下方编号步骤，勿只看本行摘要
+幂等键：Requirement 中 SourceEmergenceNodeId == nodeId 的活跃行（!IsDeleted）
 返回：ApiResponse<Requirement>
 ```
 
-**权限校验（必须在查重/insert 之前，跨两个权限域）**：adopt 横跨涌现与产品两个域，两侧鉴权都要显式做、缺一即越权（IDOR）：
-- **节点侧（两分支都要）**：读节点 → 取其 `TreeId` → 校验 `EmergenceTree.OwnerId == 当前 userId`（与 `EmergenceController` 既有变更端点一致，按树属主，不是按节点）。不通过 → 404/403，禁止用猜测的私有 node id 流转/探测他人树的节点。
-- **产品侧（分支不同，校验对象不同）**：关键——命中幂等分支会**忽略**调用方传入的 `productId`，所以**不能**只校验调用方 productId，否则用户对已有需求所在产品 A 失权后，塞一个自己能访问的产品 B 就能拿回产品 A 的需求（泄漏）。规则：
-  - **insert 分支**（新建）：校验**调用方 `productId`** 可访问（需求要落进这个产品）；
-  - **命中分支**（返回既有需求）：校验**既有需求自身的 `existing.ProductId`** 可访问，而非调用方传入的 productId；不可访问 → 403/conflict，不返回。
-  - 统一用 `FindAccessibleProductAsync(targetProductId, userId)`，`targetProductId` 按分支取调用方 productId 或 `existing.ProductId`。
-- 节点属主校验先于查重；产品校验在确定走哪个分支后、返回/insert 之前。避免"先建后拒"泄漏或脏写。
+**核心不变量**：一个涌现节点**最多对应一条活跃（`!IsDeleted`）需求**。注意是"活跃"——既有活跃需求被软删后允许重新 adopt 生成新需求，所以不是"一个节点历史上只能流转一次"。锁放在需求的 `SourceEmergenceNodeId`（活跃唯一索引）上，不放在节点 `AdoptedRequirementId` 上：后者若先标记再 insert，insert 失败会留孤儿锁卡死；放在"真正被创建的活跃需求"上则无空窗。`AdoptedRequirementId` 仅是给 UI 的反范化指针，可懒修复，**非权威、不参与幂等判定**。
 
-**幂等语义（一节点只流转一次）**：与缺陷转需求不同——缺陷天然归属一个产品（productId 固定在缺陷上），而涌现节点是产品无关的，productId 由调用方在 adopt 时传入。为避免"同一节点用不同 productId 重复调用却各返回/各新建需求"的歧义，一个节点最多对应一条需求。
+**实现顺序（编号步骤为权威 SSOT，鉴权步骤已内联，照此实现即不留越权/脏写缺口）**：
 
-**锁放在需求上，不放在节点上（避免孤儿锁）**：关键设计选择——幂等键是 **`Requirement.SourceEmergenceNodeId`**（与缺陷转需求用 `SourceDefectId` 查重完全同构），而**不是**节点的 `AdoptedRequirementId`。原因：若把锁放在节点字段、先把节点标记为已流转再去 insert 需求，一旦 insert 失败/超时，节点就锁向一个不存在的需求 id，后续全走"已流转"分支，永久卡死需人工修复。把锁放在"真正被创建出来的那条需求"上就没有这个空窗——需求要么建成（锁生效）、要么没建成（无锁可孤儿）。
+1. **节点属主校验**（两分支共同前置）：读节点 → 取 `TreeId` → 校验 `EmergenceTree.OwnerId == userId`（与 `EmergenceController` 既有变更端点一致，按树属主）。不通过 → 404/403。先于一切查重/写入，禁止凭猜测的私有 node id 流转/探测他人节点。
+2. **查重**：`Requirements.Find(SourceEmergenceNodeId == nodeId && !IsDeleted)`。
+3. **命中分支**（查到活跃需求）：先校验**既有需求自身的 `existing.ProductId`** 可访问（`FindAccessibleProductAsync(existing.ProductId, userId)`），**不是**校验入参 productId——命中分支忽略入参 productId，若只校入参，用户对产品 A 失权后塞一个能访问的产品 B 仍能取回 A 的需求（IDOR）。通过 → 返回既有需求（忽略入参 productId），结束；不通过 → 403/conflict，不返回。
+4. **insert 分支**（未查到）：先校验**入参 `productId`** 可访问（`FindAccessibleProductAsync(productId, userId)`，需求要落进这个产品），不通过 → 404/403；通过才 insert 需求（`SourceEmergenceNodeId=nodeId`、`SourceSystem="emergence"`、`ProductId=productId`）。
+5. **并发兜底**：`Requirement.SourceEmergenceNodeId` 上有 **partial unique index，过滤 = 非空 且 `IsDeleted: false`**（只对活跃且有来源节点的行唯一）。两请求同时过了第 2 步查重时，第二条 insert 被唯一约束拒绝（duplicate key）→ 捕获后回第 2 步查重、走命中分支返回，绝不产生两条。
+6. **best-effort 回填节点**：insert 成功后 `UpdateOne(node, { AdoptedRequirementId: reqId, Status: planned })`。失败也无害——需求已建成且经 `SourceEmergenceNodeId` 可反查，下次读节点或下次 adopt 时懒修复。任何步骤失败重试都收敛到同一条活跃需求，不卡死、不劈裂。
 
-**实现顺序（insert-first + 唯一索引）**：
+**产品侧鉴权 = 权限闸 + 资源访问，两者都要（端点不在 product 路由下，权限闸不会自动生效）**：adopt 挂在 `/api/emergence/*` 下，全局中间件只会要求该路由的 `emergence-agent.use`，**不会**触发保护 `ProductAgentController` 的 `[AdminController("product-agent", AdminPermissionCatalog.ProductAgentUse)]` 权限闸。所以第 3/4 步的产品侧校验除了 `FindAccessibleProductAsync`（产品成员/归属），**还必须显式校验当前用户持有 `AdminPermissionCatalog.ProductAgentUse` 权限**——否则"有涌现权限 + 是产品成员但无 product-agent 权限"的角色能绕过正常产品端点的权限闸、借 adopt 创建/读取需求。两道都过才算产品侧通过。
 
-1. **查重**：`Requirements.Find(SourceEmergenceNodeId == nodeId && !IsDeleted)`，命中 → 先校验 `existing.ProductId` 可访问（见上节命中分支规则），通过才返回既有需求（忽略本次 productId），结束；
-2. **insert 需求**（`SourceEmergenceNodeId=nodeId`、`SourceSystem="emergence"`、`ProductId=productId`）——这一步才是"占位"动作；
-3. **并发兜底**：`Requirement.SourceEmergenceNodeId` 上有 **partial unique index，过滤条件 = 非空 且 `IsDeleted: false`**（即只对"活跃且有来源节点"的行唯一）。两个请求同时过了第 1 步查重时，第二条 insert 会被唯一约束拒绝（duplicate key）→ 捕获后回到第 1 步查重、返回已存在的那条，绝不产生两条；
-4. **best-effort 回填节点**：insert 成功后再 `UpdateOne(node, { AdoptedRequirementId: reqId, Status: planned })`。此步**失败也无害**——需求已建成且经 `SourceEmergenceNodeId` 可反查，`AdoptedRequirementId` 只是给 UI 用的反范化指针，可在下次读节点或下次 adopt（会命中第 1 步查重、再次尝试回填）时懒修复。任何一步失败重试都收敛到同一条需求，不卡死、不劈裂。
+**软删除与唯一索引同口径（硬要求）**：查重过滤 `!IsDeleted`，索引 `partialFilterExpression` 也必须含 `IsDeleted: false`。若索引漏了它：需求软删后查重查不到活跃行，但索引里软删行还占位，重新 adopt 的 insert 撞 duplicate-key 却无活跃行可返回 → 节点永久无法再流转。同口径后：软删 → 索引腾位 → 重新 adopt 正常 insert 新活跃需求，核心不变量"一节点一活跃需求"成立。
 
-**软删除与唯一索引必须同口径（否则重新流转会卡死）**：查重过滤 `!IsDeleted`，索引也必须把 `IsDeleted: false` 写进 `partialFilterExpression`——两者口径一致是硬要求。若索引漏了 `IsDeleted: false`：需求被软删后，查重（`!IsDeleted`）查不到活跃行，但索引里软删行还占位，重新 adopt 的 insert 会撞 duplicate-key 却无活跃行可返回 → 该节点永久无法再流转。把软删行排除出索引后：软删 → 索引腾出 → 重新 adopt 可正常 insert 一条新活跃需求，"一节点一活跃需求"成立；同时节点 `AdoptedRequirementId` 若仍指向已删需求，按第 4 步懒修复重写为新需求 id（读取时校验目标需求 `!IsDeleted`，已删则视同未流转、允许重新 adopt）。
+唯一索引是承重件（非可选防御）。按 `no-auto-index.md`，索引由 DBA 手动建——已作为实现前置条件登记在 `doc/guide.mongodb-indexes.md`（`requirements` → `uniq_requirements_source_emergence_node`，上线 adopt 端点前必须先执行）。
 
-唯一索引是本方案的承重件（不是可选防御）。按本仓库 `no-auto-index.md` 规则，索引由 DBA 手动创建、不在启动时自动建——该索引已作为**实现前置条件**登记在 `doc/guide.mongodb-indexes.md`（`requirements` → `uniq_requirements_source_emergence_node`，DBA 上线 adopt 端点前必须先执行）。
-
-前端：涌现节点卡片底部新增"流转需求池"按钮（未 adopt 时可点）；已流转节点显示需求编号 chip，点击跳转 product-agent 对应需求。复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
+**前端**：涌现节点卡片底部"流转需求池"按钮。**"已流转"状态以"`AdoptedRequirementId` 指向一条仍活跃（`!IsDeleted`）的需求"为准**，不能只看 `AdoptedRequirementId` 非空——既有需求被软删后该指针仍在，但 API 允许重新 adopt，此时仍应显示可点按钮、不显示 chip（否则按钮被永久禁用、与后端能力不符）。后端在节点列表/详情响应里附带"该指针指向的需求是否活跃"标志供前端判定（避免前端二次查询）。已流转（活跃）→ 显示需求编号 chip，点击跳 product-agent 对应需求。复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
 
 ## 八、关联设计文档
 
@@ -150,4 +145,4 @@ Body: { productId: string }
 | 对接伊利存量工单系统 | 中 | 需对方提供 API 与资料，属外部依赖，不可自产，明确为前置条件 |
 | 改善项目追踪字段不全 | 低 | DefectProject 当前仅容器，里程碑/进度/成本为演示态，后续按需补字段 |
 | 需求池来源多样导致口径混乱 | 低 | 统一 `SourceSystem` 枚举（defect/emergence/tapd/manual），前端按来源打标 |
-| adopt 跨权限域越权（IDOR） | 中 | 必须前置双校验：节点按树 `OwnerId == userId`；产品校验**按分支取对象**——insert 校调用方 productId、命中校 `existing.ProductId`（命中分支忽略入参 productId，故不能只校入参，否则失权后可借他产品取回需求）。先于返回/insert（见 7 节） |
+| adopt 跨权限域越权（IDOR） | 中 | 节点按树 `OwnerId == userId`；产品侧 = `ProductAgentUse` 权限闸 + `FindAccessibleProductAsync`（端点在 emergence 路由下，product 权限闸不自动生效，必须显式校验）；校验对象**按分支取**——insert 校入参 productId、命中校 `existing.ProductId`（命中分支忽略入参，只校入参则失权后可借他产品取回需求）。先于返回/insert（见 7 节） |
