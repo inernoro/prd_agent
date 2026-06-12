@@ -51,14 +51,129 @@ public class ProductAgentController : ControllerBase
         return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
     }
 
+    private async Task<ProductAgentSettings?> GetProductAgentSettingsAsync()
+    {
+        return await _db.ProductAgentSettings
+            .Find(x => x.Id == ProductAgentSettings.SingletonId)
+            .FirstOrDefaultAsync();
+    }
+
+    /// <summary>
+    /// 产品管理应用管理员。首次启用时由原 ProductAgentAdmin 权限持有人接管，
+    /// 一旦管理员名单落库，后续完全以名单为准。
+    /// </summary>
+    private async Task<bool> IsProductApplicationAdminAsync(string userId)
+    {
+        var settings = await GetProductAgentSettingsAsync();
+        return settings == null
+            ? HasPermission(AdminPermissionCatalog.ProductAgentAdmin)
+            : settings.AdminIds.Contains(userId);
+    }
+
+    private async Task<ProductAgentSettings?> EnsureProductAgentSettingsAsync(string userId)
+    {
+        var settings = await GetProductAgentSettingsAsync();
+        if (settings != null) return settings;
+        if (!HasPermission(AdminPermissionCatalog.ProductAgentAdmin)) return null;
+
+        settings = new ProductAgentSettings
+        {
+            AdminIds = new() { userId },
+            UpdatedBy = userId,
+        };
+        try
+        {
+            await _db.ProductAgentSettings.InsertOneAsync(settings);
+            return settings;
+        }
+        catch (MongoWriteException)
+        {
+            return await GetProductAgentSettingsAsync();
+        }
+    }
+
+    private async Task<IActionResult?> RequireProductApplicationAdminAsync()
+    {
+        return await IsProductApplicationAdminAsync(GetUserId())
+            ? null
+            : StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品管理应用管理员可执行此操作"));
+    }
+
     /// <summary>查可访问的产品（owner / member / 管理权限）。无权返回 null。</summary>
     private async Task<Product?> FindAccessibleProductAsync(string productId, string userId)
     {
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return null;
-        if (CanManage()) return product;
+        if (await CanManageAsync(userId)) return product;
         if (product.OwnerId == userId || product.MemberIds.Contains(userId)) return product;
         return null;
+    }
+
+    // ════════════════════════ 应用管理员 ════════════════════════
+
+    [HttpGet("settings/admins")]
+    public async Task<IActionResult> ListApplicationAdmins()
+    {
+        var userId = GetUserId();
+        var settings = await EnsureProductAgentSettingsAsync(userId);
+        var adminIds = settings?.AdminIds ?? new List<string>();
+        var users = adminIds.Count == 0
+            ? new List<User>()
+            : await _db.Users.Find(u => adminIds.Contains(u.UserId)).ToListAsync();
+        var nameById = users.ToDictionary(u => u.UserId, u => u.DisplayName);
+        var usernameById = users.ToDictionary(u => u.UserId, u => u.Username);
+        var items = adminIds.Select(id => new
+        {
+            userId = id,
+            displayName = nameById.GetValueOrDefault(id, id),
+            username = usernameById.GetValueOrDefault(id, string.Empty),
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items,
+            canManage = await IsProductApplicationAdminAsync(userId),
+        }));
+    }
+
+    [HttpPost("settings/admins")]
+    public async Task<IActionResult> AddApplicationAdmin([FromBody] ProductApplicationAdminRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (string.IsNullOrWhiteSpace(request.UserId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择管理员"));
+        var exists = await _db.Users.Find(u => u.UserId == request.UserId).AnyAsync();
+        if (!exists) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "用户不存在"));
+
+        var userId = GetUserId();
+        await EnsureProductAgentSettingsAsync(userId);
+        await _db.ProductAgentSettings.UpdateOneAsync(
+            x => x.Id == ProductAgentSettings.SingletonId,
+            Builders<ProductAgentSettings>.Update
+                .AddToSet(x => x.AdminIds, request.UserId.Trim())
+                .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                .Set(x => x.UpdatedBy, userId));
+        return await ListApplicationAdmins();
+    }
+
+    [HttpDelete("settings/admins/{adminUserId}")]
+    public async Task<IActionResult> RemoveApplicationAdmin(string adminUserId)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        var settings = await EnsureProductAgentSettingsAsync(GetUserId());
+        if (settings == null || !settings.AdminIds.Contains(adminUserId))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "管理员不存在"));
+        if (settings.AdminIds.Count <= 1)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少保留一位产品管理应用管理员"));
+
+        await _db.ProductAgentSettings.UpdateOneAsync(
+            x => x.Id == ProductAgentSettings.SingletonId,
+            Builders<ProductAgentSettings>.Update
+                .Pull(x => x.AdminIds, adminUserId)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                .Set(x => x.UpdatedBy, GetUserId()));
+        return Ok(ApiResponse<object>.Ok(new { removed = true }));
     }
 
     // ════════════════════════ 产品 Product ════════════════════════
@@ -106,7 +221,7 @@ public class ProductAgentController : ControllerBase
 
         var b = Builders<Product>.Filter;
         var conds = new List<FilterDefinition<Product>> { b.Eq(p => p.IsDeleted, false) };
-        if (!CanManage())
+        if (!await CanManageAsync(userId))
             conds.Add(b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
         if (!string.IsNullOrWhiteSpace(grade))
             conds.Add(b.Eq(p => p.Grade, grade));
@@ -164,7 +279,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        if (product.OwnerId != userId && !CanManage())
+        if (product.OwnerId != userId && !await CanManageAsync(userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品负责人或管理员可删除"));
 
         await _db.Products.UpdateOneAsync(p => p.Id == productId,
@@ -204,8 +319,8 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             members,
-            canManageMembers = CanManageProductMembers(product, userId),
-            canManageAdmins = CanManageProductAdmins(product, userId),
+            canManageMembers = await CanManageProductMembersAsync(product, userId),
+            canManageAdmins = await CanManageProductAdminsAsync(product, userId),
         }));
     }
 
@@ -216,7 +331,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        if (!CanManageProductMembers(product, userId))
+        if (!await CanManageProductMembersAsync(product, userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权管理该产品成员"));
 
         var toAdd = (request.UserIds ?? new()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
@@ -239,7 +354,9 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能移除产品负责人"));
 
         var isAdminTarget = product.AdminIds.Contains(memberUserId);
-        var allowed = isAdminTarget ? CanManageProductAdmins(product, userId) : CanManageProductMembers(product, userId);
+        var allowed = isAdminTarget
+            ? await CanManageProductAdminsAsync(product, userId)
+            : await CanManageProductMembersAsync(product, userId);
         if (!allowed)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权移除该成员"));
 
@@ -258,7 +375,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        if (!CanManageProductAdmins(product, userId))
+        if (!await CanManageProductAdminsAsync(product, userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅负责人或管理员可指派产品管理员"));
         if (memberUserId == product.OwnerId)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "负责人角色不可更改"));
@@ -423,7 +540,7 @@ public class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
-        if (item.CreatedBy != GetUserId() && !CanManage())
+        if (item.CreatedBy != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可更新该立项记录"));
         var submission = await _db.ReviewSubmissions.Find(x => x.Id == request.SubmissionId).FirstOrDefaultAsync();
         if (submission == null)
@@ -453,7 +570,7 @@ public class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
-        if (item.CreatedBy != GetUserId() && !CanManage())
+        if (item.CreatedBy != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可提交该立项决策"));
         if (item.ReviewPassed != true)
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "Agent 评审通过后才能提交立项决策"));
@@ -484,7 +601,7 @@ public class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
         if (item.Status != "owner_pending")
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前记录不在负责人审批状态"));
-        if (item.PrimaryOwnerId != GetUserId() && !CanManage())
+        if (item.PrimaryOwnerId != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品主负责人可审批"));
 
         var tCode = await GenerateWorkflowCodeAsync(item.ProductId, "T", item.VersionType);
@@ -578,7 +695,7 @@ public class ProductAgentController : ControllerBase
         var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
-        if (item.OwnerId != GetUserId() && !CanManage())
+        if (item.OwnerId != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可完成该上线记录"));
         if (string.IsNullOrWhiteSpace(request.AnnouncementUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上线公告地址不能为空"));
@@ -595,6 +712,8 @@ public class ProductAgentController : ControllerBase
     [HttpPost("products/{productId}/version-workflow/import")]
     public async Task<IActionResult> ImportVersionWorkflow(string productId, [FromBody] ImportVersionWorkflowRequest request)
     {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
         var userId = GetUserId();
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
@@ -779,8 +898,8 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        if (string.IsNullOrWhiteSpace(request.Title))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "功能名称不能为空"));
+        var validation = await ValidateFeatureRequestAsync(productId, request, requireAll: true);
+        if (validation != null) return validation;
         if (!string.IsNullOrWhiteSpace(request.Grade) && !ProductItemGrade.All.Contains(request.Grade))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的功能分级"));
 
@@ -794,13 +913,21 @@ public class ProductAgentController : ControllerBase
             FeatureNo = await GenerateNoAsync("FEA", _db.Features, "FeatureNo"),
             Title = request.Title.Trim(),
             Description = request.Description?.Trim(),
+            ModuleName = request.ModuleName!.Trim(),
+            FeatureType = request.FeatureType!,
+            MainRequirementId = request.MainRequirementId!,
+            PlannedVersionId = request.PlannedVersionId!,
+            OfficialReleaseId = request.OfficialReleaseId,
+            KeyRules = request.KeyRules!.Trim(),
+            AcceptanceCriteria = request.AcceptanceCriteria!.Trim(),
+            Remark = request.Remark?.Trim(),
             Grade = string.IsNullOrWhiteSpace(request.Grade) ? ProductItemGrade.P2 : request.Grade,
             ParentId = request.ParentId,
-            RequirementIds = request.RequirementIds ?? new(),
+            RequirementIds = MergeMainRequirement(request.MainRequirementId!, request.RequirementIds),
             TemplateId = request.TemplateId,
             WorkflowDefId = featWorkflowDefId,
             FormData = request.FormData ?? new(),
-            OwnerId = userId,
+            OwnerId = request.OwnerId!,
             AssigneeId = request.AssigneeId,
             StateEnteredAt = DateTime.UtcNow,
         };
@@ -818,21 +945,73 @@ public class ProductAgentController : ControllerBase
         var feature = await _db.Features.Find(f => f.Id == featureId && !f.IsDeleted).FirstOrDefaultAsync();
         if (feature == null || await FindAccessibleProductAsync(feature.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "功能不存在或无权访问"));
+        var validation = await ValidateFeatureRequestAsync(feature.ProductId, request, requireAll: true);
+        if (validation != null) return validation;
         if (!string.IsNullOrWhiteSpace(request.Grade) && !ProductItemGrade.All.Contains(request.Grade))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的功能分级"));
 
         var u = Builders<Feature>.Update.Set(f => f.UpdatedAt, DateTime.UtcNow);
         if (!string.IsNullOrWhiteSpace(request.Title)) u = u.Set(f => f.Title, request.Title.Trim());
         u = u.Set(f => f.Description, request.Description?.Trim());
+        u = u.Set(f => f.ModuleName, request.ModuleName!.Trim());
+        u = u.Set(f => f.FeatureType, request.FeatureType!);
+        u = u.Set(f => f.MainRequirementId, request.MainRequirementId!);
+        u = u.Set(f => f.PlannedVersionId, request.PlannedVersionId!);
+        u = u.Set(f => f.OfficialReleaseId, request.OfficialReleaseId);
+        u = u.Set(f => f.KeyRules, request.KeyRules!.Trim());
+        u = u.Set(f => f.AcceptanceCriteria, request.AcceptanceCriteria!.Trim());
+        u = u.Set(f => f.Remark, request.Remark?.Trim());
+        u = u.Set(f => f.OwnerId, request.OwnerId!);
         if (!string.IsNullOrWhiteSpace(request.Grade)) u = u.Set(f => f.Grade, request.Grade);
         if (request.ParentId != null) u = u.Set(f => f.ParentId, request.ParentId);
-        if (request.RequirementIds != null) u = u.Set(f => f.RequirementIds, request.RequirementIds);
+        u = u.Set(f => f.RequirementIds, MergeMainRequirement(request.MainRequirementId!, request.RequirementIds));
         if (request.AssigneeId != null) u = u.Set(f => f.AssigneeId, request.AssigneeId);
         if (request.FormData != null) u = u.Set(f => f.FormData, request.FormData);
         await _db.Features.UpdateOneAsync(f => f.Id == featureId, u);
         await RecordAssignChangeAsync(ProductEntityType.Feature, featureId, feature.ProductId, feature.AssigneeId, request.AssigneeId, feature.FeatureNo, feature.Title);
         var updated = await _db.Features.Find(f => f.Id == featureId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    private async Task<IActionResult?> ValidateFeatureRequestAsync(string productId, UpsertFeatureRequest request, bool requireAll)
+    {
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "功能名称不能为空"));
+        if (requireAll && string.IsNullOrWhiteSpace(request.Description))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "功能说明不能为空"));
+        if (requireAll && string.IsNullOrWhiteSpace(request.ModuleName))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所属功能模块不能为空"));
+        if (string.IsNullOrWhiteSpace(request.FeatureType) || !FeatureBusinessType.All.Contains(request.FeatureType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择有效的功能类型"));
+        if (string.IsNullOrWhiteSpace(request.MainRequirementId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择主需求"));
+        if (string.IsNullOrWhiteSpace(request.PlannedVersionId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择计划版本"));
+        if (string.IsNullOrWhiteSpace(request.OwnerId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择负责人"));
+        if (requireAll && string.IsNullOrWhiteSpace(request.KeyRules))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "关键规则不能为空"));
+        if (requireAll && string.IsNullOrWhiteSpace(request.AcceptanceCriteria))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "验收标准不能为空"));
+
+        if (!await _db.Requirements.Find(r => r.Id == request.MainRequirementId && r.ProductId == productId && !r.IsDeleted).AnyAsync())
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "主需求不属于当前产品或已删除"));
+        if (!await _db.ProductVersions.Find(v => v.Id == request.PlannedVersionId && v.ProductId == productId && !v.IsDeleted).AnyAsync())
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "计划版本不属于当前产品或已删除"));
+        if (!string.IsNullOrWhiteSpace(request.OfficialReleaseId)
+            && !await _db.ProductReleases.Find(r => r.Id == request.OfficialReleaseId && r.ProductId == productId && !r.IsDeleted).AnyAsync())
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "正式上线版本不属于当前产品或已删除"));
+        return null;
+    }
+
+    private static List<string> MergeMainRequirement(string mainRequirementId, List<string>? requirementIds)
+    {
+        var result = (requirementIds ?? new List<string>())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct()
+            .ToList();
+        if (!result.Contains(mainRequirementId)) result.Insert(0, mainRequirementId);
+        return result;
     }
 
     /// <summary>删除功能（软删除）</summary>
@@ -969,7 +1148,7 @@ public class ProductAgentController : ControllerBase
         var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
         if (customer == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
-        if (customer.OwnerId != GetUserId() && !CanManage())
+        if (customer.OwnerId != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅客户创建者或管理员可删除"));
         await _db.Customers.UpdateOneAsync(c => c.Id == customerId,
             Builders<Customer>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow));
@@ -1010,7 +1189,7 @@ public class ProductAgentController : ControllerBase
     [HttpPost("categories")]
     public async Task<IActionResult> UpsertCategory([FromBody] UpsertCategoryRequest request)
     {
-        if (!CanManage())
+        if (!await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "类型名称不能为空"));
@@ -1049,7 +1228,7 @@ public class ProductAgentController : ControllerBase
     [HttpDelete("categories/{categoryId}")]
     public async Task<IActionResult> DeleteCategory(string categoryId)
     {
-        if (!CanManage())
+        if (!await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         var cat = await _db.ProductCategories.Find(c => c.Id == categoryId && !c.IsDeleted).FirstOrDefaultAsync();
         if (cat == null)
@@ -1082,7 +1261,7 @@ public class ProductAgentController : ControllerBase
     [HttpPost("desc-templates")]
     public async Task<IActionResult> UpsertDescTemplate([FromBody] UpsertDescTemplateRequest request)
     {
-        if (!CanManage())
+        if (!await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "模板名称不能为空"));
@@ -1118,7 +1297,7 @@ public class ProductAgentController : ControllerBase
     [HttpDelete("desc-templates/{templateId}")]
     public async Task<IActionResult> DeleteDescTemplate(string templateId)
     {
-        if (!CanManage())
+        if (!await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         await _db.ProductDescTemplates.UpdateOneAsync(t => t.Id == templateId,
             Builders<ProductDescTemplate>.Update.Set(t => t.IsDeleted, true).Set(t => t.UpdatedAt, DateTime.UtcNow));
@@ -1144,7 +1323,7 @@ public class ProductAgentController : ControllerBase
     [HttpPost("form-templates")]
     public async Task<IActionResult> UpsertFormTemplate([FromBody] UpsertFormTemplateRequest request)
     {
-        if (!CanManage())
+        if (!await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "模板名称不能为空"));
@@ -1187,7 +1366,7 @@ public class ProductAgentController : ControllerBase
     [HttpDelete("form-templates/{templateId}")]
     public async Task<IActionResult> DeleteFormTemplate(string templateId)
     {
-        if (!CanManage())
+        if (!await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         await _db.ProductFormTemplates.UpdateOneAsync(t => t.Id == templateId,
             Builders<ProductFormTemplate>.Update.Set(t => t.IsDeleted, true).Set(t => t.UpdatedAt, DateTime.UtcNow));
@@ -1225,7 +1404,7 @@ public class ProductAgentController : ControllerBase
     [HttpPost("workflow-definitions")]
     public async Task<IActionResult> UpsertWorkflowDefinition([FromBody] UpsertWorkflowDefinitionRequest request)
     {
-        if (!CanManage())
+        if (!await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "流程名称不能为空"));
@@ -1269,7 +1448,7 @@ public class ProductAgentController : ControllerBase
     [HttpDelete("workflow-definitions/{definitionId}")]
     public async Task<IActionResult> DeleteWorkflowDefinition(string definitionId)
     {
-        if (!CanManage())
+        if (!await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         await _db.ProductWorkflowDefinitions.UpdateOneAsync(w => w.Id == definitionId,
             Builders<ProductWorkflowDefinition>.Update.Set(w => w.IsDeleted, true).Set(w => w.UpdatedAt, DateTime.UtcNow));
@@ -1722,7 +1901,7 @@ public class ProductAgentController : ControllerBase
             b.Eq(d => d.IsDeleted, false),
             b.Eq(d => d.TracedProductId, (string?)null),
         };
-        if (!CanManage())
+        if (!await CanManageAsync(userId))
             conds.Add(b.Or(b.Eq(d => d.ReporterId, userId), b.Eq(d => d.AssigneeId, userId)));
         if (!string.IsNullOrWhiteSpace(keyword))
             conds.Add(b.Or(
@@ -2756,6 +2935,8 @@ public class ProductAgentController : ControllerBase
     [HttpPost("products/{productId}/requirements/import")]
     public async Task<IActionResult> ImportRequirements(string productId, [FromBody] ImportRequirementsRequest request)
     {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
         var userId = GetUserId();
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
@@ -2844,6 +3025,186 @@ public class ProductAgentController : ControllerBase
         await RecalcProductCountsAsync(productId);
         return Ok(ApiResponse<object>.Ok(new { created, updated }));
     }
+
+    [HttpPost("products/{productId}/features/import")]
+    public async Task<IActionResult> ImportFeatures(string productId, [FromBody] ImportSimpleItemsRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (!await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).AnyAsync())
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        var rows = ValidateSimpleImportRows(request);
+        if (rows.Result != null) return rows.Result;
+
+        var userId = GetUserId();
+        var (_, workflowId) = await ResolveDefaultsAsync(ProductEntityType.Feature, productId);
+        var initialState = await ResolveInitialStateAsync(workflowId);
+        var created = 0;
+        var updated = 0;
+        foreach (var row in rows.Rows!)
+        {
+            var sourceSystem = NormalizeImportSource(row.SourceSystem);
+            var externalId = row.ExternalId?.Trim();
+            var existing = string.IsNullOrWhiteSpace(externalId)
+                ? null
+                : await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted &&
+                    f.SourceSystem == sourceSystem && f.ExternalId == externalId).FirstOrDefaultAsync();
+            if (existing != null)
+            {
+                await _db.Features.UpdateOneAsync(f => f.Id == existing.Id,
+                    Builders<Feature>.Update
+                        .Set(f => f.Title, row.Title!.Trim())
+                        .Set(f => f.Description, row.Description?.Trim())
+                        .Set(f => f.Grade, NormalizeImportGrade(row.Grade))
+                        .Set(f => f.UpdatedAt, DateTime.UtcNow));
+                updated++;
+                continue;
+            }
+            await _db.Features.InsertOneAsync(new Feature
+            {
+                ProductId = productId,
+                FeatureNo = await GenerateNoAsync("FEA", _db.Features, "FeatureNo"),
+                Title = row.Title!.Trim(),
+                Description = row.Description?.Trim(),
+                Grade = NormalizeImportGrade(row.Grade),
+                CurrentState = string.IsNullOrWhiteSpace(row.Status) ? initialState : row.Status.Trim(),
+                WorkflowDefId = workflowId,
+                StateEnteredAt = DateTime.UtcNow,
+                OwnerId = userId,
+                SourceSystem = sourceSystem,
+                ExternalId = externalId,
+            });
+            created++;
+        }
+        await RecalcProductCountsAsync(productId);
+        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+    }
+
+    [HttpPost("products/{productId}/versions/import")]
+    public async Task<IActionResult> ImportVersions(string productId, [FromBody] ImportSimpleItemsRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (!await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).AnyAsync())
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        var rows = ValidateSimpleImportRows(request);
+        if (rows.Result != null) return rows.Result;
+
+        var userId = GetUserId();
+        var created = 0;
+        var updated = 0;
+        foreach (var row in rows.Rows!)
+        {
+            var sourceSystem = NormalizeImportSource(row.SourceSystem);
+            var externalId = row.ExternalId?.Trim();
+            var lifecycle = ProductVersionLifecycle.All.Contains(row.Status ?? "")
+                ? row.Status!
+                : ProductVersionLifecycle.Planning;
+            var existing = string.IsNullOrWhiteSpace(externalId)
+                ? null
+                : await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted &&
+                    v.SourceSystem == sourceSystem && v.ExternalId == externalId).FirstOrDefaultAsync();
+            if (existing != null)
+            {
+                await _db.ProductVersions.UpdateOneAsync(v => v.Id == existing.Id,
+                    Builders<ProductVersion>.Update
+                        .Set(v => v.VersionName, row.Title!.Trim())
+                        .Set(v => v.Description, row.Description?.Trim())
+                        .Set(v => v.Lifecycle, lifecycle)
+                        .Set(v => v.PlannedReleaseAt, ParseImportDate(row.PlannedAt))
+                        .Set(v => v.ReleasedAt, ParseImportDate(row.CompletedAt))
+                        .Set(v => v.UpdatedAt, DateTime.UtcNow));
+                updated++;
+                continue;
+            }
+            await _db.ProductVersions.InsertOneAsync(new ProductVersion
+            {
+                ProductId = productId,
+                VersionName = row.Title!.Trim(),
+                Description = row.Description?.Trim(),
+                Lifecycle = lifecycle,
+                IsMajor = string.Equals(row.Grade, "major", StringComparison.OrdinalIgnoreCase),
+                PlannedReleaseAt = ParseImportDate(row.PlannedAt),
+                ReleasedAt = ParseImportDate(row.CompletedAt),
+                OwnerId = userId,
+                SourceSystem = sourceSystem,
+                ExternalId = externalId,
+            });
+            created++;
+        }
+        await RecalcProductCountsAsync(productId);
+        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+    }
+
+    [HttpPost("products/{productId}/defects/import")]
+    public async Task<IActionResult> ImportDefects(string productId, [FromBody] ImportSimpleItemsRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (!await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).AnyAsync())
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        var rows = ValidateSimpleImportRows(request);
+        if (rows.Result != null) return rows.Result;
+
+        var userId = GetUserId();
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var created = 0;
+        var updated = 0;
+        foreach (var row in rows.Rows!)
+        {
+            var sourceSystem = NormalizeImportSource(row.SourceSystem);
+            var externalId = row.ExternalId?.Trim();
+            var status = DefectStatus.All.Contains(row.Status ?? "") ? row.Status! : DefectStatus.Submitted;
+            var existing = string.IsNullOrWhiteSpace(externalId)
+                ? null
+                : await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
+                    d.ProductSourceSystem == sourceSystem && d.ProductExternalId == externalId).FirstOrDefaultAsync();
+            if (existing != null)
+            {
+                await _db.DefectReports.UpdateOneAsync(d => d.Id == existing.Id,
+                    Builders<DefectReport>.Update
+                        .Set(d => d.Title, row.Title!.Trim())
+                        .Set(d => d.RawContent, row.Description?.Trim() ?? string.Empty)
+                        .Set(d => d.Grade, NormalizeImportGrade(row.Grade))
+                        .Set(d => d.Status, status)
+                        .Set(d => d.UpdatedAt, DateTime.UtcNow));
+                updated++;
+                continue;
+            }
+            await _db.DefectReports.InsertOneAsync(new DefectReport
+            {
+                DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
+                Title = row.Title!.Trim(),
+                RawContent = row.Description?.Trim() ?? string.Empty,
+                Grade = NormalizeImportGrade(row.Grade),
+                Status = status,
+                ReporterId = userId,
+                ReporterName = user?.DisplayName,
+                TracedProductId = productId,
+                ProductSourceSystem = sourceSystem,
+                ProductExternalId = externalId,
+            });
+            created++;
+        }
+        await RecalcDefectCountAsync(productId);
+        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+    }
+
+    private (List<ImportSimpleItemRow>? Rows, IActionResult? Result) ValidateSimpleImportRows(ImportSimpleItemsRequest request)
+    {
+        var rows = (request.Rows ?? new()).Where(r => !string.IsNullOrWhiteSpace(r.Title)).ToList();
+        if (rows.Count == 0)
+            return (null, BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有可导入的有效行（标题不能为空）")));
+        if (rows.Count > 500)
+            return (null, BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单次最多导入 500 条")));
+        return (rows, null);
+    }
+
+    private static string NormalizeImportSource(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "csv" : value.Trim().ToLowerInvariant();
+
+    private static string NormalizeImportGrade(string? value)
+        => ProductItemGrade.All.Contains(value ?? "") ? value! : ProductItemGrade.P2;
 
     private static DateTime? ParseImportDate(string? value)
     {
@@ -3126,24 +3487,23 @@ public class ProductAgentController : ControllerBase
 
     // ════════════════════════ 管理层总览（跨产品聚合，P1）════════════════════════
 
-    /// <summary>当前用户是否管理层（看全部产品 + 全局设置）。</summary>
-    private bool IsProductAdmin() => HasPermission(AdminPermissionCatalog.ProductAgentAdmin);
-
-    /// <summary>能否管理/查看全部产品：管理员(ProductAgentAdmin)是管理(ProductAgentManage)的超集；Super 已含在 HasPermission 内。</summary>
-    private bool CanManage() => IsProductAdmin() || HasPermission(AdminPermissionCatalog.ProductAgentManage);
+    /// <summary>能否管理/查看全部产品：应用管理员或具备原产品管理权限。</summary>
+    private async Task<bool> CanManageAsync(string userId)
+        => await IsProductApplicationAdminAsync(userId)
+            || HasPermission(AdminPermissionCatalog.ProductAgentManage);
 
     /// <summary>能否管理本产品成员（增删普通成员）：全局管理 | 产品负责人 | 产品管理员。</summary>
-    private bool CanManageProductMembers(Product p, string uid)
-        => CanManage() || p.OwnerId == uid || p.AdminIds.Contains(uid);
+    private async Task<bool> CanManageProductMembersAsync(Product p, string uid)
+        => await CanManageAsync(uid) || p.OwnerId == uid || p.AdminIds.Contains(uid);
 
     /// <summary>能否指派/撤销产品管理员：全局管理 | 产品负责人（产品管理员不可指派同级）。</summary>
-    private bool CanManageProductAdmins(Product p, string uid)
-        => CanManage() || p.OwnerId == uid;
+    private async Task<bool> CanManageProductAdminsAsync(Product p, string uid)
+        => await CanManageAsync(uid) || p.OwnerId == uid;
 
     /// <summary>可访问的产品 Id 集合；返回 null 表示"全部"（管理层/管理权限）。</summary>
     private async Task<HashSet<string>?> GetAccessibleProductIdsAsync(string userId)
     {
-        if (CanManage()) return null;
+        if (await CanManageAsync(userId)) return null;
         var b = Builders<Product>.Filter;
         var filter = b.And(b.Eq(p => p.IsDeleted, false),
             b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
@@ -3181,7 +3541,7 @@ public class ProductAgentController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            isAdmin = IsProductAdmin(),
+            isAdmin = await IsProductApplicationAdminAsync(userId),
             counts = new
             {
                 products = products.Count,
@@ -3214,6 +3574,38 @@ public class ProductAgentController : ControllerBase
             .Where(r => string.IsNullOrWhiteSpace(keyword) || (r.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || r.RequirementNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(r => r.UpdatedAt)
             .Select(r => new { r.Id, r.ProductId, productName = names.GetValueOrDefault(r.ProductId, ""), r.RequirementNo, r.Title, r.Grade, r.CurrentState, versionCount = r.VersionIds.Count, customerCount = r.CustomerIds.Count, r.AssigneeId, assigneeName = r.AssigneeId == null ? null : userNames.GetValueOrDefault(r.AssigneeId, ""), r.UpdatedAt })
+            .Take(1000).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    /// <summary>跨产品版本列表（含所属产品名）。</summary>
+    [HttpGet("overview/versions")]
+    public async Task<IActionResult> OverviewVersions([FromQuery] string? lifecycle = null, [FromQuery] string? keyword = null)
+    {
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var items = await FindInScopeAsync<ProductVersion>(scope, v => v.ProductId, v => v.IsDeleted);
+        var names = await ProductNamesAsync(items.Select(v => v.ProductId));
+        var rows = items
+            .Where(v => string.IsNullOrWhiteSpace(lifecycle) || v.Lifecycle == lifecycle)
+            .Where(v => string.IsNullOrWhiteSpace(keyword) ||
+                v.VersionName.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                (v.ExternalId?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false))
+            .OrderByDescending(v => v.UpdatedAt)
+            .Select(v => new
+            {
+                v.Id,
+                v.ProductId,
+                productName = names.GetValueOrDefault(v.ProductId, ""),
+                v.VersionName,
+                v.Lifecycle,
+                v.IsMajor,
+                requirementCount = v.RequirementIds.Count,
+                featureCount = v.FeatureVersionIds.Count,
+                v.ExternalId,
+                v.PlannedReleaseAt,
+                v.ReleasedAt,
+                v.UpdatedAt,
+            })
             .Take(1000).ToList();
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
     }
@@ -3733,9 +4125,18 @@ public class UpsertFeatureRequest
 {
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string? ModuleName { get; set; }
+    public string? FeatureType { get; set; }
+    public string? MainRequirementId { get; set; }
+    public string? PlannedVersionId { get; set; }
+    public string? OfficialReleaseId { get; set; }
+    public string? KeyRules { get; set; }
+    public string? AcceptanceCriteria { get; set; }
+    public string? Remark { get; set; }
     public string? Grade { get; set; }
     public string? ParentId { get; set; }
     public List<string>? RequirementIds { get; set; }
+    public string? OwnerId { get; set; }
     public string? AssigneeId { get; set; }
     public string? TemplateId { get; set; }
     public string? WorkflowDefId { get; set; }
@@ -3845,6 +4246,28 @@ public class ImportRequirementComment
     public string? Title { get; set; }
     public string? Content { get; set; }
     public string? CreatedAt { get; set; }
+}
+
+public class ImportSimpleItemsRequest
+{
+    public List<ImportSimpleItemRow> Rows { get; set; } = new();
+}
+
+public class ImportSimpleItemRow
+{
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public string? Grade { get; set; }
+    public string? Status { get; set; }
+    public string? SourceSystem { get; set; }
+    public string? ExternalId { get; set; }
+    public string? PlannedAt { get; set; }
+    public string? CompletedAt { get; set; }
+}
+
+public class ProductApplicationAdminRequest
+{
+    public string UserId { get; set; } = string.Empty;
 }
 
 public class BatchRequest
