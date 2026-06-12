@@ -40,6 +40,13 @@ export interface StreamingTextProps {
    * 设计来源: EmergenceNode 修复"全文 span 爆炸把父节点挤飞" 这条 bug (2026-05-13)。
    */
   maxTailChars?: number;
+  /**
+   * 只对尾部 N 个字符做词级动画, 前缀作为稳定纯文本渲染。
+   * 和 maxTailChars 不同: 它不截断内容, 只减少长文本流式输出时的 span 数量。
+   */
+  animateTailChars?: number;
+  /** 块级渲染模式, 用于聊天气泡等需要明确换行/收缩边界的长文本容器 */
+  block?: boolean;
   /** 外层 className */
   className?: string;
 }
@@ -122,6 +129,17 @@ function renderCursor(content: 'map' | 'bar' | 'dot' | ReactNode): ReactNode {
   );
 }
 
+function renderPlainText(text: string): ReactNode {
+  if (!text) return null;
+  const lines = text.split('\n');
+  return lines.map((line, index) => (
+    <Fragment key={`plain-${index}`}>
+      {index > 0 ? <br /> : null}
+      {line}
+    </Fragment>
+  ));
+}
+
 export const StreamingText = memo(function StreamingText({
   text,
   streaming = false,
@@ -131,6 +149,8 @@ export const StreamingText = memo(function StreamingText({
   cursor,
   cursorContent = 'map',
   maxTailChars,
+  animateTailChars,
+  block = false,
   className,
 }: StreamingTextProps) {
   const showFinalMarkdown = markdown && !streaming && !!renderMarkdown;
@@ -139,18 +159,25 @@ export const StreamingText = memo(function StreamingText({
   // - 不限制时: tokenize 全文, offset 从 0 起
   // - 限制时: 只 tokenize 尾部 maxTailChars 个字符, 但 token offset 从 text.length - tail.length 起
   //   这样滑窗时 React 用绝对 offset 作 key, 已 mount 的 span 不会被复用造成"内容互换闪烁"
-  const tokens = useMemo(() => {
-    if (showFinalMarkdown) return [];
+  const { staticPrefix, tokens } = useMemo(() => {
+    if (showFinalMarkdown) return { staticPrefix: '', tokens: [] };
     const full = text || '';
     if (!maxTailChars || full.length <= maxTailChars) {
-      return tokenize(full, 0);
+      if (animateTailChars && animateTailChars > 0 && full.length > animateTailChars) {
+        const base = full.length - animateTailChars;
+        return {
+          staticPrefix: full.slice(0, base),
+          tokens: tokenize(full.slice(base), base),
+        };
+      }
+      return { staticPrefix: '', tokens: tokenize(full, 0) };
     }
     const base = full.length - maxTailChars;
     const tail = '…' + full.slice(base);
     // 首字符 '…' 占 1 字符, 后续真实字符 offset 从 base 开始
     // 用 base - 1 让 '…' 拿到稳定的负数 key, 后续 token offset 就是 absolute
-    return tokenize(tail, base - 1);
-  }, [text, showFinalMarkdown, maxTailChars]);
+    return { staticPrefix: '', tokens: tokenize(tail, base - 1) };
+  }, [text, showFinalMarkdown, maxTailChars, animateTailChars]);
 
   const showCursor = cursor ?? streaming;
 
@@ -163,7 +190,10 @@ export const StreamingText = memo(function StreamingText({
   }
 
   return (
-    <span className={`streaming-text streaming-text--${mode} ${className ?? ''}`.trim()}>
+    <span
+      className={`streaming-text streaming-text--${mode} ${block ? 'streaming-text--block' : ''} ${className ?? ''}`.trim()}
+    >
+      {renderPlainText(staticPrefix)}
       {tokens.map((tok) => {
         if (tok.kind === 'br') return <br key={`br-${tok.offset}`} />;
         if (tok.kind === 'ws') return <Fragment key={`ws-${tok.offset}`}>{tok.value}</Fragment>;

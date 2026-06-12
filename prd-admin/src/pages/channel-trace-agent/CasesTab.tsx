@@ -411,31 +411,26 @@ export function CasesTab() {
           {messages.map((m, i) =>
             m.role === 'user' ? (
               <div key={i} className="flex justify-end">
-                <div className="max-w-[80%] rounded-xl bg-emerald-500/15 border border-emerald-500/25 px-3.5 py-2 text-sm text-white/90 whitespace-pre-wrap">
+                <div className="min-w-0 max-w-[80%] rounded-xl bg-emerald-500/15 border border-emerald-500/25 px-3.5 py-2 text-sm text-white/90 whitespace-pre-wrap break-words">
                   {m.content}
                 </div>
               </div>
             ) : (
-              <div key={i} className="space-y-1.5">
+              <div key={i} className="min-w-0 space-y-1.5">
                 <MsgMeta related={m.relatedCases} hits={m.codeHits} />
-                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 break-words">
-                  <MarkdownContent content={m.content} variant="reading" />
+                <div className="min-w-0 max-w-full rounded-xl bg-white/3 border border-white/10 px-4 py-3 text-white/90 break-words">
+                  <AssistantAnswer content={m.content} />
                 </div>
               </div>
             ),
           )}
 
           {isStreaming && (
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <MsgMeta related={curRelated} hits={curHits} />
               {streamingText ? (
-                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 break-words">
-                  <StreamingText
-                    text={streamingText}
-                    streaming={isStreaming}
-                    markdown
-                    renderMarkdown={(c) => <MarkdownContent content={c} variant="reading" />}
-                  />
+                <div className="min-w-0 max-w-full rounded-xl bg-white/3 border border-white/10 px-4 py-3 text-white/90 break-words">
+                  <AssistantAnswer content={streamingText} streaming />
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-sm text-white/50 py-2">
@@ -639,6 +634,21 @@ export function CasesTab() {
         />
       )}
     </div>
+  );
+}
+
+function AssistantAnswer({ content, streaming = false }: { content: string; streaming?: boolean }) {
+  return (
+    <StreamingText
+      text={content}
+      streaming={streaming}
+      mode="blur"
+      markdown
+      block
+      animateTailChars={1800}
+      className="text-[14.5px] leading-[1.85]"
+      renderMarkdown={(c) => <MarkdownContent content={c} variant="reading" />}
+    />
   );
 }
 
