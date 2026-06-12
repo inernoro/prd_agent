@@ -17,7 +17,7 @@ import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
 import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy } from '../types.js';
-import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
+import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { combinedOutput } from '../types.js';
@@ -4392,6 +4392,132 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return 'unknown';
   }
 
+  type ResourceWorkbenchRuntimeKey = 'mysql' | 'postgres' | 'sqlserver' | 'mongodb' | 'redis' | 'rabbitmq' | 'unknown';
+
+  interface ResourceWorkbenchCapability {
+    runtimeKey: ResourceWorkbenchRuntimeKey;
+    runtime: 'sql' | 'document' | 'keyValue' | 'queue' | 'unsupported';
+    runner: 'sql' | 'mongo' | 'redis-readonly' | 'planned';
+    treeLabel: string;
+    consoleLabel: string;
+    commandLanguage: 'sql' | 'mongo' | 'redis' | 'rabbitmq' | 'text';
+    resultModes: Array<'table' | 'json' | 'output'>;
+    defaultCommand: string;
+    ready: boolean;
+    writeSupported: boolean;
+    customPanels: string[];
+    note: string;
+  }
+
+  function resourceWorkbenchRuntimeKey(runtime: string): ResourceWorkbenchRuntimeKey {
+    const lower = runtime.toLowerCase();
+    if (lower.includes('mysql') || lower.includes('mariadb')) return 'mysql';
+    if (lower.includes('postgres')) return 'postgres';
+    if (lower.includes('sql server') || lower.includes('mssql') || lower.includes('sqlserver')) return 'sqlserver';
+    if (lower.includes('mongo')) return 'mongodb';
+    if (lower.includes('redis')) return 'redis';
+    if (lower.includes('rabbit')) return 'rabbitmq';
+    return 'unknown';
+  }
+
+  function resourceWorkbenchCapability(runtime: string): ResourceWorkbenchCapability {
+    const runtimeKey = resourceWorkbenchRuntimeKey(runtime);
+    if (runtimeKey === 'mysql' || runtimeKey === 'postgres') {
+      return {
+        runtimeKey,
+        runtime: 'sql',
+        runner: 'sql',
+        treeLabel: '数据库 / 表',
+        consoleLabel: 'SQL Console',
+        commandLanguage: 'sql',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'SELECT * FROM <table> LIMIT 50',
+        ready: true,
+        writeSupported: true,
+        customPanels: ['schema', 'ddl', 'backup'],
+        note: 'SQL 系资源共用统一工作台协议，DDL/DML 由 data-write 权限和审计保护。',
+      };
+    }
+    if (runtimeKey === 'sqlserver') {
+      return {
+        runtimeKey,
+        runtime: 'sql',
+        runner: 'planned',
+        treeLabel: '数据库 / schema / 表',
+        consoleLabel: 'T-SQL Console',
+        commandLanguage: 'sql',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'SELECT TOP 50 * FROM <table>;',
+        ready: false,
+        writeSupported: false,
+        customPanels: ['schema', 'ddl', 'backup'],
+        note: 'SQL Server for Linux 已进入工作台协议，执行器需要 sqlcmd/mssql-tools 后接入。',
+      };
+    }
+    if (runtimeKey === 'mongodb') {
+      return {
+        runtimeKey,
+        runtime: 'document',
+        runner: 'mongo',
+        treeLabel: '数据库 / collection',
+        consoleLabel: 'MongoDB Console',
+        commandLanguage: 'mongo',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'db.getCollection("<collection>").find({}).limit(50);',
+        ready: true,
+        writeSupported: true,
+        customPanels: ['collection', 'index', 'document'],
+        note: '文档型资源共用统一工作台协议，collection 选择只生成默认命令。',
+      };
+    }
+    if (runtimeKey === 'redis') {
+      return {
+        runtimeKey,
+        runtime: 'keyValue',
+        runner: 'redis-readonly',
+        treeLabel: 'DB / key',
+        consoleLabel: 'Redis Console',
+        commandLanguage: 'redis',
+        resultModes: ['json', 'output'],
+        defaultCommand: 'GET <key>',
+        ready: true,
+        writeSupported: false,
+        customPanels: ['string', 'hash', 'list', 'set', 'zset', 'stream'],
+        note: 'Redis 先保留只读 key 浏览，后续在同一协议下补命令执行和结构化编辑。',
+      };
+    }
+    if (runtimeKey === 'rabbitmq') {
+      return {
+        runtimeKey,
+        runtime: 'queue',
+        runner: 'planned',
+        treeLabel: 'vhost / exchange / queue / binding',
+        consoleLabel: 'RabbitMQ Command',
+        commandLanguage: 'rabbitmq',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'list queues',
+        ready: false,
+        writeSupported: false,
+        customPanels: ['queue', 'exchange', 'binding', 'message'],
+        note: 'RabbitMQ 已进入工作台协议，后续接入 list / peek / publish / purge 等动作命令。',
+      };
+    }
+    return {
+      runtimeKey,
+      runtime: 'unsupported',
+      runner: 'planned',
+      treeLabel: '资源树',
+      consoleLabel: 'Command',
+      commandLanguage: 'text',
+      resultModes: ['json', 'output'],
+      defaultCommand: '',
+      ready: false,
+      writeSupported: false,
+      customPanels: [],
+      note: '该资源尚未声明数据工作台执行器。',
+    };
+  }
+
   function sqlIdent(name: string): string {
     return `\`${name.replace(/`/g, '``')}\``;
   }
@@ -4456,12 +4582,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
     rowCount: number;
   }
 
+  interface SqlTableRef {
+    schema?: string;
+    table: string;
+  }
+
   type SqlDataRuntime = 'mysql' | 'postgres';
 
-  function mysqlRootPassword(service: InfraService): string {
-    return service.env?.MYSQL_ROOT_PASSWORD
-      || service.env?.MARIADB_ROOT_PASSWORD
-      || service.env?.MYSQL_PASSWORD
+  function resolvedInfraEnv(service: InfraService, branch?: BranchEntry): Record<string, string> {
+    const projectId = service.projectId || branch?.projectId || 'default';
+    const vars = branch ? getMergedEnv(projectId, branch.id) : stateService.getCustomEnv(projectId);
+    return resolveEnvTemplates(service.env || {}, vars);
+  }
+
+  function resolvedServiceDbName(service: InfraService): string {
+    const dbName = String(service.dbName || '').trim();
+    return dbName.includes('${') ? '' : dbName;
+  }
+
+  function mysqlRootPassword(service: InfraService, branch?: BranchEntry): string {
+    const env = resolvedInfraEnv(service, branch);
+    return env.MYSQL_ROOT_PASSWORD
+      || env.MARIADB_ROOT_PASSWORD
+      || env.MYSQL_PASSWORD
       || '';
   }
 
@@ -4479,14 +4622,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function mysqlClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     const database = mysqlDatabaseForBranch(service, branch);
     const branchUser = branchEnv.MYSQL_USER || '';
     const branchPassword = branchEnv.MYSQL_PASSWORD || '';
     if (branchUser && branchPassword) {
       return { user: branchUser, password: branchPassword, database, secrets: [branchPassword] };
     }
-    const rootPassword = mysqlRootPassword(service);
-    return { user: 'root', password: rootPassword, database, secrets: [rootPassword] };
+    const rootPassword = mysqlRootPassword(service, branch);
+    const user = env.MYSQL_USER || env.MARIADB_USER || 'root';
+    const password = env.MYSQL_USER || env.MARIADB_USER
+      ? (env.MYSQL_PASSWORD || env.MARIADB_PASSWORD || rootPassword)
+      : rootPassword;
+    return { user, password, database, secrets: [password] };
   }
 
   function parseDbTsv(stdout: string): DbDataQueryResult {
@@ -4553,11 +4701,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function postgresDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.POSTGRES_DB
-        || service.dbName
-        || service.env?.POSTGRES_DB
-        || service.env?.POSTGRES_USER
+        || env.POSTGRES_DB
+        || resolvedServiceDbName(service)
+        || env.POSTGRES_USER
         || 'postgres',
     )
       .replace(/[^a-zA-Z0-9_]/g, '_')
@@ -4566,8 +4715,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function postgresClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
-    const user = branchEnv.POSTGRES_USER || service.env?.POSTGRES_USER || 'postgres';
-    const password = branchEnv.POSTGRES_PASSWORD || service.env?.POSTGRES_PASSWORD || '';
+    const env = resolvedInfraEnv(service, branch);
+    const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
+    const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
     return { user, password, database: postgresDatabaseForBranch(service, branch), secrets: [password] };
   }
 
@@ -4595,6 +4745,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
       : runMysqlDataQuery(service, branch, sql, timeoutMs);
   }
 
+  async function runSqlDataInitScript(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string): Promise<{ exitCode: number; output: string; error: string | null; truncated: boolean }> {
+    const trimmed = sql.trim();
+    if (!trimmed) throw new Error('初始化 SQL 不能为空');
+    if (trimmed.length > 100_000) throw new Error('初始化 SQL 过长（上限 100KB）');
+    const database = sqlDataDatabase(runtime, service, branch);
+    if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
+      throw new Error(`数据库名不合法: ${database || '(empty)'}`);
+    }
+    const command = runtime === 'postgres'
+      ? (() => {
+        const creds = postgresClientCredentials(service, branch);
+        return {
+          command: `printf %s ${shq(trimmed)} | docker exec -i -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -v ON_ERROR_STOP=1 -P pager=off`,
+          secrets: creds.secrets,
+        };
+      })()
+      : (() => {
+        const creds = mysqlClientCredentials(service, branch);
+        return {
+          command: `printf %s ${shq(trimmed)} | docker exec -i ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --default-character-set=utf8mb4 ${shq(creds.database)}`,
+          secrets: creds.secrets,
+        };
+      })();
+    const result = await shell.exec(command.command, { timeout: 120_000 });
+    const rawOutput = result.stdout || '';
+    const rawError = result.stderr || '';
+    const output = maskTextSecrets(rawOutput.slice(0, 256 * 1024), command.secrets);
+    const error = maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets);
+    return {
+      exitCode: result.exitCode,
+      output,
+      error: result.exitCode === 0 ? null : (error || output || '初始化 SQL 执行失败'),
+      truncated: rawOutput.length > 256 * 1024 || rawError.length > 16 * 1024,
+    };
+  }
+
   function sqlDataDatabase(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry): string {
     return runtime === 'postgres'
       ? postgresDatabaseForBranch(service, branch)
@@ -4609,17 +4795,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return value;
   }
 
+  function sqlSchemaFromRequest(input: unknown): string | undefined {
+    const value = String(input || '').trim();
+    if (!value) return undefined;
+    if (!/^[a-zA-Z0-9_$]+$/.test(value)) {
+      throw new Error('schema 名不合法');
+    }
+    return value;
+  }
+
+  function sqlTableRefFromRequest(tableInput: unknown, schemaInput: unknown): SqlTableRef {
+    return {
+      schema: sqlSchemaFromRequest(schemaInput),
+      table: tableNameFromRequest(tableInput),
+    };
+  }
+
+  function sqlTableIdent(runtime: SqlDataRuntime, ref: SqlTableRef): string {
+    if (runtime === 'postgres') {
+      return ref.schema ? `${pgIdent(ref.schema)}.${pgIdent(ref.table)}` : pgIdent(ref.table);
+    }
+    return sqlIdent(ref.table);
+  }
+
   function redisPassword(service: InfraService): string {
-    return service.env?.REDIS_PASSWORD || service.env?.REDIS_PASS || service.env?.REDISCLI_AUTH || '';
+    const env = resolvedInfraEnv(service);
+    return env.REDIS_PASSWORD || env.REDIS_PASS || env.REDISCLI_AUTH || '';
   }
 
   function mongoDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MONGO_INITDB_DATABASE
         || branchEnv.MONGODB_DATABASE
         || service.dbName
-        || service.env?.MONGO_INITDB_DATABASE
+        || env.MONGO_INITDB_DATABASE
         || 'app',
     )
       .replace(/[^a-zA-Z0-9_-]/g, '_')
@@ -4634,20 +4845,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return value;
   }
 
+  function chooseMongoCurrentDatabase(configuredDatabase: string, databases: unknown[]): string {
+    const validDatabases = databases
+      .map((item) => (item && typeof item === 'object' && 'name' in item ? String((item as { name?: unknown }).name || '') : ''))
+      .filter((name) => /^[a-zA-Z0-9_-]{1,63}$/.test(name));
+    if (validDatabases.includes(configuredDatabase)) return configuredDatabase;
+    const businessDatabase = validDatabases.find((name) => !['admin', 'config', 'local'].includes(name));
+    return businessDatabase || validDatabases[0] || configuredDatabase;
+  }
+
   function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
     const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
       || branchUser
-      || service.env?.MONGO_INITDB_ROOT_USERNAME
-      || service.env?.MONGO_USERNAME
-      || service.env?.MONGODB_USERNAME
+      || env.MONGO_INITDB_ROOT_USERNAME
+      || env.MONGO_USERNAME
+      || env.MONGODB_USERNAME
       || '';
     const password = branchEnv.MONGO_INITDB_ROOT_PASSWORD
       || branchEnv.MONGODB_PASSWORD
-      || service.env?.MONGO_INITDB_ROOT_PASSWORD
-      || service.env?.MONGO_PASSWORD
-      || service.env?.MONGODB_PASSWORD
+      || env.MONGO_INITDB_ROOT_PASSWORD
+      || env.MONGO_PASSWORD
+      || env.MONGODB_PASSWORD
       || '';
     const database = databaseOverride || mongoDatabaseForBranch(service, branch);
     const authSourceDb = user
@@ -4706,6 +4927,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const text = JSON.stringify(value ?? {});
     if (text.length > 20_000) throw new Error('MongoDB 查询 JSON 过长（上限 20KB）');
     return text;
+  }
+
+  function normalizeMongoFindCommand(commandInput: unknown): { collection: string; script: string } {
+    const command = String(commandInput || '').trim();
+    if (!command) throw new Error('MongoDB 命令不能为空');
+    if (command.length > 20_000) throw new Error('MongoDB 命令过长（上限 20KB）');
+    const withoutTrailing = command.replace(/;+$/g, '').trim();
+    if (withoutTrailing.includes(';')) {
+      throw new Error('MongoDB Console 一次只允许执行一条命令');
+    }
+    if (/\b(insert|insertOne|insertMany|update|updateOne|updateMany|delete|deleteOne|deleteMany|drop|dropDatabase|dropCollection|create|createCollection|aggregate|mapReduce|eval|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer)\b/i.test(withoutTrailing) || /\$where\b/i.test(withoutTrailing)) {
+      throw new Error('MongoDB Console 当前只允许只读 find 查询');
+    }
+
+    const getCollectionMatch = withoutTrailing.match(/^db\.getCollection\((["'])([^"'\r\n]{1,120})\1\)\.find\s*\(/);
+    const dotCollectionMatch = withoutTrailing.match(/^db\.([a-zA-Z0-9_$-]{1,120})\.find\s*\(/);
+    const collection = getCollectionMatch?.[2] || dotCollectionMatch?.[1] || '';
+    if (!collection) {
+      throw new Error('MongoDB Console 当前只支持 db.getCollection("collection").find(...) 或 db.collection.find(...)');
+    }
+    mongoCollectionFromRequest(collection);
+    if (!/\.limit\s*\(\s*\d{1,3}\s*\)\s*$/.test(withoutTrailing)) {
+      throw new Error('MongoDB find 查询必须显式追加 limit(1-100)');
+    }
+    const limitRaw = Number(withoutTrailing.match(/\.limit\s*\(\s*(\d{1,3})\s*\)\s*$/)?.[1] || 0);
+    if (!Number.isFinite(limitRaw) || limitRaw < 1 || limitRaw > 100) {
+      throw new Error('MongoDB limit 必须在 1-100 之间');
+    }
+
+    return {
+      collection,
+      script: `JSON.stringify((${withoutTrailing}).toArray())`,
+    };
   }
 
   async function runRedisCli(service: InfraService, args: string[], timeoutMs = 15_000): Promise<string> {
@@ -4900,9 +5154,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const branchUser = branchDatabaseUser(branch).slice(0, 63);
     const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
-    const adminUser = service.env?.POSTGRES_USER || 'postgres';
-    const adminPassword = service.env?.POSTGRES_PASSWORD || '';
-    const adminDb = service.env?.POSTGRES_DB || adminUser || 'postgres';
+    const env = resolvedInfraEnv(service);
+    const adminUser = env.POSTGRES_USER || 'postgres';
+    const adminPassword = env.POSTGRES_PASSWORD || '';
+    const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
     const sql = [
       `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${pgString(branchUser)}) THEN CREATE ROLE ${pgIdent(branchUser)} LOGIN PASSWORD ${pgString(branchPassword)}; END IF; END $$;`,
       `ALTER ROLE ${pgIdent(branchUser)} WITH LOGIN PASSWORD ${pgString(branchPassword)};`,
@@ -4965,13 +5220,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mongoAdminUri(service: InfraService): { uri: string; secrets: string[]; rootUser: string; rootPassword: string } {
-    const rootUser = service.env?.MONGO_INITDB_ROOT_USERNAME
-      || service.env?.MONGO_USERNAME
-      || service.env?.MONGODB_USERNAME
+    const env = resolvedInfraEnv(service);
+    const rootUser = env.MONGO_INITDB_ROOT_USERNAME
+      || env.MONGO_USERNAME
+      || env.MONGODB_USERNAME
       || '';
-    const rootPassword = service.env?.MONGO_INITDB_ROOT_PASSWORD
-      || service.env?.MONGO_PASSWORD
-      || service.env?.MONGODB_PASSWORD
+    const rootPassword = env.MONGO_INITDB_ROOT_PASSWORD
+      || env.MONGO_PASSWORD
+      || env.MONGODB_PASSWORD
       || '';
     const uri = rootUser
       ? `mongodb://${encodeURIComponent(rootUser)}:${encodeURIComponent(rootPassword)}@localhost:27017/admin`
@@ -5160,11 +5416,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function mysqlDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MYSQL_DATABASE
-        || service.dbName
-        || service.env?.MYSQL_DATABASE
-        || service.env?.MARIADB_DATABASE
+        || env.MYSQL_DATABASE
+        || env.MARIADB_DATABASE
+        || resolvedServiceDbName(service)
         || 'app',
     )
       .replace(/[^a-zA-Z0-9_]/g, '_')
@@ -5826,7 +6083,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (runtime === 'mongodb') {
       const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
-      const serviceRequiresAuth = Boolean(service.env?.MONGO_INITDB_ROOT_USERNAME || service.env?.MONGO_USERNAME || service.env?.MONGODB_USERNAME);
+      const env = resolvedInfraEnv(service);
+      const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
       if (!database || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
         throw new Error('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
       }
@@ -5931,9 +6189,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } else if (runtime === 'postgres') {
       const branchEnv = stateService.getCustomEnvScope(branch.id);
       const user = branchEnv.POSTGRES_USER || '';
-      const adminUser = service.env?.POSTGRES_USER || 'postgres';
-      const adminPassword = service.env?.POSTGRES_PASSWORD || '';
-      const adminDb = service.env?.POSTGRES_DB || adminUser || 'postgres';
+      const env = resolvedInfraEnv(service);
+      const adminUser = env.POSTGRES_USER || 'postgres';
+      const adminPassword = env.POSTGRES_PASSWORD || '';
+      const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
       const sql = [
         `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${pgString(database)} AND pid <> pg_backend_pid();`,
         `DROP DATABASE IF EXISTS ${pgIdent(database)};`,
@@ -5993,8 +6252,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error('源数据库与目标数据库相同，拒绝覆盖复制');
     }
     const branchDb = await createPostgresBranchDatabase(service, branch, targetDatabase);
-    const adminUser = service.env?.POSTGRES_USER || 'postgres';
-    const adminPassword = service.env?.POSTGRES_PASSWORD || '';
+    const env = resolvedInfraEnv(service);
+    const adminUser = env.POSTGRES_USER || 'postgres';
+    const adminPassword = env.POSTGRES_PASSWORD || '';
     const result = await shell.exec(
       [
         `docker exec -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} pg_dump -U ${shq(adminUser)} -d ${shq(sourceDatabase)} --no-owner --no-privileges`,
@@ -6209,20 +6469,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     branch: BranchEntry,
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
-    const env = service.env || {};
+    const env = resolvedInfraEnv(service, branch);
     const branchEnv = stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
-      const db = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || env.MARIADB_DATABASE || 'app';
+      const db = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || env.MARIADB_USER || 'user';
       return `mysql://${user}:******@${host}:${port}/${db}`;
     }
     if (runtime === 'postgres') {
-      const db = branchEnv.POSTGRES_DB || service.dbName || env.POSTGRES_DB || 'postgres';
+      const db = branchEnv.POSTGRES_DB || env.POSTGRES_DB || resolvedServiceDbName(service) || 'postgres';
       const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
       return `postgres://${user}:******@${host}:${port}/${db}`;
     }
     if (runtime === 'mongodb') {
-      const db = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || service.dbName || env.MONGO_INITDB_DATABASE || 'app';
+      const db = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || env.MONGO_INITDB_DATABASE || resolvedServiceDbName(service) || 'app';
       const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
       const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
         || branchUser
@@ -6245,22 +6505,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
     port: number,
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
-    const env = service.env || {};
+    const env = resolvedInfraEnv(service, branch);
     const branchEnv = stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
-      const database = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || 'app';
+      const database = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || 'root';
       const password = branchEnv.MYSQL_PASSWORD || env.MYSQL_PASSWORD || env.MYSQL_ROOT_PASSWORD || '';
       return `mysql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
     }
     if (runtime === 'postgres') {
-      const database = branchEnv.POSTGRES_DB || service.dbName || env.POSTGRES_DB || env.POSTGRES_USER || 'postgres';
+      const database = branchEnv.POSTGRES_DB || env.POSTGRES_DB || resolvedServiceDbName(service) || env.POSTGRES_USER || 'postgres';
       const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
       const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
       return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
     }
     if (runtime === 'mongodb') {
-      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || service.dbName || env.MONGO_INITDB_DATABASE || 'app';
+      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || env.MONGO_INITDB_DATABASE || resolvedServiceDbName(service) || 'app';
       const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
       const serviceUser = branchEnv.MONGO_INITDB_ROOT_USERNAME || env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME || '';
       const user = branchUser || serviceUser;
@@ -6859,25 +7119,67 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
       const sql = ctx.runtime === 'postgres'
-        ? "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"
+        ? "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name"
         : 'SHOW FULL TABLES';
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
-      const tables = result.rows.map((row) => ({
-        name: row[0] || '',
-        type: row[1] || 'BASE TABLE',
-      })).filter((row) => row.name);
+      const tables = result.rows.map((row) => {
+        if (ctx.runtime === 'postgres') {
+          const schema = row[0] || 'public';
+          const name = row[1] || '';
+          return {
+            schema,
+            name,
+            fullName: `${schema}.${name}`,
+            type: row[2] || 'BASE TABLE',
+          };
+        }
+        return {
+          schema: database,
+          name: row[0] || '',
+          fullName: row[0] || '',
+          type: row[1] || 'BASE TABLE',
+        };
+      }).filter((row) => row.name);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, tables });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
   });
 
+  router.get('/branches/:id/resources/:resourceId/workbench-capability', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    const capability = resourceWorkbenchCapability(resource.runtime);
+    res.json({
+      branchId: branch.id,
+      resourceId,
+      resourceName: resource.displayName,
+      source: resource.source,
+      kind: resource.kind,
+      runtime: resource.runtime,
+      capability,
+    });
+  });
+
   router.get('/branches/:id/resources/:resourceId/data/schema', async (req, res) => {
     const ctx = await resolveSqlDataResourceForRequest(req, res);
     if (!ctx) return;
-    let table = '';
+    let ref: SqlTableRef;
     try {
-      table = tableNameFromRequest(req.query.table);
+      ref = sqlTableRefFromRequest(req.query.table, req.query.schema);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -6891,13 +7193,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
           'column_default,',
           "CASE WHEN column_default LIKE 'nextval%' THEN 'auto_increment' ELSE '' END AS extra",
           'FROM information_schema.columns c',
-          `WHERE table_schema = 'public' AND table_name = ${sqlString(table)}`,
+          `WHERE table_schema = ${pgString(ref.schema || 'public')} AND table_name = ${pgString(ref.table)}`,
           'ORDER BY ordinal_position',
         ].join(' ')
         : [
           'SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA',
           'FROM information_schema.COLUMNS',
-          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${sqlString(table)}`,
+          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${sqlString(ref.table)}`,
           'ORDER BY ORDINAL_POSITION',
         ].join(' ');
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
@@ -6909,7 +7211,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         defaultValue: row[4] || '',
         extra: row[5] || '',
       }));
-      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, table, columns });
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, columns });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -6918,9 +7220,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.get('/branches/:id/resources/:resourceId/data/preview', async (req, res) => {
     const ctx = await resolveSqlDataResourceForRequest(req, res);
     if (!ctx) return;
-    let table = '';
+    let ref: SqlTableRef;
     try {
-      table = tableNameFromRequest(req.query.table);
+      ref = sqlTableRefFromRequest(req.query.table, req.query.schema);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -6929,9 +7231,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 200) : 50;
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
-      const ident = ctx.runtime === 'postgres' ? pgIdent(table) : sqlIdent(table);
+      const ident = sqlTableIdent(ctx.runtime, ref);
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, `SELECT * FROM ${ident} LIMIT ${limit}`);
-      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, table, limit, ...result });
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, limit, ...result });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -7038,6 +7340,67 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  router.post('/branches/:id/resources/:resourceId/data/init-sql', async (req, res) => {
+    const ctx = await resolveSqlDataResourceForRequest(req, res);
+    if (!ctx) return;
+    const resources = await getBranchResourceSnapshot(ctx.branch);
+    const resource = resources.find((item) => item.id === ctx.resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+    try {
+      ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行初始化 SQL');
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+    const sql = typeof req.body?.sql === 'string' ? req.body.sql : '';
+    try {
+      const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      const result = await runSqlDataInitScript(ctx.runtime, ctx.service, ctx.branch, sql);
+      stateService.recordDestructiveOp({
+        type: 'purge-database',
+        projectId: ctx.projectId,
+        summary: `对 ${ctx.resourceName} 执行初始化 SQL：${database}`,
+        triggeredBy: resolveActorFromRequest(req),
+      });
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: result.exitCode === 0 ? 'success' : 'failed',
+        note: `${ctx.resourceName} 执行初始化 SQL：${database}`,
+      });
+      stateService.save();
+      res.status(result.exitCode === 0 ? 200 : 500).json({
+        ok: result.exitCode === 0,
+        branchId: ctx.branch.id,
+        resourceId: ctx.resourceId,
+        runtime: ctx.runtime,
+        database,
+        ...result,
+      });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} 初始化 SQL 失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.get('/branches/:id/resources/:resourceId/data/redis/keys', async (req, res) => {
     const ctx = await resolveRedisDataResourceForRequest(req, res);
     if (!ctx) return;
@@ -7114,9 +7477,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const ctx = await resolveMongoDataResourceForRequest(req, res);
     if (!ctx) return;
     try {
-      const currentDatabase = mongoDatabaseForBranch(ctx.service, ctx.branch);
+      const configuredDatabase = mongoDatabaseForBranch(ctx.service, ctx.branch);
       const data = await runMongoJson(ctx.service, ctx.branch, 'JSON.stringify(db.adminCommand({ listDatabases: 1 }).databases.map(d => ({ name: d.name, sizeOnDisk: d.sizeOnDisk || 0 })))');
-      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, currentDatabase, databases: Array.isArray(data) ? data : [] });
+      const databases = Array.isArray(data) ? data : [];
+      const currentDatabase = chooseMongoCurrentDatabase(configuredDatabase, databases);
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, configuredDatabase, currentDatabase, databases });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -7153,6 +7518,55 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const data = await runMongoJson(ctx.service, ctx.branch, script, database);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collection, limit, documents: Array.isArray(data) ? data : [] });
     } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/mongo/command', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    let database = '';
+    let command: { collection: string; script: string };
+    try {
+      database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      command = normalizeMongoFindCommand(req.body?.command);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    try {
+      const data = await runMongoJson(ctx.service, ctx.branch, command.script, database);
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 执行 MongoDB find：${database}.${command.collection}`,
+      });
+      stateService.save();
+      res.json({
+        branchId: ctx.branch.id,
+        resourceId: ctx.resourceId,
+        database,
+        collection: command.collection,
+        kind: 'documents',
+        documents: Array.isArray(data) ? data : [],
+      });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} MongoDB command 失败：${(err as Error).message}`,
+      });
+      stateService.save();
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -7768,7 +8182,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const runtime = resourceRuntimeKey(resource.runtime);
     const actor = resolveActorFromRequest(req);
     const rawInfra = resource.raw as InfraService;
-    const baseDb = rawInfra.dbName || rawInfra.env?.MYSQL_DATABASE || rawInfra.env?.POSTGRES_DB || rawInfra.env?.MONGO_INITDB_DATABASE || 'app';
+    const baseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
+      ? resourceDatabaseForRuntime(runtime, rawInfra, branch) || 'app'
+      : resolvedServiceDbName(rawInfra) || 'app';
     const targetDatabase = String(req.body?.targetDatabase || branchDatabaseName(baseDb, branch))
       .replace(/[^a-zA-Z0-9_]/g, '_')
       .slice(0, 64);
@@ -17110,6 +17526,24 @@ cdscli project list --human
       const backendSec = Math.floor((Date.now() - cdsBackendStart) / 1000);
       timingRecorder.merge({ buildBackendMs: Date.now() - cdsBackendStart });
       send('build-backend', 'done', `后端 dist/ 已重编到 ${newHead} (${backendSec}s)`);
+
+      // The first nginx-render above runs before dist/ is rebuilt, so pages
+      // generated from dist/cli/render-page.js (notably cds-waiting.html) can
+      // otherwise lag one deploy behind. Re-render after the atomic dist swap
+      // so nginx uses the current loading-page templates during this restart.
+      try {
+        const renderRes = await shell.exec('./exec_cds.sh nginx-render', {
+          cwd: path.join(repoRoot, 'cds'),
+          timeout: 15_000,
+        });
+        if (renderRes.exitCode === 0) {
+          send('nginx-render', 'done', 'nginx 模板已用新 dist 重新渲染');
+        } else {
+          send('nginx-render', 'warning', `nginx-render(new dist) exit=${renderRes.exitCode}: ${(renderRes.stderr || renderRes.stdout || '').slice(0, 200)}`);
+        }
+      } catch (err) {
+        send('nginx-render', 'warning', `nginx-render(new dist) 异常(忽略,继续): ${(err as Error).message}`);
+      }
 
       // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)

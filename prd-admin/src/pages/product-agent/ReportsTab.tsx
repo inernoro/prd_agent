@@ -1,16 +1,24 @@
 /**
- * 产品管理智能体 — 报表/统计（版本进度 + 迭代速度 + 总体进度，P2）。
+ * 产品管理智能体 — 报表/统计（工作台数据展示区已并入本页，统计图表唯一入口）。
  *
- * 数据源：当前需求状态(按工作流分类) + 活动时间线的流转记录(近 8 周进入终态吞吐)。
+ * 四个分区（去重后的口径）：
+ * 1. KPI：规模（版本/需求/功能/缺陷）+ 进度（已完成/进行中/完成率）——原工作台 4 卡与原报表"需求总数"合并
+ * 2. 进度：总体进度（按工作流分类）+ 迭代速度（近 8 周进入终态吞吐）
+ * 3. 分布：需求分级分布 + 缺陷状态分布（工作台迁入，与"总体进度"口径不同：分级 vs 完成态）
+ * 4. 版本：版本生命周期（阶段漏斗，工作台迁入）+ 版本进度（按需求完成度堆叠）——同为版本维度但口径不同，并列
+ *
+ * 数据源：GET /products/{id}/analytics 一次返回全部（含 counts / 三个分布），不再前端拉列表自算。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EChartsOption } from 'echarts';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getProductAnalytics, type ProductAnalytics } from '@/services/real/productAgent';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel } from './types';
 import './product-cards.css';
 
 const C = { done: '#22c55e', doing: '#f59e0b', todo: '#64748b', req: '#38bdf8', feat: '#a78bfa' };
+const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
 export function ReportsTab({ productId }: { productId: string }) {
   const [data, setData] = useState<ProductAnalytics | null>(null);
@@ -26,6 +34,7 @@ export function ReportsTab({ productId }: { productId: string }) {
     void reload();
   }, [reload]);
 
+  // ── 进度区 ──
   const overallPie = useMemo<EChartsOption | null>(() => {
     if (!data) return null;
     const o = data.overall;
@@ -42,6 +51,65 @@ export function ReportsTab({ productId }: { productId: string }) {
         label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
         itemStyle: { borderColor: '#0f1014', borderWidth: 2 },
       }],
+    };
+  }, [data]);
+
+  const velocityChart = useMemo<EChartsOption | null>(() => {
+    if (!data) return null;
+    const w = data.velocity;
+    return {
+      tooltip: { trigger: 'axis' },
+      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
+      grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
+      xAxis: { type: 'category', data: w.map((x) => x.week), axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10 } },
+      yAxis: { type: 'value', axisLabel: { color: 'rgba(255,255,255,0.4)' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } },
+      series: [
+        { name: '需求完成', type: 'bar', stack: 'v', data: w.map((x) => x.requirements), itemStyle: { color: C.req }, barMaxWidth: 28 },
+        { name: '功能完成', type: 'bar', stack: 'v', data: w.map((x) => x.features), itemStyle: { color: C.feat }, barMaxWidth: 28 },
+      ],
+    };
+  }, [data]);
+
+  // ── 分布区（工作台迁入） ──
+  const gradePie = useMemo<EChartsOption | null>(() => {
+    if (!data) return null;
+    const entries = Object.entries(data.requirementsByGrade)
+      .filter(([, v]) => v > 0)
+      .map(([k, v]) => ({ name: ITEM_GRADE_LABEL[k as keyof typeof ITEM_GRADE_LABEL] ?? k, value: v }));
+    if (entries.length === 0) return null;
+    return {
+      tooltip: { trigger: 'item' },
+      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
+      series: [{ type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'], data: entries, label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, itemStyle: { borderColor: '#0f1014', borderWidth: 2 } }],
+      color: CHART_COLORS,
+    };
+  }, [data]);
+
+  const defectBar = useMemo<EChartsOption | null>(() => {
+    if (!data) return null;
+    const entries = Object.entries(data.defectsByStatus).map(([k, v]) => [defectStatusLabel(k), v] as const);
+    if (entries.length === 0) return null;
+    return {
+      tooltip: { trigger: 'axis' },
+      grid: { left: 8, right: 16, top: 16, bottom: 8, containLabel: true },
+      xAxis: { type: 'category', data: entries.map(([k]) => k), axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10 } },
+      yAxis: { type: 'value', axisLabel: { color: 'rgba(255,255,255,0.4)' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } },
+      series: [{ type: 'bar', data: entries.map(([, v]) => v), itemStyle: { color: '#F87171', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 32 }],
+    };
+  }, [data]);
+
+  // ── 版本区 ──
+  const lifecycleFunnel = useMemo<EChartsOption | null>(() => {
+    if (!data) return null;
+    const entries = Object.entries(data.versionsByLifecycle)
+      .filter(([, v]) => v > 0)
+      .map(([k, v]) => ({ name: VERSION_LIFECYCLE_LABEL[k as keyof typeof VERSION_LIFECYCLE_LABEL] ?? k, value: v }));
+    if (entries.length === 0) return null;
+    return {
+      tooltip: { trigger: 'item' },
+      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
+      series: [{ type: 'funnel', left: '10%', right: '10%', top: 10, bottom: 30, minSize: '14%', label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, data: entries }],
+      color: CHART_COLORS,
     };
   }, [data]);
 
@@ -62,22 +130,6 @@ export function ReportsTab({ productId }: { productId: string }) {
     };
   }, [data]);
 
-  const velocityChart = useMemo<EChartsOption | null>(() => {
-    if (!data) return null;
-    const w = data.velocity;
-    return {
-      tooltip: { trigger: 'axis' },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
-      grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
-      xAxis: { type: 'category', data: w.map((x) => x.week), axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10 } },
-      yAxis: { type: 'value', axisLabel: { color: 'rgba(255,255,255,0.4)' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } },
-      series: [
-        { name: '需求完成', type: 'bar', stack: 'v', data: w.map((x) => x.requirements), itemStyle: { color: C.req, borderRadius: [0, 0, 0, 0] }, barMaxWidth: 28 },
-        { name: '功能完成', type: 'bar', stack: 'v', data: w.map((x) => x.features), itemStyle: { color: C.feat }, barMaxWidth: 28 },
-      ],
-    };
-  }, [data]);
-
   if (loading) return <MapSectionLoader text="正在生成报表…" />;
   if (!data) return <div className="text-sm text-white/40 py-10 text-center">加载失败</div>;
 
@@ -86,25 +138,46 @@ export function ReportsTab({ productId }: { productId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 总体 KPI */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Kpi label="需求总数" value={o.total} />
-        <Kpi label="已完成" value={o.done} color={C.done} />
-        <Kpi label="进行中" value={o.doing} color={C.doing} />
-        <Kpi label="完成率" value={`${pct}%`} color={C.done} />
+      {/* 1. KPI：规模 + 进度 */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
+        <Kpi label="版本" value={data.counts.versions} color="#60A5FA" />
+        <Kpi label="需求" value={data.counts.requirements} color="#FBBF24" />
+        <Kpi label="功能" value={data.counts.features} color="#A78BFA" />
+        <Kpi label="缺陷" value={data.counts.defects} color="#F87171" />
+        <Kpi label="已完成需求" value={o.done} color={C.done} />
+        <Kpi label="进行中需求" value={o.doing} color={C.doing} />
+        <Kpi label="需求完成率" value={`${pct}%`} color={C.done} />
       </div>
 
+      {/* 2. 进度 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ChartCard title="总体进度">{overallPie && <EChart option={overallPie} height={260} />}</ChartCard>
         <ChartCard title="迭代速度（近 8 周完成吞吐）">{velocityChart && <EChart option={velocityChart} height={260} />}</ChartCard>
       </div>
-      <ChartCard title="版本进度（按需求状态）">
-        {data.releaseProgress.length === 0 ? (
-          <div className="text-[12px] text-white/30 py-10 text-center">还没有版本。去「版本」新建后，这里按版本展示需求完成进度。</div>
-        ) : (
-          releaseBar && <EChart option={releaseBar} height={300} />
-        )}
-      </ChartCard>
+
+      {/* 3. 分布 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard title="需求分级分布">
+          {gradePie ? <EChart option={gradePie} height={260} /> : <EmptyChart text="暂无需求" />}
+        </ChartCard>
+        <ChartCard title="缺陷状态分布">
+          {defectBar ? <EChart option={defectBar} height={260} /> : <EmptyChart text="暂无追溯缺陷" />}
+        </ChartCard>
+      </div>
+
+      {/* 4. 版本 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard title="版本生命周期（阶段分布）">
+          {lifecycleFunnel ? <EChart option={lifecycleFunnel} height={280} /> : <EmptyChart text="暂无版本" />}
+        </ChartCard>
+        <ChartCard title="版本进度（按需求状态）">
+          {data.releaseProgress.length === 0 ? (
+            <EmptyChart text="还没有版本。去「版本」新建后，这里按版本展示需求完成进度。" />
+          ) : (
+            releaseBar && <EChart option={releaseBar} height={280} />
+          )}
+        </ChartCard>
+      </div>
     </div>
   );
 }
@@ -125,4 +198,8 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
       {children}
     </div>
   );
+}
+
+function EmptyChart({ text }: { text: string }) {
+  return <div className="h-[260px] flex items-center justify-center text-xs text-white/35 text-center px-6">{text}</div>;
 }

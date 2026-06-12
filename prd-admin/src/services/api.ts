@@ -188,6 +188,12 @@ export const api = {
     },
   },
 
+  // ============ Team Activity 团队动态 ============
+  teamActivity: {
+    logs: () => '/api/team-activity/logs',
+    modules: () => '/api/team-activity/modules',
+  },
+
   // ============ Skills 技能管理 ============
   skills: {
     list: () => '/api/skills',
@@ -1109,6 +1115,7 @@ export const api = {
     viewLogs: '/api/web-pages/shares/view-logs',
     shareLogsForSite: (siteId: string) => `/api/web-pages/${siteId}/share-logs`,
     renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
+    shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
   },
   // ============ 公开主页（/u/:username 无需登录） ============
@@ -1415,6 +1422,13 @@ export const api = {
     knowledge: {
       file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
     },
+    // 首页工作台（跨项目）
+    myTodos: () => '/api/pm/my-todos',
+    reportsSummary: (scope?: string) => `/api/pm/reports/summary${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`,
+    preferences: () => '/api/pm/preferences',
+    quickActions: () => '/api/pm/preferences/quick-actions',
+    assistantAsk: () => '/api/pm/assistant/ask',
+    assistantAttachments: () => '/api/pm/assistant/attachments',
     weeklyReportsImportable: (params?: { weekYear?: number; weekNumber?: number }) => {
       const q = new URLSearchParams();
       if (params?.weekYear) q.set('weekYear', String(params.weekYear));

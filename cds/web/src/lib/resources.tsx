@@ -14,6 +14,7 @@ import goIconUrl from 'devicon/icons/go/go-original.svg';
 import javaIconUrl from 'devicon/icons/java/java-original.svg';
 import mongoIconUrl from 'devicon/icons/mongodb/mongodb-original.svg';
 import mysqlIconUrl from 'devicon/icons/mysql/mysql-original.svg';
+import sqlServerIconUrl from 'devicon/icons/microsoftsqlserver/microsoftsqlserver-plain.svg';
 import nodeIconUrl from 'devicon/icons/nodejs/nodejs-original.svg';
 import phpIconUrl from 'devicon/icons/php/php-original.svg';
 import postgresIconUrl from 'devicon/icons/postgresql/postgresql-original.svg';
@@ -107,7 +108,7 @@ export interface BranchResourceCloneTask {
   projectId: string;
   branchId: string;
   resourceId: string;
-  runtime: 'mysql' | 'postgres' | 'mongodb' | 'redis' | 'unknown';
+  runtime: 'mysql' | 'postgres' | 'sqlserver' | 'mongodb' | 'redis' | 'rabbitmq' | 'unknown';
   mode: 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
   strategy: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
@@ -141,6 +142,7 @@ const RUNTIME_TONE: Record<string, string> = {
   Static: 'text-lime-500',
   MySQL: 'text-cyan-600',
   PostgreSQL: 'text-sky-600',
+  'SQL Server': 'text-red-500',
   MongoDB: 'text-emerald-600',
   Redis: 'text-red-500',
   RabbitMQ: 'text-orange-500',
@@ -157,6 +159,7 @@ const iconByRuntime: Record<string, string> = {
   PHP: phpIconUrl,
   MySQL: mysqlIconUrl,
   PostgreSQL: postgresIconUrl,
+  'SQL Server': sqlServerIconUrl,
   MongoDB: mongoIconUrl,
   Redis: redisIconUrl,
   RabbitMQ: rabbitIconUrl,
@@ -207,6 +210,7 @@ export function inferInfraRuntime(service: BranchResourceInfraInput): { runtime:
   const raw = text([service.id, service.name, service.dockerImage]);
   if (/mysql|mariadb/.test(raw)) return { runtime: 'MySQL', kind: 'database', envKeys: ['MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_DATABASE', 'DATABASE_URL'] };
   if (/postgres|postgresql|postgis|pgvector/.test(raw)) return { runtime: 'PostgreSQL', kind: 'database', envKeys: ['POSTGRES_HOST', 'POSTGRES_PORT', 'POSTGRES_DB', 'DATABASE_URL'] };
+  if (/mssql|sqlserver|sql-server|microsoft.*sql/.test(raw)) return { runtime: 'SQL Server', kind: 'database', envKeys: ['MSSQL_HOST', 'MSSQL_PORT', 'MSSQL_DATABASE', 'DATABASE_URL'] };
   if (/mongo/.test(raw)) return { runtime: 'MongoDB', kind: 'database', envKeys: ['MONGODB_HOST', 'MONGODB_PORT', 'MONGODB_URL'] };
   if (/redis/.test(raw)) return { runtime: 'Redis', kind: 'cache', envKeys: ['REDIS_HOST', 'REDIS_PORT', 'REDIS_URL'] };
   if (/rabbit/.test(raw)) return { runtime: 'RabbitMQ', kind: 'queue', envKeys: ['RABBITMQ_HOST', 'RABBITMQ_PORT', 'RABBITMQ_URL'] };
@@ -228,6 +232,7 @@ function infraConnectionString(runtime: string, service: BranchResourceInfraInpu
   const host = typeof window === 'undefined' ? '127.0.0.1' : window.location.hostname || '127.0.0.1';
   if (runtime === 'MySQL') return `mysql://${env.MYSQL_USER || 'user'}:******@${host}:${port}/${db}`;
   if (runtime === 'PostgreSQL') return `postgres://${env.POSTGRES_USER || 'user'}:******@${host}:${port}/${db}`;
+  if (runtime === 'SQL Server') return `sqlserver://${env.MSSQL_USER || env.SA_USER || 'sa'}:******@${host}:${port}/${env.MSSQL_DATABASE || db}`;
   if (runtime === 'MongoDB') return `mongodb://${env.MONGO_INITDB_ROOT_USERNAME || 'user'}:******@${host}:${port}/${db}`;
   if (runtime === 'Redis') return `redis://:******@${host}:${port}`;
   if (runtime === 'RabbitMQ') return `amqp://${env.RABBITMQ_DEFAULT_USER || 'user'}:******@${host}:${port}`;

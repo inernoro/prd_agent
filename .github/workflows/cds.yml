@@ -72,6 +72,9 @@ jobs:
       - name: Type check
         run: pnpm build
 
+      - name: CDS UI regression audit
+        run: pnpm run audit:ui
+
       - name: Run tests
         run: pnpm test
 

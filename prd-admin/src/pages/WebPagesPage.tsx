@@ -19,6 +19,7 @@ import {
   listSiteTags,
   createSiteShareLink,
   listSiteShares,
+  ensureSiteShareShortLink,
   revokeSiteShare,
   renewSiteShare,
   listShareViewLogs,
@@ -63,6 +64,7 @@ import {
   FolderOpen,
   Eye,
   Copy,
+  Hash,
   Check,
   X,
   Lock,
@@ -2585,6 +2587,10 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
         // 用户在面板中显式新建（PR 2026-05-28）：跳过服务端复用，每次都换新 token
         forceNew: true,
         visibility,
+        // 数字短链按需分配（2026-06-11）：只有用户在高级选项里主动选「数字短链」才生成
+        // /s/{seq}，否则后端不写 short_links，只发不可枚举的 /s/wp/{token} 长链——
+        // 杜绝「用户没选短链却拿到数字链」+「管理员短链页冒出几百条」。
+        allocateShortLink: isShort,
       });
       if (res.success) {
         onCreated?.();
@@ -3007,13 +3013,39 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
     }
   };
 
-  const shareUrlOf = (s: ShareLinkItem) =>
-    s.shortSeq && s.shortSeq > 0
-      ? `${window.location.origin}/s/${s.shortSeq}`
-      : `${window.location.origin}/s/wp/${s.token}`;
+  // 主链接恒为不可枚举的字母长链 /s/wp/{token}（2026-06-11）：
+  // 用户创建时默认选的就是长链，复制/点击/预览都应给长链，不再因「后端碰巧分配了
+  // shortSeq」就把数字短链当主链返回——那正是「我没选数字短链却总拿到数字链」的根因。
+  // 数字短链 /s/{seq} 仅作为用户主动生成后的次级可选项单独展示。
+  const shareUrlOf = (s: ShareLinkItem) => `${window.location.origin}/s/wp/${s.token}`;
+  const shortUrlOf = (s: ShareLinkItem) =>
+    s.shortSeq && s.shortSeq > 0 ? `${window.location.origin}/s/${s.shortSeq}` : null;
 
   const handleCopy = (s: ShareLinkItem) => {
     navigator.clipboard.writeText(shareUrlOf(s));
+  };
+
+  // 事后生成数字短链（懒分配入口）：用户在某条分享上主动点「生成数字短链」时调用，
+  // 成功后把返回的 shortSeq 写回该条分享并复制数字短链。
+  const [allocatingId, setAllocatingId] = useState<string | null>(null);
+  const handleShortLink = async (s: ShareLinkItem) => {
+    const existing = shortUrlOf(s);
+    if (existing) {
+      navigator.clipboard.writeText(existing);
+      return;
+    }
+    setAllocatingId(s.id);
+    try {
+      const res = await ensureSiteShareShortLink(s.id);
+      if (res.success && res.data.shortSeq > 0) {
+        setShares(shares.map(x => x.id === s.id ? { ...x, shortSeq: res.data.shortSeq } : x));
+        navigator.clipboard.writeText(`${window.location.origin}/s/${res.data.shortSeq}`);
+      } else {
+        alert(res.error?.message || '生成数字短链失败');
+      }
+    } finally {
+      setAllocatingId(null);
+    }
   };
 
   const handleShowLogs = async (token: string) => {
@@ -3103,13 +3135,9 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                         >
                           {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
                         </a>
-                        {share.shortSeq && share.shortSeq > 0 ? (
-                          <span title={`/s/${share.shortSeq}`}>
+                        {share.shortSeq && share.shortSeq > 0 && (
+                          <span title={`已生成数字短链 /s/${share.shortSeq}`}>
                             <Badge variant="subtle">#{share.shortSeq}</Badge>
-                          </span>
-                        ) : (
-                          <span title="老分享，仅长链可用">
-                            <Badge variant="subtle">长链</Badge>
                           </span>
                         )}
                         {visibilityChip(share.visibility)}
@@ -3159,9 +3187,24 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                       >
                         <Eye size={12} />
                       </Button>
-                      <Button size="xs" variant="ghost" onClick={() => handleCopy(share)} title="复制链接">
+                      <Button size="xs" variant="ghost" onClick={() => handleCopy(share)} title="复制链接（长链）">
                         <Copy size={12} />
                       </Button>
+                      {share.shortSeq && share.shortSeq > 0 ? (
+                        <Button size="xs" variant="ghost" onClick={() => handleShortLink(share)} title={`复制数字短链 /s/${share.shortSeq}`}>
+                          <Hash size={12} />
+                        </Button>
+                      ) : (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          disabled={allocatingId === share.id}
+                          onClick={() => handleShortLink(share)}
+                          title="生成数字短链（自用，可枚举，建议配密码）"
+                        >
+                          {allocatingId === share.id ? <MapSpinner size={12} /> : <Hash size={12} style={{ opacity: 0.45 }} />}
+                        </Button>
+                      )}
                       <Button size="xs" variant="ghost" onClick={() => window.open(shareUrlOf(share), '_blank')} title="预览">
                         <ExternalLink size={12} />
                       </Button>

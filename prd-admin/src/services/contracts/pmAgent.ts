@@ -730,3 +730,54 @@ export type ListPmTaskWorkLogsContract = (taskId: string) => Promise<ApiResponse
 export type CreatePmTaskWorkLogContract = (taskId: string, input: CreatePmTaskWorkLogInput) => Promise<ApiResponse<PmTaskWorkLog>>;
 export type UpdatePmTaskWorkLogContract = (logId: string, input: UpdatePmTaskWorkLogInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmTaskWorkLogContract = (logId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 首页工作台（跨项目）──
+
+/** 首页「我的待办」一条：跨项目聚合（指派给我的未完成任务 + 待我打分的结案评价）。 */
+export interface PmMyTodoItem {
+  kind: 'task' | 'evaluation';
+  id: string;
+  projectId: string;
+  projectTitle: string;
+  title: string;
+  dueAt?: string | null;
+  priority?: PmTaskPriority | null;
+  status?: PmTaskStatus | null;
+  overdue: boolean;
+}
+export type GetPmMyTodosContract = () => Promise<ApiResponse<{ items: PmMyTodoItem[]; total: number }>>;
+
+/** 项目管理智能体用户偏好（quickActionIds：null = 从未配置走默认；空数组 = 用户主动清空）。 */
+export interface PmAgentPrefs {
+  quickActionIds: string[] | null;
+}
+export type GetPmAgentPreferencesContract = () => Promise<ApiResponse<PmAgentPrefs>>;
+export type UpdatePmQuickActionsContract = (quickActionIds: string[]) => Promise<ApiResponse<PmAgentPrefs>>;
+
+/** 跨项目执行数据报表（一级导航「报表」页，与 NPSS 看板分工：本接口管执行数据）。 */
+export interface PmReportSummary {
+  scope: 'managed' | 'related' | 'all';
+  projectTotal: number;
+  lifecycleDist: Array<{ key: PmProjectLifecycle; count: number }>;
+  typeDist: Array<{ key: PmProjectType; count: number }>;
+  tasks: {
+    total: number;
+    done: number;
+    overdue: number;
+    completionRate: number;
+    statusDist: Array<{ key: PmTaskStatus; count: number }>;
+    assigneeTop: Array<{ name: string; total: number; done: number; overdue: number }>;
+  };
+  milestones: {
+    total: number;
+    reached: number;
+    overdue: number;
+    upcoming: Array<{ id: string; projectId: string; projectTitle: string; title: string; dueAt?: string | null }>;
+  };
+  risks: {
+    open: number;
+    matrix: Array<{ probability: PmRiskLevel; impact: PmRiskLevel; count: number }>;
+    top: Array<{ id: string; projectId: string; projectTitle: string; title: string; probability: PmRiskLevel; impact: PmRiskLevel; status: PmRiskStatus; score: number }>;
+  };
+}
+export type GetPmReportSummaryContract = (scope?: PmProjectScope) => Promise<ApiResponse<PmReportSummary>>;

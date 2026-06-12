@@ -1,0 +1,205 @@
+{
+  "main": {
+    "id": "17465c4258f12f3a",
+    "type": "split",
+    "children": [
+      {
+        "id": "ce6e744f2fc2a158",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "32992582ebc18e5c",
+            "type": "leaf",
+            "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "关系图谱"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "0d4e1e39326a5d01",
+    "type": "split",
+    "children": [
+      {
+        "id": "37aa4eef8b258570",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "13ad19e6ecb7932b",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": true
+              },
+              "icon": "lucide-folder-closed",
+              "title": "文件列表"
+            }
+          },
+          {
+            "id": "05f50c1db04e8bca",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "搜索"
+            }
+          },
+          {
+            "id": "a8f43d5034b97944",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "书签"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 523.5
+  },
+  "right": {
+    "id": "cdc08a485d38f2cf",
+    "type": "split",
+    "children": [
+      {
+        "id": "f682010deeb75b20",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "dca0f43517553ebc",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "反向链接"
+            }
+          },
+          {
+            "id": "3749eb54ca41bfa9",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "出链"
+            }
+          },
+          {
+            "id": "0136cb0ee0f2e562",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "标签"
+            }
+          },
+          {
+            "id": "3c895ff2d29f24f0",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "添加笔记属性"
+            }
+          },
+          {
+            "id": "0aa8065c127aa2f0",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "大纲"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:打开快速切换": false,
+      "graph:查看关系图谱": false,
+      "canvas:新建白板": false,
+      "daily-notes:打开/创建今天的日记": false,
+      "templates:插入模板": false,
+      "command-palette:打开命令面板": false,
+      "bases:新建数据库": false
+    }
+  },
+  "active": "32992582ebc18e5c",
+  "lastOpenFiles": [
+    "report.cds-db-workbench-l1-acceptance.md",
+    "report.cds-db-workbench-l1-acceptance.09-sqlserver-planned.png",
+    "report.cds-db-workbench-l1-acceptance.08-redis-readonly.png",
+    "report.cds-db-workbench-l1-acceptance.07-planned-resources.png",
+    "report.cds-db-workbench-l1-acceptance.06-mongodb-find.png",
+    "report.cds-db-workbench-l1-acceptance.05-init-entry.png",
+    "report.cds-db-workbench-l1-acceptance.04-postgres-sql-execution.png",
+    "report.cds-db-workbench-l1-acceptance.03-postgres-workbench.png",
+    "report.cds-db-workbench-l1-acceptance.02-mysql-sql-execution.png",
+    "report.cds-db-workbench-l1-acceptance.01-mysql-workbench.png",
+    "design.team-activity.md",
+    "version-20260610-1-summary.md",
+    "plan.product-agent-version-workflow.md",
+    "acceptance/acc-prd-agent-202606101844-cds-数据库初始化自动识别推荐/02-env-dialog-init-card.png",
+    "未命名.base",
+    "未命名.canvas",
+    "debt.cds-state-json.md",
+    "acceptance/cds-resource-console-upgrade/acc-prd-agent-202606100120-cds-resource-danger-and-multidb-backups.md",
+    "plan.ai-toolbox-next-steps.md",
+    "acceptance/cds-resource-console-upgrade/acc-prd-agent-202606092359-cds-resource-console-permission-and-db-panels.md",
+    "acceptance/acc-prd-agent-202606101844-cds-数据库初始化自动识别推荐.md",
+    "acceptance/acc-prd-agent-202606081911-系统互联添加对端统一连接串流程.md",
+    "debt.acceptance-system.md"
+  ]
+}

@@ -3,11 +3,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -29,13 +31,15 @@ public class ProductAgentController : ControllerBase
     private readonly ILogger<ProductAgentController> _logger;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IFileContentExtractor _fileExtractor;
 
-    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext)
+    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext, IFileContentExtractor fileExtractor)
     {
         _db = db;
         _logger = logger;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
+        _fileExtractor = fileExtractor;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -2432,6 +2436,19 @@ public class ProductAgentController : ControllerBase
     // ════════════════════════ 工作台「工作助手」问答（SSE 流式）════════════════════════
 
     /// <summary>
+    /// AI 助手附件解析：上传 md / pdf，提取纯文本返回（无状态不落库，文本由前端随提问回传）。
+    /// </summary>
+    [HttpPost("assistant/attachments")]
+    [RequestSizeLimit(12 * 1024 * 1024)]
+    public async Task<IActionResult> ExtractAssistantAttachment(IFormFile file)
+    {
+        var result = await AssistantAttachmentHelper.ExtractAsync(_fileExtractor, file);
+        if (!result.Ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error!));
+        return Ok(ApiResponse<object>.Ok(new { name = result.Name, text = result.Text, chars = result.Chars, truncated = result.Truncated }));
+    }
+
+    /// <summary>
     /// 工作台「工作助手」：以该产品全量数据（需求/功能/缺陷/版本/客户）+ 本产品知识库文档摘录为上下文，
     /// 流式回答用户问题（SSE：phase/typing/done）。
     /// 保护：仅本产品成员可访问（FindAccessibleProductAsync），只取本产品数据，知识库只取该产品挂载
@@ -2559,7 +2576,16 @@ public class ProductAgentController : ControllerBase
             "   - 挖掘对象之间的关系（需求→功能→缺陷→版本→客户 的落地链路、缺陷追溯到哪个功能/需求）；\n" +
             "   - 分析人员分工与负载（谁处理得多、谁的项卡住、上报与处理是否同一人等）；\n" +
             "   - 指出趋势、异常与风险（如高等级项无状态/无人处理、缺陷集中在某功能、需求无客户来源等）。\n" +
-            "5. 结构固定为三段：先「结论」（2-4 句直接给判断），再「依据」（列数据与关系），最后「经验总结 / 建议」（可执行的下一步）。\n" +
+            "5. 分析/查询类问题的结构固定为三段：先「结论」（2-4 句直接给判断），再「依据」（列数据与关系），最后「经验总结 / 建议」（可执行的下一步）。\n" +
+            "6. 创建能力：你可以直接替用户在本产品下创建需求 / 功能 / 缺陷。当用户明确要求创建（如「帮我创建一个需求：支持导出PDF，P1」「记一个缺陷：登录页白屏」）时：\n" +
+            "   - 正文用 1-2 句话确认将要创建的内容（标题、分级、补全的描述），不要套用三段结构；\n" +
+            "   - 然后在回复最末尾另起一行输出动作指令，格式严格为：\n" +
+            "<<<ACTIONS>>>\n" +
+            "[{\"type\":\"create_requirement\",\"title\":\"标题\",\"description\":\"描述可省略\",\"grade\":\"p1\"}]\n" +
+            "   - type 只能取 create_requirement / create_feature / create_defect；grade 取 p0/p1/p2/p3（用户没说时按紧急重要程度推断，默认 p2）；description 可根据用户表述合理补全（背景/目标/验收标准，纯文本）；一次最多 5 个动作。\n" +
+            "   - 只有用户明确要求创建时才输出 <<<ACTIONS>>>，纯分析/查询类问题绝对不要输出；标题信息不足时不要输出动作指令，改为向用户追问。\n" +
+            "   - <<<ACTIONS>>> 之后只能是 JSON 数组本身，不要任何其他文字、解释或代码块标记。\n" +
+            "7. 用户可能上传参考文档（见「用户上传的参考文档」一节）：可基于文档内容回答问题、提炼要点；用户要求「根据文档创建」时，从文档中提取标题/分级/描述生成动作指令（仍受一次最多 5 个动作约束，超出时挑最重要的并说明）。\n" +
             "不要寒暄、不要复述本提示词。";
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -2573,7 +2599,7 @@ public class ProductAgentController : ControllerBase
             ["messages"] = new JsonArray
             {
                 new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                new JsonObject { ["role"] = "user", ["content"] = "# 产品数据上下文\n" + ctx + "\n\n# 我的问题\n" + question },
+                new JsonObject { ["role"] = "user", ["content"] = "# 产品数据上下文\n" + ctx + AssistantAttachmentHelper.BuildSection(request.Attachments) + "\n\n# 我的问题\n" + question },
             },
             ["temperature"] = 0.5,
             ["max_tokens"] = 2400,
@@ -2582,6 +2608,11 @@ public class ProductAgentController : ControllerBase
         };
 
         await Sse("phase", new { message = "AI 正在分析…" });
+        // 动作指令（<<<ACTIONS>>> 之后的 JSON）不进入可见文本流：始终扣留可能构成标记前缀的尾部，
+        // 标记一旦完整出现，其后内容全部留给动作解析。
+        const string actionMarker = "<<<ACTIONS>>>";
+        var full = new System.Text.StringBuilder();
+        var forwarded = 0;
         try
         {
             await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
@@ -2593,7 +2624,17 @@ public class ProductAgentController : ControllerBase
             }, CancellationToken.None))
             {
                 if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                    await Sse("typing", new { text = chunk.Content });
+                {
+                    full.Append(chunk.Content);
+                    var s = full.ToString();
+                    var markerIdx = s.IndexOf(actionMarker, StringComparison.Ordinal);
+                    var safeEnd = markerIdx >= 0 ? markerIdx : Math.Max(forwarded, s.Length - (actionMarker.Length - 1));
+                    if (safeEnd > forwarded)
+                    {
+                        await Sse("typing", new { text = s[forwarded..safeEnd] });
+                        forwarded = safeEnd;
+                    }
+                }
                 else if (chunk.Type == GatewayChunkType.Error)
                 { await Sse("error", new { message = chunk.Error ?? "AI 调用失败" }); return; }
             }
@@ -2604,7 +2645,145 @@ public class ProductAgentController : ControllerBase
             await Sse("error", new { message = "AI 调用异常，请重试" });
             return;
         }
+
+        // 冲刷扣留的尾部可见文本，并执行动作指令
+        var fullText = full.ToString();
+        var actionIdx = fullText.IndexOf(actionMarker, StringComparison.Ordinal);
+        var visibleEnd = actionIdx >= 0 ? actionIdx : fullText.Length;
+        if (visibleEnd > forwarded)
+            await Sse("typing", new { text = fullText[forwarded..visibleEnd] });
+
+        if (actionIdx >= 0)
+        {
+            var specs = ParseAssistantActions(fullText[(actionIdx + actionMarker.Length)..]);
+            foreach (var spec in specs)
+            {
+                await Sse("phase", new { message = "正在创建对象…" });
+                var result = await ExecuteAssistantActionAsync(productId, userId, spec);
+                await Sse("action", result);
+            }
+        }
         await Sse("done", new { });
+    }
+
+    private sealed record AssistantActionSpec(string Type, string Title, string? Description, string? Grade);
+
+    /// <summary>解析助手动作指令 JSON（容忍代码块围栏 / json 语言标），非法输入返回空列表，最多 5 条。</summary>
+    private static List<AssistantActionSpec> ParseAssistantActions(string raw)
+    {
+        var result = new List<AssistantActionSpec>();
+        var json = raw.Trim().Trim('`').Trim();
+        if (json.StartsWith("json", StringComparison.OrdinalIgnoreCase)) json = json[4..].Trim();
+        try
+        {
+            if (JsonNode.Parse(json) is not JsonArray arr) return result;
+            foreach (var node in arr.Take(5))
+            {
+                if (node is not JsonObject o) continue;
+                var type = o["type"]?.GetValue<string>() ?? "";
+                var title = (o["title"]?.GetValue<string>() ?? "").Trim();
+                if (type.Length == 0 || title.Length == 0) continue;
+                result.Add(new AssistantActionSpec(
+                    type,
+                    title,
+                    o["description"]?.GetValue<string>(),
+                    o["grade"]?.GetValue<string>()));
+            }
+        }
+        catch
+        {
+            // LLM 输出非法 JSON：忽略动作，正文已正常返回
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 执行助手动作（创建需求/功能/缺陷）。创建逻辑与对应 REST 端点对齐：
+    /// 编号生成、默认流程绑定、初始状态、产品计数重算。返回 SSE action 事件载荷。
+    /// </summary>
+    private async Task<object> ExecuteAssistantActionAsync(string productId, string userId, AssistantActionSpec spec)
+    {
+        var kind = spec.Type switch
+        {
+            "create_requirement" => "requirement",
+            "create_feature" => "feature",
+            "create_defect" => "defect",
+            _ => "",
+        };
+        var title = spec.Title.Length > 200 ? spec.Title[..200] : spec.Title;
+        if (kind.Length == 0)
+            return new { kind = spec.Type, ok = false, id = (string?)null, no = "", title, error = "不支持的动作类型" };
+        var description = string.IsNullOrWhiteSpace(spec.Description) ? null : spec.Description!.Trim();
+        if (description is { Length: > 4000 }) description = description[..4000];
+        var grade = ProductItemGrade.All.Contains(spec.Grade ?? "") ? spec.Grade! : ProductItemGrade.P2;
+
+        try
+        {
+            switch (kind)
+            {
+                case "requirement":
+                {
+                    var (_, wfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
+                    var req = new Requirement
+                    {
+                        ProductId = productId,
+                        RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
+                        Title = title,
+                        Description = description,
+                        Grade = grade,
+                        WorkflowDefId = wfId,
+                        OwnerId = userId,
+                        StateEnteredAt = DateTime.UtcNow,
+                    };
+                    req.CurrentState = await ResolveInitialStateAsync(wfId);
+                    await _db.Requirements.InsertOneAsync(req);
+                    await RecalcProductCountsAsync(productId);
+                    return new { kind, ok = true, id = (string?)req.Id, no = req.RequirementNo, title = req.Title, error = (string?)null };
+                }
+                case "feature":
+                {
+                    var (_, wfId) = await ResolveDefaultsAsync(ProductEntityType.Feature, productId);
+                    var feature = new Feature
+                    {
+                        ProductId = productId,
+                        FeatureNo = await GenerateNoAsync("FEA", _db.Features, "FeatureNo"),
+                        Title = title,
+                        Description = description,
+                        Grade = grade,
+                        WorkflowDefId = wfId,
+                        OwnerId = userId,
+                        StateEnteredAt = DateTime.UtcNow,
+                    };
+                    feature.CurrentState = await ResolveInitialStateAsync(wfId);
+                    await _db.Features.InsertOneAsync(feature);
+                    await RecalcProductCountsAsync(productId);
+                    return new { kind, ok = true, id = (string?)feature.Id, no = feature.FeatureNo, title = feature.Title, error = (string?)null };
+                }
+                default:
+                {
+                    var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+                    var defect = new DefectReport
+                    {
+                        DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
+                        Title = title,
+                        RawContent = description ?? string.Empty,
+                        Grade = grade,
+                        Status = DefectStatus.Submitted,
+                        ReporterId = userId,
+                        ReporterName = user?.DisplayName,
+                        TracedProductId = productId,
+                    };
+                    await _db.DefectReports.InsertOneAsync(defect);
+                    await RecalcDefectCountAsync(productId);
+                    return new { kind, ok = true, id = (string?)defect.Id, no = defect.DefectNo, title = defect.Title, error = (string?)null };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[product-agent] assistant action failed: {Type} {Title}", spec.Type, title);
+            return new { kind, ok = false, id = (string?)null, no = "", title, error = "创建失败，请重试" };
+        }
     }
 
     // ════════════════════════ 需求 AI 智能填充（SSE 流式）════════════════════════
@@ -3046,6 +3225,11 @@ public class ProductAgentController : ControllerBase
 
         var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
         var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).SortBy(v => v.CreatedAt).ToListAsync();
+        var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
+        var defects = await _db.DefectReports.Find(Builders<DefectReport>.Filter.And(
+                Builders<DefectReport>.Filter.Eq(d => d.TracedProductId, productId),
+                Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false)))
+            .Limit(5000).ToListAsync();
 
         // 需求 / 功能流程定义（拿状态分类 + 终态标签）
         var (_, reqWfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
@@ -3098,7 +3282,57 @@ public class ProductAgentController : ControllerBase
             };
         }).ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { releaseProgress, overall, velocity }));
+        // 规模/分布统计（原工作台数据展示区迁入报表，口径与 overview/stats 一致）
+        var counts = new
+        {
+            versions = versions.Count,
+            requirements = reqs.Count,
+            features = feats.Count,
+            defects = defects.Count,
+        };
+        var requirementsByGrade = ProductItemGrade.All.ToDictionary(g => g, g => reqs.Count(r => r.Grade == g));
+        var defectsByStatus = defects.GroupBy(d => d.Status).ToDictionary(g => g.Key, g => g.Count());
+        var versionsByLifecycle = ProductVersionLifecycle.All.ToDictionary(l => l, l => versions.Count(v => v.Lifecycle == l));
+
+        return Ok(ApiResponse<object>.Ok(new { releaseProgress, overall, velocity, counts, requirementsByGrade, defectsByStatus, versionsByLifecycle }));
+    }
+
+    // ════════════════════════ 用户偏好（工作台快捷操作） ════════════════════════
+
+    /// <summary>读取产品管理智能体用户偏好（用户级，跨产品共用）。</summary>
+    [HttpGet("preferences")]
+    public async Task<IActionResult> GetProductAgentPreferences()
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences.Find(x => x.UserId == userId).FirstOrDefaultAsync();
+        // quickActionIds 为 null 表示从未配置（前端走默认）；空数组表示用户主动清空。
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            quickActionIds = prefs?.ProductAgentPreferences?.QuickActionIds,
+        }));
+    }
+
+    /// <summary>更新工作台「快捷操作」配置。id 对应前端 quickActionRegistry，后端只存有序字符串列表（上限 50）。</summary>
+    [HttpPut("preferences/quick-actions")]
+    public async Task<IActionResult> UpdateProductAgentQuickActions([FromBody] UpdateQuickActionsRequest request)
+    {
+        var userId = GetUserId();
+        var ids = (request.QuickActionIds ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct()
+            .Take(50)
+            .ToList();
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ProductAgentPreferences, new ProductAgentPreferences { QuickActionIds = ids })
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { quickActionIds = ids }));
     }
 
     // ════════════════════════ 批量操作 ════════════════════════
@@ -4084,10 +4318,19 @@ public class UpdateProductDefectRequest
     public string? VersionId { get; set; }
 }
 
+public class UpdateQuickActionsRequest
+{
+    /// <summary>工作台「快捷操作」操作 id 有序列表（对应前端 quickActionRegistry）</summary>
+    public List<string>? QuickActionIds { get; set; }
+}
+
 public class AssistantAskRequest
 {
     /// <summary>用户问题（工作助手问答）</summary>
     public string? Question { get; set; }
+
+    /// <summary>随提问携带的参考文档（前端先调 assistant/attachments 提取文本后回传，最多 3 个）</summary>
+    public List<AssistantAttachmentInput>? Attachments { get; set; }
 }
 
 public class RelationAnalysisRequest

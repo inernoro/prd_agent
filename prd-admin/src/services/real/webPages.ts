@@ -394,6 +394,8 @@ export async function createShareLink(data: {
   forceNew?: boolean;
   /** 访问可见性：owner-only（默认）/ logged-in / public */
   visibility?: 'owner-only' | 'logged-in' | 'public';
+  /** 是否分配数字短链 /s/{seq}。默认 false：只发 /s/wp/{token} 长链，不污染 short_links */
+  allocateShortLink?: boolean;
 }): Promise<ApiResponse<{
   id: string;
   token: string;
@@ -416,6 +418,17 @@ export async function createShareLink(data: {
 
 export async function listShares(): Promise<ApiResponse<{ items: ShareLinkItem[] }>> {
   return apiRequest(api.webPages.shares(), { method: 'GET' });
+}
+
+/**
+ * 事后为某条已存在的分享按需生成数字短链 /s/{seq}（用户点「生成数字短链」时调用）。
+ * 幂等：已有则返回原 seq。
+ */
+export async function ensureShareShortLink(shareId: string): Promise<ApiResponse<{
+  shortSeq: number;
+  shortShareUrl: string | null;
+}>> {
+  return apiRequest(api.webPages.shareShortLink(encodeURIComponent(shareId)), { method: 'POST' });
 }
 
 export async function revokeShare(shareId: string): Promise<ApiResponse<{ revoked: boolean }>> {

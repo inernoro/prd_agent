@@ -2,16 +2,17 @@
  * 产品管理智能体 — 单产品视图（IA 重构后）。
  *
  * 路由：/product-agent/p/:productId
- * 进入某个具体产品，查看该产品下的全部信息（概览 / 版本(含升级申请) / 需求 / 功能 / 缺陷 / 客户 / 知识库 / 图谱）。
+ * 进入某个具体产品，查看该产品下的全部信息（工作台 / 版本(含升级申请) / 需求 / 功能 / 缺陷 / 客户 / 知识库 / 图谱）。
+ * 工作台 = AI助手内嵌主区（70%）+ 右栏「我的待办 + 快捷操作」（30%）；统计图表都在「报表」tab。
  * 需求/功能 的「新建」走独立页面（/product-agent/p/:productId/:kind/new）；查看走详情页。
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import type { EChartsOption } from 'echarts';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Sparkles } from 'lucide-react';
-import { ProductAssistantDrawer } from './ProductAssistantDrawer';
-import { EChart } from '@/components/charts/EChart';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
+import { ProductAssistantPanel } from './ProductAssistantPanel';
+import { QuickActionsCard } from './QuickActionsCard';
+import { TapdRtfImportDialog } from './TapdRtfImportDialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { KnowledgeModule } from './knowledge/KnowledgeModule';
@@ -50,8 +51,6 @@ import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 
 type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
-
-const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
 /** 按 parentId 把扁平列表排成父子层级顺序（深度优先），返回每项 + 缩进深度。 */
 function orderByHierarchy<T extends { id: string; parentId?: string | null }>(items: T[]): { item: T; depth: number }[] {
@@ -94,7 +93,6 @@ export function SingleProductView() {
   const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
-  const [assistantOpen, setAssistantOpen] = useState(false);
   // 当前 tab 记录在 URL（?tab=），从对象详情页返回时能停在原 tab，而不是回弹到工作台。
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -151,7 +149,18 @@ export function SingleProductView() {
       active={active}
       onSelect={setActive}
     >
-      {active === 'knowledge' ? (
+      {active === 'overview' ? (
+        // 工作台：AI助手主区（70%）+ 右栏待办/快捷操作（30%），撑满高度各自滚动
+        <div className="flex-1 min-h-0 flex">
+          <div className="h-full min-h-0 min-w-0 flex flex-col border-r border-white/10" style={{ width: '70%' }}>
+            <ProductAssistantPanel productId={product.id} productName={product.name} />
+          </div>
+          <aside className="h-full min-h-0 min-w-0 flex flex-col gap-4 p-4" style={{ width: '30%' }}>
+            <MyTodos product={product} />
+            <QuickActionsCard productId={product.id} gotoTab={(t) => setActive(t as Section)} />
+          </aside>
+        </div>
+      ) : active === 'knowledge' ? (
         <div className="flex-1 min-h-0">
           <KnowledgeModule productId={product.id} />
         </div>
@@ -168,24 +177,7 @@ export function SingleProductView() {
           <RtmMatrix productId={product.id} />
         </div>
       ) : (
-        <SectionShell
-          title={SECTION_TITLE[active]}
-          actions={active === 'overview' ? (
-            <button
-              onClick={() => setAssistantOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/25"
-              title="基于本产品数据与知识库的问答助手"
-            >
-              <Sparkles size={14} /> AI助手
-            </button>
-          ) : undefined}
-        >
-          {active === 'overview' && (
-            <div className="flex flex-col gap-5">
-              <MyTodos product={product} />
-              <ProductDashboard product={product} />
-            </div>
-          )}
+        <SectionShell title={SECTION_TITLE[active]}>
           {active === 'versions' && <VersionsTab productId={product.id} />}
           {active === 'requirements' && <RequirementsTab productId={product.id} />}
           {active === 'features' && <FeaturesTab productId={product.id} />}
@@ -193,9 +185,6 @@ export function SingleProductView() {
           {active === 'defects' && <DefectsTab productId={product.id} />}
           {active === 'team' && <ProductTeamTab productId={product.id} />}
         </SectionShell>
-      )}
-      {assistantOpen && (
-        <ProductAssistantDrawer productId={product.id} productName={product.name} onClose={() => setAssistantOpen(false)} />
       )}
     </ProductAgentLayout>
   );
@@ -221,7 +210,6 @@ function BoardTab({ productId }: { productId: string }) {
   );
 }
 
-// ── 产品概览仪表盘 ──
 // ── 工作台「我的待办」：只显示当前用户现在需要处理的项 ──
 // 过滤口径由后端 GET /products/{id}/my-todos 闭环（状态责任人 + 未到终态/未完成）；
 // 需求/功能流转给他人或到终态、缺陷已完成后，会自动从这里消失。
@@ -247,23 +235,25 @@ function MyTodos({ product }: { product: Product }) {
     return () => { alive = false; };
   }, [product.id]);
 
-  if (loading) return <MapSectionLoader text="正在汇总待办…" />;
   const total = items.length;
   // 状态标签：缺陷用前端 SSOT 映射，需求/功能用后端已解析的工作流状态名
   const stateOf = (it: MyTodoItem) => (it.kind === 'defect' ? defectStatusLabel(it.state) : it.stateLabel || undefined);
 
+  // 工作台右栏窄卡片：与快捷操作按 7:3 分高（flexGrow），列表内部滚动
   return (
-    <div className="pa-row rounded-xl border border-white/10 bg-white/[0.02] p-4">
-      <div className="flex items-center gap-2 mb-3">
+    <div className="min-h-0 flex flex-col rounded-xl border border-white/10 bg-white/[0.02] p-4" style={{ flexGrow: 7, flexBasis: 0 }}>
+      <div className="shrink-0 flex items-center gap-2 mb-1">
         <ListChecks size={15} className="text-cyan-400" />
         <span className="text-sm font-semibold text-white/80">我的待办</span>
-        <span className="text-[11px] text-white/40">只显示当前需要我处理的需求 / 功能 / 缺陷，已处理或流转走的自动消失</span>
         <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">{total}</span>
       </div>
-      {total === 0 ? (
+      <div className="shrink-0 text-[11px] text-white/40 mb-3">只显示当前需要我处理的需求 / 功能 / 缺陷，已处理或流转走的自动消失</div>
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center"><MapSpinner size={18} /></div>
+      ) : total === 0 ? (
         <div className="text-[12px] text-white/35 py-6 text-center">暂无待办，保持清爽。</div>
       ) : (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex-1 flex flex-col gap-1.5" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {items.map((it) => (
             <TodoRow key={`${it.kind}-${it.id}`} kind={TODO_KIND_META[it.kind].label} color={TODO_KIND_META[it.kind].color}
               no={it.no} title={it.title || '(无标题)'} state={stateOf(it)}
@@ -277,7 +267,7 @@ function MyTodos({ product }: { product: Product }) {
 
 function TodoRow({ kind, color, no, title, state, onClick }: { kind: string; color: string; no: string; title: string; state?: string | null; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="pa-row text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-white/5">
+    <button onClick={onClick} className="pa-row shrink-0 text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-white/5">
       <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color, background: `${color}1a` }}>{kind}</span>
       <span className="text-[11px] font-mono text-white/35 shrink-0">{no}</span>
       <span className="text-sm text-white/85 truncate flex-1">{title}</span>
@@ -285,108 +275,6 @@ function TodoRow({ kind, color, no, title, state, onClick }: { kind: string; col
     </button>
   );
 }
-
-function ProductDashboard({ product }: { product: Product }) {
-  const [reqs, setReqs] = useState<Requirement[]>([]);
-  const [defects, setDefects] = useState<TracedDefect[]>([]);
-  const [versions, setVersions] = useState<ProductVersion[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      const [r, d, v] = await Promise.all([
-        listRequirements(product.id),
-        listTracedDefects(product.id),
-        listVersions(product.id),
-      ]);
-      if (!alive) return;
-      if (r.success) setReqs(r.data.items);
-      if (d.success) setDefects(d.data.items);
-      if (v.success) setVersions(v.data.items);
-      setLoading(false);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [product.id]);
-
-  const reqGradePie = useMemo<EChartsOption>(() => {
-    const grades: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
-    const data = grades.map((g) => ({ name: ITEM_GRADE_LABEL[g], value: reqs.filter((r) => r.grade === g).length })).filter((x) => x.value > 0);
-    return {
-      tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
-      series: [{ type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'], data, label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, itemStyle: { borderColor: '#0f1014', borderWidth: 2 } }],
-      color: CHART_COLORS,
-    };
-  }, [reqs]);
-
-  const defectStatusBar = useMemo<EChartsOption>(() => {
-    const map = new Map<string, number>();
-    defects.forEach((d) => { const k = defectStatusLabel(d.status); map.set(k, (map.get(k) ?? 0) + 1); });
-    const entries = Array.from(map.entries());
-    return {
-      tooltip: { trigger: 'axis' },
-      grid: { left: 8, right: 16, top: 16, bottom: 8, containLabel: true },
-      xAxis: { type: 'category', data: entries.map(([k]) => k), axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10 } },
-      yAxis: { type: 'value', axisLabel: { color: 'rgba(255,255,255,0.4)' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } },
-      series: [{ type: 'bar', data: entries.map(([, v]) => v), itemStyle: { color: '#F87171', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 32 }],
-    };
-  }, [defects]);
-
-  const versionLifecycle = useMemo<EChartsOption>(() => {
-    const data = ['planning', 'developing', 'testing', 'released', 'deprecated']
-      .map((l) => ({ name: VERSION_LIFECYCLE_LABEL[l as keyof typeof VERSION_LIFECYCLE_LABEL], value: versions.filter((v) => v.lifecycle === l).length }))
-      .filter((x) => x.value > 0);
-    return {
-      tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
-      series: [{ type: 'funnel', left: '10%', right: '10%', top: 10, bottom: 30, minSize: '14%', label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, data }],
-      color: CHART_COLORS,
-    };
-  }, [versions]);
-
-  const kpis = [
-    { label: '版本', value: product.versionCount, color: '#60A5FA' },
-    { label: '需求', value: product.requirementCount, color: '#FBBF24' },
-    { label: '功能', value: product.featureCount, color: '#A78BFA' },
-    { label: '缺陷', value: product.defectCount, color: '#F87171' },
-  ];
-
-  return (
-    <div className="flex flex-col gap-5">
-      {product.description && <div className="text-sm text-white/60 max-w-3xl">{product.description}</div>}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {kpis.map((k, i) => (
-          <div key={k.label} style={{ animationDelay: `${i * 45}ms` }} className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-4">
-            <div className="text-2xl font-semibold" style={{ color: k.color }}>{k.value}</div>
-            <div className="text-xs text-white/50 mt-1">{k.label}</div>
-          </div>
-        ))}
-      </div>
-      {loading ? (
-        <MapSectionLoader text="正在统计…" />
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-          <DashChart title="需求分级分布" empty={reqs.length === 0} option={reqGradePie} />
-          <DashChart title="缺陷状态分布" empty={defects.length === 0} option={defectStatusBar} />
-          <DashChart title="版本生命周期" empty={versions.length === 0} option={versionLifecycle} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DashChart({ title, option, empty }: { title: string; option: EChartsOption; empty: boolean }) {
-  return (
-    <div className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-4">
-      <div className="text-sm font-medium text-white/70 mb-2">{title}</div>
-      {empty ? <div className="h-[240px] flex items-center justify-center text-xs text-white/35">暂无数据</div> : <EChart option={option} height={240} />}
-    </div>
-  );
-}
-
 
 // ── 版本 tab（含大版本升级申请）──
 function VersionsTab({ productId }: { productId: string }) {
@@ -476,8 +364,10 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [tapdRtfFiles, setTapdRtfFiles] = useState<File[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const nameOf = useDirectoryNames();
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
@@ -532,6 +422,24 @@ function RequirementsTab({ productId }: { productId: string }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".rtf,application/rtf,text/rtf"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const rtfFiles = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith('.rtf'));
+              if (rtfFiles.length > 0) setTapdRtfFiles(rtfFiles);
+              e.target.value = '';
+            }}
+          />
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs"
+          >
+            <Upload size={13} /> 导入 TAPD RTF
+          </button>
           <button onClick={exportCsv} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
             <Download size={13} /> 导出CSV
           </button>
@@ -575,6 +483,14 @@ function RequirementsTab({ productId }: { productId: string }) {
         </div>
       )}
         </>
+      )}
+      {tapdRtfFiles.length > 0 && (
+        <TapdRtfImportDialog
+          productId={productId}
+          files={tapdRtfFiles}
+          onClose={() => setTapdRtfFiles([])}
+          onImported={reload}
+        />
       )}
     </div>
   );

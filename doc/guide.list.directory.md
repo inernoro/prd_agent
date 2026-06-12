@@ -99,6 +99,8 @@
   > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
+- [团队动态设计](design.team-activity) `design.team-activity`
+  > 全局白名单审计 Filter 自动留痕 + TargetTitle 标题快照（删除前预读）+ 管理员时间线页（/team-activity）
 
 - [LLM Gateway 统一调用架构设计](design.llm-gateway) `design.llm-gateway`
   > 所有 LLM 调用通过统一网关，三级调度 + 健康管理
@@ -1018,3 +1020,5 @@
 | 2026-03-10 | 新增 | `guide.list.directory.md` | 文档索引目录页 |
 | 2026-06-10 | 新增 | `debt.cds-nginx-loading-pages` | CDS loading pages 债务台账 |
 | 2026-06-10 | 新增 | `design.cds-skill-version-update` | CDS 技能版本与更新架构 |
+| 2026-06-10 | 新增 | `plan.product-agent-version-workflow` | 产品管理智能体版本流程整改计划 |
+| 2026-06-11 | 新增 | `report.version-20260610-1-summary` | version-20260610-1 分支改动说明 |

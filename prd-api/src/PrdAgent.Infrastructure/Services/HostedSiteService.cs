@@ -742,7 +742,8 @@ public class HostedSiteService : IHostedSiteService
         CancellationToken ct = default,
         string purpose = "share",
         bool forceNew = false,
-        string visibility = "owner-only")
+        string visibility = "owner-only",
+        bool allocateShortLink = false)
     {
         // 规范化 visibility 入参（白名单），缺省回退 owner-only
         var normalizedVisibility = visibility?.ToLowerInvariant() switch
@@ -912,6 +913,10 @@ public class HostedSiteService : IHostedSiteService
                     Builders<WebPageShareLink>.Update.Combine(ups),
                     cancellationToken: ct);
             }
+            // 复用旧分享时若用户本次显式要数字短链、而旧链还没分配过 seq，则补分配
+            // （AllocateAsync 幂等：已有则返回原 seq，不会重复占号）。
+            if (allocateShortLink && reuse.Purpose != "visit" && reuse.ShortSeq <= 0)
+                await TryAllocateShortSeqAsync(reuse, ct);
             _logger.LogInformation("用户 {UserId} 复用站点分享 {ShareId}, type={Type}",
                 userId, reuse.Id, reuse.ShareType);
             return reuse;
@@ -950,31 +955,62 @@ public class HostedSiteService : IHostedSiteService
 
         await _db.WebPageShareLinks.InsertOneAsync(share, cancellationToken: ct);
 
-        // visit 便捷链只通过不可猜测的 /s/wp/{token} 暴露，绝不分配数字短链 /s/{seq}：
-        // /api/short-links/{seq} 匿名且可枚举，若给 visit 链分配 seq，攻击者枚举数字即可
-        // 访问到从未被主动分享的私有站点。仅 share 用户主动分享才分配数字短链。
-        if (effPurpose != "visit")
-        {
-            // 分配统一短链 Seq（/s/{seq}）；失败不影响主流程（用户仍可用 /s/wp/{token}）
-            try
-            {
-                var seq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.WebPage, share.Token, ct);
-                await _db.WebPageShareLinks.UpdateOneAsync(
-                    x => x.Id == share.Id,
-                    Builders<WebPageShareLink>.Update.Set(x => x.ShortSeq, seq),
-                    cancellationToken: ct);
-                share.ShortSeq = seq;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "为分享 {ShareId} 分配短链失败，将仅提供旧链接", share.Id);
-            }
-        }
+        // 数字短链 /s/{seq} 改为「按需懒分配」（2026-06-11）：用户意图里没有短链就不强制
+        // 生成，否则 short_links 集合被每条分享污染、管理员页面冒出几百条用户从没要过的短链。
+        // 默认创建的分享 ShortSeq=0，对外只用不可枚举的 /s/wp/{token} 长链即可独立访问
+        // （ViewShareAsync 直接按 token 查 WebPageShareLink，不依赖 short_links）。
+        // 仅当调用方显式 allocateShortLink=true（用户在分享面板主动选「数字短链」或事后点
+        // 「生成数字短链」）才分配 seq。
+        // visit 便捷链恒不分配：/api/short-links/{seq} 匿名且可枚举，给 visit 链分配 seq
+        // 会让攻击者枚举数字即可访问从未被主动分享的私有站点。
+        if (effPurpose != "visit" && allocateShortLink)
+            await TryAllocateShortSeqAsync(share, ct);
 
         _logger.LogInformation("用户 {UserId} 创建站点分享 {ShareId}, type={Type}, shortSeq={Seq}",
             userId, share.Id, share.ShareType, share.ShortSeq);
 
         return share;
+    }
+
+    /// <summary>
+    /// 为指定分享按需分配统一短链 Seq（/s/{seq}），并回写 ShortSeq。
+    /// AllocateAsync 幂等（同一 token 已有则返回原 seq）；失败不抛出，只记日志——
+    /// 因为分享主路径不依赖 short_links，用户仍可用 /s/wp/{token} 长链访问。
+    /// </summary>
+    private async Task TryAllocateShortSeqAsync(WebPageShareLink share, CancellationToken ct)
+    {
+        try
+        {
+            var seq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.WebPage, share.Token, ct);
+            await _db.WebPageShareLinks.UpdateOneAsync(
+                x => x.Id == share.Id,
+                Builders<WebPageShareLink>.Update.Set(x => x.ShortSeq, seq),
+                cancellationToken: ct);
+            share.ShortSeq = seq;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "为分享 {ShareId} 分配短链失败，将仅提供长链 /s/wp/{Token}", share.Id, share.Token);
+        }
+    }
+
+    /// <summary>
+    /// 事后为某条已存在的分享分配数字短链（用户在分享面板点「生成数字短链」时调用）。
+    /// 返回分配后的 ShortSeq（&gt;0 成功）；找不到 / 无权 / visit 链返回 0 或抛权限异常。
+    /// </summary>
+    public async Task<long> EnsureShortLinkAsync(string userId, string shareId, CancellationToken ct = default)
+    {
+        var share = await _db.WebPageShareLinks.Find(x => x.Id == shareId).FirstOrDefaultAsync(ct);
+        if (share == null)
+            throw new KeyNotFoundException("分享不存在");
+        if (share.CreatedBy != userId)
+            throw new UnauthorizedAccessException("只能为自己创建的分享生成短链");
+        if (share.Purpose == "visit")
+            throw new InvalidOperationException("访问便捷链不支持数字短链");
+        if (share.ShortSeq > 0)
+            return share.ShortSeq; // 已有则幂等返回
+        await TryAllocateShortSeqAsync(share, ct);
+        return share.ShortSeq;
     }
 
     public async Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct)

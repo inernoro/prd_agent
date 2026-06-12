@@ -50,7 +50,7 @@ public static class PeerNodeStatus
 }
 
 /// <summary>
-/// 一次性配对码（管理员握手用，短 TTL，握手成功即失效）。
+/// 一次性配对码（管理员握手用，默认 3 天有效，握手成功即失效）。
 /// 集合 peer_pairing_codes，Id 即配对码本身。
 /// </summary>
 public class PeerPairingCode
@@ -61,8 +61,8 @@ public class PeerPairingCode
     /// <summary>生成该配对码的管理员 userId</summary>
     public string CreatedBy { get; set; } = string.Empty;
 
-    /// <summary>过期时间（默认 5 分钟）</summary>
-    public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddMinutes(5);
+    /// <summary>过期时间（默认 3 天）</summary>
+    public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(3);
 
     /// <summary>是否已被使用（一次性）</summary>
     public bool Used { get; set; }

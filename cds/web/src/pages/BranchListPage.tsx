@@ -10,7 +10,6 @@ import {
   ChevronDown,
   Copy,
   Cpu,
-  Eye,
   ExternalLink,
   Gauge,
   GitBranch,
@@ -39,6 +38,7 @@ import {
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
+import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -731,34 +731,6 @@ function rememberAvatarStatus(url: string, status: 'loaded' | 'failed'): void {
   writeAvatarStorage(url, status);
 }
 
-function circularActorText(value: string): string {
-  const base = (value || '').trim() || 'CDS';
-  const compact = base.replace(/\s+/g, '');
-  const clipped = compact.length > 18 ? compact.slice(0, 18) : compact;
-  return `${clipped} • ${clipped} •`;
-}
-
-function CircularActorText({ text }: { text: string }): JSX.Element {
-  const chars = Array.from(circularActorText(text));
-  return (
-    <span className="cds-actor-orbit__ring" aria-hidden>
-      {chars.map((char, index) => {
-        const angle = (360 / chars.length) * index;
-        return (
-          <span
-            // eslint-disable-next-line react/no-array-index-key
-            key={`${char}-${index}`}
-            className="cds-actor-orbit__char"
-            style={{ transform: `rotate(${angle}deg) translateY(-23px) rotate(90deg)` }}
-          >
-            {char}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
 function formatBytesFromMB(value?: number): string {
   if (!value || value <= 0) return '未知';
   if (value >= 1024) return `${Math.round(value / 102.4) / 10} GB`;
@@ -797,6 +769,11 @@ function deployFailureMessage(branch?: BranchSummary): string {
 
 function projectIdFromQuery(): string {
   return new URLSearchParams(window.location.search).get('project') || '';
+}
+
+function resourceDetailTabFromQuery(value: string | null): BranchResourceDetailTab {
+  const allowed = new Set<BranchResourceDetailTab>(['overview', 'connection', 'data', 'backups', 'variables', 'metrics', 'logs', 'settings']);
+  return value && allowed.has(value as BranchResourceDetailTab) ? value as BranchResourceDetailTab : 'data';
 }
 
 function displayName(project: ProjectSummary): string {
@@ -1326,6 +1303,17 @@ export function BranchListPage(): JSX.Element {
   const highlightPulseTimerRef = useRef<number | null>(null);
   const previewQueryRef = useRef(new URLSearchParams(window.location.search).get('preview') || '');
   const previewQueryConsumedRef = useRef(false);
+  const resourceOpenQueryParams = new URLSearchParams(window.location.search);
+  const resourceOpenQueryRef = useRef<{
+    branchId: string;
+    resourceId: string;
+    detailTab: BranchResourceDetailTab;
+  }>({
+    branchId: resourceOpenQueryParams.get('openBranch') || '',
+    resourceId: resourceOpenQueryParams.get('resource') || '',
+    detailTab: resourceDetailTabFromQuery(resourceOpenQueryParams.get('resourceTab')),
+  });
+  const resourceOpenQueryConsumedRef = useRef(false);
 
   const setAction = useCallback((key: string, next: BranchAction | null) => {
     actionRef.current = { ...actionRef.current };
@@ -2732,6 +2720,25 @@ export function BranchListPage(): JSX.Element {
     void previewBranchByName(requestedBranch);
   }, [previewBranchByName, state.status]);
 
+  useEffect(() => {
+    if (resourceOpenQueryConsumedRef.current || state.status !== 'ok') return;
+    const request = resourceOpenQueryRef.current;
+    if (!request.branchId || !request.resourceId) return;
+    const branch = state.branches.find((item) => item.id === request.branchId);
+    if (!branch) return;
+    resourceOpenQueryConsumedRef.current = true;
+    setDetailDrawerResourceFocus({
+      resourceId: request.resourceId,
+      detailTab: request.detailTab,
+    });
+    setDetailDrawerBranchId(branch.id);
+    const params = new URLSearchParams(window.location.search);
+    params.delete('openBranch');
+    params.delete('resource');
+    params.delete('resourceTab');
+    window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+  }, [state]);
+
   const capacityAssist = useMemo(() => {
     if (state.status !== 'ok' || !state.capacity || selectedBranches.length === 0) {
       return { deficit: 0, candidates: [] as BranchSummary[], freed: 0 };
@@ -3001,7 +3008,7 @@ export function BranchListPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide>
+      <Workspace wide className="cds-branch-list-workspace">
         {/* Hero: search-or-paste branch with autocomplete dropdown — replaces
             the old left "tracked / remote" two-list panel which the user
             said wasn't useful. Daily flow: focus the input, see all branches,
@@ -3032,9 +3039,8 @@ export function BranchListPage(): JSX.Element {
           </div>
         ) : null}
 
-        {/* Branch tile grid — built user mental model: cards in a 3-up
-            grid, each with [预览] [部署] [详情] inline + kebab menu for low-frequency
-            actions (拉取 / 停止 / 收藏 / 调试 / 标签 / 重置 / 删除). */}
+        {/* Branch tile grid — keeps cards readable while filling wider screens
+            with more columns before falling back to stretched rows. */}
         {state.status === 'ok' ? (
           <div className="mt-6">
             {/* 标签过滤栏:仅在有激活过滤时出现。点 × 清除过滤,恢复显示全部分支。
@@ -3085,7 +3091,7 @@ export function BranchListPage(): JSX.Element {
                 </div>
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+              <div className="cds-branch-card-grid">
                 {sortedBranches.map((branch) => (
                   <BranchCard
                     key={branch.id}
@@ -3181,6 +3187,7 @@ export function BranchListPage(): JSX.Element {
           }}
           onToast={setToast}
           onActionComplete={() => void refresh()}
+          onRelease={(branchId) => setReleaseBranchId(branchId)}
         />
 
         {state.status === 'ok' ? (
@@ -4005,16 +4012,10 @@ function BranchSearchDropdown({
 }
 
 /*
- * OpsDrawer — right-side slide-in sidebar (NOT a modal) hosting low-frequency
- * operations (capacity / hosts / executors / batch / activity). Triggered by
- * the topbar "运维" button.
- *
- * 2026-05-10 重大修法:用户反复反馈"打开运维栏后 BG 按钮点不动"。根因是之前
- * 实现把抽屉做成 modal(role=dialog aria-modal=true + 全屏 black/40 overlay
- * + body.overflow=hidden),用户期望「侧栏开着仍能继续点 BG」,正确做法是
- * "non-modal sidebar":去掉 overlay、去掉 modal 语义、去掉 body 滚动锁定。
- *
- * 关闭方式保留:ESC 键 + header 的 X 按钮。
+ * OpsDrawer — right-side drawer for low-frequency operations (capacity /
+ * hosts / executors / batch / activity). Keep the shell aligned with
+ * BranchDetailDrawer so both heavy panels share the same size and dismissal
+ * behavior.
  */
 function OpsDrawer({
   open,
@@ -4031,41 +4032,39 @@ function OpsDrawer({
       if (event.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
-    // eslint-disable-next-line no-console
-    console.log('[OpsDrawer] open at', new Date().toISOString());
     return () => {
       window.removeEventListener('keydown', onKey);
-      // eslint-disable-next-line no-console
-      console.log('[OpsDrawer] close at', new Date().toISOString());
     };
   }, [open, onClose]);
 
   if (!open) return null;
 
-  // 关键差异 vs 旧版本:
-  // - 不再外层包 fixed inset-0 flex(那个会撑满全屏,即使透明也夺走指针事件)
-  // - 不再有 black/40 overlay 全屏 button(那个是真正挡 BG 的元凶)
-  // - role=complementary 而非 dialog;移除 aria-modal(用户期望非模态)
-  // - 不再 body.overflow=hidden(BG 仍可正常滚动)
-  // 抽屉本体直接 fixed 在右侧,只占 460px,左侧 BG 全部仍可交互。
   return (
-    <div
-      className="cds-drawer-anim fixed top-0 right-0 bottom-0 z-50 flex h-screen w-full max-w-[460px] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
-      role="complementary"
-      aria-label="运维抽屉"
-      style={{ minHeight: 0 }}
-    >
-      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <Activity className="h-4 w-4 text-muted-foreground" />
-          运维 · 容量 / 主机 / 执行器 / 活动
+    <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="运维抽屉">
+      <button
+        type="button"
+        className="absolute inset-0 z-0 bg-transparent"
+        onClick={onClose}
+        aria-label="关闭运维抽屉"
+      />
+      <div
+        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[min(1240px,calc(100vw-32px))] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
+        style={{ minHeight: 0 }}
+      >
+        <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Activity className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="text-sm font-semibold">运维</span>
+            <span className="text-muted-foreground/60">·</span>
+            <span className="min-w-0 truncate text-xs text-muted-foreground">容量 / 主机 / 执行器 / 活动</span>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="关闭" title="关闭">
+            <X />
+          </Button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5" style={{ overscrollBehavior: 'contain' }}>
+          {children}
         </div>
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label="关闭" title="关闭">
-          <Square />
-        </Button>
-      </header>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
-        {children}
       </div>
     </div>
   );
@@ -4360,9 +4359,9 @@ function BranchCard({
   onClickTag?: (tag: string) => void;
 }): JSX.Element {
   /*
-   * BranchTile — compact card sized for a 3-up grid (~360px wide). Mirrors
-   * the legacy mental model: primary actions [预览] [部署] [详情] inline at
-   * the bottom; low-frequency actions live in a kebab dropdown.
+   * BranchTile — compact card inside the adaptive branch grid. Primary
+   * preview/release actions are merged into one split button; low-frequency
+   * branch operations live in the kebab dropdown.
    */
   const busy = action?.status === 'running' || isBusy(branch);
   const deleteBusy = action?.status === 'running' && action.kind === 'delete';
@@ -4384,6 +4383,16 @@ function BranchCard({
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
+  const runtimeIconClass = runtime?.kind === 'pending'
+    ? 'text-amber-500'
+    : runtime?.kind === 'mixed'
+      ? 'text-violet-500'
+      : runtime?.kind === 'release'
+        ? 'text-emerald-500'
+        : 'text-sky-500';
+  const runtimeIconTitle = runtime
+    ? `${runtime.label}: ${runtime.title}\n来源: ${origin.label} — ${origin.title}`
+    : `源码版: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`;
   const role = branchVisualRole(branch.branch);
   const roleCardClass = branchRoleCardClass(role);
   const issueLabel = isError ? branchIssueLabel(branch) : '';
@@ -4421,14 +4430,22 @@ function BranchCard({
   const [commitHistoryState, setCommitHistoryState] = useState<
     { status: 'idle' | 'loading' | 'ok' | 'error'; commits: BranchCommitSummary[]; message?: string }
   >({ status: 'idle', commits: [] });
-  const actorOrbitVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
-  const actorOrbitTone = isError || action?.status === 'error'
+  const actorNameGlowVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
+  const actorNameGlowTone = isError || action?.status === 'error'
     ? 'danger'
     : isAiActive
       ? 'ai'
       : branch.status === 'stopping' || action?.kind === 'stop'
         ? 'warning'
         : 'build';
+  const actorNameGlowClass = actorNameGlowVisible
+    ? {
+      ai: 'cds-actor-name-glow cds-actor-name-glow--ai',
+      build: 'cds-actor-name-glow cds-actor-name-glow--build',
+      warning: 'cds-actor-name-glow cds-actor-name-glow--warning',
+      danger: 'cds-actor-name-glow cds-actor-name-glow--danger',
+    }[actorNameGlowTone]
+    : 'text-foreground/70';
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -4557,10 +4574,19 @@ function BranchCard({
           - 分支名给最大宽度,truncate(必要时 hover 显示完整) */}
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
-          <Github
-            className={`mt-1.5 h-4 w-4 shrink-0 text-sky-500 ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
-            aria-hidden
-          />
+          <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
+            {runtime ? (
+              <Rocket
+                className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+                aria-label={runtime.label}
+              />
+            ) : (
+              <Github
+                className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+                aria-label="源码版"
+              />
+            )}
+          </span>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <h3
@@ -4596,27 +4622,6 @@ function BranchCard({
                   AI
                 </button>
               ) : null}
-              {/*
-                2026-05-14：标题行的徽章从「Webhook / 手动」改为分支当前的「运行模式」
-                （发布版 / 源码 / 混合）。用户更关心的是"这个分支跑的是热加载还是 publish"，
-                而不是"来源是 webhook 还是手动"。来源信息降级到 title attribute（hover 看到）。
-                发布相关运行模式带火箭图标；源码只保留普通文字，避免误导成发布态。
-              */}
-              {runtime ? (
-                <span
-                  className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border text-[10px] font-medium ${runtime.className}`}
-                  title={`${runtime.title}\n来源: ${origin.label} — ${origin.title}`}
-                >
-                  <Rocket className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
-                </span>
-              ) : (
-                <span
-                  className="inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border border-[hsl(var(--hairline))] text-[10px] font-medium text-muted-foreground"
-                  title={`运行模式: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`}
-                >
-                  <Github className="h-2.5 w-2.5" aria-hidden />
-                </span>
-              )}
             </div>
           </div>
         </div>
@@ -4787,15 +4792,21 @@ function BranchCard({
           // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
           // running 时才用 service 自身状态做精细化区分。
           const chipStatus = isInterim || isError ? branch.status : resource.status;
-          const chipClass = isError ? issueClass : statusClass(chipStatus);
           const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
+          const chipToneClass = chipStatus === 'running'
+            ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
+            : chipStatus === 'error'
+              ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
+              : isInterim
+                ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
+                : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
           return (
             <button
               key={resource.id}
               type="button"
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs transition-[background-color,border-color,box-shadow] hover:border-primary/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${chipClass} ${
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${chipToneClass} ${
                 resource.access === 'external'
-                  ? 'shadow-[0_0_0_1px_rgba(56,189,248,0.28),0_0_16px_-8px_rgba(56,189,248,0.85)] ring-1 ring-sky-400/35'
+                  ? 'ring-1 ring-[hsl(var(--hairline))]'
                   : ''
               }`}
               title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}\n点击打开资源面板`}
@@ -4806,8 +4817,8 @@ function BranchCard({
               }}
             >
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
-              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0" /> : null}
-              {chipDisplay.port ? <span className="font-mono text-muted-foreground">:{resource.port}</span> : null}
+              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85 saturate-100 brightness-105" /> : null}
+              {chipDisplay.port ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
             </button>
           );
         }) : (
@@ -5032,10 +5043,8 @@ function BranchCard({
         <div className="relative min-w-0 pr-2 text-muted-foreground">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
-            <div className={`cds-actor-orbit ${actorOrbitVisible ? `cds-actor-orbit--active cds-actor-orbit--${actorOrbitTone}` : ''}`}>
-              {actorOrbitVisible && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
               <div
-                className="cds-actor-orbit__avatar relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
                 aria-label={builderTitle}
               >
                 <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
@@ -5058,46 +5067,46 @@ function BranchCard({
                   />
                 ) : null}
               </div>
+              {footerBuilder ? (
+                <span className={`block max-w-full break-all text-center text-[10px] font-medium leading-tight ${actorNameGlowClass}`}>
+                  {footerBuilder}
+                </span>
+              ) : null}
             </div>
-            {footerBuilder && !actorOrbitVisible ? (
-              <span className="block max-w-full break-all text-center text-[10px] font-medium leading-tight text-foreground/70">
-                {footerBuilder}
-              </span>
-            ) : null}
-          </div>
             <div className="relative flex min-w-0 flex-1 items-center gap-2">
-            {footerSha ? (
-              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
-                {footerSha}
-              </span>
-            ) : null}
-            {footerSubject ? (
-              <span className="min-w-0 flex-1 truncate text-sm" title={footerSubject}>
-                {footerSubject}
-              </span>
-            ) : (
-              <span className="min-w-0 flex-1" aria-hidden />
-            )}
-            <button
-              type="button"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-              title="查看提交历史"
-              aria-label={`${branch.branch} 提交历史`}
-              aria-expanded={commitMenuOpen}
-              onClick={(event) => {
-                event.stopPropagation();
-                void toggleCommitMenu();
-              }}
-            >
-              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${commitMenuOpen ? 'rotate-180' : ''}`} />
-            </button>
+              {footerSha ? (
+                <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
+                  {footerSha}
+                </span>
+              ) : null}
+              {footerSubject ? (
+                <span className="min-w-0 flex-1 truncate text-sm" title={footerSubject}>
+                  {footerSubject}
+                </span>
+              ) : (
+                <span className="min-w-0 flex-1" aria-hidden />
+              )}
+              <button
+                type="button"
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                title="查看提交历史"
+                aria-label={`${branch.branch} 提交历史`}
+                aria-expanded={commitMenuOpen}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void toggleCommitMenu();
+                }}
+              >
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${commitMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
             </div>
           </div>
           {commitHistoryPanel}
         </div>
         {/*
-          重设计(2026-05-04 用户主诉求):
-            - running 态:Eye 按钮(主橙 primary 色,**预览=重点色**)。点开预览页。
+          重设计(2026-06-11 用户主诉求):
+            - running 态:预览 + 发布合并成一个 split button。主按钮预览,
+              下拉菜单包含发布,避免右下角两个强按钮互相抢焦点。
             - 中间态:loading 旋转图标(non-clickable)
             - **未运行/异常**:**不再放部署按钮**。需要部署 → 点开抽屉 →
               设置 tab → 「重新部署」。理由:部署有副作用,需要"打开上下文 → 看
@@ -5106,67 +5115,19 @@ function BranchCard({
         */}
         <div className="flex shrink-0 items-center gap-2">
           {isRunning ? (
-            <Button
-              size="icon"
-              variant="outline"
-              onClick={(event) => {
-                event.stopPropagation();
-                onRelease();
-              }}
+            <PreviewActionSplitButton
               disabled={busy}
-              title="发布到目标"
-              aria-label="发布到目标"
-              className="border-emerald-500/35 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15 hover:text-emerald-500"
-            >
-              <Rocket />
-            </Button>
-          ) : null}
-          {isRunning ? (
-            previewCapacityWarning ? (
-              <ConfirmAction
-                title="容量不足，仍然预览部署？"
-                description={previewCapacityWarning}
-                confirmLabel="继续"
-                disabled={busy}
-                onConfirm={onPreview}
-                trigger={(
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className={isAiActive
-                      ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
-                      : isAiOperated
-                        ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
-                      : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                    title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
-                    aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
-                  >
-                    {isAiOperated ? <Bot /> : <Eye />}
-                  </Button>
-                )}
-              />
-            ) : (
-              <Button
-                size="icon"
-                variant="outline"
-                className={isAiActive
-                  ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
-                  : isAiOperated
-                    ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
-                  : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                onClick={isAiOperated
-                  ? (event) => {
-                    event.stopPropagation();
-                    setAiPanelOpen((current) => !current);
-                  }
-                  : onPreview}
-                disabled={busy}
-                title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
-                aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
-              >
-                {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
-              </Button>
-            )
+              loading={busy}
+              icon={isAiOperated ? <Bot className="h-4 w-4" /> : undefined}
+              previewTitle={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
+              previewAriaLabel={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
+              previewConfirmTitle={previewCapacityWarning && !isAiOperated ? '容量不足，仍然预览部署？' : undefined}
+              previewConfirmDescription={previewCapacityWarning && !isAiOperated ? previewCapacityWarning : undefined}
+              onPreview={isAiOperated
+                ? () => setAiPanelOpen((current) => !current)
+                : onPreview}
+              onRelease={onRelease}
+            />
           ) : isInterim ? (
             <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
               <Loader2 className="animate-spin" />

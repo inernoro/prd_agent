@@ -70,6 +70,12 @@ export const menuList: MenuDef[] = [
     permissions: ['logs.read'],
   },
   {
+    appKey: 'team-activity',
+    label: '团队动态',
+    icon: 'Activity',
+    permissions: ['team-activity.read'],
+  },
+  {
     appKey: 'data',
     label: '数据管理',
     icon: 'Database',
@@ -225,6 +231,9 @@ export const allPermissions: PermissionDef[] = [
 
   // 日志
   { key: 'logs.read', label: '日志 - 读', description: '查看请求日志', category: 'read' },
+
+  // 团队动态
+  { key: 'team-activity.read', label: '团队动态 - 读', description: '查看全员工作动态时间线', category: 'read' },
 
   // 开放平台
   { key: 'open-platform.manage', label: '开放平台 - 管理', description: '管理 API 应用', category: 'manage' },
