@@ -5,8 +5,10 @@ import {
   collectDefaultExpandedIds,
   collectDescendantIds,
   collectSubtreeIds,
+  flattenCatalogModuleOptions,
   featurePathLabel,
   normalizeFeaturePath,
+  resolveCatalogModuleValue,
 } from './featureTreeUtils';
 
 function feat(id: string, title: string, parentId?: string): Feature {
@@ -84,6 +86,31 @@ describe('featurePathLabel', () => {
       feat('b', '优惠券', 'a'),
     ];
     expect(featurePathLabel(features, 'b')).toBe('营销活动 / 优惠券');
+  });
+});
+
+describe('flattenCatalogModuleOptions', () => {
+  it('lists every tree node with full path', () => {
+    const features = [
+      feat('a', '营销活动'),
+      feat('b', '优惠券', 'a'),
+    ];
+    const tree = buildFeatureTree(features);
+    const flat = flattenCatalogModuleOptions(tree, features);
+    expect(flat.map((o) => o.path)).toEqual(['营销活动', '营销活动 / 优惠券']);
+  });
+});
+
+describe('resolveCatalogModuleValue', () => {
+  it('resolves by path title or legacy module name', () => {
+    const features = [
+      { ...feat('a', '营销活动'), moduleName: '营销' },
+      feat('b', '优惠券', 'a'),
+    ];
+    const tree = buildFeatureTree(features);
+    expect(resolveCatalogModuleValue(features, tree, '营销活动 / 优惠券')?.featureId).toBe('b');
+    expect(resolveCatalogModuleValue(features, tree, '优惠券')?.featureId).toBe('b');
+    expect(resolveCatalogModuleValue(features, tree, '营销')?.featureId).toBe('a');
   });
 });
 
