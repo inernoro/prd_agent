@@ -113,7 +113,7 @@ export class ReleaseService {
     } else if (!target.isEnabled) {
       push({ id: 'target', label: '发布目标', status: 'fail', message: `${target.name} 已禁用`, blocking: true });
     } else if (target.type !== 'ssh' || !target.ssh) {
-      push({ id: 'target', label: '发布目标', status: 'fail', message: 'MVP 只支持 SSH ReleaseTarget', blocking: true });
+      push({ id: 'target', label: '发布目标', status: 'fail', message: 'MVP 只支持站点发布目标', blocking: true });
     } else if (projectMismatch) {
       push({
         id: 'project-scope',
@@ -128,31 +128,34 @@ export class ReleaseService {
 
     const canProbeTarget = Boolean(target?.ssh && target.isEnabled && target.type === 'ssh' && !projectMismatch);
 
-    if (!projectMismatch && target?.ssh?.deployCommand?.trim()) {
-      push({ id: 'deploy-command', label: 'deployCommand 已配置', status: 'pass', message: target.ssh.deployCommand.trim(), blocking: false });
+    const deployCommand = !projectMismatch ? target?.ssh?.deployCommand?.trim() || '' : '';
+    const deployScripts = extractReleaseScriptPaths(deployCommand);
+
+    if (deployCommand) {
+      push({ id: 'deploy-command', label: '发布脚本已配置', status: 'pass', message: deployCommand, blocking: false });
     } else if (!projectMismatch) {
-      push({ id: 'deploy-command', label: 'deployCommand 已配置', status: 'fail', message: 'SSH target 缺少 deployCommand', blocking: true });
+      push({ id: 'deploy-command', label: '发布脚本已配置', status: 'fail', message: '站点发布目标缺少发布脚本', blocking: true });
     }
 
     if (!projectMismatch && target?.ssh?.healthcheckUrl?.trim()) {
       if (canProbeTarget) {
         try {
           await probeHealthcheck(target.ssh.healthcheckUrl);
-          push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'pass', message: target.ssh.healthcheckUrl, blocking: false });
+          push({ id: 'healthcheck', label: '上线地址可访问', status: 'pass', message: target.ssh.healthcheckUrl, blocking: false });
         } catch (err) {
-          push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'fail', message: (err as Error).message, blocking: true });
+          push({ id: 'healthcheck', label: '上线地址可访问', status: 'fail', message: (err as Error).message, blocking: true });
         }
       } else {
-        push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'warn', message: '目标未启用，已跳过健康检查探测', blocking: false });
+        push({ id: 'healthcheck', label: '上线地址可访问', status: 'warn', message: '目标未启用，已跳过健康检查探测', blocking: false });
       }
     } else if (!projectMismatch) {
-      push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'fail', message: 'SSH target 缺少 healthcheckUrl', blocking: true });
+      push({ id: 'healthcheck', label: '上线地址可访问', status: 'fail', message: '站点发布目标缺少上线地址', blocking: true });
     }
 
     if (canProbeTarget && target?.ssh?.privateKeyRef) {
       const host = this.stateService.getRemoteHost(target.ssh.privateKeyRef);
       if (!host) {
-        push({ id: 'ssh', label: '目标主机可连接', status: 'fail', message: `privateKeyRef 不存在: ${target.ssh.privateKeyRef}`, blocking: true });
+        push({ id: 'ssh', label: '目标主机可连接', status: 'fail', message: `服务器凭据不存在: ${target.ssh.privateKeyRef}`, blocking: true });
       } else {
         try {
           await this.sshExec(target, 'echo cds-release-connect-ok');
@@ -160,7 +163,22 @@ export class ReleaseService {
         } catch (err) {
           push({ id: 'ssh', label: '目标主机可连接', status: 'fail', message: (err as Error).message, blocking: true });
         }
+
+        if (checks.some((check) => check.id === 'ssh' && check.status === 'pass')) {
+          if (deployScripts.length > 0) {
+            try {
+              await this.sshExec(target, buildScriptCheckCommand(target, deployScripts));
+              push({ id: 'scripts', label: '发布脚本可执行', status: 'pass', message: deployScripts.join('、'), blocking: false });
+            } catch (err) {
+              push({ id: 'scripts', label: '发布脚本可执行', status: 'fail', message: (err as Error).message, blocking: true });
+            }
+          } else if (deployCommand) {
+            push({ id: 'scripts', label: '发布脚本可执行', status: 'warn', message: '自定义发布命令未识别到 ./script.sh，已跳过脚本文件检查', blocking: false });
+          }
+        }
       }
+    } else if (deployScripts.length > 0 && !target?.ssh?.privateKeyRef && canProbeTarget) {
+      push({ id: 'scripts', label: '发布脚本可执行', status: 'fail', message: '站点发布目标缺少服务器凭据，无法检查脚本', blocking: true });
     }
 
     const previousRelease = target ? this.stateService.getLatestSuccessfulReleaseRun(target.id) : undefined;
@@ -216,12 +234,12 @@ export class ReleaseService {
     const current = this.stateService.getReleaseRun(releaseId);
     if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
     const target = this.stateService.getReleaseTarget(current.targetId);
-    if (!target?.ssh) throw new Error('rollback requires SSH target');
-    if (!target.ssh.rollbackCommand?.trim()) throw new Error('rollbackCommand is not configured');
+    if (!target?.ssh) throw new Error('回滚需要站点发布目标');
+    if (!target.ssh.rollbackCommand?.trim()) throw new Error('未配置回滚命令');
     const previous = current.previousReleaseId
       ? this.stateService.getReleaseRun(current.previousReleaseId)
       : this.stateService.getLatestSuccessfulReleaseRun(current.targetId, current.releaseId);
-    if (!previous) throw new Error('no previous successful release to roll back to');
+    if (!previous) throw new Error('没有可回滚的上一版本');
 
     const rollbackId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const run: ReleaseRun = {
@@ -272,7 +290,7 @@ export class ReleaseService {
   }
 
   private async runRollback(releaseId: string, target: ReleaseTarget, previous: ReleaseRun): Promise<void> {
-    if (!target.ssh?.rollbackCommand) throw new Error('rollbackCommand is not configured');
+    if (!target.ssh?.rollbackCommand) throw new Error('未配置回滚命令');
     this.emitLog(releaseId, 'info', `执行回滚命令，目标版本 ${previous.releaseId}`, 'rollback');
     await this.sshExec(target, buildReleaseCommand(target, previous, target.ssh.rollbackCommand, releaseId), releaseId);
     this.emitLog(releaseId, 'info', `健康检查 ${target.ssh.healthcheckUrl}`, 'healthcheck');
@@ -378,6 +396,23 @@ function buildArtifact(branch: BranchEntry, commitSha: string, previewUrl: strin
     branchName: branch.branch,
     previewUrl,
   };
+}
+
+const RELEASE_SCRIPT_PATH_RE = /\.\/[A-Za-z0-9._/@+-]+\.sh/g;
+
+export function extractReleaseScriptPaths(rawCommand: string): string[] {
+  const matches = rawCommand.match(RELEASE_SCRIPT_PATH_RE) || [];
+  return Array.from(new Set(matches));
+}
+
+export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]): string {
+  if (!target.ssh) throw new Error('target is not SSH');
+  const uniqueScripts = Array.from(new Set(scripts));
+  if (uniqueScripts.length === 0) {
+    return `cd ${shellQuote(target.ssh.appPath || '.')} && true`;
+  }
+  const renderedScripts = uniqueScripts.map((script) => shellQuote(script)).join(' ');
+  return `cd ${shellQuote(target.ssh.appPath || '.')} && for f in ${renderedScripts}; do test -f "$f" || { echo "missing script: $f"; exit 41; }; test -x "$f" || { echo "script is not executable: $f"; exit 42; }; done`;
 }
 
 function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {

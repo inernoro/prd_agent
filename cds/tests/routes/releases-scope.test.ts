@@ -57,7 +57,7 @@ describe('release control plane project-scope isolation', () => {
   const KEY_A = 'TEST-KEY-A';
   const KEY_B = 'TEST-KEY-B';
 
-  function releaseTarget(id: string, projectId: string): ReleaseTarget {
+  function releaseTarget(id: string, projectId: string, privateKeyRef = `${projectId}-host-key`): ReleaseTarget {
     const now = new Date().toISOString();
     return {
       id,
@@ -71,7 +71,7 @@ describe('release control plane project-scope isolation', () => {
         host: `${projectId}.example.test`,
         port: 22,
         user: 'deploy',
-        privateKeyRef: 'prod-host-key',
+        privateKeyRef,
         appPath: '/srv/app',
         deployCommand: './deploy.sh',
         rollbackCommand: './rollback.sh',
@@ -169,6 +169,34 @@ describe('release control plane project-scope isolation', () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('project_mismatch');
     expect(stateService.getReleaseTarget('target-b')!.ssh!.deployCommand).toBe('./deploy.sh');
+  });
+
+  it('refuses Project A key creating its own target with a Project B provisioned RemoteHost key', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets', { 'X-Test-Key': KEY_A }, {
+      id: 'target-a-using-b-key',
+      projectId: 'proj-a',
+      name: 'A using B key',
+      host: 'proj-b.example.test',
+      port: 22,
+      user: 'deploy',
+      privateKeyRef: 'proj-b-host-key',
+      appPath: '/srv/app',
+      deployCommand: 'echo hijacked',
+      healthcheckUrl: 'https://proj-b.example.test/healthz',
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('remote_host_scope');
+    expect(stateService.getReleaseTarget('target-a-using-b-key')).toBeUndefined();
+  });
+
+  it('refuses Project A key patching its own target onto a Project B provisioned RemoteHost key', async () => {
+    const res = await request(server, 'PATCH', '/api/releases/targets/target-a', { 'X-Test-Key': KEY_A }, {
+      privateKeyRef: 'proj-b-host-key',
+      host: 'proj-b.example.test',
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('remote_host_scope');
+    expect(stateService.getReleaseTarget('target-a')!.ssh!.privateKeyRef).toBe('proj-a-host-key');
   });
 
   it('refuses Project A key starting a Project B release run', async () => {

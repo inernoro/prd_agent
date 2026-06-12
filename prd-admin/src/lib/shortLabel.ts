@@ -54,6 +54,8 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'users': '团队',
   'teams': '团队',
   'document-store': '知识库',
+  'document-store-universe': '宇宙图',
+  'universe': '宇宙图',
   'web-pages': '网页',
   'changelog': '更新',
   'library': '殿堂',

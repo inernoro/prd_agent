@@ -323,6 +323,19 @@ export async function listTags(): Promise<ApiResponse<{ tags: TagCount[] }>> {
 
 // ─── Team Groups（团队空间专题 / 日常分类） ───
 
+export type WebPageGroupVisibility = 'inherit' | 'restricted';
+export type WebPageGroupSubjectType = 'user' | 'label';
+/** 分组级角色档位（owner 不下放到分组级） */
+export type WebPageGroupRole = 'viewer' | 'editor';
+
+export interface WebPageGroupAccessRule {
+  /** user = 具体成员 | label = 角色标签 */
+  subjectType: WebPageGroupSubjectType;
+  /** user 时为成员 UserId；label 时为标签文本 */
+  subjectId: string;
+  role: WebPageGroupRole;
+}
+
 export interface WebPageGroup {
   id: string;
   teamId: string;
@@ -331,6 +344,12 @@ export interface WebPageGroup {
   name: string;
   sortOrder: number;
   createdBy: string;
+  /** inherit = 跟随空间角色（默认）| restricted = 仅授权成员与空间 owner 可见 */
+  visibility?: WebPageGroupVisibility;
+  /** 授权规则（仅空间 owner 拿得到；普通成员为 null） */
+  accessRules?: WebPageGroupAccessRule[] | null;
+  /** 我对该分组的有效角色（后端解析；受限分组未授权时整条分组不会返回） */
+  myGroupRole?: 'owner' | 'editor' | 'viewer';
   createdAt: string;
   updatedAt: string;
 }
@@ -357,6 +376,17 @@ export async function updateSiteGroup(
 
 export async function deleteSiteGroup(groupId: string): Promise<ApiResponse<{ deleted: boolean }>> {
   return apiRequest(api.webPages.groupById(encodeURIComponent(groupId)), { method: 'DELETE' });
+}
+
+/** 设置分组可见性与授权规则（仅空间 owner 可调）。inherit 时 rules 被清空。 */
+export async function updateSiteGroupAccess(
+  groupId: string,
+  input: { visibility: WebPageGroupVisibility; rules?: WebPageGroupAccessRule[] },
+): Promise<ApiResponse<WebPageGroup>> {
+  return apiRequest(api.webPages.groupAccess(encodeURIComponent(groupId)), {
+    method: 'PUT',
+    body: input,
+  });
 }
 
 export async function setSiteGroup(siteId: string, groupId: string | null): Promise<ApiResponse<HostedSite>> {

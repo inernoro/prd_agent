@@ -43,6 +43,13 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       res.status(400).json({ error: validation });
       return;
     }
+    if (rejectPrivateKeyRefMismatch(
+      req,
+      res,
+      deps.stateService,
+      String(body.projectId).trim(),
+      String(body.privateKeyRef).trim(),
+    )) return;
     const now = new Date().toISOString();
     const target: ReleaseTarget = {
       id: typeof body.id === 'string' && body.id.trim() ? body.id.trim() : `rt_${crypto.randomBytes(6).toString('hex')}`,
@@ -100,6 +107,13 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     if (rejectProjectMismatch(req, res, typeof mergedBody.projectId === 'string' ? mergedBody.projectId : undefined)) return;
+    if (rejectPrivateKeyRefMismatch(
+      req,
+      res,
+      deps.stateService,
+      String(mergedBody.projectId).trim(),
+      String(mergedBody.privateKeyRef).trim(),
+    )) return;
     const updated: ReleaseTarget = {
       ...existing,
       projectId: String(mergedBody.projectId).trim(),
@@ -285,6 +299,30 @@ function rejectProjectMismatch(req: Request, res: Response, projectId: string | 
   const mismatch = assertProjectAccess(req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } }, projectId);
   if (!mismatch) return false;
   res.status(mismatch.status).json(mismatch.body);
+  return true;
+}
+
+function rejectPrivateKeyRefMismatch(
+  req: Request,
+  res: Response,
+  stateService: StateService,
+  projectId: string,
+  privateKeyRef: string,
+): boolean {
+  const projectKey = requestProjectKey(req);
+  if (!projectKey) return false;
+  if (projectKey.projectId !== projectId) return false;
+  const alreadyProvisionedForProject = stateService
+    .getReleaseTargets(projectId)
+    .some((target) => target.ssh?.privateKeyRef === privateKeyRef);
+  if (alreadyProvisionedForProject) return false;
+
+  res.status(403).json({
+    error: 'remote_host_scope',
+    projectId,
+    keyId: projectKey.keyId,
+    message: '项目级 key 不能引入未由本项目发布目标使用过的服务器凭据，请先用系统权限创建发布目标。',
+  });
   return true;
 }
 

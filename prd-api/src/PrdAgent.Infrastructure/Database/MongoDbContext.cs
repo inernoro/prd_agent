@@ -301,6 +301,13 @@ public class MongoDbContext
     public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
     public IMongoCollection<DocumentStoreSyncLink> DocumentStoreSyncLinks => _database.GetCollection<DocumentStoreSyncLink>("document_store_sync_links");
 
+    /// <summary>
+    /// 通用 @ 账本（双链 + 反向链接 + 宇宙图 SSOT）。
+    /// MVP 仅记录 document → document，未来扩展到 defect/pr/report 等任意实体。
+    /// 详见 doc/design.knowledge-base-mention-network.md。
+    /// </summary>
+    public IMongoCollection<Mention> Mentions => _database.GetCollection<Mention>("mentions");
+
     // 系统级跨节点互传（Peer Sync）
     public IMongoCollection<PeerNode> PeerNodes => _database.GetCollection<PeerNode>("peer_nodes");
     public IMongoCollection<PeerPairingCode> PeerPairingCodes => _database.GetCollection<PeerPairingCode>("peer_pairing_codes");

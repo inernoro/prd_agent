@@ -26,6 +26,7 @@ const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ 
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
+const UniverseGraphPage = lazy(() => import('@/pages/document-store/UniverseGraphPage').then(m => ({ default: m.UniverseGraphPage })));
 const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
 const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
@@ -407,7 +408,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       label: '前端搭档智能体',
       shortLabel: '前端',
       description: '给后端同事用的前端交付助手：接 API、写组件、修报错、看截图现象',
-      icon: 'Code2',
+      icon: 'FolderKanban',
       section: 'toolbox',
       appKey: 'front-end-agent',
       wip: true,
@@ -620,6 +621,26 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'infra',
       tags: ['文档', '知识', '知识库', 'docs'],
     },
+  },
+  {
+    path: '/document-store/:storeId/universe',
+    permission: ['document-store.read', 'document-store.write'],
+    element: shellGuarded(['document-store.read', 'document-store.write'], <UniverseGraphPage />),
+    nav: {
+      label: '知识宇宙图',
+      shortLabel: '宇宙图',
+      description: '基于双链构建的知识星图（Obsidian Graph View 风格）',
+      icon: 'Network',
+      section: 'infra',
+      wip: true,
+      tags: ['宇宙图', '图谱', 'graph', '双链', '反向链接'],
+    },
+  },
+  {
+    path: '/document-store/universe',
+    permission: ['document-store.read', 'document-store.write'],
+    element: shellGuarded(['document-store.read', 'document-store.write'], <UniverseGraphPage />),
+    // 顶层入口默认走第一个库；nav 字段省略以避免重复占用导航位
   },
   {
     path: '/admin-web-pages',

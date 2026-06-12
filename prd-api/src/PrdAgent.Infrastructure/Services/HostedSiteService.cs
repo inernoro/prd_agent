@@ -119,7 +119,55 @@ public class HostedSiteService : IHostedSiteService
         if (site.OwnerUserId == userId) return WebHostingRoles.Owner;
         if (site.SharedTeamIds is not { Count: > 0 }) return null;
         var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
-        return WebHostingPermission.ResolveSiteRole(isSiteOwner: false, site.SharedTeamIds, roles);
+
+        // 站点挂在受限分组下时，分组所属团队那一路的角色按授权规则裁剪/升格
+        // （其他共享团队的角色不受影响），解析逻辑见 WebPageGroupAccess。
+        WebPageGroup? group = null;
+        List<string>? myLabels = null;
+        if (!string.IsNullOrWhiteSpace(site.GroupId))
+        {
+            group = await _db.WebPageGroups.Find(g => g.Id == site.GroupId).FirstOrDefaultAsync(ct);
+            if (WebPageGroupAccess.IsRestricted(group))
+            {
+                var member = await _db.TeamMembers
+                    .Find(m => m.TeamId == group!.TeamId && m.UserId == userId)
+                    .FirstOrDefaultAsync(ct);
+                myLabels = member?.Labels ?? new List<string>();
+            }
+        }
+        return WebPageGroupAccess.ResolveSiteRoleWithGroup(
+            isSiteOwner: false, site.SharedTeamIds, roles, group, userId, myLabels);
+    }
+
+    /// <summary>
+    /// 计算这些团队里「对我不可见」的受限分组 ID（用于列表过滤）。
+    /// 注意：列表过滤是分组粒度的近似 —— 站点同时共享给多个团队时，单站点的精确判定
+    /// 以 ResolveSiteRoleAsync 为准（见 doc/debt 记录的已知边界）。
+    /// </summary>
+    private async Task<List<string>> GetInvisibleGroupIdsAsync(string userId, List<string> teamIds, CancellationToken ct)
+    {
+        if (teamIds.Count == 0) return new List<string>();
+        var restricted = await _db.WebPageGroups
+            .Find(g => teamIds.Contains(g.TeamId) && g.Visibility == WebPageGroupVisibility.Restricted)
+            .ToListAsync(ct);
+        if (restricted.Count == 0) return new List<string>();
+
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        var memberTeamIds = restricted.Select(g => g.TeamId).Distinct().ToList();
+        var members = await _db.TeamMembers
+            .Find(m => memberTeamIds.Contains(m.TeamId) && m.UserId == userId)
+            .ToListAsync(ct);
+        var labelsByTeam = members.ToDictionary(m => m.TeamId, m => (IReadOnlyCollection<string>)(m.Labels ?? new List<string>()));
+
+        var invisible = new List<string>();
+        foreach (var g in restricted)
+        {
+            roles.TryGetValue(g.TeamId, out var spaceRole);
+            labelsByTeam.TryGetValue(g.TeamId, out var labels);
+            if (WebPageGroupAccess.ResolveGroupRole(spaceRole, g, userId, labels) == null)
+                invisible.Add(g.Id);
+        }
+        return invisible;
     }
 
     // ─────────────────────────────────────────────
@@ -365,7 +413,16 @@ public class HostedSiteService : IHostedSiteService
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
         var fb = Builders<HostedSite>.Filter;
         var filter = fb.And(fb.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds));
-        return await _db.HostedSites.Find(filter).FirstOrDefaultAsync(ct);
+        var site = await _db.HostedSites.Find(filter).FirstOrDefaultAsync(ct);
+        if (site == null) return null;
+
+        // 受限分组隔离：站点挂在我无权访问的受限分组下时，直查单站点同样不可见
+        if (site.OwnerUserId != userId && !string.IsNullOrWhiteSpace(site.GroupId))
+        {
+            var role = await ResolveSiteRoleAsync(site, userId, ct);
+            if (role == null) return null;
+        }
+        return site;
     }
 
     public async Task<(List<HostedSite> Items, long Total)> ListAsync(
@@ -379,12 +436,14 @@ public class HostedSiteService : IHostedSiteService
         if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase))
         {
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+            List<string> scopeTeamIds;
             if (!string.IsNullOrWhiteSpace(teamId))
             {
                 // 团队作用域：必须是我所在的团队，且站点已分享到该团队
                 if (!myTeamIds.Contains(teamId))
                     return (new List<HostedSite>(), 0);
                 filter = fb.AnyEq(x => x.SharedTeamIds, teamId);
+                scopeTeamIds = new List<string> { teamId };
             }
             else
             {
@@ -392,6 +451,16 @@ public class HostedSiteService : IHostedSiteService
                 if (myTeamIds.Count == 0)
                     return (new List<HostedSite>(), 0);
                 filter = fb.AnyIn(x => x.SharedTeamIds, myTeamIds);
+                scopeTeamIds = myTeamIds;
+            }
+
+            // 受限分组隔离：挂在「对我不可见的受限分组」下的站点不进列表（我自己创建的除外）
+            var invisibleGroupIds = await GetInvisibleGroupIdsAsync(userId, scopeTeamIds, ct);
+            if (invisibleGroupIds.Count > 0)
+            {
+                filter &= fb.Or(
+                    fb.Eq(x => x.OwnerUserId, userId),
+                    fb.Not(fb.In(x => x.GroupId, invisibleGroupIds.Cast<string?>())));
             }
         }
         else

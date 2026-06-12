@@ -28,6 +28,7 @@ import {
   setSiteTeams,
   listSiteGroups,
   createSiteGroup,
+  updateSiteGroup,
   deleteSiteGroup,
   setSiteGroup,
   copySiteToTeam,
@@ -40,6 +41,7 @@ import {
   canShareInWebHosting,
 } from '@/lib/webHostingRole';
 import { SpaceBar, TeamSpaceHeader, type Space } from '@/components/team/SpaceBar';
+import { GroupAccessDialog } from '@/components/team/GroupAccessDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
@@ -51,6 +53,9 @@ import { ShareDock, useDockDrag } from '@/components/share-dock';
 
 /** 网页托管页面专用的 ShareDock MIME 类型 */
 const WEB_PAGE_MIME = 'application/x-map-site-id';
+
+// 树导航「未分组」虚拟节点 ID（仅前端过滤用，发往后端前必须还原成 null）
+const UNGROUPED_ID = '__ungrouped__';
 import { useAuthStore } from '@/stores/authStore';
 import {
   Upload,
@@ -625,10 +630,23 @@ export default function WebPagesPage() {
   const displaySites = useMemo(() => {
     // 团队空间按分组（专题/日常分类）过滤；个人空间沿用文件夹过滤
     if (currentSpace.kind === 'team') {
+      if (activeGroupId === UNGROUPED_ID) return spaceSites.filter((s) => !s.groupId);
       return activeGroupId ? spaceSites.filter((s) => s.groupId === activeGroupId) : spaceSites;
     }
     return activeFolder ? spaceSites.filter((s) => s.folder === activeFolder) : spaceSites;
   }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind]);
+  // 「未分组」是树导航的虚拟节点：投送/移入分组时必须还原成 null
+  const activeRealGroupId = activeGroupId === UNGROUPED_ID ? null : activeGroupId;
+  // 树导航的分组计数（来自当前空间已加载的站点）
+  const groupCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    let ungrouped = 0;
+    for (const s of spaceSites) {
+      if (s.groupId) counts.set(s.groupId, (counts.get(s.groupId) ?? 0) + 1);
+      else ungrouped++;
+    }
+    return { counts, ungrouped };
+  }, [spaceSites]);
   const siteGroups = useMemo(
     () => buildSiteGroups(displaySites, groupMode, currentSpace.kind === 'team' ? teamGroups : undefined),
     [displaySites, groupMode, currentSpace.kind, teamGroups],
@@ -636,6 +654,8 @@ export default function WebPagesPage() {
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 260;
 
   const enterSpace = (s: Space) => {
+    // 幂等守卫：点的就是当前空间则不动（双击当前团队改名时，两次 click 不应触发整页重载）
+    if (s.kind === currentSpace.kind && (s.kind === 'personal' || (currentSpace.kind === 'team' && s.teamId === currentSpace.teamId))) return;
     setCurrentSpace(s);
     setActiveFolder(null);
     setActiveGroupId(null);
@@ -654,6 +674,19 @@ export default function WebPagesPage() {
       await loadGroups();
     } else {
       toast.error('创建失败', res.error?.message);
+    }
+  };
+
+  // 分组权限设置弹窗（仅空间 owner 入口可见）
+  const [accessGroup, setAccessGroup] = useState<WebPageGroup | null>(null);
+
+  const handleRenameGroup = async (g: WebPageGroup, name: string) => {
+    // 乐观更新：树上立即显示新名，API 失败再回滚（不整列表刷新）
+    setTeamGroups((prev) => prev.map((x) => (x.id === g.id ? { ...x, name } : x)));
+    const res = await updateSiteGroup(g.id, { name });
+    if (!res.success) {
+      setTeamGroups((prev) => prev.map((x) => (x.id === g.id ? { ...x, name: g.name } : x)));
+      toast.error('重命名失败', res.error?.message);
     }
   };
 
@@ -767,7 +800,7 @@ export default function WebPagesPage() {
             // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
             const targetSpace = currentSpace;
             // 同步快照当前选中的分组：正停留在某专题/分类视图里拖拽上传 → 新网页直接归入该分组
-            const targetGroupId = targetSpace.kind === 'team' ? activeGroupId : null;
+            const targetGroupId = targetSpace.kind === 'team' ? activeRealGroupId : null;
             // 权限闸门：团队空间内必须有编辑权限才能投放（与上传按钮的显隐条件一致）。
             // dropzone 始终挂载，不能让只读 viewer 通过拖拽绕过按钮把内容写进团队空间。
             // 仅在「角色已确切加载（非 null）」时硬拦截：刚切进团队空间 role 尚未就绪（null）时放行，
@@ -984,19 +1017,12 @@ export default function WebPagesPage() {
           </div>
         </div>
 
-        {/* 空间内组织：锚点容器永远渲染（教程引导依赖该 selector）。
-            个人空间 = 文件夹（站点 folder 字段派生）；团队空间 = 分组实体（专题 / 日常分类，可先建空再加内容）。 */}
+        {/* 空间内组织（教程引导依赖 webpages-folders selector）：
+            个人空间 = 文件夹 chips（站点 folder 字段派生）；
+            团队空间 = 左侧分组树导航（见下方 TeamGroupsTree，锚点随之移动，同一时刻 DOM 里只有一个）。 */}
+        {currentSpace.kind !== 'team' && (
         <div data-tour-id="webpages-folders" className="mt-3">
-          {currentSpace.kind === 'team' ? (
-            <TeamGroupsBar
-              groups={teamGroups}
-              activeGroupId={activeGroupId}
-              canEdit={canEditInWebHosting(myWebHostingRole)}
-              onSelect={setActiveGroupId}
-              onCreate={handleCreateGroup}
-              onDelete={handleDeleteGroup}
-            />
-          ) : spaceFolders.length > 0 ? (
+          {spaceFolders.length > 0 ? (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
               <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
                 style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
@@ -1016,6 +1042,7 @@ export default function WebPagesPage() {
             </div>
           )}
         </div>
+        )}
 
         {/* 团队空间协作头部：放最下方，出现/消失不顶动上方搜索框（切换统一性） */}
         {currentSpace.kind === 'team' && (
@@ -1100,7 +1127,25 @@ export default function WebPagesPage() {
         {activeTag && <span>标签: {activeTag}</span>}
       </div>
 
-      {/* Content */}
+      {/* Content：团队空间左侧挂分组树导航（空间 → 专题 → 分类），个人空间保持原布局 */}
+      <div className={currentSpace.kind === 'team' ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}>
+        {currentSpace.kind === 'team' && (
+          <TeamGroupsTree
+            groups={teamGroups}
+            activeGroupId={activeGroupId}
+            canEdit={canEditInWebHosting(myWebHostingRole)}
+            canManageAccess={myWebHostingRole === 'owner'}
+            totalCount={spaceSites.length}
+            ungroupedCount={groupCounts.ungrouped}
+            counts={groupCounts.counts}
+            onSelect={setActiveGroupId}
+            onCreate={handleCreateGroup}
+            onDelete={handleDeleteGroup}
+            onRename={handleRenameGroup}
+            onOpenAccess={setAccessGroup}
+          />
+        )}
+        <div className="flex-1 min-w-0 flex flex-col">
       {loading && sites.length === 0 ? (
         <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
           加载中...
@@ -1108,7 +1153,7 @@ export default function WebPagesPage() {
       ) : displaySites.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ color: 'var(--text-muted)' }}>
           <UploadCloud size={48} strokeWidth={1} />
-          <p>{currentSpace.kind === 'team' ? '这个团队空间还没有网页' : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
+          <p>{currentSpace.kind === 'team' ? (activeGroupId ? '这个分组还没有网页' : '这个团队空间还没有网页') : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
           {/* 与顶部上传按钮同款权限闸门：团队空间只读 viewer 不展示上传入口，
               避免点开弹窗 uploadSite 后被 setTeams 403、徒留站点在个人空间 */}
           {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
@@ -1148,6 +1193,8 @@ export default function WebPagesPage() {
           ))}
         </div>
       )}
+        </div>
+      </div>
 
       {/* Upload / Edit Dialog */}
       {showUploadDialog && (
@@ -1168,9 +1215,9 @@ export default function WebPagesPage() {
               // 归属失败不能静默：告知用户站点暂在个人空间（与 dropzone 路径一致）
               if (!assigned.success) {
                 toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
-              } else if (currentSpace.kind === 'team' && currentSpace.teamId === dialogSpace.teamId && activeGroupId) {
+              } else if (currentSpace.kind === 'team' && currentSpace.teamId === dialogSpace.teamId && activeRealGroupId) {
                 // 仍停留在同一团队的专题/分类视图 → 新网页顺手归入该分组
-                const grouped = await setSiteGroup(saved.id, activeGroupId);
+                const grouped = await setSiteGroup(saved.id, activeRealGroupId);
                 if (!grouped.success) toast.error('已上传，但归入分组失败', grouped.error?.message || '可稍后通过批量操作移入分组');
               }
             }
@@ -1299,45 +1346,70 @@ export default function WebPagesPage() {
       {showCopyFromPersonal && currentSpace.kind === 'team' && (
         <CopyFromPersonalDialog
           teamId={currentSpace.teamId}
-          initialGroupId={activeGroupId}
+          initialGroupId={activeRealGroupId}
           groups={teamGroups}
           onClose={() => setShowCopyFromPersonal(false)}
           onCopied={() => { void load(); }}
+        />
+      )}
+
+      {accessGroup && currentSpace.kind === 'team' && (
+        <GroupAccessDialog
+          group={accessGroup}
+          teamId={currentSpace.teamId}
+          onClose={() => setAccessGroup(null)}
+          onSaved={() => { void loadGroups(); void load(); }}
         />
       )}
     </div>
   );
 }
 
-// ─── 团队空间分组条（专题 / 日常分类） ───
+// ─── 团队空间分组树导航（空间 → 专题 → 分类） ───
 
-function TeamGroupsBar({
+function TeamGroupsTree({
   groups,
   activeGroupId,
   canEdit,
+  canManageAccess,
+  totalCount,
+  ungroupedCount,
+  counts,
   onSelect,
   onCreate,
   onDelete,
+  onRename,
+  onOpenAccess,
 }: {
   groups: WebPageGroup[];
   activeGroupId: string | null;
   canEdit: boolean;
+  canManageAccess: boolean;
+  totalCount: number;
+  ungroupedCount: number;
+  counts: Map<string, number>;
   onSelect: (groupId: string | null) => void;
   onCreate: (kind: 'topic' | 'daily', name: string) => void | Promise<void>;
   onDelete: (group: WebPageGroup) => void | Promise<void>;
+  onRename: (group: WebPageGroup, name: string) => void | Promise<void>;
+  onOpenAccess: (group: WebPageGroup) => void;
 }) {
+  // 节内新建：点击节标题的 + 在该节底部展开输入框
   const [creating, setCreating] = useState<'topic' | 'daily' | null>(null);
   const [name, setName] = useState('');
-  const createRef = useRef<HTMLDivElement | null>(null);
+  // 双击分组行进入就地改名（编辑权限门控）
+  const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
 
-  useEffect(() => {
-    if (!creating) return;
-    const h = (e: MouseEvent) => { if (createRef.current && !createRef.current.contains(e.target as Node)) setCreating(null); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [creating]);
+  const commitRename = async () => {
+    if (!editing) return;
+    const g = groups.find((x) => x.id === editing.id);
+    const next = editing.value.trim();
+    setEditing(null);
+    if (!g || !next || next === g.name) return;
+    await onRename(g, next);
+  };
 
-  const submit = async () => {
+  const submitCreate = async () => {
     const n = name.trim();
     if (!n || !creating) return;
     await onCreate(creating, n);
@@ -1345,86 +1417,155 @@ function TeamGroupsBar({
     setCreating(null);
   };
 
-  const chip = (g: WebPageGroup) => {
+  const itemStyle = (on: boolean): React.CSSProperties => (on
+    ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' }
+    : { color: 'var(--text-muted)' });
+
+  const row = (g: WebPageGroup) => {
     const on = activeGroupId === g.id;
+    if (editing?.id === g.id) {
+      return (
+        <input
+          key={g.id}
+          autoFocus
+          value={editing.value}
+          onChange={(e) => setEditing({ id: g.id, value: e.target.value })}
+          onBlur={() => void commitRename()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void commitRename();
+            if (e.key === 'Escape') setEditing(null);
+          }}
+          className="w-full h-7 px-2 rounded-[6px] text-[12px] outline-none"
+          style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)' }}
+        />
+      );
+    }
     return (
-      <span key={g.id} className="inline-flex items-center shrink-0">
-        <button
-          type="button"
-          onClick={() => onSelect(on ? null : g.id)}
-          className="h-7 px-2.5 rounded-full text-[12px] flex items-center gap-1 transition-colors"
-          style={on
-            ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
-            : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
-        >
-          <Folder size={11} /> {g.name}
-          {on && canEdit && (
-            <X
-              size={11}
-              className="ml-0.5 opacity-70 hover:opacity-100"
-              onClick={(e) => { e.stopPropagation(); void onDelete(g); }}
-            />
-          )}
-        </button>
-      </span>
+      <div
+        key={g.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => onSelect(on ? null : g.id)}
+        onDoubleClick={() => { if (canEdit) setEditing({ id: g.id, value: g.name }); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') onSelect(on ? null : g.id); }}
+        title={canEdit ? '双击重命名' : undefined}
+        className="group/tree-item w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-white/5"
+        style={itemStyle(on)}
+      >
+        <Folder size={11} className="shrink-0" />
+        <span className="flex-1 truncate" style={on ? undefined : { color: 'var(--text-primary)' }}>{g.name}</span>
+        {g.visibility === 'restricted' && (
+          <Lock size={9} className="shrink-0 opacity-70" aria-label="受限分组" />
+        )}
+        {canManageAccess && (
+          <button
+            type="button"
+            title="访问权限"
+            className="shrink-0 opacity-0 group-hover/tree-item:opacity-70 hover:!opacity-100"
+            style={{ color: 'inherit' }}
+            onClick={(e) => { e.stopPropagation(); onOpenAccess(g); }}
+          >
+            <Settings2 size={11} />
+          </button>
+        )}
+        {canEdit && (
+          <button
+            type="button"
+            title="删除分组（组内网页回到未分组）"
+            className="shrink-0 opacity-0 group-hover/tree-item:opacity-70 hover:!opacity-100"
+            style={{ color: 'inherit' }}
+            onClick={(e) => { e.stopPropagation(); void onDelete(g); }}
+          >
+            <X size={11} />
+          </button>
+        )}
+        <span className="shrink-0 text-[10px] opacity-60">{counts.get(g.id) ?? 0}</span>
+      </div>
     );
   };
 
-  const addBtn = (kind: 'topic' | 'daily') => (
-    <button
-      type="button"
-      title={kind === 'topic' ? '新建专题（可先建空专题再加内容）' : '新建日常分类'}
-      onClick={() => { setCreating(kind); setName(''); }}
-      className="h-7 w-7 rounded-full flex items-center justify-center shrink-0"
-      style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.2)', color: 'var(--text-muted)' }}
-    >
-      <Plus size={12} />
-    </button>
-  );
-
-  const topics = groups.filter((g) => g.kind === 'topic');
-  const dailies = groups.filter((g) => g.kind === 'daily');
-
-  return (
-    <div className="relative">
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
-        <button type="button" onClick={() => onSelect(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
-          style={activeGroupId === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
-          全部
-        </button>
-        <span className="mx-1 h-4 w-px shrink-0" style={{ background: 'var(--border-default)' }} />
-        <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>专题</span>
-        {topics.map(chip)}
-        {canEdit && addBtn('topic')}
-        <span className="mx-1 h-4 w-px shrink-0" style={{ background: 'var(--border-default)' }} />
-        <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>分类</span>
-        {dailies.map(chip)}
-        {canEdit && addBtn('daily')}
-        {groups.length === 0 && !canEdit && (
-          <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>这个团队还没有专题或分类</span>
+  const section = (kind: 'topic' | 'daily', label: string, items: WebPageGroup[]) => (
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between h-6 px-2">
+        <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
+        {canEdit && (
+          <button
+            type="button"
+            title={kind === 'topic' ? '新建专题（可先建空专题再加内容）' : '新建日常分类'}
+            className="opacity-60 hover:opacity-100"
+            style={{ color: 'var(--text-muted)' }}
+            onClick={() => { setCreating(kind); setName(''); }}
+          >
+            <Plus size={12} />
+          </button>
         )}
       </div>
-      {creating && (
-        <div ref={createRef} className="absolute left-0 top-[34px] z-[130] w-[280px] rounded-[12px] p-3"
-          style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}>
-          <div className="flex gap-1.5">
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={creating === 'topic' ? '新专题名称' : '新分类名称'}
-              className="flex-1 h-8 px-2 rounded-[8px] text-[13px] outline-none"
-              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-              onKeyDown={(e) => { if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setCreating(null); }}
-            />
-            <button type="button" className="px-3 h-8 rounded-[8px] text-[12px]"
-              style={{ background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }} onClick={() => void submit()}>
-              创建
-            </button>
-          </div>
+      {items.map(row)}
+      {items.length === 0 && creating !== kind && (
+        <div className="px-2 py-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          {canEdit ? `点 + 新建${label}` : `还没有${label}`}
         </div>
       )}
+      {creating === kind && (
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={kind === 'topic' ? '新专题名称，回车创建' : '新分类名称，回车创建'}
+          className="w-full h-7 px-2 rounded-[6px] text-[12px] outline-none"
+          style={{ background: 'var(--bg-input)', border: '1px solid rgba(212,175,55,0.5)', color: 'var(--text-primary)' }}
+          onBlur={() => { if (!name.trim()) setCreating(null); else void submitCreate(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') void submitCreate(); if (e.key === 'Escape') setCreating(null); }}
+        />
+      )}
     </div>
+  );
+
+  return (
+    <aside
+      data-tour-id="webpages-folders"
+      className="w-[212px] shrink-0 rounded-xl p-2 space-y-2"
+      style={{
+        position: 'sticky',
+        top: 0,
+        alignSelf: 'flex-start',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-default)',
+      }}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => onSelect(null)}
+        onKeyDown={(e) => { if (e.key === 'Enter') onSelect(null); }}
+        className="w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-white/5"
+        style={itemStyle(activeGroupId === null)}
+      >
+        <Grid3X3 size={11} className="shrink-0" />
+        <span className="flex-1" style={activeGroupId === null ? undefined : { color: 'var(--text-primary)' }}>全部</span>
+        <span className="shrink-0 text-[10px] opacity-60">{totalCount}</span>
+      </div>
+      {ungroupedCount > 0 && (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onSelect(activeGroupId === UNGROUPED_ID ? null : UNGROUPED_ID)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onSelect(activeGroupId === UNGROUPED_ID ? null : UNGROUPED_ID); }}
+          className="w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-white/5"
+          style={itemStyle(activeGroupId === UNGROUPED_ID)}
+        >
+          <FolderInput size={11} className="shrink-0" />
+          <span className="flex-1" style={activeGroupId === UNGROUPED_ID ? undefined : { color: 'var(--text-primary)' }}>未分组</span>
+          <span className="shrink-0 text-[10px] opacity-60">{ungroupedCount}</span>
+        </div>
+      )}
+      <div className="h-px" style={{ background: 'var(--border-default)' }} />
+      {section('topic', '专题', groups.filter((g) => g.kind === 'topic'))}
+      {section('daily', '分类', groups.filter((g) => g.kind === 'daily'))}
+    </aside>
   );
 }
 

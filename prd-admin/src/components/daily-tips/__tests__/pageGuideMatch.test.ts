@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { DailyTip } from '@/services/real/dailyTips';
-import { filterPageTips, matchPageGuide, isUpdateTip, pickAutoOpenUpdateTip } from '../pageGuideMatch';
+import { filterPageTips, matchPageGuide, isUpdateTip, isUpdateReminderTip, pickAutoOpenUpdateTip } from '../pageGuideMatch';
 
 const NONE = new Set<string>();
 
@@ -123,6 +123,37 @@ describe('pickAutoOpenUpdateTip —— 抽屉自动弹出严格按页(用户 202
     expect(isUpdateTip(tip({ id: 'x', actionUrl: '/a', sourceType: 'feature-release' }))).toBe(true);
     expect(isUpdateTip(pageGuide)).toBe(false);
     expect(isUpdateTip(taskTip)).toBe(false);
+  });
+});
+
+describe('isUpdateReminderTip / 轻微提醒更新走 Spotlight 气泡而非抽屉', () => {
+  const reminder = tip({
+    id: 'visual-paste',
+    sourceId: 'visual-agent-paste-update-reminder',
+    actionUrl: '/visual-agent',
+    targetSelector: '[data-tour-id=visual-image-btn]',
+  });
+  const weeklyUpdate = tip({
+    id: 'web-update',
+    sourceId: 'webpages-update-2026w24',
+    actionUrl: '/web-pages',
+  });
+
+  it('isUpdateReminderTip:仅 sourceId 含 -update-reminder 命中', () => {
+    expect(isUpdateReminderTip(reminder)).toBe(true);
+    expect(isUpdateReminderTip(weeklyUpdate)).toBe(false);
+  });
+
+  it('reminder 仍算 isUpdateTip(归类为更新),但被排除出抽屉自动展开(避免与气泡双弹)', () => {
+    expect(isUpdateTip(reminder)).toBe(true);
+    const pageTips = filterPageTips([reminder], NONE, '/visual-agent', '');
+    expect(pageTips.map((t) => t.id)).toEqual(['visual-paste']); // 仍属本页教程,出现在列表/入口
+    expect(pickAutoOpenUpdateTip(pageTips, new Set<string>())).toBeNull(); // 但抽屉路径不自动弹它
+  });
+
+  it('普通周更新教程不受影响,仍走抽屉自动展开', () => {
+    const pageTips = filterPageTips([weeklyUpdate], NONE, '/web-pages', '');
+    expect(pickAutoOpenUpdateTip(pageTips, new Set<string>())?.id).toBe('web-update');
   });
 });
 

@@ -1099,6 +1099,7 @@ export const api = {
     setTeams: (id: string) => `/api/web-pages/${id}/teams`,
     groups: () => '/api/web-pages/groups',
     groupById: (groupId: string) => `/api/web-pages/groups/${groupId}`,
+    groupAccess: (groupId: string) => `/api/web-pages/groups/${groupId}/access`,
     setGroup: (id: string) => `/api/web-pages/${id}/group`,
     copyToTeam: (id: string) => `/api/web-pages/${id}/copy-to-team`,
     // 波1 访客痕迹：记录一次访问 + owner 查本页访客名单。
@@ -1231,6 +1232,18 @@ export const api = {
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
+    // 双链 + 反向链接 + 宇宙图（mentions 账本）
+    mentions: {
+      documentLinks: (entryId: string) => `/api/mentions/documents/${entryId}/links`,
+      storeGraph: (storeId: string) => `/api/mentions/stores/${storeId}/graph`,
+      suggest: (storeId: string, q?: string, limit?: number) => {
+        const qs = new URLSearchParams();
+        if (q) qs.set('q', q);
+        if (limit) qs.set('limit', String(limit));
+        const s = qs.toString();
+        return `/api/mentions/stores/${storeId}/suggest${s ? `?${s}` : ''}`;
+      },
+    },
     // 跨环境 / 本地库↔库 同步
     sync: {
       listAll: () => '/api/document-store/sync/links',
@@ -1278,6 +1291,8 @@ export const api = {
     member: (id: string, userId: string) => `/api/teams/${id}/members/${userId}`,
     memberWebHostingRole: (id: string, userId: string) =>
       `/api/teams/${id}/members/${userId}/web-hosting-role`,
+    memberLabels: (id: string, userId: string) =>
+      `/api/teams/${id}/members/${userId}/labels`,
     inviteCode: (id: string) => `/api/teams/${id}/invite-code`,
     join: () => '/api/teams/join',
     activity: (id: string) => `/api/teams/${id}/activity`,
