@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List, User, BarChart3, Award, CalendarRange } from 'lucide-react';
 import { GoalsDashboard } from './goals-canvas/GoalsDashboard';
+import { GoalDetailDrawer } from './goals-canvas/GoalDetailDrawer';
 
 const CONFIDENCE_DOT: Record<string, { label: string; color: string }> = {
   high: { label: '信心高', color: '#10B981' }, medium: { label: '信心中', color: '#F59E0B' }, low: { label: '信心低', color: '#EF4444' },
@@ -57,6 +58,8 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
   const [showCycleMgr, setShowCycleMgr] = useState(false);
   // AI 拆解目标：null=未打开；{scope} 项目级拆顶层；{parentGoalId,...} 针对某目标拆子目标
   const [aiTarget, setAiTarget] = useState<{ parentGoalId?: string; parentTitle?: string; scope: PmGoalScope } | null>(null);
+  // 仪表盘视图点卡片 → 打开与画布同一个目标详情抽屉（三视图编辑同源同步）
+  const [dashboardGoal, setDashboardGoal] = useState<PmGoal | null>(null);
 
   const load = useCallback(async () => {
     const [gr, mr, cr] = await Promise.all([listPmGoals(projectId), listPmMilestones(projectId), listPmGoalCycles(projectId)]);
@@ -338,7 +341,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
           onReload={() => { load(); onMilestonesChanged?.(); /* 画布抽屉内可设为/取消里程碑、删目标，需同步父级 milestones */ }}
           onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
       ) : view === 'dashboard' ? (
-        <GoalsDashboard goals={goals} cycles={cycles} />
+        <GoalsDashboard goals={goals} cycles={cycles} onOpen={(g) => setDashboardGoal(g)} />
       ) : (
       <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
       {/* 业务目标北极星（可编辑） */}
@@ -404,6 +407,14 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
           onClose={() => setAiTarget(null)} onCreated={() => { setAiTarget(null); load(); }} />
       )}
       </div>
+      )}
+
+      {dashboardGoal && (
+        <GoalDetailDrawer projectId={projectId} goal={dashboardGoal} allGoals={goals} businessGoal={businessGoal}
+          canWrite={dashboardGoal.scope === 'personal' || canManage}
+          onClose={() => setDashboardGoal(null)}
+          onSaved={() => { setDashboardGoal(null); load(); onMilestonesChanged?.(); }}
+          onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
       )}
 
       {showCycleMgr && (

@@ -31,3 +31,5 @@
 | feat | prd-admin | 知识库阅读区「全屏」按钮（原生 Fullscreen API，ESC 退出，MD/HTML 通用） |
 | feat | prd-admin | 双击重命名改为行内编辑（原地 input，Enter 保存/Esc 取消/失焦保存），不再弹框；右键菜单弹框保留 |
 | feat | prd-admin | Markdown 富文本编辑：引入 @uiw/react-md-editor（懒加载独立 chunk），富文本（所见即所得）/源码双模式切换，源码模式保留 [[ 引用自动补全；HTML 等仍编辑源码 |
+| feat | prd-admin | 目标三视图统一编辑：仪表盘卡片点击打开与画布同一个 GoalDetailDrawer，保存同源刷新，数据同步 |
+| polish | prd-admin | 目标抽屉信息架构重排：「AI 拆细 / 加子目标」上移头部常驻可见，「删除目标」收进底部危险区，不再埋在正文中部 |
