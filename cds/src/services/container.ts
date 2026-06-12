@@ -582,10 +582,10 @@ export class ContainerService {
         onOutput?.(`── entrypoint 覆盖: (清空 image ENTRYPOINT) ──\n`);
       } else if (/\s/.test(ep)) {
         onOutput?.(
-          `── ⚠ cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
-          `── ⚠ 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
+          `── [警告] cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
+          `── [警告] 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
           `(CDS 已默认 sh -c 包装 command) ──\n` +
-          `── ⚠ 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
+          `── [警告] 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
         );
       } else {
         entrypointFlags.push(`--entrypoint ${JSON.stringify(ep)}`);

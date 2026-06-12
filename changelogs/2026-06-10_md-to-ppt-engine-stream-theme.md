@@ -98,3 +98,5 @@
 | security | cds | 只读 SQL Console 危险关键字检查扩到全部放行语句头：堵 PostgreSQL EXPLAIN ANALYZE UPDATE 绕过写权限门（PR #799 Codex P1，main 既有） |
 | feat | prd-api,prd-admin | 大纲生成纳入服务器权威性（server-authority.md）：大纲也是一次 Run（op=outline），结果落库 OutlineJson，客户端刷新/断开后后台跑完仍可按 runId 取回，不再「刷新即丢」「永远转圈」 |
 | fix | - | 验收技能 L0 档步骤式证据门禁按档位缩放（Bugbot Medium）：L0 轻量验收不再被「>=3 步骤」硬卡，下限=min(档位截图下限,3) |
+| security | cds | MongoDB 只读 Console $where 正则修复（PR #799 Codex P2）：去掉前导 \b 边界（{/空格后永不成立），堵 db.find({$where:...}) 服务端 JS 谓词绕过 |
+| fix | cds | 部署日志 entrypoint 空格警告字符串去 emoji（⚠ → [警告]，PR #799 Codex P1，铁律 §0） |
