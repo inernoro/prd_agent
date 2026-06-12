@@ -21,6 +21,7 @@ import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWo
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
 import { slaInfo } from './sla';
+import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import './product-cards.css';
 import {
   listRequirements,
@@ -1119,9 +1120,9 @@ function RequirementDetail({
                   <FieldLabel>状态</FieldLabel>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
-                      {workflow?.states.find((s) => s.key === requirement.currentState)?.label ?? requirement.currentState}
+                      {resolveRequirementStateLabel(requirement.currentState, workflow)}
                     </span>
-                    <SlaBadge stateEnteredAt={requirement.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === requirement.currentState)?.slaHours} />
+                    <SlaBadge stateEnteredAt={requirement.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === normalizeRequirementStateKey(requirement.currentState))?.slaHours} />
                   </div>
                 </div>
               )}

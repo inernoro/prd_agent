@@ -15,6 +15,7 @@ import { useEffectiveWorkflow } from './DynamicForm';
 import { ITEM_GRADE_LABEL } from './types';
 import type { Requirement, Feature } from './types';
 import { slaInfo } from './sla';
+import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import './product-cards.css';
 
 type Item = (Requirement | Feature) & { title: string; currentState?: string | null; grade: string; assigneeId?: string | null; stateEnteredAt?: string | null };
@@ -66,9 +67,13 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   const drop = async (targetKey: string) => {
     const item = items.find((i) => i.id === dragId);
     setDragId(null);
-    if (!item || item.currentState === targetKey) return;
+    if (!item) return;
+    const fromKey = entityType === 'requirement'
+      ? normalizeRequirementStateKey(item.currentState ?? initialKey)
+      : (item.currentState ?? initialKey);
+    if (fromKey === targetKey) return;
     const tr = (workflow?.transitions ?? []).find(
-      (t) => t.toState === targetKey && (!t.fromState || t.fromState === (item.currentState ?? initialKey)),
+      (t) => t.toState === targetKey && (!t.fromState || t.fromState === fromKey),
     );
     if (!tr) {
       setHint(`不能直接从「${stateLabel(item.currentState)}」拖到「${stateLabel(targetKey)}」：没有定义对应的流转`);
@@ -87,8 +92,15 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
     else setHint(res.error?.message ?? '流转失败');
   };
 
-  const stateLabel = (key?: string | null) => states.find((s) => s.key === key)?.label ?? key ?? '未设置';
-  const colKeyOf = (it: Item) => (states.some((s) => s.key === it.currentState) ? it.currentState! : initialKey);
+  const stateLabel = (key?: string | null) => {
+    if (entityType === 'requirement') return resolveRequirementStateLabel(key, workflow);
+    return states.find((s) => s.key === key)?.label ?? key ?? '未设置';
+  };
+  const colKeyOf = (it: Item) => {
+    const raw = it.currentState ?? initialKey;
+    const key = entityType === 'requirement' ? normalizeRequirementStateKey(raw) : raw;
+    return states.some((s) => s.key === key) ? key : initialKey;
+  };
 
   // 泳道分组
   const lanes = useMemo<{ key: string; label: string; items: Item[] }[]>(() => {

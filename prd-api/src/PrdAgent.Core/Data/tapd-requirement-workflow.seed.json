@@ -1,0 +1,36 @@
+{
+  "_comment": "TAPD 米多需求收集工作流 SSOT。抓取于 workitem_type/config?tab=workflow + workflow_settings（2026-06-12）。ProductWorkflowDefaults.Requirement() 与此对齐。管理员在设置中保存后 IsUserCustomized=true，种子不再覆盖。",
+  "workflow_name": "米多需求收集工作流",
+  "tapd_workspace": "64054517",
+  "workitem_type_id": "1164054517001000088",
+  "state_keys": {
+    "new": "待评审",
+    "planning": "待规划",
+    "status_2": "已立项",
+    "developing": "开发中",
+    "resolved": "已上线",
+    "rejected": "已拒绝",
+    "status_3": "已排期"
+  },
+  "states": [
+    { "key": "new", "label": "待评审", "remark": "新提交的需求，待评审", "is_initial": true, "is_final": false, "sort_order": 0 },
+    { "key": "planning", "label": "待规划", "remark": "经过产品经理评审，认为此需求合理，待排期规划", "is_initial": false, "is_final": false, "sort_order": 1 },
+    { "key": "status_2", "label": "已立项", "remark": "需求已出产品方案，待开发", "is_initial": false, "is_final": false, "sort_order": 2 },
+    { "key": "developing", "label": "开发中", "remark": "该需求正在开发中，待上线", "is_initial": false, "is_final": false, "sort_order": 3 },
+    { "key": "resolved", "label": "已上线", "remark": "需求已经实现，并且项目已经上线", "is_initial": false, "is_final": true, "sort_order": 4 },
+    { "key": "rejected", "label": "已拒绝", "remark": "经过产品经理评审，认为此需求不合理", "is_initial": false, "is_final": true, "sort_order": 5 },
+    { "key": "status_3", "label": "已排期", "remark": "-", "is_initial": false, "is_final": false, "sort_order": 6 }
+  ],
+  "transition_matrix": {
+    "待评审": ["待规划", "已立项", "开发中", "已上线", "已拒绝", "已排期"],
+    "待规划": ["待评审", "已立项", "开发中", "已上线", "已拒绝", "已排期"],
+    "已立项": ["待规划", "开发中", "已上线", "已拒绝"],
+    "开发中": ["待规划", "已立项", "已上线", "已拒绝"],
+    "已上线": ["待规划", "已立项", "开发中", "已拒绝"],
+    "已拒绝": ["待评审", "待规划"],
+    "已排期": ["已立项", "开发中", "已上线", "已拒绝"]
+  },
+  "advanced_transition_config": true,
+  "seed_revision": 4,
+  "transition_action_label_format": "到{目标状态中文名}"
+}

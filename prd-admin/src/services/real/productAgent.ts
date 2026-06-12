@@ -580,7 +580,7 @@ export function getOverviewStats() {
 }
 export interface OverviewRequirementRow {
   id: string; productId: string; productName: string; requirementNo: string; title: string;
-  grade: string; currentState?: string | null; versionCount: number; customerCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
+  grade: string; currentState?: string | null; stateLabel?: string | null; versionCount: number; customerCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
 }
 export function getOverviewRequirements(params?: { grade?: string; keyword?: string; mine?: boolean }) {
   const q = new URLSearchParams();

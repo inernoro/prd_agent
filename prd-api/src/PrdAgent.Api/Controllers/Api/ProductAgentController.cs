@@ -1379,12 +1379,73 @@ public class ProductAgentController : ControllerBase
     /// <summary>确保内置默认工作流（需求 / 功能）已落库（固定 Id，幂等补缺）。</summary>
     private async Task EnsureDefaultWorkflowsSeededAsync()
     {
+        var reqDef = ProductWorkflowDefaults.Requirement();
+        var existingReq = await _db.ProductWorkflowDefinitions
+            .Find(w => w.Id == ProductWorkflowDefaults.RequirementDefId && !w.IsDeleted)
+            .FirstOrDefaultAsync();
+        if (existingReq == null)
+        {
+            reqDef.SeedRevision = ProductWorkflowDefaults.RequirementWorkflowRevision;
+            reqDef.IsUserCustomized = false;
+            await _db.ProductWorkflowDefinitions.InsertOneAsync(reqDef);
+        }
+        else if (!existingReq.IsUserCustomized
+                 && existingReq.SeedRevision < ProductWorkflowDefaults.RequirementWorkflowRevision)
+        {
+            await _db.ProductWorkflowDefinitions.UpdateOneAsync(
+                w => w.Id == reqDef.Id,
+                Builders<ProductWorkflowDefinition>.Update
+                    .Set(w => w.Name, reqDef.Name)
+                    .Set(w => w.Description, reqDef.Description)
+                    .Set(w => w.States, reqDef.States)
+                    .Set(w => w.Transitions, reqDef.Transitions)
+                    .Set(w => w.SeedRevision, ProductWorkflowDefaults.RequirementWorkflowRevision)
+                    .Set(w => w.UpdatedAt, DateTime.UtcNow));
+        }
+
         var existingIds = (await _db.ProductWorkflowDefinitions
-            .Find(Builders<ProductWorkflowDefinition>.Filter.In(w => w.Id, new[] { ProductWorkflowDefaults.RequirementDefId, ProductWorkflowDefaults.FeatureDefId }))
+            .Find(Builders<ProductWorkflowDefinition>.Filter.In(w => w.Id, new[] { ProductWorkflowDefaults.FeatureDefId }))
             .Project(w => w.Id).ToListAsync()).ToHashSet();
-        var missing = ProductWorkflowDefaults.All().Where(w => !existingIds.Contains(w.Id)).ToList();
-        if (missing.Count > 0)
-            await _db.ProductWorkflowDefinitions.InsertManyAsync(missing);
+        var missingFeature = ProductWorkflowDefaults.All()
+            .Where(w => w.Id != ProductWorkflowDefaults.RequirementDefId && !existingIds.Contains(w.Id))
+            .ToList();
+        if (missingFeature.Count > 0)
+            await _db.ProductWorkflowDefinitions.InsertManyAsync(missingFeature);
+
+        await MigrateLegacyRequirementStatesAsync();
+    }
+
+    /// <summary>将旧版 MAP 需求状态 Key 迁移为 TAPD 对齐 Key（幂等）。</summary>
+    private async Task MigrateLegacyRequirementStatesAsync()
+    {
+        foreach (var (legacy, modern) in TapdRequirementWorkflow.LegacyStateMap)
+        {
+            if (legacy == modern) continue;
+            await _db.Requirements.UpdateManyAsync(
+                r => r.CurrentState == legacy && !r.IsDeleted,
+                Builders<Requirement>.Update.Set(r => r.CurrentState, modern).Set(r => r.UpdatedAt, DateTime.UtcNow));
+        }
+
+        var distinctStates = await _db.Requirements.Find(r => !r.IsDeleted && r.CurrentState != null)
+            .Project(r => r.CurrentState).ToListAsync();
+        foreach (var state in distinctStates.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct())
+        {
+            var normalized = TapdRequirementWorkflow.NormalizeStateKey(state);
+            if (normalized == state) continue;
+            await _db.Requirements.UpdateManyAsync(
+                r => r.CurrentState == state && !r.IsDeleted,
+                Builders<Requirement>.Update.Set(r => r.CurrentState, normalized).Set(r => r.UpdatedAt, DateTime.UtcNow));
+        }
+    }
+
+    private async Task<Dictionary<string, ProductWorkflowDefinition>> LoadWorkflowDefsByIdsAsync(IEnumerable<string?> ids)
+    {
+        var defIds = ids.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct().ToList();
+        if (defIds.Count == 0) return new();
+        var defs = await _db.ProductWorkflowDefinitions
+            .Find(w => defIds.Contains(w.Id) && !w.IsDeleted)
+            .ToListAsync();
+        return defs.ToDictionary(d => d.Id, d => d);
     }
 
     [HttpGet("workflow-definitions")]
@@ -1423,6 +1484,7 @@ public class ProductAgentController : ControllerBase
                 .Set(w => w.Transitions, request.Transitions ?? new())
                 .Set(w => w.IsDefault, request.IsDefault)
                 .Set(w => w.ProductId, request.ProductId)
+                .Set(w => w.IsUserCustomized, true)
                 .Set(w => w.UpdatedAt, DateTime.UtcNow);
             await _db.ProductWorkflowDefinitions.UpdateOneAsync(w => w.Id == request.Id, u);
             var updated = await _db.ProductWorkflowDefinitions.Find(w => w.Id == request.Id).FirstOrDefaultAsync();
@@ -1515,6 +1577,9 @@ public class ProductAgentController : ControllerBase
 
         var def = await _db.ProductWorkflowDefinitions.Find(w => w.Id == workflowDefId && !w.IsDeleted).FirstOrDefaultAsync();
         if (def == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "流程定义不存在"));
+
+        if (request.EntityType == ProductEntityType.Requirement)
+            currentState = TapdRequirementWorkflow.NormalizeStateKey(currentState);
 
         var transition = def.Transitions.FirstOrDefault(t => t.Key == request.TransitionKey);
         if (transition == null)
@@ -1854,10 +1919,13 @@ public class ProductAgentController : ControllerBase
         bool IsFinal(string? defId, string? state)
             => !string.IsNullOrEmpty(state) && !string.IsNullOrEmpty(defId)
                && defById.TryGetValue(defId, out var def) && def.States.Any(s => s.Key == state && s.IsFinal);
-        string? StateLabel(string? defId, string? state)
+        string? StateLabel(string? defId, string? state, bool requirement = false)
         {
             if (string.IsNullOrEmpty(state)) return null;
-            if (!string.IsNullOrEmpty(defId) && defById.TryGetValue(defId, out var def))
+            defById.TryGetValue(defId ?? "", out var def);
+            if (requirement)
+                return TapdRequirementWorkflow.ResolveStateLabel(state, def);
+            if (def != null)
                 return def.States.FirstOrDefault(s => s.Key == state)?.Label ?? state;
             return state;
         }
@@ -1878,8 +1946,8 @@ public class ProductAgentController : ControllerBase
                || (d.ReporterId == userId && reporterActive.Contains(d.Status ?? ""));
 
         var items = new List<object>();
-        foreach (var r in reqs.Where(r => MineByState(r.AssigneeId, r.OwnerId) && !IsFinal(r.WorkflowDefId, r.CurrentState)))
-            items.Add(new { kind = "requirement", id = r.Id, no = r.RequirementNo, title = r.Title, state = r.CurrentState, stateLabel = StateLabel(r.WorkflowDefId, r.CurrentState) });
+        foreach (var r in reqs.Where(r => MineByState(r.AssigneeId, r.OwnerId) && !IsFinal(r.WorkflowDefId, TapdRequirementWorkflow.NormalizeStateKey(r.CurrentState))))
+            items.Add(new { kind = "requirement", id = r.Id, no = r.RequirementNo, title = r.Title, state = TapdRequirementWorkflow.NormalizeStateKey(r.CurrentState), stateLabel = StateLabel(r.WorkflowDefId, r.CurrentState, requirement: true) });
         foreach (var f in feats.Where(f => MineByState(f.AssigneeId, f.OwnerId) && !IsFinal(f.WorkflowDefId, f.CurrentState)))
             items.Add(new { kind = "feature", id = f.Id, no = f.FeatureNo, title = f.Title, state = f.CurrentState, stateLabel = StateLabel(f.WorkflowDefId, f.CurrentState) });
         foreach (var d in defects.Where(DefectMine))
@@ -2990,16 +3058,19 @@ public class ProductAgentController : ControllerBase
                     r.SourceSystem == sourceSystem &&
                     r.ExternalId == externalId).FirstOrDefaultAsync();
             }
+            var importedState = TapdRequirementWorkflow.MapTapdStatusLabel(row.SourceStatus) ?? initialState;
             if (existing != null)
             {
-                await _db.Requirements.UpdateOneAsync(r => r.Id == existing.Id,
-                    Builders<Requirement>.Update
-                        .Set(r => r.Title, row.Title!.Trim())
-                        .Set(r => r.Description, row.Description?.Trim())
-                        .Set(r => r.Grade, ProductItemGrade.All.Contains(row.Grade ?? "") ? row.Grade! : ProductItemGrade.P2)
-                        .Set(r => r.SourceUrl, row.SourceUrl?.Trim())
-                        .Set(r => r.SourceSnapshot, sourceSnapshot)
-                        .Set(r => r.UpdatedAt, now));
+                var update = Builders<Requirement>.Update
+                    .Set(r => r.Title, row.Title!.Trim())
+                    .Set(r => r.Description, row.Description?.Trim())
+                    .Set(r => r.Grade, ProductItemGrade.All.Contains(row.Grade ?? "") ? row.Grade! : ProductItemGrade.P2)
+                    .Set(r => r.SourceUrl, row.SourceUrl?.Trim())
+                    .Set(r => r.SourceSnapshot, sourceSnapshot)
+                    .Set(r => r.UpdatedAt, now);
+                if (!string.IsNullOrWhiteSpace(row.SourceStatus))
+                    update = update.Set(r => r.CurrentState, importedState).Set(r => r.StateEnteredAt, now);
+                await _db.Requirements.UpdateOneAsync(r => r.Id == existing.Id, update);
                 updated++;
                 continue;
             }
@@ -3011,7 +3082,7 @@ public class ProductAgentController : ControllerBase
                 Description = row.Description?.Trim(),
                 Grade = ProductItemGrade.All.Contains(row.Grade ?? "") ? row.Grade! : ProductItemGrade.P2,
                 WorkflowDefId = wfId,
-                CurrentState = initialState,
+                CurrentState = importedState,
                 StateEnteredAt = now,
                 OwnerId = userId,
                 SourceSystem = sourceSystem,
@@ -3239,7 +3310,13 @@ public class ProductAgentController : ControllerBase
             : await _db.ProductWorkflowDefinitions.Find(w => defIds.Contains(w.Id) && !w.IsDeleted).ToListAsync();
         var reqDef = defs.FirstOrDefault(d => d.Id == reqWfId);
         var reqStates = reqDef?.States.ToDictionary(s => s.Key, s => s) ?? new();
-        string CatOf(string? key) => key != null && reqStates.TryGetValue(key, out var s) ? (s.Category ?? (s.IsFinal ? "done" : "todo")) : "todo";
+        string CatOf(string? key)
+        {
+            var normalized = TapdRequirementWorkflow.NormalizeStateKey(key);
+            return normalized != null && reqStates.TryGetValue(normalized, out var s)
+                ? (s.Category ?? (s.IsFinal ? "done" : "todo"))
+                : "todo";
+        }
 
         // 版本进度（按需求状态分类）
         var releaseProgress = versions.Select(v =>
@@ -3568,12 +3645,33 @@ public class ProductAgentController : ControllerBase
         var items = await FindInScopeAsync<Requirement>(scope, r => r.ProductId, r => r.IsDeleted);
         var names = await ProductNamesAsync(items.Select(r => r.ProductId));
         var userNames = await UserNamesAsync(items.Select(r => r.AssigneeId));
+        var defById = await LoadWorkflowDefsByIdsAsync(items.Select(r => r.WorkflowDefId));
         var rows = items
             .Where(r => string.IsNullOrWhiteSpace(grade) || r.Grade == grade)
             .Where(r => !mine || r.AssigneeId == userId)
             .Where(r => string.IsNullOrWhiteSpace(keyword) || (r.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || r.RequirementNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(r => r.UpdatedAt)
-            .Select(r => new { r.Id, r.ProductId, productName = names.GetValueOrDefault(r.ProductId, ""), r.RequirementNo, r.Title, r.Grade, r.CurrentState, versionCount = r.VersionIds.Count, customerCount = r.CustomerIds.Count, r.AssigneeId, assigneeName = r.AssigneeId == null ? null : userNames.GetValueOrDefault(r.AssigneeId, ""), r.UpdatedAt })
+            .Select(r =>
+            {
+                defById.TryGetValue(r.WorkflowDefId ?? "", out var def);
+                var stateKey = TapdRequirementWorkflow.NormalizeStateKey(r.CurrentState);
+                return new
+                {
+                    r.Id,
+                    r.ProductId,
+                    productName = names.GetValueOrDefault(r.ProductId, ""),
+                    r.RequirementNo,
+                    r.Title,
+                    r.Grade,
+                    currentState = stateKey,
+                    stateLabel = TapdRequirementWorkflow.ResolveStateLabel(stateKey, def),
+                    versionCount = r.VersionIds.Count,
+                    customerCount = r.CustomerIds.Count,
+                    r.AssigneeId,
+                    assigneeName = r.AssigneeId == null ? null : userNames.GetValueOrDefault(r.AssigneeId, ""),
+                    r.UpdatedAt,
+                };
+            })
             .Take(1000).ToList();
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
     }

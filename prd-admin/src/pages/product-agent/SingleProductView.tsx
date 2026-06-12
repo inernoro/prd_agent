@@ -49,6 +49,7 @@ import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inT
 import { toCSV, downloadCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
+import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
 
 type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
 
@@ -378,7 +379,7 @@ function RequirementsTab({ productId }: { productId: string }) {
     void listCustomers().then((r) => { if (r.success) setCustomers(r.data.items); });
   }, [productId]);
 
-  const stateLabel = useCallback((key: string) => workflow?.states.find((s) => s.key === key)?.label ?? key, [workflow]);
+  const stateLabel = useCallback((key: string) => resolveRequirementStateLabel(key, workflow), [workflow]);
   const versionName = useMemo(() => new Map(versions.map((v) => [v.id, v.versionName])), [versions]);
   const customerName = useMemo(() => new Map(customers.map((c) => [c.id, c.name])), [customers]);
   const fields = useMemo<FilterFieldDef<Requirement>[]>(() => [
@@ -401,7 +402,7 @@ function RequirementsTab({ productId }: { productId: string }) {
   });
 
   const exportCsv = () => {
-    const rows = items.map((r) => [r.requirementNo, r.externalId ?? '', r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, r.currentState ?? '', r.sourceSnapshot?.status ?? '', r.description ?? '']);
+    const rows = items.map((r) => [r.requirementNo, r.externalId ?? '', r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
     downloadCSV(`需求-${productId}.csv`, toCSV(['MAP编号', 'TAPD ID', '标题', '分级', 'MAP状态', 'TAPD状态', '描述'], rows));
   };
 
@@ -866,7 +867,7 @@ function StateBoard({
     setDragId(null);
     setOverState(null);
     if (!r) return;
-    const from = r.currentState ?? initial;
+    const from = normalizeRequirementStateKey(r.currentState ?? initial);
     if (from === toState) return;
     const t = workflow.transitions.find((tr) => tr.toState === toState && (!tr.fromState || tr.fromState === from));
     if (!t) return; // 没有合法流转
@@ -877,7 +878,7 @@ function StateBoard({
   return (
     <div className="flex gap-3 overflow-x-auto pb-2" style={{ overscrollBehavior: 'contain' }}>
       {states.map((s) => {
-        const list = items.filter((r) => (r.currentState ?? initial) === s.key);
+        const list = items.filter((r) => normalizeRequirementStateKey(r.currentState ?? initial) === s.key);
         return (
           <div
             key={s.key}

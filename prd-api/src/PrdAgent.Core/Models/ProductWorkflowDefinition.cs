@@ -41,6 +41,15 @@ public class ProductWorkflowDefinition
     /// <summary>软删除标记</summary>
     public bool IsDeleted { get; set; }
 
+    /// <summary>
+    /// 内置种子版本（来自 TapdRequirementWorkflow / ProductWorkflowDefaults）。
+    /// 仅当未用户自定义且 SeedRevision 低于代码版本时，EnsureDefaultWorkflowsSeededAsync 会覆盖状态与流转。
+    /// </summary>
+    public int SeedRevision { get; set; }
+
+    /// <summary>管理员在「设置 → 流程模板」保存后为 true，禁止种子逻辑再覆盖。</summary>
+    public bool IsUserCustomized { get; set; }
+
     /// <summary>取初始状态 Key（IsInitial 优先，否则取第一个）。</summary>
     public string? GetInitialStateKey()
         => States.FirstOrDefault(s => s.IsInitial)?.Key ?? States.FirstOrDefault()?.Key;

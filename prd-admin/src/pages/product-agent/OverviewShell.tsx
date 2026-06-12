@@ -59,6 +59,7 @@ import {
 } from '@/services/real/productAgent';
 import type { Customer, Product } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade, defectStatusLabel } from './types';
+import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
@@ -462,7 +463,7 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
             { header: '标题', render: (r) => <span className="text-white/90">{r.title}</span> },
             { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
             { header: '分级', render: (r) => GRADE_BADGE(r.grade) },
-            { header: '状态', render: (r) => <span className="text-white/55 text-xs">{r.currentState || '-'}</span> },
+            { header: '状态', render: (r) => <span className="text-white/55 text-xs">{(r.stateLabel ?? resolveRequirementStateLabel(r.currentState)) || '-'}</span> },
             { header: '处理人', render: (r) => <span className="text-white/55 text-xs">{r.assigneeName || '-'}</span> },
             { header: '版本', render: (r) => <span className="text-white/55 text-xs">{r.versionCount}</span> },
             { header: '客户', render: (r) => <span className="text-white/55 text-xs">{r.customerCount}</span> },

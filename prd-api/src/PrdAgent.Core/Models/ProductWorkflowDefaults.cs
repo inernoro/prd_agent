@@ -3,42 +3,58 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 产品管理智能体 — 内置默认工作流（让"流程流转"开箱即用）。
 ///
-/// 首次访问时 find-or-create 到 product_workflow_definitions（固定 Id，幂等）。
-/// 管理员可在「设置 → 流程模板」改造，或为某产品建覆盖流程。
-/// 缺陷流转留在 defect-agent（其原生归属），此处只覆盖需求 / 功能。
+/// 需求流程对齐 TAPD「米多需求收集工作流」：状态 Key 与流转矩阵见 TapdRequirementWorkflow。
+/// 首次访问时 upsert 到 product_workflow_definitions（固定 Id，幂等）。
 /// </summary>
 public static class ProductWorkflowDefaults
 {
     public const string RequirementDefId = "wf-default-requirement";
     public const string FeatureDefId = "wf-default-feature";
 
+    /// <summary>递增后 EnsureDefaultWorkflowsSeededAsync 会覆盖默认需求流程定义。</summary>
+    public const int RequirementWorkflowRevision = 4;
+
     public static ProductWorkflowDefinition Requirement() => new()
     {
         Id = RequirementDefId,
-        Name = "标准需求流程",
-        Description = "待评审 → 已评审 → 开发中 → 测试中 → 已完成 / 已拒绝",
+        Name = TapdRequirementWorkflow.WorkflowName,
+        Description = "对齐 TAPD 米多需求收集工作流（应用设置 workitem_type/config?tab=workflow）",
         EntityType = ProductEntityType.Requirement,
         IsDefault = true,
         ProductId = null,
         States = new()
         {
-            new() { Key = "pending",    Label = "待评审", Color = "#9ca3af", IsInitial = true, Category = "todo",  SortOrder = 0, SlaHours = 48 },
-            new() { Key = "reviewed",   Label = "已评审", Color = "#38bdf8", Category = "todo",  SortOrder = 1 },
-            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 2, SlaHours = 72, WipLimit = 5 },
-            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 3, SlaHours = 48, WipLimit = 5 },
-            new() { Key = "done",       Label = "已完成", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
-            new() { Key = "rejected",   Label = "已拒绝", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
+            new() { Key = TapdRequirementWorkflow.New, Label = "待评审", Color = "#9ca3af", IsInitial = true, Category = "todo", SortOrder = 0, SlaHours = 48 },
+            new() { Key = TapdRequirementWorkflow.Planning, Label = "待规划", Color = "#38bdf8", Category = "todo", SortOrder = 1, SlaHours = 48 },
+            new() { Key = TapdRequirementWorkflow.Approved, Label = "已立项", Color = "#60a5fa", Category = "todo", SortOrder = 2 },
+            new() { Key = TapdRequirementWorkflow.Developing, Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 3, SlaHours = 72, WipLimit = 8 },
+            new() { Key = TapdRequirementWorkflow.Released, Label = "已上线", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
+            new() { Key = TapdRequirementWorkflow.Rejected, Label = "已拒绝", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
+            new() { Key = TapdRequirementWorkflow.Scheduled, Label = "已排期", Color = "#a78bfa", Category = "todo", SortOrder = 6 },
         },
-        Transitions = new()
-        {
-            new() { Key = "approve",   Label = "通过评审", FromState = "pending",    ToState = "reviewed" },
-            new() { Key = "reject",    Label = "驳回",     FromState = "pending",    ToState = "rejected", RequireComment = true },
-            new() { Key = "start-dev", Label = "开始开发", FromState = "reviewed",   ToState = "developing", AutoAssignToActor = true },
-            new() { Key = "to-test",   Label = "提交测试", FromState = "developing", ToState = "testing" },
-            new() { Key = "complete",  Label = "完成",     FromState = "testing",    ToState = "done" },
-            new() { Key = "reopen",    Label = "重新打开", FromState = null,         ToState = "pending" },
-        },
+        Transitions = BuildTapdRequirementTransitions(),
     };
+
+    private static List<ProductWorkflowTransition> BuildTapdRequirementTransitions()
+    {
+        var list = new List<ProductWorkflowTransition>();
+        foreach (var (fromKey, toKeys) in TapdRequirementWorkflow.TransitionMatrix)
+        {
+            foreach (var toKey in toKeys)
+            {
+                list.Add(new ProductWorkflowTransition
+                {
+                    Key = $"{fromKey}-to-{toKey}",
+                    Label = TapdRequirementWorkflow.BuildTransitionActionLabel(toKey),
+                    FromState = fromKey,
+                    ToState = toKey,
+                    RequireComment = toKey == TapdRequirementWorkflow.Rejected,
+                    AutoAssignToActor = toKey == TapdRequirementWorkflow.Developing,
+                });
+            }
+        }
+        return list;
+    }
 
     public static ProductWorkflowDefinition Feature() => new()
     {

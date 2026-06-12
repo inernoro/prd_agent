@@ -738,6 +738,11 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
   if (loading) return <MapSectionLoader text="正在加载流程…" />;
   return (
     <div className="flex flex-col gap-3">
+      {entityType === 'requirement' && (
+        <div className="text-xs text-white/40 px-1">
+          首次初始化对齐 TAPD「米多需求收集工作流」（7 状态 + 流转矩阵）。在此保存后视为自定义配置，系统不再用内置种子覆盖。
+        </div>
+      )}
       <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 flex items-center gap-3">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="流程名称" className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40" />
         <button onClick={save} disabled={saving} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50">

@@ -57,6 +57,7 @@ import {
   type GraphEdge,
 } from '@/services/real/productAgent';
 import { ITEM_GRADE_LABEL, effectiveDefectGrade } from './types';
+import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 
 type NodeType = GraphNode['type'];
 
@@ -852,7 +853,7 @@ function NodeDrawer({
           r.push(
             { label: '编号', value: o.requirementNo },
             { label: '分级', value: o.grade },
-            { label: '状态', value: o.currentState || '-' },
+            { label: '状态', value: resolveRequirementStateLabel(o.currentState) || '-' },
             { label: '关联客户', value: o.customerIds.map((id) => cName.get(id) ?? id).join('、') || '—' },
             { label: '归属版本', value: o.versionIds.map((id) => vName.get(id) ?? id).join('、') || '—' },
           );

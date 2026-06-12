@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { transition } from '@/services/real/productAgent';
 import type { WorkflowDefinition, ProductEntityType } from './types';
+import { normalizeRequirementStateKey, requirementTransitionButtonLabel, resolveRequirementStateLabel } from './requirementWorkflowUtils';
 
 export function WorkflowBar({
   workflow,
@@ -26,8 +27,10 @@ export function WorkflowBar({
 
   if (!workflow || workflow.states.length === 0) return null;
 
-  const state = workflow.states.find((s) => s.key === currentState) ?? workflow.states.find((s) => s.isInitial) ?? workflow.states[0];
-  const available = workflow.transitions.filter((t) => !t.fromState || t.fromState === (currentState ?? state?.key));
+  const isRequirement = entityType === 'requirement';
+  const effectiveStateKey = isRequirement ? normalizeRequirementStateKey(currentState) : (currentState ?? undefined);
+  const state = workflow.states.find((s) => s.key === effectiveStateKey) ?? workflow.states.find((s) => s.isInitial) ?? workflow.states[0];
+  const available = workflow.transitions.filter((t) => !t.fromState || t.fromState === (effectiveStateKey ?? state?.key));
 
   const doTransition = async (key: string, requireComment: boolean) => {
     let comment: string | undefined;
@@ -51,7 +54,7 @@ export function WorkflowBar({
         className="text-xs px-2 py-0.5 rounded font-medium"
         style={{ background: 'rgba(255,255,255,0.06)', color: state?.color ?? '#e8e8ec' }}
       >
-        {state?.label ?? currentState ?? '未设置'}
+        {isRequirement ? resolveRequirementStateLabel(currentState, workflow) : (state?.label ?? currentState ?? '未设置')}
       </span>
       {available.length > 0 && <span className="text-white/20 mx-1">|</span>}
       {available.map((t) => (
@@ -62,7 +65,7 @@ export function WorkflowBar({
           className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/10 disabled:opacity-50"
         >
           {busy === t.key ? <MapSpinner size={12} /> : null}
-          {t.label || t.key}
+          {isRequirement ? requirementTransitionButtonLabel(t, workflow) : (t.label || t.key)}
         </button>
       ))}
       {error && <span className="text-xs text-red-300/80">{error}</span>}
