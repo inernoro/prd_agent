@@ -1,9 +1,10 @@
 /**
  * TAPD 缺陷 Excel/CSV 导入解析。
- * 严重程度列（紧急/高/中/低/无关紧要）→ V2.6 四档；不读取「优先级」列。
+ * 「严重程度」→ V2.6 四档；「优先级」→ 处理优先级 p0–p3。两列各自映射，无兜底。
  */
 import * as XLSX from 'xlsx';
 import type { ImportSimpleItemRow } from '@/services/real/productAgent';
+import { normalizeTapdPriorityToGrade } from './defectPriority';
 import { normalizeTapdToSeverityLevel } from './defectSeverity';
 
 function cellStr(value: unknown): string {
@@ -22,8 +23,8 @@ function headerIndex(headers: string[], ...names: string[]): number {
 export function mapDefectImportRows(headers: string[], body: string[][]): ImportSimpleItemRow[] {
   const titleIndex = headerIndex(headers, '标题', 'title');
   const descIndex = headerIndex(headers, '详细描述', '描述', 'description', 'desc');
-  /** TAPD 标准导出列名；与「优先级」「缺陷等级」无关 */
   const severityIndex = headerIndex(headers, '严重程度', 'severity');
+  const priorityIndex = headerIndex(headers, '优先级', 'priority');
   const statusIndex = headerIndex(headers, '状态', 'status');
   const assigneeIndex = headerIndex(headers, '处理人', '当前处理人', 'assignee', 'handler');
   const reporterIndex = headerIndex(headers, '创建人', '上报人', 'reporter', '提交人');
@@ -33,15 +34,19 @@ export function mapDefectImportRows(headers: string[], body: string[][]): Import
   return body
     .map((values) => {
       const rawTapdSeverity = severityIndex >= 0 ? values[severityIndex]?.trim() : undefined;
-      const mapped = rawTapdSeverity ? normalizeTapdToSeverityLevel(rawTapdSeverity) : undefined;
+      const rawTapdPriority = priorityIndex >= 0 ? values[priorityIndex]?.trim() : undefined;
+      const severity = rawTapdSeverity ? normalizeTapdToSeverityLevel(rawTapdSeverity) : undefined;
+      const grade = rawTapdPriority ? normalizeTapdPriorityToGrade(rawTapdPriority) : undefined;
       const handlerRaw = assigneeIndex >= 0 ? values[assigneeIndex]?.trim() : undefined;
       const reporterRaw = reporterIndex >= 0 ? values[reporterIndex]?.trim() : undefined;
       const splitPeople = (raw?: string) => (raw ?? '').split(/[;；,，]/).map((n) => n.trim()).filter(Boolean);
       return {
         title: values[effectiveTitleIndex]?.trim() ?? '',
         description: descIndex >= 0 ? values[descIndex]?.trim() : undefined,
-        severity: mapped,
-        tapdSeverityRaw: rawTapdSeverity,
+        severity,
+        grade,
+        tapdSeverityRaw: rawTapdSeverity || undefined,
+        tapdPriorityRaw: rawTapdPriority || undefined,
         status: statusIndex >= 0 ? values[statusIndex]?.trim() : undefined,
         sourceSystem: 'tapd',
         externalId: idIndex >= 0 ? values[idIndex]?.trim() : undefined,

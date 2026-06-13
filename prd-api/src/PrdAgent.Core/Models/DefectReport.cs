@@ -48,7 +48,7 @@ public class DefectReport
 
     /// <summary>
     /// 产品管理智能体内的处理优先级：见 ProductItemGrade（p0/p1/p2/p3）。与 Severity（严重程度）独立。
-    /// TAPD「缺陷等级」导入映射到 Severity，不写入本字段。
+    /// TAPD 导出列「优先级」导入映射到本字段；无值时不写入。
     /// </summary>
     public string? Grade { get; set; }
 

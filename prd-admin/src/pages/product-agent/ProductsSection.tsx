@@ -534,10 +534,10 @@ function ProductEditModal({
           <UserMultiSearchSelect
             value={ownerIds}
             onChange={setOwnerIds}
-            placeholder="留空待认领，可多选"
+            placeholder="请选择负责人（可选，支持多选）"
             uiSize="md"
           />
-          <p className="text-[10px] text-white/35">可不填，后续由成员认领；支持指定多位负责人。</p>
+          <p className="text-[10px] text-white/35">可选填；未指定时待成员认领，支持指定多位负责人。</p>
         </div>
         <div className="flex justify-end gap-2 mt-1">
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">

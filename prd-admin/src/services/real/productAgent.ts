@@ -368,6 +368,8 @@ export interface ImportSimpleItemRow {
   grade?: string;
   /** TAPD 导出「严重程度」列原文 */
   tapdSeverityRaw?: string;
+  /** TAPD 导出「优先级」列原文 */
+  tapdPriorityRaw?: string;
   /** 严重程度 V2.6 四档（致命/严重/一般/轻微）；缺陷 CSV 解析产出 */
   severity?: string;
   status?: string;
