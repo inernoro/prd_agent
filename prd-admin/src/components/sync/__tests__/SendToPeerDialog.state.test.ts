@@ -18,7 +18,7 @@ describe('SendToPeerDialog queue state', () => {
     }, null, null);
 
     expect(state.selectedCount).toBe(4);
-    expect(state.doneCount + state.runningCount + state.waitingCount + state.failedCount).toBe(state.selectedCount);
+    expect(state.doneCount + state.skippedCount + state.runningCount + state.waitingCount + state.failedCount).toBe(state.selectedCount);
     expect(state.runningCount).toBe(1);
     expect(state.waitingCount).toBe(3);
   });
@@ -66,7 +66,21 @@ describe('SendToPeerDialog queue state', () => {
     expect(state.doneCount).toBe(3);
     expect(state.failedCount).toBe(1);
     expect(state.waitingCount).toBe(0);
-    expect(state.doneCount + state.runningCount + state.waitingCount + state.failedCount).toBe(state.selectedCount);
+    expect(state.doneCount + state.skippedCount + state.runningCount + state.waitingCount + state.failedCount).toBe(state.selectedCount);
     expect(state.reverseLabel).toBe('部分条目未通过');
+  });
+
+  it('shows already synced results as skipped instead of completed work', () => {
+    const results: TransferItemResult[] = [
+      { itemId: 'kb-1', ok: true, created: 0, updated: 0, skipped: 112, failed: 0, message: '发送 新增0/更新0/跳过112' },
+      { itemId: 'kb-2', ok: true, created: 0, updated: 0, skipped: 1, failed: 0, message: '发送 新增0/更新0/跳过1' },
+    ];
+    const state = deriveQueueState(selectedItems.slice(0, 2), false, null, results, null);
+
+    expect(state.doneCount).toBe(0);
+    expect(state.skippedCount).toBe(2);
+    expect(state.itemStates.get('kb-1')).toBe('skipped');
+    expect(state.currentLabel).toBe('全部无变化，已跳过');
+    expect(state.reverseLabel).toBe('无变化，已跳过');
   });
 });

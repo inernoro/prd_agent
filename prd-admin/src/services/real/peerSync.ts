@@ -37,6 +37,10 @@ export interface TransferItemResult {
   itemId: string;
   ok: boolean;
   message?: string;
+  created?: number;
+  updated?: number;
+  skipped?: number;
+  failed?: number;
   assetsRewritten?: number;
   assetRewriteFailed?: number;
 }

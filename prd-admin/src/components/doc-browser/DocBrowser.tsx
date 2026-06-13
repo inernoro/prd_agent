@@ -1326,6 +1326,7 @@ function TreeNode({
               <RelativeTime
                 value={entry[timeField]!}
                 refreshIntervalMs={0}
+                mode="compact"
                 className="text-[9.5px] tabular-nums text-token-muted"
                 title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
               />
@@ -1415,6 +1416,7 @@ function TreeNode({
             <RelativeTime
               value={entry[timeField]!}
               refreshIntervalMs={0}
+              mode="compact"
               className="text-[9.5px] tabular-nums text-token-muted"
               title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
             />

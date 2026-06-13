@@ -469,11 +469,12 @@ function directionShortLabel(direction: PeerTransferDirection) {
   return '双向';
 }
 
-type QueueItemState = 'unselected' | 'waiting' | 'running' | 'done' | 'failed';
+type QueueItemState = 'unselected' | 'waiting' | 'running' | 'done' | 'skipped' | 'failed';
 
 interface QueueState {
   selectedCount: number;
   doneCount: number;
+  skippedCount: number;
   runningCount: number;
   waitingCount: number;
   failedCount: number;
@@ -494,11 +495,13 @@ export function deriveQueueState(
   error: string | null,
 ): QueueState {
   const resultMap = new Map((results || []).map((r) => [r.itemId, r]));
-  const doneCount = results?.filter((r) => r.ok).length ?? 0;
+  const skippedCount = results?.filter(isSkippedResult).length ?? 0;
+  const doneCount = results?.filter((r) => r.ok && !isSkippedResult(r)).length ?? 0;
   const failedCount = results?.filter((r) => !r.ok).length ?? (error ? selectedItems.length : 0);
-  const runningCount = submitting && selectedItems.length > doneCount + failedCount ? 1 : 0;
-  const waitingCount = Math.max(0, selectedItems.length - doneCount - failedCount - runningCount);
-  const activeIndex = submitting ? Math.min(doneCount + failedCount, Math.max(0, selectedItems.length - 1)) : -1;
+  const settledCount = doneCount + skippedCount + failedCount;
+  const runningCount = submitting && selectedItems.length > settledCount ? 1 : 0;
+  const waitingCount = Math.max(0, selectedItems.length - settledCount - runningCount);
+  const activeIndex = submitting ? Math.min(settledCount, Math.max(0, selectedItems.length - 1)) : -1;
   const activeItem = activeIndex >= 0 ? selectedItems[activeIndex] || null : null;
   const activeStep = progress?.step ?? 0;
   const itemStates = new Map<string, QueueItemState>();
@@ -507,7 +510,7 @@ export function deriveQueueState(
   selectedItems.forEach((item, index) => {
     const result = resultMap.get(item.itemId);
     if (result) {
-      itemStates.set(item.itemId, result.ok ? 'done' : 'failed');
+      itemStates.set(item.itemId, result.ok ? (isSkippedResult(result) ? 'skipped' : 'done') : 'failed');
       itemProgress.set(item.itemId, 100);
       return;
     }
@@ -525,12 +528,13 @@ export function deriveQueueState(
   return {
     selectedCount: selectedItems.length,
     doneCount,
+    skippedCount,
     runningCount,
     waitingCount,
     failedCount,
     activeItem,
     activeStep,
-    currentLabel: progress?.stage || (results ? '同步结果已返回' : selectedItems.length > 0 ? '等待开始同步' : '等待选择知识库'),
+    currentLabel: progress?.stage || (results ? (skippedCount === results.length ? '全部无变化，已跳过' : '同步结果已返回') : selectedItems.length > 0 ? '等待开始同步' : '等待选择知识库'),
     reverseLabel,
     etaLabel: submitting ? `约 ${formatDuration(etaSeconds)}` : '无进行中任务',
     itemStates,
@@ -546,6 +550,17 @@ function stepProgress(step: number) {
   return 0;
 }
 
+function isSkippedResult(result: TransferItemResult) {
+  if (!result.ok) return false;
+  const created = result.created ?? 0;
+  const updated = result.updated ?? 0;
+  const failed = result.failed ?? 0;
+  const skipped = result.skipped ?? 0;
+  if (skipped > 0 && created === 0 && updated === 0 && failed === 0) return true;
+  const message = result.message ?? '';
+  return /新增0\/更新0\/跳过[1-9]\d*/.test(message) && !/失败[1-9]\d*/.test(message);
+}
+
 function reverseStatusFromStep(args: {
   submitting: boolean;
   activeStep: number;
@@ -553,7 +568,11 @@ function reverseStatusFromStep(args: {
   error: string | null;
 }) {
   if (args.error) return '未执行回读';
-  if (args.results && args.results.length > 0) return args.results.some((r) => !r.ok) ? '部分条目未通过' : '回读校验通过';
+  if (args.results && args.results.length > 0) {
+    if (args.results.some((r) => !r.ok)) return '部分条目未通过';
+    if (args.results.every(isSkippedResult)) return '无变化，已跳过';
+    return '回读校验通过';
+  }
   if (!args.submitting) return '等待回读';
   if (args.activeStep < 4) return '等待回读';
   return '正在回读同步结果';
@@ -566,9 +585,10 @@ function formatDuration(seconds: number) {
 
 function QueueOverview({ state }: { state: QueueState }) {
   return (
-    <div className="grid grid-cols-5 gap-2 text-center">
+    <div className="grid grid-cols-6 gap-2 text-center">
       <QueueStat label="本轮" value={state.selectedCount} />
       <QueueStat label="完成" value={state.doneCount} tone="green" />
+      <QueueStat label="跳过" value={state.skippedCount} />
       <QueueStat label="同步中" value={state.runningCount} tone="gold" />
       <QueueStat label="等待" value={state.waitingCount} />
       <QueueStat label="失败" value={state.failedCount} tone={state.failedCount > 0 ? 'red' : 'slate'} />
@@ -647,7 +667,7 @@ function QueueItemCard({ item, onToggle, state, progress, result, active }: {
         </div>
         <div className="min-w-0">
           <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-            <StatusPill icon={active ? <MapSpinner size={12} /> : state === 'done' ? <CheckCircle2 size={13} /> : state === 'failed' ? <AlertTriangle size={13} /> : <Clock3 size={13} />} text={queueStateLabel(state)} tone={tone} />
+            <StatusPill icon={active ? <MapSpinner size={12} /> : state === 'done' || state === 'skipped' ? <CheckCircle2 size={13} /> : state === 'failed' ? <AlertTriangle size={13} /> : <Clock3 size={13} />} text={queueStateLabel(state)} tone={tone} />
             <span className="font-semibold" style={{ color: statusColor(tone) }}>{inQueue ? `${progress}%` : '未选'}</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full" style={{ background: 'rgba(148,163,184,0.14)' }}>
@@ -689,6 +709,7 @@ function stepFromProgress(progress: number) {
 
 function queueStateTone(state: QueueItemState): StatusTone {
   if (state === 'done') return 'teal';
+  if (state === 'skipped') return 'slate';
   if (state === 'running') return 'gold';
   if (state === 'failed') return 'red';
   return 'slate';
@@ -696,6 +717,7 @@ function queueStateTone(state: QueueItemState): StatusTone {
 
 function queueStateLabel(state: QueueItemState) {
   if (state === 'done') return '已完成';
+  if (state === 'skipped') return '已跳过';
   if (state === 'running') return '同步中';
   if (state === 'failed') return '失败';
   if (state === 'waiting') return '等待';
