@@ -37,6 +37,11 @@ import {
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { OVERVIEW_LIST_SEARCH_BOX } from './listFilter';
 import { filterByTracked } from './productRecordTrackStorage';
+import { InitiationMeetingRoundsEditor } from './InitiationWorkflowPanel';
+import {
+  formatInitiationReviewScore,
+  isMeetingResultPending,
+} from './initiationWorkflowUtils';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
@@ -58,6 +63,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState<'initiation' | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
+  const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
   const [releaseOwnerId, setReleaseOwnerId] = useState(currentUserId ?? '');
   const [query, setQuery] = useState('');
@@ -154,7 +160,8 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
         items={visibleInitiations}
         members={members}
         currentUserId={currentUserId}
-        onRetry={setRetrySeed}
+        onRetryReview={setRetrySeed}
+        onFillMeeting={setMeetingFillItem}
         onChanged={reload}
         readOnly={recordScope === 'all'}
       />
@@ -169,6 +176,18 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
         onClose={() => setRetrySeed(null)}
         onChanged={async () => { setRetrySeed(null); await reload(); }}
       />
+    )}
+    {meetingFillItem && (
+      <Modal title="会议结果" onClose={() => setMeetingFillItem(null)} width="max-w-2xl">
+        <InitiationMeetingRoundsEditor
+          initiation={meetingFillItem}
+          editable={meetingFillItem.createdBy === currentUserId}
+          onSaved={async () => {
+            setMeetingFillItem(null);
+            await reload();
+          }}
+        />
+      </Modal>
     )}
   </div>;
 }
@@ -488,13 +507,14 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   </Modal>;
 }
 
-function InitiationTable({ productId, productName, items, members, currentUserId, onRetry, onChanged, readOnly }: {
+function InitiationTable({ productId, productName, items, members, currentUserId, onRetryReview, onFillMeeting, onChanged, readOnly }: {
   productId: string;
   productName: string;
   items: ProductInitiation[];
   members: ProductMember[];
   currentUserId?: string;
-  onRetry: (item: ProductInitiation) => void;
+  onRetryReview: (item: ProductInitiation) => void;
+  onFillMeeting: (item: ProductInitiation) => void;
   onChanged: () => Promise<void>;
   readOnly: boolean;
 }) {
@@ -509,8 +529,14 @@ function InitiationTable({ productId, productName, items, members, currentUserId
   return (
     <>
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注', '操作']} selection={tableSelection}>
-        {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')} onClick={() => openDetail(item.id)}>
+      <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
+        {items.map((item) => {
+          const isOwner = !readOnly && item.createdBy === currentUserId;
+          const showRetryReview = isOwner && item.status === 'review_failed';
+          const showFillMeeting = isOwner && isMeetingResultPending(item);
+          const reviewScoreText = formatInitiationReviewScore(item);
+          return (
+        <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')} onClick={() => openDetail(item.id)}>
           <ListTableSelectionCell selection={tableSelection} id={item.id} />
           <Td>{resolveVersionProductLabel(item, productName)}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
@@ -528,15 +554,32 @@ function InitiationTable({ productId, productName, items, members, currentUserId
       <Td>{formatDate(item.projectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td>
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
-      <Td onClick={(e) => e.stopPropagation()}>
-        {!readOnly && item.createdBy === currentUserId && item.status === 'review_failed' && (
-          <button type="button" onClick={() => onRetry(item)} className="text-amber-200 hover:underline">重新发起</button>
-        )}
-        {!readOnly && item.createdBy === currentUserId && item.status === 'decision_pending' && (
-          <button type="button" onClick={() => onRetry(item)} className="text-cyan-300 hover:underline">继续决策</button>
+      <Td>
+        {reviewScoreText === '-' ? (
+          <span className="text-white/35">-</span>
+        ) : (
+          <span className={
+            item.reviewPassed === true ? 'text-emerald-300'
+              : item.reviewPassed === false ? 'text-rose-300'
+                : 'text-white/70'
+          }>{reviewScoreText}</span>
         )}
       </Td>
-    </tr>)}{items.length === 0 && <Empty cols={17}>暂无立项记录</Empty>}
+      <Td onClick={(e) => e.stopPropagation()}>
+        {(showRetryReview || showFillMeeting) ? (
+          <div className="flex flex-col items-start gap-1">
+            {showRetryReview && (
+              <button type="button" onClick={() => onRetryReview(item)} className="text-amber-200 hover:underline">重新发起立项</button>
+            )}
+            {showFillMeeting && (
+              <button type="button" onClick={() => onFillMeeting(item)} className="text-cyan-300 hover:underline">会议结果</button>
+            )}
+          </div>
+        ) : null}
+      </Td>
+    </tr>
+          );
+        })}{items.length === 0 && <Empty cols={18}>暂无立项记录</Empty>}
       </Table>
     </>
   );

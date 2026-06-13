@@ -41,3 +41,20 @@ export function fromDatetimeLocalValue(value: string): string | undefined {
   if (Number.isNaN(d.getTime())) return undefined;
   return d.toISOString();
 }
+
+/** 展示立项记录的 Agent 评审得分 */
+export function formatInitiationReviewScore(initiation: ProductInitiation): string {
+  if (initiation.reviewScore != null) return `${initiation.reviewScore}/100`;
+  const attempts = initiation.reviewAttempts ?? [];
+  if (attempts.length === 0) return '-';
+  const latest = [...attempts].sort((a, b) => b.attemptNo - a.attemptNo)[0];
+  if (latest.reviewScore != null) return `${latest.reviewScore}/100`;
+  return '-';
+}
+
+/** 需开线下评审会且仍有稿次未回填结论 */
+export function isMeetingResultPending(initiation: ProductInitiation): boolean {
+  if (!initiation.reviewMeetingRequired) return false;
+  const rounds = normalizeMeetingRounds(initiation);
+  return rounds.some((r) => r.passed == null);
+}

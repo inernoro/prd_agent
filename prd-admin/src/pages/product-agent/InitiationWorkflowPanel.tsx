@@ -70,7 +70,7 @@ function DimensionList({ scores }: { scores: ReviewDimensionScore[] }) {
   );
 }
 
-function MeetingRoundsEditor({
+export function InitiationMeetingRoundsEditor({
   initiation,
   editable,
   onSaved,
@@ -228,7 +228,7 @@ export function InitiationWorkflowPanel({
 
       <WorkflowDetailCard title="线下评审会">
         {initiation.reviewMeetingRequired ? (
-          <MeetingRoundsEditor
+          <InitiationMeetingRoundsEditor
             initiation={initiation}
             editable={editableMeeting}
             onSaved={onInitiationChange}
