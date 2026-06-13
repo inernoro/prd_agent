@@ -20,6 +20,7 @@ import {
   listDescTemplates,
   upsertDescTemplate,
   deleteDescTemplate,
+  listProductMembers,
   listProductApplicationAdmins,
   addProductApplicationAdmin,
   removeProductApplicationAdmin,
@@ -176,6 +177,7 @@ export function SettingsSection() {
 
 function ApplicationAdminManager() {
   const [items, setItems] = useState<ProductApplicationAdmin[]>([]);
+  const [productAdminRows, setProductAdminRows] = useState<Array<{ productId: string; productName: string; admins: string[] }>>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -183,9 +185,24 @@ function ApplicationAdminManager() {
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const result = await listProductApplicationAdmins();
-    if (result.success) setItems(result.data.items);
-    else setMessage(result.error?.message ?? '管理员名单加载失败');
+    const [adminResult, productsResult] = await Promise.all([
+      listProductApplicationAdmins(),
+      listProducts({ pageSize: 200 }),
+    ]);
+    if (adminResult.success) setItems(adminResult.data.items);
+    else setMessage(adminResult.error?.message ?? '管理员名单加载失败');
+    if (productsResult.success) {
+      const rows = await Promise.all(productsResult.data.items.map(async (product) => {
+        const memberResult = await listProductMembers(product.id);
+        const admins = memberResult.success
+          ? memberResult.data.members
+            .filter((member) => member.role === 'owner' || member.role === 'admin')
+            .map((member) => member.displayName)
+          : [];
+        return { productId: product.id, productName: product.name, admins };
+      }));
+      setProductAdminRows(rows);
+    }
     setLoading(false);
   }, []);
   useEffect(() => { void reload(); }, [reload]);
@@ -239,6 +256,27 @@ function ApplicationAdminManager() {
                 <td className="px-4 py-3 text-white/80">{item.displayName}</td>
                 <td className="px-4 py-3 text-xs text-white/45">{item.username || item.userId}</td>
                 <td className="px-4 py-3"><button onClick={() => void remove(item.userId)} disabled={busy || items.length <= 1} title={items.length <= 1 ? '至少保留一位管理员' : '移除管理员'} className="text-white/35 hover:text-red-300 disabled:opacity-25"><Trash2 size={14} /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-white/10">
+        <div className="px-4 py-2.5 text-xs text-white/50 border-b border-white/10">
+          产品实时管理员（2 列）：产品 / 管理员（多位用分号分隔）
+        </div>
+        <table className="w-full text-left text-sm">
+          <thead className="bg-white/[0.03] text-xs text-white/45">
+            <tr>
+              <th className="px-4 py-2.5 font-medium">产品</th>
+              <th className="px-4 py-2.5 font-medium">管理员</th>
+            </tr>
+          </thead>
+          <tbody>
+            {productAdminRows.map((row) => (
+              <tr key={row.productId} className="border-t border-white/5">
+                <td className="px-4 py-3 text-white/80">{row.productName}</td>
+                <td className="px-4 py-3 text-xs text-white/55">{row.admins.length > 0 ? row.admins.join('；') : '未配置'}</td>
               </tr>
             ))}
           </tbody>
