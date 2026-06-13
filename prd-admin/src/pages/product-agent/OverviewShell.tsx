@@ -42,6 +42,7 @@ import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
+import { OverviewDataTable, TruncateCell } from './overviewDataTable';
 import './product-cards.css';
 import {
   getOverviewStats,
@@ -341,61 +342,6 @@ function EmptyChart({ text }: { text: string }) {
 
 // ════════════════════════ 跨产品数据表 ════════════════════════
 
-interface Column<T> {
-  header: string;
-  render: (row: T) => React.ReactNode;
-  className?: string;
-  width?: string;
-}
-
-function DataTable<T extends { id: string }>({
-  columns,
-  rows,
-  onRowClick,
-}: {
-  columns: Column<T>[];
-  rows: T[];
-  onRowClick?: (row: T) => void;
-}) {
-  return (
-    <div className="w-full min-w-0 overflow-x-auto rounded-xl border border-white/10">
-      <table className="w-full min-w-full table-fixed whitespace-nowrap text-sm">
-        {columns.some((c) => c.width) && (
-          <colgroup>
-            {columns.map((c, i) => (
-              <col key={i} style={c.width ? { width: c.width } : undefined} />
-            ))}
-          </colgroup>
-        )}
-        <thead>
-          <tr className="bg-white/[0.03] text-white/45 text-[11px]">
-            {columns.map((c, i) => (
-              <th key={i} className={`text-left font-medium px-3 py-2 ${c.className ?? ''}`}>
-                {c.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              onClick={() => onRowClick?.(row)}
-              className={`border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
-            >
-              {columns.map((c, i) => (
-                <td key={i} className={`px-3 py-2 text-white/80 ${c.className ?? ''}`}>
-                  {c.render(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function TableToolbar({
   keyword,
   setKeyword,
@@ -555,19 +501,20 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
       {filtered.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}</div>
       ) : (
-        <DataTable
+        <OverviewDataTable
+          tableKey="requirements"
           rows={filtered}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/requirement/${r.id}`)}
           columns={[
-            { header: 'ID', width: '10%', className: 'truncate', render: (r) => <span className="text-white/40 text-xs font-mono">{r.requirementNo}</span> },
-            { header: '标题', width: '28%', className: 'truncate', render: (r) => <span className="text-white/90 truncate block" title={r.title}>{r.title}</span> },
-            { header: '产品', width: '12%', className: 'truncate', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
-            { header: '分级', width: '7%', render: (r) => GRADE_BADGE(r.grade) },
-            { header: '状态', width: '10%', className: 'truncate', render: (r) => <span className="text-white/55 text-xs">{(r.stateLabel ?? resolveRequirementStateLabel(r.currentState)) || '-'}</span> },
-            { header: '处理人', width: '10%', className: 'truncate', render: (r) => <span className="text-white/55 text-xs">{r.assigneeName || '-'}</span> },
-            { header: '版本', width: '7%', render: (r) => <span className="text-white/55 text-xs">{r.versionCount}</span> },
-            { header: '客户', width: '7%', render: (r) => <span className="text-white/55 text-xs">{r.customerCount}</span> },
-            { header: '更新', width: '9%', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
+            { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.requirementNo}</span> },
+            { key: 'title', header: '标题', defaultWidth: 360, render: (r) => <TruncateCell text={r.title} className="text-white/90" /> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
+            { key: 'grade', header: '分级', defaultWidth: 72, resizable: false, render: (r) => GRADE_BADGE(r.grade) },
+            { key: 'state', header: '状态', defaultWidth: 96, render: (r) => <TruncateCell text={(r.stateLabel ?? resolveRequirementStateLabel(r.currentState)) || '-'} maxChars={12} className="text-white/55 text-xs" /> },
+            { key: 'assignee', header: '处理人', defaultWidth: 96, render: (r) => <TruncateCell text={r.assigneeName || '-'} maxChars={10} className="text-white/55 text-xs" /> },
+            { key: 'versions', header: '版本', defaultWidth: 64, resizable: false, render: (r) => <span className="text-white/55 text-xs">{r.versionCount}</span> },
+            { key: 'customers', header: '客户', defaultWidth: 64, resizable: false, render: (r) => <span className="text-white/55 text-xs">{r.customerCount}</span> },
+            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
           ]}
         />
       )}
@@ -637,17 +584,18 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
       {rows.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">没有追溯到产品的缺陷</div>
       ) : (
-        <DataTable
+        <OverviewDataTable
+          tableKey="defects"
           rows={rows}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/defect/${r.id}`)}
           columns={[
-            { header: 'ID', render: (r) => <span className="text-white/40 text-xs font-mono">{r.defectNo}</span> },
-            { header: '标题', render: (r) => <span className="text-white/90">{r.title || '(无标题)'}</span> },
-            { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
-            { header: '状态', render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },
-            { header: '严重程度', render: (r) => SEVERITY_BADGE(defectSeverityTierLabel(r)) },
-            { header: '追溯', render: (r) => <span className="text-white/55 text-xs">{r.tracedRequirementId ? '需求' : r.tracedVersionId ? '版本' : '产品'}</span> },
-            { header: '更新', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
+            { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.defectNo}</span> },
+            { key: 'title', header: '标题', defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
+            { key: 'status', header: '状态', defaultWidth: 88, render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },
+            { key: 'severity', header: '严重程度', defaultWidth: 88, render: (r) => SEVERITY_BADGE(defectSeverityTierLabel(r)) },
+            { key: 'trace', header: '追溯', defaultWidth: 72, resizable: false, render: (r) => <span className="text-white/55 text-xs">{r.tracedRequirementId ? '需求' : r.tracedVersionId ? '版本' : '产品'}</span> },
+            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
           ]}
         />
       )}
@@ -718,19 +666,20 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
         extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
       />
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有正式版本</div> : (
-        <DataTable
+        <OverviewDataTable
+          tableKey="releases"
           rows={rows}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/release/${row.id}`)}
           columns={[
-            { header: 'V 号', render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
-            { header: 'T 号', render: (r) => <span className="font-mono text-xs text-white/55">{r.tCode ?? '临时优化'}</span> },
-            { header: '方案', render: (r) => <span className="text-white/85">{r.planName}</span> },
-            { header: '产品', render: (r) => <span className="text-xs text-white/55">{r.productName}</span> },
-            { header: '级别', render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { header: '需求数', render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
-            { header: '上线日期', render: (r) => <span className="text-xs text-white/45">{r.plannedReleaseAt ? new Date(r.plannedReleaseAt).toLocaleDateString('zh-CN') : '-'}</span> },
-            { header: '状态', render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
-            { header: '更新', render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
+            { key: 'vcode', header: 'V 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
+            { key: 'tcode', header: 'T 号', defaultWidth: 96, render: (r) => <span className="font-mono text-xs text-white/55">{r.tCode ?? '临时优化'}</span> },
+            { key: 'plan', header: '方案', defaultWidth: 200, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-xs text-white/55" /> },
+            { key: 'scale', header: '级别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { key: 'reqCount', header: '需求数', defaultWidth: 72, resizable: false, render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
+            { key: 'releaseAt', header: '上线日期', defaultWidth: 104, render: (r) => <span className="text-xs text-white/45">{r.plannedReleaseAt ? new Date(r.plannedReleaseAt).toLocaleDateString('zh-CN') : '-'}</span> },
+            { key: 'status', header: '状态', defaultWidth: 104, render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
+            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
           ]}
         />
       )}
@@ -770,17 +719,18 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
         extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
       />
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有内部版本</div> : (
-        <DataTable
+        <OverviewDataTable
+          tableKey="initiations"
           rows={rows}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
           columns={[
-            { header: 'T 号', render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '—'}</span> },
-            { header: '方案', render: (r) => <span className="text-white/85">{r.planName}</span> },
-            { header: '产品', render: (r) => <span className="text-xs text-white/55">{r.productName}</span> },
-            { header: '级别', render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { header: '需求数', render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
-            { header: '状态', render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
-            { header: '更新', render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
+            { key: 'tcode', header: 'T 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '—'}</span> },
+            { key: 'plan', header: '方案', defaultWidth: 240, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-xs text-white/55" /> },
+            { key: 'scale', header: '级别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { key: 'reqCount', header: '需求数', defaultWidth: 72, resizable: false, render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
+            { key: 'status', header: '状态', defaultWidth: 104, render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
+            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
           ]}
         />
       )}
@@ -843,16 +793,20 @@ function CustomersSection({ isAdmin }: { isAdmin: boolean }) {
       ) : rows.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">还没有客户。点击右上角「新增客户」录入，需求里即可关联。</div>
       ) : (
-        <DataTable
+        <OverviewDataTable
+          tableKey="customers"
           rows={rows}
           columns={[
-            { header: '名称', render: (c) => <span className="text-white/90">{c.name}</span> },
-            { header: '公司', render: (c) => <span className="text-white/55 text-xs">{c.company || '-'}</span> },
-            { header: '联系方式', render: (c) => <span className="text-white/55 text-xs">{c.contact || '-'}</span> },
-            { header: '标签', render: (c) => <span className="text-white/45 text-xs">{(c.tags ?? []).join(' / ') || '-'}</span> },
-            { header: '更新', render: (c) => <span className="text-white/35 text-xs">{relTime(c.updatedAt)}</span> },
+            { key: 'name', header: '名称', defaultWidth: 160, render: (c) => <TruncateCell text={c.name} className="text-white/90" /> },
+            { key: 'company', header: '公司', defaultWidth: 160, render: (c) => <TruncateCell text={c.company || '-'} maxChars={20} className="text-white/55 text-xs" /> },
+            { key: 'contact', header: '联系方式', defaultWidth: 140, render: (c) => <TruncateCell text={c.contact || '-'} maxChars={18} className="text-white/55 text-xs" /> },
+            { key: 'tags', header: '标签', defaultWidth: 160, render: (c) => <TruncateCell text={(c.tags ?? []).join(' / ') || '-'} maxChars={24} className="text-white/45 text-xs" /> },
+            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (c) => <span className="text-white/35 text-xs">{relTime(c.updatedAt)}</span> },
             {
+              key: 'actions',
               header: '操作',
+              defaultWidth: 88,
+              resizable: false,
               className: 'w-24',
               render: (c) => (
                 <div className="flex items-center gap-1.5">
