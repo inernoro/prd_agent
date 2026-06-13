@@ -1332,3 +1332,27 @@ db.activity_logs.createIndex(
   { name: "idx_activity_logs_module_created" }
 )
 ```
+
+### requirements
+
+产品管理智能体的需求实体。涌现节点「流转需求池」(`POST /api/emergence/nodes/{id}/adopt`)
+以 `SourceEmergenceNodeId` 为幂等键 insert-first 创建需求，**该唯一索引是并发兜底的承重件**：
+两个 adopt 请求同时过了 `!IsDeleted` 查重时，第二条 insert 被 unique 索引拦截 → 回查返回既有需求，
+杜绝重复需求劈裂需求池。过滤条件必须含 `IsDeleted: false`（与查重同口径），否则需求软删后
+重新流转会撞 duplicate-key 却无活跃行可返回、节点永久卡死（设计见 `doc/design.voc-vertical-slice.md` §7，
+债务见 `doc/debt.voc.md` 2026-06-12-emergence-source-unique-index）。
+
+```js
+// (SourceEmergenceNodeId) 活跃行唯一 — 一个涌现节点最多一条活跃需求，并发 adopt 被 unique 索引拦截
+db.requirements.createIndex(
+  { "SourceEmergenceNodeId": 1 },
+  {
+    name: "uniq_requirements_source_emergence_node",
+    unique: true,
+    partialFilterExpression: {
+      "SourceEmergenceNodeId": { $type: "string" },
+      "IsDeleted": false
+    }
+  }
+)
+```

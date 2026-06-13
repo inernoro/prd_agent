@@ -71,6 +71,7 @@ docs:
   design.apple-shortcuts: 苹果快捷指令集成设计方案
   design.executive-dashboard: 总裁面板与周报 Agent 设计文档
   design.product-agent: 产品管理 Agent（产品-版本-需求-功能-缺陷-客户）设计
+  design.voc-vertical-slice: 伊利 VOC 用户原声闭环垂直切片设计（监测→预警→诊断→追踪→洞察→需求池）
   design.defect-agent: 缺陷管理 Agent 功能设计
   design.defect-labels: 缺陷管理标签体系设计
   design.defect-image-analysis: 缺陷截图 VLM 预解析设计文档
@@ -277,6 +278,7 @@ docs:
   debt.pm-agent: 项目管理智能体 · 债务台账
   debt.product-agent: 产品管理智能体 · 债务台账
   debt.video-agent: 视频生成 Agent · 债务台账
+  debt.voc: 伊利 VOC 闭环 · 债务台账（BI 看板 / 情感管道 / RAG / 竞品矩阵）
   debt.workflow-agent: 工作流 Agent · 债务台账
   debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账
   debt.claude-sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
