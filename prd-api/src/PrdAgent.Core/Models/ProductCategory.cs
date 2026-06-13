@@ -25,6 +25,9 @@ public class ProductCategory
     /// <summary>是否内置（内置项可改名/改色/排序，不可删除）</summary>
     public bool IsBuiltin { get; set; }
 
+    /// <summary>产品编号前缀（如 SYS）；为空则按类型名称推断。</summary>
+    public string? NoPrefix { get; set; }
+
     /// <summary>软删除标记</summary>
     public bool IsDeleted { get; set; }
 

@@ -38,6 +38,8 @@ import { ActivityTimeline } from './ActivityTimeline';
 import { ProductDefectDetail } from './ProductDefectDetail';
 import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { enrichContentWithMentions } from '@/lib/mentionRender';
+import { DetailRecordActions } from './DetailRecordActions';
+import type { ProductRecordKind } from './productRecordTrackStorage';
 import './product-cards.css';
 import {
   listRequirements,
@@ -77,7 +79,7 @@ const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
 // ── 自定义字段去重 / 分栏 ──
 const NATIVE_DUP_KEYS = new Set(['title', 'name', 'description', 'desc']);
-const NATIVE_DUP_LABELS = ['标题', '名称', '描述', '需求名称', '需求描述', '功能名称', '功能描述', '缺陷标题', '需求类型', '需求来源'];
+const NATIVE_DUP_LABELS = ['标题', '名称', '描述', '需求名称', '需求描述', '功能名称', '功能描述', '缺陷标题', '需求类型', '需求来源', '状态'];
 
 /** 与系统原生字段（标题/描述）重名的模板字段视为重复，详情页不再渲染。 */
 function isNativeDuplicate(f: FormField): boolean {
@@ -327,6 +329,7 @@ function DetailScaffold({
   sidebar,
   layout = 'split',
   children,
+  recordTrack,
 }: {
   no: string;
   kindLabel: string;
@@ -344,6 +347,7 @@ function DetailScaffold({
   sidebar?: React.ReactNode;
   layout?: 'split' | 'stack';
   children?: React.ReactNode;
+  recordTrack?: { kind: ProductRecordKind; productId: string; recordId: string; recordNo: string };
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -369,15 +373,26 @@ function DetailScaffold({
           )}
         </div>
         <div className="px-4 pb-3 pt-1.5">
-          <div className="flex items-baseline gap-1">
-            <input
-              value={title}
-              readOnly={readOnlyTitle}
-              onChange={(e) => onTitleChange?.(e.target.value)}
-              placeholder={titlePlaceholder}
-              className="flex-1 bg-transparent text-xl font-semibold text-white outline-none placeholder:text-white/25 read-only:cursor-default"
-            />
-            {!readOnlyTitle && <span className="text-red-300/70 text-sm">*</span>}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex min-w-0 flex-1 items-baseline gap-1">
+              <input
+                value={title}
+                readOnly={readOnlyTitle}
+                onChange={(e) => onTitleChange?.(e.target.value)}
+                placeholder={titlePlaceholder}
+                className="flex-1 min-w-0 bg-transparent text-xl font-semibold text-white outline-none placeholder:text-white/25 read-only:cursor-default"
+              />
+              {!readOnlyTitle && <span className="text-red-300/70 text-sm shrink-0">*</span>}
+            </div>
+            {recordTrack && (
+              <DetailRecordActions
+                kind={recordTrack.kind}
+                productId={recordTrack.productId}
+                recordId={recordTrack.recordId}
+                recordNo={recordTrack.recordNo}
+                title={title}
+              />
+            )}
           </div>
         </div>
         {workflow && <div className="px-4 py-2.5 border-t border-white/5">{workflow}</div>}
@@ -1086,6 +1101,7 @@ function RequirementDetail({
       dirty={dirty}
       saving={saving}
       onSave={save}
+      recordTrack={{ kind: 'requirement', productId, recordId: requirement.id, recordNo: requirement.requirementNo }}
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
@@ -1558,6 +1574,7 @@ function FeatureDetail({
       dirty={dirty}
       saving={saving}
       onSave={save}
+      recordTrack={{ kind: 'feature', productId: feature.productId, recordId: feature.id, recordNo: feature.featureNo }}
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (

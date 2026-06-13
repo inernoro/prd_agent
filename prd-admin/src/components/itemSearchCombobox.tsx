@@ -12,6 +12,8 @@ export interface ItemSearchOption {
   id: string;
   label: string;
   subLabel?: string;
+  /** 仅参与搜索匹配，不在下拉/触发器中展示 */
+  searchExtra?: string;
 }
 
 export function formatItemSearchLabel(option: ItemSearchOption) {
@@ -29,7 +31,7 @@ export function truncateItemLabel(text: string, maxLen = ITEM_COMBOBOX_LABEL_MAX
 }
 
 export function matchItemSearchOption(option: ItemSearchOption, q: string) {
-  const hay = [option.label, option.subLabel].filter(Boolean).join(' ').toLowerCase();
+  const hay = [option.label, option.subLabel, option.searchExtra].filter(Boolean).join(' ').toLowerCase();
   return hay.includes(q);
 }
 

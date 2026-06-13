@@ -25,6 +25,12 @@ describe('requirementWorkflowUtils', () => {
   it('normalizeRequirementStateKey migrates legacy keys', () => {
     expect(normalizeRequirementStateKey('pending')).toBe('new');
     expect(normalizeRequirementStateKey('done')).toBe('resolved');
+    expect(normalizeRequirementStateKey('state')).toBe('new');
+  });
+
+  it('resolveRequirementStateLabel maps bogus state key to 待评审', () => {
+    expect(resolveRequirementStateLabel('state', mockWorkflow)).toBe('待评审');
+    expect(resolveRequirementStateLabel(null, mockWorkflow)).toBe('待评审');
   });
 
   it('resolveRequirementStateLabel uses workflow then builtin fallback', () => {

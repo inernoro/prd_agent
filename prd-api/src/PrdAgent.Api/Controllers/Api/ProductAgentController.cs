@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -176,9 +177,139 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { removed = true }));
     }
 
+    /// <summary>
+    /// [调试] 清空产品管理（product-agent）业务数据，保留本应用配置。仅应用管理员可用，上线前移除。
+    /// 仅 DeleteMany 本应用 MongoDB 集合中的记录，不修改代码、不改动表单/流程/类型/管理员等配置文档。
+    /// 不触碰 defect-agent 独立缺陷、其他 Agent 的 DocumentStore、用户/团队/权限等全局数据。
+    /// </summary>
+    [HttpPost("settings/debug/reset-all-data")]
+    public async Task<IActionResult> ResetProductAgentDemoData([FromBody] ProductAgentDebugResetRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (!string.Equals(request.ConfirmPhrase?.Trim(), "清空演示数据", StringComparison.Ordinal))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "确认语不正确，请输入：清空演示数据"));
+
+        var userId = GetUserId();
+        _logger.LogWarning("产品管理调试清空：用户 {UserId} 触发 product-agent 业务数据删除", userId);
+
+        var deleted = new Dictionary<string, long>();
+
+        // 知识库：仅删除挂在本应用产品/版本上的 DocumentStore（通过 KnowledgeStoreId 反查，不扫全库）
+        var products = await _db.Products.Find(FilterDefinition<Product>.Empty).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
+        var storeIds = products
+            .Where(p => !string.IsNullOrWhiteSpace(p.KnowledgeStoreId))
+            .Select(p => p.KnowledgeStoreId!)
+            .ToHashSet(StringComparer.Ordinal);
+        var versionStoreIds = await _db.ProductVersions
+            .Find(FilterDefinition<ProductVersion>.Empty)
+            .Project(v => v.KnowledgeStoreId)
+            .ToListAsync();
+        foreach (var storeId in versionStoreIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+            storeIds.Add(storeId!);
+
+        if (storeIds.Count > 0)
+        {
+            // 二次校验：只删 product-agent 知识库挂载（AppKey 或 ProductKnowledgeRef），避免误伤其他应用文档空间
+            var scopedStoreIds = await _db.DocumentStores
+                .Find(Builders<DocumentStore>.Filter.And(
+                    Builders<DocumentStore>.Filter.In(s => s.Id, storeIds),
+                    Builders<DocumentStore>.Filter.Or(
+                        Builders<DocumentStore>.Filter.Eq(s => s.AppKey, "product-agent"),
+                        Builders<DocumentStore>.Filter.Ne(s => s.ProductKnowledgeRef, null))))
+                .Project(s => s.Id)
+                .ToListAsync();
+
+            if (scopedStoreIds.Count > 0)
+            {
+                deleted["document_entries"] = (await _db.DocumentEntries.DeleteManyAsync(
+                    Builders<DocumentEntry>.Filter.In(e => e.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_likes"] = (await _db.DocumentStoreLikes.DeleteManyAsync(
+                    Builders<DocumentStoreLike>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_favorites"] = (await _db.DocumentStoreFavorites.DeleteManyAsync(
+                    Builders<DocumentStoreFavorite>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_share_links"] = (await _db.DocumentStoreShareLinks.DeleteManyAsync(
+                    Builders<DocumentStoreShareLink>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_agent_runs"] = (await _db.DocumentStoreAgentRuns.DeleteManyAsync(
+                    Builders<DocumentStoreAgentRun>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_conversations"] = (await _db.DocumentStoreConversations.DeleteManyAsync(
+                    Builders<DocumentStoreConversation>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_view_events"] = (await _db.DocumentStoreViewEvents.DeleteManyAsync(
+                    Builders<DocumentStoreViewEvent>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_sync_links"] = (await _db.DocumentStoreSyncLinks.DeleteManyAsync(
+                    Builders<DocumentStoreSyncLink>.Filter.Or(
+                        Builders<DocumentStoreSyncLink>.Filter.In(x => x.LocalStoreId, scopedStoreIds),
+                        Builders<DocumentStoreSyncLink>.Filter.In(x => x.RemoteStoreId, scopedStoreIds)))).DeletedCount;
+                deleted["document_stores"] = (await _db.DocumentStores.DeleteManyAsync(
+                    Builders<DocumentStore>.Filter.In(s => s.Id, scopedStoreIds))).DeletedCount;
+            }
+        }
+
+        // 缺陷：仅删 product-agent 追溯/导入的缺陷（TracedProductId 或 ProductSourceSystem），保留 defect-agent 独立数据
+        var tracedDefectFilter = Builders<DefectReport>.Filter.Or(
+            Builders<DefectReport>.Filter.And(
+                Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, null),
+                Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, "")),
+            Builders<DefectReport>.Filter.And(
+                Builders<DefectReport>.Filter.Ne(d => d.ProductSourceSystem, null),
+                Builders<DefectReport>.Filter.Ne(d => d.ProductSourceSystem, "")));
+        var tracedDefectIds = await _db.DefectReports.Find(tracedDefectFilter).Project(d => d.Id).ToListAsync();
+        if (tracedDefectIds.Count > 0)
+        {
+            deleted["defect_messages"] = (await _db.DefectMessages.DeleteManyAsync(
+                Builders<DefectMessage>.Filter.In(m => m.DefectId, tracedDefectIds))).DeletedCount;
+            deleted["defect_reports"] = (await _db.DefectReports.DeleteManyAsync(
+                Builders<DefectReport>.Filter.In(d => d.Id, tracedDefectIds))).DeletedCount;
+        }
+        else
+        {
+            deleted["defect_messages"] = 0;
+            deleted["defect_reports"] = 0;
+        }
+
+        // 以下集合均为 product-agent 专属业务表（见 MongoDbContext Product Management 段），DeleteMany 仅清数据
+        deleted["product_item_activities"] = (await _db.ProductItemActivities.DeleteManyAsync(FilterDefinition<ProductItemActivity>.Empty)).DeletedCount;
+        deleted["product_item_summaries"] = (await _db.ProductItemSummaries.DeleteManyAsync(FilterDefinition<ProductItemSummary>.Empty)).DeletedCount;
+        deleted["version_upgrade_requests"] = (await _db.VersionUpgradeRequests.DeleteManyAsync(FilterDefinition<VersionUpgradeRequest>.Empty)).DeletedCount;
+        deleted["feature_versions"] = (await _db.FeatureVersions.DeleteManyAsync(FilterDefinition<FeatureVersion>.Empty)).DeletedCount;
+        deleted["features"] = (await _db.Features.DeleteManyAsync(FilterDefinition<Feature>.Empty)).DeletedCount;
+        deleted["requirements"] = (await _db.Requirements.DeleteManyAsync(FilterDefinition<Requirement>.Empty)).DeletedCount;
+        deleted["product_releases"] = (await _db.ProductReleases.DeleteManyAsync(FilterDefinition<ProductRelease>.Empty)).DeletedCount;
+        deleted["product_initiations"] = (await _db.ProductInitiations.DeleteManyAsync(FilterDefinition<ProductInitiation>.Empty)).DeletedCount;
+        deleted["product_versions"] = (await _db.ProductVersions.DeleteManyAsync(FilterDefinition<ProductVersion>.Empty)).DeletedCount;
+        deleted["customers"] = (await _db.Customers.DeleteManyAsync(FilterDefinition<Customer>.Empty)).DeletedCount;
+        deleted["products"] = (await _db.Products.DeleteManyAsync(FilterDefinition<Product>.Empty)).DeletedCount;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            scope = "product-agent",
+            deleted,
+            preserved = new[]
+            {
+                "product_form_templates",
+                "product_workflow_definitions",
+                "product_categories",
+                "requirement_types",
+                "product_desc_templates",
+                "product_agent_settings",
+            },
+            untouched = new[]
+            {
+                "defect-agent 独立缺陷（无 TracedProductId / ProductSourceSystem）",
+                "defect_templates / defect_projects / defect_folders 等缺陷应用配置",
+                "其他 Agent 的 document_stores（非 product-agent 挂载）",
+                "users / teams / 权限 / LLM 日志等全局平台数据",
+                "代码与部署产物（本接口仅 MongoDB DeleteMany）",
+            },
+            productCount = productIds.Count,
+            message = "产品管理业务数据已清空，本应用配置与其他系统数据未改动。",
+        }));
+    }
+
     // ════════════════════════ 产品 Product ════════════════════════
 
-    /// <summary>创建产品（自动生成产品编号）</summary>
+    /// <summary>创建产品（自动生成「类型前缀-全局序号」编号）</summary>
     [HttpPost("products")]
     public async Task<IActionResult> CreateProduct([FromBody] UpsertProductRequest request)
     {
@@ -189,14 +320,15 @@ public class ProductAgentController : ControllerBase
 
         var userId = GetUserId();
         var owner = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var grade = string.IsNullOrWhiteSpace(request.Grade) ? ProductGrade.Normal : request.Grade;
 
         var product = new Product
         {
-            ProductNo = await GenerateNoAsync("PRD", _db.Products, "ProductNo"),
+            ProductNo = await AssignProductNoForGradeAsync(grade),
             Name = request.Name.Trim(),
             Code = request.Code?.Trim(),
             Description = request.Description?.Trim(),
-            Grade = string.IsNullOrWhiteSpace(request.Grade) ? ProductGrade.Normal : request.Grade,
+            Grade = grade,
             TemplateId = request.TemplateId,
             WorkflowDefId = request.WorkflowDefId,
             FormData = request.FormData ?? new(),
@@ -254,7 +386,7 @@ public class ProductAgentController : ControllerBase
             var grade = await ResolveGradeIdAsync(row.Grade, defaultGrade);
             var product = new Product
             {
-                ProductNo = await GenerateNoAsync("PRD", _db.Products, "ProductNo"),
+                ProductNo = await AssignProductNoForGradeAsync(grade),
                 Name = name,
                 Code = row.Code?.Trim(),
                 Description = row.Description?.Trim(),
@@ -324,7 +456,17 @@ public class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Name)) update = update.Set(p => p.Name, request.Name.Trim());
         update = update.Set(p => p.Code, request.Code?.Trim());
         update = update.Set(p => p.Description, request.Description?.Trim());
-        if (!string.IsNullOrWhiteSpace(request.Grade)) update = update.Set(p => p.Grade, request.Grade);
+        if (!string.IsNullOrWhiteSpace(request.Grade) && request.Grade != product.Grade)
+        {
+            var newPrefix = await ResolveProductNoPrefixAsync(request.Grade);
+            if (ProductNoRules.TryParseSequence(product.ProductNo, out var seq))
+                update = update.Set(p => p.ProductNo, ProductNoRules.Format(newPrefix, seq));
+            update = update.Set(p => p.Grade, request.Grade);
+        }
+        else if (!string.IsNullOrWhiteSpace(request.Grade))
+        {
+            update = update.Set(p => p.Grade, request.Grade);
+        }
         if (request.TemplateId != null) update = update.Set(p => p.TemplateId, request.TemplateId);
         if (request.WorkflowDefId != null) update = update.Set(p => p.WorkflowDefId, request.WorkflowDefId);
         if (request.FormData != null) update = update.Set(p => p.FormData, request.FormData);
@@ -879,6 +1021,10 @@ public class ProductAgentController : ControllerBase
                     var legacyData = row.LegacyData ?? new Dictionary<string, string>();
                     if (!string.IsNullOrWhiteSpace(row.OwnerId) && !legacyData.ContainsKey("产品负责人"))
                         legacyData["产品负责人"] = row.OwnerId.Trim();
+                    if (!string.IsNullOrWhiteSpace(row.Remark) && !legacyData.ContainsKey("备注"))
+                        legacyData["备注"] = row.Remark.Trim();
+                    if (row.TeamMemberIds is { Count: > 0 } teamNames && !legacyData.ContainsKey("项目组成员"))
+                        legacyData["项目组成员"] = string.Join("、", teamNames.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
                     await _db.ProductReleases.InsertOneAsync(new ProductRelease
                     {
                         ProductId = productId, TCode = row.TCode, VCode = row.Code.Trim(), PlanName = row.PlanName.Trim(),
@@ -898,6 +1044,10 @@ public class ProductAgentController : ControllerBase
                     var legacyData = row.LegacyData ?? new Dictionary<string, string>();
                     if (!string.IsNullOrWhiteSpace(row.OwnerId) && !legacyData.ContainsKey("产品负责人"))
                         legacyData["产品负责人"] = row.OwnerId.Trim();
+                    if (!string.IsNullOrWhiteSpace(row.Remark) && !legacyData.ContainsKey("备注"))
+                        legacyData["备注"] = row.Remark.Trim();
+                    if (row.TeamMemberIds is { Count: > 0 } teamNames && !legacyData.ContainsKey("项目组成员"))
+                        legacyData["项目组成员"] = string.Join("、", teamNames.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
                     await _db.ProductInitiations.InsertOneAsync(new ProductInitiation
                     {
                         ProductId = productId, TCode = row.Code?.Trim(), PlanName = row.PlanName.Trim(),
@@ -987,7 +1137,12 @@ public class ProductAgentController : ControllerBase
             AssigneeId = request.AssigneeId,
             StateEnteredAt = DateTime.UtcNow,
         };
-        req.CurrentState = await ResolveInitialStateAsync(reqWorkflowDefId);
+        var reqWorkflowDef = await _db.ProductWorkflowDefinitions
+            .Find(w => w.Id == reqWorkflowDefId && !w.IsDeleted)
+            .FirstOrDefaultAsync();
+        req.CurrentState = RequirementWorkflowCatalog.NormalizeStateKey(
+            await ResolveInitialStateAsync(reqWorkflowDefId),
+            reqWorkflowDef);
 
         await _db.Requirements.InsertOneAsync(req);
         // 维护版本侧反向引用（版本关联需求）
@@ -1381,6 +1536,7 @@ public class ProductAgentController : ControllerBase
                 .Set(c => c.Name, request.Name.Trim())
                 .Set(c => c.Color, color)
                 .Set(c => c.SortOrder, request.SortOrder)
+                .Set(c => c.NoPrefix, string.IsNullOrWhiteSpace(request.NoPrefix) ? null : request.NoPrefix.Trim().ToUpperInvariant())
                 .Set(c => c.UpdatedAt, DateTime.UtcNow);
             await _db.ProductCategories.UpdateOneAsync(c => c.Id == request.Id, u);
             var updated = await _db.ProductCategories.Find(c => c.Id == request.Id).FirstOrDefaultAsync();
@@ -1394,6 +1550,7 @@ public class ProductAgentController : ControllerBase
             Name = request.Name.Trim(),
             Color = color,
             SortOrder = request.SortOrder > 0 ? request.SortOrder : maxOrder + 1,
+            NoPrefix = string.IsNullOrWhiteSpace(request.NoPrefix) ? null : request.NoPrefix.Trim().ToUpperInvariant(),
             IsBuiltin = false,
         };
         await _db.ProductCategories.InsertOneAsync(cat);
@@ -3166,8 +3323,10 @@ public class ProductAgentController : ControllerBase
         var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
         var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
         var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).ToListAsync();
-        var custIds = reqs.SelectMany(r => r.CustomerIds).Distinct().ToList();
-        var custs = custIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => custIds.Contains(c.Id)).ToListAsync();
+        // 全局客户名录（助手需识别「由客户 X 提出」并写入需求 CustomerIds，不能只取已关联需求的客户）
+        var allCustomers = await _db.Customers.Find(c => !c.IsDeleted)
+            .SortByDescending(c => c.UpdatedAt).Limit(100).ToListAsync();
+        var custNameById = allCustomers.ToDictionary(c => c.Id, c => c.Name);
 
         // 解析相关人员名（处理人/负责人/上报人/团队）—— 让助手能回答「某人本月情况 / 分工 / 负载」
         var userIds = new HashSet<string>();
@@ -3196,15 +3355,24 @@ public class ProductAgentController : ControllerBase
             sb.AppendLine($"\n## 版本（{versions.Count}）");
             foreach (var v in versions) sb.AppendLine($"- {v.VersionName}（{v.Lifecycle}/{v.CurrentState ?? "—"}；计划 {D(v.PlannedReleaseAt)}，已发布 {D(v.ReleasedAt)}）");
         }
-        if (custs.Count > 0)
+        if (allCustomers.Count > 0)
         {
-            sb.AppendLine($"\n## 客户（{custs.Count}）");
-            foreach (var c in custs) sb.AppendLine($"- {c.Name}（{c.Company}）");
+            sb.AppendLine($"\n## 客户名录（{allCustomers.Count}，创建需求时 customerNames 必须优先从中精确匹配）");
+            foreach (var c in allCustomers) sb.AppendLine($"- {c.Name}{(string.IsNullOrWhiteSpace(c.Company) ? "" : $"（{c.Company}）")}");
         }
         if (reqs.Count > 0)
         {
             sb.AppendLine($"\n## 需求（{reqs.Count}）");
-            foreach (var r in reqs) sb.AppendLine($"- [{r.RequirementNo}] {r.Title}（等级 {r.Grade.ToUpperInvariant()}，状态 {r.CurrentState ?? "—"}；处理人 {N(r.AssigneeId)}，负责人 {N(r.OwnerId)}；创建 {D(r.CreatedAt)}）{Short(r.Description)}");
+            foreach (var r in reqs)
+            {
+                var custLabel = r.CustomerIds.Count == 0
+                    ? ""
+                    : $"；提出客户 {string.Join("、", r.CustomerIds.Select(id => custNameById.TryGetValue(id, out var nm) ? nm : id))}";
+                var originLabel = r.FormData.TryGetValue("需求来源", out var origin) && !string.IsNullOrWhiteSpace(origin)
+                    ? $"；来源 {origin}"
+                    : "";
+                sb.AppendLine($"- [{r.RequirementNo}] {r.Title}（等级 {r.Grade.ToUpperInvariant()}，状态 {r.CurrentState ?? "—"}；处理人 {N(r.AssigneeId)}，负责人 {N(r.OwnerId)}{custLabel}{originLabel}；创建 {D(r.CreatedAt)}）{Short(r.Description)}");
+            }
         }
         if (feats.Count > 0)
         {
@@ -3258,13 +3426,19 @@ public class ProductAgentController : ControllerBase
             "   - 分析人员分工与负载（谁处理得多、谁的项卡住、上报与处理是否同一人等）；\n" +
             "   - 指出趋势、异常与风险（如高等级项无状态/无人处理、缺陷集中在某功能、需求无客户来源等）。\n" +
             "5. 分析/查询类问题的结构固定为三段：先「结论」（2-4 句直接给判断），再「依据」（列数据与关系），最后「经验总结 / 建议」（可执行的下一步）。\n" +
-            "6. 创建能力：你可以直接替用户在本产品下创建需求 / 功能 / 缺陷。当用户明确要求创建（如「帮我创建一个需求：支持导出PDF，P1」「记一个缺陷：登录页白屏」）时：\n" +
-            "   - 正文用 1-2 句话确认将要创建的内容（标题、分级、补全的描述），不要套用三段结构；\n" +
+            "6. 创建能力：你可以直接替用户在本产品下创建需求 / 功能 / 缺陷 / 客户档案。当用户明确要求创建时：\n" +
+            "   - 正文用 1-2 句话确认将要执行的操作，不要套用三段结构；\n" +
             "   - 然后在回复最末尾另起一行输出动作指令，格式严格为：\n" +
             "<<<ACTIONS>>>\n" +
-            "[{\"type\":\"create_requirement\",\"title\":\"标题\",\"description\":\"描述可省略\",\"grade\":\"p1\"}]\n" +
-            "   - type 只能取 create_requirement / create_feature / create_defect；grade 取 p0/p1/p2/p3（用户没说时按紧急重要程度推断，默认 p2）；description 可根据用户表述合理补全（背景/目标/验收标准，纯文本）；一次最多 5 个动作。\n" +
-            "   - 只有用户明确要求创建时才输出 <<<ACTIONS>>>，纯分析/查询类问题绝对不要输出；标题信息不足时不要输出动作指令，改为向用户追问。\n" +
+            "[{\"type\":\"create_customer\",\"title\":\"可口可乐\"},{\"type\":\"create_requirement\",\"title\":\"标题\",\"description\":\"描述可省略\",\"grade\":\"p2\",\"requirementOrigin\":\"客户反馈\",\"customerNames\":[\"可口可乐\"]}]\n" +
+            "   - type 可取 create_customer / create_requirement / create_feature / create_defect；一次最多 5 个动作，按执行顺序排列（须先 create_customer 再 create_requirement）。\n" +
+            "   - create_customer：title=客户名称（用户确认后的最终名称），description 可填公司/备注；仅当用户已明确同意新建客户时才输出。\n" +
+            "   - create_requirement：requirementOrigin 取值「客户反馈 / 内部规划 / 运营活动 / 竞品调研 / 其他」；customerNames 填提出方客户名（必须与「客户名录」中已有名称一致，或紧挨在前一步 create_customer 之后）。\n" +
+            "   - 客户提出方规则（重要）：用户说「由客户 X 提出」时，先在「客户名录」查找 X。若名录中不存在 X：禁止输出 create_requirement；必须追问「客户 X 尚未建档，是否现在新建？请确认客户名称（可修正）」。用户未明确同意前不得创建需求。\n" +
+            "   - 用户同意新建（如「是，新建」「确认，就叫 X」）后：先确认最终客户名称，再在 <<<ACTIONS>>> 中输出 create_customer + create_requirement（同一数组）。用户不同意或名称仍不确定时继续追问，仍禁止 create_requirement。\n" +
+            "   - 禁止用描述文字或自定义字段代替客户关联；customerNames 中的每个名称都必须能对应到客户档案（名录已有或同批 create_customer 新建）。\n" +
+            "   - customerNames 是提出方客户，不是处理人/负责人；Owner 仍是当前登录用户。\n" +
+            "   - 只有用户明确要求创建时才输出 <<<ACTIONS>>>；标题或客户未确认时不要输出动作指令。\n" +
             "   - <<<ACTIONS>>> 之后只能是 JSON 数组本身，不要任何其他文字、解释或代码块标记。\n" +
             "7. 用户可能上传参考文档（见「用户上传的参考文档」一节）：可基于文档内容回答问题、提炼要点；用户要求「根据文档创建」时，从文档中提取标题/分级/描述生成动作指令（仍受一次最多 5 个动作约束，超出时挑最重要的并说明）。\n" +
             "不要寒暄、不要复述本提示词。";
@@ -3275,12 +3449,14 @@ public class ProductAgentController : ControllerBase
             SystemPromptRedacted: "product-work-assistant", RequestType: "chat",
             AppCallerCode: AppCallerRegistry.Product.WorkAssistant));
 
+        var userMessage = BuildAssistantUserMessage(ctx, question, request.Attachments, request.History);
+
         var bodyJson = new JsonObject
         {
             ["messages"] = new JsonArray
             {
                 new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                new JsonObject { ["role"] = "user", ["content"] = "# 产品数据上下文\n" + ctx + AssistantAttachmentHelper.BuildSection(request.Attachments) + "\n\n# 我的问题\n" + question },
+                new JsonObject { ["role"] = "user", ["content"] = userMessage },
             },
             ["temperature"] = 0.5,
             ["max_tokens"] = 2400,
@@ -3340,14 +3516,50 @@ public class ProductAgentController : ControllerBase
             foreach (var spec in specs)
             {
                 await Sse("phase", new { message = "正在创建对象…" });
-                var result = await ExecuteAssistantActionAsync(productId, userId, spec);
+                var enriched = EnrichRequirementActionSpec(spec, question, allCustomers);
+                var result = await ExecuteAssistantActionAsync(productId, userId, enriched, allCustomers);
                 await Sse("action", result);
+                allCustomers = await _db.Customers.Find(c => !c.IsDeleted)
+                    .SortByDescending(c => c.UpdatedAt).Limit(100).ToListAsync();
             }
         }
         await Sse("done", new { });
     }
 
-    private sealed record AssistantActionSpec(string Type, string Title, string? Description, string? Grade);
+    private static string BuildAssistantUserMessage(
+        string productContext,
+        string question,
+        List<AssistantAttachmentInput>? attachments,
+        List<AssistantHistoryTurn>? history)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("# 产品数据上下文");
+        sb.AppendLine(productContext);
+        sb.Append(AssistantAttachmentHelper.BuildSection(attachments));
+        if (history is { Count: > 0 })
+        {
+            sb.AppendLine("\n## 本轮之前的对话（供延续确认客户、需求等待办）");
+            foreach (var turn in history.TakeLast(10))
+            {
+                var q = (turn.Question ?? "").Trim();
+                var a = (turn.Answer ?? "").Trim();
+                if (q.Length > 0) sb.AppendLine($"用户：{q}");
+                if (a.Length > 0) sb.AppendLine($"助手：{a}");
+                sb.AppendLine();
+            }
+        }
+        sb.AppendLine("# 当前问题");
+        sb.AppendLine(question);
+        return sb.ToString();
+    }
+
+    private sealed record AssistantActionSpec(
+        string Type,
+        string Title,
+        string? Description,
+        string? Grade,
+        string? RequirementOrigin = null,
+        List<string>? CustomerNames = null);
 
     /// <summary>解析助手动作指令 JSON（容忍代码块围栏 / json 语言标），非法输入返回空列表，最多 5 条。</summary>
     private static List<AssistantActionSpec> ParseAssistantActions(string raw)
@@ -3364,11 +3576,25 @@ public class ProductAgentController : ControllerBase
                 var type = o["type"]?.GetValue<string>() ?? "";
                 var title = (o["title"]?.GetValue<string>() ?? "").Trim();
                 if (type.Length == 0 || title.Length == 0) continue;
+                List<string>? customerNames = null;
+                if (o["customerNames"] is JsonArray cnArr)
+                {
+                    customerNames = cnArr
+                        .Where(e => e?.GetValueKind() == JsonValueKind.String)
+                        .Select(e => (e!.GetValue<string>() ?? "").Trim())
+                        .Where(x => x.Length > 0)
+                        .ToList();
+                    if (customerNames.Count == 0) customerNames = null;
+                }
+                var requirementOrigin = (o["requirementOrigin"]?.GetValue<string>() ?? "").Trim();
+                if (requirementOrigin.Length == 0) requirementOrigin = null;
                 result.Add(new AssistantActionSpec(
                     type,
                     title,
                     o["description"]?.GetValue<string>(),
-                    o["grade"]?.GetValue<string>()));
+                    o["grade"]?.GetValue<string>(),
+                    requirementOrigin,
+                    customerNames));
             }
         }
         catch
@@ -3378,17 +3604,122 @@ public class ProductAgentController : ControllerBase
         return result;
     }
 
+    /// <summary>从用户原话补全 LLM 动作里遗漏的客户名与需求来源（兜底）。</summary>
+    private static AssistantActionSpec EnrichRequirementActionSpec(
+        AssistantActionSpec spec,
+        string question,
+        List<Customer> customers)
+    {
+        if (!string.Equals(spec.Type, "create_requirement", StringComparison.Ordinal))
+            return spec;
+
+        var customerNames = new List<string>(spec.CustomerNames ?? new List<string>());
+        foreach (var name in ExtractCustomerNamesFromQuestion(question, customers))
+        {
+            if (!customerNames.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase)))
+                customerNames.Add(name);
+        }
+
+        var origin = spec.RequirementOrigin?.Trim() ?? "";
+        if (string.IsNullOrEmpty(origin) && customerNames.Count > 0)
+            origin = "客户反馈";
+        if (!string.IsNullOrEmpty(origin) && !RequirementOriginValues.Contains(origin))
+            origin = customerNames.Count > 0 ? "客户反馈" : "";
+
+        return spec with
+        {
+            RequirementOrigin = string.IsNullOrEmpty(origin) ? null : origin,
+            CustomerNames = customerNames.Count > 0 ? customerNames : null,
+        };
+    }
+
+    private static List<string> ExtractCustomerNamesFromQuestion(string text, List<Customer> customers)
+    {
+        var found = new List<string>();
+        if (string.IsNullOrWhiteSpace(text)) return found;
+
+        var patterns = new[]
+        {
+            @"由客户[「""']?([^「」""'\n，,；;]+)[」""']?提出",
+            @"客户[「""']?([^「」""'\n，,；;]+)[」""']?提出",
+            @"来自客户[「""']?([^「」""'\n，,；;]+)[」""']?",
+            @"客户[「""']?([^「」""'\n，,；;]+)[」""']?反馈",
+        };
+        foreach (var pattern in patterns)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(text, pattern);
+            if (!m.Success) continue;
+            var name = m.Groups[1].Value.Trim();
+            if (name.Length > 0 && name.Length <= 40)
+                found.Add(NormalizeCustomerNameAgainstCatalog(name, customers) ?? name);
+        }
+
+        foreach (var c in customers)
+        {
+            var nm = c.Name?.Trim() ?? "";
+            if (nm.Length > 1 && text.Contains(nm, StringComparison.Ordinal))
+                found.Add(nm);
+        }
+
+        return found.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static string? NormalizeCustomerNameAgainstCatalog(string raw, List<Customer> customers)
+    {
+        var q = raw.Trim();
+        if (q.Length == 0) return null;
+        var exact = customers.FirstOrDefault(c => string.Equals(c.Name.Trim(), q, StringComparison.Ordinal));
+        if (exact != null) return exact.Name.Trim();
+        var partial = customers.FirstOrDefault(c => c.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || q.Contains(c.Name, StringComparison.OrdinalIgnoreCase));
+        return partial?.Name.Trim();
+    }
+
+    private static (List<string> CustomerIds, Dictionary<string, string> FormData, List<string> UnmatchedNames) ResolveRequirementCustomerFields(
+        List<string>? customerNames,
+        string? requirementOrigin,
+        List<Customer> customers)
+    {
+        var formData = new Dictionary<string, string>();
+        var ids = new List<string>();
+        var unmatched = new List<string>();
+
+        foreach (var raw in customerNames ?? new List<string>())
+        {
+            var normalized = NormalizeCustomerNameAgainstCatalog(raw, customers) ?? raw.Trim();
+            var id = MatchCustomerId(customers, normalized);
+            if (!string.IsNullOrEmpty(id)) ids.Add(id!);
+            else if (!string.IsNullOrWhiteSpace(normalized)) unmatched.Add(normalized);
+        }
+        ids = ids.Distinct().ToList();
+
+        var origin = requirementOrigin?.Trim() ?? "";
+        if (string.IsNullOrEmpty(origin) && ids.Count > 0)
+            origin = "客户反馈";
+        if (!string.IsNullOrEmpty(origin) && RequirementOriginValues.Contains(origin))
+            formData["需求来源"] = origin;
+        else if (ids.Count > 0)
+            formData["需求来源"] = "客户反馈";
+
+        return (ids, formData, unmatched);
+    }
+
     /// <summary>
     /// 执行助手动作（创建需求/功能/缺陷）。创建逻辑与对应 REST 端点对齐：
     /// 编号生成、默认流程绑定、初始状态、产品计数重算。返回 SSE action 事件载荷。
     /// </summary>
-    private async Task<object> ExecuteAssistantActionAsync(string productId, string userId, AssistantActionSpec spec)
+    private async Task<object> ExecuteAssistantActionAsync(
+        string productId,
+        string userId,
+        AssistantActionSpec spec,
+        List<Customer>? customers = null)
     {
         var kind = spec.Type switch
         {
             "create_requirement" => "requirement",
             "create_feature" => "feature",
             "create_defect" => "defect",
+            "create_customer" => "customer",
             _ => "",
         };
         var title = spec.Title.Length > 200 ? spec.Title[..200] : spec.Title;
@@ -3400,10 +3731,47 @@ public class ProductAgentController : ControllerBase
 
         try
         {
+            if (string.Equals(spec.Type, "create_customer", StringComparison.Ordinal))
+            {
+                customers ??= await _db.Customers.Find(c => !c.IsDeleted)
+                    .SortByDescending(c => c.UpdatedAt).Limit(100).ToListAsync();
+                var existingId = MatchCustomerId(customers, title);
+                if (!string.IsNullOrEmpty(existingId))
+                {
+                    var existing = customers.First(c => c.Id == existingId);
+                    return new { kind = "customer", ok = true, id = (string?)existing.Id, no = "", title = existing.Name, error = (string?)null };
+                }
+                var customer = new Customer
+                {
+                    Name = title,
+                    Description = description,
+                    OwnerId = userId,
+                };
+                await _db.Customers.InsertOneAsync(customer);
+                return new { kind = "customer", ok = true, id = (string?)customer.Id, no = "", title = customer.Name, error = (string?)null };
+            }
+
             switch (kind)
             {
                 case "requirement":
                 {
+                    customers ??= await _db.Customers.Find(c => !c.IsDeleted)
+                        .SortByDescending(c => c.UpdatedAt).Limit(100).ToListAsync();
+                    var (customerIds, formData, unmatched) = ResolveRequirementCustomerFields(
+                        spec.CustomerNames, spec.RequirementOrigin, customers);
+                    if (unmatched.Count > 0)
+                    {
+                        var names = string.Join("、", unmatched);
+                        return new
+                        {
+                            kind,
+                            ok = false,
+                            id = (string?)null,
+                            no = "",
+                            title,
+                            error = $"客户「{names}」尚未在客户档案中。请先向用户确认是否新建客户并确认名称；用户同意后再输出 create_customer，然后 create_requirement。禁止用文本字段代替客户关联。",
+                        };
+                    }
                     var (_, wfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
                     var req = new Requirement
                     {
@@ -3412,6 +3780,8 @@ public class ProductAgentController : ControllerBase
                         Title = title,
                         Description = description,
                         Grade = grade,
+                        CustomerIds = customerIds,
+                        FormData = formData,
                         WorkflowDefId = wfId,
                         OwnerId = userId,
                         StateEnteredAt = DateTime.UtcNow,
@@ -5077,6 +5447,36 @@ public class ProductAgentController : ControllerBase
         return await GenerateNextTapdStyleDefectIdAsync(productId);
     }
 
+    private async Task<long> GenerateNextProductSequenceAsync()
+    {
+        var numbers = await _db.Products
+            .Find(p => !p.IsDeleted)
+            .Project(p => p.ProductNo)
+            .ToListAsync();
+        long max = 0;
+        foreach (var no in numbers)
+        {
+            if (ProductNoRules.TryParseSequence(no, out var seq) && seq > max) max = seq;
+        }
+        return max + 1;
+    }
+
+    private async Task<string> ResolveProductNoPrefixAsync(string gradeId)
+    {
+        await EnsureCategoriesSeededAsync();
+        var cat = await _db.ProductCategories.Find(c => c.Id == gradeId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (!string.IsNullOrWhiteSpace(cat?.NoPrefix))
+            return cat.NoPrefix.Trim().ToUpperInvariant();
+        return ProductNoRules.PrefixForCategoryName(cat?.Name);
+    }
+
+    private async Task<string> AssignProductNoForGradeAsync(string gradeId)
+    {
+        var prefix = await ResolveProductNoPrefixAsync(gradeId);
+        var seq = await GenerateNextProductSequenceAsync();
+        return ProductNoRules.Format(prefix, seq);
+    }
+
     /// <summary>按 {PREFIX}-{YEAR}-{NNNN} 生成业务编号。fieldName 为编号字段名（FieldDefinition 由 string 隐式转换）。</summary>
     private static async Task<string> GenerateNoAsync<T>(string prefix, IMongoCollection<T> coll, string fieldName)
     {
@@ -5117,12 +5517,15 @@ public class ProductAgentController : ControllerBase
         return $"{prefix}{max[0]}.{max[1]}.{max[2]}";
     }
 
-    /// <summary>根据流程定义解析初始状态 Key（未绑定流程时返回 null）。</summary>
-    private async Task<string?> ResolveInitialStateAsync(string? workflowDefId)
+    /// <summary>根据流程定义解析初始状态 Key（未绑定或定义缺失时回退内置「待评审」= new）。</summary>
+    private async Task<string> ResolveInitialStateAsync(string? workflowDefId)
     {
-        if (string.IsNullOrWhiteSpace(workflowDefId)) return null;
+        await EnsureDefaultWorkflowsSeededAsync();
+        if (string.IsNullOrWhiteSpace(workflowDefId))
+            return RequirementWorkflowCatalog.New;
         var def = await _db.ProductWorkflowDefinitions.Find(w => w.Id == workflowDefId && !w.IsDeleted).FirstOrDefaultAsync();
-        return def?.GetInitialStateKey();
+        var key = def?.GetInitialStateKey();
+        return string.IsNullOrWhiteSpace(key) ? RequirementWorkflowCatalog.New : key;
     }
 
     /// <summary>把流程定义 + 初始状态惰性绑定到实例（存量数据补绑）。</summary>
@@ -5335,6 +5738,8 @@ public class UpsertCategoryRequest
     public string Name { get; set; } = string.Empty;
     public string? Color { get; set; }
     public int SortOrder { get; set; }
+    /// <summary>产品编号前缀（如 SYS）；为空则按类型名称推断。</summary>
+    public string? NoPrefix { get; set; }
 }
 
 public class UpsertRequirementTypeRequest
@@ -5695,6 +6100,11 @@ public class ProductApplicationAdminRequest
     public string UserId { get; set; } = string.Empty;
 }
 
+public class ProductAgentDebugResetRequest
+{
+    public string? ConfirmPhrase { get; set; }
+}
+
 public class BatchRequest
 {
     public string EntityType { get; set; } = string.Empty;
@@ -5760,8 +6170,17 @@ public class AssistantAskRequest
     /// <summary>用户问题（工作助手问答）</summary>
     public string? Question { get; set; }
 
+    /// <summary>本轮之前的对话（最多取最近若干轮），用于客户确认等多轮流程</summary>
+    public List<AssistantHistoryTurn>? History { get; set; }
+
     /// <summary>随提问携带的参考文档（前端先调 assistant/attachments 提取文本后回传，最多 3 个）</summary>
     public List<AssistantAttachmentInput>? Attachments { get; set; }
+}
+
+public class AssistantHistoryTurn
+{
+    public string? Question { get; set; }
+    public string? Answer { get; set; }
 }
 
 public class RelationAnalysisRequest

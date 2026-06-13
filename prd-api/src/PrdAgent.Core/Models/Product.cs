@@ -12,7 +12,7 @@ public class Product
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>产品编号（如 PRD-2026-0001，自动生成）</summary>
+    /// <summary>产品编号（层级前缀 + 全局序号，如 SYS-1007157；调层级只改前缀）</summary>
     public string ProductNo { get; set; } = string.Empty;
 
     /// <summary>产品名称</summary>

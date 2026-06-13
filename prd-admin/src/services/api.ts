@@ -453,6 +453,41 @@ export const api = {
     },
   },
 
+  // ============ 技术分析文档格式校验 Agent ============
+  techDocFormatAgent: {
+    github: {
+      auth: {
+        status: () => '/api/tech-doc-format-agent/github/auth/status',
+        deviceStart: () => '/api/tech-doc-format-agent/github/auth/device/start',
+        devicePoll: () => '/api/tech-doc-format-agent/github/auth/device/poll',
+      },
+      repositories: (query?: string, page?: number, pageSize?: number) => {
+        const q = new URLSearchParams();
+        if (query) q.set('query', query);
+        if (page) q.set('page', String(page));
+        if (pageSize) q.set('pageSize', String(pageSize));
+        const qs = q.toString();
+        return `/api/tech-doc-format-agent/github/repositories${qs ? `?${qs}` : ''}`;
+      },
+      tree: (owner: string, repo: string, path?: string, branch?: string) => {
+        const q = new URLSearchParams();
+        q.set('owner', owner);
+        q.set('repo', repo);
+        if (path) q.set('path', path);
+        if (branch) q.set('branch', branch);
+        return `/api/tech-doc-format-agent/github/tree?${q.toString()}`;
+      },
+      context: (owner: string, repo: string, path?: string, branch?: string) => {
+        const q = new URLSearchParams();
+        q.set('owner', owner);
+        q.set('repo', repo);
+        if (path) q.set('path', path);
+        if (branch) q.set('branch', branch);
+        return `/api/tech-doc-format-agent/github/context?${q.toString()}`;
+      },
+    },
+  },
+
   // ============ Literary Agent 文学创作 ============
   literaryAgent: {
     prompts: {
