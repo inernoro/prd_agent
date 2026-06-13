@@ -5,9 +5,11 @@ description: Page Agent Bridge 操作规范：鼠标轨迹 + spa-navigate + desc
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/bridge-ops.md
-     生成时间: 2026-05-23T07:41:02Z -->
+     生成时间: 2026-06-12T07:54:26Z -->
 
 # Page Agent Bridge 操作规范
+
+> 暂停状态（2026-05-28）：Bridge HTTP 轮询已默认关闭，`CDS_BRIDGE_ENABLED=1` 才会恢复。Agent 不应再把 Bridge 作为默认页面验收/操作手段；本规则只作为历史兼容和故障定位参考。
 
 Agent 通过 CDS Bridge 操作预览页面时的强制规则。
 
