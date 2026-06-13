@@ -4,15 +4,16 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
-  listInitiations, listProductMembers, listReleases, listRequirements,
-  listVersions, syncInitiationReview,
+  getOverviewStats, getProduct, listInitiations, listProductMembers, listReleases, listRequirements,
+  syncInitiationReview,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import { createSubmission, getSubmission, runReviewSubmission } from '@/services/real/reviewAgent';
 import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
-import type { ProductInitiation, ProductMember, ProductRelease, ProductVersion, Requirement } from './types';
+import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
+import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
@@ -31,9 +32,10 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [releases, setReleases] = useState<ProductRelease[]>([]);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [members, setMembers] = useState<ProductMember[]>([]);
-  const [legacyVersions, setLegacyVersions] = useState<ProductVersion[]>([]);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [canImport, setCanImport] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [dialog, setDialog] = useState<'initiation' | null>(null);
+  const [dialog, setDialog] = useState<'initiation' | 'import-release' | 'import-initiation' | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
   const [releaseOwnerId, setReleaseOwnerId] = useState(currentUserId ?? '');
   const [query, setQuery] = useState('');
@@ -43,19 +45,27 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
     if (currentUserId && !releaseOwnerId) setReleaseOwnerId(currentUserId);
   }, [currentUserId, releaseOwnerId]);
 
+  useEffect(() => {
+    void getOverviewStats().then((res) => {
+      if (res.success) setCanImport(res.data.isAdmin);
+    });
+    void getProduct(productId).then((res) => {
+      if (res.success) setProduct(res.data);
+    });
+  }, [productId]);
+
   const reload = useCallback(async () => {
     setLoading(true);
-    const [i, r, req, mem, old] = await Promise.all([
+    const [i, r, req, mem] = await Promise.all([
       listInitiations(productId, recordScope),
       listReleases(productId, releaseOwnerId === currentUserId ? 'mine' : 'all', releaseOwnerId),
       listRequirements(productId),
-      listProductMembers(productId), listVersions(productId),
+      listProductMembers(productId),
     ]);
     if (i.success) setInitiations(i.data.items);
     if (r.success) setReleases(r.data.items);
     if (req.success) setRequirements(req.data.items);
     if (mem.success) setMembers(mem.data.members);
-    if (old.success) setLegacyVersions(old.data.items);
     setLoading(false);
   }, [currentUserId, productId, recordScope, releaseOwnerId]);
 
@@ -89,6 +99,14 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
         <RecordToolbar query={query} onQueryChange={setQuery} ownerId={releaseOwnerId} onOwnerChange={setReleaseOwnerId}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses} />
         <div className="flex flex-wrap items-center gap-2">
+          {canImport && (
+            <button
+              onClick={() => setDialog('import-release')}
+              className="flex items-center gap-1 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-500/20"
+            >
+              <Upload size={14} /> 导入历史数据
+            </button>
+          )}
           <Primary onClick={() => navigate(`/product-agent/p/${productId}/release/new`)} disabled={approved.length === 0}><Plus size={14} />申领正式版本号</Primary>
           <button onClick={() => navigate(`/product-agent/p/${productId}/release/new?temporary=1`)} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">临时优化需求</button>
           <span className="group relative"><HelpCircle size={15} className="cursor-help text-white/35" />
@@ -104,19 +122,38 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
         <RecordToolbar query={query} onQueryChange={setQuery} scope={recordScope} onScopeChange={setRecordScope}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses} />
         <div className="flex gap-2">
+          {canImport && (
+            <button
+              onClick={() => setDialog('import-initiation')}
+              className="flex items-center gap-1 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-500/20"
+            >
+              <Upload size={14} /> 导入历史数据
+            </button>
+          )}
           <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
         </div>
       </div>
       <InitiationTable productId={productId} items={filteredInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
     </>}
-    <details className="rounded-xl border border-white/10 bg-white/[0.02]">
-      <summary className="cursor-pointer px-4 py-3 text-xs text-white/45">旧版版本数据（保留，共 {legacyVersions.length} 条）</summary>
-      <div className="border-t border-white/10 px-4 py-3">
-        {legacyVersions.length === 0 ? <span className="text-xs text-white/30">暂无旧版数据</span> : legacyVersions.map((v) =>
-          <div key={v.id} className="flex justify-between border-b border-white/5 py-2 text-xs last:border-0"><span className="text-white/70">{v.versionName}</span><span className="text-white/35">{v.lifecycle}</span></div>)}
-      </div>
-    </details>
     {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
+    {dialog === 'import-release' && product && (
+      <VersionWorkflowImportDialog
+        kind="release"
+        products={[product]}
+        fixedProductId={productId}
+        onClose={() => setDialog(null)}
+        onImported={async () => { setDialog(null); await reload(); }}
+      />
+    )}
+    {dialog === 'import-initiation' && product && (
+      <VersionWorkflowImportDialog
+        kind="initiation"
+        products={[product]}
+        fixedProductId={productId}
+        onClose={() => setDialog(null)}
+        onImported={async () => { setDialog(null); await reload(); }}
+      />
+    )}
   </div>;
 }
 

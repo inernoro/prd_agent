@@ -40,13 +40,13 @@ import { WorkflowTemplateSection } from './WorkflowTemplateSection';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
+import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import './product-cards.css';
 import {
   getOverviewStats,
   listProducts,
   getOverviewRequirements,
-  getOverviewVersions,
   getOverviewReleases,
   getOverviewInitiations,
   type OverviewReleaseRow,
@@ -58,7 +58,6 @@ import {
   deleteCustomer,
   type OverviewStats,
   type OverviewRequirementRow,
-  type OverviewVersionRow,
   type OverviewDefectRow,
 } from '@/services/real/productAgent';
 import type { Customer, Product } from './types';
@@ -173,7 +172,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'versions' && (
-        <SectionShell title="版本（跨产品）" desc="正式版本、内部立项、历史版本分 tab 展示；点击行进入三标签详情页（基础信息 / 需求 / 功能）">
+        <SectionShell title="版本（跨产品）" desc="正式版本与内部版本分 tab 展示；点击行进入三标签详情页（基础信息 / 需求 / 功能）；管理员可导入 Excel 历史数据">
           <VersionOverviewSection isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
@@ -670,17 +669,15 @@ const WORKFLOW_STATUS_LABEL: Record<string, string> = {
 };
 
 function VersionOverviewSection({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
-  const [tab, setTab] = useState<'release' | 'initiation' | 'legacy'>('release');
+  const [tab, setTab] = useState<'release' | 'initiation'>('release');
   return (
     <div>
       <div className="mb-3 flex border-b border-white/10">
         <OverviewSubTab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</OverviewSubTab>
-        <OverviewSubTab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部立项</OverviewSubTab>
-        <OverviewSubTab active={tab === 'legacy'} onClick={() => setTab('legacy')}>历史版本</OverviewSubTab>
+        <OverviewSubTab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</OverviewSubTab>
       </div>
-      {tab === 'release' && <ReleaseOverviewTable />}
-      {tab === 'initiation' && <InitiationOverviewTable />}
-      {tab === 'legacy' && <LegacyVersionsTable isAdmin={isAdmin} products={products} />}
+      {tab === 'release' && <ReleaseOverviewTable isAdmin={isAdmin} products={products} />}
+      {tab === 'initiation' && <InitiationOverviewTable isAdmin={isAdmin} products={products} />}
     </div>
   );
 }
@@ -697,11 +694,12 @@ function OverviewSubTab({ active, children, onClick }: { active: boolean; childr
   );
 }
 
-function ReleaseOverviewTable() {
+function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewReleaseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
+  const [showImport, setShowImport] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -714,7 +712,11 @@ function ReleaseOverviewTable() {
   if (loading) return <MapSectionLoader text="正在加载正式版本…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} />
+      <TableToolbar
+        keyword={keyword}
+        setKeyword={setKeyword}
+        extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
+      />
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有正式版本</div> : (
         <DataTable
           rows={rows}
@@ -732,15 +734,24 @@ function ReleaseOverviewTable() {
           ]}
         />
       )}
+      {showImport && (
+        <VersionWorkflowImportDialog
+          kind="release"
+          products={products}
+          onClose={() => setShowImport(false)}
+          onImported={async () => { setShowImport(false); await reload(); }}
+        />
+      )}
     </div>
   );
 }
 
-function InitiationOverviewTable() {
+function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewInitiationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
+  const [showImport, setShowImport] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -750,11 +761,15 @@ function InitiationOverviewTable() {
   }, [keyword]);
   useEffect(() => { void reload(); }, [reload]);
 
-  if (loading) return <MapSectionLoader text="正在加载内部立项…" />;
+  if (loading) return <MapSectionLoader text="正在加载内部版本…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} />
-      {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有内部立项</div> : (
+      <TableToolbar
+        keyword={keyword}
+        setKeyword={setKeyword}
+        extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
+      />
+      {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有内部版本</div> : (
         <DataTable
           rows={rows}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
@@ -769,50 +784,14 @@ function InitiationOverviewTable() {
           ]}
         />
       )}
-    </div>
-  );
-}
-
-function LegacyVersionsTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
-  const navigate = useNavigate();
-  const [rows, setRows] = useState<OverviewVersionRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
-  const [lifecycle, setLifecycle] = useState('');
-  const [showImport, setShowImport] = useState(false);
-  const lifecycleFilters = Object.entries(VERSION_LIFECYCLE_LABEL).map(([value, label]) => ({ value, label }));
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const result = await getOverviewVersions({ keyword: keyword.trim() || undefined, lifecycle: lifecycle || undefined });
-    if (result.success) setRows(result.data.items);
-    setLoading(false);
-  }, [keyword, lifecycle]);
-  useEffect(() => { void reload(); }, [reload]);
-
-  if (loading) return <MapSectionLoader text="正在加载版本…" />;
-  return (
-    <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部生命周期" filters={lifecycleFilters} filterValue={lifecycle} setFilterValue={setLifecycle} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
-      {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有版本</div> : (
-        <DataTable
-          rows={rows}
-          onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/version/${row.id}`)}
-          columns={[
-            { header: '版本名', render: (row) => <span className="text-cyan-200/90">{row.versionName}</span> },
-            { header: '外部 ID', render: (row) => <span className="text-xs text-white/40">{row.externalId || '-'}</span> },
-            { header: '产品', render: (row) => <span className="text-xs text-white/55">{row.productName}</span> },
-            { header: '生命周期', render: (row) => <span className="text-xs text-white/55">{VERSION_LIFECYCLE_LABEL[row.lifecycle as keyof typeof VERSION_LIFECYCLE_LABEL] ?? row.lifecycle}</span> },
-            { header: '版本级别', render: (row) => <span className="text-xs text-white/55">{row.isMajor ? '大版本' : '普通版本'}</span> },
-            { header: '需求数', render: (row) => <span className="text-xs text-white/55">{row.requirementCount}</span> },
-            { header: '功能数', render: (row) => <span className="text-xs text-white/55">{row.featureCount}</span> },
-            { header: '计划发布', render: (row) => <span className="text-xs text-white/45">{row.plannedReleaseAt ? new Date(row.plannedReleaseAt).toLocaleDateString('zh-CN') : '-'}</span> },
-            { header: '实际发布', render: (row) => <span className="text-xs text-white/45">{row.releasedAt ? new Date(row.releasedAt).toLocaleDateString('zh-CN') : '-'}</span> },
-            { header: '更新', render: (row) => <span className="text-xs text-white/35">{relTime(row.updatedAt)}</span> },
-          ]}
+      {showImport && (
+        <VersionWorkflowImportDialog
+          kind="initiation"
+          products={products}
+          onClose={() => setShowImport(false)}
+          onImported={async () => { setShowImport(false); await reload(); }}
         />
       )}
-      {showImport && <ProductHistoryImportDialog type="version" products={products} onClose={() => setShowImport(false)} onImported={reload} />}
     </div>
   );
 }
