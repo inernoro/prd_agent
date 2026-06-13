@@ -7,6 +7,7 @@ import {
   importFeatures,
   importOverviewDefects,
   importOverviewRequirements,
+  importOverviewVersions,
   importRequirements,
   importVersions,
   type ImportRequirementRow,
@@ -15,7 +16,7 @@ import {
 import type { Product } from './types';
 import { parseDefectImportFile } from './defectImportParse';
 import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
-import { applyFallbackProductToRows, rowHasProductRouteHint } from './requirementImportRouting';
+import { rowHasProductRouteHint } from './requirementImportRouting';
 
 export type HistoryImportType = 'requirement' | 'feature' | 'defect' | 'version';
 
@@ -108,10 +109,9 @@ export function ProductHistoryImportDialog({
   crossProductRoute?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const isCrossProduct = crossProductRoute && (type === 'requirement' || type === 'defect');
+  const isCrossProduct = crossProductRoute && (type === 'requirement' || type === 'defect' || type === 'version');
   const needsProductPicker = !isCrossProduct;
   const [productId, setProductId] = useState(products[0]?.id ?? '');
-  const [fallbackProductId, setFallbackProductId] = useState(products[0]?.id ?? '');
   const [fileNames, setFileNames] = useState<string[]>([]);
   const [rows, setRows] = useState<ImportSimpleItemRow[]>([]);
   const [rtfFiles, setRtfFiles] = useState<File[]>([]);
@@ -162,20 +162,13 @@ export function ProductHistoryImportDialog({
     }
   };
 
-  const fallbackProduct = useMemo(
-    () => products.find((product) => product.id === fallbackProductId),
-    [fallbackProductId, products],
-  );
-
   const commit = async () => {
     if (rows.length === 0) return;
     if (needsProductPicker && !productId) return;
     const baseRows = rows as ImportRequirementRow[];
-    const rowsToImport = isCrossProduct && type === 'requirement'
-      ? applyFallbackProductToRows(baseRows, fallbackProduct?.name)
-      : baseRows;
+    const rowsToImport = baseRows;
     if (isCrossProduct && rowsToImport.every((row) => !rowHasProductRouteHint(row))) {
-      setMessage(`无法路由：请为文件增加「应用」或「产品/所属产品」列${type === 'requirement' ? '，或选择「无应用列时默认归属产品」' : ''}。`);
+      setMessage('无法路由：请为文件增加「应用」或「产品/所属产品」列，或在标题前加【产品名】。');
       return;
     }
     setBusy(true);
@@ -189,7 +182,9 @@ export function ProductHistoryImportDialog({
           ? (crossProductRoute
             ? await importOverviewDefects(rowsToImport)
             : await importDefects(productId, rows))
-          : await importVersions(productId, rows);
+          : crossProductRoute
+            ? await importOverviewVersions(rowsToImport)
+            : await importVersions(productId, rows);
     setBusy(false);
     if (!result.success) {
       setMessage(result.error?.message ?? '导入失败');
@@ -202,7 +197,7 @@ export function ProductHistoryImportDialog({
     if (created + updated === 0) {
       setMessage(
         skipped > 0
-          ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「应用/产品」未匹配系统产品被跳过。请检查文件列${type === 'requirement' ? '或默认归属产品' : ''}。`
+          ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「应用/产品」未匹配系统产品被跳过。请检查文件列或标题【产品名】。`
           : `未写入任何${TYPE_LABEL[type]}，请检查文件内容。`,
       );
       return;
@@ -220,7 +215,6 @@ export function ProductHistoryImportDialog({
       <RequirementRtfImportDialog
         productId={productId || products[0]?.id || ''}
         crossProductRoute={crossProductRoute}
-        fallbackProductName={crossProductRoute ? fallbackProduct?.name : undefined}
         files={rtfFiles}
         onClose={onClose}
         onImported={onImported}
@@ -236,30 +230,13 @@ export function ProductHistoryImportDialog({
             <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
             <div className="mt-1 text-xs text-white/45">
               {isCrossProduct
-                ? type === 'requirement'
-                  ? '按「应用」或「产品」列匹配系统产品；无该列时可指定默认归属产品。'
-                  : '按「应用」或「产品/所属产品」列匹配系统产品；未匹配行跳过，不手动选归属产品。'
+                ? '按文件「应用」或「产品/所属产品」列匹配系统产品；未匹配行跳过，不手动选归属产品。'
                 : '可重复导入；有外部 ID 时更新原记录，无 ID 时系统自动分配纯数字编号。'}
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭"><X size={17} /></button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {crossProductRoute && type === 'requirement' && (
-            <label className="mb-4 block">
-              <span className="mb-1.5 block text-xs text-white/50">无「应用」列时默认归属产品</span>
-              <select
-                value={fallbackProductId}
-                onChange={(event) => setFallbackProductId(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
-              >
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>{product.name}</option>
-                ))}
-              </select>
-              <span className="mt-1 block text-[10px] text-white/35">仅对缺少「应用/产品」列或标题【前缀】的行生效。</span>
-            </label>
-          )}
           {needsProductPicker && (
             <label className="mb-4 block">
               <span className="mb-1.5 block text-xs text-white/50">归属产品</span>
@@ -312,9 +289,7 @@ export function ProductHistoryImportDialog({
         <div className="flex shrink-0 items-center justify-between border-t border-white/10 px-5 py-4">
           <div className="text-xs text-white/35">
             {isCrossProduct
-              ? type === 'requirement'
-                ? '按「应用/产品」列路由；无列时使用默认归属产品'
-                : '按「应用/产品/所属产品」列自动路由到系统产品'
+              ? '按文件「应用/产品/所属产品」列自动路由到系统产品'
               : selectedProduct ? `将写入：${selectedProduct.name}` : '请选择产品'}
           </div>
           <div className="flex gap-2">

@@ -4351,7 +4351,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        return await ImportRequirementsCoreAsync(request, userId, productId);
+        return await ImportRequirementsCoreAsync(request, userId);
     }
 
     /// <summary>跨产品批量导入需求（按行「应用」匹配产品，未匹配则跳过）。</summary>
@@ -4365,8 +4365,7 @@ public class ProductAgentController : ControllerBase
 
     private async Task<IActionResult> ImportRequirementsCoreAsync(
         ImportRequirementsRequest request,
-        string userId,
-        string? forcedProductId = null)
+        string userId)
     {
         var rows = (request.Rows ?? new()).Where(r => !string.IsNullOrWhiteSpace(r.Title)).ToList();
         if (rows.Count == 0)
@@ -4382,12 +4381,6 @@ public class ProductAgentController : ControllerBase
                 Builders<Product>.Filter.In(p => p.Id, scope));
         var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
         var productIds = products.Select(p => p.Id).ToHashSet();
-
-        if (!string.IsNullOrWhiteSpace(forcedProductId))
-        {
-            if (!productIds.Contains(forcedProductId))
-                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        }
 
         var wfByProduct = new Dictionary<string, (string WfId, string InitialState)>();
         async Task<(string WfId, string InitialState)> ResolveRequirementWorkflowAsync(string pid)
@@ -4415,17 +4408,8 @@ public class ProductAgentController : ControllerBase
             string? targetProductId;
             string? label;
             bool matched;
-            if (!string.IsNullOrWhiteSpace(forcedProductId))
-            {
-                targetProductId = forcedProductId;
-                label = products.FirstOrDefault(p => p.Id == forcedProductId)?.Name;
-                matched = true;
-            }
-            else
-            {
-                (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
-                    products, row.Title, row.SourceFields);
-            }
+            (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
+                products, row.Title, row.SourceFields);
             if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
             {
                 skipped++;
@@ -4764,14 +4748,52 @@ public class ProductAgentController : ControllerBase
         if (denied != null) return denied;
         if (!await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).AnyAsync())
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        return await ImportVersionsCoreAsync(request, GetUserId());
+    }
+
+    [HttpPost("overview/versions/import")]
+    public async Task<IActionResult> OverviewImportVersions([FromBody] ImportSimpleItemsRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        return await ImportVersionsCoreAsync(request, GetUserId());
+    }
+
+    private async Task<IActionResult> ImportVersionsCoreAsync(ImportSimpleItemsRequest request, string userId)
+    {
         var rows = ValidateSimpleImportRows(request);
         if (rows.Result != null) return rows.Result;
 
-        var userId = GetUserId();
+        var scope = await GetAccessibleProductIdsAsync(userId);
+        var productFilter = scope == null
+            ? Builders<Product>.Filter.Eq(p => p.IsDeleted, false)
+            : Builders<Product>.Filter.And(
+                Builders<Product>.Filter.Eq(p => p.IsDeleted, false),
+                Builders<Product>.Filter.In(p => p.Id, scope));
+        var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToHashSet();
+
         var created = 0;
         var updated = 0;
+        var skipped = 0;
+        var routed = new Dictionary<string, int>();
+        var unmatched = new List<object>();
+        var affectedProducts = new HashSet<string>();
         foreach (var row in rows.Rows!)
         {
+            var (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
+                products, row.Title, row.SourceFields);
+            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
+            {
+                skipped++;
+                if (!string.IsNullOrWhiteSpace(label))
+                    unmatched.Add(new { title = row.Title, label });
+                continue;
+            }
+
+            affectedProducts.Add(targetProductId);
+            routed[targetProductId] = routed.GetValueOrDefault(targetProductId) + 1;
+
             var sourceSystem = NormalizeImportSource(row.SourceSystem);
             var externalId = row.ExternalId?.Trim();
             var lifecycle = ProductVersionLifecycle.All.Contains(row.Status ?? "")
@@ -4779,7 +4801,7 @@ public class ProductAgentController : ControllerBase
                 : ProductVersionLifecycle.Planning;
             var existing = string.IsNullOrWhiteSpace(externalId)
                 ? null
-                : await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted &&
+                : await _db.ProductVersions.Find(v => v.ProductId == targetProductId && !v.IsDeleted &&
                     v.SourceSystem == sourceSystem && v.ExternalId == externalId).FirstOrDefaultAsync();
             if (existing != null)
             {
@@ -4796,7 +4818,7 @@ public class ProductAgentController : ControllerBase
             }
             await _db.ProductVersions.InsertOneAsync(new ProductVersion
             {
-                ProductId = productId,
+                ProductId = targetProductId,
                 VersionName = row.Title!.Trim(),
                 Description = row.Description?.Trim(),
                 Lifecycle = lifecycle,
@@ -4809,8 +4831,9 @@ public class ProductAgentController : ControllerBase
             });
             created++;
         }
-        await RecalcProductCountsAsync(productId);
-        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+        foreach (var pid in affectedProducts)
+            await RecalcProductCountsAsync(pid);
+        return Ok(ApiResponse<object>.Ok(new { created, updated, skipped, routed, unmatched }));
     }
 
     /// <summary>跨产品批量导入缺陷（按行「应用/产品」匹配，未匹配则跳过）。</summary>
@@ -4829,13 +4852,12 @@ public class ProductAgentController : ControllerBase
         if (denied != null) return denied;
         if (!await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).AnyAsync())
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        return await ImportDefectsCoreAsync(request, GetUserId(), forcedProductId: productId);
+        return await ImportDefectsCoreAsync(request, GetUserId());
     }
 
     private async Task<IActionResult> ImportDefectsCoreAsync(
         ImportSimpleItemsRequest request,
-        string userId,
-        string? forcedProductId = null)
+        string userId)
     {
         var rows = ValidateSimpleImportRows(request);
         if (rows.Result != null) return rows.Result;
@@ -4848,12 +4870,6 @@ public class ProductAgentController : ControllerBase
                 Builders<Product>.Filter.In(p => p.Id, scope));
         var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
         var productIds = products.Select(p => p.Id).ToHashSet();
-
-        if (!string.IsNullOrWhiteSpace(forcedProductId))
-        {
-            if (!productIds.Contains(forcedProductId))
-                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        }
 
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var created = 0;
@@ -4871,17 +4887,8 @@ public class ProductAgentController : ControllerBase
             string? targetProductId;
             string? label;
             bool matched;
-            if (!string.IsNullOrWhiteSpace(forcedProductId))
-            {
-                targetProductId = forcedProductId;
-                label = products.FirstOrDefault(p => p.Id == forcedProductId)?.Name;
-                matched = true;
-            }
-            else
-            {
-                (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
-                    products, row.Title, row.SourceFields);
-            }
+            (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
+                products, row.Title, row.SourceFields);
             if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
             {
                 skipped++;
@@ -4978,9 +4985,7 @@ public class ProductAgentController : ControllerBase
         }
         foreach (var pid in affectedProducts)
             await RecalcDefectCountAsync(pid);
-        if (string.IsNullOrWhiteSpace(forcedProductId))
-            return Ok(ApiResponse<object>.Ok(new { created, updated, skipped, routed, unmatched }));
-        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+        return Ok(ApiResponse<object>.Ok(new { created, updated, skipped, routed, unmatched }));
     }
 
     private (List<ImportSimpleItemRow>? Rows, IActionResult? Result) ValidateSimpleImportRows(ImportSimpleItemsRequest request)
