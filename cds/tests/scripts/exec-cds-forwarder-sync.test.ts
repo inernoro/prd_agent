@@ -18,6 +18,8 @@ function makeHarness() {
 
   writeFileSync(path.join(cdsDir, 'dist', 'forwarder-main.js'), 'forwarder-main-v1\n');
   writeFileSync(path.join(cdsDir, 'dist', 'forwarder', 'proxy-handler.js'), 'proxy-v1\n');
+  writeFileSync(path.join(cdsDir, 'dist', 'forwarder', 'proxy-handler.js.map'), 'proxy-map-v1\n');
+  writeFileSync(path.join(cdsDir, 'dist', 'forwarder', 'proxy-handler.d.ts'), 'proxy-types-v1\n');
   writeFileSync(path.join(cdsDir, 'dist', 'widget-script.js'), 'widget-v1\n');
   writeFileSync(path.join(cdsDir, 'dist', 'index.js'), 'admin-v1\n');
 
@@ -77,6 +79,18 @@ describe('exec_cds.sh forwarder self-sync', () => {
 
     h.run();
     expect(h.restartCount()).toBe(1);
+  });
+
+  it('does not restart forwarder when only sourcemap or declaration output changes', () => {
+    const h = makeHarness();
+    h.run();
+    expect(h.restartCount()).toBe(0);
+
+    writeFileSync(path.join(h.cdsDir, 'dist', 'forwarder', 'proxy-handler.js.map'), 'proxy-map-v2\n');
+    writeFileSync(path.join(h.cdsDir, 'dist', 'forwarder', 'proxy-handler.d.ts'), 'proxy-types-v2\n');
+    h.run();
+
+    expect(h.restartCount()).toBe(0);
   });
 
   it('keeps master startup tolerant when forwarder service is inactive', () => {

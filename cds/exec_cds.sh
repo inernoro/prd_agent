@@ -153,7 +153,7 @@ forwarder_runtime_signature() {
     [ -f "$f" ] && files="${files}${f}"$'\n'
   done
   if [ -d "$dist_dir/forwarder" ]; then
-    files="${files}$(find "$dist_dir/forwarder" -type f 2>/dev/null | sort)"$'\n'
+    files="${files}$(find "$dist_dir/forwarder" -type f -name '*.js' 2>/dev/null | sort)"$'\n'
   fi
   if [ -z "${files//$'\n'/}" ]; then
     return 1
@@ -3039,8 +3039,8 @@ case "$CMD" in
 
     # ── self-sync forwarder ────────────────────────────────────────────
     # master self-update 只更新控制面时不应重启业务面的 forwarder。这里不再看
-    # dist 目录 mtime,而是比较 forwarder 运行时文件内容签名。只有
-    # forwarder-main / dist/forwarder/* / widget-script 真的变化才重启 forwarder。
+    # dist 目录 mtime,而是比较 forwarder 运行时 JS 文件内容签名。只有
+    # forwarder-main / dist/forwarder/*.js / widget-script 真的变化才重启 forwarder。
     sync_forwarder_if_needed
 
     info "[master-run] exec node dist/index.js"
