@@ -84,7 +84,7 @@ public class RequirementWorkflowCatalogTests
     {
         var def = ProductWorkflowDefaults.Requirement();
         Assert.Equal("待评审", RequirementWorkflowCatalog.ResolveStateLabel("new", def));
-        Assert.Equal("待规划", RequirementWorkflowCatalog.ResolveStateLabel("pending", def));
+        Assert.Equal("待评审", RequirementWorkflowCatalog.ResolveStateLabel("pending", def));
         Assert.Equal("待评审", RequirementWorkflowCatalog.ResolveStateLabel("new", null));
     }
 
