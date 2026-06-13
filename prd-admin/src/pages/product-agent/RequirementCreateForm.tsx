@@ -11,6 +11,7 @@ import { toast } from '@/lib/toast';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { TapdPropertyPanel, TapdPropertyRow } from './TapdPropertyPanel';
 import { toRequirementOptions } from './comboboxOptions';
+import { REQUIREMENT_PRODUCT_DEFECT_FORM_KEY } from './productDefectLinkageCatalog';
 import { REQUIREMENT_ORIGIN_FORM_KEY, REQUIREMENT_ORIGIN_OPTIONS, type RequirementOriginValue } from './requirementOriginCatalog';
 import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
 import { RequirementTypeSelect } from './RequirementTypeSelect';
@@ -21,8 +22,14 @@ import type { Customer, DescTemplate, Feature, ItemGrade, Requirement } from './
 import { ITEM_GRADE_LABEL } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
-const RESERVED_TEMPLATE_LABELS = new Set(['需求来源', '需求类型', '客户名称', '客户', '归属版本', '标题', '名称', '描述', '需求名称', '需求描述']);
-const RESERVED_TEMPLATE_KEYS = new Set(['title', 'name', 'description', 'desc', 'requirementSource', 'customerName']);
+const RESERVED_TEMPLATE_LABELS = new Set([
+  '需求来源', '需求类型', '客户名称', '客户', '归属版本', '标题', '名称', '描述', '需求名称', '需求描述',
+  REQUIREMENT_PRODUCT_DEFECT_FORM_KEY,
+]);
+const RESERVED_TEMPLATE_KEYS = new Set([
+  'title', 'name', 'description', 'desc', 'requirementSource', 'customerName',
+  REQUIREMENT_PRODUCT_DEFECT_FORM_KEY,
+]);
 
 function mergeDesc(prev: string, tpl: string): string {
   const stripped = (prev || '').replace(/<br\s*\/?>/gi, '').replace(/<div>\s*<\/div>/gi, '').replace(/&nbsp;/gi, '').trim();
@@ -214,6 +221,13 @@ export function RequirementCreateForm({
     ...(requirementType ? { [REQUIREMENT_TYPE_FORM_KEY]: requirementType } : {}),
   }), [formData, requirementOrigin, requirementType]);
 
+  /** 新建仅登记需求；是否转产品缺陷由成立后工作流流转，创建时不写入该标记 */
+  const createFormData = useMemo((): Record<string, string> => (
+    Object.fromEntries(
+      Object.entries(mergedFormData).filter(([key]) => key !== REQUIREMENT_PRODUCT_DEFECT_FORM_KEY),
+    )
+  ), [mergedFormData]);
+
   const descAutoFilledRef = useRef(false);
   useEffect(() => {
     let alive = true;
@@ -233,8 +247,8 @@ export function RequirementCreateForm({
     description,
     assigneeId,
     templateFields: [...split.others, ...split.files],
-    formData: mergedFormData,
-  }), [title, description, assigneeId, split.others, split.files, mergedFormData]);
+    formData: createFormData,
+  }), [title, description, assigneeId, split.others, split.files, createFormData]);
 
   const onAiFill = (r: RequirementAiFillResult) => {
     const applied = applyRequirementAiFill({
@@ -268,7 +282,7 @@ export function RequirementCreateForm({
       assigneeId: assigneeId || null,
       parentId: parentId || null,
       customerIds,
-      formData: mergedFormData,
+      formData: createFormData,
       templateId: template?.id,
       workflowDefId: workflow?.id,
     });

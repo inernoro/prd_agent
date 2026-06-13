@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapDefectImportRows, parseDefectImportXlsxBuffer } from './defectImportParse';
-import { readFileSync } from 'node:fs';
-
+import { mapDefectImportRows } from './defectImportParse';
 describe('mapDefectImportRows', () => {
   const tapdHeaders = ['ID', '标题', '详细描述', '状态', '优先级', '严重程度'];
 
@@ -35,19 +33,5 @@ describe('mapDefectImportRows', () => {
       const [row] = mapDefectImportRows(tapdHeaders, [['1', 't', '', 'new', '', opt]]);
       expect(row.severity).toBe(expected[i]);
     });
-  });
-});
-
-describe('parseDefectImportXlsxBuffer', () => {
-  it('parses real TAPD export xlsx when file exists', () => {
-    const path = 'c:/Users/midoo/Downloads/产品缺陷管理_缺陷_20260612213247.xlsx';
-    try {
-      const buf = readFileSync(path);
-      const rows = parseDefectImportXlsxBuffer(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-      expect(rows.length).toBeGreaterThan(0);
-      expect(rows[0].externalId).toBe('1023034');
-    } catch {
-      // 本地无样例文件时跳过
-    }
   });
 });

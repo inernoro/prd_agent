@@ -55,7 +55,7 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-export function parseProductHistoryCsv(text: string, options?: { entityType?: HistoryImportType }): ImportSimpleItemRow[] {
+export function parseProductHistoryCsv(text: string, _options?: { entityType?: HistoryImportType }): ImportSimpleItemRow[] {
   const parsed = parseCsv(text);
   if (parsed.length < 2) return [];
   const headers = parsed[0].map((value) => value.trim().toLowerCase());

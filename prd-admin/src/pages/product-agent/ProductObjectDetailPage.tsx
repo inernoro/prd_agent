@@ -16,6 +16,7 @@ import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { FeatureModuleSearchSelect } from '@/components/FeatureModuleSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { useAuthStore } from '@/stores/authStore';
+import { searchDirectoryUsers } from '@/services';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { RequirementCreateForm } from './RequirementCreateForm';
 import { TapdPropertyPanel, TapdPropertyRow } from './TapdPropertyPanel';
@@ -58,13 +59,19 @@ import {
 import type { Requirement, Feature, Product, ProductVersion, ProductRelease, Customer, FeatureVersion, FeatureBusinessType, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 import { slaInfo } from './sla';
+import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 
-const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
+const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
+  basic: '基础功能',
+  core: '核心功能',
+  value_added: '增值功能',
+};
 const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
   { value: 'basic', label: '基础功能' },
   { value: 'core', label: '核心功能' },
   { value: 'value_added', label: '增值功能' },
 ];
+const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
 // ── 自定义字段去重 / 分栏 ──
 const NATIVE_DUP_KEYS = new Set(['title', 'name', 'description', 'desc']);
@@ -178,7 +185,7 @@ export function ProductObjectDetailPage() {
           <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 hover:bg-white/5 hover:text-white shrink-0" title="返回">
             <ArrowLeft size={16} />
           </button>
-          <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">内部版本立项</span>
+          <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">内部版本</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           <div className="mx-auto w-full max-w-4xl py-5 px-5">
@@ -203,7 +210,7 @@ export function ProductObjectDetailPage() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-        <div className={`${(isNew && kind === 'requirement') || kind === 'feature' ? 'w-full px-5 xl:px-8 py-5' : 'mx-auto py-5'}`} style={(isNew && kind === 'requirement') || kind === 'feature' ? undefined : { width: '80%' }}>
+        <div className={`${(isNew && kind === 'requirement') || kind === 'feature' || kind === 'version' ? 'w-full px-5 xl:px-8 py-5' : 'mx-auto py-5'}`} style={(isNew && kind === 'requirement') || kind === 'feature' || kind === 'version' ? undefined : { width: '80%' }}>
           {isNew ? (
             kind === 'defect' ? (
               <CreateDefectForm
@@ -300,7 +307,7 @@ function KindBadge({ kind, isNew }: { kind: string; isNew?: boolean }) {
 
 // ════════════════════════ 通用构件 ════════════════════════
 
-/** 详情骨架：头部(编号/大标题/状态流转/统一保存) + 左主栏 + 右属性栏。 */
+/** 详情骨架：头部 + 主内容；split 为左右双栏，stack 为单列全宽（一行一个容器）。 */
 function DetailScaffold({
   no,
   kindLabel,
@@ -316,6 +323,7 @@ function DetailScaffold({
   workflow,
   main,
   sidebar,
+  layout = 'split',
   children,
 }: {
   no: string;
@@ -331,7 +339,8 @@ function DetailScaffold({
   headerActions?: React.ReactNode;
   workflow?: React.ReactNode;
   main: React.ReactNode;
-  sidebar: React.ReactNode;
+  sidebar?: React.ReactNode;
+  layout?: 'split' | 'stack';
   children?: React.ReactNode;
 }) {
   return (
@@ -372,11 +381,15 @@ function DetailScaffold({
         {workflow && <div className="px-4 py-2.5 border-t border-white/5">{workflow}</div>}
       </div>
 
-      {/* 主体双栏：左 70% / 右 30% */}
-      <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-4 items-start">
+      {/* 主体：split 左 70% / 右 30%；stack 单列全宽 */}
+      {layout === 'stack' ? (
         <div className="flex flex-col gap-4 min-w-0">{main}</div>
-        <div className="flex flex-col gap-4 min-w-0">{sidebar}</div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-4 items-start">
+          <div className="flex flex-col gap-4 min-w-0">{main}</div>
+          <div className="flex flex-col gap-4 min-w-0">{sidebar}</div>
+        </div>
+      )}
       {children}
     </div>
   );
@@ -581,6 +594,78 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-2 text-[11px]">
       <span className="text-white/40">{label}</span>
       <span className="text-white/60">{value}</span>
+    </div>
+  );
+}
+
+/** 属性字段表：左列字段名、右列值，一行一个字段 */
+function AttributeFieldTable({ rows }: { rows: { label: string; value: React.ReactNode }[] }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-white/10">
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          <col style={{ width: '22%' }} />
+          <col />
+        </colgroup>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label} className="border-t border-white/5 first:border-t-0">
+              <td className="px-4 py-3 text-xs font-medium text-white/45 bg-white/[0.02] align-top">{row.label}</td>
+              <td className="px-4 py-3 text-sm text-white/80 min-w-0">{row.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DetailRecordTable({
+  columns,
+  rows,
+  emptyText,
+  onRowClick,
+}: {
+  columns: { header: string; width?: string; className?: string; render: (row: { id: string }) => React.ReactNode }[];
+  rows: { id: string }[];
+  emptyText: string;
+  onRowClick?: (id: string) => void;
+}) {
+  if (rows.length === 0) {
+    return <div className="py-10 text-center text-sm text-white/35">{emptyText}</div>;
+  }
+  const cell = 'px-3 py-2.5 text-xs text-white/65 truncate';
+  return (
+    <div className="overflow-x-auto rounded-lg border border-white/10">
+      <table className="w-full table-fixed text-left text-sm min-w-[960px]">
+        {columns.some((c) => c.width) && (
+          <colgroup>
+            {columns.map((c, i) => (
+              <col key={i} style={c.width ? { width: c.width } : undefined} />
+            ))}
+          </colgroup>
+        )}
+        <thead className="bg-white/[0.03] text-[11px] text-white/45 border-b border-white/10">
+          <tr>
+            {columns.map((c) => (
+              <th key={c.header} className={`px-3 py-2.5 font-medium whitespace-nowrap ${c.className ?? ''}`}>{c.header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr
+              key={row.id}
+              onClick={() => onRowClick?.(row.id)}
+              className={`border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
+            >
+              {columns.map((c) => (
+                <td key={c.header} className={`${cell} ${c.className ?? ''}`}>{c.render(row)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1768,8 +1853,110 @@ function VersionDetail({
     );
   }, [version, versionName, description, lifecycle, isMajor, parentVersionId, selReqs, formData]);
 
+  const { workflow: reqWorkflow } = useEffectiveWorkflow('requirement', productId);
+  const { workflow: featWorkflow } = useEffectiveWorkflow('feature', productId);
+  const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    const ids = Array.from(new Set([
+      ...requirements.flatMap((r) => [r.ownerId, r.assigneeId].filter(Boolean) as string[]),
+      ...features.flatMap((f) => [f.ownerId, f.assigneeId].filter(Boolean) as string[]),
+    ]));
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void searchDirectoryUsers('', 200).then((res) => {
+      if (cancelled || !res.success) return;
+      setUserNames(new Map(res.data.items.map((u) => [u.userId, u.displayName])));
+    });
+    return () => { cancelled = true; };
+  }, [requirements, features]);
+
+  const linkedRequirements = useMemo(
+    () => requirements.filter((r) => selReqs.has(r.id)),
+    [requirements, selReqs],
+  );
+  const linkedFeatures = useMemo(
+    () => features.filter((f) => featureVersions.some((fv) => fv.featureId === f.id)),
+    [features, featureVersions],
+  );
+
+  const versionAttributeRows = useMemo(() => {
+    if (!version) return [];
+    const rows: { label: string; value: React.ReactNode }[] = [
+      {
+        label: '生命周期',
+        value: (
+          <div className="flex flex-wrap gap-1.5">
+            {(Object.keys(VERSION_LIFECYCLE_LABEL) as VersionLifecycle[]).map((lc) => (
+              <button
+                key={lc}
+                type="button"
+                onClick={() => setLifecycle(lc)}
+                className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
+              >
+                {VERSION_LIFECYCLE_LABEL[lc]}
+              </button>
+            ))}
+          </div>
+        ),
+      },
+      {
+        label: '大版本',
+        value: (
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={isMajor} onChange={(e) => setIsMajor(e.target.checked)} className="accent-cyan-500" />
+            <span className="text-sm text-white/70">{isMajor ? '是' : '否'}</span>
+          </label>
+        ),
+      },
+      {
+        label: '父版本',
+        value: (
+          <ParentSelect
+            value={parentVersionId}
+            onChange={setParentVersionId}
+            options={allVersions.filter((v) => v.id !== version.id).map((v) => ({ id: v.id, label: v.versionName }))}
+            placeholder="无（顶层版本）"
+          />
+        ),
+      },
+    ];
+    if (version.currentState) {
+      rows.push({
+        label: '工作流状态',
+        value: (
+          <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 inline-block">
+            {workflow?.states.find((s) => s.key === version.currentState)?.label ?? version.currentState}
+          </span>
+        ),
+      });
+    }
+    rows.push(
+      { label: '计划发布', value: fmtDate(version.plannedReleaseAt) || '—' },
+      { label: '创建时间', value: fmtDate(version.createdAt) },
+      { label: '更新时间', value: fmtDate(version.updatedAt) },
+    );
+    return rows;
+  }, [allVersions, isMajor, lifecycle, parentVersionId, version, workflow]);
+
   if (!version) return <NotFound />;
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
+  const nameOf = (id?: string | null) => (id ? userNames.get(id) ?? id : '—');
+  const attributeRowsWithCustom = [
+    ...versionAttributeRows,
+    ...split.others.map((field) => ({
+      label: field.label || field.key,
+      value: (
+        <FormFieldsRenderer
+          fields={[field]}
+          values={formData}
+          onChange={setField}
+          productId={productId}
+          hideLabels
+        />
+      ),
+    })),
+  ];
 
   const save = async () => {
     setSaving(true);
@@ -1819,6 +2006,7 @@ function VersionDetail({
         </VersionDetailTab>
       </div>
       <DetailScaffold
+      layout="stack"
       no={VERSION_LIFECYCLE_LABEL[version.lifecycle]}
       kindLabel="版本"
       kindColor="#34D399"
@@ -1844,6 +2032,9 @@ function VersionDetail({
       main={
         detailTab === 'basic' ? (
           <>
+            <Card title="版本属性">
+              <AttributeFieldTable rows={attributeRowsWithCustom} />
+            </Card>
             <Card title="版本描述" action={<DescTemplatePicker entityType="version" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
               <DescriptionField value={description} onChange={setDescription} />
             </Card>
@@ -1852,113 +2043,104 @@ function VersionDetail({
                 <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
               </Card>
             )}
-            <Card title="动态">
-              <ActivityTimeline entityType="version" entityId={version.id} />
+            <Card title="本版本知识">
+              <VersionKnowledgeCard productId={productId} versionId={version.id} />
             </Card>
           </>
         ) : detailTab === 'requirements' ? (
-          <Card title="关联需求（勾选后点顶部保存）">
-            {requirements.length === 0 ? (
-              <div className="text-[11px] text-white/30">该产品还没有需求</div>
-            ) : (
-              <div className="flex flex-col gap-0.5 max-h-[32rem] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                {requirements.map((r) => (
-                  <div key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5">
-                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
-                      <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggleReq(r.id)} className="accent-cyan-500 shrink-0" />
-                      <span className="text-sm text-white/80 truncate">{r.title}</span>
-                    </label>
-                    <button type="button" onClick={() => navigate(`/product-agent/p/${productId}/requirement/${r.id}`)} className="shrink-0 text-[11px] text-cyan-300 hover:underline">详情</button>
-                  </div>
-                ))}
-              </div>
-            )}
+          <Card title={`关联需求 · 已纳入 ${linkedRequirements.length} / ${requirements.length}`} action={
+            <span className="text-[11px] text-white/35">勾选纳入后点顶部保存</span>
+          }>
+            <DetailRecordTable
+              emptyText="该产品还没有需求"
+              rows={requirements}
+              onRowClick={(id) => navigate(`/product-agent/p/${productId}/requirement/${id}`)}
+              columns={[
+                {
+                  header: '纳入',
+                  width: '56px',
+                  className: 'text-center',
+                  render: (row) => (
+                    <input
+                      type="checkbox"
+                      checked={selReqs.has(row.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleReq(row.id)}
+                      className="accent-cyan-500"
+                    />
+                  ),
+                },
+                { header: 'MAP 编号', width: '10%', render: (row) => <span className="font-mono text-cyan-200/80">{(row as Requirement).requirementNo}</span> },
+                { header: '标题', width: '22%', render: (row) => <span className="text-white/85 truncate block" title={(row as Requirement).title}>{(row as Requirement).title}</span> },
+                { header: '分级', width: '7%', render: (row) => ITEM_GRADE_LABEL[(row as Requirement).grade] },
+                { header: '状态', width: '10%', render: (row) => resolveRequirementStateLabel((row as Requirement).currentState ?? '', reqWorkflow) || '—' },
+                { header: '处理人', width: '10%', render: (row) => nameOf((row as Requirement).assigneeId) },
+                { header: '负责人', width: '10%', render: (row) => nameOf((row as Requirement).ownerId) },
+                { header: '更新时间', width: '12%', render: (row) => fmtDate((row as Requirement).updatedAt) },
+                {
+                  header: '操作',
+                  width: '64px',
+                  className: 'text-center',
+                  render: (row) => (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/product-agent/p/${productId}/requirement/${row.id}`); }}
+                      className="text-[11px] text-cyan-300 hover:underline"
+                    >
+                      详情
+                    </button>
+                  ),
+                },
+              ]}
+            />
           </Card>
         ) : (
-          <Card title="纳入功能（即勾即存，无需点保存）">
-            {features.length === 0 ? (
-              <div className="text-[11px] text-white/30">该产品还没有功能</div>
-            ) : (
-              <div className="flex flex-col gap-0.5 max-h-[32rem] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                {features.map((f) => (
-                  <div key={f.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5">
-                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
-                      <input type="checkbox" checked={!!featureIncluded(f.id)} onChange={() => void toggleFeature(f.id)} className="accent-cyan-500 shrink-0" />
-                      <span className="text-sm text-white/80 truncate">{f.title}</span>
-                    </label>
-                    <button type="button" onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)} className="shrink-0 text-[11px] text-cyan-300 hover:underline">详情</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        )
-      }
-      sidebar={
-        detailTab === 'basic' ? (
-          <>
-            <Card title="属性">
-              <div className="flex flex-col gap-3.5">
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>生命周期</FieldLabel>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(Object.keys(VERSION_LIFECYCLE_LABEL) as VersionLifecycle[]).map((lc) => (
-                      <button
-                        key={lc}
-                        onClick={() => setLifecycle(lc)}
-                        className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
-                      >
-                        {VERSION_LIFECYCLE_LABEL[lc]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={isMajor} onChange={(e) => setIsMajor(e.target.checked)} className="accent-cyan-500" />
-                  <span className="text-sm text-white/70">标记为大版本</span>
-                </label>
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>父版本</FieldLabel>
-                  <ParentSelect
-                    value={parentVersionId}
-                    onChange={setParentVersionId}
-                    options={allVersions.filter((v) => v.id !== version.id).map((v) => ({ id: v.id, label: v.versionName }))}
-                    placeholder="无（顶层版本）"
-                  />
-                </div>
-                {version.currentState && (
-                  <div className="flex flex-col gap-1.5">
-                    <FieldLabel>状态</FieldLabel>
-                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 self-start">
-                      {workflow?.states.find((s) => s.key === version.currentState)?.label ?? version.currentState}
-                    </span>
-                  </div>
-                )}
-                {split.others.length > 0 && (
-                  <div className="pt-1 border-t border-white/5">
-                    <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
-                  </div>
-                )}
-              </div>
-            </Card>
-            <Card title="本版本知识（从产品知识库调取）">
-              <VersionKnowledgeCard productId={productId} versionId={version.id} />
-            </Card>
-            <Card title="信息">
-              <div className="flex flex-col gap-2">
-                <InfoRow label="计划发布" value={fmtDate(version.plannedReleaseAt)} />
-                <InfoRow label="创建时间" value={fmtDate(version.createdAt)} />
-                <InfoRow label="更新时间" value={fmtDate(version.updatedAt)} />
-              </div>
-            </Card>
-          </>
-        ) : (
-          <Card title="提示">
-            <p className="text-xs leading-5 text-white/45">
-              {detailTab === 'requirements'
-                ? '勾选本版本要纳入的需求后，回到顶部点击「保存」。'
-                : '功能纳入会立即写入，无需点保存。'}
-            </p>
+          <Card title={`纳入功能 · 已纳入 ${linkedFeatures.length} / ${features.length}`} action={
+            <span className="text-[11px] text-white/35">勾选即写入，无需点保存</span>
+          }>
+            <DetailRecordTable
+              emptyText="该产品还没有功能"
+              rows={features}
+              onRowClick={(id) => navigate(`/product-agent/p/${productId}/feature/${id}`)}
+              columns={[
+                {
+                  header: '纳入',
+                  width: '56px',
+                  className: 'text-center',
+                  render: (row) => (
+                    <input
+                      type="checkbox"
+                      checked={!!featureIncluded(row.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => void toggleFeature(row.id)}
+                      className="accent-cyan-500"
+                    />
+                  ),
+                },
+                { header: '功能编号', width: '10%', render: (row) => <span className="font-mono text-violet-200/80">{(row as Feature).featureNo}</span> },
+                { header: '标题', width: '18%', render: (row) => <span className="text-white/85 truncate block" title={(row as Feature).title}>{(row as Feature).title}</span> },
+                { header: '所属模块', width: '14%', render: (row) => (row as Feature).moduleName || '—' },
+                { header: '功能类型', width: '9%', render: (row) => FEATURE_TYPE_LABEL[(row as Feature).featureType] ?? (row as Feature).featureType },
+                { header: '状态', width: '10%', render: (row) => featWorkflow?.states.find((s) => s.key === (row as Feature).currentState)?.label ?? (row as Feature).currentState ?? '—' },
+                { header: '处理人', width: '9%', render: (row) => nameOf((row as Feature).assigneeId) },
+                { header: '负责人', width: '9%', render: (row) => nameOf((row as Feature).ownerId) },
+                { header: '更新时间', width: '11%', render: (row) => fmtDate((row as Feature).updatedAt) },
+                {
+                  header: '操作',
+                  width: '64px',
+                  className: 'text-center',
+                  render: (row) => (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/product-agent/p/${productId}/feature/${row.id}`); }}
+                      className="text-[11px] text-cyan-300 hover:underline"
+                    >
+                      详情
+                    </button>
+                  ),
+                },
+              ]}
+            />
           </Card>
         )
       }
