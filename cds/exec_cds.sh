@@ -173,7 +173,7 @@ record_forwarder_runtime_signature() {
   sig="$(forwarder_runtime_signature "$dist_dir" 2>/dev/null || true)"
   [ -n "$sig" ] || return 0
   mkdir -p "$state_dir" 2>/dev/null || true
-  printf '%s\n' "$sig" > "$sig_file" 2>/dev/null || true
+  printf 'v2:%s\n' "$sig" > "$sig_file" 2>/dev/null || true
 }
 
 sync_forwarder_if_needed() {
@@ -197,10 +197,17 @@ sync_forwarder_if_needed() {
   [ -f "$sig_file" ] && previous_sig="$(cat "$sig_file" 2>/dev/null || true)"
   if [ -z "$previous_sig" ]; then
     mkdir -p "$state_dir" 2>/dev/null || true
-    printf '%s\n' "$current_sig" > "$sig_file" 2>/dev/null || true
+    printf 'v2:%s\n' "$current_sig" > "$sig_file" 2>/dev/null || true
     info "[master-run] forwarder runtime signature initialized,跳过 self-sync"
     return 0
   fi
+
+  if [[ "$previous_sig" != v2:* ]]; then
+    printf 'v2:%s\n' "$current_sig" > "$sig_file" 2>/dev/null || true
+    info "[master-run] legacy forwarder runtime signature migrated,跳过 self-sync"
+    return 0
+  fi
+  previous_sig="${previous_sig#v2:}"
 
   if [ "$current_sig" = "$previous_sig" ]; then
     info "[master-run] forwarder runtime signature 未变化,跳过 self-sync"
@@ -210,7 +217,7 @@ sync_forwarder_if_needed() {
   info "[master-run] forwarder runtime signature 已变化 → systemctl restart cds-forwarder(self-sync)"
   if systemctl restart cds-forwarder.service 2>&1 | head -3; then
     mkdir -p "$state_dir" 2>/dev/null || true
-    printf '%s\n' "$current_sig" > "$sig_file" 2>/dev/null || true
+    printf 'v2:%s\n' "$current_sig" > "$sig_file" 2>/dev/null || true
   else
     warn "[master-run] cds-forwarder restart 失败,需手动:systemctl restart cds-forwarder"
   fi

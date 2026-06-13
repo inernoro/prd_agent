@@ -107,6 +107,16 @@ describe('exec_cds.sh forwarder self-sync', () => {
     expect(h.restartCount()).toBe(0);
   });
 
+  it('migrates legacy bare signature without restarting forwarder', () => {
+    const h = makeHarness();
+    writeFileSync(path.join(h.stateDir, 'forwarder-runtime.sig'), 'legacy-bare-signature\n');
+
+    h.run();
+
+    expect(h.restartCount()).toBe(0);
+    expect(readFileSync(path.join(h.stateDir, 'forwarder-runtime.sig'), 'utf8')).toMatch(/^v2:/);
+  });
+
   it('keeps signature ownership in master-run only, not forwarder-run', () => {
     const script = readFileSync(scriptPath, 'utf8');
     const forwarderRunCase = script.match(/\n  forwarder-run\)([\s\S]*?)\n  install-forwarder\)/)?.[1] || '';
