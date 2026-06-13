@@ -25,6 +25,15 @@ export type DocumentStore = {
   tagColors?: Record<string, string>;
   /** 可管理的分类清单（知识库一等维度；空=未启用分类） */
   categories?: string[];
+  /** 系统互联同步状态：syncing / synced / error */
+  peerSyncStatus?: 'syncing' | 'synced' | 'error' | string | null;
+  /** 系统互联同步方向：push / pull / both / received */
+  peerSyncDirection?: 'push' | 'pull' | 'both' | 'received' | string | null;
+  peerSyncNodeId?: string | null;
+  peerSyncNodeName?: string | null;
+  peerSyncNodeBaseUrl?: string | null;
+  peerSyncLastAt?: string | null;
+  peerSyncLastResult?: string | null;
   createdAt: string;
   updatedAt: string;
 };
