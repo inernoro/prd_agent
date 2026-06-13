@@ -3,3 +3,4 @@
 | fix | cds | 兼容旧版裸 forwarder 签名文件，升级时只迁移签名不重启业务转发进程 |
 | fix | cds | forwarder 自同步签名仅纳入实际运行的 JS 文件，避免 source map 和类型声明变化触发重启 |
 | fix | cds | forwarder 自同步优先按源码签名判断，避免构建产物波动导致 master 重启时误重启业务转发进程 |
+| fix | cds | forwarder 自同步在 Git 仓库内优先使用 HEAD 源码 blob 签名，避免 pnpm/install/systemd 环境差异造成签名抖动 |

@@ -132,7 +132,7 @@ describe('exec_cds.sh forwarder self-sync', () => {
     h.run();
 
     expect(h.restartCount()).toBe(0);
-    expect(readFileSync(path.join(h.stateDir, 'forwarder-runtime.sig'), 'utf8')).toMatch(/^v2:/);
+    expect(readFileSync(path.join(h.stateDir, 'forwarder-runtime.sig'), 'utf8')).toMatch(/^v3:/);
   });
 
   it('keeps signature ownership in master-run only, not forwarder-run', () => {
