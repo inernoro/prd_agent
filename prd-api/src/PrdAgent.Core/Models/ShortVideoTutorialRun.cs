@@ -20,8 +20,14 @@ public class ShortVideoTutorialRun
     /// <summary>教程标题</summary>
     public string Title { get; set; } = string.Empty;
 
-    /// <summary>文案/字幕来源：manual / metadata-fallback</summary>
+    /// <summary>文案/字幕来源：manual / tikhub-metadata / metadata-fallback</summary>
     public string SourceMode { get; set; } = "manual";
+
+    /// <summary>短视频解析器返回的元数据 JSON</summary>
+    public string? ParsedMetadataJson { get; set; }
+
+    /// <summary>解析过程说明</summary>
+    public string? ParserMessage { get; set; }
 
     /// <summary>状态：running / done / failed</summary>
     public string Status { get; set; } = "running";

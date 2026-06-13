@@ -1,10 +1,12 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -25,6 +27,7 @@ public class ShortVideoTutorialController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IHostedSiteService _hostedSiteService;
     private readonly IConfiguration _config;
+    private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ShortVideoTutorialController> _logger;
 
     public ShortVideoTutorialController(
@@ -32,12 +35,14 @@ public class ShortVideoTutorialController : ControllerBase
         IDocumentService documentService,
         IHostedSiteService hostedSiteService,
         IConfiguration config,
+        IServiceProvider serviceProvider,
         ILogger<ShortVideoTutorialController> logger)
     {
         _db = db;
         _documentService = documentService;
         _hostedSiteService = hostedSiteService;
         _config = config;
+        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -56,8 +61,6 @@ public class ShortVideoTutorialController : ControllerBase
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(CancellationToken.None);
         var userName = string.IsNullOrWhiteSpace(user?.DisplayName) ? user?.Username ?? userId : user.DisplayName!;
         var platform = DetectPlatform(videoUrl);
-        var sourceText = NormalizeSourceText(req.SourceText, title, videoUrl, platform);
-        var sourceMode = string.IsNullOrWhiteSpace(req.SourceText) ? "metadata-fallback" : "manual";
 
         var run = new ShortVideoTutorialRun
         {
@@ -65,7 +68,7 @@ public class ShortVideoTutorialController : ControllerBase
             VideoUrl = videoUrl,
             Platform = platform,
             Title = title,
-            SourceMode = sourceMode,
+            SourceMode = "resolving",
             Status = "running",
             CreatedAt = now,
             UpdatedAt = now,
@@ -75,9 +78,16 @@ public class ShortVideoTutorialController : ControllerBase
 
         try
         {
-            MarkStage(run, "parse", "done", sourceMode == "manual"
-                ? "已使用用户提供的字幕/文案作为解析来源"
-                : "未提供字幕，已使用链接元数据生成教程骨架");
+            var parsedSource = await ResolveParsedSourceAsync(videoUrl, platform, req.SourceText, req.Title);
+            title = CleanTitle(req.Title) ?? CleanTitle(parsedSource.Title) ?? title;
+            var sourceText = NormalizeSourceText(parsedSource.SourceText, title, videoUrl, platform);
+            var sourceMode = parsedSource.SourceMode;
+            run.Title = title;
+            run.SourceMode = sourceMode;
+            run.ParsedMetadataJson = parsedSource.MetadataJson;
+            run.ParserMessage = parsedSource.Message;
+            MarkStage(run, "parse", "done", parsedSource.Message);
+            await SaveRunAsync(run);
 
             var store = await ResolveStoreAsync(req.StoreId, title, userId);
             run.StoreId = store.Id;
@@ -312,6 +322,160 @@ public class ShortVideoTutorialController : ControllerBase
         return "unknown";
     }
 
+    private async Task<ParsedShortVideoSource> ResolveParsedSourceAsync(string videoUrl, string platform, string? manualText, string? requestedTitle)
+    {
+        var trimmedManual = manualText?.Trim();
+        var hasManualText = !string.IsNullOrWhiteSpace(trimmedManual);
+        var apiKey = ResolveTikHubApiKey();
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return new ParsedShortVideoSource(
+                CleanTitle(requestedTitle),
+                trimmedManual,
+                hasManualText ? "manual" : "metadata-fallback",
+                hasManualText ? "已使用用户提供的字幕/文案作为解析来源" : "TikHub API 密钥未配置，已使用链接元数据生成教程骨架",
+                null);
+        }
+
+        try
+        {
+            var parserNode = new WorkflowNode
+            {
+                NodeId = "short-video-parser",
+                Name = "短视频解析",
+                NodeType = CapsuleTypes.DouyinParser,
+                Config = new Dictionary<string, object?>
+                {
+                    ["apiBaseUrl"] = ResolveTikHubApiBaseUrl(),
+                    ["apiKey"] = apiKey,
+                    ["videoUrl"] = videoUrl,
+                },
+            };
+            var parserResult = await CapsuleExecutor.ExecuteDouyinParserAsync(
+                _serviceProvider,
+                parserNode,
+                new Dictionary<string, string>(),
+                new List<ExecutionArtifact>());
+            var metadataJson = parserResult.Artifacts.FirstOrDefault()?.InlineContent;
+            var metadata = ExtractParsedMetadata(metadataJson);
+
+            string? parsedText = null;
+            if (!string.IsNullOrWhiteSpace(metadataJson))
+            {
+                var textNode = new WorkflowNode
+                {
+                    NodeId = "short-video-text",
+                    Name = "视频内容转文本",
+                    NodeType = CapsuleTypes.VideoToText,
+                    Config = new Dictionary<string, object?>
+                    {
+                        ["extractMode"] = "metadata",
+                    },
+                };
+                var textResult = await CapsuleExecutor.ExecuteVideoToTextAsync(
+                    _serviceProvider,
+                    textNode,
+                    new Dictionary<string, string>(),
+                    new List<ExecutionArtifact>
+                    {
+                        new()
+                        {
+                            SlotId = "vt-in",
+                            Name = "视频信息",
+                            MimeType = "application/json",
+                            InlineContent = metadataJson,
+                        },
+                    },
+                    null);
+                parsedText = ExtractTranscript(textResult.Artifacts.FirstOrDefault()?.InlineContent);
+            }
+
+            var source = hasManualText ? trimmedManual : parsedText;
+            var mode = hasManualText ? "manual" : string.IsNullOrWhiteSpace(source) ? "metadata-fallback" : "tikhub-metadata";
+            var message = mode switch
+            {
+                "manual" => "已调用短视频解析器获取元数据，并使用用户提供的字幕/文案作为教程来源",
+                "tikhub-metadata" => "已调用短视频解析器获取标题、描述和元数据，并加工为教程来源",
+                _ => "短视频解析器未返回可用文案，已使用链接元数据生成教程骨架",
+            };
+            return new ParsedShortVideoSource(metadata.Title, source, mode, message, metadataJson);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "短视频解析器降级 runSource videoUrl={VideoUrl}", videoUrl);
+            return new ParsedShortVideoSource(
+                CleanTitle(requestedTitle),
+                trimmedManual,
+                hasManualText ? "manual" : "metadata-fallback",
+                hasManualText ? "短视频解析器暂不可用，已使用用户提供的字幕/文案作为解析来源" : "短视频解析器暂不可用，已使用链接元数据生成教程骨架",
+                null);
+        }
+    }
+
+    private string ResolveTikHubApiKey()
+        => (_config["ShortVideo:TikHubApiKey"]
+            ?? _config["TikHub:ApiKey"]
+            ?? Environment.GetEnvironmentVariable("TIKHUB_API_KEY")
+            ?? string.Empty).Trim();
+
+    private string ResolveTikHubApiBaseUrl()
+        => (_config["ShortVideo:TikHubApiBaseUrl"]
+            ?? _config["TikHub:ApiBaseUrl"]
+            ?? Environment.GetEnvironmentVariable("TIKHUB_API_BASE_URL")
+            ?? "https://tikhub.io/api/douyin").TrimEnd('/');
+
+    private static ParsedVideoMetadata ExtractParsedMetadata(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new ParsedVideoMetadata(null);
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            return new ParsedVideoMetadata(GetJsonString(root, "title", "desc", "description"));
+        }
+        catch
+        {
+            return new ParsedVideoMetadata(null);
+        }
+    }
+
+    private static string? ExtractTranscript(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            return FirstNonEmpty(
+                GetJsonString(root, "transcript", "body", "description", "title"),
+                root.TryGetProperty("bullets", out var bullets) && bullets.ValueKind == JsonValueKind.Array
+                    ? string.Join("\n", bullets.EnumerateArray().Select(x => x.GetString()).Where(x => !string.IsNullOrWhiteSpace(x)))
+                    : null);
+        }
+        catch
+        {
+            return json.Trim();
+        }
+    }
+
+    private static string? GetJsonString(JsonElement root, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (root.TryGetProperty(name, out var value))
+            {
+                if (value.ValueKind == JsonValueKind.String)
+                    return value.GetString();
+                if (value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+                    return value.ToString();
+            }
+        }
+        return null;
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
+
     private static string NormalizeSourceText(string? sourceText, string title, string videoUrl, string platform)
     {
         var text = sourceText?.Trim();
@@ -329,7 +493,7 @@ public class ShortVideoTutorialController : ControllerBase
         sb.AppendLine();
         sb.AppendLine($"> 来源平台：{platform}");
         sb.AppendLine($"> 原始链接：{videoUrl}");
-        sb.AppendLine($"> 生成方式：{(sourceMode == "manual" ? "用户提供文案/字幕，服务端加工" : "链接元数据兜底，等待补充转写")}");
+        sb.AppendLine($"> 生成方式：{SourceModeLabel(sourceMode)}");
         sb.AppendLine();
         sb.AppendLine("## 教程目标");
         sb.AppendLine();
@@ -485,8 +649,17 @@ public class ShortVideoTutorialController : ControllerBase
         _ => "网页教程风格",
     };
 
+    private static string SourceModeLabel(string sourceMode) => sourceMode switch
+    {
+        "manual" => "用户提供文案/字幕，服务端加工",
+        "tikhub-metadata" => "短视频解析器提取元数据，服务端加工",
+        _ => "链接元数据兜底，等待补充转写",
+    };
+
     private sealed record TutorialStep(string Title, string Body);
     private sealed record TutorialContent(string Summary, string Markdown);
+    private sealed record ParsedShortVideoSource(string? Title, string? SourceText, string SourceMode, string Message, string? MetadataJson);
+    private sealed record ParsedVideoMetadata(string? Title);
 }
 
 public class CreateShortVideoTutorialRequest
