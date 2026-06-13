@@ -66,6 +66,7 @@ import {
   canExecuteWorkflowTransition,
   isGlobalProductAdmin,
   transitionNeedsDialog,
+  type ProductWorkflowContext,
 } from './workflowTransitionGuard';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
@@ -890,7 +891,7 @@ function StateBoard({
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overState, setOverState] = useState<string | null>(null);
-  const [product, setProduct] = useState<Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'> | null>(null);
+  const [product, setProduct] = useState<ProductWorkflowContext | null>(null);
   const [pendingTransition, setPendingTransition] = useState<{ item: Requirement; transition: WorkflowTransition } | null>(null);
   const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
   const permissions = useAuthStore((s) => s.permissions);
@@ -900,7 +901,14 @@ function StateBoard({
 
   useEffect(() => {
     void getProduct(productId).then((res) => {
-      if (res.success) setProduct({ ownerId: res.data.ownerId, adminIds: res.data.adminIds, memberIds: res.data.memberIds });
+      if (res.success) {
+        setProduct({
+          ownerId: res.data.ownerId,
+          ownerIds: res.data.ownerIds,
+          adminIds: res.data.adminIds,
+          memberIds: res.data.memberIds,
+        });
+      }
     });
   }, [productId]);
 

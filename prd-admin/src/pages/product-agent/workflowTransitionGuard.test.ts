@@ -6,10 +6,12 @@ import {
   missingTransitionFieldKeys,
   resolveWorkflowActorRoles,
   transitionNeedsDialog,
+  type ProductWorkflowContext,
 } from './workflowTransitionGuard';
 
-const product: Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'> = {
+const product: ProductWorkflowContext = {
   ownerId: 'owner-1',
+  ownerIds: ['owner-1'],
   adminIds: ['admin-1'],
   memberIds: ['member-1', 'admin-1'],
 };
@@ -19,6 +21,18 @@ describe('workflowTransitionGuard', () => {
     const roles = resolveWorkflowActorRoles('owner-1', product, false, { ownerId: 'owner-1', assigneeId: 'member-1' });
     expect(roles.has('owner')).toBe(true);
     expect(roles.has('assignee')).toBe(false);
+    expect(roles.has('product_admin')).toBe(true);
+  });
+
+  it('resolveWorkflowActorRoles treats secondary product owner as member', () => {
+    const multiOwnerProduct: ProductWorkflowContext = {
+      ownerId: 'owner-1',
+      ownerIds: ['owner-1', 'owner-2'],
+      adminIds: [],
+      memberIds: [],
+    };
+    const roles = resolveWorkflowActorRoles('owner-2', multiOwnerProduct, false, {});
+    expect(roles.has('member')).toBe(true);
     expect(roles.has('product_admin')).toBe(true);
   });
 

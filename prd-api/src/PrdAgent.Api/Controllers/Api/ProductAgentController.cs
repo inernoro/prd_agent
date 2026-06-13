@@ -106,7 +106,7 @@ public class ProductAgentController : ControllerBase
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return null;
         if (await CanManageAsync(userId)) return product;
-        if (product.OwnerId == userId || product.MemberIds.Contains(userId)) return product;
+        if (product.IsProductOwner(userId) || product.MemberIds.Contains(userId)) return product;
         return null;
     }
 
@@ -319,8 +319,8 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的产品类型"));
 
         var userId = GetUserId();
-        var owner = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var grade = string.IsNullOrWhiteSpace(request.Grade) ? ProductGrade.Normal : request.Grade;
+        var (ownerIds, ownerId, ownerName) = await ResolveProductOwnersAsync(request.OwnerIds);
 
         var product = new Product
         {
@@ -332,9 +332,10 @@ public class ProductAgentController : ControllerBase
             TemplateId = request.TemplateId,
             WorkflowDefId = request.WorkflowDefId,
             FormData = request.FormData ?? new(),
-            OwnerId = userId,
-            OwnerName = owner?.DisplayName,
-            MemberIds = (request.MemberIds ?? new()).Append(userId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList(),
+            OwnerIds = ownerIds,
+            OwnerId = ownerId,
+            OwnerName = ownerName,
+            MemberIds = MergeMemberIds(request.MemberIds, ownerIds),
         };
         product.CurrentState = await ResolveInitialStateAsync(request.WorkflowDefId);
 
@@ -357,7 +358,6 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单次最多导入 500 条"));
 
         var userId = GetUserId();
-        var owner = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var defaultGrade = await ResolveGradeIdAsync(request.DefaultGrade, ProductGrade.Normal);
 
         var existingNames = (await _db.Products.Find(p => !p.IsDeleted).Project(p => p.Name).ToListAsync())
@@ -391,9 +391,10 @@ public class ProductAgentController : ControllerBase
                 Code = row.Code?.Trim(),
                 Description = row.Description?.Trim(),
                 Grade = grade,
-                OwnerId = userId,
-                OwnerName = owner?.DisplayName,
-                MemberIds = new List<string> { userId },
+                OwnerIds = new(),
+                OwnerId = string.Empty,
+                OwnerName = null,
+                MemberIds = new(),
             };
             product.CurrentState = await ResolveInitialStateAsync(null);
 
@@ -417,7 +418,10 @@ public class ProductAgentController : ControllerBase
         var b = Builders<Product>.Filter;
         var conds = new List<FilterDefinition<Product>> { b.Eq(p => p.IsDeleted, false) };
         if (!await CanManageAsync(userId))
-            conds.Add(b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
+            conds.Add(b.Or(
+                b.Eq(p => p.OwnerId, userId),
+                b.AnyEq(p => p.OwnerIds, userId),
+                b.AnyEq(p => p.MemberIds, userId)));
         if (!string.IsNullOrWhiteSpace(grade))
             conds.Add(b.Eq(p => p.Grade, grade));
         if (!string.IsNullOrWhiteSpace(keyword))
@@ -471,6 +475,16 @@ public class ProductAgentController : ControllerBase
         if (request.WorkflowDefId != null) update = update.Set(p => p.WorkflowDefId, request.WorkflowDefId);
         if (request.FormData != null) update = update.Set(p => p.FormData, request.FormData);
         if (request.MemberIds != null) update = update.Set(p => p.MemberIds, request.MemberIds);
+        if (request.OwnerIds != null)
+        {
+            var (ownerIds, ownerId, ownerName) = await ResolveProductOwnersAsync(request.OwnerIds);
+            update = update
+                .Set(p => p.OwnerIds, ownerIds)
+                .Set(p => p.OwnerId, ownerId)
+                .Set(p => p.OwnerName, ownerName);
+            if (ownerIds.Count > 0)
+                update = update.AddToSetEach(p => p.MemberIds, ownerIds);
+        }
 
         await _db.Products.UpdateOneAsync(p => p.Id == productId, update);
         var updated = await _db.Products.Find(p => p.Id == productId).FirstOrDefaultAsync();
@@ -484,7 +498,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        if (product.OwnerId != userId && !await CanManageAsync(userId))
+        if (!product.IsProductOwner(userId) && !await CanManageAsync(userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品负责人或管理员可删除"));
 
         await _db.Products.UpdateOneAsync(p => p.Id == productId,
@@ -503,19 +517,18 @@ public class ProductAgentController : ControllerBase
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
 
         // 成员全集：负责人 + 成员列表，去重去空
-        var allIds = new List<string> { product.OwnerId };
-        allIds.AddRange(product.MemberIds);
-        var ids = allIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        var ownerSet = product.EnumerateOwnerIds().ToHashSet();
+        var allIds = ownerSet.Concat(product.MemberIds).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
 
-        var users = await _db.Users.Find(u => ids.Contains(u.UserId)).ToListAsync();
+        var users = await _db.Users.Find(u => allIds.Contains(u.UserId)).ToListAsync();
         var nameById = users.ToDictionary(u => u.UserId, u => u.DisplayName);
         var adminSet = product.AdminIds.ToHashSet();
 
-        var members = ids.Select(id => new
+        var members = allIds.Select(id => new
         {
             userId = id,
             displayName = nameById.GetValueOrDefault(id, id),
-            role = id == product.OwnerId ? "owner" : (adminSet.Contains(id) ? "admin" : "member"),
+            role = ownerSet.Contains(id) ? "owner" : (adminSet.Contains(id) ? "admin" : "member"),
         })
         .OrderBy(m => m.role == "owner" ? 0 : m.role == "admin" ? 1 : 2)
         .ThenBy(m => m.displayName)
@@ -555,7 +568,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        if (memberUserId == product.OwnerId)
+        if (product.IsProductOwner(memberUserId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能移除产品负责人"));
 
         var isAdminTarget = product.AdminIds.Contains(memberUserId);
@@ -582,7 +595,7 @@ public class ProductAgentController : ControllerBase
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
         if (!await CanManageProductAdminsAsync(product, userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅负责人或管理员可指派产品管理员"));
-        if (memberUserId == product.OwnerId)
+        if (product.IsProductOwner(memberUserId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "负责人角色不可更改"));
 
         var role = (request.Role ?? "").Trim().ToLowerInvariant();
@@ -777,12 +790,27 @@ public class ProductAgentController : ControllerBase
         var status = submission.Status == ReviewStatuses.Done
             ? (passed == true ? "decision_pending" : "review_failed")
             : "review_pending";
+        if (item.Status is not ("review_pending" or "review_failed" or "draft"))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许同步 Agent 评审结果"));
+
+        var attemptNo = (item.ReviewAttempts?.Count ?? 0) + 1;
+        var attempt = new InitiationReviewAttempt
+        {
+            AttemptNo = attemptNo,
+            SubmissionId = submission.Id,
+            PlanFileName = submission.FileName,
+            ReviewScore = result?.TotalScore,
+            ReviewPassed = passed,
+            StartedAt = submission.SubmittedAt,
+            CompletedAt = submission.CompletedAt ?? DateTime.UtcNow,
+        };
         await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
             Builders<ProductInitiation>.Update
                 .Set(x => x.ReviewSubmissionId, submission.Id)
                 .Set(x => x.ReviewScore, result == null ? null : result.TotalScore)
                 .Set(x => x.ReviewPassed, passed)
                 .Set(x => x.Status, status)
+                .Push(x => x.ReviewAttempts, attempt)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
@@ -801,14 +829,31 @@ public class ProductAgentController : ControllerBase
 
         if (request.ReviewMeetingRequired && !request.ExpectedMeetingAt.HasValue)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写预计评审会时间"));
+        if (request.ReviewMeetingRequired)
+        {
+            var draftCount = request.MeetingDraftCount is >= 1 and <= 3 ? request.MeetingDraftCount.Value : 1;
+            if (draftCount < 1 || draftCount > 3)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "会议稿次须为 1–3 稿"));
+        }
         if (!request.ReviewMeetingRequired && string.IsNullOrWhiteSpace(request.PrimaryOwnerId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择产品主负责人"));
+
+        var meetingDraftCount = request.ReviewMeetingRequired
+            ? (request.MeetingDraftCount is >= 1 and <= 3 ? request.MeetingDraftCount.Value : 1)
+            : (int?)null;
+        var meetingRounds = request.ReviewMeetingRequired && meetingDraftCount.HasValue
+            ? Enumerable.Range(1, meetingDraftCount.Value)
+                .Select(r => new InitiationMeetingDraftRound { Round = r })
+                .ToList()
+            : new List<InitiationMeetingDraftRound>();
 
         var tCode = request.ReviewMeetingRequired ? await GenerateWorkflowCodeAsync(item.ProductId, "T", item.VersionType) : null;
         await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
             Builders<ProductInitiation>.Update
                 .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired)
                 .Set(x => x.ExpectedMeetingAt, request.ExpectedMeetingAt)
+                .Set(x => x.MeetingDraftCount, meetingDraftCount)
+                .Set(x => x.MeetingDraftRounds, meetingRounds)
                 .Set(x => x.PrimaryOwnerId, request.PrimaryOwnerId)
                 .Set(x => x.TCode, tCode)
                 .Set(x => x.Status, request.ReviewMeetingRequired ? "approved" : "owner_pending")
@@ -816,6 +861,49 @@ public class ProductAgentController : ControllerBase
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         if (request.ReviewMeetingRequired)
             await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Approved, GetUserId(), "立项评审通过，自动流转到已立项");
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    /// <summary>回填 / 修改线下评审会各稿次时间与结论（仅申请人或管理员）</summary>
+    [HttpPatch("initiations/{id}/meeting")]
+    public async Task<IActionResult> UpdateInitiationMeeting(string id, [FromBody] UpdateInitiationMeetingRequest request)
+    {
+        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.ReviewMeetingRequired != true)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "该立项未选择召开评审会"));
+        if (item.CreatedBy != GetUserId() && !await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可更新会议结果"));
+
+        var maxRound = item.MeetingDraftCount is >= 1 and <= 3 ? item.MeetingDraftCount.Value : 1;
+        var rounds = (request.Rounds ?? new List<InitiationMeetingDraftRound>())
+            .Where(r => r.Round >= 1 && r.Round <= maxRound)
+            .GroupBy(r => r.Round)
+            .Select(g => g.Last())
+            .OrderBy(r => r.Round)
+            .ToList();
+
+        DateTime? firstAt = null, secondAt = null, thirdAt = null;
+        foreach (var r in rounds)
+        {
+            if (r.Round == 1) firstAt = r.HeldAt;
+            if (r.Round == 2) secondAt = r.HeldAt;
+            if (r.Round == 3) thirdAt = r.HeldAt;
+        }
+
+        var allPassed = rounds.Count >= maxRound && rounds.All(r => r.Passed == true);
+        var projectAt = allPassed ? rounds.Where(r => r.HeldAt.HasValue).Max(r => r.HeldAt) : item.ProjectAt;
+
+        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductInitiation>.Update
+                .Set(x => x.MeetingDraftRounds, rounds)
+                .Set(x => x.FirstDraftMeetingAt, firstAt)
+                .Set(x => x.SecondDraftMeetingAt, secondAt)
+                .Set(x => x.ThirdDraftMeetingAt, thirdAt)
+                .Set(x => x.ProjectAt, projectAt)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -4951,11 +5039,11 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>能否管理本产品成员（增删普通成员）：全局管理 | 产品负责人 | 产品管理员。</summary>
     private async Task<bool> CanManageProductMembersAsync(Product p, string uid)
-        => await CanManageAsync(uid) || p.OwnerId == uid || p.AdminIds.Contains(uid);
+        => await CanManageAsync(uid) || p.IsProductOwner(uid) || p.AdminIds.Contains(uid);
 
     /// <summary>能否指派/撤销产品管理员：全局管理 | 产品负责人（产品管理员不可指派同级）。</summary>
     private async Task<bool> CanManageProductAdminsAsync(Product p, string uid)
-        => await CanManageAsync(uid) || p.OwnerId == uid;
+        => await CanManageAsync(uid) || p.IsProductOwner(uid);
 
     /// <summary>可访问的产品 Id 集合；返回 null 表示"全部"（管理层/管理权限）。</summary>
     private async Task<HashSet<string>?> GetAccessibleProductIdsAsync(string userId)
@@ -4963,7 +5051,10 @@ public class ProductAgentController : ControllerBase
         if (await CanManageAsync(userId)) return null;
         var b = Builders<Product>.Filter;
         var filter = b.And(b.Eq(p => p.IsDeleted, false),
-            b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
+            b.Or(
+                b.Eq(p => p.OwnerId, userId),
+                b.AnyEq(p => p.OwnerIds, userId),
+                b.AnyEq(p => p.MemberIds, userId)));
         var ids = await _db.Products.Find(filter).Project(p => p.Id).ToListAsync();
         return ids.ToHashSet();
     }
@@ -5555,6 +5646,36 @@ public class ProductAgentController : ControllerBase
         return $"{prefix}{max[0]}.{max[1]}.{max[2]}";
     }
 
+    /// <summary>解析产品负责人列表，同步 OwnerId / OwnerName 反规范化字段。</summary>
+    private async Task<(List<string> OwnerIds, string OwnerId, string? OwnerName)> ResolveProductOwnersAsync(List<string>? requestOwnerIds)
+    {
+        var ownerIds = (requestOwnerIds ?? new())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (ownerIds.Count == 0)
+            return (new List<string>(), string.Empty, null);
+
+        var names = await UserNamesAsync(ownerIds);
+        var ownerId = ownerIds[0];
+        var displayNames = ownerIds
+            .Select(id => names.TryGetValue(id, out var n) && !string.IsNullOrWhiteSpace(n) ? n : id)
+            .ToList();
+        var ownerName = string.Join("、", displayNames);
+        return (ownerIds, ownerId, ownerName);
+    }
+
+    /// <summary>合并成员列表与负责人（负责人自动加入成员）。</summary>
+    private static List<string> MergeMemberIds(List<string>? memberIds, IReadOnlyList<string> ownerIds)
+    {
+        var merged = new List<string>();
+        if (memberIds != null)
+            merged.AddRange(memberIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()));
+        merged.AddRange(ownerIds);
+        return merged.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToList();
+    }
+
     /// <summary>根据流程定义解析初始状态 Key（未绑定或定义缺失时回退内置「待评审」= new）。</summary>
     private async Task<string> ResolveInitialStateAsync(string? workflowDefId)
     {
@@ -5807,6 +5928,7 @@ public class UpsertProductRequest
     public string? WorkflowDefId { get; set; }
     public Dictionary<string, string>? FormData { get; set; }
     public List<string>? MemberIds { get; set; }
+    public List<string>? OwnerIds { get; set; }
 }
 
 public class AddProductMembersRequest
@@ -5856,6 +5978,13 @@ public class InitiationDecisionRequest
     public bool ReviewMeetingRequired { get; set; }
     public DateTime? ExpectedMeetingAt { get; set; }
     public string? PrimaryOwnerId { get; set; }
+    /// <summary>需开会时计划稿次数（1–3）</summary>
+    public int? MeetingDraftCount { get; set; }
+}
+
+public class UpdateInitiationMeetingRequest
+{
+    public List<InitiationMeetingDraftRound>? Rounds { get; set; }
 }
 
 public class ApproveInitiationRequest

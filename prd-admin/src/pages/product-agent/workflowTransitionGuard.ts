@@ -61,6 +61,14 @@ export interface WorkflowTransitionEntitySnapshot {
   hasCompletedRelease?: boolean;
 }
 
+export type ProductWorkflowContext = Pick<Product, 'ownerId' | 'ownerIds' | 'adminIds' | 'memberIds'>;
+
+export function isProductOwner(userId: string, product: Pick<Product, 'ownerId' | 'ownerIds'>): boolean {
+  if (!userId) return false;
+  if (product.ownerIds?.includes(userId)) return true;
+  return !!product.ownerId && product.ownerId === userId;
+}
+
 export function isGlobalProductAdmin(permissions: string[]): boolean {
   return permissions.includes('super')
     || permissions.includes('product-agent.manage')
@@ -69,7 +77,7 @@ export function isGlobalProductAdmin(permissions: string[]): boolean {
 
 export function resolveWorkflowActorRoles(
   userId: string,
-  product: Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'>,
+  product: ProductWorkflowContext,
   isGlobalAdmin: boolean,
   entity: WorkflowTransitionEntitySnapshot,
 ): Set<WorkflowTransitionRole> {
@@ -85,11 +93,11 @@ export function resolveWorkflowActorRoles(
   const effectiveAssignee = entity.assigneeId?.trim() || ownerId;
   if (effectiveAssignee && effectiveAssignee === userId) roles.add('assignee');
 
-  if (isGlobalAdmin || product.ownerId === userId || product.adminIds.includes(userId)) {
+  if (isGlobalAdmin || isProductOwner(userId, product) || product.adminIds.includes(userId)) {
     roles.add('product_admin');
   }
 
-  if (product.ownerId === userId || product.memberIds.includes(userId) || product.adminIds.includes(userId)) {
+  if (isProductOwner(userId, product) || product.memberIds.includes(userId) || product.adminIds.includes(userId)) {
     roles.add('member');
   }
 
@@ -99,7 +107,7 @@ export function resolveWorkflowActorRoles(
 export function canExecuteWorkflowTransition(
   userId: string,
   transition: Pick<WorkflowTransition, 'allowedRoles'>,
-  product: Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'>,
+  product: ProductWorkflowContext,
   isGlobalAdmin: boolean,
   entity: WorkflowTransitionEntitySnapshot,
 ): boolean {

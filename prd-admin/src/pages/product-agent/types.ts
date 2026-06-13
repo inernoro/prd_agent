@@ -74,6 +74,7 @@ export interface Product {
   formData: Record<string, string>;
   knowledgeStoreId?: string | null;
   ownerId: string;
+  ownerIds?: string[];
   ownerName?: string | null;
   memberIds: string[];
   adminIds: string[];
@@ -146,6 +147,9 @@ export interface ProductInitiation {
   reviewPassed?: boolean | null;
   reviewMeetingRequired?: boolean | null;
   expectedMeetingAt?: string | null;
+  meetingDraftCount?: number | null;
+  meetingDraftRounds?: InitiationMeetingDraftRound[];
+  reviewAttempts?: InitiationReviewAttempt[];
   firstDraftMeetingAt?: string | null;
   secondDraftMeetingAt?: string | null;
   thirdDraftMeetingAt?: string | null;
@@ -162,6 +166,24 @@ export interface ProductInitiation {
   legacyData?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface InitiationReviewAttempt {
+  id: string;
+  attemptNo: number;
+  submissionId?: string | null;
+  planFileName?: string | null;
+  reviewScore?: number | null;
+  reviewPassed?: boolean | null;
+  startedAt: string;
+  completedAt?: string | null;
+}
+
+export interface InitiationMeetingDraftRound {
+  round: number;
+  heldAt?: string | null;
+  passed?: boolean | null;
+  notes?: string | null;
 }
 
 export interface ProductRelease {

@@ -5,7 +5,7 @@ import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'luci
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
   listInitiations, listProductMembers, listProducts, listReleases, listRequirements,
-  syncInitiationReview,
+  syncInitiationReview, getProduct,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
@@ -25,6 +25,7 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { toProductOptions } from './comboboxOptions';
 import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
+import { resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
 import {
   ListSelectionHeaderCell,
@@ -56,11 +57,19 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [members, setMembers] = useState<ProductMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState<'initiation' | null>(null);
+  const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
   const [releaseOwnerId, setReleaseOwnerId] = useState(currentUserId ?? '');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
+  const [productName, setProductName] = useState('');
+
+  useEffect(() => {
+    void getProduct(productId).then((res) => {
+      if (res.success) setProductName(res.data.name);
+    });
+  }, [productId]);
 
   useEffect(() => {
     if (currentUserId && !releaseOwnerId) setReleaseOwnerId(currentUserId);
@@ -129,7 +138,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           </span>
         </div>
       </div>
-      <ReleaseTable productId={productId} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
+      <ReleaseTable productId={productId} productName={productName} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
     </> : <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <RecordToolbar query={query} onQueryChange={setQuery} scope={recordScope} onScopeChange={setRecordScope}
@@ -139,28 +148,64 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
         </div>
       </div>
-      <InitiationTable productId={productId} items={visibleInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
+      <InitiationTable
+        productId={productId}
+        productName={productName}
+        items={visibleInitiations}
+        members={members}
+        currentUserId={currentUserId}
+        onRetry={setRetrySeed}
+        onChanged={reload}
+        readOnly={recordScope === 'all'}
+      />
     </>}
     {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
+    {retrySeed && (
+      <InitiationWizard
+        productId={productId}
+        requirements={requirements}
+        members={members}
+        seed={retrySeed}
+        onClose={() => setRetrySeed(null)}
+        onChanged={async () => { setRetrySeed(null); await reload(); }}
+      />
+    )}
   </div>;
 }
 
-function InitiationWizard({ productId, requirements, members, onClose, onChanged }: {
-  productId: string; requirements: Requirement[]; members: ProductMember[]; onClose: () => void; onChanged: () => Promise<void>;
+export function InitiationWizard({ productId, requirements, members, onClose, onChanged, seed }: {
+  productId: string;
+  requirements: Requirement[];
+  members: ProductMember[];
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+  /** 评审未通过时重新发起：预填基础信息并直接进入 Agent 评审步骤 */
+  seed?: ProductInitiation;
 }) {
-  const [step, setStep] = useState(1);
-  const [item, setItem] = useState<ProductInitiation | null>(null);
-  const [projectType, setProjectType] = useState<'standard' | 'custom'>('standard');
-  const [customerSource, setCustomerSource] = useState('');
-  const [linkedProductId, setLinkedProductId] = useState(productId);
+  const isRetry = Boolean(seed);
+  const wizardTitle = seed?.status === 'decision_pending'
+    ? '继续立项决策'
+    : isRetry
+      ? '重新发起立项'
+      : '发起立项';
+  const [step, setStep] = useState(() => {
+    if (seed?.status === 'review_failed') return 2;
+    if (seed?.status === 'decision_pending') return 3;
+    return 1;
+  });
+  const [item, setItem] = useState<ProductInitiation | null>(seed ?? null);
+  const [projectType, setProjectType] = useState<'standard' | 'custom'>(seed?.projectType ?? 'standard');
+  const [customerSource, setCustomerSource] = useState(seed?.customerSource ?? '');
+  const [linkedProductId, setLinkedProductId] = useState(seed?.linkedProductId ?? productId);
   const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
-  const [planName, setPlanName] = useState('');
-  const [planUrl, setPlanUrl] = useState('');
-  const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>('minor');
-  const [requirementIds, setRequirementIds] = useState<string[]>([]);
+  const [planName, setPlanName] = useState(seed?.planName ?? '');
+  const [planUrl, setPlanUrl] = useState(seed?.planUrl ?? '');
+  const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>(seed?.versionType ?? 'minor');
+  const [requirementIds, setRequirementIds] = useState<string[]>(seed?.requirementIds ?? []);
   const [file, setFile] = useState<File | null>(null);
   const [meeting, setMeeting] = useState(false);
   const [meetingAt, setMeetingAt] = useState('');
+  const [meetingDraftCount, setMeetingDraftCount] = useState(seed?.meetingDraftCount ?? 1);
   const [ownerId, setOwnerId] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -353,13 +398,14 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
       reviewMeetingRequired: meeting,
       expectedMeetingAt: meeting && meetingAt ? new Date(meetingAt).toISOString() : undefined,
       primaryOwnerId: meeting ? undefined : ownerId,
+      meetingDraftCount: meeting ? meetingDraftCount : undefined,
     });
     setBusy(false);
     if (!res.success) return setMessage(res.error?.message ?? '提交失败');
     await onChanged(); onClose();
   };
 
-  return <Modal title="发起立项" onClose={onClose} width="max-w-3xl">
+  return <Modal title={wizardTitle} onClose={onClose} width="max-w-3xl">
     <Stepper step={step} />
     {step === 1 && <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
       <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
@@ -413,9 +459,20 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
     </div>}
     {step === 3 && <div className="space-y-4">
       <Field label="是否需要开评审会"><Select value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></Select></Field>
-      {meeting ? <Field label="预计评审会时间 *"><Input type="datetime-local" value={meetingAt} onChange={(e) => setMeetingAt(e.target.value)} /></Field>
-        : <Field label="产品主负责人 *"><Select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}><option value="">请选择</option>{members.map((m) => <option key={m.userId} value={m.userId}>{m.displayName}</option>)}</Select></Field>}
-      <Info>{meeting ? '提交后立即获取 T 立项号。' : '提交后流转给主负责人，负责人同意后生成 T 立项号。'}</Info>
+      {meeting ? <>
+        <Field label="预计评审会时间 *"><Input type="datetime-local" value={meetingAt} onChange={(e) => setMeetingAt(e.target.value)} /></Field>
+        <Field label="计划召开稿次 *">
+          <Select value={String(meetingDraftCount)} onChange={(e) => setMeetingDraftCount(Number(e.target.value))}>
+            <option value="1">1 稿（仅第一稿）</option>
+            <option value="2">2 稿（第一稿 + 第二稿）</option>
+            <option value="3">3 稿（第一稿 + 第二稿 + 第三稿）</option>
+          </Select>
+        </Field>
+        <Info>提交后立即获取 T 立项号。线下各稿会议时间与是否通过请在立项详情中后续回填。</Info>
+      </> : <>
+        <Field label="产品主负责人 *"><Select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}><option value="">请选择</option>{members.map((m) => <option key={m.userId} value={m.userId}>{m.displayName}</option>)}</Select></Field>
+        <Info>提交后流转给主负责人，负责人同意后生成 T 立项号。</Info>
+      </>}
     </div>}
     {message && <div className="mt-4 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">{message}</div>}
     <div className="mt-6 flex justify-end gap-2"><Secondary onClick={onClose}>取消</Secondary>
@@ -431,9 +488,15 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
   </Modal>;
 }
 
-function InitiationTable({ productId, items, members, onChanged, readOnly }: {
+function InitiationTable({ productId, productName, items, members, currentUserId, onRetry, onChanged, readOnly }: {
   productId: string;
-  items: ProductInitiation[]; members: ProductMember[]; onChanged: () => Promise<void>; readOnly: boolean;
+  productName: string;
+  items: ProductInitiation[];
+  members: ProductMember[];
+  currentUserId?: string;
+  onRetry: (item: ProductInitiation) => void;
+  onChanged: () => Promise<void>;
+  readOnly: boolean;
 }) {
   const navigate = useNavigate();
   const names = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
@@ -446,10 +509,10 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
   return (
     <>
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']} selection={tableSelection}>
+      <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注', '操作']} selection={tableSelection}>
         {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')} onClick={() => openDetail(item.id)}>
           <ListTableSelectionCell selection={tableSelection} id={item.id} />
-          <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
+          <Td>{resolveVersionProductLabel(item, productName)}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
         ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
@@ -465,14 +528,23 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
       <Td>{formatDate(item.projectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td>
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
+      <Td onClick={(e) => e.stopPropagation()}>
+        {!readOnly && item.createdBy === currentUserId && item.status === 'review_failed' && (
+          <button type="button" onClick={() => onRetry(item)} className="text-amber-200 hover:underline">重新发起</button>
+        )}
+        {!readOnly && item.createdBy === currentUserId && item.status === 'decision_pending' && (
+          <button type="button" onClick={() => onRetry(item)} className="text-cyan-300 hover:underline">继续决策</button>
+        )}
+      </Td>
     </tr>)}{items.length === 0 && <Empty cols={17}>暂无立项记录</Empty>}
       </Table>
     </>
   );
 }
 
-function ReleaseTable({ productId, items, requirements, members, onChanged, readOnly }: {
+function ReleaseTable({ productId, productName, items, requirements, members, onChanged, readOnly }: {
   productId: string;
+  productName: string;
   items: ProductRelease[]; requirements: Requirement[]; members: ProductMember[]; onChanged: () => Promise<void>; readOnly: boolean;
 }) {
   const navigate = useNavigate();
@@ -505,10 +577,10 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
   });
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-    <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={tableSelection}>
+    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]')} onClick={() => openRelease(item.id)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
-      <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
+      <Td>{resolveVersionProductLabel(item, productName)}</Td>
       <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
       <Td mono>{item.initiationId && item.tCode
         ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item.initiationId!); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
@@ -524,7 +596,7 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
         : readOnly ? <span className="text-white/35">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-white/50">填写地址</button></div>
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-    </tr>)}{items.length === 0 && <Empty cols={16}>暂无上线记录</Empty>}
+    </tr>)}{items.length === 0 && <Empty cols={15}>暂无上线记录</Empty>}
   </Table>
   </>;
 }

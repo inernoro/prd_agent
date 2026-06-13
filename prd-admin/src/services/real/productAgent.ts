@@ -22,6 +22,7 @@ import type {
   DescTemplate,
   ProductMembersResult,
   ProductInitiation,
+  InitiationMeetingDraftRound,
   ProductRelease,
   ReleaseFeatureItem,
 } from '@/pages/product-agent/types';
@@ -125,8 +126,12 @@ export function decideInitiation(id: string, body: {
   reviewMeetingRequired: boolean;
   expectedMeetingAt?: string;
   primaryOwnerId?: string;
+  meetingDraftCount?: number;
 }) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/decision`, { method: 'POST', body });
+}
+export function updateInitiationMeeting(id: string, body: { rounds: InitiationMeetingDraftRound[] }) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/meeting`, { method: 'PATCH', body });
 }
 export function approveInitiation(id: string, comment?: string) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/approve`, { method: 'POST', body: { comment } });
