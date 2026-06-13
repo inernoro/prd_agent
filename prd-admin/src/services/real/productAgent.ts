@@ -119,6 +119,17 @@ export function createInitiation(productId: string, body: {
 }) {
   return apiRequest<ProductInitiation>(`/api/product/products/${productId}/initiations`, { method: 'POST', body });
 }
+export function updateInitiation(id: string, body: {
+  linkedProductId: string;
+  projectType: 'standard' | 'custom';
+  customerSource?: string;
+  planName: string;
+  planUrl?: string;
+  versionType: 'major' | 'medium' | 'minor';
+  requirementIds: string[];
+}) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}`, { method: 'PATCH', body });
+}
 export function syncInitiationReview(id: string, submissionId: string) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/review`, { method: 'POST', body: { submissionId } });
 }

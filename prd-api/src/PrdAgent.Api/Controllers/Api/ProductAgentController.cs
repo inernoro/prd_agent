@@ -771,6 +771,47 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(item));
     }
 
+    [HttpPatch("initiations/{id}")]
+    public async Task<IActionResult> UpdateInitiation(string id, [FromBody] CreateInitiationRequest request)
+    {
+        var userId = GetUserId();
+        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.CreatedBy != userId && !await CanManageAsync(userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可修改该立项记录"));
+        if (item.Status is not ("draft" or "review_pending" or "review_failed" or "decision_pending"))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许修改基础信息"));
+
+        if (string.IsNullOrWhiteSpace(request.PlanName))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方案名称不能为空"));
+        if (string.IsNullOrWhiteSpace(request.LinkedProductId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择产品"));
+        if (request.ProjectType == "custom" && string.IsNullOrWhiteSpace(request.CustomerSource))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "定制项目必须填写客户来源"));
+
+        var linkedProduct = await FindAccessibleProductAsync(request.LinkedProductId.Trim(), userId);
+        if (linkedProduct == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "所选产品不存在或无权访问"));
+
+        var (systemName, appName) = await ResolveInitiationSystemAppNamesAsync(linkedProduct);
+
+        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductInitiation>.Update
+                .Set(x => x.LinkedProductId, linkedProduct.Id)
+                .Set(x => x.ProjectType, request.ProjectType == "custom" ? "custom" : "standard")
+                .Set(x => x.SystemName, systemName)
+                .Set(x => x.AppName, appName)
+                .Set(x => x.CustomerSource, request.CustomerSource?.Trim())
+                .Set(x => x.PlanName, request.PlanName.Trim())
+                .Set(x => x.PlanUrl, string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim())
+                .Set(x => x.VersionType, NormalizeVersionType(request.VersionType))
+                .Set(x => x.RequirementIds, request.RequirementIds?.Distinct().ToList() ?? new())
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
     [HttpPost("initiations/{id}/review")]
     public async Task<IActionResult> SyncInitiationReview(string id, [FromBody] SyncInitiationReviewRequest request)
     {
@@ -790,7 +831,7 @@ public class ProductAgentController : ControllerBase
         var status = submission.Status == ReviewStatuses.Done
             ? (passed == true ? "decision_pending" : "review_failed")
             : "review_pending";
-        if (item.Status is not ("review_pending" or "review_failed" or "draft"))
+        if (item.Status is not ("review_pending" or "review_failed" or "draft" or "decision_pending"))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许同步 Agent 评审结果"));
 
         var attemptNo = (item.ReviewAttempts?.Count ?? 0) + 1;

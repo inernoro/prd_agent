@@ -5,7 +5,7 @@ import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'luci
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
   listInitiations, listProductMembers, listProducts, listReleases, listRequirements,
-  syncInitiationReview, getProduct,
+  syncInitiationReview, updateInitiation, getProduct,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
@@ -309,20 +309,32 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
 
   const productOptions = useMemo(() => toProductOptions(catalogProducts), [catalogProducts]);
 
-  const createBase = async () => {
+  const basePayload = () => ({
+    linkedProductId,
+    projectType,
+    customerSource: projectType === 'custom' ? customerSource : undefined,
+    planName,
+    planUrl: planUrl.trim() || undefined,
+    versionType,
+    requirementIds,
+  });
+
+  const goPrevStep = () => {
+    if (step <= 1 || reviewRunning || busy) return;
+    setMessage('');
+    setStep((s) => s - 1);
+  };
+
+  const saveStep1 = async () => {
     if (!linkedProductId.trim()) return setMessage('请选择产品');
     if (!planName.trim()) return setMessage('请填写方案名称');
     if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
     setBusy(true);
-    const res = await createInitiation(productId, {
-      linkedProductId,
-      projectType,
-      customerSource: projectType === 'custom' ? customerSource : undefined,
-      planName,
-      planUrl: planUrl.trim() || undefined,
-      versionType,
-      requirementIds,
-    });
+    const payload = basePayload();
+    const editable = item && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
+    const res = editable && item
+      ? await updateInitiation(item.id, payload)
+      : await createInitiation(productId, payload);
     setBusy(false);
     if (!res.success) return setMessage(res.error?.message ?? '保存失败');
     setItem(res.data); setStep(2); setMessage('');
@@ -494,8 +506,15 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
       </>}
     </div>}
     {message && <div className="mt-4 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">{message}</div>}
-    <div className="mt-6 flex justify-end gap-2"><Secondary onClick={onClose}>取消</Secondary>
-      {step === 1 && <Primary onClick={createBase} disabled={busy}>{busy ? '保存中...' : '下一步'}</Primary>}
+    <div className="mt-6 flex items-center justify-between gap-2">
+      <div>
+        {step > 1 && (
+          <Secondary onClick={goPrevStep} disabled={busy || reviewRunning}>上一步</Secondary>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Secondary onClick={onClose} disabled={reviewRunning}>取消</Secondary>
+      {step === 1 && <Primary onClick={saveStep1} disabled={busy}>{busy ? '保存中...' : '下一步'}</Primary>}
       {step === 2 && (
         <Primary onClick={runReview} disabled={busy || !file}>
           {reviewRunning && <Loader2 size={14} className="animate-spin" />}
@@ -503,6 +522,7 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
         </Primary>
       )}
       {step === 3 && <Primary onClick={submitDecision} disabled={busy || (meeting ? !meetingAt : !ownerId)}>提交立项</Primary>}
+      </div>
     </div>
   </Modal>;
 }
