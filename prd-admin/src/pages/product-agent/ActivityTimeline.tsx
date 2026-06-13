@@ -137,7 +137,7 @@ function ActivityRow({ a }: { a: ProductActivity }) {
           <span className="text-xs text-white/80">{a.actorName || a.actorId}</span>
           <span className="text-[10px] text-white/35 ml-auto">{fmt(a.createdAt)}</span>
         </div>
-        <div className="text-sm text-white/85 prose-product pl-5" dangerouslySetInnerHTML={{ __html: sanitizeHtml(enrichContentWithMentions(a.content)) }} />
+        <div className="text-sm text-white/85 prose-product pl-5" dangerouslySetInnerHTML={{ __html: sanitizeHtml(enrichContentWithMentions(a.content ?? '')) }} />
       </div>
     );
   }
