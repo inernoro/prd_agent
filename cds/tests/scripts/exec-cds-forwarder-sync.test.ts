@@ -142,4 +142,11 @@ describe('exec_cds.sh forwarder self-sync', () => {
     expect(forwarderRunCase).not.toContain('record_forwarder_runtime_signature');
     expect(script).toContain('sync_forwarder_if_needed');
   });
+
+  it('runs master dependency install in CI mode for non-interactive systemd', () => {
+    const script = readFileSync(scriptPath, 'utf8');
+    const masterRunCase = script.match(/\n  master-run\)([\s\S]*?)\n  forwarder-run\)/)?.[1] || '';
+
+    expect(masterRunCase).toContain('CI=true pnpm install --frozen-lockfile --prefer-offline');
+  });
 });

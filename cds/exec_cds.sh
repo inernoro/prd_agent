@@ -3061,7 +3061,7 @@ case "$CMD" in
     # systemd Restart=always 会无限重启,污染日志且永远起不来。
     # 显式 exit 78(EX_CONFIG)告诉 systemd 这是配置/依赖问题,operator 看 status
     # 一眼区分"代码 bug 崩"vs"依赖装不上",对应不同 runbook。
-    if ! pnpm install --frozen-lockfile --prefer-offline; then
+    if ! CI=true pnpm install --frozen-lockfile --prefer-offline; then
       err "[master-run] pnpm install 失败 — 中止启动,避免 node 用陈旧 node_modules"
       err "[master-run] 排查: (a) pnpm-lock.yaml 是否与 package.json 同步 (b) ~/.pnpm-store 是否健康 (c) 磁盘空间"
       exit 78  # EX_CONFIG — operator 友好的 systemd 退出码
