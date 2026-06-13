@@ -236,7 +236,7 @@ const FOCUSED_TOOLBOX_IDS = [
 const SHORT_VIDEO_TOOLBOX_ITEM: ToolboxItem = {
   id: 'builtin-short-video-parser',
   name: '短视频解析',
-  description: '粘贴短视频链接后，默认保存原始素材到知识库，再提供文案和时间轴加工入口',
+  description: '粘贴短视频链接后，先保存原始视频到知识库，再基于视频转写继续加工',
   icon: 'Video',
   category: 'builtin',
   type: 'builtin',
@@ -244,7 +244,7 @@ const SHORT_VIDEO_TOOLBOX_ITEM: ToolboxItem = {
   agentKey: 'short-video-parser',
   routePath: '/document-store',
   permission: 'document-store.write',
-  tags: ['短视频', '抖音', 'TikTok', '解析', '素材', '字幕', '时间轴', '知识库'],
+  tags: ['短视频', '抖音', 'TikTok', '解析', '视频', '转写', '知识库'],
   usageCount: 0,
   createdAt: new Date().toISOString(),
   createdByName: '官方',
@@ -257,8 +257,8 @@ type ShortVideoResultLike = {
   run: import('@/services').ShortVideoMaterialRun;
   storeId: string;
   sourceEntryId: string;
-  transcriptEntryId: string;
-  timelineEntryId: string;
+  transcriptEntryId?: string;
+  timelineEntryId?: string;
 };
 
 function shortVideoRunStorageKey(storeId: string) {
@@ -279,20 +279,20 @@ function extractUrl(text: string): string | null {
 }
 
 function shortVideoResultFromRun(run: import('@/services').ShortVideoMaterialRun): ShortVideoResultLike | null {
-  if (!run.storeId || !run.sourceEntryId || !run.transcriptEntryId || !run.timelineEntryId) return null;
+  if (!run.storeId || !run.sourceEntryId) return null;
   return {
     run,
     storeId: run.storeId,
     sourceEntryId: run.sourceEntryId,
-    transcriptEntryId: run.transcriptEntryId,
-    timelineEntryId: run.timelineEntryId,
+    transcriptEntryId: run.transcriptEntryId || undefined,
+    timelineEntryId: run.timelineEntryId || undefined,
   };
 }
 
 const SHORT_VIDEO_STAGE_LABELS: Record<string, string> = {
   parse: '解析链接',
-  source: '保存原始素材',
-  transcript: '生成字幕文稿',
+  source: '保存原始视频',
+  transcript: '视频转文字',
   timeline: '整理时间线',
   ready: '准备继续加工',
 };
@@ -331,19 +331,20 @@ function formatShortVideoProgress(run: import('@/services').ShortVideoMaterialRu
 function buildShortVideoResultMessage(result: ShortVideoResultLike): string {
   const title = result.run.title || '短视频素材';
   const parserMessage = result.run.parserMessage?.trim();
-  const isFallback = result.run.sourceMode === 'metadata-fallback';
+  const hasTranscript = Boolean(result.transcriptEntryId);
   return [
-    `已保存到知识库：「${title}」。`,
+    `已保存视频到知识库：「${title}」。`,
     parserMessage ? `解析说明：${parserMessage}` : null,
-    isFallback ? '当前已保存原始链接和待补充文案骨架；如需真实字幕内容，可继续补充字幕或使用视频转语音能力加工。' : null,
+    hasTranscript
+      ? '已从视频生成原始文字并保存到知识库；文案、润色和时间线属于后续加工，不会默认生成。'
+      : '当前只保存了原始视频；没有生成文字条目，也不会把平台标题或描述当成字幕。',
     '',
     '处理进度（来自服务器，刷新后仍会保留）：',
     ...((result.run.stages ?? []).map(formatShortVideoStageLine)),
     '',
-    '本次默认产物已经入库：',
-    `- 原始素材：${title} · 原始视频素材`,
-    `- 字幕文稿：${title} · 字幕文稿`,
-    `- 时间轴片段：${title} · 时间轴片段`,
+    '已入库产物：',
+    `- 原始视频：${title}.mp4`,
+    hasTranscript ? `- 原始文字：${title} · 原始转写文字` : null,
     '',
     '你可以先停在这里，也可以选择下方动作继续加工。',
   ].filter((line): line is string => line !== null).join('\n');
@@ -351,65 +352,62 @@ function buildShortVideoResultMessage(result: ShortVideoResultLike): string {
 
 function buildShortVideoQuickActions(result: ShortVideoResultLike): ChatQuickAction[] {
   const title = result.run.title || '短视频素材';
-  return [
+  const actions: ChatQuickAction[] = [
     {
       key: 'open-source',
-      label: '原始素材',
+      label: '原始视频',
       entryId: result.sourceEntryId,
-      title: `${title} · 原始视频素材.md`,
+      title: `${title}.mp4`,
       icon: 'video',
       group: 'assets',
-      description: '打开默认保存到知识库的原始视频素材',
+      description: '打开已保存到知识库的原始视频',
     },
+  ];
+
+  if (!result.transcriptEntryId) return actions;
+
+  actions.push(
     {
       key: 'open-transcript',
-      label: '字幕文稿',
+      label: '原始文字',
       entryId: result.transcriptEntryId,
-      title: `${title} · 字幕文稿.md`,
+      title: `${title} · 原始转写文字.md`,
       icon: 'text',
       group: 'assets',
-      description: '打开默认生成的字幕文稿',
-    },
-    {
-      key: 'open-timeline',
-      label: '时间轴',
-      entryId: result.timelineEntryId,
-      title: `${title} · 时间轴片段.md`,
-      icon: 'timeline',
-      group: 'assets',
-      description: '打开默认生成的时间轴片段',
+      description: '打开从视频转写出的原始文字',
     },
     {
       key: 'literal-copy',
       label: '一字不变',
       entryId: result.transcriptEntryId,
-      title: `${title} · 字幕文稿.md`,
-      initialInput: '请基于这份字幕文稿整理成可阅读文案，尽量一字不变保留原话，只处理段落、标点和标题层级。',
+      title: `${title} · 原始转写文字.md`,
+      initialInput: '请基于这份原始转写文字整理成可阅读文案，尽量一字不变保留原话，只处理段落、标点和标题层级。',
       icon: 'agent',
       group: 'processing',
-      description: '基于字幕整理成尽量保留原话的文案',
+      description: '基于原始文字整理成尽量保留原话的文案',
     },
     {
       key: 'enhance-copy',
       label: '补充润色',
       entryId: result.transcriptEntryId,
-      title: `${title} · 字幕文稿.md`,
-      initialInput: '请基于这份字幕文稿整理成教程文案，可以补充必要背景、步骤解释和小标题，但不要改变原视频的核心意思。',
+      title: `${title} · 原始转写文字.md`,
+      initialInput: '请基于这份原始转写文字整理成教程文案，可以补充必要背景、步骤解释和小标题，但不要改变原视频的核心意思。',
       icon: 'agent',
       group: 'processing',
-      description: '基于字幕补充背景并整理成教程文案',
+      description: '基于原始文字补充背景并整理成教程文案',
     },
     {
       key: 'timeline-copy',
       label: '转时间线',
-      entryId: result.timelineEntryId,
-      title: `${title} · 时间轴片段.md`,
-      initialInput: '请把这份时间轴片段整理成清晰的教程步骤，每一步包含时间段、动作、材料和检查点。',
+      entryId: result.transcriptEntryId,
+      title: `${title} · 原始转写文字.md`,
+      initialInput: '请把这份原始转写文字整理成清晰的时间线，每一步包含时间段、动作、材料和检查点。',
       icon: 'timeline',
       group: 'processing',
-      description: '把时间轴片段整理为步骤化教程',
+      description: '把原始文字整理为时间线或步骤化教程',
     },
-  ];
+  );
+  return actions;
 }
 
 // 哪些 builtin 智能体可在此处选用，现在由「智能体宇宙」能力契约决定（后端 SSOT）：
@@ -1099,12 +1097,14 @@ export function ReprocessChatDrawer({
 
   useEffect(() => {
     if (!isShortVideoMode) return;
+    if (sendLockRef.current) return;
     const runId = loadActiveShortVideoRun(storeId);
     if (!runId || restoredShortVideoRunRef.current === runId) return;
     restoredShortVideoRunRef.current = runId;
     const ownerKey = conversationKey;
     const messageId = `short-video-run-${runId}`;
     setMessages((prev) => {
+      if (sendLockRef.current) return prev;
       if (prev.some((m) => m.id === messageId)) return prev;
       return [
         ...prev,
@@ -1145,13 +1145,12 @@ export function ReprocessChatDrawer({
       ref: SHORT_VIDEO_TOOLBOX_ITEM.id,
       icon: SHORT_VIDEO_TOOLBOX_ITEM.icon,
     };
-    setMessages((prev) => [
-      ...prev,
+    setMessages([
       { id: userMsgId, role: 'user', content: userText.trim(), invoker },
       {
         id: asstMsgId,
         role: 'assistant',
-        content: '正在解析短视频链接，并把原始素材保存到知识库。解析完成后会给出可继续加工的入口。',
+        content: '正在解析短视频链接，并把原始视频保存到知识库。文字只会从视频真实转写生成，文案和时间线需要后续再加工。',
         streaming: true,
         phase: 'streaming',
         invoker,
@@ -1175,6 +1174,7 @@ export function ReprocessChatDrawer({
       }
       const result = res.data;
       saveActiveShortVideoRun(storeId, result.run.id);
+      restoredShortVideoRunRef.current = result.run.id;
       setMessages((prev) => prev.map((m) => m.id === asstMsgId
         ? {
             ...m,
@@ -2141,12 +2141,12 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError, mode }: {
         <div>
           <p className="text-[13px] font-semibold text-token-primary mb-1">短视频解析</p>
           <p className="text-[11px] text-token-muted max-w-[380px] leading-relaxed">
-            粘贴短视频链接后会先保存原始素材到当前知识库，再返回字幕文稿、时间轴片段和继续加工入口。
+            粘贴短视频链接后会先保存原始视频到当前知识库，再从视频转写原始文字并返回继续加工入口。
           </p>
         </div>
         <ul className="mt-1 text-[10px] text-token-muted max-w-[380px] leading-relaxed text-left mx-auto space-y-1" style={{ listStyle: 'none', paddingLeft: 0 }}>
-          <li>· 默认操作：链接解析为知识库资产，用户不需要先选格式</li>
-          <li>· 后续动作：打开视频素材、转文案、补充润色、整理时间线</li>
+          <li>· 默认操作：视频先入库，文字必须来自视频转写</li>
+          <li>· 后续动作：打开视频、打开原始文字、转文案、补充润色、整理时间线</li>
           <li>· 解析能力由服务端执行，前端只展示过程和结果入口</li>
         </ul>
       </div>

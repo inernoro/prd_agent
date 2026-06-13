@@ -10,6 +10,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Services;
 
@@ -6005,8 +6006,8 @@ function safeChart(canvasId, config) {
         {
             platform,
             originalUrl = videoUrl,
-            videoUrl = TryGetJsonString(dataElem, "video_url", "video", "play_addr", "nwm_video_url"),
-            coverUrl = TryGetJsonString(dataElem, "cover_url", "cover", "origin_cover"),
+            videoUrl = ExtractDouyinPlayableVideoUrl(dataElem),
+            coverUrl = ExtractDouyinCoverUrl(dataElem),
             title = TryGetJsonString(dataElem, "title", "desc", "description", "caption"),
             author = TryGetJsonString(dataElem, "author", "author_name", "nickname"),
             authorId = TryGetJsonString(dataElem, "author_id", "author_uid", "uid"),
@@ -6025,6 +6026,114 @@ function safeChart(canvasId, config) {
         var artifact = MakeTextArtifact(node, "dp-out", "视频信息", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
     }
+
+    private static string ExtractDouyinPlayableVideoUrl(JsonElement dataElem)
+    {
+        var direct = TryGetUsableUrl(dataElem, "video_url", "nwm_video_url", "play_url", "url");
+        if (!string.IsNullOrWhiteSpace(direct)) return direct;
+
+        if (dataElem.TryGetProperty("video", out var video) && video.ValueKind == JsonValueKind.Object)
+        {
+            var fromVideo = ExtractVideoAddressFromObject(video);
+            if (!string.IsNullOrWhiteSpace(fromVideo)) return fromVideo;
+        }
+
+        return ExtractVideoAddressFromObject(dataElem);
+    }
+
+    private static string ExtractVideoAddressFromObject(JsonElement element)
+    {
+        foreach (var key in new[] { "play_addr_h264", "play_addr", "download_addr", "play_addr_265" })
+        {
+            if (element.TryGetProperty(key, out var address))
+            {
+                var url = ExtractUrlFromAddressObject(address);
+                if (!string.IsNullOrWhiteSpace(url)) return url;
+            }
+        }
+
+        if (element.TryGetProperty("bit_rate", out var bitRates) && bitRates.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in bitRates.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                var url = ExtractVideoAddressFromObject(item);
+                if (!string.IsNullOrWhiteSpace(url)) return url;
+            }
+        }
+
+        return "";
+    }
+
+    private static string ExtractDouyinCoverUrl(JsonElement dataElem)
+    {
+        var direct = TryGetUsableUrl(dataElem, "cover_url", "coverUrl", "thumb");
+        if (!string.IsNullOrWhiteSpace(direct)) return direct;
+
+        if (dataElem.TryGetProperty("video", out var video) && video.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var key in new[] { "cover", "origin_cover", "dynamic_cover" })
+            {
+                if (video.TryGetProperty(key, out var cover))
+                {
+                    var url = ExtractUrlFromAddressObject(cover);
+                    if (!string.IsNullOrWhiteSpace(url)) return url;
+                }
+            }
+        }
+
+        foreach (var key in new[] { "cover", "origin_cover", "dynamic_cover" })
+        {
+            if (dataElem.TryGetProperty(key, out var cover))
+            {
+                var url = ExtractUrlFromAddressObject(cover);
+                if (!string.IsNullOrWhiteSpace(url)) return url;
+            }
+        }
+
+        return "";
+    }
+
+    private static string ExtractUrlFromAddressObject(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            var value = element.GetString() ?? "";
+            return IsUsableHttpUrl(value) ? value : "";
+        }
+        if (element.ValueKind != JsonValueKind.Object) return "";
+
+        var direct = TryGetUsableUrl(element, "url", "play_url", "download_url", "main_url");
+        if (!string.IsNullOrWhiteSpace(direct)) return direct;
+
+        if (element.TryGetProperty("url_list", out var urls) && urls.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in urls.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) continue;
+                var value = item.GetString() ?? "";
+                if (IsUsableHttpUrl(value)) return value;
+            }
+        }
+
+        return "";
+    }
+
+    private static string TryGetUsableUrl(JsonElement element, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!element.TryGetProperty(key, out var value)) continue;
+            if (value.ValueKind != JsonValueKind.String) continue;
+            var text = value.GetString() ?? "";
+            if (IsUsableHttpUrl(text)) return text;
+        }
+        return "";
+    }
+
+    private static bool IsUsableHttpUrl(string value)
+        => value.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+           || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 视频下载到 COS：将视频 URL 下载并上传到对象存储，返回 COS 地址。
@@ -6086,7 +6195,7 @@ function safeChart(canvasId, config) {
 
         // 上传到 COS
         var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
-        var stored = await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", CancellationToken.None, domain: "workflow", type: "video-download");
+        var stored = await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", CancellationToken.None, domain: "workflow-agent", type: "doc");
 
         sb.AppendLine($"[VideoDownloader] ✅ COS 上传成功: {stored.Url}");
         sb.AppendLine($"[VideoDownloader] SHA256: {stored.Sha256}, 大小: {stored.SizeBytes} bytes");
@@ -6274,8 +6383,9 @@ function safeChart(canvasId, config) {
         var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
         var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
 
-        // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle，
-        // 任何一个有 doubao-asr-stream 都行，不强迫用户为本胶囊单独绑模型池）
+        // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle）。
+        // 优先使用 doubao-asr-stream；如果线上模型池只绑定普通 Whisper/OpenAI 兼容 ASR，
+        // 则走 Gateway multipart /v1/audio/transcriptions，避免要求用户额外改模型池。
         var asrCallerChain = new[]
         {
             AppCallerRegistry.VideoAgent.VideoToText.Asr,
@@ -6283,11 +6393,18 @@ function safeChart(canvasId, config) {
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
         };
         PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult? resolution = null;
+        PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult? firstSuccessfulResolution = null;
+        string? firstSuccessfulCaller = null;
         string? resolvedCaller = null;
         var resolutionErrors = new List<string>();
         foreach (var caller in asrCallerChain)
         {
             var r = await modelResolver.ResolveAsync(caller, ModelTypes.Asr);
+            if (r.Success && firstSuccessfulResolution == null)
+            {
+                firstSuccessfulResolution = r;
+                firstSuccessfulCaller = caller;
+            }
             if (r.Success && r.IsExchange && r.ExchangeTransformerType == "doubao-asr-stream")
             {
                 resolution = r;
@@ -6296,13 +6413,19 @@ function safeChart(canvasId, config) {
             }
             resolutionErrors.Add($"{caller}: {(r.Success ? $"transformer={r.ExchangeTransformerType ?? "(non-exchange)"}" : r.ErrorMessage)}");
         }
-        if (resolution == null)
+        if (resolution == null && firstSuccessfulResolution != null)
+        {
+            resolution = firstSuccessfulResolution;
+            resolvedCaller = firstSuccessfulCaller;
+        }
+        if (resolution == null || string.IsNullOrWhiteSpace(resolvedCaller))
         {
             throw new InvalidOperationException(
-                "ASR 模型调度失败：尝试了 video-agent.video-to-text::asr / video-agent.v2d.transcribe::asr / document-store.subtitle::asr 三个 caller，无一绑定可用的 doubao-asr-stream 模型。请去管理后台「模型池」给其中任一 caller 绑定。诊断："
+                "ASR 模型调度失败：尝试了 video-agent.video-to-text::asr / video-agent.v2d.transcribe::asr / document-store.subtitle::asr 三个 caller，无一可用。诊断："
                 + string.Join(" | ", resolutionErrors));
         }
-        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller}");
+        var useDoubaoStream = resolution.IsExchange && resolution.ExchangeTransformerType == "doubao-asr-stream";
+        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller} mode={(useDoubaoStream ? "doubao-stream" : "gateway-multipart")}");
 
         var apiKeyRaw = resolution.ApiKey ?? "";
         string appKey = "", accessKey = apiKeyRaw;
@@ -6382,57 +6505,74 @@ function safeChart(canvasId, config) {
                     var audioBytes = await ExtractAudioWithFfmpegFromFileAsync(tmpVideoPath);
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 音频 {audioBytes.Length} 字节，提交 ASR");
 
-                    var asrResult = await streamAsr.TranscribeWithCallbackAsync(
-                        wsUrl, appKey, accessKey, audioBytes, asrConfig,
-                        onStage: (_, _) => Task.CompletedTask,
-                        onProgress: (_, _) => Task.CompletedTask,
-                        onFrame: (_, _, _) => Task.CompletedTask,
-                        ct: CancellationToken.None);
-
-                    if (asrResult.Success)
+                    if (useDoubaoStream)
                     {
-                        transcript = asrResult.FullText ?? "";
-                        sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 完成，转写 {transcript.Length} 字");
+                        var asrResult = await streamAsr.TranscribeWithCallbackAsync(
+                            wsUrl, appKey, accessKey, audioBytes, asrConfig,
+                            onStage: (_, _) => Task.CompletedTask,
+                            onProgress: (_, _) => Task.CompletedTask,
+                            onFrame: (_, _, _) => Task.CompletedTask,
+                            ct: CancellationToken.None);
 
-                        // 从最后一帧 raw response 抽取 utterances 时间戳（豆包 ASR 返回毫秒）→ TranscriptCue 数组
-                        try
+                        if (asrResult.Success)
                         {
-                            var cuesArr = new JsonArray();
-                            var lastResp = asrResult.Responses.LastOrDefault(r => r.PayloadMsg != null);
-                            if (lastResp?.PayloadMsg != null)
+                            transcript = asrResult.FullText ?? "";
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 完成，转写 {transcript.Length} 字");
+
+                            // 从最后一帧 raw response 抽取 utterances 时间戳（豆包 ASR 返回毫秒）→ TranscriptCue 数组
+                            try
                             {
-                                var payload = lastResp.PayloadMsg.Value;
-                                if (payload.TryGetProperty("result", out var res) && res.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
+                                var cuesArr = new JsonArray();
+                                var lastResp = asrResult.Responses.LastOrDefault(r => r.PayloadMsg != null);
+                                if (lastResp?.PayloadMsg != null)
                                 {
-                                    foreach (var utt in utts.EnumerateArray())
+                                    var payload = lastResp.PayloadMsg.Value;
+                                    if (payload.TryGetProperty("result", out var res) && res.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
                                     {
-                                        var cueText = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                                        if (string.IsNullOrWhiteSpace(cueText)) continue;
-                                        double startMs = utt.TryGetProperty("start_time", out var stEl) && stEl.ValueKind == JsonValueKind.Number ? stEl.GetDouble() : 0;
-                                        double endMs = utt.TryGetProperty("end_time", out var etEl) && etEl.ValueKind == JsonValueKind.Number ? etEl.GetDouble() : 0;
-                                        cuesArr.Add(new JsonObject
+                                        foreach (var utt in utts.EnumerateArray())
                                         {
-                                            ["startSec"] = startMs / 1000.0,
-                                            ["endSec"] = endMs / 1000.0,
-                                            ["text"] = cueText.Trim(),
-                                        });
+                                            var cueText = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                                            if (string.IsNullOrWhiteSpace(cueText)) continue;
+                                            double startMs = utt.TryGetProperty("start_time", out var stEl) && stEl.ValueKind == JsonValueKind.Number ? stEl.GetDouble() : 0;
+                                            double endMs = utt.TryGetProperty("end_time", out var etEl) && etEl.ValueKind == JsonValueKind.Number ? etEl.GetDouble() : 0;
+                                            cuesArr.Add(new JsonObject
+                                            {
+                                                ["startSec"] = startMs / 1000.0,
+                                                ["endSec"] = endMs / 1000.0,
+                                                ["text"] = cueText.Trim(),
+                                            });
+                                        }
                                     }
                                 }
+                                if (cuesArr.Count > 0)
+                                {
+                                    enriched["transcriptCues"] = cuesArr;
+                                    sb.AppendLine($"[VideoToText:asr] item#{idx} 提取 {cuesArr.Count} 条带时间戳字幕");
+                                }
                             }
-                            if (cuesArr.Count > 0)
+                            catch (Exception cueEx)
                             {
-                                enriched["transcriptCues"] = cuesArr;
-                                sb.AppendLine($"[VideoToText:asr] item#{idx} 提取 {cuesArr.Count} 条带时间戳字幕");
+                                sb.AppendLine($"[VideoToText:asr] item#{idx} cue 抽取异常（不影响 transcript）: {cueEx.Message}");
                             }
                         }
-                        catch (Exception cueEx)
+                        else
                         {
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} cue 抽取异常（不影响 transcript）: {cueEx.Message}");
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 失败: {asrResult.Error}");
                         }
                     }
                     else
                     {
-                        sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 失败: {asrResult.Error}");
+                        var gatewayResult = await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, resolution.ToGatewayResolution());
+                        transcript = gatewayResult.Transcript;
+                        if (gatewayResult.Cues.Count > 0)
+                        {
+                            enriched["transcriptCues"] = gatewayResult.Cues;
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成，转写 {transcript.Length} 字，时间戳 {gatewayResult.Cues.Count} 条");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成，转写 {transcript.Length} 字");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -6563,6 +6703,75 @@ function safeChart(canvasId, config) {
         var outputJson = outputRoot.ToJsonString(JsonPretty);
         var artifact = MakeTextArtifact(node, "vt-out", "ASR 转写结果", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    private sealed record GatewayAsrTranscript(string Transcript, JsonArray Cues);
+
+    private static async Task<GatewayAsrTranscript> TranscribeAudioViaGatewayAsync(
+        ILlmGateway gateway,
+        string appCallerCode,
+        byte[] audioBytes,
+        GatewayModelResolution resolution)
+    {
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/audio/transcriptions",
+            IsMultipart = true,
+            MultipartFields = new Dictionary<string, object>
+            {
+                ["model"] = resolution.ActualModel ?? "whisper-1",
+                ["response_format"] = "verbose_json",
+                ["timestamp_granularities[]"] = "segment",
+            },
+            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+            {
+                ["file"] = ("audio.wav", audioBytes, "audio/wav"),
+            },
+            TimeoutSeconds = 600,
+        };
+
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new InvalidOperationException($"Gateway ASR 调用失败: {detail}");
+        }
+
+        return ParseGatewayAsrTranscript(rawResp.Content);
+    }
+
+    private static GatewayAsrTranscript ParseGatewayAsrTranscript(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var cues = new JsonArray();
+        var parts = new List<string>();
+
+        if (root.TryGetProperty("segments", out var segments) && segments.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var seg in segments.EnumerateArray())
+            {
+                var text = seg.TryGetProperty("text", out var textEl) ? textEl.GetString() ?? "" : "";
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                parts.Add(text.Trim());
+                var start = seg.TryGetProperty("start", out var startEl) && startEl.ValueKind == JsonValueKind.Number ? startEl.GetDouble() : 0;
+                var end = seg.TryGetProperty("end", out var endEl) && endEl.ValueKind == JsonValueKind.Number ? endEl.GetDouble() : 0;
+                cues.Add(new JsonObject
+                {
+                    ["startSec"] = start,
+                    ["endSec"] = end,
+                    ["text"] = text.Trim(),
+                });
+            }
+        }
+
+        var transcript = parts.Count > 0
+            ? string.Join("\n", parts)
+            : TryGetJsonString(root, "text", "transcript");
+
+        return new GatewayAsrTranscript(transcript.Trim(), cues);
     }
 
     /// <summary>

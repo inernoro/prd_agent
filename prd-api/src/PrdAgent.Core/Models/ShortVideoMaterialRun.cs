@@ -26,7 +26,7 @@ public class ShortVideoMaterialRun
     /// <summary>用户提交时附带的字幕/文案，用于后台任务恢复</summary>
     public string? InputSourceText { get; set; }
 
-    /// <summary>文案/字幕来源：manual / tikhub-metadata / metadata-fallback</summary>
+    /// <summary>素材来源：manual / tikhub-video / metadata-fallback</summary>
     public string SourceMode { get; set; } = "manual";
 
     /// <summary>短视频解析器返回的元数据 JSON</summary>
@@ -47,13 +47,13 @@ public class ShortVideoMaterialRun
     /// <summary>默认选中的产物条目 ID</summary>
     public string? EntryId { get; set; }
 
-    /// <summary>原始视频素材条目 ID</summary>
+    /// <summary>原始视频文件条目 ID</summary>
     public string? SourceEntryId { get; set; }
 
-    /// <summary>字幕文稿条目 ID</summary>
+    /// <summary>原始转写文字条目 ID</summary>
     public string? TranscriptEntryId { get; set; }
 
-    /// <summary>时间轴片段条目 ID</summary>
+    /// <summary>时间轴片段条目 ID（旧运行记录兼容字段，不再默认生成）</summary>
     public string? TimelineEntryId { get; set; }
 
     /// <summary>错误信息</summary>

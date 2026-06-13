@@ -19,7 +19,7 @@ export interface ShortVideoMaterialRun {
   title: string;
   requestedTitle?: string;
   inputSourceText?: string;
-  sourceMode: 'manual' | 'tikhub-metadata' | 'metadata-fallback' | string;
+  sourceMode: 'manual' | 'tikhub-video' | 'metadata-fallback' | string;
   parserMessage?: string;
   status: 'queued' | 'running' | 'done' | 'failed' | string;
   stages: ShortVideoMaterialStage[];
