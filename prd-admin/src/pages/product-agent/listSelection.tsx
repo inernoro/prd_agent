@@ -4,7 +4,29 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
-const CHECKBOX_CLS = 'accent-cyan-500 shrink-0';
+/** 表格行 / 卡片悬停时显现复选框（Tailwind named group） */
+export const LIST_ROW_HOVER_GROUP = 'group/list-row';
+/** 表头悬停时显现全选复选框 */
+export const LIST_HEADER_HOVER_GROUP = 'group/list-header';
+
+/** 拼到 `<tr>` / 行容器 className 上，启用悬停显现复选框 */
+export function listSelectionRowClass(className = '') {
+  return [LIST_ROW_HOVER_GROUP, className].filter(Boolean).join(' ');
+}
+
+const CHECKBOX_BASE_CLS =
+  'shrink-0 cursor-pointer accent-cyan-500 transition-opacity duration-150 ease-out focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/40';
+
+function listCheckboxOpacityClass(revealed: boolean) {
+  if (revealed) return 'opacity-100';
+  return [
+    'opacity-[0.12]',
+    'hover:opacity-90',
+    'group-hover/list-row:opacity-90',
+    'group-hover/list-header:opacity-90',
+    'group-hover/list-checkbox:opacity-90',
+  ].join(' ');
+}
 
 /** 表格首列复选框固定宽度（colgroup / th / td 共用） */
 export const LIST_SELECTION_COL_WIDTH = 40;
@@ -22,7 +44,9 @@ function SelectionCheckboxWrap({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={`flex items-center justify-center ${className}`}>{children}</div>;
+  return (
+    <div className={`group/list-checkbox flex items-center justify-center ${className}`}>{children}</div>
+  );
 }
 
 export function useListSelection(allIds: string[]) {
@@ -107,6 +131,8 @@ export function ListCheckbox({
     if (ref.current) ref.current.indeterminate = !!indeterminate;
   }, [indeterminate]);
 
+  const revealed = checked || !!indeterminate;
+
   return (
     <input
       ref={ref}
@@ -118,7 +144,7 @@ export function ListCheckbox({
         onClick?.(e);
       }}
       aria-label={ariaLabel}
-      className={`${CHECKBOX_CLS} ${className}`}
+      className={`${CHECKBOX_BASE_CLS} ${listCheckboxOpacityClass(revealed)} ${className}`}
     />
   );
 }
@@ -138,7 +164,10 @@ export function ListSelectionHeaderCell({
   className?: string;
 }) {
   return (
-    <th className="box-border p-0 align-middle font-medium whitespace-nowrap" style={selectionColStyle}>
+    <th
+      className={`box-border p-0 align-middle font-medium whitespace-nowrap ${LIST_HEADER_HOVER_GROUP}`}
+      style={selectionColStyle}
+    >
       <SelectionCheckboxWrap className={className}>
         <ListCheckbox
           checked={allSelected}

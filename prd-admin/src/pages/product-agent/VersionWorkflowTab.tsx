@@ -15,7 +15,13 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
-import { ListSelectionHeaderCell, LIST_SELECTION_COL_WIDTH, type TableSelectionProps } from './listSelection';
+import {
+  ListSelectionHeaderCell,
+  LIST_HEADER_HOVER_GROUP,
+  LIST_SELECTION_COL_WIDTH,
+  listSelectionRowClass,
+  type TableSelectionProps,
+} from './listSelection';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
 
@@ -304,7 +310,7 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
     <>
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']} selection={tableSelection}>
-        {items.map((item) => <tr key={item.id} className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]" onClick={() => openDetail(item.id)}>
+        {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')} onClick={() => openDetail(item.id)}>
           <ListTableSelectionCell selection={tableSelection} id={item.id} />
           <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
@@ -363,7 +369,7 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
     <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={tableSelection}>
-    {items.map((item) => <tr key={item.id} className="border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]" onClick={() => openRelease(item.id)}>
+    {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]')} onClick={() => openRelease(item.id)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
@@ -550,7 +556,7 @@ function Table({ headers, children, selection }: {
           </colgroup>
         ) : null}
         <thead className="bg-white/[0.035] text-white/40">
-          <tr>
+          <tr className={LIST_HEADER_HOVER_GROUP}>
             {selection ? (
               <ListSelectionHeaderCell
                 allSelected={selection.allSelected}

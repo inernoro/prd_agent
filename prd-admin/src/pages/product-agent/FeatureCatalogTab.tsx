@@ -22,7 +22,7 @@ import {
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { toProductOptions } from './comboboxOptions';
 import { SelectionActionBar, ListTableSelectionCell, ListTableSelectionHeader, useOverviewTableSelection } from './selectableList';
-import { LIST_SELECTION_COL_WIDTH } from './listSelection';
+import { LIST_SELECTION_COL_WIDTH, listSelectionRowClass } from './listSelection';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
 import type { Feature, FeatureBusinessType, Product, ProductRelease } from './types';
@@ -397,7 +397,7 @@ export function FeatureCatalogTab({
                     <tr
                       key={f.id}
                       onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
-                      className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]"
+                      className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')}
                     >
                       <ListTableSelectionCell selection={tableSelection} id={f.id} />
                       <td className="px-3 py-2.5 font-mono text-cyan-200/80 whitespace-nowrap">{f.featureNo}</td>

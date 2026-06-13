@@ -201,7 +201,7 @@ export function ProductsSection({ onListCountChange }: { onListCountChange?: (co
               key={p.id}
               onClick={() => navigate(`/product-agent/p/${p.id}`)}
               style={{ animationDelay: `${Math.min(i, 14) * 45}ms` }}
-              className="pa-card group cursor-pointer rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 flex flex-col gap-2"
+              className="pa-card group group/list-row cursor-pointer rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 flex flex-col gap-2"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex min-w-0 flex-1 items-start gap-2">

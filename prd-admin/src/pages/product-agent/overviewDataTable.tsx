@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TableSelectionProps } from './listSelection';
-import { ListSelectionCell, ListSelectionHeaderCell, LIST_SELECTION_COL_WIDTH } from './listSelection';
+import {
+  ListSelectionCell,
+  ListSelectionHeaderCell,
+  LIST_HEADER_HOVER_GROUP,
+  LIST_SELECTION_COL_WIDTH,
+  listSelectionRowClass,
+} from './listSelection';
 
 export const DEFAULT_CELL_TEXT_MAX = 40;
 const MIN_COL_WIDTH = 56;
@@ -125,7 +131,7 @@ export function OverviewDataTable<T extends { id: string }>({
           ))}
         </colgroup>
         <thead>
-          <tr className="bg-white/[0.03] text-white/45 text-[11px]">
+          <tr className={`bg-white/[0.03] text-white/45 text-[11px] ${LIST_HEADER_HOVER_GROUP}`}>
             {selection ? (
               <ListSelectionHeaderCell
                 allSelected={selection.allSelected}
@@ -166,7 +172,9 @@ export function OverviewDataTable<T extends { id: string }>({
             <tr
               key={row.id}
               onClick={() => onRowClick?.(row)}
-              className={`border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
+              className={listSelectionRowClass(
+                `border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`,
+              )}
             >
               {selection ? (
                 <ListSelectionCell

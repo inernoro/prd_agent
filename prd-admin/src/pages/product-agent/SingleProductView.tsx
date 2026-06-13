@@ -31,7 +31,7 @@ import {
   useOverviewTableSelection,
 } from './selectableList';
 import type { TableSelectionProps } from './listSelection';
-import { LIST_SELECTION_COL_WIDTH } from './listSelection';
+import { LIST_SELECTION_COL_WIDTH, listSelectionRowClass } from './listSelection';
 import { downloadListCsv } from './listExport';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import './product-cards.css';
@@ -625,7 +625,7 @@ function RequirementDataTable({
       </thead>
       <tbody>
         {rows.map(({ item, depth }) => (
-          <tr key={item.id} onClick={() => openDetail(item.id)} className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]">
+          <tr key={item.id} onClick={() => openDetail(item.id)} className={listSelectionRowClass('cursor-pointer border-t border-white/5 hover:bg-white/[0.03]')}>
             <ListTableSelectionCell selection={selection} id={item.id} />
             <td className={`${cell} whitespace-nowrap font-mono text-cyan-200/80`}>{item.requirementNo}</td>
             <td className="px-3 py-2 text-white/85">
