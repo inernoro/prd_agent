@@ -12,6 +12,7 @@ import { useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowAttributeTable, WorkflowDetailCard, WorkflowRecordTable } from './workflowDetailUi';
 import { buildInitiationBasicInfoRows } from './versionBasicInfoCatalog';
 import { defectDetailColumns, featureDetailColumns, requirementDetailColumns } from './versionDetailTables';
+import { DetailRecordActions } from './DetailRecordActions';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -119,12 +120,21 @@ export function InitiationWorkflowDetail({
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-lg font-semibold text-white/90">{displayTitle}</h1>
-        <p className="mt-1 text-xs text-white/40">
-          {initiation.planName} · {SCALE_LABEL[initiation.versionType]} · {STATUS_LABEL[initiation.status] ?? initiation.status}
-          {initiation.sourceType === 'import' ? ' · 历史导入' : ''}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold text-white/90">{displayTitle}</h1>
+          <p className="mt-1 text-xs text-white/40">
+            {initiation.planName} · {SCALE_LABEL[initiation.versionType]} · {STATUS_LABEL[initiation.status] ?? initiation.status}
+            {initiation.sourceType === 'import' ? ' · 历史导入' : ''}
+          </p>
+        </div>
+        <DetailRecordActions
+          kind="initiation"
+          productId={productId}
+          recordId={initiation.id}
+          recordNo={initiation.tCode ?? initiation.id}
+          title={displayTitle}
+        />
       </div>
 
       <div className="flex border-b border-white/10">

@@ -16,6 +16,8 @@ import type { ProductInitiation, ProductMember, ProductRelease, Product, Require
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
 import { ListSelectionHeaderCell, LIST_SELECTION_COL_WIDTH, type TableSelectionProps } from './listSelection';
+import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { filterByTracked } from './productRecordTrackStorage';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
@@ -42,6 +44,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [releaseOwnerId, setReleaseOwnerId] = useState(currentUserId ?? '');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [trackedOnly, setTrackedOnly] = useState(false);
 
   useEffect(() => {
     if (currentUserId && !releaseOwnerId) setReleaseOwnerId(currentUserId);
@@ -84,6 +87,14 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
     () => releases.filter((item) => matchesRecord(item, query, statusFilter)),
     [releases, query, statusFilter],
   );
+  const visibleInitiations = useMemo(
+    () => filterByTracked(filteredInitiations, trackedOnly, 'initiation', (item) => ({ productId, recordId: item.id })),
+    [filteredInitiations, trackedOnly, productId],
+  );
+  const visibleReleases = useMemo(
+    () => filterByTracked(filteredReleases, trackedOnly, 'release', (item) => ({ productId, recordId: item.id })),
+    [filteredReleases, trackedOnly, productId],
+  );
   const statuses = useMemo(
     () => Array.from(new Set((tab === 'release' ? releases : initiations).map((item) => item.status))),
     [initiations, releases, tab],
@@ -99,7 +110,8 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
     {tab === 'release' ? <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <RecordToolbar query={query} onQueryChange={setQuery} ownerId={releaseOwnerId} onOwnerChange={setReleaseOwnerId}
-          status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses} />
+          status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
+          trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex flex-wrap items-center gap-2">
           {canImport && (
             <button
@@ -118,11 +130,12 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           </span>
         </div>
       </div>
-      <ReleaseTable productId={productId} items={filteredReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
+      <ReleaseTable productId={productId} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
     </> : <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <RecordToolbar query={query} onQueryChange={setQuery} scope={recordScope} onScopeChange={setRecordScope}
-          status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses} />
+          status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
+          trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex gap-2">
           {canImport && (
             <button
@@ -135,7 +148,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
         </div>
       </div>
-      <InitiationTable productId={productId} items={filteredInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
+      <InitiationTable productId={productId} items={visibleInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
     </>}
     {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
     {dialog === 'import-release' && product && (
@@ -397,7 +410,7 @@ function matchesRecord(
   });
 }
 
-function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, onOwnerChange, status, onStatusChange, statuses }: {
+function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, onOwnerChange, status, onStatusChange, statuses, trackedOnly, onTrackedOnlyChange }: {
   query: string;
   onQueryChange: (value: string) => void;
   scope?: RecordScope;
@@ -407,9 +420,12 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
   status: string;
   onStatusChange: (value: string) => void;
   statuses: string[];
+  trackedOnly?: boolean;
+  onTrackedOnlyChange?: (value: boolean) => void;
 }) {
   const filterClassName = 'h-[34px] rounded-lg border border-white/10 bg-[#111318] px-3 text-xs text-white/75 outline-none focus:border-cyan-400/50';
   return <div className="flex flex-wrap items-center gap-2">
+    {onTrackedOnlyChange && <TrackedFilterToggle active={trackedOnly ?? false} onChange={onTrackedOnlyChange} />}
     <label className="relative block w-64 max-w-full">
       <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
       <input value={query} onChange={(event) => onQueryChange(event.target.value)}

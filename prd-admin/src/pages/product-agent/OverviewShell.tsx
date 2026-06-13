@@ -66,6 +66,9 @@ import type { Customer, Product } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
+import { useListFilter, distinctOptions, type FilterFieldDef } from './listFilter';
+import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { filterByTracked } from './productRecordTrackStorage';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
 
@@ -432,6 +435,7 @@ function RequirementsTable({
   const [rows, setRows] = useState<OverviewRequirementRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [mine, setMine] = useState(false);
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
   const productNameMap = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
@@ -481,7 +485,7 @@ function RequirementsTable({
     },
   ], [productNameMap]);
 
-  const { bar, filtered } = useListFilter({
+  const { bar, filtered: filterBarFiltered } = useListFilter({
     items: rows,
     storageKey: 'pa-list-filters:overview-requirement',
     fields,
@@ -489,6 +493,10 @@ function RequirementsTable({
     keywordPlaceholder: '搜索标题 / 编号',
     showFilterSettings: false,
   });
+  const filtered = useMemo(
+    () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId: r.productId, recordId: r.id })),
+    [filterBarFiltered, trackedOnly],
+  );
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -521,6 +529,7 @@ function RequirementsTable({
   return (
     <div className="w-full min-w-0">
       <div className="flex items-center gap-2 flex-wrap mb-3">
+        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
         <div className="flex-1 min-w-0">{bar}</div>
         <div className="flex items-center gap-2 shrink-0">
           <MineToggle mine={mine} setMine={setMine} />
@@ -529,7 +538,9 @@ function RequirementsTable({
       </div>
       <SelectionActionBar mode="entity" entityType="requirement" selection={selection} onDone={reload} onExport={exportSelected} />
       {filtered.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}</div>
+        <div className="text-center text-white/40 text-sm py-12">
+          {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}
+        </div>
       ) : (
         <OverviewDataTable
           tableKey="requirements"
@@ -606,6 +617,7 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
   const [rows, setRows] = useState<OverviewDefectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
   const reload = useCallback(async () => {
@@ -618,7 +630,12 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
     void reload();
   }, [reload]);
 
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
+  const visibleRows = useMemo(
+    () => filterByTracked(rows, trackedOnly, 'defect', (r) => ({ productId: r.productId, recordId: r.id })),
+    [rows, trackedOnly],
+  );
+
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(visibleRows, {
     filename: 'overview-defects.csv',
     headers: ['ID', '标题', '产品', '状态', '严重程度'],
     mapRow: (r) => [r.defectNo, r.title ?? '', r.productName, defectStatusLabel(r.status), defectSeverityTierLabel(r)],
@@ -627,14 +644,21 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
+        <div className="flex-1 min-w-0">
+          <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
+        </div>
+      </div>
       <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
-      {rows.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">没有追溯到产品的缺陷</div>
+      {visibleRows.length === 0 ? (
+        <div className="text-center text-white/40 text-sm py-12">
+          {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : '没有追溯到产品的缺陷'}
+        </div>
       ) : (
         <OverviewDataTable
           tableKey="defects"
-          rows={rows}
+          rows={visibleRows}
           selection={tableSelection}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/defect/${r.id}`)}
           columns={[

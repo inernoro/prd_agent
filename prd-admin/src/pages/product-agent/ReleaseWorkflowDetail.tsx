@@ -38,6 +38,7 @@ import { RequirementLinkList } from './WorkflowObjectLinkList';
 import { WorkflowAttributeTable, WorkflowDetailCard, WorkflowRecordTable } from './workflowDetailUi';
 import { buildReleaseBasicInfoRows } from './versionBasicInfoCatalog';
 import { defectDetailColumns, featureDetailColumns, requirementDetailColumns } from './versionDetailTables';
+import { DetailRecordActions } from './DetailRecordActions';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -373,8 +374,8 @@ export function ReleaseWorkflowDetail({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-lg font-semibold text-white/90">
             {isNew ? (temporary ? '临时优化需求上线' : '申领正式版本号') : releaseDisplayTitle}
           </h1>
@@ -385,11 +386,22 @@ export function ReleaseWorkflowDetail({
             </p>
           )}
         </div>
-        {!isNew && release?.status === 'announcement_pending' && (
-          <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-amber-200">
-            待填写上线公告
-          </span>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {!isNew && release?.status === 'announcement_pending' && (
+            <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-amber-200">
+              待填写上线公告
+            </span>
+          )}
+          {!isNew && release && (
+            <DetailRecordActions
+              kind="release"
+              productId={productId}
+              recordId={release.id}
+              recordNo={release.vCode || release.id}
+              title={releaseDisplayTitle}
+            />
+          )}
+        </div>
       </div>
 
       <div className="flex border-b border-white/10">

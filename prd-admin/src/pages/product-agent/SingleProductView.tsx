@@ -67,6 +67,8 @@ import {
   isGlobalProductAdmin,
   transitionNeedsDialog,
 } from './workflowTransitionGuard';
+import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { filterByTracked } from './productRecordTrackStorage';
 import type { WorkflowTransition } from './types';
 
 type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
@@ -383,6 +385,7 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [items, setItems] = useState<Requirement[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [rtfImportFiles, setRtfImportFiles] = useState<File[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -409,13 +412,17 @@ function RequirementsTab({ productId }: { productId: string }) {
     { key: 'customer', label: '关联客户', options: (its) => distinctMultiOptions(its, (r) => r.customerIds, (id) => customerName.get(id) ?? id), test: (r, v) => r.customerIds.includes(v) },
     { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (r, v) => inTimeRange(r.createdAt, v) },
   ], [stateLabel, nameOf, versionName, customerName]);
-  const { bar, filtered } = useListFilter({
+  const { bar, filtered: filterBarFiltered } = useListFilter({
     items,
     storageKey: 'pa-list-filters:requirement',
     fields,
     keywordOf: (r) => `${r.requirementNo} ${r.externalId ?? ''} ${r.title} ${r.description ?? ''} ${Object.values(r.sourceSnapshot?.fields ?? {}).join(' ')}`,
     keywordPlaceholder: '搜索 ID、标题、描述',
   });
+  const filtered = useMemo(
+    () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId, recordId: r.id })),
+    [filterBarFiltered, trackedOnly, productId],
+  );
 
   const listCount = filtered.length;
 
@@ -495,9 +502,14 @@ function RequirementsTab({ productId }: { productId: string }) {
         <EmptyHint text="没有与你相关的需求。你是负责人或处理人的需求会出现在这里；点「新建需求」可创建新条目。" />
       ) : (
         <>
-        <div className="shrink-0 w-full min-w-0">{bar}</div>
+        <div className="shrink-0 w-full min-w-0 flex flex-wrap items-center gap-2">
+          <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
+          <div className="min-w-0 flex-1">{bar}</div>
+        </div>
         {filtered.length === 0 ? (
-          <div className="text-center text-white/35 text-sm py-10">没有匹配的需求，调整筛选条件试试。</div>
+          <div className="text-center text-white/35 text-sm py-10">
+            {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : '没有匹配的需求，调整筛选条件试试。'}
+          </div>
         ) : view === 'board' && workflow && workflow.states.length > 0 ? (
         <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
           <StateBoard items={filtered} productId={productId} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
@@ -644,6 +656,7 @@ function DefectsTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<TracedDefect[]>([]);
   const [loading, setLoading] = useState(true);
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [features, setFeatures] = useState<Feature[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
 
@@ -681,7 +694,11 @@ function DefectsTab({ productId }: { productId: string }) {
     { key: 'version', label: '关联版本', options: (its) => distinctOptions(its, (d) => d.tracedVersionId ?? '', (id) => versionName.get(id) ?? id), test: (d, v) => (d.tracedVersionId ?? '') === v },
     { key: 'created', label: '提交时间', options: () => TIME_PRESETS, test: (d, v) => inTimeRange(d.createdAt, v) },
   ], [personName, featureName, versionName]);
-  const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索 ID、标题、描述' });
+  const { bar, filtered: filterBarFiltered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索 ID、标题、描述' });
+  const filtered = useMemo(
+    () => filterByTracked(filterBarFiltered, trackedOnly, 'defect', (d) => ({ productId, recordId: d.id })),
+    [filterBarFiltered, trackedOnly, productId],
+  );
 
   const { selection, exportSelected } = useOverviewTableSelection(filtered, {
     filename: `defects-${productId}.csv`,
@@ -705,10 +722,15 @@ function DefectsTab({ productId }: { productId: string }) {
         <EmptyHint text="没有与你相关的缺陷。你是处理人或上报人的缺陷会出现在这里；点「新建缺陷」可创建新条目。" />
       ) : (
         <>
-        {bar}
+        <div className="flex flex-wrap items-center gap-2">
+          <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
+          <div className="min-w-0 flex-1">{bar}</div>
+        </div>
         <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
         {filtered.length === 0 ? (
-          <div className="text-center text-white/35 text-sm py-10">没有匹配的缺陷，调整筛选条件试试。</div>
+          <div className="text-center text-white/35 text-sm py-10">
+            {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : '没有匹配的缺陷，调整筛选条件试试。'}
+          </div>
         ) : (
         <div className="flex flex-col gap-2">
           {filtered.map((d) => (
