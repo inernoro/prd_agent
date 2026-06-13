@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Target } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import type { PmMilestone } from '@/services/contracts/pmAgent';
 import { MILESTONE_HEALTH_REGISTRY } from './pmConstants';
@@ -41,7 +41,7 @@ export function MilestoneCalendar({ milestones, onOpen }: Props) {
 
   const todayKey = ymd(new Date());
   const monthLabel = `${cursor.getFullYear()} 年 ${cursor.getMonth() + 1} 月`;
-  const undated = milestones.filter((m) => !m.dueAt).length;
+  const undated = milestones.filter((m) => !m.dueAt);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2">
@@ -50,7 +50,7 @@ export function MilestoneCalendar({ milestones, onOpen }: Props) {
         <span className="text-[13px] font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>{monthLabel}</span>
         <Button variant="ghost" size="sm" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}><ChevronRight size={14} /></Button>
         <Button variant="ghost" size="sm" onClick={() => { const n = new Date(); setCursor(new Date(n.getFullYear(), n.getMonth(), 1)); }}>今天</Button>
-        {undated > 0 && <span className="ml-auto text-[11px]" style={{ color: 'var(--text-muted)' }}>另有 {undated} 个未排期里程碑（无截止日，不在日历显示）</span>}
+        {undated.length > 0 && <span className="ml-auto text-[11px]" style={{ color: 'var(--text-muted)' }}>另有 {undated.length} 个未排期里程碑（见下方）</span>}
       </div>
 
       <div className="grid shrink-0" style={{ gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
@@ -71,10 +71,12 @@ export function MilestoneCalendar({ milestones, onOpen }: Props) {
                 {items.map((m) => {
                   const c = MILESTONE_HEALTH_REGISTRY[m.health].color;
                   return (
-                    <button key={m.id} onClick={() => onOpen(m)} title={`${m.title}（${MILESTONE_HEALTH_REGISTRY[m.health].label} · ${m.progress}%）`}
+                    <button key={m.id} onClick={() => onOpen(m)} title={`${m.title}（${MILESTONE_HEALTH_REGISTRY[m.health].label} · ${m.progress}%${m.autoFromGoal ? ' · 来自目标' : ''}）`}
                       className="text-left rounded px-1 py-0.5 flex items-center gap-1 hover:opacity-85"
                       style={{ background: `${c}1f` }}>
-                      <span style={{ width: 7, height: 7, background: c, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 1, flexShrink: 0 }} />
+                      {m.autoFromGoal
+                        ? <Target size={8} style={{ color: c, flexShrink: 0 }} />
+                        : <span style={{ width: 7, height: 7, background: c, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 1, flexShrink: 0 }} />}
                       <span className="text-[10px] truncate" style={{ color: 'var(--text-primary)' }}>{m.title}</span>
                     </button>
                   );
@@ -83,6 +85,25 @@ export function MilestoneCalendar({ milestones, onOpen }: Props) {
             );
           })}
         </div>
+        {undated.length > 0 && (
+          <div className="mt-2 rounded-lg border p-2 flex flex-col gap-1.5" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>未排期（无截止日）—— 点开设置日期后即落入日历</div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {undated.map((m) => {
+                const c = MILESTONE_HEALTH_REGISTRY[m.health].color;
+                return (
+                  <button key={m.id} onClick={() => onOpen(m)} title={`${m.title}（${MILESTONE_HEALTH_REGISTRY[m.health].label} · ${m.progress}%${m.autoFromGoal ? ' · 来自目标' : ''}）`}
+                    className="rounded px-1.5 py-1 flex items-center gap-1.5 hover:opacity-85" style={{ background: `${c}1f` }}>
+                    {m.autoFromGoal
+                      ? <Target size={9} style={{ color: c, flexShrink: 0 }} />
+                      : <span style={{ width: 7, height: 7, background: c, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 1, flexShrink: 0 }} />}
+                    <span className="text-[11px]" style={{ color: 'var(--text-primary)' }}>{m.title}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

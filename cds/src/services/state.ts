@@ -1625,7 +1625,7 @@ export class StateService {
 
   getLatestSuccessfulReleaseRun(targetId: string, beforeReleaseId?: string): ReleaseRun | undefined {
     const runs = this.getReleaseRuns({ targetId })
-      .filter((run) => run.status === 'success');
+      .filter((run) => run.status === 'success' || run.status === 'rollback_success');
     if (!beforeReleaseId) return runs[0];
     const current = this.getReleaseRun(beforeReleaseId);
     const beforeTs = current?.startedAt;
@@ -2681,6 +2681,30 @@ export class StateService {
         }
       }
     }
+  }
+
+  /** Agent 请求历史（观测台持久层）：ring buffer 500 条，会话终态时落一条摘要 */
+  static readonly AGENT_REQUEST_HISTORY_MAX = 500;
+
+  recordAgentRequest(record: import('../types.js').AgentRequestRecord): void {
+    const list = this.state.agentRequestHistory || [];
+    const existing = list.findIndex((item) => item.sessionId === record.sessionId);
+    if (existing >= 0) {
+      list[existing] = record;
+    } else {
+      list.push(record);
+    }
+    while (list.length > StateService.AGENT_REQUEST_HISTORY_MAX) list.shift();
+    this.state.agentRequestHistory = list;
+    try {
+      this.save();
+    } catch (err) {
+      console.warn('[state] recordAgentRequest save failed:', (err as Error).message);
+    }
+  }
+
+  listAgentRequests(): import('../types.js').AgentRequestRecord[] {
+    return this.state.agentRequestHistory || [];
   }
 
   recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {

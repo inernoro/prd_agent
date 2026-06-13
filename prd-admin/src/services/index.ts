@@ -40,7 +40,7 @@ import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContra
 import type { ClearImageGenModelContract, ClearIntentModelContract, ClearVisionModelContract, CreateModelContract, DeleteModelContract, GetModelsContract, SetImageGenModelContract, SetIntentModelContract, SetMainModelContract, SetVisionModelContract, TestModelContract, UpdateModelContract, UpdateModelPrioritiesContract, GetModelAdapterInfoContract, GetModelsAdapterInfoBatchContract, GetAdapterInfoByModelNameContract } from '@/services/contracts/models';
 import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfigContract, GetLLMConfigsContract, UpdateLLMConfigContract } from '@/services/contracts/llmConfigs';
 import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract } from '@/services/contracts/llmLogs';
-import type { GetTeamActivityLogsContract, GetTeamActivityModulesContract } from '@/services/contracts/teamActivity';
+import type { GetTeamActivityInsightsContract, GetTeamActivityLogsContract, GetTeamActivityModulesContract, GetTeamActivityStatsContract, SetTeamActivityInsightStateContract } from '@/services/contracts/teamActivity';
 import type { GetAdminDocumentContentContract } from '@/services/contracts/adminDocuments';
 import type { ListUploadArtifactsContract } from '@/services/contracts/uploadArtifacts';
 import type { AdminImpersonateContract } from '@/services/contracts/lab';
@@ -316,7 +316,7 @@ import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatfor
 import { clearImageGenModelReal, clearIntentModelReal, clearVisionModelReal, createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal, updateModelPrioritiesReal, getModelAdapterInfoReal, getModelsAdapterInfoBatchReal, getAdapterInfoByModelNameReal } from '@/services/real/models';
 import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
 import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal } from '@/services/real/llmLogs';
-import { getTeamActivityLogsReal, getTeamActivityModulesReal } from '@/services/real/teamActivity';
+import { getTeamActivityInsightsReal, getTeamActivityLogsReal, getTeamActivityModulesReal, getTeamActivityStatsReal, setTeamActivityInsightStateReal } from '@/services/real/teamActivity';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
 import { listUploadArtifactsReal } from '@/services/real/uploadArtifacts';
 import {
@@ -884,6 +884,9 @@ export const activateLLMConfig: ActivateLLMConfigContract = withAuth(activateLLM
 
 export const getTeamActivityLogs: GetTeamActivityLogsContract = withAuth(getTeamActivityLogsReal);
 export const getTeamActivityModules: GetTeamActivityModulesContract = withAuth(getTeamActivityModulesReal);
+export const getTeamActivityStats: GetTeamActivityStatsContract = withAuth(getTeamActivityStatsReal);
+export const getTeamActivityInsights: GetTeamActivityInsightsContract = withAuth(getTeamActivityInsightsReal);
+export const setTeamActivityInsightState: SetTeamActivityInsightStateContract = withAuth(setTeamActivityInsightStateReal);
 
 export const getLlmLogs: GetLlmLogsContract = withAuth(getLlmLogsReal);
 export const getLlmLogDetail: GetLlmLogDetailContract = withAuth(getLlmLogDetailReal);
@@ -1691,6 +1694,7 @@ export {
   reuploadSite,
   createFromContent,
   listSites,
+  getSiteContent,
   getSite,
   updateSite,
   deleteSite,
@@ -2064,6 +2068,14 @@ export {
   updatePmRiskReal as updatePmRisk,
   deletePmRiskReal as deletePmRisk,
   getPmBurndownReal as getPmBurndown,
+  listPmBriefingsReal as listPmBriefings,
+  getPmBriefingReal as getPmBriefing,
+  deletePmBriefingReal as deletePmBriefing,
+  toggleBriefingShareReal as toggleBriefingShare,
+  saveBriefingToHostingReal as saveBriefingToHosting,
+  listBriefingStylesReal as listBriefingStyles,
+  restylePmBriefingReal as restylePmBriefing,
+  renamePmBriefingReal as renamePmBriefing,
   getPmMyTodosReal as getPmMyTodos,
   getPmAgentPreferencesReal as getPmAgentPreferences,
   updatePmQuickActionsReal as updatePmQuickActions,
@@ -2092,6 +2104,8 @@ export type {
   PmMilestoneStatus,
   PmMilestoneHealth,
   SavePmMilestoneInput,
+  PmBriefing,
+  PmBriefingStyle,
   PmTask,
   PmTaskDraft,
   PmTaskWorkLog,

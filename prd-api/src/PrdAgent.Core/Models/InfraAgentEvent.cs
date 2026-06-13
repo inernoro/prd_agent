@@ -17,6 +17,14 @@ public class InfraAgentEvent
 
     public string PayloadJson { get; set; } = "{}";
 
+    /// <summary>
+    /// CDS 侧事件序号（从 CDS /stream 导入的事件携带）。导入去重的唯一依据：
+    /// 同一会话内 CdsSeq 单调递增，水位线以下的事件跳过。
+    /// 禁止退回「按 payload 内容判重」——LLM 流式输出大量 delta 内容完全相同
+    /// （如单个 "&lt;" token），按内容判重会把重复 token 全部丢弃，拼出残缺 HTML。
+    /// </summary>
+    public long? CdsSeq { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 

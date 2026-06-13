@@ -32,6 +32,8 @@ export interface UserSearchSelectProps {
   value: string;
   /** 选中用户回调 */
   onChange: (userId: string) => void;
+  /** 选中时回传完整用户对象（含 displayName，供调用方记录姓名快照；清除选择不触发） */
+  onSelectUser?: (user: AdminUser) => void;
   /** 预加载的用户列表（不传则组件内部自动获取） */
   users?: AdminUser[];
   /** 占位文本 */
@@ -60,6 +62,7 @@ export interface UserSearchSelectProps {
 export function UserSearchSelect({
   value,
   onChange,
+  onSelectUser,
   users: externalUsers,
   placeholder = '搜索用户名或昵称...',
   showAllOption = false,
@@ -281,6 +284,7 @@ export function UserSearchSelect({
                 style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
                 onClick={() => {
                   onChange(u.userId);
+                  onSelectUser?.(u);
                   closePanel();
                 }}
               >

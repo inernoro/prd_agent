@@ -12,6 +12,11 @@ const branchListSource = fs.readFileSync(
   'utf8',
 );
 
+const releaseCenterLibSource = fs.readFileSync(
+  path.resolve(process.cwd(), '../cds/web/src/lib/releaseCenter.ts'),
+  'utf8',
+);
+
 function stringLiterals(source: string): string[] {
   const literals: string[] = [];
   const re = /(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
@@ -33,7 +38,12 @@ describe('release site publishing UI contract', () => {
     expect(releaseCenterSource).toContain('./exec_dep.sh');
     expect(releaseCenterSource).toContain('上线地址');
     expect(releaseCenterSource).toContain('发布记录');
-    expect(releaseCenterSource).toContain('未配置回滚');
+    expect(releaseCenterSource).toContain('响应时间');
+    expect(releaseCenterSource).toContain('最近检查');
+    expect(releaseCenterSource).toContain('回滚策略');
+    expect(releaseCenterSource).toContain('选择目标版本');
+    expect(releaseCenterSource).toContain('确认回滚');
+    expect(releaseCenterSource).toContain('重试发布');
     expect(releaseCenterSource).toContain('calc(100vw - 32px)');
   });
 
@@ -61,11 +71,24 @@ describe('release site publishing UI contract', () => {
     expect(branchListSource).toContain('calc(100vw - 32px)');
   });
 
+  it('keeps the default release center entry clean while retaining project scoping', () => {
+    expect(releaseCenterLibSource).toContain("DEFAULT_RELEASE_CENTER_PROJECT_ID = 'prd-agent'");
+    expect(releaseCenterLibSource).toContain("return '/release-center'");
+    expect(releaseCenterLibSource).toContain('release-center?project=');
+    expect(releaseCenterSource).toContain('initialReleaseCenterProject(');
+    expect(releaseCenterSource).toContain('rememberReleaseCenterProject(');
+    expect(branchListSource).toContain('releaseCenterHref(branch.projectId)');
+    expect(branchListSource).not.toContain('/release-center?project=${encodeURIComponent(branch.projectId)}');
+  });
+
   it('shows release run progress as business steps, not raw logs only', () => {
     expect(branchListSource).toContain('连接服务器');
     expect(branchListSource).toContain('进入站点目录');
     expect(branchListSource).toContain('执行 ${scriptOne.replace');
     expect(branchListSource).toContain('执行 ${scriptTwo.replace');
+    expect(branchListSource).toContain('releaseScriptPhase(scriptOne)');
+    expect(releaseCenterSource).toContain("releaseScriptPhase('./fast.sh')");
+    expect(releaseCenterSource).toContain("releaseScriptPhase('./exec_dep.sh')");
     expect(branchListSource).toContain('检查上线地址');
     expect(branchListSource).toContain('标记完成');
     expect(branchListSource).toContain('ReleaseRunStepList');

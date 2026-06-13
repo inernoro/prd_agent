@@ -189,6 +189,7 @@ builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 // 模型池故障通知与自动探活
 builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();
 builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHealthProbeService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWorker>();
 
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();

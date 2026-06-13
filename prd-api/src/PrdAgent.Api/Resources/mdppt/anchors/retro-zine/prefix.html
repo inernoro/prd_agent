@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Retro Zine Business Presentation</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Caveat:wght@400;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+    :root {
+      --bg: #C8B99A;
+      --bg-dark: #B8A98A;
+      --green: #008F4D;
+      --green-light: #00A85D;
+      --black: #1A1A1A;
+      --white: #F4EFE6;
+      --line: #1A1A1A;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      font-family: 'Space Grotesk', sans-serif;
+      color: var(--black);
+    }
+
+    /* ---------- GRAIN TEXTURE OVERLAY ---------- */
+    .grain-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.07;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
+    }
+
+    /* ---------- NAVIGATION ---------- */
+    .nav-hint {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--black);
+      color: var(--bg);
+      padding: 8px 20px;
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      font-weight: 600;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+    body:hover .nav-hint {
+      opacity: 1;
+    }
+    .nav-hint span {
+      opacity: 0.6;
+    }
+    .slide-counter {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 100;
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 14px;
+      letter-spacing: 2px;
+      color: var(--black);
+      background: var(--white);
+      padding: 6px 14px;
+      border: 2px solid var(--black);
+    }
+    .progress-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      height: 4px;
+      background: var(--green);
+      z-index: 100;
+      transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    /* ---------- SLIDES SYSTEM ---------- */
+    .slides-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    .slide {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      padding: 60px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(20px);
+      transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+      overflow: hidden;
+    }
+    .slide.active {
+      opacity: 1;
+      pointer-events: all;
+      transform: translateY(0);
+    }
+
+    /* ---------- UTILITIES ---------- */
+    .font-bold {
+      font-family: 'Bebas Neue', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    .font-hand {
+      font-family: 'Caveat', cursive;
+    }
+    .font-body {
+      font-family: 'Space Grotesk', sans-serif;
+    }
+    .text-green { color: var(--green); }
+    .text-black { color: var(--black); }
+    .text-white { color: var(--white); }
+    .bg-green { background: var(--green); }
+    .bg-black { background: var(--black); }
+    .bg-white { background: var(--white); }
+
+    .line-top {
+      border-top: 3px solid var(--line);
+    }
+    .line-bottom {
+      border-bottom: 3px solid var(--line);
+    }
+    .line-left {
+      border-left: 3px solid var(--line);
+    }
+    .line-right {
+      border-right: 3px solid var(--line);
+    }
+    .line-box {
+      border: 3px solid var(--line);
+    }
+
+    /* Stamp rotation utility */
+    .stamp {
+      display: inline-block;
+      transform: rotate(-8deg);
+    }
+    .stamp-alt {
+      display: inline-block;
+      transform: rotate(6deg);
+    }
+
+    /* ---------- SLIDE 1: HERO TITLE ---------- */
+    .slide-hero {
+      background: var(--bg);
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+    .slide-hero .hero-label {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--green);
+      margin-bottom: 12px;
+    }
+    .slide-hero .hero-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(48px, 10vw, 140px);
+      line-height: 0.88;
+      color: var(--green);
+      text-transform: uppercase;
+      letter-spacing: 4px;
+    }
+    .slide-hero .hero-illustration {
+      width: clamp(120px, 18vw, 240px);
+      height: auto;
+      margin: 16px 0;
+    }
+    .slide-hero .hero-sub {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: clamp(12px, 1.2vw, 16px);
+      font-weight: 500;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--black);
+      margin-top: 12px;
+    }
+    .slide-hero .hero-date {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(32px, 5vw, 72px);
+      color: var(--green);
+      margin-top: 8px;
+      line-height: 1;
+    }
+
+    /* ---------- SLIDE 2: SPLIT EDITORIAL ---------- */
+    .slide-split {
+      flex-direction: row;
+      padding: 0;
+    }
+    .slide-split .split-left {
+      flex: 1;
+      padding: 60px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      border-right: 3px solid var(--black);
+    }
+    .slide-split .split-right {
+      flex: 1;
+      padding: 60px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background: var(--bg-dark);
+    }
+    .slide-split .split-label {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 14px;
+      letter-spacing: 3px;
+      color: var(--green);
+      margin-bottom: 20px;
+    }
+    .slide-split .split-heading {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(42px, 6vw, 90px);
+      line-height: 0.95;
+      color: var(--black);
+      text-transform: uppercase;
+      margin-bottom: 24px;
+    }
+    .slide-split .split-body {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: clamp(14px, 1.3vw, 18px);
+      line-height: 1.6;
+      color: var(--black);
+      max-width: 480px;
+    }
+    .slide-split .split-stat {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(80px, 12vw, 160px);
+      color: var(--green);
+      line-height: 1;
+    }
+    .slide-split .split-stat-label {
+      font-family: 'Caveat', cursive;
+      font-size: clamp(24px, 3vw, 36px);
+      color: var(--black);
+      margin-top: 8px;
+    }
+
+    /* ---------- SLIDE 3: STATEMENT ---------- */
+    .slide-statement {
+      text-align: center;
+      background: var(--green);
+      color: var(--white);
+    }
+    .slide-statement .statement-line-top,
+    .slide-statement .statement-line-bottom {
+      width: 60px;
+      height: 4px;
+      background: var(--white);
+      margin: 0 auto;
+    }
+    .slide-statement .statement-quote {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(36px, 6vw, 90px);
+      line-height: 1.1;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin: 40px auto;
+      max-width: 900px;
+    }
+    .slide-statement .statement-author {
+      font-family: 'Caveat', cursive;
+      font-size: clamp(24px, 3vw, 36px);
+      margin-top: 20px;
+    }
+
+    /* ---------- SLIDE 4: INFO GRID ---------- */
+    .slide-grid {
+      padding: 60px;
+      justify-content: center;
+    }
+    .slide-grid .grid-header {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(48px, 7vw, 100px);
+      color: var(--green);
+      text-transform: uppercase;
+      margin-bottom: 40px;
+      line-height: 0.9;
+    }
+    .slide-grid .grid-boxes {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0;
+      width: 100%;
+      max-width: 1000px;
+      border: 3px solid var(--black);
+    }
+    .slide-grid .grid-box {
+      padding: 32px;
+      border: 1.5px solid var(--black);
+    }
+    .slide-grid .grid-box-label {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 13px;
+      letter-spacing: 3px;
+      color: var(--green);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .slide-grid .grid-box-value {
+      font-family: 'Caveat', cursive;
+      font-size: clamp(22px, 2.5vw, 32px);
+      color: var(--black);
+      line-height: 1.3;
+    }
+    .slide-grid .grid-box-value strong {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(20px, 2vw, 28px);
+      color: var(--black);
+      letter-spacing: 1px;
+    }
+
+    /* ---------- SLIDE 5: FULL VISUAL ---------- */
+    .slide-visual {
+      padding: 0;
+      position: relative;
+    }
+    .slide-visual .visual-bg {
+      position: absolute;
+      inset: 0;
+      background: var(--bg-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .slide-visual .visual-bg svg {
+      width: 70%;
+      height: auto;
+      max-height: 70%;
+      opacity: 0.25;
+    }
+    .slide-visual .visual-overlay {
+      position: relative;
+      z-index: 2;
+      text-align: center;
+      background: var(--green);
+      padding: 40px 60px;
+      border: 3px solid var(--black);
+      transform: rotate(-2deg);
+    }
+    .slide-visual .visual-overlay h2 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(48px, 8vw, 120px);
+      color: var(--white);
+      text-transform: uppercase;
+      line-height: 0.9;
+    }
+    .slide-visual .visual-overlay p {
+      font-family: 'Caveat', cursive;
+      font-size: clamp(24px, 3vw, 36px);
+      color: var(--white);
+      margin-top: 12px;
+    }
+    .slide-visual .visual-caption {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 12px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--black);
+      z-index: 2;
+    }
+
+    /* ---------- SLIDE 6: EDITORIAL TWO-COLUMN ---------- */
+    .slide-editorial {
+      padding: 60px 80px;
+      justify-content: center;
+    }
+    .slide-editorial .ed-header {
+      width: 100%;
+      max-width: 1100px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 3px solid var(--black);
+      padding-bottom: 16px;
+      margin-bottom: 40px;
+    }
+    .slide-editorial .ed-header h2 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(36px, 5vw, 72px);
+      color: var(--green);
+      text-transform: uppercase;
+      line-height: 0.95;
+    }
+    .slide-editorial .ed-header .ed-issue {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 14px;
+      letter-spacing: 3px;
+      color: var(--black);
+    }
+    .slide-editorial .ed-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px;
+      max-width: 1100px;
+      width: 100%;
+    }
+    .slide-editorial .ed-col {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: clamp(13px, 1.2vw, 16px);
+      line-height: 1.7;
+      color: var(--black);
+    }
+    .slide-editorial .ed-col:first-child {
+      border-right: 2px solid var(--black);
+      padding-right: 60px;
+    }
+    .slide-editorial .ed-drop {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(48px, 6vw, 80px);
+      color: var(--green);
+      float: left;
+      line-height: 0.8;
+      margin-right: 12px;
+      margin-top: 6px;
+    }
+    .slide-editorial .ed-highlight {
+      background: var(--black);
+      color: var(--bg);
+      padding: 2px 8px;
+      font-weight: 600;
+    }
+
+    /* ---------- SLIDE 7: NUMBERED FEATURES ---------- */
+    .slide-numbers {
+      padding: 60px;
+      justify-content: center;
+    }
+    .slide-numbers .num-header {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(14px, 1.5vw, 18px);
+      letter-spacing: 4px;
+      color: var(--green);
+      text-transform: uppercase;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+    .slide-numbers .num-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0;
+      max-width: 1000px;
+      width: 100%;
+    }
+    .slide-numbers .num-item {
+      padding: 24px 20px;
+      border: 1.5px solid var(--black);
+      text-align: center;
+    }
+    .slide-numbers .num-digit {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(44px, 6vw, 80px);
+      color: var(--green);
+      line-height: 1;
+    }
+    .slide-numbers .num-label {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 15px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--black);
+      margin-top: 10px;
+    }
+    .slide-numbers .num-desc {
+      font-family: 'Caveat', cursive;
+      font-size: clamp(16px, 1.5vw, 20px);
+      color: var(--black);
+      margin-top: 6px;
+      line-height: 1.3;
+    }
+
+    /* ---------- SLIDE 8: COLLAGE ---------- */
+    .slide-collage {
+      padding: 0;
+      background: var(--bg);
+    }
+    .slide-collage .collage-header {
+      position: absolute;
+      top: 40px;
+      left: 60px;
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(14px, 1.5vw, 18px);
+      letter-spacing: 4px;
+      color: var(--green);
+      text-transform: uppercase;
+    }
+    .slide-collage .collage-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    .slide-collage .collage-piece {
+      position: absolute;
+      border: 3px solid var(--black);
+      background: var(--white);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .slide-collage .collage-piece h3 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(24px, 3vw, 42px);
+      text-transform: uppercase;
+      color: var(--black);
+      margin-bottom: 8px;
+    }
+    .slide-collage .collage-piece p {
+      font-family: 'Caveat', cursive;
+      font-size: clamp(18px, 2vw, 26px);
+      color: var(--black);
+      line-height: 1.3;
+    }
+    .slide-collage .piece-1 {
+      top: 15%;
+      left: 8%;
+      width: 32%;
+      height: 28%;
+      transform: rotate(-3deg);
+      background: var(--green);
+      color: var(--white);
+    }
+    .slide-collage .piece-1 h3 { color: var(--white); }
+    .slide-collage .piece-1 p { color: var(--white); }
+    .slide-collage .piece-2 {
+      top: 12%;
+      right: 10%;
+      width: 28%;
+      height: 34%;
+      transform: rotate(4deg);
+      background: var(--white);
+    }
+    .slide-collage .piece-3 {
+      bottom: 18%;
+      left: 12%;
+      width: 26%;
+      height: 30%;
+      transform: rotate(2deg);
+      background: var(--bg-dark);
+    }
+    .slide-collage .piece-4 {
+      bottom: 15%;
+      right: 8%;
+      width: 34%;
+      height: 26%;
+      transform: rotate(-5deg);
+      background: var(--black);
+      color: var(--bg);
+    }
+    .slide-collage .piece-4 h3 { color: var(--green); }
+    .slide-collage .piece-4 p { color: var(--bg); }
+
+    /* Tape effects */
+    .tape {
+      position: absolute;
+      width: 80px;
+      height: 24px;
+      background: rgba(255,255,255,0.4);
+      border: 1px solid rgba(0,0,0,0.1);
+      z-index: 10;
+    }
+
+    /* ---------- SLIDE 9: RSVP / CTA ---------- */
+    .slide-rsvp {
+      padding: 60px;
+      justify-content: center;
+      align-items: center;
+    }
+    .slide-rsvp .rsvp-card {
+      width: 100%;
+      max-width: 700px;
+      border: 3px solid var(--black);
+      background: var(--white);
+      padding: 48px;
+      position: relative;
+    }
+    .slide-rsvp .rsvp-card::before {
+      content: '';
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: -12px;
+      bottom: -12px;
+      background: var(--green);
+      z-index: -1;
+    }
+    .slide-rsvp .rsvp-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(42px, 6vw, 80px);
+      color: var(--green);
+      text-transform: uppercase;
+      line-height: 0.95;
+      margin-bottom: 8px;
+    }
+    .slide-rsvp .rsvp-subtitle {
+      font-family: 'Caveat', cursive;
+      font-size: clamp(22px, 2.5vw, 30px);
+      color: var(--black);
+      margin-bottom: 32px;
+    }
+    .slide-rsvp .rsvp-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .slide-rsvp .rsvp-field {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      border-bottom: 2px solid var(--black);
+      padding-bottom: 8px;
+    }
+    .slide-rsvp .rsvp-field label {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 14px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--green);
+      white-space: nowrap;
+    }
+    .slide-rsvp .rsvp-field .hand-line {
+      flex: 1;
+      font-family: 'Caveat', cursive;
+      font-size: 22px;
+      color: var(--black);
+    }
+    .slide-rsvp .rsvp-stamp {
+      position: absolute;
+      bottom: -20px;
+      right: 30px;
+      background: var(--black);
+      color: var(--green);
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 18px;
+      letter-spacing: 2px;
+      padding: 10px 24px;
+      transform: rotate(-8deg);
+      border: 2px solid var(--green);
+    }
+
+    /* ---------- SLIDE 10: CLOSING ---------- */
+    .slide-closing {
+      background: var(--black);
+      color: var(--bg);
+      text-align: center;
+    }
+    .slide-closing .closing-label {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 12px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--green);
+      margin-bottom: 24px;
+    }
+    .slide-closing .closing-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(56px, 10vw, 160px);
+      line-height: 0.85;
+      text-transform: uppercase;
+      color: var(--bg);
+    }
+    .slide-closing .closing-divider {
+      width: 80px;
+      height: 4px;
+      background: var(--green);
+      margin: 32px auto;
+    }
+    .slide-closing .closing-hand {
+      font-family: 'Caveat', cursive;
+      font-size: clamp(24px, 3vw, 36px);
+      color: var(--green);
+      margin-top: 16px;
+    }
+    .slide-closing .closing-social {
+      margin-top: 40px;
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 14px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+    .slide-closing .closing-social a {
+      color: var(--bg);
+      text-decoration: none;
+      border-bottom: 2px solid var(--green);
+      padding-bottom: 4px;
+      transition: color 0.3s;
+    }
+    .slide-closing .closing-social a:hover {
+      color: var(--green);
+    }
+
+    /* ---------- HANDWRITTEN SVG ILLUSTRATION ---------- */
+    .hand-illustration {
+      width: 100%;
+      max-width: 400px;
+      height: auto;
+    }
+
+    /* ---------- RESPONSIVE ---------- */
+    @media (max-width: 768px) {
+      .slide { padding: 32px; }
+      .slide-split { flex-direction: column; }
+      .slide-split .split-left { border-right: none; border-bottom: 3px solid var(--black); }
+      .slide-grid .grid-boxes { grid-template-columns: 1fr; }
+      .slide-numbers .num-grid { grid-template-columns: 1fr; }
+      .slide-editorial .ed-columns { grid-template-columns: 1fr; gap: 24px; }
+      .slide-editorial .ed-col:first-child { border-right: none; padding-right: 0; border-bottom: 2px solid var(--black); padding-bottom: 24px; }
+      .slide-collage .collage-piece { position: relative; top: auto; left: auto; right: auto; bottom: auto; width: 90%; height: auto; margin: 10px auto; transform: none; }
+      .slide-collage .collage-container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; overflow-y: auto; }
+      .slide-rsvp .rsvp-card { padding: 28px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Grain texture overlay -->
+  <div class="grain-overlay"></div>
+
+  <!-- Progress & Navigation -->
+  <div class="progress-bar" id="progressBar"></div>
+  <div class="slide-counter" id="slideCounter">01 / 10</div>
+  <div class="nav-hint">
+    <span>&#8592; PREV</span> | <span>SPACE / CLICK</span> | <span>NEXT &#8594;</span>
+  </div>
+
+  <div class="slides-container" id="slidesContainer">
+
+    <!-- SLIDE 1: HERO TITLE -->
+    

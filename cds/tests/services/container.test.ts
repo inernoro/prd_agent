@@ -101,6 +101,27 @@ describe('ContainerService', () => {
       writeSpy.mockRestore();
     });
 
+    it('project customEnv Jwt__Secret takes precedence over CDS global secret', async () => {
+      // 跨项目穿透回归（2026-06-12）：换 CDS_JWT_SECRET 不得再覆盖
+      // 显式配置了 Jwt__Secret 的项目容器
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid456', stderr: '', exitCode: 0 }));
+      const writeSpy = vi.spyOn(fs, 'writeFileSync');
+
+      await service.runService(
+        makeEntry(), makeProfile(), makeService(),
+        undefined, { Jwt__Secret: 'project-pinned-secret', OTHER: 'x' });
+
+      const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(envFileContent).toContain('Jwt__Secret=project-pinned-secret');
+      expect(envFileContent).not.toContain('Jwt__Secret=test-secret');
+      // 未显式配置 Issuer 仍走全局兜底
+      expect(envFileContent).toContain('Jwt__Issuer=prdagent');
+
+      writeSpy.mockRestore();
+    });
+
     it('records operationId on pre-run cleanup and docker run events', async () => {
       const records: Array<{ action: string; operationId?: string | null; details?: Record<string, unknown> }> = [];
       service = new ContainerService(mock, makeConfig(), undefined, {

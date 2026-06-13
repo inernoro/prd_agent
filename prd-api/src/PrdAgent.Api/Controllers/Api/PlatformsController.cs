@@ -37,6 +37,7 @@ public class PlatformsController : ControllerBase
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly ILlmRequestLogWriter _logWriter;
     private readonly IIdGenerator _idGenerator;
+    private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
 
     // v2：不再返回预设(demo)模型列表；同时通过升级 key 前缀避免旧缓存继续生效
     private const string ModelsCacheKeyPrefix = "platform:models:v2:";
@@ -55,7 +56,8 @@ public class PlatformsController : ControllerBase
         ILlmGateway gateway,
         ILLMRequestContextAccessor ctxAccessor,
         ILlmRequestLogWriter logWriter,
-        IIdGenerator idGenerator)
+        IIdGenerator idGenerator,
+        IInfraAgentRuntimeProfileService runtimeProfiles)
     {
         _db = db;
         _logger = logger;
@@ -67,6 +69,7 @@ public class PlatformsController : ControllerBase
         _ctxAccessor = ctxAccessor;
         _logWriter = logWriter;
         _idGenerator = idGenerator;
+        _runtimeProfiles = runtimeProfiles;
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
@@ -284,6 +287,78 @@ public class PlatformsController : ControllerBase
 
         _logger.LogInformation("Platform updated: {Id}", id);
         return Ok(ApiResponse<object>.Ok(new { id }));
+    }
+
+    /// <summary>
+    /// 从运行配置恢复平台 API key（密钥环境不匹配事故的自愈通道）。
+    ///
+    /// 场景：部署环境的 Jwt:Secret 被轮换后，llmplatforms.ApiKeyEncrypted（AES，
+    /// 密钥=Jwt:Secret）全部解密为空；但「CDS Agent 运行配置」里物化过的同一把
+    /// 上游 key 走 ASP.NET DataProtection（密钥环独立持久化），仍然可解。
+    /// 本端点在服务端把 key 从运行配置解出、用当前 Jwt:Secret 重新加密写回平台
+    /// —— 明文全程不出进程、不进日志、不回显。
+    ///
+    /// 防错配守卫：运行配置的 BaseUrl 必须与平台 ApiUrl 同 host，拒绝把 A 平台
+    /// 的 key 写进 B 平台。
+    /// </summary>
+    [HttpPost("{id}/restore-key-from-profile")]
+    public async Task<IActionResult> RestoreKeyFromProfile(string id, [FromBody] RestoreKeyFromProfileRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ProfileId))
+        {
+            return BadRequest(ApiResponse<object>.Fail("PROFILE_ID_REQUIRED", "profileId 不能为空"));
+        }
+
+        var platform = await _db.LLMPlatforms.Find(p => p.Id == id).FirstOrDefaultAsync();
+        if (platform == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("PLATFORM_NOT_FOUND", "平台不存在"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        InfraAgentRuntimeProfileSecretView? secret;
+        try
+        {
+            secret = await _runtimeProfiles.ResolveAsync(request.ProfileId, userId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            return Conflict(ApiResponse<object>.Fail("PROFILE_KEY_UNREADABLE", ex.Message));
+        }
+        if (secret == null || secret.Id != request.ProfileId)
+        {
+            return NotFound(ApiResponse<object>.Fail("PROFILE_NOT_FOUND", "运行配置不存在或不可见"));
+        }
+        if (string.IsNullOrWhiteSpace(secret.ApiKey))
+        {
+            return Conflict(ApiResponse<object>.Fail("PROFILE_KEY_EMPTY", "运行配置中没有可用的 API key"));
+        }
+
+        // 同 host 守卫：防止把别家平台的 key 错写进来
+        if (!Uri.TryCreate(platform.ApiUrl, UriKind.Absolute, out var platformUri)
+            || !Uri.TryCreate(secret.BaseUrl, UriKind.Absolute, out var profileUri)
+            || !string.Equals(platformUri.Host, profileUri.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                "HOST_MISMATCH",
+                $"运行配置指向 {secret.BaseUrl}，与平台 {platform.ApiUrl} 不同 host，拒绝恢复"));
+        }
+
+        var update = Builders<LLMPlatform>.Update
+            .Set(p => p.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(secret.ApiKey, GetJwtSecret()))
+            .Set(p => p.UpdatedAt, DateTime.UtcNow);
+        await _db.LLMPlatforms.UpdateOneAsync(p => p.Id == id, update);
+
+        _logger.LogWarning(
+            "[PlatformKeyRestore] 平台「{Platform}」的 API key 已从运行配置「{Profile}」恢复（操作者 {UserId}）",
+            platform.Name, secret.Name, userId);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id,
+            platform = platform.Name,
+            fromProfile = secret.Name,
+            apiKeyMasked = ApiKeyCrypto.Mask(secret.ApiKey),
+        }));
     }
 
     /// <summary>
@@ -1108,6 +1183,12 @@ public class UpdatePlatformRequest
     public bool Enabled { get; set; } = true;
     public int MaxConcurrency { get; set; } = 5;
     public string? Remark { get; set; }
+}
+
+public class RestoreKeyFromProfileRequest
+{
+    /// <summary>来源运行配置 ID（其 BaseUrl 必须与平台 ApiUrl 同 host）</summary>
+    public string ProfileId { get; set; } = string.Empty;
 }
 
 public class AvailableModelDto

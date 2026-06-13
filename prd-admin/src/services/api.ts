@@ -192,6 +192,9 @@ export const api = {
   teamActivity: {
     logs: () => '/api/team-activity/logs',
     modules: () => '/api/team-activity/modules',
+    stats: () => '/api/team-activity/stats',
+    insights: () => '/api/team-activity/insights',
+    insightState: () => '/api/team-activity/insights/state',
   },
 
   // ============ Skills 技能管理 ============
@@ -1093,6 +1096,7 @@ export const api = {
     fromContent: () => '/api/web-pages/from-content',
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
+    content: (id: string) => `/api/web-pages/${id}/content`,
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
@@ -1229,6 +1233,9 @@ export const api = {
       // 批次 D：划词评论
       inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
       inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
+      // 划词 AI 局部改写（SSE 直流）
+      selectionRewrite: (entryId: string) => `/api/document-store/entries/${entryId}/selection-rewrite`,
+      selectionRewriteActions: () => '/api/document-store/selection-rewrite/actions',
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
@@ -1416,6 +1423,8 @@ export const api = {
       risks: (projectId: string) => `/api/pm/projects/${projectId}/risks`,
       burndown: (projectId: string) => `/api/pm/projects/${projectId}/burndown`,
       closureReport: (projectId: string) => `/api/pm/projects/${projectId}/closure-report`,
+      briefings: (projectId: string) => `/api/pm/projects/${projectId}/briefings`,
+      briefingsGenerate: (projectId: string) => `/api/pm/projects/${projectId}/briefings/generate`,
       healthDiagnosis: (projectId: string) => `/api/pm/projects/${projectId}/health-diagnosis`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
@@ -1472,6 +1481,16 @@ export const api = {
     },
     milestones: {
       item: (milestoneId: string) => `/api/pm/milestones/${milestoneId}`,
+    },
+    briefings: {
+      item: (briefingId: string) => `/api/pm/briefings/${briefingId}`,
+      share: (briefingId: string) => `/api/pm/briefings/${briefingId}/share`,
+      saveToHosting: (briefingId: string) => `/api/pm/briefings/${briefingId}/save-to-hosting`,
+      restyle: (briefingId: string) => `/api/pm/briefings/${briefingId}/restyle`,
+      refine: (briefingId: string) => `/api/pm/briefings/${briefingId}/refine`,
+      styles: () => '/api/pm/briefings/styles',
+      /** 匿名分享页（后端直接返回 text/html，可直接浏览器打开） */
+      sharedView: (token: string) => `/api/pm/briefings/shared/${token}`,
     },
     risks: {
       item: (riskId: string) => `/api/pm/risks/${riskId}`,

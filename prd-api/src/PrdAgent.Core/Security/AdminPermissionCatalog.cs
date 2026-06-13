@@ -335,6 +335,7 @@ public static class AdminPermissionCatalog
     /// 团队动态权限（读）：查看全员工作动态时间线（管理员级）
     /// </summary>
     public const string TeamActivityRead = "team-activity.read";
+    public const string TeamActivityManage = "team-activity.manage";
 
     /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
@@ -457,6 +458,7 @@ public static class AdminPermissionCatalog
         new(DailyTipsWrite, "小技巧-写", "新建/编辑/删除首页小技巧与引导卡片"),
 
         new(TeamActivityRead, "团队动态-读", "查看全员工作动态时间线（仅授予管理层）"),
+        new(TeamActivityManage, "团队动态-管理", "处理行为洞察（确认/已修复/忽略/转缺陷关联），写操作权限"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };
