@@ -2083,6 +2083,8 @@ export {
   getPmAgentPreferencesReal as getPmAgentPreferences,
   updatePmQuickActionsReal as updatePmQuickActions,
   getPmReportSummaryReal as getPmReportSummary,
+  getPmGlobalProjectsReal as getPmGlobalProjects,
+  getPmGlobalSummaryReal as getPmGlobalSummary,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,

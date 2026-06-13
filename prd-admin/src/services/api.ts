@@ -1484,6 +1484,19 @@ export const api = {
     // 首页工作台（跨项目）
     myTodos: () => '/api/pm/my-todos',
     reportsSummary: (scope?: string) => `/api/pm/reports/summary${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`,
+    // 全局总览（管理层只读洞察，跨全公司项目）
+    globalProjects: (q: Record<string, string | number | undefined>) => {
+      const sp = new URLSearchParams();
+      Object.entries(q).forEach(([k, v]) => { if (v !== undefined && v !== '') sp.set(k, String(v)); });
+      const s = sp.toString();
+      return `/api/pm/global/projects${s ? `?${s}` : ''}`;
+    },
+    globalSummary: (q: Record<string, string | undefined>) => {
+      const sp = new URLSearchParams();
+      Object.entries(q).forEach(([k, v]) => { if (v !== undefined && v !== '') sp.set(k, String(v)); });
+      const s = sp.toString();
+      return `/api/pm/global/summary${s ? `?${s}` : ''}`;
+    },
     preferences: () => '/api/pm/preferences',
     quickActions: () => '/api/pm/preferences/quick-actions',
     assistantAsk: () => '/api/pm/assistant/ask',

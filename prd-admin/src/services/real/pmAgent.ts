@@ -86,6 +86,8 @@ import type {
   GetPmKnowledgeOverviewContract,
   ListPmKnowledgeEntriesContract,
   GetPmKnowledgeEntryContentContract,
+  GetPmGlobalProjectsContract,
+  GetPmGlobalSummaryContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -467,4 +469,19 @@ export const listPmKnowledgeEntriesReal: ListPmKnowledgeEntriesContract = async 
 
 export const getPmKnowledgeEntryContentReal: GetPmKnowledgeEntryContentContract = async (entryId) => {
   return await apiRequest(api.pm.knowledgeEntryContent(encodeURIComponent(entryId)), { method: 'GET' });
+};
+
+// ── 全局总览（管理层只读洞察，跨全公司项目） ──
+
+export const getPmGlobalProjectsReal: GetPmGlobalProjectsContract = async (filters) => {
+  return await apiRequest(api.pm.globalProjects({
+    page: filters.page, pageSize: filters.pageSize, sort: filters.sort,
+    lifecycle: filters.lifecycle, type: filters.type, leaderId: filters.leaderId, health: filters.health, q: filters.q,
+  }), { method: 'GET' });
+};
+
+export const getPmGlobalSummaryReal: GetPmGlobalSummaryContract = async (filters) => {
+  return await apiRequest(api.pm.globalSummary({
+    lifecycle: filters.lifecycle, type: filters.type, leaderId: filters.leaderId, q: filters.q,
+  }), { method: 'GET' });
 };
