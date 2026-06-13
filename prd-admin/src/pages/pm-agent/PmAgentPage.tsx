@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck, Home, BarChart3, ArrowLeft } from 'lucide-react';
+import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck, Home, BarChart3, ArrowLeft, Globe } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { AgentFullscreenLayout, type NavItem } from '@/components/agent-shell/AgentFullscreenLayout';
@@ -18,6 +18,7 @@ import type { PmProject, PmProjectScope } from '@/services/contracts/pmAgent';
 import { CreateProjectDialog } from './CreateProjectDialog';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { DashboardView } from './DashboardView';
+import { GlobalView } from './GlobalView';
 import { AuditLogView } from './AuditLogView';
 import { PmAssistantPanel } from './PmAssistantPanel';
 import { PmTodosCard } from './PmTodosCard';
@@ -25,9 +26,9 @@ import { PmQuickActionsCard } from './PmQuickActionsCard';
 import { PmReportsSection } from './PmReportsSection';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, GRADE_REGISTRY, PM_ACCENT } from './pmConstants';
 
-type WorkspaceNav = 'home' | 'projects' | 'reports' | 'dashboard' | 'audit';
+type WorkspaceNav = 'home' | 'projects' | 'reports' | 'global' | 'dashboard' | 'audit';
 
-const NAV_KEYS = new Set<WorkspaceNav>(['home', 'projects', 'reports', 'dashboard', 'audit']);
+const NAV_KEYS = new Set<WorkspaceNav>(['home', 'projects', 'reports', 'global', 'dashboard', 'audit']);
 
 export function PmAgentPage() {
   const navigate = useNavigate();
@@ -41,6 +42,11 @@ export function PmAgentPage() {
   const canViewAudit = useAuthStore((s) => {
     const perms = Array.isArray(s.permissions) ? s.permissions : [];
     return perms.includes('pm-agent.audit') || perms.includes('super');
+  });
+  // 全局总览仅对管理层开放（pm-agent.global），跨全公司项目只读洞察
+  const canViewGlobal = useAuthStore((s) => {
+    const perms = Array.isArray(s.permissions) ? s.permissions : [];
+    return perms.includes('pm-agent.global') || perms.includes('super');
   });
 
   // 一级导航记录在 URL（?nav=），刷新/返回不丢位置；默认落在首页（AI 工作台）
@@ -69,14 +75,14 @@ export function PmAgentPage() {
     { key: 'home', label: '首页', icon: Home },
     { key: 'projects', label: '项目', icon: FolderKanban },
     { key: 'reports', label: '报表', icon: BarChart3 },
-    { key: 'dashboard', label: 'NPSS 看板', icon: TrendingUp, hidden: !canViewDashboard, dividerBefore: true },
+    { key: 'global', label: '全局总览', icon: Globe, hidden: !canViewGlobal, dividerBefore: true },
+    { key: 'dashboard', label: 'NPSS 看板', icon: TrendingUp, hidden: !canViewDashboard },
     { key: 'audit', label: '审计日志', icon: ShieldCheck, hidden: !canViewAudit },
   ];
 
   return (
     <AgentFullscreenLayout
       title="项目管理"
-      subtitle="立项 → 目标 → 里程碑 / 任务 → 结案"
       topSlot={
         <div className="mb-2">
           <button
@@ -107,6 +113,7 @@ export function PmAgentPage() {
         <div className="flex-1 min-h-0 flex flex-col p-5 pa-accent-blue">
           {active === 'projects' && <ProjectsSection onOpen={(id) => navigate(`/pm-agent/p/${id}`)} />}
           {active === 'reports' && <PmReportsSection />}
+          {active === 'global' && canViewGlobal && <GlobalView onOpen={(id) => navigate(`/pm-agent/p/${id}`)} />}
           {active === 'dashboard' && canViewDashboard && <DashboardView />}
           {active === 'audit' && canViewAudit && <AuditLogView />}
         </div>

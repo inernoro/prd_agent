@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react';
 import type { EChartsOption } from 'echarts';
-import { Plus, ChevronRight, ChevronDown, Target, Milestone as MilestoneIcon, User, CircleCheck, Lock, Package, Sparkles, CalendarDays, GanttChartSquare, Activity } from 'lucide-react';
+import { Plus, ChevronRight, ChevronDown, Target, Milestone as MilestoneIcon, User, CircleCheck, Lock, Package, Sparkles, CalendarDays, GanttChartSquare, Activity, GripVertical } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { EChart } from '@/components/charts/EChart';
+import { updatePmMilestone } from '@/services';
+import { toast } from '@/lib/toast';
 import type { PmMilestone, PmGoal, PmTask } from '@/services/contracts/pmAgent';
 import { MILESTONE_HEALTH_REGISTRY, TASK_STATUS_REGISTRY } from './pmConstants';
 import { MilestoneDetailDrawer } from './MilestoneDetailDrawer';
 import { MilestoneCalendar } from './MilestoneCalendar';
 import { MilestoneSuggestPanel } from './MilestoneSuggestPanel';
 import { fmtDate } from './materialUtils';
+import { midOrderKey } from './orderKeyUtils';
 
 interface Props {
   projectId: string;
@@ -41,11 +44,26 @@ export function MilestonesPanel({ projectId, milestones, goals, tasks, canManage
   const teamGoals = goals.filter((g) => g.scope === 'team');
   const goalTitle = (id?: string | null) => (id ? teamGoals.find((g) => g.id === id)?.title ?? goals.find((g) => g.id === id)?.title ?? null : null);
   const tasksOf = (mId: string) => tasks.filter((t) => t.milestoneId === mId);
+  // 手动顺序优先（orderKey），与目标/任务/决策/风险一致，支持拖拽重排；同序时按计划截止日兜底。
+  // 日历/基线视图仍按真实日期渲染，不受手动顺序影响。
   const sorted = useMemo(() => [...milestones].sort((a, b) => {
+    const ak = a.orderKey ?? 0, bk = b.orderKey ?? 0;
+    if (ak !== bk) return ak - bk;
     const av = a.dueAt ? new Date(a.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
     const bv = b.dueAt ? new Date(b.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
-    return av - bv || (a.orderKey ?? 0) - (b.orderKey ?? 0);
+    return av - bv;
   }), [milestones]);
+
+  const [dragId, setDragId] = useState<string | null>(null);
+  // 拖拽重排：把 dragId 放到 target 之前
+  const reorderMilestone = async (draggedId: string, target: PmMilestone) => {
+    if (draggedId === target.id) return;
+    const list = sorted.filter((m) => m.id !== draggedId);
+    const idx = list.findIndex((m) => m.id === target.id);
+    const newKey = midOrderKey(idx > 0 ? list[idx - 1].orderKey : null, target.orderKey);
+    const res = await updatePmMilestone(draggedId, { orderKey: newKey });
+    if (res.success) onChanged(); else toast.error('排序失败', res.error?.message || '');
+  };
 
   const toggle = (id: string) => setExpanded((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const openDrawer = (m: PmMilestone | null) => setDrawer({ open: true, milestone: m });
@@ -141,9 +159,17 @@ export function MilestonesPanel({ projectId, milestones, goals, tasks, canManage
                     {idx < sorted.length - 1 && <span className="flex-1" style={{ width: 2, background: 'var(--border-subtle)', marginTop: 4 }} />}
                   </div>
                   <div className="group flex-1 min-w-0 rounded-lg border mb-2 flex flex-col gap-2 p-3 cursor-pointer transition-colors hover:border-[var(--border-strong)]"
-                    style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}
-                    onClick={() => openDrawer(m)}>
+                    style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', opacity: dragId === m.id ? 0.5 : 1 }}
+                    onClick={() => openDrawer(m)}
+                    onDragOver={canManage && dragId ? (e) => { e.preventDefault(); } : undefined}
+                    onDrop={canManage && dragId ? (e) => { e.preventDefault(); e.stopPropagation(); const id = dragId; setDragId(null); if (id) reorderMilestone(id, m); } : undefined}>
                     <div className="flex items-center gap-2">
+                      {canManage && (
+                        <span draggable onClick={(e) => e.stopPropagation()}
+                          onDragStart={(e) => { e.stopPropagation(); setDragId(m.id); e.dataTransfer.effectAllowed = 'move'; }}
+                          onDragEnd={() => setDragId(null)}
+                          className="shrink-0 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100" style={{ color: 'var(--text-muted)' }} title="拖拽调整顺序"><GripVertical size={14} /></span>
+                      )}
                       {kids.length > 0 && (
                         <button onClick={(e) => { e.stopPropagation(); toggle(m.id); }} style={{ color: 'var(--text-muted)' }} title={isOpen ? '收起任务' : '展开任务'}>
                           {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

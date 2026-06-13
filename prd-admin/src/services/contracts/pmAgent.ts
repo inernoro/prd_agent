@@ -823,3 +823,77 @@ export interface PmReportSummary {
   };
 }
 export type GetPmReportSummaryContract = (scope?: PmProjectScope) => Promise<ApiResponse<PmReportSummary>>;
+
+// ───────── 全局总览（管理层只读洞察，跨全公司项目） ─────────
+export type PmGlobalHealth = 'on_track' | 'at_risk' | 'overdue' | 'closed';
+
+export interface PmGlobalFilters {
+  lifecycle?: PmProjectLifecycle;
+  type?: PmProjectType;
+  leaderId?: string;
+  health?: PmGlobalHealth;
+  q?: string;
+}
+
+export interface PmGlobalProjectRow {
+  id: string;
+  projectNo: string;
+  title: string;
+  projectType: PmProjectType;
+  lifecycle: PmProjectLifecycle;
+  leaderId?: string | null;
+  leaderName?: string | null;
+  taskTotal: number;
+  taskDone: number;
+  completionRate: number;
+  budget: number;
+  actualCost: number;
+  overBudget: boolean;
+  overdueMilestones: number;
+  highRisks: number;
+  stalled: boolean;
+  health: PmGlobalHealth;
+  plannedEndAt?: string | null;
+  updatedAt: string;
+}
+
+export interface PmGlobalProjectsResult {
+  items: PmGlobalProjectRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PmGlobalSummary {
+  projectTotal: number;
+  lifecycleDist: Array<{ key: PmProjectLifecycle; count: number }>;
+  typeDist: Array<{ key: PmProjectType; count: number }>;
+  healthDist: Array<{ key: PmGlobalHealth; count: number }>;
+  warnings: {
+    overdueMilestones: number;
+    overBudget: Array<{ id: string; title: string; leaderName?: string | null; budget: number; actualCost: number }>;
+    stalled: Array<{ id: string; title: string; leaderName?: string | null; updatedAt: string; idleDays: number }>;
+    highRisk: Array<{ id: string; title: string; leaderName?: string | null; highRisks: number }>;
+  };
+  business: {
+    totalBudget: number;
+    totalActual: number;
+    budgetExecutionRate: number;
+    taskTotal: number;
+    taskDone: number;
+    completionRate: number;
+  };
+  leaderLoad: Array<{
+    leaderId: string;
+    leaderName: string;
+    projectCount: number;
+    activeCount: number;
+    taskTotal: number;
+    taskDone: number;
+    overdueMilestones: number;
+    overBudget: number;
+  }>;
+}
+
+export type GetPmGlobalProjectsContract = (filters: PmGlobalFilters & { page?: number; pageSize?: number; sort?: string }) => Promise<ApiResponse<PmGlobalProjectsResult>>;
+export type GetPmGlobalSummaryContract = (filters: PmGlobalFilters) => Promise<ApiResponse<PmGlobalSummary>>;
