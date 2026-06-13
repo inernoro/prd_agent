@@ -174,7 +174,7 @@ export function ProductObjectDetailPage() {
           <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-200">正式版本</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-          <div className="mx-auto w-full max-w-4xl py-5 px-5">
+          <div className="w-full px-5 xl:px-8 py-5">
             <ReleaseWorkflowDetail productId={productId} releaseId={id} isNew={isNew} />
           </div>
         </div>
@@ -192,7 +192,7 @@ export function ProductObjectDetailPage() {
           <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">内部版本</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-          <div className="mx-auto w-full max-w-4xl py-5 px-5">
+          <div className="w-full px-5 xl:px-8 py-5">
             <InitiationWorkflowDetail productId={productId} initiationId={id} />
           </div>
         </div>
