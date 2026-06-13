@@ -63,10 +63,10 @@ import {
   type OverviewDefectRow,
 } from '@/services/real/productAgent';
 import type { Customer, Product } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel, readDefectPriorityGrade, readDefectSeverityLevel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
-import { useListFilter, distinctOptions, type FilterFieldDef } from './listFilter';
+import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
 
@@ -487,6 +487,8 @@ function RequirementsTable({
     keywordOf: (r) => `${r.requirementNo} ${r.title} ${r.productName}`,
     keywordPlaceholder: '搜索标题 / 编号',
     showFilterSettings: false,
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId: r.productId, recordId: r.id })),
@@ -520,9 +522,8 @@ function RequirementsTable({
   return (
     <div className="w-full min-w-0">
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-        <div className="flex-1 min-w-0">{bar}</div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
+        <div className="flex shrink-0 items-center gap-2">
           <MineToggle mine={mine} setMine={setMine} />
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
         </div>
@@ -603,26 +604,82 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewDefectRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
+  const productNameMap = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
+  const fields = useMemo<FilterFieldDef<OverviewDefectRow>[]>(() => [
+    {
+      key: 'severity',
+      label: '严重程度',
+      defaultVisible: true,
+      options: () => (['致命', '严重', '一般', '轻微'] as const).map((label) => ({ value: label, label })),
+      test: (r, v) => readDefectSeverityLevel(r) === v,
+    },
+    {
+      key: 'priority',
+      label: '优先级',
+      defaultVisible: true,
+      options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })),
+      test: (r, v) => readDefectPriorityGrade(r) === v,
+    },
+    {
+      key: 'product',
+      label: '产品',
+      defaultVisible: true,
+      options: (its) => distinctOptions(
+        its,
+        (r) => r.productId,
+        (id) => productNameMap.get(id) ?? its.find((r) => r.productId === id)?.productName ?? id,
+      ),
+      test: (r, v) => r.productId === v,
+    },
+    {
+      key: 'assignee',
+      label: '处理人',
+      defaultVisible: true,
+      options: (its) => distinctOptions(
+        its,
+        (r) => r.assigneeId ?? '',
+        (id) => its.find((r) => r.assigneeId === id)?.assigneeName ?? id,
+      ),
+      test: (r, v) => (r.assigneeId ?? '') === v,
+    },
+    {
+      key: 'status',
+      label: '状态',
+      defaultVisible: true,
+      options: (its) => distinctOptions(its, (r) => r.status, defectStatusLabel),
+      test: (r, v) => r.status === v,
+    },
+  ], [productNameMap]);
+
+  const { bar, filtered: filterBarFiltered } = useListFilter({
+    items: rows,
+    storageKey: 'pa-list-filters:overview-defect',
+    fields,
+    keywordOf: (r) => `${r.defectNo} ${r.title ?? ''} ${r.productName}`,
+    keywordPlaceholder: '搜索标题 / 编号',
+    showFilterSettings: false,
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
+  });
+  const filtered = useMemo(
+    () => filterByTracked(filterBarFiltered, trackedOnly, 'defect', (r) => ({ productId: r.productId, recordId: r.id })),
+    [filterBarFiltered, trackedOnly],
+  );
+
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await getOverviewDefects({ keyword: keyword.trim() || undefined });
+    const res = await getOverviewDefects();
     if (res.success) setRows(res.data.items);
     setLoading(false);
-  }, [keyword]);
+  }, []);
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  const visibleRows = useMemo(
-    () => filterByTracked(rows, trackedOnly, 'defect', (r) => ({ productId: r.productId, recordId: r.id })),
-    [rows, trackedOnly],
-  );
-
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(visibleRows, {
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
     filename: 'overview-defects.csv',
     headers: ['ID', '标题', '产品', '状态', '严重程度'],
     mapRow: (r) => [r.defectNo, r.title ?? '', r.productName, defectStatusLabel(r.status), defectSeverityTierLabel(r)],
@@ -630,27 +687,25 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
 
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
-    <div>
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-        <div className="flex-1 min-w-0">
-          <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
-        </div>
+    <div className="w-full min-w-0">
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
+        {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
       </div>
       <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
-      {visibleRows.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">
-          {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : '没有追溯到产品的缺陷'}
+          {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : rows.length === 0 ? '没有追溯到产品的缺陷' : '没有符合筛选条件的缺陷'}
         </div>
       ) : (
         <OverviewDataTable
           tableKey="defects"
-          rows={visibleRows}
+          rows={filtered}
           selection={tableSelection}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/defect/${r.id}`)}
           columns={[
             { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.defectNo}</span> },
-            { key: 'title', header: formatListSectionTitle('标题', visibleRows.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
+            { key: 'title', header: formatListSectionTitle('标题', filtered.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
             { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
             { key: 'status', header: '状态', defaultWidth: 88, render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },
             { key: 'severity', header: '严重程度', defaultWidth: 88, render: (r) => SEVERITY_BADGE(defectSeverityTierLabel(r)) },

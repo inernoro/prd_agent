@@ -108,13 +108,10 @@ export function getInitiation(id: string) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}`);
 }
 export function createInitiation(productId: string, body: {
+  linkedProductId: string;
   projectType: 'standard' | 'custom';
-  systemName?: string;
-  appName?: string;
   customerSource?: string;
   planName: string;
-  requirementDescription?: string;
-  departmentName?: string;
   planUrl?: string;
   versionType: 'major' | 'medium' | 'minor';
   requirementIds: string[];
@@ -745,6 +742,7 @@ export function getOverviewFeatures(params?: { grade?: string; keyword?: string;
 export interface OverviewDefectRow {
   id: string; productId: string; productName: string; defectNo: string; title?: string | null;
   status: string; grade?: string | null; severityTier?: string | null; structuredData?: Record<string, string>;
+  assigneeId?: string | null; assigneeName?: string | null;
   tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
 }
 export function getOverviewDefects(params?: { status?: string; keyword?: string }) {

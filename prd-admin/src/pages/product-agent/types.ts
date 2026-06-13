@@ -128,6 +128,7 @@ export type VersionScale = 'major' | 'medium' | 'minor';
 export interface ProductInitiation {
   id: string;
   productId: string;
+  linkedProductId?: string | null;
   tCode?: string | null;
   systemName?: string | null;
   appName?: string | null;

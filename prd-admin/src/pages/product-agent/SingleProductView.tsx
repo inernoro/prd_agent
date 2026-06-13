@@ -55,8 +55,8 @@ import {
 } from '@/services/real/productAgent';
 import { searchDirectoryUsers } from '@/services';
 import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, readDefectSeverityLevel } from './types';
-import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, type FilterFieldDef } from './listFilter';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, readDefectPriorityGrade, readDefectSeverityLevel } from './types';
+import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
@@ -418,6 +418,8 @@ function RequirementsTab({ productId }: { productId: string }) {
     fields,
     keywordOf: (r) => `${r.requirementNo} ${r.externalId ?? ''} ${r.title} ${r.description ?? ''} ${Object.values(r.sourceSnapshot?.fields ?? {}).join(' ')}`,
     keywordPlaceholder: '搜索 ID、标题、描述',
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId, recordId: r.id })),
@@ -498,9 +500,8 @@ function RequirementsTab({ productId }: { productId: string }) {
         <EmptyHint text="没有与你相关的需求。你是负责人或处理人的需求会出现在这里；点「新建需求」可创建新条目。" />
       ) : (
         <>
-        <div className="shrink-0 w-full min-w-0 flex flex-wrap items-center gap-2">
-          <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-          <div className="min-w-0 flex-1">{bar}</div>
+        <div className="shrink-0 w-full min-w-0 flex items-center gap-2 flex-wrap">
+          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
         </div>
         {filtered.length === 0 ? (
           <div className="text-center text-white/35 text-sm py-10">
@@ -683,6 +684,7 @@ function DefectsTab({ productId }: { productId: string }) {
   }, [items]);
   const fields = useMemo<FilterFieldDef<TracedDefect>[]>(() => [
     { key: 'severity', label: '严重程度', defaultVisible: true, options: () => (['致命', '严重', '一般', '轻微'] as const).map((label) => ({ value: label, label })), test: (d, v) => readDefectSeverityLevel(d) === v },
+    { key: 'priority', label: '优先级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (d, v) => readDefectPriorityGrade(d) === v },
     { key: 'status', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (d) => d.status, defectStatusLabel), test: (d, v) => d.status === v },
     { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (d) => d.assigneeId ?? '', (id) => personName.get(id) ?? id), test: (d, v) => (d.assigneeId ?? '') === v },
     { key: 'reporter', label: '上报人', options: (its) => distinctOptions(its, (d) => d.reporterId ?? '', (id) => personName.get(id) ?? id), test: (d, v) => (d.reporterId ?? '') === v },
@@ -690,7 +692,15 @@ function DefectsTab({ productId }: { productId: string }) {
     { key: 'version', label: '关联版本', options: (its) => distinctOptions(its, (d) => d.tracedVersionId ?? '', (id) => versionName.get(id) ?? id), test: (d, v) => (d.tracedVersionId ?? '') === v },
     { key: 'created', label: '提交时间', options: () => TIME_PRESETS, test: (d, v) => inTimeRange(d.createdAt, v) },
   ], [personName, featureName, versionName]);
-  const { bar, filtered: filterBarFiltered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索 ID、标题、描述' });
+  const { bar, filtered: filterBarFiltered } = useListFilter({
+    items,
+    storageKey: 'pa-list-filters:defect',
+    fields,
+    keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`,
+    keywordPlaceholder: '搜索 ID、标题、描述',
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
+  });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'defect', (d) => ({ productId, recordId: d.id })),
     [filterBarFiltered, trackedOnly, productId],
@@ -718,9 +728,8 @@ function DefectsTab({ productId }: { productId: string }) {
         <EmptyHint text="没有与你相关的缺陷。你是处理人或上报人的缺陷会出现在这里；点「新建缺陷」可创建新条目。" />
       ) : (
         <>
-        <div className="flex flex-wrap items-center gap-2">
-          <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-          <div className="min-w-0 flex-1">{bar}</div>
+        <div className="flex w-full min-w-0 items-center gap-2 flex-wrap">
+          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
         </div>
         <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
         {filtered.length === 0 ? (

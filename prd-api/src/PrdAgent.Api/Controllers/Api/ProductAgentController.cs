@@ -725,20 +725,30 @@ public class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
         if (string.IsNullOrWhiteSpace(request.PlanName))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方案名称不能为空"));
+        if (string.IsNullOrWhiteSpace(request.LinkedProductId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择产品"));
         if (request.ProjectType == "custom" && string.IsNullOrWhiteSpace(request.CustomerSource))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "定制项目必须填写客户来源"));
+
+        var linkedProduct = await FindAccessibleProductAsync(request.LinkedProductId.Trim(), userId);
+        if (linkedProduct == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "所选产品不存在或无权访问"));
+
+        var (systemName, appName) = await ResolveInitiationSystemAppNamesAsync(linkedProduct);
+        var departmentName = await ResolveDefaultInitiationDepartmentAsync(userId);
 
         var item = new ProductInitiation
         {
             ProductId = productId,
+            LinkedProductId = linkedProduct.Id,
             ProjectType = request.ProjectType == "custom" ? "custom" : "standard",
-            SystemName = request.SystemName?.Trim(),
-            AppName = request.AppName?.Trim(),
+            SystemName = systemName,
+            AppName = appName,
             CustomerSource = request.CustomerSource?.Trim(),
             PlanName = request.PlanName.Trim(),
-            RequirementDescription = request.RequirementDescription?.Trim(),
-            DepartmentName = request.DepartmentName?.Trim(),
-            PlanUrl = request.PlanUrl?.Trim(),
+            RequirementDescription = null,
+            DepartmentName = departmentName,
+            PlanUrl = string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim(),
             VersionType = NormalizeVersionType(request.VersionType),
             RequirementIds = request.RequirementIds?.Distinct().ToList() ?? new(),
             Status = "review_pending",
@@ -5168,6 +5178,7 @@ public class ProductAgentController : ControllerBase
             scope == null ? Builders<DefectReport>.Filter.Empty : Builders<DefectReport>.Filter.In(d => d.TracedProductId, scope));
         var items = await _db.DefectReports.Find(filter).Limit(5000).ToListAsync();
         var names = await ProductNamesAsync(items.Select(d => d.TracedProductId!));
+        var userNames = await UserNamesAsync(items.Select(d => d.AssigneeId));
         var rows = items
             .Where(d => string.IsNullOrWhiteSpace(status) || d.Status == status)
             .Where(d => string.IsNullOrWhiteSpace(keyword) || (d.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || d.DefectNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
@@ -5182,6 +5193,8 @@ public class ProductAgentController : ControllerBase
                 grade = d.Grade,
                 severityTier = d.StructuredData.GetValueOrDefault(TapdDefectFieldCatalog.DefectSeverity),
                 structuredData = d.StructuredData,
+                d.AssigneeId,
+                assigneeName = d.AssigneeId == null ? null : userNames.GetValueOrDefault(d.AssigneeId, ""),
                 d.TracedRequirementId,
                 d.TracedVersionId,
                 d.UpdatedAt,
@@ -5445,6 +5458,31 @@ public class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(externalId))
             return externalId.Trim();
         return await GenerateNextTapdStyleDefectIdAsync(productId);
+    }
+
+    private async Task<string?> ResolveDefaultInitiationDepartmentAsync(string userId)
+    {
+        var last = await _db.ProductInitiations
+            .Find(x => x.CreatedBy == userId && !x.IsDeleted && x.DepartmentName != null && x.DepartmentName != "")
+            .SortByDescending(x => x.CreatedAt)
+            .Project(x => x.DepartmentName)
+            .FirstOrDefaultAsync();
+        return string.IsNullOrWhiteSpace(last) ? null : last.Trim();
+    }
+
+    /// <summary>按关联产品类型写入 legacy 系统/应用列（导入 Excel 兼容）。</summary>
+    private async Task<(string? SystemName, string? AppName)> ResolveInitiationSystemAppNamesAsync(Product linkedProduct)
+    {
+        await EnsureCategoriesSeededAsync();
+        var cat = await _db.ProductCategories.Find(c => c.Id == linkedProduct.Grade && !c.IsDeleted).FirstOrDefaultAsync();
+        var typeName = cat?.Name?.Trim() ?? "";
+        return typeName switch
+        {
+            "应用" => (null, linkedProduct.Name),
+            "系统" => (linkedProduct.Name, null),
+            "子系统" => (linkedProduct.Name, null),
+            _ => (linkedProduct.Name, linkedProduct.Name),
+        };
     }
 
     private async Task<long> GenerateNextProductSequenceAsync()
@@ -5798,13 +5836,11 @@ public class UpsertVersionRequest
 
 public class CreateInitiationRequest
 {
-    public string? SystemName { get; set; }
-    public string? AppName { get; set; }
+    /// <summary>关联的产品目录 ID（必填）</summary>
+    public string LinkedProductId { get; set; } = string.Empty;
     public string ProjectType { get; set; } = "standard";
     public string? CustomerSource { get; set; }
     public string PlanName { get; set; } = string.Empty;
-    public string? RequirementDescription { get; set; }
-    public string? DepartmentName { get; set; }
     public string? PlanUrl { get; set; }
     public string VersionType { get; set; } = "minor";
     public List<string>? RequirementIds { get; set; }

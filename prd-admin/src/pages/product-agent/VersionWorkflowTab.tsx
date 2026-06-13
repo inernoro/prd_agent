@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
-  getOverviewStats, getProduct, listInitiations, listProductMembers, listReleases, listRequirements,
+  getOverviewStats, getProduct, listInitiations, listProductMembers, listProducts, listReleases, listRequirements,
   syncInitiationReview,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -12,6 +12,8 @@ import { createSubmission, getSubmission, runReviewSubmission } from '@/services
 import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
+import { toProductOptions } from './comboboxOptions';
 import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
@@ -23,6 +25,7 @@ import {
   type TableSelectionProps,
 } from './listSelection';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { OVERVIEW_LIST_SEARCH_BOX } from './listFilter';
 import { filterByTracked } from './productRecordTrackStorage';
 
 type MainTab = 'release' | 'initiation';
@@ -185,11 +188,9 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
   const [item, setItem] = useState<ProductInitiation | null>(null);
   const [projectType, setProjectType] = useState<'standard' | 'custom'>('standard');
   const [customerSource, setCustomerSource] = useState('');
-  const [systemName, setSystemName] = useState('');
-  const [appName, setAppName] = useState('');
+  const [linkedProductId, setLinkedProductId] = useState(productId);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
   const [planName, setPlanName] = useState('');
-  const [requirementDescription, setRequirementDescription] = useState('');
-  const [departmentName, setDepartmentName] = useState('');
   const [planUrl, setPlanUrl] = useState('');
   const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>('minor');
   const [requirementIds, setRequirementIds] = useState<string[]>([]);
@@ -200,12 +201,27 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
+  useEffect(() => {
+    void listProducts({ pageSize: 200 }).then((res) => {
+      if (res.success) setCatalogProducts(res.data.items);
+    });
+  }, []);
+
+  const productOptions = useMemo(() => toProductOptions(catalogProducts), [catalogProducts]);
+
   const createBase = async () => {
-    if (!planName.trim() || (projectType === 'custom' && !customerSource.trim())) return setMessage('请完整填写必填项');
+    if (!linkedProductId.trim()) return setMessage('请选择产品');
+    if (!planName.trim()) return setMessage('请填写方案名称');
+    if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
     setBusy(true);
     const res = await createInitiation(productId, {
-      projectType, systemName, appName, customerSource, planName, requirementDescription,
-      departmentName, planUrl, versionType, requirementIds,
+      linkedProductId,
+      projectType,
+      customerSource: projectType === 'custom' ? customerSource : undefined,
+      planName,
+      planUrl: planUrl.trim() || undefined,
+      versionType,
+      requirementIds,
     });
     setBusy(false);
     if (!res.success) return setMessage(res.error?.message ?? '保存失败');
@@ -260,13 +276,19 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
     {step === 1 && <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
       <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
       {projectType === 'custom' && <Field label="客户来源 *"><Input value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}
-      <Field label="系统"><Input value={systemName} onChange={(e) => setSystemName(e.target.value)} /></Field>
-      <Field label="应用"><Input value={appName} onChange={(e) => setAppName(e.target.value)} /></Field>
+      <Field label="产品 *" full>
+        <ItemSearchSelect
+          value={linkedProductId}
+          onChange={setLinkedProductId}
+          options={productOptions}
+          placeholder="搜索产品名称或编号"
+          countUnit="个产品"
+          emptyText="暂无产品"
+        />
+      </Field>
       <Field label="方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} /></Field>
-      <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
-      <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field>
+      <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://（选填）" /></Field>
       <Field label="版本级别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
-      <Field label="项目需求描述" full><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} className="min-h-24 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></Field>
       <Field label="关联需求" full>
         <RequirementChecks requirements={requirements} selected={requirementIds} onChange={setRequirementIds} />
       </Field>
@@ -429,17 +451,19 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
   trackedOnly?: boolean;
   onTrackedOnlyChange?: (value: boolean) => void;
 }) {
-  const filterClassName = 'h-[34px] rounded-lg border border-white/10 bg-[#111318] px-3 text-xs text-white/75 outline-none focus:border-cyan-400/50';
+  const filterClassName = 'h-8 rounded-lg border border-white/10 bg-[#111318] px-3 text-xs text-white/75 outline-none focus:border-cyan-400/50';
   return <div className="flex flex-wrap items-center gap-2">
-    {onTrackedOnlyChange && <TrackedFilterToggle active={trackedOnly ?? false} onChange={onTrackedOnlyChange} />}
-    <label className="relative block w-64 max-w-full">
-      <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-      <input value={query} onChange={(event) => onQueryChange(event.target.value)}
+    <div className={OVERVIEW_LIST_SEARCH_BOX}>
+      <Search size={14} className="shrink-0 text-white/35" />
+      <input
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
         placeholder="搜索版本号、方案名称等"
-        className="w-full rounded-lg border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50" />
-    </label>
+        className="min-w-0 flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/35"
+      />
+    </div>
     {onOwnerChange
-      ? <div className="w-52">
+      ? <div className="h-8 w-52">
           <UserSearchSelect value={ownerId ?? ''} onChange={onOwnerChange} placeholder="产品负责人" showAllOption={false} uiSize="sm" />
         </div>
       : <select
@@ -460,6 +484,7 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
       <option value="">全部状态</option>
       {statuses.map((value) => <option key={value} value={value}>{STATUS_LABEL[value] ?? value}</option>)}
     </select>
+    {onTrackedOnlyChange && <TrackedFilterToggle active={trackedOnly ?? false} onChange={onTrackedOnlyChange} />}
   </div>;
 }
 

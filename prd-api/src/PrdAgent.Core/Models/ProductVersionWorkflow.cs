@@ -4,6 +4,8 @@ public class ProductInitiation
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string ProductId { get; set; } = string.Empty;
+    /// <summary>立项关联的产品目录条目（替代手填系统/应用）</summary>
+    public string? LinkedProductId { get; set; }
     public string? TCode { get; set; }
     public string? SystemName { get; set; }
     public string? AppName { get; set; }
