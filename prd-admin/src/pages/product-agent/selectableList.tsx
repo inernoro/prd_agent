@@ -10,6 +10,7 @@ import {
   ListCheckbox,
   ListSelectionCell,
   ListSelectionHeaderCell,
+  LIST_SELECTION_COL_WIDTH,
   type TableSelectionProps,
 } from './listSelection';
 import { ListBatchBar, ExportOnlyBatchBar, type ListBatchEntityType } from './ListBatchBar';
@@ -143,7 +144,7 @@ export function SelectableRow({
       className={`${className}${onClick ? ' cursor-pointer' : ''}`}
       onClick={onClick}
     >
-      <span onClick={(e) => e.stopPropagation()} className="shrink-0">
+      <span onClick={(e) => e.stopPropagation()} className="flex w-10 shrink-0 items-center justify-center" style={{ width: LIST_SELECTION_COL_WIDTH, minWidth: LIST_SELECTION_COL_WIDTH }}>
         <ListCheckbox checked={selection.selected.has(id)} onChange={() => selection.toggle(id)} />
       </span>
       <div className="min-w-0 flex-1">{children}</div>

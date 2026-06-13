@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TableSelectionProps } from './listSelection';
-import { ListSelectionCell, ListSelectionHeaderCell } from './listSelection';
+import { ListSelectionCell, ListSelectionHeaderCell, LIST_SELECTION_COL_WIDTH } from './listSelection';
 
 export const DEFAULT_CELL_TEXT_MAX = 40;
 const MIN_COL_WIDTH = 56;
@@ -112,7 +112,7 @@ export function OverviewDataTable<T extends { id: string }>({
     };
   }, [storageKey]);
 
-  const selectColWidth = 40;
+  const selectColWidth = LIST_SELECTION_COL_WIDTH;
   const tableMinWidth = widths.reduce((sum, width) => sum + width, 0) + (selection ? selectColWidth : 0);
 
   return (
@@ -132,7 +132,6 @@ export function OverviewDataTable<T extends { id: string }>({
                 indeterminate={selection.indeterminate}
                 onToggleAll={selection.onToggleAll}
                 disabled={rows.length === 0}
-                className="px-3 py-2"
               />
             ) : null}
             {columns.map((column, index) => (

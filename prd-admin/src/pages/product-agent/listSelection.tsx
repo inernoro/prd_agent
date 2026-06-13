@@ -2,9 +2,28 @@
  * 产品管理 — 列表多选 SSOT（复选框 + 全选 + 选中态 hook）。
  * 所有表格 / 行列表统一使用，配合 ListBatchBar 做批量操作。
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
 const CHECKBOX_CLS = 'accent-cyan-500 shrink-0';
+
+/** 表格首列复选框固定宽度（colgroup / th / td 共用） */
+export const LIST_SELECTION_COL_WIDTH = 40;
+
+const selectionColStyle = {
+  width: LIST_SELECTION_COL_WIDTH,
+  minWidth: LIST_SELECTION_COL_WIDTH,
+  maxWidth: LIST_SELECTION_COL_WIDTH,
+} as const;
+
+function SelectionCheckboxWrap({
+  children,
+  className = 'py-2.5',
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return <div className={`flex items-center justify-center ${className}`}>{children}</div>;
+}
 
 export function useListSelection(allIds: string[]) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -109,23 +128,26 @@ export function ListSelectionHeaderCell({
   indeterminate,
   onToggleAll,
   disabled,
-  className = 'px-3 py-2.5',
+  className = 'py-2.5',
 }: {
   allSelected: boolean;
   indeterminate: boolean;
   onToggleAll: () => void;
   disabled?: boolean;
+  /** 仅用于 inner 垂直间距，勿传 px-* */
   className?: string;
 }) {
   return (
-    <th className={`w-10 font-medium whitespace-nowrap ${className}`}>
-      <ListCheckbox
-        checked={allSelected}
-        indeterminate={indeterminate}
-        onChange={onToggleAll}
-        aria-label="全选"
-        className={disabled ? 'opacity-40 pointer-events-none' : ''}
-      />
+    <th className="box-border p-0 align-middle font-medium whitespace-nowrap" style={selectionColStyle}>
+      <SelectionCheckboxWrap className={className}>
+        <ListCheckbox
+          checked={allSelected}
+          indeterminate={indeterminate}
+          onChange={onToggleAll}
+          aria-label="全选"
+          className={disabled ? 'opacity-40 pointer-events-none' : ''}
+        />
+      </SelectionCheckboxWrap>
     </th>
   );
 }
@@ -133,15 +155,18 @@ export function ListSelectionHeaderCell({
 export function ListSelectionCell({
   checked,
   onToggle,
-  className = 'px-3 py-2',
+  className = 'py-2.5',
 }: {
   checked: boolean;
   onToggle: () => void;
+  /** 仅用于 inner 垂直间距，勿传 px-* */
   className?: string;
 }) {
   return (
-    <td className={`w-10 ${className}`} onClick={(e) => e.stopPropagation()}>
-      <ListCheckbox checked={checked} onChange={onToggle} />
+    <td className="box-border p-0 align-middle" style={selectionColStyle} onClick={(e) => e.stopPropagation()}>
+      <SelectionCheckboxWrap className={className}>
+        <ListCheckbox checked={checked} onChange={onToggle} />
+      </SelectionCheckboxWrap>
     </td>
   );
 }

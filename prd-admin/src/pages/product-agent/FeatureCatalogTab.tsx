@@ -21,6 +21,7 @@ import {
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { toProductOptions } from './comboboxOptions';
 import { SelectionActionBar, ListTableSelectionCell, ListTableSelectionHeader, useOverviewTableSelection } from './selectableList';
+import { LIST_SELECTION_COL_WIDTH } from './listSelection';
 import type { Feature, FeatureBusinessType, Product, ProductRelease } from './types';
 
 const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
@@ -347,9 +348,12 @@ export function FeatureCatalogTab({
               </div>
             ) : (
               <table className="w-full min-w-[1100px] text-left text-xs">
+                <colgroup>
+                  <col style={{ width: LIST_SELECTION_COL_WIDTH }} />
+                </colgroup>
                 <thead className="sticky top-0 z-10 bg-[#0f1014] text-white/45 border-b border-white/10">
                   <tr>
-                    <ListTableSelectionHeader selection={tableSelection} disabled={tableRows.length === 0} className="px-3 py-2" />
+                    <ListTableSelectionHeader selection={tableSelection} disabled={tableRows.length === 0} />
                     <th className="px-3 py-2.5 font-medium whitespace-nowrap">编号</th>
                     <th className="px-3 py-2.5 font-medium">目录路径</th>
                     <th className="px-3 py-2.5 font-medium">功能名称</th>
@@ -370,7 +374,7 @@ export function FeatureCatalogTab({
                       onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
                       className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]"
                     >
-                      <ListTableSelectionCell selection={tableSelection} id={f.id} className="px-3 py-2.5" />
+                      <ListTableSelectionCell selection={tableSelection} id={f.id} />
                       <td className="px-3 py-2.5 font-mono text-cyan-200/80 whitespace-nowrap">{f.featureNo}</td>
                       <td className="px-3 py-2.5 text-white/50 max-w-[200px] truncate" title={featurePathLabel(scopedFeatures, f.id)}>
                         {featurePathLabel(scopedFeatures, f.id)}

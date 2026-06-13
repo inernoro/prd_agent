@@ -30,6 +30,7 @@ import {
   useOverviewTableSelection,
 } from './selectableList';
 import type { TableSelectionProps } from './listSelection';
+import { LIST_SELECTION_COL_WIDTH } from './listSelection';
 import { downloadListCsv } from './listExport';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import './product-cards.css';
@@ -573,7 +574,7 @@ function RequirementDataTable({
   return (
     <table className="w-full table-fixed text-left text-sm" style={{ minWidth: minTableWidth }}>
       <colgroup>
-        <col style={{ width: 40 }} />
+        <col style={{ width: LIST_SELECTION_COL_WIDTH }} />
         <col style={{ width: '8%' }} />
         <col style={{ width: dynamicColCount > 0 ? '20%' : '26%' }} />
         <col style={{ width: '5%' }} />
