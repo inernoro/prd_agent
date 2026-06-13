@@ -273,9 +273,11 @@ export const deletePmGoalCycleReal: DeletePmGoalCycleContract = async (cycleId) 
 
 // ── 审计日志 ──
 export const listPmAuditLogsReal: ListPmAuditLogsContract = async (opts) => {
-  const { projectId, page = 1, pageSize = 50 } = opts ?? {};
+  const { projectId, keyword, method, page = 1, pageSize = 50 } = opts ?? {};
   const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (projectId) qs.set('projectId', projectId);
+  if (keyword && keyword.trim()) qs.set('keyword', keyword.trim());
+  if (method) qs.set('method', method);
   return await apiRequest(`${api.pm.auditLogs()}?${qs.toString()}`, { method: 'GET' });
 };
 

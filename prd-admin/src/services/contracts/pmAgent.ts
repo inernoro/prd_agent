@@ -576,7 +576,7 @@ export type PmAuditLog = {
   targetId?: string | null;
   createdAt: string;
 };
-export type ListPmAuditLogsContract = (opts?: { projectId?: string; page?: number; pageSize?: number }) => Promise<ApiResponse<{ items: PmAuditLog[]; total: number; page: number; pageSize: number }>>;
+export type ListPmAuditLogsContract = (opts?: { projectId?: string; keyword?: string; method?: string; page?: number; pageSize?: number }) => Promise<ApiResponse<{ items: PmAuditLog[]; total: number; page: number; pageSize: number }>>;
 
 // ── 里程碑 ──
 export type PmMilestoneStatus = 'planned' | 'reached' | 'cancelled';

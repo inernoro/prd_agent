@@ -4,3 +4,5 @@
 | fix | prd-admin | 修复知识库全屏覆盖层背景误用半透明 token 导致整页穿透（改用不透明 --bg-base）；修复上传 PDF 等文件后标题回退显示文件名（放开提取正文类型参与正文标题推导，仅排除 HTML/XML 源码） |
 | refactor | prd-admin | 全局知识库改为列表→详情两段式（列表全宽、点文档进该项目全宽 DocBrowser），解决多列嵌套挤压正文；Agent 全屏左导航支持收起/展开；DocBrowser 阅读区右侧本页章节/批注栏支持收起 |
 | fix | prd-admin | 修复全局知识库详情阅读区高度截断（DocBrowser wrapper 补 flex flex-col 使 flex-1 生效）；列表改扁平表格行+服务端分页（应对文档多）+ 新增项目筛选；去除"只读/掌控全局"等冗余文案；DocBrowser「+」新建按钮仅在有写操作时显示（只读态不再露占位项） |
+| feat | prd-api | 项目管理审计日志端点新增 keyword（路径/操作 regex）+ method 筛选参数 |
+| feat | prd-admin | 项目管理审计日志顶部新增搜索框 + 操作方法筛选（关键词防抖、筛选重置页码） |

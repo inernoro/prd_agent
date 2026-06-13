@@ -1973,7 +1973,7 @@ public class PmAgentController : ControllerBase
 
     /// <summary>审计日志列表（管理层可见）。可按 projectId 过滤；批量解析操作人名称与项目标题</summary>
     [HttpGet("audit-logs")]
-    public async Task<IActionResult> ListAuditLogs([FromQuery] string? projectId = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    public async Task<IActionResult> ListAuditLogs([FromQuery] string? projectId = null, [FromQuery] string? keyword = null, [FromQuery] string? method = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         if (!HasPermission(AdminPermissionCatalog.PmAgentAudit))
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "审计日志仅对管理层开放"));
@@ -1981,7 +1981,14 @@ public class PmAgentController : ControllerBase
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
         var b = Builders<PmAuditLog>.Filter;
-        var filter = string.IsNullOrWhiteSpace(projectId) ? b.Empty : b.Eq(x => x.ProjectId, projectId);
+        var filter = b.Empty;
+        if (!string.IsNullOrWhiteSpace(projectId)) filter &= b.Eq(x => x.ProjectId, projectId);
+        if (!string.IsNullOrWhiteSpace(method)) filter &= b.Eq(x => x.Method, method.Trim().ToUpperInvariant());
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = new BsonRegularExpression(Regex.Escape(keyword.Trim()), "i");
+            filter &= b.Or(b.Regex(x => x.Path, kw), b.Regex(x => x.ActionLabel, kw));
+        }
         var total = await _db.PmAuditLogs.CountDocumentsAsync(filter);
         var logs = await _db.PmAuditLogs.Find(filter).SortByDescending(x => x.CreatedAt)
             .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync();
