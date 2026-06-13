@@ -323,10 +323,16 @@ export function RequirementCreateForm({
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/8 bg-[#13151a]">
         <span className="text-[12px] px-2 py-0.5 rounded text-amber-200 bg-amber-500/15 border border-amber-500/25">需求</span>
         <span className="text-[12px] text-white/35">新建</span>
-        <div className="ml-auto flex items-center gap-2">
-          <button type="button" onClick={cancel} className="px-3 py-1.5 rounded-md text-[13px] text-white/60 border border-white/10 hover:bg-white/5">取消</button>
+        <div className="ml-auto flex items-center gap-2 min-w-0">
+          {validationError && (
+            <span className="text-[12px] text-amber-200/90 truncate max-w-[min(420px,40vw)]" title={validationError}>
+              {validationError}
+            </span>
+          )}
+          <button type="button" onClick={cancel} className="shrink-0 px-3 py-1.5 rounded-md text-[13px] text-white/60 border border-white/10 hover:bg-white/5">取消</button>
           <button type="button" onClick={() => void create()} disabled={saving || !!validationError || !title.trim()}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-[13px] bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed">
+            title={validationError ?? undefined}
+            className="shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-[13px] bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed">
             {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
           </button>
         </div>
@@ -378,7 +384,9 @@ export function RequirementCreateForm({
                     value={formData[originDetail.formKey] ?? ''}
                     onChange={(e) => setFormData((d) => ({ ...d, [originDetail.formKey]: e.target.value }))}
                     placeholder={`请输入${originDetail.label}`}
-                    className="w-full h-9 rounded-[8px] border border-white/12 bg-[var(--bg-input)] px-2.5 text-[13px] text-white outline-none focus:border-cyan-500/40 no-focus-ring placeholder:text-white/25"
+                    className={`w-full h-9 rounded-[8px] border bg-[var(--bg-input)] px-2.5 text-[13px] text-white outline-none focus:border-cyan-500/40 no-focus-ring placeholder:text-white/25 ${
+                      validationError?.includes(originDetail.label) ? 'border-amber-400/50' : 'border-white/12'
+                    }`}
                   />
                 )}
               </TapdPropertyRow>
