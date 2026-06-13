@@ -19,7 +19,12 @@ public static class TapdDefectFieldCatalog
     public const string ResponsiblePerson = "责任人";
     public const string Overdue = "是否逾期";
     public const string ValidReport = "有效报告";
+    /// <summary>TAPD 自定义「缺陷等级」(custom_field_6)，与标准导出列「严重程度」不同。</summary>
     public const string DefectGrade = "缺陷等级";
+    /// <summary>产品管理 V2.6 严重程度（致命/严重/一般/轻微），存 StructuredData。</summary>
+    public const string DefectSeverity = "严重程度";
+    /// <summary>TAPD 导出「严重程度」列原文（紧急/高/中/低/无关紧要），导入镜像。</summary>
+    public const string TapdSeveritySource = "TAPD严重程度";
     public const string DefectDivision = "缺陷划分";
     public const string FeedbackPerson = "反馈人";
     public const string CompanyName = "公司名称";
@@ -37,7 +42,7 @@ public static class TapdDefectFieldCatalog
     /// <summary>详情页右侧属性栏展示顺序（与 TAPD 查看页一致）。</summary>
     public static readonly string[] SidebarFieldKeys =
     {
-        DefectId, Status, CurrentOwner, Reporter, Created, DefectGrade, DefectDivision,
+        DefectId, Status, CurrentOwner, Reporter, Created, DefectSeverity, DefectDivision,
         ResponsiblePerson, Overdue, ValidReport, FeedbackPerson, CompanyName, MerchantNo,
         IntroducedProject, FeedbackTime, ImpactScope, StructureParent, LogicAttribution,
         IssueStartTime, Due, Resolved, Closed, UrlLink, IsHistorical, TimelyFixed,

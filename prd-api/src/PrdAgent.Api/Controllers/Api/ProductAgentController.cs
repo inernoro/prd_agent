@@ -1984,7 +1984,7 @@ public class ProductAgentController : ControllerBase
             entityOwnerId = defectEntity.ReporterId;
             entityAssigneeId = defectEntity.AssigneeId;
             entityTitle = defectEntity.Title ?? defectEntity.DefectNo;
-            entityGrade = defectEntity.Grade ?? SeverityToGrade(defectEntity.Severity);
+            entityGrade = ProductItemGrade.All.Contains(defectEntity.Grade ?? "") ? defectEntity.Grade! : ProductItemGrade.P2;
         }
 
         if (request.EntityType is ProductEntityType.Requirement or ProductEntityType.Feature or ProductEntityType.Defect)
@@ -2225,7 +2225,7 @@ public class ProductAgentController : ControllerBase
             RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
             Title = string.IsNullOrWhiteSpace(defect.Title) ? $"由缺陷 {defect.DefectNo} 转化" : defect.Title!.Trim(),
             Description = defect.RawContent,
-            Grade = defect.Grade ?? SeverityToGrade(defect.Severity),
+            Grade = ProductItemGrade.All.Contains(defect.Grade ?? "") ? defect.Grade! : ProductItemGrade.P2,
             WorkflowDefId = workflowDefId,
             OwnerId = userId,
             SourceDefectId = defect.Id,
@@ -2293,7 +2293,7 @@ public class ProductAgentController : ControllerBase
             AddEdge($"version:{fv.VersionId}", $"feature:{fv.FeatureId}", "feature-in-version");
         foreach (var d in defects)
         {
-            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = d.Grade ?? SeverityToGrade(d.Severity), state = d.Status });
+            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = d.Grade, severityTier = d.StructuredData.GetValueOrDefault(TapdDefectFieldCatalog.DefectSeverity), state = d.Status });
             var any = false;
             if (!string.IsNullOrEmpty(d.TracedRequirementId)) { AddEdge($"defect:{d.Id}", $"requirement:{d.TracedRequirementId}", "traces"); any = true; }
             if (!string.IsNullOrEmpty(d.TracedFeatureId)) { AddEdge($"defect:{d.Id}", $"feature:{d.TracedFeatureId}", "traces"); any = true; }
@@ -2628,7 +2628,7 @@ public class ProductAgentController : ControllerBase
             DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
             Title = request.Title.Trim(),
             RawContent = request.Description?.Trim() ?? string.Empty,
-            Grade = ProductItemGrade.All.Contains(request.Grade ?? "") ? request.Grade : ProductItemGrade.P2,
+            Grade = ProductItemGrade.All.Contains(request.Grade ?? "") ? request.Grade : null,
             AssigneeId = string.IsNullOrWhiteSpace(request.AssigneeId) ? null : request.AssigneeId,
             AssigneeName = assigneeName,
             ReporterId = userId,
@@ -2647,7 +2647,7 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(defect));
     }
 
-    /// <summary>在产品内编辑缺陷核心字段（标题/描述/等级/状态/处理人/关联功能/版本）。完整流转仍在缺陷管理智能体。</summary>
+    /// <summary>在产品内编辑缺陷核心字段（标题/描述/严重程度/状态/处理人/关联功能/版本）。完整流转仍在缺陷管理智能体。</summary>
     [HttpPut("products/{productId}/defects/{defectId}")]
     public async Task<IActionResult> UpdateProductDefect(string productId, string defectId, [FromBody] UpdateProductDefectRequest request)
     {
@@ -2668,8 +2668,10 @@ public class ProductAgentController : ControllerBase
 
         var u = Builders<DefectReport>.Update
             .Set(d => d.Title, request.Title.Trim())
-            .Set(d => d.RawContent, request.Description?.Trim() ?? string.Empty)
-            .Set(d => d.Grade, ProductItemGrade.All.Contains(request.Grade ?? "") ? request.Grade : ProductItemGrade.P2)
+            .Set(d => d.RawContent, request.Description?.Trim() ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(request.Grade) && ProductItemGrade.All.Contains(request.Grade))
+            u = u.Set(d => d.Grade, request.Grade);
+        u = u
             .Set(d => d.AssigneeId, string.IsNullOrWhiteSpace(request.AssigneeId) ? null : request.AssigneeId)
             .Set(d => d.AssigneeName, assigneeName)
             .Set(d => d.TracedFeatureId, string.IsNullOrWhiteSpace(request.FeatureId) ? null : request.FeatureId)
@@ -2735,15 +2737,6 @@ public class ProductAgentController : ControllerBase
     }
 
     /// <summary>缺陷严重度 → 需求分级映射。</summary>
-    private static string SeverityToGrade(string? severity) => severity switch
-    {
-        DefectSeverity.Blocker or DefectSeverity.Critical => ProductItemGrade.P0,
-        DefectSeverity.Major => ProductItemGrade.P1,
-        DefectSeverity.Minor => ProductItemGrade.P2,
-        DefectSeverity.Trivial or DefectSeverity.Suggestion => ProductItemGrade.P3,
-        _ => ProductItemGrade.P2,
-    };
-
     // ════════════════════════ 动态/讨论时间线 + 通知（P2）════════════════════════
 
     /// <summary>解析对象上下文（产品/处理人/负责人/标题/编号），仅支持需求 / 功能。</summary>
@@ -3018,7 +3011,7 @@ public class ProductAgentController : ControllerBase
         }
         foreach (var d in defs)
         {
-            objLines.Add($"缺陷 [{d.DefectNo}] {d.Title}（等级 {(d.Grade ?? SeverityToGrade(d.Severity)).ToUpperInvariant()}，状态 {d.Status}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}，关闭 {D(d.ClosedAt)}）描述：{Short(d.RawContent)}");
+            objLines.Add($"缺陷 [{d.DefectNo}] {d.Title}（严重程度 {d.StructuredData.GetValueOrDefault(TapdDefectFieldCatalog.DefectSeverity, "未设置")}，处理优先级 {(d.Grade ?? "未设置").ToUpperInvariant()}，状态 {d.Status}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}，关闭 {D(d.ClosedAt)}）描述：{Short(d.RawContent)}");
             timeline.Add((d.SubmittedAt ?? d.CreatedAt, $"缺陷 {d.DefectNo} 提交"));
             if (d.ResolvedAt.HasValue) timeline.Add((d.ResolvedAt.Value, $"缺陷 {d.DefectNo} 解决"));
         }
@@ -3215,7 +3208,7 @@ public class ProductAgentController : ControllerBase
                     : !string.IsNullOrEmpty(d.TracedRequirementId) ? "需求"
                     : !string.IsNullOrEmpty(d.TracedVersionId) ? ("版本" + (verNameById.TryGetValue(d.TracedVersionId!, out var vn) ? vn : ""))
                     : "产品";
-                sb.AppendLine($"- [{d.DefectNo}] {d.Title}（等级 {(d.Grade ?? SeverityToGrade(d.Severity)).ToUpperInvariant()}，状态 {d.Status}；处理人 {N(d.AssigneeId)}，上报人 {N(d.ReporterId)}；追溯到{traced}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}）{Short(d.RawContent)}");
+                sb.AppendLine($"- [{d.DefectNo}] {d.Title}（严重程度 {d.StructuredData.GetValueOrDefault(TapdDefectFieldCatalog.DefectSeverity, "未设置")}，处理优先级 {(d.Grade ?? "未设置").ToUpperInvariant()}，状态 {d.Status}；处理人 {N(d.AssigneeId)}，上报人 {N(d.ReporterId)}；追溯到{traced}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}）{Short(d.RawContent)}");
             }
         }
         // 知识库：仅本产品挂载的 DocumentStore 文本索引/摘要，截断保护，不取原文件
@@ -4167,15 +4160,26 @@ public class ProductAgentController : ControllerBase
                 ? null
                 : await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
                     d.ProductSourceSystem == sourceSystem && d.ProductExternalId == externalId).FirstOrDefaultAsync();
+            var rawTapdSeverity = row.TapdSeverityRaw?.Trim();
+            string? severityLevel = null;
+            if (!string.IsNullOrWhiteSpace(row.Severity) && DefectSeverityCatalog.AllLevels.Contains(row.Severity.Trim()))
+                severityLevel = row.Severity.Trim();
+            else if (!string.IsNullOrWhiteSpace(rawTapdSeverity))
+                severityLevel = DefectSeverityCatalog.TryNormalizeTapdToLevel(rawTapdSeverity);
+            var structuredPatch = DefectSeverityCatalog.BuildImportStructuredPatch(rawTapdSeverity, severityLevel);
             if (existing != null)
             {
-                await _db.DefectReports.UpdateOneAsync(d => d.Id == existing.Id,
-                    Builders<DefectReport>.Update
-                        .Set(d => d.Title, row.Title!.Trim())
-                        .Set(d => d.RawContent, row.Description?.Trim() ?? string.Empty)
-                        .Set(d => d.Grade, NormalizeImportGrade(row.Grade))
-                        .Set(d => d.Status, status)
-                        .Set(d => d.UpdatedAt, DateTime.UtcNow));
+                var u = Builders<DefectReport>.Update
+                    .Set(d => d.Title, row.Title!.Trim())
+                    .Set(d => d.RawContent, row.Description?.Trim() ?? string.Empty)
+                    .Set(d => d.Status, status)
+                    .Set(d => d.UpdatedAt, DateTime.UtcNow);
+                if (structuredPatch.Count > 0)
+                {
+                    var mergedStructured = TapdDefectFieldCatalog.MergeStructuredData(existing.StructuredData, structuredPatch);
+                    u = u.Set(d => d.StructuredData, mergedStructured);
+                }
+                await _db.DefectReports.UpdateOneAsync(d => d.Id == existing.Id, u);
                 updated++;
                 continue;
             }
@@ -4185,7 +4189,6 @@ public class ProductAgentController : ControllerBase
                 DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
                 Title = row.Title!.Trim(),
                 RawContent = row.Description?.Trim() ?? string.Empty,
-                Grade = NormalizeImportGrade(row.Grade),
                 Status = status,
                 ReporterId = userId,
                 ReporterName = user?.DisplayName,
@@ -4193,6 +4196,7 @@ public class ProductAgentController : ControllerBase
                 WorkflowDefId = defectWfId,
                 ProductSourceSystem = sourceSystem,
                 ProductExternalId = externalId,
+                StructuredData = structuredPatch,
             });
             created++;
         }
@@ -4767,7 +4771,20 @@ public class ProductAgentController : ControllerBase
             .Where(d => string.IsNullOrWhiteSpace(status) || d.Status == status)
             .Where(d => string.IsNullOrWhiteSpace(keyword) || (d.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || d.DefectNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(d => d.UpdatedAt)
-            .Select(d => new { d.Id, productId = d.TracedProductId, productName = names.GetValueOrDefault(d.TracedProductId ?? "", ""), d.DefectNo, d.Title, d.Status, grade = d.Grade ?? SeverityToGrade(d.Severity), d.TracedRequirementId, d.TracedVersionId, d.UpdatedAt })
+            .Select(d => new {
+                d.Id,
+                productId = d.TracedProductId,
+                productName = names.GetValueOrDefault(d.TracedProductId ?? "", ""),
+                d.DefectNo,
+                d.Title,
+                d.Status,
+                grade = d.Grade,
+                severityTier = d.StructuredData.GetValueOrDefault(TapdDefectFieldCatalog.DefectSeverity),
+                structuredData = d.StructuredData,
+                d.TracedRequirementId,
+                d.TracedVersionId,
+                d.UpdatedAt,
+            })
             .Take(1000).ToList();
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
     }
@@ -4900,7 +4917,7 @@ public class ProductAgentController : ControllerBase
             AddEdge($"version:{fv.VersionId}", $"feature:{fv.FeatureId}", "feature-in-version");
         foreach (var d in defects)
         {
-            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = d.Grade ?? SeverityToGrade(d.Severity), state = d.Status, productId = d.TracedProductId });
+            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = d.Grade, severityTier = d.StructuredData.GetValueOrDefault(TapdDefectFieldCatalog.DefectSeverity), state = d.Status, productId = d.TracedProductId });
             var any = false;
             if (!string.IsNullOrEmpty(d.TracedRequirementId)) { AddEdge($"defect:{d.Id}", $"requirement:{d.TracedRequirementId}", "traces"); any = true; }
             if (!string.IsNullOrEmpty(d.TracedFeatureId)) { AddEdge($"defect:{d.Id}", $"feature:{d.TracedFeatureId}", "traces"); any = true; }
@@ -5573,6 +5590,10 @@ public class ImportSimpleItemRow
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string? Grade { get; set; }
+    /// <summary>TAPD 导出「严重程度」列原文（紧急/高/中/低/无关紧要）。</summary>
+    public string? TapdSeverityRaw { get; set; }
+    /// <summary>已映射的 V2.6 严重程度（致命/严重/一般/轻微）；可选。</summary>
+    public string? Severity { get; set; }
     public string? Status { get; set; }
     public string? SourceSystem { get; set; }
     public string? ExternalId { get; set; }
@@ -5613,7 +5634,7 @@ public class CreateProductDefectRequest
 {
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
-    /// <summary>缺陷等级 p0/p1/p2/p3，见 ProductItemGrade（与需求/功能统一）</summary>
+    /// <summary>处理优先级 p0/p1/p2/p3，见 ProductItemGrade（与严重程度独立）</summary>
     public string? Grade { get; set; }
     public string? AssigneeId { get; set; }
     public string? RequirementId { get; set; }
@@ -5627,7 +5648,7 @@ public class UpdateProductDefectRequest
 {
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
-    /// <summary>缺陷等级 p0/p1/p2/p3，见 ProductItemGrade（与需求/功能统一）</summary>
+    /// <summary>处理优先级 p0/p1/p2/p3，见 ProductItemGrade（仅显式传入时更新）</summary>
     public string? Grade { get; set; }
     public string? Status { get; set; }
     public string? AssigneeId { get; set; }

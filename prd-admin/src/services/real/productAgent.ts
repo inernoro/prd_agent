@@ -330,6 +330,10 @@ export interface ImportSimpleItemRow {
   title: string;
   description?: string;
   grade?: string;
+  /** TAPD 导出「严重程度」列原文 */
+  tapdSeverityRaw?: string;
+  /** 严重程度 V2.6 四档（致命/严重/一般/轻微）；缺陷 CSV 解析产出 */
+  severity?: string;
   status?: string;
   sourceSystem?: string;
   externalId?: string;
@@ -510,10 +514,8 @@ export interface TracedDefect {
   defectNo: string;
   title?: string | null;
   status: string;
-  /** 统一等级 p0/p1/p2/p3（取代严重度）。severity 仍保留用于旧数据兜底。 */
+  /** 处理优先级 p0/p1/p2/p3；与严重程度（structuredData）独立，无值即空 */
   grade?: string | null;
-  severity?: string | null;
-  priority?: string | null;
   tracedRequirementId?: string | null;
   tracedVersionId?: string | null;
   tracedFeatureId?: string | null;
@@ -742,7 +744,8 @@ export function getOverviewFeatures(params?: { grade?: string; keyword?: string;
 }
 export interface OverviewDefectRow {
   id: string; productId: string; productName: string; defectNo: string; title?: string | null;
-  status: string; grade?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
+  status: string; grade?: string | null; severityTier?: string | null; structuredData?: Record<string, string>;
+  tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
 }
 export function getOverviewDefects(params?: { status?: string; keyword?: string }) {
   const q = new URLSearchParams();

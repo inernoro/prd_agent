@@ -12,8 +12,13 @@ import {
   updateProductDefect,
   type TracedDefect,
 } from '@/services/real/productAgent';
-import type { Feature, ItemGrade, ProductVersion } from './types';
-import { ITEM_GRADE_LABEL, effectiveDefectGrade } from './types';
+import type { Feature, ProductVersion } from './types';
+import { readDefectPriorityGrade, readDefectSeverityLevel } from './types';
+import {
+  DEFECT_SEVERITY_LEVEL_HINT,
+  DEFECT_SEVERITY_LEVEL_OPTIONS,
+  type DefectSeverityLevel,
+} from './defectSeverity';
 import { RichTextField, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -27,6 +32,7 @@ import {
   TAPD_DEFECT_FIELD,
   TAPD_DEFECT_SIDEBAR_FIELDS,
   computeTapdDerivedFields,
+  tierToStructuredValue,
   type TapdDefectSidebarField,
 } from './tapdDefectFieldCatalog';
 
@@ -148,7 +154,7 @@ export function ProductDefectDetail({
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [grade, setGrade] = useState<ItemGrade>('p2');
+  const [severityLevel, setSeverityLevel] = useState<DefectSeverityLevel | ''>('');
   const [assigneeId, setAssigneeId] = useState('');
   const [featureId, setFeatureId] = useState('');
   const [versionId, setVersionId] = useState('');
@@ -164,7 +170,7 @@ export function ProductDefectDetail({
     if (!defect) return;
     setTitle(defect.title ?? '');
     setDescription(defect.rawContent ?? '');
-    setGrade(effectiveDefectGrade(defect));
+    setSeverityLevel(readDefectSeverityLevel(defect) ?? '');
     setAssigneeId(defect.assigneeId ?? '');
     setFeatureId(defect.tracedFeatureId ?? '');
     setVersionId(defect.tracedVersionId ?? '');
@@ -184,20 +190,20 @@ export function ProductDefectDetail({
     if (!defect) return false;
     const origStructured = defect.structuredData ?? {};
     const structuredChanged = TAPD_DEFECT_SIDEBAR_FIELDS.some((f) => {
-      if (f.kind === 'readonly' || f.kind === 'grade' || f.kind === 'classification') return false;
+      if (f.kind === 'readonly' || f.kind === 'severity' || f.kind === 'classification') return false;
       return (derivedStructured[f.key] ?? '') !== (origStructured[f.key] ?? '');
     });
     return (
       title !== (defect.title ?? '') ||
       description !== (defect.rawContent ?? '') ||
-      grade !== effectiveDefectGrade(defect) ||
+      severityLevel !== (readDefectSeverityLevel(defect) ?? '') ||
       assigneeId !== (defect.assigneeId ?? '') ||
       featureId !== (defect.tracedFeatureId ?? '') ||
       versionId !== (defect.tracedVersionId ?? '') ||
       classification !== normalizeDefectClassification(defect.productDefectClassification) ||
       structuredChanged
     );
-  }, [defect, title, description, grade, assigneeId, featureId, versionId, classification, derivedStructured]);
+  }, [defect, title, description, severityLevel, assigneeId, featureId, versionId, classification, derivedStructured]);
 
   if (!defect) {
     return <div className="text-white/40 text-sm text-center py-10">缺陷不存在</div>;
@@ -212,11 +218,10 @@ export function ProductDefectDetail({
     setSaving(true);
     const payloadStructured = { ...derivedStructured };
     payloadStructured[TAPD_DEFECT_FIELD.defectDivision] = classification;
-    payloadStructured[TAPD_DEFECT_FIELD.defectGrade] = ITEM_GRADE_LABEL[grade] ?? grade;
+    payloadStructured[TAPD_DEFECT_FIELD.defectSeverity] = tierToStructuredValue(severityLevel);
     await updateProductDefect(productId, defect.id, {
       title: title.trim(),
       description,
-      grade,
       assigneeId: assigneeId || null,
       featureId: featureId || undefined,
       versionId: versionId || undefined,
@@ -244,13 +249,19 @@ export function ProductDefectDetail({
     if (field.kind === 'readonly' && field.entitySource) {
       return <div className={readonlyCls}>{readEntityField(defect, field.entitySource)}</div>;
     }
-    if (field.kind === 'grade') {
+    if (field.kind === 'severity') {
       return (
-        <select className={inputCls} value={grade} onChange={(e) => setGrade(e.target.value as ItemGrade)}>
-          {(['p0', 'p1', 'p2', 'p3'] as ItemGrade[]).map((g) => (
-            <option key={g} value={g}>{ITEM_GRADE_LABEL[g]}</option>
-          ))}
-        </select>
+        <div className="flex flex-col gap-1">
+          <select className={inputCls} value={severityLevel} onChange={(e) => setSeverityLevel(e.target.value as DefectSeverityLevel | '')}>
+            <option value="">未设置</option>
+            {DEFECT_SEVERITY_LEVEL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          {severityLevel ? (
+            <p className="text-[11px] text-white/40 leading-snug">{DEFECT_SEVERITY_LEVEL_HINT[severityLevel]}</p>
+          ) : null}
+        </div>
       );
     }
     if (field.kind === 'classification') {
@@ -312,7 +323,7 @@ export function ProductDefectDetail({
       <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="缺陷标题" className="w-full text-xl font-semibold text-white bg-transparent border-none outline-none placeholder:text-white/25" />
 
       {workflow ? (
-        <WorkflowBar workflow={workflow} entityType="defect" entityId={defect.id} productId={productId} currentState={defect.status} entitySnapshot={{ ownerId: defect.reporterId ?? '', assigneeId, title, grade }} onChanged={onReload} />
+        <WorkflowBar workflow={workflow} entityType="defect" entityId={defect.id} productId={productId} currentState={defect.status} entitySnapshot={{ ownerId: defect.reporterId ?? '', assigneeId, title, grade: readDefectPriorityGrade(defect) ?? undefined }} onChanged={onReload} />
       ) : null}
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">

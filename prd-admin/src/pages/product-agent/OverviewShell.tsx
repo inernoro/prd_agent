@@ -62,7 +62,7 @@ import {
   type OverviewDefectRow,
 } from '@/services/real/productAgent';
 import type { Customer, Product } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade, defectStatusLabel } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { distinctOptions, useListFilter, type FilterFieldDef } from './listFilter';
 
@@ -152,7 +152,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'requirements' && (
-        <SectionShell title="需求（跨产品）" desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
+        <SectionShell title="需求" desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
           <RequirementsTable isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
@@ -459,6 +459,9 @@ function MineToggle({ mine, setMine }: { mine: boolean; setMine: (v: boolean) =>
 const GRADE_BADGE = (g: string) => (
   <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] ?? g}</span>
 );
+const SEVERITY_BADGE = (label: string) => (
+  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{label}</span>
+);
 function AdminImportButton({ onClick }: { onClick: () => void }) {
   return (
     <button onClick={onClick} className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20">
@@ -643,7 +646,7 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
             { header: '标题', render: (r) => <span className="text-white/90">{r.title || '(无标题)'}</span> },
             { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
             { header: '状态', render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },
-            { header: '等级', render: (r) => GRADE_BADGE(effectiveDefectGrade(r)) },
+            { header: '严重程度', render: (r) => SEVERITY_BADGE(defectSeverityTierLabel(r)) },
             { header: '追溯', render: (r) => <span className="text-white/55 text-xs">{r.tracedRequirementId ? '需求' : r.tracedVersionId ? '版本' : '产品'}</span> },
             { header: '更新', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
           ]}

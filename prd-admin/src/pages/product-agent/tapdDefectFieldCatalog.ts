@@ -1,7 +1,9 @@
 /**
  * TAPD 缺陷字段 SSOT — 与 prd-api TapdDefectFieldCatalog / CapsuleExecutor.MapBugFieldsToChinese 对齐。
- * 后续 TAPD 导入按此中文 key 写入 DefectReport.structuredData。
+ * 产品管理「严重程度」仅存 structuredData，不跨字段推断。
  */
+import type { DefectSeverityLevel } from './defectSeverity';
+
 export const TAPD_DEFECT_FIELD = {
   defectId: '缺陷ID',
   title: '标题',
@@ -17,6 +19,10 @@ export const TAPD_DEFECT_FIELD = {
   overdue: '是否逾期',
   validReport: '有效报告',
   defectGrade: '缺陷等级',
+  /** V2.6 四档：致命/严重/一般/轻微 */
+  defectSeverity: '严重程度',
+  /** TAPD 导出列原文：紧急/高/中/低/无关紧要 */
+  tapdSeveritySource: 'TAPD严重程度',
   defectDivision: '缺陷划分',
   feedbackPerson: '反馈人',
   companyName: '公司名称',
@@ -50,24 +56,22 @@ export const TAPD_API_FIELD_MAP: Record<string, string> = {
   custom_field_three: TAPD_DEFECT_FIELD.logicAttribution,
 };
 
-export type TapdFieldEditorKind = 'text' | 'textarea' | 'date' | 'readonly' | 'url' | 'grade' | 'classification';
+export type TapdFieldEditorKind = 'text' | 'textarea' | 'date' | 'readonly' | 'url' | 'severity' | 'classification';
 
 export interface TapdDefectSidebarField {
   key: string;
   label: string;
   kind: TapdFieldEditorKind;
-  /** 只读：从实体列读取，不写入 structuredData */
   entitySource?: 'externalId' | 'status' | 'reporterName' | 'createdAt' | 'resolvedAt' | 'closedAt' | 'assigneeName';
 }
 
-/** 右侧属性栏字段顺序（对齐 TAPD 缺陷详情查看页） */
 export const TAPD_DEFECT_SIDEBAR_FIELDS: TapdDefectSidebarField[] = [
   { key: TAPD_DEFECT_FIELD.defectId, label: '缺陷ID', kind: 'readonly', entitySource: 'externalId' },
   { key: TAPD_DEFECT_FIELD.status, label: '状态', kind: 'readonly', entitySource: 'status' },
   { key: TAPD_DEFECT_FIELD.currentOwner, label: '处理人', kind: 'text' },
   { key: TAPD_DEFECT_FIELD.reporter, label: '创建人', kind: 'readonly', entitySource: 'reporterName' },
   { key: TAPD_DEFECT_FIELD.created, label: '创建时间', kind: 'readonly', entitySource: 'createdAt' },
-  { key: TAPD_DEFECT_FIELD.defectGrade, label: '缺陷等级', kind: 'grade' },
+  { key: TAPD_DEFECT_FIELD.defectSeverity, label: '严重程度', kind: 'severity' },
   { key: TAPD_DEFECT_FIELD.defectDivision, label: '缺陷划分', kind: 'classification' },
   { key: TAPD_DEFECT_FIELD.responsiblePerson, label: '责任人', kind: 'text' },
   { key: TAPD_DEFECT_FIELD.overdue, label: '是否逾期', kind: 'text' },
@@ -89,6 +93,7 @@ export const TAPD_DEFECT_SIDEBAR_FIELDS: TapdDefectSidebarField[] = [
   { key: TAPD_DEFECT_FIELD.timelyFixed, label: '及时处理', kind: 'readonly' },
 ];
 
+/** 仅根据已有日期字段派生只读标记；无足够数据时不写入默认值 */
 export function computeTapdDerivedFields(structured: Record<string, string>): Record<string, string> {
   const issueStart = structured[TAPD_DEFECT_FIELD.issueStartTime]?.trim();
   const resolved = structured[TAPD_DEFECT_FIELD.resolved]?.trim();
@@ -109,7 +114,9 @@ export function computeTapdDerivedFields(structured: Record<string, string>): Re
       next[TAPD_DEFECT_FIELD.timelyFixed] = dueDt.toDateString() >= resolvedDt.toDateString() ? '是' : '否';
     }
   }
-  if (!next[TAPD_DEFECT_FIELD.isHistorical]) next[TAPD_DEFECT_FIELD.isHistorical] = '否';
-  if (!next[TAPD_DEFECT_FIELD.timelyFixed]) next[TAPD_DEFECT_FIELD.timelyFixed] = '无法判断';
   return next;
+}
+
+export function tierToStructuredValue(level: DefectSeverityLevel | ''): string {
+  return level;
 }

@@ -3,6 +3,7 @@
  * 后端：prd-api/src/PrdAgent.Core/Models/{Product,ProductVersion,Requirement,Feature,Customer,
  * ProductFormTemplate,ProductWorkflowDefinition}.cs
  */
+import { formatDefectSeverityLevel, readDefectSeverityLevel } from './defectSeverity';
 
 /** 产品管理对象类型 */
 export type ProductEntityType =
@@ -434,29 +435,21 @@ export function defectStatusLabel(status?: string | null): string {
   return DEFECT_STATUS_LABEL[s] ?? DEFECT_STATUS_LABEL[lower] ?? s;
 }
 
-/** 旧缺陷「严重度」→ 统一「等级」兜底映射（与后端 ProductAgentController.SeverityToGrade 同口径）。 */
-export function severityToItemGrade(severity?: string | null): ItemGrade {
-  switch (severity) {
-    case 'blocker':
-    case 'critical':
-      return 'p0';
-    case 'major':
-      return 'p1';
-    case 'minor':
-      return 'p2';
-    case 'trivial':
-    case 'suggestion':
-      return 'p3';
-    default:
-      return 'p2';
-  }
+/** 缺陷严重程度 V2.6 四档（只读 structuredData，无值返回 null） */
+export { readDefectSeverityLevel, formatDefectSeverityLevel } from './defectSeverity';
+
+export function defectSeverityLevelLabel(d: { structuredData?: Record<string, string> | null }): string {
+  return formatDefectSeverityLevel(readDefectSeverityLevel(d));
 }
 
-/** 取缺陷有效等级：优先 grade，旧数据为空时由 severity 兜底。 */
-export function effectiveDefectGrade(d: { grade?: string | null; severity?: string | null }): ItemGrade {
+/** @deprecated 使用 defectSeverityLevelLabel */
+export const defectSeverityTierLabel = defectSeverityLevelLabel;
+
+/** 缺陷处理优先级（只读 grade 字段，无值返回 null） */
+export function readDefectPriorityGrade(d: { grade?: string | null }): ItemGrade | null {
   const g = d.grade;
   if (g === 'p0' || g === 'p1' || g === 'p2' || g === 'p3') return g;
-  return severityToItemGrade(d.severity);
+  return null;
 }
 
 export const PRODUCT_GRADE_LABEL: Record<ProductGrade, string> = {

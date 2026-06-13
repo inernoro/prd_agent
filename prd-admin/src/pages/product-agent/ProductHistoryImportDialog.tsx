@@ -10,6 +10,7 @@ import {
   type ImportSimpleItemRow,
 } from '@/services/real/productAgent';
 import type { Product } from './types';
+import { parseDefectImportFile } from './defectImportParse';
 import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
 
 export type HistoryImportType = 'requirement' | 'feature' | 'defect' | 'version';
@@ -54,7 +55,7 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-export function parseProductHistoryCsv(text: string): ImportSimpleItemRow[] {
+export function parseProductHistoryCsv(text: string, options?: { entityType?: HistoryImportType }): ImportSimpleItemRow[] {
   const parsed = parseCsv(text);
   if (parsed.length < 2) return [];
   const headers = parsed[0].map((value) => value.trim().toLowerCase());
@@ -63,20 +64,23 @@ export function parseProductHistoryCsv(text: string): ImportSimpleItemRow[] {
   const descriptionIndex = indexOf('描述', '内容', 'description', 'desc');
   const gradeIndex = indexOf('分级', '等级', '级别', 'grade');
   const statusIndex = indexOf('状态', '生命周期', 'status', 'lifecycle');
-  const externalIdIndex = indexOf('需求 id', '外部id', '外部 id', 'externalid', 'external id', '编号', 'id');
+  const externalIdIndex = indexOf('需求 id', '外部id', '外部 id', 'externalid', 'external id', '编号', 'id', '缺陷id');
   const plannedIndex = indexOf('计划发布时间', '预计结束', 'planned');
   const completedIndex = indexOf('实际发布时间', '完成时间', 'released', 'completed');
   const effectiveTitleIndex = titleIndex >= 0 ? titleIndex : 0;
-  return parsed.slice(1).map((values) => ({
-    title: values[effectiveTitleIndex]?.trim() ?? '',
-    description: descriptionIndex >= 0 ? values[descriptionIndex]?.trim() : undefined,
-    grade: gradeIndex >= 0 ? values[gradeIndex]?.trim().toLowerCase() : undefined,
-    status: statusIndex >= 0 ? values[statusIndex]?.trim().toLowerCase() : undefined,
-    sourceSystem: 'csv',
-    externalId: externalIdIndex >= 0 ? values[externalIdIndex]?.trim() : undefined,
-    plannedAt: plannedIndex >= 0 ? values[plannedIndex]?.trim() : undefined,
-    completedAt: completedIndex >= 0 ? values[completedIndex]?.trim() : undefined,
-  })).filter((row) => row.title);
+  return parsed.slice(1).map((values) => {
+    const rawGrade = gradeIndex >= 0 ? values[gradeIndex]?.trim() : undefined;
+    return {
+      title: values[effectiveTitleIndex]?.trim() ?? '',
+      description: descriptionIndex >= 0 ? values[descriptionIndex]?.trim() : undefined,
+      grade: rawGrade?.toLowerCase(),
+      status: statusIndex >= 0 ? values[statusIndex]?.trim().toLowerCase() : undefined,
+      sourceSystem: 'csv',
+      externalId: externalIdIndex >= 0 ? values[externalIdIndex]?.trim() : undefined,
+      plannedAt: plannedIndex >= 0 ? values[plannedIndex]?.trim() : undefined,
+      completedAt: completedIndex >= 0 ? values[completedIndex]?.trim() : undefined,
+    };
+  }).filter((row) => row.title);
 }
 
 export function ProductHistoryImportDialog({
@@ -110,14 +114,23 @@ export function ProductHistoryImportDialog({
       setRtfFiles(rtf);
       return;
     }
-    const csv = files.find((file) => file.name.toLowerCase().endsWith('.csv'));
-    if (!csv) {
-      setMessage('请选择 CSV 文件。需求还可选择 RTF 导出文件。');
+    const spreadsheet = files.find((file) => {
+      const n = file.name.toLowerCase();
+      return n.endsWith('.csv') || n.endsWith('.xlsx') || n.endsWith('.xls');
+    });
+    if (!spreadsheet) {
+      setMessage(type === 'defect' ? '请选择 TAPD 导出的 CSV 或 Excel（.xlsx）。' : '请选择 CSV 文件。需求还可选择 RTF 导出文件。');
       return;
     }
-    const parsedRows = parseProductHistoryCsv(await csv.text());
-    setRows(parsedRows);
-    setMessage(parsedRows.length > 0 ? `已读取 ${parsedRows.length} 条，确认后写入。` : '没有识别到有效数据，请检查标题列。');
+    try {
+      const parsedRows = type === 'defect'
+        ? await parseDefectImportFile(spreadsheet)
+        : parseProductHistoryCsv(await spreadsheet.text(), { entityType: type });
+      setRows(parsedRows);
+      setMessage(parsedRows.length > 0 ? `已读取 ${parsedRows.length} 条，确认后写入。` : '没有识别到有效数据，请检查标题列。');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '解析失败');
+    }
   };
 
   const commit = async () => {
@@ -169,14 +182,14 @@ export function ProductHistoryImportDialog({
           </label>
           <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025]">
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
-            <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 RTF' : 'CSV'} 文件</div>
-            <div className="mt-1 text-xs text-white/35">需求 RTF 支持多选；CSV 首行需为字段名</div>
+            <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 RTF' : type === 'defect' ? 'TAPD 导出 CSV / Excel' : 'CSV'} 文件</div>
+            <div className="mt-1 text-xs text-white/35">{type === 'defect' ? '需含「严重程度」列（紧急/高/中/低/无关紧要）' : '需求 RTF 支持多选；CSV 首行需为字段名'}</div>
           </button>
           <input
             ref={inputRef}
             type="file"
             multiple={type === 'requirement'}
-            accept={type === 'requirement' ? '.csv,.rtf,text/csv,application/rtf' : '.csv,text/csv'}
+            accept={type === 'requirement' ? '.csv,.rtf,text/csv,application/rtf' : type === 'defect' ? '.csv,.xlsx,.xls,text/csv' : '.csv,text/csv'}
             className="hidden"
             onChange={(event) => void readFiles(Array.from(event.target.files ?? []))}
           />
@@ -184,8 +197,8 @@ export function ProductHistoryImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-white/10">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">外部 ID</th><th className="px-3 py-2">等级</th><th className="px-3 py-2">状态</th></tr></thead>
-                <tbody>{rows.slice(0, 30).map((row, index) => <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5"><td className="px-3 py-2 text-white/75">{row.title}</td><td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td><td className="px-3 py-2 text-white/45">{row.grade || '-'}</td><td className="px-3 py-2 text-white/45">{row.status || '-'}</td></tr>)}</tbody>
+                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">外部 ID</th><th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th></tr></thead>
+                <tbody>{rows.slice(0, 30).map((row, index) => <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5"><td className="px-3 py-2 text-white/75">{row.title}</td><td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td><td className="px-3 py-2 text-white/45">{type === 'defect' ? (row.severity ? `${row.severity}（TAPD:${row.tapdSeverityRaw || '—'}）` : (row.tapdSeverityRaw || '—')) : (row.grade || '-')}</td><td className="px-3 py-2 text-white/45">{row.status || '-'}</td></tr>)}</tbody>
               </table>
             </div>
           )}
