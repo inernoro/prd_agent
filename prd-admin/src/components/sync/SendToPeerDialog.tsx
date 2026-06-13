@@ -251,10 +251,12 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
               </div>
             </div>
           </div>
-          <div className="hidden items-center gap-2 text-xs md:flex">
-            <StatusPill icon={<Activity size={13} />} text={submitting ? '监听中' : '监听待命'} tone={submitting ? 'gold' : 'slate'} />
-            <StatusPill icon={<ShieldCheck size={13} />} text="回读校验" tone={direction === 'both' ? 'teal' : 'slate'} />
-            <StatusPill icon={<ListChecks size={13} />} text="条目明细" tone="teal" />
+          <div className="hidden items-center gap-3 text-xs md:flex">
+            <HeaderMeta icon={<Activity size={13} />} label={submitting ? '监听中' : '监听待命'} tone={submitting ? 'gold' : 'slate'} />
+            <HeaderDivider />
+            <HeaderMeta icon={<ShieldCheck size={13} />} label={direction === 'both' ? '回读校验已开启' : '单向写入'} tone={direction === 'both' ? 'teal' : 'slate'} />
+            <HeaderDivider />
+            <HeaderMeta icon={<ListChecks size={13} />} label="条目明细可审计" tone="slate" />
           </div>
           <button
             onClick={safeClose}
@@ -289,14 +291,14 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
                   )}
 
                   <SectionTitle label="同步方向" />
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-1 rounded-xl border p-1" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.32)' }}>
                     {availableDirections.map((d) => (
                       <CompactChoiceCard key={d.key} active={direction === d.key} icon={d.icon} label={directionShortLabel(d.key)} onClick={() => setDirection(d.key)} />
                     ))}
                   </div>
 
                   <SectionTitle label="同步策略" />
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-1 rounded-xl border p-1" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.30)' }}>
                     <CompactToggle
                       label="原时间"
                       checked={preserveTimestamps}
@@ -427,21 +429,32 @@ function EmptyBlock({ icon, title, desc }: { icon: ReactNode; title: string; des
   );
 }
 
+function HeaderMeta({ icon, label, tone }: { icon: ReactNode; label: string; tone: StatusTone }) {
+  return (
+    <span className="inline-flex items-center gap-1.5" style={{ color: statusColor(tone) }}>
+      {icon}
+      <span className="font-medium">{label}</span>
+    </span>
+  );
+}
+
+function HeaderDivider() {
+  return <span className="h-3 w-px" style={{ background: 'rgba(148,163,184,0.22)' }} />;
+}
+
 function CompactChoiceCard({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="relative min-h-[76px] rounded-xl border px-3 py-3 text-left transition"
+      className="flex h-9 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-semibold transition"
       style={{
-        borderColor: active ? 'rgba(45,212,191,0.54)' : 'rgba(148,163,184,0.18)',
-        background: active ? 'rgba(20,184,166,0.12)' : 'rgba(15,23,42,0.42)',
+        background: active ? 'rgba(20,184,166,0.16)' : 'transparent',
+        color: active ? 'rgb(94,234,212)' : 'rgb(174,187,201)',
+        boxShadow: active ? 'inset 0 0 0 1px rgba(45,212,191,0.30)' : 'none',
       }}
     >
-      <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg border" style={{ borderColor: 'rgba(148,163,184,0.16)', color: active ? 'rgb(94,234,212)' : 'rgb(148,163,184)' }}>
-        {icon}
-      </div>
-      <div className="text-xs font-semibold">{label}</div>
-      {active && <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full" style={{ background: 'rgb(94,234,212)', boxShadow: '0 0 12px rgba(94,234,212,0.8)' }} />}
+      {icon}
+      <span>{label}</span>
     </button>
   );
 }
@@ -450,15 +463,15 @@ function CompactToggle({ label, checked, onChange }: { label: string; checked: b
   return (
     <button
       onClick={() => onChange(!checked)}
-      className="relative h-9 rounded-xl border px-2 text-center text-xs font-semibold transition"
+      className="flex h-8 items-center justify-center gap-1.5 rounded-lg px-2 text-center text-xs font-semibold transition"
       style={{
-        borderColor: checked ? 'rgba(45,212,191,0.46)' : 'rgba(148,163,184,0.18)',
-        background: checked ? 'rgba(20,184,166,0.12)' : 'rgba(15,23,42,0.42)',
+        background: checked ? 'rgba(20,184,166,0.14)' : 'transparent',
         color: checked ? 'rgb(94,234,212)' : 'rgb(148,163,184)',
+        boxShadow: checked ? 'inset 0 0 0 1px rgba(45,212,191,0.26)' : 'none',
       }}
     >
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: checked ? 'rgb(94,234,212)' : 'rgba(148,163,184,0.40)' }} />
       {label}
-      {checked && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full" style={{ background: 'rgb(94,234,212)' }} />}
     </button>
   );
 }
@@ -585,7 +598,7 @@ function formatDuration(seconds: number) {
 
 function QueueOverview({ state }: { state: QueueState }) {
   return (
-    <div className="grid grid-cols-6 gap-2 text-center">
+    <div className="flex flex-wrap items-end justify-end gap-x-4 gap-y-2 text-right">
       <QueueStat label="本轮" value={state.selectedCount} />
       <QueueStat label="完成" value={state.doneCount} tone="green" />
       <QueueStat label="跳过" value={state.skippedCount} />
@@ -599,16 +612,16 @@ function QueueOverview({ state }: { state: QueueState }) {
 function QueueStat({ label, value, tone = 'slate' }: { label: string; value: number; tone?: 'green' | 'gold' | 'red' | 'slate' }) {
   const color = tone === 'green' ? 'rgb(134,239,172)' : tone === 'gold' ? 'rgb(252,211,77)' : tone === 'red' ? 'rgb(252,165,165)' : 'rgb(226,232,240)';
   return (
-    <div className="min-w-[54px] rounded-xl border px-2 py-2" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.42)' }}>
-      <div className="text-[10px] font-semibold" style={{ color: 'rgb(174,187,201)' }}>{label}</div>
-      <div className="text-base font-semibold" style={{ color }}>{value}</div>
+    <div className="min-w-[38px]">
+      <div className="text-[10px] font-semibold" style={{ color: 'rgb(148,163,184)' }}>{label}</div>
+      <div className="text-lg font-semibold leading-6" style={{ color }}>{value}</div>
     </div>
   );
 }
 
 function SyncMonitorStrip({ state, node, direction }: { state: QueueState; node: PeerNode | null; direction: PeerTransferDirection }) {
   return (
-    <div className="grid gap-2 lg:grid-cols-4">
+    <div className="grid gap-x-5 gap-y-3 rounded-xl border px-4 py-3 md:grid-cols-2 lg:grid-cols-4" style={{ borderColor: 'rgba(148,163,184,0.14)', background: 'rgba(15,23,42,0.28)' }}>
       <MonitorCell label="当前状态" value={state.currentLabel} />
       <MonitorCell label="目标节点" value={node?.displayName || '等待选择'} sub={directionShortLabel(direction)} />
       <MonitorCell label="反向校验" value={state.reverseLabel} />
@@ -619,9 +632,9 @@ function SyncMonitorStrip({ state, node, direction }: { state: QueueState; node:
 
 function MonitorCell({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-xl border px-3 py-2" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.40)' }}>
-      <div className="text-[11px] font-semibold" style={{ color: 'rgb(174,187,201)' }}>{label}</div>
-      <div className="mt-1 truncate text-xs font-semibold">{value}</div>
+    <div className="min-w-0 border-l pl-3 first:border-l-0 first:pl-0" style={{ borderColor: 'rgba(148,163,184,0.14)' }}>
+      <div className="text-[11px] font-semibold" style={{ color: 'rgb(148,163,184)' }}>{label}</div>
+      <div className="mt-1 truncate text-xs font-semibold" style={{ color: 'rgb(226,232,240)' }}>{value}</div>
       {sub && <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>{sub}</div>}
     </div>
   );
