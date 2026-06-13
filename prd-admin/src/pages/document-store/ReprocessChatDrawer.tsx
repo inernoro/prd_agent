@@ -289,13 +289,41 @@ function shortVideoResultFromRun(run: import('@/services').ShortVideoMaterialRun
   };
 }
 
+const SHORT_VIDEO_STAGE_LABELS: Record<string, string> = {
+  parse: '解析链接',
+  source: '保存原始素材',
+  transcript: '生成字幕文稿',
+  timeline: '整理时间线',
+  ready: '准备继续加工',
+};
+
+function getShortVideoStageLabel(stage: import('@/services').ShortVideoMaterialStage): string {
+  return SHORT_VIDEO_STAGE_LABELS[stage.key] || stage.label;
+}
+
+function formatShortVideoStageLine(stage: import('@/services').ShortVideoMaterialStage): string {
+  const label = getShortVideoStageLabel(stage);
+  const message = stage.message?.trim();
+  if (stage.status === 'done') return `- ${label}：已完成${message ? `。${message}` : ''}`;
+  if (stage.status === 'running') return `- ${label}：正在处理${message ? `。${message}` : ''}`;
+  if (stage.status === 'failed') return `- ${label}：处理失败${message ? `。${message}` : ''}`;
+  return `- ${label}：等待中${message && message !== '等待提交' ? `。${message}` : ''}`;
+}
+
+function formatShortVideoRunStatus(status: import('@/services').ShortVideoMaterialRun['status']): string {
+  if (status === 'queued') return '等待后台开始';
+  if (status === 'running') return '后台正在处理';
+  if (status === 'done') return '已完成';
+  if (status === 'failed') return '处理失败';
+  return '已取消';
+}
+
 function formatShortVideoProgress(run: import('@/services').ShortVideoMaterialRun): string {
   const lines = [
-    `后台任务：${run.status === 'queued' ? '等待执行' : run.status === 'running' ? '正在执行' : run.status}`,
-    `运行 ID：${run.id}`,
+    `后台任务：${formatShortVideoRunStatus(run.status)}`,
     '',
-    '服务端进度：',
-    ...((run.stages ?? []).map((stage) => `- ${stage.label}：${stage.status}，${stage.message}`)),
+    '处理进度（来自服务器，刷新后仍会保留）：',
+    ...((run.stages ?? []).map(formatShortVideoStageLine)),
   ];
   return lines.join('\n');
 }
@@ -307,10 +335,10 @@ function buildShortVideoResultMessage(result: ShortVideoResultLike): string {
   return [
     `已保存到知识库：「${title}」。`,
     parserMessage ? `解析说明：${parserMessage}` : null,
-    isFallback ? '当前已沉淀原始链接和待补充文案骨架；如需真实字幕内容，可继续补充字幕或使用视频转语音能力加工。' : null,
+    isFallback ? '当前已保存原始链接和待补充文案骨架；如需真实字幕内容，可继续补充字幕或使用视频转语音能力加工。' : null,
     '',
-    '服务端阶段：',
-    ...((result.run.stages ?? []).map((stage) => `- ${stage.label}：${stage.status}，${stage.message}`)),
+    '处理进度（来自服务器，刷新后仍会保留）：',
+    ...((result.run.stages ?? []).map(formatShortVideoStageLine)),
     '',
     '本次默认产物已经入库：',
     `- 原始素材：${title} · 原始视频素材`,

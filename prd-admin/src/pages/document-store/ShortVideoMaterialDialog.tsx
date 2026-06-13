@@ -9,11 +9,11 @@ import {
 import { toast } from '@/lib/toast';
 
 const DEFAULT_STAGES: ShortVideoMaterialStage[] = [
-  { key: 'parse', label: '解析素材来源', status: 'pending', message: '等待提交', at: '' },
-  { key: 'source', label: '沉淀原始素材', status: 'pending', message: '等待提交', at: '' },
-  { key: 'transcript', label: '沉淀字幕文案', status: 'pending', message: '等待提交', at: '' },
-  { key: 'timeline', label: '沉淀时间轴片段', status: 'pending', message: '等待提交', at: '' },
-  { key: 'ready', label: '交给知识库继续加工', status: 'pending', message: '等待提交', at: '' },
+  { key: 'parse', label: '解析链接', status: 'pending', message: '等待提交', at: '' },
+  { key: 'source', label: '保存原始素材', status: 'pending', message: '等待提交', at: '' },
+  { key: 'transcript', label: '生成字幕文稿', status: 'pending', message: '等待提交', at: '' },
+  { key: 'timeline', label: '整理时间线', status: 'pending', message: '等待提交', at: '' },
+  { key: 'ready', label: '准备继续加工', status: 'pending', message: '等待提交', at: '' },
 ];
 
 function stageClass(status: ShortVideoMaterialStage['status']) {

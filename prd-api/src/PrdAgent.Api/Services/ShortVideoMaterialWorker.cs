@@ -177,7 +177,7 @@ public sealed class ShortVideoMaterialProcessor
 
         var store = await ResolveStoreAsync(run.StoreId, run.UserId);
         run.StoreId = store.Id;
-        MarkStage(run, "source", "running", $"正在写入知识库「{store.Name}」");
+        MarkStage(run, "source", "running", $"正在保存到知识库「{store.Name}」");
         await SaveRunAsync(run);
 
         var sourceEntry = await CreateMarkdownEntryAsync(
@@ -198,10 +198,10 @@ public sealed class ShortVideoMaterialProcessor
             },
             now);
         run.SourceEntryId = sourceEntry.Id;
-        MarkStage(run, "source", "done", "原始视频素材已作为知识库资产沉淀");
+        MarkStage(run, "source", "done", "原始视频素材已保存到知识库");
         await SaveRunAsync(run);
 
-        MarkStage(run, "transcript", "running", "正在写入字幕/文案资产");
+        MarkStage(run, "transcript", "running", "正在生成可编辑的字幕文稿");
         await SaveRunAsync(run);
         var transcriptEntry = await CreateMarkdownEntryAsync(
             store,
@@ -222,10 +222,10 @@ public sealed class ShortVideoMaterialProcessor
             },
             now);
         run.TranscriptEntryId = transcriptEntry.Id;
-        MarkStage(run, "transcript", "done", "字幕/文案资产已写入知识库，可继续编辑或再加工");
+        MarkStage(run, "transcript", "done", "字幕文稿已保存到知识库，可继续编辑或再加工");
         await SaveRunAsync(run);
 
-        MarkStage(run, "timeline", "running", "正在生成时间轴片段资产");
+        MarkStage(run, "timeline", "running", "正在整理时间线片段");
         await SaveRunAsync(run);
         var timeline = BuildTimeline(sourceText);
         var timelineEntry = await CreateMarkdownEntryAsync(
@@ -247,9 +247,9 @@ public sealed class ShortVideoMaterialProcessor
             },
             now);
         run.TimelineEntryId = timelineEntry.Id;
-        MarkStage(run, "timeline", "done", "时间轴片段已写入知识库，可作为教程、脚本或网页素材继续加工");
+        MarkStage(run, "timeline", "done", "时间线已保存到知识库，可作为教程、脚本或网页素材继续加工");
 
-        MarkStage(run, "ready", "done", "素材已就绪：可选中字幕或时间轴继续使用智能体再加工、生成字幕、配图或发布");
+        MarkStage(run, "ready", "done", "已准备好继续加工：可打开字幕或时间线，再生成教程、配图或网页");
         run.EntryId = transcriptEntry.Id;
         run.Status = "done";
         run.UpdatedAt = DateTime.UtcNow;
@@ -278,7 +278,7 @@ public sealed class ShortVideoMaterialProcessor
         store = new DocumentStore
         {
             Name = storeName,
-            Description = "沉淀短视频原始素材、字幕文稿、时间轴片段与后续加工资产",
+            Description = "保存短视频原始素材、字幕文稿、时间线片段与后续加工资产",
             OwnerId = userId,
             AppKey = "document-store",
             Tags = new List<string> { "短视频", "素材", "加工台" },
@@ -350,11 +350,11 @@ public sealed class ShortVideoMaterialProcessor
     public static List<ShortVideoMaterialStage> BuildInitialStages()
         => new()
         {
-            Stage("parse", "解析素材来源", "pending", "服务端已创建后台任务，等待 Worker 拾取"),
-            Stage("source", "沉淀原始素材", "pending", "等待解析结果"),
-            Stage("transcript", "沉淀字幕文案", "pending", "等待素材资产生成"),
-            Stage("timeline", "沉淀时间轴片段", "pending", "等待字幕文案生成"),
-            Stage("ready", "交给知识库继续加工", "pending", "等待素材写入完成"),
+            Stage("parse", "解析链接", "pending", "已创建后台任务，等待开始处理"),
+            Stage("source", "保存原始素材", "pending", "等待链接解析完成"),
+            Stage("transcript", "生成字幕文稿", "pending", "等待原始素材保存完成"),
+            Stage("timeline", "整理时间线", "pending", "等待字幕文稿生成"),
+            Stage("ready", "准备继续加工", "pending", "等待默认产物入库"),
         };
 
     private static ShortVideoMaterialStage Stage(string key, string label, string status, string message)
@@ -475,7 +475,7 @@ public sealed class ShortVideoMaterialProcessor
             var message = mode switch
             {
                 "manual" => "已调用短视频解析器获取元数据，并使用用户提供的字幕/文案作为素材来源",
-                "tikhub-metadata" => "已调用短视频解析器获取标题、描述和元数据，并沉淀为知识库素材",
+                "tikhub-metadata" => "已调用短视频解析器获取标题、描述和元数据，并保存为知识库素材",
                 _ => "短视频解析器未返回可用文案，已生成原始素材和待补充文案骨架",
             };
             return new ParsedShortVideoSource(metadata.Title, source, mode, message, metadataJson);

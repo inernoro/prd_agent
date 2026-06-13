@@ -116,7 +116,7 @@ public class ShortVideoMaterialController : ControllerBase
         store = new DocumentStore
         {
             Name = storeName,
-            Description = "沉淀短视频原始素材、字幕文稿、时间轴片段与后续加工资产",
+            Description = "保存短视频原始素材、字幕文稿、时间线片段与后续加工资产",
             OwnerId = userId,
             AppKey = "document-store",
             Tags = new List<string> { "短视频", "素材", "加工台" },
@@ -187,11 +187,11 @@ public class ShortVideoMaterialController : ControllerBase
     private static List<ShortVideoMaterialStage> BuildInitialStages()
         => new()
         {
-            Stage("parse", "解析素材来源", "running", "服务端已接收链接，正在解析短视频素材"),
-            Stage("source", "沉淀原始素材", "pending", "等待解析结果"),
-            Stage("transcript", "沉淀字幕文案", "pending", "等待素材资产生成"),
-            Stage("timeline", "沉淀时间轴片段", "pending", "等待字幕文案生成"),
-            Stage("ready", "交给知识库继续加工", "pending", "等待素材写入完成"),
+            Stage("parse", "解析链接", "running", "已收到链接，正在读取短视频信息"),
+            Stage("source", "保存原始素材", "pending", "等待链接解析完成"),
+            Stage("transcript", "生成字幕文稿", "pending", "等待原始素材保存完成"),
+            Stage("timeline", "整理时间线", "pending", "等待字幕文稿生成"),
+            Stage("ready", "准备继续加工", "pending", "等待默认产物入库"),
         };
 
     private static ShortVideoMaterialStage Stage(string key, string label, string status, string message)
@@ -318,7 +318,7 @@ public class ShortVideoMaterialController : ControllerBase
             var message = mode switch
             {
                 "manual" => "已调用短视频解析器获取元数据，并使用用户提供的字幕/文案作为素材来源",
-                "tikhub-metadata" => "已调用短视频解析器获取标题、描述和元数据，并沉淀为知识库素材",
+                "tikhub-metadata" => "已调用短视频解析器获取标题、描述和元数据，并保存为知识库素材",
                 _ => "短视频解析器未返回可用文案，已生成原始素材和待补充文案骨架",
             };
             return new ParsedShortVideoSource(metadata.Title, source, mode, message, metadataJson);
