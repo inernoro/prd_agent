@@ -124,6 +124,16 @@ export function GlobalView({ onOpen }: { onOpen: (id: string) => void }) {
           <option value="">全部负责人</option>
           {leaderOptions.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
         </select>
+        {/* 排序仅对「项目总表」有意义，统一放在筛选区 */}
+        {tab === 'projects' && (
+          <select className={selCls} style={selStyle} value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
+            <option value="">最近更新</option>
+            <option value="completion">完成率高→低</option>
+            <option value="completionAsc">完成率低→高</option>
+            <option value="endAt">截止近→远</option>
+            <option value="budget">成本高→低</option>
+          </select>
+        )}
         {(filters.lifecycle || filters.type || filters.health || filters.leaderId || filters.q) && (
           <button onClick={() => { setFilters({}); setQInput(''); setPage(1); }} className="text-[12px] px-2 py-1.5 rounded-md hover:opacity-70" style={{ color: 'var(--text-muted)' }}>清除筛选</button>
         )}
@@ -183,16 +193,9 @@ export function GlobalView({ onOpen }: { onOpen: (id: string) => void }) {
                   </tbody>
                 </table>
               </div>
-              {/* 排序 + 分页 */}
+              {/* 分页 */}
               <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 <span>共 {total} 个项目</span>
-                <select className={selCls} style={selStyle} value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
-                  <option value="">最近更新</option>
-                  <option value="completion">完成率高→低</option>
-                  <option value="completionAsc">完成率低→高</option>
-                  <option value="endAt">截止近→远</option>
-                  <option value="budget">成本高→低</option>
-                </select>
                 <div className="ml-auto flex items-center gap-2">
                   <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="px-2 py-1 rounded disabled:opacity-40 hover:opacity-70" style={{ color: 'var(--text-secondary)' }}>上一页</button>
                   <span>{page} / {totalPages}</span>
