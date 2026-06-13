@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ExternalLink, FileText, Loader2, RefreshCcw, Video, X } from 'lucide-react';
+import { Check, Clock3, ExternalLink, FileText, Loader2, PackageCheck, RefreshCcw, Video, X } from 'lucide-react';
 import {
   createShortVideoMaterialRun,
   type ShortVideoMaterialRunResponse,
@@ -20,7 +20,7 @@ function stageClass(status: ShortVideoMaterialStage['status']) {
   if (status === 'done') return 'border-token-success bg-token-success-soft text-token-success';
   if (status === 'running') return 'border-token-accent bg-token-accent-soft text-token-accent';
   if (status === 'failed') return 'border-token-error bg-token-error-soft text-token-error';
-  return 'border-token-subtle bg-token-nested text-token-muted';
+  return 'border-token-subtle bg-token-card text-token-secondary';
 }
 
 function stageIcon(status: ShortVideoMaterialStage['status']) {
@@ -85,10 +85,14 @@ export function ShortVideoMaterialDialog({ storeId, storeName, onClose, onCreate
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/55 px-4 py-6">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[#05070c]/85 px-4 py-6 backdrop-blur-[3px]">
       <div
-        className="surface-panel flex w-full max-w-[920px] min-h-0 flex-col overflow-hidden rounded-[10px] border border-token-subtle shadow-2xl"
-        style={{ height: 'min(720px, calc(100vh - 48px))' }}
+        className="flex w-full max-w-[980px] min-h-0 flex-col overflow-hidden rounded-[10px] border border-token-subtle shadow-2xl"
+        style={{
+          height: 'min(740px, calc(100vh - 48px))',
+          background: 'var(--panel-solid)',
+          boxShadow: '0 28px 90px rgba(0, 0, 0, 0.55)',
+        }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
@@ -96,8 +100,8 @@ export function ShortVideoMaterialDialog({ storeId, storeName, onClose, onCreate
               <Video size={18} />
             </div>
             <div className="min-w-0">
-              <h2 className="truncate text-[15px] font-semibold tracking-normal">短视频素材解析</h2>
-              <p className="truncate text-[12px] text-token-muted">写入「{storeName}」：原始素材、字幕文稿、时间轴片段</p>
+              <h2 className="truncate text-[15px] font-semibold tracking-normal">短视频素材包入库</h2>
+              <p className="truncate text-[12px] text-token-muted">本次最终结果：1 个素材包，写入「{storeName}」</p>
             </div>
           </div>
           <button
@@ -112,6 +116,10 @@ export function ShortVideoMaterialDialog({ storeId, storeName, onClose, onCreate
 
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(320px,420px)_minmax(0,1fr)] gap-4 overflow-auto p-5 max-lg:grid-cols-1">
           <section className="min-h-0">
+            <div className="mb-3 flex items-center gap-2 text-[13px] font-semibold">
+              <Video size={15} className="text-token-accent" />
+              输入材料
+            </div>
             <div className="space-y-4">
               <label className="block">
                 <span className="mb-1.5 block text-[12px] text-token-secondary">短视频链接或分享文本</span>
@@ -158,34 +166,51 @@ export function ShortVideoMaterialDialog({ storeId, storeName, onClose, onCreate
           </section>
 
           <section className="min-h-0">
-            <div className="mb-3 flex items-center gap-2 text-[13px] font-semibold">
-              <FileText size={15} className="text-token-accent" />
-              入库步骤
-            </div>
-            <div className="grid grid-cols-1 gap-3">
-              {stages.map(stage => (
-                <div key={stage.key} className={`rounded-[8px] border px-3 py-3 ${stageClass(stage.status)}`}>
-                  <div className="mb-1 flex items-center gap-2 text-[12px] font-semibold">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full border border-current">
-                      {stageIcon(stage.status)}
-                    </span>
-                    {stage.label}
+            <div className="rounded-[10px] border border-token-subtle bg-token-card p-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <PackageCheck size={16} className="shrink-0 text-token-accent" />
+                  <div className="min-w-0">
+                    <div className="truncate text-[13px] font-semibold">本次最终结果：1 个素材包</div>
+                    <div className="truncate text-[11px] text-token-muted">素材包由 3 个知识库条目组成</div>
                   </div>
-                  <p className="text-[11px] leading-relaxed opacity-85">{stage.message}</p>
                 </div>
-              ))}
+                <span className="shrink-0 rounded-[999px] border border-token-subtle px-2 py-1 text-[11px] text-token-secondary">
+                  {result ? '已生成' : running ? '生成中' : '待生成'}
+                </span>
+              </div>
+              <div className="grid gap-2">
+                <OutcomeRow label="原始视频素材" desc="来源链接、平台、生成方式" href={result?.sourceUrl} />
+                <OutcomeRow label="字幕文稿" desc="可编辑的口播文案" href={result?.transcriptUrl} />
+                <OutcomeRow label="时间轴片段" desc="按片段继续加工" href={result?.timelineUrl} />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-3 flex items-center gap-2 text-[13px] font-semibold">
+                <FileText size={15} className="text-token-accent" />
+                服务端入库过程
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {stages.map(stage => (
+                  <div key={stage.key} className={`rounded-[8px] border px-3 py-2.5 ${stageClass(stage.status)}`}>
+                    <div className="mb-1 flex items-center gap-2 text-[12px] font-semibold">
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full border border-current">
+                        {stageIcon(stage.status)}
+                      </span>
+                      {stage.label}
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-current">{stage.message}</p>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {result && (
-              <div className="mt-4 border-t border-token-subtle pt-4">
-                <div className="mb-2 text-[13px] font-semibold">已生成素材资产</div>
-                <div className="grid gap-2">
-                  <AssetLink label="原始视频素材" href={result.sourceUrl} />
-                  <AssetLink label="字幕文稿" href={result.transcriptUrl} />
-                  <AssetLink label="时间轴片段" href={result.timelineUrl} />
-                </div>
-                <p className="mt-3 text-[11px] leading-relaxed text-token-muted">
-                  这些是中间素材，不是最终教程。你可以继续在知识库里编辑、引用、再加工，或选择成品内容发布到网页托管。
+              <div className="mt-4 rounded-[8px] border border-token-subtle bg-token-nested px-3 py-2.5">
+                <div className="text-[12px] font-semibold text-token-primary">下一步</div>
+                <p className="mt-1 text-[11px] leading-relaxed text-token-secondary">
+                  选中任一条目继续编辑，或交给智能体加工成教程、脚本、课程大纲、网页草稿。
                 </p>
               </div>
             )}
@@ -197,16 +222,37 @@ export function ShortVideoMaterialDialog({ storeId, storeName, onClose, onCreate
   );
 }
 
-function AssetLink({ label, href }: { label: string; href: string }) {
+function OutcomeRow({ label, desc, href }: { label: string; desc: string; href?: string }) {
+  const icon = href ? <Check size={13} /> : <Clock3 size={13} />;
+  const content = (
+    <>
+      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] ${href ? 'bg-token-success-soft text-token-success' : 'bg-token-nested text-token-muted'}`}>
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12px] font-semibold text-token-primary">{label}</span>
+        <span className="block truncate text-[11px] text-token-muted">{desc}</span>
+      </span>
+      {href && <ExternalLink size={14} className="shrink-0 text-token-muted" />}
+    </>
+  );
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="surface-row flex items-center gap-3 rounded-[8px] border border-token-subtle px-3 py-2"
+      >
+        {content}
+      </a>
+    );
+  }
+
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="surface-row flex items-center justify-between gap-3 rounded-[8px] border border-token-subtle px-3 py-2 text-[12px]"
-    >
-      <span>{label}</span>
-      <ExternalLink size={14} className="text-token-muted" />
-    </a>
+    <div className="flex items-center gap-3 rounded-[8px] border border-token-subtle bg-token-nested px-3 py-2">
+      {content}
+    </div>
   );
 }
