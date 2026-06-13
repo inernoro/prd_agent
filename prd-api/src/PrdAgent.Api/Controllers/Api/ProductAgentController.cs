@@ -703,7 +703,9 @@ public class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(ownerId))
             filter &= Builders<ProductRelease>.Filter.Eq(x => x.OwnerId, ownerId);
         else if (!string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase))
-            filter &= Builders<ProductRelease>.Filter.Eq(x => x.OwnerId, userId);
+            filter &= Builders<ProductRelease>.Filter.Or(
+                Builders<ProductRelease>.Filter.Eq(x => x.OwnerId, userId),
+                Builders<ProductRelease>.Filter.Eq(x => x.CreatedBy, userId));
         var items = await _db.ProductReleases.Find(filter)
             .SortByDescending(x => x.CreatedAt).ToListAsync();
         return Ok(ApiResponse<object>.Ok(new { items }));
@@ -865,47 +867,61 @@ public class ProductAgentController : ControllerBase
                 errors.Add(new { row = index + 2, message = "方案名称不能为空" });
                 continue;
             }
-            if (request.Kind == "release")
+            try
             {
-                if (string.IsNullOrWhiteSpace(row.Code))
+                if (request.Kind == "release")
                 {
-                    errors.Add(new { row = index + 2, message = "上线历史数据必须有 V 号" });
-                    continue;
+                    if (string.IsNullOrWhiteSpace(row.Code))
+                    {
+                        errors.Add(new { row = index + 2, message = "上线历史数据必须有 V 号" });
+                        continue;
+                    }
+                    var legacyData = row.LegacyData ?? new Dictionary<string, string>();
+                    if (!string.IsNullOrWhiteSpace(row.OwnerId) && !legacyData.ContainsKey("产品负责人"))
+                        legacyData["产品负责人"] = row.OwnerId.Trim();
+                    await _db.ProductReleases.InsertOneAsync(new ProductRelease
+                    {
+                        ProductId = productId, TCode = row.TCode, VCode = row.Code.Trim(), PlanName = row.PlanName.Trim(),
+                        VersionType = NormalizeVersionType(row.VersionType), AnnouncementUrl = row.AnnouncementUrl,
+                        SystemName = row.SystemName, AppName = row.AppName,
+                        ProjectType = row.ProjectType == "custom" ? "custom" : "standard",
+                        DepartmentName = row.DepartmentName, OwnerId = null,
+                        OpenBrandScope = string.IsNullOrWhiteSpace(row.OpenBrandScope) ? "上线全域开放" : row.OpenBrandScope,
+                        PlanUrl = row.PlanUrl, TeamMemberIds = row.TeamMemberIds ?? new(),
+                        Status = string.IsNullOrWhiteSpace(row.AnnouncementUrl) ? "announcement_pending" : "released",
+                        PlannedReleaseAt = row.Date, ReleasedAt = row.Date, CreatedBy = userId, SourceType = "import",
+                        LegacyData = legacyData,
+                    });
                 }
-                await _db.ProductReleases.InsertOneAsync(new ProductRelease
+                else
                 {
-                    ProductId = productId, TCode = row.TCode, VCode = row.Code.Trim(), PlanName = row.PlanName.Trim(),
-                    VersionType = NormalizeVersionType(row.VersionType), AnnouncementUrl = row.AnnouncementUrl,
-                    SystemName = row.SystemName, AppName = row.AppName,
-                    ProjectType = row.ProjectType == "custom" ? "custom" : "standard",
-                    DepartmentName = row.DepartmentName, OwnerId = row.OwnerId,
-                    OpenBrandScope = string.IsNullOrWhiteSpace(row.OpenBrandScope) ? "上线全域开放" : row.OpenBrandScope,
-                    PlanUrl = row.PlanUrl, TeamMemberIds = row.TeamMemberIds ?? new(),
-                    Status = string.IsNullOrWhiteSpace(row.AnnouncementUrl) ? "announcement_pending" : "released",
-                    PlannedReleaseAt = row.Date, ReleasedAt = row.Date, CreatedBy = userId, SourceType = "import",
-                    LegacyData = row.LegacyData ?? new(),
-                });
+                    var legacyData = row.LegacyData ?? new Dictionary<string, string>();
+                    if (!string.IsNullOrWhiteSpace(row.OwnerId) && !legacyData.ContainsKey("产品负责人"))
+                        legacyData["产品负责人"] = row.OwnerId.Trim();
+                    await _db.ProductInitiations.InsertOneAsync(new ProductInitiation
+                    {
+                        ProductId = productId, TCode = row.Code?.Trim(), PlanName = row.PlanName.Trim(),
+                        VersionType = NormalizeVersionType(row.VersionType), PlanUrl = row.PlanUrl,
+                        SystemName = row.SystemName, AppName = row.AppName,
+                        ProjectType = row.ProjectType == "custom" ? "custom" : "standard", CustomerSource = row.CustomerSource,
+                        RequirementDescription = row.RequirementDescription, DepartmentName = row.DepartmentName,
+                        PrimaryOwnerId = null, FirstDraftMeetingAt = row.FirstDraftMeetingAt,
+                        SecondDraftMeetingAt = row.SecondDraftMeetingAt, ThirdDraftMeetingAt = row.ThirdDraftMeetingAt,
+                        ProjectAt = row.ProjectAt, PlannedProjectAt = row.PlannedProjectAt,
+                        NeedUiDesign = row.NeedUiDesign, IsAiPoc = row.IsAiPoc,
+                        DevelopmentStatus = string.IsNullOrWhiteSpace(row.DevelopmentStatus) ? "待开发" : row.DevelopmentStatus,
+                        Remark = row.Remark,
+                        Status = string.IsNullOrWhiteSpace(row.Code) ? "draft" : "approved", CreatedBy = userId,
+                        SourceType = "import", LegacyData = legacyData,
+                    });
+                }
+                created++;
             }
-            else
+            catch (Exception ex)
             {
-                await _db.ProductInitiations.InsertOneAsync(new ProductInitiation
-                {
-                    ProductId = productId, TCode = row.Code?.Trim(), PlanName = row.PlanName.Trim(),
-                    VersionType = NormalizeVersionType(row.VersionType), PlanUrl = row.PlanUrl,
-                    SystemName = row.SystemName, AppName = row.AppName,
-                    ProjectType = row.ProjectType == "custom" ? "custom" : "standard", CustomerSource = row.CustomerSource,
-                    RequirementDescription = row.RequirementDescription, DepartmentName = row.DepartmentName,
-                    PrimaryOwnerId = row.OwnerId, FirstDraftMeetingAt = row.FirstDraftMeetingAt,
-                    SecondDraftMeetingAt = row.SecondDraftMeetingAt, ThirdDraftMeetingAt = row.ThirdDraftMeetingAt,
-                    ProjectAt = row.ProjectAt, PlannedProjectAt = row.PlannedProjectAt,
-                    NeedUiDesign = row.NeedUiDesign, IsAiPoc = row.IsAiPoc,
-                    DevelopmentStatus = string.IsNullOrWhiteSpace(row.DevelopmentStatus) ? "待开发" : row.DevelopmentStatus,
-                    Remark = row.Remark,
-                    Status = string.IsNullOrWhiteSpace(row.Code) ? "draft" : "approved", CreatedBy = userId,
-                    SourceType = "import", LegacyData = row.LegacyData ?? new(),
-                });
+                _logger.LogWarning(ex, "版本工作流导入第 {Row} 行失败", index + 2);
+                errors.Add(new { row = index + 2, message = ex.Message });
             }
-            created++;
         }
         return Ok(ApiResponse<object>.Ok(new { created, errors }));
     }
@@ -4972,6 +4988,8 @@ public class ProductAgentController : ControllerBase
     private IMongoCollection<T> ResolveCollection<T>()
     {
         if (typeof(T) == typeof(ProductVersion)) return (IMongoCollection<T>)(object)_db.ProductVersions;
+        if (typeof(T) == typeof(ProductRelease)) return (IMongoCollection<T>)(object)_db.ProductReleases;
+        if (typeof(T) == typeof(ProductInitiation)) return (IMongoCollection<T>)(object)_db.ProductInitiations;
         if (typeof(T) == typeof(Requirement)) return (IMongoCollection<T>)(object)_db.Requirements;
         if (typeof(T) == typeof(Feature)) return (IMongoCollection<T>)(object)_db.Features;
         if (typeof(T) == typeof(FeatureVersion)) return (IMongoCollection<T>)(object)_db.FeatureVersions;

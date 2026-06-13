@@ -73,7 +73,7 @@ export function VersionWorkflowImportDialog({
 
   const commit = async () => {
     const targetProductId = fixedProductId ?? productId;
-    if (!targetProductId || rows.length === 0) return;
+    if (!targetProductId || importableCount === 0) return;
     setBusy(true);
     const payloadRows = rows
       .filter((row) => (kind === 'release' ? Boolean(row.code) : true))
@@ -84,11 +84,16 @@ export function VersionWorkflowImportDialog({
       setMessage(result.error?.message ?? '导入失败');
       return;
     }
+    const created = result.data.created ?? 0;
     const errorCount = result.data.errors?.length ?? 0;
+    if (created === 0) {
+      setMessage(errorCount > 0 ? `导入未写入任何记录，${errorCount} 条校验失败。` : '导入未写入任何记录，请检查数据或联系管理员。');
+      return;
+    }
     setMessage(
       errorCount > 0
-        ? `导入完成：新增 ${result.data.created} 条，${errorCount} 条校验失败。`
-        : `导入完成：新增 ${result.data.created} 条。`,
+        ? `导入完成：新增 ${created} 条，${errorCount} 条校验失败。`
+        : `导入完成：新增 ${created} 条。`,
     );
     await onImported();
   };

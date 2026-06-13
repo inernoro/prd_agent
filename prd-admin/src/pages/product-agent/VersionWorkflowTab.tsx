@@ -291,7 +291,7 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
       <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
-        <div>{names.get(item.primaryOwnerId ?? item.createdBy) ?? item.primaryOwnerId ?? item.createdBy ?? '-'}</div>
+        <div>{names.get(item.primaryOwnerId ?? item.createdBy) ?? item.legacyData?.['产品负责人'] ?? item.primaryOwnerId ?? item.createdBy ?? '-'}</div>
         {!readOnly && item.status === 'owner_pending' && <button onClick={async () => { await approveInitiation(item.id); await onChanged(); }} className="mt-1 text-cyan-300">负责人同意</button>}
       </Td>
       <Td>{formatDate(item.firstDraftMeetingAt)}</Td><Td>{formatDate(item.secondDraftMeetingAt)}</Td><Td>{formatDate(item.thirdDraftMeetingAt)}</Td>
@@ -338,7 +338,7 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
         : (item.tCode ?? '临时优化需求')}</Td>
       <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{SCALE_LABEL[item.versionType]}</Td>
       <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
-      <Td>{item.departmentName || '-'}</Td><Td>{names.get(item.ownerId ?? '') ?? item.ownerId ?? '-'}</Td>
+      <Td>{item.departmentName || '-'}</Td><Td>{names.get(item.ownerId ?? '') ?? item.legacyData?.['产品负责人'] ?? item.ownerId ?? '-'}</Td>
       <Td>{item.teamMemberIds.map((id) => names.get(id) ?? id).join('、')}</Td>
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{formatDate(item.plannedReleaseAt)}</Td>

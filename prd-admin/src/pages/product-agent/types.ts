@@ -158,6 +158,7 @@ export interface ProductInitiation {
   approvalComment?: string | null;
   createdBy: string;
   sourceType: 'system' | 'import';
+  legacyData?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -188,6 +189,7 @@ export interface ProductRelease {
   status: string;
   createdBy: string;
   sourceType: 'system' | 'import';
+  legacyData?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
