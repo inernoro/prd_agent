@@ -9,7 +9,7 @@ import {
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
-  createSubmission, getDimensions, getResultStreamUrl, getSubmission, type ReviewDimensionScore,
+  createSubmission, getDimensions, getResultStreamUrl, type ReviewDimensionScore,
 } from '@/services/real/reviewAgent';
 import { useSseStream } from '@/lib/useSseStream';
 import {
@@ -18,6 +18,7 @@ import {
   type InitiationReviewStage,
   type ProcessLogEntry,
 } from './InitiationReviewLivePanel';
+import { hasRecoverableSseOutcome, waitForSubmissionDone } from './initiationReviewFinish';
 import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -55,9 +56,8 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [members, setMembers] = useState<ProductMember[]>([]);
   const [product, setProduct] = useState<Product | null>(null);
-  const [canImport, setCanImport] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [dialog, setDialog] = useState<'initiation' | 'import-release' | 'import-initiation' | null>(null);
+  const [dialog, setDialog] = useState<'initiation' | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
   const [releaseOwnerId, setReleaseOwnerId] = useState(currentUserId ?? '');
   const [query, setQuery] = useState('');
@@ -218,6 +218,7 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
   const [expectedDimCount, setExpectedDimCount] = useState(0);
   const logSeq = useRef(0);
   const streamErrorRef = useRef<string | null>(null);
+  const sseOutcomeRef = useRef({ hasResult: false, dimensionCount: 0, streamDone: false });
 
   const appendLog = useCallback((text: string) => {
     logSeq.current += 1;
@@ -231,7 +232,9 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
     onItem: (item) => {
       setDimensionScores((prev) => {
         const existing = prev.find((d) => d.key === item.key);
-        return existing ? prev.map((d) => (d.key === item.key ? item : d)) : [...prev, item];
+        const next = existing ? prev.map((d) => (d.key === item.key ? item : d)) : [...prev, item];
+        sseOutcomeRef.current.dimensionCount = next.length;
+        return next;
       });
       appendLog(`维度「${item.name}」：${item.score}/${item.maxScore}`);
     },
@@ -241,6 +244,7 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
     onEvent: {
       result: (data: unknown) => {
         const d = data as { totalScore: number; isPassed: boolean };
+        sseOutcomeRef.current.hasResult = true;
         setTotalScore(d.totalScore);
         setReviewPassed(d.isPassed);
         appendLog(`汇总得分 ${d.totalScore}/100，${d.isPassed ? '通过' : '未通过'}`);
@@ -255,7 +259,11 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
     },
     onError: (msg) => {
       streamErrorRef.current = msg;
-      appendLog(`评审失败：${msg}`);
+      appendLog(`评审流异常：${msg}`);
+    },
+    onDone: () => {
+      sseOutcomeRef.current.streamDone = true;
+      appendLog('评审流已结束');
     },
   });
 
@@ -311,6 +319,7 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
     setProcessLogs([]);
     sse.reset();
     streamErrorRef.current = null;
+    sseOutcomeRef.current = { hasResult: false, dimensionCount: 0, streamDone: false };
 
     setReviewStage('uploading');
     appendLog(`开始上传：${file.name}`);
@@ -337,35 +346,42 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
     appendLog('连接评审流，等待 Agent 分析打分…');
     await sse.start({ url: getResultStreamUrl(submissionId) });
 
-    if (streamErrorRef.current) {
+    const outcome = sseOutcomeRef.current;
+    const recoverable = hasRecoverableSseOutcome(outcome);
+
+    if (streamErrorRef.current && !recoverable) {
       setBusy(false);
       setReviewStage('idle');
       return setMessage(streamErrorRef.current);
     }
+    if (streamErrorRef.current && recoverable) {
+      appendLog('评审结果已从流中获取，忽略连接异常并继续同步…');
+    }
 
-    const result = await getSubmission(submissionId);
-    if (!result.success) {
-      setBusy(false);
-      setReviewStage('idle');
-      return setMessage(result.error?.message ?? '获取评审结果失败');
-    }
-    if (result.data.submission.status === 'Error') {
-      setBusy(false);
-      setReviewStage('idle');
-      return setMessage(result.data.submission.errorMessage ?? '评审执行失败');
-    }
-    if (result.data.submission.status !== 'Done') {
-      setBusy(false);
-      setReviewStage('idle');
-      return setMessage(result.data.submission.errorMessage ?? '评审未正常完成');
+    if (!outcome.hasResult && !outcome.streamDone) {
+      appendLog('确认服务端评审状态…');
+      const waited = await waitForSubmissionDone(submissionId);
+      if (!waited.ok && !recoverable) {
+        setBusy(false);
+        setReviewStage('idle');
+        return setMessage(waited.message);
+      }
+      if (!waited.ok && recoverable) {
+        appendLog(`详情查询失败（${waited.message}），仍尝试同步立项…`);
+      }
     }
 
     setReviewStage('syncing');
-    appendLog('评审完成，正在同步到立项记录…');
+    appendLog('正在同步评审结果到立项记录…');
     const synced = await syncInitiationReview(item.id, submissionId);
     setBusy(false);
     setReviewStage('idle');
-    if (!synced.success) return setMessage(synced.error?.message ?? '同步评审结果失败');
+    if (!synced.success) {
+      if (recoverable) {
+        return setMessage(`评审已完成，但同步立项失败：${synced.error?.message ?? '未知错误'}。请刷新页面或联系管理员。`);
+      }
+      return setMessage(synced.error?.message ?? '同步评审结果失败');
+    }
     setItem(synced.data);
     appendLog('立项记录已更新');
     if (synced.data.reviewPassed) {
@@ -414,7 +430,7 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
       {!reviewRunning && (
         <label className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-cyan-400/35 bg-cyan-400/5 text-center">
           <Upload className="mb-3 text-cyan-300" size={28} /><span className="text-sm text-white/75">{file ? file.name : '拖动或点击上传方案文件'}</span>
-          <span className="mt-1 text-xs text-white/35">PDF、Word、Markdown、Excel、PPT</span>
+          <span className="mt-1 text-xs text-white/35">PDF、Word、Markdown、TXT、Excel、PPT</span>
           <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         </label>
       )}
