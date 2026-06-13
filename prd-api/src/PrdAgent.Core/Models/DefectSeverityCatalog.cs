@@ -13,7 +13,7 @@ public static class DefectSeverityCatalog
 
     public static readonly string[] AllLevels = { LevelFatal, LevelSerious, LevelNormal, LevelMinor };
 
-    /// <summary>TAPD「严重程度」五档 → V2.6 四档；无法识别或为空时返回 null。</summary>
+    /// <summary>TAPD「优先级」五档 → V2.6 四档；无法识别或为空时返回 null。</summary>
     public static string? TryNormalizeTapdToLevel(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
