@@ -43,7 +43,9 @@ export function fromDatetimeLocalValue(value: string): string | undefined {
 }
 
 /** 展示立项记录的 Agent 评审得分 */
-export function formatInitiationReviewScore(initiation: ProductInitiation): string {
+export function formatInitiationReviewScore(
+  initiation: Pick<ProductInitiation, 'reviewScore' | 'reviewAttempts'>,
+): string {
   if (initiation.reviewScore != null) return `${initiation.reviewScore}/100`;
   const attempts = initiation.reviewAttempts ?? [];
   if (attempts.length === 0) return '-';

@@ -5,8 +5,10 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   importDefects,
   importFeatures,
+  importOverviewRequirements,
   importRequirements,
   importVersions,
+  type ImportRequirementRow,
   type ImportSimpleItemRow,
 } from '@/services/real/productAgent';
 import type { Product } from './types';
@@ -65,11 +67,13 @@ export function parseProductHistoryCsv(text: string, _options?: { entityType?: H
   const gradeIndex = indexOf('分级', '等级', '级别', 'grade');
   const statusIndex = indexOf('状态', '生命周期', 'status', 'lifecycle');
   const externalIdIndex = indexOf('需求 id', '外部id', '外部 id', 'externalid', 'external id', '编号', 'id', '缺陷id');
+  const appIndex = indexOf('应用', '应用/产品');
   const plannedIndex = indexOf('计划发布时间', '预计结束', 'planned');
   const completedIndex = indexOf('实际发布时间', '完成时间', 'released', 'completed');
   const effectiveTitleIndex = titleIndex >= 0 ? titleIndex : 0;
   return parsed.slice(1).map((values) => {
     const rawGrade = gradeIndex >= 0 ? values[gradeIndex]?.trim() : undefined;
+    const appName = appIndex >= 0 ? values[appIndex]?.trim() : undefined;
     return {
       title: values[effectiveTitleIndex]?.trim() ?? '',
       description: descriptionIndex >= 0 ? values[descriptionIndex]?.trim() : undefined,
@@ -79,6 +83,7 @@ export function parseProductHistoryCsv(text: string, _options?: { entityType?: H
       externalId: externalIdIndex >= 0 ? values[externalIdIndex]?.trim() : undefined,
       plannedAt: plannedIndex >= 0 ? values[plannedIndex]?.trim() : undefined,
       completedAt: completedIndex >= 0 ? values[completedIndex]?.trim() : undefined,
+      sourceFields: appName ? { 应用: appName } : undefined,
     };
   }).filter((row) => row.title);
 }
@@ -88,11 +93,14 @@ export function ProductHistoryImportDialog({
   products,
   onClose,
   onImported,
+  crossProductRoute = false,
 }: {
   type: HistoryImportType;
   products: Product[];
   onClose: () => void;
   onImported: () => Promise<void>;
+  /** 全局导入：按「应用」列路由到对应产品，productId 仅作兜底 */
+  crossProductRoute?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [productId, setProductId] = useState(products[0]?.id ?? '');
@@ -150,7 +158,9 @@ export function ProductHistoryImportDialog({
     if (!productId || rows.length === 0) return;
     setBusy(true);
     const result = type === 'requirement'
-      ? await importRequirements(productId, rows)
+      ? (crossProductRoute
+        ? await importOverviewRequirements(rows as ImportRequirementRow[], productId)
+        : await importRequirements(productId, rows as ImportRequirementRow[]))
       : type === 'feature'
         ? await importFeatures(productId, rows)
         : type === 'defect'
@@ -182,13 +192,15 @@ export function ProductHistoryImportDialog({
         <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
           <div>
             <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
-            <div className="mt-1 text-xs text-white/45">可重复导入；相同 TAPD ID 会更新原记录，ID 与 TAPD 保持一致。</div>
+            <div className="mt-1 text-xs text-white/45">可重复导入；相同 TAPD ID 会更新原记录。{crossProductRoute && type === 'requirement' ? '需求按「应用」列自动匹配系统产品。' : 'ID 与 TAPD 保持一致。'}</div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭"><X size={17} /></button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <label className="mb-4 block">
-            <span className="mb-1.5 block text-xs text-white/50">归属产品</span>
+            <span className="mb-1.5 block text-xs text-white/50">
+              {crossProductRoute && type === 'requirement' ? '未匹配「应用」时落入（兜底产品）' : '归属产品'}
+            </span>
             <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none">
               {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
             </select>

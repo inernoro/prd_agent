@@ -186,11 +186,29 @@ export function completeRelease(id: string, announcementUrl: string) {
 export function importVersionWorkflow(productId: string, body: {
   kind: 'initiation' | 'release';
   rows: Array<Record<string, unknown>>;
+  fallbackProductId?: string;
 }) {
-  return apiRequest<{ created: number; errors: { row: number; message: string }[] }>(
+  return apiRequest<ImportRoutedResult>(
     `/api/product/products/${productId}/version-workflow/import`,
     { method: 'POST', body },
   );
+}
+
+export function importOverviewVersionWorkflow(body: {
+  kind: 'initiation' | 'release';
+  rows: Array<Record<string, unknown>>;
+  fallbackProductId?: string;
+}) {
+  return apiRequest<ImportRoutedResult>('/api/product/overview/version-workflow/import', { method: 'POST', body });
+}
+
+export interface ImportRoutedResult {
+  created: number;
+  updated?: number;
+  skipped?: number;
+  errors?: { row: number; message: string }[];
+  routed?: Record<string, number>;
+  unmatched?: Array<{ row?: number; label?: string; title?: string; planName?: string; fallbackProductId?: string }>;
 }
 
 // ── 需求 ──
@@ -336,7 +354,14 @@ export interface ImportRequirementRow {
 }
 
 export function importRequirements(productId: string, rows: ImportRequirementRow[]) {
-  return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
+  return apiRequest<ImportRoutedResult>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
+}
+
+export function importOverviewRequirements(rows: ImportRequirementRow[], fallbackProductId?: string) {
+  return apiRequest<ImportRoutedResult>('/api/product/overview/requirements/import', {
+    method: 'POST',
+    body: { rows, fallbackProductId },
+  });
 }
 
 export interface ImportSimpleItemRow {
@@ -356,6 +381,8 @@ export interface ImportSimpleItemRow {
   handlerNames?: string[];
   /** TAPD 创建人 / 上报人姓名 */
   reporterNames?: string[];
+  /** 来源扩展字段（如 CSV「应用」列） */
+  sourceFields?: Record<string, string>;
 }
 
 export function importFeatures(productId: string, rows: ImportSimpleItemRow[]) {
@@ -714,23 +741,57 @@ export interface OverviewReleaseRow {
   id: string;
   productId: string;
   productName: string;
+  systemName?: string | null;
+  appName?: string | null;
+  legacyData?: Record<string, string>;
   vCode: string;
   tCode?: string | null;
+  initiationId?: string | null;
+  projectType: string;
   planName: string;
   versionType: string;
-  status: string;
+  departmentName?: string | null;
+  ownerId?: string | null;
+  ownerName?: string | null;
+  teamMemberIds: string[];
+  teamMemberNames: string[];
+  planUrl?: string | null;
   plannedReleaseAt?: string | null;
+  openBrandScope: string;
+  requirementIds: string[];
+  requirementTitles: string[];
   requirementCount: number;
-  initiationId?: string | null;
+  announcementUrl?: string | null;
+  status: string;
+  isTemporaryOptimization: boolean;
   updatedAt: string;
 }
 export interface OverviewInitiationRow {
   id: string;
   productId: string;
   productName: string;
+  systemName?: string | null;
+  appName?: string | null;
+  legacyData?: Record<string, string>;
+  projectType: string;
+  customerSource?: string | null;
   tCode?: string | null;
   planName: string;
   versionType: string;
+  requirementDescription?: string | null;
+  departmentName?: string | null;
+  primaryOwnerId?: string | null;
+  ownerName?: string | null;
+  firstDraftMeetingAt?: string | null;
+  secondDraftMeetingAt?: string | null;
+  thirdDraftMeetingAt?: string | null;
+  projectAt?: string | null;
+  needUiDesign?: boolean | null;
+  planUrl?: string | null;
+  developmentStatus: string;
+  remark?: string | null;
+  reviewScore?: number | null;
+  reviewPassed?: boolean | null;
   status: string;
   requirementCount: number;
   updatedAt: string;

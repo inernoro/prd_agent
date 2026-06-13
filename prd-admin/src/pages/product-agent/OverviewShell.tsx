@@ -68,6 +68,8 @@ import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { formatInitiationReviewScore } from './initiationWorkflowUtils';
+import { formatVersionBasicBool, formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { filterByTracked } from './productRecordTrackStorage';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
@@ -177,7 +179,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'versions' && (
-        <SectionShell title="版本" desc="正式版本与内部版本分 tab 展示；点击行进入三标签详情页（基础信息 / 需求 / 功能）；管理员可导入 Excel 历史数据">
+        <SectionShell title="版本" desc="正式版本与内部版本分 tab 展示，列字段与单产品版本页对齐（含负责人/组员/会议时间等）；点击行进入详情；管理员可导入 Excel 历史数据">
           <VersionOverviewSection isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
@@ -552,7 +554,7 @@ function RequirementsTable({
           ]}
         />
       )}
-      {showImport && <ProductHistoryImportDialog type="requirement" products={products} onClose={() => setShowImport(false)} onImported={reload} />}
+      {showImport && <ProductHistoryImportDialog type="requirement" products={products} crossProductRoute onClose={() => setShowImport(false)} onImported={reload} />}
     </div>
   );
 }
@@ -729,6 +731,38 @@ const WORKFLOW_STATUS_LABEL: Record<string, string> = {
   released: '已上线',
 };
 
+function overviewProjectTypeLabel(projectType: string, customerSource?: string | null) {
+  if (projectType === 'custom') return customerSource?.trim() ? `定制项目 · ${customerSource.trim()}` : '定制项目';
+  return '非定制项目';
+}
+
+function OverviewVersionStatus({ status }: { status: string }) {
+  const good = status === 'approved' || status === 'released';
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-xs ${good ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>
+      {WORKFLOW_STATUS_LABEL[status] ?? status}
+    </span>
+  );
+}
+
+function overviewAnnouncementCell(row: OverviewReleaseRow) {
+  if (row.announcementUrl) {
+    return (
+      <a
+        href={row.announcementUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="text-cyan-300 hover:underline"
+        onClick={(event) => event.stopPropagation()}
+      >
+        查看公告
+      </a>
+    );
+  }
+  if (row.status === 'announcement_pending') return <span className="text-xs text-white/35">待填写</span>;
+  return <span className="text-white/35">-</span>;
+}
+
 function VersionOverviewSection({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
   const [tab, setTab] = useState<'release' | 'initiation'>('release');
   return (
@@ -772,13 +806,18 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
     filename: 'overview-releases.csv',
-    headers: ['V号', 'T号', '方案', '产品', '级别', '状态'],
+    headers: ['产品', 'V号', 'T号', '项目类别', '版本类别', '方案', '部门', '负责人', '组员', '上线日期', '状态'],
     mapRow: (r) => [
+      resolveVersionProductLabel(r, r.productName),
       r.vCode,
-      r.tCode ?? '',
-      r.planName,
-      r.productName,
+      r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : ''),
+      overviewProjectTypeLabel(r.projectType),
       VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
+      r.planName,
+      r.departmentName ?? '',
+      r.ownerName ?? '',
+      r.teamMemberNames.join('、'),
+      r.plannedReleaseAt ? formatVersionBasicDate(r.plannedReleaseAt) : '',
       WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
     ],
   });
@@ -799,15 +838,21 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
           selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/release/${row.id}`)}
           columns={[
-            { key: 'vcode', header: 'V 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
-            { key: 'tcode', header: 'T 号', defaultWidth: 96, render: (r) => <span className="font-mono text-xs text-white/55">{r.tCode ?? '临时优化'}</span> },
-            { key: 'plan', header: '方案', defaultWidth: 200, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-xs text-white/55" /> },
-            { key: 'scale', header: '级别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { key: 'reqCount', header: '需求数', defaultWidth: 72, resizable: false, render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
-            { key: 'releaseAt', header: '上线日期', defaultWidth: 104, render: (r) => <span className="text-xs text-white/45">{r.plannedReleaseAt ? new Date(r.plannedReleaseAt).toLocaleDateString('zh-CN') : '-'}</span> },
-            { key: 'status', header: '状态', defaultWidth: 104, render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
-            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-white/55" /> },
+            { key: 'vcode', header: '正式版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
+            { key: 'tcode', header: '内部版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-xs text-white/55">{r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : '-')}</span> },
+            { key: 'projectType', header: '项目类别', defaultWidth: 96, render: (r) => <span className="text-xs text-white/55">{overviewProjectTypeLabel(r.projectType)}</span> },
+            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
+            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-white/55" /> },
+            { key: 'owner', header: '产品负责人（申领人）', defaultWidth: 120, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-white/70" /> },
+            { key: 'team', header: '项目组成员', defaultWidth: 140, render: (r) => <TruncateCell text={r.teamMemberNames.length > 0 ? r.teamMemberNames.join('、') : '-'} maxChars={18} className="text-xs text-white/55" /> },
+            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-white/35">-</span> },
+            { key: 'releaseAt', header: '上线日期', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.plannedReleaseAt)}</span> },
+            { key: 'brand', header: '当前开放品牌', defaultWidth: 112, render: (r) => <TruncateCell text={r.openBrandScope || '上线全域开放'} maxChars={14} className="text-xs text-white/55" /> },
+            { key: 'requirements', header: '需求来源', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementTitles.length > 0 ? r.requirementTitles.join('、') : '-'} maxChars={20} className="text-xs text-white/55" /> },
+            { key: 'announcement', header: '上线公告地址', defaultWidth: 104, render: (r) => overviewAnnouncementCell(r) },
+            { key: 'status', header: '状态', defaultWidth: 120, render: (r) => <OverviewVersionStatus status={r.status} /> },
           ]}
         />
       )}
@@ -840,12 +885,17 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
     filename: 'overview-initiations.csv',
-    headers: ['T号', '方案', '产品', '级别', '状态'],
+    headers: ['产品', '项目类别', 'T号', '版本类别', '方案', '部门', '负责人', '开发状态', 'Agent评审', '状态'],
     mapRow: (r) => [
+      resolveVersionProductLabel(r, r.productName),
+      overviewProjectTypeLabel(r.projectType, r.customerSource),
       r.tCode ?? '',
-      r.planName,
-      r.productName,
       VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
+      r.planName,
+      r.departmentName ?? '',
+      r.ownerName ?? '',
+      r.developmentStatus,
+      formatInitiationReviewScore(r),
       WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
     ],
   });
@@ -866,13 +916,40 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
           selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
           columns={[
-            { key: 'tcode', header: 'T 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '—'}</span> },
-            { key: 'plan', header: '方案', defaultWidth: 240, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-xs text-white/55" /> },
-            { key: 'scale', header: '级别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { key: 'reqCount', header: '需求数', defaultWidth: 72, resizable: false, render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
-            { key: 'status', header: '状态', defaultWidth: 104, render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
-            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-white/55" /> },
+            { key: 'projectType', header: '项目类别', defaultWidth: 108, render: (r) => <span className="text-xs text-white/55">{overviewProjectTypeLabel(r.projectType, r.customerSource)}</span> },
+            { key: 'tcode', header: '立项号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '-'}</span> },
+            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
+            { key: 'reqDesc', header: '项目需求描述', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementDescription ?? '-'} maxChars={20} className="text-xs text-white/55" /> },
+            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-white/55" /> },
+            { key: 'owner', header: '产品负责人', defaultWidth: 104, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-white/70" /> },
+            { key: 'draft1', header: '第一稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.firstDraftMeetingAt)}</span> },
+            { key: 'draft2', header: '第二稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.secondDraftMeetingAt)}</span> },
+            { key: 'draft3', header: '第三稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.thirdDraftMeetingAt)}</span> },
+            { key: 'projectAt', header: '立项时间', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.projectAt)}</span> },
+            { key: 'ui', header: '需UI设计', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{formatVersionBasicBool(r.needUiDesign)}</span> },
+            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-white/35">-</span> },
+            { key: 'devStatus', header: '开发状态', defaultWidth: 88, render: (r) => <span className="text-xs text-white/55">{r.developmentStatus || '待开发'}</span> },
+            { key: 'remark', header: '备注', defaultWidth: 120, render: (r) => <TruncateCell text={r.remark ?? '-'} maxChars={16} className="text-xs text-white/45" /> },
+            {
+              key: 'review',
+              header: 'Agent评审',
+              defaultWidth: 88,
+              resizable: false,
+              render: (r) => {
+                const scoreText = formatInitiationReviewScore(r);
+                if (scoreText === '-') return <span className="text-white/35">-</span>;
+                return (
+                  <span className={
+                    r.reviewPassed === true ? 'text-emerald-300 text-xs'
+                      : r.reviewPassed === false ? 'text-rose-300 text-xs'
+                        : 'text-white/70 text-xs'
+                  }>{scoreText}</span>
+                );
+              },
+            },
+            { key: 'status', header: '状态', defaultWidth: 120, render: (r) => <OverviewVersionStatus status={r.status} /> },
           ]}
         />
       )}
