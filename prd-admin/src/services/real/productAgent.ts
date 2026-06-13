@@ -18,10 +18,12 @@ import type {
   WorkflowDefinition,
   ProductEntityType,
   ProductCategory,
+  RequirementType,
   DescTemplate,
   ProductMembersResult,
   ProductInitiation,
   ProductRelease,
+  ReleaseFeatureItem,
 } from '@/pages/product-agent/types';
 
 interface ListWrap<T> {
@@ -57,6 +59,20 @@ export function deleteProduct(id: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/products/${id}`, { method: 'DELETE' });
 }
 
+export interface ImportProductRow {
+  name: string;
+  grade?: string;
+  description?: string;
+  code?: string;
+}
+
+export function importProducts(rows: ImportProductRow[], defaultGrade?: string) {
+  return apiRequest<{ created: number; skipped: number; skippedNames: string[] }>('/api/product/products/import', {
+    method: 'POST',
+    body: { rows, defaultGrade },
+  });
+}
+
 // ── 产品团队成员 ──
 export function listProductMembers(productId: string): Promise<ApiResponse<ProductMembersResult>> {
   return apiRequest<ProductMembersResult>(`/api/product/products/${productId}/members`);
@@ -87,6 +103,9 @@ export function deleteVersion(versionId: string) {
 
 export function listInitiations(productId: string, scope: 'mine' | 'all' = 'mine') {
   return apiRequest<ListWrap<ProductInitiation>>(`/api/product/products/${productId}/initiations?scope=${scope}`);
+}
+export function getInitiation(id: string) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}`);
 }
 export function createInitiation(productId: string, body: {
   projectType: 'standard' | 'custom';
@@ -129,8 +148,24 @@ export function createRelease(productId: string, body: {
   additionalRequirementIds?: string[];
   teamMemberIds: string[];
   plannedReleaseAt: string;
+  previousReleaseId?: string;
+  featureManifest?: ReleaseFeatureItem[];
 }) {
   return apiRequest<ProductRelease>(`/api/product/products/${productId}/releases`, { method: 'POST', body });
+}
+export function getRelease(id: string) {
+  return apiRequest<ProductRelease>(`/api/product/releases/${id}`);
+}
+export function getInheritReleaseManifest(productId: string) {
+  return apiRequest<{ previousReleaseId: string | null; previousVCode?: string | null; items: ReleaseFeatureItem[] }>(
+    `/api/product/products/${productId}/releases/inherit-manifest`,
+  );
+}
+export function updateReleaseFeatureManifest(id: string, body: {
+  previousReleaseId?: string;
+  featureManifest: ReleaseFeatureItem[];
+}) {
+  return apiRequest<ProductRelease>(`/api/product/releases/${id}/feature-manifest`, { method: 'PUT', body });
 }
 export function completeRelease(id: string, announcementUrl: string) {
   return apiRequest<ProductRelease>(`/api/product/releases/${id}/complete`, { method: 'POST', body: { announcementUrl } });
@@ -146,11 +181,12 @@ export function importVersionWorkflow(productId: string, body: {
 }
 
 // ── 需求 ──
-export function listRequirements(productId: string, params?: { versionId?: string; customerId?: string; grade?: string }) {
+export function listRequirements(productId: string, params?: { versionId?: string; customerId?: string; grade?: string; mine?: boolean }) {
   const q = new URLSearchParams();
   if (params?.versionId) q.set('versionId', params.versionId);
   if (params?.customerId) q.set('customerId', params.customerId);
   if (params?.grade) q.set('grade', params.grade);
+  if (params?.mine) q.set('mine', 'true');
   const qs = q.toString();
   return apiRequest<ListWrap<Requirement>>(`/api/product/products/${productId}/requirements${qs ? `?${qs}` : ''}`);
 }
@@ -239,6 +275,17 @@ export function deleteProductCategory(categoryId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/categories/${categoryId}`, { method: 'DELETE' });
 }
 
+// ── 需求类型（AI 分类 + 新建表单）──
+export function listRequirementTypes() {
+  return apiRequest<ListWrap<RequirementType>>('/api/product/requirement-types');
+}
+export function upsertRequirementType(body: Partial<RequirementType> & { id?: string }) {
+  return apiRequest<RequirementType>('/api/product/requirement-types', { method: 'POST', body });
+}
+export function deleteRequirementType(typeId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/requirement-types/${typeId}`, { method: 'DELETE' });
+}
+
 // ── 详情描述模板 ──
 export function listDescTemplates(entityType?: ProductEntityType) {
   const qs = entityType ? `?entityType=${encodeURIComponent(entityType)}` : '';
@@ -283,6 +330,10 @@ export interface ImportSimpleItemRow {
   title: string;
   description?: string;
   grade?: string;
+  /** TAPD 导出「严重程度」列原文 */
+  tapdSeverityRaw?: string;
+  /** 严重程度 V2.6 四档（致命/严重/一般/轻微）；缺陷 CSV 解析产出 */
+  severity?: string;
   status?: string;
   sourceSystem?: string;
   externalId?: string;
@@ -292,6 +343,25 @@ export interface ImportSimpleItemRow {
 
 export function importFeatures(productId: string, rows: ImportSimpleItemRow[]) {
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/features/import`, { method: 'POST', body: { rows } });
+}
+
+export interface ImportFeatureTreeRow {
+  path: string;
+  title?: string;
+  grade?: string;
+  featureType?: string;
+  moduleName?: string;
+  description?: string;
+  externalId?: string;
+  keyRules?: string;
+  acceptanceCriteria?: string;
+}
+
+export function importFeatureTree(productId: string, officialReleaseId: string, rows: ImportFeatureTreeRow[]) {
+  return apiRequest<{ created: number; updated: number; officialReleaseId: string }>(
+    `/api/product/products/${productId}/features/import-tree`,
+    { method: 'POST', body: { officialReleaseId, rows } },
+  );
 }
 export function importDefects(productId: string, rows: ImportSimpleItemRow[]) {
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/defects/import`, { method: 'POST', body: { rows } });
@@ -392,7 +462,18 @@ export function deleteWorkflowDefinition(definitionId: string) {
 }
 
 // ── 通用状态流转 ──
-export function transition(body: { entityType: ProductEntityType; entityId: string; transitionKey: string; comment?: string; assigneeId?: string | null }) {
+export function transition(body: {
+  entityType: ProductEntityType;
+  entityId: string;
+  transitionKey: string;
+  comment?: string;
+  assigneeId?: string | null;
+  title?: string;
+  grade?: string;
+  versionIds?: string[];
+  initiationId?: string;
+  releaseId?: string;
+}) {
   return apiRequest<{ entityId: string; newState: string }>('/api/product/transition', { method: 'POST', body });
 }
 
@@ -433,10 +514,8 @@ export interface TracedDefect {
   defectNo: string;
   title?: string | null;
   status: string;
-  /** 统一等级 p0/p1/p2/p3（取代严重度）。severity 仍保留用于旧数据兜底。 */
+  /** 处理优先级 p0/p1/p2/p3；与严重程度（structuredData）独立，无值即空 */
   grade?: string | null;
-  severity?: string | null;
-  priority?: string | null;
   tracedRequirementId?: string | null;
   tracedVersionId?: string | null;
   tracedFeatureId?: string | null;
@@ -448,12 +527,24 @@ export interface TracedDefect {
   reporterName?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  workflowDefId?: string | null;
+  /** 缺陷 / 非产品缺陷 */
+  productDefectClassification?: string | null;
+  structuredData?: Record<string, string>;
+  productExternalId?: string | null;
+  productSourceSystem?: string | null;
+  resolution?: string | null;
+  rejectReason?: string | null;
+  resolvedAt?: string | null;
+  closedAt?: string | null;
+  attachments?: Array<{ id?: string; fileName?: string; mimeType?: string; url?: string }>;
 }
-export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string }) {
+export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string; mine?: boolean }) {
   const q = new URLSearchParams();
   if (params?.requirementId) q.set('requirementId', params.requirementId);
   if (params?.versionId) q.set('versionId', params.versionId);
   if (params?.featureId) q.set('featureId', params.featureId);
+  if (params?.mine) q.set('mine', 'true');
   const qs = q.toString();
   return apiRequest<ListWrap<TracedDefect>>(`/api/product/products/${productId}/defects${qs ? `?${qs}` : ''}`);
 }
@@ -580,7 +671,7 @@ export function getOverviewStats() {
 }
 export interface OverviewRequirementRow {
   id: string; productId: string; productName: string; requirementNo: string; title: string;
-  grade: string; currentState?: string | null; versionCount: number; customerCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
+  grade: string; currentState?: string | null; stateLabel?: string | null; versionCount: number; customerCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
 }
 export function getOverviewRequirements(params?: { grade?: string; keyword?: string; mine?: boolean }) {
   const q = new URLSearchParams();
@@ -602,6 +693,43 @@ export function getOverviewVersions(params?: { lifecycle?: string; keyword?: str
   const qs = q.toString();
   return apiRequest<ListWrap<OverviewVersionRow>>(`/api/product/overview/versions${qs ? `?${qs}` : ''}`);
 }
+export interface OverviewReleaseRow {
+  id: string;
+  productId: string;
+  productName: string;
+  vCode: string;
+  tCode?: string | null;
+  planName: string;
+  versionType: string;
+  status: string;
+  plannedReleaseAt?: string | null;
+  requirementCount: number;
+  initiationId?: string | null;
+  updatedAt: string;
+}
+export interface OverviewInitiationRow {
+  id: string;
+  productId: string;
+  productName: string;
+  tCode?: string | null;
+  planName: string;
+  versionType: string;
+  status: string;
+  requirementCount: number;
+  updatedAt: string;
+}
+export function getOverviewReleases(params?: { keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewReleaseRow>>(`/api/product/overview/releases${qs ? `?${qs}` : ''}`);
+}
+export function getOverviewInitiations(params?: { keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewInitiationRow>>(`/api/product/overview/initiations${qs ? `?${qs}` : ''}`);
+}
 export interface OverviewFeatureRow {
   id: string; productId: string; productName: string; featureNo: string; title: string;
   grade: string; currentState?: string | null; requirementCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
@@ -616,7 +744,8 @@ export function getOverviewFeatures(params?: { grade?: string; keyword?: string;
 }
 export interface OverviewDefectRow {
   id: string; productId: string; productName: string; defectNo: string; title?: string | null;
-  status: string; grade?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
+  status: string; grade?: string | null; severityTier?: string | null; structuredData?: Record<string, string>;
+  tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
 }
 export function getOverviewDefects(params?: { status?: string; keyword?: string }) {
   const q = new URLSearchParams();
@@ -652,6 +781,16 @@ export function removeProductApplicationAdmin(userId: string) {
 export function createProductDefect(productId: string, body: { title: string; description?: string; grade?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
 }
-export function updateProductDefect(productId: string, defectId: string, body: { title: string; description?: string; grade?: string; status?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
+export function updateProductDefect(productId: string, defectId: string, body: {
+  title: string;
+  description?: string;
+  grade?: string;
+  status?: string;
+  assigneeId?: string | null;
+  featureId?: string;
+  versionId?: string;
+  productDefectClassification?: string;
+  structuredData?: Record<string, string>;
+}) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects/${defectId}`, { method: 'PUT', body });
 }

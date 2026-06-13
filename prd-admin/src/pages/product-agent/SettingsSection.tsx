@@ -1,8 +1,8 @@
 /**
- * 产品管理智能体 — 全局设置（表单模板 + 流程模板可视化编辑器，P2）。
+ * 产品管理智能体 — 全局设置（表单 / 描述 / 产品类型 / 需求类型 / 管理员；流转规则见「应用 → 应用配置」）。
  *
- * 全局默认（ProductId 留空）+ 允许选某产品覆盖。复用后端 form-templates / workflow-definitions CRUD。
- * 作用对象类型：需求 / 功能 / 缺陷 / 版本 / 客户 / 升级申请。
+ * 全局默认（ProductId 留空）+ 允许选某产品覆盖。复用后端 form-templates / desc-templates CRUD。
+ * 作用对象类型：需求 / 功能 / 版本 / 客户。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -13,10 +13,10 @@ import {
   listProducts,
   listFormTemplates,
   upsertFormTemplate,
-  listWorkflowDefinitions,
-  upsertWorkflowDefinition,
   upsertProductCategory,
   deleteProductCategory,
+  upsertRequirementType,
+  deleteRequirementType,
   listDescTemplates,
   upsertDescTemplate,
   deleteDescTemplate,
@@ -25,8 +25,9 @@ import {
   removeProductApplicationAdmin,
   type ProductApplicationAdmin,
 } from '@/services/real/productAgent';
-import type { Product, FormField, FormFieldType, WorkflowState, WorkflowTransition, ProductEntityType, ProductCategory, DescTemplate } from './types';
+import type { Product, FormField, FormFieldType, ProductEntityType, ProductCategory, RequirementType, DescTemplate } from './types';
 import { useProductCategories } from './productCategories';
+import { useRequirementTypes } from './requirementTypes';
 import { RichTextField } from './DynamicForm';
 
 const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
@@ -34,7 +35,6 @@ const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'feature', label: '功能' },
   { value: 'version', label: '版本' },
   { value: 'customer', label: '客户' },
-  { value: 'upgrade-request', label: '升级申请' },
 ];
 
 const FIELD_TYPES: { value: FormFieldType; label: string }[] = [
@@ -61,10 +61,11 @@ const RELATION_TARGETS: { value: string; label: string }[] = [
 ];
 
 // 各对象类型的系统预置字段（由页面原生渲染，不可在表单里增删改；这里仅展示让配置者知晓）
-const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]> = {
+const PRESET_FIELDS: Partial<Record<ProductEntityType, { label: string; type: string }[]>> = {
   requirement: [
     { label: '标题', type: '单行文本' },
     { label: '描述', type: '多行文本' },
+    { label: '需求类型', type: '分类（可配置）' },
     { label: '分级', type: 'P0-P3' },
     { label: '状态', type: '流程驱动' },
     { label: '所属客户', type: '关联客户' },
@@ -74,7 +75,6 @@ const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]
   feature: [
     { label: '名称', type: '单行文本' },
     { label: '描述', type: '多行文本' },
-    { label: '分级', type: 'P0-P3' },
     { label: '状态', type: '流程驱动' },
     { label: '实现需求', type: '关联需求' },
     { label: '纳入版本', type: '功能版本化' },
@@ -93,13 +93,6 @@ const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]
     { label: '联系方式', type: '单行文本' },
     { label: '描述', type: '多行文本' },
   ],
-  'upgrade-request': [
-    { label: '标题', type: '单行文本' },
-    { label: '理由', type: '多行文本' },
-    { label: '关联需求', type: '关联需求' },
-    { label: '关联功能', type: '关联功能' },
-    { label: '状态', type: '流程驱动' },
-  ],
   product: [
     { label: '名称', type: '单行文本' },
     { label: '描述', type: '多行文本' },
@@ -108,7 +101,7 @@ const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]
 };
 
 export function SettingsSection() {
-  const [mode, setMode] = useState<'form' | 'workflow' | 'desc' | 'category' | 'admins'>('form');
+  const [mode, setMode] = useState<'form' | 'desc' | 'category' | 'reqtype' | 'admins'>('form');
   const [entityType, setEntityType] = useState<ProductEntityType>('requirement');
   const [productScope, setProductScope] = useState(''); // '' = 全局
   const [products, setProducts] = useState<Product[]>([]);
@@ -126,12 +119,12 @@ export function SettingsSection() {
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex rounded-lg border border-white/10 overflow-hidden">
           <button onClick={() => setMode('form')} className={`px-3 py-1.5 text-sm ${mode === 'form' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>表单模板</button>
-          <button onClick={() => setMode('workflow')} className={`px-3 py-1.5 text-sm ${mode === 'workflow' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>流程模板</button>
           <button onClick={() => setMode('desc')} className={`px-3 py-1.5 text-sm ${mode === 'desc' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>描述模板</button>
           <button onClick={() => setMode('category')} className={`px-3 py-1.5 text-sm ${mode === 'category' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>产品类型</button>
+          <button onClick={() => setMode('reqtype')} className={`px-3 py-1.5 text-sm ${mode === 'reqtype' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>需求类型</button>
           <button onClick={() => setMode('admins')} className={`px-3 py-1.5 text-sm ${mode === 'admins' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>管理员</button>
         </div>
-        {mode !== 'category' && mode !== 'admins' && (
+        {mode !== 'category' && mode !== 'reqtype' && mode !== 'admins' && (
           <>
             <div className="w-px h-6 bg-white/10" />
             {ENTITY_TYPES.map((e) => (
@@ -166,10 +159,10 @@ export function SettingsSection() {
         <ApplicationAdminManager />
       ) : mode === 'form' ? (
         <FormTemplateEditor key={`f-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
-      ) : mode === 'workflow' ? (
-        <WorkflowEditor key={`w-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
       ) : mode === 'desc' ? (
         <DescTemplateManager key={`d-${entityType}`} entityType={entityType} />
+      ) : mode === 'reqtype' ? (
+        <RequirementTypeManager />
       ) : (
         <CategoryManager />
       )}
@@ -531,6 +524,159 @@ function CategoryRow({ category, onChanged }: { category: ProductCategory; onCha
   );
 }
 
+// ════════════════════════ 需求类型管理 ════════════════════════
+
+function RequirementTypeManager() {
+  const { types, reload } = useRequirementTypes();
+  const [draftName, setDraftName] = useState('');
+  const [draftDefinition, setDraftDefinition] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const add = async () => {
+    if (!draftName.trim()) return;
+    setSaving(true);
+    setMsg(null);
+    const res = await upsertRequirementType({ name: draftName.trim(), definition: draftDefinition.trim() });
+    setSaving(false);
+    if (res.success) {
+      setDraftName('');
+      setDraftDefinition('');
+      await reload();
+    } else {
+      setMsg(res.error?.message || '新增失败');
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3 max-w-3xl">
+      <div className="text-xs text-white/50">
+        需求类型用于新建需求表单与 AI 智能填充分类。每类需写清「定义」供 AI 判断；内置 5 项可改名称与定义，不可删除；自定义类型在无需求占用时可删除。
+      </div>
+
+      <div className="rounded-xl border border-white/10 divide-y divide-white/5">
+        {types.map((t) => (
+          <RequirementTypeRow key={t.id} item={t} onChanged={reload} />
+        ))}
+        {types.length === 0 && (
+          <div className="px-4 py-6 text-center text-sm text-white/40">正在加载需求类型…</div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-xl border border-dashed border-white/15 px-3 py-3">
+        <input
+          value={draftName}
+          onChange={(e) => setDraftName(e.target.value)}
+          placeholder="新增类型名称，如「安全合规」"
+          className="w-full px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+        />
+        <textarea
+          value={draftDefinition}
+          onChange={(e) => setDraftDefinition(e.target.value)}
+          rows={2}
+          placeholder="类型定义（AI 识别依据）：描述何种需求应归入此类…"
+          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40 resize-y min-h-[56px]"
+        />
+        <button
+          onClick={add}
+          disabled={!draftName.trim() || saving}
+          className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+        >
+          {saving ? <MapSpinner size={14} /> : <Plus size={14} />} 新增类型
+        </button>
+      </div>
+      {msg && <div className="text-xs text-red-300/80">{msg}</div>}
+    </div>
+  );
+}
+
+function RequirementTypeRow({ item, onChanged }: { item: RequirementType; onChanged: () => Promise<unknown> }) {
+  const [name, setName] = useState(item.name);
+  const [definition, setDefinition] = useState(item.definition);
+  const [expanded, setExpanded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const dirty = name.trim() !== item.name || definition !== item.definition;
+
+  useEffect(() => {
+    setName(item.name);
+    setDefinition(item.definition);
+  }, [item.id, item.name, item.definition]);
+
+  const save = async () => {
+    if (!name.trim() || !dirty) return;
+    setBusy(true);
+    setErr(null);
+    const res = await upsertRequirementType({ id: item.id, name: name.trim(), definition: definition.trim(), sortOrder: item.sortOrder });
+    setBusy(false);
+    if (res.success) await onChanged();
+    else setErr(res.error?.message || '保存失败');
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    setErr(null);
+    const res = await deleteRequirementType(item.id);
+    setBusy(false);
+    if (res.success) await onChanged();
+    else setErr(res.error?.message || '删除失败');
+  };
+
+  return (
+    <div className="px-3 py-2.5 flex flex-col gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="flex-1 min-w-[140px] px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+        />
+        {item.isBuiltin && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded text-white/40 border border-white/10 shrink-0">内置</span>
+        )}
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-[11px] text-white/45 hover:text-white/70 px-2 py-1 shrink-0"
+        >
+          {expanded ? '收起定义' : '编辑定义'}
+        </button>
+        {err && <span className="text-[11px] text-red-300/80 shrink-0 max-w-[140px] truncate" title={err}>{err}</span>}
+        <button
+          onClick={save}
+          disabled={!dirty || !name.trim() || busy}
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-cyan-200/80 hover:text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
+        >
+          {busy ? <MapSpinner size={12} /> : <Save size={12} />} 保存
+        </button>
+        <button
+          onClick={remove}
+          disabled={item.isBuiltin || busy}
+          title={item.isBuiltin ? '内置类型不可删除' : '删除'}
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-red-300/60 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-30 shrink-0"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+      {expanded && (
+        <textarea
+          value={definition}
+          onChange={(e) => setDefinition(e.target.value)}
+          rows={3}
+          placeholder="类型定义：描述 AI 应如何将需求归入此类…"
+          className="w-full px-3 py-2 rounded-lg bg-black/20 border border-white/10 text-xs text-white/80 outline-none focus:border-cyan-500/40 resize-y min-h-[72px]"
+        />
+      )}
+      {!expanded && definition.trim() && (
+        <p className="text-[11px] text-white/35 pl-0.5 line-clamp-2" title={definition}>{definition}</p>
+      )}
+    </div>
+  );
+}
+
 // ════════════════════════ 表单模板编辑器 ════════════════════════
 function FormTemplateEditor({ entityType, productId }: { entityType: ProductEntityType; productId: string | null }) {
   const [id, setId] = useState<string | undefined>(undefined);
@@ -668,146 +814,6 @@ function FormTemplateEditor({ entityType, productId }: { entityType: ProductEnti
       <button onClick={addField} className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm">
         <Plus size={14} /> 添加字段
       </button>
-    </div>
-  );
-}
-
-// ════════════════════════ 流程模板编辑器 ════════════════════════
-function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityType; productId: string | null }) {
-  const [id, setId] = useState<string | undefined>(undefined);
-  const [name, setName] = useState('');
-  const [states, setStates] = useState<WorkflowState[]>([]);
-  const [transitions, setTransitions] = useState<WorkflowTransition[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const res = await listWorkflowDefinitions({ entityType, productId: productId ?? undefined });
-    if (res.success) {
-      const match = res.data.items.find((w) => (w.productId ?? null) === productId && w.isDefault) ?? res.data.items.find((w) => (w.productId ?? null) === productId);
-      if (match) {
-        setId(match.id);
-        setName(match.name);
-        setStates([...match.states].sort((a, b) => a.sortOrder - b.sortOrder));
-        setTransitions([...match.transitions]);
-      } else {
-        setId(undefined);
-        setName(`${ENTITY_TYPES.find((e) => e.value === entityType)?.label}默认流程`);
-        setStates([]);
-        setTransitions([]);
-      }
-    }
-    setLoading(false);
-  }, [entityType, productId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const addState = () => setStates((s) => [...s, { key: `state_${s.length + 1}`, label: '', color: '#60A5FA', isInitial: s.length === 0, isFinal: false, sortOrder: s.length }]);
-  const updateState = (i: number, patch: Partial<WorkflowState>) => setStates((s) => s.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
-  const removeState = (i: number) => setStates((s) => s.filter((_, idx) => idx !== i));
-
-  const addTransition = () => setTransitions((t) => [...t, { key: `t_${t.length + 1}`, label: '', fromState: states[0]?.key ?? '', toState: states[1]?.key ?? states[0]?.key ?? '', requireComment: false }]);
-  const updateTransition = (i: number, patch: Partial<WorkflowTransition>) => setTransitions((t) => t.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
-  const removeTransition = (i: number) => setTransitions((t) => t.filter((_, idx) => idx !== i));
-
-  const save = async () => {
-    setSaving(true);
-    setMsg(null);
-    const res = await upsertWorkflowDefinition({
-      id,
-      name: name.trim() || '默认流程',
-      entityType,
-      states: states.map((s, idx) => ({ ...s, sortOrder: idx })),
-      transitions,
-      isDefault: true,
-      productId,
-    });
-    setSaving(false);
-    if (res.success) {
-      setMsg('已保存');
-      await load();
-    } else {
-      setMsg(res.error?.message ?? '保存失败');
-    }
-  };
-
-  if (loading) return <MapSectionLoader text="正在加载流程…" />;
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 flex items-center gap-3">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="流程名称" className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40" />
-        <button onClick={save} disabled={saving} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50">
-          {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
-        </button>
-        {msg && <span className="text-xs text-white/50">{msg}</span>}
-      </div>
-
-      {/* 状态 */}
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 flex flex-col gap-2">
-        <div className="text-sm font-medium text-white/70">状态</div>
-        {states.length === 0 && <div className="text-xs text-white/35 py-2 text-center">还没有状态，先添加状态再连流转。</div>}
-        {states.map((s, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <input type="color" value={s.color ?? '#60A5FA'} onChange={(e) => updateState(i, { color: e.target.value })} className="w-7 h-7 rounded bg-transparent border border-white/10" />
-            <input value={s.label} onChange={(e) => updateState(i, { label: e.target.value })} placeholder="状态名（如：待评审）" className="flex-1 px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40" />
-            <input value={s.key} onChange={(e) => updateState(i, { key: e.target.value })} placeholder="key" className="w-28 px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none" />
-            <label className="flex items-center gap-1 text-xs text-white/50"><input type="checkbox" checked={s.isInitial} onChange={(e) => updateState(i, { isInitial: e.target.checked })} className="accent-cyan-500" /> 初始</label>
-            <label className="flex items-center gap-1 text-xs text-white/50"><input type="checkbox" checked={s.isFinal} onChange={(e) => updateState(i, { isFinal: e.target.checked })} className="accent-cyan-500" /> 终态</label>
-            <input
-              type="number"
-              min={0}
-              value={s.slaHours ?? ''}
-              onChange={(e) => updateState(i, { slaHours: e.target.value ? Number(e.target.value) : null })}
-              placeholder="SLA小时"
-              title="停留超过此小时数视为超时（空=不限）"
-              className="w-20 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none"
-            />
-            <input
-              type="number"
-              min={0}
-              value={s.wipLimit ?? ''}
-              onChange={(e) => updateState(i, { wipLimit: e.target.value ? Number(e.target.value) : null })}
-              placeholder="WIP"
-              title="看板该列在制上限（空=不限）"
-              className="w-16 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none"
-            />
-            <button onClick={() => removeState(i)} className="text-white/30 hover:text-red-300"><Trash2 size={14} /></button>
-          </div>
-        ))}
-        <button onClick={addState} className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm">
-          <Plus size={14} /> 添加状态
-        </button>
-      </div>
-
-      {/* 流转 */}
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 flex flex-col gap-2">
-        <div className="text-sm font-medium text-white/70">流转（from → to）</div>
-        {transitions.length === 0 && <div className="text-xs text-white/35 py-2 text-center">还没有流转动作。</div>}
-        {transitions.map((t, i) => (
-          <div key={i} className="flex items-center gap-2 flex-wrap">
-            <input value={t.label} onChange={(e) => updateTransition(i, { label: e.target.value })} placeholder="动作名（如：提交评审）" className="flex-1 min-w-[140px] px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40" />
-            <input value={t.key} onChange={(e) => updateTransition(i, { key: e.target.value })} placeholder="key" className="w-24 px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none" />
-            <select value={t.fromState ?? ''} onChange={(e) => updateTransition(i, { fromState: e.target.value || null })} className="px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none">
-              <option value="">任意状态</option>
-              {states.map((s) => <option key={s.key} value={s.key}>{s.label || s.key}</option>)}
-            </select>
-            <span className="text-white/30 text-xs">→</span>
-            <select value={t.toState} onChange={(e) => updateTransition(i, { toState: e.target.value })} className="px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none">
-              {states.map((s) => <option key={s.key} value={s.key}>{s.label || s.key}</option>)}
-            </select>
-            <label className="flex items-center gap-1 text-xs text-white/50"><input type="checkbox" checked={t.requireComment} onChange={(e) => updateTransition(i, { requireComment: e.target.checked })} className="accent-cyan-500" /> 需备注</label>
-            <label className="flex items-center gap-1 text-xs text-white/50" title="触发该流转时自动把处理人指派给操作人本人"><input type="checkbox" checked={t.autoAssignToActor ?? false} onChange={(e) => updateTransition(i, { autoAssignToActor: e.target.checked })} className="accent-cyan-500" /> 自动认领</label>
-            <button onClick={() => removeTransition(i)} className="text-white/30 hover:text-red-300"><Trash2 size={14} /></button>
-          </div>
-        ))}
-        <button onClick={addTransition} disabled={states.length === 0} className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm disabled:opacity-40">
-          <Plus size={14} /> 添加流转
-        </button>
-      </div>
     </div>
   );
 }

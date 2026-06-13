@@ -7,7 +7,7 @@ describe('功能规范字段', () => {
       '所属功能模块',
       '功能类型',
       '主需求',
-      '计划版本',
+      '内部版本号',
       '负责人',
       '功能说明',
       '关键规则',
@@ -17,7 +17,7 @@ describe('功能规范字段', () => {
     requiredLabels.forEach((label) => {
       expect(source.split(label).length - 1).toBeGreaterThanOrEqual(2);
     });
-    expect(source).toContain('正式上线版本号');
+    expect(source).toContain('正式版本号');
     expect(source).toContain('关联需求');
     expect(source).toContain('remark');
   });

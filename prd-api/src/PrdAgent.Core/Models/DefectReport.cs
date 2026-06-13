@@ -8,7 +8,7 @@ public class DefectReport
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>缺陷编号（如 DEF-2025-0001，自动生成）</summary>
+    /// <summary>缺陷 ID（TAPD 规则：纯数字；导入保留 TAPD ID，新建在本产品最大 ID 基础上 +1）</summary>
     public string DefectNo { get; set; } = string.Empty;
 
     /// <summary>使用的模板 ID</summary>
@@ -47,9 +47,8 @@ public class DefectReport
     public string? Priority { get; set; }
 
     /// <summary>
-    /// 产品管理智能体内的缺陷分级：见 ProductItemGrade（p0/p1/p2/p3）。
-    /// 与需求/功能统一口径，取代产品侧的「严重度」展示；缺陷管理智能体不使用该字段。
-    /// 旧数据为 null 时由 Severity 经 SeverityToGrade 兜底推算。
+    /// 产品管理智能体内的处理优先级：见 ProductItemGrade（p0/p1/p2/p3）。与 Severity（严重程度）独立。
+    /// TAPD「缺陷等级」导入映射到 Severity，不写入本字段。
     /// </summary>
     public string? Grade { get; set; }
 
@@ -166,6 +165,12 @@ public class DefectReport
 
     // ===== 产品管理智能体（product-agent）追溯引用 =====
     // 缺陷追溯需求：由 product-agent 写入，defect-agent 不感知这些字段（仅追加，不改既有逻辑）。
+
+    /// <summary>产品管理智能体绑定的流程定义 Id（状态 Key 与 Status 一致）。</summary>
+    public string? WorkflowDefId { get; set; }
+
+    /// <summary>产品内缺陷划分：缺陷 / 非产品缺陷，见 ProductDefectLinkageCatalog。</summary>
+    public string? ProductDefectClassification { get; set; }
 
     /// <summary>追溯到的产品 ID（product-agent.products）</summary>
     public string? TracedProductId { get; set; }

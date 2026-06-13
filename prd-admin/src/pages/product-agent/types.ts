@@ -3,6 +3,7 @@
  * 后端：prd-api/src/PrdAgent.Core/Models/{Product,ProductVersion,Requirement,Feature,Customer,
  * ProductFormTemplate,ProductWorkflowDefinition}.cs
  */
+import { formatDefectSeverityLevel, readDefectSeverityLevel } from './defectSeverity';
 
 /** 产品管理对象类型 */
 export type ProductEntityType =
@@ -10,6 +11,7 @@ export type ProductEntityType =
   | 'version'
   | 'requirement'
   | 'feature'
+  | 'defect'
   | 'customer'
   | 'upgrade-request';
 
@@ -28,6 +30,15 @@ export interface ProductCategory {
   isBuiltin: boolean;
 }
 
+/** 需求类型（可增删改查；内置 5 项不可删除；AI 按 Definition 识别） */
+export interface RequirementType {
+  id: string;
+  name: string;
+  definition: string;
+  sortOrder: number;
+  isBuiltin: boolean;
+}
+
 /** 详情描述模板（按对象类型，富文本骨架，方便一键套用） */
 export interface DescTemplate {
   id: string;
@@ -41,7 +52,13 @@ export interface DescTemplate {
 export type VersionLifecycle = 'planning' | 'developing' | 'testing' | 'released' | 'deprecated';
 
 /** 功能版本变更类型 */
-export type FeatureChangeType = 'added' | 'modified' | 'deprecated';
+export type FeatureChangeType = 'added' | 'modified' | 'deprecated' | 'unchanged';
+
+export interface ReleaseFeatureItem {
+  featureId: string;
+  changeType: FeatureChangeType;
+  changeNote?: string | null;
+}
 export type FeatureBusinessType = 'basic' | 'core' | 'value_added';
 
 export interface Product {
@@ -141,6 +158,7 @@ export interface ProductInitiation {
   approvalComment?: string | null;
   createdBy: string;
   sourceType: 'system' | 'import';
+  legacyData?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -166,9 +184,12 @@ export interface ProductRelease {
   plannedReleaseAt?: string | null;
   releasedAt?: string | null;
   announcementUrl?: string | null;
+  previousReleaseId?: string | null;
+  featureManifest?: ReleaseFeatureItem[];
   status: string;
   createdBy: string;
   sourceType: 'system' | 'import';
+  legacyData?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -335,6 +356,8 @@ export interface FormTemplate {
 export interface WorkflowState {
   key: string;
   label: string;
+  /** 状态说明（流程模板配置页） */
+  description?: string | null;
   color?: string | null;
   isInitial: boolean;
   isFinal: boolean;
@@ -355,6 +378,10 @@ export interface WorkflowTransition {
   requireComment: boolean;
   /** 自动化：触发时把处理人自动指派给操作人本人 */
   autoAssignToActor?: boolean;
+  /** 流转前必须已填写的字段（title / assigneeId / grade / comment） */
+  requiredFieldKeys?: string[] | null;
+  /** 跨对象联动：requirement | defect */
+  linkEntityType?: string | null;
 }
 
 export interface WorkflowDefinition {
@@ -366,6 +393,9 @@ export interface WorkflowDefinition {
   transitions: WorkflowTransition[];
   isDefault: boolean;
   productId?: string | null;
+  /** 内置种子版本；用户保存流程模板后不再被种子覆盖 */
+  seedRevision?: number;
+  isUserCustomized?: boolean;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -379,8 +409,16 @@ export const ITEM_GRADE_LABEL: Record<ItemGrade, string> = {
   p3: 'P3 低',
 };
 
-/** 缺陷状态英文值 → 中文标签（与后端 DefectStatus 同口径，工作台/列表/图表统一展示用）。 */
+/** 缺陷状态 Key → 中文标签（产品缺陷工作流与需求对齐；含旧缺陷智能体状态兜底）。 */
 export const DEFECT_STATUS_LABEL: Record<string, string> = {
+  new: '待评审',
+  planning: '待规划',
+  status_2: '已立项',
+  developing: '开发中',
+  resolved: '已上线',
+  rejected: '已拒绝',
+  status_3: '已排期',
+  to_requirement: '非产品缺陷',
   draft: '草稿',
   reviewing: '评审中',
   awaiting: '待处理',
@@ -388,8 +426,6 @@ export const DEFECT_STATUS_LABEL: Record<string, string> = {
   assigned: '已分配',
   processing: '处理中',
   verifying: '待验收',
-  resolved: '已解决',
-  rejected: '已拒绝',
   closed: '已关闭',
 };
 
@@ -397,32 +433,25 @@ export const DEFECT_STATUS_LABEL: Record<string, string> = {
 export function defectStatusLabel(status?: string | null): string {
   const s = (status ?? '').trim();
   if (!s) return '—';
-  return DEFECT_STATUS_LABEL[s] ?? DEFECT_STATUS_LABEL[s.toLowerCase()] ?? s;
+  const lower = s.toLowerCase();
+  return DEFECT_STATUS_LABEL[s] ?? DEFECT_STATUS_LABEL[lower] ?? s;
 }
 
-/** 旧缺陷「严重度」→ 统一「等级」兜底映射（与后端 ProductAgentController.SeverityToGrade 同口径）。 */
-export function severityToItemGrade(severity?: string | null): ItemGrade {
-  switch (severity) {
-    case 'blocker':
-    case 'critical':
-      return 'p0';
-    case 'major':
-      return 'p1';
-    case 'minor':
-      return 'p2';
-    case 'trivial':
-    case 'suggestion':
-      return 'p3';
-    default:
-      return 'p2';
-  }
+/** 缺陷严重程度 V2.6 四档（只读 structuredData，无值返回 null） */
+export { readDefectSeverityLevel, formatDefectSeverityLevel } from './defectSeverity';
+
+export function defectSeverityLevelLabel(d: { structuredData?: Record<string, string> | null }): string {
+  return formatDefectSeverityLevel(readDefectSeverityLevel(d));
 }
 
-/** 取缺陷有效等级：优先 grade，旧数据为空时由 severity 兜底。 */
-export function effectiveDefectGrade(d: { grade?: string | null; severity?: string | null }): ItemGrade {
+/** @deprecated 使用 defectSeverityLevelLabel */
+export const defectSeverityTierLabel = defectSeverityLevelLabel;
+
+/** 缺陷处理优先级（只读 grade 字段，无值返回 null） */
+export function readDefectPriorityGrade(d: { grade?: string | null }): ItemGrade | null {
   const g = d.grade;
   if (g === 'p0' || g === 'p1' || g === 'p2' || g === 'p3') return g;
-  return severityToItemGrade(d.severity);
+  return null;
 }
 
 export const PRODUCT_GRADE_LABEL: Record<ProductGrade, string> = {

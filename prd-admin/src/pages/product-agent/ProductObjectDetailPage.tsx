@@ -2,29 +2,45 @@
  * 产品管理智能体 — 对象独立详情页（需求 / 功能 / 缺陷）。
  *
  * 路由：/product-agent/:productId/:kind/:id  （kind: requirement | feature | defect）
- * 布局参考 Jira / TAPD / Linear：头部(编号+大标题+状态流转+统一保存) + 左主栏(描述/内容型字段/关联)
+ * 布局：头部(编号+大标题+状态流转+统一保存) + 左主栏(描述/内容型字段/关联)
  * + 右属性栏(分级/状态/属性型自定义字段/信息)。系统字段与自定义字段同一套视觉语言、必填带星号。
  * 自定义模板里与系统字段重名的项(标题/描述)自动去重，避免「重复填两遍」。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, Share2, X, Sparkles, ExternalLink, MessageSquareText } from 'lucide-react';
+import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, Share2, X, ExternalLink, MessageSquareText } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { ItemMultiSearchSelect } from '@/components/ItemMultiSearchSelect';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
+import { FeatureModuleSearchSelect } from '@/components/FeatureModuleSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { useAuthStore } from '@/stores/authStore';
-import { useSseStream } from '@/lib/useSseStream';
+import { searchDirectoryUsers } from '@/services';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
+import { RequirementCreateForm } from './RequirementCreateForm';
+import { TapdPropertyPanel, TapdPropertyRow } from './TapdPropertyPanel';
+import { featurePathLabel } from './featureTreeUtils';
+import { InitiationWorkflowDetail } from './InitiationWorkflowDetail';
+import { ReleaseWorkflowDetail } from './ReleaseWorkflowDetail';
+import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
+import {
+  REQUIREMENT_PRODUCT_DEFECT_FORM_KEY,
+  REQUIREMENT_PRODUCT_DEFECT_VALUE,
+} from './productDefectLinkageCatalog';
+import { RequirementTypeSelect } from './RequirementTypeSelect';
+import { toRequirementOptions } from './comboboxOptions';
 import { VersionKnowledgeCard } from './knowledge/VersionKnowledgeCard';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
-import { slaInfo } from './sla';
+import { ProductDefectDetail } from './ProductDefectDetail';
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
+import { enrichContentWithMentions } from '@/lib/mentionRender';
 import './product-cards.css';
 import {
   listRequirements,
-  createRequirement,
   updateRequirement,
   listFeatures,
   createFeature,
@@ -37,25 +53,31 @@ import {
   listCustomers,
   listFeatureVersions,
   listTracedDefects,
-  convertDefectToRequirement,
   createProductDefect,
-  updateProductDefect,
   listDescTemplates,
+  getProduct,
   type TracedDefect,
 } from '@/services/real/productAgent';
-import type { Requirement, Feature, ProductVersion, ProductRelease, Customer, FeatureVersion, FeatureBusinessType, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade } from './types';
+import type { Requirement, Feature, Product, ProductVersion, ProductRelease, Customer, FeatureVersion, FeatureBusinessType, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import { slaInfo } from './sla';
+import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 
-const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
+const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
+  basic: '基础功能',
+  core: '核心功能',
+  value_added: '增值功能',
+};
 const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
   { value: 'basic', label: '基础功能' },
   { value: 'core', label: '核心功能' },
   { value: 'value_added', label: '增值功能' },
 ];
+const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
 // ── 自定义字段去重 / 分栏 ──
 const NATIVE_DUP_KEYS = new Set(['title', 'name', 'description', 'desc']);
-const NATIVE_DUP_LABELS = ['标题', '名称', '描述', '需求名称', '需求描述', '功能名称', '功能描述', '缺陷标题'];
+const NATIVE_DUP_LABELS = ['标题', '名称', '描述', '需求名称', '需求描述', '功能名称', '功能描述', '缺陷标题', '需求类型', '需求来源'];
 
 /** 与系统原生字段（标题/描述）重名的模板字段视为重复，详情页不再渲染。 */
 function isNativeDuplicate(f: FormField): boolean {
@@ -100,16 +122,18 @@ export function ProductObjectDetailPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
   const [featureVersions, setFeatureVersions] = useState<FeatureVersion[]>([]);
+  const [product, setProduct] = useState<Product | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [r, f, v, release, c, d] = await Promise.all([
+    const [r, f, v, release, c, d, p] = await Promise.all([
       listRequirements(productId),
       listFeatures(productId),
       listVersions(productId),
       listReleases(productId, 'all'),
       listCustomers(),
       listTracedDefects(productId),
+      getProduct(productId),
     ]);
     if (r.success) setRequirements(r.data.items);
     if (f.success) setFeatures(f.data.items);
@@ -117,6 +141,7 @@ export function ProductObjectDetailPage() {
     if (release.success) setReleases(release.data.items);
     if (c.success) setCustomers(c.data.items);
     if (d.success) setTracedDefects(d.data.items);
+    if (p.success) setProduct(p.data);
     if (kind === 'feature') {
       const fv = await listFeatureVersions(productId, { featureId: id });
       if (fv.success) setFeatureVersions(fv.data.items);
@@ -137,6 +162,42 @@ export function ProductObjectDetailPage() {
     else navigate('/product-agent');
   };
 
+  if (kind === 'release') {
+    return (
+      <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
+        <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
+          <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 hover:bg-white/5 hover:text-white shrink-0" title="返回">
+            <ArrowLeft size={16} />
+          </button>
+          <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-200">正式版本</span>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+          <div className="mx-auto w-full max-w-4xl py-5 px-5">
+            <ReleaseWorkflowDetail productId={productId} releaseId={id} isNew={isNew} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === 'initiation') {
+    return (
+      <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
+        <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
+          <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 hover:bg-white/5 hover:text-white shrink-0" title="返回">
+            <ArrowLeft size={16} />
+          </button>
+          <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">内部版本</span>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+          <div className="mx-auto w-full max-w-4xl py-5 px-5">
+            <InitiationWorkflowDetail productId={productId} initiationId={id} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
       <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
@@ -151,21 +212,28 @@ export function ProductObjectDetailPage() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-        <div className="mx-auto py-5" style={{ width: '80%' }}>
+        <div className={`${(isNew && kind === 'requirement') || kind === 'feature' || kind === 'version' ? 'w-full px-5 xl:px-8 py-5' : 'mx-auto py-5'}`} style={(isNew && kind === 'requirement') || kind === 'feature' || kind === 'version' ? undefined : { width: '80%' }}>
           {isNew ? (
             kind === 'defect' ? (
               <CreateDefectForm
                 productId={productId}
                 onCreated={(newId) => navigate(`/product-agent/p/${productId}/defect/${newId}`, { replace: true })}
               />
-            ) : (
-              <CreateObjectForm
+            ) : kind === 'requirement' ? (
+              <RequirementCreateForm
                 productId={productId}
-                kind={kind}
                 requirements={requirements}
+                customers={customers}
+                onCreated={(newId) => navigate(`/product-agent/p/${productId}/requirement/${newId}`, { replace: true })}
+              />
+            ) : (
+              <FeatureCreateForm
+                productId={productId}
+                requirements={requirements}
+                allFeatures={features}
                 versions={versions}
                 releases={releases}
-                onCreated={(newId) => navigate(`/product-agent/p/${productId}/${kind}/${newId}`, { replace: true })}
+                onCreated={(newId) => navigate(`/product-agent/p/${productId}/feature/${newId}`, { replace: true })}
               />
             )
           ) : loading ? (
@@ -184,6 +252,7 @@ export function ProductObjectDetailPage() {
           ) : kind === 'feature' ? (
             <FeatureDetail
               feature={features.find((f) => f.id === id)}
+              productName={product?.name ?? productId}
               requirements={requirements}
               allFeatures={features}
               featureVersions={featureVersions}
@@ -202,7 +271,7 @@ export function ProductObjectDetailPage() {
               onReload={reload}
             />
           ) : kind === 'defect' ? (
-            <DefectDetail
+            <ProductDefectDetail
               productId={productId}
               defect={tracedDefects.find((d) => d.id === id)}
               features={features}
@@ -240,7 +309,7 @@ function KindBadge({ kind, isNew }: { kind: string; isNew?: boolean }) {
 
 // ════════════════════════ 通用构件 ════════════════════════
 
-/** 详情骨架：头部(编号/大标题/状态流转/统一保存) + 左主栏 + 右属性栏。 */
+/** 详情骨架：头部 + 主内容；split 为左右双栏，stack 为单列全宽（一行一个容器）。 */
 function DetailScaffold({
   no,
   kindLabel,
@@ -256,6 +325,7 @@ function DetailScaffold({
   workflow,
   main,
   sidebar,
+  layout = 'split',
   children,
 }: {
   no: string;
@@ -271,7 +341,8 @@ function DetailScaffold({
   headerActions?: React.ReactNode;
   workflow?: React.ReactNode;
   main: React.ReactNode;
-  sidebar: React.ReactNode;
+  sidebar?: React.ReactNode;
+  layout?: 'split' | 'stack';
   children?: React.ReactNode;
 }) {
   return (
@@ -312,11 +383,15 @@ function DetailScaffold({
         {workflow && <div className="px-4 py-2.5 border-t border-white/5">{workflow}</div>}
       </div>
 
-      {/* 主体双栏：左 70% / 右 30% */}
-      <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-4 items-start">
+      {/* 主体：split 左 70% / 右 30%；stack 单列全宽 */}
+      {layout === 'stack' ? (
         <div className="flex flex-col gap-4 min-w-0">{main}</div>
-        <div className="flex flex-col gap-4 min-w-0">{sidebar}</div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-4 items-start">
+          <div className="flex flex-col gap-4 min-w-0">{main}</div>
+          <div className="flex flex-col gap-4 min-w-0">{sidebar}</div>
+        </div>
+      )}
       {children}
     </div>
   );
@@ -377,7 +452,7 @@ function ParentSelect({ value, onChange, options, placeholder }: { value: string
   );
 }
 
-/** 描述字段：富文本（排版工具栏 + 截图粘贴/拖拽上传），对齐 Jira / TAPD / Linear。 */
+/** 描述字段：富文本（排版工具栏 + 截图粘贴/拖拽上传）。 */
 function DescriptionField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return <RichTextField value={value} onChange={onChange} minHeight={420} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴 / 点右上角套用模板）" />;
 }
@@ -516,16 +591,6 @@ function Chips({ items, empty }: { items: string[]; empty: string }) {
   );
 }
 
-function SlaBadge({ stateEnteredAt, slaHours }: { stateEnteredAt?: string | null; slaHours?: number | null }) {
-  const sla = slaInfo(stateEnteredAt, slaHours);
-  if (!sla) return null;
-  return (
-    <span className={`text-[11px] inline-flex items-center gap-1 ${sla.overdue ? 'text-red-300' : 'text-white/40'}`}>
-      停留 {sla.label}{sla.overdue ? ' · 超时' : ''}
-    </span>
-  );
-}
-
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-2 text-[11px]">
@@ -535,97 +600,122 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** 属性字段表：左列字段名、右列值，一行一个字段 */
+function AttributeFieldTable({ rows }: { rows: { label: string; value: React.ReactNode }[] }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-white/10">
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          <col style={{ width: '22%' }} />
+          <col />
+        </colgroup>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label} className="border-t border-white/5 first:border-t-0">
+              <td className="px-4 py-3 text-xs font-medium text-white/45 bg-white/[0.02] align-top">{row.label}</td>
+              <td className="px-4 py-3 text-sm text-white/80 min-w-0">{row.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DetailRecordTable({
+  columns,
+  rows,
+  emptyText,
+  onRowClick,
+}: {
+  columns: { header: string; width?: string; className?: string; render: (row: { id: string }) => React.ReactNode }[];
+  rows: { id: string }[];
+  emptyText: string;
+  onRowClick?: (id: string) => void;
+}) {
+  if (rows.length === 0) {
+    return <div className="py-10 text-center text-sm text-white/35">{emptyText}</div>;
+  }
+  const cell = 'px-3 py-2.5 text-xs text-white/65 truncate';
+  return (
+    <div className="overflow-x-auto rounded-lg border border-white/10">
+      <table className="w-full table-fixed text-left text-sm min-w-[960px]">
+        {columns.some((c) => c.width) && (
+          <colgroup>
+            {columns.map((c, i) => (
+              <col key={i} style={c.width ? { width: c.width } : undefined} />
+            ))}
+          </colgroup>
+        )}
+        <thead className="bg-white/[0.03] text-[11px] text-white/45 border-b border-white/10">
+          <tr>
+            {columns.map((c) => (
+              <th key={c.header} className={`px-3 py-2.5 font-medium whitespace-nowrap ${c.className ?? ''}`}>{c.header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr
+              key={row.id}
+              onClick={() => onRowClick?.(row.id)}
+              className={`border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
+            >
+              {columns.map((c) => (
+                <td key={c.header} className={`${cell} ${c.className ?? ''}`}>{c.render(row)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function NotFound() {
   return <div className="text-white/40 text-sm text-center py-10">对象不存在或已删除</div>;
 }
 
-// ════════════════════════ AI 智能填充（输入文本 → 按模板回填）════════════════════════
-interface AiFillResult { title?: string; description?: string; grade?: string; formData?: Record<string, string> }
-
-function AiFillCard({ productId, templateId, onFill }: { productId: string; templateId?: string; onFill: (r: AiFillResult) => void }) {
-  const [text, setText] = useState('');
-  const { phase, phaseMessage, typing, isStreaming, start, abort } = useSseStream<AiFillResult>({
-    url: `/api/product/products/${productId}/requirements/ai-fill/stream`,
-    method: 'POST',
-    itemEvent: 'result',
-    onItem: (r) => onFill(r),
-  });
-  const run = () => { if (text.trim()) void start({ body: { text: text.trim(), templateId } }); };
-
-  return (
-    <Card title="AI 智能填充">
-      <div className="flex flex-col gap-2">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={4}
-          placeholder="粘贴一段需求原始描述（背景、痛点、期望…），AI 自动拆解为标题 / 描述 / 分级 / 模板字段，回填后你再修改确认。"
-          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 resize-none placeholder:text-white/25"
-          style={{ overscrollBehavior: 'contain' }}
-        />
-        <div className="flex items-center gap-2">
-          {isStreaming ? (
-            <button onClick={abort} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/15 text-white/70 hover:bg-white/5 text-sm">
-              <MapSpinner size={14} /> 停止
-            </button>
-          ) : (
-            <button onClick={run} disabled={!text.trim()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40">
-              <Sparkles size={14} /> 智能填充
-            </button>
-          )}
-          {phase !== 'idle' && <span className={`text-[11px] ${phase === 'error' ? 'text-red-300/80' : 'text-white/45'}`}>{phaseMessage}</span>}
-        </div>
-        {isStreaming && typing && (
-          <div className="text-[11px] text-white/40 font-mono max-h-24 overflow-y-auto bg-white/[0.03] border border-white/5 rounded p-2 whitespace-pre-wrap" style={{ overscrollBehavior: 'contain' }}>
-            {typing}
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-// ════════════════════════ 新建对象（需求 / 功能）════════════════════════
-function CreateObjectForm({
+// ════════════════════════ 新建功能（布局对齐功能详情）════════════════════════
+function FeatureCreateForm({
   productId,
-  kind,
   requirements,
+  allFeatures,
   versions,
   releases,
   onCreated,
 }: {
   productId: string;
-  kind: string;
   requirements: Requirement[];
+  allFeatures: Feature[];
   versions: ProductVersion[];
   releases: ProductRelease[];
   onCreated: (newId: string) => void;
 }) {
+  const navigate = useNavigate();
   const currentUserId = useAuthStore((state) => state.user?.userId ?? '');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [grade, setGrade] = useState<ItemGrade>('p2');
-  const [assigneeId, setAssigneeId] = useState('');
   const [moduleName, setModuleName] = useState('');
   const [featureType, setFeatureType] = useState<FeatureBusinessType>('basic');
   const [mainRequirementId, setMainRequirementId] = useState('');
-  const [requirementIds, setRequirementIds] = useState<Set<string>>(new Set());
+  const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
   const [plannedVersionId, setPlannedVersionId] = useState('');
   const [officialReleaseId, setOfficialReleaseId] = useState('');
   const [ownerId, setOwnerId] = useState(currentUserId);
+  const [assigneeId, setAssigneeId] = useState('');
+  const [parentId, setParentId] = useState('');
   const [keyRules, setKeyRules] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [remark, setRemark] = useState('');
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
-  const entityType = kind === 'feature' ? 'feature' : 'requirement';
-  const { template } = useEffectiveTemplate(entityType, productId);
-  const { workflow } = useEffectiveWorkflow(entityType, productId);
+  const { template } = useEffectiveTemplate('feature', productId);
+  const { workflow } = useEffectiveWorkflow('feature', productId);
   const split = useMemo(() => splitFields(template?.fields), [template]);
 
-  // 新建时默认套用「默认描述模板」，无需用户再点「套用模板」；用户已输入则不覆盖
-  const defaultDescContent = useDefaultDescTemplateContent(entityType);
+  const defaultDescContent = useDefaultDescTemplateContent('feature');
   const descAutoFilledRef = useRef(false);
   useEffect(() => {
     if (descAutoFilledRef.current || !defaultDescContent) return;
@@ -634,207 +724,177 @@ function CreateObjectForm({
       setDescription(defaultDescContent);
     }
   }, [defaultDescContent, description]);
-  const kindLabel = kind === 'feature' ? '功能' : '需求';
-  const kindColor = kind === 'feature' ? '#A78BFA' : '#FBBF24';
-  const isFeature = kind === 'feature';
-  const inputCls = 'w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40';
-  const selectCls = 'w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40';
 
   useEffect(() => {
     if (currentUserId && !ownerId) setOwnerId(currentUserId);
   }, [currentUserId, ownerId]);
 
-  if (kind !== 'requirement' && kind !== 'feature') {
-    return <div className="text-white/40 text-sm text-center py-10">该类型不支持在此新建</div>;
-  }
-
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
 
-  // AI 智能填充回填：标题/描述/分级/自定义字段
-  const onAiFill = (r: AiFillResult) => {
-    if (r.title) setTitle(r.title);
-    if (r.description) { descAutoFilledRef.current = true; setDescription(r.description); }
-    if (r.grade && ITEM_GRADES.includes(r.grade as ItemGrade)) setGrade(r.grade as ItemGrade);
-    if (r.formData) setFormData((prev) => ({ ...prev, ...r.formData }));
-  };
-
   const create = async () => {
-    if (!title.trim()) return setMessage(`${kindLabel}名称不能为空`);
-    if (isFeature && (!description.trim() || !moduleName.trim() || !mainRequirementId || !plannedVersionId || !ownerId || !keyRules.trim() || !acceptanceCriteria.trim())) {
-      return setMessage('请完整填写功能说明、所属模块、主需求、计划版本、负责人、关键规则和验收标准');
+    if (!title.trim() || !description.trim() || !moduleName.trim() || !mainRequirementId || !plannedVersionId || !ownerId || !keyRules.trim() || !acceptanceCriteria.trim()) {
+      setMessage('请完整填写功能名称、功能说明、所属模块、主需求、内部版本号、负责人、关键规则和验收标准');
+      return;
     }
     setSaving(true);
     setMessage('');
-    const payload = isFeature
-      ? {
-          title: title.trim(),
-          description,
-          moduleName: moduleName.trim(),
-          featureType,
-          mainRequirementId,
-          requirementIds: Array.from(new Set([mainRequirementId, ...requirementIds])),
-          plannedVersionId,
-          officialReleaseId: officialReleaseId || null,
-          ownerId,
-          keyRules,
-          acceptanceCriteria,
-          remark,
-          grade,
-          assigneeId: assigneeId || null,
-          formData,
-          templateId: template?.id,
-          workflowDefId: workflow?.id,
-        }
-      : { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData, templateId: template?.id, workflowDefId: workflow?.id };
-    const res = kind === 'requirement' ? await createRequirement(productId, payload) : await createFeature(productId, payload);
+    const res = await createFeature(productId, {
+      title: title.trim(),
+      description,
+      moduleName: moduleName.trim(),
+      featureType,
+      mainRequirementId,
+      requirementIds: Array.from(new Set([mainRequirementId, ...selReqs])),
+      plannedVersionId,
+      officialReleaseId: officialReleaseId || null,
+      ownerId,
+      parentId: parentId || null,
+      keyRules,
+      acceptanceCriteria,
+      remark,
+      assigneeId: assigneeId || null,
+      formData,
+      templateId: template?.id,
+      workflowDefId: workflow?.id,
+    });
     setSaving(false);
     if (res.success && res.data) onCreated(res.data.id);
-    else setMessage(res.error?.message ?? `创建${kindLabel}失败`);
+    else setMessage(res.error?.message ?? '创建功能失败');
   };
 
   return (
     <DetailScaffold
-      no={`新建${kindLabel}`}
-      kindLabel={kindLabel}
-      kindColor={kindColor}
+      no="新建功能"
+      kindLabel="功能"
+      kindColor="#A78BFA"
       title={title}
       onTitleChange={setTitle}
-      titlePlaceholder={kind === 'requirement' ? '需求标题' : '功能名称'}
+      titlePlaceholder="功能名称"
       dirty
       saving={saving}
       onSave={create}
       main={
         <>
-          {entityType === 'requirement' && (
-            <AiFillCard productId={productId} templateId={template?.id} onFill={onAiFill} />
-          )}
-          <Card title={isFeature ? '功能说明' : '描述'} action={<DescTemplatePicker entityType={entityType} onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+          <Card title="功能说明" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
-          {isFeature && (
-            <>
-              <Card title="关键规则">
-                <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="填写核心业务规则、限制条件和边界" />
-              </Card>
-              <Card title="验收标准">
-                <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="填写可判断功能成立和交付完成的验收标准" />
-              </Card>
-              <Card title="备注">
-                <PlainTextArea value={remark} onChange={setRemark} placeholder="补充特殊情况或例外说明，可不填" />
-              </Card>
-            </>
-          )}
+          <Card title="关键规则">
+            <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="填写核心业务规则、限制条件和边界" />
+          </Card>
+          <Card title="验收标准">
+            <p className="text-[11px] text-white/35 mb-2">写清怎样算做完、测试和产品怎样验收（给定场景与条件，系统应出现什么结果）</p>
+            <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="例：给定合法输入，系统返回预期结果；异常场景有明确提示…" />
+          </Card>
+          <Card title="备注">
+            <PlainTextArea value={remark} onChange={setRemark} placeholder="补充特殊情况或例外说明，可不填" />
+          </Card>
           {split.files.length > 0 && (
-            <Card title={template?.name || '附件'}>
+            <Card title="附件">
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
           {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
-          <p className="text-[11px] text-white/35 px-1">创建后进入详情页，可继续维护关联关系与流转状态。</p>
+          <p className="text-[11px] text-white/35 px-1">保存后进入功能详情，可继续维护版本纳入、缺陷追溯与状态流转。</p>
         </>
       }
       sidebar={
-        <Card title="属性">
-          <div className="flex flex-col gap-3.5">
-            {isFeature && (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel required>所属功能模块</FieldLabel>
-                  <input value={moduleName} onChange={(event) => setModuleName(event.target.value)} placeholder="如：营销活动 / 权限中心" className={inputCls} />
+        <>
+          <Card title="属性">
+            <div className="flex flex-col gap-3.5">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>所属功能模块</FieldLabel>
+                <p className="text-[11px] text-white/35 -mt-0.5">从功能目录树逐级点选，或在搜索框输入路径/名称快捷定位</p>
+                <FeatureModuleSearchSelect value={moduleName} onChange={setModuleName} features={allFeatures} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>功能类型</FieldLabel>
+                <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                  {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>负责人</FieldLabel>
+                <UserSearchSelect value={ownerId} onChange={setOwnerId} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>处理人</FieldLabel>
+                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>父功能</FieldLabel>
+                <ParentSelect
+                  value={parentId}
+                  onChange={setParentId}
+                  options={allFeatures.map((f) => ({ id: f.id, label: f.title }))}
+                  placeholder="无（顶层功能）"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel required>内部版本号</FieldLabel>
+                <p className="text-[11px] text-white/35 -mt-0.5">立项时确定本功能归属的内部版本（T 号），关联下方内部版本记录</p>
+                <InternalVersionSelect value={plannedVersionId} onChange={setPlannedVersionId} versions={versions} />
+                {plannedVersionId && (
+                  <FeatureInternalVersionLink
+                    version={versions.find((v) => v.id === plannedVersionId)}
+                    onOpen={(id) => navigate(`/product-agent/p/${productId}/version/${id}`)}
+                  />
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>正式版本号</FieldLabel>
+                <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                  <option value="">上线后回写</option>
+                  {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
+                </select>
+              </div>
+              {split.others.length > 0 && (
+                <div className="pt-1 border-t border-white/5">
+                  <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel required>功能类型</FieldLabel>
-                  <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className={selectCls}>
-                    {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                  </select>
-                </div>
+              )}
+            </div>
+          </Card>
+          <Card title="主需求与关联需求">
+            {requirements.length === 0 ? (
+              <div className="text-[11px] text-white/30">该产品还没有需求，请先创建需求后再新建功能</div>
+            ) : (
+              <div className="space-y-3">
                 <div className="flex flex-col gap-1.5">
                   <FieldLabel required>主需求</FieldLabel>
-                  <select value={mainRequirementId} onChange={(event) => {
-                    const value = event.target.value;
-                    setMainRequirementId(value);
-                    if (value) setRequirementIds((prev) => new Set([...prev, value]));
-                  }} className={selectCls}>
-                    <option value="">请选择主需求</option>
-                    {requirements.map((requirement) => <option key={requirement.id} value={requirement.id}>{requirement.requirementNo} · {requirement.title}</option>)}
-                  </select>
+                  <ItemSearchSelect
+                    value={mainRequirementId}
+                    onChange={(id) => {
+                      setMainRequirementId(id);
+                      if (id) setSelReqs((prev) => new Set([...prev, id]));
+                    }}
+                    options={toRequirementOptions(requirements)}
+                    placeholder="搜索需求标题或编号..."
+                    clearOptionLabel="请选择主需求"
+                    countUnit="条需求"
+                  />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <FieldLabel>关联需求</FieldLabel>
-                  <div className="max-h-44 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] p-2" style={{ overscrollBehavior: 'contain' }}>
-                    {requirements.map((requirement) => (
-                      <label key={requirement.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 hover:bg-white/5">
-                        <input
-                          type="checkbox"
-                          checked={requirementIds.has(requirement.id) || mainRequirementId === requirement.id}
-                          disabled={mainRequirementId === requirement.id}
-                          onChange={() => setRequirementIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(requirement.id)) next.delete(requirement.id); else next.add(requirement.id);
-                            return next;
-                          })}
-                          className="mt-0.5 accent-cyan-500"
-                        />
-                        <span className="min-w-0 text-xs text-white/65">{requirement.title}</span>
-                      </label>
-                    ))}
-                  </div>
+                  <ItemMultiSearchSelect
+                    value={Array.from(selReqs).filter((id) => id !== mainRequirementId)}
+                    onChange={(ids) => setSelReqs(new Set(mainRequirementId ? [mainRequirementId, ...ids] : ids))}
+                    options={toRequirementOptions(requirements)}
+                    placeholder="搜索并选择关联需求..."
+                    countUnit="条需求"
+                    lockedIds={mainRequirementId ? [mainRequirementId] : []}
+                    emptyText="暂无其他需求可选"
+                  />
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel required>计划版本</FieldLabel>
-                  <select value={plannedVersionId} onChange={(event) => setPlannedVersionId(event.target.value)} className={selectCls}>
-                    <option value="">请选择内部版本</option>
-                    {versions.map((version) => <option key={version.id} value={version.id}>{version.versionName}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>正式上线版本号</FieldLabel>
-                  <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className={selectCls}>
-                    <option value="">上线后回写</option>
-                    {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel required>负责人</FieldLabel>
-                  <UserSearchSelect value={ownerId} onChange={setOwnerId} />
-                </div>
-              </>
-            )}
-            <div className="flex flex-col gap-1.5">
-              <FieldLabel required>分级</FieldLabel>
-              <GradeField grade={grade} setGrade={setGrade} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <FieldLabel>处理人</FieldLabel>
-              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
-            </div>
-            {split.others.length > 0 && (
-              <div className="pt-1 border-t border-white/5">
-                <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
               </div>
             )}
-          </div>
-        </Card>
+          </Card>
+        </>
       }
     />
   );
 }
 
 // ════════════════════════ 新建缺陷（独立页，对齐新建需求）════════════════════════
-const DEFECT_STATUSES: { v: string; label: string }[] = [
-  { v: 'draft', label: '草稿' },
-  { v: 'reviewing', label: '评审中' },
-  { v: 'awaiting', label: '待处理' },
-  { v: 'submitted', label: '已提交' },
-  { v: 'assigned', label: '已分配' },
-  { v: 'processing', label: '处理中' },
-  { v: 'verifying', label: '待验收' },
-  { v: 'resolved', label: '已解决' },
-  { v: 'rejected', label: '已拒绝' },
-  { v: 'closed', label: '已关闭' },
-];
-const DEFECT_STATUS_LABEL: Record<string, string> = Object.fromEntries(DEFECT_STATUSES.map((s) => [s.v, s.label]));
-
 function CreateDefectForm({ productId, onCreated }: { productId: string; onCreated: (newId: string) => void }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -1018,7 +1078,7 @@ function RequirementDetail({
 
   return (
     <DetailScaffold
-      no={`${requirement.requirementNo}${requirement.externalId ? ` · TAPD ${requirement.externalId}` : ''}`}
+      no={requirement.requirementNo}
       kindLabel="需求"
       kindColor="#FBBF24"
       title={title}
@@ -1029,7 +1089,16 @@ function RequirementDetail({
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
-          <WorkflowBar workflow={workflow} entityType="requirement" entityId={requirement.id} currentState={requirement.currentState} onChanged={onReload} />
+          <WorkflowBar
+            workflow={workflow}
+            entityType="requirement"
+            entityId={requirement.id}
+            productId={productId}
+            currentState={requirement.currentState}
+            importedStatusLabel={requirement.sourceSnapshot?.status || requirement.sourceSnapshot?.fields?.['状态']}
+            entitySnapshot={{ ownerId: requirement.ownerId, assigneeId, title, grade, versionIds: requirement.versionIds }}
+            onChanged={onReload}
+          />
         ) : undefined
       }
       main={
@@ -1038,12 +1107,12 @@ function RequirementDetail({
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
           {split.files.length > 0 && (
-            <Card title={template?.name || '附件'}>
+            <Card title="附件">
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
           {requirement.sourceSnapshot?.comments?.length ? (
-            <Card title={`TAPD 评论与流转 · ${requirement.sourceSnapshot.comments.length}`}>
+            <Card title={`评论与流转 · ${requirement.sourceSnapshot.comments.length}`}>
               <div className="flex flex-col gap-3">
                 {requirement.sourceSnapshot.comments.map((comment, index) => (
                   <div key={`${comment.author}-${comment.createdAt ?? index}`} className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
@@ -1057,7 +1126,12 @@ function RequirementDetail({
                           </div>
                           <span className="text-[11px] text-white/35 shrink-0">{fmtDate(comment.createdAt)}</span>
                         </div>
-                        {comment.content && <div className="mt-2 text-sm text-white/65 whitespace-pre-wrap leading-6">{comment.content}</div>}
+                        {comment.content && (
+                          <div
+                            className="mt-2 text-sm text-white/65 prose-product leading-6"
+                            dangerouslySetInnerHTML={{ __html: sanitizeHtml(enrichContentWithMentions(comment.content)) }}
+                          />
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1072,20 +1146,11 @@ function RequirementDetail({
       }
       sidebar={
         <>
-          {requirement.sourceSystem === 'tapd' && requirement.sourceSnapshot && (
-            <Card
-              title="TAPD 属性"
-              action={requirement.sourceUrl ? (
-                <a href={requirement.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
-                  打开原需求 <ExternalLink size={11} />
-                </a>
-              ) : undefined}
-            >
-              <TapdSourceProperties requirement={requirement} />
-            </Card>
-          )}
           <Card title="属性">
             <div className="flex flex-col gap-3.5">
+              {requirement.sourceSnapshot && (
+                <RequirementExtendedFields requirement={requirement} />
+              )}
               {requirement.sourceDefectId && (
                 <div className="flex flex-col gap-1.5">
                   <FieldLabel>来源缺陷</FieldLabel>
@@ -1098,6 +1163,13 @@ function RequirementDetail({
                 </div>
               )}
               <div className="flex flex-col gap-1.5">
+                <FieldLabel>需求类型</FieldLabel>
+                <RequirementTypeSelect
+                  value={formData[REQUIREMENT_TYPE_FORM_KEY] ?? ''}
+                  onChange={(v) => setField(REQUIREMENT_TYPE_FORM_KEY, v)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
                 <FieldLabel required>分级</FieldLabel>
                 <GradeField grade={grade} setGrade={setGrade} />
               </div>
@@ -1105,6 +1177,15 @@ function RequirementDetail({
                 <FieldLabel>处理人</FieldLabel>
                 <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
               </div>
+              <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData[REQUIREMENT_PRODUCT_DEFECT_FORM_KEY] === REQUIREMENT_PRODUCT_DEFECT_VALUE}
+                  onChange={(e) => setField(REQUIREMENT_PRODUCT_DEFECT_FORM_KEY, e.target.checked ? REQUIREMENT_PRODUCT_DEFECT_VALUE : '')}
+                  className="accent-cyan-500"
+                />
+                产品缺陷
+              </label>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>父需求</FieldLabel>
                 <ParentSelect
@@ -1114,17 +1195,6 @@ function RequirementDetail({
                   placeholder="无（顶层需求）"
                 />
               </div>
-              {requirement.currentState && (
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>状态</FieldLabel>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
-                      {workflow?.states.find((s) => s.key === requirement.currentState)?.label ?? requirement.currentState}
-                    </span>
-                    <SlaBadge stateEnteredAt={requirement.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === requirement.currentState)?.slaHours} />
-                  </div>
-                </div>
-              )}
               {split.others.length > 0 && (
                 <div className="pt-1 border-t border-white/5">
                   <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
@@ -1173,7 +1243,7 @@ function RequirementDetail({
   );
 }
 
-const TAPD_FIELD_ORDER = [
+const REQUIREMENT_EXTENDED_FIELD_ORDER = [
   '状态',
   '优先级',
   '模块',
@@ -1203,25 +1273,48 @@ const TAPD_FIELD_ORDER = [
   '期望排期时间',
 ] as const;
 
-function TapdSourceProperties({ requirement }: { requirement: Requirement }) {
+const REQUIREMENT_PERSON_FIELD_LABELS = new Set(['处理人', '开发人员', '创建人', '抄送人']);
+
+function RequirementExtendedFields({ requirement }: { requirement: Requirement }) {
   const snapshot = requirement.sourceSnapshot!;
   const fields = snapshot.fields ?? {};
-  const visibleFields = TAPD_FIELD_ORDER
+  const visibleFields = REQUIREMENT_EXTENDED_FIELD_ORDER
+    .filter((label) => !REQUIREMENT_PERSON_FIELD_LABELS.has(label))
     .map((label) => ({ label, value: fields[label] }))
     .filter((item) => item.value);
 
   return (
-    <div className="flex flex-col gap-2.5">
+    <>
+      {requirement.externalId && requirement.externalId !== requirement.requirementNo && (
+        <InfoRow label="来源 ID" value={requirement.externalId} />
+      )}
+      {requirement.sourceUrl && (
+        <div className="flex flex-col gap-1.5">
+          <FieldLabel>来源链接</FieldLabel>
+          <a href={requirement.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-cyan-300 hover:text-cyan-200">
+            打开链接 <ExternalLink size={11} />
+          </a>
+        </div>
+      )}
       {visibleFields.map((item) => (
         <InfoRow key={item.label} label={item.label} value={item.value} />
       ))}
-      <div className="pt-2 mt-1 border-t border-white/8 flex flex-col gap-2">
-        <InfoRow label="来源文件" value={snapshot.importedFileName || '—'} />
-        <InfoRow label="TAPD 创建" value={fmtDate(snapshot.sourceCreatedAt)} />
-        <InfoRow label="TAPD 修改" value={fmtDate(snapshot.sourceModifiedAt)} />
+      {(snapshot.handlerNames.length > 0 || snapshot.developerNames.length > 0 || snapshot.creatorNames.length > 0 || snapshot.ccNames.length > 0) && (
+        <>
+          {snapshot.handlerNames.length > 0 && <InfoRow label="处理人" value={snapshot.handlerNames.join('、')} />}
+          {snapshot.developerNames.length > 0 && <InfoRow label="开发人员" value={snapshot.developerNames.join('、')} />}
+          {snapshot.creatorNames.length > 0 && <InfoRow label="创建人" value={snapshot.creatorNames.join('、')} />}
+          {snapshot.ccNames.length > 0 && <InfoRow label="抄送人" value={snapshot.ccNames.join('、')} />}
+        </>
+      )}
+      <div className="pt-2 border-t border-white/8 flex flex-col gap-2">
+        <InfoRow label="创建时间" value={fmtDate(snapshot.sourceCreatedAt)} />
+        <InfoRow label="最后修改" value={fmtDate(snapshot.sourceModifiedAt)} />
+        {snapshot.importedFileName && <InfoRow label="导入文件" value={snapshot.importedFileName} />}
         <InfoRow label="导入时间" value={fmtDate(snapshot.importedAt)} />
       </div>
-    </div>
+      <div className="pt-2 border-t border-white/8" />
+    </>
   );
 }
 
@@ -1246,9 +1339,76 @@ function DefectList({ defects, onClick, empty }: { defects: TracedDefect[]; onCl
   );
 }
 
-// ════════════════════════ 功能详情 ════════════════════════
+function FeatureRequirementLink({
+  requirement,
+  onOpen,
+}: {
+  requirement?: Requirement;
+  onOpen: (id: string) => void;
+}) {
+  if (!requirement) return <span className="text-xs text-white/35">未选择</span>;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(requirement.id)}
+      className="w-full text-left rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2 hover:border-cyan-400/30 hover:bg-cyan-400/5"
+    >
+      <span className="block text-[10px] font-mono text-cyan-200/80">{requirement.requirementNo}</span>
+      <span className="block text-xs text-white/80 truncate mt-0.5">{requirement.title}</span>
+    </button>
+  );
+}
+
+function FeatureInternalVersionLink({
+  version,
+  onOpen,
+}: {
+  version?: ProductVersion;
+  onOpen: (id: string) => void;
+}) {
+  if (!version) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(version.id)}
+      className="w-full text-left rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2 hover:border-violet-400/30 hover:bg-violet-400/5"
+    >
+      <span className="block text-[10px] font-mono text-violet-200/80">{version.versionName}</span>
+      {version.description && (
+        <span className="block text-xs text-white/60 truncate mt-0.5">{version.description}</span>
+      )}
+      <span className="block text-[10px] text-white/35 mt-1">点击查看内部版本详情</span>
+    </button>
+  );
+}
+
+function InternalVersionSelect({
+  value,
+  onChange,
+  versions,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  versions: ProductVersion[];
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none"
+    >
+      <option value="">请选择内部版本（T 号）</option>
+      {versions.map((version) => (
+        <option key={version.id} value={version.id}>{version.versionName}</option>
+      ))}
+    </select>
+  );
+}
+
+// ════════════════════════ 功能详情（字段对齐 V2.6 §3.6）════════════════════════
 function FeatureDetail({
   feature,
+  productName,
   requirements,
   allFeatures,
   featureVersions,
@@ -1258,6 +1418,7 @@ function FeatureDetail({
   onReload,
 }: {
   feature?: Feature;
+  productName: string;
   requirements: Requirement[];
   allFeatures: Feature[];
   featureVersions: FeatureVersion[];
@@ -1278,7 +1439,6 @@ function FeatureDetail({
   const [keyRules, setKeyRules] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [remark, setRemark] = useState('');
-  const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
   const [parentId, setParentId] = useState('');
   const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
@@ -1314,7 +1474,6 @@ function FeatureDetail({
       setKeyRules(feature.keyRules ?? '');
       setAcceptanceCriteria(feature.acceptanceCriteria ?? '');
       setRemark(feature.remark ?? '');
-      setGrade(feature.grade);
       setAssigneeId(feature.assigneeId ?? '');
       setParentId(feature.parentId ?? '');
       setSelReqs(new Set(feature.requirementIds));
@@ -1337,21 +1496,28 @@ function FeatureDetail({
       keyRules !== (feature.keyRules ?? '') ||
       acceptanceCriteria !== (feature.acceptanceCriteria ?? '') ||
       remark !== (feature.remark ?? '') ||
-      grade !== feature.grade ||
       assigneeId !== (feature.assigneeId ?? '') ||
       parentId !== (feature.parentId ?? '') ||
       !reqSetEqual(selReqs, feature.requirementIds) ||
       !recordEqual(formData, feature.formData ?? {})
     );
-  }, [feature, title, description, moduleName, featureType, mainRequirementId, plannedVersionId, officialReleaseId, ownerId, keyRules, acceptanceCriteria, remark, grade, assigneeId, parentId, selReqs, formData]);
+  }, [feature, title, description, moduleName, featureType, mainRequirementId, plannedVersionId, officialReleaseId, ownerId, keyRules, acceptanceCriteria, remark, assigneeId, parentId, selReqs, formData]);
 
   if (!feature) return <NotFound />;
   const productId = feature.productId;
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
+  const mainRequirement = requirements.find((r) => r.id === mainRequirementId);
+  const relatedRequirements = requirements.filter((r) => selReqs.has(r.id) && r.id !== mainRequirementId);
+  const selectedInternalVersion = versions.find((v) => v.id === plannedVersionId);
+  const officialReleaseLabel = releases.find((r) => r.id === officialReleaseId);
+  const parentFeature = parentId ? allFeatures.find((f) => f.id === parentId) : undefined;
+  const catalogPath = parentId || allFeatures.some((f) => f.parentId === feature.id)
+    ? featurePathLabel(allFeatures, feature.id)
+    : moduleName;
 
   const save = async () => {
     if (!title.trim() || !description.trim() || !moduleName.trim() || !mainRequirementId || !plannedVersionId || !ownerId || !keyRules.trim() || !acceptanceCriteria.trim()) {
-      setMessage('请完整填写功能名称、功能说明、所属模块、主需求、计划版本、负责人、关键规则和验收标准');
+      setMessage('请完整填写功能名称、功能说明、所属模块、主需求、内部版本号、负责人、关键规则和验收标准');
       return;
     }
     setSaving(true);
@@ -1368,7 +1534,6 @@ function FeatureDetail({
       keyRules,
       acceptanceCriteria,
       remark,
-      grade,
       assigneeId: assigneeId || null,
       parentId,
       requirementIds: Array.from(new Set([mainRequirementId, ...selReqs])),
@@ -1380,16 +1545,6 @@ function FeatureDetail({
       return;
     }
     onReload();
-  };
-
-  const toggle = (id: string) => {
-    if (id === mainRequirementId) return;
-    setSelReqs((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   };
 
   return (
@@ -1406,25 +1561,44 @@ function FeatureDetail({
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
-          <WorkflowBar workflow={workflow} entityType="feature" entityId={feature.id} currentState={feature.currentState} onChanged={onReload} />
+          <WorkflowBar
+            workflow={workflow}
+            entityType="feature"
+            entityId={feature.id}
+            productId={feature.productId}
+            currentState={feature.currentState}
+            entitySnapshot={{ ownerId: ownerId || feature.ownerId, assigneeId, title, grade: feature.grade }}
+            onChanged={onReload}
+          />
         ) : undefined
       }
       main={
         <>
-          <Card title="功能说明" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
-            <DescriptionField value={description} onChange={setDescription} />
-          </Card>
-          <Card title="关键规则">
-            <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="填写核心业务规则、限制条件和边界" />
-          </Card>
-          <Card title="验收标准">
-            <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="填写可判断功能成立和交付完成的验收标准" />
-          </Card>
-          <Card title="备注">
-            <PlainTextArea value={remark} onChange={setRemark} placeholder="补充特殊情况或例外说明，可不填" />
+          <Card title="交付内容" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+            <div className="flex flex-col gap-4">
+              <div>
+                <FieldLabel required>功能说明</FieldLabel>
+                <p className="text-[11px] text-white/35 mt-1 mb-2">面向的业务场景与本次交付目标</p>
+                <DescriptionField value={description} onChange={setDescription} />
+              </div>
+              <div>
+                <FieldLabel required>关键规则</FieldLabel>
+                <p className="text-[11px] text-white/35 mt-1 mb-2">核心业务规则、限制条件与边界（输入约束、权限、判空等）</p>
+                <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="例：仅负责人可认领；单日上限 20 条；必填客户编号…" />
+              </div>
+              <div>
+                <FieldLabel required>验收标准</FieldLabel>
+                <p className="text-[11px] text-white/35 mt-1 mb-2">写清怎样算做完、测试和产品怎样验收（给定场景与条件，系统应出现什么结果）</p>
+                <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="例：给定合法输入，系统返回预期结果；异常场景有明确提示…" />
+              </div>
+              <div>
+                <FieldLabel>备注</FieldLabel>
+                <PlainTextArea value={remark} onChange={setRemark} placeholder="补充特殊情况或例外说明，可不填" />
+              </div>
+            </div>
           </Card>
           {split.files.length > 0 && (
-            <Card title={template?.name || '附件'}>
+            <Card title="附件">
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
@@ -1436,132 +1610,177 @@ function FeatureDetail({
       }
       sidebar={
         <>
-          <Card title="属性">
-            <div className="flex flex-col gap-3.5">
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel required>所属功能模块</FieldLabel>
-                <input
-                  value={moduleName}
-                  onChange={(event) => setModuleName(event.target.value)}
-                  placeholder="如：营销活动 / 权限中心"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40"
+          <TapdPropertyPanel title="基础信息">
+            <TapdPropertyRow label="功能 ID">
+              <span className="text-xs font-mono text-violet-200/90 pt-2 block">{feature.featureNo}</span>
+            </TapdPropertyRow>
+            {feature.externalId && (
+              <TapdPropertyRow label="外部 ID">
+                <span className="text-xs text-white/60 pt-2 block">{feature.externalId}</span>
+              </TapdPropertyRow>
+            )}
+            <TapdPropertyRow label="所属产品">
+              <span className="text-xs text-white/75 pt-2 block">{productName}</span>
+            </TapdPropertyRow>
+            <TapdPropertyRow label="所属功能模块" required>
+              <FeatureModuleSearchSelect value={moduleName} onChange={setModuleName} features={allFeatures} uiSize="md" />
+            </TapdPropertyRow>
+            {catalogPath && catalogPath !== moduleName && (
+              <TapdPropertyRow label="目录路径">
+                <span className="text-[11px] text-white/45 pt-2 block leading-relaxed">{catalogPath}</span>
+              </TapdPropertyRow>
+            )}
+            <TapdPropertyRow label="功能类型" required>
+              <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            </TapdPropertyRow>
+            <TapdPropertyRow label="负责人" required>
+              <UserSearchSelect value={ownerId} onChange={setOwnerId} uiSize="md" />
+            </TapdPropertyRow>
+            <TapdPropertyRow label="处理人">
+              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} uiSize="md" />
+            </TapdPropertyRow>
+            <TapdPropertyRow label="父功能">
+              <ParentSelect
+                value={parentId}
+                onChange={setParentId}
+                options={allFeatures.filter((f) => f.id !== feature.id).map((f) => ({ id: f.id, label: f.title }))}
+                placeholder="无（顶层功能）"
+              />
+            </TapdPropertyRow>
+            {parentFeature && (
+              <TapdPropertyRow label="父功能路径">
+                <span className="text-[11px] text-white/45 pt-2 block">{featurePathLabel(allFeatures, parentFeature.id)}</span>
+              </TapdPropertyRow>
+            )}
+            {feature.currentState && (
+              <TapdPropertyRow label="状态">
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
+                    {workflow?.states.find((s) => s.key === feature.currentState)?.label ?? feature.currentState}
+                  </span>
+                  {(() => {
+                    const sla = slaInfo(feature.stateEnteredAt, workflow?.states.find((s) => s.key === feature.currentState)?.slaHours);
+                    if (!sla) return null;
+                    return (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${sla.overdue ? 'text-red-300 border-red-500/30 bg-red-500/10' : 'text-white/40 border-white/10'}`}>
+                        停留 {sla.label}{sla.overdue ? ' · 超时' : ''}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </TapdPropertyRow>
+            )}
+          </TapdPropertyPanel>
+
+          <TapdPropertyPanel title="版本信息">
+            <p className="px-3 pb-2 text-[11px] text-white/35 leading-relaxed">立项时指定内部版本号，关联本产品的内部版本（T 号）；正式上线后回写 V 号。</p>
+            <TapdPropertyRow label="内部版本号" required>
+              <InternalVersionSelect value={plannedVersionId} onChange={setPlannedVersionId} versions={versions} />
+            </TapdPropertyRow>
+            {selectedInternalVersion && (
+              <div className="px-3 pb-2">
+                <FeatureInternalVersionLink
+                  version={selectedInternalVersion}
+                  onOpen={(id) => navigate(`/product-agent/p/${productId}/version/${id}`)}
                 />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel required>功能类型</FieldLabel>
-                <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
-                  {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel required>负责人</FieldLabel>
-                <UserSearchSelect value={ownerId} onChange={setOwnerId} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel required>分级</FieldLabel>
-                <GradeField grade={grade} setGrade={setGrade} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>处理人</FieldLabel>
-                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>父功能</FieldLabel>
-                <ParentSelect
-                  value={parentId}
-                  onChange={setParentId}
-                  options={allFeatures.filter((f) => f.id !== feature.id).map((f) => ({ id: f.id, label: f.title }))}
-                  placeholder="无（顶层功能）"
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel required>计划版本</FieldLabel>
-                <select value={plannedVersionId} onChange={(event) => setPlannedVersionId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
-                  <option value="">请选择内部版本</option>
-                  {versions.map((version) => <option key={version.id} value={version.id}>{version.versionName}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>正式上线版本号</FieldLabel>
-                <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
-                  <option value="">上线后回写</option>
-                  {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
-                </select>
-              </div>
-              {feature.currentState && (
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>状态</FieldLabel>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
-                      {workflow?.states.find((s) => s.key === feature.currentState)?.label ?? feature.currentState}
-                    </span>
-                    <SlaBadge stateEnteredAt={feature.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === feature.currentState)?.slaHours} />
-                  </div>
-                </div>
-              )}
-              {split.others.length > 0 && (
-                <div className="pt-1 border-t border-white/5">
-                  <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
-                </div>
-              )}
-            </div>
-          </Card>
-          <Card title="主需求与关联需求">
-            {requirements.length === 0 ? (
-              <div className="text-[11px] text-white/30">该产品还没有需求</div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel required>主需求</FieldLabel>
-                  <select
-                    value={mainRequirementId}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setMainRequirementId(value);
-                      if (value) setSelReqs((prev) => new Set([...prev, value]));
-                    }}
-                    className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none"
-                  >
-                    <option value="">请选择主需求</option>
-                    {requirements.map((requirement) => <option key={requirement.id} value={requirement.id}>{requirement.requirementNo} · {requirement.title}</option>)}
-                  </select>
-                </div>
-                <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                  {requirements.map((requirement) => (
-                    <label key={requirement.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-white/5">
-                      <input
-                        type="checkbox"
-                        checked={selReqs.has(requirement.id) || mainRequirementId === requirement.id}
-                        disabled={mainRequirementId === requirement.id}
-                        onChange={() => toggle(requirement.id)}
-                        className="accent-cyan-500"
-                      />
-                      <span className="truncate text-sm text-white/80">{requirement.title}</span>
-                    </label>
-                  ))}
-                </div>
               </div>
             )}
-          </Card>
-          <Card title="纳入的版本">
-            <Chips items={featureVersions.map((fv) => versionName.get(fv.versionId) ?? fv.versionId)} empty="尚未纳入任何版本" />
-          </Card>
-          <Card
-            title={`追溯缺陷 · ${tracedDefects.length}`}
-            action={
-              <button onClick={() => setShowDefectLinker(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
+            <TapdPropertyRow label="正式版本号">
+              <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                <option value="">上线后回写 V 号</option>
+                {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
+              </select>
+            </TapdPropertyRow>
+            {officialReleaseLabel?.vCode && (
+              <TapdPropertyRow label="已回写">
+                <span className="text-xs font-mono text-emerald-200/90 pt-2 block">{officialReleaseLabel.vCode}</span>
+              </TapdPropertyRow>
+            )}
+            <TapdPropertyRow label="纳入版本">
+              <Chips items={featureVersions.map((fv) => versionName.get(fv.versionId) ?? fv.versionId)} empty="尚未纳入任何版本" />
+            </TapdPropertyRow>
+          </TapdPropertyPanel>
+
+          <TapdPropertyPanel title="需求关联">
+            {requirements.length === 0 ? (
+              <div className="px-3 py-4 text-[11px] text-white/30">该产品还没有需求，请先在需求池建立主需求来源。</div>
+            ) : (
+              <>
+                <TapdPropertyRow label="主需求" required>
+                  <ItemSearchSelect
+                    value={mainRequirementId}
+                    onChange={(id) => {
+                      setMainRequirementId(id);
+                      if (id) setSelReqs((prev) => new Set([...prev, id]));
+                    }}
+                    options={toRequirementOptions(requirements)}
+                    placeholder="搜索需求标题或编号..."
+                    clearOptionLabel="请选择主需求"
+                    countUnit="条需求"
+                    uiSize="md"
+                  />
+                </TapdPropertyRow>
+                {mainRequirement && (
+                  <div className="px-3 pb-2">
+                    <FeatureRequirementLink requirement={mainRequirement} onOpen={(rid) => navigate(`/product-agent/p/${productId}/requirement/${rid}`)} />
+                  </div>
+                )}
+                <TapdPropertyRow label="关联需求">
+                  <ItemMultiSearchSelect
+                    value={Array.from(selReqs).filter((id) => id !== mainRequirementId)}
+                    onChange={(ids) => setSelReqs(new Set(mainRequirementId ? [mainRequirementId, ...ids] : ids))}
+                    options={toRequirementOptions(requirements)}
+                    placeholder="搜索并选择关联需求..."
+                    countUnit="条需求"
+                    lockedIds={mainRequirementId ? [mainRequirementId] : []}
+                    emptyText="暂无其他需求可选"
+                    uiSize="md"
+                  />
+                </TapdPropertyRow>
+                {relatedRequirements.length > 0 && (
+                  <div className="px-3 pb-3 flex flex-col gap-1.5">
+                    {relatedRequirements.map((r) => (
+                      <FeatureRequirementLink key={r.id} requirement={r} onOpen={(rid) => navigate(`/product-agent/p/${productId}/requirement/${rid}`)} />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </TapdPropertyPanel>
+
+          <TapdPropertyPanel
+            title={`缺陷关联 · ${tracedDefects.length}`}
+          >
+            <div className="px-3 py-2 flex justify-end">
+              <button type="button" onClick={() => setShowDefectLinker(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
                 <Link2 size={12} /> 关联缺陷
               </button>
-            }
-          >
-            <DefectList defects={tracedDefects} onClick={(did) => navigate(`/product-agent/p/${feature.productId}/defect/${did}`)} empty="还没有缺陷追溯到本功能" />
-          </Card>
-          <Card title="信息">
-            <div className="flex flex-col gap-2">
-              <InfoRow label="创建时间" value={fmtDate(feature.createdAt)} />
-              <InfoRow label="更新时间" value={fmtDate(feature.updatedAt)} />
             </div>
-          </Card>
+            <div className="px-3 pb-3">
+              <DefectList defects={tracedDefects} onClick={(did) => navigate(`/product-agent/p/${feature.productId}/defect/${did}`)} empty="还没有缺陷追溯到本功能" />
+            </div>
+          </TapdPropertyPanel>
+
+          {split.others.length > 0 && (
+            <TapdPropertyPanel title="扩展字段">
+              {split.others.map((field) => (
+                <TapdPropertyRow key={field.key} label={field.label || field.key} required={field.required}>
+                  <FormFieldsRenderer fields={[field]} values={formData} onChange={setField} productId={productId} hideLabels />
+                </TapdPropertyRow>
+              ))}
+            </TapdPropertyPanel>
+          )}
+
+          <TapdPropertyPanel title="系统信息">
+            <TapdPropertyRow label="创建时间">
+              <span className="text-xs text-white/55 pt-2 block">{fmtDate(feature.createdAt)}</span>
+            </TapdPropertyRow>
+            <TapdPropertyRow label="更新时间">
+              <span className="text-xs text-white/55 pt-2 block">{fmtDate(feature.updatedAt)}</span>
+            </TapdPropertyRow>
+          </TapdPropertyPanel>
         </>
       }
     >
@@ -1600,6 +1819,8 @@ function VersionDetail({
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [showTrace, setShowTrace] = useState(false);
+  const [detailTab, setDetailTab] = useState<'basic' | 'requirements' | 'features'>('basic');
+  const navigate = useNavigate();
   const { template } = useEffectiveTemplate('version', productId);
   const { workflow } = useEffectiveWorkflow('version', productId);
   const split = useMemo(() => splitFields(template?.fields), [template]);
@@ -1639,8 +1860,110 @@ function VersionDetail({
     );
   }, [version, versionName, description, lifecycle, isMajor, parentVersionId, selReqs, formData]);
 
+  const { workflow: reqWorkflow } = useEffectiveWorkflow('requirement', productId);
+  const { workflow: featWorkflow } = useEffectiveWorkflow('feature', productId);
+  const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    const ids = Array.from(new Set([
+      ...requirements.flatMap((r) => [r.ownerId, r.assigneeId].filter(Boolean) as string[]),
+      ...features.flatMap((f) => [f.ownerId, f.assigneeId].filter(Boolean) as string[]),
+    ]));
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void searchDirectoryUsers('', 200).then((res) => {
+      if (cancelled || !res.success) return;
+      setUserNames(new Map(res.data.items.map((u) => [u.userId, u.displayName])));
+    });
+    return () => { cancelled = true; };
+  }, [requirements, features]);
+
+  const linkedRequirements = useMemo(
+    () => requirements.filter((r) => selReqs.has(r.id)),
+    [requirements, selReqs],
+  );
+  const linkedFeatures = useMemo(
+    () => features.filter((f) => featureVersions.some((fv) => fv.featureId === f.id)),
+    [features, featureVersions],
+  );
+
+  const versionAttributeRows = useMemo(() => {
+    if (!version) return [];
+    const rows: { label: string; value: React.ReactNode }[] = [
+      {
+        label: '生命周期',
+        value: (
+          <div className="flex flex-wrap gap-1.5">
+            {(Object.keys(VERSION_LIFECYCLE_LABEL) as VersionLifecycle[]).map((lc) => (
+              <button
+                key={lc}
+                type="button"
+                onClick={() => setLifecycle(lc)}
+                className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
+              >
+                {VERSION_LIFECYCLE_LABEL[lc]}
+              </button>
+            ))}
+          </div>
+        ),
+      },
+      {
+        label: '大版本',
+        value: (
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={isMajor} onChange={(e) => setIsMajor(e.target.checked)} className="accent-cyan-500" />
+            <span className="text-sm text-white/70">{isMajor ? '是' : '否'}</span>
+          </label>
+        ),
+      },
+      {
+        label: '父版本',
+        value: (
+          <ParentSelect
+            value={parentVersionId}
+            onChange={setParentVersionId}
+            options={allVersions.filter((v) => v.id !== version.id).map((v) => ({ id: v.id, label: v.versionName }))}
+            placeholder="无（顶层版本）"
+          />
+        ),
+      },
+    ];
+    if (version.currentState) {
+      rows.push({
+        label: '工作流状态',
+        value: (
+          <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 inline-block">
+            {workflow?.states.find((s) => s.key === version.currentState)?.label ?? version.currentState}
+          </span>
+        ),
+      });
+    }
+    rows.push(
+      { label: '计划发布', value: fmtDate(version.plannedReleaseAt) || '—' },
+      { label: '创建时间', value: fmtDate(version.createdAt) },
+      { label: '更新时间', value: fmtDate(version.updatedAt) },
+    );
+    return rows;
+  }, [allVersions, isMajor, lifecycle, parentVersionId, version, workflow]);
+
   if (!version) return <NotFound />;
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
+  const nameOf = (id?: string | null) => (id ? userNames.get(id) ?? id : '—');
+  const attributeRowsWithCustom = [
+    ...versionAttributeRows,
+    ...split.others.map((field) => ({
+      label: field.label || field.key,
+      value: (
+        <FormFieldsRenderer
+          fields={[field]}
+          values={formData}
+          onChange={setField}
+          productId={productId}
+          hideLabels
+        />
+      ),
+    })),
+  ];
 
   const save = async () => {
     setSaving(true);
@@ -1673,8 +1996,24 @@ function VersionDetail({
     await reloadFv();
   };
 
+  const linkedReqCount = selReqs.size;
+  const linkedFeatCount = featureVersions.length;
+
   return (
-    <DetailScaffold
+    <>
+      <div className="mb-4 flex border-b border-white/10">
+        <VersionDetailTab active={detailTab === 'basic'} onClick={() => setDetailTab('basic')}>基础信息</VersionDetailTab>
+        <VersionDetailTab active={detailTab === 'requirements'} onClick={() => setDetailTab('requirements')}>
+          需求
+          {linkedReqCount > 0 && <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-cyan-200">{linkedReqCount}</span>}
+        </VersionDetailTab>
+        <VersionDetailTab active={detailTab === 'features'} onClick={() => setDetailTab('features')}>
+          功能
+          {linkedFeatCount > 0 && <span className="ml-1.5 rounded-full bg-violet-400/20 px-1.5 text-[10px] text-violet-200">{linkedFeatCount}</span>}
+        </VersionDetailTab>
+      </div>
+      <DetailScaffold
+      layout="stack"
       no={VERSION_LIFECYCLE_LABEL[version.lifecycle]}
       kindLabel="版本"
       kindColor="#34D399"
@@ -1687,307 +2026,148 @@ function VersionDetail({
       headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
-          <WorkflowBar workflow={workflow} entityType="version" entityId={version.id} currentState={version.currentState} onChanged={onReload} />
+          <WorkflowBar
+            workflow={workflow}
+            entityType="version"
+            entityId={version.id}
+            productId={productId}
+            currentState={version.currentState}
+            onChanged={onReload}
+          />
         ) : undefined
       }
       main={
-        <>
-          <Card title="版本描述" action={<DescTemplatePicker entityType="version" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
-            <DescriptionField value={description} onChange={setDescription} />
-          </Card>
-          {split.files.length > 0 && (
-            <Card title={template?.name || '附件'}>
-              <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
+        detailTab === 'basic' ? (
+          <>
+            <Card title="版本属性">
+              <AttributeFieldTable rows={attributeRowsWithCustom} />
             </Card>
-          )}
-          <Card title="动态">
-            <ActivityTimeline entityType="version" entityId={version.id} />
-          </Card>
-        </>
-      }
-      sidebar={
-        <>
-          <Card title="属性">
-            <div className="flex flex-col gap-3.5">
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>生命周期</FieldLabel>
-                <div className="flex flex-wrap gap-1.5">
-                  {(Object.keys(VERSION_LIFECYCLE_LABEL) as VersionLifecycle[]).map((lc) => (
+            <Card title="版本描述" action={<DescTemplatePicker entityType="version" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+              <DescriptionField value={description} onChange={setDescription} />
+            </Card>
+            {split.files.length > 0 && (
+              <Card title="附件">
+                <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
+              </Card>
+            )}
+            <Card title="本版本知识">
+              <VersionKnowledgeCard productId={productId} versionId={version.id} />
+            </Card>
+          </>
+        ) : detailTab === 'requirements' ? (
+          <Card title={`关联需求 · 已纳入 ${linkedRequirements.length} / ${requirements.length}`} action={
+            <span className="text-[11px] text-white/35">勾选纳入后点顶部保存</span>
+          }>
+            <DetailRecordTable
+              emptyText="该产品还没有需求"
+              rows={requirements}
+              onRowClick={(id) => navigate(`/product-agent/p/${productId}/requirement/${id}`)}
+              columns={[
+                {
+                  header: '纳入',
+                  width: '56px',
+                  className: 'text-center',
+                  render: (row) => (
+                    <input
+                      type="checkbox"
+                      checked={selReqs.has(row.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleReq(row.id)}
+                      className="accent-cyan-500"
+                    />
+                  ),
+                },
+                { header: 'ID', width: '10%', render: (row) => <span className="font-mono text-cyan-200/80">{(row as Requirement).requirementNo}</span> },
+                { header: '标题', width: '22%', render: (row) => <span className="text-white/85 truncate block" title={(row as Requirement).title}>{(row as Requirement).title}</span> },
+                { header: '分级', width: '7%', render: (row) => ITEM_GRADE_LABEL[(row as Requirement).grade] },
+                { header: '状态', width: '10%', render: (row) => resolveRequirementStateLabel((row as Requirement).currentState ?? '', reqWorkflow) || '—' },
+                { header: '处理人', width: '10%', render: (row) => nameOf((row as Requirement).assigneeId) },
+                { header: '负责人', width: '10%', render: (row) => nameOf((row as Requirement).ownerId) },
+                { header: '更新时间', width: '12%', render: (row) => fmtDate((row as Requirement).updatedAt) },
+                {
+                  header: '操作',
+                  width: '64px',
+                  className: 'text-center',
+                  render: (row) => (
                     <button
-                      key={lc}
-                      onClick={() => setLifecycle(lc)}
-                      className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/product-agent/p/${productId}/requirement/${row.id}`); }}
+                      className="text-[11px] text-cyan-300 hover:underline"
                     >
-                      {VERSION_LIFECYCLE_LABEL[lc]}
+                      详情
                     </button>
-                  ))}
-                </div>
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={isMajor} onChange={(e) => setIsMajor(e.target.checked)} className="accent-cyan-500" />
-                <span className="text-sm text-white/70">标记为大版本</span>
-              </label>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>父版本</FieldLabel>
-                <ParentSelect
-                  value={parentVersionId}
-                  onChange={setParentVersionId}
-                  options={allVersions.filter((v) => v.id !== version.id).map((v) => ({ id: v.id, label: v.versionName }))}
-                  placeholder="无（顶层版本）"
-                />
-              </div>
-              {version.currentState && (
-                <div className="flex flex-col gap-1.5">
-                  <FieldLabel>状态</FieldLabel>
-                  <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 self-start">
-                    {workflow?.states.find((s) => s.key === version.currentState)?.label ?? version.currentState}
-                  </span>
-                </div>
-              )}
-              {split.others.length > 0 && (
-                <div className="pt-1 border-t border-white/5">
-                  <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
-                </div>
-              )}
-            </div>
+                  ),
+                },
+              ]}
+            />
           </Card>
-          <Card title="本版本知识（从产品知识库调取）">
-            <VersionKnowledgeCard productId={productId} versionId={version.id} />
+        ) : (
+          <Card title={`纳入功能 · 已纳入 ${linkedFeatures.length} / ${features.length}`} action={
+            <span className="text-[11px] text-white/35">勾选即写入，无需点保存</span>
+          }>
+            <DetailRecordTable
+              emptyText="该产品还没有功能"
+              rows={features}
+              onRowClick={(id) => navigate(`/product-agent/p/${productId}/feature/${id}`)}
+              columns={[
+                {
+                  header: '纳入',
+                  width: '56px',
+                  className: 'text-center',
+                  render: (row) => (
+                    <input
+                      type="checkbox"
+                      checked={!!featureIncluded(row.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => void toggleFeature(row.id)}
+                      className="accent-cyan-500"
+                    />
+                  ),
+                },
+                { header: '功能编号', width: '10%', render: (row) => <span className="font-mono text-violet-200/80">{(row as Feature).featureNo}</span> },
+                { header: '标题', width: '18%', render: (row) => <span className="text-white/85 truncate block" title={(row as Feature).title}>{(row as Feature).title}</span> },
+                { header: '所属模块', width: '14%', render: (row) => (row as Feature).moduleName || '—' },
+                { header: '功能类型', width: '9%', render: (row) => FEATURE_TYPE_LABEL[(row as Feature).featureType] ?? (row as Feature).featureType },
+                { header: '状态', width: '10%', render: (row) => featWorkflow?.states.find((s) => s.key === (row as Feature).currentState)?.label ?? (row as Feature).currentState ?? '—' },
+                { header: '处理人', width: '9%', render: (row) => nameOf((row as Feature).assigneeId) },
+                { header: '负责人', width: '9%', render: (row) => nameOf((row as Feature).ownerId) },
+                { header: '更新时间', width: '11%', render: (row) => fmtDate((row as Feature).updatedAt) },
+                {
+                  header: '操作',
+                  width: '64px',
+                  className: 'text-center',
+                  render: (row) => (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/product-agent/p/${productId}/feature/${row.id}`); }}
+                      className="text-[11px] text-cyan-300 hover:underline"
+                    >
+                      详情
+                    </button>
+                  ),
+                },
+              ]}
+            />
           </Card>
-          <Card title="关联需求（本版本要做哪些需求）">
-            {requirements.length === 0 ? (
-              <div className="text-[11px] text-white/30">该产品还没有需求</div>
-            ) : (
-              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                {requirements.map((r) => (
-                  <label key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
-                    <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggleReq(r.id)} className="accent-cyan-500" />
-                    <span className="text-sm text-white/80 truncate">{r.title}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </Card>
-          <Card title="纳入功能（功能版本化，即勾即存）">
-            {features.length === 0 ? (
-              <div className="text-[11px] text-white/30">该产品还没有功能</div>
-            ) : (
-              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                {features.map((f) => (
-                  <label key={f.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
-                    <input type="checkbox" checked={!!featureIncluded(f.id)} onChange={() => void toggleFeature(f.id)} className="accent-cyan-500" />
-                    <span className="text-sm text-white/80 truncate">{f.title}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </Card>
-          <Card title="信息">
-            <div className="flex flex-col gap-2">
-              <InfoRow label="计划发布" value={fmtDate(version.plannedReleaseAt)} />
-              <InfoRow label="创建时间" value={fmtDate(version.createdAt)} />
-              <InfoRow label="更新时间" value={fmtDate(version.updatedAt)} />
-            </div>
-          </Card>
-        </>
+        )
       }
     >
       {showTrace && (
         <TraceRelationDrawer productId={productId} nodeId={`version:${version.id}`} title={version.versionName} onClose={() => setShowTrace(false)} />
       )}
     </DetailScaffold>
+    </>
   );
 }
 
-// ════════════════════════ 缺陷详情（产品内可编辑，对齐需求详情）════════════════════════
-function DefectDetail({
-  productId,
-  defect,
-  features,
-  versions,
-  versionName,
-  requirementName,
-  onReload,
-  gotoRequirement,
-  gotoFeature,
-}: {
-  productId: string;
-  defect?: TracedDefect;
-  features: Feature[];
-  versions: ProductVersion[];
-  versionName: Map<string, string>;
-  requirementName: Map<string, string>;
-  onReload: () => void;
-  gotoRequirement: (id: string) => void;
-  gotoFeature: (id: string) => void;
-}) {
-  const navigate = useNavigate();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [grade, setGrade] = useState<ItemGrade>('p2');
-  const [status, setStatus] = useState('');
-  const [assigneeId, setAssigneeId] = useState('');
-  const [featureId, setFeatureId] = useState('');
-  const [versionId, setVersionId] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [converting, setConverting] = useState(false);
-  const [convertErr, setConvertErr] = useState<string | null>(null);
-  const [showTrace, setShowTrace] = useState(false);
-
-  useEffect(() => {
-    if (defect) {
-      setTitle(defect.title ?? '');
-      setDescription(defect.rawContent ?? '');
-      setGrade(effectiveDefectGrade(defect));
-      setStatus(defect.status ?? '');
-      setAssigneeId(defect.assigneeId ?? '');
-      setFeatureId(defect.tracedFeatureId ?? '');
-      setVersionId(defect.tracedVersionId ?? '');
-    }
-  }, [defect]);
-
-  const featureName = useMemo(() => new Map(features.map((f) => [f.id, f.title])), [features]);
-
-  const dirty = useMemo(() => {
-    if (!defect) return false;
-    return (
-      title !== (defect.title ?? '') ||
-      description !== (defect.rawContent ?? '') ||
-      grade !== effectiveDefectGrade(defect) ||
-      status !== (defect.status ?? '') ||
-      assigneeId !== (defect.assigneeId ?? '') ||
-      featureId !== (defect.tracedFeatureId ?? '') ||
-      versionId !== (defect.tracedVersionId ?? '')
-    );
-  }, [defect, title, description, grade, status, assigneeId, featureId, versionId]);
-
-  if (!defect) return <NotFound />;
-
-  const chip = (active: boolean) => `px-2.5 py-1 rounded-md text-xs border ${active ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/45 border-white/10 hover:bg-white/5'}`;
-  const selectCls = 'w-full px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
-
-  const save = async () => {
-    if (!title.trim()) return;
-    setSaving(true);
-    await updateProductDefect(productId, defect.id, {
-      title: title.trim(),
-      description,
-      grade,
-      status: status || undefined,
-      assigneeId: assigneeId || null,
-      featureId: featureId || undefined,
-      versionId: versionId || undefined,
-    });
-    setSaving(false);
-    onReload();
-  };
-
-  const convert = async () => {
-    setConverting(true);
-    setConvertErr(null);
-    const res = await convertDefectToRequirement(defect.id);
-    setConverting(false);
-    if (res.success && res.data) navigate(`/product-agent/p/${res.data.productId}/requirement/${res.data.id}`);
-    else setConvertErr(res.error?.message ?? '转换失败');
-  };
-
+function VersionDetailTab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
-    <DetailScaffold
-      no={defect.defectNo}
-      kindLabel="缺陷"
-      kindColor="#F87171"
-      title={title}
-      onTitleChange={setTitle}
-      titlePlaceholder="缺陷标题"
-      dirty={dirty}
-      saving={saving}
-      onSave={save}
-      headerActions={
-        <>
-          <button
-            onClick={convert}
-            disabled={converting}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-cyan-200 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50"
-          >
-            {converting ? <MapSpinner size={14} /> : <GitBranch size={14} />} 转为需求
-          </button>
-          <TraceButton onClick={() => setShowTrace(true)} />
-        </>
-      }
-      workflow={
-        <div className="flex flex-wrap items-center gap-1.5">
-          {DEFECT_STATUSES.map((s) => (
-            <button key={s.v} type="button" onClick={() => setStatus(s.v)} className={chip(status === s.v)}>{s.label}</button>
-          ))}
-        </div>
-      }
-      main={
-        <>
-          <Card title="描述 / 复现步骤">
-            <DescriptionField value={description} onChange={setDescription} />
-          </Card>
-          <Card title="追溯指向">
-            <div className="flex flex-col gap-2 text-sm">
-              {featureId ? (
-                <button onClick={() => gotoFeature(featureId)} className="text-left text-cyan-300 hover:underline">
-                  功能：{featureName.get(featureId) ?? featureId}
-                </button>
-              ) : null}
-              {defect.tracedRequirementId ? (
-                <button onClick={() => gotoRequirement(defect.tracedRequirementId!)} className="text-left text-cyan-300 hover:underline">
-                  需求：{requirementName.get(defect.tracedRequirementId) ?? defect.tracedRequirementId}
-                </button>
-              ) : null}
-              {versionId && <div className="text-white/70">版本：{versionName.get(versionId) ?? versionId}</div>}
-              {!featureId && !defect.tracedRequirementId && !versionId && <div className="text-white/50">仅追溯到产品</div>}
-            </div>
-          </Card>
-          {convertErr && <p className="text-xs text-red-300/80 px-1">{convertErr}</p>}
-          <p className="text-[11px] text-white/35 px-1">右上角「转为需求」会在本产品下生成一条需求，并把本缺陷追溯到该需求（已转过则直接跳转）。</p>
-        </>
-      }
-      sidebar={
-        <>
-          <Card title="属性">
-            <div className="flex flex-col gap-3.5">
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>等级</FieldLabel>
-                <GradeField grade={grade} setGrade={setGrade} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>处理人</FieldLabel>
-                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>关联功能</FieldLabel>
-                <select className={selectCls} value={featureId} onChange={(e) => setFeatureId(e.target.value)}>
-                  <option value="">不关联</option>
-                  {features.map((f) => <option key={f.id} value={f.id}>{f.title}</option>)}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>关联版本</FieldLabel>
-                <select className={selectCls} value={versionId} onChange={(e) => setVersionId(e.target.value)}>
-                  <option value="">不关联</option>
-                  {versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}
-                </select>
-              </div>
-            </div>
-          </Card>
-          <Card title="信息">
-            <div className="flex flex-col gap-2">
-              <InfoRow label="状态" value={DEFECT_STATUS_LABEL[status] ?? status ?? '—'} />
-              <InfoRow label="上报人" value={defect.reporterName || '—'} />
-              <InfoRow label="创建时间" value={fmtDate(defect.createdAt)} />
-              <InfoRow label="更新时间" value={fmtDate(defect.updatedAt)} />
-            </div>
-          </Card>
-        </>
-      }
+    <button
+      type="button"
+      onClick={onClick}
+      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40 hover:text-white/60'}`}
     >
-      {showTrace && (
-        <TraceRelationDrawer productId={productId} nodeId={`defect:${defect.id}`} title={defect.title || defect.defectNo} onClose={() => setShowTrace(false)} />
-      )}
-    </DetailScaffold>
+      {children}
+    </button>
   );
 }

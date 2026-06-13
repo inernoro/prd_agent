@@ -1,17 +1,21 @@
-export interface TapdRtfImage {
+import { wrapMentionsInPlainText } from '@/lib/mentionRender';
+
+export interface RtfImportImage {
   fileName: string;
   mimeType: string;
   bytes: Uint8Array;
+  /** 文件内全局图片序号，与描述中的 [[IMPORT_IMAGE_N]] 对应 */
+  refIndex: number;
 }
 
-export interface TapdImportedComment {
+export interface RtfImportComment {
   author: string;
   title: string;
   content: string;
   createdAt?: string;
 }
 
-export interface TapdRtfRequirement {
+export interface RtfImportRequirement {
   externalId: string;
   title: string;
   description: string;
@@ -23,11 +27,11 @@ export interface TapdRtfRequirement {
   developerNames: string[];
   creatorNames: string[];
   ccNames: string[];
-  comments: TapdImportedComment[];
+  comments: RtfImportComment[];
   sourceCreatedAt?: string;
   sourceModifiedAt?: string;
   sourceCompletedAt?: string;
-  images: TapdRtfImage[];
+  images: RtfImportImage[];
 }
 
 interface RtfState {
@@ -54,7 +58,81 @@ const SKIPPED_DESTINATIONS = new Set([
   'themedata',
 ]);
 
-const IMAGE_MARKER = (index: number) => `[[TAPD_IMAGE_${index}]]`;
+const IMAGE_MARKER = (index: number) => `[[IMPORT_IMAGE_${index}]]`;
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+export interface SniffedImageFormat {
+  mimeType: string;
+  extension: string;
+}
+
+/** 按文件头魔数识别图片格式（优先于 RTF 内的 pngblip/jpegblip 声明）。 */
+export function sniffImageFormat(bytes: Uint8Array): SniffedImageFormat | null {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return { mimeType: 'image/png', extension: 'png' };
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { mimeType: 'image/jpeg', extension: 'jpg' };
+  }
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return { mimeType: 'image/gif', extension: 'gif' };
+  }
+  if (
+    bytes.length >= 12
+    && bytes[0] === 0x52
+    && bytes[1] === 0x49
+    && bytes[8] === 0x57
+    && bytes[9] === 0x45
+    && bytes[10] === 0x42
+    && bytes[11] === 0x50
+  ) {
+    return { mimeType: 'image/webp', extension: 'webp' };
+  }
+  return null;
+}
+
+function trimPngBytes(bytes: Uint8Array): Uint8Array {
+  const endMarker = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+  for (let index = bytes.length - endMarker.length; index >= 0; index -= 1) {
+    if (endMarker.every((byte, offset) => bytes[index + offset] === byte)) {
+      return bytes.slice(0, index + endMarker.length);
+    }
+  }
+  return bytes;
+}
+
+function trimJpegBytes(bytes: Uint8Array): Uint8Array {
+  for (let index = bytes.length - 2; index >= 0; index -= 1) {
+    if (bytes[index] === 0xff && bytes[index + 1] === 0xd9) return bytes.slice(0, index + 2);
+  }
+  return bytes;
+}
+
+function trimImageBytes(bytes: Uint8Array, format: SniffedImageFormat): Uint8Array {
+  if (format.mimeType === 'image/png') return trimPngBytes(bytes);
+  if (format.mimeType === 'image/jpeg') return trimJpegBytes(bytes);
+  return bytes;
+}
+
+/** 校正内嵌图：裁剪尾部杂质、按魔数修正 mime/扩展名、过滤空图与超限图。 */
+export function normalizeRtfImage(image: RtfImportImage): RtfImportImage | null {
+  if (!image.bytes?.length) return null;
+  const sniffed = sniffImageFormat(image.bytes);
+  if (!sniffed) return null;
+  const trimmed = trimImageBytes(image.bytes, sniffed);
+  if (trimmed.length < 16 || trimmed.length > MAX_ATTACHMENT_BYTES) return null;
+  return {
+    ...image,
+    bytes: trimmed,
+    mimeType: sniffed.mimeType,
+    fileName: `import-${image.refIndex + 1}.${sniffed.extension}`,
+  };
+}
+
+export function rtfImageToUploadFile(image: RtfImportImage): File {
+  const copy = new Uint8Array(image.bytes);
+  return new File([copy], image.fileName, { type: image.mimeType });
+}
 
 function findGroupStart(input: string, controlIndex: number): number {
   for (let index = controlIndex; index >= 0; index -= 1) {
@@ -72,9 +150,9 @@ function findGroupEnd(input: string, start: number): number {
   return input.length;
 }
 
-function extractImages(input: string): { rtf: string; images: TapdRtfImage[] } {
+function extractImages(input: string): { rtf: string; images: RtfImportImage[] } {
   const groups: { start: number; end: number; replacement: string }[] = [];
-  const images: TapdRtfImage[] = [];
+  const images: RtfImportImage[] = [];
   let cursor = 0;
 
   while (cursor < input.length) {
@@ -100,11 +178,14 @@ function extractImages(input: string): { rtf: string; images: TapdRtfImage[] } {
         bytes[index / 2] = Number.parseInt(evenHex.slice(index, index + 2), 16);
       }
       const imageIndex = images.length;
-      images.push({
-        fileName: `tapd-import-${imageIndex + 1}.${extension}`,
+      const draft: RtfImportImage = {
+        fileName: `import-${imageIndex + 1}.${extension}`,
         mimeType,
         bytes,
-      });
+        refIndex: imageIndex,
+      };
+      const normalized = normalizeRtfImage(draft) ?? draft;
+      images.push(normalized);
       groups.push({ start, end, replacement: IMAGE_MARKER(imageIndex) });
     } else {
       groups.push({ start, end, replacement: '' });
@@ -230,10 +311,10 @@ function descriptionToHtml(value: string): string {
     .map((line) => {
       const trimmed = line.trim();
       if (!trimmed) return '';
-      const marker = trimmed.match(/^\[\[TAPD_IMAGE_(\d+)]]$/);
-      if (marker) return `<p data-tapd-image="${marker[1]}"></p>`;
-      if (/^\d+[、.]/.test(trimmed)) return `<h3>${escapeHtml(trimmed)}</h3>`;
-      return `<p>${escapeHtml(trimmed)}</p>`;
+      const marker = trimmed.match(/^\[\[(?:IMPORT_IMAGE|TAPD_IMAGE)_(\d+)]]$/);
+      if (marker) return `<p data-import-image="${marker[1]}"></p>`;
+      if (/^\d+[、.]/.test(trimmed)) return `<h3>${wrapMentionsInPlainText(trimmed)}</h3>`;
+      return `<p>${wrapMentionsInPlainText(trimmed)}</p>`;
     })
     .filter(Boolean)
     .join('');
@@ -254,7 +335,7 @@ function mapPriorityToGrade(priority: string): 'p0' | 'p1' | 'p2' | 'p3' {
   return 'p2';
 }
 
-function parseComment(value: string): TapdImportedComment | null {
+function parseComment(value: string): RtfImportComment | null {
   const lines = value.split('\n').map((line) => line.trim()).filter(Boolean);
   if (lines.length === 0 || !lines[0].startsWith('【评论:')) return null;
   const header = lines[0].match(/^【评论:([^\s]+)\s+(.+?)(?:\s+\(([^)]+)\))?】$/);
@@ -266,18 +347,48 @@ function parseComment(value: string): TapdImportedComment | null {
   };
 }
 
-export function parseTapdRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fileName = 'tapd-export.rtf'): TapdRtfRequirement {
-  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  const raw = new TextDecoder('windows-1252').decode(data);
-  if (!raw.trimStart().startsWith('{\\rtf')) throw new Error(`${fileName} 不是有效的 RTF 文件`);
+function isRequirementIdRow(values: string[]): boolean {
+  return values[0]?.trim() === 'ID' && values.length >= 2 && Boolean(values[1]?.trim());
+}
 
-  const extracted = extractImages(raw);
-  const rows = decodeRtf(extracted.rtf)
-    .split('\u001e')
-    .map((row) => row.split('\u001f').map((cell) => cell.trim()))
-    .filter((row) => row.some(Boolean));
-  if (rows.length < 3) throw new Error(`${fileName} 没有识别到 TAPD 需求表格`);
+/** TAPD 批量导出：按「ID」行切分为多条需求表格块。 */
+export function splitRequirementRtfRows(rows: string[][]): string[][][] {
+  const blocks: string[][][] = [];
+  let current: string[][] = [];
 
+  for (const row of rows) {
+    const values = row.filter((cell, index) => cell || index < row.length - 1);
+    if (isRequirementIdRow(values) && current.length > 0) {
+      blocks.push(current);
+      current = [];
+    }
+    current.push(row);
+  }
+  if (current.length > 0) blocks.push(current);
+  return blocks.filter((block) => block.some((r) => r.some(Boolean)));
+}
+
+function collectReferencedImageIndices(text: string): number[] {
+  const indices = new Set<number>();
+  for (const match of text.matchAll(/\[\[IMPORT_IMAGE_(\d+)]]|data-import-image="(\d+)"/g)) {
+    const index = Number(match[1] ?? match[2]);
+    if (!Number.isNaN(index)) indices.add(index);
+  }
+  return Array.from(indices).sort((a, b) => a - b);
+}
+
+function imagesForRequirement(descriptionHtml: string, allImages: RtfImportImage[]): RtfImportImage[] {
+  return collectReferencedImageIndices(descriptionHtml)
+    .map((index) => allImages[index])
+    .filter((image): image is RtfImportImage => Boolean(image?.bytes?.length));
+}
+
+function parseRequirementRows(
+  rows: string[][],
+  allImages: RtfImportImage[],
+  fileName: string,
+  blockIndex?: number,
+): RtfImportRequirement {
   const fields: Record<string, string> = {};
   const fullWidthValues: string[] = [];
   let title = '';
@@ -306,13 +417,15 @@ export function parseTapdRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fi
     .sort((a, b) => b.length - a.length)[0] ?? '';
   const comments = fullWidthValues
     .map(parseComment)
-    .filter((comment): comment is TapdImportedComment => comment !== null);
-  if (!fields.ID || !title) throw new Error(`${fileName} 缺少 TAPD ID 或需求标题`);
+    .filter((comment): comment is RtfImportComment => comment !== null);
+  const suffix = blockIndex === undefined ? '' : ` 第 ${blockIndex + 1} 条`;
+  if (!fields.ID || !title) throw new Error(`${fileName}${suffix} 缺少需求 ID 或标题`);
 
+  const description = descriptionToHtml(descriptionText);
   return {
     externalId: fields.ID,
     title,
-    description: descriptionToHtml(descriptionText),
+    description,
     grade: mapPriorityToGrade(fields.优先级 ?? ''),
     sourceStatus: fields.状态 ?? '',
     sourcePriority: fields.优先级 ?? '',
@@ -325,19 +438,58 @@ export function parseTapdRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fi
     sourceCreatedAt: fields.创建时间 || undefined,
     sourceModifiedAt: fields.最后修改时间 || undefined,
     sourceCompletedAt: fields.完成时间 || undefined,
-    images: extracted.images,
+    images: imagesForRequirement(description, allImages),
   };
 }
 
-export function replaceTapdImageMarkers(
+/** 解析需求导出 RTF（单文件可含多条需求：表格字段 + 评论 + 内嵌图片）。 */
+export function parseRequirementRtfBytes(bytes: ArrayBuffer | Uint8Array, fileName = 'requirement-export.rtf'): RtfImportRequirement[] {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const raw = new TextDecoder('windows-1252').decode(data);
+  if (!raw.trimStart().startsWith('{\\rtf')) throw new Error(`${fileName} 不是有效的 RTF 文件`);
+
+  const extracted = extractImages(raw);
+  const rows = decodeRtf(extracted.rtf)
+    .split('\u001e')
+    .map((row) => row.split('\u001f').map((cell) => cell.trim()))
+    .filter((row) => row.some(Boolean));
+  if (rows.length < 3) throw new Error(`${fileName} 没有识别到需求表格`);
+
+  const blocks = splitRequirementRtfRows(rows);
+  if (blocks.length === 0) throw new Error(`${fileName} 没有识别到需求记录`);
+
+  return blocks.map((block, index) => parseRequirementRows(block, extracted.images, fileName, index));
+}
+
+export function replaceImportImageMarkers(
   html: string,
   uploadedImages: { index: number; url: string; fileName: string }[],
 ): string {
   let result = html;
   for (const image of uploadedImages) {
-    const marker = `<p data-tapd-image="${image.index}"></p>`;
+    const markers = [
+      `<p data-import-image="${image.index}"></p>`,
+      `<p data-tapd-image="${image.index}"></p>`,
+    ];
     const replacement = `<p><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.fileName)}" style="max-width:100%;border-radius:8px;margin:8px 0;" /></p>`;
-    result = result.replace(marker, replacement);
+    for (const marker of markers) {
+      result = result.replace(marker, replacement);
+    }
+  }
+  return result;
+}
+
+/** 移除上传失败图片在描述 HTML 中的占位段落。 */
+export function stripFailedImageMarkers(html: string, failedRefIndices: number[]): string {
+  let result = html;
+  for (const index of failedRefIndices) {
+    const markers = [
+      `<p data-import-image="${index}"></p>`,
+      `<p data-tapd-image="${index}"></p>`,
+    ];
+    for (const marker of markers) {
+      result = result.split(marker).join('');
+    }
   }
   return result;
 }
