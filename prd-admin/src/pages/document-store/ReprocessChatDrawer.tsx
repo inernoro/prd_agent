@@ -158,6 +158,8 @@ type ChatQuickAction = {
   title: string;
   initialInput?: string;
   icon?: 'video' | 'text' | 'timeline' | 'agent';
+  group?: 'assets' | 'processing';
+  description?: string;
 };
 
 /**
@@ -273,48 +275,60 @@ function buildShortVideoQuickActions(result: import('@/services').ShortVideoMate
   return [
     {
       key: 'open-source',
-      label: '打开原始素材',
+      label: '原始素材',
       entryId: result.sourceEntryId,
       title: `${title} · 原始视频素材.md`,
       icon: 'video',
+      group: 'assets',
+      description: '打开默认保存到知识库的原始视频素材',
     },
     {
       key: 'open-transcript',
-      label: '打开字幕文稿',
+      label: '字幕文稿',
       entryId: result.transcriptEntryId,
       title: `${title} · 字幕文稿.md`,
       icon: 'text',
+      group: 'assets',
+      description: '打开默认生成的字幕文稿',
     },
     {
       key: 'open-timeline',
-      label: '打开时间轴',
+      label: '时间轴',
       entryId: result.timelineEntryId,
       title: `${title} · 时间轴片段.md`,
       icon: 'timeline',
+      group: 'assets',
+      description: '打开默认生成的时间轴片段',
     },
     {
       key: 'literal-copy',
-      label: '一字不变转文案',
+      label: '一字不变',
       entryId: result.transcriptEntryId,
       title: `${title} · 字幕文稿.md`,
       initialInput: '请基于这份字幕文稿整理成可阅读文案，尽量一字不变保留原话，只处理段落、标点和标题层级。',
       icon: 'agent',
+      group: 'processing',
+      description: '基于字幕整理成尽量保留原话的文案',
     },
     {
       key: 'enhance-copy',
-      label: '补充润色转文案',
+      label: '补充润色',
       entryId: result.transcriptEntryId,
       title: `${title} · 字幕文稿.md`,
       initialInput: '请基于这份字幕文稿整理成教程文案，可以补充必要背景、步骤解释和小标题，但不要改变原视频的核心意思。',
       icon: 'agent',
+      group: 'processing',
+      description: '基于字幕补充背景并整理成教程文案',
     },
     {
       key: 'timeline-copy',
-      label: '转换成时间线',
+      label: '转时间线',
       entryId: result.timelineEntryId,
       title: `${title} · 时间轴片段.md`,
       initialInput: '请把这份时间轴片段整理成清晰的教程步骤，每一步包含时间段、动作、材料和检查点。',
       icon: 'timeline',
+      group: 'processing',
+      description: '把时间轴片段整理为步骤化教程',
     },
   ];
 }
@@ -2108,20 +2122,11 @@ function MessageBubble({
         )}
 
         {!msg.streaming && msg.phase !== 'error' && msg.quickActions && msg.quickActions.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-3 pt-2.5 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-            {msg.quickActions.map((action) => (
-              <ApplyBtn
-                key={action.key}
-                icon={<QuickActionIcon action={action} />}
-                label={action.label}
-                busy={false}
-                applied={false}
-                disabled={!!applying}
-                accent={!!action.initialInput}
-                onClick={() => onQuickAction(action)}
-              />
-            ))}
-          </div>
+          <QuickActionGroups
+            actions={msg.quickActions}
+            applying={applying}
+            onQuickAction={onQuickAction}
+          />
         )}
 
         {canApply && (
@@ -2158,6 +2163,46 @@ function MessageBubble({
   );
 }
 
+function QuickActionGroups({
+  actions, applying, onQuickAction,
+}: {
+  actions: ChatQuickAction[];
+  applying: string | null;
+  onQuickAction: (action: ChatQuickAction) => void;
+}) {
+  const assetActions = actions.filter((a) => (a.group ?? 'assets') === 'assets');
+  const processingActions = actions.filter((a) => a.group === 'processing');
+  const renderGroup = (label: string, items: ChatQuickAction[]) => {
+    if (items.length === 0) return null;
+    return (
+      <div className="space-y-1.5">
+        <div className="text-[10px] font-semibold text-token-muted">{label}</div>
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((action) => (
+            <ApplyBtn
+              key={action.key}
+              icon={<QuickActionIcon action={action} />}
+              label={action.label}
+              title={action.description}
+              busy={false}
+              applied={false}
+              disabled={!!applying}
+              accent={!!action.initialInput}
+              onClick={() => onQuickAction(action)}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div className="mt-3 pt-2.5 border-t space-y-2.5" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+      {renderGroup('已入库产物', assetActions)}
+      {renderGroup('继续加工', processingActions)}
+    </div>
+  );
+}
+
 function QuickActionIcon({ action }: { action: ChatQuickAction }) {
   if (action.icon === 'video') return <Video size={10} />;
   if (action.icon === 'timeline') return <Layers size={10} />;
@@ -2190,10 +2235,11 @@ function ThinkingDots() {
 }
 
 function ApplyBtn({
-  icon, label, busy, applied, disabled, onClick, accent,
+  icon, label, title, busy, applied, disabled, onClick, accent,
 }: {
   icon: React.ReactNode;
   label: string;
+  title?: string;
   busy: boolean;
   applied: boolean;
   disabled: boolean;
@@ -2214,7 +2260,8 @@ function ApplyBtn({
     <button
       onClick={onClick}
       disabled={disabled || busy}
-      className="inline-flex items-center gap-1 rounded-[7px] px-2.5 py-1.5 text-[10px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      title={title ?? label}
+      className="inline-flex items-center gap-1 rounded-[7px] px-2.5 py-1.5 text-[10px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
       style={{ background: bg, color, border }}
     >
       {busy ? <RotateCw size={10} className="animate-spin" /> : icon}
