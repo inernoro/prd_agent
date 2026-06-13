@@ -197,11 +197,16 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
       >
         <style>{`
           @keyframes peerFlow {
-            0% { transform: translateX(-28%); opacity: 0; }
+            0% { transform: translateX(-100%); opacity: 0; }
             20% { opacity: 1; }
-            100% { transform: translateX(118%); opacity: 0; }
+            100% { transform: translateX(240%); opacity: 0; }
           }
-          .peer-flow-beam { animation: peerFlow 1.75s ease-in-out infinite; }
+          @keyframes peerPulse {
+            0%, 100% { transform: scale(1); opacity: 0.72; }
+            50% { transform: scale(1.08); opacity: 1; }
+          }
+          .peer-flow-beam { animation: peerFlow 1.6s ease-in-out infinite; }
+          .peer-flow-pulse { animation: peerPulse 1.35s ease-in-out infinite; }
         `}</style>
 
         <div className="flex items-center justify-between border-b px-6 py-4" style={{ borderColor: 'rgba(148,163,184,0.14)' }}>
@@ -537,6 +542,7 @@ function TransferPreview({ node, direction, selectedCount, submitting, progress 
   progress: { step: number; stage: string; startedAt: number } | null;
 }) {
   const directionText = direction === 'push' ? '发送' : direction === 'pull' ? '拉取' : '双向';
+  const activeStep = progress?.step ?? 0;
   return (
     <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -546,21 +552,72 @@ function TransferPreview({ node, direction, selectedCount, submitting, progress 
         </div>
         <StatusPill text={submitting ? '正在跨系统同步' : '待开始'} icon={submitting ? <MapSpinner size={12} /> : <CheckCircle2 size={13} />} tone={submitting ? 'gold' : 'slate'} />
       </div>
-      <div className="relative h-56 overflow-hidden rounded-2xl border" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(30,41,59,0.60))' }}>
-        <div className="absolute left-5 top-5 rounded-xl border px-3 py-2" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(2,6,23,0.58)' }}>
-          <div className="text-xs font-semibold">本地</div>
-          <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>{selectedCount} 个知识库</div>
+      <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'linear-gradient(180deg, rgba(15,23,42,0.78), rgba(15,23,42,0.48))' }}>
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+          <TransferNode
+            label="本地"
+            title={`${selectedCount} 个知识库`}
+            desc="读取内容与附件"
+            icon={<Database size={16} />}
+            active={submitting && activeStep <= 2}
+          />
+
+          <div className="flex min-w-[88px] flex-col items-center gap-2">
+            <div className="relative h-px w-full overflow-hidden rounded-full" style={{ background: 'rgba(148,163,184,0.24)' }}>
+              <div
+                className="peer-flow-beam absolute top-0 h-px w-9 rounded-full"
+                style={{
+                  left: 0,
+                  background: 'linear-gradient(90deg, transparent, rgb(94,234,212), transparent)',
+                  animationPlayState: submitting ? 'running' : 'paused',
+                }}
+              />
+            </div>
+            <span className="rounded-full border px-2 py-0.5 text-[11px] font-semibold" style={{
+              borderColor: direction === 'both' ? 'rgba(45,212,191,0.34)' : 'rgba(148,163,184,0.18)',
+              color: direction === 'both' ? 'rgb(94,234,212)' : 'rgb(203,213,225)',
+              background: direction === 'both' ? 'rgba(20,184,166,0.10)' : 'rgba(148,163,184,0.08)',
+            }}>
+              {directionText}
+            </span>
+          </div>
+
+          <TransferNode
+            label="对端"
+            title={node?.displayName || '等待选择'}
+            desc={node?.baseUrl || '选择目标节点'}
+            icon={<Globe size={16} />}
+            active={submitting && activeStep >= 2}
+          />
         </div>
-        <div className="absolute bottom-5 right-5 rounded-xl border px-3 py-2" style={{ borderColor: 'rgba(45,212,191,0.28)', background: 'rgba(2,6,23,0.58)' }}>
-          <div className="text-xs font-semibold">{node?.displayName || '对端节点'}</div>
-          <div className="mt-1 max-w-[190px] truncate font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{node?.baseUrl || '等待选择'}</div>
-        </div>
-        <div className="absolute left-[22%] top-[52%] h-px w-[58%] -rotate-[18deg]" style={{ background: 'rgba(148,163,184,0.28)' }} />
-        <div className="absolute left-[22%] top-[52%] h-[3px] w-[58%] -rotate-[18deg] overflow-hidden rounded-full">
-          <div className="peer-flow-beam h-full w-28 rounded-full" style={{ background: 'linear-gradient(90deg, transparent, rgb(96,165,250), rgb(45,212,191), transparent)', animationPlayState: submitting ? 'running' : 'paused' }} />
-        </div>
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: 'rgba(245,158,11,0.34)', background: 'rgba(245,158,11,0.10)', color: 'rgb(252,211,77)' }}>
-          {directionText}
+
+        <div className="mt-4 grid grid-cols-4 gap-2">
+          {STEPS.map((s, index) => {
+            const state = resultsState(index + 1, activeStep, submitting);
+            return (
+              <div
+                key={s.title}
+                className="rounded-xl border px-2.5 py-2"
+                style={{
+                  borderColor: state === 'active' ? 'rgba(45,212,191,0.46)' : state === 'done' ? 'rgba(34,197,94,0.28)' : 'rgba(148,163,184,0.14)',
+                  background: state === 'active' ? 'rgba(20,184,166,0.10)' : state === 'done' ? 'rgba(22,101,52,0.10)' : 'rgba(15,23,42,0.34)',
+                }}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className={state === 'active' ? 'peer-flow-pulse' : ''} style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 999,
+                    background: state === 'active' ? 'rgb(94,234,212)' : state === 'done' ? 'rgb(134,239,172)' : 'rgb(100,116,139)',
+                    display: 'inline-block',
+                    flexShrink: 0,
+                  }} />
+                  <span className="truncate text-[11px] font-semibold">{s.title}</span>
+                </div>
+                <div className="mt-1 truncate text-[10px]" style={{ color: 'var(--text-muted)' }}>{s.desc}</div>
+              </div>
+            );
+          })}
         </div>
       </div>
       <div className="mt-3 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
@@ -568,6 +625,41 @@ function TransferPreview({ node, direction, selectedCount, submitting, progress 
       </div>
     </div>
   );
+}
+
+function TransferNode({ label, title, desc, icon, active }: {
+  label: string;
+  title: string;
+  desc: string;
+  icon: ReactNode;
+  active: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-xl border px-3 py-3" style={{
+      borderColor: active ? 'rgba(45,212,191,0.36)' : 'rgba(148,163,184,0.16)',
+      background: active ? 'rgba(20,184,166,0.10)' : 'rgba(2,6,23,0.28)',
+    }}>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border" style={{
+          borderColor: active ? 'rgba(45,212,191,0.34)' : 'rgba(148,163,184,0.16)',
+          color: active ? 'rgb(94,234,212)' : 'rgb(148,163,184)',
+          background: active ? 'rgba(20,184,166,0.12)' : 'rgba(15,23,42,0.40)',
+        }}>
+          {icon}
+        </span>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.10em]" style={{ color: 'rgb(148,163,184)' }}>{label}</span>
+      </div>
+      <div className="truncate text-xs font-semibold">{title}</div>
+      <div className="mt-1 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{desc}</div>
+    </div>
+  );
+}
+
+function resultsState(step: number, activeStep: number, submitting: boolean) {
+  if (!submitting) return 'idle';
+  if (step < activeStep) return 'done';
+  if (step === activeStep) return 'active';
+  return 'idle';
 }
 
 function formatShortTime(value: string) {
