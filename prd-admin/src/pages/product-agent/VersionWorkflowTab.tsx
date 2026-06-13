@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
-  getOverviewStats, getProduct, listInitiations, listProductMembers, listProducts, listReleases, listRequirements,
+  listInitiations, listProductMembers, listProducts, listReleases, listRequirements,
   syncInitiationReview,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -25,7 +25,6 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { toProductOptions } from './comboboxOptions';
 import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
-import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
 import {
   ListSelectionHeaderCell,
@@ -55,7 +54,6 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [releases, setReleases] = useState<ProductRelease[]>([]);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [members, setMembers] = useState<ProductMember[]>([]);
-  const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState<'initiation' | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
@@ -67,15 +65,6 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   useEffect(() => {
     if (currentUserId && !releaseOwnerId) setReleaseOwnerId(currentUserId);
   }, [currentUserId, releaseOwnerId]);
-
-  useEffect(() => {
-    void getOverviewStats().then((res) => {
-      if (res.success) setCanImport(res.data.isAdmin);
-    });
-    void getProduct(productId).then((res) => {
-      if (res.success) setProduct(res.data);
-    });
-  }, [productId]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -131,14 +120,6 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex flex-wrap items-center gap-2">
-          {canImport && (
-            <button
-              onClick={() => setDialog('import-release')}
-              className="flex items-center gap-1 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-500/20"
-            >
-              <Upload size={14} /> 导入历史数据
-            </button>
-          )}
           <Primary onClick={() => navigate(`/product-agent/p/${productId}/release/new`)} disabled={approved.length === 0}><Plus size={14} />申领正式版本号</Primary>
           <button onClick={() => navigate(`/product-agent/p/${productId}/release/new?temporary=1`)} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">临时优化需求</button>
           <span className="group relative"><HelpCircle size={15} className="cursor-help text-white/35" />
@@ -155,38 +136,12 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex gap-2">
-          {canImport && (
-            <button
-              onClick={() => setDialog('import-initiation')}
-              className="flex items-center gap-1 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-500/20"
-            >
-              <Upload size={14} /> 导入历史数据
-            </button>
-          )}
           <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
         </div>
       </div>
       <InitiationTable productId={productId} items={visibleInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
     </>}
     {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
-    {dialog === 'import-release' && product && (
-      <VersionWorkflowImportDialog
-        kind="release"
-        products={[product]}
-        fixedProductId={productId}
-        onClose={() => setDialog(null)}
-        onImported={async () => { setDialog(null); await reload(); }}
-      />
-    )}
-    {dialog === 'import-initiation' && product && (
-      <VersionWorkflowImportDialog
-        kind="initiation"
-        products={[product]}
-        fixedProductId={productId}
-        onClose={() => setDialog(null)}
-        onImported={async () => { setDialog(null); await reload(); }}
-      />
-    )}
   </div>;
 }
 

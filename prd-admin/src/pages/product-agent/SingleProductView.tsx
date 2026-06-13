@@ -7,12 +7,11 @@
  * 需求/功能 的「新建」走独立页面（/product-agent/p/:productId/:kind/new）；查看走详情页。
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download } from 'lucide-react';
 import { ProductAssistantPanel } from './ProductAssistantPanel';
 import { QuickActionsCard } from './QuickActionsCard';
-import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
 import { requirementSourceLabel } from './requirementSource';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
@@ -39,6 +38,7 @@ import { VersionWorkflowTab } from './VersionWorkflowTab';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import {
   getProduct,
+  getOverviewStats,
   listVersions,
   createVersion,
   deleteVersion,
@@ -114,6 +114,7 @@ export function SingleProductView() {
   const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   // 当前 tab 记录在 URL（?tab=），从对象详情页返回时能停在原 tab，而不是回弹到工作台。
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -135,6 +136,9 @@ export function SingleProductView() {
 
   useEffect(() => {
     void reload();
+    void getOverviewStats().then((res) => {
+      if (res.success) setIsAdmin(res.data.isAdmin);
+    });
   }, [reload]);
 
   if (loading) {
@@ -191,7 +195,7 @@ export function SingleProductView() {
         </div>
       ) : active === 'features' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">
-          <FeatureCatalogTab productId={product.id} />
+          <FeatureCatalogTab productId={product.id} showImport={isAdmin} />
         </div>
       ) : active === 'requirements' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">
@@ -386,10 +390,8 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
   const [trackedOnly, setTrackedOnly] = useState(false);
-  const [rtfImportFiles, setRtfImportFiles] = useState<File[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const fileRef = useRef<HTMLInputElement>(null);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const nameOf = useDirectoryNames();
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
@@ -471,24 +473,6 @@ function RequirementsTab({ productId }: { productId: string }) {
       <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".rtf,application/rtf,text/rtf"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              const rtfFiles = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith('.rtf'));
-              if (rtfFiles.length > 0) setRtfImportFiles(rtfFiles);
-              e.target.value = '';
-            }}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs"
-          >
-            <Upload size={13} /> 导入 RTF
-          </button>
           <button onClick={() => exportCsv(false)} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
             <Download size={13} /> 导出CSV
           </button>
@@ -546,14 +530,6 @@ function RequirementsTab({ productId }: { productId: string }) {
         </div>
       )}
         </>
-      )}
-      {rtfImportFiles.length > 0 && (
-        <RequirementRtfImportDialog
-          productId={productId}
-          files={rtfImportFiles}
-          onClose={() => setRtfImportFiles([])}
-          onImported={reload}
-        />
       )}
     </div>
   );

@@ -164,10 +164,10 @@ export function OverviewShell() {
         <div className="flex h-full min-h-0 flex-col">
           <div className="shrink-0 border-b border-white/10 px-6 py-3">
             <h2 className="text-base font-semibold text-white">功能</h2>
-            <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；功能清单归属正式版本，导入时需选择 V 号</p>
+            <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；功能清单归属正式版本。历史目录导入请在单产品「功能」页操作（管理员）</p>
           </div>
           <div className="min-h-0 flex-1">
-            <OverviewFeaturesPanel isAdmin={isAdmin} products={products} />
+            <OverviewFeaturesPanel products={products} />
           </div>
         </div>
       )}
@@ -559,10 +559,8 @@ function RequirementsTable({
 
 /** 主页功能面板：先选产品，再复用单产品内的 FeatureCatalogTab（目录树 + 表格） */
 function OverviewFeaturesPanel({
-  isAdmin,
   products,
 }: {
-  isAdmin: boolean;
   products: Product[];
 }) {
   const [productId, setProductId] = useState('');
@@ -592,7 +590,7 @@ function OverviewFeaturesPanel({
       <FeatureCatalogTab
         productId={productId}
         productPicker={{ products, productId, onProductIdChange: setProductId }}
-        showImport={isAdmin}
+        showImport={false}
         showCreate
         showReleaseLink={false}
       />

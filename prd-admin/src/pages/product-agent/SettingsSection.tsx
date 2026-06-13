@@ -221,7 +221,7 @@ function ApplicationAdminManager() {
     <div className="flex flex-col gap-4">
       <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <div className="text-sm font-medium text-white/75">产品管理应用管理员</div>
-        <div className="mt-1 text-xs leading-5 text-white/40">只有名单内管理员可看到并执行需求、功能、缺陷、版本的历史数据导入。管理员可重复导入，带外部 ID 的数据按原记录更新。</div>
+        <div className="mt-1 text-xs leading-5 text-white/40">只有名单内管理员可看到并执行历史数据导入：产品、需求、缺陷、版本请在产品管理总览对应菜单导入；功能目录仅在单产品「功能」页导入。可重复导入，带外部 ID 的数据按原记录更新。</div>
         <div className="mt-4 flex items-center gap-2">
           <div className="min-w-0 flex-1"><UserSearchSelect value={selectedUserId} onChange={setSelectedUserId} placeholder="搜索 MAP 用户" showAllOption={false} /></div>
           <button onClick={() => void add()} disabled={!selectedUserId || busy} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-3 py-2 text-sm text-cyan-100 disabled:opacity-40">

@@ -97,7 +97,7 @@ function FeatureTreeNodeRow({
 export function FeatureCatalogTab({
   productId,
   productPicker,
-  showImport = true,
+  showImport = false,
   showCreate = true,
   showReleaseLink = true,
 }: {
@@ -108,7 +108,7 @@ export function FeatureCatalogTab({
     productId: string;
     onProductIdChange: (id: string) => void;
   };
-  /** 导入目录结构（主页仅管理员展示） */
+  /** 导入目录结构（仅管理员；单产品功能页或总览功能菜单由调用方显式开启） */
   showImport?: boolean;
   showCreate?: boolean;
   showReleaseLink?: boolean;
