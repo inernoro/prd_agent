@@ -3,7 +3,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, FolderTree, Plus, Search, Upload } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderTree, Plus, Upload } from 'lucide-react';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { searchDirectoryUsers } from '@/services';
@@ -24,7 +24,8 @@ import { SelectionActionBar, ListTableSelectionCell, ListTableSelectionHeader, u
 import { LIST_SELECTION_COL_WIDTH, listSelectionRowClass } from './listSelection';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
-import type { Feature, FeatureBusinessType, Product, ProductRelease } from './types';
+import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
+import { ITEM_GRADE_LABEL, type Feature, type FeatureBusinessType, type Product, type ProductRelease } from './types';
 
 const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
   basic: '基础功能',
@@ -118,7 +119,6 @@ export function FeatureCatalogTab({
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [keyword, setKeyword] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [releaseId, setReleaseId] = useState('');
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -138,7 +138,6 @@ export function FeatureCatalogTab({
   useEffect(() => {
     setSelectedId(null);
     setReleaseId('');
-    setKeyword('');
   }, [productId]);
 
   useEffect(() => {
@@ -168,21 +167,67 @@ export function FeatureCatalogTab({
     [scopedFeatures, selectedId],
   );
 
-  const tableRows = useMemo(() => {
-    const kw = keyword.trim().toLowerCase();
-    return scopedFeatures
-      .filter((f) => subtreeIds.has(f.id))
-      .filter((f) => {
-        if (!kw) return true;
-        return `${f.featureNo} ${f.title} ${f.moduleName} ${f.description ?? ''}`.toLowerCase().includes(kw);
-      })
-      .sort((a, b) => featurePathLabel(scopedFeatures, a.id).localeCompare(featurePathLabel(scopedFeatures, b.id), 'zh'));
-  }, [scopedFeatures, subtreeIds, keyword]);
-
-  const visibleRows = useMemo(
-    () => filterByTracked(tableRows, trackedOnly, 'feature', (f) => ({ productId, recordId: f.id })),
-    [tableRows, trackedOnly, productId],
+  const subtreeRows = useMemo(
+    () => scopedFeatures.filter((f) => subtreeIds.has(f.id)),
+    [scopedFeatures, subtreeIds],
   );
+
+  const stateLabel = useCallback(
+    (key: string) => resolveRequirementStateLabel(key, workflow),
+    [workflow],
+  );
+  const fields = useMemo<FilterFieldDef<Feature>[]>(() => [
+    {
+      key: 'grade',
+      label: '分级',
+      defaultVisible: true,
+      options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })),
+      test: (f, v) => f.grade === v,
+    },
+    {
+      key: 'state',
+      label: '状态',
+      defaultVisible: true,
+      options: (its) => distinctOptions(its, (f) => f.currentState ?? '', stateLabel),
+      test: (f, v) => (f.currentState ?? '') === v,
+    },
+    {
+      key: 'assignee',
+      label: '处理人',
+      defaultVisible: true,
+      options: (its) => distinctOptions(its, (f) => f.assigneeId ?? '', (id) => userNames.get(id) ?? id),
+      test: (f, v) => (f.assigneeId ?? '') === v,
+    },
+    {
+      key: 'type',
+      label: '类型',
+      options: () => (Object.entries(FEATURE_TYPE_LABEL) as [FeatureBusinessType, string][]).map(([value, label]) => ({ value, label })),
+      test: (f, v) => f.featureType === v,
+    },
+    {
+      key: 'owner',
+      label: '负责人',
+      options: (its) => distinctOptions(its, (f) => f.ownerId, (id) => userNames.get(id) ?? id),
+      test: (f, v) => f.ownerId === v,
+    },
+  ], [stateLabel, userNames]);
+
+  const { bar, filtered: filterBarFiltered } = useListFilter({
+    items: subtreeRows,
+    storageKey: 'pa-list-filters:feature-catalog',
+    fields,
+    keywordOf: (f) => `${f.featureNo} ${f.title} ${f.moduleName} ${f.description ?? ''}`,
+    keywordPlaceholder: '搜索编号/名称/模块',
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
+  });
+
+  const visibleRows = useMemo(() => {
+    const sorted = [...filterBarFiltered].sort(
+      (a, b) => featurePathLabel(scopedFeatures, a.id).localeCompare(featurePathLabel(scopedFeatures, b.id), 'zh'),
+    );
+    return filterByTracked(sorted, trackedOnly, 'feature', (f) => ({ productId, recordId: f.id }));
+  }, [filterBarFiltered, trackedOnly, productId, scopedFeatures]);
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(visibleRows, {
     filename: `features-${productId}.csv`,
@@ -301,28 +346,19 @@ export function FeatureCatalogTab({
             <select
               value={releaseId}
               onChange={(e) => { setReleaseId(e.target.value); setSelectedId(null); }}
-              className="h-8 min-w-[140px] max-w-[200px] rounded-lg border border-white/10 bg-[#15171c] px-2.5 text-xs text-white outline-none focus:border-cyan-400/50"
+              className="h-8 min-w-[140px] max-w-[200px] shrink-0 rounded-lg border border-white/10 bg-[#15171c] px-2.5 text-xs text-white outline-none focus:border-cyan-400/50"
             >
               <option value="">全部正式版本</option>
               {releases.map((r) => (
                 <option key={r.id} value={r.id}>{r.vCode}{r.planName ? ` · ${r.planName}` : ''}</option>
               ))}
             </select>
-            <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-            <label className="relative block min-w-[200px] flex-1">
-              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-              <input
-                value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
-                placeholder="搜索编号/名称/模块"
-                className="w-full rounded-lg border border-white/10 bg-black/20 py-1.5 pl-9 pr-3 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50"
-              />
-            </label>
+            <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
             {showImport && (
               <button
                 type="button"
                 onClick={() => setShowImportDialog(true)}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 hover:bg-white/10"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-white/70 hover:bg-white/10"
               >
                 <Upload size={14} /> 导入目录结构
               </button>
@@ -331,7 +367,7 @@ export function FeatureCatalogTab({
               <button
                 type="button"
                 onClick={() => navigate(`/product-agent/p/${productId}/feature/new`)}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-200 border border-cyan-500/30 hover:bg-cyan-500/25"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 text-xs text-cyan-200 border border-cyan-500/30 hover:bg-cyan-500/25"
               >
                 <Plus size={14} /> 新建功能
               </button>
@@ -340,7 +376,7 @@ export function FeatureCatalogTab({
               <button
                 type="button"
                 onClick={() => navigate(`/product-agent/p/${productId}/release/new`)}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/45 hover:bg-white/5"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-3 text-xs text-white/45 hover:bg-white/5"
               >
                 申领正式版本号
               </button>
