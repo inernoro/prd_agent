@@ -98,7 +98,6 @@ export function OverviewShell() {
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
-  const [featureListCount, setFeatureListCount] = useState(0);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -164,11 +163,11 @@ export function OverviewShell() {
       {active === 'features' && (
         <div className="flex h-full min-h-0 flex-col">
           <div className="shrink-0 border-b border-white/10 px-6 py-3">
-            <h2 className="text-base font-semibold text-white">{formatListSectionTitle('功能', featureListCount)}</h2>
+            <h2 className="text-base font-semibold text-white">功能</h2>
             <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；功能清单归属正式版本，导入时需选择 V 号</p>
           </div>
           <div className="min-h-0 flex-1">
-            <OverviewFeaturesPanel isAdmin={isAdmin} products={products} onListCountChange={setFeatureListCount} />
+            <OverviewFeaturesPanel isAdmin={isAdmin} products={products} />
           </div>
         </div>
       )}
@@ -561,22 +560,19 @@ function RequirementsTable({
 function OverviewFeaturesPanel({
   isAdmin,
   products,
-  onListCountChange,
 }: {
   isAdmin: boolean;
   products: Product[];
-  onListCountChange?: (count: number) => void;
 }) {
   const [productId, setProductId] = useState('');
 
   useEffect(() => {
     if (products.length === 0) {
       setProductId('');
-      onListCountChange?.(0);
       return;
     }
     setProductId((prev) => (prev && products.some((p) => p.id === prev) ? prev : products[0].id));
-  }, [products, onListCountChange]);
+  }, [products]);
 
   if (products.length === 0) {
     return <div className="text-center text-white/40 text-sm py-12">还没有可查看的产品，请先在「产品」中创建。</div>;
@@ -598,7 +594,6 @@ function OverviewFeaturesPanel({
         showImport={isAdmin}
         showCreate
         showReleaseLink={false}
-        onListCountChange={onListCountChange}
       />
     </div>
   );

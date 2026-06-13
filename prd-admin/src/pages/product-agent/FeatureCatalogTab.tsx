@@ -6,7 +6,6 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronRight, FolderTree, Plus, Search, Upload } from 'lucide-react';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import { searchDirectoryUsers } from '@/services';
 import { listFeatures, listReleases } from '@/services/real/productAgent';
 import { useEffectiveWorkflow } from './DynamicForm';
@@ -100,7 +99,6 @@ export function FeatureCatalogTab({
   showImport = true,
   showCreate = true,
   showReleaseLink = true,
-  onListCountChange,
 }: {
   productId: string;
   /** 主页跨产品：在工具栏「全部版本」左侧展示可搜索的产品下拉 */
@@ -113,7 +111,6 @@ export function FeatureCatalogTab({
   showImport?: boolean;
   showCreate?: boolean;
   showReleaseLink?: boolean;
-  onListCountChange?: (count: number) => void;
 }) {
   const navigate = useNavigate();
   const [features, setFeatures] = useState<Feature[]>([]);
@@ -187,10 +184,6 @@ export function FeatureCatalogTab({
     [tableRows, trackedOnly, productId],
   );
 
-  useEffect(() => {
-    onListCountChange?.(visibleRows.length);
-  }, [onListCountChange, visibleRows.length]);
-
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(visibleRows, {
     filename: `features-${productId}.csv`,
     headers: ['编号', '功能名称', '模块', '类型', '关联需求数'],
@@ -241,7 +234,7 @@ export function FeatureCatalogTab({
     <div className="flex h-full min-h-0 flex-col">
       {!productPicker && (
         <div className="shrink-0 border-b border-white/10 px-4 py-3">
-          <h2 className="text-base font-semibold text-white">{formatListSectionTitle('功能', visibleRows.length)}</h2>
+          <h2 className="text-base font-semibold text-white">功能</h2>
         </div>
       )}
       <div className="flex h-full min-h-0 flex-1">
