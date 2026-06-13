@@ -98,8 +98,6 @@ export function OverviewShell() {
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
-  const [productListCount, setProductListCount] = useState(0);
-  const [requirementListCount, setRequirementListCount] = useState(0);
   const [featureListCount, setFeatureListCount] = useState(0);
 
   const loadStats = useCallback(async () => {
@@ -154,13 +152,13 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'products' && (
-        <SectionShell title="产品" count={productListCount} desc="新增 / 修改 / 删除 / 筛选，点击进入单产品视图">
-          <ProductsSection onListCountChange={setProductListCount} />
+        <SectionShell title="产品" desc="新增 / 修改 / 删除 / 筛选，点击进入单产品视图">
+          <ProductsSection />
         </SectionShell>
       )}
       {active === 'requirements' && (
-        <SectionShell title="需求" count={requirementListCount} desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
-          <RequirementsTable isAdmin={isAdmin} products={products} onListCountChange={setRequirementListCount} />
+        <SectionShell title="需求" desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
+          <RequirementsTable isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
       {active === 'features' && (
@@ -425,11 +423,9 @@ function AdminImportButton({ onClick }: { onClick: () => void }) {
 function RequirementsTable({
   isAdmin,
   products,
-  onListCountChange,
 }: {
   isAdmin: boolean;
   products: Product[];
-  onListCountChange?: (count: number) => void;
 }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewRequirementRow[]>([]);
@@ -508,10 +504,6 @@ function RequirementsTable({
     void reload();
   }, [reload]);
 
-  useEffect(() => {
-    onListCountChange?.(filtered.length);
-  }, [filtered.length, onListCountChange]);
-
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
     filename: 'overview-requirements.csv',
     headers: ['ID', '标题', '产品', '分级', '状态', '处理人'],
@@ -549,7 +541,7 @@ function RequirementsTable({
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/requirement/${r.id}`)}
           columns={[
             { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.requirementNo}</span> },
-            { key: 'title', header: '标题', defaultWidth: 360, render: (r) => <TruncateCell text={r.title} className="text-white/90" /> },
+            { key: 'title', header: formatListSectionTitle('标题', filtered.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title} className="text-white/90" /> },
             { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
             { key: 'grade', header: '分级', defaultWidth: 72, resizable: false, render: (r) => GRADE_BADGE(r.grade) },
             { key: 'state', header: '状态', defaultWidth: 96, render: (r) => <TruncateCell text={(r.stateLabel ?? resolveRequirementStateLabel(r.currentState)) || '-'} maxChars={12} className="text-white/55 text-xs" /> },
@@ -663,7 +655,7 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/defect/${r.id}`)}
           columns={[
             { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.defectNo}</span> },
-            { key: 'title', header: '标题', defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
+            { key: 'title', header: formatListSectionTitle('标题', visibleRows.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
             { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
             { key: 'status', header: '状态', defaultWidth: 88, render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },
             { key: 'severity', header: '严重程度', defaultWidth: 88, render: (r) => SEVERITY_BADGE(defectSeverityTierLabel(r)) },

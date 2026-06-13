@@ -424,7 +424,6 @@ function RequirementsTab({ productId }: { productId: string }) {
     [filterBarFiltered, trackedOnly, productId],
   );
 
-  const listCount = filtered.length;
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
     filename: `需求-${productId}.csv`,
@@ -467,9 +466,6 @@ function RequirementsTab({ productId }: { productId: string }) {
   }
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
-      <div className="shrink-0 border-b border-white/10 pb-2">
-        <h2 className="text-base font-semibold text-white">{formatListSectionTitle('需求', listCount)}</h2>
-      </div>
       <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">
@@ -610,7 +606,7 @@ function RequirementDataTable({
         <tr>
           <ListTableSelectionHeader selection={selection} disabled={rows.length === 0} />
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">ID</th>
-          <th className="px-3 py-2.5 font-medium">标题</th>
+          <th className="px-3 py-2.5 font-medium">{formatListSectionTitle('标题', items.length)}</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">分级</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">MAP 状态</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">处理人</th>
@@ -733,6 +729,11 @@ function DefectsTab({ productId }: { productId: string }) {
           </div>
         ) : (
         <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-3 px-3 py-2 text-[11px] font-medium text-white/45 border-b border-white/10">
+            <span className="w-24 shrink-0">ID</span>
+            <span className="min-w-0 flex-1">{formatListSectionTitle('标题', filtered.length)}</span>
+            <span className="w-16 shrink-0 text-right">状态</span>
+          </div>
           {filtered.map((d) => (
             <SelectableRow
               key={d.id}

@@ -15,6 +15,7 @@ import { readFavoriteProductIds, toggleFavoriteProductId } from './productFavori
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
 import { ListCheckbox } from './listSelection';
 import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
+import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import './product-cards.css';
 
 const SEARCH_BOX =
@@ -40,7 +41,7 @@ function writeProductViewMode(mode: ProductViewMode) {
   }
 }
 
-export function ProductsSection({ onListCountChange }: { onListCountChange?: (count: number) => void }) {
+export function ProductsSection() {
   const navigate = useNavigate();
   const { categories } = useProductCategories();
   const [products, setProducts] = useState<Product[]>([]);
@@ -97,10 +98,6 @@ export function ProductsSection({ onListCountChange }: { onListCountChange?: (co
   const visibleProducts = favoritesOnly
     ? products.filter((p) => favoriteIds.has(p.id))
     : products;
-
-  useEffect(() => {
-    onListCountChange?.(visibleProducts.length);
-  }, [onListCountChange, visibleProducts.length]);
 
   const { selection, exportSelected } = useOverviewTableSelection(visibleProducts, {
     filename: 'products.csv',
@@ -303,7 +300,7 @@ export function ProductsSection({ onListCountChange }: { onListCountChange?: (co
             },
             {
               key: 'name',
-              header: '产品名称',
+              header: formatListSectionTitle('产品名称', visibleProducts.length),
               defaultWidth: 180,
               render: (p) => <TruncateCell text={p.name} maxChars={24} className="text-white font-medium" />,
             },
