@@ -1,11 +1,11 @@
 /** 版本详情页：需求 / 功能 / 缺陷列表列定义（空数据仍渲染表头） */
-import type { Feature, Requirement } from './types';
+import type { Feature, Requirement, WorkflowDefinition } from './types';
 import { ITEM_GRADE_LABEL, defectSeverityTierLabel, defectStatusLabel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import type { TracedDefect } from '@/services/real/productAgent';
 import { workflowFmtDate } from './workflowDetailUi';
 
-export function requirementDetailColumns(reqWorkflow: { states?: { key: string; label: string }[] } | null) {
+export function requirementDetailColumns(reqWorkflow?: WorkflowDefinition | null) {
   return [
     { header: '编号', width: '10%', render: (row: { id: string }) => <span className="font-mono text-cyan-200/80">{(row as Requirement).requirementNo}</span> },
     { header: '标题', width: '30%', render: (row: { id: string }) => <span className="text-white/85 truncate block" title={(row as Requirement).title}>{(row as Requirement).title}</span> },

@@ -1,4 +1,5 @@
 using PrdAgent.Core.Models;
+using Xunit;
 
 namespace PrdAgent.Api.Tests.Models;
 

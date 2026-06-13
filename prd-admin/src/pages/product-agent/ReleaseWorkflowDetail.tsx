@@ -34,7 +34,6 @@ import type {
   Requirement,
 } from './types';
 import { useEffectiveWorkflow } from './DynamicForm';
-import { RequirementLinkList } from './WorkflowObjectLinkList';
 import { WorkflowAttributeTable, WorkflowDetailCard, WorkflowRecordTable } from './workflowDetailUi';
 import { buildReleaseBasicInfoRows } from './versionBasicInfoCatalog';
 import { defectDetailColumns, featureDetailColumns, requirementDetailColumns } from './versionDetailTables';
