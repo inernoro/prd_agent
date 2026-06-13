@@ -4351,7 +4351,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        return await ImportRequirementsCoreAsync(request, userId);
+        return await ImportRequirementsCoreAsync(request, userId, productId);
     }
 
     /// <summary>跨产品批量导入需求（按行「应用」匹配产品，未匹配则跳过）。</summary>
@@ -4363,7 +4363,10 @@ public class ProductAgentController : ControllerBase
         return await ImportRequirementsCoreAsync(request, GetUserId());
     }
 
-    private async Task<IActionResult> ImportRequirementsCoreAsync(ImportRequirementsRequest request, string userId)
+    private async Task<IActionResult> ImportRequirementsCoreAsync(
+        ImportRequirementsRequest request,
+        string userId,
+        string? forcedProductId = null)
     {
         var rows = (request.Rows ?? new()).Where(r => !string.IsNullOrWhiteSpace(r.Title)).ToList();
         if (rows.Count == 0)
@@ -4379,6 +4382,12 @@ public class ProductAgentController : ControllerBase
                 Builders<Product>.Filter.In(p => p.Id, scope));
         var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
         var productIds = products.Select(p => p.Id).ToHashSet();
+
+        if (!string.IsNullOrWhiteSpace(forcedProductId))
+        {
+            if (!productIds.Contains(forcedProductId))
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        }
 
         var wfByProduct = new Dictionary<string, (string WfId, string InitialState)>();
         async Task<(string WfId, string InitialState)> ResolveRequirementWorkflowAsync(string pid)
@@ -4402,8 +4411,20 @@ public class ProductAgentController : ControllerBase
 
         foreach (var row in rows)
         {
-            var (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
-                products, row.Title, row.SourceFields);
+            string? targetProductId;
+            string? label;
+            bool matched;
+            if (!string.IsNullOrWhiteSpace(forcedProductId))
+            {
+                targetProductId = forcedProductId;
+                label = products.FirstOrDefault(p => p.Id == forcedProductId)?.Name;
+                matched = true;
+            }
+            else
+            {
+                (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
+                    products, row.Title, row.SourceFields);
+            }
             if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
             {
                 skipped++;
@@ -5267,7 +5288,7 @@ public class ProductAgentController : ControllerBase
         var defById = await LoadWorkflowDefsByIdsAsync(items.Select(r => r.WorkflowDefId));
         var rows = items
             .Where(r => string.IsNullOrWhiteSpace(grade) || r.Grade == grade)
-            .Where(r => !mine || r.AssigneeId == userId)
+            .Where(r => !mine || r.AssigneeId == userId || r.OwnerId == userId)
             .Where(r => string.IsNullOrWhiteSpace(keyword) || (r.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || r.RequirementNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(r => r.UpdatedAt)
             .Select(r =>

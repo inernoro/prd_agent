@@ -14,6 +14,7 @@ import {
 import type { Product } from './types';
 import { parseDefectImportFile } from './defectImportParse';
 import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
+import { applyFallbackProductToRows, rowHasProductRouteHint } from './requirementImportRouting';
 
 export type HistoryImportType = 'requirement' | 'feature' | 'defect' | 'version';
 
@@ -68,12 +69,15 @@ export function parseProductHistoryCsv(text: string, _options?: { entityType?: H
   const statusIndex = indexOf('状态', '生命周期', 'status', 'lifecycle');
   const externalIdIndex = indexOf('需求 id', '外部id', '外部 id', 'externalid', 'external id', '编号', 'id', '缺陷id');
   const appIndex = indexOf('应用', '应用/产品');
+  const productIndex = indexOf('产品', '所属产品', '产品名称', '产品线');
   const plannedIndex = indexOf('计划发布时间', '预计结束', 'planned');
   const completedIndex = indexOf('实际发布时间', '完成时间', 'released', 'completed');
   const effectiveTitleIndex = titleIndex >= 0 ? titleIndex : 0;
   return parsed.slice(1).map((values) => {
     const rawGrade = gradeIndex >= 0 ? values[gradeIndex]?.trim() : undefined;
     const appName = appIndex >= 0 ? values[appIndex]?.trim() : undefined;
+    const productName = productIndex >= 0 ? values[productIndex]?.trim() : undefined;
+    const routeLabel = appName || productName;
     return {
       title: values[effectiveTitleIndex]?.trim() ?? '',
       description: descriptionIndex >= 0 ? values[descriptionIndex]?.trim() : undefined,
@@ -83,7 +87,7 @@ export function parseProductHistoryCsv(text: string, _options?: { entityType?: H
       externalId: externalIdIndex >= 0 ? values[externalIdIndex]?.trim() : undefined,
       plannedAt: plannedIndex >= 0 ? values[plannedIndex]?.trim() : undefined,
       completedAt: completedIndex >= 0 ? values[completedIndex]?.trim() : undefined,
-      sourceFields: appName ? { 应用: appName } : undefined,
+      sourceFields: routeLabel ? { 应用: routeLabel } : undefined,
     };
   }).filter((row) => row.title);
 }
@@ -105,6 +109,7 @@ export function ProductHistoryImportDialog({
   const inputRef = useRef<HTMLInputElement>(null);
   const needsProductPicker = !(crossProductRoute && type === 'requirement');
   const [productId, setProductId] = useState(products[0]?.id ?? '');
+  const [fallbackProductId, setFallbackProductId] = useState(products[0]?.id ?? '');
   const [fileNames, setFileNames] = useState<string[]>([]);
   const [rows, setRows] = useState<ImportSimpleItemRow[]>([]);
   const [rtfFiles, setRtfFiles] = useState<File[]>([]);
@@ -155,14 +160,27 @@ export function ProductHistoryImportDialog({
     }
   };
 
+  const fallbackProduct = useMemo(
+    () => products.find((product) => product.id === fallbackProductId),
+    [fallbackProductId, products],
+  );
+
   const commit = async () => {
     if (rows.length === 0) return;
     if (needsProductPicker && !productId) return;
+    const baseRows = rows as ImportRequirementRow[];
+    const rowsToImport = crossProductRoute && type === 'requirement'
+      ? applyFallbackProductToRows(baseRows, fallbackProduct?.name)
+      : baseRows;
+    if (crossProductRoute && type === 'requirement' && rowsToImport.every((row) => !rowHasProductRouteHint(row))) {
+      setMessage('无法路由：请为 CSV 增加「应用」或「产品」列，或选择「无应用列时默认归属产品」。');
+      return;
+    }
     setBusy(true);
     const result = type === 'requirement'
       ? (crossProductRoute
-        ? await importOverviewRequirements(rows as ImportRequirementRow[])
-        : await importRequirements(productId, rows as ImportRequirementRow[]))
+        ? await importOverviewRequirements(rowsToImport)
+        : await importRequirements(productId, rowsToImport))
       : type === 'feature'
         ? await importFeatures(productId, rows)
         : type === 'defect'
@@ -173,9 +191,20 @@ export function ProductHistoryImportDialog({
       setMessage(result.error?.message ?? '导入失败');
       return;
     }
+    const created = result.data.created ?? 0;
+    const updated = result.data.updated ?? 0;
+    const skipped = result.data.skipped ?? 0;
+    if (created + updated === 0) {
+      setMessage(
+        skipped > 0
+          ? `未写入任何需求：${skipped} 条因「应用/产品」未匹配系统产品被跳过。请检查 CSV 列或默认归属产品。`
+          : '未写入任何需求，请检查文件内容。',
+      );
+      return;
+    }
     setMessage(
-      `导入完成：新增 ${result.data.created} 条，更新 ${result.data.updated ?? 0} 条${
-        (result.data.skipped ?? 0) > 0 ? `，${result.data.skipped} 条「应用」未匹配已跳过` : ''
+      `导入完成：新增 ${created} 条，更新 ${updated} 条${
+        skipped > 0 ? `，${skipped} 条「应用」未匹配已跳过` : ''
       }。`,
     );
     await onImported();
@@ -186,6 +215,7 @@ export function ProductHistoryImportDialog({
       <RequirementRtfImportDialog
         productId={productId || products[0]?.id || ''}
         crossProductRoute={crossProductRoute}
+        fallbackProductName={crossProductRoute ? fallbackProduct?.name : undefined}
         files={rtfFiles}
         onClose={onClose}
         onImported={onImported}
@@ -201,13 +231,28 @@ export function ProductHistoryImportDialog({
             <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
             <div className="mt-1 text-xs text-white/45">
               {crossProductRoute && type === 'requirement'
-                ? '可重复导入；按「应用」列匹配系统产品，未匹配的行跳过。'
+                ? '按「应用」或「产品」列匹配系统产品；无该列时可指定默认归属产品。'
                 : '可重复导入；相同 TAPD ID 会更新原记录，ID 与 TAPD 保持一致。'}
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭"><X size={17} /></button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {crossProductRoute && type === 'requirement' && (
+            <label className="mb-4 block">
+              <span className="mb-1.5 block text-xs text-white/50">无「应用」列时默认归属产品</span>
+              <select
+                value={fallbackProductId}
+                onChange={(event) => setFallbackProductId(event.target.value)}
+                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
+              >
+                {products.map((product) => (
+                  <option key={product.id} value={product.id}>{product.name}</option>
+                ))}
+              </select>
+              <span className="mt-1 block text-[10px] text-white/35">仅对缺少「应用/产品」列或标题【前缀】的行生效。</span>
+            </label>
+          )}
           {needsProductPicker && (
             <label className="mb-4 block">
               <span className="mb-1.5 block text-xs text-white/50">归属产品</span>
@@ -243,7 +288,7 @@ export function ProductHistoryImportDialog({
         <div className="flex shrink-0 items-center justify-between border-t border-white/10 px-5 py-4">
           <div className="text-xs text-white/35">
             {crossProductRoute && type === 'requirement'
-              ? '按「应用」列匹配系统产品，未匹配跳过'
+              ? '按「应用/产品」列路由；无列时使用默认归属产品'
               : selectedProduct ? `将写入：${selectedProduct.name}` : '请选择产品'}
           </div>
           <div className="flex gap-2">

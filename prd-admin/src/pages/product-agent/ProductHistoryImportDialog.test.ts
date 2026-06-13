@@ -20,6 +20,14 @@ describe('parseProductHistoryCsv', () => {
     }]);
   });
 
+  it('maps 产品 column to route label', () => {
+    const rows = parseProductHistoryCsv([
+      '外部 ID,标题,产品,等级',
+      '1,需求甲,产品管理系统,p1',
+    ].join('\n'));
+    expect(rows[0].sourceFields).toEqual({ 应用: '产品管理系统' });
+  });
+
   it('falls back to the first column as title', () => {
     expect(parseProductHistoryCsv('未知列,内容\n需求甲,说明')).toEqual([{
       title: '需求甲',
