@@ -373,6 +373,8 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
                       selectedCount={selected.size}
                       submitting={submitting}
                       progress={progress}
+                      results={results}
+                      error={error}
                     />
 
                     <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>
@@ -522,10 +524,12 @@ function EmptyBlock({ icon, title, desc }: { icon: ReactNode; title: string; des
   );
 }
 
-function StatusPill({ icon, text, tone }: { icon: ReactNode; text: string; tone: 'teal' | 'gold' | 'slate' }) {
-  const color = tone === 'teal' ? 'rgb(94,234,212)' : tone === 'gold' ? 'rgb(252,211,77)' : 'rgb(148,163,184)';
-  const border = tone === 'teal' ? 'rgba(45,212,191,0.32)' : tone === 'gold' ? 'rgba(245,158,11,0.34)' : 'rgba(148,163,184,0.18)';
-  const bg = tone === 'teal' ? 'rgba(20,184,166,0.10)' : tone === 'gold' ? 'rgba(245,158,11,0.10)' : 'rgba(148,163,184,0.08)';
+type StatusTone = 'teal' | 'gold' | 'slate' | 'red';
+
+function StatusPill({ icon, text, tone }: { icon: ReactNode; text: string; tone: StatusTone }) {
+  const color = statusColor(tone);
+  const border = statusBorder(tone);
+  const bg = statusBackground(tone);
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1" style={{ color, borderColor: border, background: bg }}>
       {icon}
@@ -534,25 +538,76 @@ function StatusPill({ icon, text, tone }: { icon: ReactNode; text: string; tone:
   );
 }
 
-function TransferPreview({ node, direction, selectedCount, submitting, progress }: {
+function statusColor(tone: StatusTone) {
+  if (tone === 'teal') return 'rgb(94,234,212)';
+  if (tone === 'gold') return 'rgb(252,211,77)';
+  if (tone === 'red') return 'rgb(252,165,165)';
+  return 'rgb(148,163,184)';
+}
+
+function statusBorder(tone: StatusTone) {
+  if (tone === 'teal') return 'rgba(45,212,191,0.32)';
+  if (tone === 'gold') return 'rgba(245,158,11,0.34)';
+  if (tone === 'red') return 'rgba(248,113,113,0.34)';
+  return 'rgba(148,163,184,0.18)';
+}
+
+function statusBackground(tone: StatusTone) {
+  if (tone === 'teal') return 'rgba(20,184,166,0.10)';
+  if (tone === 'gold') return 'rgba(245,158,11,0.10)';
+  if (tone === 'red') return 'rgba(127,29,29,0.14)';
+  return 'rgba(148,163,184,0.08)';
+}
+
+function TransferPreview({ node, direction, selectedCount, submitting, progress, results, error }: {
   node: PeerNode | null;
   direction: PeerTransferDirection;
   selectedCount: number;
   submitting: boolean;
   progress: { step: number; stage: string; startedAt: number } | null;
+  results: TransferItemResult[] | null;
+  error: string | null;
 }) {
   const directionText = direction === 'push' ? '发送' : direction === 'pull' ? '拉取' : '双向';
   const activeStep = progress?.step ?? 0;
+  const successCount = results?.filter((r) => r.ok).length ?? 0;
+  const failedCount = results?.filter((r) => !r.ok).length ?? 0;
+  const status = getTransferStatus({ submitting, results, error, selectedCount });
+  const statusTone = transferStatusTone(status);
   return (
     <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Activity size={16} />
-          传输预览
+          传输状态
         </div>
-        <StatusPill text={submitting ? '正在跨系统同步' : '待开始'} icon={submitting ? <MapSpinner size={12} /> : <CheckCircle2 size={13} />} tone={submitting ? 'gold' : 'slate'} />
+        <StatusPill
+          text={transferStatusLabel(status)}
+          icon={submitting ? <MapSpinner size={12} /> : status === 'success' ? <CheckCircle2 size={13} /> : status === 'failed' || status === 'partial' ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
+          tone={statusTone}
+        />
       </div>
-      <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'linear-gradient(180deg, rgba(15,23,42,0.78), rgba(15,23,42,0.48))' }}>
+
+      <div className="mb-3 rounded-2xl border px-4 py-3" style={{
+        borderColor: statusBorder(statusTone),
+        background: statusBackground(statusTone),
+      }}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold" style={{ color: statusColor(statusTone) }}>{transferStatusLabel(status)}</div>
+            <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
+              {transferStatusDesc(status, { selectedCount, successCount, failedCount, error })}
+            </div>
+          </div>
+          <div className="grid shrink-0 grid-cols-3 gap-2 text-center">
+            <MiniStat label="已选" value={selectedCount} />
+            <MiniStat label="成功" value={successCount} tone="green" />
+            <MiniStat label="失败" value={failedCount} tone={failedCount > 0 ? 'red' : 'slate'} />
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.54)' }}>
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
           <TransferNode
             label="本地"
@@ -593,14 +648,14 @@ function TransferPreview({ node, direction, selectedCount, submitting, progress 
 
         <div className="mt-4 grid grid-cols-4 gap-2">
           {STEPS.map((s, index) => {
-            const state = resultsState(index + 1, activeStep, submitting);
+            const state = resultsState(index + 1, activeStep, submitting, results, failedCount, error);
             return (
               <div
                 key={s.title}
                 className="rounded-xl border px-2.5 py-2"
                 style={{
-                  borderColor: state === 'active' ? 'rgba(45,212,191,0.46)' : state === 'done' ? 'rgba(34,197,94,0.28)' : 'rgba(148,163,184,0.14)',
-                  background: state === 'active' ? 'rgba(20,184,166,0.10)' : state === 'done' ? 'rgba(22,101,52,0.10)' : 'rgba(15,23,42,0.34)',
+                  borderColor: state === 'active' ? 'rgba(45,212,191,0.46)' : state === 'done' ? 'rgba(34,197,94,0.28)' : state === 'failed' ? 'rgba(248,113,113,0.34)' : 'rgba(148,163,184,0.14)',
+                  background: state === 'active' ? 'rgba(20,184,166,0.10)' : state === 'done' ? 'rgba(22,101,52,0.10)' : state === 'failed' ? 'rgba(127,29,29,0.14)' : 'rgba(15,23,42,0.34)',
                 }}
               >
                 <div className="flex items-center gap-1.5">
@@ -608,13 +663,15 @@ function TransferPreview({ node, direction, selectedCount, submitting, progress 
                     width: 7,
                     height: 7,
                     borderRadius: 999,
-                    background: state === 'active' ? 'rgb(94,234,212)' : state === 'done' ? 'rgb(134,239,172)' : 'rgb(100,116,139)',
+                    background: state === 'active' ? 'rgb(94,234,212)' : state === 'done' ? 'rgb(134,239,172)' : state === 'failed' ? 'rgb(252,165,165)' : 'rgb(100,116,139)',
                     display: 'inline-block',
                     flexShrink: 0,
                   }} />
                   <span className="truncate text-[11px] font-semibold">{s.title}</span>
                 </div>
-                <div className="mt-1 truncate text-[10px]" style={{ color: 'var(--text-muted)' }}>{s.desc}</div>
+                <div className="mt-1 truncate text-[10px]" style={{ color: state === 'failed' ? 'rgb(252,165,165)' : 'var(--text-muted)' }}>
+                  {state === 'done' ? '已完成' : state === 'active' ? '进行中' : state === 'failed' ? '未成功' : s.desc}
+                </div>
               </div>
             );
           })}
@@ -623,6 +680,65 @@ function TransferPreview({ node, direction, selectedCount, submitting, progress 
       <div className="mt-3 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
         {progress ? progress.stage : '开始后会按顺序执行扫描、图片重传、合并、回读四步。'}
       </div>
+    </div>
+  );
+}
+
+type TransferStatus = 'idle' | 'ready' | 'running' | 'success' | 'partial' | 'failed';
+
+function getTransferStatus({ submitting, results, error, selectedCount }: {
+  submitting: boolean;
+  results: TransferItemResult[] | null;
+  error: string | null;
+  selectedCount: number;
+}): TransferStatus {
+  if (submitting) return 'running';
+  if (error) return 'failed';
+  if (results && results.length > 0) return results.some((r) => !r.ok) ? 'partial' : 'success';
+  if (selectedCount > 0) return 'ready';
+  return 'idle';
+}
+
+function transferStatusLabel(status: TransferStatus) {
+  switch (status) {
+    case 'success': return '同步成功';
+    case 'partial': return '部分失败';
+    case 'failed': return '同步失败';
+    case 'running': return '同步中';
+    case 'ready': return '可开始';
+    default: return '待选择';
+  }
+}
+
+function transferStatusDesc(status: TransferStatus, args: {
+  selectedCount: number;
+  successCount: number;
+  failedCount: number;
+  error: string | null;
+}) {
+  switch (status) {
+    case 'success': return `${args.successCount} 个知识库已完成跨系统同步，列表和状态标识会刷新。`;
+    case 'partial': return `${args.successCount} 个成功，${args.failedCount} 个失败。失败条目不会写入成功同步标识。`;
+    case 'failed': return args.error || '本次传输未成功，不会写入成功同步标识。';
+    case 'running': return `正在处理 ${args.selectedCount} 个知识库，请保持面板打开。`;
+    case 'ready': return `已选择 ${args.selectedCount} 个知识库，点击开始后会显示每一步结果。`;
+    default: return '先选择一个或多个知识库。';
+  }
+}
+
+function transferStatusTone(status: TransferStatus): StatusTone {
+  if (status === 'success') return 'teal';
+  if (status === 'partial' || status === 'running') return 'gold';
+  if (status === 'failed') return 'red';
+  return 'slate';
+}
+
+function MiniStat({ label, value, tone = 'slate' }: { label: string; value: number; tone?: 'green' | 'red' | 'slate' }) {
+  const color = tone === 'green' ? 'rgb(134,239,172)' : tone === 'red' ? 'rgb(252,165,165)' : 'rgb(203,213,225)';
+  return (
+    <div className="min-w-[42px] rounded-lg border px-2 py-1" style={{ borderColor: 'rgba(148,163,184,0.14)', background: 'rgba(15,23,42,0.40)' }}>
+      <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="text-sm font-semibold" style={{ color }}>{value}</div>
     </div>
   );
 }
@@ -655,7 +771,9 @@ function TransferNode({ label, title, desc, icon, active }: {
   );
 }
 
-function resultsState(step: number, activeStep: number, submitting: boolean) {
+function resultsState(step: number, activeStep: number, submitting: boolean, results: TransferItemResult[] | null, failedCount: number, error: string | null) {
+  if (error) return step === 1 ? 'failed' : 'idle';
+  if (results && results.length > 0) return failedCount > 0 && step === STEPS.length ? 'failed' : 'done';
   if (!submitting) return 'idle';
   if (step < activeStep) return 'done';
   if (step === activeStep) return 'active';
