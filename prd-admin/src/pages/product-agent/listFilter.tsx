@@ -137,6 +137,7 @@ function FilterBar<T>({
   showFilterSettings,
   searchBoxClassName,
   trailing,
+  showResultCount,
 }: {
   items: T[];
   fields: FilterFieldDef<T>[];
