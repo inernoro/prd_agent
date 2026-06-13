@@ -85,12 +85,12 @@ export function ShortVideoMaterialDialog({ storeId, storeName, onClose, onCreate
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[#05070c]/85 px-4 py-6 backdrop-blur-[3px]">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[#03050a]/95 px-4 py-6 backdrop-blur-md">
       <div
         className="flex w-full max-w-[980px] min-h-0 flex-col overflow-hidden rounded-[10px] border border-token-subtle shadow-2xl"
         style={{
           height: 'min(740px, calc(100vh - 48px))',
-          background: 'var(--panel-solid)',
+          background: 'var(--bg-elevated)',
           boxShadow: '0 28px 90px rgba(0, 0, 0, 0.55)',
         }}
       >
