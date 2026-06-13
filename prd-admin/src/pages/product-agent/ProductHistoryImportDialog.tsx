@@ -169,7 +169,7 @@ export function ProductHistoryImportDialog({
         <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
           <div>
             <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
-            <div className="mt-1 text-xs text-white/45">可重复导入；带外部 ID 的记录会更新原数据，不会重复创建。</div>
+            <div className="mt-1 text-xs text-white/45">可重复导入；相同 TAPD ID 会更新原记录，ID 与 TAPD 保持一致。</div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭"><X size={17} /></button>
         </div>
@@ -197,7 +197,7 @@ export function ProductHistoryImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-white/10">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">外部 ID</th><th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th></tr></thead>
+                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th><th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th></tr></thead>
                 <tbody>{rows.slice(0, 30).map((row, index) => <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5"><td className="px-3 py-2 text-white/75">{row.title}</td><td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td><td className="px-3 py-2 text-white/45">{type === 'defect' ? (row.severity ? `${row.severity}（TAPD:${row.tapdSeverityRaw || '—'}）` : (row.tapdSeverityRaw || '—')) : (row.grade || '-')}</td><td className="px-3 py-2 text-white/45">{row.status || '-'}</td></tr>)}</tbody>
               </table>
             </div>

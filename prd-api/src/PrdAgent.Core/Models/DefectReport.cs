@@ -8,7 +8,7 @@ public class DefectReport
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>缺陷编号（如 DEF-2025-0001，自动生成）</summary>
+    /// <summary>缺陷 ID（TAPD 规则：纯数字；导入保留 TAPD ID，新建在本产品最大 ID 基础上 +1）</summary>
     public string DefectNo { get; set; } = string.Empty;
 
     /// <summary>使用的模板 ID</summary>

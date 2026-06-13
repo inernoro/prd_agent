@@ -559,7 +559,7 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
           rows={filtered}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/requirement/${r.id}`)}
           columns={[
-            { header: '编号', width: '10%', className: 'truncate', render: (r) => <span className="text-white/40 text-xs">{r.requirementNo}</span> },
+            { header: 'ID', width: '10%', className: 'truncate', render: (r) => <span className="text-white/40 text-xs font-mono">{r.requirementNo}</span> },
             { header: '标题', width: '28%', className: 'truncate', render: (r) => <span className="text-white/90 truncate block" title={r.title}>{r.title}</span> },
             { header: '产品', width: '12%', className: 'truncate', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
             { header: '分级', width: '7%', render: (r) => GRADE_BADGE(r.grade) },
@@ -641,7 +641,7 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
           rows={rows}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/defect/${r.id}`)}
           columns={[
-            { header: '编号', render: (r) => <span className="text-white/40 text-xs">{r.defectNo}</span> },
+            { header: 'ID', render: (r) => <span className="text-white/40 text-xs font-mono">{r.defectNo}</span> },
             { header: '标题', render: (r) => <span className="text-white/90">{r.title || '(无标题)'}</span> },
             { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
             { header: '状态', render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },

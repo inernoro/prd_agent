@@ -305,7 +305,6 @@ export function ProductDefectDetail({
           <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono bg-red-500/10 text-red-200/90 border border-red-500/25">
             <Bug size={12} /> {defect.defectNo}
           </span>
-          {defect.productExternalId ? <span className="text-[11px] text-white/35 font-mono truncate">TAPD {defect.productExternalId}</span> : null}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button type="button" onClick={convert} disabled={converting} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-cyan-200 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50">

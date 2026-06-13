@@ -14,7 +14,7 @@ public class Requirement
     /// <summary>所属产品 ID</summary>
     public string ProductId { get; set; } = string.Empty;
 
-    /// <summary>需求编号（如 REQ-2026-0001，自动生成）</summary>
+    /// <summary>需求 ID（TAPD 规则：纯数字；导入保留 TAPD ID，新建在本产品最大 ID 基础上 +1）</summary>
     public string RequirementNo { get; set; } = string.Empty;
 
     /// <summary>需求标题</summary>

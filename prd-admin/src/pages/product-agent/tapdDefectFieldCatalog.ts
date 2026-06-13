@@ -66,7 +66,7 @@ export interface TapdDefectSidebarField {
 }
 
 export const TAPD_DEFECT_SIDEBAR_FIELDS: TapdDefectSidebarField[] = [
-  { key: TAPD_DEFECT_FIELD.defectId, label: '缺陷ID', kind: 'readonly', entitySource: 'externalId' },
+  { key: TAPD_DEFECT_FIELD.defectId, label: 'ID', kind: 'readonly', entitySource: 'externalId' },
   { key: TAPD_DEFECT_FIELD.status, label: '状态', kind: 'readonly', entitySource: 'status' },
   { key: TAPD_DEFECT_FIELD.currentOwner, label: '处理人', kind: 'text' },
   { key: TAPD_DEFECT_FIELD.reporter, label: '创建人', kind: 'readonly', entitySource: 'reporterName' },

@@ -957,7 +957,7 @@ public class ProductAgentController : ControllerBase
         var req = new Requirement
         {
             ProductId = productId,
-            RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
+            RequirementNo = await GenerateNextTapdStyleRequirementIdAsync(productId),
             Title = request.Title.Trim(),
             Description = request.Description?.Trim(),
             Grade = string.IsNullOrWhiteSpace(request.Grade) ? ProductItemGrade.P2 : request.Grade,
@@ -2185,7 +2185,7 @@ public class ProductAgentController : ControllerBase
 
         var defect = new DefectReport
         {
-            DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
+            DefectNo = await GenerateNextTapdStyleDefectIdAsync(productId),
             Title = req.Title,
             RawContent = req.Description ?? string.Empty,
             Grade = req.Grade,
@@ -2222,7 +2222,7 @@ public class ProductAgentController : ControllerBase
         var req = new Requirement
         {
             ProductId = productId,
-            RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
+            RequirementNo = await GenerateNextTapdStyleRequirementIdAsync(productId),
             Title = string.IsNullOrWhiteSpace(defect.Title) ? $"由缺陷 {defect.DefectNo} 转化" : defect.Title!.Trim(),
             Description = defect.RawContent,
             Grade = ProductItemGrade.All.Contains(defect.Grade ?? "") ? defect.Grade! : ProductItemGrade.P2,
@@ -2625,7 +2625,7 @@ public class ProductAgentController : ControllerBase
             assigneeName = (await _db.Users.Find(u => u.UserId == request.AssigneeId).FirstOrDefaultAsync())?.DisplayName;
         var defect = new DefectReport
         {
-            DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
+            DefectNo = await GenerateNextTapdStyleDefectIdAsync(productId),
             Title = request.Title.Trim(),
             RawContent = request.Description?.Trim() ?? string.Empty,
             Grade = ProductItemGrade.All.Contains(request.Grade ?? "") ? request.Grade : null,
@@ -3392,7 +3392,7 @@ public class ProductAgentController : ControllerBase
                     var req = new Requirement
                     {
                         ProductId = productId,
-                        RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
+                        RequirementNo = await GenerateNextTapdStyleRequirementIdAsync(productId),
                         Title = title,
                         Description = description,
                         Grade = grade,
@@ -3430,7 +3430,7 @@ public class ProductAgentController : ControllerBase
                     var (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
                     var defect = new DefectReport
                     {
-                        DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
+                        DefectNo = await GenerateNextTapdStyleDefectIdAsync(productId),
                         Title = title,
                         RawContent = description ?? string.Empty,
                         Grade = grade,
@@ -3833,7 +3833,11 @@ public class ProductAgentController : ControllerBase
                     r.ProductId == productId &&
                     !r.IsDeleted &&
                     r.SourceSystem == sourceSystem &&
-                    r.ExternalId == externalId).FirstOrDefaultAsync();
+                    r.ExternalId == externalId).FirstOrDefaultAsync()
+                  ?? await _db.Requirements.Find(r =>
+                    r.ProductId == productId &&
+                    !r.IsDeleted &&
+                    r.RequirementNo == externalId).FirstOrDefaultAsync();
             }
             var importedState = RequirementWorkflowCatalog.MapImportedStatusLabel(row.SourceStatus) ?? initialState;
             if (existing != null)
@@ -3847,6 +3851,8 @@ public class ProductAgentController : ControllerBase
                     .Set(r => r.UpdatedAt, now);
                 if (!string.IsNullOrWhiteSpace(row.SourceStatus))
                     update = update.Set(r => r.CurrentState, importedState).Set(r => r.StateEnteredAt, now);
+                if (!string.IsNullOrWhiteSpace(externalId))
+                    update = update.Set(r => r.RequirementNo, externalId);
                 await _db.Requirements.UpdateOneAsync(r => r.Id == existing.Id, update);
                 updated++;
                 continue;
@@ -3854,7 +3860,7 @@ public class ProductAgentController : ControllerBase
             var req = new Requirement
             {
                 ProductId = productId,
-                RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
+                RequirementNo = await ResolveImportRequirementNoAsync(productId, externalId),
                 Title = row.Title!.Trim(),
                 Description = row.Description?.Trim(),
                 Grade = ProductItemGrade.All.Contains(row.Grade ?? "") ? row.Grade! : ProductItemGrade.P2,
@@ -4159,7 +4165,9 @@ public class ProductAgentController : ControllerBase
             var existing = string.IsNullOrWhiteSpace(externalId)
                 ? null
                 : await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
-                    d.ProductSourceSystem == sourceSystem && d.ProductExternalId == externalId).FirstOrDefaultAsync();
+                    d.ProductSourceSystem == sourceSystem && d.ProductExternalId == externalId).FirstOrDefaultAsync()
+                  ?? await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
+                    d.DefectNo == externalId).FirstOrDefaultAsync();
             var rawTapdSeverity = row.TapdSeverityRaw?.Trim();
             string? severityLevel = null;
             if (!string.IsNullOrWhiteSpace(row.Severity) && DefectSeverityCatalog.AllLevels.Contains(row.Severity.Trim()))
@@ -4167,6 +4175,11 @@ public class ProductAgentController : ControllerBase
             else if (!string.IsNullOrWhiteSpace(rawTapdSeverity))
                 severityLevel = DefectSeverityCatalog.TryNormalizeTapdToLevel(rawTapdSeverity);
             var structuredPatch = DefectSeverityCatalog.BuildImportStructuredPatch(rawTapdSeverity, severityLevel);
+            if (!string.IsNullOrWhiteSpace(externalId))
+            {
+                structuredPatch = TapdDefectFieldCatalog.MergeStructuredData(structuredPatch,
+                    new Dictionary<string, string> { [TapdDefectFieldCatalog.DefectId] = externalId });
+            }
             if (existing != null)
             {
                 var u = Builders<DefectReport>.Update
@@ -4179,6 +4192,8 @@ public class ProductAgentController : ControllerBase
                     var mergedStructured = TapdDefectFieldCatalog.MergeStructuredData(existing.StructuredData, structuredPatch);
                     u = u.Set(d => d.StructuredData, mergedStructured);
                 }
+                if (!string.IsNullOrWhiteSpace(externalId))
+                    u = u.Set(d => d.DefectNo, externalId).Set(d => d.ProductExternalId, externalId).Set(d => d.ProductSourceSystem, sourceSystem);
                 await _db.DefectReports.UpdateOneAsync(d => d.Id == existing.Id, u);
                 updated++;
                 continue;
@@ -4186,7 +4201,7 @@ public class ProductAgentController : ControllerBase
             var (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
             await _db.DefectReports.InsertOneAsync(new DefectReport
             {
-                DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
+                DefectNo = await ResolveImportDefectNoAsync(productId, externalId),
                 Title = row.Title!.Trim(),
                 RawContent = row.Description?.Trim() ?? string.Empty,
                 Status = status,
@@ -4987,6 +5002,62 @@ public class ProductAgentController : ControllerBase
     }
 
     // ════════════════════════ 私有工具 ════════════════════════
+
+    /// <summary>解析 TAPD 风格纯数字 ID（如 1007157）。</summary>
+    private static bool TryParseTapdNumericId(string? value, out long id)
+    {
+        id = 0;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return long.TryParse(value.Trim(), out id) && id > 0;
+    }
+
+    /// <summary>下一需求 ID：取本产品下 RequirementNo / ExternalId 最大纯数字 + 1（与 TAPD 规则一致）。</summary>
+    private async Task<string> GenerateNextTapdStyleRequirementIdAsync(string productId)
+    {
+        var items = await _db.Requirements
+            .Find(r => r.ProductId == productId && !r.IsDeleted)
+            .Project(r => new { r.RequirementNo, r.ExternalId })
+            .ToListAsync();
+        long max = 0;
+        foreach (var item in items)
+        {
+            if (TryParseTapdNumericId(item.RequirementNo, out var no) && no > max) max = no;
+            if (TryParseTapdNumericId(item.ExternalId, out var ext) && ext > max) max = ext;
+        }
+        return (max + 1).ToString();
+    }
+
+    /// <summary>下一缺陷 ID：取本产品下 DefectNo / ProductExternalId 最大纯数字 + 1。</summary>
+    private async Task<string> GenerateNextTapdStyleDefectIdAsync(string productId)
+    {
+        var items = await _db.DefectReports
+            .Find(d => d.TracedProductId == productId && !d.IsDeleted)
+            .Project(d => new { d.DefectNo, d.ProductExternalId })
+            .ToListAsync();
+        long max = 0;
+        foreach (var item in items)
+        {
+            if (TryParseTapdNumericId(item.DefectNo, out var no) && no > max) max = no;
+            if (TryParseTapdNumericId(item.ProductExternalId, out var ext) && ext > max) max = ext;
+        }
+        return (max + 1).ToString();
+    }
+
+    /// <summary>导入需求 ID：有 TAPD 外部 ID 时原样使用，否则在本产品现有最大 ID 基础上 +1。</summary>
+    private async Task<string> ResolveImportRequirementNoAsync(string productId, string? externalId)
+    {
+        if (!string.IsNullOrWhiteSpace(externalId))
+            return externalId.Trim();
+        return await GenerateNextTapdStyleRequirementIdAsync(productId);
+    }
+
+    /// <summary>导入缺陷 ID：有 TAPD 外部 ID 时原样使用，否则在本产品现有最大 ID 基础上 +1。</summary>
+    private async Task<string> ResolveImportDefectNoAsync(string productId, string? externalId)
+    {
+        if (!string.IsNullOrWhiteSpace(externalId))
+            return externalId.Trim();
+        return await GenerateNextTapdStyleDefectIdAsync(productId);
+    }
 
     /// <summary>按 {PREFIX}-{YEAR}-{NNNN} 生成业务编号。fieldName 为编号字段名（FieldDefinition 由 string 隐式转换）。</summary>
     private static async Task<string> GenerateNoAsync<T>(string prefix, IMongoCollection<T> coll, string fieldName)

@@ -37,7 +37,7 @@ export function mapDefectImportRows(headers: string[], body: string[][]): Import
         description: descIndex >= 0 ? values[descIndex]?.trim() : undefined,
         severity: mapped,
         tapdSeverityRaw: rawTapdSeverity,
-        status: statusIndex >= 0 ? values[statusIndex]?.trim().toLowerCase() : undefined,
+        status: statusIndex >= 0 ? values[statusIndex]?.trim() : undefined,
         sourceSystem: 'tapd',
         externalId: idIndex >= 0 ? values[idIndex]?.trim() : undefined,
       };

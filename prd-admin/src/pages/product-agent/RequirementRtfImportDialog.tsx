@@ -254,7 +254,7 @@ export function RequirementRtfImportDialog({
                           <div className="min-w-0 flex-1">
                             <div className="text-sm font-medium text-white truncate">{reqItem.requirement.title}</div>
                             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-white/50">
-                              <span>需求 ID：{reqItem.requirement.externalId}</span>
+                              <span>ID：{reqItem.requirement.externalId}</span>
                               <span>状态：{reqItem.requirement.sourceStatus || '空'}</span>
                               <span>优先级：{reqItem.requirement.sourcePriority || '空'}</span>
                               <span>字段：{Object.keys(reqItem.requirement.fields).length}</span>

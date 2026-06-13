@@ -1076,7 +1076,7 @@ function RequirementDetail({
 
   return (
     <DetailScaffold
-      no={`${requirement.requirementNo}${requirement.externalId ? ` · ${requirement.externalId}` : ''}`}
+      no={requirement.requirementNo}
       kindLabel="需求"
       kindColor="#FBBF24"
       title={title}
@@ -1278,8 +1278,8 @@ function RequirementExtendedFields({ requirement }: { requirement: Requirement }
 
   return (
     <>
-      {requirement.externalId && (
-        <InfoRow label="需求 ID" value={requirement.externalId} />
+      {requirement.externalId && requirement.externalId !== requirement.requirementNo && (
+        <InfoRow label="来源 ID" value={requirement.externalId} />
       )}
       {requirement.sourceUrl && (
         <div className="flex flex-col gap-1.5">
@@ -2070,7 +2070,7 @@ function VersionDetail({
                     />
                   ),
                 },
-                { header: 'MAP 编号', width: '10%', render: (row) => <span className="font-mono text-cyan-200/80">{(row as Requirement).requirementNo}</span> },
+                { header: 'ID', width: '10%', render: (row) => <span className="font-mono text-cyan-200/80">{(row as Requirement).requirementNo}</span> },
                 { header: '标题', width: '22%', render: (row) => <span className="text-white/85 truncate block" title={(row as Requirement).title}>{(row as Requirement).title}</span> },
                 { header: '分级', width: '7%', render: (row) => ITEM_GRADE_LABEL[(row as Requirement).grade] },
                 { header: '状态', width: '10%', render: (row) => resolveRequirementStateLabel((row as Requirement).currentState ?? '', reqWorkflow) || '—' },

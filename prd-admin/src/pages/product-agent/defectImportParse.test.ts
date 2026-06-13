@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mapDefectImportRows } from './defectImportParse';
+import * as XLSX from 'xlsx';
+import { mapDefectImportRows, parseDefectImportXlsxBuffer } from './defectImportParse';
 describe('mapDefectImportRows', () => {
   const tapdHeaders = ['ID', '标题', '详细描述', '状态', '优先级', '严重程度'];
 
@@ -17,6 +18,32 @@ describe('mapDefectImportRows', () => {
     expect(rows[1]).toMatchObject({
       tapdSeverityRaw: '无关紧要',
       severity: '轻微',
+    });
+  });
+
+  it('preserves TAPD Chinese status labels', () => {
+    const rows = mapDefectImportRows(tapdHeaders, [['1023034', '标题', 'desc', '已解决', '高', '紧急']]);
+    expect(rows[0].status).toBe('已解决');
+    expect(rows[0].externalId).toBe('1023034');
+  });
+
+  it('parses TAPD xlsx export buffer', () => {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      tapdHeaders,
+      ['1023034', '3+2 门店问题', '详细描述', '已解决', '高', '紧急'],
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, sheet, '缺陷');
+    const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+    const rows = parseDefectImportXlsxBuffer(buffer);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      externalId: '1023034',
+      title: '3+2 门店问题',
+      status: '已解决',
+      tapdSeverityRaw: '紧急',
+      severity: '致命',
+      sourceSystem: 'tapd',
     });
   });
 

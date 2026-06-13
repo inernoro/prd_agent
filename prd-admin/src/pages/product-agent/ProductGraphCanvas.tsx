@@ -902,7 +902,7 @@ function NodeDrawer({
           const cName = new Map((cRes.success ? cRes.data.items : []).map((c) => [c.id, c.name] as [string, string]));
           const vName = new Map((vRes.success ? vRes.data.items : []).map((v) => [v.id, v.versionName] as [string, string]));
           r.push(
-            { label: '编号', value: o.requirementNo },
+            { label: 'ID', value: o.requirementNo },
             { label: '分级', value: o.grade },
             { label: '状态', value: resolveRequirementStateLabel(o.currentState) || '-' },
             { label: '关联客户', value: o.customerIds.map((id) => cName.get(id) ?? id).join('、') || '—' },
@@ -925,7 +925,7 @@ function NodeDrawer({
       } else if (type === 'defect') {
         const res = await listTracedDefects(productId);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
-        if (o) { r.push({ label: '编号', value: o.defectNo }, { label: '状态', value: o.status }, { label: '严重程度', value: defectSeverityTierLabel(o) }, { label: '追溯', value: o.tracedRequirementId ? '需求' : o.tracedVersionId ? '版本' : '产品' }); }
+        if (o) { r.push({ label: 'ID', value: o.defectNo }, { label: '状态', value: o.status }, { label: '严重程度', value: defectSeverityTierLabel(o) }, { label: '追溯', value: o.tracedRequirementId ? '需求' : o.tracedVersionId ? '版本' : '产品' }); }
       } else if (type === 'product') {
         const res = await getProduct(productId);
         const o = res.success ? res.data : undefined;

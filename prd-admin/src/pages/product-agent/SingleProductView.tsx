@@ -407,12 +407,12 @@ function RequirementsTab({ productId }: { productId: string }) {
     storageKey: 'pa-list-filters:requirement',
     fields,
     keywordOf: (r) => `${r.requirementNo} ${r.externalId ?? ''} ${r.title} ${r.description ?? ''} ${Object.values(r.sourceSnapshot?.fields ?? {}).join(' ')}`,
-    keywordPlaceholder: '搜索编号、标题、描述',
+    keywordPlaceholder: '搜索 ID、标题、描述',
   });
 
   const exportCsv = () => {
-    const rows = items.map((r) => [r.requirementNo, r.externalId ?? '', r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
-    downloadCSV(`需求-${productId}.csv`, toCSV(['编号', '需求ID', '标题', '分级', '状态', '描述'], rows));
+    const rows = items.map((r) => [r.requirementNo, r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
+    downloadCSV(`需求-${productId}.csv`, toCSV(['ID', '标题', '分级', '状态', '描述'], rows));
   };
 
   const reload = useCallback(async () => {
@@ -479,7 +479,7 @@ function RequirementsTab({ productId }: { productId: string }) {
           <GradeBoard
             items={filtered}
             onCardClick={(r) => openDetail(r.id)}
-            renderSub={(r) => `${r.requirementNo}${r.externalId ? ` · ${r.externalId}` : ''} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
+            renderSub={(r) => `${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
           />
         </div>
       ) : (
@@ -546,15 +546,14 @@ function RequirementDataTable({
   const rows = orderByHierarchy(items);
   const cell = 'truncate px-3 py-2 text-xs text-white/60';
   const dynamicColCount = sourceFields.length;
-  const minTableWidth = 1180 + dynamicColCount * 120;
+  const minTableWidth = 1060 + dynamicColCount * 120;
 
   return (
     <table className="w-full table-fixed text-left text-sm" style={{ minWidth: minTableWidth }}>
       <colgroup>
         <col style={{ width: 40 }} />
-        <col style={{ width: '7%' }} />
-        <col style={{ width: '7%' }} />
-        <col style={{ width: dynamicColCount > 0 ? '18%' : '24%' }} />
+        <col style={{ width: '8%' }} />
+        <col style={{ width: dynamicColCount > 0 ? '20%' : '26%' }} />
         <col style={{ width: '5%' }} />
         <col style={{ width: '8%' }} />
         <col style={{ width: '8%' }} />
@@ -569,8 +568,7 @@ function RequirementDataTable({
       <thead className="sticky top-0 z-10 bg-[#0f1014] text-[11px] text-white/45 border-b border-white/10">
         <tr>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">选择</th>
-          <th className="px-3 py-2.5 font-medium whitespace-nowrap">MAP 编号</th>
-          <th className="px-3 py-2.5 font-medium whitespace-nowrap">需求 ID</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">ID</th>
           <th className="px-3 py-2.5 font-medium">标题</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">分级</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">MAP 状态</th>
@@ -589,7 +587,6 @@ function RequirementDataTable({
           <tr key={item.id} onClick={() => openDetail(item.id)} className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]">
             <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} className="accent-cyan-500" /></td>
             <td className={`${cell} whitespace-nowrap font-mono text-cyan-200/80`}>{item.requirementNo}</td>
-            <td className={`${cell} whitespace-nowrap`}>{item.externalId || '-'}</td>
             <td className="px-3 py-2 text-white/85">
               <div className="truncate" style={{ paddingLeft: depth * 20 }} title={item.title}>
                 {depth > 0 && <span className="mr-1 text-white/25">└</span>}
@@ -655,7 +652,7 @@ function DefectsTab({ productId }: { productId: string }) {
     { key: 'version', label: '关联版本', options: (its) => distinctOptions(its, (d) => d.tracedVersionId ?? '', (id) => versionName.get(id) ?? id), test: (d, v) => (d.tracedVersionId ?? '') === v },
     { key: 'created', label: '提交时间', options: () => TIME_PRESETS, test: (d, v) => inTimeRange(d.createdAt, v) },
   ], [personName, featureName, versionName]);
-  const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索编号/标题/描述' });
+  const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索 ID、标题、描述' });
 
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
