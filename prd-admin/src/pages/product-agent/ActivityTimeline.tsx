@@ -1,17 +1,15 @@
 /**
  * 产品管理智能体 — 对象动态/讨论时间线（评论 + 系统活动合流，参考 Jira / Linear）。
  *
- * 自加载 GET activities；底部评论输入(富文本 + @提醒人)。系统活动(流转/指派/转化)与
+ * 自加载 GET activities；底部评论输入（@ 提醒成员，微信式下拉选人）。系统活动(流转/指派/转化)与
  * 评论按时间正序混排。发表评论后会通知 @提醒人 / 处理人 / 负责人(后端负责)。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { MessageSquare, ArrowRight, UserPlus, GitBranch, Sparkles, Send, X } from 'lucide-react';
+import { MessageSquare, ArrowRight, UserPlus, GitBranch, Sparkles, Send } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { MentionTextarea, extractMentionIds } from '@/components/MentionTextarea';
 import { searchDirectoryUsers } from '@/services';
-import type { AdminUser } from '@/types/admin';
 import { sanitizeHtml } from '@/lib/sanitizeHtml';
-import { RichTextField } from './DynamicForm';
 import { listActivities, addComment, type ProductActivity } from '@/services/real/productAgent';
 import './product-cards.css';
 
@@ -36,7 +34,7 @@ export function ActivityTimeline({
   const [content, setContent] = useState('');
   const [mentionIds, setMentionIds] = useState<string[]>([]);
   const [posting, setPosting] = useState(false);
-  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [users, setUsers] = useState<Array<{ userId: string; displayName: string; username?: string; avatarFileName?: string | null }>>([]);
 
   const reload = useCallback(async () => {
     const res = await listActivities(entityType, entityId);
@@ -56,17 +54,10 @@ export function ActivityTimeline({
           username: u.username,
           displayName: u.displayName,
           avatarFileName: u.avatarFileName,
-          role: '' as AdminUser['role'],
-          status: 'Active' as AdminUser['status'],
-          createdAt: '',
         })));
       }
     });
   }, []);
-  const nameOf = useMemo(() => {
-    const map = new Map(users.map((u) => [u.userId, u.displayName || u.username]));
-    return (id: string) => map.get(id) ?? id;
-  }, [users]);
 
   const visibleItems = useMemo(() => {
     if (filter === 'comment') return items.filter((a) => a.type === 'comment');
@@ -74,12 +65,14 @@ export function ActivityTimeline({
     return items;
   }, [items, filter]);
 
-  const empty = (content || '').replace(/<br\s*\/?>/gi, '').replace(/<div>\s*<\/div>/gi, '').replace(/&nbsp;/gi, '').trim() === '';
+  const empty = content.trim() === '';
 
   const submit = async () => {
     if (empty) return;
     setPosting(true);
-    const res = await addComment(entityType, entityId, { content, mentions: mentionIds });
+    const mentions = extractMentionIds(content, users);
+    const html = content.trim().replace(/\n/g, '<br>');
+    const res = await addComment(entityType, entityId, { content: html, mentions });
     setPosting(false);
     if (res.success) {
       setContent('');
@@ -106,18 +99,21 @@ export function ActivityTimeline({
 
       {/* 评论输入 */}
       {filter !== 'system' ? <div className="flex flex-col gap-2 pt-1 border-t border-white/5">
-        <RichTextField value={content} onChange={setContent} minHeight={90} placeholder="写下评论…（支持排版与截图粘贴）" />
+        <MentionTextarea
+          value={content}
+          onChange={setContent}
+          users={users}
+          onMentionIdsChange={setMentionIds}
+          minHeight={90}
+          placeholder="写下评论，输入 @ 提醒成员（支持上下键选择，回车确认）"
+          disabled={posting}
+        />
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] text-white/40">提醒</span>
-          {mentionIds.map((id) => (
-            <span key={id} className="text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-200 inline-flex items-center gap-1">
-              {nameOf(id)}
-              <X size={11} className="cursor-pointer hover:text-white" onClick={() => setMentionIds((xs) => xs.filter((x) => x !== id))} />
+          {mentionIds.length > 0 && (
+            <span className="text-[11px] text-white/40">
+              将提醒 {mentionIds.length} 人
             </span>
-          ))}
-          <div className="w-44">
-            <MentionPicker users={users} onPick={(id) => setMentionIds((xs) => (xs.includes(id) ? xs : [...xs, id]))} />
-          </div>
+          )}
           <button
             onClick={submit}
             disabled={empty || posting}
@@ -128,24 +124,6 @@ export function ActivityTimeline({
         </div>
       </div> : null}
     </div>
-  );
-}
-
-/** 选人即加入提醒列表，选后自身清空（复用 UserSearchSelect）。 */
-function MentionPicker({ users, onPick }: { users: AdminUser[]; onPick: (id: string) => void }) {
-  const [val, setVal] = useState('');
-  return (
-    <UserSearchSelect
-      value={val}
-      users={users}
-      onChange={(id) => {
-        if (id) {
-          onPick(id);
-          setVal('');
-        }
-      }}
-      placeholder="搜索并@提醒"
-    />
   );
 }
 
