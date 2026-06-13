@@ -28,8 +28,10 @@ function defaultWorkflowName(entityType: ProductEntityType): string {
   return `${label}工作流`;
 }
 
+type WorkflowTab = ProductEntityType | 'admins';
+
 export function WorkflowTemplateSection() {
-  const [entityType, setEntityType] = useState<ProductEntityType>('requirement');
+  const [activeTab, setActiveTab] = useState<WorkflowTab>('requirement');
   const [productScope, setProductScope] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
 
@@ -39,6 +41,8 @@ export function WorkflowTemplateSection() {
     });
   }, []);
 
+  const isAdminsTab = activeTab === 'admins';
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2 flex-wrap">
@@ -46,26 +50,40 @@ export function WorkflowTemplateSection() {
           <button
             key={e.value}
             type="button"
-            onClick={() => setEntityType(e.value)}
-            className={`px-2.5 py-1 rounded-md text-xs border ${entityType === e.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+            onClick={() => setActiveTab(e.value)}
+            className={`px-2.5 py-1 rounded-md text-xs border ${activeTab === e.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
           >
             {e.label}
           </button>
         ))}
-        <div className="w-px h-6 bg-white/10" />
-        <select
-          value={productScope}
-          onChange={(e) => setProductScope(e.target.value)}
-          className="px-2 py-1.5 rounded-md text-xs bg-white/5 border border-white/10 text-white/70 outline-none"
+        <button
+          type="button"
+          onClick={() => setActiveTab('admins')}
+          className={`px-2.5 py-1 rounded-md text-xs border ${isAdminsTab ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
         >
-          <option value="">全局默认（所有产品共用）</option>
-          {products.map((p) => (
-            <option key={p.id} value={p.id}>覆盖：{p.name}</option>
-          ))}
-        </select>
+          产品管理员
+        </button>
+        {!isAdminsTab && (
+          <>
+            <div className="w-px h-6 bg-white/10" />
+            <select
+              value={productScope}
+              onChange={(e) => setProductScope(e.target.value)}
+              className="px-2 py-1.5 rounded-md text-xs bg-white/5 border border-white/10 text-white/70 outline-none"
+            >
+              <option value="">全局默认（所有产品共用）</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>覆盖：{p.name}</option>
+              ))}
+            </select>
+          </>
+        )}
       </div>
-      <WorkflowEditor key={`${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
-      <ProductAdminOverviewPanel />
+      {isAdminsTab ? (
+        <ProductAdminOverviewPanel />
+      ) : (
+        <WorkflowEditor key={`${activeTab}-${productScope}`} entityType={activeTab} productId={productScope || null} />
+      )}
     </div>
   );
 }

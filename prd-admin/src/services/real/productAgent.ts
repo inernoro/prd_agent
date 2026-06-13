@@ -418,6 +418,13 @@ export function importVersions(productId: string, rows: ImportSimpleItemRow[]) {
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/versions/import`, { method: 'POST', body: { rows } });
 }
 
+export function importOverviewVersions(rows: ImportSimpleItemRow[]) {
+  return apiRequest<ImportRoutedResult>('/api/product/overview/versions/import', {
+    method: 'POST',
+    body: { rows },
+  });
+}
+
 // ── 报表 / 统计分析 ──
 export interface ProductAnalytics {
   releaseProgress: { versionId: string; versionName: string; total: number; done: number; doing: number; todo: number }[];

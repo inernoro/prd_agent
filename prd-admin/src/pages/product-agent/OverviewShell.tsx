@@ -205,7 +205,7 @@ export function OverviewShell() {
         </div>
       )}
       {active === 'workflow' && (
-        <SectionShell title="应用配置" desc="需求、功能、缺陷的状态及流转规则；各产品管理员一览（全局默认，可按产品覆盖）">
+        <SectionShell title="应用配置" desc="需求、功能、缺陷的状态及流转规则（全局默认，可按产品覆盖）；产品管理员一览见同名标签">
           <WorkflowTemplateSection />
         </SectionShell>
       )}
