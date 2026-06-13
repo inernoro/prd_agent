@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
@@ -8,7 +8,16 @@ import {
   syncInitiationReview,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
-import { createSubmission, getSubmission, runReviewSubmission } from '@/services/real/reviewAgent';
+import {
+  createSubmission, getDimensions, getResultStreamUrl, getSubmission, type ReviewDimensionScore,
+} from '@/services/real/reviewAgent';
+import { useSseStream } from '@/lib/useSseStream';
+import {
+  InitiationReviewLivePanel,
+  computeInitiationReviewProgress,
+  type InitiationReviewStage,
+  type ProcessLogEntry,
+} from './InitiationReviewLivePanel';
 import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -200,12 +209,76 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
   const [ownerId, setOwnerId] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [reviewStage, setReviewStage] = useState<InitiationReviewStage>('idle');
+  const [processLogs, setProcessLogs] = useState<ProcessLogEntry[]>([]);
+  const [dimensionScores, setDimensionScores] = useState<ReviewDimensionScore[]>([]);
+  const [totalScore, setTotalScore] = useState<number | null>(null);
+  const [reviewPassed, setReviewPassed] = useState<boolean | null>(null);
+  const [adjustmentLog, setAdjustmentLog] = useState<string[]>([]);
+  const [expectedDimCount, setExpectedDimCount] = useState(0);
+  const logSeq = useRef(0);
+  const streamErrorRef = useRef<string | null>(null);
+
+  const appendLog = useCallback((text: string) => {
+    logSeq.current += 1;
+    const at = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    setProcessLogs((prev) => [...prev, { id: `${Date.now()}-${logSeq.current}`, at, text }]);
+  }, []);
+
+  const sse = useSseStream<ReviewDimensionScore>({
+    url: '',
+    itemEvent: 'dimension_score',
+    onItem: (item) => {
+      setDimensionScores((prev) => {
+        const existing = prev.find((d) => d.key === item.key);
+        return existing ? prev.map((d) => (d.key === item.key ? item : d)) : [...prev, item];
+      });
+      appendLog(`维度「${item.name}」：${item.score}/${item.maxScore}`);
+    },
+    onPhase: (msg) => {
+      if (msg) appendLog(msg);
+    },
+    onEvent: {
+      result: (data: unknown) => {
+        const d = data as { totalScore: number; isPassed: boolean };
+        setTotalScore(d.totalScore);
+        setReviewPassed(d.isPassed);
+        appendLog(`汇总得分 ${d.totalScore}/100，${d.isPassed ? '通过' : '未通过'}`);
+      },
+      adjustment_log: (data: unknown) => {
+        const d = data as { entries?: string[] };
+        if (Array.isArray(d.entries) && d.entries.length > 0) {
+          setAdjustmentLog(d.entries);
+          appendLog(`系统兜底调整 ${d.entries.length} 项`);
+        }
+      },
+    },
+    onError: (msg) => {
+      streamErrorRef.current = msg;
+      appendLog(`评审失败：${msg}`);
+    },
+  });
+
+  const reviewRunning = reviewStage !== 'idle';
+  const progressPercent = useMemo(
+    () => computeInitiationReviewProgress(reviewStage, dimensionScores.length, expectedDimCount),
+    [reviewStage, dimensionScores.length, expectedDimCount],
+  );
 
   useEffect(() => {
     void listProducts({ pageSize: 200 }).then((res) => {
       if (res.success) setCatalogProducts(res.data.items);
     });
   }, []);
+
+  useEffect(() => {
+    if (step !== 2) return;
+    void getDimensions().then((res) => {
+      if (res.success) {
+        setExpectedDimCount(res.data.dimensions.filter((d) => d.isActive).length);
+      }
+    });
+  }, [step]);
 
   const productOptions = useMemo(() => toProductOptions(catalogProducts), [catalogProducts]);
 
@@ -229,34 +302,78 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
   };
   const runReview = async () => {
     if (!file || !item) return setMessage('请先上传方案文件');
-    setBusy(true); setMessage('正在上传并提交 Agent 评审...');
+    setBusy(true);
+    setMessage('');
+    setDimensionScores([]);
+    setTotalScore(null);
+    setReviewPassed(null);
+    setAdjustmentLog([]);
+    setProcessLogs([]);
+    sse.reset();
+    streamErrorRef.current = null;
+
+    setReviewStage('uploading');
+    appendLog(`开始上传：${file.name}`);
     const uploaded = await uploadAttachment(file);
-    if (!uploaded.success) { setBusy(false); return setMessage(uploaded.error?.message ?? '上传失败'); }
+    if (!uploaded.success) {
+      setBusy(false);
+      setReviewStage('idle');
+      return setMessage(uploaded.error?.message ?? '上传失败');
+    }
+    appendLog('方案文件上传成功');
+
+    setReviewStage('submitting');
+    appendLog('正在创建 Agent 评审任务…');
     const submitted = await createSubmission(planName, uploaded.data.attachmentId);
-    if (!submitted.success) { setBusy(false); return setMessage(submitted.error?.message ?? '提交评审失败'); }
-    const controller = new AbortController();
-    const streamed = await runReviewSubmission(
-      submitted.data.submission.id,
-      controller.signal,
-      (phase) => setMessage(phase || 'Agent 评审中...'),
-    );
-    if (!streamed.success) {
+    if (!submitted.success) {
       setBusy(false);
-      return setMessage(streamed.errorMessage ?? '评审执行失败');
+      setReviewStage('idle');
+      return setMessage(submitted.error?.message ?? '提交评审失败');
     }
-    const result = await getSubmission(submitted.data.submission.id);
-    if (!result.success || result.data.submission.status !== 'Done') {
+    const submissionId = submitted.data.submission.id;
+    appendLog(`评审任务已创建（${submissionId.slice(0, 8)}…）`);
+
+    setReviewStage('streaming');
+    appendLog('连接评审流，等待 Agent 分析打分…');
+    await sse.start({ url: getResultStreamUrl(submissionId) });
+
+    if (streamErrorRef.current) {
       setBusy(false);
-      return setMessage(result.success
-        ? result.data.submission.errorMessage ?? '评审未正常完成'
-        : result.error?.message ?? '获取评审结果失败');
+      setReviewStage('idle');
+      return setMessage(streamErrorRef.current);
     }
-    const synced = await syncInitiationReview(item.id, submitted.data.submission.id);
+
+    const result = await getSubmission(submissionId);
+    if (!result.success) {
+      setBusy(false);
+      setReviewStage('idle');
+      return setMessage(result.error?.message ?? '获取评审结果失败');
+    }
+    if (result.data.submission.status === 'Error') {
+      setBusy(false);
+      setReviewStage('idle');
+      return setMessage(result.data.submission.errorMessage ?? '评审执行失败');
+    }
+    if (result.data.submission.status !== 'Done') {
+      setBusy(false);
+      setReviewStage('idle');
+      return setMessage(result.data.submission.errorMessage ?? '评审未正常完成');
+    }
+
+    setReviewStage('syncing');
+    appendLog('评审完成，正在同步到立项记录…');
+    const synced = await syncInitiationReview(item.id, submissionId);
     setBusy(false);
+    setReviewStage('idle');
     if (!synced.success) return setMessage(synced.error?.message ?? '同步评审结果失败');
     setItem(synced.data);
-    if (synced.data.reviewPassed) { setStep(3); setMessage('评审通过，可以提交立项决策。'); }
-    else setMessage(`评审未通过，得分 ${synced.data.reviewScore ?? 0}。请修改方案后重新立项。`);
+    appendLog('立项记录已更新');
+    if (synced.data.reviewPassed) {
+      setStep(3);
+      setMessage('评审通过，可以提交立项决策。');
+    } else {
+      setMessage(`评审未通过，得分 ${synced.data.reviewScore ?? 0}。请修改方案后重新立项。`);
+    }
   };
   const submitDecision = async () => {
     if (!item) return;
@@ -294,12 +411,34 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
       </Field>
     </div>}
     {step === 2 && <div className="space-y-4">
-      <label className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-cyan-400/35 bg-cyan-400/5 text-center">
-        <Upload className="mb-3 text-cyan-300" size={28} /><span className="text-sm text-white/75">{file ? file.name : '拖动或点击上传方案文件'}</span>
-        <span className="mt-1 text-xs text-white/35">PDF、Word、Markdown、Excel、PPT</span>
-        <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-      </label>
-      {item?.reviewScore != null && <Score score={item.reviewScore} passed={item.reviewPassed === true} />}
+      {!reviewRunning && (
+        <label className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-cyan-400/35 bg-cyan-400/5 text-center">
+          <Upload className="mb-3 text-cyan-300" size={28} /><span className="text-sm text-white/75">{file ? file.name : '拖动或点击上传方案文件'}</span>
+          <span className="mt-1 text-xs text-white/35">PDF、Word、Markdown、Excel、PPT</span>
+          <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        </label>
+      )}
+      {reviewRunning && file && (
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/70">
+          方案文件：<span className="text-white/90">{file.name}</span>
+        </div>
+      )}
+      {reviewRunning && (
+        <InitiationReviewLivePanel
+          stage={reviewStage}
+          ssePhase={sse.phase}
+          phaseMessage={sse.phaseMessage}
+          progressPercent={progressPercent}
+          logs={processLogs}
+          typing={sse.typing}
+          dimensionScores={dimensionScores}
+          totalScore={totalScore}
+          isPassed={reviewPassed}
+          adjustmentLog={adjustmentLog}
+          expectedDimCount={expectedDimCount}
+        />
+      )}
+      {!reviewRunning && item?.reviewScore != null && <Score score={item.reviewScore} passed={item.reviewPassed === true} />}
     </div>}
     {step === 3 && <div className="space-y-4">
       <Field label="是否需要开评审会"><Select value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></Select></Field>
@@ -310,7 +449,12 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
     {message && <div className="mt-4 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">{message}</div>}
     <div className="mt-6 flex justify-end gap-2"><Secondary onClick={onClose}>取消</Secondary>
       {step === 1 && <Primary onClick={createBase} disabled={busy}>{busy ? '保存中...' : '下一步'}</Primary>}
-      {step === 2 && <Primary onClick={runReview} disabled={busy}>{busy && <Loader2 size={14} className="animate-spin" />}上传并打分</Primary>}
+      {step === 2 && (
+        <Primary onClick={runReview} disabled={busy || !file}>
+          {reviewRunning && <Loader2 size={14} className="animate-spin" />}
+          {reviewRunning ? '评审进行中…' : '上传并打分'}
+        </Primary>
+      )}
       {step === 3 && <Primary onClick={submitDecision} disabled={busy || (meeting ? !meetingAt : !ownerId)}>提交立项</Primary>}
     </div>
   </Modal>;
