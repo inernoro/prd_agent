@@ -12,7 +12,6 @@ import {
   type ImportSimpleItemRow,
 } from '@/services/real/productAgent';
 import type { Product } from './types';
-import { ITEM_GRADE_LABEL } from './types';
 import { parseDefectImportFile } from './defectImportParse';
 import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
 
@@ -220,7 +219,7 @@ export function ProductHistoryImportDialog({
           <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025]">
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
             <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 RTF' : type === 'defect' ? 'TAPD 导出 CSV / Excel / RTF' : 'CSV'} 文件</div>
-            <div className="mt-1 text-xs text-white/35">{type === 'defect' ? '「优先级」→ 处理优先级；「严重程度」→ 严重程度；两列各自映射，无值留空' : '需求 RTF 支持多选；CSV 首行需为字段名'}</div>
+            <div className="mt-1 text-xs text-white/35">{type === 'defect' ? 'TAPD「优先级」→ 系统「严重程度」；其它列无值则留空' : '需求 RTF 支持多选；CSV 首行需为字段名'}</div>
           </button>
           <input
             ref={inputRef}
@@ -234,8 +233,8 @@ export function ProductHistoryImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-white/10">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th>{type === 'defect' ? (<><th className="px-3 py-2">处理优先级</th><th className="px-3 py-2">严重程度</th></>) : <th className="px-3 py-2">等级</th>}<th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
-                <tbody>{rows.slice(0, 30).map((row, index) => <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5"><td className="px-3 py-2 text-white/75">{row.title}</td><td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td>{type === 'defect' ? (<><td className="px-3 py-2 text-white/45">{row.grade ? `${ITEM_GRADE_LABEL[row.grade as keyof typeof ITEM_GRADE_LABEL] ?? row.grade}${row.tapdPriorityRaw ? `（TAPD:${row.tapdPriorityRaw}）` : ''}` : (row.tapdPriorityRaw || '—')}</td><td className="px-3 py-2 text-white/45">{row.severity ? `${row.severity}${row.tapdSeverityRaw ? `（TAPD:${row.tapdSeverityRaw}）` : ''}` : (row.tapdSeverityRaw || '—')}</td></>) : <td className="px-3 py-2 text-white/45">{row.grade || '-'}</td>}<td className="px-3 py-2 text-white/45">{row.status || '-'}</td>{type === 'defect' && <td className="px-3 py-2 text-white/45">{row.handlerNames?.join('、') || '-'}</td>}</tr>)}</tbody>
+                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th><th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
+                <tbody>{rows.slice(0, 30).map((row, index) => <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5"><td className="px-3 py-2 text-white/75">{row.title}</td><td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td><td className="px-3 py-2 text-white/45">{type === 'defect' ? (row.severity ? `${row.severity}（TAPD优先级:${row.tapdSeverityRaw || '—'}）` : (row.tapdSeverityRaw || '—')) : (row.grade || '-')}</td><td className="px-3 py-2 text-white/45">{row.status || '-'}</td>{type === 'defect' && <td className="px-3 py-2 text-white/45">{row.handlerNames?.join('、') || '-'}</td>}</tr>)}</tbody>
               </table>
             </div>
           )}

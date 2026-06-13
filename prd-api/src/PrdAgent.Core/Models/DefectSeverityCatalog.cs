@@ -2,7 +2,7 @@ namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 产品管理缺陷严重程度（V2.6 四档）。SSOT：StructuredData[TapdDefectFieldCatalog.DefectSeverity]。
-/// TAPD 导出列「严重程度」或「优先级」（五档：紧急/高/中/低/无关紧要）分别映射；无值不推断。
+/// TAPD 导出列「优先级」（五档：紧急/高/中/低/无关紧要）→ V2.6 严重程度；无值不推断。
 /// </summary>
 public static class DefectSeverityCatalog
 {

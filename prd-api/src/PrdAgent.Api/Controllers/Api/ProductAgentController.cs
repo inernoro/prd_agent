@@ -4801,11 +4801,6 @@ public class ProductAgentController : ControllerBase
             else if (!string.IsNullOrWhiteSpace(rawTapdSeverity))
                 severityLevel = DefectSeverityCatalog.TryNormalizeTapdToLevel(rawTapdSeverity);
             var structuredPatch = DefectSeverityCatalog.BuildImportStructuredPatch(rawTapdSeverity, severityLevel);
-            string? importGrade = null;
-            if (!string.IsNullOrWhiteSpace(row.Grade) && ProductItemGrade.All.Contains(row.Grade.Trim()))
-                importGrade = row.Grade.Trim();
-            else if (!string.IsNullOrWhiteSpace(row.TapdPriorityRaw))
-                importGrade = DefectPriorityCatalog.TryNormalizeTapdToGrade(row.TapdPriorityRaw);
             if (!string.IsNullOrWhiteSpace(externalId))
             {
                 structuredPatch = TapdDefectFieldCatalog.MergeStructuredData(structuredPatch,
@@ -4822,8 +4817,6 @@ public class ProductAgentController : ControllerBase
                     u = u.Set(d => d.AssigneeId, assignee.UserId).Set(d => d.AssigneeName, assignee.DisplayName ?? assignee.Username);
                 if (reporter != null)
                     u = u.Set(d => d.ReporterId, reporter.UserId).Set(d => d.ReporterName, reporter.DisplayName ?? reporter.Username);
-                if (importGrade != null)
-                    u = u.Set(d => d.Grade, importGrade);
                 if (structuredPatch.Count > 0)
                 {
                     var mergedStructured = TapdDefectFieldCatalog.MergeStructuredData(existing.StructuredData, structuredPatch);
@@ -4851,7 +4844,6 @@ public class ProductAgentController : ControllerBase
                 ProductSourceSystem = sourceSystem,
                 ProductExternalId = externalId,
                 StructuredData = structuredPatch,
-                Grade = importGrade,
             });
             created++;
         }
@@ -6506,10 +6498,8 @@ public class ImportSimpleItemRow
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string? Grade { get; set; }
-    /// <summary>TAPD 导出「严重程度」列原文（紧急/高/中/低/无关紧要）。</summary>
+    /// <summary>TAPD 导出「优先级」列原文（紧急/高/中/低/无关紧要），导入映射为 V2.6 严重程度。</summary>
     public string? TapdSeverityRaw { get; set; }
-    /// <summary>TAPD 导出「优先级」列原文。</summary>
-    public string? TapdPriorityRaw { get; set; }
     /// <summary>已映射的 V2.6 严重程度（致命/严重/一般/轻微）；可选。</summary>
     public string? Severity { get; set; }
     public string? Status { get; set; }

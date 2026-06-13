@@ -24,7 +24,7 @@ function isV26Level(v: string): v is DefectSeverityLevel {
 }
 
 /**
- * TAPD「严重程度」五档（紧急/高/中/低/无关紧要）→ V2.6 四档。仅用于导入列「严重程度」。
+ * TAPD「优先级」五档（紧急/高/中/低/无关紧要）→ V2.6「严重程度」四档。缺陷导入唯一等级映射。
  */
 export function normalizeTapdToSeverityLevel(raw?: string | null): DefectSeverityLevel | undefined {
   const text = raw?.trim();

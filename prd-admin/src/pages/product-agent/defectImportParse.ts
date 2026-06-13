@@ -1,10 +1,9 @@
 /**
  * TAPD 缺陷 Excel/CSV 导入解析。
- * 「严重程度」→ V2.6 四档；「优先级」→ 处理优先级 p0–p3。两列各自映射，无兜底。
+ * 唯一等级映射：TAPD「优先级」→ 系统「严重程度」（V2.6 四档）；无值留空，不写入处理优先级 p0–p3。
  */
 import * as XLSX from 'xlsx';
 import type { ImportSimpleItemRow } from '@/services/real/productAgent';
-import { normalizeTapdPriorityToGrade } from './defectPriority';
 import { normalizeTapdToSeverityLevel } from './defectSeverity';
 
 function cellStr(value: unknown): string {
@@ -23,7 +22,7 @@ function headerIndex(headers: string[], ...names: string[]): number {
 export function mapDefectImportRows(headers: string[], body: string[][]): ImportSimpleItemRow[] {
   const titleIndex = headerIndex(headers, '标题', 'title');
   const descIndex = headerIndex(headers, '详细描述', '描述', 'description', 'desc');
-  const severityIndex = headerIndex(headers, '严重程度', 'severity');
+  /** TAPD 历史导出：「优先级」列语义即严重程度，不读「严重程度」列 */
   const priorityIndex = headerIndex(headers, '优先级', 'priority');
   const statusIndex = headerIndex(headers, '状态', 'status');
   const assigneeIndex = headerIndex(headers, '处理人', '当前处理人', 'assignee', 'handler');
@@ -33,10 +32,8 @@ export function mapDefectImportRows(headers: string[], body: string[][]): Import
 
   return body
     .map((values) => {
-      const rawTapdSeverity = severityIndex >= 0 ? values[severityIndex]?.trim() : undefined;
       const rawTapdPriority = priorityIndex >= 0 ? values[priorityIndex]?.trim() : undefined;
-      const severity = rawTapdSeverity ? normalizeTapdToSeverityLevel(rawTapdSeverity) : undefined;
-      const grade = rawTapdPriority ? normalizeTapdPriorityToGrade(rawTapdPriority) : undefined;
+      const severity = rawTapdPriority ? normalizeTapdToSeverityLevel(rawTapdPriority) : undefined;
       const handlerRaw = assigneeIndex >= 0 ? values[assigneeIndex]?.trim() : undefined;
       const reporterRaw = reporterIndex >= 0 ? values[reporterIndex]?.trim() : undefined;
       const splitPeople = (raw?: string) => (raw ?? '').split(/[;；,，]/).map((n) => n.trim()).filter(Boolean);
@@ -44,9 +41,7 @@ export function mapDefectImportRows(headers: string[], body: string[][]): Import
         title: values[effectiveTitleIndex]?.trim() ?? '',
         description: descIndex >= 0 ? values[descIndex]?.trim() : undefined,
         severity,
-        grade,
-        tapdSeverityRaw: rawTapdSeverity || undefined,
-        tapdPriorityRaw: rawTapdPriority || undefined,
+        tapdSeverityRaw: rawTapdPriority || undefined,
         status: statusIndex >= 0 ? values[statusIndex]?.trim() : undefined,
         sourceSystem: 'tapd',
         externalId: idIndex >= 0 ? values[idIndex]?.trim() : undefined,

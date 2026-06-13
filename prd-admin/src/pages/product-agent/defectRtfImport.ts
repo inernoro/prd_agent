@@ -1,5 +1,4 @@
 import type { ImportSimpleItemRow } from '@/services/real/productAgent';
-import { normalizeTapdPriorityToGrade } from './defectPriority';
 import { normalizeTapdToSeverityLevel } from './defectSeverity';
 import { parseRequirementRtfBytes, type RtfImportRequirement } from './requirementRtfImport';
 
@@ -23,7 +22,6 @@ function stripImportImageMarkers(html: string): string {
 
 /** TAPD 缺陷 RTF 块 → 缺陷导入行（复用需求 RTF 表格解析）。 */
 export function mapDefectRtfItem(item: RtfImportRequirement): ImportSimpleItemRow {
-  const rawTapdSeverity = item.fields['严重程度']?.trim() || undefined;
   const rawTapdPriority = item.fields['优先级']?.trim() || undefined;
   const handlerNames = uniqueNames([
     ...item.handlerNames,
@@ -34,10 +32,8 @@ export function mapDefectRtfItem(item: RtfImportRequirement): ImportSimpleItemRo
     description: stripImportImageMarkers(item.description),
     externalId: item.externalId,
     status: item.sourceStatus || item.fields['状态']?.trim(),
-    tapdSeverityRaw: rawTapdSeverity,
-    tapdPriorityRaw: rawTapdPriority,
-    severity: rawTapdSeverity ? normalizeTapdToSeverityLevel(rawTapdSeverity) : undefined,
-    grade: rawTapdPriority ? normalizeTapdPriorityToGrade(rawTapdPriority) : undefined,
+    tapdSeverityRaw: rawTapdPriority,
+    severity: rawTapdPriority ? normalizeTapdToSeverityLevel(rawTapdPriority) : undefined,
     sourceSystem: 'tapd',
     handlerNames,
     reporterNames: uniqueNames(item.creatorNames),
