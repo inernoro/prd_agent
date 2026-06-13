@@ -14,6 +14,7 @@ import {
   createDefaultMatrixTransition,
   findMatrixTransition,
 } from './WorkflowTransitionRuleModal';
+import { ProductAdminOverviewPanel } from './ProductAdminOverviewPanel';
 
 /** 应用配置：需求 / 功能 / 缺陷 三类对象的状态与流转矩阵。 */
 const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
@@ -64,6 +65,7 @@ export function WorkflowTemplateSection() {
         </select>
       </div>
       <WorkflowEditor key={`${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
+      <ProductAdminOverviewPanel />
     </div>
   );
 }

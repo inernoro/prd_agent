@@ -1,5 +1,5 @@
 /**
- * 产品管理智能体 — 全局设置（表单 / 描述 / 产品类型 / 需求类型 / 管理员；流转规则见「应用 → 应用配置」）。
+ * 产品管理智能体 — 全局设置（表单 / 描述 / 产品类型 / 需求类型 / 应用管理员；产品管理员见「应用 → 应用配置」）。
  *
  * 全局默认（ProductId 留空）+ 允许选某产品覆盖。复用后端 form-templates / desc-templates CRUD。
  * 作用对象类型：需求 / 功能 / 版本 / 客户。
@@ -20,7 +20,6 @@ import {
   listDescTemplates,
   upsertDescTemplate,
   deleteDescTemplate,
-  listProductMembers,
   listProductApplicationAdmins,
   addProductApplicationAdmin,
   removeProductApplicationAdmin,
@@ -124,7 +123,7 @@ export function SettingsSection() {
           <button onClick={() => setMode('desc')} className={`px-3 py-1.5 text-sm ${mode === 'desc' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>描述模板</button>
           <button onClick={() => setMode('category')} className={`px-3 py-1.5 text-sm ${mode === 'category' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>产品类型</button>
           <button onClick={() => setMode('reqtype')} className={`px-3 py-1.5 text-sm ${mode === 'reqtype' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>需求类型</button>
-          <button onClick={() => setMode('admins')} className={`px-3 py-1.5 text-sm ${mode === 'admins' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>管理员</button>
+          <button onClick={() => setMode('admins')} className={`px-3 py-1.5 text-sm ${mode === 'admins' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>应用管理员</button>
           <button onClick={() => setMode('debug')} className={`px-3 py-1.5 text-sm ${mode === 'debug' ? 'bg-amber-500/15 text-amber-200' : 'text-white/50 hover:bg-white/5'}`}>调试</button>
         </div>
         {mode !== 'category' && mode !== 'reqtype' && mode !== 'admins' && mode !== 'debug' && (
@@ -177,7 +176,6 @@ export function SettingsSection() {
 
 function ApplicationAdminManager() {
   const [items, setItems] = useState<ProductApplicationAdmin[]>([]);
-  const [productAdminRows, setProductAdminRows] = useState<Array<{ productId: string; productName: string; admins: string[] }>>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -185,24 +183,9 @@ function ApplicationAdminManager() {
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [adminResult, productsResult] = await Promise.all([
-      listProductApplicationAdmins(),
-      listProducts({ pageSize: 200 }),
-    ]);
+    const adminResult = await listProductApplicationAdmins();
     if (adminResult.success) setItems(adminResult.data.items);
     else setMessage(adminResult.error?.message ?? '管理员名单加载失败');
-    if (productsResult.success) {
-      const rows = await Promise.all(productsResult.data.items.map(async (product) => {
-        const memberResult = await listProductMembers(product.id);
-        const admins = memberResult.success
-          ? memberResult.data.members
-            .filter((member) => member.role === 'owner' || member.role === 'admin')
-            .map((member) => member.displayName)
-          : [];
-        return { productId: product.id, productName: product.name, admins };
-      }));
-      setProductAdminRows(rows);
-    }
     setLoading(false);
   }, []);
   useEffect(() => { void reload(); }, [reload]);
@@ -256,27 +239,6 @@ function ApplicationAdminManager() {
                 <td className="px-4 py-3 text-white/80">{item.displayName}</td>
                 <td className="px-4 py-3 text-xs text-white/45">{item.username || item.userId}</td>
                 <td className="px-4 py-3"><button onClick={() => void remove(item.userId)} disabled={busy || items.length <= 1} title={items.length <= 1 ? '至少保留一位管理员' : '移除管理员'} className="text-white/35 hover:text-red-300 disabled:opacity-25"><Trash2 size={14} /></button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="overflow-hidden rounded-xl border border-white/10">
-        <div className="px-4 py-2.5 text-xs text-white/50 border-b border-white/10">
-          产品实时管理员（2 列）：产品 / 管理员（多位用分号分隔）
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead className="bg-white/[0.03] text-xs text-white/45">
-            <tr>
-              <th className="px-4 py-2.5 font-medium">产品</th>
-              <th className="px-4 py-2.5 font-medium">管理员</th>
-            </tr>
-          </thead>
-          <tbody>
-            {productAdminRows.map((row) => (
-              <tr key={row.productId} className="border-t border-white/5">
-                <td className="px-4 py-3 text-white/80">{row.productName}</td>
-                <td className="px-4 py-3 text-xs text-white/55">{row.admins.length > 0 ? row.admins.join('；') : '未配置'}</td>
               </tr>
             ))}
           </tbody>

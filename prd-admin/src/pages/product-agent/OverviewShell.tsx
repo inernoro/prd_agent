@@ -205,12 +205,12 @@ export function OverviewShell() {
         </div>
       )}
       {active === 'workflow' && (
-        <SectionShell title="应用配置" desc="需求、功能、缺陷的状态及流转规则；全局默认，可按产品覆盖（管理层）">
+        <SectionShell title="应用配置" desc="需求、功能、缺陷的状态及流转规则；各产品管理员一览（全局默认，可按产品覆盖）">
           <WorkflowTemplateSection />
         </SectionShell>
       )}
       {active === 'settings' && (
-        <SectionShell title="全局设置" desc="表单/描述模板、产品类型、需求类型与应用管理员（管理层）">
+        <SectionShell title="全局设置" desc="表单/描述模板、产品类型、需求类型与应用管理员（历史导入权限）">
           <SettingsSection />
         </SectionShell>
       )}
