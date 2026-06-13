@@ -1511,7 +1511,7 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
 function ReaderColumnFrame({ fullscreen, children }: { fullscreen: boolean; children: ReactNode }) {
   if (!fullscreen) return <>{children}</>;
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100vh', background: 'var(--bg-card)' }}>
+    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100vh', background: 'var(--bg-base)' }}>
       {children}
     </div>,
     document.body,
@@ -2223,8 +2223,9 @@ export function DocBrowser({
     const lines = new Map<string, string>();
     for (const e of entries) {
       if (e.isFolder || !e.summary) continue;
-      // HTML 等非纯文本文档的 summary 是源码片段（首行常为 <!DOCTYPE html>），不参与正文标题推导
-      if (getFileTypeConfig(e.title, e.contentType).preview !== 'text') continue;
+      // 只跳过 HTML/XML 等「summary 是源码片段」的类型（首行常为 <!DOCTYPE html> / 标签），不参与正文标题推导；
+      // PDF / Word / PPT 等的 summary 是后端提取出的纯正文，应参与（否则上传 PDF 后标题回退显示文件名）。
+      if (getFileTypeConfig(e.title, e.contentType).preview === 'html' || e.summary.trimStart().startsWith('<')) continue;
       const { title, body } = parseFrontmatter(e.summary);
       let display = (title ?? '').trim();
       if (!display) {
