@@ -36,6 +36,8 @@ import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWo
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
 import { ProductDefectDetail } from './ProductDefectDetail';
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
+import { enrichContentWithMentions } from '@/lib/mentionRender';
 import './product-cards.css';
 import {
   listRequirements,
@@ -1124,7 +1126,12 @@ function RequirementDetail({
                           </div>
                           <span className="text-[11px] text-white/35 shrink-0">{fmtDate(comment.createdAt)}</span>
                         </div>
-                        {comment.content && <div className="mt-2 text-sm text-white/65 whitespace-pre-wrap leading-6">{comment.content}</div>}
+                        {comment.content && (
+                          <div
+                            className="mt-2 text-sm text-white/65 prose-product leading-6"
+                            dangerouslySetInnerHTML={{ __html: sanitizeHtml(enrichContentWithMentions(comment.content)) }}
+                          />
+                        )}
                       </div>
                     </div>
                   </div>

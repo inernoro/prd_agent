@@ -1,3 +1,5 @@
+import { wrapMentionsInPlainText } from '@/lib/mentionRender';
+
 export interface RtfImportImage {
   fileName: string;
   mimeType: string;
@@ -311,8 +313,8 @@ function descriptionToHtml(value: string): string {
       if (!trimmed) return '';
       const marker = trimmed.match(/^\[\[(?:IMPORT_IMAGE|TAPD_IMAGE)_(\d+)]]$/);
       if (marker) return `<p data-import-image="${marker[1]}"></p>`;
-      if (/^\d+[、.]/.test(trimmed)) return `<h3>${escapeHtml(trimmed)}</h3>`;
-      return `<p>${escapeHtml(trimmed)}</p>`;
+      if (/^\d+[、.]/.test(trimmed)) return `<h3>${wrapMentionsInPlainText(trimmed)}</h3>`;
+      return `<p>${wrapMentionsInPlainText(trimmed)}</p>`;
     })
     .filter(Boolean)
     .join('');

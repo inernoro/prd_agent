@@ -15,6 +15,7 @@ import type { ItemSearchOption } from '@/components/itemSearchCombobox';
 import { ItemMultiSearchSelect } from '@/components/ItemMultiSearchSelect';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { sanitizeHtml, cleanPastedHtml } from '@/lib/sanitizeHtml';
+import { enrichContentWithMentions } from '@/lib/mentionRender';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   listFormTemplates,
@@ -262,7 +263,9 @@ export function RichTextField({ value, onChange, minHeight = 120, placeholder }:
   // 未聚焦时同步外部值（初次加载 / 切换对象），聚焦输入时不打断
   useEffect(() => {
     const el = ref.current;
-    if (el && document.activeElement !== el && el.innerHTML !== value) el.innerHTML = sanitizeHtml(value);
+    if (el && document.activeElement !== el && el.innerHTML !== value) {
+      el.innerHTML = sanitizeHtml(enrichContentWithMentions(value));
+    }
   }, [value]);
 
   const exec = (cmd: string, arg?: string) => {
