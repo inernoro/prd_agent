@@ -1,19 +1,31 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
-  getOverviewStats, getProduct, listInitiations, listProductMembers, listReleases, listRequirements,
-  syncInitiationReview,
+  listInitiations, listProductMembers, listProducts, listReleases, listRequirements,
+  syncInitiationReview, updateInitiation, getProduct,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
-import { createSubmission, getSubmission, runReviewSubmission } from '@/services/real/reviewAgent';
+import {
+  createSubmission, getDimensions, getResultStreamUrl, type ReviewDimensionScore,
+} from '@/services/real/reviewAgent';
+import { useSseStream } from '@/lib/useSseStream';
+import {
+  InitiationReviewLivePanel,
+  computeInitiationReviewProgress,
+  type InitiationReviewStage,
+  type ProcessLogEntry,
+} from './InitiationReviewLivePanel';
+import { hasRecoverableSseOutcome, waitForSubmissionDone } from './initiationReviewFinish';
 import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
+import { toProductOptions } from './comboboxOptions';
 import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
-import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
+import { resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
 import {
   ListSelectionHeaderCell,
@@ -23,7 +35,13 @@ import {
   type TableSelectionProps,
 } from './listSelection';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { OVERVIEW_LIST_SEARCH_BOX } from './listFilter';
 import { filterByTracked } from './productRecordTrackStorage';
+import { InitiationMeetingRoundsEditor } from './InitiationWorkflowPanel';
+import {
+  formatInitiationReviewScore,
+  isMeetingResultPending,
+} from './initiationWorkflowUtils';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
@@ -42,28 +60,26 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [releases, setReleases] = useState<ProductRelease[]>([]);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [members, setMembers] = useState<ProductMember[]>([]);
-  const [product, setProduct] = useState<Product | null>(null);
-  const [canImport, setCanImport] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [dialog, setDialog] = useState<'initiation' | 'import-release' | 'import-initiation' | null>(null);
+  const [dialog, setDialog] = useState<'initiation' | null>(null);
+  const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
+  const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
   const [releaseOwnerId, setReleaseOwnerId] = useState(currentUserId ?? '');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
+  const [productName, setProductName] = useState('');
+
+  useEffect(() => {
+    void getProduct(productId).then((res) => {
+      if (res.success) setProductName(res.data.name);
+    });
+  }, [productId]);
 
   useEffect(() => {
     if (currentUserId && !releaseOwnerId) setReleaseOwnerId(currentUserId);
   }, [currentUserId, releaseOwnerId]);
-
-  useEffect(() => {
-    void getOverviewStats().then((res) => {
-      if (res.success) setCanImport(res.data.isAdmin);
-    });
-    void getProduct(productId).then((res) => {
-      if (res.success) setProduct(res.data);
-    });
-  }, [productId]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -119,14 +135,6 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex flex-wrap items-center gap-2">
-          {canImport && (
-            <button
-              onClick={() => setDialog('import-release')}
-              className="flex items-center gap-1 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-500/20"
-            >
-              <Upload size={14} /> 导入历史数据
-            </button>
-          )}
           <Primary onClick={() => navigate(`/product-agent/p/${productId}/release/new`)} disabled={approved.length === 0}><Plus size={14} />申领正式版本号</Primary>
           <button onClick={() => navigate(`/product-agent/p/${productId}/release/new?temporary=1`)} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">临时优化需求</button>
           <span className="group relative"><HelpCircle size={15} className="cursor-help text-white/35" />
@@ -136,111 +144,283 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           </span>
         </div>
       </div>
-      <ReleaseTable productId={productId} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
+      <ReleaseTable productId={productId} productName={productName} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
     </> : <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <RecordToolbar query={query} onQueryChange={setQuery} scope={recordScope} onScopeChange={setRecordScope}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex gap-2">
-          {canImport && (
-            <button
-              onClick={() => setDialog('import-initiation')}
-              className="flex items-center gap-1 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-200 hover:bg-cyan-500/20"
-            >
-              <Upload size={14} /> 导入历史数据
-            </button>
-          )}
           <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
         </div>
       </div>
-      <InitiationTable productId={productId} items={visibleInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
+      <InitiationTable
+        productId={productId}
+        productName={productName}
+        items={visibleInitiations}
+        members={members}
+        currentUserId={currentUserId}
+        onRetryReview={setRetrySeed}
+        onFillMeeting={setMeetingFillItem}
+        onChanged={reload}
+        readOnly={recordScope === 'all'}
+      />
     </>}
     {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
-    {dialog === 'import-release' && product && (
-      <VersionWorkflowImportDialog
-        kind="release"
-        products={[product]}
-        fixedProductId={productId}
-        onClose={() => setDialog(null)}
-        onImported={async () => { setDialog(null); await reload(); }}
+    {retrySeed && (
+      <InitiationWizard
+        productId={productId}
+        requirements={requirements}
+        members={members}
+        seed={retrySeed}
+        onClose={() => setRetrySeed(null)}
+        onChanged={async () => { setRetrySeed(null); await reload(); }}
       />
     )}
-    {dialog === 'import-initiation' && product && (
-      <VersionWorkflowImportDialog
-        kind="initiation"
-        products={[product]}
-        fixedProductId={productId}
-        onClose={() => setDialog(null)}
-        onImported={async () => { setDialog(null); await reload(); }}
-      />
+    {meetingFillItem && (
+      <Modal title="会议结果" onClose={() => setMeetingFillItem(null)} width="max-w-2xl">
+        <InitiationMeetingRoundsEditor
+          initiation={meetingFillItem}
+          editable={meetingFillItem.createdBy === currentUserId}
+          onSaved={async () => {
+            setMeetingFillItem(null);
+            await reload();
+          }}
+        />
+      </Modal>
     )}
   </div>;
 }
 
-function InitiationWizard({ productId, requirements, members, onClose, onChanged }: {
-  productId: string; requirements: Requirement[]; members: ProductMember[]; onClose: () => void; onChanged: () => Promise<void>;
+export function InitiationWizard({ productId, requirements, members, onClose, onChanged, seed }: {
+  productId: string;
+  requirements: Requirement[];
+  members: ProductMember[];
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+  /** 评审未通过时重新发起：预填基础信息并直接进入 Agent 评审步骤 */
+  seed?: ProductInitiation;
 }) {
-  const [step, setStep] = useState(1);
-  const [item, setItem] = useState<ProductInitiation | null>(null);
-  const [projectType, setProjectType] = useState<'standard' | 'custom'>('standard');
-  const [customerSource, setCustomerSource] = useState('');
-  const [systemName, setSystemName] = useState('');
-  const [appName, setAppName] = useState('');
-  const [planName, setPlanName] = useState('');
-  const [requirementDescription, setRequirementDescription] = useState('');
-  const [departmentName, setDepartmentName] = useState('');
-  const [planUrl, setPlanUrl] = useState('');
-  const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>('minor');
-  const [requirementIds, setRequirementIds] = useState<string[]>([]);
+  const isRetry = Boolean(seed);
+  const wizardTitle = seed?.status === 'decision_pending'
+    ? '继续立项决策'
+    : isRetry
+      ? '重新发起立项'
+      : '发起立项';
+  const [step, setStep] = useState(() => {
+    if (seed?.status === 'review_failed') return 2;
+    if (seed?.status === 'decision_pending') return 3;
+    return 1;
+  });
+  const [item, setItem] = useState<ProductInitiation | null>(seed ?? null);
+  const [projectType, setProjectType] = useState<'standard' | 'custom'>(seed?.projectType ?? 'standard');
+  const [customerSource, setCustomerSource] = useState(seed?.customerSource ?? '');
+  const [linkedProductId, setLinkedProductId] = useState(seed?.linkedProductId ?? productId);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
+  const [planName, setPlanName] = useState(seed?.planName ?? '');
+  const [planUrl, setPlanUrl] = useState(seed?.planUrl ?? '');
+  const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>(seed?.versionType ?? 'minor');
+  const [requirementIds, setRequirementIds] = useState<string[]>(seed?.requirementIds ?? []);
   const [file, setFile] = useState<File | null>(null);
   const [meeting, setMeeting] = useState(false);
   const [meetingAt, setMeetingAt] = useState('');
+  const [meetingDraftCount, setMeetingDraftCount] = useState(seed?.meetingDraftCount ?? 1);
   const [ownerId, setOwnerId] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [reviewStage, setReviewStage] = useState<InitiationReviewStage>('idle');
+  const [processLogs, setProcessLogs] = useState<ProcessLogEntry[]>([]);
+  const [dimensionScores, setDimensionScores] = useState<ReviewDimensionScore[]>([]);
+  const [totalScore, setTotalScore] = useState<number | null>(null);
+  const [reviewPassed, setReviewPassed] = useState<boolean | null>(null);
+  const [adjustmentLog, setAdjustmentLog] = useState<string[]>([]);
+  const [expectedDimCount, setExpectedDimCount] = useState(0);
+  const logSeq = useRef(0);
+  const streamErrorRef = useRef<string | null>(null);
+  const sseOutcomeRef = useRef({ hasResult: false, dimensionCount: 0, streamDone: false });
 
-  const createBase = async () => {
-    if (!planName.trim() || (projectType === 'custom' && !customerSource.trim())) return setMessage('请完整填写必填项');
-    setBusy(true);
-    const res = await createInitiation(productId, {
-      projectType, systemName, appName, customerSource, planName, requirementDescription,
-      departmentName, planUrl, versionType, requirementIds,
+  const appendLog = useCallback((text: string) => {
+    logSeq.current += 1;
+    const at = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    setProcessLogs((prev) => [...prev, { id: `${Date.now()}-${logSeq.current}`, at, text }]);
+  }, []);
+
+  const sse = useSseStream<ReviewDimensionScore>({
+    url: '',
+    itemEvent: 'dimension_score',
+    onItem: (item) => {
+      setDimensionScores((prev) => {
+        const existing = prev.find((d) => d.key === item.key);
+        const next = existing ? prev.map((d) => (d.key === item.key ? item : d)) : [...prev, item];
+        sseOutcomeRef.current.dimensionCount = next.length;
+        return next;
+      });
+      appendLog(`维度「${item.name}」：${item.score}/${item.maxScore}`);
+    },
+    onPhase: (msg) => {
+      if (msg) appendLog(msg);
+    },
+    onEvent: {
+      result: (data: unknown) => {
+        const d = data as { totalScore: number; isPassed: boolean };
+        sseOutcomeRef.current.hasResult = true;
+        setTotalScore(d.totalScore);
+        setReviewPassed(d.isPassed);
+        appendLog(`汇总得分 ${d.totalScore}/100，${d.isPassed ? '通过' : '未通过'}`);
+      },
+      adjustment_log: (data: unknown) => {
+        const d = data as { entries?: string[] };
+        if (Array.isArray(d.entries) && d.entries.length > 0) {
+          setAdjustmentLog(d.entries);
+          appendLog(`系统兜底调整 ${d.entries.length} 项`);
+        }
+      },
+    },
+    onError: (msg) => {
+      streamErrorRef.current = msg;
+      appendLog(`评审流异常：${msg}`);
+    },
+    onDone: () => {
+      sseOutcomeRef.current.streamDone = true;
+      appendLog('评审流已结束');
+    },
+  });
+
+  const reviewRunning = reviewStage !== 'idle';
+  const progressPercent = useMemo(
+    () => computeInitiationReviewProgress(reviewStage, dimensionScores.length, expectedDimCount),
+    [reviewStage, dimensionScores.length, expectedDimCount],
+  );
+
+  useEffect(() => {
+    void listProducts({ pageSize: 200 }).then((res) => {
+      if (res.success) setCatalogProducts(res.data.items);
     });
+  }, []);
+
+  useEffect(() => {
+    if (step !== 2) return;
+    void getDimensions().then((res) => {
+      if (res.success) {
+        setExpectedDimCount(res.data.dimensions.filter((d) => d.isActive).length);
+      }
+    });
+  }, [step]);
+
+  const productOptions = useMemo(() => toProductOptions(catalogProducts), [catalogProducts]);
+
+  const basePayload = () => ({
+    linkedProductId,
+    projectType,
+    customerSource: projectType === 'custom' ? customerSource : undefined,
+    planName,
+    planUrl: planUrl.trim() || undefined,
+    versionType,
+    requirementIds,
+  });
+
+  const goPrevStep = () => {
+    if (step <= 1 || reviewRunning || busy) return;
+    setMessage('');
+    setStep((s) => s - 1);
+  };
+
+  const saveStep1 = async () => {
+    if (!linkedProductId.trim()) return setMessage('请选择产品');
+    if (!planName.trim()) return setMessage('请填写方案名称');
+    if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
+    setBusy(true);
+    const payload = basePayload();
+    const editable = item && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
+    const res = editable && item
+      ? await updateInitiation(item.id, payload)
+      : await createInitiation(productId, payload);
     setBusy(false);
     if (!res.success) return setMessage(res.error?.message ?? '保存失败');
     setItem(res.data); setStep(2); setMessage('');
   };
   const runReview = async () => {
     if (!file || !item) return setMessage('请先上传方案文件');
-    setBusy(true); setMessage('正在上传并提交 Agent 评审...');
+    setBusy(true);
+    setMessage('');
+    setDimensionScores([]);
+    setTotalScore(null);
+    setReviewPassed(null);
+    setAdjustmentLog([]);
+    setProcessLogs([]);
+    sse.reset();
+    streamErrorRef.current = null;
+    sseOutcomeRef.current = { hasResult: false, dimensionCount: 0, streamDone: false };
+
+    setReviewStage('uploading');
+    appendLog(`开始上传：${file.name}`);
     const uploaded = await uploadAttachment(file);
-    if (!uploaded.success) { setBusy(false); return setMessage(uploaded.error?.message ?? '上传失败'); }
+    if (!uploaded.success) {
+      setBusy(false);
+      setReviewStage('idle');
+      return setMessage(uploaded.error?.message ?? '上传失败');
+    }
+    appendLog('方案文件上传成功');
+
+    setReviewStage('submitting');
+    appendLog('正在创建 Agent 评审任务…');
     const submitted = await createSubmission(planName, uploaded.data.attachmentId);
-    if (!submitted.success) { setBusy(false); return setMessage(submitted.error?.message ?? '提交评审失败'); }
-    const controller = new AbortController();
-    const streamed = await runReviewSubmission(
-      submitted.data.submission.id,
-      controller.signal,
-      (phase) => setMessage(phase || 'Agent 评审中...'),
-    );
-    if (!streamed.success) {
+    if (!submitted.success) {
       setBusy(false);
-      return setMessage(streamed.errorMessage ?? '评审执行失败');
+      setReviewStage('idle');
+      return setMessage(submitted.error?.message ?? '提交评审失败');
     }
-    const result = await getSubmission(submitted.data.submission.id);
-    if (!result.success || result.data.submission.status !== 'Done') {
+    const submissionId = submitted.data.submission.id;
+    appendLog(`评审任务已创建（${submissionId.slice(0, 8)}…）`);
+
+    setReviewStage('streaming');
+    appendLog('连接评审流，等待 Agent 分析打分…');
+    await sse.start({ url: getResultStreamUrl(submissionId) });
+
+    const outcome = sseOutcomeRef.current;
+    const recoverable = hasRecoverableSseOutcome(outcome);
+
+    if (streamErrorRef.current && !recoverable) {
       setBusy(false);
-      return setMessage(result.success
-        ? result.data.submission.errorMessage ?? '评审未正常完成'
-        : result.error?.message ?? '获取评审结果失败');
+      setReviewStage('idle');
+      return setMessage(streamErrorRef.current);
     }
-    const synced = await syncInitiationReview(item.id, submitted.data.submission.id);
+    if (streamErrorRef.current && recoverable) {
+      appendLog('评审结果已从流中获取，忽略连接异常并继续同步…');
+    }
+
+    if (!outcome.hasResult && !outcome.streamDone) {
+      appendLog('确认服务端评审状态…');
+      const waited = await waitForSubmissionDone(submissionId);
+      if (!waited.ok && !recoverable) {
+        setBusy(false);
+        setReviewStage('idle');
+        return setMessage(waited.message);
+      }
+      if (!waited.ok && recoverable) {
+        appendLog(`详情查询失败（${waited.message}），仍尝试同步立项…`);
+      }
+    }
+
+    setReviewStage('syncing');
+    appendLog('正在同步评审结果到立项记录…');
+    const synced = await syncInitiationReview(item.id, submissionId);
     setBusy(false);
-    if (!synced.success) return setMessage(synced.error?.message ?? '同步评审结果失败');
+    setReviewStage('idle');
+    if (!synced.success) {
+      if (recoverable) {
+        return setMessage(`评审已完成，但同步立项失败：${synced.error?.message ?? '未知错误'}。请刷新页面或联系管理员。`);
+      }
+      return setMessage(synced.error?.message ?? '同步评审结果失败');
+    }
     setItem(synced.data);
-    if (synced.data.reviewPassed) { setStep(3); setMessage('评审通过，可以提交立项决策。'); }
-    else setMessage(`评审未通过，得分 ${synced.data.reviewScore ?? 0}。请修改方案后重新立项。`);
+    appendLog('立项记录已更新');
+    if (synced.data.reviewPassed) {
+      setStep(3);
+      setMessage('评审通过，可以提交立项决策。');
+    } else {
+      setMessage(`评审未通过，得分 ${synced.data.reviewScore ?? 0}。请修改方案后重新立项。`);
+    }
   };
   const submitDecision = async () => {
     if (!item) return;
@@ -249,54 +429,114 @@ function InitiationWizard({ productId, requirements, members, onClose, onChanged
       reviewMeetingRequired: meeting,
       expectedMeetingAt: meeting && meetingAt ? new Date(meetingAt).toISOString() : undefined,
       primaryOwnerId: meeting ? undefined : ownerId,
+      meetingDraftCount: meeting ? meetingDraftCount : undefined,
     });
     setBusy(false);
     if (!res.success) return setMessage(res.error?.message ?? '提交失败');
     await onChanged(); onClose();
   };
 
-  return <Modal title="发起立项" onClose={onClose} width="max-w-3xl">
+  return <Modal title={wizardTitle} onClose={onClose} width="max-w-3xl">
     <Stepper step={step} />
     {step === 1 && <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
       <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
       {projectType === 'custom' && <Field label="客户来源 *"><Input value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}
-      <Field label="系统"><Input value={systemName} onChange={(e) => setSystemName(e.target.value)} /></Field>
-      <Field label="应用"><Input value={appName} onChange={(e) => setAppName(e.target.value)} /></Field>
+      <Field label="产品 *" full>
+        <ItemSearchSelect
+          value={linkedProductId}
+          onChange={setLinkedProductId}
+          options={productOptions}
+          placeholder="搜索产品名称或编号"
+          countUnit="个产品"
+          emptyText="暂无产品"
+        />
+      </Field>
       <Field label="方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} /></Field>
-      <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
-      <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field>
+      <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://（选填）" /></Field>
       <Field label="版本级别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
-      <Field label="项目需求描述" full><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} className="min-h-24 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></Field>
       <Field label="关联需求" full>
         <RequirementChecks requirements={requirements} selected={requirementIds} onChange={setRequirementIds} />
       </Field>
     </div>}
     {step === 2 && <div className="space-y-4">
-      <label className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-cyan-400/35 bg-cyan-400/5 text-center">
-        <Upload className="mb-3 text-cyan-300" size={28} /><span className="text-sm text-white/75">{file ? file.name : '拖动或点击上传方案文件'}</span>
-        <span className="mt-1 text-xs text-white/35">PDF、Word、Markdown、Excel、PPT</span>
-        <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-      </label>
-      {item?.reviewScore != null && <Score score={item.reviewScore} passed={item.reviewPassed === true} />}
+      {!reviewRunning && (
+        <label className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-cyan-400/35 bg-cyan-400/5 text-center">
+          <Upload className="mb-3 text-cyan-300" size={28} /><span className="text-sm text-white/75">{file ? file.name : '拖动或点击上传方案文件'}</span>
+          <span className="mt-1 text-xs text-white/35">PDF、Word、Markdown、TXT、Excel、PPT</span>
+          <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        </label>
+      )}
+      {reviewRunning && file && (
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/70">
+          方案文件：<span className="text-white/90">{file.name}</span>
+        </div>
+      )}
+      {reviewRunning && (
+        <InitiationReviewLivePanel
+          stage={reviewStage}
+          ssePhase={sse.phase}
+          phaseMessage={sse.phaseMessage}
+          progressPercent={progressPercent}
+          logs={processLogs}
+          typing={sse.typing}
+          dimensionScores={dimensionScores}
+          totalScore={totalScore}
+          isPassed={reviewPassed}
+          adjustmentLog={adjustmentLog}
+          expectedDimCount={expectedDimCount}
+        />
+      )}
+      {!reviewRunning && item?.reviewScore != null && <Score score={item.reviewScore} passed={item.reviewPassed === true} />}
     </div>}
     {step === 3 && <div className="space-y-4">
       <Field label="是否需要开评审会"><Select value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></Select></Field>
-      {meeting ? <Field label="预计评审会时间 *"><Input type="datetime-local" value={meetingAt} onChange={(e) => setMeetingAt(e.target.value)} /></Field>
-        : <Field label="产品主负责人 *"><Select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}><option value="">请选择</option>{members.map((m) => <option key={m.userId} value={m.userId}>{m.displayName}</option>)}</Select></Field>}
-      <Info>{meeting ? '提交后立即获取 T 立项号。' : '提交后流转给主负责人，负责人同意后生成 T 立项号。'}</Info>
+      {meeting ? <>
+        <Field label="预计评审会时间 *"><Input type="datetime-local" value={meetingAt} onChange={(e) => setMeetingAt(e.target.value)} /></Field>
+        <Field label="计划召开稿次 *">
+          <Select value={String(meetingDraftCount)} onChange={(e) => setMeetingDraftCount(Number(e.target.value))}>
+            <option value="1">1 稿（仅第一稿）</option>
+            <option value="2">2 稿（第一稿 + 第二稿）</option>
+            <option value="3">3 稿（第一稿 + 第二稿 + 第三稿）</option>
+          </Select>
+        </Field>
+        <Info>提交后立即获取 T 立项号。线下各稿会议时间与是否通过请在立项详情中后续回填。</Info>
+      </> : <>
+        <Field label="产品主负责人 *"><Select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}><option value="">请选择</option>{members.map((m) => <option key={m.userId} value={m.userId}>{m.displayName}</option>)}</Select></Field>
+        <Info>提交后流转给主负责人，负责人同意后生成 T 立项号。</Info>
+      </>}
     </div>}
     {message && <div className="mt-4 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">{message}</div>}
-    <div className="mt-6 flex justify-end gap-2"><Secondary onClick={onClose}>取消</Secondary>
-      {step === 1 && <Primary onClick={createBase} disabled={busy}>{busy ? '保存中...' : '下一步'}</Primary>}
-      {step === 2 && <Primary onClick={runReview} disabled={busy}>{busy && <Loader2 size={14} className="animate-spin" />}上传并打分</Primary>}
+    <div className="mt-6 flex items-center justify-between gap-2">
+      <div>
+        {step > 1 && (
+          <Secondary onClick={goPrevStep} disabled={busy || reviewRunning}>上一步</Secondary>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Secondary onClick={onClose} disabled={reviewRunning}>取消</Secondary>
+      {step === 1 && <Primary onClick={saveStep1} disabled={busy}>{busy ? '保存中...' : '下一步'}</Primary>}
+      {step === 2 && (
+        <Primary onClick={runReview} disabled={busy || !file}>
+          {reviewRunning && <Loader2 size={14} className="animate-spin" />}
+          {reviewRunning ? '评审进行中…' : '上传并打分'}
+        </Primary>
+      )}
       {step === 3 && <Primary onClick={submitDecision} disabled={busy || (meeting ? !meetingAt : !ownerId)}>提交立项</Primary>}
+      </div>
     </div>
   </Modal>;
 }
 
-function InitiationTable({ productId, items, members, onChanged, readOnly }: {
+function InitiationTable({ productId, productName, items, members, currentUserId, onRetryReview, onFillMeeting, onChanged, readOnly }: {
   productId: string;
-  items: ProductInitiation[]; members: ProductMember[]; onChanged: () => Promise<void>; readOnly: boolean;
+  productName: string;
+  items: ProductInitiation[];
+  members: ProductMember[];
+  currentUserId?: string;
+  onRetryReview: (item: ProductInitiation) => void;
+  onFillMeeting: (item: ProductInitiation) => void;
+  onChanged: () => Promise<void>;
+  readOnly: boolean;
 }) {
   const navigate = useNavigate();
   const names = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
@@ -309,10 +549,16 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
   return (
     <>
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']} selection={tableSelection}>
-        {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')} onClick={() => openDetail(item.id)}>
+      <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
+        {items.map((item) => {
+          const isOwner = !readOnly && item.createdBy === currentUserId;
+          const showRetryReview = isOwner && item.status === 'review_failed';
+          const showFillMeeting = isOwner && isMeetingResultPending(item);
+          const reviewScoreText = formatInitiationReviewScore(item);
+          return (
+        <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')} onClick={() => openDetail(item.id)}>
           <ListTableSelectionCell selection={tableSelection} id={item.id} />
-          <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
+          <Td>{resolveVersionProductLabel(item, productName)}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
         ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
@@ -328,14 +574,40 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
       <Td>{formatDate(item.projectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td>
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
-    </tr>)}{items.length === 0 && <Empty cols={17}>暂无立项记录</Empty>}
+      <Td>
+        {reviewScoreText === '-' ? (
+          <span className="text-white/35">-</span>
+        ) : (
+          <span className={
+            item.reviewPassed === true ? 'text-emerald-300'
+              : item.reviewPassed === false ? 'text-rose-300'
+                : 'text-white/70'
+          }>{reviewScoreText}</span>
+        )}
+      </Td>
+      <Td onClick={(e) => e.stopPropagation()}>
+        {(showRetryReview || showFillMeeting) ? (
+          <div className="flex flex-col items-start gap-1">
+            {showRetryReview && (
+              <button type="button" onClick={() => onRetryReview(item)} className="text-amber-200 hover:underline">重新发起立项</button>
+            )}
+            {showFillMeeting && (
+              <button type="button" onClick={() => onFillMeeting(item)} className="text-cyan-300 hover:underline">会议结果</button>
+            )}
+          </div>
+        ) : null}
+      </Td>
+    </tr>
+          );
+        })}{items.length === 0 && <Empty cols={18}>暂无立项记录</Empty>}
       </Table>
     </>
   );
 }
 
-function ReleaseTable({ productId, items, requirements, members, onChanged, readOnly }: {
+function ReleaseTable({ productId, productName, items, requirements, members, onChanged, readOnly }: {
   productId: string;
+  productName: string;
   items: ProductRelease[]; requirements: Requirement[]; members: ProductMember[]; onChanged: () => Promise<void>; readOnly: boolean;
 }) {
   const navigate = useNavigate();
@@ -368,10 +640,10 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
   });
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-    <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={tableSelection}>
+    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]')} onClick={() => openRelease(item.id)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
-      <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
+      <Td>{resolveVersionProductLabel(item, productName)}</Td>
       <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
       <Td mono>{item.initiationId && item.tCode
         ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item.initiationId!); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
@@ -387,7 +659,7 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
         : readOnly ? <span className="text-white/35">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-white/50">填写地址</button></div>
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-    </tr>)}{items.length === 0 && <Empty cols={16}>暂无上线记录</Empty>}
+    </tr>)}{items.length === 0 && <Empty cols={15}>暂无上线记录</Empty>}
   </Table>
   </>;
 }
@@ -429,17 +701,19 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
   trackedOnly?: boolean;
   onTrackedOnlyChange?: (value: boolean) => void;
 }) {
-  const filterClassName = 'h-[34px] rounded-lg border border-white/10 bg-[#111318] px-3 text-xs text-white/75 outline-none focus:border-cyan-400/50';
+  const filterClassName = 'h-8 rounded-lg border border-white/10 bg-[#111318] px-3 text-xs text-white/75 outline-none focus:border-cyan-400/50';
   return <div className="flex flex-wrap items-center gap-2">
-    {onTrackedOnlyChange && <TrackedFilterToggle active={trackedOnly ?? false} onChange={onTrackedOnlyChange} />}
-    <label className="relative block w-64 max-w-full">
-      <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-      <input value={query} onChange={(event) => onQueryChange(event.target.value)}
+    <div className={OVERVIEW_LIST_SEARCH_BOX}>
+      <Search size={14} className="shrink-0 text-white/35" />
+      <input
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
         placeholder="搜索版本号、方案名称等"
-        className="w-full rounded-lg border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50" />
-    </label>
+        className="min-w-0 flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/35"
+      />
+    </div>
     {onOwnerChange
-      ? <div className="w-52">
+      ? <div className="h-8 w-52">
           <UserSearchSelect value={ownerId ?? ''} onChange={onOwnerChange} placeholder="产品负责人" showAllOption={false} uiSize="sm" />
         </div>
       : <select
@@ -460,6 +734,7 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
       <option value="">全部状态</option>
       {statuses.map((value) => <option key={value} value={value}>{STATUS_LABEL[value] ?? value}</option>)}
     </select>
+    {onTrackedOnlyChange && <TrackedFilterToggle active={trackedOnly ?? false} onChange={onTrackedOnlyChange} />}
   </div>;
 }
 

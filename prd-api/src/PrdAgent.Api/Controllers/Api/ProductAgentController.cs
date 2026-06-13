@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -106,7 +107,7 @@ public class ProductAgentController : ControllerBase
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return null;
         if (await CanManageAsync(userId)) return product;
-        if (product.OwnerId == userId || product.MemberIds.Contains(userId)) return product;
+        if (product.IsProductOwner(userId) || product.MemberIds.Contains(userId)) return product;
         return null;
     }
 
@@ -319,8 +320,8 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的产品类型"));
 
         var userId = GetUserId();
-        var owner = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var grade = string.IsNullOrWhiteSpace(request.Grade) ? ProductGrade.Normal : request.Grade;
+        var (ownerIds, ownerId, ownerName) = await ResolveProductOwnersAsync(request.OwnerIds);
 
         var product = new Product
         {
@@ -332,9 +333,10 @@ public class ProductAgentController : ControllerBase
             TemplateId = request.TemplateId,
             WorkflowDefId = request.WorkflowDefId,
             FormData = request.FormData ?? new(),
-            OwnerId = userId,
-            OwnerName = owner?.DisplayName,
-            MemberIds = (request.MemberIds ?? new()).Append(userId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList(),
+            OwnerIds = ownerIds,
+            OwnerId = ownerId,
+            OwnerName = ownerName,
+            MemberIds = MergeMemberIds(request.MemberIds, ownerIds),
         };
         product.CurrentState = await ResolveInitialStateAsync(request.WorkflowDefId);
 
@@ -357,7 +359,6 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单次最多导入 500 条"));
 
         var userId = GetUserId();
-        var owner = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var defaultGrade = await ResolveGradeIdAsync(request.DefaultGrade, ProductGrade.Normal);
 
         var existingNames = (await _db.Products.Find(p => !p.IsDeleted).Project(p => p.Name).ToListAsync())
@@ -391,9 +392,10 @@ public class ProductAgentController : ControllerBase
                 Code = row.Code?.Trim(),
                 Description = row.Description?.Trim(),
                 Grade = grade,
-                OwnerId = userId,
-                OwnerName = owner?.DisplayName,
-                MemberIds = new List<string> { userId },
+                OwnerIds = new(),
+                OwnerId = string.Empty,
+                OwnerName = null,
+                MemberIds = new(),
             };
             product.CurrentState = await ResolveInitialStateAsync(null);
 
@@ -417,7 +419,10 @@ public class ProductAgentController : ControllerBase
         var b = Builders<Product>.Filter;
         var conds = new List<FilterDefinition<Product>> { b.Eq(p => p.IsDeleted, false) };
         if (!await CanManageAsync(userId))
-            conds.Add(b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
+            conds.Add(b.Or(
+                b.Eq(p => p.OwnerId, userId),
+                b.AnyEq(p => p.OwnerIds, userId),
+                b.AnyEq(p => p.MemberIds, userId)));
         if (!string.IsNullOrWhiteSpace(grade))
             conds.Add(b.Eq(p => p.Grade, grade));
         if (!string.IsNullOrWhiteSpace(keyword))
@@ -471,6 +476,16 @@ public class ProductAgentController : ControllerBase
         if (request.WorkflowDefId != null) update = update.Set(p => p.WorkflowDefId, request.WorkflowDefId);
         if (request.FormData != null) update = update.Set(p => p.FormData, request.FormData);
         if (request.MemberIds != null) update = update.Set(p => p.MemberIds, request.MemberIds);
+        if (request.OwnerIds != null)
+        {
+            var (ownerIds, ownerId, ownerName) = await ResolveProductOwnersAsync(request.OwnerIds);
+            update = update
+                .Set(p => p.OwnerIds, ownerIds)
+                .Set(p => p.OwnerId, ownerId)
+                .Set(p => p.OwnerName, ownerName);
+            if (ownerIds.Count > 0)
+                update = update.AddToSetEach(p => p.MemberIds, ownerIds);
+        }
 
         await _db.Products.UpdateOneAsync(p => p.Id == productId, update);
         var updated = await _db.Products.Find(p => p.Id == productId).FirstOrDefaultAsync();
@@ -484,7 +499,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        if (product.OwnerId != userId && !await CanManageAsync(userId))
+        if (!product.IsProductOwner(userId) && !await CanManageAsync(userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品负责人或管理员可删除"));
 
         await _db.Products.UpdateOneAsync(p => p.Id == productId,
@@ -503,19 +518,18 @@ public class ProductAgentController : ControllerBase
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
 
         // 成员全集：负责人 + 成员列表，去重去空
-        var allIds = new List<string> { product.OwnerId };
-        allIds.AddRange(product.MemberIds);
-        var ids = allIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        var ownerSet = product.EnumerateOwnerIds().ToHashSet();
+        var allIds = ownerSet.Concat(product.MemberIds).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
 
-        var users = await _db.Users.Find(u => ids.Contains(u.UserId)).ToListAsync();
+        var users = await _db.Users.Find(u => allIds.Contains(u.UserId)).ToListAsync();
         var nameById = users.ToDictionary(u => u.UserId, u => u.DisplayName);
         var adminSet = product.AdminIds.ToHashSet();
 
-        var members = ids.Select(id => new
+        var members = allIds.Select(id => new
         {
             userId = id,
             displayName = nameById.GetValueOrDefault(id, id),
-            role = id == product.OwnerId ? "owner" : (adminSet.Contains(id) ? "admin" : "member"),
+            role = ownerSet.Contains(id) ? "owner" : (adminSet.Contains(id) ? "admin" : "member"),
         })
         .OrderBy(m => m.role == "owner" ? 0 : m.role == "admin" ? 1 : 2)
         .ThenBy(m => m.displayName)
@@ -555,7 +569,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        if (memberUserId == product.OwnerId)
+        if (product.IsProductOwner(memberUserId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能移除产品负责人"));
 
         var isAdminTarget = product.AdminIds.Contains(memberUserId);
@@ -582,7 +596,7 @@ public class ProductAgentController : ControllerBase
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
         if (!await CanManageProductAdminsAsync(product, userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅负责人或管理员可指派产品管理员"));
-        if (memberUserId == product.OwnerId)
+        if (product.IsProductOwner(memberUserId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "负责人角色不可更改"));
 
         var role = (request.Role ?? "").Trim().ToLowerInvariant();
@@ -725,20 +739,30 @@ public class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
         if (string.IsNullOrWhiteSpace(request.PlanName))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方案名称不能为空"));
+        if (string.IsNullOrWhiteSpace(request.LinkedProductId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择产品"));
         if (request.ProjectType == "custom" && string.IsNullOrWhiteSpace(request.CustomerSource))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "定制项目必须填写客户来源"));
+
+        var linkedProduct = await FindAccessibleProductAsync(request.LinkedProductId.Trim(), userId);
+        if (linkedProduct == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "所选产品不存在或无权访问"));
+
+        var (systemName, appName) = await ResolveInitiationSystemAppNamesAsync(linkedProduct);
+        var departmentName = await ResolveDefaultInitiationDepartmentAsync(userId);
 
         var item = new ProductInitiation
         {
             ProductId = productId,
+            LinkedProductId = linkedProduct.Id,
             ProjectType = request.ProjectType == "custom" ? "custom" : "standard",
-            SystemName = request.SystemName?.Trim(),
-            AppName = request.AppName?.Trim(),
+            SystemName = systemName,
+            AppName = appName,
             CustomerSource = request.CustomerSource?.Trim(),
             PlanName = request.PlanName.Trim(),
-            RequirementDescription = request.RequirementDescription?.Trim(),
-            DepartmentName = request.DepartmentName?.Trim(),
-            PlanUrl = request.PlanUrl?.Trim(),
+            RequirementDescription = null,
+            DepartmentName = departmentName,
+            PlanUrl = string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim(),
             VersionType = NormalizeVersionType(request.VersionType),
             RequirementIds = request.RequirementIds?.Distinct().ToList() ?? new(),
             Status = "review_pending",
@@ -746,6 +770,47 @@ public class ProductAgentController : ControllerBase
         };
         await _db.ProductInitiations.InsertOneAsync(item);
         return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    [HttpPatch("initiations/{id}")]
+    public async Task<IActionResult> UpdateInitiation(string id, [FromBody] CreateInitiationRequest request)
+    {
+        var userId = GetUserId();
+        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.CreatedBy != userId && !await CanManageAsync(userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可修改该立项记录"));
+        if (item.Status is not ("draft" or "review_pending" or "review_failed" or "decision_pending"))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许修改基础信息"));
+
+        if (string.IsNullOrWhiteSpace(request.PlanName))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方案名称不能为空"));
+        if (string.IsNullOrWhiteSpace(request.LinkedProductId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择产品"));
+        if (request.ProjectType == "custom" && string.IsNullOrWhiteSpace(request.CustomerSource))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "定制项目必须填写客户来源"));
+
+        var linkedProduct = await FindAccessibleProductAsync(request.LinkedProductId.Trim(), userId);
+        if (linkedProduct == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "所选产品不存在或无权访问"));
+
+        var (systemName, appName) = await ResolveInitiationSystemAppNamesAsync(linkedProduct);
+
+        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductInitiation>.Update
+                .Set(x => x.LinkedProductId, linkedProduct.Id)
+                .Set(x => x.ProjectType, request.ProjectType == "custom" ? "custom" : "standard")
+                .Set(x => x.SystemName, systemName)
+                .Set(x => x.AppName, appName)
+                .Set(x => x.CustomerSource, request.CustomerSource?.Trim())
+                .Set(x => x.PlanName, request.PlanName.Trim())
+                .Set(x => x.PlanUrl, string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim())
+                .Set(x => x.VersionType, NormalizeVersionType(request.VersionType))
+                .Set(x => x.RequirementIds, request.RequirementIds?.Distinct().ToList() ?? new())
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
     }
 
     [HttpPost("initiations/{id}/review")]
@@ -767,12 +832,27 @@ public class ProductAgentController : ControllerBase
         var status = submission.Status == ReviewStatuses.Done
             ? (passed == true ? "decision_pending" : "review_failed")
             : "review_pending";
+        if (item.Status is not ("review_pending" or "review_failed" or "draft" or "decision_pending"))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许同步 Agent 评审结果"));
+
+        var attemptNo = (item.ReviewAttempts?.Count ?? 0) + 1;
+        var attempt = new InitiationReviewAttempt
+        {
+            AttemptNo = attemptNo,
+            SubmissionId = submission.Id,
+            PlanFileName = submission.FileName,
+            ReviewScore = result?.TotalScore,
+            ReviewPassed = passed,
+            StartedAt = submission.SubmittedAt,
+            CompletedAt = submission.CompletedAt ?? DateTime.UtcNow,
+        };
         await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
             Builders<ProductInitiation>.Update
                 .Set(x => x.ReviewSubmissionId, submission.Id)
                 .Set(x => x.ReviewScore, result == null ? null : result.TotalScore)
                 .Set(x => x.ReviewPassed, passed)
                 .Set(x => x.Status, status)
+                .Push(x => x.ReviewAttempts, attempt)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
@@ -791,14 +871,31 @@ public class ProductAgentController : ControllerBase
 
         if (request.ReviewMeetingRequired && !request.ExpectedMeetingAt.HasValue)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写预计评审会时间"));
+        if (request.ReviewMeetingRequired)
+        {
+            var draftCount = request.MeetingDraftCount is >= 1 and <= 3 ? request.MeetingDraftCount.Value : 1;
+            if (draftCount < 1 || draftCount > 3)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "会议稿次须为 1–3 稿"));
+        }
         if (!request.ReviewMeetingRequired && string.IsNullOrWhiteSpace(request.PrimaryOwnerId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择产品主负责人"));
 
-        var tCode = request.ReviewMeetingRequired ? await GenerateWorkflowCodeAsync(item.ProductId, "T", item.VersionType) : null;
+        var meetingDraftCount = request.ReviewMeetingRequired
+            ? (request.MeetingDraftCount is >= 1 and <= 3 ? request.MeetingDraftCount.Value : 1)
+            : (int?)null;
+        var meetingRounds = request.ReviewMeetingRequired && meetingDraftCount.HasValue
+            ? Enumerable.Range(1, meetingDraftCount.Value)
+                .Select(r => new InitiationMeetingDraftRound { Round = r })
+                .ToList()
+            : new List<InitiationMeetingDraftRound>();
+
+        var tCode = request.ReviewMeetingRequired ? await GenerateWorkflowCodeAsync("T", item.VersionType) : null;
         await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
             Builders<ProductInitiation>.Update
                 .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired)
                 .Set(x => x.ExpectedMeetingAt, request.ExpectedMeetingAt)
+                .Set(x => x.MeetingDraftCount, meetingDraftCount)
+                .Set(x => x.MeetingDraftRounds, meetingRounds)
                 .Set(x => x.PrimaryOwnerId, request.PrimaryOwnerId)
                 .Set(x => x.TCode, tCode)
                 .Set(x => x.Status, request.ReviewMeetingRequired ? "approved" : "owner_pending")
@@ -806,6 +903,49 @@ public class ProductAgentController : ControllerBase
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         if (request.ReviewMeetingRequired)
             await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Approved, GetUserId(), "立项评审通过，自动流转到已立项");
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    /// <summary>回填 / 修改线下评审会各稿次时间与结论（仅申请人或管理员）</summary>
+    [HttpPatch("initiations/{id}/meeting")]
+    public async Task<IActionResult> UpdateInitiationMeeting(string id, [FromBody] UpdateInitiationMeetingRequest request)
+    {
+        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.ReviewMeetingRequired != true)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "该立项未选择召开评审会"));
+        if (item.CreatedBy != GetUserId() && !await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可更新会议结果"));
+
+        var maxRound = item.MeetingDraftCount is >= 1 and <= 3 ? item.MeetingDraftCount.Value : 1;
+        var rounds = (request.Rounds ?? new List<InitiationMeetingDraftRound>())
+            .Where(r => r.Round >= 1 && r.Round <= maxRound)
+            .GroupBy(r => r.Round)
+            .Select(g => g.Last())
+            .OrderBy(r => r.Round)
+            .ToList();
+
+        DateTime? firstAt = null, secondAt = null, thirdAt = null;
+        foreach (var r in rounds)
+        {
+            if (r.Round == 1) firstAt = r.HeldAt;
+            if (r.Round == 2) secondAt = r.HeldAt;
+            if (r.Round == 3) thirdAt = r.HeldAt;
+        }
+
+        var allPassed = rounds.Count >= maxRound && rounds.All(r => r.Passed == true);
+        var projectAt = allPassed ? rounds.Where(r => r.HeldAt.HasValue).Max(r => r.HeldAt) : item.ProjectAt;
+
+        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductInitiation>.Update
+                .Set(x => x.MeetingDraftRounds, rounds)
+                .Set(x => x.FirstDraftMeetingAt, firstAt)
+                .Set(x => x.SecondDraftMeetingAt, secondAt)
+                .Set(x => x.ThirdDraftMeetingAt, thirdAt)
+                .Set(x => x.ProjectAt, projectAt)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -820,7 +960,7 @@ public class ProductAgentController : ControllerBase
         if (item.PrimaryOwnerId != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品主负责人可审批"));
 
-        var tCode = await GenerateWorkflowCodeAsync(item.ProductId, "T", item.VersionType);
+        var tCode = await GenerateWorkflowCodeAsync("T", item.VersionType);
         await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
             Builders<ProductInitiation>.Update
                 .Set(x => x.TCode, tCode)
@@ -934,7 +1074,7 @@ public class ProductAgentController : ControllerBase
 
         var versionType = request.IsTemporaryOptimization ? "minor" : initiation!.VersionType;
         var vCode = initiation?.TCode?.Replace("T", "V", StringComparison.OrdinalIgnoreCase)
-            ?? await GenerateWorkflowCodeAsync(productId, "V", versionType);
+            ?? await GenerateWorkflowCodeAsync("V", versionType);
         var previousRelease = await FindLatestReleaseWithManifestAsync(productId);
         var manifest = await ResolveReleaseFeatureManifestAsync(productId, request.FeatureManifest, previousRelease);
         if (manifest.Count == 0)
@@ -991,6 +1131,15 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
+    /// <summary>跨产品导入版本工作流（按行「应用」列匹配产品，未匹配则跳过）。</summary>
+    [HttpPost("overview/version-workflow/import")]
+    public async Task<IActionResult> OverviewImportVersionWorkflow([FromBody] ImportVersionWorkflowRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        return await ImportVersionWorkflowCoreAsync(request);
+    }
+
     [HttpPost("products/{productId}/version-workflow/import")]
     public async Task<IActionResult> ImportVersionWorkflow(string productId, [FromBody] ImportVersionWorkflowRequest request)
     {
@@ -999,8 +1148,25 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        return await ImportVersionWorkflowCoreAsync(request);
+    }
+
+    private async Task<IActionResult> ImportVersionWorkflowCoreAsync(ImportVersionWorkflowRequest request)
+    {
+        var userId = GetUserId();
+        var scope = await GetAccessibleProductIdsAsync(userId);
+        var productFilter = scope == null
+            ? Builders<Product>.Filter.Eq(p => p.IsDeleted, false)
+            : Builders<Product>.Filter.And(
+                Builders<Product>.Filter.Eq(p => p.IsDeleted, false),
+                Builders<Product>.Filter.In(p => p.Id, scope));
+        var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToHashSet();
+
         var errors = new List<object>();
         var created = 0;
+        var routed = new Dictionary<string, int>();
+        var unmatched = new List<object>();
         for (var index = 0; index < request.Rows.Count; index++)
         {
             var row = request.Rows[index];
@@ -1009,6 +1175,19 @@ public class ProductAgentController : ControllerBase
                 errors.Add(new { row = index + 2, message = "方案名称不能为空" });
                 continue;
             }
+            var label = ProductImportProductRouting.ResolveProductLabelFromVersionRow(row.AppName, row.SystemName, row.LegacyData);
+            var (targetProductId, _, matched) = ProductImportProductRouting.ResolveProductIdByLabel(products, label);
+            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
+            {
+                var msg = string.IsNullOrWhiteSpace(label)
+                    ? "缺少「应用」列，已跳过"
+                    : $"无法匹配产品「{label}」，已跳过";
+                errors.Add(new { row = index + 2, message = msg });
+                if (!string.IsNullOrWhiteSpace(label))
+                    unmatched.Add(new { row = index + 2, label, planName = row.PlanName });
+                continue;
+            }
+
             try
             {
                 if (request.Kind == "release")
@@ -1027,7 +1206,7 @@ public class ProductAgentController : ControllerBase
                         legacyData["项目组成员"] = string.Join("、", teamNames.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
                     await _db.ProductReleases.InsertOneAsync(new ProductRelease
                     {
-                        ProductId = productId, TCode = row.TCode, VCode = row.Code.Trim(), PlanName = row.PlanName.Trim(),
+                        ProductId = targetProductId, TCode = row.TCode, VCode = row.Code.Trim(), PlanName = row.PlanName.Trim(),
                         VersionType = NormalizeVersionType(row.VersionType), AnnouncementUrl = row.AnnouncementUrl,
                         SystemName = row.SystemName, AppName = row.AppName,
                         ProjectType = row.ProjectType == "custom" ? "custom" : "standard",
@@ -1050,7 +1229,7 @@ public class ProductAgentController : ControllerBase
                         legacyData["项目组成员"] = string.Join("、", teamNames.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
                     await _db.ProductInitiations.InsertOneAsync(new ProductInitiation
                     {
-                        ProductId = productId, TCode = row.Code?.Trim(), PlanName = row.PlanName.Trim(),
+                        ProductId = targetProductId, TCode = row.Code?.Trim(), PlanName = row.PlanName.Trim(),
                         VersionType = NormalizeVersionType(row.VersionType), PlanUrl = row.PlanUrl,
                         SystemName = row.SystemName, AppName = row.AppName,
                         ProjectType = row.ProjectType == "custom" ? "custom" : "standard", CustomerSource = row.CustomerSource,
@@ -1066,6 +1245,7 @@ public class ProductAgentController : ControllerBase
                     });
                 }
                 created++;
+                routed[targetProductId] = routed.GetValueOrDefault(targetProductId) + 1;
             }
             catch (Exception ex)
             {
@@ -1073,7 +1253,7 @@ public class ProductAgentController : ControllerBase
                 errors.Add(new { row = index + 2, message = ex.Message });
             }
         }
-        return Ok(ApiResponse<object>.Ok(new { created, errors }));
+        return Ok(ApiResponse<object>.Ok(new { created, errors, routed, unmatched }));
     }
 
     // ════════════════════════ 需求 Requirement ════════════════════════
@@ -1123,7 +1303,7 @@ public class ProductAgentController : ControllerBase
         var req = new Requirement
         {
             ProductId = productId,
-            RequirementNo = await GenerateNextTapdStyleRequirementIdAsync(productId),
+            RequirementNo = await GenerateNextTapdStyleRequirementIdAsync(),
             Title = request.Title.Trim(),
             Description = request.Description?.Trim(),
             Grade = string.IsNullOrWhiteSpace(request.Grade) ? ProductItemGrade.P2 : request.Grade,
@@ -1229,7 +1409,7 @@ public class ProductAgentController : ControllerBase
         var feature = new Feature
         {
             ProductId = productId,
-            FeatureNo = await GenerateNoAsync("FEA", _db.Features, "FeatureNo"),
+            FeatureNo = await GenerateNextFeatureNoAsync(productId, request.OfficialReleaseId),
             Title = request.Title.Trim(),
             Description = request.Description?.Trim(),
             ModuleName = request.ModuleName!.Trim(),
@@ -2358,7 +2538,7 @@ public class ProductAgentController : ControllerBase
 
         var defect = new DefectReport
         {
-            DefectNo = await GenerateNextTapdStyleDefectIdAsync(productId),
+            DefectNo = await GenerateNextTapdStyleDefectIdAsync(),
             Title = req.Title,
             RawContent = req.Description ?? string.Empty,
             Grade = req.Grade,
@@ -2395,7 +2575,7 @@ public class ProductAgentController : ControllerBase
         var req = new Requirement
         {
             ProductId = productId,
-            RequirementNo = await GenerateNextTapdStyleRequirementIdAsync(productId),
+            RequirementNo = await GenerateNextTapdStyleRequirementIdAsync(),
             Title = string.IsNullOrWhiteSpace(defect.Title) ? $"由缺陷 {defect.DefectNo} 转化" : defect.Title!.Trim(),
             Description = defect.RawContent,
             Grade = ProductItemGrade.All.Contains(defect.Grade ?? "") ? defect.Grade! : ProductItemGrade.P2,
@@ -2798,7 +2978,7 @@ public class ProductAgentController : ControllerBase
             assigneeName = (await _db.Users.Find(u => u.UserId == request.AssigneeId).FirstOrDefaultAsync())?.DisplayName;
         var defect = new DefectReport
         {
-            DefectNo = await GenerateNextTapdStyleDefectIdAsync(productId),
+            DefectNo = await GenerateNextTapdStyleDefectIdAsync(),
             Title = request.Title.Trim(),
             RawContent = request.Description?.Trim() ?? string.Empty,
             Grade = ProductItemGrade.All.Contains(request.Grade ?? "") ? request.Grade : null,
@@ -3776,7 +3956,7 @@ public class ProductAgentController : ControllerBase
                     var req = new Requirement
                     {
                         ProductId = productId,
-                        RequirementNo = await GenerateNextTapdStyleRequirementIdAsync(productId),
+                        RequirementNo = await GenerateNextTapdStyleRequirementIdAsync(),
                         Title = title,
                         Description = description,
                         Grade = grade,
@@ -3797,7 +3977,7 @@ public class ProductAgentController : ControllerBase
                     var feature = new Feature
                     {
                         ProductId = productId,
-                        FeatureNo = await GenerateNoAsync("FEA", _db.Features, "FeatureNo"),
+                        FeatureNo = await GenerateNextFeatureNoAsync(productId, null),
                         Title = title,
                         Description = description,
                         Grade = grade,
@@ -3816,7 +3996,7 @@ public class ProductAgentController : ControllerBase
                     var (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
                     var defect = new DefectReport
                     {
-                        DefectNo = await GenerateNextTapdStyleDefectIdAsync(productId),
+                        DefectNo = await GenerateNextTapdStyleDefectIdAsync(),
                         Title = title,
                         RawContent = description ?? string.Empty,
                         Grade = grade,
@@ -4162,7 +4342,7 @@ public class ProductAgentController : ControllerBase
 
     // ════════════════════════ 批量导入 ════════════════════════
 
-    /// <summary>批量导入需求（来自 CSV 解析后的行）：每行 title 必填，自动绑定默认流程 + 初始状态。</summary>
+    /// <summary>批量导入需求（按行「应用」/来源字段匹配产品，未匹配则跳过）。</summary>
     [HttpPost("products/{productId}/requirements/import")]
     public async Task<IActionResult> ImportRequirements(string productId, [FromBody] ImportRequirementsRequest request)
     {
@@ -4171,22 +4351,98 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        return await ImportRequirementsCoreAsync(request, userId);
+    }
+
+    /// <summary>跨产品批量导入需求（按行「应用」匹配产品，未匹配则跳过）。</summary>
+    [HttpPost("overview/requirements/import")]
+    public async Task<IActionResult> OverviewImportRequirements([FromBody] ImportRequirementsRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        return await ImportRequirementsCoreAsync(request, GetUserId());
+    }
+
+    private async Task<IActionResult> ImportRequirementsCoreAsync(
+        ImportRequirementsRequest request,
+        string userId)
+    {
         var rows = (request.Rows ?? new()).Where(r => !string.IsNullOrWhiteSpace(r.Title)).ToList();
         if (rows.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有可导入的有效行（标题不能为空）"));
         if (rows.Count > 500)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单次最多导入 500 条"));
 
-        var (_, wfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
-        var initialState = await ResolveInitialStateAsync(wfId);
+        var scope = await GetAccessibleProductIdsAsync(userId);
+        var productFilter = scope == null
+            ? Builders<Product>.Filter.Eq(p => p.IsDeleted, false)
+            : Builders<Product>.Filter.And(
+                Builders<Product>.Filter.Eq(p => p.IsDeleted, false),
+                Builders<Product>.Filter.In(p => p.Id, scope));
+        var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToHashSet();
+
+        var wfByProduct = new Dictionary<string, (string WfId, string InitialState)>();
+        async Task<(string WfId, string InitialState)> ResolveRequirementWorkflowAsync(string pid)
+        {
+            if (wfByProduct.TryGetValue(pid, out var cached)) return cached;
+            var (_, wfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, pid);
+            var initialState = await ResolveInitialStateAsync(wfId);
+            var tuple = (wfId, initialState);
+            wfByProduct[pid] = tuple;
+            return tuple;
+        }
+
         var now = DateTime.UtcNow;
         var created = 0;
         var updated = 0;
+        var skipped = 0;
+        var routed = new Dictionary<string, int>();
+        var unmatched = new List<object>();
+        var userByName = await BuildUserLookupByDisplayNameAsync();
+        var affectedProducts = new HashSet<string>();
+        long? batchNextRequirementId = null;
+
         foreach (var row in rows)
         {
+            string? targetProductId;
+            string? label;
+            bool matched;
+            (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
+                products, row.Title, row.SourceFields);
+            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
+            {
+                skipped++;
+                if (!string.IsNullOrWhiteSpace(label))
+                    unmatched.Add(new { title = row.Title, label });
+                continue;
+            }
+
+            var (wfId, initialState) = await ResolveRequirementWorkflowAsync(targetProductId);
+            affectedProducts.Add(targetProductId);
+            routed[targetProductId] = routed.GetValueOrDefault(targetProductId) + 1;
+
             var sourceSystem = row.SourceSystem?.Trim().ToLowerInvariant();
-            var externalId = row.ExternalId?.Trim();
-            var sourceSnapshot = string.IsNullOrWhiteSpace(sourceSystem) || string.IsNullOrWhiteSpace(externalId)
+            var externalIdInput = row.ExternalId?.Trim();
+            string requirementNo;
+            if (string.IsNullOrWhiteSpace(externalIdInput))
+            {
+                if (batchNextRequirementId == null)
+                {
+                    batchNextRequirementId = long.Parse(await GenerateNextTapdStyleRequirementIdAsync());
+                }
+                else
+                {
+                    batchNextRequirementId += 1;
+                }
+                requirementNo = batchNextRequirementId.Value.ToString();
+            }
+            else
+            {
+                requirementNo = await ResolveImportRequirementNoAsync(externalIdInput);
+            }
+            var externalId = string.IsNullOrWhiteSpace(externalIdInput) ? requirementNo : externalIdInput;
+            var sourceSnapshot = string.IsNullOrWhiteSpace(sourceSystem)
                 ? null
                 : new RequirementSourceSnapshot
                 {
@@ -4216,16 +4472,17 @@ public class ProductAgentController : ControllerBase
             if (sourceSnapshot != null)
             {
                 existing = await _db.Requirements.Find(r =>
-                    r.ProductId == productId &&
+                    r.ProductId == targetProductId &&
                     !r.IsDeleted &&
                     r.SourceSystem == sourceSystem &&
                     r.ExternalId == externalId).FirstOrDefaultAsync()
                   ?? await _db.Requirements.Find(r =>
-                    r.ProductId == productId &&
+                    r.ProductId == targetProductId &&
                     !r.IsDeleted &&
                     r.RequirementNo == externalId).FirstOrDefaultAsync();
             }
             var importedState = RequirementWorkflowCatalog.MapImportedStatusLabel(row.SourceStatus) ?? initialState;
+            var assignee = ResolveUserFromNames(userByName, row.HandlerNames);
             if (existing != null)
             {
                 var update = Builders<Requirement>.Update
@@ -4235,18 +4492,19 @@ public class ProductAgentController : ControllerBase
                     .Set(r => r.SourceUrl, row.SourceUrl?.Trim())
                     .Set(r => r.SourceSnapshot, sourceSnapshot)
                     .Set(r => r.UpdatedAt, now);
+                if (assignee != null)
+                    update = update.Set(r => r.AssigneeId, assignee.UserId);
                 if (!string.IsNullOrWhiteSpace(row.SourceStatus))
                     update = update.Set(r => r.CurrentState, importedState).Set(r => r.StateEnteredAt, now);
-                if (!string.IsNullOrWhiteSpace(externalId))
-                    update = update.Set(r => r.RequirementNo, externalId);
+                update = update.Set(r => r.RequirementNo, requirementNo).Set(r => r.ExternalId, externalId);
                 await _db.Requirements.UpdateOneAsync(r => r.Id == existing.Id, update);
                 updated++;
                 continue;
             }
             var req = new Requirement
             {
-                ProductId = productId,
-                RequirementNo = await ResolveImportRequirementNoAsync(productId, externalId),
+                ProductId = targetProductId,
+                RequirementNo = requirementNo,
                 Title = row.Title!.Trim(),
                 Description = row.Description?.Trim(),
                 Grade = ProductItemGrade.All.Contains(row.Grade ?? "") ? row.Grade! : ProductItemGrade.P2,
@@ -4254,6 +4512,7 @@ public class ProductAgentController : ControllerBase
                 CurrentState = importedState,
                 StateEnteredAt = now,
                 OwnerId = userId,
+                AssigneeId = assignee?.UserId,
                 SourceSystem = sourceSystem,
                 ExternalId = externalId,
                 SourceUrl = row.SourceUrl?.Trim(),
@@ -4262,8 +4521,9 @@ public class ProductAgentController : ControllerBase
             await _db.Requirements.InsertOneAsync(req);
             created++;
         }
-        await RecalcProductCountsAsync(productId);
-        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+        foreach (var pid in affectedProducts)
+            await RecalcProductCountsAsync(pid);
+        return Ok(ApiResponse<object>.Ok(new { created, updated, skipped, routed, unmatched }));
     }
 
     [HttpPost("products/{productId}/features/import")]
@@ -4281,6 +4541,7 @@ public class ProductAgentController : ControllerBase
         var initialState = await ResolveInitialStateAsync(workflowId);
         var created = 0;
         var updated = 0;
+        long? batchNextFeatureNo = null;
         foreach (var row in rows.Rows!)
         {
             var sourceSystem = NormalizeImportSource(row.SourceSystem);
@@ -4300,10 +4561,14 @@ public class ProductAgentController : ControllerBase
                 updated++;
                 continue;
             }
+            if (batchNextFeatureNo == null)
+                batchNextFeatureNo = long.Parse(await GenerateNextFeatureNoAsync(productId, null));
+            else
+                batchNextFeatureNo += 1;
             await _db.Features.InsertOneAsync(new Feature
             {
                 ProductId = productId,
-                FeatureNo = await GenerateNoAsync("FEA", _db.Features, "FeatureNo"),
+                FeatureNo = batchNextFeatureNo.Value.ToString(),
                 Title = row.Title!.Trim(),
                 Description = row.Description?.Trim(),
                 Grade = NormalizeImportGrade(row.Grade),
@@ -4362,6 +4627,7 @@ public class ProductAgentController : ControllerBase
 
         var created = 0;
         var updated = 0;
+        long? batchNextFeatureNoInRelease = null;
         foreach (var item in ordered)
         {
             var row = item.Row;
@@ -4440,10 +4706,14 @@ public class ProductAgentController : ControllerBase
                     continue;
                 }
 
+                if (batchNextFeatureNoInRelease == null)
+                    batchNextFeatureNoInRelease = long.Parse(await GenerateNextFeatureNoAsync(productId, releaseId));
+                else
+                    batchNextFeatureNoInRelease += 1;
                 var feature = new Feature
                 {
                     ProductId = productId,
-                    FeatureNo = await GenerateNoAsync("FEA", _db.Features, "FeatureNo"),
+                    FeatureNo = batchNextFeatureNoInRelease.Value.ToString(),
                     Title = nodeTitle,
                     Description = isLeaf ? row.Description?.Trim() : null,
                     ModuleName = ResolveTreeModuleName(row.ModuleName, segments),
@@ -4478,14 +4748,52 @@ public class ProductAgentController : ControllerBase
         if (denied != null) return denied;
         if (!await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).AnyAsync())
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        return await ImportVersionsCoreAsync(request, GetUserId());
+    }
+
+    [HttpPost("overview/versions/import")]
+    public async Task<IActionResult> OverviewImportVersions([FromBody] ImportSimpleItemsRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        return await ImportVersionsCoreAsync(request, GetUserId());
+    }
+
+    private async Task<IActionResult> ImportVersionsCoreAsync(ImportSimpleItemsRequest request, string userId)
+    {
         var rows = ValidateSimpleImportRows(request);
         if (rows.Result != null) return rows.Result;
 
-        var userId = GetUserId();
+        var scope = await GetAccessibleProductIdsAsync(userId);
+        var productFilter = scope == null
+            ? Builders<Product>.Filter.Eq(p => p.IsDeleted, false)
+            : Builders<Product>.Filter.And(
+                Builders<Product>.Filter.Eq(p => p.IsDeleted, false),
+                Builders<Product>.Filter.In(p => p.Id, scope));
+        var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToHashSet();
+
         var created = 0;
         var updated = 0;
+        var skipped = 0;
+        var routed = new Dictionary<string, int>();
+        var unmatched = new List<object>();
+        var affectedProducts = new HashSet<string>();
         foreach (var row in rows.Rows!)
         {
+            var (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
+                products, row.Title, row.SourceFields);
+            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
+            {
+                skipped++;
+                if (!string.IsNullOrWhiteSpace(label))
+                    unmatched.Add(new { title = row.Title, label });
+                continue;
+            }
+
+            affectedProducts.Add(targetProductId);
+            routed[targetProductId] = routed.GetValueOrDefault(targetProductId) + 1;
+
             var sourceSystem = NormalizeImportSource(row.SourceSystem);
             var externalId = row.ExternalId?.Trim();
             var lifecycle = ProductVersionLifecycle.All.Contains(row.Status ?? "")
@@ -4493,7 +4801,7 @@ public class ProductAgentController : ControllerBase
                 : ProductVersionLifecycle.Planning;
             var existing = string.IsNullOrWhiteSpace(externalId)
                 ? null
-                : await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted &&
+                : await _db.ProductVersions.Find(v => v.ProductId == targetProductId && !v.IsDeleted &&
                     v.SourceSystem == sourceSystem && v.ExternalId == externalId).FirstOrDefaultAsync();
             if (existing != null)
             {
@@ -4510,7 +4818,7 @@ public class ProductAgentController : ControllerBase
             }
             await _db.ProductVersions.InsertOneAsync(new ProductVersion
             {
-                ProductId = productId,
+                ProductId = targetProductId,
                 VersionName = row.Title!.Trim(),
                 Description = row.Description?.Trim(),
                 Lifecycle = lifecycle,
@@ -4523,8 +4831,18 @@ public class ProductAgentController : ControllerBase
             });
             created++;
         }
-        await RecalcProductCountsAsync(productId);
-        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+        foreach (var pid in affectedProducts)
+            await RecalcProductCountsAsync(pid);
+        return Ok(ApiResponse<object>.Ok(new { created, updated, skipped, routed, unmatched }));
+    }
+
+    /// <summary>跨产品批量导入缺陷（按行「应用/产品」匹配，未匹配则跳过）。</summary>
+    [HttpPost("overview/defects/import")]
+    public async Task<IActionResult> OverviewImportDefects([FromBody] ImportSimpleItemsRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        return await ImportDefectsCoreAsync(request, GetUserId());
     }
 
     [HttpPost("products/{productId}/defects/import")]
@@ -4534,25 +4852,66 @@ public class ProductAgentController : ControllerBase
         if (denied != null) return denied;
         if (!await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).AnyAsync())
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        return await ImportDefectsCoreAsync(request, GetUserId());
+    }
+
+    private async Task<IActionResult> ImportDefectsCoreAsync(
+        ImportSimpleItemsRequest request,
+        string userId)
+    {
         var rows = ValidateSimpleImportRows(request);
         if (rows.Result != null) return rows.Result;
 
-        var userId = GetUserId();
+        var scope = await GetAccessibleProductIdsAsync(userId);
+        var productFilter = scope == null
+            ? Builders<Product>.Filter.Eq(p => p.IsDeleted, false)
+            : Builders<Product>.Filter.And(
+                Builders<Product>.Filter.Eq(p => p.IsDeleted, false),
+                Builders<Product>.Filter.In(p => p.Id, scope));
+        var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToHashSet();
+
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var created = 0;
         var updated = 0;
+        var skipped = 0;
+        var routed = new Dictionary<string, int>();
+        var unmatched = new List<object>();
+        var affectedProducts = new HashSet<string>();
+        long? batchNextDefectId = null;
+        var userByName = await BuildUserLookupByDisplayNameAsync();
+        var wfByProduct = new Dictionary<string, string>();
+
         foreach (var row in rows.Rows!)
         {
+            string? targetProductId;
+            string? label;
+            bool matched;
+            (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
+                products, row.Title, row.SourceFields);
+            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
+            {
+                skipped++;
+                if (!string.IsNullOrWhiteSpace(label))
+                    unmatched.Add(new { title = row.Title, label });
+                continue;
+            }
+
+            affectedProducts.Add(targetProductId);
+            routed[targetProductId] = routed.GetValueOrDefault(targetProductId) + 1;
+
             var sourceSystem = NormalizeImportSource(row.SourceSystem);
             var externalId = row.ExternalId?.Trim();
             var status = RequirementWorkflowCatalog.MapImportedStatusLabel(row.Status)
                 ?? DefectWorkflowCatalog.NormalizeStateKey(row.Status)
                 ?? (DefectStatus.All.Contains(row.Status ?? "") ? DefectWorkflowCatalog.LegacyStateMap.GetValueOrDefault(row.Status!, RequirementWorkflowCatalog.New) : RequirementWorkflowCatalog.New);
+            var assignee = ResolveUserFromNames(userByName, row.HandlerNames);
+            var reporter = ResolveUserFromNames(userByName, row.ReporterNames) ?? user;
             var existing = string.IsNullOrWhiteSpace(externalId)
                 ? null
-                : await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
+                : await _db.DefectReports.Find(d => d.TracedProductId == targetProductId && !d.IsDeleted &&
                     d.ProductSourceSystem == sourceSystem && d.ProductExternalId == externalId).FirstOrDefaultAsync()
-                  ?? await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
+                  ?? await _db.DefectReports.Find(d => d.TracedProductId == targetProductId && !d.IsDeleted &&
                     d.DefectNo == externalId).FirstOrDefaultAsync();
             var rawTapdSeverity = row.TapdSeverityRaw?.Trim();
             string? severityLevel = null;
@@ -4573,6 +4932,10 @@ public class ProductAgentController : ControllerBase
                     .Set(d => d.RawContent, row.Description?.Trim() ?? string.Empty)
                     .Set(d => d.Status, status)
                     .Set(d => d.UpdatedAt, DateTime.UtcNow);
+                if (assignee != null)
+                    u = u.Set(d => d.AssigneeId, assignee.UserId).Set(d => d.AssigneeName, assignee.DisplayName ?? assignee.Username);
+                if (reporter != null)
+                    u = u.Set(d => d.ReporterId, reporter.UserId).Set(d => d.ReporterName, reporter.DisplayName ?? reporter.Username);
                 if (structuredPatch.Count > 0)
                 {
                     var mergedStructured = TapdDefectFieldCatalog.MergeStructuredData(existing.StructuredData, structuredPatch);
@@ -4584,16 +4947,35 @@ public class ProductAgentController : ControllerBase
                 updated++;
                 continue;
             }
-            var (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
+            if (!wfByProduct.TryGetValue(targetProductId, out var defectWfId))
+            {
+                (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, targetProductId);
+                wfByProduct[targetProductId] = defectWfId;
+            }
+            string defectNo;
+            if (string.IsNullOrWhiteSpace(externalId))
+            {
+                if (batchNextDefectId == null)
+                    batchNextDefectId = long.Parse(await GenerateNextTapdStyleDefectIdAsync());
+                else
+                    batchNextDefectId += 1;
+                defectNo = batchNextDefectId.Value.ToString();
+            }
+            else
+            {
+                defectNo = externalId;
+            }
             await _db.DefectReports.InsertOneAsync(new DefectReport
             {
-                DefectNo = await ResolveImportDefectNoAsync(productId, externalId),
+                DefectNo = defectNo,
                 Title = row.Title!.Trim(),
                 RawContent = row.Description?.Trim() ?? string.Empty,
                 Status = status,
-                ReporterId = userId,
-                ReporterName = user?.DisplayName,
-                TracedProductId = productId,
+                ReporterId = reporter?.UserId ?? userId,
+                ReporterName = reporter?.DisplayName ?? reporter?.Username ?? user?.DisplayName,
+                AssigneeId = assignee?.UserId,
+                AssigneeName = assignee != null ? (assignee.DisplayName ?? assignee.Username) : null,
+                TracedProductId = targetProductId,
                 WorkflowDefId = defectWfId,
                 ProductSourceSystem = sourceSystem,
                 ProductExternalId = externalId,
@@ -4601,8 +4983,9 @@ public class ProductAgentController : ControllerBase
             });
             created++;
         }
-        await RecalcDefectCountAsync(productId);
-        return Ok(ApiResponse<object>.Ok(new { created, updated }));
+        foreach (var pid in affectedProducts)
+            await RecalcDefectCountAsync(pid);
+        return Ok(ApiResponse<object>.Ok(new { created, updated, skipped, routed, unmatched }));
     }
 
     private (List<ImportSimpleItemRow>? Rows, IActionResult? Result) ValidateSimpleImportRows(ImportSimpleItemsRequest request)
@@ -4941,11 +5324,11 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>能否管理本产品成员（增删普通成员）：全局管理 | 产品负责人 | 产品管理员。</summary>
     private async Task<bool> CanManageProductMembersAsync(Product p, string uid)
-        => await CanManageAsync(uid) || p.OwnerId == uid || p.AdminIds.Contains(uid);
+        => await CanManageAsync(uid) || p.IsProductOwner(uid) || p.AdminIds.Contains(uid);
 
     /// <summary>能否指派/撤销产品管理员：全局管理 | 产品负责人（产品管理员不可指派同级）。</summary>
     private async Task<bool> CanManageProductAdminsAsync(Product p, string uid)
-        => await CanManageAsync(uid) || p.OwnerId == uid;
+        => await CanManageAsync(uid) || p.IsProductOwner(uid);
 
     /// <summary>可访问的产品 Id 集合；返回 null 表示"全部"（管理层/管理权限）。</summary>
     private async Task<HashSet<string>?> GetAccessibleProductIdsAsync(string userId)
@@ -4953,7 +5336,10 @@ public class ProductAgentController : ControllerBase
         if (await CanManageAsync(userId)) return null;
         var b = Builders<Product>.Filter;
         var filter = b.And(b.Eq(p => p.IsDeleted, false),
-            b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
+            b.Or(
+                b.Eq(p => p.OwnerId, userId),
+                b.AnyEq(p => p.OwnerIds, userId),
+                b.AnyEq(p => p.MemberIds, userId)));
         var ids = await _db.Products.Find(filter).Project(p => p.Id).ToListAsync();
         return ids.ToHashSet();
     }
@@ -5018,7 +5404,7 @@ public class ProductAgentController : ControllerBase
         var defById = await LoadWorkflowDefsByIdsAsync(items.Select(r => r.WorkflowDefId));
         var rows = items
             .Where(r => string.IsNullOrWhiteSpace(grade) || r.Grade == grade)
-            .Where(r => !mine || r.AssigneeId == userId)
+            .Where(r => !mine || r.AssigneeId == userId || r.OwnerId == userId)
             .Where(r => string.IsNullOrWhiteSpace(keyword) || (r.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || r.RequirementNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(r => r.UpdatedAt)
             .Select(r =>
@@ -5078,61 +5464,135 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
     }
 
-    /// <summary>跨产品正式版本（V 号）列表。</summary>
+    /// <summary>跨产品正式版本（V 号）列表（字段与单产品版本 tab 对齐，供管理层宽表只读浏览）。</summary>
     [HttpGet("overview/releases")]
     public async Task<IActionResult> OverviewReleases([FromQuery] string? keyword = null)
     {
         var scope = await GetAccessibleProductIdsAsync(GetUserId());
         var items = await FindInScopeAsync<ProductRelease>(scope, r => r.ProductId, r => r.IsDeleted);
         var names = await ProductNamesAsync(items.Select(r => r.ProductId));
+        var reqIds = items.SelectMany(r => r.RequirementIds).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList();
+        var reqTitles = new Dictionary<string, string>();
+        if (reqIds.Count > 0)
+        {
+            var reqs = await _db.Requirements
+                .Find(Builders<Requirement>.Filter.In(r => r.Id, reqIds))
+                .Project(r => new { r.Id, r.Title })
+                .ToListAsync();
+            foreach (var req in reqs)
+                if (!string.IsNullOrEmpty(req.Id)) reqTitles[req.Id] = req.Title ?? "";
+        }
+        var userNames = await UserNamesAsync(items.SelectMany(r =>
+        {
+            var ids = new List<string?> { r.OwnerId, r.CreatedBy };
+            ids.AddRange(r.TeamMemberIds);
+            return ids;
+        }));
         var rows = items
             .Where(r => string.IsNullOrWhiteSpace(keyword) ||
                 r.VCode.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
                 (r.TCode?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 r.PlanName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(r => r.UpdatedAt)
-            .Select(r => new
+            .Select(r =>
             {
-                r.Id,
-                r.ProductId,
-                productName = names.GetValueOrDefault(r.ProductId, ""),
-                r.VCode,
-                r.TCode,
-                r.PlanName,
-                r.VersionType,
-                r.Status,
-                r.PlannedReleaseAt,
-                requirementCount = r.RequirementIds.Count,
-                r.InitiationId,
-                r.UpdatedAt,
+                var legacyOwner = r.LegacyData.GetValueOrDefault("产品负责人");
+                var ownerId = r.OwnerId;
+                var ownerName = !string.IsNullOrWhiteSpace(legacyOwner)
+                    ? legacyOwner
+                    : (!string.IsNullOrEmpty(ownerId) ? userNames.GetValueOrDefault(ownerId, ownerId) : null);
+                var teamFromLegacy = r.LegacyData.GetValueOrDefault("项目组成员");
+                var teamMemberNames = r.TeamMemberIds.Count > 0
+                    ? r.TeamMemberIds.Select(id => userNames.GetValueOrDefault(id, id)).ToList()
+                    : (!string.IsNullOrWhiteSpace(teamFromLegacy)
+                        ? teamFromLegacy.Split('、', ';', '；', ',').Select(x => x.Trim()).Where(x => x.Length > 0).ToList()
+                        : new List<string>());
+                return new
+                {
+                    r.Id,
+                    r.ProductId,
+                    productName = names.GetValueOrDefault(r.ProductId, ""),
+                    r.SystemName,
+                    r.AppName,
+                    legacyData = r.LegacyData,
+                    r.VCode,
+                    r.TCode,
+                    r.InitiationId,
+                    r.ProjectType,
+                    r.PlanName,
+                    r.VersionType,
+                    r.DepartmentName,
+                    ownerId,
+                    ownerName,
+                    teamMemberIds = r.TeamMemberIds,
+                    teamMemberNames,
+                    r.PlanUrl,
+                    r.PlannedReleaseAt,
+                    r.OpenBrandScope,
+                    requirementIds = r.RequirementIds,
+                    requirementTitles = r.RequirementIds.Select(id => reqTitles.GetValueOrDefault(id, id)).ToList(),
+                    requirementCount = r.RequirementIds.Count,
+                    r.AnnouncementUrl,
+                    r.Status,
+                    r.IsTemporaryOptimization,
+                    r.UpdatedAt,
+                };
             })
             .Take(1000).ToList();
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
     }
 
-    /// <summary>跨产品内部版本立项（T 号）列表。</summary>
+    /// <summary>跨产品内部版本立项（T 号）列表（字段与单产品版本 tab 对齐，供管理层宽表只读浏览）。</summary>
     [HttpGet("overview/initiations")]
     public async Task<IActionResult> OverviewInitiations([FromQuery] string? keyword = null)
     {
         var scope = await GetAccessibleProductIdsAsync(GetUserId());
         var items = await FindInScopeAsync<ProductInitiation>(scope, i => i.ProductId, i => i.IsDeleted);
         var names = await ProductNamesAsync(items.Select(i => i.ProductId));
+        var userNames = await UserNamesAsync(items.SelectMany(i => new[] { i.PrimaryOwnerId, i.CreatedBy }));
         var rows = items
             .Where(i => string.IsNullOrWhiteSpace(keyword) ||
                 (i.TCode?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 i.PlanName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(i => i.UpdatedAt)
-            .Select(i => new
+            .Select(i =>
             {
-                i.Id,
-                i.ProductId,
-                productName = names.GetValueOrDefault(i.ProductId, ""),
-                i.TCode,
-                i.PlanName,
-                i.VersionType,
-                i.Status,
-                requirementCount = i.RequirementIds.Count,
-                i.UpdatedAt,
+                var legacyOwner = i.LegacyData.GetValueOrDefault("产品负责人");
+                var ownerId = i.PrimaryOwnerId ?? i.CreatedBy;
+                var ownerName = !string.IsNullOrWhiteSpace(legacyOwner)
+                    ? legacyOwner
+                    : (!string.IsNullOrEmpty(ownerId) ? userNames.GetValueOrDefault(ownerId, ownerId) : null);
+                return new
+                {
+                    i.Id,
+                    i.ProductId,
+                    productName = names.GetValueOrDefault(i.ProductId, ""),
+                    i.SystemName,
+                    i.AppName,
+                    legacyData = i.LegacyData,
+                    i.ProjectType,
+                    i.CustomerSource,
+                    i.TCode,
+                    i.VersionType,
+                    i.PlanName,
+                    i.RequirementDescription,
+                    i.DepartmentName,
+                    primaryOwnerId = i.PrimaryOwnerId,
+                    ownerName,
+                    i.FirstDraftMeetingAt,
+                    i.SecondDraftMeetingAt,
+                    i.ThirdDraftMeetingAt,
+                    i.ProjectAt,
+                    i.NeedUiDesign,
+                    i.PlanUrl,
+                    i.DevelopmentStatus,
+                    i.Remark,
+                    i.ReviewScore,
+                    i.ReviewPassed,
+                    i.Status,
+                    requirementCount = i.RequirementIds.Count,
+                    i.UpdatedAt,
+                };
             })
             .Take(1000).ToList();
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
@@ -5168,6 +5628,7 @@ public class ProductAgentController : ControllerBase
             scope == null ? Builders<DefectReport>.Filter.Empty : Builders<DefectReport>.Filter.In(d => d.TracedProductId, scope));
         var items = await _db.DefectReports.Find(filter).Limit(5000).ToListAsync();
         var names = await ProductNamesAsync(items.Select(d => d.TracedProductId!));
+        var userNames = await UserNamesAsync(items.Select(d => d.AssigneeId));
         var rows = items
             .Where(d => string.IsNullOrWhiteSpace(status) || d.Status == status)
             .Where(d => string.IsNullOrWhiteSpace(keyword) || (d.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || d.DefectNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
@@ -5182,6 +5643,8 @@ public class ProductAgentController : ControllerBase
                 grade = d.Grade,
                 severityTier = d.StructuredData.GetValueOrDefault(TapdDefectFieldCatalog.DefectSeverity),
                 structuredData = d.StructuredData,
+                d.AssigneeId,
+                assigneeName = d.AssigneeId == null ? null : userNames.GetValueOrDefault(d.AssigneeId, ""),
                 d.TracedRequirementId,
                 d.TracedVersionId,
                 d.UpdatedAt,
@@ -5389,62 +5852,127 @@ public class ProductAgentController : ControllerBase
         return map;
     }
 
+    /// <summary>TAPD 导入：按 DisplayName / Username 建立姓名索引（大小写不敏感）。</summary>
+    private async Task<Dictionary<string, User>> BuildUserLookupByDisplayNameAsync()
+    {
+        var users = await _db.Users.Find(_ => true).ToListAsync();
+        var map = new Dictionary<string, User>(StringComparer.OrdinalIgnoreCase);
+        foreach (var user in users)
+        {
+            if (!string.IsNullOrWhiteSpace(user.DisplayName))
+                map.TryAdd(user.DisplayName.Trim(), user);
+            if (!string.IsNullOrWhiteSpace(user.Username))
+                map.TryAdd(user.Username.Trim(), user);
+        }
+        return map;
+    }
+
+    private static User? ResolveUserFromNames(Dictionary<string, User> lookup, IEnumerable<string>? names)
+    {
+        if (names == null) return null;
+        foreach (var raw in names)
+        {
+            var name = raw?.Trim().TrimEnd(';', '；');
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            if (lookup.TryGetValue(name, out var user)) return user;
+        }
+        return null;
+    }
+
     // ════════════════════════ 私有工具 ════════════════════════
 
-    /// <summary>解析 TAPD 风格纯数字 ID（如 1007157）。</summary>
-    private static bool TryParseTapdNumericId(string? value, out long id)
-    {
-        id = 0;
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        return long.TryParse(value.Trim(), out id) && id > 0;
-    }
-
-    /// <summary>下一需求 ID：取本产品下 RequirementNo / ExternalId 最大纯数字 + 1（与 TAPD 规则一致）。</summary>
-    private async Task<string> GenerateNextTapdStyleRequirementIdAsync(string productId)
+    /// <summary>下一需求 ID：全库 Requirements 单表 TAPD 纯数字全局递增。</summary>
+    private async Task<string> GenerateNextTapdStyleRequirementIdAsync()
     {
         var items = await _db.Requirements
-            .Find(r => r.ProductId == productId && !r.IsDeleted)
+            .Find(r => !r.IsDeleted)
             .Project(r => new { r.RequirementNo, r.ExternalId })
             .ToListAsync();
-        long max = 0;
-        foreach (var item in items)
-        {
-            if (TryParseTapdNumericId(item.RequirementNo, out var no) && no > max) max = no;
-            if (TryParseTapdNumericId(item.ExternalId, out var ext) && ext > max) max = ext;
-        }
-        return (max + 1).ToString();
+        return ProductEntityNumbering.NextTapdNumericId(
+            items.SelectMany(i => new[] { i.RequirementNo, i.ExternalId }));
     }
 
-    /// <summary>下一缺陷 ID：取本产品下 DefectNo / ProductExternalId 最大纯数字 + 1。</summary>
-    private async Task<string> GenerateNextTapdStyleDefectIdAsync(string productId)
+    /// <summary>下一缺陷 ID：全库 DefectReports 单表 TAPD 纯数字全局递增。</summary>
+    private async Task<string> GenerateNextTapdStyleDefectIdAsync()
     {
         var items = await _db.DefectReports
-            .Find(d => d.TracedProductId == productId && !d.IsDeleted)
+            .Find(d => !d.IsDeleted)
             .Project(d => new { d.DefectNo, d.ProductExternalId })
             .ToListAsync();
-        long max = 0;
-        foreach (var item in items)
+        return ProductEntityNumbering.NextTapdNumericId(
+            items.SelectMany(i => new[] { i.DefectNo, i.ProductExternalId }));
+    }
+
+    /// <summary>
+    /// 下一功能编号：绑定正式版本时在版本清单内递增；否则在产品草稿清单（未绑定 OfficialReleaseId）内递增。
+    /// </summary>
+    private async Task<string> GenerateNextFeatureNoAsync(string productId, string? officialReleaseId)
+    {
+        FilterDefinition<Feature> catalogFilter;
+        if (!string.IsNullOrWhiteSpace(officialReleaseId))
         {
-            if (TryParseTapdNumericId(item.DefectNo, out var no) && no > max) max = no;
-            if (TryParseTapdNumericId(item.ProductExternalId, out var ext) && ext > max) max = ext;
+            var releaseId = officialReleaseId.Trim();
+            catalogFilter = Builders<Feature>.Filter.And(
+                Builders<Feature>.Filter.Eq(f => f.OfficialReleaseId, releaseId),
+                Builders<Feature>.Filter.Eq(f => f.IsDeleted, false));
         }
-        return (max + 1).ToString();
+        else
+        {
+            catalogFilter = Builders<Feature>.Filter.And(
+                Builders<Feature>.Filter.Eq(f => f.ProductId, productId),
+                Builders<Feature>.Filter.Eq(f => f.IsDeleted, false),
+                Builders<Feature>.Filter.Or(
+                    Builders<Feature>.Filter.Eq(f => f.OfficialReleaseId, null),
+                    Builders<Feature>.Filter.Eq(f => f.OfficialReleaseId, "")));
+        }
+
+        var items = await _db.Features
+            .Find(catalogFilter)
+            .Project(f => new { f.FeatureNo, f.ExternalId })
+            .ToListAsync();
+        return ProductEntityNumbering.NextTapdNumericId(
+            items.SelectMany(i => new[] { i.FeatureNo, i.ExternalId }));
     }
 
-    /// <summary>导入需求 ID：有 TAPD 外部 ID 时原样使用，否则在本产品现有最大 ID 基础上 +1。</summary>
-    private async Task<string> ResolveImportRequirementNoAsync(string productId, string? externalId)
+    /// <summary>导入需求 ID：有外部 ID 时原样使用，否则取全库最大纯数字 ID + 1。</summary>
+    private async Task<string> ResolveImportRequirementNoAsync(string? externalId)
     {
         if (!string.IsNullOrWhiteSpace(externalId))
             return externalId.Trim();
-        return await GenerateNextTapdStyleRequirementIdAsync(productId);
+        return await GenerateNextTapdStyleRequirementIdAsync();
     }
 
-    /// <summary>导入缺陷 ID：有 TAPD 外部 ID 时原样使用，否则在本产品现有最大 ID 基础上 +1。</summary>
-    private async Task<string> ResolveImportDefectNoAsync(string productId, string? externalId)
+    /// <summary>导入缺陷 ID：有 TAPD 外部 ID 时原样使用，否则取全库最大纯数字 ID + 1。</summary>
+    private async Task<string> ResolveImportDefectNoAsync(string? externalId)
     {
         if (!string.IsNullOrWhiteSpace(externalId))
             return externalId.Trim();
-        return await GenerateNextTapdStyleDefectIdAsync(productId);
+        return await GenerateNextTapdStyleDefectIdAsync();
+    }
+
+    private async Task<string?> ResolveDefaultInitiationDepartmentAsync(string userId)
+    {
+        var last = await _db.ProductInitiations
+            .Find(x => x.CreatedBy == userId && !x.IsDeleted && x.DepartmentName != null && x.DepartmentName != "")
+            .SortByDescending(x => x.CreatedAt)
+            .Project(x => x.DepartmentName)
+            .FirstOrDefaultAsync();
+        return string.IsNullOrWhiteSpace(last) ? null : last.Trim();
+    }
+
+    /// <summary>按关联产品类型写入 legacy 系统/应用列（导入 Excel 兼容）。</summary>
+    private async Task<(string? SystemName, string? AppName)> ResolveInitiationSystemAppNamesAsync(Product linkedProduct)
+    {
+        await EnsureCategoriesSeededAsync();
+        var cat = await _db.ProductCategories.Find(c => c.Id == linkedProduct.Grade && !c.IsDeleted).FirstOrDefaultAsync();
+        var typeName = cat?.Name?.Trim() ?? "";
+        return typeName switch
+        {
+            "应用" => (null, linkedProduct.Name),
+            "系统" => (linkedProduct.Name, null),
+            "子系统" => (linkedProduct.Name, null),
+            _ => (linkedProduct.Name, linkedProduct.Name),
+        };
     }
 
     private async Task<long> GenerateNextProductSequenceAsync()
@@ -5495,26 +6023,42 @@ public class ProductAgentController : ControllerBase
             _ => "minor",
         };
 
-    private async Task<string> GenerateWorkflowCodeAsync(string productId, string prefix, string versionType)
+    private async Task<string> GenerateWorkflowCodeAsync(string prefix, string versionType)
     {
         var codes = prefix == "T"
-            ? (await _db.ProductInitiations.Find(x => x.ProductId == productId && x.TCode != null && !x.IsDeleted).Project(x => x.TCode!).ToListAsync())
-            : (await _db.ProductReleases.Find(x => x.ProductId == productId && x.VCode != "" && !x.IsDeleted).Project(x => x.VCode).ToListAsync());
-        var max = new[] { 0, 0, 0 };
-        foreach (var code in codes)
-        {
-            var parts = code.TrimStart('T', 't', 'V', 'v').Split('.');
-            if (parts.Length != 3 || !int.TryParse(parts[0], out var a) || !int.TryParse(parts[1], out var b) || !int.TryParse(parts[2], out var c)) continue;
-            if (a > max[0] || a == max[0] && b > max[1] || a == max[0] && b == max[1] && c > max[2])
-                max = new[] { a, b, c };
-        }
-        switch (NormalizeVersionType(versionType))
-        {
-            case "major": max = new[] { max[0] + 1, 0, 0 }; break;
-            case "medium": max = new[] { max[0], max[1] + 1, 0 }; break;
-            default: max[2]++; break;
-        }
-        return $"{prefix}{max[0]}.{max[1]}.{max[2]}";
+            ? await _db.ProductInitiations.Find(x => x.TCode != null && !x.IsDeleted).Project(x => x.TCode!).ToListAsync()
+            : await _db.ProductReleases.Find(x => x.VCode != "" && !x.IsDeleted).Project(x => x.VCode).ToListAsync();
+        return ProductEntityNumbering.NextWorkflowCode(prefix, versionType, codes);
+    }
+
+    /// <summary>解析产品负责人列表，同步 OwnerId / OwnerName 反规范化字段。</summary>
+    private async Task<(List<string> OwnerIds, string OwnerId, string? OwnerName)> ResolveProductOwnersAsync(List<string>? requestOwnerIds)
+    {
+        var ownerIds = (requestOwnerIds ?? new())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (ownerIds.Count == 0)
+            return (new List<string>(), string.Empty, null);
+
+        var names = await UserNamesAsync(ownerIds);
+        var ownerId = ownerIds[0];
+        var displayNames = ownerIds
+            .Select(id => names.TryGetValue(id, out var n) && !string.IsNullOrWhiteSpace(n) ? n : id)
+            .ToList();
+        var ownerName = string.Join("、", displayNames);
+        return (ownerIds, ownerId, ownerName);
+    }
+
+    /// <summary>合并成员列表与负责人（负责人自动加入成员）。</summary>
+    private static List<string> MergeMemberIds(List<string>? memberIds, IReadOnlyList<string> ownerIds)
+    {
+        var merged = new List<string>();
+        if (memberIds != null)
+            merged.AddRange(memberIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()));
+        merged.AddRange(ownerIds);
+        return merged.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToList();
     }
 
     /// <summary>根据流程定义解析初始状态 Key（未绑定或定义缺失时回退内置「待评审」= new）。</summary>
@@ -5769,6 +6313,7 @@ public class UpsertProductRequest
     public string? WorkflowDefId { get; set; }
     public Dictionary<string, string>? FormData { get; set; }
     public List<string>? MemberIds { get; set; }
+    public List<string>? OwnerIds { get; set; }
 }
 
 public class AddProductMembersRequest
@@ -5798,13 +6343,11 @@ public class UpsertVersionRequest
 
 public class CreateInitiationRequest
 {
-    public string? SystemName { get; set; }
-    public string? AppName { get; set; }
+    /// <summary>关联的产品目录 ID（必填）</summary>
+    public string LinkedProductId { get; set; } = string.Empty;
     public string ProjectType { get; set; } = "standard";
     public string? CustomerSource { get; set; }
     public string PlanName { get; set; } = string.Empty;
-    public string? RequirementDescription { get; set; }
-    public string? DepartmentName { get; set; }
     public string? PlanUrl { get; set; }
     public string VersionType { get; set; } = "minor";
     public List<string>? RequirementIds { get; set; }
@@ -5820,6 +6363,13 @@ public class InitiationDecisionRequest
     public bool ReviewMeetingRequired { get; set; }
     public DateTime? ExpectedMeetingAt { get; set; }
     public string? PrimaryOwnerId { get; set; }
+    /// <summary>需开会时计划稿次数（1–3）</summary>
+    public int? MeetingDraftCount { get; set; }
+}
+
+public class UpdateInitiationMeetingRequest
+{
+    public List<InitiationMeetingDraftRound>? Rounds { get; set; }
 }
 
 public class ApproveInitiationRequest
@@ -6084,7 +6634,7 @@ public class ImportSimpleItemRow
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string? Grade { get; set; }
-    /// <summary>TAPD 导出「严重程度」列原文（紧急/高/中/低/无关紧要）。</summary>
+    /// <summary>TAPD 导出「优先级」列原文（紧急/高/中/低/无关紧要），导入映射为 V2.6 严重程度。</summary>
     public string? TapdSeverityRaw { get; set; }
     /// <summary>已映射的 V2.6 严重程度（致命/严重/一般/轻微）；可选。</summary>
     public string? Severity { get; set; }
@@ -6093,6 +6643,12 @@ public class ImportSimpleItemRow
     public string? ExternalId { get; set; }
     public string? PlannedAt { get; set; }
     public string? CompletedAt { get; set; }
+    /// <summary>TAPD 处理人姓名列表，导入时按 DisplayName/Username 匹配。</summary>
+    public List<string>? HandlerNames { get; set; }
+    /// <summary>TAPD 创建人 / 上报人姓名列表。</summary>
+    public List<string>? ReporterNames { get; set; }
+    /// <summary>来源扩展字段（如 CSV「应用」「所属产品」列，跨产品导入路由用）。</summary>
+    public Dictionary<string, string>? SourceFields { get; set; }
 }
 
 public class ProductApplicationAdminRequest

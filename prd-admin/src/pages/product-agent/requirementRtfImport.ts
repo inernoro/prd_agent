@@ -323,8 +323,19 @@ function descriptionToHtml(value: string): string {
 function splitNames(value?: string): string[] {
   return (value ?? '')
     .split(/[;；,，]/)
-    .map((name) => name.trim())
+    .map((name) => name.trim().replace(/[;；]+$/g, ''))
     .filter(Boolean);
+}
+
+function uniqueNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of names) {
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
 }
 
 function mapPriorityToGrade(priority: string): 'p0' | 'p1' | 'p2' | 'p3' {
@@ -430,7 +441,10 @@ function parseRequirementRows(
     sourceStatus: fields.状态 ?? '',
     sourcePriority: fields.优先级 ?? '',
     fields,
-    handlerNames: splitNames(fields.处理人),
+    handlerNames: uniqueNames([
+      ...splitNames(fields.处理人),
+      ...splitNames(fields.当前处理人),
+    ]),
     developerNames: splitNames(fields.开发人员),
     creatorNames: splitNames(fields.创建人),
     ccNames: splitNames(fields.抄送人),

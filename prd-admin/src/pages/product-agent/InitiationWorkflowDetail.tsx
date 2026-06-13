@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getInitiation, listFeatures, listProductMembers, listRequirements, listTracedDefects, type TracedDefect } from '@/services/real/productAgent';
+import { getInitiation, getProduct, listFeatures, listProductMembers, listRequirements, listTracedDefects, type TracedDefect } from '@/services/real/productAgent';
 import { getUserCards } from '@/services/real/teams';
 import type { Feature, ProductInitiation, ProductMember, Requirement } from './types';
 import { useEffectiveWorkflow } from './DynamicForm';
@@ -13,6 +13,9 @@ import { WorkflowAttributeTable, WorkflowDetailCard, WorkflowRecordTable } from 
 import { buildInitiationBasicInfoRows } from './versionBasicInfoCatalog';
 import { defectDetailColumns, featureDetailColumns, requirementDetailColumns } from './versionDetailTables';
 import { DetailRecordActions } from './DetailRecordActions';
+import { InitiationWorkflowPanel } from './InitiationWorkflowPanel';
+import { InitiationWizard } from './VersionWorkflowTab';
+import { useAuthStore } from '@/stores/authStore';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -24,7 +27,7 @@ const STATUS_LABEL: Record<string, string> = {
   approved: '已取得立项号',
 };
 
-type DetailTab = 'basic' | 'requirements' | 'features' | 'defects';
+type DetailTab = 'basic' | 'requirements' | 'features' | 'defects' | 'workflow';
 
 export function InitiationWorkflowDetail({
   productId,
@@ -34,6 +37,7 @@ export function InitiationWorkflowDetail({
   initiationId: string;
 }) {
   const navigate = useNavigate();
+  const currentUserId = useAuthStore((s) => s.user?.userId);
   const [tab, setTab] = useState<DetailTab>('basic');
   const [loading, setLoading] = useState(true);
   const [initiation, setInitiation] = useState<ProductInitiation | null>(null);
@@ -42,21 +46,25 @@ export function InitiationWorkflowDetail({
   const [members, setMembers] = useState<ProductMember[]>([]);
   const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
   const [displayNames, setDisplayNames] = useState<Map<string, string>>(new Map());
+  const [retryOpen, setRetryOpen] = useState(false);
+  const [productName, setProductName] = useState('');
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [initRes, reqRes, featRes, memRes, defRes] = await Promise.all([
+    const [initRes, reqRes, featRes, memRes, defRes, productRes] = await Promise.all([
       getInitiation(initiationId),
       listRequirements(productId),
       listFeatures(productId),
       listProductMembers(productId),
       listTracedDefects(productId),
+      getProduct(productId),
     ]);
     if (initRes.success) setInitiation(initRes.data);
     if (reqRes.success) setRequirements(reqRes.data.items);
     if (featRes.success) setFeatures(featRes.data.items);
     if (memRes.success) setMembers(memRes.data.members);
     if (defRes.success) setTracedDefects(defRes.data.items);
+    if (productRes.success) setProductName(productRes.data.name);
     setLoading(false);
   }, [initiationId, productId]);
 
@@ -106,11 +114,17 @@ export function InitiationWorkflowDetail({
   };
 
   const basicRows = useMemo(
-    () => (initiation ? buildInitiationBasicInfoRows(initiation, resolveName) : []),
-    [initiation, displayNames, members],
+    () => (initiation ? buildInitiationBasicInfoRows(initiation, resolveName, productName) : []),
+    [initiation, displayNames, members, productName],
   );
 
   const displayTitle = initiation?.tCode?.trim() || initiation?.planName?.trim() || '内部版本';
+  const canRetryReview = initiation?.status === 'review_failed' && initiation.createdBy === currentUserId;
+  const canContinueDecision = initiation?.status === 'decision_pending' && initiation.createdBy === currentUserId;
+  const canEditMeeting = Boolean(
+    initiation?.reviewMeetingRequired
+    && (initiation.createdBy === currentUserId),
+  );
 
   if (loading) return <MapSectionLoader text="正在加载立项详情…" />;
 
@@ -135,6 +149,24 @@ export function InitiationWorkflowDetail({
           recordNo={initiation.tCode ?? initiation.id}
           title={displayTitle}
         />
+        {canRetryReview && (
+          <button
+            type="button"
+            onClick={() => setRetryOpen(true)}
+            className="rounded-lg border border-amber-400/35 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-400/20"
+          >
+            重新发起立项
+          </button>
+        )}
+        {canContinueDecision && (
+          <button
+            type="button"
+            onClick={() => setRetryOpen(true)}
+            className="rounded-lg border border-cyan-400/35 bg-cyan-400/10 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-400/20"
+          >
+            继续立项决策
+          </button>
+        )}
       </div>
 
       <div className="flex border-b border-white/10">
@@ -157,6 +189,7 @@ export function InitiationWorkflowDetail({
             <span className="ml-1.5 rounded-full bg-red-400/20 px-1.5 text-[10px] text-red-200">{linkedDefects.length}</span>
           )}
         </TabButton>
+        <TabButton active={tab === 'workflow'} onClick={() => setTab('workflow')}>立项详情</TabButton>
       </div>
 
       {tab === 'basic' && (
@@ -196,6 +229,29 @@ export function InitiationWorkflowDetail({
             columns={defectDetailColumns()}
           />
         </WorkflowDetailCard>
+      )}
+
+      {tab === 'workflow' && (
+        <InitiationWorkflowPanel
+          initiation={initiation}
+          editableMeeting={canEditMeeting}
+          onInitiationChange={setInitiation}
+        />
+      )}
+
+      {retryOpen && (
+        <InitiationWizard
+          productId={productId}
+          requirements={requirements}
+          members={members}
+          seed={initiation}
+          onClose={() => setRetryOpen(false)}
+          onChanged={async () => {
+            setRetryOpen(false);
+            await reload();
+            setTab('workflow');
+          }}
+        />
       )}
 
       <div className="flex justify-end border-t border-white/10 pt-4">

@@ -41,6 +41,8 @@ describe('versionWorkflowImportParse', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].code).toBe('V3.5.2');
     expect(rows[0].tCode).toBe('T3.5.2');
+    expect(rows[0].appName).toBe('互动营销');
+    expect(rows[0].legacyData?.['产品']).toBe('互动营销');
     expect(rows[0].planName).toBe('互动营销V3.5.2（大转盘升级）');
     expect(rows[0].projectType).toBe('custom');
     expect(rows[0].legacyData?.['合同签订方']).toBe('消时乐');

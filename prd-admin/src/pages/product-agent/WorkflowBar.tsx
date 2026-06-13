@@ -7,12 +7,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import { getProduct, transition } from '@/services/real/productAgent';
-import type { Product, WorkflowDefinition, ProductEntityType } from './types';
+import type { WorkflowDefinition, ProductEntityType } from './types';
 import { normalizeRequirementStateKey, requirementTransitionButtonLabel, resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import {
   canExecuteWorkflowTransition,
   isGlobalProductAdmin,
   transitionNeedsDialog,
+  type ProductWorkflowContext,
   type WorkflowTransitionEntitySnapshot,
 } from './workflowTransitionGuard';
 import { WorkflowTransitionDialog } from './WorkflowTransitionDialog';
@@ -40,7 +41,7 @@ export function WorkflowBar({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [product, setProduct] = useState<Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'> | null>(null);
+  const [product, setProduct] = useState<ProductWorkflowContext | null>(null);
   const [pendingTransition, setPendingTransition] = useState<WorkflowTransition | null>(null);
 
   const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
@@ -55,7 +56,12 @@ export function WorkflowBar({
     let active = true;
     void getProduct(productId).then((res) => {
       if (!active || !res.success) return;
-      setProduct({ ownerId: res.data.ownerId, adminIds: res.data.adminIds, memberIds: res.data.memberIds });
+      setProduct({
+        ownerId: res.data.ownerId,
+        ownerIds: res.data.ownerIds,
+        adminIds: res.data.adminIds,
+        memberIds: res.data.memberIds,
+      });
     });
     return () => {
       active = false;

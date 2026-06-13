@@ -78,6 +78,12 @@ function indexOfHeader(headers: string[], ...names: string[]): number {
   }));
 }
 
+/** 仅匹配表头与 name 完全一致（避免「产品」误命中「产品立项方案名称」）。 */
+function indexOfExactHeader(headers: string[], name: string): number {
+  const key = normalizeHeader(name);
+  return headers.map(normalizeHeader).findIndex((header) => header === key);
+}
+
 function parseDateValue(value: unknown): string | undefined {
   const text = cellStr(value);
   if (!text) return undefined;
@@ -126,6 +132,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
   const planIndex = indexOfHeader(headers, '产品立项方案名称', '方案名称', '方案');
   const systemIndex = indexOfHeader(headers, '系统');
   const appIndex = indexOfHeader(headers, '应用', '应用/产品', '产品');
+  const productIndex = indexOfExactHeader(headers, '产品');
   const projectTypeIndex = indexOfHeader(headers, '项目类别');
   const versionTypeIndex = indexOfHeader(headers, '版本类别', '版本级别');
   const departmentIndex = indexOfHeader(headers, '所属部门', '部门');
@@ -178,12 +185,27 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       legacyData['合同签订方'] = values[contractPartyIndex].trim();
     }
 
+    const explicitProduct = productIndex >= 0 ? values[productIndex]?.trim() : undefined;
+    let systemName = systemIndex >= 0 ? values[systemIndex]?.trim() : undefined;
+    let appName = appIndex >= 0 ? values[appIndex]?.trim() : undefined;
+    if (explicitProduct) {
+      legacyData['产品'] = explicitProduct;
+      appName = explicitProduct;
+      systemName = undefined;
+    } else if (appName && !systemName) {
+      legacyData['产品'] = appName;
+    } else if (systemName && !appName) {
+      legacyData['产品'] = systemName;
+    } else if (appName) {
+      legacyData['产品'] = appName;
+    }
+
     rows.push({
       code,
       tCode: tCodeIndex >= 0 ? normalizeCode(values[tCodeIndex]) : undefined,
       planName: planName || code || '',
-      systemName: systemIndex >= 0 ? values[systemIndex]?.trim() : undefined,
-      appName: appIndex >= 0 ? values[appIndex]?.trim() : undefined,
+      systemName,
+      appName,
       versionType: versionTypeIndex >= 0 ? values[versionTypeIndex]?.trim() : undefined,
       projectType: projectTypeIndex >= 0 ? mapProjectType(values[projectTypeIndex]) : undefined,
       customerSource: customerSourceIndex >= 0 ? values[customerSourceIndex]?.trim() : undefined,

@@ -2,7 +2,7 @@ namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 产品管理缺陷严重程度（V2.6 四档）。SSOT：StructuredData[TapdDefectFieldCatalog.DefectSeverity]。
-/// TAPD 导出列「严重程度」五档（紧急/高/中/低/无关紧要）仅在有原文时映射；无值不推断。
+/// TAPD 导出列「优先级」（五档：紧急/高/中/低/无关紧要）→ V2.6 严重程度；无值不推断。
 /// </summary>
 public static class DefectSeverityCatalog
 {
@@ -13,7 +13,7 @@ public static class DefectSeverityCatalog
 
     public static readonly string[] AllLevels = { LevelFatal, LevelSerious, LevelNormal, LevelMinor };
 
-    /// <summary>TAPD「严重程度」五档 → V2.6 四档；无法识别或为空时返回 null。</summary>
+    /// <summary>TAPD「优先级」五档 → V2.6 四档；无法识别或为空时返回 null。</summary>
     public static string? TryNormalizeTapdToLevel(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
