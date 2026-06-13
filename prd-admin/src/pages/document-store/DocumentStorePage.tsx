@@ -181,24 +181,40 @@ function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | Docu
   const isSyncing = store.peerSyncStatus === 'syncing';
   const Icon = isError ? AlertCircle : isSyncing ? FolderSync : store.peerSyncDirection === 'both' ? Network : Send;
   const label = getPeerSyncLabel(store);
+  const title = [
+    label,
+    store.peerSyncNodeName ? `对端：${store.peerSyncNodeName}` : '',
+    store.peerSyncLastResult || '',
+  ].filter(Boolean).join('\n');
+  const color = isError ? 'rgba(252,165,165,0.96)' : 'rgba(252,211,77,0.96)';
+  const background = isError ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.12)';
+  const borderColor = isError ? 'rgba(239,68,68,0.30)' : 'rgba(245,158,11,0.35)';
+  if (compact) {
+    return (
+      <span
+        className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+        style={{ background, borderColor, color }}
+        title={title}
+        aria-label={label}
+      >
+        <Icon size={11} />
+      </span>
+    );
+  }
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full border font-semibold"
+      className="inline-flex max-w-[160px] items-center gap-1 overflow-hidden rounded-full border font-semibold whitespace-nowrap"
       style={{
-        padding: compact ? '2px 7px' : '5px 9px',
-        fontSize: compact ? 9 : 11,
-        background: isError ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.12)',
-        borderColor: isError ? 'rgba(239,68,68,0.30)' : 'rgba(245,158,11,0.35)',
-        color: isError ? 'rgba(252,165,165,0.96)' : 'rgba(252,211,77,0.96)',
+        padding: '5px 9px',
+        fontSize: 11,
+        background,
+        borderColor,
+        color,
       }}
-      title={[
-        label,
-        store.peerSyncNodeName ? `对端：${store.peerSyncNodeName}` : '',
-        store.peerSyncLastResult || '',
-      ].filter(Boolean).join('\n')}
+      title={title}
     >
-      <Icon size={compact ? 9 : 12} />
-      {label}
+      <Icon size={12} className="flex-shrink-0" />
+      <span className="truncate">{label}</span>
     </span>
   );
 }
@@ -2267,19 +2283,22 @@ export function DocumentStorePage() {
                           <Library size={18} style={{ color: '#fff' }} />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
+                            <h3 className="min-w-0 truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                               {s.name}
                             </h3>
-                            {s.hasActiveShare && (
-                              <span
-                                className="inline-flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
-                                style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.32)' }}
-                                title="该知识库已对外分享">
-                                <Share2 size={9} /> 已分享
-                              </span>
-                            )}
-                            <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
+                            <div className="flex min-w-0 flex-shrink-0 items-center gap-1">
+                              {s.hasActiveShare && (
+                                <span
+                                  className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+                                  style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', borderColor: 'rgba(234,179,8,0.32)' }}
+                                  title="该知识库已对外分享"
+                                  aria-label="已分享">
+                                  <Share2 size={11} />
+                                </span>
+                              )}
+                              <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
+                            </div>
                           </div>
                           {/* 副标题行：分类(首个标签) · N 篇文章 —— 复刻设计稿图1 */}
                           <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>

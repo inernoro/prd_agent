@@ -19,9 +19,7 @@ import {
   Database,
   FolderOpen,
   Globe,
-  Image,
   ListChecks,
-  RotateCcw,
   Send,
   ShieldCheck,
   X,
@@ -86,9 +84,8 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   }, [submitting]);
 
   const safeClose = useCallback(() => {
-    if (submitting) return;
     onClose();
-  }, [submitting, onClose]);
+  }, [onClose]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -136,7 +133,23 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     [capability],
   );
   const canSubmit = Boolean(nodeId && selected.size > 0 && !submitting);
-  const modeLabel = allowOverwrite ? '允许覆盖' : '仅新增';
+  const selectedItems = useMemo(
+    () => items.filter((item) => selected.has(item.itemId)),
+    [items, selected],
+  );
+  const queueState = useMemo(
+    () => deriveQueueState(selectedItems, submitting, progress, results, transferError),
+    [selectedItems, submitting, progress, results, transferError],
+  );
+  const primaryActionLabel = submitting
+    ? '停止监听'
+    : results
+      ? '再次同步'
+      : direction === 'pull'
+        ? '开始拉取'
+        : direction === 'both'
+          ? '开始双向同步'
+          : '开始发送';
 
   const toggleItem = (id: string) => {
     setSelected((prev) => {
@@ -169,6 +182,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
       rewriteAssetLinks,
     });
     timers.forEach((t) => window.clearTimeout(t));
+    if (!isMountedRef.current) return;
     setSubmitting(false);
     setProgress(null);
     if (res.success && res.data) {
@@ -178,6 +192,14 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     } else {
       setTransferError(res.error?.message || '互传失败');
     }
+  };
+
+  const handlePrimaryAction = () => {
+    if (submitting) {
+      safeClose();
+      return;
+    }
+    void handleSubmit();
   };
 
   const modal = (
@@ -218,14 +240,18 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
             <div>
               <div className="text-base font-semibold">发送到对端节点</div>
               <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                左侧设置同步策略，右侧选择知识库并预览传输过程
+                实时监听知识库同步进度，关闭面板即可停止监听
               </div>
             </div>
           </div>
+          <div className="hidden items-center gap-2 text-xs md:flex">
+            <StatusPill icon={<Activity size={13} />} text={submitting ? '监听中' : '监听待命'} tone={submitting ? 'gold' : 'slate'} />
+            <StatusPill icon={<ShieldCheck size={13} />} text="回读校验" tone={direction === 'both' ? 'teal' : 'slate'} />
+            <StatusPill icon={<ListChecks size={13} />} text="条目明细" tone="teal" />
+          </div>
           <button
             onClick={safeClose}
-            disabled={submitting}
-            className="rounded-lg p-2 transition hover:bg-white/10 disabled:opacity-40"
+            className="rounded-lg p-2 transition hover:bg-white/10"
             aria-label="关闭"
           >
             <X size={18} />
@@ -256,45 +282,33 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
                   )}
 
                   <SectionTitle label="同步方向" />
-                  <div className="grid grid-cols-1 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     {availableDirections.map((d) => (
-                      <ChoiceCard key={d.key} active={direction === d.key} icon={d.icon} onClick={() => setDirection(d.key)}>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold">{d.label}</div>
-                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{d.hint}</div>
-                        </div>
-                      </ChoiceCard>
+                      <CompactChoiceCard key={d.key} active={direction === d.key} icon={d.icon} label={directionShortLabel(d.key)} onClick={() => setDirection(d.key)} />
                     ))}
                   </div>
 
                   <SectionTitle label="同步策略" />
-                  <div className="grid gap-2">
-                    <ToggleRow
-                      icon={<Clock3 size={16} />}
-                      title="保存原时间"
-                      desc="保留源知识库的创建与更新时间"
+                  <div className="grid grid-cols-3 gap-2">
+                    <CompactToggle
+                      label="原时间"
                       checked={preserveTimestamps}
                       onChange={setPreserveTimestamps}
                     />
-                    <ToggleRow
-                      icon={<RotateCcw size={16} />}
-                      title="允许覆盖"
-                      desc="修复历史同步造成的脏数据"
+                    <CompactToggle
+                      label="覆盖"
                       checked={allowOverwrite}
                       onChange={setAllowOverwrite}
                     />
-                    <ToggleRow
-                      icon={<Image size={16} />}
-                      title="图片重传"
-                      desc="使用目标平台自己的图片域名"
+                    <CompactToggle
+                      label="重传"
                       checked={rewriteAssetLinks}
                       onChange={setRewriteAssetLinks}
                     />
                   </div>
-                </div>
-
-                <div className="mt-5 rounded-xl border p-3 text-xs leading-5" style={{ borderColor: 'rgba(245,158,11,0.32)', background: 'rgba(245,158,11,0.10)', color: 'rgb(252,211,77)' }}>
-                  本次建议：保留原时间、允许覆盖、图片重传。任一条目失败不会写入成功同步标识。
+                  <div className="rounded-xl border px-3 py-2 text-xs leading-5" style={{ borderColor: 'rgba(45,212,191,0.18)', background: 'rgba(15,23,42,0.36)', color: 'rgb(203,213,225)' }}>
+                    使用策略：{preserveTimestamps ? '保留原时间' : '使用同步时间'}、{allowOverwrite ? '覆盖同名条目' : '仅新增'}、{rewriteAssetLinks ? '图片重传' : '跳过图片'}，完成后回读校验。
+                  </div>
                 </div>
               </>
             )}
@@ -304,16 +318,12 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
             <div className="border-b px-6 py-4" style={{ borderColor: 'rgba(148,163,184,0.12)' }}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="text-base font-semibold">选择与传输预览</div>
+                  <div className="text-base font-semibold">知识库同步队列</div>
                   <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                    已选 {selected.size} 个知识库，模式为 {modeLabel}
+                    外层是知识库状态，阶段进度和回读校验由同一队列状态推导
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2 text-xs">
-                  <StatusPill icon={<ShieldCheck size={13} />} text={preserveTimestamps ? '保留原时间' : '使用同步时间'} tone={preserveTimestamps ? 'teal' : 'slate'} />
-                  <StatusPill icon={<RotateCcw size={13} />} text={modeLabel} tone={allowOverwrite ? 'gold' : 'slate'} />
-                  <StatusPill icon={<Image size={13} />} text={rewriteAssetLinks ? '图片重传' : '跳过图片'} tone={rewriteAssetLinks ? 'teal' : 'slate'} />
-                </div>
+                <QueueOverview state={queueState} />
               </div>
             </div>
 
@@ -328,125 +338,44 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
               {loading ? (
                 <MapSectionLoader text="正在加载…" />
               ) : (
-                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
-                  <section className="min-w-0 space-y-4">
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {items.map((it) => (
-                        <button
-                          key={it.itemId}
-                          onClick={() => toggleItem(it.itemId)}
-                          className="group min-h-[118px] rounded-2xl border p-4 text-left transition"
-                          style={{
-                            borderColor: selected.has(it.itemId) ? 'rgba(45,212,191,0.56)' : 'rgba(148,163,184,0.18)',
-                            background: selected.has(it.itemId)
-                              ? 'linear-gradient(135deg, rgba(20,184,166,0.14), rgba(59,130,246,0.10))'
-                              : 'rgba(15,23,42,0.42)',
-                          }}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border" style={{ borderColor: 'rgba(148,163,184,0.20)', background: 'rgba(15,23,42,0.55)' }}>
-                              {selected.has(it.itemId) ? <Check size={17} style={{ color: 'rgb(45,212,191)' }} /> : <FolderOpen size={17} style={{ color: 'rgb(148,163,184)' }} />}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="line-clamp-2 text-sm font-semibold">{it.name}</div>
-                              <div className="mt-2 flex flex-wrap gap-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                <span>{it.recordCount} 项内容</span>
-                                {it.updatedAt && <span>最近更新 {formatShortTime(it.updatedAt)}</span>}
-                              </div>
-                            </div>
-                          </div>
-                          {it.description && (
-                            <div className="mt-3 line-clamp-2 text-xs" style={{ color: 'var(--text-muted)' }}>{it.description}</div>
-                          )}
-                        </button>
-                      ))}
+                <div className="space-y-4">
+                  <SyncMonitorStrip state={queueState} node={activeNode} direction={direction} />
+                  {queueState.waitingCount > 0 && (
+                    <div className="text-xs font-medium" style={{ color: 'rgb(203,213,225)' }}>
+                      还有 {queueState.waitingCount} 个等待知识库，向下滚动查看。
                     </div>
-
-                    {items.length === 0 && (
-                      <EmptyBlock icon={<Database size={20} />} title="没有可同步的知识库" desc="当前账号没有可发送的个人或团队知识库" />
-                    )}
+                  )}
+                  <section className="space-y-3">
+                    {items.map((it) => (
+                      <QueueItemCard
+                        key={it.itemId}
+                        item={it}
+                        selected={selected.has(it.itemId)}
+                        onToggle={() => toggleItem(it.itemId)}
+                        state={queueState.itemStates.get(it.itemId) || 'unselected'}
+                        progress={queueState.itemProgress.get(it.itemId) || 0}
+                        result={results?.find((r) => r.itemId === it.itemId) || null}
+                        active={queueState.activeItem?.itemId === it.itemId}
+                      />
+                    ))}
                   </section>
 
-                  <aside className="space-y-4">
-                    <TransferPreview
-                      node={activeNode}
-                      direction={direction}
-                      selectedCount={selected.size}
-                      submitting={submitting}
-                      progress={progress}
-                      results={results}
-                      error={transferError}
-                    />
-
-                    <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>
-                      <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                        <ListChecks size={16} />
-                        验收步骤
-                      </div>
-                      <div className="space-y-2">
-                        {STEPS.map((s, index) => {
-                          const active = submitting && progress && progress.step === index + 1;
-                          const done = Boolean(results) || Boolean(progress && progress.step > index + 1);
-                          return (
-                            <div key={s.title} className="flex gap-3 rounded-xl border px-3 py-2" style={{
-                              borderColor: active ? 'rgba(45,212,191,0.46)' : 'rgba(148,163,184,0.14)',
-                              background: active ? 'rgba(20,184,166,0.10)' : 'rgba(15,23,42,0.34)',
-                            }}>
-                              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold" style={{
-                                background: done ? 'rgba(34,197,94,0.20)' : active ? 'rgba(45,212,191,0.22)' : 'rgba(148,163,184,0.12)',
-                                color: done ? 'rgb(134,239,172)' : active ? 'rgb(94,234,212)' : 'rgb(148,163,184)',
-                              }}>
-                                {index + 1}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="text-xs font-semibold">{s.title}</div>
-                                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{s.desc}</div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {results && (
-                      <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>
-                        <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                          <CheckCircle2 size={16} />
-                          互传结果
-                        </div>
-                        <div className="space-y-2">
-                          {results.map((r) => {
-                            const name = items.find((i) => i.itemId === r.itemId)?.name || r.itemId;
-                            return (
-                              <div key={r.itemId} className="rounded-xl border px-3 py-2 text-xs" style={{
-                                borderColor: r.ok ? 'rgba(34,197,94,0.26)' : 'rgba(248,113,113,0.30)',
-                                background: r.ok ? 'rgba(22,101,52,0.12)' : 'rgba(127,29,29,0.14)',
-                              }}>
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="truncate font-semibold">{name}</span>
-                                  <span style={{ color: r.ok ? 'rgb(134,239,172)' : 'rgb(252,165,165)' }}>{r.ok ? '成功' : '失败'}</span>
-                                </div>
-                                {r.message && <div className="mt-1 leading-5" style={{ color: 'var(--text-muted)' }}>{r.message}</div>}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </aside>
+                  {items.length === 0 && (
+                    <EmptyBlock icon={<Database size={20} />} title="没有可同步的知识库" desc="当前账号没有可发送的个人或团队知识库" />
+                  )}
                 </div>
               )}
             </div>
 
             <div className="flex items-center justify-between gap-3 border-t px-6 py-4" style={{ borderColor: 'rgba(148,163,184,0.12)' }}>
               <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                {submitting && progress ? `${progress.stage}，已用 ${Math.round((Date.now() - progress.startedAt) / 1000)} 秒` : '同步完成后会刷新知识库列表和跨系统同步标识'}
+                {submitting && progress ? `${progress.stage}，已用 ${Math.round((Date.now() - progress.startedAt) / 1000)} 秒，预计剩余 ${queueState.etaLabel}` : '同步完成后会刷新知识库列表和跨系统同步标识'}
               </div>
               <div className="flex gap-2">
-                <Button size="sm" variant="ghost" onClick={safeClose} disabled={submitting}>取消</Button>
-                <Button size="sm" onClick={handleSubmit} disabled={!canSubmit}>
-                  {submitting ? <MapSpinner size={14} /> : <Send size={14} />}
-                  {direction === 'pull' ? '开始拉取' : direction === 'both' ? '开始双向同步' : '开始发送'}
+                <Button size="sm" variant="ghost" onClick={safeClose}>{submitting ? '关闭面板' : '取消'}</Button>
+                <Button size="sm" onClick={handlePrimaryAction} disabled={!submitting && !canSubmit}>
+                  {submitting ? <X size={14} /> : <Send size={14} />}
+                  {primaryActionLabel}
                 </Button>
               </div>
             </div>
@@ -482,39 +411,6 @@ function ChoiceCard({ active, icon, onClick, children }: { active: boolean; icon
   );
 }
 
-function ToggleRow({ icon, title, desc, checked, onChange }: {
-  icon: ReactNode;
-  title: string;
-  desc: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className="flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition"
-      style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.42)' }}
-    >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg" style={{ background: 'rgba(59,130,246,0.12)', color: 'rgb(147,197,253)' }}>
-        {icon}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold">{title}</div>
-        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{desc}</div>
-      </div>
-      <span className="relative h-6 w-11 rounded-full border transition" style={{
-        borderColor: checked ? 'rgba(45,212,191,0.56)' : 'rgba(148,163,184,0.22)',
-        background: checked ? 'rgba(20,184,166,0.28)' : 'rgba(15,23,42,0.70)',
-      }}>
-        <span className="absolute top-1 h-4 w-4 rounded-full transition" style={{
-          left: checked ? 22 : 4,
-          background: checked ? 'rgb(94,234,212)' : 'rgb(148,163,184)',
-        }} />
-      </span>
-    </button>
-  );
-}
-
 function EmptyBlock({ icon, title, desc }: { icon: ReactNode; title: string; desc: string }) {
   return (
     <div className="rounded-2xl border px-4 py-6 text-center" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.36)' }}>
@@ -523,6 +419,285 @@ function EmptyBlock({ icon, title, desc }: { icon: ReactNode; title: string; des
       <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{desc}</div>
     </div>
   );
+}
+
+function CompactChoiceCard({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="relative min-h-[76px] rounded-xl border px-3 py-3 text-left transition"
+      style={{
+        borderColor: active ? 'rgba(45,212,191,0.54)' : 'rgba(148,163,184,0.18)',
+        background: active ? 'rgba(20,184,166,0.12)' : 'rgba(15,23,42,0.42)',
+      }}
+    >
+      <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg border" style={{ borderColor: 'rgba(148,163,184,0.16)', color: active ? 'rgb(94,234,212)' : 'rgb(148,163,184)' }}>
+        {icon}
+      </div>
+      <div className="text-xs font-semibold">{label}</div>
+      {active && <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full" style={{ background: 'rgb(94,234,212)', boxShadow: '0 0 12px rgba(94,234,212,0.8)' }} />}
+    </button>
+  );
+}
+
+function CompactToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className="relative h-9 rounded-xl border px-2 text-center text-xs font-semibold transition"
+      style={{
+        borderColor: checked ? 'rgba(45,212,191,0.46)' : 'rgba(148,163,184,0.18)',
+        background: checked ? 'rgba(20,184,166,0.12)' : 'rgba(15,23,42,0.42)',
+        color: checked ? 'rgb(94,234,212)' : 'rgb(148,163,184)',
+      }}
+    >
+      {label}
+      {checked && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full" style={{ background: 'rgb(94,234,212)' }} />}
+    </button>
+  );
+}
+
+function directionShortLabel(direction: PeerTransferDirection) {
+  if (direction === 'push') return '发送';
+  if (direction === 'pull') return '拉取';
+  return '双向';
+}
+
+type QueueItemState = 'unselected' | 'waiting' | 'running' | 'done' | 'failed';
+
+interface QueueState {
+  selectedCount: number;
+  doneCount: number;
+  runningCount: number;
+  waitingCount: number;
+  failedCount: number;
+  activeItem: SyncItemSummary | null;
+  activeStep: number;
+  currentLabel: string;
+  reverseLabel: string;
+  etaLabel: string;
+  itemStates: Map<string, QueueItemState>;
+  itemProgress: Map<string, number>;
+}
+
+export function deriveQueueState(
+  selectedItems: SyncItemSummary[],
+  submitting: boolean,
+  progress: { step: number; stage: string; startedAt: number } | null,
+  results: TransferItemResult[] | null,
+  error: string | null,
+): QueueState {
+  const resultMap = new Map((results || []).map((r) => [r.itemId, r]));
+  const doneCount = results?.filter((r) => r.ok).length ?? 0;
+  const failedCount = results?.filter((r) => !r.ok).length ?? (error ? selectedItems.length : 0);
+  const runningCount = submitting && selectedItems.length > doneCount + failedCount ? 1 : 0;
+  const waitingCount = Math.max(0, selectedItems.length - doneCount - failedCount - runningCount);
+  const activeIndex = submitting ? Math.min(doneCount + failedCount, Math.max(0, selectedItems.length - 1)) : -1;
+  const activeItem = activeIndex >= 0 ? selectedItems[activeIndex] || null : null;
+  const activeStep = progress?.step ?? 0;
+  const itemStates = new Map<string, QueueItemState>();
+  const itemProgress = new Map<string, number>();
+
+  selectedItems.forEach((item, index) => {
+    const result = resultMap.get(item.itemId);
+    if (result) {
+      itemStates.set(item.itemId, result.ok ? 'done' : 'failed');
+      itemProgress.set(item.itemId, 100);
+      return;
+    }
+    if (submitting && index === activeIndex) {
+      itemStates.set(item.itemId, 'running');
+      itemProgress.set(item.itemId, stepProgress(activeStep));
+      return;
+    }
+    itemStates.set(item.itemId, submitting && index > activeIndex ? 'waiting' : 'waiting');
+    itemProgress.set(item.itemId, 0);
+  });
+
+  const etaSeconds = Math.max(20, waitingCount * 35 + (submitting ? Math.max(0, 5 - activeStep) * 14 : 0));
+  const reverseLabel = reverseStatusFromStep({ submitting, activeStep, results, error });
+  return {
+    selectedCount: selectedItems.length,
+    doneCount,
+    runningCount,
+    waitingCount,
+    failedCount,
+    activeItem,
+    activeStep,
+    currentLabel: progress?.stage || (results ? '同步结果已返回' : selectedItems.length > 0 ? '等待开始同步' : '等待选择知识库'),
+    reverseLabel,
+    etaLabel: submitting ? `约 ${formatDuration(etaSeconds)}` : '无进行中任务',
+    itemStates,
+    itemProgress,
+  };
+}
+
+function stepProgress(step: number) {
+  if (step <= 1) return 16;
+  if (step === 2) return 42;
+  if (step === 3) return 68;
+  if (step >= 4) return 88;
+  return 0;
+}
+
+function reverseStatusFromStep(args: {
+  submitting: boolean;
+  activeStep: number;
+  results: TransferItemResult[] | null;
+  error: string | null;
+}) {
+  if (args.error) return '未执行回读';
+  if (args.results && args.results.length > 0) return args.results.some((r) => !r.ok) ? '部分条目未通过' : '回读校验通过';
+  if (!args.submitting) return '等待回读';
+  if (args.activeStep < 4) return '等待回读';
+  return '正在回读同步结果';
+}
+
+function formatDuration(seconds: number) {
+  if (seconds < 60) return `${seconds} 秒`;
+  return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+}
+
+function QueueOverview({ state }: { state: QueueState }) {
+  return (
+    <div className="grid grid-cols-5 gap-2 text-center">
+      <QueueStat label="已选" value={state.selectedCount} />
+      <QueueStat label="完成" value={state.doneCount} tone="green" />
+      <QueueStat label="同步中" value={state.runningCount} tone="gold" />
+      <QueueStat label="等待" value={state.waitingCount} />
+      <QueueStat label="失败" value={state.failedCount} tone={state.failedCount > 0 ? 'red' : 'slate'} />
+    </div>
+  );
+}
+
+function QueueStat({ label, value, tone = 'slate' }: { label: string; value: number; tone?: 'green' | 'gold' | 'red' | 'slate' }) {
+  const color = tone === 'green' ? 'rgb(134,239,172)' : tone === 'gold' ? 'rgb(252,211,77)' : tone === 'red' ? 'rgb(252,165,165)' : 'rgb(226,232,240)';
+  return (
+    <div className="min-w-[54px] rounded-xl border px-2 py-2" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.42)' }}>
+      <div className="text-[10px] font-semibold" style={{ color: 'rgb(174,187,201)' }}>{label}</div>
+      <div className="text-base font-semibold" style={{ color }}>{value}</div>
+    </div>
+  );
+}
+
+function SyncMonitorStrip({ state, node, direction }: { state: QueueState; node: PeerNode | null; direction: PeerTransferDirection }) {
+  return (
+    <div className="grid gap-2 lg:grid-cols-4">
+      <MonitorCell label="当前状态" value={state.currentLabel} />
+      <MonitorCell label="目标节点" value={node?.displayName || '等待选择'} sub={directionShortLabel(direction)} />
+      <MonitorCell label="反向校验" value={state.reverseLabel} />
+      <MonitorCell label="预计剩余" value={state.etaLabel} />
+    </div>
+  );
+}
+
+function MonitorCell({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-xl border px-3 py-2" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.40)' }}>
+      <div className="text-[11px] font-semibold" style={{ color: 'rgb(174,187,201)' }}>{label}</div>
+      <div className="mt-1 truncate text-xs font-semibold">{value}</div>
+      {sub && <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>{sub}</div>}
+    </div>
+  );
+}
+
+function QueueItemCard({ item, selected, onToggle, state, progress, result, active }: {
+  item: SyncItemSummary;
+  selected: boolean;
+  onToggle: () => void;
+  state: QueueItemState;
+  progress: number;
+  result: TransferItemResult | null;
+  active: boolean;
+}) {
+  const tone = queueStateTone(state);
+  return (
+    <button
+      onClick={onToggle}
+      className="w-full rounded-2xl border p-4 text-left transition"
+      title={item.updatedAt ? `最近更新 ${new Date(item.updatedAt).toLocaleString('zh-CN')}` : undefined}
+      style={{
+        borderColor: selected ? statusBorder(tone) : 'rgba(148,163,184,0.16)',
+        background: selected ? statusBackground(tone) : 'rgba(15,23,42,0.32)',
+      }}
+    >
+      <div className="grid gap-4 md:grid-cols-[44px_minmax(0,1fr)_280px]">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl border" style={{ borderColor: selected ? statusBorder(tone) : 'rgba(148,163,184,0.18)', color: selected ? statusColor(tone) : 'rgb(148,163,184)', background: selected ? statusBackground(tone) : 'rgba(15,23,42,0.46)' }}>
+          {selected ? <Check size={17} /> : <FolderOpen size={17} />}
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-sm font-semibold">{stripTimestampSuffix(item.name)}</div>
+            <span className="rounded-full border px-2 py-0.5 text-[11px]" style={{ borderColor: 'rgba(148,163,184,0.16)', color: 'rgb(203,213,225)' }}>
+              {item.recordCount} 项
+            </span>
+          </div>
+          {item.description && <div className="mt-1 text-xs leading-5" style={{ color: 'rgb(174,187,201)' }}>{item.description}</div>}
+          <div className="mt-2 flex flex-wrap gap-3 text-[11px]" style={{ color: 'rgb(174,187,201)' }}>
+            {item.updatedAt && <span>更新 {formatShortTime(item.updatedAt)}</span>}
+            <span>保留原时间</span>
+            <span>允许覆盖</span>
+          </div>
+        </div>
+        <div className="min-w-0">
+          <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+            <StatusPill icon={active ? <MapSpinner size={12} /> : state === 'done' ? <CheckCircle2 size={13} /> : state === 'failed' ? <AlertTriangle size={13} /> : <Clock3 size={13} />} text={queueStateLabel(state)} tone={tone} />
+            <span className="font-semibold" style={{ color: statusColor(tone) }}>{selected ? `${progress}%` : '未选'}</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full" style={{ background: 'rgba(148,163,184,0.14)' }}>
+            <div className="h-full rounded-full transition-all" style={{ width: `${selected ? progress : 0}%`, background: state === 'failed' ? 'rgb(248,113,113)' : 'linear-gradient(90deg, rgb(94,234,212), rgb(134,239,172))' }} />
+          </div>
+          {active && (
+            <div className="mt-2 grid grid-cols-4 gap-1.5">
+              {STEPS.map((step, index) => (
+                <StepChip key={step.title} label={step.title} state={index + 1 < stepFromProgress(progress) ? 'done' : index + 1 === stepFromProgress(progress) ? 'active' : 'idle'} />
+              ))}
+            </div>
+          )}
+          {result?.message && <div className="mt-2 text-[11px] leading-5" style={{ color: 'var(--text-muted)' }}>{result.message}</div>}
+          {item.recordCount >= 20 && selected && <div className="mt-2 text-[11px]" style={{ color: 'rgb(174,187,201)' }}>可在结果明细中审计全部 {item.recordCount} 项内容</div>}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function StepChip({ label, state }: { label: string; state: 'idle' | 'active' | 'done' }) {
+  const color = state === 'done' ? 'rgb(134,239,172)' : state === 'active' ? 'rgb(252,211,77)' : 'rgb(148,163,184)';
+  return (
+    <span className="truncate rounded-lg border px-1.5 py-1 text-center text-[10px] font-semibold" style={{
+      color,
+      borderColor: state === 'active' ? 'rgba(245,158,11,0.34)' : state === 'done' ? 'rgba(34,197,94,0.28)' : 'rgba(148,163,184,0.14)',
+      background: state === 'active' ? 'rgba(245,158,11,0.10)' : state === 'done' ? 'rgba(22,101,52,0.10)' : 'rgba(15,23,42,0.34)',
+    }}>{label}</span>
+  );
+}
+
+function stepFromProgress(progress: number) {
+  if (progress >= 88) return 4;
+  if (progress >= 68) return 3;
+  if (progress >= 42) return 2;
+  if (progress > 0) return 1;
+  return 0;
+}
+
+function queueStateTone(state: QueueItemState): StatusTone {
+  if (state === 'done') return 'teal';
+  if (state === 'running') return 'gold';
+  if (state === 'failed') return 'red';
+  return 'slate';
+}
+
+function queueStateLabel(state: QueueItemState) {
+  if (state === 'done') return '已完成';
+  if (state === 'running') return '同步中';
+  if (state === 'failed') return '失败';
+  if (state === 'waiting') return '等待';
+  return '未选择';
+}
+
+function stripTimestampSuffix(name: string) {
+  return name.replace(/[-_]?20\d{10,14}$/, '');
 }
 
 type StatusTone = 'teal' | 'gold' | 'slate' | 'red';
@@ -558,227 +733,6 @@ function statusBackground(tone: StatusTone) {
   if (tone === 'gold') return 'rgba(245,158,11,0.10)';
   if (tone === 'red') return 'rgba(127,29,29,0.14)';
   return 'rgba(148,163,184,0.08)';
-}
-
-function TransferPreview({ node, direction, selectedCount, submitting, progress, results, error }: {
-  node: PeerNode | null;
-  direction: PeerTransferDirection;
-  selectedCount: number;
-  submitting: boolean;
-  progress: { step: number; stage: string; startedAt: number } | null;
-  results: TransferItemResult[] | null;
-  error: string | null;
-}) {
-  const directionText = direction === 'push' ? '发送' : direction === 'pull' ? '拉取' : '双向';
-  const activeStep = progress?.step ?? 0;
-  const successCount = results?.filter((r) => r.ok).length ?? 0;
-  const failedCount = results?.filter((r) => !r.ok).length ?? 0;
-  const status = getTransferStatus({ submitting, results, error, selectedCount });
-  const statusTone = transferStatusTone(status);
-  return (
-    <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <Activity size={16} />
-          传输状态
-        </div>
-        <StatusPill
-          text={transferStatusLabel(status)}
-          icon={submitting ? <MapSpinner size={12} /> : status === 'success' ? <CheckCircle2 size={13} /> : status === 'failed' || status === 'partial' ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
-          tone={statusTone}
-        />
-      </div>
-
-      <div className="mb-3 rounded-2xl border px-4 py-3" style={{
-        borderColor: statusBorder(statusTone),
-        background: statusBackground(statusTone),
-      }}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold" style={{ color: statusColor(statusTone) }}>{transferStatusLabel(status)}</div>
-            <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
-              {transferStatusDesc(status, { selectedCount, successCount, failedCount, error })}
-            </div>
-          </div>
-          <div className="grid shrink-0 grid-cols-3 gap-2 text-center">
-            <MiniStat label="已选" value={selectedCount} />
-            <MiniStat label="成功" value={successCount} tone="green" />
-            <MiniStat label="失败" value={failedCount} tone={failedCount > 0 ? 'red' : 'slate'} />
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.54)' }}>
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-          <TransferNode
-            label="本地"
-            title={`${selectedCount} 个知识库`}
-            desc="读取内容与附件"
-            icon={<Database size={16} />}
-            active={submitting && activeStep <= 2}
-          />
-
-          <div className="flex min-w-[88px] flex-col items-center gap-2">
-            <div className="relative h-px w-full overflow-hidden rounded-full" style={{ background: 'rgba(148,163,184,0.24)' }}>
-              <div
-                className="peer-flow-beam absolute top-0 h-px w-9 rounded-full"
-                style={{
-                  left: 0,
-                  background: 'linear-gradient(90deg, transparent, rgb(94,234,212), transparent)',
-                  animationPlayState: submitting ? 'running' : 'paused',
-                }}
-              />
-            </div>
-            <span className="rounded-full border px-2 py-0.5 text-[11px] font-semibold" style={{
-              borderColor: direction === 'both' ? 'rgba(45,212,191,0.34)' : 'rgba(148,163,184,0.18)',
-              color: direction === 'both' ? 'rgb(94,234,212)' : 'rgb(203,213,225)',
-              background: direction === 'both' ? 'rgba(20,184,166,0.10)' : 'rgba(148,163,184,0.08)',
-            }}>
-              {directionText}
-            </span>
-          </div>
-
-          <TransferNode
-            label="对端"
-            title={node?.displayName || '等待选择'}
-            desc={node?.baseUrl || '选择目标节点'}
-            icon={<Globe size={16} />}
-            active={submitting && activeStep >= 2}
-          />
-        </div>
-
-        <div className="mt-4 grid grid-cols-4 gap-2">
-          {STEPS.map((s, index) => {
-            const state = resultsState(index + 1, activeStep, submitting, results, failedCount, error);
-            return (
-              <div
-                key={s.title}
-                className="rounded-xl border px-2.5 py-2"
-                style={{
-                  borderColor: state === 'active' ? 'rgba(45,212,191,0.46)' : state === 'done' ? 'rgba(34,197,94,0.28)' : state === 'failed' ? 'rgba(248,113,113,0.34)' : 'rgba(148,163,184,0.14)',
-                  background: state === 'active' ? 'rgba(20,184,166,0.10)' : state === 'done' ? 'rgba(22,101,52,0.10)' : state === 'failed' ? 'rgba(127,29,29,0.14)' : 'rgba(15,23,42,0.34)',
-                }}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className={state === 'active' ? 'peer-flow-pulse' : ''} style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 999,
-                    background: state === 'active' ? 'rgb(94,234,212)' : state === 'done' ? 'rgb(134,239,172)' : state === 'failed' ? 'rgb(252,165,165)' : 'rgb(100,116,139)',
-                    display: 'inline-block',
-                    flexShrink: 0,
-                  }} />
-                  <span className="truncate text-[11px] font-semibold">{s.title}</span>
-                </div>
-                <div className="mt-1 truncate text-[10px]" style={{ color: state === 'failed' ? 'rgb(252,165,165)' : 'var(--text-muted)' }}>
-                  {state === 'done' ? '已完成' : state === 'active' ? '进行中' : state === 'failed' ? '未成功' : s.desc}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div className="mt-3 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
-        {progress ? progress.stage : '开始后会按顺序执行扫描、图片重传、合并、回读四步。'}
-      </div>
-    </div>
-  );
-}
-
-type TransferStatus = 'idle' | 'ready' | 'running' | 'success' | 'partial' | 'failed';
-
-function getTransferStatus({ submitting, results, error, selectedCount }: {
-  submitting: boolean;
-  results: TransferItemResult[] | null;
-  error: string | null;
-  selectedCount: number;
-}): TransferStatus {
-  if (submitting) return 'running';
-  if (error) return 'failed';
-  if (results && results.length > 0) return results.some((r) => !r.ok) ? 'partial' : 'success';
-  if (selectedCount > 0) return 'ready';
-  return 'idle';
-}
-
-function transferStatusLabel(status: TransferStatus) {
-  switch (status) {
-    case 'success': return '同步成功';
-    case 'partial': return '部分失败';
-    case 'failed': return '同步失败';
-    case 'running': return '同步中';
-    case 'ready': return '可开始';
-    default: return '待选择';
-  }
-}
-
-function transferStatusDesc(status: TransferStatus, args: {
-  selectedCount: number;
-  successCount: number;
-  failedCount: number;
-  error: string | null;
-}) {
-  switch (status) {
-    case 'success': return `${args.successCount} 个知识库已完成跨系统同步，列表和状态标识会刷新。`;
-    case 'partial': return `${args.successCount} 个成功，${args.failedCount} 个失败。失败条目不会写入成功同步标识。`;
-    case 'failed': return args.error || '本次传输未成功，不会写入成功同步标识。';
-    case 'running': return `正在处理 ${args.selectedCount} 个知识库，请保持面板打开。`;
-    case 'ready': return `已选择 ${args.selectedCount} 个知识库，点击开始后会显示每一步结果。`;
-    default: return '先选择一个或多个知识库。';
-  }
-}
-
-function transferStatusTone(status: TransferStatus): StatusTone {
-  if (status === 'success') return 'teal';
-  if (status === 'partial' || status === 'running') return 'gold';
-  if (status === 'failed') return 'red';
-  return 'slate';
-}
-
-function MiniStat({ label, value, tone = 'slate' }: { label: string; value: number; tone?: 'green' | 'red' | 'slate' }) {
-  const color = tone === 'green' ? 'rgb(134,239,172)' : tone === 'red' ? 'rgb(252,165,165)' : 'rgb(203,213,225)';
-  return (
-    <div className="min-w-[42px] rounded-lg border px-2 py-1" style={{ borderColor: 'rgba(148,163,184,0.14)', background: 'rgba(15,23,42,0.40)' }}>
-      <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{label}</div>
-      <div className="text-sm font-semibold" style={{ color }}>{value}</div>
-    </div>
-  );
-}
-
-function TransferNode({ label, title, desc, icon, active }: {
-  label: string;
-  title: string;
-  desc: string;
-  icon: ReactNode;
-  active: boolean;
-}) {
-  return (
-    <div className="min-w-0 rounded-xl border px-3 py-3" style={{
-      borderColor: active ? 'rgba(45,212,191,0.36)' : 'rgba(148,163,184,0.16)',
-      background: active ? 'rgba(20,184,166,0.10)' : 'rgba(2,6,23,0.28)',
-    }}>
-      <div className="mb-2 flex items-center gap-2">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border" style={{
-          borderColor: active ? 'rgba(45,212,191,0.34)' : 'rgba(148,163,184,0.16)',
-          color: active ? 'rgb(94,234,212)' : 'rgb(148,163,184)',
-          background: active ? 'rgba(20,184,166,0.12)' : 'rgba(15,23,42,0.40)',
-        }}>
-          {icon}
-        </span>
-        <span className="text-[11px] font-semibold uppercase tracking-[0.10em]" style={{ color: 'rgb(148,163,184)' }}>{label}</span>
-      </div>
-      <div className="truncate text-xs font-semibold">{title}</div>
-      <div className="mt-1 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{desc}</div>
-    </div>
-  );
-}
-
-function resultsState(step: number, activeStep: number, submitting: boolean, results: TransferItemResult[] | null, failedCount: number, error: string | null) {
-  if (error) return step === 1 ? 'failed' : 'idle';
-  if (results && results.length > 0) return failedCount > 0 && step === STEPS.length ? 'failed' : 'done';
-  if (!submitting) return 'idle';
-  if (step < activeStep) return 'done';
-  if (step === activeStep) return 'active';
-  return 'idle';
 }
 
 function formatShortTime(value: string) {
