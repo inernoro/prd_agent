@@ -222,7 +222,7 @@ public class DocumentStoreSyncResource : ISyncableResource
             await _db.DocumentStores.InsertOneAsync(target, cancellationToken: ct);
         }
 
-        var outcome = await ApplyRecordsAsync(target, bundle.Records, mode, options, ownerUserId, ownerName, ownerAvatar, ct);
+        var outcome = await ApplyRecordsAsync(target, bundle.Item, bundle.Records, mode, options, ownerUserId, ownerName, ownerAvatar, ct);
         outcome.TargetItemId = target.Id;
         outcome.UnmatchedAuthors = authorMatched ? 0 : 1;
         if (!authorMatched)
@@ -254,7 +254,7 @@ public class DocumentStoreSyncResource : ISyncableResource
 
     /// <summary>把记录幂等 upsert 进目标库（沿用 DocumentStoreSyncController.ApplyBundleAsync 的算法）。</summary>
     private async Task<SyncApplyOutcome> ApplyRecordsAsync(
-        DocumentStore target, List<SyncRecord> records, SyncApplyMode mode,
+        DocumentStore target, SyncBundleItem item, List<SyncRecord> records, SyncApplyMode mode,
         DocumentStorePeerApplyOptions options,
         string actorUserId, string actorName, string? actorAvatar, CancellationToken ct)
     {
@@ -270,7 +270,7 @@ public class DocumentStoreSyncResource : ISyncableResource
         int created = 0, updated = 0, skipped = 0, failed = 0, assetsRewritten = 0, assetRewriteFailed = 0;
         var addOnly = mode == SyncApplyMode.AddOnly;
         var now = DateTime.UtcNow;
-        DateTime PickTime(DateTime? source) => options.PreserveTimestamps && source.HasValue ? source.Value : DateTime.UtcNow;
+        DateTime PickTime(DateTime? source) => PickTimestamp(source, options.PreserveTimestamps, now);
 
         string? ResolveParent(string? parentLineage)
         {
@@ -287,20 +287,34 @@ public class DocumentStoreSyncResource : ISyncableResource
                 lineageToTargetId[f.LineageId] = exFolder.Id;
                 if (addOnly) { skipped++; return; }
                 var newTags = f.Tags ?? new List<string>();
-                if (exFolder.Title != f.Title || exFolder.ParentId != parentId
-                    || !TagsEqual(exFolder.Tags, f.Tags) || !MetaEqual(exFolder.Metadata, f.Metadata))
+                var contentChanged = exFolder.Title != f.Title || exFolder.ParentId != parentId
+                    || !TagsEqual(exFolder.Tags, f.Tags) || !MetaEqual(exFolder.Metadata, f.Metadata);
+                var timestampsChanged = NeedsRecordTimestampRefresh(exFolder, f, options.PreserveTimestamps);
+                if (contentChanged || timestampsChanged)
                 {
-                    await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exFolder.Id,
-                        Builders<DocumentEntry>.Update
-                            .Set(e => e.Title, f.Title)
-                            .Set(e => e.ParentId, parentId)
-                            .Set(e => e.Tags, newTags)
-                            .Set(e => e.Metadata, WithLineage(f.Metadata, f.LineageId))
-                            .Set(e => e.UpdatedBy, actorUserId)
-                            .Set(e => e.UpdatedByName, actorName)
-                            .Set(e => e.UpdatedAt, PickTime(f.UpdatedAt)), cancellationToken: ct);
+                    var update = Builders<DocumentEntry>.Update
+                        .Set(e => e.Title, f.Title)
+                        .Set(e => e.ParentId, parentId)
+                        .Set(e => e.Tags, newTags)
+                        .Set(e => e.Metadata, WithLineage(f.Metadata, f.LineageId))
+                        .Set(e => e.UpdatedBy, actorUserId)
+                        .Set(e => e.UpdatedByName, actorName)
+                        .Set(e => e.UpdatedAt, PickTime(f.UpdatedAt));
+                    if (options.PreserveTimestamps && f.CreatedAt.HasValue)
+                        update = update.Set(e => e.CreatedAt, PickTime(f.CreatedAt));
+                    if (options.PreserveTimestamps && (f.LastChangedAt.HasValue || f.UpdatedAt.HasValue))
+                        update = update.Set(e => e.LastChangedAt, PickTime(f.LastChangedAt ?? f.UpdatedAt));
+
+                    await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exFolder.Id, update, cancellationToken: ct);
                     exFolder.Title = f.Title;
                     exFolder.ParentId = parentId;
+                    exFolder.Tags = newTags;
+                    exFolder.Metadata = WithLineage(f.Metadata, f.LineageId);
+                    exFolder.UpdatedAt = PickTime(f.UpdatedAt);
+                    if (options.PreserveTimestamps && f.CreatedAt.HasValue)
+                        exFolder.CreatedAt = PickTime(f.CreatedAt);
+                    if (options.PreserveTimestamps && (f.LastChangedAt.HasValue || f.UpdatedAt.HasValue))
+                        exFolder.LastChangedAt = PickTime(f.LastChangedAt ?? f.UpdatedAt);
                     updated++;
                 }
                 else skipped++;
@@ -379,34 +393,53 @@ public class DocumentStoreSyncResource : ISyncableResource
                     var existingContent = !string.IsNullOrEmpty(exEntry.DocumentId)
                         ? (await _documentService.GetByIdAsync(exEntry.DocumentId))?.RawContent ?? string.Empty
                         : string.Empty;
-                    if (Sha256Hex(existingContent) == Sha256Hex(content)
-                        && exEntry.Title == fe.Title && exEntry.ParentId == parentId
-                        && TagsEqual(exEntry.Tags, fe.Tags) && exEntry.Summary == fe.Summary
-                        && MetaEqual(exEntry.Metadata, fe.Metadata))
+                    var contentChanged = Sha256Hex(existingContent) != Sha256Hex(content)
+                        || exEntry.Title != fe.Title || exEntry.ParentId != parentId
+                        || !TagsEqual(exEntry.Tags, fe.Tags) || exEntry.Summary != fe.Summary
+                        || !MetaEqual(exEntry.Metadata, fe.Metadata);
+                    var timestampsChanged = NeedsRecordTimestampRefresh(exEntry, fe, options.PreserveTimestamps);
+                    if (!contentChanged && !timestampsChanged)
                     {
                         skipped++;
+                        continue;
+                    }
+                    if (!contentChanged)
+                    {
+                        var timeOnlyUpdate = Builders<DocumentEntry>.Update
+                            .Set(e => e.UpdatedBy, actorUserId)
+                            .Set(e => e.UpdatedByName, actorName)
+                            .Set(e => e.UpdatedAt, PickTime(fe.UpdatedAt));
+                        if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
+                            timeOnlyUpdate = timeOnlyUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+                        if (options.PreserveTimestamps && (fe.LastChangedAt.HasValue || fe.UpdatedAt.HasValue))
+                            timeOnlyUpdate = timeOnlyUpdate.Set(e => e.LastChangedAt, PickTime(fe.LastChangedAt ?? fe.UpdatedAt));
+
+                        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exEntry.Id, timeOnlyUpdate, cancellationToken: ct);
+                        updated++;
                         continue;
                     }
                     var oldDocId = exEntry.DocumentId;
                     var parsed = await BuildAndSaveDocAsync(content, fe.Title);
                     var updatedAt = PickTime(fe.UpdatedAt);
                     var changedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
-                    await _db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == exEntry.Id,
-                        Builders<DocumentEntry>.Update
-                            .Set(e => e.DocumentId, parsed.Id)
-                            .Set(e => e.Title, fe.Title)
-                            .Set(e => e.Summary, fe.Summary)
-                            .Set(e => e.ParentId, parentId)
-                            .Set(e => e.Tags, fe.Tags ?? new List<string>())
-                            .Set(e => e.ContentIndex, content.Length > 2000 ? content[..2000] : content)
-                            .Set(e => e.FileSize, fe.FileSize)
-                            .Set(e => e.ContentType, string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType)
-                            .Set(e => e.Metadata, WithLineage(fe.Metadata, fe.LineageId))
-                            .Set(e => e.UpdatedBy, actorUserId)
-                            .Set(e => e.UpdatedByName, actorName)
-                            .Set(e => e.UpdatedAt, updatedAt)
-                            .Set(e => e.LastChangedAt, changedAt), cancellationToken: ct);
+                    var fullUpdate = Builders<DocumentEntry>.Update
+                        .Set(e => e.DocumentId, parsed.Id)
+                        .Set(e => e.Title, fe.Title)
+                        .Set(e => e.Summary, fe.Summary)
+                        .Set(e => e.ParentId, parentId)
+                        .Set(e => e.Tags, fe.Tags ?? new List<string>())
+                        .Set(e => e.ContentIndex, content.Length > 2000 ? content[..2000] : content)
+                        .Set(e => e.FileSize, fe.FileSize)
+                        .Set(e => e.ContentType, string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType)
+                        .Set(e => e.Metadata, WithLineage(fe.Metadata, fe.LineageId))
+                        .Set(e => e.UpdatedBy, actorUserId)
+                        .Set(e => e.UpdatedByName, actorName)
+                        .Set(e => e.UpdatedAt, updatedAt)
+                        .Set(e => e.LastChangedAt, changedAt);
+                    if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
+                        fullUpdate = fullUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+
+                    await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exEntry.Id, fullUpdate, cancellationToken: ct);
                     await CleanupReplacedDocAsync(oldDocId, parsed.Id, exEntry.Id);
                     updated++;
                 }
@@ -449,13 +482,25 @@ public class DocumentStoreSyncResource : ISyncableResource
         }
 
         var count = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == target.Id, cancellationToken: ct);
+        var fallbackStoreUpdatedAt = records.Select(r => r.UpdatedAt).Where(t => t.HasValue).Select(t => t!.Value)
+            .DefaultIfEmpty(target.UpdatedAt).Max();
         var storeUpdatedAt = options.PreserveTimestamps
-            ? records.Select(r => r.UpdatedAt).Where(t => t.HasValue).Select(t => t!.Value).DefaultIfEmpty(target.UpdatedAt).Max()
+            ? (item.UpdatedAt ?? fallbackStoreUpdatedAt)
             : now;
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == target.Id,
-            Builders<DocumentStore>.Update.Set(s => s.DocumentCount, (int)count).Set(s => s.UpdatedAt, storeUpdatedAt),
-            cancellationToken: ct);
+        var storeUpdate = Builders<DocumentStore>.Update
+            .Set(s => s.DocumentCount, (int)count)
+            .Set(s => s.UpdatedAt, storeUpdatedAt);
+        if (!addOnly)
+        {
+            storeUpdate = storeUpdate
+                .Set(s => s.Name, string.IsNullOrWhiteSpace(item.Name) ? target.Name : item.Name)
+                .Set(s => s.Description, item.Description)
+                .Set(s => s.Tags, item.Tags ?? new List<string>());
+            if (options.PreserveTimestamps && item.CreatedAt.HasValue)
+                storeUpdate = storeUpdate.Set(s => s.CreatedAt, PickTime(item.CreatedAt));
+        }
+
+        await _db.DocumentStores.UpdateOneAsync(s => s.Id == target.Id, storeUpdate, cancellationToken: ct);
 
         return new SyncApplyOutcome
         {
@@ -679,6 +724,34 @@ public class DocumentStoreSyncResource : ISyncableResource
         {
             _logger.LogWarning(ex, "[peer-sync] 清理旧 ParsedPrd 失败 docId={DocId}", oldDocId);
         }
+    }
+
+    private static DateTime PickTimestamp(DateTime? source, bool preserveTimestamps, DateTime fallback)
+        => preserveTimestamps && source.HasValue ? source.Value : fallback;
+
+    private static bool NeedsRecordTimestampRefresh(DocumentEntry existing, SyncRecord incoming, bool preserveTimestamps)
+    {
+        if (!preserveTimestamps) return false;
+        return NeedsTimestampRefresh(existing.CreatedAt, incoming.CreatedAt, preserveTimestamps)
+            || NeedsTimestampRefresh(existing.UpdatedAt, incoming.UpdatedAt, preserveTimestamps)
+            || NeedsTimestampRefresh(existing.LastChangedAt, incoming.LastChangedAt ?? incoming.UpdatedAt, preserveTimestamps);
+    }
+
+    private static bool NeedsTimestampRefresh(DateTime existing, DateTime? incoming, bool preserveTimestamps)
+        => preserveTimestamps && incoming.HasValue && !SameTimestamp(existing, incoming.Value);
+
+    private static bool NeedsTimestampRefresh(DateTime? existing, DateTime? incoming, bool preserveTimestamps)
+        => preserveTimestamps && incoming.HasValue && (!existing.HasValue || !SameTimestamp(existing.Value, incoming.Value));
+
+    private static bool SameTimestamp(DateTime a, DateTime b)
+        => TruncateToMongoPrecision(a) == TruncateToMongoPrecision(b);
+
+    private static DateTime TruncateToMongoPrecision(DateTime value)
+    {
+        var utc = value.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
+            : value.ToUniversalTime();
+        return new DateTime(utc.Ticks - utc.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
     }
 
     private static bool TagsEqual(List<string>? a, List<string>? b)
