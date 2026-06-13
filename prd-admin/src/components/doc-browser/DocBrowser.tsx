@@ -8,7 +8,7 @@ import {
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe, Maximize2,
+  ClipboardCheck, Globe, Maximize2, Minimize2,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -1506,6 +1506,18 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
   );
 }
 
+// 阅读列全屏包裹：非全屏原位渲染；全屏时 createPortal 到 body 铺满视口（fixed inset-0）。
+// 物理脱离 AgentFullscreenLayout 等祖先布局上下文，杜绝「点全屏不展开」。
+function ReaderColumnFrame({ fullscreen, children }: { fullscreen: boolean; children: ReactNode }) {
+  if (!fullscreen) return <>{children}</>;
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100vh', background: 'var(--bg-card)' }}>
+      {children}
+    </div>,
+    document.body,
+  );
+}
+
 // ── DocBrowser 主组件 ──
 
 export function DocBrowser({
@@ -1587,14 +1599,19 @@ export function DocBrowser({
   const [inlineRenameId, setInlineRenameId] = useState<string | null>(null);
   // Markdown 编辑模式：rich=所见即所得（MDEditor），source=纯文本（保留 [[wikilink]] 自动补全）
   const [mdEditRich, setMdEditRich] = useState(true);
-  // 阅读区全屏（原生 Fullscreen API：保持 React 树不动，ESC 退出）
-  const readerSectionRef = useRef<HTMLDivElement>(null);
-  const toggleReaderFullscreen = useCallback(() => {
-    const el = readerSectionRef.current;
-    if (!el) return;
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void el.requestFullscreen().catch(() => toast.error('当前浏览器不支持全屏', ''));
-  }, []);
+  // 阅读区全屏：用 createPortal 到 body 的 CSS 全屏覆盖层（不走原生 Fullscreen API）。
+  // 原生 requestFullscreen 在 AgentFullscreenLayout（h-screen、不走 AppShell）这类深层嵌套
+  // 上下文里不可靠，会出现「点全屏不展开」。createPortal + fixed inset-0 物理脱离祖先，
+  // 在任何嵌套上下文都铺满视口（遵守 .claude/rules/frontend-modal.md）。
+  const [readerFullscreen, setReaderFullscreen] = useState(false);
+  const toggleReaderFullscreen = useCallback(() => setReaderFullscreen((v) => !v), []);
+  // ESC 退出全屏
+  useEffect(() => {
+    if (!readerFullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setReaderFullscreen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [readerFullscreen]);
   // 左侧面板宽度（可拖拽调整，sessionStorage 持久化）
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const saved = sessionStorage.getItem('doc-browser-sidebar-width');
@@ -3016,7 +3033,9 @@ export function DocBrowser({
         </div>
       )}
 
-      {/* 右侧：文档预览。移动端：占满整宽，仅在「进正文(mobileDetail)」时显示，否则让列表占满。 */}
+      {/* 右侧：文档预览。移动端：占满整宽，仅在「进正文(mobileDetail)」时显示，否则让列表占满。
+          全屏时整列经 ReaderColumnFrame createPortal 到 body 铺满视口。 */}
+      <ReaderColumnFrame fullscreen={readerFullscreen}>
       <div
         className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
         style={{ minHeight: 0, display: isMobile && !mobileDetail ? 'none' : undefined }}
@@ -3268,14 +3287,14 @@ export function DocBrowser({
                   {commentCount > 0 ? `${commentCount} 条评论` : '评论'}
                 </button>
               )}
-              {/* 全屏阅读（原生全屏，ESC 退出） */}
+              {/* 全屏阅读（CSS 全屏覆盖层，ESC 退出） */}
               {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
                   className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                   style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
-                  title="全屏阅读（ESC 退出）">
-                  <Maximize2 size={11} /> 全屏
+                  title={readerFullscreen ? '退出全屏（ESC）' : '全屏阅读（ESC 退出）'}>
+                  {readerFullscreen ? <><Minimize2 size={11} /> 退出全屏</> : <><Maximize2 size={11} /> 全屏</>}
                 </button>
               )}
               {/* 编辑/保存按钮（仅对可编辑类型显示） */}
@@ -3335,8 +3354,8 @@ export function DocBrowser({
                 );
               })()}
             </div>
-            {/* 内容区 + 右侧本页章节导航（F1）。ref 供「全屏」用原生 Fullscreen API 放大本区 */}
-            <div ref={readerSectionRef} className="flex-1 flex min-w-0 relative" style={{ minHeight: 0, background: 'var(--bg-card)' }}>
+            {/* 内容区 + 右侧本页章节导航（F1）。 */}
+            <div className="flex-1 flex min-w-0 relative" style={{ minHeight: 0, background: 'var(--bg-card)' }}>
               {/* 内容列包裹：让进度条 absolute 限定在本列宽度内，不跨到右侧 TOC 列（Bugbot Low） */}
               <div className="flex-1 min-w-0 relative flex flex-col" style={{ minHeight: 0 }}>
               {/* 阅读进度条（仅正文预览态）；切文档时按 key 重挂归零 */}
@@ -3589,6 +3608,7 @@ export function DocBrowser({
           </div>
         )}
       </div>
+      </ReaderColumnFrame>
 
       {/* 右键菜单 */}
       {contextMenu && (
