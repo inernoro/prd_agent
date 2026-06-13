@@ -50,6 +50,8 @@ export function useListFilter<T>(opts: {
   searchBoxClassName?: string;
   /** 筛选项右侧附加控件（如「追踪」切换） */
   trailing?: ReactNode;
+  /** 是否在工具栏末尾展示「命中数/总数」（总览宽工具栏默认关闭，列表区另有统计） */
+  showResultCount?: boolean;
 }): { bar: ReactNode; filtered: T[]; activeCount: number } {
   const {
     items,
@@ -60,6 +62,7 @@ export function useListFilter<T>(opts: {
     showFilterSettings = true,
     searchBoxClassName,
     trailing,
+    showResultCount = !searchBoxClassName,
   } = opts;
   const [kw, setKw] = useState('');
   const [values, setValues] = useState<Record<string, string>>({});
@@ -110,6 +113,7 @@ export function useListFilter<T>(opts: {
       showFilterSettings={showFilterSettings}
       searchBoxClassName={searchBoxClassName}
       trailing={trailing}
+      showResultCount={showResultCount}
     />
   );
 
@@ -150,6 +154,7 @@ function FilterBar<T>({
   showFilterSettings: boolean;
   searchBoxClassName?: string;
   trailing?: ReactNode;
+  showResultCount: boolean;
 }) {
   const [gearOpen, setGearOpen] = useState(false);
   const gearRef = useRef<HTMLDivElement>(null);
@@ -171,7 +176,7 @@ function FilterBar<T>({
   const wideSearch = Boolean(searchBoxClassName);
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">
+    <div className={`flex min-w-0 flex-1 items-center gap-2 ${wideSearch ? 'flex-nowrap' : 'flex-wrap'}`}>
       {wideSearch ? (
         <div className={searchBoxClassName}>
           <Search size={14} className="shrink-0 text-white/35" />
@@ -254,9 +259,11 @@ function FilterBar<T>({
           )}
         </div>
       )}
-      <span className="text-[11px] text-white/30 ml-auto shrink-0">
-        {resultCount}/{total}
-      </span>
+      {showResultCount && (
+        <span className="text-[11px] text-white/30 ml-auto shrink-0">
+          {resultCount}/{total}
+        </span>
+      )}
     </div>
   );
 }
