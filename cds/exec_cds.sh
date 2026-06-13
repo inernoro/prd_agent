@@ -3051,7 +3051,6 @@ case "$CMD" in
       err "[forwarder-run] dist/forwarder-main.js 不存在 — 请先 cd cds && pnpm install && pnpm run build"
       exit 78
     fi
-    record_forwarder_runtime_signature "$SCRIPT_DIR/dist"
     info "[forwarder-run] exec node dist/forwarder-main.js (port=${CDS_FORWARDER_PORT:-9090})"
     exec node dist/forwarder-main.js
     ;;

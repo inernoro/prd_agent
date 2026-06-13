@@ -106,4 +106,12 @@ describe('exec_cds.sh forwarder self-sync', () => {
 
     expect(h.restartCount()).toBe(0);
   });
+
+  it('keeps signature ownership in master-run only, not forwarder-run', () => {
+    const script = readFileSync(scriptPath, 'utf8');
+    const forwarderRunCase = script.match(/\n  forwarder-run\)([\s\S]*?)\n  install-forwarder\)/)?.[1] || '';
+
+    expect(forwarderRunCase).not.toContain('record_forwarder_runtime_signature');
+    expect(script).toContain('sync_forwarder_if_needed');
+  });
 });
