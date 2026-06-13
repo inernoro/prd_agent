@@ -2691,6 +2691,8 @@ export function DocBrowser({
                 </span>
               )}
             </div>
+            {/* 「+」新建：仅在有写操作时显示（只读调用方不传写回调 → 不渲染，避免只剩占位项） */}
+            {(onCreateDocument || onUploadFile || onImportFromHosting || onCreateFolder) && (
             <div ref={addMenuRef} className="relative">
               <button
                 onClick={() => setShowAddMenu(v => !v)}
@@ -2761,6 +2763,7 @@ export function DocBrowser({
                 </div>
               )}
             </div>
+            )}
           </div>
           {/* tag 筛选条：≤6 个内联 chip 行；>6 个收进"标签筛选"下拉（点开弹长方形面板多选），避免一长串横向溢出 */}
           {allTagsRanked.length > 0 && (
