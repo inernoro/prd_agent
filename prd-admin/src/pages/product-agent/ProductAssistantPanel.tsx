@@ -200,7 +200,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             <div className="text-sm text-white/70 font-medium">问点什么吧</div>
             <div className="text-[12px] text-white/40 leading-relaxed max-w-md">
               我能基于本产品的需求 / 功能 / 缺陷 / 版本 / 客户与知识库回答你的问题，也能直接替你创建对象。
-              试试下方的快捷分析，或者对我说：「帮我创建一个P1需求：支持导出PDF」。
+              试试下方的快捷分析，或者对我说：「帮我创建一个 P2 需求：由客户可口可乐提出，在膨胀功能里支持自定义金额包」。
               也可以点左下角回形针上传 md / pdf 文档，让我基于文档内容分析或批量创建。
             </div>
           </div>

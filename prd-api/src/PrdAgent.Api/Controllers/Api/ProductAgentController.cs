@@ -3296,8 +3296,10 @@ public class ProductAgentController : ControllerBase
         var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
         var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
         var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).ToListAsync();
-        var custIds = reqs.SelectMany(r => r.CustomerIds).Distinct().ToList();
-        var custs = custIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => custIds.Contains(c.Id)).ToListAsync();
+        // 全局客户名录（助手需识别「由客户 X 提出」并写入需求 CustomerIds，不能只取已关联需求的客户）
+        var allCustomers = await _db.Customers.Find(c => !c.IsDeleted)
+            .SortByDescending(c => c.UpdatedAt).Limit(100).ToListAsync();
+        var custNameById = allCustomers.ToDictionary(c => c.Id, c => c.Name);
 
         // 解析相关人员名（处理人/负责人/上报人/团队）—— 让助手能回答「某人本月情况 / 分工 / 负载」
         var userIds = new HashSet<string>();
@@ -3326,15 +3328,24 @@ public class ProductAgentController : ControllerBase
             sb.AppendLine($"\n## 版本（{versions.Count}）");
             foreach (var v in versions) sb.AppendLine($"- {v.VersionName}（{v.Lifecycle}/{v.CurrentState ?? "—"}；计划 {D(v.PlannedReleaseAt)}，已发布 {D(v.ReleasedAt)}）");
         }
-        if (custs.Count > 0)
+        if (allCustomers.Count > 0)
         {
-            sb.AppendLine($"\n## 客户（{custs.Count}）");
-            foreach (var c in custs) sb.AppendLine($"- {c.Name}（{c.Company}）");
+            sb.AppendLine($"\n## 客户名录（{allCustomers.Count}，创建需求时 customerNames 必须优先从中精确匹配）");
+            foreach (var c in allCustomers) sb.AppendLine($"- {c.Name}{(string.IsNullOrWhiteSpace(c.Company) ? "" : $"（{c.Company}）")}");
         }
         if (reqs.Count > 0)
         {
             sb.AppendLine($"\n## 需求（{reqs.Count}）");
-            foreach (var r in reqs) sb.AppendLine($"- [{r.RequirementNo}] {r.Title}（等级 {r.Grade.ToUpperInvariant()}，状态 {r.CurrentState ?? "—"}；处理人 {N(r.AssigneeId)}，负责人 {N(r.OwnerId)}；创建 {D(r.CreatedAt)}）{Short(r.Description)}");
+            foreach (var r in reqs)
+            {
+                var custLabel = r.CustomerIds.Count == 0
+                    ? ""
+                    : $"；提出客户 {string.Join("、", r.CustomerIds.Select(id => custNameById.TryGetValue(id, out var nm) ? nm : id))}";
+                var originLabel = r.FormData.TryGetValue("需求来源", out var origin) && !string.IsNullOrWhiteSpace(origin)
+                    ? $"；来源 {origin}"
+                    : "";
+                sb.AppendLine($"- [{r.RequirementNo}] {r.Title}（等级 {r.Grade.ToUpperInvariant()}，状态 {r.CurrentState ?? "—"}；处理人 {N(r.AssigneeId)}，负责人 {N(r.OwnerId)}{custLabel}{originLabel}；创建 {D(r.CreatedAt)}）{Short(r.Description)}");
+            }
         }
         if (feats.Count > 0)
         {
@@ -3389,11 +3400,13 @@ public class ProductAgentController : ControllerBase
             "   - 指出趋势、异常与风险（如高等级项无状态/无人处理、缺陷集中在某功能、需求无客户来源等）。\n" +
             "5. 分析/查询类问题的结构固定为三段：先「结论」（2-4 句直接给判断），再「依据」（列数据与关系），最后「经验总结 / 建议」（可执行的下一步）。\n" +
             "6. 创建能力：你可以直接替用户在本产品下创建需求 / 功能 / 缺陷。当用户明确要求创建（如「帮我创建一个需求：支持导出PDF，P1」「记一个缺陷：登录页白屏」）时：\n" +
-            "   - 正文用 1-2 句话确认将要创建的内容（标题、分级、补全的描述），不要套用三段结构；\n" +
+            "   - 正文用 1-2 句话确认将要创建的内容（标题、分级、提出方/客户、补全的描述），不要套用三段结构；\n" +
             "   - 然后在回复最末尾另起一行输出动作指令，格式严格为：\n" +
             "<<<ACTIONS>>>\n" +
-            "[{\"type\":\"create_requirement\",\"title\":\"标题\",\"description\":\"描述可省略\",\"grade\":\"p1\"}]\n" +
+            "[{\"type\":\"create_requirement\",\"title\":\"标题\",\"description\":\"描述可省略\",\"grade\":\"p1\",\"requirementOrigin\":\"客户反馈\",\"customerNames\":[\"可口可乐\"]}]\n" +
             "   - type 只能取 create_requirement / create_feature / create_defect；grade 取 p0/p1/p2/p3（用户没说时按紧急重要程度推断，默认 p2）；description 可根据用户表述合理补全（背景/目标/验收标准，纯文本）；一次最多 5 个动作。\n" +
+            "   - create_requirement 额外字段：requirementOrigin 取值「客户反馈 / 内部规划 / 运营活动 / 竞品调研 / 其他」。用户说「由客户 X 提出」「X 客户反馈」「X 公司提的需求」→ requirementOrigin=客户反馈 且 customerNames 填 [X]（X 必须与上文「客户名录」中名称一致，可模糊匹配后写名录里的标准名）；用户说「我们内部规划」「产品自己提的」→ requirementOrigin=内部规划，customerNames 省略。\n" +
+            "   - customerNames 是提出该需求的客户/品牌/公司（可多个），不是处理人/负责人；系统 Owner 仍是当前登录用户，不要把客户名填进 description 代替 customerNames。\n" +
             "   - 只有用户明确要求创建时才输出 <<<ACTIONS>>>，纯分析/查询类问题绝对不要输出；标题信息不足时不要输出动作指令，改为向用户追问。\n" +
             "   - <<<ACTIONS>>> 之后只能是 JSON 数组本身，不要任何其他文字、解释或代码块标记。\n" +
             "7. 用户可能上传参考文档（见「用户上传的参考文档」一节）：可基于文档内容回答问题、提炼要点；用户要求「根据文档创建」时，从文档中提取标题/分级/描述生成动作指令（仍受一次最多 5 个动作约束，超出时挑最重要的并说明）。\n" +
@@ -3470,14 +3483,21 @@ public class ProductAgentController : ControllerBase
             foreach (var spec in specs)
             {
                 await Sse("phase", new { message = "正在创建对象…" });
-                var result = await ExecuteAssistantActionAsync(productId, userId, spec);
+                var enriched = EnrichRequirementActionSpec(spec, question, allCustomers);
+                var result = await ExecuteAssistantActionAsync(productId, userId, enriched, allCustomers);
                 await Sse("action", result);
             }
         }
         await Sse("done", new { });
     }
 
-    private sealed record AssistantActionSpec(string Type, string Title, string? Description, string? Grade);
+    private sealed record AssistantActionSpec(
+        string Type,
+        string Title,
+        string? Description,
+        string? Grade,
+        string? RequirementOrigin = null,
+        List<string>? CustomerNames = null);
 
     /// <summary>解析助手动作指令 JSON（容忍代码块围栏 / json 语言标），非法输入返回空列表，最多 5 条。</summary>
     private static List<AssistantActionSpec> ParseAssistantActions(string raw)
@@ -3494,11 +3514,25 @@ public class ProductAgentController : ControllerBase
                 var type = o["type"]?.GetValue<string>() ?? "";
                 var title = (o["title"]?.GetValue<string>() ?? "").Trim();
                 if (type.Length == 0 || title.Length == 0) continue;
+                List<string>? customerNames = null;
+                if (o["customerNames"] is JsonArray cnArr)
+                {
+                    customerNames = cnArr
+                        .Where(e => e?.GetValueKind == JsonValueKind.String)
+                        .Select(e => (e!.GetValue<string>() ?? "").Trim())
+                        .Where(x => x.Length > 0)
+                        .ToList();
+                    if (customerNames.Count == 0) customerNames = null;
+                }
+                var requirementOrigin = (o["requirementOrigin"]?.GetValue<string>() ?? "").Trim();
+                if (requirementOrigin.Length == 0) requirementOrigin = null;
                 result.Add(new AssistantActionSpec(
                     type,
                     title,
                     o["description"]?.GetValue<string>(),
-                    o["grade"]?.GetValue<string>()));
+                    o["grade"]?.GetValue<string>(),
+                    requirementOrigin,
+                    customerNames));
             }
         }
         catch
@@ -3508,11 +3542,118 @@ public class ProductAgentController : ControllerBase
         return result;
     }
 
+    /// <summary>从用户原话补全 LLM 动作里遗漏的客户名与需求来源（兜底）。</summary>
+    private static AssistantActionSpec EnrichRequirementActionSpec(
+        AssistantActionSpec spec,
+        string question,
+        List<Customer> customers)
+    {
+        if (!string.Equals(spec.Type, "create_requirement", StringComparison.Ordinal))
+            return spec;
+
+        var customerNames = new List<string>(spec.CustomerNames ?? new List<string>());
+        foreach (var name in ExtractCustomerNamesFromQuestion(question, customers))
+        {
+            if (!customerNames.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase)))
+                customerNames.Add(name);
+        }
+
+        var origin = spec.RequirementOrigin?.Trim() ?? "";
+        if (string.IsNullOrEmpty(origin) && customerNames.Count > 0)
+            origin = "客户反馈";
+        if (!string.IsNullOrEmpty(origin) && !RequirementOriginValues.Contains(origin))
+            origin = customerNames.Count > 0 ? "客户反馈" : "";
+
+        return spec with
+        {
+            RequirementOrigin = string.IsNullOrEmpty(origin) ? null : origin,
+            CustomerNames = customerNames.Count > 0 ? customerNames : null,
+        };
+    }
+
+    private static List<string> ExtractCustomerNamesFromQuestion(string text, List<Customer> customers)
+    {
+        var found = new List<string>();
+        if (string.IsNullOrWhiteSpace(text)) return found;
+
+        var patterns = new[]
+        {
+            @"由客户[「""']?([^「」""'\n，,；;]+)[」""']?提出",
+            @"客户[「""']?([^「」""'\n，,；;]+)[」""']?提出",
+            @"来自客户[「""']?([^「」""'\n，,；;]+)[」""']?",
+            @"客户[「""']?([^「」""'\n，,；;]+)[」""']?反馈",
+        };
+        foreach (var pattern in patterns)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(text, pattern);
+            if (!m.Success) continue;
+            var name = m.Groups[1].Value.Trim();
+            if (name.Length > 0 && name.Length <= 40)
+                found.Add(NormalizeCustomerNameAgainstCatalog(name, customers) ?? name);
+        }
+
+        foreach (var c in customers)
+        {
+            var nm = c.Name?.Trim() ?? "";
+            if (nm.Length > 1 && text.Contains(nm, StringComparison.Ordinal))
+                found.Add(nm);
+        }
+
+        return found.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static string? NormalizeCustomerNameAgainstCatalog(string raw, List<Customer> customers)
+    {
+        var q = raw.Trim();
+        if (q.Length == 0) return null;
+        var exact = customers.FirstOrDefault(c => string.Equals(c.Name.Trim(), q, StringComparison.Ordinal));
+        if (exact != null) return exact.Name.Trim();
+        var partial = customers.FirstOrDefault(c => c.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+            || q.Contains(c.Name, StringComparison.OrdinalIgnoreCase));
+        return partial?.Name.Trim();
+    }
+
+    private static (List<string> CustomerIds, Dictionary<string, string> FormData) ResolveRequirementCustomerFields(
+        List<string>? customerNames,
+        string? requirementOrigin,
+        List<Customer> customers)
+    {
+        var formData = new Dictionary<string, string>();
+        var ids = new List<string>();
+        var unmatched = new List<string>();
+
+        foreach (var raw in customerNames ?? new List<string>())
+        {
+            var normalized = NormalizeCustomerNameAgainstCatalog(raw, customers) ?? raw.Trim();
+            var id = MatchCustomerId(customers, normalized);
+            if (!string.IsNullOrEmpty(id)) ids.Add(id!);
+            else if (!string.IsNullOrWhiteSpace(normalized)) unmatched.Add(normalized);
+        }
+        ids = ids.Distinct().ToList();
+
+        var origin = requirementOrigin?.Trim() ?? "";
+        if (string.IsNullOrEmpty(origin) && (ids.Count > 0 || unmatched.Count > 0))
+            origin = "客户反馈";
+        if (!string.IsNullOrEmpty(origin) && RequirementOriginValues.Contains(origin))
+            formData["需求来源"] = origin;
+        else if (ids.Count > 0 || unmatched.Count > 0)
+            formData["需求来源"] = "客户反馈";
+
+        if (unmatched.Count > 0)
+            formData["客户名称"] = string.Join("、", unmatched);
+
+        return (ids, formData);
+    }
+
     /// <summary>
     /// 执行助手动作（创建需求/功能/缺陷）。创建逻辑与对应 REST 端点对齐：
     /// 编号生成、默认流程绑定、初始状态、产品计数重算。返回 SSE action 事件载荷。
     /// </summary>
-    private async Task<object> ExecuteAssistantActionAsync(string productId, string userId, AssistantActionSpec spec)
+    private async Task<object> ExecuteAssistantActionAsync(
+        string productId,
+        string userId,
+        AssistantActionSpec spec,
+        List<Customer>? customers = null)
     {
         var kind = spec.Type switch
         {
@@ -3534,6 +3675,10 @@ public class ProductAgentController : ControllerBase
             {
                 case "requirement":
                 {
+                    customers ??= await _db.Customers.Find(c => !c.IsDeleted)
+                        .SortByDescending(c => c.UpdatedAt).Limit(100).ToListAsync();
+                    var (customerIds, formData) = ResolveRequirementCustomerFields(
+                        spec.CustomerNames, spec.RequirementOrigin, customers);
                     var (_, wfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
                     var req = new Requirement
                     {
@@ -3542,6 +3687,8 @@ public class ProductAgentController : ControllerBase
                         Title = title,
                         Description = description,
                         Grade = grade,
+                        CustomerIds = customerIds,
+                        FormData = formData,
                         WorkflowDefId = wfId,
                         OwnerId = userId,
                         StateEnteredAt = DateTime.UtcNow,
