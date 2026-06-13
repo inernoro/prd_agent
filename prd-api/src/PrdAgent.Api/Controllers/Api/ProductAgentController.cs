@@ -3553,7 +3553,7 @@ public class ProductAgentController : ControllerBase
                 if (o["customerNames"] is JsonArray cnArr)
                 {
                     customerNames = cnArr
-                        .Where(e => e?.GetValueKind == JsonValueKind.String)
+                        .Where(e => e?.GetValueKind() == JsonValueKind.String)
                         .Select(e => (e!.GetValue<string>() ?? "").Trim())
                         .Where(x => x.Length > 0)
                         .ToList();
