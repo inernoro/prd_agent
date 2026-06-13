@@ -63,10 +63,23 @@ public class ProductRelease
     public DateTime? ReleasedAt { get; set; }
     public string? AnnouncementUrl { get; set; }
     public string Status { get; set; } = "announcement_pending";
+    /// <summary>继承来源的上一正式版本上线记录 ID</summary>
+    public string? PreviousReleaseId { get; set; }
+    /// <summary>本正式版本的功能清单（相对上一版的变更记录）</summary>
+    public List<ReleaseFeatureItem> FeatureManifest { get; set; } = new();
     public string CreatedBy { get; set; } = string.Empty;
     public string SourceType { get; set; } = "system";
     public Dictionary<string, string> LegacyData { get; set; } = new();
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public bool IsDeleted { get; set; }
+}
+
+/// <summary>正式版本功能清单条目 — 关联功能实体并标注相对上一版的变更类型</summary>
+public class ReleaseFeatureItem
+{
+    public string FeatureId { get; set; } = string.Empty;
+    /// <summary>变更类型：added / modified / deprecated / unchanged，见 FeatureChangeType</summary>
+    public string ChangeType { get; set; } = FeatureChangeType.Unchanged;
+    public string? ChangeNote { get; set; }
 }

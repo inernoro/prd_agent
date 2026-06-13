@@ -14,7 +14,7 @@ public class Requirement
     /// <summary>所属产品 ID</summary>
     public string ProductId { get; set; } = string.Empty;
 
-    /// <summary>需求编号（如 REQ-2026-0001，自动生成）</summary>
+    /// <summary>需求 ID（TAPD 规则：纯数字；导入保留 TAPD ID，新建在本产品最大 ID 基础上 +1）</summary>
     public string RequirementNo { get; set; } = string.Empty;
 
     /// <summary>需求标题</summary>
@@ -56,16 +56,16 @@ public class Requirement
     /// <summary>来源缺陷 Id（由缺陷转需求时记录，用于溯源追溯）</summary>
     public string? SourceDefectId { get; set; }
 
-    /// <summary>外部来源系统，如 tapd</summary>
+    /// <summary>外部来源标识（如 rtf / csv / defect），仅导入溯源用</summary>
     public string? SourceSystem { get; set; }
 
-    /// <summary>外部系统中的需求 ID，用于幂等导入</summary>
+    /// <summary>外部需求 ID（导入幂等键，对应工作项 ID 字段）</summary>
     public string? ExternalId { get; set; }
 
-    /// <summary>外部系统详情地址</summary>
+    /// <summary>外部详情链接（可选）</summary>
     public string? SourceUrl { get; set; }
 
-    /// <summary>TAPD RTF 导入时保留的原始字段、人员、评论和时间快照</summary>
+    /// <summary>文件导入时保留的原始字段、人员、评论与时间快照</summary>
     public RequirementSourceSnapshot? SourceSnapshot { get; set; }
 
     /// <summary>进入当前状态的时间（SLA 时效计算用）</summary>

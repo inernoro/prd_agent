@@ -68,3 +68,16 @@
     transform: none;
   }
 }
+
+/* 历史导入 / 评论中的 @ 提醒成员（微信/TAPD 风格） */
+.pa-mention,
+.prose-product .pa-mention {
+  display: inline;
+  padding: 0 5px;
+  margin: 0 1px;
+  border-radius: 4px;
+  background: rgba(var(--pa-accent), 0.16);
+  color: rgb(103, 232, 249);
+  font-weight: 500;
+  white-space: nowrap;
+}

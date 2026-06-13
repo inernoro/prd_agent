@@ -454,25 +454,25 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
-    // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
-    path: '/product-agent/p/:productId',
-    placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
-  },
-  {
-    // 知识详情页（独立路由，静态段 knowledge 优先于下方 :kind 通配），全屏，不进导航
+    // 知识详情页（静态段 knowledge 优先于 :kind 通配），全屏，不进导航
     path: '/product-agent/p/:productId/knowledge/:entryId',
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
   },
   {
-    // 对象独立详情/新建页（需求/功能/缺陷，:id 为 new 时是新建），参数化子路由，全屏，不进导航
+    // 对象独立详情/新建页（需求/功能/缺陷/版本/立项/release，:id 为 new 时是新建），必须排在单产品路由之前
     path: '/product-agent/p/:productId/:kind/:id',
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
+  },
+  {
+    // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
+    path: '/product-agent/p/:productId',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
   },
   {
     path: '/product-agent',

@@ -10,6 +10,7 @@ import { AlertTriangle, Puzzle } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getRtm, type RtmData } from '@/services/real/productAgent';
 import { ITEM_GRADE_LABEL } from './types';
+import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import './product-cards.css';
 
 export function RtmMatrix({ productId }: { productId: string }) {
@@ -71,7 +72,7 @@ export function RtmMatrix({ productId }: { productId: string }) {
                       </button>
                     </td>
                     <td className="px-3 py-2.5"><span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[r.grade as keyof typeof ITEM_GRADE_LABEL] ?? r.grade}</span></td>
-                    <td className="px-3 py-2.5 text-white/55 text-xs">{r.currentState || '-'}</td>
+                    <td className="px-3 py-2.5 text-white/55 text-xs">{resolveRequirementStateLabel(r.currentState) || '-'}</td>
                     <td className="px-3 py-2.5"><CellChips items={r.versions.map((v) => ({ key: v.id, label: v.name }))} empty="未规划" /></td>
                     <td className="px-3 py-2.5"><CellChips items={r.features.map((f) => ({ key: f.id, label: f.title, onClick: () => go('feature', f.id) }))} empty="未实现" emptyWarn /></td>
                     <td className="px-3 py-2.5"><CellChips items={r.customers.map((c) => ({ key: c.id, label: c.name }))} empty="—" /></td>
