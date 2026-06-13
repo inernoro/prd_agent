@@ -146,14 +146,29 @@ hash_file() {
 }
 
 forwarder_runtime_signature() {
-  local dist_dir="${1:-$SCRIPT_DIR/dist}"
+  local input="${1:-$SCRIPT_DIR}"
+  local root="$input"
+  if [ "$(basename "$input")" = "dist" ]; then
+    root="$(dirname "$input")"
+  fi
+  local src_dir="$root/src"
+  local dist_dir="$root/dist"
   local files=""
   local f
-  for f in "$dist_dir/forwarder-main.js" "$dist_dir/widget-script.js"; do
-    [ -f "$f" ] && files="${files}${f}"$'\n'
-  done
-  if [ -d "$dist_dir/forwarder" ]; then
-    files="${files}$(find "$dist_dir/forwarder" -type f -name '*.js' 2>/dev/null | sort)"$'\n'
+  if [ -f "$src_dir/forwarder-main.ts" ] || [ -f "$src_dir/widget-script.ts" ] || [ -d "$src_dir/forwarder" ]; then
+    for f in "$src_dir/forwarder-main.ts" "$src_dir/widget-script.ts"; do
+      [ -f "$f" ] && files="${files}${f}"$'\n'
+    done
+    if [ -d "$src_dir/forwarder" ]; then
+      files="${files}$(find "$src_dir/forwarder" -type f -name '*.ts' 2>/dev/null | sort)"$'\n'
+    fi
+  else
+    for f in "$dist_dir/forwarder-main.js" "$dist_dir/widget-script.js"; do
+      [ -f "$f" ] && files="${files}${f}"$'\n'
+    done
+    if [ -d "$dist_dir/forwarder" ]; then
+      files="${files}$(find "$dist_dir/forwarder" -type f -name '*.js' 2>/dev/null | sort)"$'\n'
+    fi
   fi
   if [ -z "${files//$'\n'/}" ]; then
     return 1
@@ -161,7 +176,7 @@ forwarder_runtime_signature() {
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     [ -f "$f" ] || continue
-    printf '%s %s\n' "${f#"$dist_dir"/}" "$(hash_file "$f")"
+    printf '%s %s\n' "${f#"$root"/}" "$(hash_file "$f")"
   done <<< "$files" | sort | hash_stream
 }
 
@@ -3039,8 +3054,9 @@ case "$CMD" in
 
     # ── self-sync forwarder ────────────────────────────────────────────
     # master self-update 只更新控制面时不应重启业务面的 forwarder。这里不再看
-    # dist 目录 mtime,而是比较 forwarder 运行时 JS 文件内容签名。只有
-    # forwarder-main / dist/forwarder/*.js / widget-script 真的变化才重启 forwarder。
+    # dist 目录 mtime,而是比较 forwarder 运行时源码签名。只有
+    # src/forwarder-main.ts / src/forwarder/*.ts / src/widget-script.ts
+    # 真的变化才重启 forwarder；发布包没有源码时才 fallback 到 dist JS。
     sync_forwarder_if_needed
 
     info "[master-run] exec node dist/index.js"

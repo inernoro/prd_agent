@@ -13,9 +13,13 @@ function makeHarness() {
   const binDir = path.join(root, 'bin');
   const stateDir = path.join(cdsDir, '.cds');
   mkdirSync(path.join(cdsDir, 'dist', 'forwarder'), { recursive: true });
+  mkdirSync(path.join(cdsDir, 'src', 'forwarder'), { recursive: true });
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
 
+  writeFileSync(path.join(cdsDir, 'src', 'forwarder-main.ts'), 'forwarder-main-source-v1\n');
+  writeFileSync(path.join(cdsDir, 'src', 'forwarder', 'proxy-handler.ts'), 'proxy-source-v1\n');
+  writeFileSync(path.join(cdsDir, 'src', 'widget-script.ts'), 'widget-source-v1\n');
   writeFileSync(path.join(cdsDir, 'dist', 'forwarder-main.js'), 'forwarder-main-v1\n');
   writeFileSync(path.join(cdsDir, 'dist', 'forwarder', 'proxy-handler.js'), 'proxy-v1\n');
   writeFileSync(path.join(cdsDir, 'dist', 'forwarder', 'proxy-handler.js.map'), 'proxy-map-v1\n');
@@ -73,7 +77,7 @@ describe('exec_cds.sh forwarder self-sync', () => {
     h.run();
     expect(h.restartCount()).toBe(0);
 
-    writeFileSync(path.join(h.cdsDir, 'dist', 'forwarder', 'proxy-handler.js'), 'proxy-v2\n');
+    writeFileSync(path.join(h.cdsDir, 'src', 'forwarder', 'proxy-handler.ts'), 'proxy-source-v2\n');
     h.run();
     expect(h.restartCount()).toBe(1);
 
