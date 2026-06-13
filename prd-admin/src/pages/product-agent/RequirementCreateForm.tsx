@@ -17,6 +17,7 @@ import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
 import { RequirementTypeSelect } from './RequirementTypeSelect';
 import { validateRequirementCreateInput } from './requirementCreateValidation';
 import { applyRequirementAiFill, type RequirementAiFillResult } from './requirementAiFillApply';
+import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { createRequirement, listDescTemplates, listFeatures } from '@/services/real/productAgent';
 import type { Customer, DescTemplate, Feature, ItemGrade, Requirement } from './types';
 import { ITEM_GRADE_LABEL } from './types';
@@ -24,11 +25,12 @@ import { ITEM_GRADE_LABEL } from './types';
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 const RESERVED_TEMPLATE_LABELS = new Set([
   '需求来源', '需求类型', '客户名称', '客户', '规划名称', '活动名称', '竞品名称',
-  '归属版本', '标题', '名称', '描述', '需求名称', '需求描述',
+  '归属版本', '标题', '名称', '描述', '需求名称', '需求描述', '状态',
   REQUIREMENT_PRODUCT_DEFECT_FORM_KEY,
 ]);
 const RESERVED_TEMPLATE_KEYS = new Set([
   'title', 'name', 'description', 'desc', 'requirementSource', 'customerName',
+  'state', 'currentState', 'status',
   REQUIREMENT_PRODUCT_DEFECT_FORM_KEY,
 ]);
 
@@ -187,6 +189,10 @@ export function RequirementCreateForm({
   const [message, setMessage] = useState('');
   const { template } = useEffectiveTemplate('requirement', productId);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
+  const initialStateLabel = useMemo(
+    () => resolveRequirementStateLabel(null, workflow),
+    [workflow],
+  );
   useEffect(() => { setCustomerList(customers); }, [customers]);
   useEffect(() => {
     void listFeatures(productId).then((res) => {
@@ -323,6 +329,11 @@ export function RequirementCreateForm({
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/8 bg-[#13151a]">
         <span className="text-[12px] px-2 py-0.5 rounded text-amber-200 bg-amber-500/15 border border-amber-500/25">需求</span>
         <span className="text-[12px] text-white/35">新建</span>
+        {initialStateLabel && (
+          <span className="text-[11px] px-2 py-0.5 rounded bg-white/[0.06] text-white/70 border border-white/10">
+            {initialStateLabel}
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-2 min-w-0">
           {validationError && (
             <span className="text-[12px] text-amber-200/90 truncate max-w-[min(420px,40vw)]" title={validationError}>

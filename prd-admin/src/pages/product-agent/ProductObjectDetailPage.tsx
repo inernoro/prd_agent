@@ -77,7 +77,7 @@ const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
 // ── 自定义字段去重 / 分栏 ──
 const NATIVE_DUP_KEYS = new Set(['title', 'name', 'description', 'desc']);
-const NATIVE_DUP_LABELS = ['标题', '名称', '描述', '需求名称', '需求描述', '功能名称', '功能描述', '缺陷标题', '需求类型', '需求来源'];
+const NATIVE_DUP_LABELS = ['标题', '名称', '描述', '需求名称', '需求描述', '功能名称', '功能描述', '缺陷标题', '需求类型', '需求来源', '状态'];
 
 /** 与系统原生字段（标题/描述）重名的模板字段视为重复，详情页不再渲染。 */
 function isNativeDuplicate(f: FormField): boolean {

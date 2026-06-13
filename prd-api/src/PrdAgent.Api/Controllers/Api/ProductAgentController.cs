@@ -1137,7 +1137,12 @@ public class ProductAgentController : ControllerBase
             AssigneeId = request.AssigneeId,
             StateEnteredAt = DateTime.UtcNow,
         };
-        req.CurrentState = await ResolveInitialStateAsync(reqWorkflowDefId);
+        var reqWorkflowDef = await _db.ProductWorkflowDefinitions
+            .Find(w => w.Id == reqWorkflowDefId && !w.IsDeleted)
+            .FirstOrDefaultAsync();
+        req.CurrentState = RequirementWorkflowCatalog.NormalizeStateKey(
+            await ResolveInitialStateAsync(reqWorkflowDefId),
+            reqWorkflowDef);
 
         await _db.Requirements.InsertOneAsync(req);
         // 维护版本侧反向引用（版本关联需求）
@@ -5512,12 +5517,15 @@ public class ProductAgentController : ControllerBase
         return $"{prefix}{max[0]}.{max[1]}.{max[2]}";
     }
 
-    /// <summary>根据流程定义解析初始状态 Key（未绑定流程时返回 null）。</summary>
-    private async Task<string?> ResolveInitialStateAsync(string? workflowDefId)
+    /// <summary>根据流程定义解析初始状态 Key（未绑定或定义缺失时回退内置「待评审」= new）。</summary>
+    private async Task<string> ResolveInitialStateAsync(string? workflowDefId)
     {
-        if (string.IsNullOrWhiteSpace(workflowDefId)) return null;
+        await EnsureDefaultWorkflowsSeededAsync();
+        if (string.IsNullOrWhiteSpace(workflowDefId))
+            return RequirementWorkflowCatalog.New;
         var def = await _db.ProductWorkflowDefinitions.Find(w => w.Id == workflowDefId && !w.IsDeleted).FirstOrDefaultAsync();
-        return def?.GetInitialStateKey();
+        var key = def?.GetInitialStateKey();
+        return string.IsNullOrWhiteSpace(key) ? RequirementWorkflowCatalog.New : key;
     }
 
     /// <summary>把流程定义 + 初始状态惰性绑定到实例（存量数据补绑）。</summary>

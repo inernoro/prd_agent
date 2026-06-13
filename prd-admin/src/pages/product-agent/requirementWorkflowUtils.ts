@@ -13,6 +13,8 @@ const LEGACY_STATE_MAP: Record<string, string> = {
   testing: 'developing',
   done: 'resolved',
   rejected: 'rejected',
+  /** 历史误把表单字段 key「state」写入 currentState 时的兜底迁移 */
+  state: 'new',
 };
 
 function initialStateKey(workflow?: WorkflowDefinition | null): string {
