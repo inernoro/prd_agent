@@ -1,4 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { TableSelectionProps } from './listSelection';
+import {
+  ListSelectionCell,
+  ListSelectionHeaderCell,
+  LIST_HEADER_HOVER_GROUP,
+  LIST_SELECTION_COL_WIDTH,
+  listSelectionRowClass,
+} from './listSelection';
 
 export const DEFAULT_CELL_TEXT_MAX = 40;
 const MIN_COL_WIDTH = 56;
@@ -57,11 +65,14 @@ export function OverviewDataTable<T extends { id: string }>({
   columns,
   rows,
   onRowClick,
+  selection,
 }: {
   tableKey: string;
   columns: OverviewTableColumn<T>[];
   rows: T[];
   onRowClick?: (row: T) => void;
+  /** 传入则首列显示复选框，支持多选批量操作 */
+  selection?: TableSelectionProps;
 }) {
   const defaultWidthsKey = columns.map((c) => `${c.key}:${c.defaultWidth ?? 120}`).join('|');
   const defaultWidths = useMemo(
@@ -107,18 +118,28 @@ export function OverviewDataTable<T extends { id: string }>({
     };
   }, [storageKey]);
 
-  const tableMinWidth = widths.reduce((sum, width) => sum + width, 0);
+  const selectColWidth = LIST_SELECTION_COL_WIDTH;
+  const tableMinWidth = widths.reduce((sum, width) => sum + width, 0) + (selection ? selectColWidth : 0);
 
   return (
     <div className="w-full min-w-0 overflow-x-auto rounded-xl border border-white/10">
       <table className="table-fixed text-sm" style={{ minWidth: tableMinWidth, width: '100%' }}>
         <colgroup>
+          {selection ? <col style={{ width: selectColWidth }} /> : null}
           {widths.map((width, index) => (
             <col key={columns[index]?.key ?? index} style={{ width }} />
           ))}
         </colgroup>
         <thead>
-          <tr className="bg-white/[0.03] text-white/45 text-[11px]">
+          <tr className={`bg-white/[0.03] text-white/45 text-[11px] ${LIST_HEADER_HOVER_GROUP}`}>
+            {selection ? (
+              <ListSelectionHeaderCell
+                allSelected={selection.allSelected}
+                indeterminate={selection.indeterminate}
+                onToggleAll={selection.onToggleAll}
+                disabled={rows.length === 0}
+              />
+            ) : null}
             {columns.map((column, index) => (
               <th
                 key={column.key}
@@ -151,8 +172,16 @@ export function OverviewDataTable<T extends { id: string }>({
             <tr
               key={row.id}
               onClick={() => onRowClick?.(row)}
-              className={`border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
+              className={listSelectionRowClass(
+                `border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`,
+              )}
             >
+              {selection ? (
+                <ListSelectionCell
+                  checked={selection.selectedIds.has(row.id)}
+                  onToggle={() => selection.onToggle(row.id)}
+                />
+              ) : null}
               {columns.map((column) => (
                 <td key={column.key} className={`px-3 py-2 text-white/80 max-w-0 ${column.className ?? ''}`}>
                   <div className="min-w-0 overflow-hidden">{column.render(row)}</div>

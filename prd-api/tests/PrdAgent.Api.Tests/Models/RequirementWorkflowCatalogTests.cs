@@ -18,6 +18,7 @@ public class RequirementWorkflowCatalogTests
     [InlineData("pending", "new")]
     [InlineData("reviewed", "planning")]
     [InlineData("done", "resolved")]
+    [InlineData("state", "new")]
     public void NormalizeStateKey_migrates_legacy_keys(string legacy, string modern)
     {
         Assert.Equal(modern, RequirementWorkflowCatalog.NormalizeStateKey(legacy));
@@ -83,7 +84,7 @@ public class RequirementWorkflowCatalogTests
     {
         var def = ProductWorkflowDefaults.Requirement();
         Assert.Equal("待评审", RequirementWorkflowCatalog.ResolveStateLabel("new", def));
-        Assert.Equal("待规划", RequirementWorkflowCatalog.ResolveStateLabel("pending", def));
+        Assert.Equal("待评审", RequirementWorkflowCatalog.ResolveStateLabel("pending", def));
         Assert.Equal("待评审", RequirementWorkflowCatalog.ResolveStateLabel("new", null));
     }
 

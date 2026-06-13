@@ -59,6 +59,8 @@ public static class RequirementWorkflowCatalog
         ["testing"] = Developing,
         ["done"] = Released,
         ["rejected"] = Rejected,
+        /// <summary>历史误把表单字段 key「state」写入 CurrentState 时的兜底迁移。</summary>
+        ["state"] = New,
     };
 
     /// <summary>
@@ -125,7 +127,7 @@ public static class RequirementWorkflowCatalog
         return matrix;
     }
 
-    public const int ExpectedTransitionCount = 37;
+    public const int ExpectedTransitionCount = 36;
 
     public static string BuildTransitionActionLabel(string toStateKey, ProductWorkflowDefinition? workflowDef = null)
     {

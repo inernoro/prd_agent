@@ -20,6 +20,10 @@ import {
 } from './featureTreeUtils';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { toProductOptions } from './comboboxOptions';
+import { SelectionActionBar, ListTableSelectionCell, ListTableSelectionHeader, useOverviewTableSelection } from './selectableList';
+import { LIST_SELECTION_COL_WIDTH, listSelectionRowClass } from './listSelection';
+import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { filterByTracked } from './productRecordTrackStorage';
 import type { Feature, FeatureBusinessType, Product, ProductRelease } from './types';
 
 const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
@@ -115,6 +119,7 @@ export function FeatureCatalogTab({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [keyword, setKeyword] = useState('');
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [releaseId, setReleaseId] = useState('');
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
@@ -174,6 +179,23 @@ export function FeatureCatalogTab({
       .sort((a, b) => featurePathLabel(scopedFeatures, a.id).localeCompare(featurePathLabel(scopedFeatures, b.id), 'zh'));
   }, [scopedFeatures, subtreeIds, keyword]);
 
+  const visibleRows = useMemo(
+    () => filterByTracked(tableRows, trackedOnly, 'feature', (f) => ({ productId, recordId: f.id })),
+    [tableRows, trackedOnly, productId],
+  );
+
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(visibleRows, {
+    filename: `features-${productId}.csv`,
+    headers: ['编号', '功能名称', '模块', '类型', '关联需求数'],
+    mapRow: (f) => [
+      f.featureNo,
+      f.title,
+      f.moduleName ?? '',
+      FEATURE_TYPE_LABEL[f.featureType] ?? f.featureType,
+      String(f.requirementIds.length),
+    ],
+  });
+
   const releaseName = useMemo(() => new Map(releases.map((r) => [r.id, r.vCode])), [releases]);
   const productOptions = useMemo(
     () => (productPicker ? toProductOptions(productPicker.products) : []),
@@ -210,6 +232,11 @@ export function FeatureCatalogTab({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {!productPicker && (
+        <div className="shrink-0 border-b border-white/10 px-4 py-3">
+          <h2 className="text-base font-semibold text-white">功能</h2>
+        </div>
+      )}
       <div className="flex h-full min-h-0 flex-1">
         <aside className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-white/10 bg-[#121317]">
           <div className="shrink-0 border-b border-white/10 px-3 py-2">
@@ -253,8 +280,8 @@ export function FeatureCatalogTab({
             </div>
             <div className="text-[11px] text-white/40 mt-0.5">
               {selectedNode
-                ? `展示「${selectedNode.title}」及其下所有层级共 ${tableRows.length} 条记录`
-                : `共 ${tableRows.length} 条功能记录`}
+                ? `展示「${selectedNode.title}」及其下所有层级共 ${visibleRows.length} 条记录`
+                : `共 ${visibleRows.length} 条功能记录`}
             </div>
           </div>
           <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-white/10 px-4 py-2.5">
@@ -281,6 +308,7 @@ export function FeatureCatalogTab({
                 <option key={r.id} value={r.id}>{r.vCode}{r.planName ? ` · ${r.planName}` : ''}</option>
               ))}
             </select>
+            <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
             <label className="relative block min-w-[200px] flex-1">
               <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
               <input
@@ -319,15 +347,31 @@ export function FeatureCatalogTab({
             )}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
-            {tableRows.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-auto flex flex-col" style={{ overscrollBehavior: 'contain' }}>
+            <SelectionActionBar
+              mode="entity"
+              entityType="feature"
+              selection={selection}
+              onDone={reload}
+              onExport={exportSelected}
+              className="shrink-0 px-4 py-2 border-b border-white/10"
+            />
+            {visibleRows.length === 0 ? (
               <div className="flex h-full items-center justify-center text-sm text-white/35">
-                {scopedFeatures.length === 0 ? '还没有功能记录，请先选择正式版本并导入或新建。' : '当前目录下没有匹配的记录。'}
+                {trackedOnly
+                  ? '还没有追踪的功能。打开详情页标题右侧星标即可追踪。'
+                  : scopedFeatures.length === 0
+                    ? '还没有功能记录，请先选择正式版本并导入或新建。'
+                    : '当前目录下没有匹配的记录。'}
               </div>
             ) : (
               <table className="w-full min-w-[1100px] text-left text-xs">
+                <colgroup>
+                  <col style={{ width: LIST_SELECTION_COL_WIDTH }} />
+                </colgroup>
                 <thead className="sticky top-0 z-10 bg-[#0f1014] text-white/45 border-b border-white/10">
                   <tr>
+                    <ListTableSelectionHeader selection={tableSelection} disabled={visibleRows.length === 0} />
                     <th className="px-3 py-2.5 font-medium whitespace-nowrap">编号</th>
                     <th className="px-3 py-2.5 font-medium">目录路径</th>
                     <th className="px-3 py-2.5 font-medium">功能名称</th>
@@ -342,12 +386,13 @@ export function FeatureCatalogTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {tableRows.map((f) => (
+                  {visibleRows.map((f) => (
                     <tr
                       key={f.id}
                       onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
-                      className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]"
+                      className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')}
                     >
+                      <ListTableSelectionCell selection={tableSelection} id={f.id} />
                       <td className="px-3 py-2.5 font-mono text-cyan-200/80 whitespace-nowrap">{f.featureNo}</td>
                       <td className="px-3 py-2.5 text-white/50 max-w-[200px] truncate" title={featurePathLabel(scopedFeatures, f.id)}>
                         {featurePathLabel(scopedFeatures, f.id)}

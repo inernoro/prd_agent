@@ -43,6 +43,7 @@ import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
+import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
 import './product-cards.css';
 import {
   getOverviewStats,
@@ -64,7 +65,10 @@ import {
 import type { Customer, Product } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
-import { distinctOptions, useListFilter, type FilterFieldDef } from './listFilter';
+import { formatListSectionTitle } from '@/lib/listSectionTitle';
+import { useListFilter, distinctOptions, type FilterFieldDef } from './listFilter';
+import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { filterByTracked } from './productRecordTrackStorage';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
 
@@ -415,11 +419,18 @@ function AdminImportButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+function RequirementsTable({
+  isAdmin,
+  products,
+}: {
+  isAdmin: boolean;
+  products: Product[];
+}) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewRequirementRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [mine, setMine] = useState(false);
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
   const productNameMap = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
@@ -469,7 +480,7 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
     },
   ], [productNameMap]);
 
-  const { bar, filtered } = useListFilter({
+  const { bar, filtered: filterBarFiltered } = useListFilter({
     items: rows,
     storageKey: 'pa-list-filters:overview-requirement',
     fields,
@@ -477,6 +488,10 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
     keywordPlaceholder: '搜索标题 / 编号',
     showFilterSettings: false,
   });
+  const filtered = useMemo(
+    () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId: r.productId, recordId: r.id })),
+    [filterBarFiltered, trackedOnly],
+  );
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -488,26 +503,44 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
     void reload();
   }, [reload]);
 
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
+    filename: 'overview-requirements.csv',
+    headers: ['ID', '标题', '产品', '分级', '状态', '处理人'],
+    mapRow: (r) => [
+      r.requirementNo,
+      r.title,
+      r.productName,
+      r.grade,
+      r.stateLabel ?? resolveRequirementStateLabel(r.currentState) ?? '',
+      r.assigneeName ?? '',
+    ],
+  });
+
   if (loading) return <MapSectionLoader text="正在加载需求…" />;
   return (
     <div className="w-full min-w-0">
       <div className="flex items-center gap-2 flex-wrap mb-3">
+        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
         <div className="flex-1 min-w-0">{bar}</div>
         <div className="flex items-center gap-2 shrink-0">
           <MineToggle mine={mine} setMine={setMine} />
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
         </div>
       </div>
+      <SelectionActionBar mode="entity" entityType="requirement" selection={selection} onDone={reload} onExport={exportSelected} />
       {filtered.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}</div>
+        <div className="text-center text-white/40 text-sm py-12">
+          {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}
+        </div>
       ) : (
         <OverviewDataTable
           tableKey="requirements"
           rows={filtered}
+          selection={tableSelection}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/requirement/${r.id}`)}
           columns={[
             { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.requirementNo}</span> },
-            { key: 'title', header: '标题', defaultWidth: 360, render: (r) => <TruncateCell text={r.title} className="text-white/90" /> },
+            { key: 'title', header: formatListSectionTitle('标题', filtered.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title} className="text-white/90" /> },
             { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
             { key: 'grade', header: '分级', defaultWidth: 72, resizable: false, render: (r) => GRADE_BADGE(r.grade) },
             { key: 'state', header: '状态', defaultWidth: 96, render: (r) => <TruncateCell text={(r.stateLabel ?? resolveRequirementStateLabel(r.currentState)) || '-'} maxChars={12} className="text-white/55 text-xs" /> },
@@ -524,7 +557,13 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
 }
 
 /** 主页功能面板：先选产品，再复用单产品内的 FeatureCatalogTab（目录树 + 表格） */
-function OverviewFeaturesPanel({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+function OverviewFeaturesPanel({
+  isAdmin,
+  products,
+}: {
+  isAdmin: boolean;
+  products: Product[];
+}) {
   const [productId, setProductId] = useState('');
 
   useEffect(() => {
@@ -565,6 +604,7 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
   const [rows, setRows] = useState<OverviewDefectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
   const reload = useCallback(async () => {
@@ -577,20 +617,40 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
     void reload();
   }, [reload]);
 
+  const visibleRows = useMemo(
+    () => filterByTracked(rows, trackedOnly, 'defect', (r) => ({ productId: r.productId, recordId: r.id })),
+    [rows, trackedOnly],
+  );
+
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(visibleRows, {
+    filename: 'overview-defects.csv',
+    headers: ['ID', '标题', '产品', '状态', '严重程度'],
+    mapRow: (r) => [r.defectNo, r.title ?? '', r.productName, defectStatusLabel(r.status), defectSeverityTierLabel(r)],
+  });
+
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
-      {rows.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">没有追溯到产品的缺陷</div>
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
+        <div className="flex-1 min-w-0">
+          <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
+        </div>
+      </div>
+      <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
+      {visibleRows.length === 0 ? (
+        <div className="text-center text-white/40 text-sm py-12">
+          {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : '没有追溯到产品的缺陷'}
+        </div>
       ) : (
         <OverviewDataTable
           tableKey="defects"
-          rows={rows}
+          rows={visibleRows}
+          selection={tableSelection}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/defect/${r.id}`)}
           columns={[
             { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.defectNo}</span> },
-            { key: 'title', header: '标题', defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
+            { key: 'title', header: formatListSectionTitle('标题', visibleRows.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
             { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
             { key: 'status', header: '状态', defaultWidth: 88, render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },
             { key: 'severity', header: '严重程度', defaultWidth: 88, render: (r) => SEVERITY_BADGE(defectSeverityTierLabel(r)) },
@@ -657,6 +717,19 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
   }, [keyword]);
   useEffect(() => { void reload(); }, [reload]);
 
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
+    filename: 'overview-releases.csv',
+    headers: ['V号', 'T号', '方案', '产品', '级别', '状态'],
+    mapRow: (r) => [
+      r.vCode,
+      r.tCode ?? '',
+      r.planName,
+      r.productName,
+      VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
+      WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
+    ],
+  });
+
   if (loading) return <MapSectionLoader text="正在加载正式版本…" />;
   return (
     <div>
@@ -665,10 +738,12 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
         setKeyword={setKeyword}
         extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
       />
+      <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有正式版本</div> : (
         <OverviewDataTable
           tableKey="releases"
           rows={rows}
+          selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/release/${row.id}`)}
           columns={[
             { key: 'vcode', header: 'V 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
@@ -710,6 +785,18 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
   }, [keyword]);
   useEffect(() => { void reload(); }, [reload]);
 
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
+    filename: 'overview-initiations.csv',
+    headers: ['T号', '方案', '产品', '级别', '状态'],
+    mapRow: (r) => [
+      r.tCode ?? '',
+      r.planName,
+      r.productName,
+      VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
+      WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
+    ],
+  });
+
   if (loading) return <MapSectionLoader text="正在加载内部版本…" />;
   return (
     <div>
@@ -718,10 +805,12 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
         setKeyword={setKeyword}
         extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
       />
+      <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有内部版本</div> : (
         <OverviewDataTable
           tableKey="initiations"
           rows={rows}
+          selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
           columns={[
             { key: 'tcode', header: 'T 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '—'}</span> },
@@ -769,6 +858,12 @@ function CustomersSection({ isAdmin }: { isAdmin: boolean }) {
   }, [keyword]);
   useEffect(() => { void reload(); }, [reload]);
 
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
+    filename: 'customers.csv',
+    headers: ['名称', '公司', '联系方式', '标签'],
+    mapRow: (c) => [c.name, c.company ?? '', c.contact ?? '', (c.tags ?? []).join(' / ')],
+  });
+
   const onDelete = async (c: Customer) => {
     const ok = await systemDialog.confirm({ title: '删除客户', message: `删除客户「${c.name}」？已关联的需求不受影响（仅解除显示）。`, tone: 'danger', confirmText: '删除', cancelText: '取消' });
     if (!ok) return;
@@ -788,6 +883,11 @@ function CustomersSection({ isAdmin }: { isAdmin: boolean }) {
           </button>
         }
       />
+      {isAdmin ? (
+        <SelectionActionBar mode="entity" entityType="customer" selection={selection} onDone={reload} onExport={exportSelected} />
+      ) : (
+        <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
+      )}
       {loading ? (
         <MapSectionLoader text="正在加载客户…" />
       ) : rows.length === 0 ? (
@@ -796,6 +896,7 @@ function CustomersSection({ isAdmin }: { isAdmin: boolean }) {
         <OverviewDataTable
           tableKey="customers"
           rows={rows}
+          selection={tableSelection}
           columns={[
             { key: 'name', header: '名称', defaultWidth: 160, render: (c) => <TruncateCell text={c.name} className="text-white/90" /> },
             { key: 'company', header: '公司', defaultWidth: 160, render: (c) => <TruncateCell text={c.company || '-'} maxChars={20} className="text-white/55 text-xs" /> },

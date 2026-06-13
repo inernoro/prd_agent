@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
@@ -14,6 +14,16 @@ import { useAuthStore } from '@/stores/authStore';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
+import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
+import {
+  ListSelectionHeaderCell,
+  LIST_HEADER_HOVER_GROUP,
+  LIST_SELECTION_COL_WIDTH,
+  listSelectionRowClass,
+  type TableSelectionProps,
+} from './listSelection';
+import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { filterByTracked } from './productRecordTrackStorage';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
@@ -40,6 +50,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [releaseOwnerId, setReleaseOwnerId] = useState(currentUserId ?? '');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [trackedOnly, setTrackedOnly] = useState(false);
 
   useEffect(() => {
     if (currentUserId && !releaseOwnerId) setReleaseOwnerId(currentUserId);
@@ -82,6 +93,14 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
     () => releases.filter((item) => matchesRecord(item, query, statusFilter)),
     [releases, query, statusFilter],
   );
+  const visibleInitiations = useMemo(
+    () => filterByTracked(filteredInitiations, trackedOnly, 'initiation', (item) => ({ productId, recordId: item.id })),
+    [filteredInitiations, trackedOnly, productId],
+  );
+  const visibleReleases = useMemo(
+    () => filterByTracked(filteredReleases, trackedOnly, 'release', (item) => ({ productId, recordId: item.id })),
+    [filteredReleases, trackedOnly, productId],
+  );
   const statuses = useMemo(
     () => Array.from(new Set((tab === 'release' ? releases : initiations).map((item) => item.status))),
     [initiations, releases, tab],
@@ -97,7 +116,8 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
     {tab === 'release' ? <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <RecordToolbar query={query} onQueryChange={setQuery} ownerId={releaseOwnerId} onOwnerChange={setReleaseOwnerId}
-          status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses} />
+          status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
+          trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex flex-wrap items-center gap-2">
           {canImport && (
             <button
@@ -116,11 +136,12 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           </span>
         </div>
       </div>
-      <ReleaseTable productId={productId} items={filteredReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
+      <ReleaseTable productId={productId} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
     </> : <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <RecordToolbar query={query} onQueryChange={setQuery} scope={recordScope} onScopeChange={setRecordScope}
-          status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses} />
+          status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
+          trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex gap-2">
           {canImport && (
             <button
@@ -133,7 +154,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
         </div>
       </div>
-      <InitiationTable productId={productId} items={filteredInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
+      <InitiationTable productId={productId} items={visibleInitiations} members={members} onChanged={reload} readOnly={recordScope === 'all'} />
     </>}
     {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
     {dialog === 'import-release' && product && (
@@ -280,9 +301,18 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
   const navigate = useNavigate();
   const names = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  return <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']}>
-    {items.map((item) => <tr key={item.id} className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]" onClick={() => openDetail(item.id)}>
-      <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, {
+    filename: `initiations-${productId}.csv`,
+    headers: ['立项号', '方案', '版本类别', '状态'],
+    mapRow: (i) => [i.tCode ?? '', i.planName, SCALE_LABEL[i.versionType], STATUS_LABEL[i.status] ?? i.status],
+  });
+  return (
+    <>
+      <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
+      <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']} selection={tableSelection}>
+        {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')} onClick={() => openDetail(item.id)}>
+          <ListTableSelectionCell selection={tableSelection} id={item.id} />
+          <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
         ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
@@ -299,7 +329,9 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
     </tr>)}{items.length === 0 && <Empty cols={17}>暂无立项记录</Empty>}
-  </Table>;
+      </Table>
+    </>
+  );
 }
 
 function ReleaseTable({ productId, items, requirements, members, onChanged, readOnly }: {
@@ -329,8 +361,16 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
   }, [items]);
   const openRelease = (id: string) => navigate(`/product-agent/p/${productId}/release/${id}`);
   const openInitiation = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  return <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']}>
-    {items.map((item) => <tr key={item.id} className="border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]" onClick={() => openRelease(item.id)}>
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, {
+    filename: `releases-${productId}.csv`,
+    headers: ['正式版本号', '内部版本号', '方案', '状态'],
+    mapRow: (i) => [i.vCode, i.tCode ?? '临时优化', i.planName, STATUS_LABEL[i.status] ?? i.status],
+  });
+  return <>
+    <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
+    <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={tableSelection}>
+    {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]')} onClick={() => openRelease(item.id)}>
+      <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
       <Td mono>{item.initiationId && item.tCode
@@ -348,7 +388,8 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
     </tr>)}{items.length === 0 && <Empty cols={16}>暂无上线记录</Empty>}
-  </Table>;
+  </Table>
+  </>;
 }
 
 function formatDate(value?: string | null) {
@@ -375,7 +416,7 @@ function matchesRecord(
   });
 }
 
-function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, onOwnerChange, status, onStatusChange, statuses }: {
+function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, onOwnerChange, status, onStatusChange, statuses, trackedOnly, onTrackedOnlyChange }: {
   query: string;
   onQueryChange: (value: string) => void;
   scope?: RecordScope;
@@ -385,9 +426,12 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
   status: string;
   onStatusChange: (value: string) => void;
   statuses: string[];
+  trackedOnly?: boolean;
+  onTrackedOnlyChange?: (value: boolean) => void;
 }) {
   const filterClassName = 'h-[34px] rounded-lg border border-white/10 bg-[#111318] px-3 text-xs text-white/75 outline-none focus:border-cyan-400/50';
   return <div className="flex flex-wrap items-center gap-2">
+    {onTrackedOnlyChange && <TrackedFilterToggle active={trackedOnly ?? false} onChange={onTrackedOnlyChange} />}
     <label className="relative block w-64 max-w-full">
       <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
       <input value={query} onChange={(event) => onQueryChange(event.target.value)}
@@ -498,7 +542,36 @@ function RequirementChecks({ requirements, selected, onChange }: {
 function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>; }
 function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/65">{props.children}</button>; }
 function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40'}`}>{children}</button>; }
-function Table({ headers, children }: { headers: string[]; children: React.ReactNode }) { return <div className="overflow-x-auto rounded-xl border border-white/10"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-white/[0.035] text-white/40"><tr>{headers.map((h) => <th key={h} className="whitespace-pre-line px-3 py-3 font-medium">{h}</th>)}</tr></thead><tbody>{children}</tbody></table></div>; }
+function Table({ headers, children, selection }: {
+  headers: string[];
+  children: ReactNode;
+  selection?: TableSelectionProps;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-white/10">
+      <table className="w-full min-w-[900px] text-left text-xs">
+        {selection ? (
+          <colgroup>
+            <col style={{ width: LIST_SELECTION_COL_WIDTH }} />
+          </colgroup>
+        ) : null}
+        <thead className="bg-white/[0.035] text-white/40">
+          <tr className={LIST_HEADER_HOVER_GROUP}>
+            {selection ? (
+              <ListSelectionHeaderCell
+                allSelected={selection.allSelected}
+                indeterminate={selection.indeterminate}
+                onToggleAll={selection.onToggleAll}
+              />
+            ) : null}
+            {headers.map((h) => <th key={h} className="whitespace-pre-line px-3 py-3 font-medium">{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  );
+}
 function Td({ children, mono, onClick, className }: { children: React.ReactNode; mono?: boolean; onClick?: React.MouseEventHandler<HTMLTableCellElement>; className?: string }) {
   return <td className={`max-w-64 px-3 py-3 text-white/65 ${mono ? 'font-mono text-cyan-200' : ''} ${className ?? ''}`} onClick={onClick}>{children}</td>;
 }

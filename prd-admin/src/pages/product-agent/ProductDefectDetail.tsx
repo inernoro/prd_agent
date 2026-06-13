@@ -23,6 +23,7 @@ import { RichTextField, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
+import { DetailRecordActions } from './DetailRecordActions';
 import {
   NON_PRODUCT_DEFECT_CLASSIFICATION,
   PRODUCT_DEFECT_CLASSIFICATION,
@@ -301,10 +302,23 @@ export function ProductDefectDetail({
   return (
     <div className="flex flex-col gap-4 min-h-0">
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono bg-red-500/10 text-red-200/90 border border-red-500/25">
             <Bug size={12} /> {defect.defectNo}
           </span>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="缺陷标题"
+            className="min-w-0 flex-1 text-xl font-semibold text-white bg-transparent border-none outline-none placeholder:text-white/25"
+          />
+          <DetailRecordActions
+            kind="defect"
+            productId={productId}
+            recordId={defect.id}
+            recordNo={defect.defectNo}
+            title={title}
+          />
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button type="button" onClick={convert} disabled={converting} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-cyan-200 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50">
@@ -318,8 +332,6 @@ export function ProductDefectDetail({
           </button>
         </div>
       </div>
-
-      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="缺陷标题" className="w-full text-xl font-semibold text-white bg-transparent border-none outline-none placeholder:text-white/25" />
 
       {workflow ? (
         <WorkflowBar workflow={workflow} entityType="defect" entityId={defect.id} productId={productId} currentState={defect.status} entitySnapshot={{ ownerId: defect.reporterId ?? '', assigneeId, title, grade: readDefectPriorityGrade(defect) ?? undefined }} onChanged={onReload} />
