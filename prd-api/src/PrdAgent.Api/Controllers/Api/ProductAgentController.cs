@@ -4813,6 +4813,15 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { created, updated }));
     }
 
+    /// <summary>跨产品批量导入缺陷（按行「应用/产品」匹配，未匹配则跳过）。</summary>
+    [HttpPost("overview/defects/import")]
+    public async Task<IActionResult> OverviewImportDefects([FromBody] ImportSimpleItemsRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        return await ImportDefectsCoreAsync(request, GetUserId());
+    }
+
     [HttpPost("products/{productId}/defects/import")]
     public async Task<IActionResult> ImportDefects(string productId, [FromBody] ImportSimpleItemsRequest request)
     {
@@ -4820,17 +4829,70 @@ public class ProductAgentController : ControllerBase
         if (denied != null) return denied;
         if (!await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).AnyAsync())
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        return await ImportDefectsCoreAsync(request, GetUserId(), forcedProductId: productId);
+    }
+
+    private async Task<IActionResult> ImportDefectsCoreAsync(
+        ImportSimpleItemsRequest request,
+        string userId,
+        string? forcedProductId = null)
+    {
         var rows = ValidateSimpleImportRows(request);
         if (rows.Result != null) return rows.Result;
 
-        var userId = GetUserId();
+        var scope = await GetAccessibleProductIdsAsync(userId);
+        var productFilter = scope == null
+            ? Builders<Product>.Filter.Eq(p => p.IsDeleted, false)
+            : Builders<Product>.Filter.And(
+                Builders<Product>.Filter.Eq(p => p.IsDeleted, false),
+                Builders<Product>.Filter.In(p => p.Id, scope));
+        var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToHashSet();
+
+        if (!string.IsNullOrWhiteSpace(forcedProductId))
+        {
+            if (!productIds.Contains(forcedProductId))
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        }
+
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var created = 0;
         var updated = 0;
+        var skipped = 0;
+        var routed = new Dictionary<string, int>();
+        var unmatched = new List<object>();
+        var affectedProducts = new HashSet<string>();
         long? batchNextDefectId = null;
         var userByName = await BuildUserLookupByDisplayNameAsync();
+        var wfByProduct = new Dictionary<string, string>();
+
         foreach (var row in rows.Rows!)
         {
+            string? targetProductId;
+            string? label;
+            bool matched;
+            if (!string.IsNullOrWhiteSpace(forcedProductId))
+            {
+                targetProductId = forcedProductId;
+                label = products.FirstOrDefault(p => p.Id == forcedProductId)?.Name;
+                matched = true;
+            }
+            else
+            {
+                (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
+                    products, row.Title, row.SourceFields);
+            }
+            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
+            {
+                skipped++;
+                if (!string.IsNullOrWhiteSpace(label))
+                    unmatched.Add(new { title = row.Title, label });
+                continue;
+            }
+
+            affectedProducts.Add(targetProductId);
+            routed[targetProductId] = routed.GetValueOrDefault(targetProductId) + 1;
+
             var sourceSystem = NormalizeImportSource(row.SourceSystem);
             var externalId = row.ExternalId?.Trim();
             var status = RequirementWorkflowCatalog.MapImportedStatusLabel(row.Status)
@@ -4840,9 +4902,9 @@ public class ProductAgentController : ControllerBase
             var reporter = ResolveUserFromNames(userByName, row.ReporterNames) ?? user;
             var existing = string.IsNullOrWhiteSpace(externalId)
                 ? null
-                : await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
+                : await _db.DefectReports.Find(d => d.TracedProductId == targetProductId && !d.IsDeleted &&
                     d.ProductSourceSystem == sourceSystem && d.ProductExternalId == externalId).FirstOrDefaultAsync()
-                  ?? await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
+                  ?? await _db.DefectReports.Find(d => d.TracedProductId == targetProductId && !d.IsDeleted &&
                     d.DefectNo == externalId).FirstOrDefaultAsync();
             var rawTapdSeverity = row.TapdSeverityRaw?.Trim();
             string? severityLevel = null;
@@ -4878,7 +4940,11 @@ public class ProductAgentController : ControllerBase
                 updated++;
                 continue;
             }
-            var (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, productId);
+            if (!wfByProduct.TryGetValue(targetProductId, out var defectWfId))
+            {
+                (_, defectWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, targetProductId);
+                wfByProduct[targetProductId] = defectWfId;
+            }
             string defectNo;
             if (string.IsNullOrWhiteSpace(externalId))
             {
@@ -4902,7 +4968,7 @@ public class ProductAgentController : ControllerBase
                 ReporterName = reporter?.DisplayName ?? reporter?.Username ?? user?.DisplayName,
                 AssigneeId = assignee?.UserId,
                 AssigneeName = assignee != null ? (assignee.DisplayName ?? assignee.Username) : null,
-                TracedProductId = productId,
+                TracedProductId = targetProductId,
                 WorkflowDefId = defectWfId,
                 ProductSourceSystem = sourceSystem,
                 ProductExternalId = externalId,
@@ -4910,7 +4976,10 @@ public class ProductAgentController : ControllerBase
             });
             created++;
         }
-        await RecalcDefectCountAsync(productId);
+        foreach (var pid in affectedProducts)
+            await RecalcDefectCountAsync(pid);
+        if (string.IsNullOrWhiteSpace(forcedProductId))
+            return Ok(ApiResponse<object>.Ok(new { created, updated, skipped, routed, unmatched }));
         return Ok(ApiResponse<object>.Ok(new { created, updated }));
     }
 
@@ -6573,6 +6642,8 @@ public class ImportSimpleItemRow
     public List<string>? HandlerNames { get; set; }
     /// <summary>TAPD 创建人 / 上报人姓名列表。</summary>
     public List<string>? ReporterNames { get; set; }
+    /// <summary>来源扩展字段（如 CSV「应用」「所属产品」列，跨产品导入路由用）。</summary>
+    public Dictionary<string, string>? SourceFields { get; set; }
 }
 
 public class ProductApplicationAdminRequest

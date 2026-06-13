@@ -70,4 +70,20 @@ describe('mapDefectImportRows', () => {
     expect(rows[0].handlerNames).toEqual(['伍林波']);
     expect(rows[0].reporterNames).toEqual(['陈嘉颖']);
   });
+
+  it('parses 所属产品 column for cross-product routing', () => {
+    const headers = [...tapdHeaders, '所属产品'];
+    const rows = mapDefectImportRows(headers, [
+      ['1023034', '登录失败', '偶发', 'new', '高', '', '防窜物流'],
+    ]);
+    expect(rows[0].sourceFields).toEqual({ 所属产品: '防窜物流' });
+  });
+
+  it('prefers 应用 column over 所属产品 when both present', () => {
+    const headers = [...tapdHeaders, '应用', '所属产品'];
+    const rows = mapDefectImportRows(headers, [
+      ['1', '标题', 'desc', 'new', '中', '', '米多大数据引擎', '防窜物流'],
+    ]);
+    expect(rows[0].sourceFields).toEqual({ 应用: '米多大数据引擎', 所属产品: '防窜物流' });
+  });
 });

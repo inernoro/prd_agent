@@ -329,7 +329,7 @@ export function FeatureCatalogTab({
                 : `共 ${visibleRows.length} 条功能记录`}
             </div>
           </div>
-          <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-white/10 px-4 py-2.5">
+          <div className="shrink-0 flex flex-nowrap items-center gap-2 border-b border-white/10 px-4 py-2.5 overflow-x-auto">
             {productPicker && (
               <div className="h-8 w-[min(100%,200px)] min-w-[140px] shrink-0">
                 <ItemSearchSelect
@@ -353,7 +353,7 @@ export function FeatureCatalogTab({
                 <option key={r.id} value={r.id}>{r.vCode}{r.planName ? ` · ${r.planName}` : ''}</option>
               ))}
             </select>
-            <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
+            <div className="flex min-w-0 flex-1 items-center gap-2">{bar}</div>
             {showImport && (
               <button
                 type="button"

@@ -408,6 +408,12 @@ export function importFeatureTree(productId: string, officialReleaseId: string, 
 export function importDefects(productId: string, rows: ImportSimpleItemRow[]) {
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/defects/import`, { method: 'POST', body: { rows } });
 }
+export function importOverviewDefects(rows: ImportSimpleItemRow[]) {
+  return apiRequest<ImportRoutedResult>('/api/product/overview/defects/import', {
+    method: 'POST',
+    body: { rows },
+  });
+}
 export function importVersions(productId: string, rows: ImportSimpleItemRow[]) {
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/versions/import`, { method: 'POST', body: { rows } });
 }
