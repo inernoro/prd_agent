@@ -780,8 +780,11 @@ export function removeProductApplicationAdmin(userId: string) {
 }
 export function resetProductAgentDemoData(confirmPhrase: string) {
   return apiRequest<{
+    scope: string;
     deleted: Record<string, number>;
     preserved: string[];
+    untouched: string[];
+    productCount: number;
     message: string;
   }>('/api/product/settings/debug/reset-all-data', { method: 'POST', body: { confirmPhrase } });
 }

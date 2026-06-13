@@ -255,6 +255,7 @@ function DebugDataResetPanel() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [result, setResult] = useState<Record<string, number> | null>(null);
+  const [untouched, setUntouched] = useState<string[]>([]);
 
   const reset = async () => {
     if (confirmPhrase.trim() !== DEBUG_RESET_CONFIRM) {
@@ -264,6 +265,7 @@ function DebugDataResetPanel() {
     setBusy(true);
     setMessage('正在清空业务数据…');
     setResult(null);
+    setUntouched([]);
     const response = await resetProductAgentDemoData(confirmPhrase.trim());
     setBusy(false);
     if (!response.success) {
@@ -271,6 +273,7 @@ function DebugDataResetPanel() {
       return;
     }
     setResult(response.data.deleted);
+    setUntouched(response.data.untouched ?? []);
     setConfirmPhrase('');
     setMessage(response.data.message);
   };
@@ -283,10 +286,13 @@ function DebugDataResetPanel() {
           <div>
             <div className="text-sm font-medium text-amber-100">调试模式 · 清空演示数据</div>
             <div className="mt-1 text-xs leading-5 text-white/50">
-              仅删除产品管理业务数据，便于重新导入演示。会清空：产品、版本、正式/内部版本、需求、功能、客户、知识库文档、追溯到产品的缺陷及关联评论等。
+              作用范围：<span className="text-white/70">仅 product-agent 产品管理应用</span>。删除 MongoDB 业务记录，不修改任何代码或配置结构。
+            </div>
+            <div className="mt-2 text-xs leading-5 text-white/45">
+              会清空：产品、版本、正式/内部版本、需求、功能、客户、本应用挂载的知识库文档、产品侧追溯/导入的缺陷。
             </div>
             <div className="mt-2 text-xs leading-5 text-white/40">
-              不会删除：表单模板、描述模板、产品类型、需求类型、流转规则、应用管理员名单。
+              不会动：表单/描述/类型/流程/管理员配置；defect-agent 独立缺陷与其他 Agent 文档空间；用户、团队、权限等全局数据。
             </div>
             <div className="mt-2 text-[11px] text-amber-200/70">此功能为临时调试入口，演示准备完成后将移除。</div>
           </div>
@@ -315,7 +321,16 @@ function DebugDataResetPanel() {
       </div>
 
       {result && (
-        <div className="overflow-hidden rounded-xl border border-white/10">
+        <div className="flex flex-col gap-3">
+          {untouched.length > 0 && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+              <div className="mb-2 text-xs font-medium text-white/55">明确不删除（其他系统 / 全局）</div>
+              <ul className="list-inside list-disc space-y-1 text-xs leading-5 text-white/40">
+                {untouched.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </div>
+          )}
+          <div className="overflow-hidden rounded-xl border border-white/10">
           <table className="w-full text-left text-xs">
             <thead className="bg-white/[0.03] text-white/45">
               <tr>
@@ -332,6 +347,7 @@ function DebugDataResetPanel() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

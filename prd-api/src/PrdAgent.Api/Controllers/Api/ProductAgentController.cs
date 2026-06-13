@@ -177,7 +177,9 @@ public class ProductAgentController : ControllerBase
     }
 
     /// <summary>
-    /// [调试] 清空产品管理全部业务数据，保留表单/流程/类型/管理员等配置。仅应用管理员可用，上线前移除。
+    /// [调试] 清空产品管理（product-agent）业务数据，保留本应用配置。仅应用管理员可用，上线前移除。
+    /// 仅 DeleteMany 本应用 MongoDB 集合中的记录，不修改代码、不改动表单/流程/类型/管理员等配置文档。
+    /// 不触碰 defect-agent 独立缺陷、其他 Agent 的 DocumentStore、用户/团队/权限等全局数据。
     /// </summary>
     [HttpPost("settings/debug/reset-all-data")]
     public async Task<IActionResult> ResetProductAgentDemoData([FromBody] ProductAgentDebugResetRequest request)
@@ -188,11 +190,13 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "确认语不正确，请输入：清空演示数据"));
 
         var userId = GetUserId();
-        _logger.LogWarning("产品管理调试清空：用户 {UserId} 触发全量业务数据删除", userId);
+        _logger.LogWarning("产品管理调试清空：用户 {UserId} 触发 product-agent 业务数据删除", userId);
 
         var deleted = new Dictionary<string, long>();
 
+        // 知识库：仅删除挂在本应用产品/版本上的 DocumentStore（通过 KnowledgeStoreId 反查，不扫全库）
         var products = await _db.Products.Find(FilterDefinition<Product>.Empty).ToListAsync();
+        var productIds = products.Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
         var storeIds = products
             .Where(p => !string.IsNullOrWhiteSpace(p.KnowledgeStoreId))
             .Select(p => p.KnowledgeStoreId!)
@@ -206,33 +210,50 @@ public class ProductAgentController : ControllerBase
 
         if (storeIds.Count > 0)
         {
-            var storeIdList = storeIds.ToList();
-            deleted["document_entries"] = (await _db.DocumentEntries.DeleteManyAsync(
-                Builders<DocumentEntry>.Filter.In(e => e.StoreId, storeIdList))).DeletedCount;
-            deleted["document_store_likes"] = (await _db.DocumentStoreLikes.DeleteManyAsync(
-                Builders<DocumentStoreLike>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
-            deleted["document_store_favorites"] = (await _db.DocumentStoreFavorites.DeleteManyAsync(
-                Builders<DocumentStoreFavorite>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
-            deleted["document_store_share_links"] = (await _db.DocumentStoreShareLinks.DeleteManyAsync(
-                Builders<DocumentStoreShareLink>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
-            deleted["document_store_agent_runs"] = (await _db.DocumentStoreAgentRuns.DeleteManyAsync(
-                Builders<DocumentStoreAgentRun>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
-            deleted["document_store_conversations"] = (await _db.DocumentStoreConversations.DeleteManyAsync(
-                Builders<DocumentStoreConversation>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
-            deleted["document_store_view_events"] = (await _db.DocumentStoreViewEvents.DeleteManyAsync(
-                Builders<DocumentStoreViewEvent>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
-            deleted["document_store_sync_links"] = (await _db.DocumentStoreSyncLinks.DeleteManyAsync(
-                Builders<DocumentStoreSyncLink>.Filter.Or(
-                    Builders<DocumentStoreSyncLink>.Filter.In(x => x.LocalStoreId, storeIdList),
-                    Builders<DocumentStoreSyncLink>.Filter.In(x => x.RemoteStoreId, storeIdList)))).DeletedCount;
-            deleted["document_stores"] = (await _db.DocumentStores.DeleteManyAsync(
-                Builders<DocumentStore>.Filter.In(s => s.Id, storeIdList))).DeletedCount;
+            // 二次校验：只删 product-agent 知识库挂载（AppKey 或 ProductKnowledgeRef），避免误伤其他应用文档空间
+            var scopedStoreIds = await _db.DocumentStores
+                .Find(Builders<DocumentStore>.Filter.And(
+                    Builders<DocumentStore>.Filter.In(s => s.Id, storeIds),
+                    Builders<DocumentStore>.Filter.Or(
+                        Builders<DocumentStore>.Filter.Eq(s => s.AppKey, "product-agent"),
+                        Builders<DocumentStore>.Filter.Ne(s => s.ProductKnowledgeRef, null))))
+                .Project(s => s.Id)
+                .ToListAsync();
+
+            if (scopedStoreIds.Count > 0)
+            {
+                deleted["document_entries"] = (await _db.DocumentEntries.DeleteManyAsync(
+                    Builders<DocumentEntry>.Filter.In(e => e.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_likes"] = (await _db.DocumentStoreLikes.DeleteManyAsync(
+                    Builders<DocumentStoreLike>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_favorites"] = (await _db.DocumentStoreFavorites.DeleteManyAsync(
+                    Builders<DocumentStoreFavorite>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_share_links"] = (await _db.DocumentStoreShareLinks.DeleteManyAsync(
+                    Builders<DocumentStoreShareLink>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_agent_runs"] = (await _db.DocumentStoreAgentRuns.DeleteManyAsync(
+                    Builders<DocumentStoreAgentRun>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_conversations"] = (await _db.DocumentStoreConversations.DeleteManyAsync(
+                    Builders<DocumentStoreConversation>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_view_events"] = (await _db.DocumentStoreViewEvents.DeleteManyAsync(
+                    Builders<DocumentStoreViewEvent>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
+                deleted["document_store_sync_links"] = (await _db.DocumentStoreSyncLinks.DeleteManyAsync(
+                    Builders<DocumentStoreSyncLink>.Filter.Or(
+                        Builders<DocumentStoreSyncLink>.Filter.In(x => x.LocalStoreId, scopedStoreIds),
+                        Builders<DocumentStoreSyncLink>.Filter.In(x => x.RemoteStoreId, scopedStoreIds)))).DeletedCount;
+                deleted["document_stores"] = (await _db.DocumentStores.DeleteManyAsync(
+                    Builders<DocumentStore>.Filter.In(s => s.Id, scopedStoreIds))).DeletedCount;
+            }
         }
 
-        var tracedDefectIds = await _db.DefectReports
-            .Find(d => d.TracedProductId != null && d.TracedProductId != "")
-            .Project(d => d.Id)
-            .ToListAsync();
+        // 缺陷：仅删 product-agent 追溯/导入的缺陷（TracedProductId 或 ProductSourceSystem），保留 defect-agent 独立数据
+        var tracedDefectFilter = Builders<DefectReport>.Filter.Or(
+            Builders<DefectReport>.Filter.And(
+                Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, null),
+                Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, "")),
+            Builders<DefectReport>.Filter.And(
+                Builders<DefectReport>.Filter.Ne(d => d.ProductSourceSystem, null),
+                Builders<DefectReport>.Filter.Ne(d => d.ProductSourceSystem, "")));
+        var tracedDefectIds = await _db.DefectReports.Find(tracedDefectFilter).Project(d => d.Id).ToListAsync();
         if (tracedDefectIds.Count > 0)
         {
             deleted["defect_messages"] = (await _db.DefectMessages.DeleteManyAsync(
@@ -246,6 +267,7 @@ public class ProductAgentController : ControllerBase
             deleted["defect_reports"] = 0;
         }
 
+        // 以下集合均为 product-agent 专属业务表（见 MongoDbContext Product Management 段），DeleteMany 仅清数据
         deleted["product_item_activities"] = (await _db.ProductItemActivities.DeleteManyAsync(FilterDefinition<ProductItemActivity>.Empty)).DeletedCount;
         deleted["product_item_summaries"] = (await _db.ProductItemSummaries.DeleteManyAsync(FilterDefinition<ProductItemSummary>.Empty)).DeletedCount;
         deleted["version_upgrade_requests"] = (await _db.VersionUpgradeRequests.DeleteManyAsync(FilterDefinition<VersionUpgradeRequest>.Empty)).DeletedCount;
@@ -260,6 +282,7 @@ public class ProductAgentController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
+            scope = "product-agent",
             deleted,
             preserved = new[]
             {
@@ -270,7 +293,16 @@ public class ProductAgentController : ControllerBase
                 "product_desc_templates",
                 "product_agent_settings",
             },
-            message = "产品管理业务数据已清空，配置项未改动。",
+            untouched = new[]
+            {
+                "defect-agent 独立缺陷（无 TracedProductId / ProductSourceSystem）",
+                "defect_templates / defect_projects / defect_folders 等缺陷应用配置",
+                "其他 Agent 的 document_stores（非 product-agent 挂载）",
+                "users / teams / 权限 / LLM 日志等全局平台数据",
+                "代码与部署产物（本接口仅 MongoDB DeleteMany）",
+            },
+            productCount = productIds.Count,
+            message = "产品管理业务数据已清空，本应用配置与其他系统数据未改动。",
         }));
     }
 
