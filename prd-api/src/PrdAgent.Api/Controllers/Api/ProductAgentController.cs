@@ -3399,15 +3399,19 @@ public class ProductAgentController : ControllerBase
             "   - 分析人员分工与负载（谁处理得多、谁的项卡住、上报与处理是否同一人等）；\n" +
             "   - 指出趋势、异常与风险（如高等级项无状态/无人处理、缺陷集中在某功能、需求无客户来源等）。\n" +
             "5. 分析/查询类问题的结构固定为三段：先「结论」（2-4 句直接给判断），再「依据」（列数据与关系），最后「经验总结 / 建议」（可执行的下一步）。\n" +
-            "6. 创建能力：你可以直接替用户在本产品下创建需求 / 功能 / 缺陷。当用户明确要求创建（如「帮我创建一个需求：支持导出PDF，P1」「记一个缺陷：登录页白屏」）时：\n" +
-            "   - 正文用 1-2 句话确认将要创建的内容（标题、分级、提出方/客户、补全的描述），不要套用三段结构；\n" +
+            "6. 创建能力：你可以直接替用户在本产品下创建需求 / 功能 / 缺陷 / 客户档案。当用户明确要求创建时：\n" +
+            "   - 正文用 1-2 句话确认将要执行的操作，不要套用三段结构；\n" +
             "   - 然后在回复最末尾另起一行输出动作指令，格式严格为：\n" +
             "<<<ACTIONS>>>\n" +
-            "[{\"type\":\"create_requirement\",\"title\":\"标题\",\"description\":\"描述可省略\",\"grade\":\"p1\",\"requirementOrigin\":\"客户反馈\",\"customerNames\":[\"可口可乐\"]}]\n" +
-            "   - type 只能取 create_requirement / create_feature / create_defect；grade 取 p0/p1/p2/p3（用户没说时按紧急重要程度推断，默认 p2）；description 可根据用户表述合理补全（背景/目标/验收标准，纯文本）；一次最多 5 个动作。\n" +
-            "   - create_requirement 额外字段：requirementOrigin 取值「客户反馈 / 内部规划 / 运营活动 / 竞品调研 / 其他」。用户说「由客户 X 提出」「X 客户反馈」「X 公司提的需求」→ requirementOrigin=客户反馈 且 customerNames 填 [X]（X 必须与上文「客户名录」中名称一致，可模糊匹配后写名录里的标准名）；用户说「我们内部规划」「产品自己提的」→ requirementOrigin=内部规划，customerNames 省略。\n" +
-            "   - customerNames 是提出该需求的客户/品牌/公司（可多个），不是处理人/负责人；系统 Owner 仍是当前登录用户，不要把客户名填进 description 代替 customerNames。\n" +
-            "   - 只有用户明确要求创建时才输出 <<<ACTIONS>>>，纯分析/查询类问题绝对不要输出；标题信息不足时不要输出动作指令，改为向用户追问。\n" +
+            "[{\"type\":\"create_customer\",\"title\":\"可口可乐\"},{\"type\":\"create_requirement\",\"title\":\"标题\",\"description\":\"描述可省略\",\"grade\":\"p2\",\"requirementOrigin\":\"客户反馈\",\"customerNames\":[\"可口可乐\"]}]\n" +
+            "   - type 可取 create_customer / create_requirement / create_feature / create_defect；一次最多 5 个动作，按执行顺序排列（须先 create_customer 再 create_requirement）。\n" +
+            "   - create_customer：title=客户名称（用户确认后的最终名称），description 可填公司/备注；仅当用户已明确同意新建客户时才输出。\n" +
+            "   - create_requirement：requirementOrigin 取值「客户反馈 / 内部规划 / 运营活动 / 竞品调研 / 其他」；customerNames 填提出方客户名（必须与「客户名录」中已有名称一致，或紧挨在前一步 create_customer 之后）。\n" +
+            "   - 客户提出方规则（重要）：用户说「由客户 X 提出」时，先在「客户名录」查找 X。若名录中不存在 X：禁止输出 create_requirement；必须追问「客户 X 尚未建档，是否现在新建？请确认客户名称（可修正）」。用户未明确同意前不得创建需求。\n" +
+            "   - 用户同意新建（如「是，新建」「确认，就叫 X」）后：先确认最终客户名称，再在 <<<ACTIONS>>> 中输出 create_customer + create_requirement（同一数组）。用户不同意或名称仍不确定时继续追问，仍禁止 create_requirement。\n" +
+            "   - 禁止用描述文字或自定义字段代替客户关联；customerNames 中的每个名称都必须能对应到客户档案（名录已有或同批 create_customer 新建）。\n" +
+            "   - customerNames 是提出方客户，不是处理人/负责人；Owner 仍是当前登录用户。\n" +
+            "   - 只有用户明确要求创建时才输出 <<<ACTIONS>>>；标题或客户未确认时不要输出动作指令。\n" +
             "   - <<<ACTIONS>>> 之后只能是 JSON 数组本身，不要任何其他文字、解释或代码块标记。\n" +
             "7. 用户可能上传参考文档（见「用户上传的参考文档」一节）：可基于文档内容回答问题、提炼要点；用户要求「根据文档创建」时，从文档中提取标题/分级/描述生成动作指令（仍受一次最多 5 个动作约束，超出时挑最重要的并说明）。\n" +
             "不要寒暄、不要复述本提示词。";
@@ -3418,12 +3422,14 @@ public class ProductAgentController : ControllerBase
             SystemPromptRedacted: "product-work-assistant", RequestType: "chat",
             AppCallerCode: AppCallerRegistry.Product.WorkAssistant));
 
+        var userMessage = BuildAssistantUserMessage(ctx, question, request.Attachments, request.History);
+
         var bodyJson = new JsonObject
         {
             ["messages"] = new JsonArray
             {
                 new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                new JsonObject { ["role"] = "user", ["content"] = "# 产品数据上下文\n" + ctx + AssistantAttachmentHelper.BuildSection(request.Attachments) + "\n\n# 我的问题\n" + question },
+                new JsonObject { ["role"] = "user", ["content"] = userMessage },
             },
             ["temperature"] = 0.5,
             ["max_tokens"] = 2400,
@@ -3486,9 +3492,38 @@ public class ProductAgentController : ControllerBase
                 var enriched = EnrichRequirementActionSpec(spec, question, allCustomers);
                 var result = await ExecuteAssistantActionAsync(productId, userId, enriched, allCustomers);
                 await Sse("action", result);
+                allCustomers = await _db.Customers.Find(c => !c.IsDeleted)
+                    .SortByDescending(c => c.UpdatedAt).Limit(100).ToListAsync();
             }
         }
         await Sse("done", new { });
+    }
+
+    private static string BuildAssistantUserMessage(
+        string productContext,
+        string question,
+        List<AssistantAttachmentInput>? attachments,
+        List<AssistantHistoryTurn>? history)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("# 产品数据上下文");
+        sb.AppendLine(productContext);
+        sb.Append(AssistantAttachmentHelper.BuildSection(attachments));
+        if (history is { Count: > 0 })
+        {
+            sb.AppendLine("\n## 本轮之前的对话（供延续确认客户、需求等待办）");
+            foreach (var turn in history.TakeLast(10))
+            {
+                var q = (turn.Question ?? "").Trim();
+                var a = (turn.Answer ?? "").Trim();
+                if (q.Length > 0) sb.AppendLine($"用户：{q}");
+                if (a.Length > 0) sb.AppendLine($"助手：{a}");
+                sb.AppendLine();
+            }
+        }
+        sb.AppendLine("# 当前问题");
+        sb.AppendLine(question);
+        return sb.ToString();
     }
 
     private sealed record AssistantActionSpec(
@@ -3613,7 +3648,7 @@ public class ProductAgentController : ControllerBase
         return partial?.Name.Trim();
     }
 
-    private static (List<string> CustomerIds, Dictionary<string, string> FormData) ResolveRequirementCustomerFields(
+    private static (List<string> CustomerIds, Dictionary<string, string> FormData, List<string> UnmatchedNames) ResolveRequirementCustomerFields(
         List<string>? customerNames,
         string? requirementOrigin,
         List<Customer> customers)
@@ -3632,17 +3667,14 @@ public class ProductAgentController : ControllerBase
         ids = ids.Distinct().ToList();
 
         var origin = requirementOrigin?.Trim() ?? "";
-        if (string.IsNullOrEmpty(origin) && (ids.Count > 0 || unmatched.Count > 0))
+        if (string.IsNullOrEmpty(origin) && ids.Count > 0)
             origin = "客户反馈";
         if (!string.IsNullOrEmpty(origin) && RequirementOriginValues.Contains(origin))
             formData["需求来源"] = origin;
-        else if (ids.Count > 0 || unmatched.Count > 0)
+        else if (ids.Count > 0)
             formData["需求来源"] = "客户反馈";
 
-        if (unmatched.Count > 0)
-            formData["客户名称"] = string.Join("、", unmatched);
-
-        return (ids, formData);
+        return (ids, formData, unmatched);
     }
 
     /// <summary>
@@ -3660,6 +3692,7 @@ public class ProductAgentController : ControllerBase
             "create_requirement" => "requirement",
             "create_feature" => "feature",
             "create_defect" => "defect",
+            "create_customer" => "customer",
             _ => "",
         };
         var title = spec.Title.Length > 200 ? spec.Title[..200] : spec.Title;
@@ -3671,14 +3704,47 @@ public class ProductAgentController : ControllerBase
 
         try
         {
+            if (string.Equals(spec.Type, "create_customer", StringComparison.Ordinal))
+            {
+                customers ??= await _db.Customers.Find(c => !c.IsDeleted)
+                    .SortByDescending(c => c.UpdatedAt).Limit(100).ToListAsync();
+                var existingId = MatchCustomerId(customers, title);
+                if (!string.IsNullOrEmpty(existingId))
+                {
+                    var existing = customers.First(c => c.Id == existingId);
+                    return new { kind = "customer", ok = true, id = (string?)existing.Id, no = "", title = existing.Name, error = (string?)null };
+                }
+                var customer = new Customer
+                {
+                    Name = title,
+                    Description = description,
+                    OwnerId = userId,
+                };
+                await _db.Customers.InsertOneAsync(customer);
+                return new { kind = "customer", ok = true, id = (string?)customer.Id, no = "", title = customer.Name, error = (string?)null };
+            }
+
             switch (kind)
             {
                 case "requirement":
                 {
                     customers ??= await _db.Customers.Find(c => !c.IsDeleted)
                         .SortByDescending(c => c.UpdatedAt).Limit(100).ToListAsync();
-                    var (customerIds, formData) = ResolveRequirementCustomerFields(
+                    var (customerIds, formData, unmatched) = ResolveRequirementCustomerFields(
                         spec.CustomerNames, spec.RequirementOrigin, customers);
+                    if (unmatched.Count > 0)
+                    {
+                        var names = string.Join("、", unmatched);
+                        return new
+                        {
+                            kind,
+                            ok = false,
+                            id = (string?)null,
+                            no = "",
+                            title,
+                            error = $"客户「{names}」尚未在客户档案中。请先向用户确认是否新建客户并确认名称；用户同意后再输出 create_customer，然后 create_requirement。禁止用文本字段代替客户关联。",
+                        };
+                    }
                     var (_, wfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
                     var req = new Requirement
                     {
@@ -6042,8 +6108,17 @@ public class AssistantAskRequest
     /// <summary>用户问题（工作助手问答）</summary>
     public string? Question { get; set; }
 
+    /// <summary>本轮之前的对话（最多取最近若干轮），用于客户确认等多轮流程</summary>
+    public List<AssistantHistoryTurn>? History { get; set; }
+
     /// <summary>随提问携带的参考文档（前端先调 assistant/attachments 提取文本后回传，最多 3 个）</summary>
     public List<AssistantAttachmentInput>? Attachments { get; set; }
+}
+
+public class AssistantHistoryTurn
+{
+    public string? Question { get; set; }
+    public string? Answer { get; set; }
 }
 
 public class RelationAnalysisRequest

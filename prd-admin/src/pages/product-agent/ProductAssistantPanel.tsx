@@ -63,7 +63,12 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
   const actionsRef = useRef<AssistantActionResult[]>([]);
   const pendingRef = useRef<string | null>(null);
   const pendingFilesRef = useRef<string[]>([]);
+  const historyRef = useRef<QA[]>(history);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
 
   // 对话持久化（按产品隔离，sessionStorage：切走重回不丢，手动清除才没）
   useEffect(() => {
@@ -137,7 +142,14 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
     setPendingFiles(fileNames);
     const attachments = files.map((f) => ({ name: f.name, text: f.text }));
     setFiles([]);
-    void sse.start({ body: { question: text, ...(attachments.length > 0 ? { attachments } : {}) } });
+    const priorHistory = historyRef.current.map((m) => ({ question: m.q, answer: m.a }));
+    void sse.start({
+      body: {
+        question: text,
+        history: priorHistory,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      },
+    });
   };
 
   const clearAll = () => {
@@ -200,7 +212,8 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             <div className="text-sm text-white/70 font-medium">问点什么吧</div>
             <div className="text-[12px] text-white/40 leading-relaxed max-w-md">
               我能基于本产品的需求 / 功能 / 缺陷 / 版本 / 客户与知识库回答你的问题，也能直接替你创建对象。
-              试试下方的快捷分析，或者对我说：「帮我创建一个 P2 需求：由客户可口可乐提出，在膨胀功能里支持自定义金额包」。
+              若需求由某客户提出但该客户尚未建档，我会先向你确认是否新建客户档案，确认后再创建需求。
+              试试下方的快捷分析，或者说：「帮我创建一个 P2 需求：由客户可口可乐提出……」
               也可以点左下角回形针上传 md / pdf 文档，让我基于文档内容分析或批量创建。
             </div>
           </div>
@@ -316,6 +329,7 @@ const ACTION_KIND_META: Record<string, { label: string; color: string }> = {
   requirement: { label: '需求', color: '#FBBF24' },
   feature: { label: '功能', color: '#A78BFA' },
   defect: { label: '缺陷', color: '#F87171' },
+  customer: { label: '客户', color: '#4ADE80' },
 };
 
 /** 助手创建对象的结果卡片：成功可点击直达详情页，失败显示原因。与 AI 气泡左对齐（头像宽 28 + 间距 8）。 */
@@ -327,22 +341,28 @@ function ActionResults({ items, productId }: { items: AssistantActionResult[]; p
         const meta = ACTION_KIND_META[r.kind] ?? { label: r.kind, color: '#94A3B8' };
         if (!r.ok) {
           return (
-            <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-[12px] text-red-200">
-              <CircleAlert size={14} className="shrink-0" />
-              <span className="truncate">创建{meta.label}「{r.title}」失败：{r.error || '未知错误'}</span>
+            <div key={i} className="flex items-start gap-2 px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-[12px] text-red-200">
+              <CircleAlert size={14} className="shrink-0 mt-0.5" />
+              <span className="whitespace-pre-wrap break-words">
+                {r.kind === 'requirement' ? '创建需求' : `创建${meta.label}`}「{r.title}」失败：{r.error || '未知错误'}
+              </span>
             </div>
           );
         }
+        const open = () => {
+          if (r.kind === 'customer') navigate('/product-agent?section=customers');
+          else if (r.id) navigate(`/product-agent/p/${productId}/${r.kind}/${r.id}`);
+        };
         return (
           <button
             key={i}
-            onClick={() => r.id && navigate(`/product-agent/p/${productId}/${r.kind}/${r.id}`)}
+            onClick={open}
             className="group flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-cyan-500/10 hover:border-cyan-500/30 text-left"
           >
             <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color: meta.color, background: `${meta.color}1a` }}>
               已创建{meta.label}
             </span>
-            <span className="text-[11px] font-mono text-white/40 shrink-0">{r.no}</span>
+            {r.no ? <span className="text-[11px] font-mono text-white/40 shrink-0">{r.no}</span> : null}
             <span className="text-[12px] text-white/85 truncate flex-1">{r.title}</span>
             <span className="flex items-center gap-1 text-[11px] text-cyan-300/70 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
               查看 <ExternalLink size={11} />
