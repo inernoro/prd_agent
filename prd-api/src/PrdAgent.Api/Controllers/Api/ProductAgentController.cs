@@ -309,7 +309,7 @@ public class ProductAgentController : ControllerBase
 
     // ════════════════════════ 产品 Product ════════════════════════
 
-    /// <summary>创建产品（自动生成 TAPD 风格纯数字编号）</summary>
+    /// <summary>创建产品（自动生成「类型前缀-全局序号」编号）</summary>
     [HttpPost("products")]
     public async Task<IActionResult> CreateProduct([FromBody] UpsertProductRequest request)
     {
@@ -320,14 +320,15 @@ public class ProductAgentController : ControllerBase
 
         var userId = GetUserId();
         var owner = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var grade = string.IsNullOrWhiteSpace(request.Grade) ? ProductGrade.Normal : request.Grade;
 
         var product = new Product
         {
-            ProductNo = await GenerateNextTapdStyleProductNoAsync(),
+            ProductNo = await AssignProductNoForGradeAsync(grade),
             Name = request.Name.Trim(),
             Code = request.Code?.Trim(),
             Description = request.Description?.Trim(),
-            Grade = string.IsNullOrWhiteSpace(request.Grade) ? ProductGrade.Normal : request.Grade,
+            Grade = grade,
             TemplateId = request.TemplateId,
             WorkflowDefId = request.WorkflowDefId,
             FormData = request.FormData ?? new(),
@@ -385,7 +386,7 @@ public class ProductAgentController : ControllerBase
             var grade = await ResolveGradeIdAsync(row.Grade, defaultGrade);
             var product = new Product
             {
-                ProductNo = await GenerateNextTapdStyleProductNoAsync(),
+                ProductNo = await AssignProductNoForGradeAsync(grade),
                 Name = name,
                 Code = row.Code?.Trim(),
                 Description = row.Description?.Trim(),
@@ -455,7 +456,17 @@ public class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Name)) update = update.Set(p => p.Name, request.Name.Trim());
         update = update.Set(p => p.Code, request.Code?.Trim());
         update = update.Set(p => p.Description, request.Description?.Trim());
-        if (!string.IsNullOrWhiteSpace(request.Grade)) update = update.Set(p => p.Grade, request.Grade);
+        if (!string.IsNullOrWhiteSpace(request.Grade) && request.Grade != product.Grade)
+        {
+            var newPrefix = await ResolveProductNoPrefixAsync(request.Grade);
+            if (ProductNoRules.TryParseSequence(product.ProductNo, out var seq))
+                update = update.Set(p => p.ProductNo, ProductNoRules.Format(newPrefix, seq));
+            update = update.Set(p => p.Grade, request.Grade);
+        }
+        else if (!string.IsNullOrWhiteSpace(request.Grade))
+        {
+            update = update.Set(p => p.Grade, request.Grade);
+        }
         if (request.TemplateId != null) update = update.Set(p => p.TemplateId, request.TemplateId);
         if (request.WorkflowDefId != null) update = update.Set(p => p.WorkflowDefId, request.WorkflowDefId);
         if (request.FormData != null) update = update.Set(p => p.FormData, request.FormData);
@@ -1520,6 +1531,7 @@ public class ProductAgentController : ControllerBase
                 .Set(c => c.Name, request.Name.Trim())
                 .Set(c => c.Color, color)
                 .Set(c => c.SortOrder, request.SortOrder)
+                .Set(c => c.NoPrefix, string.IsNullOrWhiteSpace(request.NoPrefix) ? null : request.NoPrefix.Trim().ToUpperInvariant())
                 .Set(c => c.UpdatedAt, DateTime.UtcNow);
             await _db.ProductCategories.UpdateOneAsync(c => c.Id == request.Id, u);
             var updated = await _db.ProductCategories.Find(c => c.Id == request.Id).FirstOrDefaultAsync();
@@ -1533,6 +1545,7 @@ public class ProductAgentController : ControllerBase
             Name = request.Name.Trim(),
             Color = color,
             SortOrder = request.SortOrder > 0 ? request.SortOrder : maxOrder + 1,
+            NoPrefix = string.IsNullOrWhiteSpace(request.NoPrefix) ? null : request.NoPrefix.Trim().ToUpperInvariant(),
             IsBuiltin = false,
         };
         await _db.ProductCategories.InsertOneAsync(cat);
@@ -5429,8 +5442,7 @@ public class ProductAgentController : ControllerBase
         return await GenerateNextTapdStyleDefectIdAsync(productId);
     }
 
-    /// <summary>下一产品编号：取全局 ProductNo 最大纯数字 + 1（与 TAPD 需求 ID 规则一致）。</summary>
-    private async Task<string> GenerateNextTapdStyleProductNoAsync()
+    private async Task<long> GenerateNextProductSequenceAsync()
     {
         var numbers = await _db.Products
             .Find(p => !p.IsDeleted)
@@ -5439,9 +5451,25 @@ public class ProductAgentController : ControllerBase
         long max = 0;
         foreach (var no in numbers)
         {
-            if (TryParseTapdNumericId(no, out var id) && id > max) max = id;
+            if (ProductNoRules.TryParseSequence(no, out var seq) && seq > max) max = seq;
         }
-        return (max + 1).ToString();
+        return max + 1;
+    }
+
+    private async Task<string> ResolveProductNoPrefixAsync(string gradeId)
+    {
+        await EnsureCategoriesSeededAsync();
+        var cat = await _db.ProductCategories.Find(c => c.Id == gradeId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (!string.IsNullOrWhiteSpace(cat?.NoPrefix))
+            return cat.NoPrefix.Trim().ToUpperInvariant();
+        return ProductNoRules.PrefixForCategoryName(cat?.Name);
+    }
+
+    private async Task<string> AssignProductNoForGradeAsync(string gradeId)
+    {
+        var prefix = await ResolveProductNoPrefixAsync(gradeId);
+        var seq = await GenerateNextProductSequenceAsync();
+        return ProductNoRules.Format(prefix, seq);
     }
 
     /// <summary>按 {PREFIX}-{YEAR}-{NNNN} 生成业务编号。fieldName 为编号字段名（FieldDefinition 由 string 隐式转换）。</summary>
@@ -5702,6 +5730,8 @@ public class UpsertCategoryRequest
     public string Name { get; set; } = string.Empty;
     public string? Color { get; set; }
     public int SortOrder { get; set; }
+    /// <summary>产品编号前缀（如 SYS）；为空则按类型名称推断。</summary>
+    public string? NoPrefix { get; set; }
 }
 
 public class UpsertRequirementTypeRequest
