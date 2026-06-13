@@ -39,6 +39,21 @@ describe('SendToPeerDialog queue state', () => {
     expect(readingBack.reverseLabel).toBe('正在回读同步结果');
   });
 
+  it('keeps the frozen transfer item running even if the live selection changes', () => {
+    const frozenQueue = selectedItems.slice(0, 2);
+    const state = deriveQueueState(frozenQueue, true, {
+      step: 4,
+      stage: '正在回写同步状态',
+      startedAt: Date.now(),
+    }, null, null);
+
+    expect(state.selectedCount).toBe(2);
+    expect(state.activeItem?.itemId).toBe('kb-1');
+    expect(state.itemStates.get('kb-1')).toBe('running');
+    expect(state.itemProgress.get('kb-1')).toBeGreaterThan(0);
+    expect(state.itemStates.get('kb-2')).toBe('waiting');
+  });
+
   it('derives completed and failed counts from transfer results', () => {
     const results: TransferItemResult[] = [
       { itemId: 'kb-1', ok: true },

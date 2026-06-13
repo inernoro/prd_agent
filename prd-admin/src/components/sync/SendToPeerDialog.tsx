@@ -72,6 +72,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
 
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<TransferItemResult[] | null>(null);
+  const [transferItems, setTransferItems] = useState<SyncItemSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [transferError, setTransferError] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ step: number; stage: string; startedAt: number } | null>(null);
@@ -137,9 +138,12 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     () => items.filter((item) => selected.has(item.itemId)),
     [items, selected],
   );
+  const queueItems = (submitting || results || transferError) && transferItems
+    ? transferItems
+    : selectedItems;
   const queueState = useMemo(
-    () => deriveQueueState(selectedItems, submitting, progress, results, transferError),
-    [selectedItems, submitting, progress, results, transferError],
+    () => deriveQueueState(queueItems, submitting, progress, results, transferError),
+    [queueItems, submitting, progress, results, transferError],
   );
   const primaryActionLabel = submitting
     ? '停止监听'
@@ -162,9 +166,12 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
+    const runItems = selectedItems;
+    const runItemIds = runItems.map((item) => item.itemId);
     setSubmitting(true);
     setTransferError(null);
     setResults(null);
+    setTransferItems(runItems);
     const startedAt = Date.now();
     setProgress({ step: 1, stage: '正在扫描所选知识库', startedAt });
     const timers = [
@@ -175,7 +182,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     const res = await transferToPeer({
       nodeId,
       resourceType,
-      itemIds: Array.from(selected),
+      itemIds: runItemIds,
       direction,
       mode: allowOverwrite ? 'overwrite' : 'add-only',
       preserveTimestamps,
@@ -350,7 +357,6 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
                       <QueueItemCard
                         key={it.itemId}
                         item={it}
-                        selected={selected.has(it.itemId)}
                         onToggle={() => toggleItem(it.itemId)}
                         state={queueState.itemStates.get(it.itemId) || 'unselected'}
                         progress={queueState.itemProgress.get(it.itemId) || 0}
@@ -561,7 +567,7 @@ function formatDuration(seconds: number) {
 function QueueOverview({ state }: { state: QueueState }) {
   return (
     <div className="grid grid-cols-5 gap-2 text-center">
-      <QueueStat label="已选" value={state.selectedCount} />
+      <QueueStat label="本轮" value={state.selectedCount} />
       <QueueStat label="完成" value={state.doneCount} tone="green" />
       <QueueStat label="同步中" value={state.runningCount} tone="gold" />
       <QueueStat label="等待" value={state.waitingCount} />
@@ -601,9 +607,8 @@ function MonitorCell({ label, value, sub }: { label: string; value: string; sub?
   );
 }
 
-function QueueItemCard({ item, selected, onToggle, state, progress, result, active }: {
+function QueueItemCard({ item, onToggle, state, progress, result, active }: {
   item: SyncItemSummary;
-  selected: boolean;
   onToggle: () => void;
   state: QueueItemState;
   progress: number;
@@ -611,19 +616,20 @@ function QueueItemCard({ item, selected, onToggle, state, progress, result, acti
   active: boolean;
 }) {
   const tone = queueStateTone(state);
+  const inQueue = state !== 'unselected';
   return (
     <button
       onClick={onToggle}
       className="w-full rounded-2xl border p-4 text-left transition"
       title={item.updatedAt ? `最近更新 ${new Date(item.updatedAt).toLocaleString('zh-CN')}` : undefined}
       style={{
-        borderColor: selected ? statusBorder(tone) : 'rgba(148,163,184,0.16)',
-        background: selected ? statusBackground(tone) : 'rgba(15,23,42,0.32)',
+        borderColor: inQueue ? statusBorder(tone) : 'rgba(148,163,184,0.16)',
+        background: inQueue ? statusBackground(tone) : 'rgba(15,23,42,0.32)',
       }}
     >
       <div className="grid gap-4 md:grid-cols-[44px_minmax(0,1fr)_280px]">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl border" style={{ borderColor: selected ? statusBorder(tone) : 'rgba(148,163,184,0.18)', color: selected ? statusColor(tone) : 'rgb(148,163,184)', background: selected ? statusBackground(tone) : 'rgba(15,23,42,0.46)' }}>
-          {selected ? <Check size={17} /> : <FolderOpen size={17} />}
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl border" style={{ borderColor: inQueue ? statusBorder(tone) : 'rgba(148,163,184,0.18)', color: inQueue ? statusColor(tone) : 'rgb(148,163,184)', background: inQueue ? statusBackground(tone) : 'rgba(15,23,42,0.46)' }}>
+          {inQueue ? <Check size={17} /> : <FolderOpen size={17} />}
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -642,10 +648,10 @@ function QueueItemCard({ item, selected, onToggle, state, progress, result, acti
         <div className="min-w-0">
           <div className="mb-2 flex items-center justify-between gap-3 text-xs">
             <StatusPill icon={active ? <MapSpinner size={12} /> : state === 'done' ? <CheckCircle2 size={13} /> : state === 'failed' ? <AlertTriangle size={13} /> : <Clock3 size={13} />} text={queueStateLabel(state)} tone={tone} />
-            <span className="font-semibold" style={{ color: statusColor(tone) }}>{selected ? `${progress}%` : '未选'}</span>
+            <span className="font-semibold" style={{ color: statusColor(tone) }}>{inQueue ? `${progress}%` : '未选'}</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full" style={{ background: 'rgba(148,163,184,0.14)' }}>
-            <div className="h-full rounded-full transition-all" style={{ width: `${selected ? progress : 0}%`, background: state === 'failed' ? 'rgb(248,113,113)' : 'linear-gradient(90deg, rgb(94,234,212), rgb(134,239,172))' }} />
+            <div className="h-full rounded-full transition-all" style={{ width: `${inQueue ? progress : 0}%`, background: state === 'failed' ? 'rgb(248,113,113)' : 'linear-gradient(90deg, rgb(94,234,212), rgb(134,239,172))' }} />
           </div>
           {active && (
             <div className="mt-2 grid grid-cols-4 gap-1.5">
@@ -655,7 +661,7 @@ function QueueItemCard({ item, selected, onToggle, state, progress, result, acti
             </div>
           )}
           {result?.message && <div className="mt-2 text-[11px] leading-5" style={{ color: 'var(--text-muted)' }}>{result.message}</div>}
-          {item.recordCount >= 20 && selected && <div className="mt-2 text-[11px]" style={{ color: 'rgb(174,187,201)' }}>可在结果明细中审计全部 {item.recordCount} 项内容</div>}
+          {item.recordCount >= 20 && inQueue && <div className="mt-2 text-[11px]" style={{ color: 'rgb(174,187,201)' }}>可在结果明细中审计全部 {item.recordCount} 项内容</div>}
         </div>
       </div>
     </button>
