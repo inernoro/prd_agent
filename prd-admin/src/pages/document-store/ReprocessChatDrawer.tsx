@@ -273,13 +273,6 @@ function loadActiveShortVideoRun(storeId: string): string | null {
   try { return sessionStorage.getItem(shortVideoRunStorageKey(storeId)); } catch { return null; }
 }
 
-function clearActiveShortVideoRun(storeId: string, runId?: string) {
-  try {
-    const key = shortVideoRunStorageKey(storeId);
-    if (!runId || sessionStorage.getItem(key) === runId) sessionStorage.removeItem(key);
-  } catch { /* ignore */ }
-}
-
 function extractUrl(text: string): string | null {
   const hit = text.match(/https?:\/\/[^\s"'<>]+/i);
   return hit?.[0] ?? null;
@@ -1036,7 +1029,6 @@ export function ReprocessChatDrawer({
               quickActions: buildShortVideoQuickActions(result),
             }
           : m));
-        clearActiveShortVideoRun(storeId, runId);
         setStreamingId(null);
         sendLockRef.current = false;
         onStoreChanged?.();
@@ -1049,7 +1041,6 @@ export function ReprocessChatDrawer({
         setMessages((prev) => prev.map((m) => m.id === messageId
           ? { ...m, streaming: false, phase: 'error', content: `${formatShortVideoProgress(run)}\n\n（解析失败：${message}）` }
           : m));
-        clearActiveShortVideoRun(storeId, runId);
         setStreamingId(null);
         sendLockRef.current = false;
         return;
@@ -1073,7 +1064,7 @@ export function ReprocessChatDrawer({
       setStreamingId(null);
       sendLockRef.current = false;
     }
-  }, [onStoreChanged, storeId]);
+  }, [onStoreChanged]);
 
   useEffect(() => {
     if (!isShortVideoMode) return;
@@ -1172,10 +1163,8 @@ export function ReprocessChatDrawer({
         : m));
     } finally {
       if (entryIdRef.current === ownerKey) {
-        if (!loadActiveShortVideoRun(storeId)) {
-          setStreamingId(null);
-          sendLockRef.current = false;
-        }
+        setStreamingId(null);
+        sendLockRef.current = false;
       }
     }
   }, [conversationKey, pollShortVideoRun, scrollToBottom, storeId]);
