@@ -3,7 +3,7 @@
  * 与单产品「知识列表」同构（搜索/筛选/分页/进详情页），多一列「所属产品」；
  * 管理操作（新建/上传/分类治理）落在具体产品库，这里提供「进入产品知识库」跳转。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, ChevronLeft, ChevronRight, ArrowRight, X, BookOpen } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -11,9 +11,7 @@ import { getOverviewKnowledgeEntries, listProducts } from '@/services/real/produ
 import type { OverviewKnowledgeEntryRow } from '@/services/real/productAgent';
 import type { Product } from '../types';
 import { fileKindOf, fmtSize, fmtTime, FOCUS_BOX } from './shared';
-import { useListSelection, ListCheckbox } from '../listSelection';
-import { ExportOnlyBatchBar } from '../ListBatchBar';
-import { downloadListCsv } from '../listExport';
+import { SelectionActionBar, SelectableRow, useSelectableListExport } from '../selectableList';
 import '../product-cards.css';
 
 const PAGE_SIZE = 20;
@@ -52,16 +50,15 @@ export function OverviewKnowledgeList() {
   const hasFilter = !!(appliedKeyword || productFilter);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const rowIds = useMemo(() => rows.map((r) => r.entry.id), [rows]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = rows.filter((r) => selection.selected.has(r.entry.id));
-    downloadListCsv(
-      'overview-knowledge.csv',
-      ['标题', '产品', '分类', '类型', '大小'],
-      picked.map((r) => [r.entry.title, r.productName ?? '', r.entry.category ?? '', fileKindOf(r.entry.contentType).label, fmtSize(r.entry.fileSize)]),
-    );
-  };
+  const { selection, exportSelected } = useSelectableListExport(
+    rows,
+    (r) => r.entry.id,
+    {
+      filename: 'overview-knowledge.csv',
+      headers: ['标题', '产品', '分类', '类型', '大小'],
+      mapRow: (r) => [r.entry.title, r.productName ?? '', r.entry.category ?? '', fileKindOf(r.entry.contentType).label, fmtSize(r.entry.fileSize)],
+    },
+  );
 
   const goDetail = (r: OverviewKnowledgeEntryRow) => {
     if (r.productId) navigate(`/product-agent/p/${r.productId}/knowledge/${r.entry.id}`);
@@ -94,9 +91,7 @@ export function OverviewKnowledgeList() {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        {selection.count > 0 && (
-          <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
-        )}
+        <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
         {loading ? (
           <MapSectionLoader text="正在聚合各产品知识…" />
         ) : rows.length === 0 ? (
@@ -110,14 +105,27 @@ export function OverviewKnowledgeList() {
             const kind = fileKindOf(r.entry.contentType);
             const Icon = kind.icon;
             return (
-              <div
+              <SelectableRow
                 key={r.entry.id}
+                id={r.entry.id}
+                selection={selection}
                 onClick={() => goDetail(r)}
                 className="pa-row group cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.02]"
+                trailing={
+                  <>
+                    <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/55">
+                      {r.productName ?? '未知产品'}
+                    </span>
+                    <button
+                      onClick={(ev) => { ev.stopPropagation(); if (r.productId) navigate(`/product-agent/p/${r.productId}?tab=knowledge`); }}
+                      className="shrink-0 flex items-center gap-1 text-[11px] text-white/35 hover:text-cyan-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="进入产品知识库"
+                    >
+                      产品知识库 <ArrowRight size={11} />
+                    </button>
+                  </>
+                }
               >
-                <span onClick={(ev) => ev.stopPropagation()}>
-                  <ListCheckbox checked={selection.selected.has(r.entry.id)} onChange={() => selection.toggle(r.entry.id)} />
-                </span>
                 <Icon size={16} className="shrink-0" style={{ color: kind.color }} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 min-w-0">
@@ -131,17 +139,7 @@ export function OverviewKnowledgeList() {
                     {kind.label} · {fmtSize(r.entry.fileSize)} · 更新于 {fmtTime(r.entry.updatedAt)}
                   </div>
                 </div>
-                <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/55">
-                  {r.productName ?? '未知产品'}
-                </span>
-                <button
-                  onClick={(ev) => { ev.stopPropagation(); if (r.productId) navigate(`/product-agent/p/${r.productId}?tab=knowledge`); }}
-                  className="shrink-0 flex items-center gap-1 text-[11px] text-white/35 hover:text-cyan-300 opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="进入产品知识库"
-                >
-                  产品知识库 <ArrowRight size={11} />
-                </button>
-              </div>
+              </SelectableRow>
             );
           })
         )}

@@ -2,7 +2,7 @@
  * 产品管理智能体 — 「产品」区块（管理层总览内的产品管理：新增/修改/删除/筛选）。
  * 嵌在 SectionShell 内（自带标题与滚动），点产品进单产品视图 /product-agent/p/:id。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Trash2, Upload, Star, LayoutGrid, List } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -13,9 +13,8 @@ import type { Product, ProductGrade, ProductCategory } from './types';
 import { useProductCategories, categoryLabel, categoryColor } from './productCategories';
 import { readFavoriteProductIds, toggleFavoriteProductId } from './productFavoriteStorage';
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
-import { useListSelection, ListCheckbox } from './listSelection';
-import { ListBatchBar } from './ListBatchBar';
-import { downloadListCsv } from './listExport';
+import { ListCheckbox } from './listSelection';
+import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
 import './product-cards.css';
 
 const SEARCH_BOX =
@@ -99,24 +98,19 @@ export function ProductsSection() {
     ? products.filter((p) => favoriteIds.has(p.id))
     : products;
 
-  const rowIds = useMemo(() => visibleProducts.map((p) => p.id), [visibleProducts]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = visibleProducts.filter((p) => selection.selected.has(p.id));
-    downloadListCsv(
-      'products.csv',
-      ['名称', '编号', '类型', '版本', '需求', '功能', '缺陷'],
-      picked.map((p) => [
-        p.name,
-        p.productNo,
-        categoryLabel(categories, p.grade),
-        String(p.versionCount),
-        String(p.requirementCount),
-        String(p.featureCount),
-        String(p.defectCount),
-      ]),
-    );
-  };
+  const { selection, exportSelected } = useOverviewTableSelection(visibleProducts, {
+    filename: 'products.csv',
+    headers: ['名称', '编号', '类型', '版本', '需求', '功能', '缺陷'],
+    mapRow: (p) => [
+      p.name,
+      p.productNo,
+      categoryLabel(categories, p.grade),
+      String(p.versionCount),
+      String(p.requirementCount),
+      String(p.featureCount),
+      String(p.defectCount),
+    ],
+  });
 
   return (
     <div className="flex flex-col gap-4">
@@ -182,15 +176,7 @@ export function ProductsSection() {
         </div>
       </div>
 
-      {selection.count > 0 && (
-        <ListBatchBar
-          entityType="product"
-          ids={selection.selectedIds}
-          onClear={selection.clear}
-          onDone={reload}
-          onExport={exportSelected}
-        />
-      )}
+      <SelectionActionBar mode="entity" entityType="product" selection={selection} onDone={reload} onExport={exportSelected} />
 
       {loading ? (
         <MapSectionLoader text="正在加载产品…" />

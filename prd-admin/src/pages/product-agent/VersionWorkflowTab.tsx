@@ -14,9 +14,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
-import { useListSelection, ListSelectionCell, ListSelectionHeaderCell } from './listSelection';
-import { ExportOnlyBatchBar } from './ListBatchBar';
-import { downloadListCsv } from './listExport';
+import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
+import { ListSelectionHeaderCell, type TableSelectionProps } from './listSelection';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
@@ -283,26 +282,17 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
   const navigate = useNavigate();
   const names = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  const rowIds = useMemo(() => items.map((i) => i.id), [items]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = items.filter((i) => selection.selected.has(i.id));
-    downloadListCsv(
-      `initiations-${productId}.csv`,
-      ['立项号', '方案', '版本类别', '状态'],
-      picked.map((i) => [i.tCode ?? '', i.planName, SCALE_LABEL[i.versionType], STATUS_LABEL[i.status] ?? i.status]),
-    );
-  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, {
+    filename: `initiations-${productId}.csv`,
+    headers: ['立项号', '方案', '版本类别', '状态'],
+    mapRow: (i) => [i.tCode ?? '', i.planName, SCALE_LABEL[i.versionType], STATUS_LABEL[i.status] ?? i.status],
+  });
   return (
     <>
-      {selection.count > 0 && (
-        <div className="mb-2">
-          <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
-        </div>
-      )}
-      <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']} selection={selection.tableSelection}>
+      <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
+      <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']} selection={tableSelection}>
         {items.map((item) => <tr key={item.id} className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]" onClick={() => openDetail(item.id)}>
-          <ListSelectionCell checked={selection.selected.has(item.id)} onToggle={() => selection.toggle(item.id)} className="px-3 py-2" />
+          <ListTableSelectionCell selection={tableSelection} id={item.id} className="px-3 py-2" />
           <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
@@ -352,25 +342,16 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
   }, [items]);
   const openRelease = (id: string) => navigate(`/product-agent/p/${productId}/release/${id}`);
   const openInitiation = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  const rowIds = useMemo(() => items.map((i) => i.id), [items]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = items.filter((i) => selection.selected.has(i.id));
-    downloadListCsv(
-      `releases-${productId}.csv`,
-      ['正式版本号', '内部版本号', '方案', '状态'],
-      picked.map((i) => [i.vCode, i.tCode ?? '临时优化', i.planName, STATUS_LABEL[i.status] ?? i.status]),
-    );
-  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, {
+    filename: `releases-${productId}.csv`,
+    headers: ['正式版本号', '内部版本号', '方案', '状态'],
+    mapRow: (i) => [i.vCode, i.tCode ?? '临时优化', i.planName, STATUS_LABEL[i.status] ?? i.status],
+  });
   return <>
-    {selection.count > 0 && (
-      <div className="mb-2">
-        <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
-      </div>
-    )}
-    <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={selection.tableSelection}>
+    <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
+    <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className="border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]" onClick={() => openRelease(item.id)}>
-      <ListSelectionCell checked={selection.selected.has(item.id)} onToggle={() => selection.toggle(item.id)} className="px-3 py-2" />
+      <ListTableSelectionCell selection={tableSelection} id={item.id} className="px-3 py-2" />
       <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
       <Td mono>{item.initiationId && item.tCode
@@ -542,7 +523,7 @@ function Tab({ active, children, onClick }: { active: boolean; children: React.R
 function Table({ headers, children, selection }: {
   headers: string[];
   children: ReactNode;
-  selection?: ReturnType<typeof useListSelection>['tableSelection'];
+  selection?: TableSelectionProps;
 }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-white/10">

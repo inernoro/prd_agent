@@ -6,13 +6,11 @@
  * - canManageAdmins：可指派/撤销产品管理员（仅全局管理 / 负责人）。
  * 后端按角色再次校验（ProductAgentController），前端仅据标志显隐操作入口。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { UserPlus, ShieldCheck, ShieldOff, Trash2, Crown } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
-import { useListSelection, ListCheckbox } from './listSelection';
-import { ExportOnlyBatchBar } from './ListBatchBar';
-import { downloadListCsv } from './listExport';
+import { SelectionActionBar, SelectableRow, useSelectableListExport } from './selectableList';
 import './product-cards.css';
 import {
   listProductMembers,
@@ -80,16 +78,15 @@ export function ProductTeamTab({ productId }: { productId: string }) {
   if (!data) return <div className="text-white/40 text-sm">团队信息加载失败</div>;
 
   const { members, canManageMembers, canManageAdmins } = data;
-  const memberIds = useMemo(() => members.map((m) => m.userId), [members]);
-  const selection = useListSelection(memberIds);
-  const exportSelected = () => {
-    const picked = members.filter((m) => selection.selected.has(m.userId));
-    downloadListCsv(
-      `team-${productId}.csv`,
-      ['姓名', '角色'],
-      picked.map((m) => [m.displayName, ROLE_LABEL[m.role]]),
-    );
-  };
+  const { selection, exportSelected } = useSelectableListExport(
+    members,
+    (m) => m.userId,
+    {
+      filename: `team-${productId}.csv`,
+      headers: ['姓名', '角色'],
+      mapRow: (m) => [m.displayName, ROLE_LABEL[m.role]],
+    },
+  );
   const removeSelected = async () => {
     if (!window.confirm(`确认移除选中的 ${selection.count} 名成员？`)) return;
     for (const userId of selection.selectedIds) {
@@ -131,71 +128,70 @@ export function ProductTeamTab({ productId }: { productId: string }) {
         </div>
       )}
 
-      {selection.count > 0 && (
-        <div className="flex flex-col gap-2">
-          <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
-          {canManageMembers && (
-            <button type="button" onClick={() => void removeSelected()} className="self-start text-xs text-red-300/80 hover:text-red-300">
-              移除选中成员
-            </button>
-          )}
-        </div>
-      )}
+      <SelectionActionBar
+        mode="export"
+        selection={selection}
+        onExport={exportSelected}
+        onDelete={canManageMembers ? removeSelected : undefined}
+        deleteLabel="移除选中成员"
+      />
 
       <div className="flex flex-col gap-2">
         {members.map((m) => {
           const isOwner = m.role === 'owner';
           const isAdmin = m.role === 'admin';
           const busy = busyId === m.userId;
-          // 移除：成员需 canManageMembers；管理员对象需 canManageAdmins（与后端一致）
           const canRemove = !isOwner && (isAdmin ? canManageAdmins : canManageMembers);
           return (
-            <div
+            <SelectableRow
               key={m.userId}
+              id={m.userId}
+              selection={selection}
               className="pa-row flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5"
+              trailing={
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {busy && <MapSpinner size={14} />}
+                  {!isOwner && canManageAdmins && !isAdmin && (
+                    <button
+                      onClick={() => onSetRole(m.userId, 'admin')}
+                      disabled={busy}
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-purple-300 hover:bg-purple-500/15 disabled:opacity-40"
+                      title="指派为产品管理员"
+                    >
+                      <ShieldCheck size={13} /> 设为管理员
+                    </button>
+                  )}
+                  {!isOwner && canManageAdmins && isAdmin && (
+                    <button
+                      onClick={() => onSetRole(m.userId, 'member')}
+                      disabled={busy}
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-white/50 hover:bg-white/10 disabled:opacity-40"
+                      title="撤销产品管理员"
+                    >
+                      <ShieldOff size={13} /> 取消管理员
+                    </button>
+                  )}
+                  {canRemove && (
+                    <button
+                      onClick={() => onRemove(m.userId)}
+                      disabled={busy}
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-red-300/70 hover:bg-red-500/15 disabled:opacity-40"
+                      title="移除成员"
+                    >
+                      <Trash2 size={13} /> 移除
+                    </button>
+                  )}
+                </div>
+              }
             >
               <div className="flex items-center gap-2.5 min-w-0">
-                <ListCheckbox checked={selection.selected.has(m.userId)} onChange={() => selection.toggle(m.userId)} />
                 {isOwner && <Crown size={14} className="text-amber-300 shrink-0" />}
                 <span className="text-sm text-white/85 truncate">{m.displayName}</span>
                 <span className={`shrink-0 px-1.5 py-0.5 rounded text-[11px] border ${ROLE_BADGE[m.role]}`}>
                   {ROLE_LABEL[m.role]}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                {busy && <MapSpinner size={14} />}
-                {!isOwner && canManageAdmins && !isAdmin && (
-                  <button
-                    onClick={() => onSetRole(m.userId, 'admin')}
-                    disabled={busy}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-purple-300 hover:bg-purple-500/15 disabled:opacity-40"
-                    title="指派为产品管理员"
-                  >
-                    <ShieldCheck size={13} /> 设为管理员
-                  </button>
-                )}
-                {!isOwner && canManageAdmins && isAdmin && (
-                  <button
-                    onClick={() => onSetRole(m.userId, 'member')}
-                    disabled={busy}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-white/50 hover:bg-white/10 disabled:opacity-40"
-                    title="撤销产品管理员"
-                  >
-                    <ShieldOff size={13} /> 取消管理员
-                  </button>
-                )}
-                {canRemove && (
-                  <button
-                    onClick={() => onRemove(m.userId)}
-                    disabled={busy}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-red-300/70 hover:bg-red-500/15 disabled:opacity-40"
-                    title="移除成员"
-                  >
-                    <Trash2 size={13} /> 移除
-                  </button>
-                )}
-              </div>
-            </div>
+            </SelectableRow>
           );
         })}
       </div>

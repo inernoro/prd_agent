@@ -18,9 +18,7 @@ import type { DocumentStore, DocumentEntry } from '@/services/contracts/document
 import type { ProductVersion } from '../types';
 import { fileKindOf, fmtSize, fmtTime, isUploadedFile, isEditableText, NO_CATEGORY, FOCUS_BOX } from './shared';
 import { VersionLinkDialog } from './VersionLinkDialog';
-import { useListSelection, ListCheckbox } from '../listSelection';
-import { ExportOnlyBatchBar } from '../ListBatchBar';
-import { downloadListCsv } from '../listExport';
+import { SelectionActionBar, SelectableRow, useSelectableListExport } from '../selectableList';
 
 const PAGE_SIZE = 20;
 
@@ -153,16 +151,15 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const rowIds = useMemo(() => items.map((e) => e.id), [items]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = items.filter((e) => selection.selected.has(e.id));
-    downloadListCsv(
-      `knowledge-${productId}.csv`,
-      ['标题', '分类', '类型', '大小'],
-      picked.map((e) => [e.title, e.category ?? '', fileKindOf(e.contentType).label, fmtSize(e.fileSize)]),
-    );
-  };
+  const { selection, exportSelected } = useSelectableListExport(
+    items,
+    (e) => e.id,
+    {
+      filename: `knowledge-${productId}.csv`,
+      headers: ['标题', '分类', '类型', '大小'],
+      mapRow: (e) => [e.title, e.category ?? '', fileKindOf(e.contentType).label, fmtSize(e.fileSize)],
+    },
+  );
   const deleteSelected = async () => {
     if (!window.confirm(`确认删除选中的 ${selection.count} 篇文档？`)) return;
     for (const id of selection.selectedIds) {
@@ -227,23 +224,15 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
 
       {/* 列表 */}
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5" style={{ overscrollBehavior: 'contain' }} data-tour-id="knowledge-list">
-        {selection.count > 0 && (
-          <div className="shrink-0">
-            <ExportOnlyBatchBar
-              ids={selection.selectedIds}
-              onClear={selection.clear}
-              onExport={exportSelected}
-              exportLabel="导出选中"
-            />
-            <button
-              type="button"
-              onClick={() => void deleteSelected()}
-              className="mt-1 text-xs text-red-300/80 hover:text-red-300"
-            >
-              删除选中文档
-            </button>
-          </div>
-        )}
+        <SelectionActionBar
+          mode="export"
+          selection={selection}
+          onExport={exportSelected}
+          onDelete={deleteSelected}
+          deleteLabel="删除选中文档"
+          exportLabel="导出选中"
+          className="shrink-0"
+        />
         {loading ? (
           <MapSectionLoader text="正在加载知识…" />
         ) : items.length === 0 ? (
@@ -265,14 +254,23 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
             const Icon = kind.icon;
             const vIds = e.versionIds ?? [];
             return (
-              <div
+              <SelectableRow
                 key={e.id}
+                id={e.id}
+                selection={selection}
                 onClick={() => goDetail(e.id)}
                 className="pa-row group cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.02]"
+                trailing={
+                  <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(ev) => ev.stopPropagation()}>
+                    <RowBtn title="查看详情" onClick={() => goDetail(e.id)}><Eye size={13} /></RowBtn>
+                    {isEditableText(e.contentType) && <RowBtn title="编辑" onClick={() => goDetail(e.id, true)}><Pencil size={13} /></RowBtn>}
+                    <RowBtn title="关联版本" onClick={() => setLinkTarget(e)}><GitBranch size={13} /></RowBtn>
+                    <RowBtn title="移动到文件夹" onClick={() => setMoveTarget(e)}><FolderInput size={13} /></RowBtn>
+                    {isUploadedFile(e) && <RowBtn title="重新上传" onClick={() => handleReplace(e.id)}><RefreshCw size={13} /></RowBtn>}
+                    <RowBtn title="删除" danger onClick={() => void handleDelete(e)}><Trash2 size={13} /></RowBtn>
+                  </div>
+                }
               >
-                <span onClick={(ev) => ev.stopPropagation()}>
-                  <ListCheckbox checked={selection.selected.has(e.id)} onChange={() => selection.toggle(e.id)} />
-                </span>
                 <Icon size={16} className="shrink-0" style={{ color: kind.color }} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 min-w-0">
@@ -313,15 +311,7 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                     {kind.label} · {fmtSize(e.fileSize)} · {e.updatedByName || e.createdBy} 更新于 {fmtTime(e.updatedAt)}
                   </div>
                 </div>
-                <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(ev) => ev.stopPropagation()}>
-                  <RowBtn title="查看详情" onClick={() => goDetail(e.id)}><Eye size={13} /></RowBtn>
-                  {isEditableText(e.contentType) && <RowBtn title="编辑" onClick={() => goDetail(e.id, true)}><Pencil size={13} /></RowBtn>}
-                  <RowBtn title="关联版本" onClick={() => setLinkTarget(e)}><GitBranch size={13} /></RowBtn>
-                  <RowBtn title="移动到文件夹" onClick={() => setMoveTarget(e)}><FolderInput size={13} /></RowBtn>
-                  {isUploadedFile(e) && <RowBtn title="重新上传" onClick={() => handleReplace(e.id)}><RefreshCw size={13} /></RowBtn>}
-                  <RowBtn title="删除" danger onClick={() => void handleDelete(e)}><Trash2 size={13} /></RowBtn>
-                </div>
-              </div>
+              </SelectableRow>
             );
           })
         )}

@@ -22,8 +22,14 @@ import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
 import { ProductTeamTab } from './ProductTeamSection';
 import { ReportsTab } from './ReportsTab';
-import { ListBatchBar } from './ListBatchBar';
-import { useListSelection, ListSelectionCell, ListSelectionHeaderCell, ListCheckbox } from './listSelection';
+import {
+  SelectionActionBar,
+  SelectableRow,
+  ListTableSelectionCell,
+  ListTableSelectionHeader,
+  useOverviewTableSelection,
+} from './selectableList';
+import type { TableSelectionProps } from './listSelection';
 import { downloadListCsv } from './listExport';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import './product-cards.css';
@@ -409,12 +415,24 @@ function RequirementsTab({ productId }: { productId: string }) {
     keywordPlaceholder: '搜索 ID、标题、描述',
   });
 
-  const filteredIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
-  const selection = useListSelection(filteredIds);
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
+    filename: `需求-${productId}.csv`,
+    headers: ['ID', '标题', '分级', '状态', '描述'],
+    mapRow: (r) => [
+      r.requirementNo,
+      r.title,
+      ITEM_GRADE_LABEL[r.grade] ?? r.grade,
+      stateLabel(r.currentState ?? ''),
+      r.description ?? '',
+    ],
+  });
 
   const exportCsv = (onlySelected = false) => {
-    const source = onlySelected ? filtered.filter((r) => selection.selected.has(r.id)) : items;
-    const rows = source.map((r) => [r.requirementNo, r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
+    if (onlySelected) {
+      exportSelected();
+      return;
+    }
+    const rows = items.map((r) => [r.requirementNo, r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
     downloadListCsv(`需求-${productId}.csv`, ['ID', '标题', '分级', '状态', '描述'], rows);
   };
 
@@ -487,19 +505,17 @@ function RequirementsTab({ productId }: { productId: string }) {
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2 w-full min-w-0">
-          {selection.count > 0 && (
-            <ListBatchBar
-              entityType="requirement"
-              ids={selection.selectedIds}
-              onDone={reload}
-              onClear={selection.clear}
-              onExport={() => exportCsv(true)}
-            />
-          )}
+          <SelectionActionBar
+            mode="entity"
+            entityType="requirement"
+            selection={selection}
+            onDone={reload}
+            onExport={() => exportCsv(true)}
+          />
           <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-white/10" style={{ overscrollBehavior: 'contain' }}>
             <RequirementDataTable
               items={filtered}
-              selection={selection.tableSelection}
+              selection={tableSelection}
               openDetail={openDetail}
               stateLabel={stateLabel}
               nameOf={nameOf}
@@ -538,7 +554,7 @@ function RequirementDataTable({
   onDelete,
 }: {
   items: Requirement[];
-  selection: ReturnType<typeof useListSelection>['tableSelection'];
+  selection: TableSelectionProps;
   openDetail: (id: string) => void;
   stateLabel: (key: string) => string;
   nameOf: (id?: string | null) => string;
@@ -573,12 +589,7 @@ function RequirementDataTable({
       </colgroup>
       <thead className="sticky top-0 z-10 bg-[#0f1014] text-[11px] text-white/45 border-b border-white/10">
         <tr>
-          <ListSelectionHeaderCell
-            allSelected={selection.allSelected}
-            indeterminate={selection.indeterminate}
-            onToggleAll={selection.onToggleAll}
-            disabled={rows.length === 0}
-          />
+          <ListTableSelectionHeader selection={selection} disabled={rows.length === 0} />
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">ID</th>
           <th className="px-3 py-2.5 font-medium">标题</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">分级</th>
@@ -596,7 +607,7 @@ function RequirementDataTable({
       <tbody>
         {rows.map(({ item, depth }) => (
           <tr key={item.id} onClick={() => openDetail(item.id)} className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]">
-            <ListSelectionCell checked={selection.selectedIds.has(item.id)} onToggle={() => selection.onToggle(item.id)} />
+            <ListTableSelectionCell selection={selection} id={item.id} />
             <td className={`${cell} whitespace-nowrap font-mono text-cyan-200/80`}>{item.requirementNo}</td>
             <td className="px-3 py-2 text-white/85">
               <div className="truncate" style={{ paddingLeft: depth * 20 }} title={item.title}>
@@ -665,16 +676,11 @@ function DefectsTab({ productId }: { productId: string }) {
   ], [personName, featureName, versionName]);
   const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索 ID、标题、描述' });
 
-  const filteredIds = useMemo(() => filtered.map((d) => d.id), [filtered]);
-  const selection = useListSelection(filteredIds);
-  const exportSelected = () => {
-    const picked = filtered.filter((d) => selection.selected.has(d.id));
-    downloadListCsv(
-      `defects-${productId}.csv`,
-      ['ID', '标题', '状态', '严重程度'],
-      picked.map((d) => [d.defectNo, d.title ?? '', defectStatusLabel(d.status), readDefectSeverityLevel(d) ?? '']),
-    );
-  };
+  const { selection, exportSelected } = useOverviewTableSelection(filtered, {
+    filename: `defects-${productId}.csv`,
+    headers: ['ID', '标题', '状态', '严重程度'],
+    mapRow: (d) => [d.defectNo, d.title ?? '', defectStatusLabel(d.status), readDefectSeverityLevel(d) ?? ''],
+  });
 
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
@@ -693,28 +699,40 @@ function DefectsTab({ productId }: { productId: string }) {
       ) : (
         <>
         {bar}
-        {selection.count > 0 && (
-          <ListBatchBar entityType="defect" ids={selection.selectedIds} onClear={selection.clear} onDone={reload} onExport={exportSelected} />
-        )}
+        <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
         {filtered.length === 0 ? (
           <div className="text-center text-white/35 text-sm py-10">没有匹配的缺陷，调整筛选条件试试。</div>
         ) : (
         <div className="flex flex-col gap-2">
           {filtered.map((d) => (
-            <Row
+            <SelectableRow
               key={d.id}
-              checked={selection.selected.has(d.id)}
-              onCheck={() => selection.toggle(d.id)}
-              title={d.title || '(无标题)'}
-              badge={defectStatusLabel(d.status)}
-              sub={`${d.defectNo}${d.tracedRequirementId ? ' · 已追溯到需求' : d.tracedVersionId ? ' · 已追溯到版本' : ' · 仅追溯到产品'}`}
+              id={d.id}
+              selection={selection}
               onClick={() => navigate(`/product-agent/p/${productId}/defect/${d.id}`)}
-              actionLabel="查看详情"
-              onDelete={async () => {
-                await untraceDefect(d.id);
-                await reload();
-              }}
-            />
+              className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02]"
+              trailing={
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="opacity-0 group-hover:opacity-100 text-[11px] text-cyan-300/70 transition-opacity">查看详情</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void untraceDefect(d.id).then(reload); }}
+                    className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="min-w-0 text-left flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-white/90 truncate">{d.title || '(无标题)'}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 shrink-0">{defectStatusLabel(d.status)}</span>
+                </div>
+                <div className="text-[11px] text-white/40 mt-0.5 truncate">
+                  {`${d.defectNo}${d.tracedRequirementId ? ' · 已追溯到需求' : d.tracedVersionId ? ' · 已追溯到版本' : ' · 仅追溯到产品'}`}
+                </div>
+              </div>
+            </SelectableRow>
           ))}
         </div>
         )}
@@ -799,8 +817,6 @@ function Row({
   onDelete,
   onClick,
   actionLabel,
-  checked,
-  onCheck,
 }: {
   title: string;
   sub?: string;
@@ -808,14 +824,9 @@ function Row({
   onDelete?: () => void;
   onClick?: () => void;
   actionLabel?: string;
-  checked?: boolean;
-  onCheck?: () => void;
 }) {
   return (
     <div className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02]">
-      {onCheck != null && checked != null && (
-        <ListCheckbox checked={checked} onChange={onCheck} />
-      )}
       <button
         onClick={onClick}
         disabled={!onClick}

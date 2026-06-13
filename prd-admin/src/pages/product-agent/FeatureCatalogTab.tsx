@@ -20,9 +20,7 @@ import {
 } from './featureTreeUtils';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { toProductOptions } from './comboboxOptions';
-import { useListSelection, ListSelectionCell, ListSelectionHeaderCell } from './listSelection';
-import { ListBatchBar } from './ListBatchBar';
-import { downloadListCsv } from './listExport';
+import { SelectionActionBar, ListTableSelectionCell, ListTableSelectionHeader, useOverviewTableSelection } from './selectableList';
 import type { Feature, FeatureBusinessType, Product, ProductRelease } from './types';
 
 const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
@@ -177,22 +175,17 @@ export function FeatureCatalogTab({
       .sort((a, b) => featurePathLabel(scopedFeatures, a.id).localeCompare(featurePathLabel(scopedFeatures, b.id), 'zh'));
   }, [scopedFeatures, subtreeIds, keyword]);
 
-  const tableRowIds = useMemo(() => tableRows.map((f) => f.id), [tableRows]);
-  const selection = useListSelection(tableRowIds);
-  const exportSelected = () => {
-    const picked = tableRows.filter((f) => selection.selected.has(f.id));
-    downloadListCsv(
-      `features-${productId}.csv`,
-      ['编号', '功能名称', '模块', '类型', '关联需求数'],
-      picked.map((f) => [
-        f.featureNo,
-        f.title,
-        f.moduleName ?? '',
-        FEATURE_TYPE_LABEL[f.featureType] ?? f.featureType,
-        String(f.requirementIds.length),
-      ]),
-    );
-  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(tableRows, {
+    filename: `features-${productId}.csv`,
+    headers: ['编号', '功能名称', '模块', '类型', '关联需求数'],
+    mapRow: (f) => [
+      f.featureNo,
+      f.title,
+      f.moduleName ?? '',
+      FEATURE_TYPE_LABEL[f.featureType] ?? f.featureType,
+      String(f.requirementIds.length),
+    ],
+  });
 
   const releaseName = useMemo(() => new Map(releases.map((r) => [r.id, r.vCode])), [releases]);
   const productOptions = useMemo(
@@ -340,17 +333,14 @@ export function FeatureCatalogTab({
           </div>
 
           <div className="min-h-0 flex-1 overflow-auto flex flex-col" style={{ overscrollBehavior: 'contain' }}>
-            {selection.count > 0 && (
-              <div className="shrink-0 px-4 py-2 border-b border-white/10">
-                <ListBatchBar
-                  entityType="feature"
-                  ids={selection.selectedIds}
-                  onClear={selection.clear}
-                  onDone={reload}
-                  onExport={exportSelected}
-                />
-              </div>
-            )}
+            <SelectionActionBar
+              mode="entity"
+              entityType="feature"
+              selection={selection}
+              onDone={reload}
+              onExport={exportSelected}
+              className="shrink-0 px-4 py-2 border-b border-white/10"
+            />
             {tableRows.length === 0 ? (
               <div className="flex h-full items-center justify-center text-sm text-white/35">
                 {scopedFeatures.length === 0 ? '还没有功能记录，请先选择正式版本并导入或新建。' : '当前目录下没有匹配的记录。'}
@@ -359,13 +349,7 @@ export function FeatureCatalogTab({
               <table className="w-full min-w-[1100px] text-left text-xs">
                 <thead className="sticky top-0 z-10 bg-[#0f1014] text-white/45 border-b border-white/10">
                   <tr>
-                    <ListSelectionHeaderCell
-                      allSelected={selection.allSelected}
-                      indeterminate={selection.indeterminate}
-                      onToggleAll={selection.toggleAll}
-                      disabled={tableRows.length === 0}
-                      className="px-3 py-2"
-                    />
+                    <ListTableSelectionHeader selection={tableSelection} disabled={tableRows.length === 0} className="px-3 py-2" />
                     <th className="px-3 py-2.5 font-medium whitespace-nowrap">编号</th>
                     <th className="px-3 py-2.5 font-medium">目录路径</th>
                     <th className="px-3 py-2.5 font-medium">功能名称</th>
@@ -386,7 +370,7 @@ export function FeatureCatalogTab({
                       onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
                       className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]"
                     >
-                      <ListSelectionCell checked={selection.selected.has(f.id)} onToggle={() => selection.toggle(f.id)} className="px-3 py-2.5" />
+                      <ListTableSelectionCell selection={tableSelection} id={f.id} className="px-3 py-2.5" />
                       <td className="px-3 py-2.5 font-mono text-cyan-200/80 whitespace-nowrap">{f.featureNo}</td>
                       <td className="px-3 py-2.5 text-white/50 max-w-[200px] truncate" title={featurePathLabel(scopedFeatures, f.id)}>
                         {featurePathLabel(scopedFeatures, f.id)}

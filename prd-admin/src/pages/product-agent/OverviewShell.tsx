@@ -43,9 +43,7 @@ import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
-import { useListSelection } from './listSelection';
-import { ListBatchBar, ExportOnlyBatchBar } from './ListBatchBar';
-import { downloadListCsv } from './listExport';
+import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
 import './product-cards.css';
 import {
   getOverviewStats,
@@ -491,23 +489,18 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
     void reload();
   }, [reload]);
 
-  const rowIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = filtered.filter((r) => selection.selected.has(r.id));
-    downloadListCsv(
-      'overview-requirements.csv',
-      ['ID', '标题', '产品', '分级', '状态', '处理人'],
-      picked.map((r) => [
-        r.requirementNo,
-        r.title,
-        r.productName,
-        r.grade,
-        r.stateLabel ?? resolveRequirementStateLabel(r.currentState) ?? '',
-        r.assigneeName ?? '',
-      ]),
-    );
-  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
+    filename: 'overview-requirements.csv',
+    headers: ['ID', '标题', '产品', '分级', '状态', '处理人'],
+    mapRow: (r) => [
+      r.requirementNo,
+      r.title,
+      r.productName,
+      r.grade,
+      r.stateLabel ?? resolveRequirementStateLabel(r.currentState) ?? '',
+      r.assigneeName ?? '',
+    ],
+  });
 
   if (loading) return <MapSectionLoader text="正在加载需求…" />;
   return (
@@ -519,24 +512,14 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
         </div>
       </div>
-      {selection.count > 0 && (
-        <div className="mb-2">
-          <ListBatchBar
-            entityType="requirement"
-            ids={selection.selectedIds}
-            onClear={selection.clear}
-            onDone={reload}
-            onExport={exportSelected}
-          />
-        </div>
-      )}
+      <SelectionActionBar mode="entity" entityType="requirement" selection={selection} onDone={reload} onExport={exportSelected} />
       {filtered.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}</div>
       ) : (
         <OverviewDataTable
           tableKey="requirements"
           rows={filtered}
-          selection={selection.tableSelection}
+          selection={tableSelection}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/requirement/${r.id}`)}
           columns={[
             { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.requirementNo}</span> },
@@ -610,33 +593,24 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
     void reload();
   }, [reload]);
 
-  const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = rows.filter((r) => selection.selected.has(r.id));
-    downloadListCsv(
-      'overview-defects.csv',
-      ['ID', '标题', '产品', '状态', '严重程度'],
-      picked.map((r) => [r.defectNo, r.title ?? '', r.productName, defectStatusLabel(r.status), defectSeverityTierLabel(r)]),
-    );
-  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
+    filename: 'overview-defects.csv',
+    headers: ['ID', '标题', '产品', '状态', '严重程度'],
+    mapRow: (r) => [r.defectNo, r.title ?? '', r.productName, defectStatusLabel(r.status), defectSeverityTierLabel(r)],
+  });
 
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
     <div>
       <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
-      {selection.count > 0 && (
-        <div className="mb-2">
-          <ListBatchBar entityType="defect" ids={selection.selectedIds} onClear={selection.clear} onDone={reload} onExport={exportSelected} />
-        </div>
-      )}
+      <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
       {rows.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">没有追溯到产品的缺陷</div>
       ) : (
         <OverviewDataTable
           tableKey="defects"
           rows={rows}
-          selection={selection.tableSelection}
+          selection={tableSelection}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/defect/${r.id}`)}
           columns={[
             { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.defectNo}</span> },
@@ -707,23 +681,18 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
   }, [keyword]);
   useEffect(() => { void reload(); }, [reload]);
 
-  const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = rows.filter((r) => selection.selected.has(r.id));
-    downloadListCsv(
-      'overview-releases.csv',
-      ['V号', 'T号', '方案', '产品', '级别', '状态'],
-      picked.map((r) => [
-        r.vCode,
-        r.tCode ?? '',
-        r.planName,
-        r.productName,
-        VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
-        WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
-      ]),
-    );
-  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
+    filename: 'overview-releases.csv',
+    headers: ['V号', 'T号', '方案', '产品', '级别', '状态'],
+    mapRow: (r) => [
+      r.vCode,
+      r.tCode ?? '',
+      r.planName,
+      r.productName,
+      VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
+      WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
+    ],
+  });
 
   if (loading) return <MapSectionLoader text="正在加载正式版本…" />;
   return (
@@ -733,16 +702,12 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
         setKeyword={setKeyword}
         extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
       />
-      {selection.count > 0 && (
-        <div className="mb-2">
-          <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
-        </div>
-      )}
+      <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有正式版本</div> : (
         <OverviewDataTable
           tableKey="releases"
           rows={rows}
-          selection={selection.tableSelection}
+          selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/release/${row.id}`)}
           columns={[
             { key: 'vcode', header: 'V 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
@@ -784,22 +749,17 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
   }, [keyword]);
   useEffect(() => { void reload(); }, [reload]);
 
-  const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = rows.filter((r) => selection.selected.has(r.id));
-    downloadListCsv(
-      'overview-initiations.csv',
-      ['T号', '方案', '产品', '级别', '状态'],
-      picked.map((r) => [
-        r.tCode ?? '',
-        r.planName,
-        r.productName,
-        VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
-        WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
-      ]),
-    );
-  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
+    filename: 'overview-initiations.csv',
+    headers: ['T号', '方案', '产品', '级别', '状态'],
+    mapRow: (r) => [
+      r.tCode ?? '',
+      r.planName,
+      r.productName,
+      VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
+      WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
+    ],
+  });
 
   if (loading) return <MapSectionLoader text="正在加载内部版本…" />;
   return (
@@ -809,16 +769,12 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
         setKeyword={setKeyword}
         extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
       />
-      {selection.count > 0 && (
-        <div className="mb-2">
-          <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
-        </div>
-      )}
+      <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有内部版本</div> : (
         <OverviewDataTable
           tableKey="initiations"
           rows={rows}
-          selection={selection.tableSelection}
+          selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
           columns={[
             { key: 'tcode', header: 'T 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '—'}</span> },
@@ -866,16 +822,11 @@ function CustomersSection({ isAdmin }: { isAdmin: boolean }) {
   }, [keyword]);
   useEffect(() => { void reload(); }, [reload]);
 
-  const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
-  const selection = useListSelection(rowIds);
-  const exportSelected = () => {
-    const picked = rows.filter((r) => selection.selected.has(r.id));
-    downloadListCsv(
-      'customers.csv',
-      ['名称', '公司', '联系方式', '标签'],
-      picked.map((c) => [c.name, c.company ?? '', c.contact ?? '', (c.tags ?? []).join(' / ')]),
-    );
-  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
+    filename: 'customers.csv',
+    headers: ['名称', '公司', '联系方式', '标签'],
+    mapRow: (c) => [c.name, c.company ?? '', c.contact ?? '', (c.tags ?? []).join(' / ')],
+  });
 
   const onDelete = async (c: Customer) => {
     const ok = await systemDialog.confirm({ title: '删除客户', message: `删除客户「${c.name}」？已关联的需求不受影响（仅解除显示）。`, tone: 'danger', confirmText: '删除', cancelText: '取消' });
@@ -896,14 +847,10 @@ function CustomersSection({ isAdmin }: { isAdmin: boolean }) {
           </button>
         }
       />
-      {selection.count > 0 && (
-        <div className="mb-2">
-          {isAdmin ? (
-            <ListBatchBar entityType="customer" ids={selection.selectedIds} onClear={selection.clear} onDone={reload} onExport={exportSelected} />
-          ) : (
-            <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
-          )}
-        </div>
+      {isAdmin ? (
+        <SelectionActionBar mode="entity" entityType="customer" selection={selection} onDone={reload} onExport={exportSelected} />
+      ) : (
+        <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       )}
       {loading ? (
         <MapSectionLoader text="正在加载客户…" />
@@ -913,7 +860,7 @@ function CustomersSection({ isAdmin }: { isAdmin: boolean }) {
         <OverviewDataTable
           tableKey="customers"
           rows={rows}
-          selection={selection.tableSelection}
+          selection={tableSelection}
           columns={[
             { key: 'name', header: '名称', defaultWidth: 160, render: (c) => <TruncateCell text={c.name} className="text-white/90" /> },
             { key: 'company', header: '公司', defaultWidth: 160, render: (c) => <TruncateCell text={c.company || '-'} maxChars={20} className="text-white/55 text-xs" /> },

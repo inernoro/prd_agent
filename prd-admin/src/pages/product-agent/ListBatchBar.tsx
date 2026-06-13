@@ -154,16 +154,20 @@ function GenericListBatchBar({
   );
 }
 
-/** 仅导出 + 取消（版本流程等暂无批量删除 API 的列表） */
+/** 仅导出 / 导出+自定义删除（版本流程、知识库等无统一 entityType 的列表） */
 export function ExportOnlyBatchBar({
   ids,
   onClear,
   onExport,
+  onDelete,
+  deleteLabel = '删除选中',
   exportLabel = '导出选中',
 }: {
   ids: string[];
   onClear: () => void;
   onExport: () => void;
+  onDelete?: () => void | Promise<void>;
+  deleteLabel?: string;
   exportLabel?: string;
 }) {
   if (ids.length === 0) return null;
@@ -177,6 +181,18 @@ export function ExportOnlyBatchBar({
       >
         <Download size={12} /> {exportLabel}
       </button>
+      {onDelete && (
+        <>
+          <div className="w-px h-5 bg-white/15" />
+          <button
+            type="button"
+            onClick={() => void onDelete()}
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-red-300/80 border border-red-500/30 hover:bg-red-500/10"
+          >
+            <Trash2 size={12} /> {deleteLabel}
+          </button>
+        </>
+      )}
       <button
         type="button"
         onClick={onClear}
