@@ -433,7 +433,7 @@ export function ReprocessChatDrawer({
       backendSaveTimerRef.current = null;
     }
     setMessages([]);
-    setActive(null);
+    setActive(isShortVideoMode ? { kind: 'shortVideoTool' } : null);
     setError(null);
     setApplying(null);
     setInput('');
