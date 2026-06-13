@@ -5,6 +5,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   importDefects,
   importFeatures,
+  importOverviewDefects,
   importOverviewRequirements,
   importRequirements,
   importVersions,
@@ -107,7 +108,8 @@ export function ProductHistoryImportDialog({
   crossProductRoute?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const needsProductPicker = !(crossProductRoute && type === 'requirement');
+  const isCrossProduct = crossProductRoute && (type === 'requirement' || type === 'defect');
+  const needsProductPicker = !isCrossProduct;
   const [productId, setProductId] = useState(products[0]?.id ?? '');
   const [fallbackProductId, setFallbackProductId] = useState(products[0]?.id ?? '');
   const [fileNames, setFileNames] = useState<string[]>([]);
@@ -169,11 +171,11 @@ export function ProductHistoryImportDialog({
     if (rows.length === 0) return;
     if (needsProductPicker && !productId) return;
     const baseRows = rows as ImportRequirementRow[];
-    const rowsToImport = crossProductRoute && type === 'requirement'
+    const rowsToImport = isCrossProduct && type === 'requirement'
       ? applyFallbackProductToRows(baseRows, fallbackProduct?.name)
       : baseRows;
-    if (crossProductRoute && type === 'requirement' && rowsToImport.every((row) => !rowHasProductRouteHint(row))) {
-      setMessage('无法路由：请为 CSV 增加「应用」或「产品」列，或选择「无应用列时默认归属产品」。');
+    if (isCrossProduct && rowsToImport.every((row) => !rowHasProductRouteHint(row))) {
+      setMessage(`无法路由：请为文件增加「应用」或「产品/所属产品」列${type === 'requirement' ? '，或选择「无应用列时默认归属产品」' : ''}。`);
       return;
     }
     setBusy(true);
@@ -184,7 +186,9 @@ export function ProductHistoryImportDialog({
       : type === 'feature'
         ? await importFeatures(productId, rows)
         : type === 'defect'
-          ? await importDefects(productId, rows)
+          ? (crossProductRoute
+            ? await importOverviewDefects(rowsToImport)
+            : await importDefects(productId, rows))
           : await importVersions(productId, rows);
     setBusy(false);
     if (!result.success) {
@@ -198,8 +202,8 @@ export function ProductHistoryImportDialog({
     if (created + updated === 0) {
       setMessage(
         skipped > 0
-          ? `未写入任何需求：${skipped} 条因「应用/产品」未匹配系统产品被跳过。请检查 CSV 列或默认归属产品。`
-          : '未写入任何需求，请检查文件内容。',
+          ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「应用/产品」未匹配系统产品被跳过。请检查文件列${type === 'requirement' ? '或默认归属产品' : ''}。`
+          : `未写入任何${TYPE_LABEL[type]}，请检查文件内容。`,
       );
       return;
     }
@@ -231,8 +235,10 @@ export function ProductHistoryImportDialog({
           <div>
             <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
             <div className="mt-1 text-xs text-white/45">
-              {crossProductRoute && type === 'requirement'
-                ? '按「应用」或「产品」列匹配系统产品；无该列时可指定默认归属产品。'
+              {isCrossProduct
+                ? type === 'requirement'
+                  ? '按「应用」或「产品」列匹配系统产品；无该列时可指定默认归属产品。'
+                  : '按「应用」或「产品/所属产品」列匹配系统产品；未匹配行跳过，不手动选归属产品。'
                 : '可重复导入；有外部 ID 时更新原记录，无 ID 时系统自动分配纯数字编号。'}
             </div>
           </div>
@@ -279,8 +285,25 @@ export function ProductHistoryImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-white/10">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th><th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
-                <tbody>{rows.slice(0, 30).map((row, index) => <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5"><td className="px-3 py-2 text-white/75">{row.title}</td><td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td><td className="px-3 py-2 text-white/45">{type === 'defect' ? (row.severity ? `${row.severity}（TAPD优先级:${row.tapdSeverityRaw || '—'}）` : (row.tapdSeverityRaw || '—')) : (row.grade || '-')}</td><td className="px-3 py-2 text-white/45">{row.status || '-'}</td>{type === 'defect' && <td className="px-3 py-2 text-white/45">{row.handlerNames?.join('、') || '-'}</td>}</tr>)}</tbody>
+                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th>{isCrossProduct && <th className="px-3 py-2">归属产品</th>}<th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
+                <tbody>{rows.slice(0, 30).map((row, index) => {
+                  const routeLabel = row.sourceFields?.['应用']
+                    || row.sourceFields?.['所属产品']
+                    || row.sourceFields?.['产品']
+                    || row.sourceFields?.['产品名称']
+                    || row.sourceFields?.['产品线']
+                    || (row.title?.match(/^【([^】]+)】/)?.[1] ?? '');
+                  return (
+                    <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5">
+                      <td className="px-3 py-2 text-white/75">{row.title}</td>
+                      <td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td>
+                      {isCrossProduct && <td className="px-3 py-2 text-white/45">{routeLabel || '—'}</td>}
+                      <td className="px-3 py-2 text-white/45">{type === 'defect' ? (row.severity ? `${row.severity}（TAPD优先级:${row.tapdSeverityRaw || '—'}）` : (row.tapdSeverityRaw || '—')) : (row.grade || '-')}</td>
+                      <td className="px-3 py-2 text-white/45">{row.status || '-'}</td>
+                      {type === 'defect' && <td className="px-3 py-2 text-white/45">{row.handlerNames?.join('、') || '-'}</td>}
+                    </tr>
+                  );
+                })}</tbody>
               </table>
             </div>
           )}
@@ -288,8 +311,10 @@ export function ProductHistoryImportDialog({
         </div>
         <div className="flex shrink-0 items-center justify-between border-t border-white/10 px-5 py-4">
           <div className="text-xs text-white/35">
-            {crossProductRoute && type === 'requirement'
-              ? '按「应用/产品」列路由；无列时使用默认归属产品'
+            {isCrossProduct
+              ? type === 'requirement'
+                ? '按「应用/产品」列路由；无列时使用默认归属产品'
+                : '按「应用/产品/所属产品」列自动路由到系统产品'
               : selectedProduct ? `将写入：${selectedProduct.name}` : '请选择产品'}
           </div>
           <div className="flex gap-2">

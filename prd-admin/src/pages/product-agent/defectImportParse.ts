@@ -18,6 +18,30 @@ function headerIndex(headers: string[], ...names: string[]): number {
   );
 }
 
+const PRODUCT_COLUMN_NAMES = ['产品', '所属产品', '产品名称', '产品线'] as const;
+
+/** 从 TAPD 导出列解析「应用/产品」路由字段（与后端 ProductImportProductRouting 对齐） */
+export function buildDefectProductSourceFields(headers: string[], values: string[]): Record<string, string> | undefined {
+  const trimmedHeaders = headers.map((h) => h.trim());
+  const appIndex = headerIndex(trimmedHeaders, '应用', '应用/产品');
+  const productIndex = trimmedHeaders.findIndex((header) =>
+    PRODUCT_COLUMN_NAMES.some((name) => header === name),
+  );
+  const fields: Record<string, string> = {};
+  if (appIndex >= 0) {
+    const app = values[appIndex]?.trim();
+    if (app) fields['应用'] = app;
+  }
+  if (productIndex >= 0) {
+    const product = values[productIndex]?.trim();
+    if (product) {
+      const key = trimmedHeaders[productIndex] as (typeof PRODUCT_COLUMN_NAMES)[number];
+      fields[key] = product;
+    }
+  }
+  return Object.keys(fields).length > 0 ? fields : undefined;
+}
+
 /** TAPD 导出 / CSV 行 → 导入行（仅缺陷） */
 export function mapDefectImportRows(headers: string[], body: string[][]): ImportSimpleItemRow[] {
   const titleIndex = headerIndex(headers, '标题', 'title');
@@ -47,6 +71,7 @@ export function mapDefectImportRows(headers: string[], body: string[][]): Import
         externalId: idIndex >= 0 ? values[idIndex]?.trim() : undefined,
         handlerNames: handlerRaw ? splitPeople(handlerRaw) : undefined,
         reporterNames: reporterRaw ? splitPeople(reporterRaw) : undefined,
+        sourceFields: buildDefectProductSourceFields(headers, values),
       };
     })
     .filter((row) => row.title);

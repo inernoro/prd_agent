@@ -20,6 +20,17 @@ function stripImportImageMarkers(html: string): string {
     .replace(/<p data-import-image="\d+"><\/p>/g, '');
 }
 
+const PRODUCT_FIELD_KEYS = ['应用', '产品', '所属产品', '产品名称', '产品线'] as const;
+
+function extractProductSourceFields(fields: Record<string, string>): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const key of PRODUCT_FIELD_KEYS) {
+    const value = fields[key]?.trim();
+    if (value) out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** TAPD 缺陷 RTF 块 → 缺陷导入行（复用需求 RTF 表格解析）。 */
 export function mapDefectRtfItem(item: RtfImportRequirement): ImportSimpleItemRow {
   const rawTapdPriority = item.fields['优先级']?.trim() || undefined;
@@ -37,6 +48,7 @@ export function mapDefectRtfItem(item: RtfImportRequirement): ImportSimpleItemRo
     sourceSystem: 'tapd',
     handlerNames,
     reporterNames: uniqueNames(item.creatorNames),
+    sourceFields: extractProductSourceFields(item.fields),
   };
 }
 

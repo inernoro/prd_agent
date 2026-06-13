@@ -716,7 +716,7 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
           ]}
         />
       )}
-      {showImport && <ProductHistoryImportDialog type="defect" products={products} onClose={() => setShowImport(false)} onImported={reload} />}
+      {showImport && <ProductHistoryImportDialog type="defect" products={products} crossProductRoute onClose={() => setShowImport(false)} onImported={reload} />}
     </div>
   );
 }
