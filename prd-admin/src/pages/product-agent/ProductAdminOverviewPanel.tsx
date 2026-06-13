@@ -1,6 +1,6 @@
 /**
  * 各产品负责人 / 产品管理员一览（只读）。
- * 展示在「应用 → 应用配置」页；指派操作在单产品「团队」tab。
+ * 展示在「应用 → 应用配置」的「产品管理员」标签；指派操作在单产品「团队」tab。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
