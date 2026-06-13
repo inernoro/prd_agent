@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { parseVersionWorkflowImportCsv } from './versionWorkflowImportParse';
+import {
+  parseVersionWorkflowImportCsv,
+} from './versionWorkflowImportParse';
 
 describe('versionWorkflowImportParse', () => {
   it('parses release rows with V code and plan name', () => {
@@ -26,5 +28,33 @@ describe('versionWorkflowImportParse', () => {
     expect(rows[0].planName).toBe('渠道返利方案');
     expect(rows[0].departmentName).toBe('产品部');
     expect(rows[0].developmentStatus).toBe('已完成');
+  });
+
+  it('skips blank header row after real header (语雀上线导出)', () => {
+    const csv = [
+      '系统,应用,正式版本号,内部版本号,项目类别,版本类别,产品立项方案名称,所属部门,产品负责人,上线时间,合同签订方,当前开放品牌,备注',
+      ',,,,,,,,,,,,',
+      '大数据引擎系统,互动营销,V3.5.2,T3.5.2,定制项目,小版本,互动营销V3.5.2（大转盘升级）,品牌域产品部,苟于华,2021-09-01,消时乐,上线全域开放,',
+      '大数据引擎系统,互动营销,-,-,非定制项目,临时优化需求,临时优化小报,品牌域产品部,何丹铃,2021-09-15,,,',
+    ].join('\n');
+    const rows = parseVersionWorkflowImportCsv(csv, 'release');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].code).toBe('V3.5.2');
+    expect(rows[0].tCode).toBe('T3.5.2');
+    expect(rows[0].planName).toBe('互动营销V3.5.2（大转盘升级）');
+    expect(rows[0].projectType).toBe('custom');
+    expect(rows[0].legacyData?.['合同签订方']).toBe('消时乐');
+    expect(rows[1].code).toBeUndefined();
+    expect(rows[1].planName).toBe('临时优化小报');
+    expect(rows[1].projectType).toBe('standard');
+  });
+
+  it('maps 非定制项目 as standard not custom', () => {
+    const csv = [
+      '立项号,产品立项方案名称,项目类别',
+      'T1.0.0,测试方案,非定制项目',
+    ].join('\n');
+    const rows = parseVersionWorkflowImportCsv(csv, 'initiation');
+    expect(rows[0].projectType).toBe('standard');
   });
 });

@@ -41,6 +41,11 @@ export function VersionWorkflowImportDialog({
     [productId, products],
   );
 
+  const importableCount = useMemo(
+    () => (kind === 'release' ? rows.filter((row) => row.code).length : rows.length),
+    [kind, rows],
+  );
+
   const readFile = async (file: File) => {
     setFileName(file.name);
     try {
@@ -53,9 +58,12 @@ export function VersionWorkflowImportDialog({
       const missingCode = kind === 'release'
         ? parsedRows.filter((row) => !row.code).length
         : 0;
+      const importable = kind === 'release'
+        ? parsedRows.filter((row) => row.code).length
+        : parsedRows.length;
       setMessage(
         missingCode > 0
-          ? `已读取 ${parsedRows.length} 条，其中 ${missingCode} 条缺少 V 号，导入时将跳过。`
+          ? `已读取 ${parsedRows.length} 条，可导入 ${importable} 条（${missingCode} 条无 V 号或「-」将跳过）。`
           : `已读取 ${parsedRows.length} 条，确认后写入。`,
       );
     } catch (err) {
@@ -68,7 +76,7 @@ export function VersionWorkflowImportDialog({
     if (!targetProductId || rows.length === 0) return;
     setBusy(true);
     const payloadRows = rows
-      .filter((row) => (kind === 'release' ? Boolean(row.code?.trim()) : true))
+      .filter((row) => (kind === 'release' ? Boolean(row.code) : true))
       .map(({ sourceRow: _sourceRow, ...row }) => row);
     const result = await importVersionWorkflow(targetProductId, { kind, rows: payloadRows });
     setBusy(false);
@@ -178,11 +186,11 @@ export function VersionWorkflowImportDialog({
             </button>
             <button
               onClick={() => void commit()}
-              disabled={busy || !(fixedProductId ?? productId) || rows.length === 0}
+              disabled={busy || !(fixedProductId ?? productId) || importableCount === 0}
               className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40"
             >
               {busy ? <MapSpinner size={14} /> : <Upload size={14} />}
-              确认导入 {rows.length} 条
+              确认导入 {importableCount} 条
             </button>
           </div>
         </div>

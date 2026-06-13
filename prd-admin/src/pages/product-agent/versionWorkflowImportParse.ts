@@ -46,12 +46,13 @@ function normalizeHeader(value: string): string {
 function headerScore(row: string[], kind: VersionWorkflowImportKind): number {
   const hints = kind === 'release' ? RELEASE_HINTS : INITIATION_HINTS;
   const normalized = row.map(normalizeHeader);
+  if (!normalized.some(Boolean)) return -1;
   let score = 0;
   for (const hint of hints) {
     const key = normalizeHeader(hint);
-    if (normalized.some((header) => header.includes(key) || key.includes(header))) score += 1;
+    if (normalized.some((header) => header && (header.includes(key) || key.includes(header)))) score += 1;
   }
-  if (normalized.some((header) => header.includes('方案名称') || header.includes('产品立项方案名称'))) score += 2;
+  if (normalized.some((header) => header && (header.includes('方案名称') || header.includes('产品立项方案名称')))) score += 2;
   return score;
 }
 
@@ -97,9 +98,15 @@ function parseDateValue(value: unknown): string | undefined {
 function mapProjectType(raw?: string): string | undefined {
   if (!raw) return undefined;
   const value = raw.trim();
-  if (value.includes('定制')) return 'custom';
   if (value.includes('非定制') || value.includes('标准')) return 'standard';
+  if (value.includes('定制')) return 'custom';
   return undefined;
+}
+
+function normalizeCode(value?: string): string | undefined {
+  const text = value?.trim();
+  if (!text || text === '-') return undefined;
+  return text;
 }
 
 function mapBool(raw?: string): boolean | undefined {
@@ -134,6 +141,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
   const teamIndex = indexOfHeader(headers, '项目组成员', '组成员');
   const requirementSourceIndex = indexOfHeader(headers, '需求来源');
   const platformIndex = indexOfHeader(headers, '平台');
+  const contractPartyIndex = indexOfHeader(headers, '合同签订方');
 
   const codeIndex = kind === 'release'
     ? indexOfHeader(headers, '正式版本号', 'v号', 'v 号', 'v上线号', '上线号')
@@ -154,7 +162,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
   const rows: VersionWorkflowImportRow[] = [];
   body.forEach((values, offset) => {
     const planName = (effectivePlanIndex >= 0 ? values[effectivePlanIndex]?.trim() : '') || '';
-    const code = codeIndex >= 0 ? values[codeIndex]?.trim() : undefined;
+    const code = codeIndex >= 0 ? normalizeCode(values[codeIndex]) : undefined;
     if (!planName && !code) return;
 
     const legacyData: Record<string, string> = {};
@@ -166,10 +174,13 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     if (platformIndex >= 0 && values[platformIndex]?.trim()) {
       legacyData['平台'] = values[platformIndex].trim();
     }
+    if (contractPartyIndex >= 0 && values[contractPartyIndex]?.trim()) {
+      legacyData['合同签订方'] = values[contractPartyIndex].trim();
+    }
 
     rows.push({
       code,
-      tCode: tCodeIndex >= 0 ? values[tCodeIndex]?.trim() : undefined,
+      tCode: tCodeIndex >= 0 ? normalizeCode(values[tCodeIndex]) : undefined,
       planName: planName || code || '',
       systemName: systemIndex >= 0 ? values[systemIndex]?.trim() : undefined,
       appName: appIndex >= 0 ? values[appIndex]?.trim() : undefined,
