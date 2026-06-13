@@ -27,6 +27,7 @@ import {
   AlertCircle,
   Search,
   ArrowUpDown,
+  ArrowLeftRight,
   Check,
   Tag,
   FolderSync,
@@ -179,7 +180,7 @@ function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | Docu
   if (!store.peerSyncStatus) return null;
   const isError = store.peerSyncStatus === 'error';
   const isSyncing = store.peerSyncStatus === 'syncing';
-  const Icon = isError ? AlertCircle : isSyncing ? FolderSync : store.peerSyncDirection === 'both' ? Network : Send;
+  const Icon = isError ? AlertCircle : isSyncing ? FolderSync : store.peerSyncDirection === 'both' ? ArrowLeftRight : Send;
   const label = getPeerSyncLabel(store);
   const title = [
     label,
