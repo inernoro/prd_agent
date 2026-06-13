@@ -15,6 +15,7 @@ import { QuickActionsCard } from './QuickActionsCard';
 import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
 import { requirementSourceLabel } from './requirementSource';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { KnowledgeModule } from './knowledge/KnowledgeModule';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
@@ -416,6 +417,8 @@ function RequirementsTab({ productId }: { productId: string }) {
     keywordPlaceholder: '搜索 ID、标题、描述',
   });
 
+  const listCount = filtered.length;
+
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
     filename: `需求-${productId}.csv`,
     headers: ['ID', '标题', '分级', '状态', '描述'],
@@ -457,6 +460,9 @@ function RequirementsTab({ productId }: { productId: string }) {
   }
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
+      <div className="shrink-0 border-b border-white/10 pb-2">
+        <h2 className="text-base font-semibold text-white">{formatListSectionTitle('需求', listCount)}</h2>
+      </div>
       <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">

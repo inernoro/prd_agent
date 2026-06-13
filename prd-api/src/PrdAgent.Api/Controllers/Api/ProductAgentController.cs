@@ -309,7 +309,7 @@ public class ProductAgentController : ControllerBase
 
     // ════════════════════════ 产品 Product ════════════════════════
 
-    /// <summary>创建产品（自动生成产品编号）</summary>
+    /// <summary>创建产品（自动生成 TAPD 风格纯数字编号）</summary>
     [HttpPost("products")]
     public async Task<IActionResult> CreateProduct([FromBody] UpsertProductRequest request)
     {
@@ -323,7 +323,7 @@ public class ProductAgentController : ControllerBase
 
         var product = new Product
         {
-            ProductNo = await GenerateNoAsync("PRD", _db.Products, "ProductNo"),
+            ProductNo = await GenerateNextTapdStyleProductNoAsync(),
             Name = request.Name.Trim(),
             Code = request.Code?.Trim(),
             Description = request.Description?.Trim(),
@@ -385,7 +385,7 @@ public class ProductAgentController : ControllerBase
             var grade = await ResolveGradeIdAsync(row.Grade, defaultGrade);
             var product = new Product
             {
-                ProductNo = await GenerateNoAsync("PRD", _db.Products, "ProductNo"),
+                ProductNo = await GenerateNextTapdStyleProductNoAsync(),
                 Name = name,
                 Code = row.Code?.Trim(),
                 Description = row.Description?.Trim(),
@@ -1010,6 +1010,10 @@ public class ProductAgentController : ControllerBase
                     var legacyData = row.LegacyData ?? new Dictionary<string, string>();
                     if (!string.IsNullOrWhiteSpace(row.OwnerId) && !legacyData.ContainsKey("产品负责人"))
                         legacyData["产品负责人"] = row.OwnerId.Trim();
+                    if (!string.IsNullOrWhiteSpace(row.Remark) && !legacyData.ContainsKey("备注"))
+                        legacyData["备注"] = row.Remark.Trim();
+                    if (row.TeamMemberIds is { Count: > 0 } teamNames && !legacyData.ContainsKey("项目组成员"))
+                        legacyData["项目组成员"] = string.Join("、", teamNames.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
                     await _db.ProductReleases.InsertOneAsync(new ProductRelease
                     {
                         ProductId = productId, TCode = row.TCode, VCode = row.Code.Trim(), PlanName = row.PlanName.Trim(),
@@ -1029,6 +1033,10 @@ public class ProductAgentController : ControllerBase
                     var legacyData = row.LegacyData ?? new Dictionary<string, string>();
                     if (!string.IsNullOrWhiteSpace(row.OwnerId) && !legacyData.ContainsKey("产品负责人"))
                         legacyData["产品负责人"] = row.OwnerId.Trim();
+                    if (!string.IsNullOrWhiteSpace(row.Remark) && !legacyData.ContainsKey("备注"))
+                        legacyData["备注"] = row.Remark.Trim();
+                    if (row.TeamMemberIds is { Count: > 0 } teamNames && !legacyData.ContainsKey("项目组成员"))
+                        legacyData["项目组成员"] = string.Join("、", teamNames.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
                     await _db.ProductInitiations.InsertOneAsync(new ProductInitiation
                     {
                         ProductId = productId, TCode = row.Code?.Trim(), PlanName = row.PlanName.Trim(),
@@ -5419,6 +5427,21 @@ public class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(externalId))
             return externalId.Trim();
         return await GenerateNextTapdStyleDefectIdAsync(productId);
+    }
+
+    /// <summary>下一产品编号：取全局 ProductNo 最大纯数字 + 1（与 TAPD 需求 ID 规则一致）。</summary>
+    private async Task<string> GenerateNextTapdStyleProductNoAsync()
+    {
+        var numbers = await _db.Products
+            .Find(p => !p.IsDeleted)
+            .Project(p => p.ProductNo)
+            .ToListAsync();
+        long max = 0;
+        foreach (var no in numbers)
+        {
+            if (TryParseTapdNumericId(no, out var id) && id > max) max = id;
+        }
+        return (max + 1).ToString();
     }
 
     /// <summary>按 {PREFIX}-{YEAR}-{NNNN} 生成业务编号。fieldName 为编号字段名（FieldDefinition 由 string 隐式转换）。</summary>

@@ -5,6 +5,7 @@
  * 全屏智能体复用。深色画布，强调色可按智能体定制（产品=青色，项目=蓝色）。
  */
 import type { ReactNode } from 'react';
+import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import type { LucideIcon } from 'lucide-react';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 
@@ -95,18 +96,22 @@ export function SectionShell({
   title,
   desc,
   actions,
+  count,
   children,
 }: {
   title: string;
   desc?: string;
   actions?: ReactNode;
+  /** 当前列表真实条数；传入后在标题后展示「（N）」 */
+  count?: number;
   children: ReactNode;
 }) {
+  const displayTitle = count == null ? title : formatListSectionTitle(title, count);
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="shrink-0 flex items-center justify-between gap-3 px-6 py-4 border-b border-white/10">
         <div>
-          <h2 className="text-base font-semibold text-white">{title}</h2>
+          <h2 className="text-base font-semibold text-white">{displayTitle}</h2>
           {desc && <p className="text-xs text-white/40 mt-0.5">{desc}</p>}
         </div>
         {actions}

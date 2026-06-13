@@ -40,7 +40,7 @@ function writeProductViewMode(mode: ProductViewMode) {
   }
 }
 
-export function ProductsSection() {
+export function ProductsSection({ onListCountChange }: { onListCountChange?: (count: number) => void }) {
   const navigate = useNavigate();
   const { categories } = useProductCategories();
   const [products, setProducts] = useState<Product[]>([]);
@@ -97,6 +97,10 @@ export function ProductsSection() {
   const visibleProducts = favoritesOnly
     ? products.filter((p) => favoriteIds.has(p.id))
     : products;
+
+  useEffect(() => {
+    onListCountChange?.(visibleProducts.length);
+  }, [onListCountChange, visibleProducts.length]);
 
   const { selection, exportSelected } = useOverviewTableSelection(visibleProducts, {
     filename: 'products.csv',

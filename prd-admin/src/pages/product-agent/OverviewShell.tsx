@@ -65,7 +65,7 @@ import {
 import type { Customer, Product } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
-import { distinctOptions, useListFilter, type FilterFieldDef } from './listFilter';
+import { formatListSectionTitle } from '@/lib/listSectionTitle';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
 
@@ -95,6 +95,9 @@ export function OverviewShell() {
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productListCount, setProductListCount] = useState(0);
+  const [requirementListCount, setRequirementListCount] = useState(0);
+  const [featureListCount, setFeatureListCount] = useState(0);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -148,23 +151,23 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'products' && (
-        <SectionShell title="产品" desc="新增 / 修改 / 删除 / 筛选，点击进入单产品视图">
-          <ProductsSection />
+        <SectionShell title="产品" count={productListCount} desc="新增 / 修改 / 删除 / 筛选，点击进入单产品视图">
+          <ProductsSection onListCountChange={setProductListCount} />
         </SectionShell>
       )}
       {active === 'requirements' && (
-        <SectionShell title="需求" desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
-          <RequirementsTable isAdmin={isAdmin} products={products} />
+        <SectionShell title="需求" count={requirementListCount} desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
+          <RequirementsTable isAdmin={isAdmin} products={products} onListCountChange={setRequirementListCount} />
         </SectionShell>
       )}
       {active === 'features' && (
         <div className="flex h-full min-h-0 flex-col">
           <div className="shrink-0 border-b border-white/10 px-6 py-3">
-            <h2 className="text-base font-semibold text-white">功能</h2>
+            <h2 className="text-base font-semibold text-white">{formatListSectionTitle('功能', featureListCount)}</h2>
             <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；功能清单归属正式版本，导入时需选择 V 号</p>
           </div>
           <div className="min-h-0 flex-1">
-            <OverviewFeaturesPanel isAdmin={isAdmin} products={products} />
+            <OverviewFeaturesPanel isAdmin={isAdmin} products={products} onListCountChange={setFeatureListCount} />
           </div>
         </div>
       )}
@@ -416,7 +419,15 @@ function AdminImportButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+function RequirementsTable({
+  isAdmin,
+  products,
+  onListCountChange,
+}: {
+  isAdmin: boolean;
+  products: Product[];
+  onListCountChange?: (count: number) => void;
+}) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewRequirementRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -489,6 +500,10 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
     void reload();
   }, [reload]);
 
+  useEffect(() => {
+    onListCountChange?.(filtered.length);
+  }, [filtered.length, onListCountChange]);
+
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
     filename: 'overview-requirements.csv',
     headers: ['ID', '标题', '产品', '分级', '状态', '处理人'],
@@ -540,16 +555,25 @@ function RequirementsTable({ isAdmin, products }: { isAdmin: boolean; products: 
 }
 
 /** 主页功能面板：先选产品，再复用单产品内的 FeatureCatalogTab（目录树 + 表格） */
-function OverviewFeaturesPanel({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+function OverviewFeaturesPanel({
+  isAdmin,
+  products,
+  onListCountChange,
+}: {
+  isAdmin: boolean;
+  products: Product[];
+  onListCountChange?: (count: number) => void;
+}) {
   const [productId, setProductId] = useState('');
 
   useEffect(() => {
     if (products.length === 0) {
       setProductId('');
+      onListCountChange?.(0);
       return;
     }
     setProductId((prev) => (prev && products.some((p) => p.id === prev) ? prev : products[0].id));
-  }, [products]);
+  }, [products, onListCountChange]);
 
   if (products.length === 0) {
     return <div className="text-center text-white/40 text-sm py-12">还没有可查看的产品，请先在「产品」中创建。</div>;
@@ -571,6 +595,7 @@ function OverviewFeaturesPanel({ isAdmin, products }: { isAdmin: boolean; produc
         showImport={isAdmin}
         showCreate
         showReleaseLink={false}
+        onListCountChange={onListCountChange}
       />
     </div>
   );
