@@ -82,6 +82,7 @@ interface TemplatePickerDialogProps {
   onClose: () => void;
   onImport: (template: WorkflowTemplate, inputs: Record<string, string>) => void;
   importing?: boolean;
+  initialTemplateId?: string | null;
 }
 
 const fieldInputStyle: React.CSSProperties = {
@@ -91,7 +92,7 @@ const fieldInputStyle: React.CSSProperties = {
   outline: 'none',
 };
 
-export function TemplatePickerDialog({ open, onClose, onImport, importing }: TemplatePickerDialogProps) {
+export function TemplatePickerDialog({ open, onClose, onImport, importing, initialTemplateId }: TemplatePickerDialogProps) {
   const [selected, setSelected] = useState<WorkflowTemplate | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [validation, setValidation] = useState<{
@@ -104,9 +105,7 @@ export function TemplatePickerDialog({ open, onClose, onImport, importing }: Tem
     apiResults?: { api: string; method: string; status: number; response: string }[];
   } | null>(null);
 
-  if (!open) return null;
-
-  function handleSelectTemplate(tpl: WorkflowTemplate) {
+  const handleSelectTemplate = useCallback((tpl: WorkflowTemplate) => {
     setSelected(tpl);
     const defaults: Record<string, string> = {};
     for (const input of tpl.requiredInputs) {
@@ -114,7 +113,15 @@ export function TemplatePickerDialog({ open, onClose, onImport, importing }: Tem
     }
     setInputs(defaults);
     setValidation(null);
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!open || !initialTemplateId) return;
+    const target = WORKFLOW_TEMPLATES.find((tpl) => tpl.id === initialTemplateId);
+    if (target && selected?.id !== target.id) handleSelectTemplate(target);
+  }, [open, initialTemplateId, selected?.id, handleSelectTemplate]);
+
+  if (!open) return null;
 
   function handleBack() {
     setSelected(null);
