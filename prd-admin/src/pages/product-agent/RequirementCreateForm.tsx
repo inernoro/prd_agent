@@ -12,7 +12,7 @@ import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWo
 import { TapdPropertyPanel, TapdPropertyRow } from './TapdPropertyPanel';
 import { toRequirementOptions } from './comboboxOptions';
 import { REQUIREMENT_PRODUCT_DEFECT_FORM_KEY } from './productDefectLinkageCatalog';
-import { REQUIREMENT_ORIGIN_FORM_KEY, REQUIREMENT_ORIGIN_OPTIONS, type RequirementOriginValue } from './requirementOriginCatalog';
+import { REQUIREMENT_ORIGIN_FORM_KEY, REQUIREMENT_ORIGIN_OPTIONS, getRequirementOriginDetailField, originDetailFormKeysExcept, type RequirementOriginValue } from './requirementOriginCatalog';
 import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
 import { RequirementTypeSelect } from './RequirementTypeSelect';
 import { validateRequirementCreateInput } from './requirementCreateValidation';
@@ -23,7 +23,8 @@ import { ITEM_GRADE_LABEL } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 const RESERVED_TEMPLATE_LABELS = new Set([
-  '需求来源', '需求类型', '客户名称', '客户', '归属版本', '标题', '名称', '描述', '需求名称', '需求描述',
+  '需求来源', '需求类型', '客户名称', '客户', '规划名称', '活动名称', '竞品名称',
+  '归属版本', '标题', '名称', '描述', '需求名称', '需求描述',
   REQUIREMENT_PRODUCT_DEFECT_FORM_KEY,
 ]);
 const RESERVED_TEMPLATE_KEYS = new Set([
@@ -221,6 +222,24 @@ export function RequirementCreateForm({
     ...(requirementType ? { [REQUIREMENT_TYPE_FORM_KEY]: requirementType } : {}),
   }), [formData, requirementOrigin, requirementType]);
 
+  const originDetail = useMemo(
+    () => getRequirementOriginDetailField(requirementOrigin),
+    [requirementOrigin],
+  );
+
+  const onOriginChange = (next: RequirementOriginValue) => {
+    setRequirementOrigin(next);
+    const dropKeys = originDetailFormKeysExcept(next);
+    if (next !== '客户反馈') setCustomerIds([]);
+    if (dropKeys.length > 0) {
+      setFormData((prev) => {
+        const nextData = { ...prev };
+        for (const key of dropKeys) delete nextData[key];
+        return nextData;
+      });
+    }
+  };
+
   /** 新建仅登记需求；是否转产品缺陷由成立后工作流流转，创建时不写入该标记 */
   const createFormData = useMemo((): Record<string, string> => (
     Object.fromEntries(
@@ -246,9 +265,11 @@ export function RequirementCreateForm({
     title,
     description,
     assigneeId,
+    requirementOrigin,
+    customerIds,
     templateFields: [...split.others, ...split.files],
     formData: createFormData,
-  }), [title, description, assigneeId, split.others, split.files, createFormData]);
+  }), [title, description, assigneeId, requirementOrigin, customerIds, split.others, split.files, createFormData]);
 
   const onAiFill = (r: RequirementAiFillResult) => {
     const applied = applyRequirementAiFill({
@@ -340,8 +361,28 @@ export function RequirementCreateForm({
         <div className="p-5 xl:p-6 bg-[#0f1014] flex flex-col gap-4">
           <TapdPropertyPanel title="基本信息">
             <TapdPropertyRow label="需求来源">
-              <RequirementOriginSelect value={requirementOrigin} onChange={setRequirementOrigin} />
+              <RequirementOriginSelect value={requirementOrigin} onChange={onOriginChange} />
             </TapdPropertyRow>
+            {originDetail && (
+              <TapdPropertyRow label={originDetail.label} required>
+                {originDetail.kind === 'customer' ? (
+                  <CustomerSearchSelect
+                    value={customerIds}
+                    onChange={setCustomerIds}
+                    customers={customerList}
+                    onCustomerCreated={(c) => setCustomerList((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]))}
+                    uiSize="md"
+                  />
+                ) : (
+                  <input
+                    value={formData[originDetail.formKey] ?? ''}
+                    onChange={(e) => setFormData((d) => ({ ...d, [originDetail.formKey]: e.target.value }))}
+                    placeholder={`请输入${originDetail.label}`}
+                    className="w-full h-9 rounded-[8px] border border-white/12 bg-[var(--bg-input)] px-2.5 text-[13px] text-white outline-none focus:border-cyan-500/40 no-focus-ring placeholder:text-white/25"
+                  />
+                )}
+              </TapdPropertyRow>
+            )}
             <TapdPropertyRow label="需求类型">
               <RequirementTypeSelect value={requirementType} onChange={setRequirementType} />
             </TapdPropertyRow>
@@ -359,15 +400,6 @@ export function RequirementCreateForm({
                 placeholder="搜索需求..."
                 clearOptionLabel="无（顶层）"
                 countUnit="条"
-                uiSize="md"
-              />
-            </TapdPropertyRow>
-            <TapdPropertyRow label="客户名称">
-              <CustomerSearchSelect
-                value={customerIds}
-                onChange={setCustomerIds}
-                customers={customerList}
-                onCustomerCreated={(c) => setCustomerList((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]))}
                 uiSize="md"
               />
             </TapdPropertyRow>

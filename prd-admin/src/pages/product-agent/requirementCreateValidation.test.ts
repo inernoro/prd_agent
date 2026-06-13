@@ -41,4 +41,52 @@ describe('validateRequirementCreateInput', () => {
   it('全部合法返回 null', () => {
     expect(validateRequirementCreateInput(base)).toBeNull();
   });
+
+  it('客户反馈未选客户报错', () => {
+    expect(validateRequirementCreateInput({
+      ...base,
+      requirementOrigin: '客户反馈',
+      customerIds: [],
+    })).toBe('请选择客户名称');
+  });
+
+  it('客户反馈已选客户通过', () => {
+    expect(validateRequirementCreateInput({
+      ...base,
+      requirementOrigin: '客户反馈',
+      customerIds: ['c1'],
+    })).toBeNull();
+  });
+
+  it('内部规划未填规划名称报错', () => {
+    expect(validateRequirementCreateInput({
+      ...base,
+      requirementOrigin: '内部规划',
+      formData: {},
+    })).toBe('请填写规划名称');
+  });
+
+  it('运营活动需填活动名称', () => {
+    expect(validateRequirementCreateInput({
+      ...base,
+      requirementOrigin: '运营活动',
+      formData: { 活动名称: '618 大促' },
+    })).toBeNull();
+  });
+
+  it('竞品调研需填竞品名称', () => {
+    expect(validateRequirementCreateInput({
+      ...base,
+      requirementOrigin: '竞品调研',
+      formData: {},
+    })).toBe('请填写竞品名称');
+  });
+
+  it('其他来源不要求客户或补充字段', () => {
+    expect(validateRequirementCreateInput({
+      ...base,
+      requirementOrigin: '其他',
+      customerIds: [],
+    })).toBeNull();
+  });
 });
