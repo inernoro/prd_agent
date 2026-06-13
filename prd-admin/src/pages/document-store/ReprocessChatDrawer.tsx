@@ -25,6 +25,7 @@ import {
   saveReprocessConversation,
   clearReprocessConversation,
   createShortVideoMaterialRun,
+  getShortVideoMaterialRun,
 } from '@/services';
 import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
@@ -250,13 +251,63 @@ const SHORT_VIDEO_TOOLBOX_ITEM: ToolboxItem = {
 };
 
 const SHORT_VIDEO_SESSION_PREFIX = 'short-video-tool:';
+const SHORT_VIDEO_ACTIVE_RUN_KEY = 'short-video-material:active-run';
+
+type ShortVideoResultLike = {
+  run: import('@/services').ShortVideoMaterialRun;
+  storeId: string;
+  sourceEntryId: string;
+  transcriptEntryId: string;
+  timelineEntryId: string;
+};
+
+function shortVideoRunStorageKey(storeId: string) {
+  return `${SHORT_VIDEO_ACTIVE_RUN_KEY}:${storeId}`;
+}
+
+function saveActiveShortVideoRun(storeId: string, runId: string) {
+  try { sessionStorage.setItem(shortVideoRunStorageKey(storeId), runId); } catch { /* ignore */ }
+}
+
+function loadActiveShortVideoRun(storeId: string): string | null {
+  try { return sessionStorage.getItem(shortVideoRunStorageKey(storeId)); } catch { return null; }
+}
+
+function clearActiveShortVideoRun(storeId: string, runId?: string) {
+  try {
+    const key = shortVideoRunStorageKey(storeId);
+    if (!runId || sessionStorage.getItem(key) === runId) sessionStorage.removeItem(key);
+  } catch { /* ignore */ }
+}
 
 function extractUrl(text: string): string | null {
   const hit = text.match(/https?:\/\/[^\s"'<>]+/i);
   return hit?.[0] ?? null;
 }
 
-function buildShortVideoResultMessage(result: import('@/services').ShortVideoMaterialRunResponse): string {
+function shortVideoResultFromRun(run: import('@/services').ShortVideoMaterialRun): ShortVideoResultLike | null {
+  if (!run.storeId || !run.sourceEntryId || !run.transcriptEntryId || !run.timelineEntryId) return null;
+  return {
+    run,
+    storeId: run.storeId,
+    sourceEntryId: run.sourceEntryId,
+    transcriptEntryId: run.transcriptEntryId,
+    timelineEntryId: run.timelineEntryId,
+  };
+}
+
+function formatShortVideoProgress(run: import('@/services').ShortVideoMaterialRun): string {
+  const lines = [
+    `后台任务：${run.status === 'queued' ? '等待执行' : run.status === 'running' ? '正在执行' : run.status}`,
+    `运行 ID：${run.id}`,
+    '',
+    '服务端进度：',
+    ...((run.stages ?? []).map((stage) => `- ${stage.label}：${stage.status}，${stage.message}`)),
+  ];
+  return lines.join('\n');
+}
+
+function buildShortVideoResultMessage(result: ShortVideoResultLike): string {
   const title = result.run.title || '短视频素材';
   const parserMessage = result.run.parserMessage?.trim();
   const isFallback = result.run.sourceMode === 'metadata-fallback';
@@ -274,7 +325,7 @@ function buildShortVideoResultMessage(result: import('@/services').ShortVideoMat
   ].filter((line): line is string => line !== null).join('\n');
 }
 
-function buildShortVideoQuickActions(result: import('@/services').ShortVideoMaterialRunResponse): ChatQuickAction[] {
+function buildShortVideoQuickActions(result: ShortVideoResultLike): ChatQuickAction[] {
   const title = result.run.title || '短视频素材';
   return [
     {
@@ -402,6 +453,7 @@ export function ReprocessChatDrawer({
   // 否则 apply 在 doc A 上跑，返回时 doc 已切到 B，错把"成功"绑到 B（Bugbot #3 二轮 Medium）。
   const entryIdRef = useRef(conversationKey);
   const initialInputAppliedRef = useRef(false);
+  const restoredShortVideoRunRef = useRef<string | null>(null);
   // 同步 apply 锁：和 sendLockRef 同思路，state 异步 setApplying 之前快速双击会让
   // 两次 handleApply 都跑过 if(applying) 检查，跑两次写回（Codex P2 十轮）
   const applyLockRef = useRef(false);
@@ -951,6 +1003,108 @@ export function ReprocessChatDrawer({
     cancelStreamRef.current = stop;
   }, [entryId, loadingDoc, docLoadError, messages, docContent, docTruncated, scrollToBottom, capabilityForAgent, selectedParams]);
 
+  const pollShortVideoRun = useCallback(async (runId: string, messageId: string, ownerKey: string) => {
+    for (let i = 0; i < 240; i += 1) {
+      if (entryIdRef.current !== ownerKey) return;
+      const res = await getShortVideoMaterialRun(runId);
+      if (entryIdRef.current !== ownerKey) return;
+      if (!res.success || !res.data) {
+        const message = res.error?.message || '无法读取短视频后台任务';
+        setMessages((prev) => prev.map((m) => m.id === messageId
+          ? { ...m, streaming: false, phase: 'error', content: `（读取后台任务失败：${message}）` }
+          : m));
+        setStreamingId(null);
+        return;
+      }
+
+      const run = res.data;
+      if (run.status === 'done') {
+        const result = shortVideoResultFromRun(run);
+        if (!result) {
+          setMessages((prev) => prev.map((m) => m.id === messageId
+            ? { ...m, streaming: false, phase: 'error', content: '（后台任务已完成，但服务端未返回完整入库产物）' }
+            : m));
+          setStreamingId(null);
+          return;
+        }
+        setMessages((prev) => prev.map((m) => m.id === messageId
+          ? {
+              ...m,
+              streaming: false,
+              phase: 'done',
+              content: buildShortVideoResultMessage(result),
+              quickActions: buildShortVideoQuickActions(result),
+            }
+          : m));
+        clearActiveShortVideoRun(storeId, runId);
+        setStreamingId(null);
+        sendLockRef.current = false;
+        onStoreChanged?.();
+        window.setTimeout(() => onStoreChanged?.(), 1200);
+        return;
+      }
+
+      if (run.status === 'failed') {
+        const message = run.errorMessage || '短视频解析失败';
+        setMessages((prev) => prev.map((m) => m.id === messageId
+          ? { ...m, streaming: false, phase: 'error', content: `${formatShortVideoProgress(run)}\n\n（解析失败：${message}）` }
+          : m));
+        clearActiveShortVideoRun(storeId, runId);
+        setStreamingId(null);
+        sendLockRef.current = false;
+        return;
+      }
+
+      setMessages((prev) => prev.map((m) => m.id === messageId
+        ? {
+            ...m,
+            streaming: true,
+            phase: 'streaming',
+            content: formatShortVideoProgress(run),
+          }
+        : m));
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+
+    if (entryIdRef.current === ownerKey) {
+      setMessages((prev) => prev.map((m) => m.id === messageId
+        ? { ...m, streaming: false, phase: 'error', content: `${m.content}\n\n（后台任务等待超时，请稍后重新打开查看服务端状态）` }
+        : m));
+      setStreamingId(null);
+      sendLockRef.current = false;
+    }
+  }, [onStoreChanged, storeId]);
+
+  useEffect(() => {
+    if (!isShortVideoMode) return;
+    const runId = loadActiveShortVideoRun(storeId);
+    if (!runId || restoredShortVideoRunRef.current === runId) return;
+    restoredShortVideoRunRef.current = runId;
+    const ownerKey = conversationKey;
+    const messageId = `short-video-run-${runId}`;
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === messageId)) return prev;
+      return [
+        ...prev,
+        {
+          id: messageId,
+          role: 'assistant',
+          invoker: {
+            kind: 'toolbox',
+            label: SHORT_VIDEO_TOOLBOX_ITEM.name,
+            ref: SHORT_VIDEO_TOOLBOX_ITEM.id,
+            icon: SHORT_VIDEO_TOOLBOX_ITEM.icon,
+          },
+          content: `正在恢复短视频后台任务：${runId}`,
+          streaming: true,
+          phase: 'streaming',
+        },
+      ];
+    });
+    setStreamingId(messageId);
+    void pollShortVideoRun(runId, messageId, ownerKey);
+  }, [conversationKey, isShortVideoMode, pollShortVideoRun, storeId]);
+
   const runShortVideoTool = useCallback(async (userText: string) => {
     if (sendLockRef.current) return;
     const url = extractUrl(userText);
@@ -998,18 +1152,17 @@ export function ReprocessChatDrawer({
         return;
       }
       const result = res.data;
+      saveActiveShortVideoRun(storeId, result.run.id);
       setMessages((prev) => prev.map((m) => m.id === asstMsgId
         ? {
             ...m,
-            streaming: false,
-            phase: 'done',
-            content: buildShortVideoResultMessage(result),
-            quickActions: buildShortVideoQuickActions(result),
+            streaming: true,
+            phase: 'streaming',
+            content: formatShortVideoProgress(result.run),
           }
         : m));
-      onStoreChanged?.();
-      window.setTimeout(() => onStoreChanged?.(), 1200);
-      toast.success('短视频已保存到知识库', '可继续打开字幕、时间轴或原始素材加工');
+      toast.success('短视频后台任务已创建', '可以刷新页面，进度会从服务端恢复');
+      await pollShortVideoRun(result.run.id, asstMsgId, ownerKey);
     } catch (e) {
       if (entryIdRef.current !== ownerKey) return;
       const message = e instanceof Error ? e.message : '网络异常';
@@ -1019,11 +1172,13 @@ export function ReprocessChatDrawer({
         : m));
     } finally {
       if (entryIdRef.current === ownerKey) {
-        setStreamingId(null);
-        sendLockRef.current = false;
+        if (!loadActiveShortVideoRun(storeId)) {
+          setStreamingId(null);
+          sendLockRef.current = false;
+        }
       }
     }
-  }, [conversationKey, scrollToBottom, storeId, onStoreChanged]);
+  }, [conversationKey, pollShortVideoRun, scrollToBottom, storeId]);
 
   const handleSendInput = useCallback(() => {
     if (!input.trim()) return;

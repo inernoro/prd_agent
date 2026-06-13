@@ -338,7 +338,9 @@ builder.Services.AddHttpClient("DocStoreAgent");
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoMaterialProcessor>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ShortVideoMaterialWorker>();
 // 启动时把内置「再加工·智能体」种入 DB（reprocess_agents 集合）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
 

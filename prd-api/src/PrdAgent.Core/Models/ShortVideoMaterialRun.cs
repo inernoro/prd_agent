@@ -20,6 +20,12 @@ public class ShortVideoMaterialRun
     /// <summary>素材标题</summary>
     public string Title { get; set; } = string.Empty;
 
+    /// <summary>用户提交时传入的标题，用于后台任务恢复</summary>
+    public string? RequestedTitle { get; set; }
+
+    /// <summary>用户提交时附带的字幕/文案，用于后台任务恢复</summary>
+    public string? InputSourceText { get; set; }
+
     /// <summary>文案/字幕来源：manual / tikhub-metadata / metadata-fallback</summary>
     public string SourceMode { get; set; } = "manual";
 
@@ -40,6 +46,15 @@ public class ShortVideoMaterialRun
 
     /// <summary>默认选中的产物条目 ID</summary>
     public string? EntryId { get; set; }
+
+    /// <summary>原始视频素材条目 ID</summary>
+    public string? SourceEntryId { get; set; }
+
+    /// <summary>字幕文稿条目 ID</summary>
+    public string? TranscriptEntryId { get; set; }
+
+    /// <summary>时间轴片段条目 ID</summary>
+    public string? TimelineEntryId { get; set; }
 
     /// <summary>错误信息</summary>
     public string? ErrorMessage { get; set; }

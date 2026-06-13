@@ -17,12 +17,17 @@ export interface ShortVideoMaterialRun {
   videoUrl: string;
   platform: string;
   title: string;
+  requestedTitle?: string;
+  inputSourceText?: string;
   sourceMode: 'manual' | 'tikhub-metadata' | 'metadata-fallback' | string;
   parserMessage?: string;
-  status: 'running' | 'done' | 'failed' | string;
+  status: 'queued' | 'running' | 'done' | 'failed' | string;
   stages: ShortVideoMaterialStage[];
   storeId?: string;
   entryId?: string;
+  sourceEntryId?: string;
+  transcriptEntryId?: string;
+  timelineEntryId?: string;
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;

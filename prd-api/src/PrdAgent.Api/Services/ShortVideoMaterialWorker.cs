@@ -1,40 +1,153 @@
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
-using PrdAgent.Api.Extensions;
-using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
-namespace PrdAgent.Api.Controllers.Api;
+namespace PrdAgent.Api.Services;
 
 /// <summary>
-/// 短视频素材解析：短视频链接/字幕 → 知识库可编辑素材资产。
+/// 短视频素材解析后台 Worker。遵循服务器权威性：HTTP 只创建 run，实际解析和入库由 Worker 持续推进。
 /// </summary>
-[ApiController]
-[Route("api/short-video-materials")]
-[Authorize]
-[AdminController("document-store", AdminPermissionCatalog.DocumentStoreWrite)]
-public class ShortVideoMaterialController : ControllerBase
+public sealed class ShortVideoMaterialWorker : BackgroundService
+{
+    private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(2);
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<ShortVideoMaterialWorker> _logger;
+    private string? _currentRunId;
+
+    public ShortVideoMaterialWorker(IServiceScopeFactory scopeFactory, ILogger<ShortVideoMaterialWorker> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("[short-video-material] Worker started");
+        await RecoverRunningRunsAsync();
+
+        try
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await ProcessNextRunAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[short-video-material] Worker loop error");
+                }
+                await Task.Delay(ScanInterval, stoppingToken);
+            }
+        }
+        finally
+        {
+            await MarkCurrentRunFailedAsync("Worker 关闭，短视频解析任务被中断");
+        }
+    }
+
+    private async Task RecoverRunningRunsAsync()
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
+                r => r.Status == "running",
+                Builders<ShortVideoMaterialRun>.Update
+                    .Set(r => r.Status, "failed")
+                    .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
+                    .Set(r => r.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+            if (recovered.ModifiedCount > 0)
+                _logger.LogWarning("[short-video-material] 启动兜底：{Count} 个残留 running run 标记为失败", recovered.ModifiedCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[short-video-material] 启动兜底回收失败");
+        }
+    }
+
+    private async Task MarkCurrentRunFailedAsync(string message)
+    {
+        if (string.IsNullOrWhiteSpace(_currentRunId)) return;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            await db.ShortVideoMaterialRuns.UpdateOneAsync(
+                r => r.Id == _currentRunId && r.Status == "running",
+                Builders<ShortVideoMaterialRun>.Update
+                    .Set(r => r.Status, "failed")
+                    .Set(r => r.ErrorMessage, message)
+                    .Set(r => r.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+        }
+        catch { /* ignore */ }
+    }
+
+    private async Task ProcessNextRunAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var processor = scope.ServiceProvider.GetRequiredService<ShortVideoMaterialProcessor>();
+
+        var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
+            Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
+            Builders<ShortVideoMaterialRun>.Update
+                .Set(r => r.Status, "running")
+                .Set(r => r.UpdatedAt, DateTime.UtcNow),
+            new FindOneAndUpdateOptions<ShortVideoMaterialRun>
+            {
+                Sort = Builders<ShortVideoMaterialRun>.Sort.Ascending(r => r.CreatedAt),
+                ReturnDocument = ReturnDocument.After,
+            },
+            cancellationToken: CancellationToken.None);
+        if (run == null) return;
+
+        _currentRunId = run.Id;
+        try
+        {
+            await processor.ProcessAsync(run.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[short-video-material] Process failed run={RunId}", run.Id);
+            var latest = await db.ShortVideoMaterialRuns.Find(r => r.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+            if (latest != null)
+            {
+                latest.Status = "failed";
+                latest.ErrorMessage = ex.Message;
+                ShortVideoMaterialProcessor.MarkFirstRunningStageFailed(latest, ex.Message);
+                latest.UpdatedAt = DateTime.UtcNow;
+                await db.ShortVideoMaterialRuns.ReplaceOneAsync(r => r.Id == latest.Id, latest, cancellationToken: CancellationToken.None);
+            }
+        }
+        finally
+        {
+            _currentRunId = null;
+        }
+    }
+}
+
+public sealed class ShortVideoMaterialProcessor
 {
     private readonly MongoDbContext _db;
     private readonly IDocumentService _documentService;
     private readonly IConfiguration _config;
     private readonly IServiceProvider _serviceProvider;
-    private readonly ILogger<ShortVideoMaterialController> _logger;
+    private readonly ILogger<ShortVideoMaterialProcessor> _logger;
 
-    public ShortVideoMaterialController(
+    public ShortVideoMaterialProcessor(
         MongoDbContext db,
         IDocumentService documentService,
         IConfiguration config,
         IServiceProvider serviceProvider,
-        ILogger<ShortVideoMaterialController> logger)
+        ILogger<ShortVideoMaterialProcessor> logger)
     {
         _db = db;
         _documentService = documentService;
@@ -43,55 +156,104 @@ public class ShortVideoMaterialController : ControllerBase
         _logger = logger;
     }
 
-    private string GetUserId() => this.GetRequiredUserId();
-
-    [HttpPost("runs")]
-    public async Task<IActionResult> CreateRun([FromBody] CreateShortVideoMaterialRequest req)
+    public async Task ProcessAsync(string runId)
     {
-        var userId = GetUserId();
+        var run = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(CancellationToken.None)
+                  ?? throw new InvalidOperationException("短视频解析运行记录不存在");
+        var user = await _db.Users.Find(u => u.UserId == run.UserId).FirstOrDefaultAsync(CancellationToken.None);
+        var userName = string.IsNullOrWhiteSpace(user?.DisplayName) ? user?.Username ?? run.UserId : user.DisplayName!;
         var now = DateTime.UtcNow;
-        var videoUrl = ShortVideoMaterialProcessor.ExtractUrl(req.VideoUrl);
-        if (string.IsNullOrWhiteSpace(videoUrl))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写短视频链接"));
 
-        var platform = ShortVideoMaterialProcessor.DetectPlatform(videoUrl);
-        var title = CleanTitle(req.Title) ?? $"短视频素材 {DateTime.UtcNow:yyyyMMdd-HHmm}";
-        var run = new ShortVideoMaterialRun
-        {
-            UserId = userId,
-            VideoUrl = videoUrl,
-            Platform = platform,
-            Title = title,
-            RequestedTitle = req.Title,
-            InputSourceText = req.SourceText,
-            SourceMode = "resolving",
-            Status = "queued",
-            StoreId = string.IsNullOrWhiteSpace(req.StoreId) ? null : req.StoreId,
-            CreatedAt = now,
-            UpdatedAt = now,
-            Stages = ShortVideoMaterialProcessor.BuildInitialStages(),
-        };
-        await _db.ShortVideoMaterialRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        var parsed = await ResolveParsedSourceAsync(run.VideoUrl, run.Platform, run.InputSourceText, run.RequestedTitle);
+        var title = CleanTitle(run.RequestedTitle) ?? CleanTitle(parsed.Title) ?? run.Title;
+        var sourceText = NormalizeSourceText(parsed.SourceText, title, run.VideoUrl, run.Platform);
 
-        var response = new ShortVideoMaterialRunResponse
-        {
-            Run = run,
-            StoreId = run.StoreId ?? string.Empty,
-            EntryIds = new List<string>(),
-        };
-        return Ok(ApiResponse<ShortVideoMaterialRunResponse>.Ok(response));
-    }
+        run.Title = title;
+        run.SourceMode = parsed.SourceMode;
+        run.ParsedMetadataJson = parsed.MetadataJson;
+        run.ParserMessage = parsed.Message;
+        MarkStage(run, "parse", "done", parsed.Message);
+        await SaveRunAsync(run);
 
-    [HttpGet("runs/{runId}")]
-    public async Task<IActionResult> GetRun(string runId)
-    {
-        var userId = GetUserId();
-        var run = await _db.ShortVideoMaterialRuns
-            .Find(r => r.Id == runId && r.UserId == userId)
-            .FirstOrDefaultAsync(CancellationToken.None);
-        if (run == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
-        return Ok(ApiResponse<ShortVideoMaterialRun>.Ok(run));
+        var store = await ResolveStoreAsync(run.StoreId, run.UserId);
+        run.StoreId = store.Id;
+        MarkStage(run, "source", "running", $"正在写入知识库「{store.Name}」");
+        await SaveRunAsync(run);
+
+        var sourceEntry = await CreateMarkdownEntryAsync(
+            store,
+            run.UserId,
+            userName,
+            $"{title} · 原始视频素材.md",
+            BuildSourceMarkdown(title, run.VideoUrl, run.Platform, parsed),
+            $"{title}：原始短视频素材",
+            new List<string> { "短视频", "素材", run.Platform, "原始视频" },
+            new Dictionary<string, string>
+            {
+                ["kind"] = "short-video-source",
+                ["runId"] = run.Id,
+                ["videoUrl"] = run.VideoUrl,
+                ["platform"] = run.Platform,
+                ["sourceMode"] = parsed.SourceMode,
+            },
+            now);
+        run.SourceEntryId = sourceEntry.Id;
+        MarkStage(run, "source", "done", "原始视频素材已作为知识库资产沉淀");
+        await SaveRunAsync(run);
+
+        MarkStage(run, "transcript", "running", "正在写入字幕/文案资产");
+        await SaveRunAsync(run);
+        var transcriptEntry = await CreateMarkdownEntryAsync(
+            store,
+            run.UserId,
+            userName,
+            $"{title} · 字幕文稿.md",
+            BuildTranscriptMarkdown(title, run.VideoUrl, run.Platform, sourceText, parsed.SourceMode),
+            $"{title}：短视频字幕与文案素材",
+            new List<string> { "短视频", "字幕", "文案", run.Platform },
+            new Dictionary<string, string>
+            {
+                ["kind"] = "short-video-transcript",
+                ["runId"] = run.Id,
+                ["sourceEntryId"] = sourceEntry.Id,
+                ["videoUrl"] = run.VideoUrl,
+                ["platform"] = run.Platform,
+                ["sourceMode"] = parsed.SourceMode,
+            },
+            now);
+        run.TranscriptEntryId = transcriptEntry.Id;
+        MarkStage(run, "transcript", "done", "字幕/文案资产已写入知识库，可继续编辑或再加工");
+        await SaveRunAsync(run);
+
+        MarkStage(run, "timeline", "running", "正在生成时间轴片段资产");
+        await SaveRunAsync(run);
+        var timeline = BuildTimeline(sourceText);
+        var timelineEntry = await CreateMarkdownEntryAsync(
+            store,
+            run.UserId,
+            userName,
+            $"{title} · 时间轴片段.md",
+            BuildTimelineMarkdown(title, run.VideoUrl, run.Platform, timeline),
+            $"{title}：短视频时间轴片段",
+            new List<string> { "短视频", "时间轴", "片段", run.Platform },
+            new Dictionary<string, string>
+            {
+                ["kind"] = "short-video-timeline",
+                ["runId"] = run.Id,
+                ["sourceEntryId"] = sourceEntry.Id,
+                ["transcriptEntryId"] = transcriptEntry.Id,
+                ["videoUrl"] = run.VideoUrl,
+                ["platform"] = run.Platform,
+            },
+            now);
+        run.TimelineEntryId = timelineEntry.Id;
+        MarkStage(run, "timeline", "done", "时间轴片段已写入知识库，可作为教程、脚本或网页素材继续加工");
+
+        MarkStage(run, "ready", "done", "素材已就绪：可选中字幕或时间轴继续使用智能体再加工、生成字幕、配图或发布");
+        run.EntryId = transcriptEntry.Id;
+        run.Status = "done";
+        run.UpdatedAt = DateTime.UtcNow;
+        await SaveRunAsync(run);
     }
 
     private async Task<DocumentStore> ResolveStoreAsync(string? storeId, string userId)
@@ -106,7 +268,7 @@ public class ShortVideoMaterialController : ControllerBase
             return existing;
         }
 
-        var storeName = "短视频素材库";
+        const string storeName = "短视频素材库";
         var store = await _db.DocumentStores
             .Find(s => s.OwnerId == userId && s.Name == storeName)
             .FirstOrDefaultAsync(CancellationToken.None);
@@ -177,6 +339,7 @@ public class ShortVideoMaterialController : ControllerBase
 
     private async Task SaveRunAsync(ShortVideoMaterialRun run)
     {
+        run.UpdatedAt = DateTime.UtcNow;
         await _db.ShortVideoMaterialRuns.ReplaceOneAsync(
             r => r.Id == run.Id,
             run,
@@ -184,10 +347,10 @@ public class ShortVideoMaterialController : ControllerBase
             CancellationToken.None);
     }
 
-    private static List<ShortVideoMaterialStage> BuildInitialStages()
+    public static List<ShortVideoMaterialStage> BuildInitialStages()
         => new()
         {
-            Stage("parse", "解析素材来源", "running", "服务端已接收链接，正在解析短视频素材"),
+            Stage("parse", "解析素材来源", "pending", "服务端已创建后台任务，等待 Worker 拾取"),
             Stage("source", "沉淀原始素材", "pending", "等待解析结果"),
             Stage("transcript", "沉淀字幕文案", "pending", "等待素材资产生成"),
             Stage("timeline", "沉淀时间轴片段", "pending", "等待字幕文案生成"),
@@ -210,7 +373,7 @@ public class ShortVideoMaterialController : ControllerBase
         stage.At = DateTime.UtcNow;
     }
 
-    private static void MarkFirstRunningStageFailed(ShortVideoMaterialRun run, string message)
+    public static void MarkFirstRunningStageFailed(ShortVideoMaterialRun run, string message)
     {
         var stage = run.Stages.FirstOrDefault(s => s.Status == "running")
                     ?? run.Stages.FirstOrDefault(s => s.Status == "pending");
@@ -220,20 +383,14 @@ public class ShortVideoMaterialController : ControllerBase
         stage.At = DateTime.UtcNow;
     }
 
-    private static string? CleanTitle(string? title)
-    {
-        var t = title?.Trim();
-        return string.IsNullOrWhiteSpace(t) ? null : t.Length > 80 ? t[..80] : t;
-    }
-
-    private static string ExtractUrl(string? input)
+    public static string ExtractUrl(string? input)
     {
         if (string.IsNullOrWhiteSpace(input)) return string.Empty;
         var match = Regex.Match(input, @"https?://[^\s""']+", RegexOptions.IgnoreCase);
         return match.Success ? match.Value.TrimEnd('。', '，', ',', '.', ')', ']') : input.Trim();
     }
 
-    private static string DetectPlatform(string url)
+    public static string DetectPlatform(string url)
     {
         var lower = url.ToLowerInvariant();
         if (lower.Contains("douyin.com") || lower.Contains("iesdouyin.com")) return "douyin";
@@ -399,6 +556,12 @@ public class ShortVideoMaterialController : ControllerBase
     private static string? FirstNonEmpty(params string?[] values)
         => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
 
+    private static string? CleanTitle(string? title)
+    {
+        var t = title?.Trim();
+        return string.IsNullOrWhiteSpace(t) ? null : t.Length > 80 ? t[..80] : t;
+    }
+
     private static string NormalizeSourceText(string? sourceText, string title, string videoUrl, string platform)
     {
         var text = sourceText?.Trim();
@@ -508,26 +671,4 @@ public class ShortVideoMaterialController : ControllerBase
     private sealed record ParsedShortVideoSource(string? Title, string? SourceText, string SourceMode, string Message, string? MetadataJson);
     private sealed record ParsedVideoMetadata(string? Title);
     private sealed record TimelineSegment(string Time, string Text);
-}
-
-public class CreateShortVideoMaterialRequest
-{
-    public string VideoUrl { get; set; } = string.Empty;
-    public string? SourceText { get; set; }
-    public string? Title { get; set; }
-    public string? StoreId { get; set; }
-}
-
-public class ShortVideoMaterialRunResponse
-{
-    public ShortVideoMaterialRun Run { get; set; } = new();
-    public string StoreId { get; set; } = string.Empty;
-    public List<string> EntryIds { get; set; } = new();
-    public string SourceEntryId { get; set; } = string.Empty;
-    public string TranscriptEntryId { get; set; } = string.Empty;
-    public string TimelineEntryId { get; set; } = string.Empty;
-    public string StoreUrl { get; set; } = string.Empty;
-    public string SourceUrl { get; set; } = string.Empty;
-    public string TranscriptUrl { get; set; } = string.Empty;
-    public string TimelineUrl { get; set; } = string.Empty;
 }
