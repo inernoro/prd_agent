@@ -40,4 +40,13 @@ describe('parseProductHistoryCsv', () => {
       completedAt: undefined,
     }]);
   });
+
+  it('treats blank requirement id as missing', () => {
+    const rows = parseProductHistoryCsv([
+      '需求ID,标题,描述,应用',
+      ',无ID需求,说明文案,产品管理系统',
+    ].join('\n'));
+    expect(rows[0].externalId).toBeUndefined();
+    expect(rows[0].title).toBe('无ID需求');
+  });
 });

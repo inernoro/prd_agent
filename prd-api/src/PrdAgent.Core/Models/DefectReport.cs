@@ -8,7 +8,7 @@ public class DefectReport
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>缺陷 ID（TAPD 规则：纯数字；导入保留 TAPD ID，新建在本产品最大 ID 基础上 +1）</summary>
+    /// <summary>缺陷 ID（TAPD 规则：纯数字；全库 DefectReports 单表全局递增，与产品无关；导入可保留外部 TAPD ID）</summary>
     public string DefectNo { get; set; } = string.Empty;
 
     /// <summary>使用的模板 ID</summary>

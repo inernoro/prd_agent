@@ -6,6 +6,7 @@ public class ProductInitiation
     public string ProductId { get; set; } = string.Empty;
     /// <summary>立项关联的产品目录条目（替代手填系统/应用）</summary>
     public string? LinkedProductId { get; set; }
+    /// <summary>立项编号 T{a}.{b}.{c}，全库 ProductInitiations 全局递增，与产品无关</summary>
     public string? TCode { get; set; }
     public string? SystemName { get; set; }
     public string? AppName { get; set; }
@@ -76,6 +77,7 @@ public class ProductRelease
     public string ProductId { get; set; } = string.Empty;
     public string? InitiationId { get; set; }
     public string? TCode { get; set; }
+    /// <summary>正式版本编号 V{a}.{b}.{c}，全库 ProductReleases 全局递增，与产品无关</summary>
     public string VCode { get; set; } = string.Empty;
     public string? SystemName { get; set; }
     public string? AppName { get; set; }

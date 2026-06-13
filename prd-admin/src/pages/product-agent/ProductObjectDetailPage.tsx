@@ -64,6 +64,7 @@ import type { Requirement, Feature, Product, ProductVersion, ProductRelease, Cus
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 import { slaInfo } from './sla';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
+import { ProductAssigneePicker } from './ProductAssigneePicker';
 
 const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
   basic: '基础功能',
@@ -833,7 +834,7 @@ function FeatureCreateForm({
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>处理人</FieldLabel>
-                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+                <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>父功能</FieldLabel>
@@ -1006,7 +1007,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel>处理人</FieldLabel>
-              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+              <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} />
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel required>关联功能</FieldLabel>
@@ -1197,7 +1198,7 @@ function RequirementDetail({
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>处理人</FieldLabel>
-                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+                <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} />
               </div>
               <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
                 <input
@@ -1662,7 +1663,7 @@ function FeatureDetail({
               <UserSearchSelect value={ownerId} onChange={setOwnerId} uiSize="md" />
             </TapdPropertyRow>
             <TapdPropertyRow label="处理人">
-              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} uiSize="md" />
+              <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} uiSize="md" />
             </TapdPropertyRow>
             <TapdPropertyRow label="父功能">
               <ParentSelect
