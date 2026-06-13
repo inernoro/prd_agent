@@ -6,3 +6,4 @@
 | fix | prd-admin | 修复发送到对端弹窗加载错误误判为同步失败的问题 |
 | fix | prd-api | 对齐产品工作流默认流转数量与目录测试断言 |
 | chore | .claude | 修复视觉验收归档 local 模式默认输出目录绕过代码库保护的问题 |
+| ci | github-actions | 将预览冒烟和 Playwright E2E 移出 PR 必经 CI,改为独立手动验收 workflow |
