@@ -167,12 +167,12 @@ export function OverviewShell() {
         </div>
       )}
       {active === 'defects' && (
-        <SectionShell title="缺陷（跨产品）" desc="全部产品追溯到产品的缺陷汇总，点击进入缺陷详情">
+        <SectionShell title="缺陷" desc="全部产品追溯到产品的缺陷汇总，点击进入缺陷详情">
           <DefectsTable isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
       {active === 'versions' && (
-        <SectionShell title="版本（跨产品）" desc="正式版本与内部版本分 tab 展示；点击行进入三标签详情页（基础信息 / 需求 / 功能）；管理员可导入 Excel 历史数据">
+        <SectionShell title="版本" desc="正式版本与内部版本分 tab 展示；点击行进入三标签详情页（基础信息 / 需求 / 功能）；管理员可导入 Excel 历史数据">
           <VersionOverviewSection isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
@@ -182,7 +182,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'knowledge' && (
-        <SectionShell title="知识库（跨产品）" desc="所有可访问产品的知识聚合列表，点击查看详情；新建 / 治理进入具体产品">
+        <SectionShell title="知识库" desc="所有可访问产品的知识聚合列表，点击查看详情；新建 / 治理进入具体产品">
           <KnowledgeSection />
         </SectionShell>
       )}

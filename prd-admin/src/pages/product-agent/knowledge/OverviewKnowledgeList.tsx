@@ -62,7 +62,7 @@ export function OverviewKnowledgeList() {
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }}
-            placeholder="跨产品搜索知识（标题 / 全文），回车确认"
+            placeholder="搜索知识（标题 / 全文），回车确认"
             className="no-focus-ring bg-transparent text-sm text-white outline-none w-64"
           />
           {keyword && <button onClick={clearAll} className="text-white/30 hover:text-white"><X size={13} /></button>}
