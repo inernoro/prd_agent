@@ -1,8 +1,8 @@
 /**
- * 正式版本申领 / 详情 — 基础信息 + 需求 + 功能三标签页。
+ * 正式版本申领 / 详情 — 基础信息 + 需求 + 功能 + 缺陷四标签页。
  * 路由：/product-agent/p/:productId/release/:id（id=new 为新建）
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -18,8 +18,11 @@ import {
   listFeatures,
   listInitiations,
   listProductMembers,
+  listReleases,
   listRequirements,
+  listTracedDefects,
   updateReleaseFeatureManifest,
+  type TracedDefect,
 } from '@/services/real/productAgent';
 import type {
   Feature,
@@ -30,7 +33,11 @@ import type {
   ReleaseFeatureItem,
   Requirement,
 } from './types';
+import { ITEM_GRADE_LABEL, defectSeverityTierLabel, defectStatusLabel } from './types';
+import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
+import { useEffectiveWorkflow } from './DynamicForm';
 import { RequirementLinkList } from './WorkflowObjectLinkList';
+import { WorkflowAttributeTable, WorkflowDetailCard, WorkflowRecordTable, workflowFmtDate } from './workflowDetailUi';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -52,7 +59,7 @@ const CHANGE_BADGE_CLASS: Record<FeatureChangeType, string> = {
   unchanged: 'border-white/15 bg-white/5 text-white/45',
 };
 
-type DetailTab = 'basic' | 'requirements' | 'manifest';
+type DetailTab = 'basic' | 'requirements' | 'manifest' | 'defects';
 
 export function ReleaseWorkflowDetail({
   productId,
@@ -81,6 +88,8 @@ export function ReleaseWorkflowDetail({
   const [baselineManifest, setBaselineManifest] = useState<ReleaseFeatureItem[]>([]);
   const [linkedInitiation, setLinkedInitiation] = useState<ProductInitiation | null>(null);
   const [userDisplayNames, setUserDisplayNames] = useState<Map<string, string>>(new Map());
+  const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
+  const [loadError, setLoadError] = useState('');
 
   const [initiationId, setInitiationId] = useState('');
   const [ownerId, setOwnerId] = useState(currentUser?.userId ?? '');
@@ -104,16 +113,19 @@ export function ReleaseWorkflowDetail({
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [initRes, reqRes, memRes, featRes] = await Promise.all([
+    setLoadError('');
+    const [initRes, reqRes, memRes, featRes, defRes] = await Promise.all([
       listInitiations(productId, 'mine'),
       listRequirements(productId),
       listProductMembers(productId),
       listFeatures(productId),
+      listTracedDefects(productId),
     ]);
     if (initRes.success) setInitiations(initRes.data.items);
     if (reqRes.success) setRequirements(reqRes.data.items);
     if (memRes.success) setMembers(memRes.data.members);
     if (featRes.success) setFeatures(featRes.data.items);
+    if (defRes.success) setTracedDefects(defRes.data.items);
 
     if (isNew) {
       const inheritRes = await getInheritReleaseManifest(productId);
@@ -125,30 +137,46 @@ export function ReleaseWorkflowDetail({
         setBaselineManifest(items);
       }
     } else {
+      let releaseData: ProductRelease | null = null;
       const relRes = await getRelease(releaseId);
       if (relRes.success) {
-        setRelease(relRes.data);
-        setPreviousReleaseId(relRes.data.previousReleaseId ?? null);
-        setManifest(relRes.data.featureManifest ?? []);
-        setAnnouncementUrl(relRes.data.announcementUrl ?? '');
-        if (relRes.data.initiationId) {
-          const initDetail = await getInitiation(relRes.data.initiationId);
+        releaseData = relRes.data;
+      } else {
+        const listRes = await listReleases(productId, 'all');
+        if (listRes.success) {
+          releaseData = listRes.data.items.find((item) => item.id === releaseId)
+            ?? listRes.data.items.find((item) => item.vCode === releaseId)
+            ?? null;
+        }
+        if (!releaseData) {
+          setLoadError(relRes.error?.message ?? '未找到上线记录');
+        }
+      }
+      if (releaseData) {
+        setRelease(releaseData);
+        setPreviousReleaseId(releaseData.previousReleaseId ?? null);
+        setManifest(releaseData.featureManifest ?? []);
+        setAnnouncementUrl(releaseData.announcementUrl ?? '');
+        if (releaseData.initiationId) {
+          const initDetail = await getInitiation(releaseData.initiationId);
           if (initDetail.success) setLinkedInitiation(initDetail.data);
           else setLinkedInitiation(null);
         } else {
           setLinkedInitiation(null);
         }
-        if (relRes.data.previousReleaseId) {
-          const prevRes = await getRelease(relRes.data.previousReleaseId);
+        if (releaseData.previousReleaseId) {
+          const prevRes = await getRelease(releaseData.previousReleaseId);
           if (prevRes.success) {
             setPreviousVCode(prevRes.data.vCode);
             setBaselineManifest(prevRes.data.featureManifest ?? []);
           } else {
-            setBaselineManifest(relRes.data.featureManifest ?? []);
+            setBaselineManifest(releaseData.featureManifest ?? []);
           }
         } else {
-          setBaselineManifest(relRes.data.featureManifest ?? []);
+          setBaselineManifest(releaseData.featureManifest ?? []);
         }
+      } else {
+        setRelease(null);
       }
     }
     setLoading(false);
@@ -254,6 +282,77 @@ export function ReleaseWorkflowDetail({
     return userDisplayNames.get(userId) ?? memberNameMap.get(userId) ?? userId;
   };
 
+  const { workflow: reqWorkflow } = useEffectiveWorkflow('requirement', productId);
+  const isPendingWorkflow = !isNew && release?.status === 'announcement_pending';
+  const isDetailView = !isNew && !!release && !isPendingWorkflow;
+
+  const releaseLinkedFeatures = useMemo(() => {
+    if (!release) return [] as Feature[];
+    const manifestIds = new Set((release.featureManifest ?? []).map((m) => m.featureId));
+    return features.filter((f) => f.officialReleaseId === release.id || manifestIds.has(f.id));
+  }, [features, release]);
+
+  const releaseDefects = useMemo(() => {
+    if (!release) return [] as TracedDefect[];
+    const reqIds = new Set(release.requirementIds);
+    const featureIds = new Set(releaseLinkedFeatures.map((f) => f.id));
+    return tracedDefects.filter((d) =>
+      (d.tracedRequirementId && reqIds.has(d.tracedRequirementId))
+      || (d.tracedFeatureId && featureIds.has(d.tracedFeatureId)));
+  }, [release, releaseLinkedFeatures, tracedDefects]);
+
+  const releaseBasicRows = useMemo(() => {
+    if (!release) return [];
+    const ownerLabel = release.legacyData?.['产品负责人']?.trim() || resolveUserName(release.ownerId);
+    const rows: { label: string; value: ReactNode }[] = [
+      { label: '正式版本号', value: <span className="font-mono text-cyan-200">{release.vCode || '—'}</span> },
+      { label: '内部版本号', value: <span className="font-mono text-white/75">{release.tCode ?? (release.isTemporaryOptimization ? '临时优化需求' : '—')}</span> },
+      { label: '方案名称', value: release.planName || '—' },
+      { label: '版本类别', value: SCALE_LABEL[release.versionType] },
+      { label: '项目类别', value: release.projectType === 'custom' ? '定制项目' : '非定制项目' },
+      { label: '系统', value: release.systemName || '—' },
+      { label: '应用', value: release.appName || '—' },
+      { label: '所属部门', value: release.departmentName || '—' },
+      { label: '产品负责人', value: ownerLabel },
+      { label: '项目组成员', value: release.teamMemberIds.map((uid) => resolveUserName(uid)).filter((n) => n !== '—').join('、') || '—' },
+      { label: '上线日期', value: release.plannedReleaseAt ? new Date(release.plannedReleaseAt).toLocaleDateString('zh-CN') : '—' },
+      { label: '开放品牌', value: release.openBrandScope || '上线全域开放' },
+      { label: '状态', value: STATUS_LABEL[release.status] ?? release.status },
+      { label: '数据来源', value: release.sourceType === 'import' ? '历史导入' : '系统申领' },
+    ];
+    if (release.planUrl) {
+      rows.push({
+        label: '方案地址',
+        value: <a href={release.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300 hover:underline">查看方案</a>,
+      });
+    }
+    if (linkedInitiation) {
+      rows.push({
+        label: '来源立项',
+        value: (
+          <button
+            type="button"
+            onClick={() => navigate(`/product-agent/p/${productId}/initiation/${linkedInitiation.id}`)}
+            className="font-mono text-cyan-300 hover:underline"
+          >
+            {linkedInitiation.tCode}
+          </button>
+        ),
+      });
+    }
+    if (release.announcementUrl) {
+      rows.push({
+        label: '上线公告',
+        value: <a href={release.announcementUrl} target="_blank" rel="noreferrer" className="text-cyan-300 hover:underline">查看公告</a>,
+      });
+    }
+    Object.entries(release.legacyData ?? {}).forEach(([key, value]) => {
+      if (!value?.trim() || key === '产品负责人') return;
+      rows.push({ label: key, value: value.trim() });
+    });
+    return rows;
+  }, [linkedInitiation, navigate, productId, release, resolveUserName]);
+
   const saveNew = async () => {
     setBusy(true);
     setMessage('');
@@ -305,15 +404,37 @@ export function ReleaseWorkflowDetail({
   const basicInvalid = !ownerId || !releaseAt || teamIds.length === 0
     || (temporary ? extraIds.length === 0 : !initiationId);
   const manifestInvalid = activeManifest.length === 0;
+  const releaseDisplayTitle = useMemo(() => {
+    if (!release) return '正式版本';
+    return release.vCode?.trim()
+      || release.legacyData?.['正式版本号']?.trim()
+      || release.planName?.trim()
+      || '正式版本';
+  }, [release]);
 
   if (loading) return <MapSectionLoader text="正在加载版本详情…" />;
+
+  if (!isNew && !release) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16 text-center">
+        <div className="text-sm text-white/50">{loadError || '未找到上线记录'}</div>
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/65 hover:bg-white/10"
+        >
+          返回
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-white/90">
-            {isNew ? (temporary ? '临时优化需求上线' : '申领正式版本号') : (release?.vCode ?? '正式版本')}
+            {isNew ? (temporary ? '临时优化需求上线' : '申领正式版本号') : releaseDisplayTitle}
           </h1>
           {!isNew && release && (
             <p className="mt-1 text-xs text-white/40">
@@ -344,15 +465,83 @@ export function ReleaseWorkflowDetail({
         </TabButton>
         <TabButton active={tab === 'manifest'} onClick={() => setTab('manifest')}>
           功能
-          {changeStats.added + changeStats.modified + changeStats.deprecated > 0 && (
+          {(isNew
+            ? changeStats.added + changeStats.modified + changeStats.deprecated
+            : releaseLinkedFeatures.length) > 0 && (
             <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-cyan-200">
-              {changeStats.added + changeStats.modified + changeStats.deprecated}
+              {isNew
+                ? changeStats.added + changeStats.modified + changeStats.deprecated
+                : releaseLinkedFeatures.length}
             </span>
           )}
         </TabButton>
+        {!isNew && (
+          <TabButton active={tab === 'defects'} onClick={() => setTab('defects')}>
+            缺陷
+            {releaseDefects.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-red-400/20 px-1.5 text-[10px] text-red-200">{releaseDefects.length}</span>
+            )}
+          </TabButton>
+        )}
       </div>
 
-      {tab === 'basic' ? (
+      {isDetailView ? (
+        <>
+          {tab === 'basic' && (
+            <WorkflowDetailCard title="版本属性">
+              <WorkflowAttributeTable rows={releaseBasicRows} />
+            </WorkflowDetailCard>
+          )}
+          {tab === 'requirements' && (
+            <WorkflowDetailCard title={`关联需求 · ${releaseRequirements.length} 条`}>
+              <WorkflowRecordTable
+                emptyText="该正式版本未关联需求"
+                rows={releaseRequirements}
+                onRowClick={(id) => navigate(`/product-agent/p/${productId}/requirement/${id}`)}
+                columns={[
+                  { header: 'ID', width: '10%', render: (row) => <span className="font-mono text-cyan-200/80">{(row as Requirement).requirementNo}</span> },
+                  { header: '标题', width: '28%', render: (row) => <span className="text-white/85 truncate block" title={(row as Requirement).title}>{(row as Requirement).title}</span> },
+                  { header: '分级', width: '8%', render: (row) => ITEM_GRADE_LABEL[(row as Requirement).grade] },
+                  { header: '状态', width: '12%', render: (row) => resolveRequirementStateLabel((row as Requirement).currentState ?? '', reqWorkflow) || '—' },
+                  { header: '更新时间', width: '14%', render: (row) => workflowFmtDate((row as Requirement).updatedAt) },
+                ]}
+              />
+            </WorkflowDetailCard>
+          )}
+          {tab === 'manifest' && (
+            <WorkflowDetailCard title={`功能清单 · ${releaseLinkedFeatures.length} 条`}>
+              <WorkflowRecordTable
+                emptyText="该正式版本下还没有功能记录"
+                rows={releaseLinkedFeatures}
+                onRowClick={(id) => navigate(`/product-agent/p/${productId}/feature/${id}`)}
+                columns={[
+                  { header: '编号', width: '12%', render: (row) => <span className="font-mono text-violet-200/80">{(row as Feature).featureNo}</span> },
+                  { header: '标题', width: '30%', render: (row) => <span className="text-white/85 truncate block" title={(row as Feature).title}>{(row as Feature).title}</span> },
+                  { header: '模块', width: '14%', render: (row) => (row as Feature).moduleName || '—' },
+                  { header: '关联需求', width: '10%', render: (row) => String((row as Feature).requirementIds.length) },
+                  { header: '更新时间', width: '14%', render: (row) => workflowFmtDate((row as Feature).updatedAt) },
+                ]}
+              />
+            </WorkflowDetailCard>
+          )}
+          {tab === 'defects' && (
+            <WorkflowDetailCard title={`关联缺陷 · ${releaseDefects.length} 条`}>
+              <WorkflowRecordTable
+                emptyText="该正式版本未关联缺陷"
+                rows={releaseDefects}
+                onRowClick={(id) => navigate(`/product-agent/p/${productId}/defect/${id}`)}
+                columns={[
+                  { header: 'ID', width: '10%', render: (row) => <span className="font-mono text-red-200/80">{(row as TracedDefect).defectNo}</span> },
+                  { header: '标题', width: '28%', render: (row) => <span className="text-white/85 truncate block" title={(row as TracedDefect).title ?? ''}>{(row as TracedDefect).title || '—'}</span> },
+                  { header: '状态', width: '12%', render: (row) => defectStatusLabel((row as TracedDefect).status) },
+                  { header: '严重程度', width: '12%', render: (row) => defectSeverityTierLabel(row as TracedDefect) || '—' },
+                  { header: '更新时间', width: '14%', render: (row) => workflowFmtDate((row as TracedDefect).updatedAt) },
+                ]}
+              />
+            </WorkflowDetailCard>
+          )}
+        </>
+      ) : tab === 'basic' ? (
         <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-5">
           {isNew ? (
             <>
@@ -442,9 +631,7 @@ export function ReleaseWorkflowDetail({
                 </div>
               )}
             </div>
-          ) : (
-            <div className="text-sm text-white/35">未找到上线记录</div>
-          )}
+          ) : null}
         </div>
       ) : tab === 'requirements' ? (
         <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-5">
@@ -525,26 +712,32 @@ export function ReleaseWorkflowDetail({
       {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
 
       <div className="flex justify-end gap-2 border-t border-white/10 pt-4">
-        <SecondaryButton onClick={() => navigate(-1)}>取消</SecondaryButton>
-        {isNew ? (
-          <PrimaryButton
-            onClick={() => void saveNew()}
-            disabled={busy || basicInvalid || manifestInvalid}
-          >
-            {busy ? <><Loader2 size={14} className="animate-spin" /> 处理中...</> : '确认并获取正式版本号'}
-          </PrimaryButton>
-        ) : release?.status === 'announcement_pending' ? (
+        {isDetailView ? (
+          <SecondaryButton onClick={() => navigate(-1)}>返回</SecondaryButton>
+        ) : (
           <>
-            {!readOnly && (
-              <SecondaryButton onClick={() => void saveManifest()} disabled={busy || manifestInvalid}>
-                保存功能清单
-              </SecondaryButton>
-            )}
-            <PrimaryButton onClick={() => void complete()} disabled={busy || !announcementUrl.trim()}>
-              完成上线
-            </PrimaryButton>
+            <SecondaryButton onClick={() => navigate(-1)}>取消</SecondaryButton>
+            {isNew ? (
+              <PrimaryButton
+                onClick={() => void saveNew()}
+                disabled={busy || basicInvalid || manifestInvalid}
+              >
+                {busy ? <><Loader2 size={14} className="animate-spin" /> 处理中...</> : '确认并获取正式版本号'}
+              </PrimaryButton>
+            ) : release?.status === 'announcement_pending' ? (
+              <>
+                {!readOnly && (
+                  <SecondaryButton onClick={() => void saveManifest()} disabled={busy || manifestInvalid}>
+                    保存功能清单
+                  </SecondaryButton>
+                )}
+                <PrimaryButton onClick={() => void complete()} disabled={busy || !announcementUrl.trim()}>
+                  完成上线
+                </PrimaryButton>
+              </>
+            ) : null}
           </>
-        ) : null}
+        )}
       </div>
     </div>
   );
