@@ -59,16 +59,15 @@ export function resolveImportProductId(
     appName?: string;
     systemName?: string;
     legacyData?: Record<string, string>;
-    fallbackProductId?: string;
   },
 ): { productId: string | null; label: string | null; matched: boolean } {
   const label = options.appName !== undefined || options.systemName !== undefined || options.legacyData
     ? resolveProductLabelFromVersionRow(options.appName, options.systemName, options.legacyData)
     : (extractProductLabelFromFields(options.sourceFields) ?? extractTitleBracketLabel(options.title));
   if (!label) {
-    return { productId: options.fallbackProductId ?? null, label: null, matched: false };
+    return { productId: null, label: null, matched: false };
   }
   const product = matchProductByLabel(products, label);
   if (product) return { productId: product.id, label, matched: true };
-  return { productId: options.fallbackProductId ?? null, label, matched: false };
+  return { productId: null, label, matched: false };
 }

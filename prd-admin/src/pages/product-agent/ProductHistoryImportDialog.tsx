@@ -99,10 +99,11 @@ export function ProductHistoryImportDialog({
   products: Product[];
   onClose: () => void;
   onImported: () => Promise<void>;
-  /** 全局导入：按「应用」列路由到对应产品，productId 仅作兜底 */
+  /** 全局导入：按「应用」列路由，未匹配则跳过 */
   crossProductRoute?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const needsProductPicker = !(crossProductRoute && type === 'requirement');
   const [productId, setProductId] = useState(products[0]?.id ?? '');
   const [fileNames, setFileNames] = useState<string[]>([]);
   const [rows, setRows] = useState<ImportSimpleItemRow[]>([]);
@@ -155,11 +156,12 @@ export function ProductHistoryImportDialog({
   };
 
   const commit = async () => {
-    if (!productId || rows.length === 0) return;
+    if (rows.length === 0) return;
+    if (needsProductPicker && !productId) return;
     setBusy(true);
     const result = type === 'requirement'
       ? (crossProductRoute
-        ? await importOverviewRequirements(rows as ImportRequirementRow[], productId)
+        ? await importOverviewRequirements(rows as ImportRequirementRow[])
         : await importRequirements(productId, rows as ImportRequirementRow[]))
       : type === 'feature'
         ? await importFeatures(productId, rows)
@@ -171,14 +173,19 @@ export function ProductHistoryImportDialog({
       setMessage(result.error?.message ?? '导入失败');
       return;
     }
-    setMessage(`导入完成：新增 ${result.data.created} 条，更新 ${result.data.updated} 条。`);
+    setMessage(
+      `导入完成：新增 ${result.data.created} 条，更新 ${result.data.updated ?? 0} 条${
+        (result.data.skipped ?? 0) > 0 ? `，${result.data.skipped} 条「应用」未匹配已跳过` : ''
+      }。`,
+    );
     await onImported();
   };
 
-  if (rtfFiles.length > 0 && productId) {
+  if (rtfFiles.length > 0 && (productId || crossProductRoute)) {
     return (
       <RequirementRtfImportDialog
-        productId={productId}
+        productId={productId || products[0]?.id || ''}
+        crossProductRoute={crossProductRoute}
         files={rtfFiles}
         onClose={onClose}
         onImported={onImported}
@@ -192,19 +199,23 @@ export function ProductHistoryImportDialog({
         <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
           <div>
             <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
-            <div className="mt-1 text-xs text-white/45">可重复导入；相同 TAPD ID 会更新原记录。{crossProductRoute && type === 'requirement' ? '需求按「应用」列自动匹配系统产品。' : 'ID 与 TAPD 保持一致。'}</div>
+            <div className="mt-1 text-xs text-white/45">
+              {crossProductRoute && type === 'requirement'
+                ? '可重复导入；按「应用」列匹配系统产品，未匹配的行跳过。'
+                : '可重复导入；相同 TAPD ID 会更新原记录，ID 与 TAPD 保持一致。'}
+            </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭"><X size={17} /></button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <label className="mb-4 block">
-            <span className="mb-1.5 block text-xs text-white/50">
-              {crossProductRoute && type === 'requirement' ? '未匹配「应用」时落入（兜底产品）' : '归属产品'}
-            </span>
-            <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none">
-              {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-            </select>
-          </label>
+          {needsProductPicker && (
+            <label className="mb-4 block">
+              <span className="mb-1.5 block text-xs text-white/50">归属产品</span>
+              <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none">
+                {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+              </select>
+            </label>
+          )}
           <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025]">
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
             <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 RTF' : type === 'defect' ? 'TAPD 导出 CSV / Excel / RTF' : 'CSV'} 文件</div>
@@ -230,10 +241,14 @@ export function ProductHistoryImportDialog({
           {message && <div className="mt-3 text-xs text-white/55">{message}</div>}
         </div>
         <div className="flex shrink-0 items-center justify-between border-t border-white/10 px-5 py-4">
-          <div className="text-xs text-white/35">{selectedProduct ? `将写入：${selectedProduct.name}` : '请选择产品'}</div>
+          <div className="text-xs text-white/35">
+            {crossProductRoute && type === 'requirement'
+              ? '按「应用」列匹配系统产品，未匹配跳过'
+              : selectedProduct ? `将写入：${selectedProduct.name}` : '请选择产品'}
+          </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="rounded-lg border border-white/10 px-3.5 py-2 text-sm text-white/60 hover:bg-white/5 hover:text-white">取消</button>
-            <button onClick={() => void commit()} disabled={busy || !productId || rows.length === 0} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40">
+            <button onClick={() => void commit()} disabled={busy || (needsProductPicker && !productId) || rows.length === 0} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40">
               {busy ? <MapSpinner size={14} /> : <Upload size={14} />} 确认导入 {rows.length} 条
             </button>
           </div>

@@ -32,13 +32,12 @@ describe('productImportRouting', () => {
     expect(matchProductByLabel(products, 'dcrm')?.id).toBe('p2');
   });
 
-  it('falls back when 应用 does not match any product', () => {
+  it('returns null when 应用 does not match any product', () => {
     const resolved = resolveImportProductId(products, {
       appName: '不存在的产品',
-      fallbackProductId: 'fallback',
     });
     expect(resolved.matched).toBe(false);
-    expect(resolved.productId).toBe('fallback');
+    expect(resolved.productId).toBeNull();
     expect(resolved.label).toBe('不存在的产品');
   });
 });

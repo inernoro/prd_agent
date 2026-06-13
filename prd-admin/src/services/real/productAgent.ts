@@ -186,7 +186,6 @@ export function completeRelease(id: string, announcementUrl: string) {
 export function importVersionWorkflow(productId: string, body: {
   kind: 'initiation' | 'release';
   rows: Array<Record<string, unknown>>;
-  fallbackProductId?: string;
 }) {
   return apiRequest<ImportRoutedResult>(
     `/api/product/products/${productId}/version-workflow/import`,
@@ -197,7 +196,6 @@ export function importVersionWorkflow(productId: string, body: {
 export function importOverviewVersionWorkflow(body: {
   kind: 'initiation' | 'release';
   rows: Array<Record<string, unknown>>;
-  fallbackProductId?: string;
 }) {
   return apiRequest<ImportRoutedResult>('/api/product/overview/version-workflow/import', { method: 'POST', body });
 }
@@ -208,7 +206,7 @@ export interface ImportRoutedResult {
   skipped?: number;
   errors?: { row: number; message: string }[];
   routed?: Record<string, number>;
-  unmatched?: Array<{ row?: number; label?: string; title?: string; planName?: string; fallbackProductId?: string }>;
+  unmatched?: Array<{ row?: number; label?: string; title?: string; planName?: string }>;
 }
 
 // ── 需求 ──
@@ -357,10 +355,10 @@ export function importRequirements(productId: string, rows: ImportRequirementRow
   return apiRequest<ImportRoutedResult>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
 }
 
-export function importOverviewRequirements(rows: ImportRequirementRow[], fallbackProductId?: string) {
+export function importOverviewRequirements(rows: ImportRequirementRow[]) {
   return apiRequest<ImportRoutedResult>('/api/product/overview/requirements/import', {
     method: 'POST',
-    body: { rows, fallbackProductId },
+    body: { rows },
   });
 }
 

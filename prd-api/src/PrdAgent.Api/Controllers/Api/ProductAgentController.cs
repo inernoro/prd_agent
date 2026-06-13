@@ -1131,13 +1131,13 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
-    /// <summary>跨产品导入版本工作流（按行「应用」列匹配产品，fallbackProductId 为未匹配兜底）。</summary>
+    /// <summary>跨产品导入版本工作流（按行「应用」列匹配产品，未匹配则跳过）。</summary>
     [HttpPost("overview/version-workflow/import")]
     public async Task<IActionResult> OverviewImportVersionWorkflow([FromBody] ImportVersionWorkflowRequest request)
     {
         var denied = await RequireProductApplicationAdminAsync();
         if (denied != null) return denied;
-        return await ImportVersionWorkflowCoreAsync(request, request.FallbackProductId);
+        return await ImportVersionWorkflowCoreAsync(request);
     }
 
     [HttpPost("products/{productId}/version-workflow/import")]
@@ -1148,10 +1148,10 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        return await ImportVersionWorkflowCoreAsync(request, productId);
+        return await ImportVersionWorkflowCoreAsync(request);
     }
 
-    private async Task<IActionResult> ImportVersionWorkflowCoreAsync(ImportVersionWorkflowRequest request, string? fallbackProductId)
+    private async Task<IActionResult> ImportVersionWorkflowCoreAsync(ImportVersionWorkflowRequest request)
     {
         var userId = GetUserId();
         var scope = await GetAccessibleProductIdsAsync(userId);
@@ -1176,19 +1176,17 @@ public class ProductAgentController : ControllerBase
                 continue;
             }
             var label = ProductImportProductRouting.ResolveProductLabelFromVersionRow(row.AppName, row.SystemName, row.LegacyData);
-            var (targetProductId, _, matched) = ProductImportProductRouting.ResolveProductIdByLabel(products, label, fallbackProductId);
-            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId))
+            var (targetProductId, _, matched) = ProductImportProductRouting.ResolveProductIdByLabel(products, label);
+            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
             {
                 var msg = string.IsNullOrWhiteSpace(label)
-                    ? "缺少「应用」列且未指定兜底产品"
-                    : $"无法匹配产品「{label}」";
+                    ? "缺少「应用」列，已跳过"
+                    : $"无法匹配产品「{label}」，已跳过";
                 errors.Add(new { row = index + 2, message = msg });
                 if (!string.IsNullOrWhiteSpace(label))
                     unmatched.Add(new { row = index + 2, label, planName = row.PlanName });
                 continue;
             }
-            if (!string.IsNullOrWhiteSpace(label) && !matched)
-                unmatched.Add(new { row = index + 2, label, planName = row.PlanName, fallbackProductId = targetProductId });
 
             try
             {
@@ -4344,7 +4342,7 @@ public class ProductAgentController : ControllerBase
 
     // ════════════════════════ 批量导入 ════════════════════════
 
-    /// <summary>批量导入需求（按行「应用」/来源字段匹配产品；path productId 为未匹配兜底）。</summary>
+    /// <summary>批量导入需求（按行「应用」/来源字段匹配产品，未匹配则跳过）。</summary>
     [HttpPost("products/{productId}/requirements/import")]
     public async Task<IActionResult> ImportRequirements(string productId, [FromBody] ImportRequirementsRequest request)
     {
@@ -4353,19 +4351,19 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         if (await FindAccessibleProductAsync(productId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        return await ImportRequirementsCoreAsync(request, productId, userId);
+        return await ImportRequirementsCoreAsync(request, userId);
     }
 
-    /// <summary>跨产品批量导入需求（按行「应用」匹配产品）。</summary>
+    /// <summary>跨产品批量导入需求（按行「应用」匹配产品，未匹配则跳过）。</summary>
     [HttpPost("overview/requirements/import")]
     public async Task<IActionResult> OverviewImportRequirements([FromBody] ImportRequirementsRequest request)
     {
         var denied = await RequireProductApplicationAdminAsync();
         if (denied != null) return denied;
-        return await ImportRequirementsCoreAsync(request, request.FallbackProductId, GetUserId());
+        return await ImportRequirementsCoreAsync(request, GetUserId());
     }
 
-    private async Task<IActionResult> ImportRequirementsCoreAsync(ImportRequirementsRequest request, string? fallbackProductId, string userId)
+    private async Task<IActionResult> ImportRequirementsCoreAsync(ImportRequirementsRequest request, string userId)
     {
         var rows = (request.Rows ?? new()).Where(r => !string.IsNullOrWhiteSpace(r.Title)).ToList();
         if (rows.Count == 0)
@@ -4405,16 +4403,14 @@ public class ProductAgentController : ControllerBase
         foreach (var row in rows)
         {
             var (targetProductId, label, matched) = ProductImportProductRouting.ResolveProductId(
-                products, row.Title, row.SourceFields, fallbackProductId);
-            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId))
+                products, row.Title, row.SourceFields);
+            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched)
             {
                 skipped++;
                 if (!string.IsNullOrWhiteSpace(label))
                     unmatched.Add(new { title = row.Title, label });
                 continue;
             }
-            if (!string.IsNullOrWhiteSpace(label) && !matched)
-                unmatched.Add(new { title = row.Title, label, fallbackProductId = targetProductId });
 
             var (wfId, initialState) = await ResolveRequirementWorkflowAsync(targetProductId);
             affectedProducts.Add(targetProductId);
@@ -6273,8 +6269,6 @@ public class CompleteReleaseRequest
 public class ImportVersionWorkflowRequest
 {
     public string Kind { get; set; } = "initiation";
-    /// <summary>跨产品导入时，「应用」列未匹配任何产品时的兜底 ProductId。</summary>
-    public string? FallbackProductId { get; set; }
     public List<ImportVersionWorkflowRow> Rows { get; set; } = new();
 }
 
@@ -6424,8 +6418,6 @@ public class ProductCommentRequest
 
 public class ImportRequirementsRequest
 {
-    /// <summary>跨产品导入时，「应用」列未匹配任何产品时的兜底 ProductId。</summary>
-    public string? FallbackProductId { get; set; }
     public List<ImportRequirementRow> Rows { get; set; } = new();
 }
 

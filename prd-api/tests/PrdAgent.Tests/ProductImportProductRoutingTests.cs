@@ -19,8 +19,7 @@ public class ProductImportProductRoutingTests
         var (productId, label, matched) = ProductImportProductRouting.ResolveProductId(
             products,
             "【绿业元】某需求",
-            new Dictionary<string, string> { ["应用"] = "DCRM" },
-            "fallback");
+            new Dictionary<string, string> { ["应用"] = "DCRM" });
 
         Assert.Equal("p2", productId);
         Assert.Equal("DCRM", label);
@@ -28,12 +27,12 @@ public class ProductImportProductRoutingTests
     }
 
     [Fact]
-    public void ResolveProductLabelFromVersionRow_uses_appName_first()
+    public void ResolveProductIdByLabel_returns_null_when_no_match()
     {
-        var label = ProductImportProductRouting.ResolveProductLabelFromVersionRow(
-            "互动营销",
-            "大数据引擎系统",
-            new Dictionary<string, string> { ["产品"] = "互动营销" });
-        Assert.Equal("互动营销", label);
+        var products = new List<Product> { P("p1", "互动营销") };
+        var (productId, label, matched) = ProductImportProductRouting.ResolveProductIdByLabel(products, "不存在");
+        Assert.Null(productId);
+        Assert.False(matched);
+        Assert.Equal("不存在", label);
     }
 }
