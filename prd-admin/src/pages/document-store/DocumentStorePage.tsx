@@ -104,7 +104,6 @@ import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { ReprocessChatDrawer } from './ReprocessChatDrawer';
 import { ViewersDrawer } from './ViewersDrawer';
-import { ShortVideoMaterialDialog } from './ShortVideoMaterialDialog';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
@@ -725,10 +724,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
-  /** 当前打开的再加工 Drawer 目标 entry（null = 未打开） */
-  const [reprocessTarget, setReprocessTarget] = useState<{ id: string; title: string } | null>(null);
-  /** 当前打开的短视频素材解析工具 */
-  const [showVideoMaterialDialog, setShowVideoMaterialDialog] = useState(false);
+  /** 当前打开的智能体抽屉目标：可绑定文档，也可作为知识库工具会话打开。 */
+  const [reprocessTarget, setReprocessTarget] = useState<{
+    id?: string;
+    title: string;
+    mode?: 'document' | 'short-video';
+    initialInput?: string;
+  } | null>(null);
   /** 当前打开的「单篇文档分享」目标（null = 未打开） */
   const [docShareTarget, setDocShareTarget] = useState<{ id: string; title: string } | null>(null);
   /** 新建后需要自动进入编辑态的文档 id（用一次即清） */
@@ -1017,7 +1019,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   }, [storeId]);
 
   const handleOpenVideoParser = useCallback(() => {
-    setShowVideoMaterialDialog(true);
+    setReprocessTarget({
+      title: '短视频解析',
+      mode: 'short-video',
+    });
   }, []);
 
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
@@ -1363,11 +1368,27 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
       <AnimatePresence>
         {reprocessTarget && (
           <ReprocessChatDrawer
+            key={`${reprocessTarget.mode ?? 'document'}:${reprocessTarget.id ?? 'tool'}:${reprocessTarget.initialInput ?? ''}`}
             entryId={reprocessTarget.id}
             entryTitle={reprocessTarget.title}
             storeId={storeId}
+            initialMode={reprocessTarget.mode ?? 'document'}
+            initialInput={reprocessTarget.initialInput}
             onClose={() => setReprocessTarget(null)}
             onApplied={handleReprocessApplied}
+            onStoreChanged={() => {
+              void loadEntries();
+              setTimeout(() => { void loadEntries(); }, 1500);
+            }}
+            onOpenEntry={(target) => {
+              setSelectedEntryId(target.id);
+              setReprocessTarget({
+                id: target.id,
+                title: target.title,
+                mode: 'document',
+                initialInput: target.initialInput,
+              });
+            }}
           />
         )}
       </AnimatePresence>
@@ -1383,17 +1404,6 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         />
       )}
 
-      {showVideoMaterialDialog && (
-        <ShortVideoMaterialDialog
-          storeId={storeId}
-          storeName={store.name}
-          onClose={() => setShowVideoMaterialDialog(false)}
-          onCreated={async (result) => {
-            await loadEntries();
-            setSelectedEntryId(result.transcriptEntryId);
-          }}
-        />
-      )}
     </div>
   );
 }
