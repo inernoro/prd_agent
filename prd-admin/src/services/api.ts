@@ -1533,6 +1533,10 @@ export const api = {
     dashboard: () => '/api/pm/dashboard',
     auditLogs: () => '/api/pm/audit-logs',
     rewardConfig: () => '/api/pm/reward-config',
+    // 全局知识库（管理层洞察，仅 pm-agent.dashboard）
+    knowledgeOverview: () => '/api/pm/knowledge/overview',
+    knowledgeEntries: (query?: string) => `/api/pm/knowledge/entries${query ? `?${query}` : ''}`,
+    knowledgeEntryContent: (entryId: string) => `/api/pm/knowledge/entries/${entryId}/content`,
   },
 } as const;
 

@@ -83,6 +83,9 @@ import type {
   GetPmAgentPreferencesContract,
   UpdatePmQuickActionsContract,
   GetPmReportSummaryContract,
+  GetPmKnowledgeOverviewContract,
+  ListPmKnowledgeEntriesContract,
+  GetPmKnowledgeEntryContentContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -442,4 +445,24 @@ export const updatePmQuickActionsReal: UpdatePmQuickActionsContract = async (qui
 
 export const getPmReportSummaryReal: GetPmReportSummaryContract = async (scope) => {
   return await apiRequest(api.pm.reportsSummary(scope), { method: 'GET' });
+};
+
+// ── 全局知识库（管理层洞察，仅 pm-agent.dashboard）──
+
+export const getPmKnowledgeOverviewReal: GetPmKnowledgeOverviewContract = async () => {
+  return await apiRequest(api.pm.knowledgeOverview(), { method: 'GET' });
+};
+
+export const listPmKnowledgeEntriesReal: ListPmKnowledgeEntriesContract = async (filter) => {
+  const q = new URLSearchParams();
+  if (filter) {
+    for (const [k, v] of Object.entries(filter)) {
+      if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
+    }
+  }
+  return await apiRequest(api.pm.knowledgeEntries(q.toString()), { method: 'GET' });
+};
+
+export const getPmKnowledgeEntryContentReal: GetPmKnowledgeEntryContentContract = async (entryId) => {
+  return await apiRequest(api.pm.knowledgeEntryContent(encodeURIComponent(entryId)), { method: 'GET' });
 };

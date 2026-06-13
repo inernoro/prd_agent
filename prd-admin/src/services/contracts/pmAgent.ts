@@ -823,3 +823,98 @@ export interface PmReportSummary {
   };
 }
 export type GetPmReportSummaryContract = (scope?: PmProjectScope) => Promise<ApiResponse<PmReportSummary>>;
+
+// ── 全局知识库（管理层洞察，仅 pm-agent.dashboard）──
+
+/** 全局知识库总览中的一个项目分组 */
+export interface PmGlobalKnowledgeProject {
+  projectId: string;
+  projectNo: string;
+  title: string;
+  projectType: PmProjectType;
+  lifecycle: PmProjectLifecycle;
+  leaderName?: string | null;
+  storeId: string;
+  docCount: number;
+  categories: string[];
+  lastUpdatedAt?: string | null;
+}
+
+/** 全局知识库总览：项目分组 + 筛选维度枚举 + 全局统计 */
+export interface PmGlobalKnowledgeOverview {
+  projects: PmGlobalKnowledgeProject[];
+  totalProjects: number;
+  totalDocs: number;
+  byType: Record<string, number>;
+  byLifecycle: Record<string, number>;
+  facets: {
+    creators: Array<{ userId: string; name: string; count: number }>;
+    categories: string[];
+    contentTypes: string[];
+  };
+}
+
+/** 全局知识库的一条文档（含项目归属冗余字段，供分组与展示） */
+export interface PmGlobalKnowledgeEntry {
+  id: string;
+  storeId: string;
+  parentId?: string | null;
+  isFolder: boolean;
+  title: string;
+  summary?: string | null;
+  contentType: string;
+  sourceType: string;
+  category?: string | null;
+  tags: string[];
+  fileSize: number;
+  metadata?: Record<string, string>;
+  createdBy: string;
+  createdByName?: string | null;
+  updatedBy?: string | null;
+  updatedByName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastChangedAt?: string | null;
+  projectId?: string | null;
+  projectNo?: string | null;
+  projectTitle?: string | null;
+  projectType?: PmProjectType | null;
+  lifecycle?: PmProjectLifecycle | null;
+}
+
+/** 全局知识库条目筛选参数（全部可选） */
+export interface PmGlobalKnowledgeFilter {
+  projectId?: string;
+  projectType?: PmProjectType;
+  lifecycle?: PmProjectLifecycle;
+  category?: string;
+  tag?: string;
+  sourceType?: string;
+  contentType?: string;
+  createdBy?: string;
+  keyword?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface PmGlobalKnowledgeEntriesResult {
+  items: PmGlobalKnowledgeEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PmGlobalKnowledgeContent {
+  entryId: string;
+  title: string;
+  content: string | null;
+  contentType: string;
+  fileUrl: string | null;
+  hasContent: boolean;
+}
+
+export type GetPmKnowledgeOverviewContract = () => Promise<ApiResponse<PmGlobalKnowledgeOverview>>;
+export type ListPmKnowledgeEntriesContract = (filter?: PmGlobalKnowledgeFilter) => Promise<ApiResponse<PmGlobalKnowledgeEntriesResult>>;
+export type GetPmKnowledgeEntryContentContract = (entryId: string) => Promise<ApiResponse<PmGlobalKnowledgeContent>>;
