@@ -84,7 +84,7 @@ export function parseProductHistoryCsv(text: string, _options?: { entityType?: H
       grade: rawGrade?.toLowerCase(),
       status: statusIndex >= 0 ? values[statusIndex]?.trim().toLowerCase() : undefined,
       sourceSystem: 'csv',
-      externalId: externalIdIndex >= 0 ? values[externalIdIndex]?.trim() : undefined,
+      externalId: externalIdIndex >= 0 ? (values[externalIdIndex]?.trim() || undefined) : undefined,
       plannedAt: plannedIndex >= 0 ? values[plannedIndex]?.trim() : undefined,
       completedAt: completedIndex >= 0 ? values[completedIndex]?.trim() : undefined,
       sourceFields: routeLabel ? { 应用: routeLabel } : undefined,
@@ -191,9 +191,10 @@ export function ProductHistoryImportDialog({
       setMessage(result.error?.message ?? '导入失败');
       return;
     }
-    const created = result.data.created ?? 0;
-    const updated = result.data.updated ?? 0;
-    const skipped = result.data.skipped ?? 0;
+    const data = result.data;
+    const created = data.created ?? 0;
+    const updated = data.updated ?? 0;
+    const skipped = 'skipped' in data ? (data.skipped ?? 0) : 0;
     if (created + updated === 0) {
       setMessage(
         skipped > 0
@@ -232,7 +233,7 @@ export function ProductHistoryImportDialog({
             <div className="mt-1 text-xs text-white/45">
               {crossProductRoute && type === 'requirement'
                 ? '按「应用」或「产品」列匹配系统产品；无该列时可指定默认归属产品。'
-                : '可重复导入；相同 TAPD ID 会更新原记录，ID 与 TAPD 保持一致。'}
+                : '可重复导入；有外部 ID 时更新原记录，无 ID 时系统自动分配纯数字编号。'}
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭"><X size={17} /></button>

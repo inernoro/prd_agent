@@ -23,8 +23,8 @@ describe('formatInitiationReviewScore', () => {
     expect(formatInitiationReviewScore({
       ...base,
       reviewAttempts: [
-        { id: 'a1', attemptNo: 1, reviewScore: 60 },
-        { id: 'a2', attemptNo: 2, reviewScore: 72 },
+        { id: 'a1', attemptNo: 1, reviewScore: 60, startedAt: '2026-01-01T00:00:00Z' },
+        { id: 'a2', attemptNo: 2, reviewScore: 72, startedAt: '2026-01-02T00:00:00Z' },
       ],
     })).toBe('72/100');
   });

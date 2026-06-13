@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Product, WorkflowTransition } from './types';
+import type { WorkflowTransition } from './types';
 import {
   canExecuteWorkflowTransition,
   missingRequirementGateFields,

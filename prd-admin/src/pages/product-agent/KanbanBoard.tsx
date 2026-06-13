@@ -14,7 +14,7 @@ import { getProduct, listRequirements, listFeatures, transition } from '@/servic
 import { useAuthStore } from '@/stores/authStore';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { ITEM_GRADE_LABEL } from './types';
-import type { Requirement, Feature, Product, WorkflowTransition } from './types';
+import type { Requirement, Feature, WorkflowTransition } from './types';
 import { slaInfo } from './sla';
 import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import {
