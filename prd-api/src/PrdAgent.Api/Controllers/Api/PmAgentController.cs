@@ -1076,7 +1076,7 @@ public class PmAgentController : ControllerBase
             Status = PmGoalStatus.IsValid(request.Status) ? request.Status! : PmGoalStatus.OnTrack,
             CreatedBy = userId,
             CreatedByName = creatorName,
-            OrderKey = DateTime.UtcNow.Ticks,
+            OrderKey = request.OrderKey ?? DateTime.UtcNow.Ticks, // 「向上/向下添加同级」会传相邻中值定位插入点
         };
         await _db.PmGoals.InsertOneAsync(entity);
         return Ok(ApiResponse<object>.Ok(entity));
