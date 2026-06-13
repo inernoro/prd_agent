@@ -336,7 +336,7 @@ def validate_inputs(a, body, manifest):
         tail = cells[-1]
         img_refs = re.findall(r"图\s*([0-9]+[a-zA-Z]?)", tail)
         case_refs = re.findall(r"用例\s*[0-9]+", tail)
-        if not img_refs and not case_refs:
+        if not img_refs and not case_refs and not re.search(r"同上", tail):
             errs.append(f"[断链] 已落地诉求 0 证据连线（需引用「图XX」或「用例N」）：{ls[:70]}")
             continue
         for r0 in img_refs:
