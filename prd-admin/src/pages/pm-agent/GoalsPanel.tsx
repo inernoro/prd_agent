@@ -121,7 +121,9 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
     if (!editing) return;
     setBusyId(editing);
     const res = editing.startsWith('new:') ? await createPmGoal(projectId, draft) : await updatePmGoal(editing, draft);
-    if (res.success) { toast.success(editing.startsWith('new:') ? '已新增' : '已保存', ''); cancelEdit(); await load(); }
+    // 目标标题/描述/负责人改动会级联到联动里程碑(AutoFromGoal)，且里程碑「关联目标」下拉读实时标题，
+    // 故保存后必须通知父级一并刷新 goals + milestones，否则切到「里程碑」tab 看到的是旧目标名
+    if (res.success) { toast.success(editing.startsWith('new:') ? '已新增' : '已保存', ''); cancelEdit(); await load(); onMilestonesChanged?.(); }
     else toast.error('保存失败', res.error?.message || '');
     setBusyId(null);
   };

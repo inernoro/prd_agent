@@ -1098,6 +1098,10 @@ public class PmAgentController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可修改"));
 
         var update = Builders<PmGoal>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        // 记录会影响联动里程碑(AutoFromGoal)快照的字段变更，更新目标后一并回写，避免里程碑标题停留在旧值
+        string? newTitle = null;
+        bool descChanged = false; string? newDesc = null;
+        bool leadChanged = false; string? newLeadId = null; string? newLeadName = null;
         if (request.ProgressMode != null)
         {
             if (!PmGoalProgressMode.IsValid(request.ProgressMode))
@@ -1108,9 +1112,10 @@ public class PmAgentController : ControllerBase
         {
             if (string.IsNullOrWhiteSpace(request.Title))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标标题不能为空"));
-            update = update.Set(x => x.Title, request.Title.Trim());
+            newTitle = request.Title.Trim();
+            update = update.Set(x => x.Title, newTitle);
         }
-        if (request.Description != null) update = update.Set(x => x.Description, request.Description.Trim());
+        if (request.Description != null) { descChanged = true; newDesc = request.Description.Trim(); update = update.Set(x => x.Description, newDesc); }
         if (request.Metric != null) update = update.Set(x => x.Metric, request.Metric.Trim());
         if (request.Period != null) update = update.Set(x => x.Period, request.Period.Trim());
         if (request.CycleId != null) update = update.Set(x => x.CycleId, string.IsNullOrWhiteSpace(request.CycleId) ? null : request.CycleId);
@@ -1118,6 +1123,7 @@ public class PmAgentController : ControllerBase
         {
             var lid = string.IsNullOrWhiteSpace(request.LeadId) ? null : request.LeadId;
             var lname = lid == null ? null : (await _db.Users.Find(u => u.UserId == lid).FirstOrDefaultAsync())?.DisplayName;
+            leadChanged = true; newLeadId = lid; newLeadName = lname;
             update = update.Set(x => x.LeadId, lid).Set(x => x.LeadName, lname);
         }
         if (request.KeyResults != null) update = update.Set(x => x.KeyResults, MapKeyResults(request.KeyResults));
@@ -1130,6 +1136,16 @@ public class PmAgentController : ControllerBase
         }
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
         await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, update);
+
+        // 级联同步联动里程碑：AutoFromGoal 里程碑的标题/描述/负责人始终跟随目标（创建时是快照，目标改了必须回写）
+        if (newTitle != null || descChanged || leadChanged)
+        {
+            var msUpdate = Builders<PmMilestone>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+            if (newTitle != null) msUpdate = msUpdate.Set(x => x.Title, newTitle);
+            if (descChanged) msUpdate = msUpdate.Set(x => x.Description, newDesc);
+            if (leadChanged) msUpdate = msUpdate.Set(x => x.OwnerId, newLeadId).Set(x => x.OwnerName, newLeadName);
+            await _db.PmMilestones.UpdateManyAsync(m => m.GoalId == goalId && m.AutoFromGoal, msUpdate);
+        }
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
 
