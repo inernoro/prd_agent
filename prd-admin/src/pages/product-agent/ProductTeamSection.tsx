@@ -6,10 +6,13 @@
  * - canManageAdmins：可指派/撤销产品管理员（仅全局管理 / 负责人）。
  * 后端按角色再次校验（ProductAgentController），前端仅据标志显隐操作入口。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { UserPlus, ShieldCheck, ShieldOff, Trash2, Crown } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { useListSelection, ListCheckbox } from './listSelection';
+import { ExportOnlyBatchBar } from './ListBatchBar';
+import { downloadListCsv } from './listExport';
 import './product-cards.css';
 import {
   listProductMembers,
@@ -77,6 +80,26 @@ export function ProductTeamTab({ productId }: { productId: string }) {
   if (!data) return <div className="text-white/40 text-sm">团队信息加载失败</div>;
 
   const { members, canManageMembers, canManageAdmins } = data;
+  const memberIds = useMemo(() => members.map((m) => m.userId), [members]);
+  const selection = useListSelection(memberIds);
+  const exportSelected = () => {
+    const picked = members.filter((m) => selection.selected.has(m.userId));
+    downloadListCsv(
+      `team-${productId}.csv`,
+      ['姓名', '角色'],
+      picked.map((m) => [m.displayName, ROLE_LABEL[m.role]]),
+    );
+  };
+  const removeSelected = async () => {
+    if (!window.confirm(`确认移除选中的 ${selection.count} 名成员？`)) return;
+    for (const userId of selection.selectedIds) {
+      if (members.find((m) => m.userId === userId)?.role === 'owner') continue;
+      const res = await removeProductMember(productId, userId);
+      if (!res.success) return;
+    }
+    selection.clear();
+    await reload();
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -108,6 +131,17 @@ export function ProductTeamTab({ productId }: { productId: string }) {
         </div>
       )}
 
+      {selection.count > 0 && (
+        <div className="flex flex-col gap-2">
+          <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
+          {canManageMembers && (
+            <button type="button" onClick={() => void removeSelected()} className="self-start text-xs text-red-300/80 hover:text-red-300">
+              移除选中成员
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-col gap-2">
         {members.map((m) => {
           const isOwner = m.role === 'owner';
@@ -121,6 +155,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
               className="pa-row flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5"
             >
               <div className="flex items-center gap-2.5 min-w-0">
+                <ListCheckbox checked={selection.selected.has(m.userId)} onChange={() => selection.toggle(m.userId)} />
                 {isOwner && <Crown size={14} className="text-amber-300 shrink-0" />}
                 <span className="text-sm text-white/85 truncate">{m.displayName}</span>
                 <span className={`shrink-0 px-1.5 py-0.5 rounded text-[11px] border ${ROLE_BADGE[m.role]}`}>

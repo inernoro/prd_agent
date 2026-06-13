@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
@@ -14,6 +14,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
+import { useListSelection, ListSelectionCell, ListSelectionHeaderCell } from './listSelection';
+import { ExportOnlyBatchBar } from './ListBatchBar';
+import { downloadListCsv } from './listExport';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
@@ -280,9 +283,27 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
   const navigate = useNavigate();
   const names = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  return <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']}>
-    {items.map((item) => <tr key={item.id} className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]" onClick={() => openDetail(item.id)}>
-      <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
+  const rowIds = useMemo(() => items.map((i) => i.id), [items]);
+  const selection = useListSelection(rowIds);
+  const exportSelected = () => {
+    const picked = items.filter((i) => selection.selected.has(i.id));
+    downloadListCsv(
+      `initiations-${productId}.csv`,
+      ['立项号', '方案', '版本类别', '状态'],
+      picked.map((i) => [i.tCode ?? '', i.planName, SCALE_LABEL[i.versionType], STATUS_LABEL[i.status] ?? i.status]),
+    );
+  };
+  return (
+    <>
+      {selection.count > 0 && (
+        <div className="mb-2">
+          <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
+        </div>
+      )}
+      <Table headers={['系统', '应用', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注']} selection={selection.tableSelection}>
+        {items.map((item) => <tr key={item.id} className="border-t border-white/5 cursor-pointer hover:bg-white/[0.03]" onClick={() => openDetail(item.id)}>
+          <ListSelectionCell checked={selection.selected.has(item.id)} onToggle={() => selection.toggle(item.id)} className="px-3 py-2" />
+          <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
         ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
@@ -299,7 +320,9 @@ function InitiationTable({ productId, items, members, onChanged, readOnly }: {
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
     </tr>)}{items.length === 0 && <Empty cols={17}>暂无立项记录</Empty>}
-  </Table>;
+      </Table>
+    </>
+  );
 }
 
 function ReleaseTable({ productId, items, requirements, members, onChanged, readOnly }: {
@@ -329,8 +352,25 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
   }, [items]);
   const openRelease = (id: string) => navigate(`/product-agent/p/${productId}/release/${id}`);
   const openInitiation = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  return <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']}>
+  const rowIds = useMemo(() => items.map((i) => i.id), [items]);
+  const selection = useListSelection(rowIds);
+  const exportSelected = () => {
+    const picked = items.filter((i) => selection.selected.has(i.id));
+    downloadListCsv(
+      `releases-${productId}.csv`,
+      ['正式版本号', '内部版本号', '方案', '状态'],
+      picked.map((i) => [i.vCode, i.tCode ?? '临时优化', i.planName, STATUS_LABEL[i.status] ?? i.status]),
+    );
+  };
+  return <>
+    {selection.count > 0 && (
+      <div className="mb-2">
+        <ExportOnlyBatchBar ids={selection.selectedIds} onClear={selection.clear} onExport={exportSelected} />
+      </div>
+    )}
+    <Table headers={['系统', '应用', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={selection.tableSelection}>
     {items.map((item) => <tr key={item.id} className="border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]" onClick={() => openRelease(item.id)}>
+      <ListSelectionCell checked={selection.selected.has(item.id)} onToggle={() => selection.toggle(item.id)} className="px-3 py-2" />
       <Td>{item.systemName || '-'}</Td><Td>{item.appName || '-'}</Td>
       <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
       <Td mono>{item.initiationId && item.tCode
@@ -348,7 +388,8 @@ function ReleaseTable({ productId, items, requirements, members, onChanged, read
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
     </tr>)}{items.length === 0 && <Empty cols={16}>暂无上线记录</Empty>}
-  </Table>;
+  </Table>
+  </>;
 }
 
 function formatDate(value?: string | null) {
@@ -498,7 +539,32 @@ function RequirementChecks({ requirements, selected, onChange }: {
 function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>; }
 function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/65">{props.children}</button>; }
 function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40'}`}>{children}</button>; }
-function Table({ headers, children }: { headers: string[]; children: React.ReactNode }) { return <div className="overflow-x-auto rounded-xl border border-white/10"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-white/[0.035] text-white/40"><tr>{headers.map((h) => <th key={h} className="whitespace-pre-line px-3 py-3 font-medium">{h}</th>)}</tr></thead><tbody>{children}</tbody></table></div>; }
+function Table({ headers, children, selection }: {
+  headers: string[];
+  children: ReactNode;
+  selection?: ReturnType<typeof useListSelection>['tableSelection'];
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-white/10">
+      <table className="w-full min-w-[900px] text-left text-xs">
+        <thead className="bg-white/[0.035] text-white/40">
+          <tr>
+            {selection ? (
+              <ListSelectionHeaderCell
+                allSelected={selection.allSelected}
+                indeterminate={selection.indeterminate}
+                onToggleAll={selection.onToggleAll}
+                className="px-3 py-3"
+              />
+            ) : null}
+            {headers.map((h) => <th key={h} className="whitespace-pre-line px-3 py-3 font-medium">{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  );
+}
 function Td({ children, mono, onClick, className }: { children: React.ReactNode; mono?: boolean; onClick?: React.MouseEventHandler<HTMLTableCellElement>; className?: string }) {
   return <td className={`max-w-64 px-3 py-3 text-white/65 ${mono ? 'font-mono text-cyan-200' : ''} ${className ?? ''}`} onClick={onClick}>{children}</td>;
 }

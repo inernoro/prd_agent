@@ -22,7 +22,9 @@ import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
 import { ProductTeamTab } from './ProductTeamSection';
 import { ReportsTab } from './ReportsTab';
-import { BatchBar } from './BatchBar';
+import { ListBatchBar } from './ListBatchBar';
+import { useListSelection, ListSelectionCell, ListSelectionHeaderCell, ListCheckbox } from './listSelection';
+import { downloadListCsv } from './listExport';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import './product-cards.css';
 import { VersionWorkflowTab } from './VersionWorkflowTab';
@@ -47,7 +49,6 @@ import { searchDirectoryUsers } from '@/services';
 import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, readDefectSeverityLevel } from './types';
 import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, type FilterFieldDef } from './listFilter';
-import { toCSV, downloadCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
@@ -374,7 +375,6 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [items, setItems] = useState<Requirement[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rtfImportFiles, setRtfImportFiles] = useState<File[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -382,7 +382,6 @@ function RequirementsTab({ productId }: { productId: string }) {
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const nameOf = useDirectoryNames();
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
-  const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   useEffect(() => {
     void listVersions(productId).then((r) => { if (r.success) setVersions(r.data.items); });
@@ -410,9 +409,13 @@ function RequirementsTab({ productId }: { productId: string }) {
     keywordPlaceholder: '搜索 ID、标题、描述',
   });
 
-  const exportCsv = () => {
-    const rows = items.map((r) => [r.requirementNo, r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
-    downloadCSV(`需求-${productId}.csv`, toCSV(['ID', '标题', '分级', '状态', '描述'], rows));
+  const filteredIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
+  const selection = useListSelection(filteredIds);
+
+  const exportCsv = (onlySelected = false) => {
+    const source = onlySelected ? filtered.filter((r) => selection.selected.has(r.id)) : items;
+    const rows = source.map((r) => [r.requirementNo, r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
+    downloadListCsv(`需求-${productId}.csv`, ['ID', '标题', '分级', '状态', '描述'], rows);
   };
 
   const reload = useCallback(async () => {
@@ -456,7 +459,7 @@ function RequirementsTab({ productId }: { productId: string }) {
           >
             <Upload size={13} /> 导入 RTF
           </button>
-          <button onClick={exportCsv} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
+          <button onClick={() => exportCsv(false)} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
             <Download size={13} /> 导出CSV
           </button>
           {items.length > 0 && <ViewToggle view={view} setView={setView} />}
@@ -484,14 +487,19 @@ function RequirementsTab({ productId }: { productId: string }) {
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2 w-full min-w-0">
-          {selected.size > 0 && (
-            <BatchBar entityType="requirement" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
+          {selection.count > 0 && (
+            <ListBatchBar
+              entityType="requirement"
+              ids={selection.selectedIds}
+              onDone={reload}
+              onClear={selection.clear}
+              onExport={() => exportCsv(true)}
+            />
           )}
           <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-white/10" style={{ overscrollBehavior: 'contain' }}>
             <RequirementDataTable
               items={filtered}
-              selected={selected}
-              toggleSelected={toggleSel}
+              selection={selection.tableSelection}
               openDetail={openDetail}
               stateLabel={stateLabel}
               nameOf={nameOf}
@@ -521,8 +529,7 @@ function RequirementsTab({ productId }: { productId: string }) {
 
 function RequirementDataTable({
   items,
-  selected,
-  toggleSelected,
+  selection,
   openDetail,
   stateLabel,
   nameOf,
@@ -531,8 +538,7 @@ function RequirementDataTable({
   onDelete,
 }: {
   items: Requirement[];
-  selected: Set<string>;
-  toggleSelected: (id: string) => void;
+  selection: ReturnType<typeof useListSelection>['tableSelection'];
   openDetail: (id: string) => void;
   stateLabel: (key: string) => string;
   nameOf: (id?: string | null) => string;
@@ -567,7 +573,12 @@ function RequirementDataTable({
       </colgroup>
       <thead className="sticky top-0 z-10 bg-[#0f1014] text-[11px] text-white/45 border-b border-white/10">
         <tr>
-          <th className="px-3 py-2.5 font-medium whitespace-nowrap">选择</th>
+          <ListSelectionHeaderCell
+            allSelected={selection.allSelected}
+            indeterminate={selection.indeterminate}
+            onToggleAll={selection.onToggleAll}
+            disabled={rows.length === 0}
+          />
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">ID</th>
           <th className="px-3 py-2.5 font-medium">标题</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">分级</th>
@@ -585,7 +596,7 @@ function RequirementDataTable({
       <tbody>
         {rows.map(({ item, depth }) => (
           <tr key={item.id} onClick={() => openDetail(item.id)} className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]">
-            <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} className="accent-cyan-500" /></td>
+            <ListSelectionCell checked={selection.selectedIds.has(item.id)} onToggle={() => selection.onToggle(item.id)} />
             <td className={`${cell} whitespace-nowrap font-mono text-cyan-200/80`}>{item.requirementNo}</td>
             <td className="px-3 py-2 text-white/85">
               <div className="truncate" style={{ paddingLeft: depth * 20 }} title={item.title}>
@@ -654,6 +665,17 @@ function DefectsTab({ productId }: { productId: string }) {
   ], [personName, featureName, versionName]);
   const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索 ID、标题、描述' });
 
+  const filteredIds = useMemo(() => filtered.map((d) => d.id), [filtered]);
+  const selection = useListSelection(filteredIds);
+  const exportSelected = () => {
+    const picked = filtered.filter((d) => selection.selected.has(d.id));
+    downloadListCsv(
+      `defects-${productId}.csv`,
+      ['ID', '标题', '状态', '严重程度'],
+      picked.map((d) => [d.defectNo, d.title ?? '', defectStatusLabel(d.status), readDefectSeverityLevel(d) ?? '']),
+    );
+  };
+
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
     <div className="flex flex-col gap-3">
@@ -671,6 +693,9 @@ function DefectsTab({ productId }: { productId: string }) {
       ) : (
         <>
         {bar}
+        {selection.count > 0 && (
+          <ListBatchBar entityType="defect" ids={selection.selectedIds} onClear={selection.clear} onDone={reload} onExport={exportSelected} />
+        )}
         {filtered.length === 0 ? (
           <div className="text-center text-white/35 text-sm py-10">没有匹配的缺陷，调整筛选条件试试。</div>
         ) : (
@@ -678,6 +703,8 @@ function DefectsTab({ productId }: { productId: string }) {
           {filtered.map((d) => (
             <Row
               key={d.id}
+              checked={selection.selected.has(d.id)}
+              onCheck={() => selection.toggle(d.id)}
               title={d.title || '(无标题)'}
               badge={defectStatusLabel(d.status)}
               sub={`${d.defectNo}${d.tracedRequirementId ? ' · 已追溯到需求' : d.tracedVersionId ? ' · 已追溯到版本' : ' · 仅追溯到产品'}`}
@@ -772,6 +799,8 @@ function Row({
   onDelete,
   onClick,
   actionLabel,
+  checked,
+  onCheck,
 }: {
   title: string;
   sub?: string;
@@ -779,9 +808,14 @@ function Row({
   onDelete?: () => void;
   onClick?: () => void;
   actionLabel?: string;
+  checked?: boolean;
+  onCheck?: () => void;
 }) {
   return (
     <div className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02]">
+      {onCheck != null && checked != null && (
+        <ListCheckbox checked={checked} onChange={onCheck} />
+      )}
       <button
         onClick={onClick}
         disabled={!onClick}
