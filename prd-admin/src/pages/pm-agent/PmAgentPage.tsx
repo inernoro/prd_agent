@@ -83,7 +83,6 @@ export function PmAgentPage() {
   return (
     <AgentFullscreenLayout
       title="项目管理"
-      subtitle="立项 → 目标 → 里程碑 / 任务 → 结案"
       topSlot={
         <div className="mb-2">
           <button

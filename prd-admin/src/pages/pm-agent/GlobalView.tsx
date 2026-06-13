@@ -83,7 +83,7 @@ export function GlobalView({ onOpen }: { onOpen: (id: string) => void }) {
       <div className="shrink-0 flex items-center gap-2 flex-wrap">
         <Globe size={16} style={{ color: '#3B82F6' }} />
         <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>全局总览</span>
-        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>跨全公司项目的只读洞察 —— 掌控全局、洞察风险（管理层视角）</span>
+        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>全公司项目 —— 掌控全局、洞察风险</span>
       </div>
 
       {/* 子 tab */}
