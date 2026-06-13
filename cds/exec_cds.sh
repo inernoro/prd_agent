@@ -124,6 +124,98 @@ load_env() {
   set +a
 }
 
+hash_stream() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  else
+    cksum | awk '{print $1 ":" $2}'
+  fi
+}
+
+hash_file() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  else
+    cksum "$file" | awk '{print $1 ":" $2}'
+  fi
+}
+
+forwarder_runtime_signature() {
+  local dist_dir="${1:-$SCRIPT_DIR/dist}"
+  local files=""
+  local f
+  for f in "$dist_dir/forwarder-main.js" "$dist_dir/widget-script.js"; do
+    [ -f "$f" ] && files="${files}${f}"$'\n'
+  done
+  if [ -d "$dist_dir/forwarder" ]; then
+    files="${files}$(find "$dist_dir/forwarder" -type f 2>/dev/null | sort)"$'\n'
+  fi
+  if [ -z "${files//$'\n'/}" ]; then
+    return 1
+  fi
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -f "$f" ] || continue
+    printf '%s %s\n' "${f#"$dist_dir"/}" "$(hash_file "$f")"
+  done <<< "$files" | sort | hash_stream
+}
+
+record_forwarder_runtime_signature() {
+  local dist_dir="${1:-$SCRIPT_DIR/dist}"
+  local state_dir="${CDS_FORWARDER_SELF_SYNC_STATE_DIR:-$STATE_DIR}"
+  local sig_file="$state_dir/forwarder-runtime.sig"
+  local sig
+  sig="$(forwarder_runtime_signature "$dist_dir" 2>/dev/null || true)"
+  [ -n "$sig" ] || return 0
+  mkdir -p "$state_dir" 2>/dev/null || true
+  printf '%s\n' "$sig" > "$sig_file" 2>/dev/null || true
+}
+
+sync_forwarder_if_needed() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! systemctl is-active cds-forwarder.service >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local dist_dir="$SCRIPT_DIR/dist"
+  local state_dir="${CDS_FORWARDER_SELF_SYNC_STATE_DIR:-$STATE_DIR}"
+  local sig_file="$state_dir/forwarder-runtime.sig"
+  local current_sig previous_sig
+  current_sig="$(forwarder_runtime_signature "$dist_dir" 2>/dev/null || true)"
+  if [ -z "$current_sig" ]; then
+    return 0
+  fi
+
+  previous_sig=""
+  [ -f "$sig_file" ] && previous_sig="$(cat "$sig_file" 2>/dev/null || true)"
+  if [ -z "$previous_sig" ]; then
+    mkdir -p "$state_dir" 2>/dev/null || true
+    printf '%s\n' "$current_sig" > "$sig_file" 2>/dev/null || true
+    info "[master-run] forwarder runtime signature initialized,跳过 self-sync"
+    return 0
+  fi
+
+  if [ "$current_sig" = "$previous_sig" ]; then
+    info "[master-run] forwarder runtime signature 未变化,跳过 self-sync"
+    return 0
+  fi
+
+  info "[master-run] forwarder runtime signature 已变化 → systemctl restart cds-forwarder(self-sync)"
+  if systemctl restart cds-forwarder.service 2>&1 | head -3; then
+    mkdir -p "$state_dir" 2>/dev/null || true
+    printf '%s\n' "$current_sig" > "$sig_file" 2>/dev/null || true
+  else
+    warn "[master-run] cds-forwarder restart 失败,需手动:systemctl restart cds-forwarder"
+  fi
+}
+
 # ensure_cds_mongo_running: 启动 CDS 前确保 cds-state-mongo 容器 running。
 #
 # 修复循环依赖：CDS 启动要连 Mongo，但 Mongo 容器记在 CDS state 里——
@@ -2904,6 +2996,16 @@ case "$CMD" in
     load_env
     render_nginx
     ;;
+  __test-forwarder-self-sync)
+    # Hidden test hook for cds/tests/scripts/exec-cds-forwarder-sync.test.ts.
+    # It lets tests exercise the forwarder self-sync decision without starting
+    # the real master process or touching systemd on the developer machine.
+    if [ -n "${CDS_TEST_SCRIPT_DIR:-}" ]; then
+      SCRIPT_DIR="$CDS_TEST_SCRIPT_DIR"
+      STATE_DIR="$SCRIPT_DIR/.cds"
+    fi
+    sync_forwarder_if_needed
+    ;;
   master-run)
     # 用户反馈 2026-05-06:每次改 pnpm install / node 启动参数都要 sudo cp
     # 重装 systemd unit 太蠢。把"master 进程怎么启动"这件事从 systemd unit
@@ -2928,32 +3030,11 @@ case "$CMD" in
       exit 78  # EX_CONFIG — operator 友好的 systemd 退出码
     fi
 
-    # ── self-sync forwarder(2026-05-08 user 反馈"不要再让我执行命令")──
-    # 当 self-update 拉了新代码 build 完后,如果 dist 目录 mtime 比 cds-forwarder
-    # 进程的启动时间新 → forwarder 在跑老代码 → 触发 systemctl restart 让它读
-    # 新代码。仅在 forwarder 真有过版本漂移时才重启,避免每次 master 重启都浪费抖
-    # 一次业务。
-    #
-    # 用 dist 目录 mtime(不是单 forwarder-main.js)的原因:forwarder 进程引用了
-    # dist/forwarder/proxy-handler.js + dist/widget-script.js 等多个文件,任一
-    # 文件改了都需要 restart。esbuild atomic rename(dist.next → dist)后整个
-    # 目录的 mtime 更新,作为"build 何时完成"的统一信号最简单可靠。
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-active cds-forwarder.service >/dev/null 2>&1; then
-      DIST_DIR="$SCRIPT_DIR/dist"
-      if [ -d "$DIST_DIR" ] && [ -f "$DIST_DIR/forwarder-main.js" ]; then
-        FW_PID="$(systemctl show cds-forwarder.service -p MainPID --value 2>/dev/null || echo 0)"
-        if [ -n "$FW_PID" ] && [ "$FW_PID" != "0" ] && [ -d "/proc/$FW_PID" ]; then
-          DIST_MTIME="$(stat -c %Y "$DIST_DIR" 2>/dev/null || echo 0)"
-          PROC_START="$(stat -c %Y "/proc/$FW_PID" 2>/dev/null || echo 0)"
-          if [ "$DIST_MTIME" -gt "$PROC_START" ]; then
-            info "[master-run] dist 目录 mtime 比 forwarder 进程新 → systemctl restart cds-forwarder(self-sync,~3s 业务抖动)"
-            systemctl restart cds-forwarder.service 2>&1 | head -3 || warn "[master-run] cds-forwarder restart 失败,需手动:systemctl restart cds-forwarder"
-          else
-            info "[master-run] forwarder 进程已是最新 dist,跳过 self-sync"
-          fi
-        fi
-      fi
-    fi
+    # ── self-sync forwarder ────────────────────────────────────────────
+    # master self-update 只更新控制面时不应重启业务面的 forwarder。这里不再看
+    # dist 目录 mtime,而是比较 forwarder 运行时文件内容签名。只有
+    # forwarder-main / dist/forwarder/* / widget-script 真的变化才重启 forwarder。
+    sync_forwarder_if_needed
 
     info "[master-run] exec node dist/index.js"
     exec node dist/index.js
@@ -2970,6 +3051,7 @@ case "$CMD" in
       err "[forwarder-run] dist/forwarder-main.js 不存在 — 请先 cd cds && pnpm install && pnpm run build"
       exit 78
     fi
+    record_forwarder_runtime_signature "$SCRIPT_DIR/dist"
     info "[forwarder-run] exec node dist/forwarder-main.js (port=${CDS_FORWARDER_PORT:-9090})"
     exec node dist/forwarder-main.js
     ;;
