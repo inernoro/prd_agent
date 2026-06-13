@@ -20,6 +20,7 @@
 local 模式不读任何 env、不发任何网络请求。
 """
 import argparse, json, os, subprocess, datetime, re, shutil, time
+from pathlib import Path
 
 
 def curl(args, retries=5):
@@ -58,6 +59,41 @@ def build_meta(report_id, now, reviewer, a, preview):
         f"target_ref: {a.target}\npreview_url: {preview}\n"
         f"branch: {a.branch}\ncommit: {a.commit}\n-->\n"
     )
+
+
+def repo_root():
+    try:
+        out = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True, stderr=subprocess.DEVNULL).strip()
+        return Path(out).resolve() if out else None
+    except Exception:
+        return None
+
+
+def is_inside_repo(path, root=None):
+    if os.environ.get("ALLOW_REPO_ACCEPTANCE_ARTIFACTS") == "1":
+        return False
+    root = root or repo_root()
+    if not root:
+        return False
+    try:
+        Path(path).resolve().relative_to(root)
+        return True
+    except Exception:
+        return False
+
+
+def artifact_path_errors(manifest, cfg=None):
+    errs = []
+    root = repo_root()
+    for m in manifest:
+        p = m.get("path", "")
+        if p and is_inside_repo(p, root):
+            errs.append(f"[证据文件位置] 截图位于代码库内：{Path(p).resolve()}。验收截图必须写到 /tmp、对象存储或知识库,不得进入 git diff")
+    if cfg and cfg.get("report", {}).get("mode") == "local":
+        out_dir = cfg.get("report", {}).get("localOutDir", "")
+        if out_dir and is_inside_repo(out_dir, root):
+            errs.append(f"[本地输出位置] localOutDir 位于代码库内：{Path(out_dir).resolve()}。local 模式默认应写 /tmp/map-acceptance-local")
+    return errs
 
 
 def assemble(title, body, evidence, meta, img_md=None):
@@ -232,7 +268,7 @@ JUNK_TARGETS = {"test", "测试", "xxx", "demo", "tmp", "临时", "aaa", "todo"}
 PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\}|IMG:)")
 
 
-def validate_inputs(a, body, manifest):
+def validate_inputs(a, body, manifest, cfg=None):
     """返回拒收原因列表（空 = 通过准入）。结构层校验，语义层(Verdict 一致性)由人/工具把关。"""
     errs = []
     t = (a.target or "").strip()
@@ -245,6 +281,7 @@ def validate_inputs(a, body, manifest):
     need = TIER_MIN_SHOTS.get(a.tier, 3)
     if len(manifest) < need:
         errs.append(f"[证据] 截图数 {len(manifest)} < {a.tier} 下限 {need}")
+    errs.extend(artifact_path_errors(manifest, cfg))
     for m in manifest:
         p = m.get("path", "")
         if not os.path.isfile(p) or os.path.getsize(p) < 1024:
@@ -390,7 +427,7 @@ def main():
     manifest = json.load(open(a.manifest))
 
     # 准入校验：不达标直接拒收，不写库（--force 越权但告警）
-    errs = validate_inputs(a, body, manifest)
+    errs = validate_inputs(a, body, manifest, cfg)
     if errs:
         head = "准入校验未通过，已拒收（输入不对，输出不可能对）：" if not a.force else "准入校验未通过，但 --force 强行继续："
         print(head)

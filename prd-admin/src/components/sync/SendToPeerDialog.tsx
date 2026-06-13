@@ -1,15 +1,31 @@
 /**
- * 「发送到对端节点」通用弹窗 —— 系统级跨节点互传的用户入口。
+ * 「发送到对端节点」通用弹窗。
  *
- * 任意应用都可复用：传 resourceType 即可。知识库（document-store）支持双向同步，
- * 其它资源默认单向发送。详见 doc/design.peer-sync.md。
- *
- * 遵守 .claude/rules/frontend-modal.md：createPortal 到 body、inline 高度、min-h-0 滚动、ESC + 蒙版关闭。
+ * 知识库支持双向同步、保留原时间、覆盖修复、图片重传到目标域名。
+ * 遵守 frontend-modal 约束：createPortal 到 body、inline 高度、min-h:0 滚动、ESC + 蒙版关闭。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Globe, X, Check, Send, ArrowRightLeft, ArrowLeft, ArrowRight } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  ArrowRightLeft,
+  Check,
+  CheckCircle2,
+  Clock3,
+  Database,
+  FolderOpen,
+  Globe,
+  Image,
+  ListChecks,
+  RotateCcw,
+  Send,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
@@ -25,17 +41,22 @@ import {
 
 interface Props {
   resourceType: string;
-  /** 预选条目（如知识库列表里勾选的库 id）。为空则在弹窗内多选。 */
   presetItemIds?: string[];
   onClose: () => void;
-  /** 互传完成回调（可用于刷新列表） */
   onDone?: () => void;
 }
 
-const DIRECTIONS: { key: PeerTransferDirection; label: string; icon: React.ReactNode; hint: string }[] = [
-  { key: 'push', label: '发送到对端', icon: <ArrowRight size={14} />, hint: '本地内容覆盖对端（对端被更新）' },
-  { key: 'pull', label: '从对端拉取', icon: <ArrowLeft size={14} />, hint: '对端内容覆盖本地（本地被更新）' },
-  { key: 'both', label: '双向同步', icon: <ArrowRightLeft size={14} />, hint: '两侧合并，冲突以本地为准，各自新增都保留' },
+const DIRECTIONS: { key: PeerTransferDirection; label: string; icon: ReactNode; hint: string }[] = [
+  { key: 'push', label: '发送到对端', icon: <ArrowRight size={15} />, hint: '本地内容写入对端' },
+  { key: 'pull', label: '从对端拉取', icon: <ArrowLeft size={15} />, hint: '对端内容写回本地' },
+  { key: 'both', label: '双向同步', icon: <ArrowRightLeft size={15} />, hint: '先发送再回读，双方合并' },
+];
+
+const STEPS = [
+  { title: '扫描', desc: '读取所选知识库与目录差异' },
+  { title: '图片重传', desc: '上传到目标平台域名' },
+  { title: '合并', desc: '按血缘写入或覆盖' },
+  { title: '回读', desc: '刷新同步标识与结果' },
 ];
 
 export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone }: Props) {
@@ -44,28 +65,30 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   const [capability, setCapability] = useState<SyncResourceCapability | null>(null);
   const [items, setItems] = useState<SyncItemSummary[]>([]);
 
-  const [nodeId, setNodeId] = useState<string>('');
+  const [nodeId, setNodeId] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set(presetItemIds ?? []));
-  const [direction, setDirection] = useState<PeerTransferDirection>('push');
+  const [direction, setDirection] = useState<PeerTransferDirection>('both');
+  const [preserveTimestamps, setPreserveTimestamps] = useState(true);
+  const [allowOverwrite, setAllowOverwrite] = useState(true);
+  const [rewriteAssetLinks, setRewriteAssetLinks] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<TransferItemResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<{ stage: string; startedAt: number } | null>(null);
-  const [, setNow] = useState(0);
+  const [progress, setProgress] = useState<{ step: number; stage: string; startedAt: number } | null>(null);
+  const [, setTick] = useState(0);
+
   useEffect(() => {
     if (!submitting) return;
-    const t = setInterval(() => setNow((n) => n + 1), 1000);
-    return () => clearInterval(t);
+    const t = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
   }, [submitting]);
 
-  // PR #742 review Medium：transfer 进行中拦住所有关闭路径（ESC / 蒙版 / 关闭按钮），
-  // 否则 HTTP 还在跑、结果没回前 modal 被关掉，用户以为"啥都没发生"，
-  // onDone 也不触发，知识库列表不刷新。
   const safeClose = useCallback(() => {
     if (submitting) return;
     onClose();
   }, [submitting, onClose]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') safeClose();
@@ -74,40 +97,45 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     return () => window.removeEventListener('keydown', onKey);
   }, [safeClose]);
 
-  // PR #742 review fix: 慢响应回填可能在 modal 关闭后 / 新一轮 load 启动后才到，
-  // 导致弹窗状态被旧数据短暂覆盖。沿用 prd-admin learned rule: fetchIdRef stale guard。
   const loadSeqRef = useRef(0);
   const isMountedRef = useRef(true);
   useEffect(() => () => { isMountedRef.current = false; }, []);
+
   const load = useCallback(async () => {
     const mySeq = ++loadSeqRef.current;
     setLoading(true);
     setError(null);
     const [nodesRes, itemsRes] = await Promise.all([listPeerNodes(), listPeerItems(resourceType)]);
-    if (mySeq !== loadSeqRef.current || !isMountedRef.current) return; // 旧响应或 modal 已关闭 → 丢弃
+    if (mySeq !== loadSeqRef.current || !isMountedRef.current) return;
     if (nodesRes.success && nodesRes.data) {
-      setNodes(nodesRes.data.items || []);
+      const nextNodes = nodesRes.data.items || [];
       const cap = (nodesRes.data.capabilities || []).find((c) => c.resourceType === resourceType) || null;
+      setNodes(nextNodes);
       setCapability(cap);
-      if (!cap?.supportsBidirectional && direction === 'both') setDirection('push');
-      if ((nodesRes.data.items || []).length === 1) setNodeId(nodesRes.data.items[0].id);
+      if (nextNodes.length === 1) setNodeId(nextNodes[0].id);
+      if (!cap?.supportsBidirectional) setDirection('push');
     } else {
       setError(nodesRes.error?.message || '加载对端节点失败');
     }
     if (itemsRes.success && itemsRes.data) {
       setItems(itemsRes.data.items || []);
     } else {
-      // PR #742 review Medium fix：之前只看 nodesRes，items 加载失败时静默走空状态，用户以为"没东西可发"。
-      // 用 || 累加错误（nodes 已报错时优先保留）。
-      setError((prev) => prev || itemsRes.error?.message || '加载可发送条目失败');
+      setError((prev) => prev || itemsRes.error?.message || '加载可同步条目失败');
     }
     setLoading(false);
-  }, [resourceType, direction]);
+  }, [resourceType]);
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resourceType]);
+  }, [load]);
+
+  const activeNode = useMemo(() => nodes.find((n) => n.id === nodeId) || null, [nodes, nodeId]);
+  const availableDirections = useMemo(
+    () => DIRECTIONS.filter((d) => d.key === 'push' || capability?.supportsBidirectional),
+    [capability],
+  );
+  const canSubmit = Boolean(nodeId && selected.size > 0 && !submitting);
+  const modeLabel = allowOverwrite ? '允许覆盖' : '仅新增';
 
   const toggleItem = (id: string) => {
     setSelected((prev) => {
@@ -118,232 +146,432 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     });
   };
 
-  const canSubmit = nodeId && selected.size > 0 && !submitting;
-
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
     setResults(null);
     const startedAt = Date.now();
-    const total = selected.size;
-    const dirLabel = direction === 'push' ? '发送' : direction === 'pull' ? '拉取' : '双向同步';
-    setProgress({ stage: `准备 ${dirLabel} ${total} 项条目…`, startedAt });
-    const t1 = setTimeout(() => setProgress({ stage: `正在导出 / 跨节点传输 bundle…`, startedAt }), 1500);
-    const t2 = setTimeout(() => setProgress({ stage: `对端正在 apply（按血缘 upsert）…`, startedAt }), 5000);
-    const t3 = setTimeout(() => setProgress({ stage: `对端响应较慢，知识库较大或网络较差时可能需要更长时间…`, startedAt }), 12000);
+    setProgress({ step: 1, stage: '正在扫描所选知识库', startedAt });
+    const timers = [
+      window.setTimeout(() => setProgress({ step: 2, stage: '正在上传图片并重写目标域链接', startedAt }), 1200),
+      window.setTimeout(() => setProgress({ step: 3, stage: '正在按血缘合并内容', startedAt }), 3200),
+      window.setTimeout(() => setProgress({ step: 4, stage: '正在回写同步状态', startedAt }), 6200),
+    ];
     const res = await transferToPeer({
       nodeId,
       resourceType,
       itemIds: Array.from(selected),
       direction,
+      mode: allowOverwrite ? 'overwrite' : 'add-only',
+      preserveTimestamps,
+      rewriteAssetLinks,
     });
-    clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
+    timers.forEach((t) => window.clearTimeout(t));
     setSubmitting(false);
     setProgress(null);
     if (res.success && res.data) {
-      const items = res.data.results || [];
-      setResults(items);
-      // PR #742 review Medium fix：之前只有 anyFail=false 才回调 onDone，部分成功部分失败时知识库列表不刷新
-      // 用户看到弹窗里某些条目「成功」但列表没变化，以为啥都没发生。只要至少一条 ok=true 就触发刷新。
-      if (items.some((r) => r.ok)) onDone?.();
+      const nextResults = res.data.results || [];
+      setResults(nextResults);
+      if (nextResults.some((r) => r.ok)) onDone?.();
     } else {
       setError(res.error?.message || '互传失败');
     }
   };
 
-  const availableDirections = useMemo(
-    // PR #742 review P2 fix：之前只过滤掉 both，仍允许用户选 pull → 后端拒 → 验证失败提示。
-    // 单向资源（push-only）应该在 UI 就只露出 push。
-    () => DIRECTIONS.filter((d) => d.key === 'push' || capability?.supportsBidirectional),
-    [capability],
-  );
-
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      style={{ background: 'rgba(5, 7, 12, 0.70)' }}
       onClick={safeClose}
     >
       <div
-        className="w-full max-w-lg rounded-xl border border-white/10 bg-[#16171b] flex flex-col shadow-2xl"
-        style={{ maxHeight: '88vh' }}
+        className="w-full max-w-[1180px] overflow-hidden rounded-2xl border shadow-2xl"
+        style={{
+          maxHeight: '90vh',
+          background: 'linear-gradient(135deg, rgba(18,24,33,0.98), rgba(31,34,43,0.98))',
+          borderColor: 'rgba(148,163,184,0.20)',
+          color: 'var(--text-primary)',
+        }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/10 shrink-0">
-          <div className="flex items-center gap-2">
-            <Send size={16} className="text-white/70" />
-            <span className="text-sm font-medium">发送到对端节点</span>
+        <style>{`
+          @keyframes peerFlow {
+            0% { transform: translateX(-28%); opacity: 0; }
+            20% { opacity: 1; }
+            100% { transform: translateX(118%); opacity: 0; }
+          }
+          .peer-flow-beam { animation: peerFlow 1.75s ease-in-out infinite; }
+        `}</style>
+
+        <div className="flex items-center justify-between border-b px-6 py-4" style={{ borderColor: 'rgba(148,163,184,0.14)' }}>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border" style={{ background: 'rgba(20,184,166,0.10)', borderColor: 'rgba(45,212,191,0.28)' }}>
+              <Send size={18} style={{ color: 'rgb(94,234,212)' }} />
+            </div>
+            <div>
+              <div className="text-base font-semibold">发送到对端节点</div>
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                左侧设置同步策略，右侧选择知识库并预览传输过程
+              </div>
+            </div>
           </div>
-          <button onClick={safeClose} className="text-white/40 hover:text-white">
-            <X size={16} />
+          <button
+            onClick={safeClose}
+            disabled={submitting}
+            className="rounded-lg p-2 transition hover:bg-white/10 disabled:opacity-40"
+            aria-label="关闭"
+          >
+            <X size={18} />
           </button>
         </div>
 
-        {/* body */}
-        <div className="flex-1 px-5 py-4 space-y-4" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-          {/* PR #742 review Medium fix：error 之前只在 nodes.length>0 分支渲染，
-              listPeerNodes 失败时 nodes=[] 走"还没有可用的对端节点"空状态，真实错误被吞掉。
-              改为顶层渲染 error，让 API 失败时用户能看到真因。 */}
-          {!loading && error && (
-            <div className="flex items-start gap-2 text-[12px] rounded-lg px-3 py-2"
-              style={{
-                background: 'rgba(239,68,68,0.08)',
-                border: '1px solid rgba(239,68,68,0.20)',
-                color: 'rgba(252,165,165,0.95)',
-              }}>
-              <span className="font-medium shrink-0">加载失败：</span>
-              <span className="min-w-0 break-words">{error}</span>
-            </div>
-          )}
-          {loading ? (
-            <MapSectionLoader text="正在加载…" />
-          ) : nodes.length === 0 ? (
-            <div className="text-center py-8">
-              <Globe size={26} className="mx-auto text-white/25" />
-              <div className="mt-3 text-sm text-white/60">还没有可用的对端节点</div>
-              <div className="mt-1 text-xs text-white/40">
-                请联系管理员在「设置 → 系统互联」中配置对端节点后再试。
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* 目标节点 */}
-              <div>
-                <div className="text-xs text-white/50 mb-1.5">目标节点</div>
-                <div className="grid gap-1.5">
-                  {nodes.map((n) => (
-                    <button
-                      key={n.id}
-                      onClick={() => setNodeId(n.id)}
-                      className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition ${
-                        nodeId === n.id ? 'border-white/40 bg-white/10' : 'border-white/10 bg-white/5 hover:bg-white/[0.07]'
-                      }`}
-                    >
-                      <Globe size={15} className="text-white/50 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm truncate">{n.displayName}</div>
-                        <div className="text-[11px] text-white/40 font-mono truncate">{n.baseUrl}</div>
-                      </div>
-                      {nodeId === n.id && <Check size={15} className="text-white/70 shrink-0" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
+        <div className="grid min-h-0 grid-cols-[310px_minmax(0,1fr)]" style={{ height: 'min(760px, calc(90vh - 73px))' }}>
+          <aside className="flex min-h-0 flex-col border-r p-5" style={{ borderColor: 'rgba(148,163,184,0.12)', background: 'rgba(10,15,24,0.34)' }}>
+            {loading ? (
+              <MapSectionLoader text="正在加载…" />
+            ) : (
+              <>
+                <div className="space-y-5 overflow-y-auto pr-1" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
+                  <SectionTitle label="目标节点" />
+                  {nodes.length === 0 ? (
+                    <EmptyBlock icon={<Globe size={18} />} title="暂无可用对端" desc="请先在系统互联中完成对端配对" />
+                  ) : (
+                    <div className="grid gap-2">
+                      {nodes.map((n) => (
+                        <ChoiceCard key={n.id} active={nodeId === n.id} icon={<Globe size={18} />} onClick={() => setNodeId(n.id)}>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-semibold">{n.displayName}</div>
+                            <div className="truncate font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{n.baseUrl}</div>
+                          </div>
+                        </ChoiceCard>
+                      ))}
+                    </div>
+                  )}
 
-              {/* 方向 */}
-              <div>
-                <div className="text-xs text-white/50 mb-1.5">方向</div>
-                <div className="grid gap-1.5">
-                  {availableDirections.map((d) => (
-                    <button
-                      key={d.key}
-                      onClick={() => setDirection(d.key)}
-                      className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition ${
-                        direction === d.key ? 'border-white/40 bg-white/10' : 'border-white/10 bg-white/5 hover:bg-white/[0.07]'
-                      }`}
-                    >
-                      <span className="text-white/60 shrink-0">{d.icon}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm">{d.label}</div>
-                        <div className="text-[11px] text-white/40">{d.hint}</div>
-                      </div>
-                      {direction === d.key && <Check size={15} className="text-white/70 shrink-0" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 条目选择 */}
-              <div>
-                <div className="text-xs text-white/50 mb-1.5">
-                  选择条目（{capability?.displayName || resourceType}）· 已选 {selected.size}
-                </div>
-                {items.length === 0 ? (
-                  <div className="text-xs text-white/40 px-3 py-4 text-center rounded-lg border border-white/10 bg-white/5">
-                    没有可发送的条目
-                  </div>
-                ) : (
-                  <div className="grid gap-1 max-h-52 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                    {items.map((it) => (
-                      <button
-                        key={it.itemId}
-                        onClick={() => toggleItem(it.itemId)}
-                        className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition ${
-                          selected.has(it.itemId) ? 'border-white/40 bg-white/10' : 'border-white/10 bg-white/5 hover:bg-white/[0.07]'
-                        }`}
-                      >
-                        <span
-                          className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
-                            selected.has(it.itemId) ? 'bg-white/80 border-white/80' : 'border-white/30'
-                          }`}
-                        >
-                          {selected.has(it.itemId) && <Check size={11} className="text-black" />}
-                        </span>
+                  <SectionTitle label="同步方向" />
+                  <div className="grid grid-cols-1 gap-2">
+                    {availableDirections.map((d) => (
+                      <ChoiceCard key={d.key} active={direction === d.key} icon={d.icon} onClick={() => setDirection(d.key)}>
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm truncate">{it.name}</div>
-                          <div className="text-[11px] text-white/40">{it.recordCount} 项内容</div>
+                          <div className="text-sm font-semibold">{d.label}</div>
+                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{d.hint}</div>
                         </div>
-                      </button>
+                      </ChoiceCard>
                     ))}
                   </div>
-                )}
-              </div>
 
-              {/* 进度（等提示信息，避免空白等待 — CLAUDE.md §6） */}
-              {submitting && progress && (
-                <div
-                  className="rounded-lg p-3 flex items-start gap-2"
-                  style={{
-                    background: 'rgba(59,130,246,0.08)',
-                    border: '1px solid rgba(59,130,246,0.20)',
-                  }}
-                >
-                  <MapSpinner size={13} />
-                  <div className="min-w-0 flex-1 text-[12px]" style={{ color: 'var(--text-primary)' }}>
-                    {progress.stage}
-                    <span className="ml-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      已用 {Math.round((Date.now() - progress.startedAt) / 1000)}s
-                    </span>
+                  <SectionTitle label="同步策略" />
+                  <div className="grid gap-2">
+                    <ToggleRow
+                      icon={<Clock3 size={16} />}
+                      title="保存原时间"
+                      desc="保留源知识库的创建与更新时间"
+                      checked={preserveTimestamps}
+                      onChange={setPreserveTimestamps}
+                    />
+                    <ToggleRow
+                      icon={<RotateCcw size={16} />}
+                      title="允许覆盖"
+                      desc="修复历史同步造成的脏数据"
+                      checked={allowOverwrite}
+                      onChange={setAllowOverwrite}
+                    />
+                    <ToggleRow
+                      icon={<Image size={16} />}
+                      title="图片重传"
+                      desc="使用目标平台自己的图片域名"
+                      checked={rewriteAssetLinks}
+                      onChange={setRewriteAssetLinks}
+                    />
                   </div>
                 </div>
-              )}
 
-              {/* 结果 */}
-              {results && (
-                <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-1">
-                  <div className="text-xs text-white/60 mb-1">互传结果</div>
-                  {results.map((r) => {
-                    const name = items.find((i) => i.itemId === r.itemId)?.name || r.itemId;
-                    return (
-                      <div key={r.itemId} className="flex items-start gap-2 text-[12px]">
-                        <span className={r.ok ? 'text-green-400' : 'text-red-400'}>{r.ok ? '成功' : '失败'}</span>
-                        <span className="text-white/70 truncate">{name}</span>
-                        {r.message && <span className="text-white/40">— {r.message}</span>}
-                      </div>
-                    );
-                  })}
+                <div className="mt-5 rounded-xl border p-3 text-xs leading-5" style={{ borderColor: 'rgba(245,158,11,0.32)', background: 'rgba(245,158,11,0.10)', color: 'rgb(252,211,77)' }}>
+                  本次建议：保留原时间、允许覆盖、图片重传。任一条目失败不会写入成功同步标识。
+                </div>
+              </>
+            )}
+          </aside>
+
+          <main className="flex min-h-0 flex-col">
+            <div className="border-b px-6 py-4" style={{ borderColor: 'rgba(148,163,184,0.12)' }}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-base font-semibold">选择与传输预览</div>
+                  <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    已选 {selected.size} 个知识库，模式为 {modeLabel}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <StatusPill icon={<ShieldCheck size={13} />} text={preserveTimestamps ? '保留原时间' : '使用同步时间'} tone={preserveTimestamps ? 'teal' : 'slate'} />
+                  <StatusPill icon={<RotateCcw size={13} />} text={modeLabel} tone={allowOverwrite ? 'gold' : 'slate'} />
+                  <StatusPill icon={<Image size={13} />} text={rewriteAssetLinks ? '图片重传' : '跳过图片'} tone={rewriteAssetLinks ? 'teal' : 'slate'} />
+                </div>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-6" style={{ overscrollBehavior: 'contain' }}>
+              {error && (
+                <div className="mb-4 flex items-start gap-2 rounded-xl border px-3 py-2 text-sm" style={{ borderColor: 'rgba(248,113,113,0.28)', background: 'rgba(127,29,29,0.16)', color: 'rgb(252,165,165)' }}>
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <span>{error}</span>
                 </div>
               )}
 
-              {/* error 顶层渲染，见 body 顶部空状态前的渲染块 */}
-            </>
-          )}
-        </div>
+              {loading ? (
+                <MapSectionLoader text="正在加载…" />
+              ) : (
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+                  <section className="min-w-0 space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {items.map((it) => (
+                        <button
+                          key={it.itemId}
+                          onClick={() => toggleItem(it.itemId)}
+                          className="group min-h-[118px] rounded-2xl border p-4 text-left transition"
+                          style={{
+                            borderColor: selected.has(it.itemId) ? 'rgba(45,212,191,0.56)' : 'rgba(148,163,184,0.18)',
+                            background: selected.has(it.itemId)
+                              ? 'linear-gradient(135deg, rgba(20,184,166,0.14), rgba(59,130,246,0.10))'
+                              : 'rgba(15,23,42,0.42)',
+                          }}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border" style={{ borderColor: 'rgba(148,163,184,0.20)', background: 'rgba(15,23,42,0.55)' }}>
+                              {selected.has(it.itemId) ? <Check size={17} style={{ color: 'rgb(45,212,191)' }} /> : <FolderOpen size={17} style={{ color: 'rgb(148,163,184)' }} />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="line-clamp-2 text-sm font-semibold">{it.name}</div>
+                              <div className="mt-2 flex flex-wrap gap-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                <span>{it.recordCount} 项内容</span>
+                                {it.updatedAt && <span>最近更新 {formatShortTime(it.updatedAt)}</span>}
+                              </div>
+                            </div>
+                          </div>
+                          {it.description && (
+                            <div className="mt-3 line-clamp-2 text-xs" style={{ color: 'var(--text-muted)' }}>{it.description}</div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
 
-        {/* footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-white/10 shrink-0">
-          <Button size="sm" variant="ghost" onClick={safeClose}>
-            关闭
-          </Button>
-          <Button size="sm" onClick={handleSubmit} disabled={!canSubmit}>
-            {submitting ? <MapSpinner size={14} /> : <Send size={14} />}
-            {direction === 'pull' ? '拉取' : direction === 'both' ? '双向同步' : '发送'}
-          </Button>
+                    {items.length === 0 && (
+                      <EmptyBlock icon={<Database size={20} />} title="没有可同步的知识库" desc="当前账号没有可发送的个人或团队知识库" />
+                    )}
+                  </section>
+
+                  <aside className="space-y-4">
+                    <TransferPreview
+                      node={activeNode}
+                      direction={direction}
+                      selectedCount={selected.size}
+                      submitting={submitting}
+                      progress={progress}
+                    />
+
+                    <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>
+                      <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                        <ListChecks size={16} />
+                        验收步骤
+                      </div>
+                      <div className="space-y-2">
+                        {STEPS.map((s, index) => {
+                          const active = submitting && progress && progress.step === index + 1;
+                          const done = Boolean(results) || Boolean(progress && progress.step > index + 1);
+                          return (
+                            <div key={s.title} className="flex gap-3 rounded-xl border px-3 py-2" style={{
+                              borderColor: active ? 'rgba(45,212,191,0.46)' : 'rgba(148,163,184,0.14)',
+                              background: active ? 'rgba(20,184,166,0.10)' : 'rgba(15,23,42,0.34)',
+                            }}>
+                              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold" style={{
+                                background: done ? 'rgba(34,197,94,0.20)' : active ? 'rgba(45,212,191,0.22)' : 'rgba(148,163,184,0.12)',
+                                color: done ? 'rgb(134,239,172)' : active ? 'rgb(94,234,212)' : 'rgb(148,163,184)',
+                              }}>
+                                {index + 1}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-semibold">{s.title}</div>
+                                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{s.desc}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {results && (
+                      <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>
+                        <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                          <CheckCircle2 size={16} />
+                          互传结果
+                        </div>
+                        <div className="space-y-2">
+                          {results.map((r) => {
+                            const name = items.find((i) => i.itemId === r.itemId)?.name || r.itemId;
+                            return (
+                              <div key={r.itemId} className="rounded-xl border px-3 py-2 text-xs" style={{
+                                borderColor: r.ok ? 'rgba(34,197,94,0.26)' : 'rgba(248,113,113,0.30)',
+                                background: r.ok ? 'rgba(22,101,52,0.12)' : 'rgba(127,29,29,0.14)',
+                              }}>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="truncate font-semibold">{name}</span>
+                                  <span style={{ color: r.ok ? 'rgb(134,239,172)' : 'rgb(252,165,165)' }}>{r.ok ? '成功' : '失败'}</span>
+                                </div>
+                                {r.message && <div className="mt-1 leading-5" style={{ color: 'var(--text-muted)' }}>{r.message}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </aside>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t px-6 py-4" style={{ borderColor: 'rgba(148,163,184,0.12)' }}>
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                {submitting && progress ? `${progress.stage}，已用 ${Math.round((Date.now() - progress.startedAt) / 1000)} 秒` : '同步完成后会刷新知识库列表和跨系统同步标识'}
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" onClick={safeClose} disabled={submitting}>取消</Button>
+                <Button size="sm" onClick={handleSubmit} disabled={!canSubmit}>
+                  {submitting ? <MapSpinner size={14} /> : <Send size={14} />}
+                  {direction === 'pull' ? '开始拉取' : direction === 'both' ? '开始双向同步' : '开始发送'}
+                </Button>
+              </div>
+            </div>
+          </main>
         </div>
       </div>
     </div>
   );
 
   return createPortal(modal, document.body);
+}
+
+function SectionTitle({ label }: { label: string }) {
+  return <div className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'rgb(148,163,184)' }}>{label}</div>;
+}
+
+function ChoiceCard({ active, icon, onClick, children }: { active: boolean; icon: ReactNode; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition"
+      style={{
+        borderColor: active ? 'rgba(45,212,191,0.54)' : 'rgba(148,163,184,0.18)',
+        background: active ? 'rgba(20,184,166,0.12)' : 'rgba(15,23,42,0.42)',
+      }}
+    >
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border" style={{ borderColor: 'rgba(148,163,184,0.16)', color: active ? 'rgb(94,234,212)' : 'rgb(148,163,184)' }}>
+        {icon}
+      </div>
+      {children}
+      {active && <Check size={15} className="shrink-0" style={{ color: 'rgb(94,234,212)' }} />}
+    </button>
+  );
+}
+
+function ToggleRow({ icon, title, desc, checked, onChange }: {
+  icon: ReactNode;
+  title: string;
+  desc: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className="flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition"
+      style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.42)' }}
+    >
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg" style={{ background: 'rgba(59,130,246,0.12)', color: 'rgb(147,197,253)' }}>
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold">{title}</div>
+        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{desc}</div>
+      </div>
+      <span className="relative h-6 w-11 rounded-full border transition" style={{
+        borderColor: checked ? 'rgba(45,212,191,0.56)' : 'rgba(148,163,184,0.22)',
+        background: checked ? 'rgba(20,184,166,0.28)' : 'rgba(15,23,42,0.70)',
+      }}>
+        <span className="absolute top-1 h-4 w-4 rounded-full transition" style={{
+          left: checked ? 22 : 4,
+          background: checked ? 'rgb(94,234,212)' : 'rgb(148,163,184)',
+        }} />
+      </span>
+    </button>
+  );
+}
+
+function EmptyBlock({ icon, title, desc }: { icon: ReactNode; title: string; desc: string }) {
+  return (
+    <div className="rounded-2xl border px-4 py-6 text-center" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'rgba(15,23,42,0.36)' }}>
+      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: 'rgba(148,163,184,0.10)', color: 'rgb(148,163,184)' }}>{icon}</div>
+      <div className="text-sm font-semibold">{title}</div>
+      <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{desc}</div>
+    </div>
+  );
+}
+
+function StatusPill({ icon, text, tone }: { icon: ReactNode; text: string; tone: 'teal' | 'gold' | 'slate' }) {
+  const color = tone === 'teal' ? 'rgb(94,234,212)' : tone === 'gold' ? 'rgb(252,211,77)' : 'rgb(148,163,184)';
+  const border = tone === 'teal' ? 'rgba(45,212,191,0.32)' : tone === 'gold' ? 'rgba(245,158,11,0.34)' : 'rgba(148,163,184,0.18)';
+  const bg = tone === 'teal' ? 'rgba(20,184,166,0.10)' : tone === 'gold' ? 'rgba(245,158,11,0.10)' : 'rgba(148,163,184,0.08)';
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1" style={{ color, borderColor: border, background: bg }}>
+      {icon}
+      {text}
+    </span>
+  );
+}
+
+function TransferPreview({ node, direction, selectedCount, submitting, progress }: {
+  node: PeerNode | null;
+  direction: PeerTransferDirection;
+  selectedCount: number;
+  submitting: boolean;
+  progress: { step: number; stage: string; startedAt: number } | null;
+}) {
+  const directionText = direction === 'push' ? '发送' : direction === 'pull' ? '拉取' : '双向';
+  return (
+    <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Activity size={16} />
+          传输预览
+        </div>
+        <StatusPill text={submitting ? '正在跨系统同步' : '待开始'} icon={submitting ? <MapSpinner size={12} /> : <CheckCircle2 size={13} />} tone={submitting ? 'gold' : 'slate'} />
+      </div>
+      <div className="relative h-56 overflow-hidden rounded-2xl border" style={{ borderColor: 'rgba(148,163,184,0.16)', background: 'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(30,41,59,0.60))' }}>
+        <div className="absolute left-5 top-5 rounded-xl border px-3 py-2" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(2,6,23,0.58)' }}>
+          <div className="text-xs font-semibold">本地</div>
+          <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>{selectedCount} 个知识库</div>
+        </div>
+        <div className="absolute bottom-5 right-5 rounded-xl border px-3 py-2" style={{ borderColor: 'rgba(45,212,191,0.28)', background: 'rgba(2,6,23,0.58)' }}>
+          <div className="text-xs font-semibold">{node?.displayName || '对端节点'}</div>
+          <div className="mt-1 max-w-[190px] truncate font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{node?.baseUrl || '等待选择'}</div>
+        </div>
+        <div className="absolute left-[22%] top-[52%] h-px w-[58%] -rotate-[18deg]" style={{ background: 'rgba(148,163,184,0.28)' }} />
+        <div className="absolute left-[22%] top-[52%] h-[3px] w-[58%] -rotate-[18deg] overflow-hidden rounded-full">
+          <div className="peer-flow-beam h-full w-28 rounded-full" style={{ background: 'linear-gradient(90deg, transparent, rgb(96,165,250), rgb(45,212,191), transparent)', animationPlayState: submitting ? 'running' : 'paused' }} />
+        </div>
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: 'rgba(245,158,11,0.34)', background: 'rgba(245,158,11,0.10)', color: 'rgb(252,211,77)' }}>
+          {directionText}
+        </div>
+      </div>
+      <div className="mt-3 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
+        {progress ? progress.stage : '开始后会按顺序执行扫描、图片重传、合并、回读四步。'}
+      </div>
+    </div>
+  );
+}
+
+function formatShortTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
 }

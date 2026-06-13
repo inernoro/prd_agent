@@ -1,11 +1,15 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Sync;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.Sync.Resources;
 
@@ -26,17 +30,23 @@ public class DocumentStoreSyncResource : ISyncableResource
     private readonly MongoDbContext _db;
     private readonly IDocumentService _documentService;
     private readonly ITeamService _teams;
+    private readonly IAssetStorage _assetStorage;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<DocumentStoreSyncResource> _logger;
 
     public DocumentStoreSyncResource(
         MongoDbContext db,
         IDocumentService documentService,
         ITeamService teams,
+        IAssetStorage assetStorage,
+        IHttpClientFactory httpFactory,
         ILogger<DocumentStoreSyncResource> logger)
     {
         _db = db;
         _documentService = documentService;
         _teams = teams;
+        _assetStorage = assetStorage;
+        _httpFactory = httpFactory;
         _logger = logger;
     }
 
@@ -111,6 +121,9 @@ public class DocumentStoreSyncResource : ISyncableResource
                 Tags = e.Tags,
                 Metadata = e.Metadata,
                 Content = content,
+                CreatedAt = e.CreatedAt,
+                UpdatedAt = e.UpdatedAt,
+                LastChangedAt = e.LastChangedAt,
             });
         }
 
@@ -126,6 +139,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                 Tags = store.Tags,
                 OwnerUserName = owner?.Username,
                 OwnerEmail = owner?.Email,
+                CreatedAt = store.CreatedAt,
+                UpdatedAt = store.UpdatedAt,
             },
             Records = records,
         };
@@ -174,6 +189,7 @@ public class DocumentStoreSyncResource : ISyncableResource
     {
         // 1) 归属对齐：用户名 → 邮箱 → 兜底归到操作者
         var (ownerUserId, ownerName, ownerAvatar, authorMatched) = await ResolveOwnerAsync(bundle.Item, actor, ct);
+        var options = ReadOptions(bundle);
 
         // 2) 解析 / 创建目标库（保留同一 Id 便于 test↔prod 同库）
         var key = !string.IsNullOrWhiteSpace(targetKey) ? targetKey! : bundle.Item.Key;
@@ -200,11 +216,14 @@ public class DocumentStoreSyncResource : ISyncableResource
                 Description = bundle.Item.Description,
                 OwnerId = ownerUserId,
                 Tags = bundle.Item.Tags ?? new List<string>(),
+                CreatedAt = options.PreserveTimestamps && bundle.Item.CreatedAt.HasValue ? bundle.Item.CreatedAt.Value : DateTime.UtcNow,
+                UpdatedAt = options.PreserveTimestamps && bundle.Item.UpdatedAt.HasValue ? bundle.Item.UpdatedAt.Value : DateTime.UtcNow,
             };
             await _db.DocumentStores.InsertOneAsync(target, cancellationToken: ct);
         }
 
-        var outcome = await ApplyRecordsAsync(target, bundle.Records, mode, ownerUserId, ownerName, ownerAvatar, ct);
+        var outcome = await ApplyRecordsAsync(target, bundle.Records, mode, options, ownerUserId, ownerName, ownerAvatar, ct);
+        outcome.TargetItemId = target.Id;
         outcome.UnmatchedAuthors = authorMatched ? 0 : 1;
         if (!authorMatched)
             outcome.Message = (outcome.Message == null ? "" : outcome.Message + "；")
@@ -236,6 +255,7 @@ public class DocumentStoreSyncResource : ISyncableResource
     /// <summary>把记录幂等 upsert 进目标库（沿用 DocumentStoreSyncController.ApplyBundleAsync 的算法）。</summary>
     private async Task<SyncApplyOutcome> ApplyRecordsAsync(
         DocumentStore target, List<SyncRecord> records, SyncApplyMode mode,
+        DocumentStorePeerApplyOptions options,
         string actorUserId, string actorName, string? actorAvatar, CancellationToken ct)
     {
         records ??= new List<SyncRecord>();
@@ -247,8 +267,10 @@ public class DocumentStoreSyncResource : ISyncableResource
             if (!byLineage.ContainsKey(k)) byLineage[k] = e;
         }
         var lineageToTargetId = new Dictionary<string, string>();
-        int created = 0, updated = 0, skipped = 0, failed = 0;
+        int created = 0, updated = 0, skipped = 0, failed = 0, assetsRewritten = 0, assetRewriteFailed = 0;
         var addOnly = mode == SyncApplyMode.AddOnly;
+        var now = DateTime.UtcNow;
+        DateTime PickTime(DateTime? source) => options.PreserveTimestamps && source.HasValue ? source.Value : DateTime.UtcNow;
 
         string? ResolveParent(string? parentLineage)
         {
@@ -276,7 +298,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                             .Set(e => e.Metadata, WithLineage(f.Metadata, f.LineageId))
                             .Set(e => e.UpdatedBy, actorUserId)
                             .Set(e => e.UpdatedByName, actorName)
-                            .Set(e => e.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+                            .Set(e => e.UpdatedAt, PickTime(f.UpdatedAt)), cancellationToken: ct);
                     exFolder.Title = f.Title;
                     exFolder.ParentId = parentId;
                     updated++;
@@ -299,6 +321,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                 CreatedByAvatarFileName = actorAvatar,
                 UpdatedBy = actorUserId,
                 UpdatedByName = actorName,
+                CreatedAt = PickTime(f.CreatedAt),
+                UpdatedAt = PickTime(f.UpdatedAt),
             };
             await _db.DocumentEntries.InsertOneAsync(folder, cancellationToken: ct);
             byLineage[f.LineageId] = folder;
@@ -334,6 +358,14 @@ public class DocumentStoreSyncResource : ISyncableResource
             {
                 if (fe.Content == null) { skipped++; continue; }
                 var parentId = ResolveParent(fe.ParentLineageId);
+                var content = fe.Content;
+                if (options.RewriteAssetLinks)
+                {
+                    var rewrite = await RewriteEmbeddedAssetsAsync(content, options.SourceBaseUrl, ct);
+                    content = rewrite.Content;
+                    assetsRewritten += rewrite.Rewritten;
+                    assetRewriteFailed += rewrite.Failed;
+                }
 
                 if (byLineage.TryGetValue(fe.LineageId, out var exFolderConflict) && exFolderConflict.IsFolder)
                 {
@@ -347,7 +379,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                     var existingContent = !string.IsNullOrEmpty(exEntry.DocumentId)
                         ? (await _documentService.GetByIdAsync(exEntry.DocumentId))?.RawContent ?? string.Empty
                         : string.Empty;
-                    if (Sha256Hex(existingContent) == Sha256Hex(fe.Content)
+                    if (Sha256Hex(existingContent) == Sha256Hex(content)
                         && exEntry.Title == fe.Title && exEntry.ParentId == parentId
                         && TagsEqual(exEntry.Tags, fe.Tags) && exEntry.Summary == fe.Summary
                         && MetaEqual(exEntry.Metadata, fe.Metadata))
@@ -356,7 +388,9 @@ public class DocumentStoreSyncResource : ISyncableResource
                         continue;
                     }
                     var oldDocId = exEntry.DocumentId;
-                    var parsed = await BuildAndSaveDocAsync(fe.Content, fe.Title);
+                    var parsed = await BuildAndSaveDocAsync(content, fe.Title);
+                    var updatedAt = PickTime(fe.UpdatedAt);
+                    var changedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
                     await _db.DocumentEntries.UpdateOneAsync(
                         e => e.Id == exEntry.Id,
                         Builders<DocumentEntry>.Update
@@ -365,20 +399,20 @@ public class DocumentStoreSyncResource : ISyncableResource
                             .Set(e => e.Summary, fe.Summary)
                             .Set(e => e.ParentId, parentId)
                             .Set(e => e.Tags, fe.Tags ?? new List<string>())
-                            .Set(e => e.ContentIndex, fe.Content.Length > 2000 ? fe.Content[..2000] : fe.Content)
+                            .Set(e => e.ContentIndex, content.Length > 2000 ? content[..2000] : content)
                             .Set(e => e.FileSize, fe.FileSize)
                             .Set(e => e.ContentType, string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType)
                             .Set(e => e.Metadata, WithLineage(fe.Metadata, fe.LineageId))
                             .Set(e => e.UpdatedBy, actorUserId)
                             .Set(e => e.UpdatedByName, actorName)
-                            .Set(e => e.UpdatedAt, DateTime.UtcNow)
-                            .Set(e => e.LastChangedAt, DateTime.UtcNow), cancellationToken: ct);
+                            .Set(e => e.UpdatedAt, updatedAt)
+                            .Set(e => e.LastChangedAt, changedAt), cancellationToken: ct);
                     await CleanupReplacedDocAsync(oldDocId, parsed.Id, exEntry.Id);
                     updated++;
                 }
                 else
                 {
-                    var parsed = await BuildAndSaveDocAsync(fe.Content, fe.Title);
+                    var parsed = await BuildAndSaveDocAsync(content, fe.Title);
                     var entry = new DocumentEntry
                     {
                         StoreId = target.Id,
@@ -392,13 +426,15 @@ public class DocumentStoreSyncResource : ISyncableResource
                         Tags = fe.Tags ?? new List<string>(),
                         Metadata = WithLineage(fe.Metadata, fe.LineageId),
                         DocumentId = parsed.Id,
-                        ContentIndex = fe.Content.Length > 2000 ? fe.Content[..2000] : fe.Content,
+                        ContentIndex = content.Length > 2000 ? content[..2000] : content,
                         CreatedBy = actorUserId,
                         CreatedByName = actorName,
                         CreatedByAvatarFileName = actorAvatar,
                         UpdatedBy = actorUserId,
                         UpdatedByName = actorName,
-                        LastChangedAt = DateTime.UtcNow,
+                        CreatedAt = PickTime(fe.CreatedAt),
+                        UpdatedAt = PickTime(fe.UpdatedAt),
+                        LastChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt),
                     };
                     await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
                     byLineage[fe.LineageId] = entry;
@@ -413,19 +449,174 @@ public class DocumentStoreSyncResource : ISyncableResource
         }
 
         var count = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == target.Id, cancellationToken: ct);
+        var storeUpdatedAt = options.PreserveTimestamps
+            ? records.Select(r => r.UpdatedAt).Where(t => t.HasValue).Select(t => t!.Value).DefaultIfEmpty(target.UpdatedAt).Max()
+            : now;
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == target.Id,
-            Builders<DocumentStore>.Update.Set(s => s.DocumentCount, (int)count).Set(s => s.UpdatedAt, DateTime.UtcNow),
+            Builders<DocumentStore>.Update.Set(s => s.DocumentCount, (int)count).Set(s => s.UpdatedAt, storeUpdatedAt),
             cancellationToken: ct);
 
         return new SyncApplyOutcome
         {
+            TargetItemId = target.Id,
             Created = created,
             Updated = updated,
             Skipped = skipped,
             Failed = failed,
-            Message = $"新增{created}/更新{updated}/跳过{skipped}" + (failed > 0 ? $"/失败{failed}" : ""),
+            AssetsRewritten = assetsRewritten,
+            AssetRewriteFailed = assetRewriteFailed,
+            Message = $"新增{created}/更新{updated}/跳过{skipped}"
+                + (failed > 0 ? $"/失败{failed}" : "")
+                + (assetsRewritten > 0 || assetRewriteFailed > 0 ? $"；图片重传{assetsRewritten}/失败{assetRewriteFailed}" : ""),
         };
+    }
+
+    private sealed record DocumentStorePeerApplyOptions(
+        bool PreserveTimestamps,
+        bool RewriteAssetLinks,
+        string? SourceBaseUrl);
+
+    private static DocumentStorePeerApplyOptions ReadOptions(SyncResourceBundle bundle)
+    {
+        var preserveTimestamps = true;
+        var rewriteAssetLinks = true;
+        string? sourceBaseUrl = null;
+
+        if (bundle.Item.Extras != null
+            && bundle.Item.Extras.TryGetValue("peerApplyOptions", out var raw)
+            && raw.ValueKind == JsonValueKind.Object)
+        {
+            if (raw.TryGetProperty("preserveTimestamps", out var preserve) && preserve.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                preserveTimestamps = preserve.GetBoolean();
+            if (raw.TryGetProperty("rewriteAssetLinks", out var rewrite) && rewrite.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                rewriteAssetLinks = rewrite.GetBoolean();
+            if (raw.TryGetProperty("sourceBaseUrl", out var source) && source.ValueKind == JsonValueKind.String)
+                sourceBaseUrl = source.GetString();
+        }
+
+        return new DocumentStorePeerApplyOptions(preserveTimestamps, rewriteAssetLinks, sourceBaseUrl);
+    }
+
+    private async Task<(string Content, int Rewritten, int Failed)> RewriteEmbeddedAssetsAsync(
+        string content,
+        string? sourceBaseUrl,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(content) || string.IsNullOrWhiteSpace(sourceBaseUrl))
+            return (content, 0, 0);
+        if (!Uri.TryCreate(sourceBaseUrl.Trim().TrimEnd('/'), UriKind.Absolute, out var sourceBase)
+            || sourceBase.Scheme is not ("http" or "https"))
+            return (content, 0, 0);
+
+        var rewritten = 0;
+        var failed = 0;
+        var next = content;
+        foreach (var raw in ExtractAssetUrls(content).Distinct(StringComparer.Ordinal))
+        {
+            var sourceUri = ToSourceScopedUri(raw, sourceBase);
+            if (sourceUri == null)
+                continue;
+
+            try
+            {
+                var asset = await DownloadAndStoreAssetAsync(sourceUri, ct);
+                if (asset == null)
+                {
+                    failed++;
+                    continue;
+                }
+                next = next.Replace(raw, asset.Url, StringComparison.Ordinal);
+                rewritten++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[peer-sync] rewrite asset failed: {Url}", sourceUri);
+                failed++;
+            }
+        }
+
+        return (next, rewritten, failed);
+    }
+
+    private async Task<StoredAsset?> DownloadAndStoreAssetAsync(Uri uri, CancellationToken ct)
+    {
+        var client = _httpFactory.CreateClient("PeerSync");
+        client.Timeout = TimeSpan.FromSeconds(60);
+        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var mime = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var length = response.Content.Headers.ContentLength;
+        if (length.HasValue && length.Value > 25 * 1024 * 1024)
+            return null;
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+        if (bytes.Length > 25 * 1024 * 1024)
+            return null;
+
+        var fileName = Path.GetFileName(uri.LocalPath);
+        return await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: fileName);
+    }
+
+    private static Uri? ToSourceScopedUri(string raw, Uri sourceBase)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        Uri uri;
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var absolute))
+        {
+            uri = absolute;
+        }
+        else if (raw.StartsWith("/", StringComparison.Ordinal))
+        {
+            uri = new Uri(sourceBase, raw);
+        }
+        else
+        {
+            return null;
+        }
+
+        if (uri.Scheme is not ("http" or "https"))
+            return null;
+        if (!string.Equals(uri.Host, sourceBase.Host, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return uri;
+    }
+
+    private static IEnumerable<string> ExtractAssetUrls(string content)
+    {
+        foreach (Match m in Regex.Matches(content, @"!\[[^\]]*\]\((?<url>[^)\s]+)(?:\s+""[^""]*"")?\)", RegexOptions.IgnoreCase))
+        {
+            var url = m.Groups["url"].Value.Trim();
+            if (LooksLikeImageUrl(url))
+                yield return url;
+        }
+        foreach (Match m in Regex.Matches(content, "<img\\b[^>]*?\\bsrc=[\"'](?<url>[^\"']+)[\"']", RegexOptions.IgnoreCase))
+        {
+            var url = m.Groups["url"].Value.Trim();
+            if (LooksLikeImageUrl(url))
+                yield return url;
+        }
+    }
+
+    private static bool LooksLikeImageUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var path = url.Split('?', '#')[0];
+        return path.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".avif", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase);
     }
 
     // ─────────────────────────────────────────────────────────────
