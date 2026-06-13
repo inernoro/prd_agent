@@ -68,19 +68,17 @@ export function useFormDraft<T>({ key, value, pristine, onRestore, enabled = tru
     }
   }, [key, enabled]);
 
-  // 值变化时防抖落库（仅在该 key 已完成恢复检测后）。等于原始内容时删除草稿，不留无意义记录。
+  // 值变化时同步落库（仅在该 key 已完成恢复检测后）。草稿是极小 JSON，无需防抖；
+  // 同步写可彻底规避「编辑后立刻关弹窗」因防抖未触发而丢最后改动。等于原始内容时删除草稿。
   useEffect(() => {
     if (!key || !enabled) return;
     if (restoredKeyRef.current !== key) return;
-    const h = setTimeout(() => {
-      try {
-        if (JSON.stringify(value) === JSON.stringify(pristineRef.current)) sessionStorage.removeItem(key);
-        else sessionStorage.setItem(key, JSON.stringify(value));
-      } catch {
-        /* 配额超限等：静默 */
-      }
-    }, 400);
-    return () => clearTimeout(h);
+    try {
+      if (JSON.stringify(value) === JSON.stringify(pristineRef.current)) sessionStorage.removeItem(key);
+      else sessionStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      /* 配额超限等：静默 */
+    }
   }, [key, enabled, value]);
 
   const clearDraft = useCallback(() => {
