@@ -83,6 +83,9 @@ import type {
   GetPmAgentPreferencesContract,
   UpdatePmQuickActionsContract,
   GetPmReportSummaryContract,
+  GetPmKnowledgeOverviewContract,
+  ListPmKnowledgeEntriesContract,
+  GetPmKnowledgeEntryContentContract,
   GetPmGlobalProjectsContract,
   GetPmGlobalSummaryContract,
 } from '@/services/contracts/pmAgent';
@@ -272,9 +275,11 @@ export const deletePmGoalCycleReal: DeletePmGoalCycleContract = async (cycleId) 
 
 // ── 审计日志 ──
 export const listPmAuditLogsReal: ListPmAuditLogsContract = async (opts) => {
-  const { projectId, page = 1, pageSize = 50 } = opts ?? {};
+  const { projectId, keyword, method, page = 1, pageSize = 50 } = opts ?? {};
   const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (projectId) qs.set('projectId', projectId);
+  if (keyword && keyword.trim()) qs.set('keyword', keyword.trim());
+  if (method) qs.set('method', method);
   return await apiRequest(`${api.pm.auditLogs()}?${qs.toString()}`, { method: 'GET' });
 };
 
@@ -445,6 +450,28 @@ export const updatePmQuickActionsReal: UpdatePmQuickActionsContract = async (qui
 export const getPmReportSummaryReal: GetPmReportSummaryContract = async (scope) => {
   return await apiRequest(api.pm.reportsSummary(scope), { method: 'GET' });
 };
+
+// ── 全局知识库（管理层洞察，仅 pm-agent.dashboard）──
+
+export const getPmKnowledgeOverviewReal: GetPmKnowledgeOverviewContract = async () => {
+  return await apiRequest(api.pm.knowledgeOverview(), { method: 'GET' });
+};
+
+export const listPmKnowledgeEntriesReal: ListPmKnowledgeEntriesContract = async (filter) => {
+  const q = new URLSearchParams();
+  if (filter) {
+    for (const [k, v] of Object.entries(filter)) {
+      if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
+    }
+  }
+  return await apiRequest(api.pm.knowledgeEntries(q.toString()), { method: 'GET' });
+};
+
+export const getPmKnowledgeEntryContentReal: GetPmKnowledgeEntryContentContract = async (entryId) => {
+  return await apiRequest(api.pm.knowledgeEntryContent(encodeURIComponent(entryId)), { method: 'GET' });
+};
+
+// ── 全局总览（管理层只读洞察，跨全公司项目） ──
 
 export const getPmGlobalProjectsReal: GetPmGlobalProjectsContract = async (filters) => {
   return await apiRequest(api.pm.globalProjects({

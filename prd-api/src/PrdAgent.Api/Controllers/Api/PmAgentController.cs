@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
@@ -33,6 +35,7 @@ public class PmAgentController : ControllerBase
     private readonly IHostedSiteService _hostedSites;
     private readonly ILlmGateway _gateway;
     private readonly IFileContentExtractor _fileExtractor;
+    private readonly IDocumentService _documentService;
     private readonly ILogger<PmAgentController> _logger;
 
     public PmAgentController(
@@ -42,6 +45,7 @@ public class PmAgentController : ControllerBase
         IHostedSiteService hostedSites,
         ILlmGateway gateway,
         IFileContentExtractor fileExtractor,
+        IDocumentService documentService,
         ILogger<PmAgentController> logger)
     {
         _db = db;
@@ -50,6 +54,7 @@ public class PmAgentController : ControllerBase
         _hostedSites = hostedSites;
         _gateway = gateway;
         _fileExtractor = fileExtractor;
+        _documentService = documentService;
         _logger = logger;
     }
 
@@ -1984,7 +1989,7 @@ public class PmAgentController : ControllerBase
 
     /// <summary>审计日志列表（管理层可见）。可按 projectId 过滤；批量解析操作人名称与项目标题</summary>
     [HttpGet("audit-logs")]
-    public async Task<IActionResult> ListAuditLogs([FromQuery] string? projectId = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    public async Task<IActionResult> ListAuditLogs([FromQuery] string? projectId = null, [FromQuery] string? keyword = null, [FromQuery] string? method = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         if (!HasPermission(AdminPermissionCatalog.PmAgentAudit))
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "审计日志仅对管理层开放"));
@@ -1992,7 +1997,14 @@ public class PmAgentController : ControllerBase
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
         var b = Builders<PmAuditLog>.Filter;
-        var filter = string.IsNullOrWhiteSpace(projectId) ? b.Empty : b.Eq(x => x.ProjectId, projectId);
+        var filter = b.Empty;
+        if (!string.IsNullOrWhiteSpace(projectId)) filter &= b.Eq(x => x.ProjectId, projectId);
+        if (!string.IsNullOrWhiteSpace(method)) filter &= b.Eq(x => x.Method, method.Trim().ToUpperInvariant());
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = new BsonRegularExpression(Regex.Escape(keyword.Trim()), "i");
+            filter &= b.Or(b.Regex(x => x.Path, kw), b.Regex(x => x.ActionLabel, kw));
+        }
         var total = await _db.PmAuditLogs.CountDocumentsAsync(filter);
         var logs = await _db.PmAuditLogs.Find(filter).SortByDescending(x => x.CreatedAt)
             .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync();
@@ -2371,6 +2383,205 @@ public class PmAgentController : ControllerBase
 
     private static int FiscalYearOf(DateTime d, int startMonth) => d.Month >= startMonth ? d.Year : d.Year - 1;
     private static int FiscalQuarterOf(DateTime d, int startMonth) => (((d.Month - startMonth) % 12 + 12) % 12) / 3 + 1;
+
+    // ─────────────────────────────────────────────
+    // 全局知识库（管理层洞察，仅 pm-agent.dashboard）：只读聚合所有项目知识库，
+    // 绕过「项目成员」鉴权，给老板/管理层全局视角。不写任何数据，不影响项目内知识库。
+    // ─────────────────────────────────────────────
+
+    /// <summary>403 兜底：仅管理层（pm-agent.dashboard）可用全局知识库。</summary>
+    private IActionResult? RequireKnowledgeOverviewPermission()
+        => HasPermission(AdminPermissionCatalog.PmAgentDashboard)
+            ? null
+            : StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "全局知识库仅对管理层开放"));
+
+    /// <summary>
+    /// 全局知识库总览：所有项目知识库（DocumentStore.PmProjectId 非空）的项目分组元信息 +
+    /// 筛选维度枚举（分类 / 文件类型 / 创建人）+ 全局统计。供前端默认展开的分组列表与筛选器。
+    /// </summary>
+    [HttpGet("knowledge/overview")]
+    public async Task<IActionResult> KnowledgeOverview()
+    {
+        if (RequireKnowledgeOverviewPermission() is { } forbid) return forbid;
+
+        var projects = (await _db.PmProjects.Find(p => !p.IsDeleted).ToListAsync())
+            .Where(p => !string.IsNullOrEmpty(p.KnowledgeStoreId)).ToList();
+        var storeIds = projects.Select(p => p.KnowledgeStoreId!).Distinct().ToList();
+        if (storeIds.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                projects = Array.Empty<object>(), totalProjects = 0, totalDocs = 0,
+                byType = new Dictionary<string, int>(), byLifecycle = new Dictionary<string, int>(),
+                facets = new { creators = Array.Empty<object>(), categories = Array.Empty<string>(), contentTypes = Array.Empty<string>() },
+            }));
+
+        var docFilter = Builders<DocumentEntry>.Filter.And(
+            Builders<DocumentEntry>.Filter.In(d => d.StoreId, storeIds),
+            Builders<DocumentEntry>.Filter.Eq(d => d.IsFolder, false));
+        var docs = await _db.DocumentEntries.Find(docFilter)
+            .Project(d => new { d.StoreId, d.Category, d.UpdatedAt, d.ContentType, d.CreatedBy, d.CreatedByName })
+            .ToListAsync();
+        var byStore = docs.GroupBy(d => d.StoreId).ToDictionary(g => g.Key, g => g.ToList());
+
+        var stores = await _db.DocumentStores.Find(s => storeIds.Contains(s.Id)).ToListAsync();
+        var storeMap = stores.ToDictionary(s => s.Id, s => s);
+
+        var projectRows = projects.Select(p =>
+        {
+            var sid = p.KnowledgeStoreId!;
+            var d = byStore.GetValueOrDefault(sid) ?? new();
+            return new
+            {
+                projectId = p.Id, projectNo = p.ProjectNo, title = p.Title,
+                projectType = p.ProjectType, lifecycle = p.Lifecycle, leaderName = p.LeaderName,
+                storeId = sid,
+                docCount = d.Count,
+                categories = storeMap.GetValueOrDefault(sid)?.Categories ?? new List<string>(),
+                lastUpdatedAt = d.Count > 0 ? d.Max(x => x.UpdatedAt) : (DateTime?)null,
+            };
+        }).OrderByDescending(r => r.lastUpdatedAt ?? DateTime.MinValue).ToList();
+
+        var creators = docs.Where(d => !string.IsNullOrEmpty(d.CreatedBy))
+            .GroupBy(d => d.CreatedBy)
+            .Select(g => new { userId = g.Key, name = g.Select(x => x.CreatedByName).FirstOrDefault(n => !string.IsNullOrEmpty(n)) ?? "", count = g.Count() })
+            .OrderByDescending(x => x.count).ToList();
+        var categories = docs.Where(d => !string.IsNullOrEmpty(d.Category)).Select(d => d.Category!).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
+        var contentTypes = docs.Where(d => !string.IsNullOrEmpty(d.ContentType)).Select(d => d.ContentType).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            projects = projectRows,
+            totalProjects = projectRows.Count,
+            totalDocs = docs.Count,
+            byType = projectRows.GroupBy(r => r.projectType).ToDictionary(g => g.Key, g => g.Count()),
+            byLifecycle = projectRows.GroupBy(r => r.lifecycle).ToDictionary(g => g.Key, g => g.Count()),
+            facets = new { creators, categories, contentTypes },
+        }));
+    }
+
+    /// <summary>
+    /// 全局知识库条目（分页 + 多维筛选）：在所有项目知识库的 document_entries 上检索，
+    /// join 回项目元信息。仅返回文档（排除文件夹），按 UpdatedAt 倒序。
+    /// </summary>
+    [HttpGet("knowledge/entries")]
+    public async Task<IActionResult> KnowledgeEntries(
+        [FromQuery] string? projectId = null,
+        [FromQuery] string? projectType = null,
+        [FromQuery] string? lifecycle = null,
+        [FromQuery] string? category = null,
+        [FromQuery] string? tag = null,
+        [FromQuery] string? sourceType = null,
+        [FromQuery] string? contentType = null,
+        [FromQuery] string? createdBy = null,
+        [FromQuery] string? keyword = null,
+        [FromQuery] DateTime? createdAfter = null,
+        [FromQuery] DateTime? createdBefore = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 200)
+    {
+        if (RequireKnowledgeOverviewPermission() is { } forbid) return forbid;
+
+        var projects = (await _db.PmProjects.Find(p => !p.IsDeleted).ToListAsync())
+            .Where(p => !string.IsNullOrEmpty(p.KnowledgeStoreId)).ToList();
+        if (!string.IsNullOrEmpty(projectId)) projects = projects.Where(p => p.Id == projectId).ToList();
+        if (!string.IsNullOrEmpty(projectType)) projects = projects.Where(p => p.ProjectType == projectType).ToList();
+        if (!string.IsNullOrEmpty(lifecycle)) projects = projects.Where(p => p.Lifecycle == lifecycle).ToList();
+
+        // 一个项目一对一一个 store；若历史脏数据多项目指向同 store，保留最先匹配的项目用于展示归属。
+        var projByStore = new Dictionary<string, PmProject>();
+        foreach (var p in projects) projByStore.TryAdd(p.KnowledgeStoreId!, p);
+        var storeIds = projByStore.Keys.ToList();
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 500);
+        if (storeIds.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<object>(), total = 0L, page, pageSize }));
+
+        var f = Builders<DocumentEntry>.Filter;
+        var filter = f.And(f.In(d => d.StoreId, storeIds), f.Eq(d => d.IsFolder, false));
+        if (!string.IsNullOrEmpty(category)) filter &= f.Eq(d => d.Category, category);
+        if (!string.IsNullOrEmpty(tag)) filter &= f.AnyEq(d => d.Tags, tag);
+        if (!string.IsNullOrEmpty(sourceType)) filter &= f.Eq(d => d.SourceType, sourceType);
+        if (!string.IsNullOrEmpty(contentType)) filter &= f.Eq(d => d.ContentType, contentType);
+        if (!string.IsNullOrEmpty(createdBy)) filter &= f.Eq(d => d.CreatedBy, createdBy);
+        if (createdAfter.HasValue) filter &= f.Gte(d => d.CreatedAt, createdAfter.Value);
+        if (createdBefore.HasValue) filter &= f.Lte(d => d.CreatedAt, createdBefore.Value);
+        if (!string.IsNullOrEmpty(keyword))
+        {
+            var kw = new BsonRegularExpression(Regex.Escape(keyword.Trim()), "i");
+            filter &= f.Or(f.Regex(d => d.Title, kw), f.Regex(d => d.Summary, kw));
+        }
+
+        var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
+        var entries = await _db.DocumentEntries.Find(filter)
+            .SortByDescending(d => d.UpdatedAt)
+            .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync();
+
+        var items = entries.Select(e =>
+        {
+            var proj = projByStore.GetValueOrDefault(e.StoreId);
+            return new
+            {
+                id = e.Id, storeId = e.StoreId, parentId = e.ParentId, isFolder = e.IsFolder,
+                title = e.Title, summary = e.Summary, contentType = e.ContentType, sourceType = e.SourceType,
+                category = e.Category, tags = e.Tags, fileSize = e.FileSize, metadata = e.Metadata,
+                createdBy = e.CreatedBy, createdByName = e.CreatedByName,
+                updatedBy = e.UpdatedBy, updatedByName = e.UpdatedByName,
+                createdAt = e.CreatedAt, updatedAt = e.UpdatedAt, lastChangedAt = e.LastChangedAt,
+                projectId = proj?.Id, projectNo = proj?.ProjectNo, projectTitle = proj?.Title,
+                projectType = proj?.ProjectType, lifecycle = proj?.Lifecycle,
+            };
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// 全局知识库条目正文（只读）：读取口径与 DocumentStore GetEntryContent 一致
+    /// （ParsedPrd 优先，Attachment.ExtractedText 兜底）。先校验 entry 归属项目知识库
+    /// （store.PmProjectId 非空），避免越权读任意 document_entries 条目。
+    /// </summary>
+    [HttpGet("knowledge/entries/{entryId}/content")]
+    public async Task<IActionResult> KnowledgeEntryContent(string entryId)
+    {
+        if (RequireKnowledgeOverviewPermission() is { } forbid) return forbid;
+
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store is null || string.IsNullOrEmpty(store.PmProjectId))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档不属于项目知识库"));
+
+        string? content = null;
+        string? title = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null) { content = doc.RawContent; title = doc.Title; }
+        }
+        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            if (att != null) { content = att.ExtractedText; title = att.FileName; }
+        }
+        string? fileUrl = null;
+        if (!string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            fileUrl = att?.Url;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entryId = entry.Id,
+            title = title ?? entry.Title,
+            content,
+            contentType = entry.ContentType,
+            fileUrl,
+            hasContent = !string.IsNullOrEmpty(content),
+        }));
+    }
 
     /// <summary>评选 / 取消评选优秀项目</summary>
     [HttpPost("projects/{projectId}/excellence")]
