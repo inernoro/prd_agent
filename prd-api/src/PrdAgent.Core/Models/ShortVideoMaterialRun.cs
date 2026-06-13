@@ -1,9 +1,9 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 短视频教程流水线运行记录。
+/// 短视频素材解析运行记录。
 /// </summary>
-public class ShortVideoTutorialRun
+public class ShortVideoMaterialRun
 {
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -17,7 +17,7 @@ public class ShortVideoTutorialRun
     /// <summary>识别到的平台</summary>
     public string Platform { get; set; } = "unknown";
 
-    /// <summary>教程标题</summary>
+    /// <summary>素材标题</summary>
     public string Title { get; set; } = string.Empty;
 
     /// <summary>文案/字幕来源：manual / tikhub-metadata / metadata-fallback</summary>
@@ -33,22 +33,13 @@ public class ShortVideoTutorialRun
     public string Status { get; set; } = "running";
 
     /// <summary>阶段记录</summary>
-    public List<ShortVideoTutorialStage> Stages { get; set; } = new();
+    public List<ShortVideoMaterialStage> Stages { get; set; } = new();
 
     /// <summary>知识库 ID</summary>
     public string? StoreId { get; set; }
 
-    /// <summary>教程文档条目 ID</summary>
+    /// <summary>默认选中的产物条目 ID</summary>
     public string? EntryId { get; set; }
-
-    /// <summary>网页托管站点 ID</summary>
-    public string? SiteId { get; set; }
-
-    /// <summary>网页托管分享 ID</summary>
-    public string? ShareId { get; set; }
-
-    /// <summary>网页托管分享 token</summary>
-    public string? ShareToken { get; set; }
 
     /// <summary>错误信息</summary>
     public string? ErrorMessage { get; set; }
@@ -58,7 +49,7 @@ public class ShortVideoTutorialRun
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
-public class ShortVideoTutorialStage
+public class ShortVideoMaterialStage
 {
     /// <summary>阶段键</summary>
     public string Key { get; set; } = string.Empty;

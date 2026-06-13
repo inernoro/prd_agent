@@ -270,7 +270,7 @@ public class MongoDbContext
 
     // Video Agent 视频转文档
     public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
-    public IMongoCollection<ShortVideoTutorialRun> ShortVideoTutorialRuns => _database.GetCollection<ShortVideoTutorialRun>("short_video_tutorial_runs");
+    public IMongoCollection<ShortVideoMaterialRun> ShortVideoMaterialRuns => _database.GetCollection<ShortVideoMaterialRun>("short_video_material_runs");
 
     // 作品投稿展示
     public IMongoCollection<Submission> Submissions => _database.GetCollection<Submission>("submissions");
@@ -1562,9 +1562,9 @@ public class MongoDbContext
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
-        ShortVideoTutorialRuns.Indexes.CreateOne(new CreateIndexModel<ShortVideoTutorialRun>(
-            Builders<ShortVideoTutorialRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
-            new CreateIndexOptions { Name = "idx_short_video_tutorial_runs_user_created" }));
+        ShortVideoMaterialRuns.Indexes.CreateOne(new CreateIndexModel<ShortVideoMaterialRun>(
+            Builders<ShortVideoMaterialRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_short_video_material_runs_user_created" }));
         // HostedSites：按标签多值索引
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.Tags),

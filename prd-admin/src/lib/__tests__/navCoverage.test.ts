@@ -48,7 +48,6 @@ const ALLOW_LIST: Record<string, string> = {
   '/data-transfers': '数据迁移 admin',
   '/weekly-poster': '海报设计（augmenter 注入）',
   '/ai-toolbox': '百宝箱聚合页',
-  '/short-video-tutorial': '百宝箱/知识库菜单打开的短视频教程流水线，不进入侧栏导航',
   '/settings': '设置（栏顶固定，不参与可定制）',
 };
 

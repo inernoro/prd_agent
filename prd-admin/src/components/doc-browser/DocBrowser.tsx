@@ -409,7 +409,7 @@ export type DocBrowserProps = {
   onUploadFile?: () => void;
   /** 「添加」菜单项：从网页托管导入（提供时显示）。具体选择/导入流程由调用方实现。 */
   onImportFromHosting?: () => void;
-  /** 「添加」菜单项：打开短视频解析工作流，供知识库用户把视频链接加工成文案。 */
+  /** 「添加」菜单项：把短视频链接解析成知识库素材资产。 */
   onOpenVideoParser?: () => void;
   /**
    * 加载文档预览数据。
@@ -2708,7 +2708,7 @@ export function DocBrowser({
                     <button
                       className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
                       onClick={() => { onOpenVideoParser(); setShowAddMenu(false); }}
-                      title="打开短视频一键解析工作流，把抖音/TikTok 等链接解析为文案后回到知识库再加工">
+                      title="把抖音/TikTok 等链接解析为原始素材、字幕文稿和时间轴片段">
                       <Video size={12} className="text-token-accent" />
                       解析短视频
                     </button>

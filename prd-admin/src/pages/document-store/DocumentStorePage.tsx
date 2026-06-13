@@ -103,6 +103,7 @@ import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { ReprocessChatDrawer } from './ReprocessChatDrawer';
 import { ViewersDrawer } from './ViewersDrawer';
+import { ShortVideoMaterialDialog } from './ShortVideoMaterialDialog';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
@@ -709,6 +710,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
   /** 当前打开的再加工 Drawer 目标 entry（null = 未打开） */
   const [reprocessTarget, setReprocessTarget] = useState<{ id: string; title: string } | null>(null);
+  /** 当前打开的短视频素材解析工具 */
+  const [showVideoMaterialDialog, setShowVideoMaterialDialog] = useState(false);
   /** 当前打开的「单篇文档分享」目标（null = 未打开） */
   const [docShareTarget, setDocShareTarget] = useState<{ id: string; title: string } | null>(null);
   /** 新建后需要自动进入编辑态的文档 id（用一次即清） */
@@ -997,8 +1000,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   }, [storeId]);
 
   const handleOpenVideoParser = useCallback(() => {
-    navigate(`/short-video-tutorial?from=document-store&storeId=${encodeURIComponent(storeId)}`);
-  }, [navigate, storeId]);
+    setShowVideoMaterialDialog(true);
+  }, []);
 
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
     // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
@@ -1360,6 +1363,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           onClose={() => setShowViewers(false)}
           // 单库内点击文档排行/流水 → 直接在本库打开该文档
           onOpenDocument={(_sid, entryId) => { setShowViewers(false); setSelectedEntryId(entryId); }}
+        />
+      )}
+
+      {showVideoMaterialDialog && (
+        <ShortVideoMaterialDialog
+          storeId={storeId}
+          storeName={store.name}
+          onClose={() => setShowVideoMaterialDialog(false)}
+          onCreated={async (result) => {
+            await loadEntries();
+            setSelectedEntryId(result.transcriptEntryId);
+          }}
         />
       )}
     </div>
