@@ -1580,8 +1580,14 @@ export function DocumentStorePage() {
       setSelectedStoreId(null);
       setTab(t as StoreTab);
       navigate(location.pathname, { replace: true });
+      return;
     }
-  }, [location.search, location.pathname, navigate]);
+    if (location.hash === '#guide-list') {
+      setSelectedStoreId(null);
+      setTab('mine');
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.search, location.hash, location.pathname, navigate]);
 
   // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
   const [search, setSearch] = useState<string>(() => sessionStorage.getItem('doc-store-search') ?? '');

@@ -316,26 +316,6 @@ export function TipsDrawer() {
   //   1) 本页有未学会的更新教程 → 上面的 effect 自动弹(本页列表);
   //   2) 本页未走完的 *-page-guide → 下面的 effect 走 Spotlight 强制开讲(onboarding 规则)。
 
-  // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
-  // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
-  // 机制:tips 已被后端过滤掉「已学会」的——所以本页教程还在 tips 里 = 没走完 → 自动开讲。
-  //   只标 markLearned(末步「完成」)才算过,中途关闭不算,下次进该页(跨 session)会再弹。
-  //   本 session 每条只自动弹一次(sessionStorage 记忆),避免同 session 内切来切去反复打断。
-  useEffect(() => {
-    if (!loaded) return;
-    const guide = pageGuideHere;
-    if (!guide || !guide.sourceId) return;
-    let started: Set<string>;
-    try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
-    catch { started = new Set(); }
-    if (started.has(guide.sourceId)) return;
-    started.add(guide.sourceId);
-    try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
-    // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲
-    void trackTip(guide.id, 'clicked');
-    writeSpotlightPayload(guide);
-  }, [loaded, pageGuideHere]);
-
   // 关闭抽屉后复位回「本页」,保证下次打开还是本页教程语义
   useEffect(() => {
     if (!expanded) setShowAllPages(false);
@@ -398,6 +378,25 @@ export function TipsDrawer() {
     },
     [navigate, location.pathname],
   );
+
+  // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
+  // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
+  // 机制:tips 已被后端过滤掉「已学会」的——所以本页教程还在 tips 里 = 没走完 → 自动开讲。
+  //   只标 markLearned(末步「完成」)才算过,中途关闭不算,下次进该页(跨 session)会再弹。
+  //   本 session 每条只自动弹一次(sessionStorage 记忆),避免同 session 内切来切去反复打断。
+  useEffect(() => {
+    if (!loaded) return;
+    const guide = pageGuideHere;
+    if (!guide || !guide.sourceId) return;
+    let started: Set<string>;
+    try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
+    catch { started = new Set(); }
+    if (started.has(guide.sourceId)) return;
+    started.add(guide.sourceId);
+    try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
+    // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲
+    handleOpenTip(guide);
+  }, [loaded, pageGuideHere, handleOpenTip]);
 
   // 单套教程直接开讲(TipsEntryButton 派发 START_TUTORIAL_EVENT):找到该 tip 直接走 handleOpenTip,不展开面板。
   useEffect(() => {
