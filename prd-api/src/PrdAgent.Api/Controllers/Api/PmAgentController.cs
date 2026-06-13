@@ -3987,6 +3987,193 @@ public class PmAgentController : ControllerBase
         }));
     }
 
+    // ─────────────────────────────────────────────
+    // 全局总览（管理层只读洞察，跨全公司项目，不论是否干系人/成员）
+    // ─────────────────────────────────────────────
+
+    /// <summary>项目健康度判定（全局总览口径）：closed(已结案) / overdue(逾期或超预算) / at_risk(高风险或停滞) / on_track。</summary>
+    private static string GlobalProjectHealth(PmProject p, int overdueMilestones, int highRisks, DateTime today)
+    {
+        if (p.Lifecycle == PmProjectLifecycle.Evaluated || p.Lifecycle == PmProjectLifecycle.Archived) return "closed";
+        var overBudget = (p.Budget ?? 0) > 0 && (p.ActualCost ?? 0) > (p.Budget ?? 0);
+        if (overdueMilestones > 0 || overBudget) return "overdue";
+        var stalled = p.Lifecycle == PmProjectLifecycle.Running && p.UpdatedAt < today.AddDays(-14);
+        if (highRisks > 0 || stalled) return "at_risk";
+        return "on_track";
+    }
+
+    /// <summary>加载全公司项目（管理层全局视角，无成员过滤）+ 可选 DB 级筛选。上限 1000，足够公司级洞察。</summary>
+    private async Task<List<PmProject>> LoadGlobalProjectsAsync(string? lifecycle, string? type, string? leaderId, string? q)
+    {
+        var b = Builders<PmProject>.Filter;
+        var conds = new List<FilterDefinition<PmProject>> { b.Eq(p => p.IsDeleted, false) };
+        if (!string.IsNullOrWhiteSpace(lifecycle) && PmProjectLifecycle.All.Contains(lifecycle)) conds.Add(b.Eq(p => p.Lifecycle, lifecycle));
+        if (!string.IsNullOrWhiteSpace(type) && PmProjectType.All.Contains(type)) conds.Add(b.Eq(p => p.ProjectType, type));
+        if (!string.IsNullOrWhiteSpace(leaderId)) conds.Add(b.Eq(p => p.LeaderId, leaderId));
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var rx = new MongoDB.Bson.BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(q.Trim()), "i");
+            conds.Add(b.Or(b.Regex(p => p.Title, rx), b.Regex(p => p.ProjectNo, rx), b.Regex(p => p.LeaderName, rx)));
+        }
+        return await _db.PmProjects.Find(b.And(conds)).Limit(1000).ToListAsync();
+    }
+
+    /// <summary>
+    /// 全局项目总表（仅管理层 pm-agent.global）：跨全公司项目的只读列表，多维筛选 + 派生健康度 + 分页。
+    /// 不做成员过滤，给老板全局掌控视角；只读洞察，不含任何写操作。
+    /// </summary>
+    [HttpGet("global/projects")]
+    public async Task<IActionResult> GlobalProjects(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 30,
+        [FromQuery] string? lifecycle = null, [FromQuery] string? type = null,
+        [FromQuery] string? leaderId = null, [FromQuery] string? health = null,
+        [FromQuery] string? q = null, [FromQuery] string? sort = null)
+    {
+        if (!HasPermission(AdminPermissionCatalog.PmAgentGlobal))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "全局总览仅对管理层开放"));
+
+        var today = DateTime.UtcNow.Date;
+        var projects = await LoadGlobalProjectsAsync(lifecycle, type, leaderId, q);
+        var projIds = projects.Select(p => p.Id).ToList();
+
+        // 逾期里程碑 / 高风险 按项目聚合（计算健康度）
+        var overdueMsByProj = projIds.Count == 0 ? new Dictionary<string, int>() : (await _db.PmMilestones
+            .Find(m => projIds.Contains(m.ProjectId) && m.Status == PmMilestoneStatus.Planned && m.DueAt != null && m.DueAt < today).ToListAsync())
+            .GroupBy(m => m.ProjectId).ToDictionary(g => g.Key, g => g.Count());
+        int W(string level) => level == PmRiskLevel.High ? 3 : level == PmRiskLevel.Medium ? 2 : 1;
+        var highRiskByProj = projIds.Count == 0 ? new Dictionary<string, int>() : (await _db.PmRisks
+            .Find(r => projIds.Contains(r.ProjectId) && r.Status != PmRiskStatus.Closed).Limit(2000).ToListAsync())
+            .Where(r => W(r.Probability) * W(r.Impact) >= 6)
+            .GroupBy(r => r.ProjectId).ToDictionary(g => g.Key, g => g.Count());
+
+        var rows = projects.Select(p =>
+        {
+            var overdueMs = overdueMsByProj.GetValueOrDefault(p.Id, 0);
+            var highRisks = highRiskByProj.GetValueOrDefault(p.Id, 0);
+            var hp = GlobalProjectHealth(p, overdueMs, highRisks, today);
+            return new
+            {
+                id = p.Id, projectNo = p.ProjectNo, title = p.Title,
+                projectType = p.ProjectType, lifecycle = p.Lifecycle,
+                leaderId = p.LeaderId, leaderName = p.LeaderName,
+                taskTotal = p.TaskCount, taskDone = p.DoneTaskCount,
+                completionRate = p.TaskCount > 0 ? (int)Math.Round(p.DoneTaskCount * 100.0 / p.TaskCount) : 0,
+                budget = p.Budget ?? 0, actualCost = p.ActualCost ?? 0,
+                overBudget = (p.Budget ?? 0) > 0 && (p.ActualCost ?? 0) > (p.Budget ?? 0),
+                overdueMilestones = overdueMs, highRisks,
+                stalled = p.Lifecycle == PmProjectLifecycle.Running && p.UpdatedAt < today.AddDays(-14),
+                health = hp,
+                plannedEndAt = p.PlannedEndAt, updatedAt = p.UpdatedAt,
+            };
+        }).ToList();
+
+        // 健康度筛选（派生字段，DB 级无法表达，内存过滤）
+        if (!string.IsNullOrWhiteSpace(health))
+            rows = rows.Where(r => r.health == health).ToList();
+
+        // 排序：默认按更新时间倒序；支持 completion / budget / endAt
+        rows = sort switch
+        {
+            "completion" => rows.OrderByDescending(r => r.completionRate).ToList(),
+            "completionAsc" => rows.OrderBy(r => r.completionRate).ToList(),
+            "endAt" => rows.OrderBy(r => r.plannedEndAt ?? DateTime.MaxValue).ToList(),
+            "budget" => rows.OrderByDescending(r => r.actualCost).ToList(),
+            _ => rows.OrderByDescending(r => r.updatedAt).ToList(),
+        };
+
+        var total = rows.Count;
+        var paged = rows.Skip((Math.Max(1, page) - 1) * pageSize).Take(pageSize).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = paged, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// 全局总览聚合摘要（仅管理层 pm-agent.global）：项目分布 + 健康风险预警 + 经营数据汇总 + 负责人负载。
+    /// </summary>
+    [HttpGet("global/summary")]
+    public async Task<IActionResult> GlobalSummary(
+        [FromQuery] string? lifecycle = null, [FromQuery] string? type = null,
+        [FromQuery] string? leaderId = null, [FromQuery] string? q = null)
+    {
+        if (!HasPermission(AdminPermissionCatalog.PmAgentGlobal))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "全局总览仅对管理层开放"));
+
+        var today = DateTime.UtcNow.Date;
+        var projects = await LoadGlobalProjectsAsync(lifecycle, type, leaderId, q);
+        var projIds = projects.Select(p => p.Id).ToList();
+        var titleById = projects.ToDictionary(p => p.Id, p => p.Title);
+
+        var milestones = projIds.Count == 0 ? new List<PmMilestone>() : await _db.PmMilestones
+            .Find(m => projIds.Contains(m.ProjectId)).Limit(3000).ToListAsync();
+        var risks = projIds.Count == 0 ? new List<PmRisk>() : await _db.PmRisks
+            .Find(r => projIds.Contains(r.ProjectId) && r.Status != PmRiskStatus.Closed).Limit(3000).ToListAsync();
+
+        int W(string level) => level == PmRiskLevel.High ? 3 : level == PmRiskLevel.Medium ? 2 : 1;
+        var overdueMsByProj = milestones
+            .Where(m => m.Status == PmMilestoneStatus.Planned && m.DueAt.HasValue && m.DueAt.Value < today)
+            .GroupBy(m => m.ProjectId).ToDictionary(g => g.Key, g => g.Count());
+        var highRiskByProj = risks.Where(r => W(r.Probability) * W(r.Impact) >= 6)
+            .GroupBy(r => r.ProjectId).ToDictionary(g => g.Key, g => g.Count());
+
+        // 项目分布
+        var lifecycleDist = PmProjectLifecycle.All
+            .Select(k => new { key = k, count = projects.Count(p => p.Lifecycle == k) }).Where(x => x.count > 0).ToList();
+        var typeDist = PmProjectType.All
+            .Select(k => new { key = k, count = projects.Count(p => p.ProjectType == k) }).Where(x => x.count > 0).ToList();
+        var healthDist = new[] { "on_track", "at_risk", "overdue", "closed" }
+            .Select(h => new { key = h, count = projects.Count(p => GlobalProjectHealth(p, overdueMsByProj.GetValueOrDefault(p.Id, 0), highRiskByProj.GetValueOrDefault(p.Id, 0), today) == h) })
+            .Where(x => x.count > 0).ToList();
+
+        // 健康/风险预警清单
+        bool Active(PmProject p) => p.Lifecycle != PmProjectLifecycle.Evaluated && p.Lifecycle != PmProjectLifecycle.Archived;
+        var overBudgetList = projects.Where(p => (p.Budget ?? 0) > 0 && (p.ActualCost ?? 0) > (p.Budget ?? 0))
+            .OrderByDescending(p => (p.ActualCost ?? 0) - (p.Budget ?? 0))
+            .Take(10).Select(p => new { id = p.Id, title = p.Title, leaderName = p.LeaderName, budget = p.Budget ?? 0, actualCost = p.ActualCost ?? 0 }).ToList();
+        var stalledList = projects.Where(p => p.Lifecycle == PmProjectLifecycle.Running && p.UpdatedAt < today.AddDays(-14))
+            .OrderBy(p => p.UpdatedAt)
+            .Take(10).Select(p => new { id = p.Id, title = p.Title, leaderName = p.LeaderName, updatedAt = p.UpdatedAt, idleDays = (int)(today - p.UpdatedAt.Date).TotalDays }).ToList();
+        var highRiskList = projects.Where(p => Active(p) && highRiskByProj.GetValueOrDefault(p.Id, 0) > 0)
+            .OrderByDescending(p => highRiskByProj.GetValueOrDefault(p.Id, 0))
+            .Take(10).Select(p => new { id = p.Id, title = p.Title, leaderName = p.LeaderName, highRisks = highRiskByProj.GetValueOrDefault(p.Id, 0) }).ToList();
+        var overdueMsTotal = overdueMsByProj.Values.Sum();
+
+        // 经营数据汇总（Budget/ActualCost 可空，缺省按 0 计）
+        var totalBudget = projects.Sum(p => p.Budget ?? 0m);
+        var totalActual = projects.Sum(p => p.ActualCost ?? 0m);
+        var taskTotalSum = projects.Sum(p => (long)p.TaskCount);
+        var taskDoneSum = projects.Sum(p => (long)p.DoneTaskCount);
+
+        // 负责人负载（按 LeaderId 聚合在手项目/任务/逾期/超预算）
+        var leaderLoad = projects.Where(p => !string.IsNullOrWhiteSpace(p.LeaderId))
+            .GroupBy(p => p.LeaderId!)
+            .Select(g => new
+            {
+                leaderId = g.Key,
+                leaderName = g.Select(p => p.LeaderName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "未知",
+                projectCount = g.Count(),
+                activeCount = g.Count(Active),
+                taskTotal = g.Sum(p => (long)p.TaskCount),
+                taskDone = g.Sum(p => (long)p.DoneTaskCount),
+                overdueMilestones = g.Sum(p => overdueMsByProj.GetValueOrDefault(p.Id, 0)),
+                overBudget = g.Count(p => (p.Budget ?? 0) > 0 && (p.ActualCost ?? 0) > (p.Budget ?? 0)),
+            })
+            .OrderByDescending(x => x.activeCount).ThenByDescending(x => x.taskTotal).Take(20).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            projectTotal = projects.Count,
+            lifecycleDist, typeDist, healthDist,
+            warnings = new { overdueMilestones = overdueMsTotal, overBudget = overBudgetList, stalled = stalledList, highRisk = highRiskList },
+            business = new
+            {
+                totalBudget, totalActual,
+                budgetExecutionRate = totalBudget > 0 ? Math.Round((double)totalActual / (double)totalBudget * 100, 1) : 0,
+                taskTotal = taskTotalSum, taskDone = taskDoneSum,
+                completionRate = taskTotalSum > 0 ? (int)Math.Round(taskDoneSum * 100.0 / taskTotalSum) : 0,
+            },
+            leaderLoad,
+        }));
+    }
+
     /// <summary>项目管理智能体用户偏好（quickActionIds 为 null 表示从未配置，前端走默认）。</summary>
     [HttpGet("preferences")]
     public async Task<IActionResult> GetPmPreferences()
