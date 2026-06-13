@@ -5916,7 +5916,7 @@ function safeChart(canvasId, config) {
         List<ExecutionArtifact> inputArtifacts)
     {
         var sb = new StringBuilder();
-        var apiBaseUrl = ReplaceVariables(GetConfigString(node, "apiBaseUrl") ?? "https://tikhub.io/api/douyin", variables).TrimEnd('/');
+        var apiBaseUrl = ReplaceVariables(GetConfigString(node, "apiBaseUrl") ?? "https://api.tikhub.dev", variables).TrimEnd('/');
         var apiKey = ReplaceVariables(GetConfigString(node, "apiKey") ?? "", variables).Trim();
 
         // 从配置或上游获取视频链接
@@ -5977,8 +5977,8 @@ function safeChart(canvasId, config) {
         else
             client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
 
-        // 调用 TikHub 解析接口
-        var requestUrl = $"{apiBaseUrl}/video_data?video_url={Uri.EscapeDataString(videoUrl)}";
+        // 调用 TikHub 解析接口。旧版曾使用 /video_data，新版 OpenAPI 为 /api/v1/douyin/web/fetch_one_video_by_share_url。
+        var requestUrl = $"{apiBaseUrl}/api/v1/douyin/web/fetch_one_video_by_share_url?share_url={Uri.EscapeDataString(videoUrl)}";
         sb.AppendLine($"[DouyinParser] 请求: GET {requestUrl}");
 
         var response = await client.GetAsync(requestUrl, CancellationToken.None);
@@ -5996,8 +5996,10 @@ function safeChart(canvasId, config) {
         using var respDoc = JsonDocument.Parse(responseBody);
         var root = respDoc.RootElement;
 
-        // TikHub API 响应结构可能嵌套在 data 里
+        // TikHub API 响应结构可能嵌套在 data 或 data.aweme_detail 里
         var dataElem = root.TryGetProperty("data", out var d) ? d : root;
+        if (dataElem.TryGetProperty("aweme_detail", out var awemeDetail))
+            dataElem = awemeDetail;
 
         var outputObj = new
         {
@@ -6005,7 +6007,7 @@ function safeChart(canvasId, config) {
             originalUrl = videoUrl,
             videoUrl = TryGetJsonString(dataElem, "video_url", "video", "play_addr", "nwm_video_url"),
             coverUrl = TryGetJsonString(dataElem, "cover_url", "cover", "origin_cover"),
-            title = TryGetJsonString(dataElem, "title", "desc", "description"),
+            title = TryGetJsonString(dataElem, "title", "desc", "description", "caption"),
             author = TryGetJsonString(dataElem, "author", "author_name", "nickname"),
             authorId = TryGetJsonString(dataElem, "author_id", "author_uid", "uid"),
             duration = TryGetJsonString(dataElem, "duration", "video_duration"),
@@ -6017,7 +6019,7 @@ function safeChart(canvasId, config) {
 
         sb.AppendLine($"[DouyinParser] 标题: {outputObj.title}");
         sb.AppendLine($"[DouyinParser] 作者: {outputObj.author}");
-        sb.AppendLine($"[DouyinParser] 视频地址已提取: {(string.IsNullOrWhiteSpace(outputObj.videoUrl) ? "❌ 未找到" : "✅")}");
+        sb.AppendLine($"[DouyinParser] 视频地址已提取: {(string.IsNullOrWhiteSpace(outputObj.videoUrl) ? "未找到" : "已找到")}");
 
         var outputJson = JsonSerializer.Serialize(outputObj, JsonPretty);
         var artifact = MakeTextArtifact(node, "dp-out", "视频信息", outputJson, "application/json");

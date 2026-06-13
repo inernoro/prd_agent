@@ -502,7 +502,7 @@ public sealed class ShortVideoMaterialProcessor
         => (_config["ShortVideo:TikHubApiBaseUrl"]
             ?? _config["TikHub:ApiBaseUrl"]
             ?? Environment.GetEnvironmentVariable("TIKHUB_API_BASE_URL")
-            ?? "https://tikhub.io/api/douyin").TrimEnd('/');
+            ?? "https://api.tikhub.dev").TrimEnd('/');
 
     private static ParsedVideoMetadata ExtractParsedMetadata(string? json)
     {
