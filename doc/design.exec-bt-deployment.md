@@ -259,16 +259,16 @@ Node.js `JSON.parse` 会抛异常导致启动失败。
 
 ## 6. 测试体系
 
-### 6.0 全量验收测试: `test.sh`
+### 6.0 全量验收测试: `scripts/cds-acceptance-test.sh`
 
 > **一个脚本, 一条命令, 覆盖全部意外场景。**
 
 ```bash
-./test.sh                  # 运行全部 (≈70 项)
-./test.sh --phase 4        # 只跑分支生命周期
-./test.sh --from 7         # 从混沌测试开始
-./test.sh --list           # 列出所有测试项 (不执行)
-./test.sh --dry            # 干跑 (打印不执行)
+./scripts/cds-acceptance-test.sh                  # 运行全部 (≈70 项)
+./scripts/cds-acceptance-test.sh --phase 4        # 只跑分支生命周期
+./scripts/cds-acceptance-test.sh --from 7         # 从混沌测试开始
+./scripts/cds-acceptance-test.sh --list           # 列出所有测试项 (不执行)
+./scripts/cds-acceptance-test.sh --dry            # 干跑 (打印不执行)
 ```
 
 | Phase | 名称 | 测试数 | 覆盖意外场景 |
@@ -286,7 +286,7 @@ Node.js `JSON.parse` 会抛异常导致启动失败。
 
 ### 6.0.1 混沌测试覆盖矩阵 (Phase 7 × MECE 场景)
 
-| test.sh 测试 | MECE 场景 | 注入方式 | 验证点 |
+| cds-acceptance-test.sh 测试 | MECE 场景 | 注入方式 | 验证点 |
 |-------------|-----------|---------|--------|
 | C01-C03 | S5, S6 | `kill -9` CDS 进程 | 重启恢复, API 可用 |
 | C04-C05 | R3 | 写入截断 JSON 到 state.json | 自动备份+重置, CDS 启动 |

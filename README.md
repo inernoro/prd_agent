@@ -1,406 +1,162 @@
 # PRD Agent
 
-> Full-stack AI workspace — **8 specialized agents** behind an LLM gateway, a configuration marketplace, and a CDS branch-preview platform. Vision: **"文档即共识"** — ship AI so teams stop re-narrating PRDs.
+PRD Agent is a full-stack AI product workspace for turning product knowledge, defects, reports, reviews, workflows, and branch previews into auditable team operations.
 
-## New here? Start in this order
+The repository contains the production app, the admin console, the desktop client, CDS branch-preview infrastructure, and the supporting automation scripts.
 
-| Step | Read | Why |
-|------|------|-----|
-| 1 | This README → "Quick Start" | One `docker compose` command gets the stack running |
-| 2 | [`CLAUDE.md`](CLAUDE.md) | Mandatory rules (pnpm only, changelog fragments, LLM visibility) + 8 hard conventions every AI/human follows |
-| 3 | [`doc/spec.project-vision.md`](doc/spec.project-vision.md) | Why this project exists — the "four-dose prescription" story and why specialized agents beat a generic RAG |
-| 4 | [`.claude/rules/codebase-snapshot.md`](.claude/rules/codebase-snapshot.md) | Live feature registry, 115 MongoDB collections, architecture patterns in one page |
-| 5 | Pick an agent below → its own `design.*.md` in `doc/` | Deep-dive into the one you'll work on |
-
-**Building your own Agent?** Jump to [`doc/guide.agent-onboarding.md`](doc/guide.agent-onboarding.md) — a 30-minute end-to-end onboarding (破冰 → 需求 → 设计 → 建造 → 验收 → 完工) with the full skill catalog and 7 ironclad rules. Or just type `/help` in Claude Code and it'll walk you through it.
-
-Skim [`.cursorrules`](.cursorrules) for the top-level AI rules and deprecated concepts you should avoid.
-
----
-
-## Project Structure
-
-```
-prd_agent/
-├── prd-api/          # .NET 8 backend (C# 12)        → prd-api/CLAUDE.md
-├── prd-admin/        # React 18 admin console (Vite)  → prd-admin/CLAUDE.md
-├── prd-desktop/      # Tauri 2.0 desktop client       → prd-desktop/CLAUDE.md
-├── prd-video/        # Remotion 4.0 video engine
-├── cds/              # Cloud Dev Suite (branch deployment dashboard)
-├── changelogs/       # Changelog fragments (one file per PR, merged on release)
-├── doc/              # Structured docs (spec/design/plan/rule/guide/report)
-└── scripts/          # Build & deployment scripts
-```
-
-## Quick Start
-
-### Docker Compose (recommended)
+## Start Here
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
 | Service | URL |
-|---------|-----|
-| Web (Gateway + Admin) | http://localhost:5500 |
+| --- | --- |
+| Web gateway and admin console | http://localhost:5500 |
 | API | http://localhost:5000 |
 | MongoDB | mongodb://localhost:18081 |
 | Redis | localhost:18082 |
 
-### Local Development
+Local shortcuts:
+
+```bash
+./quick.sh          # backend only
+./quick.sh admin    # admin console
+./quick.sh all      # api + admin + desktop
+```
+
+Windows:
 
 ```powershell
-# Windows
-.\quick.ps1           # Backend only
-.\quick.ps1 all       # API + Admin + Desktop
+.\quick.ps1
+.\quick.ps1 all
 ```
+
+## Repository Layout
+
+```text
+prd_agent/
+├── prd-api/        # .NET 8 API and background workers
+├── prd-admin/      # React admin console
+├── prd-desktop/    # Tauri desktop client
+├── prd-video/      # Remotion video engine
+├── cds/            # Cloud Dev Suite branch preview platform
+├── scripts/        # Build, smoke, migration, and maintenance scripts
+├── doc/            # Structured specs, designs, plans, guides, reports, debt notes
+├── assets/         # Static design/reference assets and archived prototypes
+├── changelogs/     # One changelog fragment per PR
+└── deploy/         # Deployment support files
+```
+
+Root directory policy:
+
+- Keep only project entrypoints, compose files, top-level documentation, and repository metadata in the root.
+- Put exploratory HTML prototypes under `assets/prototypes/`.
+- Put test fixtures under `scripts/fixtures/`.
+- Put operational scripts under `scripts/` unless they are intentionally kept as root entrypoints.
+
+## Main Capabilities
+
+| Area | What it does |
+| --- | --- |
+| PRD and knowledge workspace | Markdown PRDs, document stores, Q&A, citations, comments, sharing, and cross-system peer sync |
+| Product and defect operations | Product workflows, requirement/feature/defect lifecycle management, statistics, and review loops |
+| Report and review agents | Weekly reports, review workflows, webhook feedback, and team reporting |
+| Visual and literary workflows | Image generation, visual analysis, article illustration, and watermark support |
+| Workflow automation | Visual workflow builder, scheduled execution, secrets, and run history |
+| CDS branch previews | Branch builds, preview routing, deployment logs, and CI/CD support |
+| LLM gateway | Centralized model routing, model pools, logging, health scoring, and fallback strategy |
+
+## Development Commands
+
+Backend:
 
 ```bash
-# Linux / macOS
-./quick.sh            # Backend only
-./quick.sh all        # All services
+cd prd-api
+dotnet build --no-restore
+dotnet test tests/PrdAgent.Tests/PrdAgent.Tests.csproj --no-restore
 ```
 
-### Start Components Individually
+Admin console:
 
 ```bash
-# Backend API
-cd prd-api && dotnet watch run --project src/PrdAgent.Api    # http://localhost:5000
-
-# Admin console
-cd prd-admin && pnpm install && pnpm dev                     # http://localhost:8000
-
-# Desktop app
-cd prd-desktop && pnpm install && pnpm tauri:dev             # http://localhost:1420
-
-# Video engine
-cd prd-video && pnpm install && pnpm start
+cd prd-admin
+pnpm install
+pnpm dev
+pnpm tsc --noEmit
+pnpm lint
 ```
 
-See each sub-directory's `CLAUDE.md` for module-specific build commands.
-
----
-
-## Key Features
-
-### Specialized Agents
-
-| Agent | Description |
-|-------|-------------|
-| **PRD Agent** | Upload Markdown PRDs, get role-aware Q&A (PM / DEV / QA perspectives), guided walkthroughs, content-gap detection, and collaborative sessions with comments |
-| **Visual Agent** | Advanced visual creation workspace — text-to-image generation, multi-image vision analysis, canvas editing, and watermark management |
-| **Literary Agent** | Article illustration and literary creation — prompt templates, reference image configs, and image generation tailored for written content |
-| **Defect Agent** | Issue tracking and defect management — project-scoped templates, escalation workflows, webhook notifications, timeout reminders, and statistics dashboard |
-| **Video Agent** | Article-to-video tutorial generation powered by Remotion 4.0 — scene composition, animated text, particle effects, SVG path drawing, and transitions |
-| **Report Agent** | Weekly report management — team structure, daily logs, data source integration, AI-assisted summaries, and review workflows |
-| **Review Agent** | Product review bot — dimension-scored evaluation of submissions, webhook-driven feedback loops, reviewer routing |
-| **PR Review** | GitHub PR review workbench — per-user OAuth Device Flow, PR snapshots, reviewer notes, CI-aware triage |
-| **Workflow Agent** | Visual workflow builder — drag-and-drop capsules, scheduled execution, secret management, and video generation integration |
-
-> **Current appKeys (8)**: `prd-agent`, `visual-agent`, `literary-agent`, `defect-agent`, `video-agent`, `report-agent`, `review-agent`, `pr-review`. Authoritative list: [`.claude/rules/app-identity.md`](.claude/rules/app-identity.md).
-
-#### Workflow Agent Template Update: TAPD Defect Collection & Analysis
-
-To support monthly governance requirements, the **TAPD Defect Collection & Analysis** template now includes a mandatory committee reporting block:
-
-- **Purpose**: Ensure `AI technical service fee` is included in the technical committee monthly briefing with month-by-month analysis.
-- **Automatic extraction fields** (if present in source data):
-  - `AI技术服务费`
-  - `AI 技术服务费`
-  - `AI服务费`
-- **Generated output fields**:
-  - `monthlyBriefingRequirements`: fixed policy item, code `1p`
-  - `aiServiceFeeMonthlyStats`: monthly amount, previous month amount, month-over-month rate, analysis text
-- **HTML report rendering**:
-  - Adds a dedicated section in the summary area showing the `1p` policy requirement
-  - Adds a month-by-month fee table for direct use in the technical committee monthly briefing
-  - Adds clickable fee evidence links (prefer defect title as link text) for traceability
-- **Editor UX improvements**:
-  - Script code input area is enlarged for easier editing
-  - Supports fullscreen script editing with JavaScript syntax highlighting preview
-
-### LLM Gateway
-
-All LLM calls flow through a unified **LLM Gateway** (`ILlmGateway`):
-
-- **Three-tier model scheduling** — Dedicated pool → Default pool → Legacy config fallback
-- **AppCallerCode routing** — Each feature registers a caller code (e.g. `visual-agent.image.vision::generation`)
-- **Health management** — Automatic health scoring with failure demotion and recovery promotion
-- **Unified logging** — Every request logs expected vs. actual model, tokens, latency, and resolution source
-
-### Model Pool Engine
-
-Six scheduling strategies in `Infrastructure/ModelPool/`:
-
-| Strategy | Behavior |
-|----------|----------|
-| FailFast | Try one model, fail immediately on error |
-| Sequential | Ordered fallback chain |
-| RoundRobin | Even load distribution |
-| WeightedRandom | Probability-based selection |
-| LeastLatency | Route to fastest model |
-| Race | Parallel requests, return first success |
-
-### Configuration Marketplace
-
-A built-in marketplace for sharing and forking configurations:
-
-- **Type registry** — Prompt templates, reference images, watermark configs (extensible via `CONFIG_TYPE_REGISTRY`)
-- **Fork with whitelist** — `IForkable` interface ensures only safe fields are copied
-- **Publishing** — Any config can be published/unpublished with fork counts tracked
-
-### Open Platform API
-
-OpenAI-compatible API for external integrations:
-
-- PRD Q&A mode — query documents via API
-- LLM proxy mode — use the gateway's model scheduling externally
-- API key authentication with rate limiting
-
-### Additional Capabilities
-
-- **RBAC** — 60+ granular permissions with `AdminPermissionMiddleware`
-- **Run/Worker pattern** — Long tasks decoupled from HTTP; SSE streaming with `afterSeq` reconnection
-- **Server authority** — Client disconnect never cancels server-side work
-- **Watermark system** — Per-app watermark configs with font management and ImageSharp rendering
-- **Web hosting** — Publish HTML pages to COS with shareable links
-- **Skill system** — 37 Claude Code skills for the full development lifecycle (see below)
-- **Desktop auto-update** — Tauri 2.0 built-in updater
-- **Rate limiting** — Redis-based sliding window (Lua script)
-
-### Cloud Dev Suite (CDS)
-
-Branch preview and testing platform for parallel development:
-
-- **On-demand branch builds** — Visit an unbuilt branch → CDS auto-creates worktree, builds containers, streams progress via SSE
-- **Smart routing** — `X-Branch` header, `cds_branch` cookie, subdomain pattern (`<slug>.preview.example.com`)
-- **Build profiles** — Docker image, commands, ports, shared cache mounts
-- **Dashboard UI** (`:9900`) — Branch CRUD, build profiles, routing rules, deployment logs
-
----
-
-## Architecture
-
-```
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│ prd-desktop  │  │  prd-admin   │  │  prd-video   │
-│ Tauri 2.0    │  │ React + Vite │  │ Remotion 4.0 │
-│ (Rust+React) │  │  (TypeScript)│  │ (TypeScript) │
-└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-       │                 │                  │
-       └────────┬────────┘                  │
-                ▼                           ▼
-        ┌───────────────┐          ┌───────────────┐
-        │  Nginx Gateway│          │  Video Render  │
-        │  (:5500)      │          │  (CLI/Worker)  │
-        └───────┬───────┘          └───────────────┘
-                ▼
-        ┌───────────────┐
-        │   prd-api     │
-        │  .NET 8 API   │
-        │  (:5000)      │
-        └───┬───────┬───┘
-            │       │
-     ┌──────▼─┐  ┌──▼──────┐
-     │MongoDB │  │  Redis   │
-     │  8.0   │  │    7     │
-     └────────┘  └─────────┘
-```
-
-### Core Architecture Patterns
-
-| Pattern | Description |
-|---------|-------------|
-| **Run/Worker** | Conversation creates Run → Worker executes in background → SSE with `afterSeq` reconnection |
-| **Platform + Model** | `(platformId, modelId)` replaces legacy Provider concept |
-| **App Identity** | Controllers hardcode `appKey` — never passed from frontend |
-| **RBAC** | `SystemRole` + `AdminPermissionCatalog` (60+) + Middleware |
-| **LLM Gateway** | `ILlmGateway` + `ModelResolver` + three-tier scheduling + health management |
-| **Marketplace** | `CONFIG_TYPE_REGISTRY` + `IForkable` whitelist copy |
-
----
-
-## Mandatory Rules
-
-### 1. Frontend Package Manager: pnpm Only
-
-All frontend projects (`prd-admin`, `prd-desktop`, `prd-video`) use **pnpm**. No npm/yarn. Only `pnpm-lock.yaml` is committed.
-
-### 2. C# Static Analysis
-
-After any `.cs` change:
+Desktop:
 
 ```bash
-cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
+cd prd-desktop
+pnpm install
+pnpm tauri:dev
 ```
 
-- `error CS*` — must fix
-- `warning CS*` — evaluate if introduced by current change
-
-### 3. Changelog Fragments
-
-Code changes to `prd-api/`, `prd-admin/`, `prd-desktop/`, `prd-video/` require a fragment file in `changelogs/` before commit. Never edit `CHANGELOG.md` directly.
-
-- Filename: `changelogs/YYYY-MM-DD_<short-desc>.md`
-- Content: table rows (no header), one record per line:
-  ```
-  | feat | prd-admin | Added XX feature |
-  | fix | prd-api | Fixed XX issue |
-  ```
-- Allowed type keys: `feat`, `fix`, `perf`, `refactor`, `docs`, `chore`, `test`, `ci`, `security`, `ops`, `style`, `polish`, `rule`, `merge`, `revert`.
-- On release: `bash scripts/assemble-changelog.sh` merges fragments into `CHANGELOG.md`
-
-### 4. LLM Interaction Visibility
-
-Any LLM-calling feature must show interaction progress — no blank waiting:
-
-- **Streaming** — SSE push, frontend renders character-by-character
-- **Progress** — Batch tasks push progress events (e.g. "Analyzing defect 3/45…")
-- **Stage indicators** — Long tasks show phase transitions (Preparing → Analyzing → Generating → Done)
-
-### 5. Server Authority
-
-Client disconnection never cancels server-side work. Only an explicit cancel API stops a task.
-
-- LLM calls and DB writes use `CancellationToken.None`
-- SSE writes catch `OperationCanceledException` — skip write but continue processing
-- Long tasks decouple via Run/Worker pattern
-
----
-
-## Architecture Rules (`.claude/rules/`)
-
-Rules are loaded on-demand when editing matching files:
-
-| Rule | Trigger Scope | Summary |
-|------|---------------|---------|
-| `app-identity.md` | `prd-api/src/**/*.cs` | Controllers hardcode `appKey`, 6 app identities |
-| `data-audit.md` | `Models/**/*.cs`, `Controllers/**/*.cs` | New entity references must audit all consuming endpoints |
-| `llm-gateway.md` | `prd-api/src/**/*.cs` | All LLM calls go through `ILlmGateway` |
-| `frontend-architecture.md` | `**/*.{ts,tsx}` | No business state in frontend + SSOT + component reuse |
-| `server-authority.md` | `prd-api/src/**/*.cs` | `CancellationToken.None` + Run/Worker + SSE heartbeat |
-| `doc-types.md` | `doc/**/*.md` | 6 document prefixes (spec/design/plan/rule/guide/report) |
-| `marketplace.md` | Marketplace files | `CONFIG_TYPE_REGISTRY` + `IForkable` whitelist copy |
-| `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | Snapshot denormalization must have equivalent fallback query path |
-| `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | Full-stack 6-layer ripple audit on enum/constant changes |
-| `codebase-snapshot.md` | Manual | Project snapshot: architecture patterns, feature registry, 101 MongoDB collections |
-
----
-
-## Quality Assurance Skill Chain
-
-37 Claude Code skills cover the full development lifecycle:
-
-```
-Requirement → /validate → Design → /plan-first → /risk → /trace → Implement → /verify → /scope-check → /cds-deploy → /smoke → /preview → /handoff → /weekly
-```
-
-### Lifecycle Skills
-
-| Skill | Trigger | Input → Output |
-|-------|---------|----------------|
-| **skill-validation** | `/validate` | Requirement description → 8-smell detection + deduplication + 7-dimension score report |
-| **plan-first** | `/plan-first` | Task description → Implementation plan + impact analysis, waits for user approval |
-| **risk-matrix** | `/risk` | Change scope → MECE 6-dimension risk matrix (correctness/compat/perf/security/ops/UX) |
-| **flow-trace** | `/trace` | Feature name → End-to-end data flow + control flow path diagram |
-| **human-verify** | `/verify` | Code changes → Devil's advocate + reverse verification + boundary + scenario review |
-| **scope-check** | `/scope-check` | Current branch → File classification (owned/shared/foreign) + boundary violation report |
-| **cds-deploy-pipeline** | `/cds-deploy` | Code commit → Push to staging, wait for containers, run smoke tests |
-| **smoke-test** | `/smoke` | Module name → Chained curl script scanning all Controller endpoints |
-| **preview-url** | `/preview` | Current branch → Preview URL (`branch-name.miduo.org`) |
-| **task-handoff-checklist** | `/handoff` | Current changes → 8-dimension handoff checklist |
-| **weekly-update-summary** | `/weekly` | Time range → Categorized weekly report from git history |
-
-### Workflow
-
-```
-0. First time?     → /help       (guided onboarding)
-1. New requirement → /validate   (quality gate)
-2. Design phase    → /plan-first (plan before code)
-3. Review phase    → /risk + /trace
-4. After coding    → /verify + /scope-check
-5. Deploy & test   → /cds-deploy + /smoke
-6. Acceptance      → /preview
-7. Before PR       → /resolve    (merge main, resolve conflicts)
-8. Ship            → /handoff
-9. Friday wrap-up  → /weekly     (auto-triggers /doc-sync)
-10. Writing docs   → /doc
-11. Post-refactor  → /hygiene
-```
-
-Full skill catalog with consolidation recommendations: `doc/guide.skill-catalog.md`
-
----
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| Backend API | .NET 8, C# 12, ASP.NET Core |
-| Admin Frontend | React 18, Vite, TypeScript, Zustand, Radix UI, Tailwind CSS |
-| Desktop | Tauri 2.0, Rust, React |
-| Video Engine | Remotion 4.0, React |
-| Database | MongoDB 8.0 |
-| Cache | Redis 7 |
-| Gateway | Nginx |
-| Package Manager | pnpm |
-
-## Configuration
-
-### Environment Variables
-
-Copy `.env.template` to `.env` and configure:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `MongoDB__ConnectionString` | Yes | MongoDB connection string |
-| `MongoDB__DatabaseName` | Yes | Database name |
-| `Redis__ConnectionString` | Yes | Redis connection string |
-| `Jwt__Secret` | Production | JWT signing secret |
-| `ASSETS_PROVIDER` | No | `tencentCos`, `local`, or `auto` |
-
-### LLM Configuration
-
-Models are configured through the **Admin console** and stored in MongoDB. The LLM Gateway handles all routing automatically.
-
-For quick local development: `LLM__ClaudeApiKey` and `LLM__Model`.
-
-## Testing
+CDS:
 
 ```bash
-# Backend
-cd prd-api && dotnet test PrdAgent.sln
-dotnet test PrdAgent.sln --filter "Category!=Integration"    # Skip integration tests
-
-# Frontend
-cd prd-admin && pnpm lint && pnpm tsc && pnpm test
+./exec_cds.sh init
+./exec_cds.sh start
+./exec_cds.sh status
 ```
+
+CDS acceptance test:
+
+```bash
+./scripts/cds-acceptance-test.sh --list
+```
+
+## Quality Gates
+
+Before pushing code:
+
+- Frontend projects use `pnpm` only.
+- C# changes must compile with `dotnet build --no-restore`.
+- TypeScript changes must pass `pnpm tsc --noEmit`.
+- UI changes need browser or visual verification.
+- Code changes require a changelog fragment in `changelogs/`.
+- Do not commit generated screenshots, local acceptance artifacts, build outputs, or dependency directories.
+
+Full contributor rules are in [AGENTS.md](AGENTS.md).
+
+## Documentation
+
+Docs in `doc/` use strict prefixes:
+
+| Prefix | Purpose |
+| --- | --- |
+| `spec.*` | Product and feature requirements |
+| `design.*` | Architecture and implementation design |
+| `plan.*` | Execution plans |
+| `rule.*` | Engineering rules |
+| `guide.*` | Operating guides |
+| `report.*` | Reports and validation records |
+| `debt.*` | Known gaps and follow-up debt |
+
+Good entry points:
+
+- [AGENTS.md](AGENTS.md) for repository rules.
+- [doc/design.peer-sync.md](doc/design.peer-sync.md) for system interconnection.
+- [doc/design.cds.md](doc/design.cds.md) for branch previews.
+- [doc/design.llm-gateway.md](doc/design.llm-gateway.md) for model routing.
+- [doc/design.product-agent.md](doc/design.product-agent.md) for product workflows.
 
 ## Deployment
 
 ```bash
-# Docker build (no SDK required)
-./scripts/build-server-docker.sh
-
-# Production deploy
 ./exec_dep.sh
-
-# Desktop version sync
-./quick.sh version vX.Y.Z
 ```
 
-## Documentation
+For local production-like builds:
 
-Structured docs in `doc/` with six standardized types:
+```bash
+./local_exec_dep.sh up
+```
 
-| Prefix | Purpose | Examples |
-|--------|---------|---------|
-| `spec.*` | What to build | Product specs, agent docs, user stories |
-| `design.*` | How to build it | Architecture designs, technical analysis |
-| `plan.*` | When to build it | Implementation plans |
-| `rule.*` | Constraints | Coding standards, audit reports |
-| `guide.*` | How to operate | Dev guides, runbooks, skill catalog |
-| `report.*` | What happened | Weekly reports |
+For branch preview deployment, use CDS through `./exec_cds.sh` or the CDS dashboard.
 
 ## License
 

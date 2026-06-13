@@ -3,11 +3,11 @@
 # PRD Agent CDS 全量验收测试
 #
 # 用法：
-#   ./test.sh                  # 运行全部测试
-#   ./test.sh --phase 3        # 只跑第 3 阶段
-#   ./test.sh --from 5         # 从第 5 阶段开始
-#   ./test.sh --list           # 列出所有测试项
-#   ./test.sh --dry            # 干跑, 只打印不执行
+#   ./scripts/cds-acceptance-test.sh                  # 运行全部测试
+#   ./scripts/cds-acceptance-test.sh --phase 3        # 只跑第 3 阶段
+#   ./scripts/cds-acceptance-test.sh --from 5         # 从第 5 阶段开始
+#   ./scripts/cds-acceptance-test.sh --list           # 列出所有测试项
+#   ./scripts/cds-acceptance-test.sh --dry            # 干跑, 只打印不执行
 #
 # 测试阶段:
 #   Phase 0  环境前置检查
@@ -26,7 +26,7 @@
 
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CDS_DIR="${REPO_ROOT}/cds"
 CDS_API="http://localhost:9900/api"
 GATEWAY="http://localhost:5500"
