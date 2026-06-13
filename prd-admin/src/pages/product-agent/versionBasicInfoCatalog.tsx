@@ -45,10 +45,27 @@ function multiline(value?: string | null) {
   return <span className="whitespace-pre-wrap">{text}</span>;
 }
 
+/** 版本流程表格/详情中的「产品」展示（合并 legacy 系统/应用列）。 */
+export function resolveVersionProductLabel(
+  item: Pick<ProductInitiation | ProductRelease, 'systemName' | 'appName' | 'legacyData'>,
+  fallbackProductName?: string | null,
+): string {
+  const fromLegacy = item.legacyData?.['产品']?.trim();
+  if (fromLegacy) return fromLegacy;
+  const app = item.appName?.trim();
+  const system = item.systemName?.trim();
+  if (app) return app;
+  if (system) return system;
+  const fallback = fallbackProductName?.trim();
+  if (fallback) return fallback;
+  return DASH;
+}
+
 /** 上线语雀.xlsx 列顺序 */
 export function buildReleaseBasicInfoRows(
   release: ProductRelease,
   resolveUserName: (userId?: string | null) => string,
+  productName?: string | null,
 ): VersionBasicInfoRow[] {
   const legacy = release.legacyData ?? {};
   const owner = legacy['产品负责人']?.trim() || resolveUserName(release.ownerId);
@@ -60,8 +77,7 @@ export function buildReleaseBasicInfoRows(
     : legacy['项目组成员']?.trim() || DASH;
 
   return [
-    { label: '系统', value: release.systemName?.trim() || DASH },
-    { label: '应用', value: release.appName?.trim() || DASH },
+    { label: '产品', value: resolveVersionProductLabel(release, productName) },
     { label: '正式版本号', value: <span className="font-mono text-cyan-200">{release.vCode?.trim() || DASH}</span> },
     {
       label: '内部版本号',
@@ -89,13 +105,13 @@ export function buildReleaseBasicInfoRows(
 export function buildInitiationBasicInfoRows(
   initiation: ProductInitiation,
   resolveUserName: (userId?: string | null) => string,
+  productName?: string | null,
 ): VersionBasicInfoRow[] {
   const legacy = initiation.legacyData ?? {};
   const owner = legacy['产品负责人']?.trim() || resolveUserName(initiation.primaryOwnerId ?? initiation.createdBy);
 
   return [
-    { label: '系统', value: initiation.systemName?.trim() || DASH },
-    { label: '应用', value: initiation.appName?.trim() || DASH },
+    { label: '产品', value: resolveVersionProductLabel(initiation, productName) },
     { label: '项目类别', value: projectTypeLabel(initiation.projectType, initiation.customerSource) },
     { label: '立项号', value: <span className="font-mono text-cyan-200">{initiation.tCode?.trim() || DASH}</span> },
     { label: '版本类别', value: scaleLabel(initiation.versionType) },

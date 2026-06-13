@@ -7,12 +7,11 @@
  * 需求/功能 的「新建」走独立页面（/product-agent/p/:productId/:kind/new）；查看走详情页。
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download } from 'lucide-react';
 import { ProductAssistantPanel } from './ProductAssistantPanel';
 import { QuickActionsCard } from './QuickActionsCard';
-import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
 import { requirementSourceLabel } from './requirementSource';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
@@ -39,6 +38,7 @@ import { VersionWorkflowTab } from './VersionWorkflowTab';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import {
   getProduct,
+  getOverviewStats,
   listVersions,
   createVersion,
   deleteVersion,
@@ -55,8 +55,8 @@ import {
 } from '@/services/real/productAgent';
 import { searchDirectoryUsers } from '@/services';
 import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, readDefectSeverityLevel } from './types';
-import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, type FilterFieldDef } from './listFilter';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, readDefectPriorityGrade, readDefectSeverityLevel } from './types';
+import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
@@ -66,6 +66,7 @@ import {
   canExecuteWorkflowTransition,
   isGlobalProductAdmin,
   transitionNeedsDialog,
+  type ProductWorkflowContext,
 } from './workflowTransitionGuard';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
@@ -114,6 +115,7 @@ export function SingleProductView() {
   const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   // 当前 tab 记录在 URL（?tab=），从对象详情页返回时能停在原 tab，而不是回弹到工作台。
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -135,6 +137,9 @@ export function SingleProductView() {
 
   useEffect(() => {
     void reload();
+    void getOverviewStats().then((res) => {
+      if (res.success) setIsAdmin(res.data.isAdmin);
+    });
   }, [reload]);
 
   if (loading) {
@@ -191,7 +196,7 @@ export function SingleProductView() {
         </div>
       ) : active === 'features' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">
-          <FeatureCatalogTab productId={product.id} />
+          <FeatureCatalogTab productId={product.id} showImport={isAdmin} />
         </div>
       ) : active === 'requirements' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">
@@ -386,10 +391,8 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
   const [trackedOnly, setTrackedOnly] = useState(false);
-  const [rtfImportFiles, setRtfImportFiles] = useState<File[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const fileRef = useRef<HTMLInputElement>(null);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const nameOf = useDirectoryNames();
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
@@ -418,6 +421,8 @@ function RequirementsTab({ productId }: { productId: string }) {
     fields,
     keywordOf: (r) => `${r.requirementNo} ${r.externalId ?? ''} ${r.title} ${r.description ?? ''} ${Object.values(r.sourceSnapshot?.fields ?? {}).join(' ')}`,
     keywordPlaceholder: '搜索 ID、标题、描述',
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId, recordId: r.id })),
@@ -469,24 +474,6 @@ function RequirementsTab({ productId }: { productId: string }) {
       <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".rtf,application/rtf,text/rtf"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              const rtfFiles = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith('.rtf'));
-              if (rtfFiles.length > 0) setRtfImportFiles(rtfFiles);
-              e.target.value = '';
-            }}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs"
-          >
-            <Upload size={13} /> 导入 RTF
-          </button>
           <button onClick={() => exportCsv(false)} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
             <Download size={13} /> 导出CSV
           </button>
@@ -498,9 +485,8 @@ function RequirementsTab({ productId }: { productId: string }) {
         <EmptyHint text="没有与你相关的需求。你是负责人或处理人的需求会出现在这里；点「新建需求」可创建新条目。" />
       ) : (
         <>
-        <div className="shrink-0 w-full min-w-0 flex flex-wrap items-center gap-2">
-          <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-          <div className="min-w-0 flex-1">{bar}</div>
+        <div className="shrink-0 w-full min-w-0 flex items-center gap-2 flex-wrap">
+          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
         </div>
         {filtered.length === 0 ? (
           <div className="text-center text-white/35 text-sm py-10">
@@ -545,14 +531,6 @@ function RequirementsTab({ productId }: { productId: string }) {
         </div>
       )}
         </>
-      )}
-      {rtfImportFiles.length > 0 && (
-        <RequirementRtfImportDialog
-          productId={productId}
-          files={rtfImportFiles}
-          onClose={() => setRtfImportFiles([])}
-          onImported={reload}
-        />
       )}
     </div>
   );
@@ -683,6 +661,7 @@ function DefectsTab({ productId }: { productId: string }) {
   }, [items]);
   const fields = useMemo<FilterFieldDef<TracedDefect>[]>(() => [
     { key: 'severity', label: '严重程度', defaultVisible: true, options: () => (['致命', '严重', '一般', '轻微'] as const).map((label) => ({ value: label, label })), test: (d, v) => readDefectSeverityLevel(d) === v },
+    { key: 'priority', label: '优先级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (d, v) => readDefectPriorityGrade(d) === v },
     { key: 'status', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (d) => d.status, defectStatusLabel), test: (d, v) => d.status === v },
     { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (d) => d.assigneeId ?? '', (id) => personName.get(id) ?? id), test: (d, v) => (d.assigneeId ?? '') === v },
     { key: 'reporter', label: '上报人', options: (its) => distinctOptions(its, (d) => d.reporterId ?? '', (id) => personName.get(id) ?? id), test: (d, v) => (d.reporterId ?? '') === v },
@@ -690,7 +669,15 @@ function DefectsTab({ productId }: { productId: string }) {
     { key: 'version', label: '关联版本', options: (its) => distinctOptions(its, (d) => d.tracedVersionId ?? '', (id) => versionName.get(id) ?? id), test: (d, v) => (d.tracedVersionId ?? '') === v },
     { key: 'created', label: '提交时间', options: () => TIME_PRESETS, test: (d, v) => inTimeRange(d.createdAt, v) },
   ], [personName, featureName, versionName]);
-  const { bar, filtered: filterBarFiltered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索 ID、标题、描述' });
+  const { bar, filtered: filterBarFiltered } = useListFilter({
+    items,
+    storageKey: 'pa-list-filters:defect',
+    fields,
+    keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`,
+    keywordPlaceholder: '搜索 ID、标题、描述',
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
+  });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'defect', (d) => ({ productId, recordId: d.id })),
     [filterBarFiltered, trackedOnly, productId],
@@ -718,9 +705,8 @@ function DefectsTab({ productId }: { productId: string }) {
         <EmptyHint text="没有与你相关的缺陷。你是处理人或上报人的缺陷会出现在这里；点「新建缺陷」可创建新条目。" />
       ) : (
         <>
-        <div className="flex flex-wrap items-center gap-2">
-          <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-          <div className="min-w-0 flex-1">{bar}</div>
+        <div className="flex w-full min-w-0 items-center gap-2 flex-wrap">
+          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
         </div>
         <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
         {filtered.length === 0 ? (
@@ -905,7 +891,7 @@ function StateBoard({
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overState, setOverState] = useState<string | null>(null);
-  const [product, setProduct] = useState<Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'> | null>(null);
+  const [product, setProduct] = useState<ProductWorkflowContext | null>(null);
   const [pendingTransition, setPendingTransition] = useState<{ item: Requirement; transition: WorkflowTransition } | null>(null);
   const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
   const permissions = useAuthStore((s) => s.permissions);
@@ -915,7 +901,14 @@ function StateBoard({
 
   useEffect(() => {
     void getProduct(productId).then((res) => {
-      if (res.success) setProduct({ ownerId: res.data.ownerId, adminIds: res.data.adminIds, memberIds: res.data.memberIds });
+      if (res.success) {
+        setProduct({
+          ownerId: res.data.ownerId,
+          ownerIds: res.data.ownerIds,
+          adminIds: res.data.adminIds,
+          memberIds: res.data.memberIds,
+        });
+      }
     });
   }, [productId]);
 

@@ -14,7 +14,7 @@ public class Requirement
     /// <summary>所属产品 ID</summary>
     public string ProductId { get; set; } = string.Empty;
 
-    /// <summary>需求 ID（TAPD 规则：纯数字；导入保留 TAPD ID，新建在本产品最大 ID 基础上 +1）</summary>
+    /// <summary>需求 ID（TAPD 规则：纯数字；全库 Requirements 单表全局递增，与产品无关；导入可保留外部 TAPD ID）</summary>
     public string RequirementNo { get; set; } = string.Empty;
 
     /// <summary>需求标题</summary>

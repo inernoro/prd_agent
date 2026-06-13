@@ -8,7 +8,7 @@ public class DefectReport
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>缺陷 ID（TAPD 规则：纯数字；导入保留 TAPD ID，新建在本产品最大 ID 基础上 +1）</summary>
+    /// <summary>缺陷 ID（TAPD 规则：纯数字；全库 DefectReports 单表全局递增，与产品无关；导入可保留外部 TAPD ID）</summary>
     public string DefectNo { get; set; } = string.Empty;
 
     /// <summary>使用的模板 ID</summary>
@@ -48,7 +48,7 @@ public class DefectReport
 
     /// <summary>
     /// 产品管理智能体内的处理优先级：见 ProductItemGrade（p0/p1/p2/p3）。与 Severity（严重程度）独立。
-    /// TAPD「缺陷等级」导入映射到 Severity，不写入本字段。
+    /// TAPD 导出列「优先级」导入时可映射到 structuredData 严重程度；无值时不写入。
     /// </summary>
     public string? Grade { get; set; }
 

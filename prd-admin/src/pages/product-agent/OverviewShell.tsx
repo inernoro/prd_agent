@@ -63,11 +63,13 @@ import {
   type OverviewDefectRow,
 } from '@/services/real/productAgent';
 import type { Customer, Product } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel, readDefectPriorityGrade, readDefectSeverityLevel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
-import { useListFilter, distinctOptions, type FilterFieldDef } from './listFilter';
+import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { formatInitiationReviewScore } from './initiationWorkflowUtils';
+import { formatVersionBasicBool, formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { filterByTracked } from './productRecordTrackStorage';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
@@ -164,10 +166,10 @@ export function OverviewShell() {
         <div className="flex h-full min-h-0 flex-col">
           <div className="shrink-0 border-b border-white/10 px-6 py-3">
             <h2 className="text-base font-semibold text-white">功能</h2>
-            <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；功能清单归属正式版本，导入时需选择 V 号</p>
+            <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；功能清单归属正式版本。管理员可先选择产品与正式版本，再导入目录结构或新建功能。</p>
           </div>
           <div className="min-h-0 flex-1">
-            <OverviewFeaturesPanel isAdmin={isAdmin} products={products} />
+            <OverviewFeaturesPanel products={products} isAdmin={isAdmin} />
           </div>
         </div>
       )}
@@ -177,7 +179,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'versions' && (
-        <SectionShell title="版本" desc="正式版本与内部版本分 tab 展示；点击行进入三标签详情页（基础信息 / 需求 / 功能）；管理员可导入 Excel 历史数据">
+        <SectionShell title="版本" desc="正式版本与内部版本分 tab 展示，列字段与单产品版本页对齐（含负责人/组员/会议时间等）；点击行进入详情；管理员可导入 Excel 历史数据">
           <VersionOverviewSection isAdmin={isAdmin} products={products} />
         </SectionShell>
       )}
@@ -487,6 +489,8 @@ function RequirementsTable({
     keywordOf: (r) => `${r.requirementNo} ${r.title} ${r.productName}`,
     keywordPlaceholder: '搜索标题 / 编号',
     showFilterSettings: false,
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId: r.productId, recordId: r.id })),
@@ -520,9 +524,8 @@ function RequirementsTable({
   return (
     <div className="w-full min-w-0">
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-        <div className="flex-1 min-w-0">{bar}</div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
+        <div className="flex shrink-0 items-center gap-2">
           <MineToggle mine={mine} setMine={setMine} />
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
         </div>
@@ -551,18 +554,18 @@ function RequirementsTable({
           ]}
         />
       )}
-      {showImport && <ProductHistoryImportDialog type="requirement" products={products} onClose={() => setShowImport(false)} onImported={reload} />}
+      {showImport && <ProductHistoryImportDialog type="requirement" products={products} crossProductRoute onClose={() => setShowImport(false)} onImported={reload} />}
     </div>
   );
 }
 
 /** 主页功能面板：先选产品，再复用单产品内的 FeatureCatalogTab（目录树 + 表格） */
 function OverviewFeaturesPanel({
-  isAdmin,
   products,
+  isAdmin,
 }: {
-  isAdmin: boolean;
   products: Product[];
+  isAdmin: boolean;
 }) {
   const [productId, setProductId] = useState('');
 
@@ -603,26 +606,82 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewDefectRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
+  const productNameMap = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
+  const fields = useMemo<FilterFieldDef<OverviewDefectRow>[]>(() => [
+    {
+      key: 'severity',
+      label: '严重程度',
+      defaultVisible: true,
+      options: () => (['致命', '严重', '一般', '轻微'] as const).map((label) => ({ value: label, label })),
+      test: (r, v) => readDefectSeverityLevel(r) === v,
+    },
+    {
+      key: 'priority',
+      label: '优先级',
+      defaultVisible: true,
+      options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })),
+      test: (r, v) => readDefectPriorityGrade(r) === v,
+    },
+    {
+      key: 'product',
+      label: '产品',
+      defaultVisible: true,
+      options: (its) => distinctOptions(
+        its,
+        (r) => r.productId,
+        (id) => productNameMap.get(id) ?? its.find((r) => r.productId === id)?.productName ?? id,
+      ),
+      test: (r, v) => r.productId === v,
+    },
+    {
+      key: 'assignee',
+      label: '处理人',
+      defaultVisible: true,
+      options: (its) => distinctOptions(
+        its,
+        (r) => r.assigneeId ?? '',
+        (id) => its.find((r) => r.assigneeId === id)?.assigneeName ?? id,
+      ),
+      test: (r, v) => (r.assigneeId ?? '') === v,
+    },
+    {
+      key: 'status',
+      label: '状态',
+      defaultVisible: true,
+      options: (its) => distinctOptions(its, (r) => r.status, defectStatusLabel),
+      test: (r, v) => r.status === v,
+    },
+  ], [productNameMap]);
+
+  const { bar, filtered: filterBarFiltered } = useListFilter({
+    items: rows,
+    storageKey: 'pa-list-filters:overview-defect',
+    fields,
+    keywordOf: (r) => `${r.defectNo} ${r.title ?? ''} ${r.productName}`,
+    keywordPlaceholder: '搜索标题 / 编号',
+    showFilterSettings: false,
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
+  });
+  const filtered = useMemo(
+    () => filterByTracked(filterBarFiltered, trackedOnly, 'defect', (r) => ({ productId: r.productId, recordId: r.id })),
+    [filterBarFiltered, trackedOnly],
+  );
+
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await getOverviewDefects({ keyword: keyword.trim() || undefined });
+    const res = await getOverviewDefects();
     if (res.success) setRows(res.data.items);
     setLoading(false);
-  }, [keyword]);
+  }, []);
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  const visibleRows = useMemo(
-    () => filterByTracked(rows, trackedOnly, 'defect', (r) => ({ productId: r.productId, recordId: r.id })),
-    [rows, trackedOnly],
-  );
-
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(visibleRows, {
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
     filename: 'overview-defects.csv',
     headers: ['ID', '标题', '产品', '状态', '严重程度'],
     mapRow: (r) => [r.defectNo, r.title ?? '', r.productName, defectStatusLabel(r.status), defectSeverityTierLabel(r)],
@@ -630,27 +689,25 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
 
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
-    <div>
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-        <div className="flex-1 min-w-0">
-          <TableToolbar keyword={keyword} setKeyword={setKeyword} extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined} />
-        </div>
+    <div className="w-full min-w-0">
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
+        {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
       </div>
       <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
-      {visibleRows.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="text-center text-white/40 text-sm py-12">
-          {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : '没有追溯到产品的缺陷'}
+          {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : rows.length === 0 ? '没有追溯到产品的缺陷' : '没有符合筛选条件的缺陷'}
         </div>
       ) : (
         <OverviewDataTable
           tableKey="defects"
-          rows={visibleRows}
+          rows={filtered}
           selection={tableSelection}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/defect/${r.id}`)}
           columns={[
             { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.defectNo}</span> },
-            { key: 'title', header: formatListSectionTitle('标题', visibleRows.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
+            { key: 'title', header: formatListSectionTitle('标题', filtered.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
             { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
             { key: 'status', header: '状态', defaultWidth: 88, render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },
             { key: 'severity', header: '严重程度', defaultWidth: 88, render: (r) => SEVERITY_BADGE(defectSeverityTierLabel(r)) },
@@ -675,6 +732,38 @@ const WORKFLOW_STATUS_LABEL: Record<string, string> = {
   announcement_pending: '待填写上线公告',
   released: '已上线',
 };
+
+function overviewProjectTypeLabel(projectType: string, customerSource?: string | null) {
+  if (projectType === 'custom') return customerSource?.trim() ? `定制项目 · ${customerSource.trim()}` : '定制项目';
+  return '非定制项目';
+}
+
+function OverviewVersionStatus({ status }: { status: string }) {
+  const good = status === 'approved' || status === 'released';
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-xs ${good ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>
+      {WORKFLOW_STATUS_LABEL[status] ?? status}
+    </span>
+  );
+}
+
+function overviewAnnouncementCell(row: OverviewReleaseRow) {
+  if (row.announcementUrl) {
+    return (
+      <a
+        href={row.announcementUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="text-cyan-300 hover:underline"
+        onClick={(event) => event.stopPropagation()}
+      >
+        查看公告
+      </a>
+    );
+  }
+  if (row.status === 'announcement_pending') return <span className="text-xs text-white/35">待填写</span>;
+  return <span className="text-white/35">-</span>;
+}
 
 function VersionOverviewSection({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
   const [tab, setTab] = useState<'release' | 'initiation'>('release');
@@ -719,13 +808,18 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
     filename: 'overview-releases.csv',
-    headers: ['V号', 'T号', '方案', '产品', '级别', '状态'],
+    headers: ['产品', 'V号', 'T号', '项目类别', '版本类别', '方案', '部门', '负责人', '组员', '上线日期', '状态'],
     mapRow: (r) => [
+      resolveVersionProductLabel(r, r.productName),
       r.vCode,
-      r.tCode ?? '',
-      r.planName,
-      r.productName,
+      r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : ''),
+      overviewProjectTypeLabel(r.projectType),
       VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
+      r.planName,
+      r.departmentName ?? '',
+      r.ownerName ?? '',
+      r.teamMemberNames.join('、'),
+      r.plannedReleaseAt ? formatVersionBasicDate(r.plannedReleaseAt) : '',
       WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
     ],
   });
@@ -746,15 +840,21 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
           selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/release/${row.id}`)}
           columns={[
-            { key: 'vcode', header: 'V 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
-            { key: 'tcode', header: 'T 号', defaultWidth: 96, render: (r) => <span className="font-mono text-xs text-white/55">{r.tCode ?? '临时优化'}</span> },
-            { key: 'plan', header: '方案', defaultWidth: 200, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-xs text-white/55" /> },
-            { key: 'scale', header: '级别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { key: 'reqCount', header: '需求数', defaultWidth: 72, resizable: false, render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
-            { key: 'releaseAt', header: '上线日期', defaultWidth: 104, render: (r) => <span className="text-xs text-white/45">{r.plannedReleaseAt ? new Date(r.plannedReleaseAt).toLocaleDateString('zh-CN') : '-'}</span> },
-            { key: 'status', header: '状态', defaultWidth: 104, render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
-            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-white/55" /> },
+            { key: 'vcode', header: '正式版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
+            { key: 'tcode', header: '内部版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-xs text-white/55">{r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : '-')}</span> },
+            { key: 'projectType', header: '项目类别', defaultWidth: 96, render: (r) => <span className="text-xs text-white/55">{overviewProjectTypeLabel(r.projectType)}</span> },
+            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
+            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-white/55" /> },
+            { key: 'owner', header: '产品负责人（申领人）', defaultWidth: 120, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-white/70" /> },
+            { key: 'team', header: '项目组成员', defaultWidth: 140, render: (r) => <TruncateCell text={r.teamMemberNames.length > 0 ? r.teamMemberNames.join('、') : '-'} maxChars={18} className="text-xs text-white/55" /> },
+            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-white/35">-</span> },
+            { key: 'releaseAt', header: '上线日期', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.plannedReleaseAt)}</span> },
+            { key: 'brand', header: '当前开放品牌', defaultWidth: 112, render: (r) => <TruncateCell text={r.openBrandScope || '上线全域开放'} maxChars={14} className="text-xs text-white/55" /> },
+            { key: 'requirements', header: '需求来源', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementTitles.length > 0 ? r.requirementTitles.join('、') : '-'} maxChars={20} className="text-xs text-white/55" /> },
+            { key: 'announcement', header: '上线公告地址', defaultWidth: 104, render: (r) => overviewAnnouncementCell(r) },
+            { key: 'status', header: '状态', defaultWidth: 120, render: (r) => <OverviewVersionStatus status={r.status} /> },
           ]}
         />
       )}
@@ -787,12 +887,17 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
     filename: 'overview-initiations.csv',
-    headers: ['T号', '方案', '产品', '级别', '状态'],
+    headers: ['产品', '项目类别', 'T号', '版本类别', '方案', '部门', '负责人', '开发状态', 'Agent评审', '状态'],
     mapRow: (r) => [
+      resolveVersionProductLabel(r, r.productName),
+      overviewProjectTypeLabel(r.projectType, r.customerSource),
       r.tCode ?? '',
-      r.planName,
-      r.productName,
       VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
+      r.planName,
+      r.departmentName ?? '',
+      r.ownerName ?? '',
+      r.developmentStatus,
+      formatInitiationReviewScore(r),
       WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
     ],
   });
@@ -813,13 +918,40 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
           selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
           columns={[
-            { key: 'tcode', header: 'T 号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '—'}</span> },
-            { key: 'plan', header: '方案', defaultWidth: 240, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-xs text-white/55" /> },
-            { key: 'scale', header: '级别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { key: 'reqCount', header: '需求数', defaultWidth: 72, resizable: false, render: (r) => <span className="text-xs text-white/55">{r.requirementCount}</span> },
-            { key: 'status', header: '状态', defaultWidth: 104, render: (r) => <span className="text-xs text-white/55">{WORKFLOW_STATUS_LABEL[r.status] ?? r.status}</span> },
-            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-xs text-white/35">{relTime(r.updatedAt)}</span> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-white/55" /> },
+            { key: 'projectType', header: '项目类别', defaultWidth: 108, render: (r) => <span className="text-xs text-white/55">{overviewProjectTypeLabel(r.projectType, r.customerSource)}</span> },
+            { key: 'tcode', header: '立项号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '-'}</span> },
+            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
+            { key: 'reqDesc', header: '项目需求描述', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementDescription ?? '-'} maxChars={20} className="text-xs text-white/55" /> },
+            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-white/55" /> },
+            { key: 'owner', header: '产品负责人', defaultWidth: 104, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-white/70" /> },
+            { key: 'draft1', header: '第一稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.firstDraftMeetingAt)}</span> },
+            { key: 'draft2', header: '第二稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.secondDraftMeetingAt)}</span> },
+            { key: 'draft3', header: '第三稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.thirdDraftMeetingAt)}</span> },
+            { key: 'projectAt', header: '立项时间', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.projectAt)}</span> },
+            { key: 'ui', header: '需UI设计', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{formatVersionBasicBool(r.needUiDesign)}</span> },
+            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-white/35">-</span> },
+            { key: 'devStatus', header: '开发状态', defaultWidth: 88, render: (r) => <span className="text-xs text-white/55">{r.developmentStatus || '待开发'}</span> },
+            { key: 'remark', header: '备注', defaultWidth: 120, render: (r) => <TruncateCell text={r.remark ?? '-'} maxChars={16} className="text-xs text-white/45" /> },
+            {
+              key: 'review',
+              header: 'Agent评审',
+              defaultWidth: 88,
+              resizable: false,
+              render: (r) => {
+                const scoreText = formatInitiationReviewScore(r);
+                if (scoreText === '-') return <span className="text-white/35">-</span>;
+                return (
+                  <span className={
+                    r.reviewPassed === true ? 'text-emerald-300 text-xs'
+                      : r.reviewPassed === false ? 'text-rose-300 text-xs'
+                        : 'text-white/70 text-xs'
+                  }>{scoreText}</span>
+                );
+              },
+            },
+            { key: 'status', header: '状态', defaultWidth: 120, render: (r) => <OverviewVersionStatus status={r.status} /> },
           ]}
         />
       )}

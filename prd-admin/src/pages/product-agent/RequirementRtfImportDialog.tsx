@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AlertCircle, CheckCircle2, FileText, Image, Upload, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { uploadAttachment } from '@/services/real/aiToolbox';
-import { importRequirements, type ImportRequirementRow } from '@/services/real/productAgent';
+import { importOverviewRequirements, importRequirements, type ImportRequirementRow } from '@/services/real/productAgent';
 import {
   normalizeRtfImage,
   parseRequirementRtfBytes,
@@ -14,6 +14,7 @@ import {
   type RtfImportRequirement,
 } from './requirementRtfImport';
 import { REQUIREMENT_SOURCE_RTF } from './requirementSource';
+import { applyFallbackProductToRows } from './requirementImportRouting';
 
 interface ParsedRequirementItem {
   file: File;
@@ -33,11 +34,15 @@ export function RequirementRtfImportDialog({
   files,
   onClose,
   onImported,
+  crossProductRoute = false,
+  fallbackProductName,
 }: {
   productId: string;
   files: File[];
   onClose: () => void;
   onImported: () => Promise<void>;
+  crossProductRoute?: boolean;
+  fallbackProductName?: string;
 }) {
   const [parsedFiles, setParsedFiles] = useState<ParsedFile[]>([]);
   const [parsing, setParsing] = useState(true);
@@ -189,7 +194,12 @@ export function RequirementRtfImportDialog({
     }
 
     setProgress(`正在写入 ${rows.length} 条需求`);
-    const imported = await importRequirements(productId, rows);
+    const rowsToImport = crossProductRoute
+      ? applyFallbackProductToRows(rows, fallbackProductName)
+      : rows;
+    const imported = crossProductRoute
+      ? await importOverviewRequirements(rowsToImport)
+      : await importRequirements(productId, rowsToImport);
     setImporting(false);
     if (!imported.success) {
       setProgress(imported.error?.message ?? '导入失败');

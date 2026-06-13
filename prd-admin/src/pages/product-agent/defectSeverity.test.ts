@@ -10,7 +10,7 @@ describe('normalizeTapdToSeverityLevel', () => {
     expect(normalizeTapdToSeverityLevel('无关紧要')).toBe('轻微');
   });
 
-  it('does not map 优先级 or P-level', () => {
+  it('returns undefined for blank or unknown', () => {
     expect(normalizeTapdToSeverityLevel('P1')).toBeUndefined();
     expect(normalizeTapdToSeverityLevel('')).toBeUndefined();
   });

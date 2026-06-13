@@ -42,11 +42,31 @@ public class Product
     /// <summary>产品整体知识库绑定的 DocumentStore ID（首次进入知识库 tab 时 find-or-create）</summary>
     public string? KnowledgeStoreId { get; set; }
 
-    /// <summary>负责人（产品经理）UserId</summary>
+    /// <summary>产品负责人 UserId 列表（可为空，待认领；运行时 SSOT）</summary>
+    public List<string> OwnerIds { get; set; } = new();
+
+    /// <summary>首位负责人 UserId（与 OwnerIds 同步，兼容旧逻辑）</summary>
     public string OwnerId { get; set; } = string.Empty;
 
-    /// <summary>负责人名称（冗余展示）</summary>
+    /// <summary>负责人展示名（多人时用「、」拼接，与 OwnerIds 同步）</summary>
     public string? OwnerName { get; set; }
+
+    /// <summary>是否为该产品负责人（含 OwnerIds 与遗留 OwnerId）。</summary>
+    public bool IsProductOwner(string userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return false;
+        if (OwnerIds.Contains(userId)) return true;
+        return !string.IsNullOrWhiteSpace(OwnerId) && OwnerId == userId;
+    }
+
+    /// <summary>有效负责人 Id 列表（OwnerIds 优先，否则回退 OwnerId）。</summary>
+    public IEnumerable<string> EnumerateOwnerIds()
+    {
+        var fromList = OwnerIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        if (fromList.Count > 0) return fromList;
+        if (!string.IsNullOrWhiteSpace(OwnerId)) return new[] { OwnerId };
+        return Array.Empty<string>();
+    }
 
     /// <summary>产品成员 UserId 列表</summary>
     public List<string> MemberIds { get; set; } = new();

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { FileText, Mic, MicOff, Save, Sparkles } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
-import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { ProductAssigneePicker } from './ProductAssigneePicker';
 import { CustomerSearchSelect } from './CustomerSearchSelect';
 import { useSseStream } from '@/lib/useSseStream';
 import { useSpeechInput } from '@/lib/useSpeechInput';
@@ -409,7 +409,7 @@ export function RequirementCreateForm({
               <GradePicker grade={grade} setGrade={setGrade} />
             </TapdPropertyRow>
             <TapdPropertyRow label="处理人" required>
-              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} placeholder="搜索用户名或昵称..." uiSize="md" />
+              <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} uiSize="md" />
             </TapdPropertyRow>
             <TapdPropertyRow label="父需求">
               <ItemSearchSelect

@@ -16,6 +16,7 @@ import { OverviewDataTable, TruncateCell } from './overviewDataTable';
 import { ListCheckbox } from './listSelection';
 import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
+import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
 import './product-cards.css';
 
 const SEARCH_BOX =
@@ -239,7 +240,7 @@ export function ProductsSection() {
                 <MiniStat label="缺陷" value={p.defectCount} />
               </div>
               <div className="flex items-center justify-between mt-1">
-                <span className="text-[10px] text-white/30 truncate">{p.ownerName || ''}</span>
+                <span className="text-[10px] text-white/30 truncate">{p.ownerName?.trim() || '待认领'}</span>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={(e) => {
@@ -357,7 +358,7 @@ export function ProductsSection() {
               key: 'owner',
               header: '负责人',
               defaultWidth: 100,
-              render: (p) => <TruncateCell text={p.ownerName ?? '—'} maxChars={12} className="text-xs text-white/45" />,
+              render: (p) => <TruncateCell text={p.ownerName?.trim() || '待认领'} maxChars={12} className="text-xs text-white/45" />,
             },
             {
               key: 'actions',
@@ -468,15 +469,19 @@ function ProductEditModal({
   const [name, setName] = useState(product?.name ?? '');
   const [description, setDescription] = useState(product?.description ?? '');
   const [grade, setGrade] = useState<ProductGrade>(product?.grade ?? categories[0]?.id ?? 'normal');
+  const [ownerIds, setOwnerIds] = useState<string[]>(() => {
+    if (product?.ownerIds?.length) return [...product.ownerIds];
+    if (product?.ownerId) return [product.ownerId];
+    return [];
+  });
   const [saving, setSaving] = useState(false);
   const isNew = !product;
 
   const save = async () => {
     if (!name.trim()) return;
     setSaving(true);
-    const res = isNew
-      ? await createProduct({ name: name.trim(), description, grade })
-      : await updateProduct(product!.id, { name: name.trim(), description, grade });
+    const body = { name: name.trim(), description, grade, ownerIds };
+    const res = isNew ? await createProduct(body) : await updateProduct(product!.id, body);
     setSaving(false);
     if (res.success) onSaved(res.data?.id);
   };
@@ -523,6 +528,16 @@ function ProductEditModal({
               </button>
             ))}
           </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-white/50">负责人</label>
+          <UserMultiSearchSelect
+            value={ownerIds}
+            onChange={setOwnerIds}
+            placeholder="请选择负责人（可选，支持多选）"
+            uiSize="md"
+          />
+          <p className="text-[10px] text-white/35">可选填；未指定时待成员认领，支持指定多位负责人。</p>
         </div>
         <div className="flex justify-end gap-2 mt-1">
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">

@@ -45,10 +45,10 @@ public static class ProductWorkflowTransitionGuard
         if (!string.IsNullOrWhiteSpace(effectiveAssignee) && effectiveAssignee == userId)
             roles.Add(ProductWorkflowTransitionRoles.Assignee);
 
-        if (isGlobalAdmin || product.OwnerId == userId || product.AdminIds.Contains(userId))
+        if (isGlobalAdmin || product.IsProductOwner(userId) || product.AdminIds.Contains(userId))
             roles.Add(ProductWorkflowTransitionRoles.ProductAdmin);
 
-        if (product.OwnerId == userId || product.MemberIds.Contains(userId) || product.AdminIds.Contains(userId))
+        if (product.IsProductOwner(userId) || product.MemberIds.Contains(userId) || product.AdminIds.Contains(userId))
             roles.Add(ProductWorkflowTransitionRoles.Member);
 
         return roles;
