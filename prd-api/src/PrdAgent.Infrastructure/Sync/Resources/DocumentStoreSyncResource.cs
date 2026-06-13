@@ -1,11 +1,16 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Net.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Sync;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.Sync.Resources;
 
@@ -26,17 +31,29 @@ public class DocumentStoreSyncResource : ISyncableResource
     private readonly MongoDbContext _db;
     private readonly IDocumentService _documentService;
     private readonly ITeamService _teams;
+    private readonly IAssetStorage _assetStorage;
+    private readonly IHttpClientFactory _httpFactory;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly IConfiguration _config;
     private readonly ILogger<DocumentStoreSyncResource> _logger;
 
     public DocumentStoreSyncResource(
         MongoDbContext db,
         IDocumentService documentService,
         ITeamService teams,
+        IAssetStorage assetStorage,
+        IHttpClientFactory httpFactory,
+        ISafeOutboundUrlValidator urlValidator,
+        IConfiguration config,
         ILogger<DocumentStoreSyncResource> logger)
     {
         _db = db;
         _documentService = documentService;
         _teams = teams;
+        _assetStorage = assetStorage;
+        _httpFactory = httpFactory;
+        _urlValidator = urlValidator;
+        _config = config;
         _logger = logger;
     }
 
@@ -111,6 +128,9 @@ public class DocumentStoreSyncResource : ISyncableResource
                 Tags = e.Tags,
                 Metadata = e.Metadata,
                 Content = content,
+                CreatedAt = e.CreatedAt,
+                UpdatedAt = e.UpdatedAt,
+                LastChangedAt = e.LastChangedAt,
             });
         }
 
@@ -126,6 +146,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                 Tags = store.Tags,
                 OwnerUserName = owner?.Username,
                 OwnerEmail = owner?.Email,
+                CreatedAt = store.CreatedAt,
+                UpdatedAt = store.UpdatedAt,
             },
             Records = records,
         };
@@ -174,6 +196,7 @@ public class DocumentStoreSyncResource : ISyncableResource
     {
         // 1) 归属对齐：用户名 → 邮箱 → 兜底归到操作者
         var (ownerUserId, ownerName, ownerAvatar, authorMatched) = await ResolveOwnerAsync(bundle.Item, actor, ct);
+        var options = ReadOptions(bundle);
 
         // 2) 解析 / 创建目标库（保留同一 Id 便于 test↔prod 同库）
         var key = !string.IsNullOrWhiteSpace(targetKey) ? targetKey! : bundle.Item.Key;
@@ -200,11 +223,14 @@ public class DocumentStoreSyncResource : ISyncableResource
                 Description = bundle.Item.Description,
                 OwnerId = ownerUserId,
                 Tags = bundle.Item.Tags ?? new List<string>(),
+                CreatedAt = options.PreserveTimestamps && bundle.Item.CreatedAt.HasValue ? bundle.Item.CreatedAt.Value : DateTime.UtcNow,
+                UpdatedAt = options.PreserveTimestamps && bundle.Item.UpdatedAt.HasValue ? bundle.Item.UpdatedAt.Value : DateTime.UtcNow,
             };
             await _db.DocumentStores.InsertOneAsync(target, cancellationToken: ct);
         }
 
-        var outcome = await ApplyRecordsAsync(target, bundle.Records, mode, ownerUserId, ownerName, ownerAvatar, ct);
+        var outcome = await ApplyRecordsAsync(target, bundle.Item, bundle.Records, mode, options, ownerUserId, ownerName, ownerAvatar, ct);
+        outcome.TargetItemId = target.Id;
         outcome.UnmatchedAuthors = authorMatched ? 0 : 1;
         if (!authorMatched)
             outcome.Message = (outcome.Message == null ? "" : outcome.Message + "；")
@@ -235,7 +261,8 @@ public class DocumentStoreSyncResource : ISyncableResource
 
     /// <summary>把记录幂等 upsert 进目标库（沿用 DocumentStoreSyncController.ApplyBundleAsync 的算法）。</summary>
     private async Task<SyncApplyOutcome> ApplyRecordsAsync(
-        DocumentStore target, List<SyncRecord> records, SyncApplyMode mode,
+        DocumentStore target, SyncBundleItem item, List<SyncRecord> records, SyncApplyMode mode,
+        DocumentStorePeerApplyOptions options,
         string actorUserId, string actorName, string? actorAvatar, CancellationToken ct)
     {
         records ??= new List<SyncRecord>();
@@ -247,8 +274,10 @@ public class DocumentStoreSyncResource : ISyncableResource
             if (!byLineage.ContainsKey(k)) byLineage[k] = e;
         }
         var lineageToTargetId = new Dictionary<string, string>();
-        int created = 0, updated = 0, skipped = 0, failed = 0;
+        int created = 0, updated = 0, skipped = 0, failed = 0, assetsRewritten = 0, assetRewriteFailed = 0;
         var addOnly = mode == SyncApplyMode.AddOnly;
+        var now = DateTime.UtcNow;
+        DateTime PickTime(DateTime? source) => PickTimestamp(source, options.PreserveTimestamps, now);
 
         string? ResolveParent(string? parentLineage)
         {
@@ -265,20 +294,34 @@ public class DocumentStoreSyncResource : ISyncableResource
                 lineageToTargetId[f.LineageId] = exFolder.Id;
                 if (addOnly) { skipped++; return; }
                 var newTags = f.Tags ?? new List<string>();
-                if (exFolder.Title != f.Title || exFolder.ParentId != parentId
-                    || !TagsEqual(exFolder.Tags, f.Tags) || !MetaEqual(exFolder.Metadata, f.Metadata))
+                var contentChanged = exFolder.Title != f.Title || exFolder.ParentId != parentId
+                    || !TagsEqual(exFolder.Tags, f.Tags) || !MetaEqual(exFolder.Metadata, f.Metadata);
+                var timestampsChanged = NeedsRecordTimestampRefresh(exFolder, f, options.PreserveTimestamps);
+                if (contentChanged || timestampsChanged)
                 {
-                    await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exFolder.Id,
-                        Builders<DocumentEntry>.Update
-                            .Set(e => e.Title, f.Title)
-                            .Set(e => e.ParentId, parentId)
-                            .Set(e => e.Tags, newTags)
-                            .Set(e => e.Metadata, WithLineage(f.Metadata, f.LineageId))
-                            .Set(e => e.UpdatedBy, actorUserId)
-                            .Set(e => e.UpdatedByName, actorName)
-                            .Set(e => e.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+                    var update = Builders<DocumentEntry>.Update
+                        .Set(e => e.Title, f.Title)
+                        .Set(e => e.ParentId, parentId)
+                        .Set(e => e.Tags, newTags)
+                        .Set(e => e.Metadata, WithLineage(f.Metadata, f.LineageId))
+                        .Set(e => e.UpdatedBy, actorUserId)
+                        .Set(e => e.UpdatedByName, actorName)
+                        .Set(e => e.UpdatedAt, PickTime(f.UpdatedAt));
+                    if (options.PreserveTimestamps && f.CreatedAt.HasValue)
+                        update = update.Set(e => e.CreatedAt, PickTime(f.CreatedAt));
+                    if (options.PreserveTimestamps && (f.LastChangedAt.HasValue || f.UpdatedAt.HasValue))
+                        update = update.Set(e => e.LastChangedAt, PickTime(f.LastChangedAt ?? f.UpdatedAt));
+
+                    await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exFolder.Id, update, cancellationToken: ct);
                     exFolder.Title = f.Title;
                     exFolder.ParentId = parentId;
+                    exFolder.Tags = newTags;
+                    exFolder.Metadata = WithLineage(f.Metadata, f.LineageId);
+                    exFolder.UpdatedAt = PickTime(f.UpdatedAt);
+                    if (options.PreserveTimestamps && f.CreatedAt.HasValue)
+                        exFolder.CreatedAt = PickTime(f.CreatedAt);
+                    if (options.PreserveTimestamps && (f.LastChangedAt.HasValue || f.UpdatedAt.HasValue))
+                        exFolder.LastChangedAt = PickTime(f.LastChangedAt ?? f.UpdatedAt);
                     updated++;
                 }
                 else skipped++;
@@ -299,6 +342,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                 CreatedByAvatarFileName = actorAvatar,
                 UpdatedBy = actorUserId,
                 UpdatedByName = actorName,
+                CreatedAt = PickTime(f.CreatedAt),
+                UpdatedAt = PickTime(f.UpdatedAt),
             };
             await _db.DocumentEntries.InsertOneAsync(folder, cancellationToken: ct);
             byLineage[f.LineageId] = folder;
@@ -334,6 +379,7 @@ public class DocumentStoreSyncResource : ISyncableResource
             {
                 if (fe.Content == null) { skipped++; continue; }
                 var parentId = ResolveParent(fe.ParentLineageId);
+                var content = fe.Content;
 
                 if (byLineage.TryGetValue(fe.LineageId, out var exFolderConflict) && exFolderConflict.IsFolder)
                 {
@@ -344,41 +390,76 @@ public class DocumentStoreSyncResource : ISyncableResource
                 if (byLineage.TryGetValue(fe.LineageId, out var exEntry) && !exEntry.IsFolder)
                 {
                     if (addOnly) { skipped++; continue; }
+                    if (options.RewriteAssetLinks)
+                    {
+                        var rewrite = await RewriteEmbeddedAssetsAsync(content, options.SourceBaseUrl, ct);
+                        content = rewrite.Content;
+                        assetsRewritten += rewrite.Rewritten;
+                        assetRewriteFailed += rewrite.Failed;
+                    }
                     var existingContent = !string.IsNullOrEmpty(exEntry.DocumentId)
                         ? (await _documentService.GetByIdAsync(exEntry.DocumentId))?.RawContent ?? string.Empty
                         : string.Empty;
-                    if (Sha256Hex(existingContent) == Sha256Hex(fe.Content)
-                        && exEntry.Title == fe.Title && exEntry.ParentId == parentId
-                        && TagsEqual(exEntry.Tags, fe.Tags) && exEntry.Summary == fe.Summary
-                        && MetaEqual(exEntry.Metadata, fe.Metadata))
+                    var contentChanged = Sha256Hex(existingContent) != Sha256Hex(content)
+                        || exEntry.Title != fe.Title || exEntry.ParentId != parentId
+                        || !TagsEqual(exEntry.Tags, fe.Tags) || exEntry.Summary != fe.Summary
+                        || !MetaEqual(exEntry.Metadata, fe.Metadata);
+                    var timestampsChanged = NeedsRecordTimestampRefresh(exEntry, fe, options.PreserveTimestamps);
+                    if (!contentChanged && !timestampsChanged)
                     {
                         skipped++;
                         continue;
                     }
-                    var oldDocId = exEntry.DocumentId;
-                    var parsed = await BuildAndSaveDocAsync(fe.Content, fe.Title);
-                    await _db.DocumentEntries.UpdateOneAsync(
-                        e => e.Id == exEntry.Id,
-                        Builders<DocumentEntry>.Update
-                            .Set(e => e.DocumentId, parsed.Id)
-                            .Set(e => e.Title, fe.Title)
-                            .Set(e => e.Summary, fe.Summary)
-                            .Set(e => e.ParentId, parentId)
-                            .Set(e => e.Tags, fe.Tags ?? new List<string>())
-                            .Set(e => e.ContentIndex, fe.Content.Length > 2000 ? fe.Content[..2000] : fe.Content)
-                            .Set(e => e.FileSize, fe.FileSize)
-                            .Set(e => e.ContentType, string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType)
-                            .Set(e => e.Metadata, WithLineage(fe.Metadata, fe.LineageId))
+                    if (!contentChanged)
+                    {
+                        var timeOnlyUpdate = Builders<DocumentEntry>.Update
                             .Set(e => e.UpdatedBy, actorUserId)
                             .Set(e => e.UpdatedByName, actorName)
-                            .Set(e => e.UpdatedAt, DateTime.UtcNow)
-                            .Set(e => e.LastChangedAt, DateTime.UtcNow), cancellationToken: ct);
+                            .Set(e => e.UpdatedAt, PickTime(fe.UpdatedAt));
+                        if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
+                            timeOnlyUpdate = timeOnlyUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+                        if (options.PreserveTimestamps && (fe.LastChangedAt.HasValue || fe.UpdatedAt.HasValue))
+                            timeOnlyUpdate = timeOnlyUpdate.Set(e => e.LastChangedAt, PickTime(fe.LastChangedAt ?? fe.UpdatedAt));
+
+                        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exEntry.Id, timeOnlyUpdate, cancellationToken: ct);
+                        updated++;
+                        continue;
+                    }
+                    var oldDocId = exEntry.DocumentId;
+                    var parsed = await BuildAndSaveDocAsync(content, fe.Title);
+                    var updatedAt = PickTime(fe.UpdatedAt);
+                    var changedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
+                    var fullUpdate = Builders<DocumentEntry>.Update
+                        .Set(e => e.DocumentId, parsed.Id)
+                        .Set(e => e.Title, fe.Title)
+                        .Set(e => e.Summary, fe.Summary)
+                        .Set(e => e.ParentId, parentId)
+                        .Set(e => e.Tags, fe.Tags ?? new List<string>())
+                        .Set(e => e.ContentIndex, content.Length > 2000 ? content[..2000] : content)
+                        .Set(e => e.FileSize, fe.FileSize)
+                        .Set(e => e.ContentType, string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType)
+                        .Set(e => e.Metadata, WithLineage(fe.Metadata, fe.LineageId))
+                        .Set(e => e.UpdatedBy, actorUserId)
+                        .Set(e => e.UpdatedByName, actorName)
+                        .Set(e => e.UpdatedAt, updatedAt)
+                        .Set(e => e.LastChangedAt, changedAt);
+                    if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
+                        fullUpdate = fullUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+
+                    await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exEntry.Id, fullUpdate, cancellationToken: ct);
                     await CleanupReplacedDocAsync(oldDocId, parsed.Id, exEntry.Id);
                     updated++;
                 }
                 else
                 {
-                    var parsed = await BuildAndSaveDocAsync(fe.Content, fe.Title);
+                    if (options.RewriteAssetLinks)
+                    {
+                        var rewrite = await RewriteEmbeddedAssetsAsync(content, options.SourceBaseUrl, ct);
+                        content = rewrite.Content;
+                        assetsRewritten += rewrite.Rewritten;
+                        assetRewriteFailed += rewrite.Failed;
+                    }
+                    var parsed = await BuildAndSaveDocAsync(content, fe.Title);
                     var entry = new DocumentEntry
                     {
                         StoreId = target.Id,
@@ -392,13 +473,15 @@ public class DocumentStoreSyncResource : ISyncableResource
                         Tags = fe.Tags ?? new List<string>(),
                         Metadata = WithLineage(fe.Metadata, fe.LineageId),
                         DocumentId = parsed.Id,
-                        ContentIndex = fe.Content.Length > 2000 ? fe.Content[..2000] : fe.Content,
+                        ContentIndex = content.Length > 2000 ? content[..2000] : content,
                         CreatedBy = actorUserId,
                         CreatedByName = actorName,
                         CreatedByAvatarFileName = actorAvatar,
                         UpdatedBy = actorUserId,
                         UpdatedByName = actorName,
-                        LastChangedAt = DateTime.UtcNow,
+                        CreatedAt = PickTime(fe.CreatedAt),
+                        UpdatedAt = PickTime(fe.UpdatedAt),
+                        LastChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt),
                     };
                     await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
                     byLineage[fe.LineageId] = entry;
@@ -413,19 +496,276 @@ public class DocumentStoreSyncResource : ISyncableResource
         }
 
         var count = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == target.Id, cancellationToken: ct);
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == target.Id,
-            Builders<DocumentStore>.Update.Set(s => s.DocumentCount, (int)count).Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+        var fallbackStoreUpdatedAt = records.Select(r => r.UpdatedAt).Where(t => t.HasValue).Select(t => t!.Value)
+            .DefaultIfEmpty(target.UpdatedAt).Max();
+        var sourceStoreUpdatedAt = item.UpdatedAt.HasValue
+            ? new[] { item.UpdatedAt.Value, fallbackStoreUpdatedAt }.Max()
+            : fallbackStoreUpdatedAt;
+        var storeUpdatedAt = addOnly && created == 0 && updated == 0
+            ? target.UpdatedAt
+            : options.PreserveTimestamps
+            ? sourceStoreUpdatedAt
+            : now;
+        var storeUpdate = Builders<DocumentStore>.Update
+            .Set(s => s.DocumentCount, (int)count)
+            .Set(s => s.UpdatedAt, storeUpdatedAt);
+        if (!addOnly)
+        {
+            storeUpdate = storeUpdate
+                .Set(s => s.Name, string.IsNullOrWhiteSpace(item.Name) ? target.Name : item.Name)
+                .Set(s => s.Description, item.Description)
+                .Set(s => s.Tags, item.Tags ?? new List<string>());
+            if (options.PreserveTimestamps && item.CreatedAt.HasValue)
+                storeUpdate = storeUpdate.Set(s => s.CreatedAt, PickTime(item.CreatedAt));
+        }
+
+        await _db.DocumentStores.UpdateOneAsync(s => s.Id == target.Id, storeUpdate, cancellationToken: ct);
 
         return new SyncApplyOutcome
         {
+            TargetItemId = target.Id,
             Created = created,
             Updated = updated,
             Skipped = skipped,
             Failed = failed,
-            Message = $"新增{created}/更新{updated}/跳过{skipped}" + (failed > 0 ? $"/失败{failed}" : ""),
+            AssetsRewritten = assetsRewritten,
+            AssetRewriteFailed = assetRewriteFailed,
+            Message = $"新增{created}/更新{updated}/跳过{skipped}"
+                + (failed > 0 ? $"/失败{failed}" : "")
+                + (assetsRewritten > 0 || assetRewriteFailed > 0 ? $"；图片重传{assetsRewritten}/失败{assetRewriteFailed}" : ""),
         };
+    }
+
+    private sealed record DocumentStorePeerApplyOptions(
+        bool PreserveTimestamps,
+        bool RewriteAssetLinks,
+        string? SourceBaseUrl);
+
+    private static DocumentStorePeerApplyOptions ReadOptions(SyncResourceBundle bundle)
+    {
+        var preserveTimestamps = true;
+        var rewriteAssetLinks = true;
+        string? sourceBaseUrl = null;
+
+        if (bundle.Item.Extras != null
+            && bundle.Item.Extras.TryGetValue("peerApplyOptions", out var raw)
+            && raw.ValueKind == JsonValueKind.Object)
+        {
+            if (raw.TryGetProperty("preserveTimestamps", out var preserve) && preserve.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                preserveTimestamps = preserve.GetBoolean();
+            if (raw.TryGetProperty("rewriteAssetLinks", out var rewrite) && rewrite.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                rewriteAssetLinks = rewrite.GetBoolean();
+            if (raw.TryGetProperty("sourceBaseUrl", out var source) && source.ValueKind == JsonValueKind.String)
+                sourceBaseUrl = source.GetString();
+        }
+
+        return new DocumentStorePeerApplyOptions(preserveTimestamps, rewriteAssetLinks, sourceBaseUrl);
+    }
+
+    private async Task<(string Content, int Rewritten, int Failed)> RewriteEmbeddedAssetsAsync(
+        string content,
+        string? sourceBaseUrl,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return (content, 0, 0);
+
+        var matches = ExtractAssetUrlMatches(content).ToList();
+        if (matches.Count == 0)
+            return (content, 0, 0);
+
+        var failed = 0;
+        Uri? sourceBase = null;
+        Uri? rejectedSourceBase = null;
+        if (!string.IsNullOrWhiteSpace(sourceBaseUrl)
+            && Uri.TryCreate(sourceBaseUrl.Trim().TrimEnd('/'), UriKind.Absolute, out var parsedSourceBase)
+            && parsedSourceBase.Scheme is "http" or "https")
+        {
+            try
+            {
+                sourceBase = await _urlValidator.EnsureSafeHttpUrlAsync(parsedSourceBase.ToString(), "peer-sync asset source", ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[peer-sync] unsafe asset source base rejected: {Url}", sourceBaseUrl);
+                rejectedSourceBase = parsedSourceBase;
+            }
+        }
+
+        var allowedBases = GetConfiguredAssetBaseUris().ToList();
+        if (sourceBase != null)
+            allowedBases.Insert(0, OriginOf(sourceBase));
+        if (allowedBases.Count == 0)
+        {
+            if (rejectedSourceBase != null)
+                failed += CountSourceScopedMatches(matches, OriginOf(rejectedSourceBase));
+            return (content, 0, failed);
+        }
+
+        var rewritten = 0;
+        var next = content;
+        var cache = new Dictionary<string, StoredAsset?>(StringComparer.Ordinal);
+        foreach (var match in matches.OrderByDescending(m => m.Index))
+        {
+            var sourceUri = ToAllowedSourceUri(match.Raw, sourceBase, allowedBases);
+            if (sourceUri == null)
+            {
+                if (rejectedSourceBase != null
+                    && ToAllowedSourceUri(match.Raw, rejectedSourceBase, new[] { OriginOf(rejectedSourceBase) }) != null)
+                    failed++;
+                continue;
+            }
+
+            try
+            {
+                await _urlValidator.EnsureSafeHttpUrlAsync(sourceUri.ToString(), "peer-sync asset", ct);
+                var cacheKey = sourceUri.ToString();
+                if (!cache.TryGetValue(cacheKey, out var asset))
+                {
+                    asset = await DownloadAndStoreAssetAsync(sourceUri, ct);
+                    cache[cacheKey] = asset;
+                }
+                if (asset == null)
+                {
+                    failed++;
+                    continue;
+                }
+                next = next.Remove(match.Index, match.Length).Insert(match.Index, asset.Url);
+                rewritten++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[peer-sync] rewrite asset failed: {Url}", sourceUri);
+                failed++;
+            }
+        }
+
+        return (next, rewritten, failed);
+    }
+
+    private static int CountSourceScopedMatches(IEnumerable<AssetUrlMatch> matches, Uri sourceBase)
+        => matches.Count(m => ToAllowedSourceUri(m.Raw, sourceBase, new[] { sourceBase }) != null);
+
+    private static Uri OriginOf(Uri uri)
+        => new($"{uri.Scheme}://{uri.Authority}");
+
+    private async Task<StoredAsset?> DownloadAndStoreAssetAsync(Uri uri, CancellationToken ct)
+    {
+        var client = _httpFactory.CreateClient("PeerSync");
+        client.Timeout = TimeSpan.FromSeconds(60);
+        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var mime = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var length = response.Content.Headers.ContentLength;
+        if (length.HasValue && length.Value > 25 * 1024 * 1024)
+            return null;
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+        if (bytes.Length > 25 * 1024 * 1024)
+            return null;
+
+        var fileName = Path.GetFileName(uri.LocalPath);
+        return await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: fileName);
+    }
+
+    private IEnumerable<Uri> GetConfiguredAssetBaseUris()
+    {
+        var keys = new[]
+        {
+            "R2_PUBLIC_BASE_URL",
+            "TENCENT_COS_PUBLIC_BASE_URL",
+            "CDN_BASE_URL",
+            "ASSET_PUBLIC_BASE_URL",
+            "PUBLIC_ASSET_BASE_URL",
+        };
+
+        foreach (var key in keys)
+        {
+            var value = _config[key];
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            if (Uri.TryCreate(value.Trim().TrimEnd('/'), UriKind.Absolute, out var uri)
+                && uri.Scheme is "http" or "https")
+                yield return uri;
+        }
+    }
+
+    private static Uri? ToAllowedSourceUri(string raw, Uri? sourceBase, IReadOnlyList<Uri> allowedBases)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        Uri uri;
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var absolute))
+        {
+            uri = absolute;
+        }
+        else if (raw.StartsWith("/", StringComparison.Ordinal) && sourceBase != null)
+        {
+            uri = new Uri(sourceBase, raw);
+        }
+        else
+        {
+            return null;
+        }
+
+        if (uri.Scheme is not ("http" or "https"))
+            return null;
+        if (!allowedBases.Any(b => IsSameOriginOrChildPath(uri, b)))
+            return null;
+        return uri;
+    }
+
+    private static bool IsSameOriginOrChildPath(Uri uri, Uri allowedBase)
+    {
+        if (!string.Equals(uri.Scheme, allowedBase.Scheme, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!string.Equals(uri.Host, allowedBase.Host, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (uri.Port != allowedBase.Port)
+            return false;
+        var basePath = allowedBase.AbsolutePath.TrimEnd('/');
+        return basePath.Length == 0 || basePath == "/"
+            || uri.AbsolutePath.StartsWith(basePath + "/", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(uri.AbsolutePath, basePath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record AssetUrlMatch(string Raw, int Index, int Length);
+
+    private static IEnumerable<AssetUrlMatch> ExtractAssetUrlMatches(string content)
+    {
+        foreach (Match m in Regex.Matches(content, @"!\[[^\]]*\]\((?<url>[^)\s]+)(?:\s+""[^""]*"")?\)", RegexOptions.IgnoreCase))
+        {
+            var group = m.Groups["url"];
+            var url = group.Value.Trim();
+            if (LooksLikeImageUrl(url))
+                yield return new AssetUrlMatch(url, group.Index, group.Length);
+        }
+        foreach (Match m in Regex.Matches(content, "<img\\b[^>]*?\\bsrc=[\"'](?<url>[^\"']+)[\"']", RegexOptions.IgnoreCase))
+        {
+            var group = m.Groups["url"];
+            var url = group.Value.Trim();
+            if (LooksLikeImageUrl(url))
+                yield return new AssetUrlMatch(url, group.Index, group.Length);
+        }
+    }
+
+    private static bool LooksLikeImageUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var path = url.Split('?', '#')[0];
+        return path.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".webp", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".avif", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -488,6 +828,34 @@ public class DocumentStoreSyncResource : ISyncableResource
         {
             _logger.LogWarning(ex, "[peer-sync] 清理旧 ParsedPrd 失败 docId={DocId}", oldDocId);
         }
+    }
+
+    private static DateTime PickTimestamp(DateTime? source, bool preserveTimestamps, DateTime fallback)
+        => preserveTimestamps && source.HasValue ? source.Value : fallback;
+
+    private static bool NeedsRecordTimestampRefresh(DocumentEntry existing, SyncRecord incoming, bool preserveTimestamps)
+    {
+        if (!preserveTimestamps) return false;
+        return NeedsTimestampRefresh(existing.CreatedAt, incoming.CreatedAt, preserveTimestamps)
+            || NeedsTimestampRefresh(existing.UpdatedAt, incoming.UpdatedAt, preserveTimestamps)
+            || NeedsTimestampRefresh(existing.LastChangedAt, incoming.LastChangedAt ?? incoming.UpdatedAt, preserveTimestamps);
+    }
+
+    private static bool NeedsTimestampRefresh(DateTime existing, DateTime? incoming, bool preserveTimestamps)
+        => preserveTimestamps && incoming.HasValue && !SameTimestamp(existing, incoming.Value);
+
+    private static bool NeedsTimestampRefresh(DateTime? existing, DateTime? incoming, bool preserveTimestamps)
+        => preserveTimestamps && incoming.HasValue && (!existing.HasValue || !SameTimestamp(existing.Value, incoming.Value));
+
+    private static bool SameTimestamp(DateTime a, DateTime b)
+        => TruncateToMongoPrecision(a) == TruncateToMongoPrecision(b);
+
+    private static DateTime TruncateToMongoPrecision(DateTime value)
+    {
+        var utc = value.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
+            : value.ToUniversalTime();
+        return new DateTime(utc.Ticks - utc.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
     }
 
     private static bool TagsEqual(List<string>? a, List<string>? b)

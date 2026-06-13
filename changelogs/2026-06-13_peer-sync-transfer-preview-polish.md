@@ -1,0 +1,10 @@
+| polish | prd-admin | 优化知识库跨系统同步弹窗右侧传输预览动效 |
+| polish | prd-admin | 重设计知识库跨系统同步右侧状态面板,突出成功失败结果 |
+| fix | prd-api | 修复知识库跨系统同步在内容未变时跳过原始时间回写的问题 |
+| fix | prd-api | 修复知识库跨系统同步图片重传的域名识别与精确替换问题 |
+| fix | prd-api | 修复受保护知识库被对端失败 apply 标记为同步错误的问题 |
+| fix | prd-admin | 修复发送到对端弹窗加载错误误判为同步失败的问题 |
+| fix | prd-api | 对齐产品工作流默认流转数量与目录测试断言 |
+| chore | .claude | 修复视觉验收归档 local 模式默认输出目录绕过代码库保护的问题 |
+| ci | github-actions | 将预览冒烟和 Playwright E2E 移出 PR 必经 CI,改为独立手动验收 workflow |
+| docs | repo | 清理 GitHub 根目录展示,重写 README 并归档原型与冒烟样本 |

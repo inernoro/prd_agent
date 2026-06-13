@@ -2140,7 +2140,7 @@ public class MdToPptController : ControllerBase
 
             // 3. 会话：优先复用大纲期间预热好的会话（启动开销已藏进用户阅读大纲的时间）
             var t2 = DateTime.UtcNow;
-            session = await TakePrewarmedSessionAsync(userId);
+            session = await TakePrewarmedSessionAsync(userId, runtimeProfile.Id);
             if (session != null)
             {
                 var hitMs = (int)(DateTime.UtcNow - t2).TotalMilliseconds;
