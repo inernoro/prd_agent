@@ -4321,6 +4321,7 @@ public class ProductAgentController : ControllerBase
         var now = DateTime.UtcNow;
         var created = 0;
         var updated = 0;
+        var userByName = await BuildUserLookupByDisplayNameAsync();
         foreach (var row in rows)
         {
             var sourceSystem = row.SourceSystem?.Trim().ToLowerInvariant();
@@ -4365,6 +4366,7 @@ public class ProductAgentController : ControllerBase
                     r.RequirementNo == externalId).FirstOrDefaultAsync();
             }
             var importedState = RequirementWorkflowCatalog.MapImportedStatusLabel(row.SourceStatus) ?? initialState;
+            var assignee = ResolveUserFromNames(userByName, row.HandlerNames);
             if (existing != null)
             {
                 var update = Builders<Requirement>.Update
@@ -4374,6 +4376,8 @@ public class ProductAgentController : ControllerBase
                     .Set(r => r.SourceUrl, row.SourceUrl?.Trim())
                     .Set(r => r.SourceSnapshot, sourceSnapshot)
                     .Set(r => r.UpdatedAt, now);
+                if (assignee != null)
+                    update = update.Set(r => r.AssigneeId, assignee.UserId);
                 if (!string.IsNullOrWhiteSpace(row.SourceStatus))
                     update = update.Set(r => r.CurrentState, importedState).Set(r => r.StateEnteredAt, now);
                 if (!string.IsNullOrWhiteSpace(externalId))
@@ -4393,6 +4397,7 @@ public class ProductAgentController : ControllerBase
                 CurrentState = importedState,
                 StateEnteredAt = now,
                 OwnerId = userId,
+                AssigneeId = assignee?.UserId,
                 SourceSystem = sourceSystem,
                 ExternalId = externalId,
                 SourceUrl = row.SourceUrl?.Trim(),
@@ -4680,6 +4685,7 @@ public class ProductAgentController : ControllerBase
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var created = 0;
         var updated = 0;
+        var userByName = await BuildUserLookupByDisplayNameAsync();
         foreach (var row in rows.Rows!)
         {
             var sourceSystem = NormalizeImportSource(row.SourceSystem);
@@ -4687,6 +4693,8 @@ public class ProductAgentController : ControllerBase
             var status = RequirementWorkflowCatalog.MapImportedStatusLabel(row.Status)
                 ?? DefectWorkflowCatalog.NormalizeStateKey(row.Status)
                 ?? (DefectStatus.All.Contains(row.Status ?? "") ? DefectWorkflowCatalog.LegacyStateMap.GetValueOrDefault(row.Status!, RequirementWorkflowCatalog.New) : RequirementWorkflowCatalog.New);
+            var assignee = ResolveUserFromNames(userByName, row.HandlerNames);
+            var reporter = ResolveUserFromNames(userByName, row.ReporterNames) ?? user;
             var existing = string.IsNullOrWhiteSpace(externalId)
                 ? null
                 : await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted &&
@@ -4712,6 +4720,10 @@ public class ProductAgentController : ControllerBase
                     .Set(d => d.RawContent, row.Description?.Trim() ?? string.Empty)
                     .Set(d => d.Status, status)
                     .Set(d => d.UpdatedAt, DateTime.UtcNow);
+                if (assignee != null)
+                    u = u.Set(d => d.AssigneeId, assignee.UserId).Set(d => d.AssigneeName, assignee.DisplayName ?? assignee.Username);
+                if (reporter != null)
+                    u = u.Set(d => d.ReporterId, reporter.UserId).Set(d => d.ReporterName, reporter.DisplayName ?? reporter.Username);
                 if (structuredPatch.Count > 0)
                 {
                     var mergedStructured = TapdDefectFieldCatalog.MergeStructuredData(existing.StructuredData, structuredPatch);
@@ -4730,8 +4742,10 @@ public class ProductAgentController : ControllerBase
                 Title = row.Title!.Trim(),
                 RawContent = row.Description?.Trim() ?? string.Empty,
                 Status = status,
-                ReporterId = userId,
-                ReporterName = user?.DisplayName,
+                ReporterId = reporter?.UserId ?? userId,
+                ReporterName = reporter?.DisplayName ?? reporter?.Username ?? user?.DisplayName,
+                AssigneeId = assignee?.UserId,
+                AssigneeName = assignee != null ? (assignee.DisplayName ?? assignee.Username) : null,
                 TracedProductId = productId,
                 WorkflowDefId = defectWfId,
                 ProductSourceSystem = sourceSystem,
@@ -5534,6 +5548,33 @@ public class ProductAgentController : ControllerBase
         return map;
     }
 
+    /// <summary>TAPD 导入：按 DisplayName / Username 建立姓名索引（大小写不敏感）。</summary>
+    private async Task<Dictionary<string, User>> BuildUserLookupByDisplayNameAsync()
+    {
+        var users = await _db.Users.Find(_ => true).ToListAsync();
+        var map = new Dictionary<string, User>(StringComparer.OrdinalIgnoreCase);
+        foreach (var user in users)
+        {
+            if (!string.IsNullOrWhiteSpace(user.DisplayName))
+                map.TryAdd(user.DisplayName.Trim(), user);
+            if (!string.IsNullOrWhiteSpace(user.Username))
+                map.TryAdd(user.Username.Trim(), user);
+        }
+        return map;
+    }
+
+    private static User? ResolveUserFromNames(Dictionary<string, User> lookup, IEnumerable<string>? names)
+    {
+        if (names == null) return null;
+        foreach (var raw in names)
+        {
+            var name = raw?.Trim().TrimEnd(';', '；');
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            if (lookup.TryGetValue(name, out var user)) return user;
+        }
+        return null;
+    }
+
     // ════════════════════════ 私有工具 ════════════════════════
 
     /// <summary>解析 TAPD 风格纯数字 ID（如 1007157）。</summary>
@@ -6299,6 +6340,10 @@ public class ImportSimpleItemRow
     public string? ExternalId { get; set; }
     public string? PlannedAt { get; set; }
     public string? CompletedAt { get; set; }
+    /// <summary>TAPD 处理人姓名列表，导入时按 DisplayName/Username 匹配。</summary>
+    public List<string>? HandlerNames { get; set; }
+    /// <summary>TAPD 创建人 / 上报人姓名列表。</summary>
+    public List<string>? ReporterNames { get; set; }
 }
 
 public class ProductApplicationAdminRequest

@@ -61,4 +61,13 @@ describe('mapDefectImportRows', () => {
       expect(row.severity).toBe(expected[i]);
     });
   });
+
+  it('reads 处理人 and 创建人 columns', () => {
+    const headers = [...tapdHeaders, '处理人', '创建人'];
+    const rows = mapDefectImportRows(headers, [
+      ['1023034', '登录失败', '偶发', 'new', '高', '紧急', '伍林波;', '陈嘉颖'],
+    ]);
+    expect(rows[0].handlerNames).toEqual(['伍林波']);
+    expect(rows[0].reporterNames).toEqual(['陈嘉颖']);
+  });
 });

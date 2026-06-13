@@ -25,6 +25,8 @@ export function mapDefectImportRows(headers: string[], body: string[][]): Import
   /** TAPD 标准导出列名；与「优先级」「缺陷等级」无关 */
   const severityIndex = headerIndex(headers, '严重程度', 'severity');
   const statusIndex = headerIndex(headers, '状态', 'status');
+  const assigneeIndex = headerIndex(headers, '处理人', '当前处理人', 'assignee', 'handler');
+  const reporterIndex = headerIndex(headers, '创建人', '上报人', 'reporter', '提交人');
   const idIndex = headerIndex(headers, 'id', '缺陷id', '外部id', 'externalid');
   const effectiveTitleIndex = titleIndex >= 0 ? titleIndex : 0;
 
@@ -32,6 +34,9 @@ export function mapDefectImportRows(headers: string[], body: string[][]): Import
     .map((values) => {
       const rawTapdSeverity = severityIndex >= 0 ? values[severityIndex]?.trim() : undefined;
       const mapped = rawTapdSeverity ? normalizeTapdToSeverityLevel(rawTapdSeverity) : undefined;
+      const handlerRaw = assigneeIndex >= 0 ? values[assigneeIndex]?.trim() : undefined;
+      const reporterRaw = reporterIndex >= 0 ? values[reporterIndex]?.trim() : undefined;
+      const splitPeople = (raw?: string) => (raw ?? '').split(/[;；,，]/).map((n) => n.trim()).filter(Boolean);
       return {
         title: values[effectiveTitleIndex]?.trim() ?? '',
         description: descIndex >= 0 ? values[descIndex]?.trim() : undefined,
@@ -40,6 +45,8 @@ export function mapDefectImportRows(headers: string[], body: string[][]): Import
         status: statusIndex >= 0 ? values[statusIndex]?.trim() : undefined,
         sourceSystem: 'tapd',
         externalId: idIndex >= 0 ? values[idIndex]?.trim() : undefined,
+        handlerNames: handlerRaw ? splitPeople(handlerRaw) : undefined,
+        reporterNames: reporterRaw ? splitPeople(reporterRaw) : undefined,
       };
     })
     .filter((row) => row.title);
@@ -65,11 +72,15 @@ export function parseDefectImportXlsxBuffer(buffer: ArrayBuffer): ImportSimpleIt
 
 export async function parseDefectImportFile(file: File): Promise<ImportSimpleItemRow[]> {
   const lower = file.name.toLowerCase();
+  if (lower.endsWith('.rtf')) {
+    const { parseDefectRtfFile } = await import('./defectRtfImport');
+    return parseDefectRtfFile(file);
+  }
   if (lower.endsWith('.csv')) return parseDefectImportCsv(await file.text());
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
     return parseDefectImportXlsxBuffer(await file.arrayBuffer());
   }
-  throw new Error('不支持的文件格式，请上传 TAPD 导出的 CSV 或 Excel（.xlsx）');
+  throw new Error('不支持的文件格式，请上传 TAPD 导出的 CSV、Excel（.xlsx）或 RTF');
 }
 
 function parseCsv(text: string): string[][] {

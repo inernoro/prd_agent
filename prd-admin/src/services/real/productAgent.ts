@@ -352,6 +352,10 @@ export interface ImportSimpleItemRow {
   externalId?: string;
   plannedAt?: string;
   completedAt?: string;
+  /** TAPD 处理人姓名（导入时后端按显示名匹配用户） */
+  handlerNames?: string[];
+  /** TAPD 创建人 / 上报人姓名 */
+  reporterNames?: string[];
 }
 
 export function importFeatures(productId: string, rows: ImportSimpleItemRow[]) {

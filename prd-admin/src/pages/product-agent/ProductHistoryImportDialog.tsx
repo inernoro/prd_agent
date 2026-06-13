@@ -107,11 +107,24 @@ export function ProductHistoryImportDialog({
     setFileNames(files.map((file) => file.name));
     const rtf = files.filter((file) => file.name.toLowerCase().endsWith('.rtf'));
     if (rtf.length > 0) {
-      if (type !== 'requirement') {
-        setMessage('RTF 仅支持需求导入，功能、缺陷和版本请使用 CSV。');
+      if (type === 'requirement') {
+        setRtfFiles(rtf);
         return;
       }
-      setRtfFiles(rtf);
+      if (type === 'defect') {
+        try {
+          const parsedRows: ImportSimpleItemRow[] = [];
+          for (const file of rtf) {
+            parsedRows.push(...await parseDefectImportFile(file));
+          }
+          setRows(parsedRows);
+          setMessage(parsedRows.length > 0 ? `已读取 ${parsedRows.length} 条缺陷（RTF），确认后写入。` : '没有识别到有效缺陷，请检查文件。');
+        } catch (err) {
+          setMessage(err instanceof Error ? err.message : 'RTF 解析失败');
+        }
+        return;
+      }
+      setMessage('RTF 仅支持需求与缺陷导入，功能与版本请使用 CSV。');
       return;
     }
     const spreadsheet = files.find((file) => {
@@ -182,14 +195,14 @@ export function ProductHistoryImportDialog({
           </label>
           <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025]">
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
-            <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 RTF' : type === 'defect' ? 'TAPD 导出 CSV / Excel' : 'CSV'} 文件</div>
-            <div className="mt-1 text-xs text-white/35">{type === 'defect' ? '需含「严重程度」列（紧急/高/中/低/无关紧要）' : '需求 RTF 支持多选；CSV 首行需为字段名'}</div>
+            <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 RTF' : type === 'defect' ? 'TAPD 导出 CSV / Excel / RTF' : 'CSV'} 文件</div>
+            <div className="mt-1 text-xs text-white/35">{type === 'defect' ? '需含「严重程度」列；RTF 导出会解析「处理人」并匹配系统用户' : '需求 RTF 支持多选；CSV 首行需为字段名'}</div>
           </button>
           <input
             ref={inputRef}
             type="file"
             multiple={type === 'requirement'}
-            accept={type === 'requirement' ? '.csv,.rtf,text/csv,application/rtf' : type === 'defect' ? '.csv,.xlsx,.xls,text/csv' : '.csv,text/csv'}
+            accept={type === 'requirement' ? '.csv,.rtf,text/csv,application/rtf' : type === 'defect' ? '.csv,.xlsx,.xls,.rtf,text/csv,application/rtf' : '.csv,text/csv'}
             className="hidden"
             onChange={(event) => void readFiles(Array.from(event.target.files ?? []))}
           />
@@ -197,8 +210,8 @@ export function ProductHistoryImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-white/10">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th><th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th></tr></thead>
-                <tbody>{rows.slice(0, 30).map((row, index) => <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5"><td className="px-3 py-2 text-white/75">{row.title}</td><td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td><td className="px-3 py-2 text-white/45">{type === 'defect' ? (row.severity ? `${row.severity}（TAPD:${row.tapdSeverityRaw || '—'}）` : (row.tapdSeverityRaw || '—')) : (row.grade || '-')}</td><td className="px-3 py-2 text-white/45">{row.status || '-'}</td></tr>)}</tbody>
+                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th><th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
+                <tbody>{rows.slice(0, 30).map((row, index) => <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5"><td className="px-3 py-2 text-white/75">{row.title}</td><td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td><td className="px-3 py-2 text-white/45">{type === 'defect' ? (row.severity ? `${row.severity}（TAPD:${row.tapdSeverityRaw || '—'}）` : (row.tapdSeverityRaw || '—')) : (row.grade || '-')}</td><td className="px-3 py-2 text-white/45">{row.status || '-'}</td>{type === 'defect' && <td className="px-3 py-2 text-white/45">{row.handlerNames?.join('、') || '-'}</td>}</tr>)}</tbody>
               </table>
             </div>
           )}
