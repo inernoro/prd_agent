@@ -47,9 +47,6 @@ export function WorkflowRecordTable({
   emptyText: string;
   onRowClick?: (id: string) => void;
 }) {
-  if (rows.length === 0) {
-    return <div className="py-10 text-center text-sm text-white/35">{emptyText}</div>;
-  }
   const cell = 'px-3 py-2.5 text-xs text-white/65 truncate';
   return (
     <div className="overflow-x-auto rounded-lg border border-white/10">
@@ -69,17 +66,25 @@ export function WorkflowRecordTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              onClick={() => onRowClick?.(row.id)}
-              className={`border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
-            >
-              {columns.map((c) => (
-                <td key={c.header} className={`${cell} ${c.className ?? ''}`}>{c.render(row)}</td>
-              ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={columns.length} className="px-3 py-10 text-center text-sm text-white/35">
+                {emptyText}
+              </td>
             </tr>
-          ))}
+          ) : (
+            rows.map((row) => (
+              <tr
+                key={row.id}
+                onClick={() => onRowClick?.(row.id)}
+                className={`border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
+              >
+                {columns.map((c) => (
+                  <td key={c.header} className={`${cell} ${c.className ?? ''}`}>{c.render(row)}</td>
+                ))}
+              </tr>
+            ))
+          )}
         </tbody>
       </table>
     </div>
