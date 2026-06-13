@@ -29,6 +29,7 @@ public class PeerSyncController : ControllerBase
     private readonly ISafeOutboundUrlValidator _urlValidator;
     private readonly IHttpClientFactory _httpFactory;
     private readonly IAdminPermissionService _permissionService;
+    private readonly IConfiguration _config;
     private readonly ILogger<PeerSyncController> _logger;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -44,6 +45,7 @@ public class PeerSyncController : ControllerBase
         ISafeOutboundUrlValidator urlValidator,
         IHttpClientFactory httpFactory,
         IAdminPermissionService permissionService,
+        IConfiguration config,
         ILogger<PeerSyncController> logger)
     {
         _db = db;
@@ -52,6 +54,7 @@ public class PeerSyncController : ControllerBase
         _urlValidator = urlValidator;
         _httpFactory = httpFactory;
         _permissionService = permissionService;
+        _config = config;
         _logger = logger;
     }
 
@@ -409,8 +412,11 @@ public class PeerSyncController : ControllerBase
         var outcome = await resource.ApplyAsync(req.Bundle, actor, mode, req.TargetKey, ct);
         var receiverDirection = string.Equals(req.Direction, "both", StringComparison.OrdinalIgnoreCase) ? "both" : "received";
         var success = outcome.Failed == 0 && outcome.AssetRewriteFailed == 0;
-        await MarkPeerSyncAsync(resource.ResourceType, outcome.TargetItemId ?? req.TargetKey, success ? "synced" : "error", receiverDirection, node,
-            outcome.Message, ct);
+        if (!string.IsNullOrWhiteSpace(outcome.TargetItemId))
+        {
+            await MarkPeerSyncAsync(resource.ResourceType, outcome.TargetItemId, success ? "synced" : "error", receiverDirection, node,
+                outcome.Message, ct);
+        }
         return Ok(ApiResponse<object>.Ok(outcome));
     }
 
@@ -602,7 +608,12 @@ public class PeerSyncController : ControllerBase
     // ═══════════════════════════════════════════════════════════════
 
     private string GetRequestBaseUrl()
-        => $"{Request.Scheme}://{Request.Host}{Request.PathBase}".TrimEnd('/');
+    {
+        var envBase = Environment.GetEnvironmentVariable("PEER_SELF_BASE_URL");
+        if (!string.IsNullOrWhiteSpace(envBase))
+            return envBase.Trim().TrimEnd('/');
+        return Request.ResolveServerUrl(_config).TrimEnd('/');
+    }
 
     private static void AttachPeerApplyOptions(
         SyncResourceBundle bundle,

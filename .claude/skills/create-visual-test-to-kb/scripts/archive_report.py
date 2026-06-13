@@ -22,6 +22,8 @@ local 模式不读任何 env、不发任何网络请求。
 import argparse, json, os, subprocess, datetime, re, shutil, time
 from pathlib import Path
 
+LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
+
 
 def curl(args, retries=5):
     """带超时 + 重试。网关 524/超时等瞬时故障会退避重试（GET/PUT 幂等安全）。"""
@@ -90,8 +92,8 @@ def artifact_path_errors(manifest, cfg=None):
         if p and is_inside_repo(p, root):
             errs.append(f"[证据文件位置] 截图位于代码库内：{Path(p).resolve()}。验收截图必须写到 /tmp、对象存储或知识库,不得进入 git diff")
     if cfg and cfg.get("report", {}).get("mode") == "local":
-        out_dir = cfg.get("report", {}).get("localOutDir", "")
-        if out_dir and is_inside_repo(out_dir, root):
+        out_dir = cfg.get("report", {}).get("localOutDir") or LOCAL_DEFAULT_OUT_DIR
+        if is_inside_repo(out_dir, root):
             errs.append(f"[本地输出位置] localOutDir 位于代码库内：{Path(out_dir).resolve()}。local 模式默认应写 /tmp/map-acceptance-local")
     return errs
 
@@ -110,7 +112,7 @@ def assemble(title, body, evidence, meta, img_md=None):
 
 
 def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
-    out_dir = cfg["report"].get("localOutDir", "doc/acceptance")
+    out_dir = cfg["report"].get("localOutDir") or LOCAL_DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     shot_dir = os.path.join(out_dir, report_id)
     os.makedirs(shot_dir, exist_ok=True)

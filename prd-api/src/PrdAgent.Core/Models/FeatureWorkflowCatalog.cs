@@ -25,7 +25,7 @@ public static class FeatureWorkflowCatalog
 
     public static readonly IReadOnlyDictionary<string, string[]> TransitionMatrix = BuildTransitionMatrix();
 
-    public const int ExpectedTransitionCount = 37;
+    public const int ExpectedTransitionCount = 36;
 
     private static Dictionary<string, string> BuildStateLabels()
     {

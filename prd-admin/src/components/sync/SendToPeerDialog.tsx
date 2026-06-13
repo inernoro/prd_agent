@@ -74,7 +74,8 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
 
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<TransferItemResult[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [transferError, setTransferError] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ step: number; stage: string; startedAt: number } | null>(null);
   const [, setTick] = useState(0);
 
@@ -104,7 +105,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   const load = useCallback(async () => {
     const mySeq = ++loadSeqRef.current;
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     const [nodesRes, itemsRes] = await Promise.all([listPeerNodes(), listPeerItems(resourceType)]);
     if (mySeq !== loadSeqRef.current || !isMountedRef.current) return;
     if (nodesRes.success && nodesRes.data) {
@@ -115,12 +116,12 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
       if (nextNodes.length === 1) setNodeId(nextNodes[0].id);
       if (!cap?.supportsBidirectional) setDirection('push');
     } else {
-      setError(nodesRes.error?.message || '加载对端节点失败');
+      setLoadError(nodesRes.error?.message || '加载对端节点失败');
     }
     if (itemsRes.success && itemsRes.data) {
       setItems(itemsRes.data.items || []);
     } else {
-      setError((prev) => prev || itemsRes.error?.message || '加载可同步条目失败');
+      setLoadError((prev) => prev || itemsRes.error?.message || '加载可同步条目失败');
     }
     setLoading(false);
   }, [resourceType]);
@@ -149,7 +150,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
-    setError(null);
+    setTransferError(null);
     setResults(null);
     const startedAt = Date.now();
     setProgress({ step: 1, stage: '正在扫描所选知识库', startedAt });
@@ -175,7 +176,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
       setResults(nextResults);
       if (nextResults.some((r) => r.ok)) onDone?.();
     } else {
-      setError(res.error?.message || '互传失败');
+      setTransferError(res.error?.message || '互传失败');
     }
   };
 
@@ -317,10 +318,10 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-6" style={{ overscrollBehavior: 'contain' }}>
-              {error && (
+              {(loadError || transferError) && (
                 <div className="mb-4 flex items-start gap-2 rounded-xl border px-3 py-2 text-sm" style={{ borderColor: 'rgba(248,113,113,0.28)', background: 'rgba(127,29,29,0.16)', color: 'rgb(252,165,165)' }}>
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                  <span>{error}</span>
+                  <span>{transferError || loadError}</span>
                 </div>
               )}
 
@@ -374,7 +375,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
                       submitting={submitting}
                       progress={progress}
                       results={results}
-                      error={error}
+                      error={transferError}
                     />
 
                     <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.42)' }}>

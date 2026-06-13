@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Net.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -32,6 +33,8 @@ public class DocumentStoreSyncResource : ISyncableResource
     private readonly ITeamService _teams;
     private readonly IAssetStorage _assetStorage;
     private readonly IHttpClientFactory _httpFactory;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly IConfiguration _config;
     private readonly ILogger<DocumentStoreSyncResource> _logger;
 
     public DocumentStoreSyncResource(
@@ -40,6 +43,8 @@ public class DocumentStoreSyncResource : ISyncableResource
         ITeamService teams,
         IAssetStorage assetStorage,
         IHttpClientFactory httpFactory,
+        ISafeOutboundUrlValidator urlValidator,
+        IConfiguration config,
         ILogger<DocumentStoreSyncResource> logger)
     {
         _db = db;
@@ -47,6 +52,8 @@ public class DocumentStoreSyncResource : ISyncableResource
         _teams = teams;
         _assetStorage = assetStorage;
         _httpFactory = httpFactory;
+        _urlValidator = urlValidator;
+        _config = config;
         _logger = logger;
     }
 
@@ -373,13 +380,6 @@ public class DocumentStoreSyncResource : ISyncableResource
                 if (fe.Content == null) { skipped++; continue; }
                 var parentId = ResolveParent(fe.ParentLineageId);
                 var content = fe.Content;
-                if (options.RewriteAssetLinks)
-                {
-                    var rewrite = await RewriteEmbeddedAssetsAsync(content, options.SourceBaseUrl, ct);
-                    content = rewrite.Content;
-                    assetsRewritten += rewrite.Rewritten;
-                    assetRewriteFailed += rewrite.Failed;
-                }
 
                 if (byLineage.TryGetValue(fe.LineageId, out var exFolderConflict) && exFolderConflict.IsFolder)
                 {
@@ -390,6 +390,13 @@ public class DocumentStoreSyncResource : ISyncableResource
                 if (byLineage.TryGetValue(fe.LineageId, out var exEntry) && !exEntry.IsFolder)
                 {
                     if (addOnly) { skipped++; continue; }
+                    if (options.RewriteAssetLinks)
+                    {
+                        var rewrite = await RewriteEmbeddedAssetsAsync(content, options.SourceBaseUrl, ct);
+                        content = rewrite.Content;
+                        assetsRewritten += rewrite.Rewritten;
+                        assetRewriteFailed += rewrite.Failed;
+                    }
                     var existingContent = !string.IsNullOrEmpty(exEntry.DocumentId)
                         ? (await _documentService.GetByIdAsync(exEntry.DocumentId))?.RawContent ?? string.Empty
                         : string.Empty;
@@ -445,6 +452,13 @@ public class DocumentStoreSyncResource : ISyncableResource
                 }
                 else
                 {
+                    if (options.RewriteAssetLinks)
+                    {
+                        var rewrite = await RewriteEmbeddedAssetsAsync(content, options.SourceBaseUrl, ct);
+                        content = rewrite.Content;
+                        assetsRewritten += rewrite.Rewritten;
+                        assetRewriteFailed += rewrite.Failed;
+                    }
                     var parsed = await BuildAndSaveDocAsync(content, fe.Title);
                     var entry = new DocumentEntry
                     {
@@ -484,8 +498,13 @@ public class DocumentStoreSyncResource : ISyncableResource
         var count = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == target.Id, cancellationToken: ct);
         var fallbackStoreUpdatedAt = records.Select(r => r.UpdatedAt).Where(t => t.HasValue).Select(t => t!.Value)
             .DefaultIfEmpty(target.UpdatedAt).Max();
-        var storeUpdatedAt = options.PreserveTimestamps
-            ? (item.UpdatedAt ?? fallbackStoreUpdatedAt)
+        var sourceStoreUpdatedAt = item.UpdatedAt.HasValue
+            ? new[] { item.UpdatedAt.Value, fallbackStoreUpdatedAt }.Max()
+            : fallbackStoreUpdatedAt;
+        var storeUpdatedAt = addOnly && created == 0 && updated == 0
+            ? target.UpdatedAt
+            : options.PreserveTimestamps
+            ? sourceStoreUpdatedAt
             : now;
         var storeUpdate = Builders<DocumentStore>.Update
             .Set(s => s.DocumentCount, (int)count)
@@ -548,30 +567,70 @@ public class DocumentStoreSyncResource : ISyncableResource
         string? sourceBaseUrl,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(content) || string.IsNullOrWhiteSpace(sourceBaseUrl))
-            return (content, 0, 0);
-        if (!Uri.TryCreate(sourceBaseUrl.Trim().TrimEnd('/'), UriKind.Absolute, out var sourceBase)
-            || sourceBase.Scheme is not ("http" or "https"))
+        if (string.IsNullOrWhiteSpace(content))
             return (content, 0, 0);
 
-        var rewritten = 0;
+        var matches = ExtractAssetUrlMatches(content).ToList();
+        if (matches.Count == 0)
+            return (content, 0, 0);
+
         var failed = 0;
-        var next = content;
-        foreach (var raw in ExtractAssetUrls(content).Distinct(StringComparer.Ordinal))
+        Uri? sourceBase = null;
+        Uri? rejectedSourceBase = null;
+        if (!string.IsNullOrWhiteSpace(sourceBaseUrl)
+            && Uri.TryCreate(sourceBaseUrl.Trim().TrimEnd('/'), UriKind.Absolute, out var parsedSourceBase)
+            && parsedSourceBase.Scheme is "http" or "https")
         {
-            var sourceUri = ToSourceScopedUri(raw, sourceBase);
+            try
+            {
+                sourceBase = await _urlValidator.EnsureSafeHttpUrlAsync(parsedSourceBase.ToString(), "peer-sync asset source", ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[peer-sync] unsafe asset source base rejected: {Url}", sourceBaseUrl);
+                rejectedSourceBase = parsedSourceBase;
+            }
+        }
+
+        var allowedBases = GetConfiguredAssetBaseUris().ToList();
+        if (sourceBase != null)
+            allowedBases.Insert(0, OriginOf(sourceBase));
+        if (allowedBases.Count == 0)
+        {
+            if (rejectedSourceBase != null)
+                failed += CountSourceScopedMatches(matches, OriginOf(rejectedSourceBase));
+            return (content, 0, failed);
+        }
+
+        var rewritten = 0;
+        var next = content;
+        var cache = new Dictionary<string, StoredAsset?>(StringComparer.Ordinal);
+        foreach (var match in matches.OrderByDescending(m => m.Index))
+        {
+            var sourceUri = ToAllowedSourceUri(match.Raw, sourceBase, allowedBases);
             if (sourceUri == null)
+            {
+                if (rejectedSourceBase != null
+                    && ToAllowedSourceUri(match.Raw, rejectedSourceBase, new[] { OriginOf(rejectedSourceBase) }) != null)
+                    failed++;
                 continue;
+            }
 
             try
             {
-                var asset = await DownloadAndStoreAssetAsync(sourceUri, ct);
+                await _urlValidator.EnsureSafeHttpUrlAsync(sourceUri.ToString(), "peer-sync asset", ct);
+                var cacheKey = sourceUri.ToString();
+                if (!cache.TryGetValue(cacheKey, out var asset))
+                {
+                    asset = await DownloadAndStoreAssetAsync(sourceUri, ct);
+                    cache[cacheKey] = asset;
+                }
                 if (asset == null)
                 {
                     failed++;
                     continue;
                 }
-                next = next.Replace(raw, asset.Url, StringComparison.Ordinal);
+                next = next.Remove(match.Index, match.Length).Insert(match.Index, asset.Url);
                 rewritten++;
             }
             catch (Exception ex)
@@ -583,6 +642,12 @@ public class DocumentStoreSyncResource : ISyncableResource
 
         return (next, rewritten, failed);
     }
+
+    private static int CountSourceScopedMatches(IEnumerable<AssetUrlMatch> matches, Uri sourceBase)
+        => matches.Count(m => ToAllowedSourceUri(m.Raw, sourceBase, new[] { sourceBase }) != null);
+
+    private static Uri OriginOf(Uri uri)
+        => new($"{uri.Scheme}://{uri.Authority}");
 
     private async Task<StoredAsset?> DownloadAndStoreAssetAsync(Uri uri, CancellationToken ct)
     {
@@ -608,7 +673,28 @@ public class DocumentStoreSyncResource : ISyncableResource
         return await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: fileName);
     }
 
-    private static Uri? ToSourceScopedUri(string raw, Uri sourceBase)
+    private IEnumerable<Uri> GetConfiguredAssetBaseUris()
+    {
+        var keys = new[]
+        {
+            "R2_PUBLIC_BASE_URL",
+            "TENCENT_COS_PUBLIC_BASE_URL",
+            "CDN_BASE_URL",
+            "ASSET_PUBLIC_BASE_URL",
+            "PUBLIC_ASSET_BASE_URL",
+        };
+
+        foreach (var key in keys)
+        {
+            var value = _config[key];
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            if (Uri.TryCreate(value.Trim().TrimEnd('/'), UriKind.Absolute, out var uri)
+                && uri.Scheme is "http" or "https")
+                yield return uri;
+        }
+    }
+
+    private static Uri? ToAllowedSourceUri(string raw, Uri? sourceBase, IReadOnlyList<Uri> allowedBases)
     {
         if (string.IsNullOrWhiteSpace(raw) || raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
             return null;
@@ -618,7 +704,7 @@ public class DocumentStoreSyncResource : ISyncableResource
         {
             uri = absolute;
         }
-        else if (raw.StartsWith("/", StringComparison.Ordinal))
+        else if (raw.StartsWith("/", StringComparison.Ordinal) && sourceBase != null)
         {
             uri = new Uri(sourceBase, raw);
         }
@@ -629,24 +715,42 @@ public class DocumentStoreSyncResource : ISyncableResource
 
         if (uri.Scheme is not ("http" or "https"))
             return null;
-        if (!string.Equals(uri.Host, sourceBase.Host, StringComparison.OrdinalIgnoreCase))
+        if (!allowedBases.Any(b => IsSameOriginOrChildPath(uri, b)))
             return null;
         return uri;
     }
 
-    private static IEnumerable<string> ExtractAssetUrls(string content)
+    private static bool IsSameOriginOrChildPath(Uri uri, Uri allowedBase)
+    {
+        if (!string.Equals(uri.Scheme, allowedBase.Scheme, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!string.Equals(uri.Host, allowedBase.Host, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (uri.Port != allowedBase.Port)
+            return false;
+        var basePath = allowedBase.AbsolutePath.TrimEnd('/');
+        return basePath.Length == 0 || basePath == "/"
+            || uri.AbsolutePath.StartsWith(basePath + "/", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(uri.AbsolutePath, basePath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record AssetUrlMatch(string Raw, int Index, int Length);
+
+    private static IEnumerable<AssetUrlMatch> ExtractAssetUrlMatches(string content)
     {
         foreach (Match m in Regex.Matches(content, @"!\[[^\]]*\]\((?<url>[^)\s]+)(?:\s+""[^""]*"")?\)", RegexOptions.IgnoreCase))
         {
-            var url = m.Groups["url"].Value.Trim();
+            var group = m.Groups["url"];
+            var url = group.Value.Trim();
             if (LooksLikeImageUrl(url))
-                yield return url;
+                yield return new AssetUrlMatch(url, group.Index, group.Length);
         }
         foreach (Match m in Regex.Matches(content, "<img\\b[^>]*?\\bsrc=[\"'](?<url>[^\"']+)[\"']", RegexOptions.IgnoreCase))
         {
-            var url = m.Groups["url"].Value.Trim();
+            var group = m.Groups["url"];
+            var url = group.Value.Trim();
             if (LooksLikeImageUrl(url))
-                yield return url;
+                yield return new AssetUrlMatch(url, group.Index, group.Length);
         }
     }
 

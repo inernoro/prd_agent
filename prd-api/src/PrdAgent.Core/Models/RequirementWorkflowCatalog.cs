@@ -125,7 +125,7 @@ public static class RequirementWorkflowCatalog
         return matrix;
     }
 
-    public const int ExpectedTransitionCount = 37;
+    public const int ExpectedTransitionCount = 36;
 
     public static string BuildTransitionActionLabel(string toStateKey, ProductWorkflowDefinition? workflowDef = null)
     {
