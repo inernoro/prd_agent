@@ -258,8 +258,12 @@ function extractUrl(text: string): string | null {
 
 function buildShortVideoResultMessage(result: import('@/services').ShortVideoMaterialRunResponse): string {
   const title = result.run.title || '短视频素材';
+  const parserMessage = result.run.parserMessage?.trim();
+  const isFallback = result.run.sourceMode === 'metadata-fallback';
   return [
     `已保存到知识库：「${title}」。`,
+    parserMessage ? `解析说明：${parserMessage}` : null,
+    isFallback ? '当前已沉淀原始链接和待补充文案骨架；如需真实字幕内容，可继续补充字幕或使用视频转语音能力加工。' : null,
     '',
     '本次默认产物已经入库：',
     `- 原始素材：${title} · 原始视频素材`,
@@ -267,7 +271,7 @@ function buildShortVideoResultMessage(result: import('@/services').ShortVideoMat
     `- 时间轴片段：${title} · 时间轴片段`,
     '',
     '你可以先停在这里，也可以选择下方动作继续加工。',
-  ].join('\n');
+  ].filter((line): line is string => line !== null).join('\n');
 }
 
 function buildShortVideoQuickActions(result: import('@/services').ShortVideoMaterialRunResponse): ChatQuickAction[] {
