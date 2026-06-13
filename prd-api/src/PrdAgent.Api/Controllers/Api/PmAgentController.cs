@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
@@ -33,6 +35,7 @@ public class PmAgentController : ControllerBase
     private readonly IHostedSiteService _hostedSites;
     private readonly ILlmGateway _gateway;
     private readonly IFileContentExtractor _fileExtractor;
+    private readonly IDocumentService _documentService;
     private readonly ILogger<PmAgentController> _logger;
 
     public PmAgentController(
@@ -42,6 +45,7 @@ public class PmAgentController : ControllerBase
         IHostedSiteService hostedSites,
         ILlmGateway gateway,
         IFileContentExtractor fileExtractor,
+        IDocumentService documentService,
         ILogger<PmAgentController> logger)
     {
         _db = db;
@@ -50,6 +54,7 @@ public class PmAgentController : ControllerBase
         _hostedSites = hostedSites;
         _gateway = gateway;
         _fileExtractor = fileExtractor;
+        _documentService = documentService;
         _logger = logger;
     }
 
@@ -1076,7 +1081,7 @@ public class PmAgentController : ControllerBase
             Status = PmGoalStatus.IsValid(request.Status) ? request.Status! : PmGoalStatus.OnTrack,
             CreatedBy = userId,
             CreatedByName = creatorName,
-            OrderKey = DateTime.UtcNow.Ticks,
+            OrderKey = request.OrderKey ?? DateTime.UtcNow.Ticks, // 「向上/向下添加同级」会传相邻中值定位插入点
         };
         await _db.PmGoals.InsertOneAsync(entity);
         return Ok(ApiResponse<object>.Ok(entity));
@@ -1098,6 +1103,10 @@ public class PmAgentController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可修改"));
 
         var update = Builders<PmGoal>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        // 记录会影响联动里程碑(AutoFromGoal)快照的字段变更，更新目标后一并回写，避免里程碑标题停留在旧值
+        string? newTitle = null;
+        bool descChanged = false; string? newDesc = null;
+        bool leadChanged = false; string? newLeadId = null; string? newLeadName = null;
         if (request.ProgressMode != null)
         {
             if (!PmGoalProgressMode.IsValid(request.ProgressMode))
@@ -1108,9 +1117,10 @@ public class PmAgentController : ControllerBase
         {
             if (string.IsNullOrWhiteSpace(request.Title))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标标题不能为空"));
-            update = update.Set(x => x.Title, request.Title.Trim());
+            newTitle = request.Title.Trim();
+            update = update.Set(x => x.Title, newTitle);
         }
-        if (request.Description != null) update = update.Set(x => x.Description, request.Description.Trim());
+        if (request.Description != null) { descChanged = true; newDesc = request.Description.Trim(); update = update.Set(x => x.Description, newDesc); }
         if (request.Metric != null) update = update.Set(x => x.Metric, request.Metric.Trim());
         if (request.Period != null) update = update.Set(x => x.Period, request.Period.Trim());
         if (request.CycleId != null) update = update.Set(x => x.CycleId, string.IsNullOrWhiteSpace(request.CycleId) ? null : request.CycleId);
@@ -1118,6 +1128,7 @@ public class PmAgentController : ControllerBase
         {
             var lid = string.IsNullOrWhiteSpace(request.LeadId) ? null : request.LeadId;
             var lname = lid == null ? null : (await _db.Users.Find(u => u.UserId == lid).FirstOrDefaultAsync())?.DisplayName;
+            leadChanged = true; newLeadId = lid; newLeadName = lname;
             update = update.Set(x => x.LeadId, lid).Set(x => x.LeadName, lname);
         }
         if (request.KeyResults != null) update = update.Set(x => x.KeyResults, MapKeyResults(request.KeyResults));
@@ -1130,6 +1141,16 @@ public class PmAgentController : ControllerBase
         }
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
         await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, update);
+
+        // 级联同步联动里程碑：AutoFromGoal 里程碑的标题/描述/负责人始终跟随目标（创建时是快照，目标改了必须回写）
+        if (newTitle != null || descChanged || leadChanged)
+        {
+            var msUpdate = Builders<PmMilestone>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+            if (newTitle != null) msUpdate = msUpdate.Set(x => x.Title, newTitle);
+            if (descChanged) msUpdate = msUpdate.Set(x => x.Description, newDesc);
+            if (leadChanged) msUpdate = msUpdate.Set(x => x.OwnerId, newLeadId).Set(x => x.OwnerName, newLeadName);
+            await _db.PmMilestones.UpdateManyAsync(m => m.GoalId == goalId && m.AutoFromGoal, msUpdate);
+        }
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
 
@@ -1968,7 +1989,7 @@ public class PmAgentController : ControllerBase
 
     /// <summary>审计日志列表（管理层可见）。可按 projectId 过滤；批量解析操作人名称与项目标题</summary>
     [HttpGet("audit-logs")]
-    public async Task<IActionResult> ListAuditLogs([FromQuery] string? projectId = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    public async Task<IActionResult> ListAuditLogs([FromQuery] string? projectId = null, [FromQuery] string? keyword = null, [FromQuery] string? method = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         if (!HasPermission(AdminPermissionCatalog.PmAgentAudit))
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "审计日志仅对管理层开放"));
@@ -1976,7 +1997,14 @@ public class PmAgentController : ControllerBase
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
         var b = Builders<PmAuditLog>.Filter;
-        var filter = string.IsNullOrWhiteSpace(projectId) ? b.Empty : b.Eq(x => x.ProjectId, projectId);
+        var filter = b.Empty;
+        if (!string.IsNullOrWhiteSpace(projectId)) filter &= b.Eq(x => x.ProjectId, projectId);
+        if (!string.IsNullOrWhiteSpace(method)) filter &= b.Eq(x => x.Method, method.Trim().ToUpperInvariant());
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = new BsonRegularExpression(Regex.Escape(keyword.Trim()), "i");
+            filter &= b.Or(b.Regex(x => x.Path, kw), b.Regex(x => x.ActionLabel, kw));
+        }
         var total = await _db.PmAuditLogs.CountDocumentsAsync(filter);
         var logs = await _db.PmAuditLogs.Find(filter).SortByDescending(x => x.CreatedAt)
             .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync();
@@ -2355,6 +2383,205 @@ public class PmAgentController : ControllerBase
 
     private static int FiscalYearOf(DateTime d, int startMonth) => d.Month >= startMonth ? d.Year : d.Year - 1;
     private static int FiscalQuarterOf(DateTime d, int startMonth) => (((d.Month - startMonth) % 12 + 12) % 12) / 3 + 1;
+
+    // ─────────────────────────────────────────────
+    // 全局知识库（管理层洞察，仅 pm-agent.dashboard）：只读聚合所有项目知识库，
+    // 绕过「项目成员」鉴权，给老板/管理层全局视角。不写任何数据，不影响项目内知识库。
+    // ─────────────────────────────────────────────
+
+    /// <summary>403 兜底：仅管理层（pm-agent.dashboard）可用全局知识库。</summary>
+    private IActionResult? RequireKnowledgeOverviewPermission()
+        => HasPermission(AdminPermissionCatalog.PmAgentDashboard)
+            ? null
+            : StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "全局知识库仅对管理层开放"));
+
+    /// <summary>
+    /// 全局知识库总览：所有项目知识库（DocumentStore.PmProjectId 非空）的项目分组元信息 +
+    /// 筛选维度枚举（分类 / 文件类型 / 创建人）+ 全局统计。供前端默认展开的分组列表与筛选器。
+    /// </summary>
+    [HttpGet("knowledge/overview")]
+    public async Task<IActionResult> KnowledgeOverview()
+    {
+        if (RequireKnowledgeOverviewPermission() is { } forbid) return forbid;
+
+        var projects = (await _db.PmProjects.Find(p => !p.IsDeleted).ToListAsync())
+            .Where(p => !string.IsNullOrEmpty(p.KnowledgeStoreId)).ToList();
+        var storeIds = projects.Select(p => p.KnowledgeStoreId!).Distinct().ToList();
+        if (storeIds.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                projects = Array.Empty<object>(), totalProjects = 0, totalDocs = 0,
+                byType = new Dictionary<string, int>(), byLifecycle = new Dictionary<string, int>(),
+                facets = new { creators = Array.Empty<object>(), categories = Array.Empty<string>(), contentTypes = Array.Empty<string>() },
+            }));
+
+        var docFilter = Builders<DocumentEntry>.Filter.And(
+            Builders<DocumentEntry>.Filter.In(d => d.StoreId, storeIds),
+            Builders<DocumentEntry>.Filter.Eq(d => d.IsFolder, false));
+        var docs = await _db.DocumentEntries.Find(docFilter)
+            .Project(d => new { d.StoreId, d.Category, d.UpdatedAt, d.ContentType, d.CreatedBy, d.CreatedByName })
+            .ToListAsync();
+        var byStore = docs.GroupBy(d => d.StoreId).ToDictionary(g => g.Key, g => g.ToList());
+
+        var stores = await _db.DocumentStores.Find(s => storeIds.Contains(s.Id)).ToListAsync();
+        var storeMap = stores.ToDictionary(s => s.Id, s => s);
+
+        var projectRows = projects.Select(p =>
+        {
+            var sid = p.KnowledgeStoreId!;
+            var d = byStore.GetValueOrDefault(sid) ?? new();
+            return new
+            {
+                projectId = p.Id, projectNo = p.ProjectNo, title = p.Title,
+                projectType = p.ProjectType, lifecycle = p.Lifecycle, leaderName = p.LeaderName,
+                storeId = sid,
+                docCount = d.Count,
+                categories = storeMap.GetValueOrDefault(sid)?.Categories ?? new List<string>(),
+                lastUpdatedAt = d.Count > 0 ? d.Max(x => x.UpdatedAt) : (DateTime?)null,
+            };
+        }).OrderByDescending(r => r.lastUpdatedAt ?? DateTime.MinValue).ToList();
+
+        var creators = docs.Where(d => !string.IsNullOrEmpty(d.CreatedBy))
+            .GroupBy(d => d.CreatedBy)
+            .Select(g => new { userId = g.Key, name = g.Select(x => x.CreatedByName).FirstOrDefault(n => !string.IsNullOrEmpty(n)) ?? "", count = g.Count() })
+            .OrderByDescending(x => x.count).ToList();
+        var categories = docs.Where(d => !string.IsNullOrEmpty(d.Category)).Select(d => d.Category!).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
+        var contentTypes = docs.Where(d => !string.IsNullOrEmpty(d.ContentType)).Select(d => d.ContentType).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            projects = projectRows,
+            totalProjects = projectRows.Count,
+            totalDocs = docs.Count,
+            byType = projectRows.GroupBy(r => r.projectType).ToDictionary(g => g.Key, g => g.Count()),
+            byLifecycle = projectRows.GroupBy(r => r.lifecycle).ToDictionary(g => g.Key, g => g.Count()),
+            facets = new { creators, categories, contentTypes },
+        }));
+    }
+
+    /// <summary>
+    /// 全局知识库条目（分页 + 多维筛选）：在所有项目知识库的 document_entries 上检索，
+    /// join 回项目元信息。仅返回文档（排除文件夹），按 UpdatedAt 倒序。
+    /// </summary>
+    [HttpGet("knowledge/entries")]
+    public async Task<IActionResult> KnowledgeEntries(
+        [FromQuery] string? projectId = null,
+        [FromQuery] string? projectType = null,
+        [FromQuery] string? lifecycle = null,
+        [FromQuery] string? category = null,
+        [FromQuery] string? tag = null,
+        [FromQuery] string? sourceType = null,
+        [FromQuery] string? contentType = null,
+        [FromQuery] string? createdBy = null,
+        [FromQuery] string? keyword = null,
+        [FromQuery] DateTime? createdAfter = null,
+        [FromQuery] DateTime? createdBefore = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 200)
+    {
+        if (RequireKnowledgeOverviewPermission() is { } forbid) return forbid;
+
+        var projects = (await _db.PmProjects.Find(p => !p.IsDeleted).ToListAsync())
+            .Where(p => !string.IsNullOrEmpty(p.KnowledgeStoreId)).ToList();
+        if (!string.IsNullOrEmpty(projectId)) projects = projects.Where(p => p.Id == projectId).ToList();
+        if (!string.IsNullOrEmpty(projectType)) projects = projects.Where(p => p.ProjectType == projectType).ToList();
+        if (!string.IsNullOrEmpty(lifecycle)) projects = projects.Where(p => p.Lifecycle == lifecycle).ToList();
+
+        // 一个项目一对一一个 store；若历史脏数据多项目指向同 store，保留最先匹配的项目用于展示归属。
+        var projByStore = new Dictionary<string, PmProject>();
+        foreach (var p in projects) projByStore.TryAdd(p.KnowledgeStoreId!, p);
+        var storeIds = projByStore.Keys.ToList();
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 500);
+        if (storeIds.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<object>(), total = 0L, page, pageSize }));
+
+        var f = Builders<DocumentEntry>.Filter;
+        var filter = f.And(f.In(d => d.StoreId, storeIds), f.Eq(d => d.IsFolder, false));
+        if (!string.IsNullOrEmpty(category)) filter &= f.Eq(d => d.Category, category);
+        if (!string.IsNullOrEmpty(tag)) filter &= f.AnyEq(d => d.Tags, tag);
+        if (!string.IsNullOrEmpty(sourceType)) filter &= f.Eq(d => d.SourceType, sourceType);
+        if (!string.IsNullOrEmpty(contentType)) filter &= f.Eq(d => d.ContentType, contentType);
+        if (!string.IsNullOrEmpty(createdBy)) filter &= f.Eq(d => d.CreatedBy, createdBy);
+        if (createdAfter.HasValue) filter &= f.Gte(d => d.CreatedAt, createdAfter.Value);
+        if (createdBefore.HasValue) filter &= f.Lte(d => d.CreatedAt, createdBefore.Value);
+        if (!string.IsNullOrEmpty(keyword))
+        {
+            var kw = new BsonRegularExpression(Regex.Escape(keyword.Trim()), "i");
+            filter &= f.Or(f.Regex(d => d.Title, kw), f.Regex(d => d.Summary, kw));
+        }
+
+        var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
+        var entries = await _db.DocumentEntries.Find(filter)
+            .SortByDescending(d => d.UpdatedAt)
+            .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync();
+
+        var items = entries.Select(e =>
+        {
+            var proj = projByStore.GetValueOrDefault(e.StoreId);
+            return new
+            {
+                id = e.Id, storeId = e.StoreId, parentId = e.ParentId, isFolder = e.IsFolder,
+                title = e.Title, summary = e.Summary, contentType = e.ContentType, sourceType = e.SourceType,
+                category = e.Category, tags = e.Tags, fileSize = e.FileSize, metadata = e.Metadata,
+                createdBy = e.CreatedBy, createdByName = e.CreatedByName,
+                updatedBy = e.UpdatedBy, updatedByName = e.UpdatedByName,
+                createdAt = e.CreatedAt, updatedAt = e.UpdatedAt, lastChangedAt = e.LastChangedAt,
+                projectId = proj?.Id, projectNo = proj?.ProjectNo, projectTitle = proj?.Title,
+                projectType = proj?.ProjectType, lifecycle = proj?.Lifecycle,
+            };
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// 全局知识库条目正文（只读）：读取口径与 DocumentStore GetEntryContent 一致
+    /// （ParsedPrd 优先，Attachment.ExtractedText 兜底）。先校验 entry 归属项目知识库
+    /// （store.PmProjectId 非空），避免越权读任意 document_entries 条目。
+    /// </summary>
+    [HttpGet("knowledge/entries/{entryId}/content")]
+    public async Task<IActionResult> KnowledgeEntryContent(string entryId)
+    {
+        if (RequireKnowledgeOverviewPermission() is { } forbid) return forbid;
+
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store is null || string.IsNullOrEmpty(store.PmProjectId))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档不属于项目知识库"));
+
+        string? content = null;
+        string? title = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null) { content = doc.RawContent; title = doc.Title; }
+        }
+        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            if (att != null) { content = att.ExtractedText; title = att.FileName; }
+        }
+        string? fileUrl = null;
+        if (!string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            fileUrl = att?.Url;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entryId = entry.Id,
+            title = title ?? entry.Title,
+            content,
+            contentType = entry.ContentType,
+            fileUrl,
+            hasContent = !string.IsNullOrEmpty(content),
+        }));
+    }
 
     /// <summary>评选 / 取消评选优秀项目</summary>
     [HttpPost("projects/{projectId}/excellence")]
@@ -3968,6 +4195,193 @@ public class PmAgentController : ControllerBase
             },
             milestones = new { total = milestones.Count, reached = msReached, overdue = msOverdue, upcoming = msUpcoming },
             risks = new { open = openRisks.Count, matrix = riskMatrix, top = riskTop },
+        }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 全局总览（管理层只读洞察，跨全公司项目，不论是否干系人/成员）
+    // ─────────────────────────────────────────────
+
+    /// <summary>项目健康度判定（全局总览口径）：closed(已结案) / overdue(逾期或超预算) / at_risk(高风险或停滞) / on_track。</summary>
+    private static string GlobalProjectHealth(PmProject p, int overdueMilestones, int highRisks, DateTime today)
+    {
+        if (p.Lifecycle == PmProjectLifecycle.Evaluated || p.Lifecycle == PmProjectLifecycle.Archived) return "closed";
+        var overBudget = (p.Budget ?? 0) > 0 && (p.ActualCost ?? 0) > (p.Budget ?? 0);
+        if (overdueMilestones > 0 || overBudget) return "overdue";
+        var stalled = p.Lifecycle == PmProjectLifecycle.Running && p.UpdatedAt < today.AddDays(-14);
+        if (highRisks > 0 || stalled) return "at_risk";
+        return "on_track";
+    }
+
+    /// <summary>加载全公司项目（管理层全局视角，无成员过滤）+ 可选 DB 级筛选。上限 1000，足够公司级洞察。</summary>
+    private async Task<List<PmProject>> LoadGlobalProjectsAsync(string? lifecycle, string? type, string? leaderId, string? q)
+    {
+        var b = Builders<PmProject>.Filter;
+        var conds = new List<FilterDefinition<PmProject>> { b.Eq(p => p.IsDeleted, false) };
+        if (!string.IsNullOrWhiteSpace(lifecycle) && PmProjectLifecycle.All.Contains(lifecycle)) conds.Add(b.Eq(p => p.Lifecycle, lifecycle));
+        if (!string.IsNullOrWhiteSpace(type) && PmProjectType.All.Contains(type)) conds.Add(b.Eq(p => p.ProjectType, type));
+        if (!string.IsNullOrWhiteSpace(leaderId)) conds.Add(b.Eq(p => p.LeaderId, leaderId));
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var rx = new MongoDB.Bson.BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(q.Trim()), "i");
+            conds.Add(b.Or(b.Regex(p => p.Title, rx), b.Regex(p => p.ProjectNo, rx), b.Regex(p => p.LeaderName, rx)));
+        }
+        return await _db.PmProjects.Find(b.And(conds)).Limit(1000).ToListAsync();
+    }
+
+    /// <summary>
+    /// 全局项目总表（仅管理层 pm-agent.global）：跨全公司项目的只读列表，多维筛选 + 派生健康度 + 分页。
+    /// 不做成员过滤，给老板全局掌控视角；只读洞察，不含任何写操作。
+    /// </summary>
+    [HttpGet("global/projects")]
+    public async Task<IActionResult> GlobalProjects(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 30,
+        [FromQuery] string? lifecycle = null, [FromQuery] string? type = null,
+        [FromQuery] string? leaderId = null, [FromQuery] string? health = null,
+        [FromQuery] string? q = null, [FromQuery] string? sort = null)
+    {
+        if (!HasPermission(AdminPermissionCatalog.PmAgentGlobal))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "全局总览仅对管理层开放"));
+
+        var today = DateTime.UtcNow.Date;
+        var projects = await LoadGlobalProjectsAsync(lifecycle, type, leaderId, q);
+        var projIds = projects.Select(p => p.Id).ToList();
+
+        // 逾期里程碑 / 高风险 按项目聚合（计算健康度）
+        var overdueMsByProj = projIds.Count == 0 ? new Dictionary<string, int>() : (await _db.PmMilestones
+            .Find(m => projIds.Contains(m.ProjectId) && m.Status == PmMilestoneStatus.Planned && m.DueAt != null && m.DueAt < today).ToListAsync())
+            .GroupBy(m => m.ProjectId).ToDictionary(g => g.Key, g => g.Count());
+        int W(string level) => level == PmRiskLevel.High ? 3 : level == PmRiskLevel.Medium ? 2 : 1;
+        var highRiskByProj = projIds.Count == 0 ? new Dictionary<string, int>() : (await _db.PmRisks
+            .Find(r => projIds.Contains(r.ProjectId) && r.Status != PmRiskStatus.Closed).Limit(2000).ToListAsync())
+            .Where(r => W(r.Probability) * W(r.Impact) >= 6)
+            .GroupBy(r => r.ProjectId).ToDictionary(g => g.Key, g => g.Count());
+
+        var rows = projects.Select(p =>
+        {
+            var overdueMs = overdueMsByProj.GetValueOrDefault(p.Id, 0);
+            var highRisks = highRiskByProj.GetValueOrDefault(p.Id, 0);
+            var hp = GlobalProjectHealth(p, overdueMs, highRisks, today);
+            return new
+            {
+                id = p.Id, projectNo = p.ProjectNo, title = p.Title,
+                projectType = p.ProjectType, lifecycle = p.Lifecycle,
+                leaderId = p.LeaderId, leaderName = p.LeaderName,
+                taskTotal = p.TaskCount, taskDone = p.DoneTaskCount,
+                completionRate = p.TaskCount > 0 ? (int)Math.Round(p.DoneTaskCount * 100.0 / p.TaskCount) : 0,
+                budget = p.Budget ?? 0, actualCost = p.ActualCost ?? 0,
+                overBudget = (p.Budget ?? 0) > 0 && (p.ActualCost ?? 0) > (p.Budget ?? 0),
+                overdueMilestones = overdueMs, highRisks,
+                stalled = p.Lifecycle == PmProjectLifecycle.Running && p.UpdatedAt < today.AddDays(-14),
+                health = hp,
+                plannedEndAt = p.PlannedEndAt, updatedAt = p.UpdatedAt,
+            };
+        }).ToList();
+
+        // 健康度筛选（派生字段，DB 级无法表达，内存过滤）
+        if (!string.IsNullOrWhiteSpace(health))
+            rows = rows.Where(r => r.health == health).ToList();
+
+        // 排序：默认按更新时间倒序；支持 completion / budget / endAt
+        rows = sort switch
+        {
+            "completion" => rows.OrderByDescending(r => r.completionRate).ToList(),
+            "completionAsc" => rows.OrderBy(r => r.completionRate).ToList(),
+            "endAt" => rows.OrderBy(r => r.plannedEndAt ?? DateTime.MaxValue).ToList(),
+            "budget" => rows.OrderByDescending(r => r.actualCost).ToList(),
+            _ => rows.OrderByDescending(r => r.updatedAt).ToList(),
+        };
+
+        var total = rows.Count;
+        var paged = rows.Skip((Math.Max(1, page) - 1) * pageSize).Take(pageSize).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = paged, total, page, pageSize }));
+    }
+
+    /// <summary>
+    /// 全局总览聚合摘要（仅管理层 pm-agent.global）：项目分布 + 健康风险预警 + 经营数据汇总 + 负责人负载。
+    /// </summary>
+    [HttpGet("global/summary")]
+    public async Task<IActionResult> GlobalSummary(
+        [FromQuery] string? lifecycle = null, [FromQuery] string? type = null,
+        [FromQuery] string? leaderId = null, [FromQuery] string? q = null)
+    {
+        if (!HasPermission(AdminPermissionCatalog.PmAgentGlobal))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "全局总览仅对管理层开放"));
+
+        var today = DateTime.UtcNow.Date;
+        var projects = await LoadGlobalProjectsAsync(lifecycle, type, leaderId, q);
+        var projIds = projects.Select(p => p.Id).ToList();
+        var titleById = projects.ToDictionary(p => p.Id, p => p.Title);
+
+        var milestones = projIds.Count == 0 ? new List<PmMilestone>() : await _db.PmMilestones
+            .Find(m => projIds.Contains(m.ProjectId)).Limit(3000).ToListAsync();
+        var risks = projIds.Count == 0 ? new List<PmRisk>() : await _db.PmRisks
+            .Find(r => projIds.Contains(r.ProjectId) && r.Status != PmRiskStatus.Closed).Limit(3000).ToListAsync();
+
+        int W(string level) => level == PmRiskLevel.High ? 3 : level == PmRiskLevel.Medium ? 2 : 1;
+        var overdueMsByProj = milestones
+            .Where(m => m.Status == PmMilestoneStatus.Planned && m.DueAt.HasValue && m.DueAt.Value < today)
+            .GroupBy(m => m.ProjectId).ToDictionary(g => g.Key, g => g.Count());
+        var highRiskByProj = risks.Where(r => W(r.Probability) * W(r.Impact) >= 6)
+            .GroupBy(r => r.ProjectId).ToDictionary(g => g.Key, g => g.Count());
+
+        // 项目分布
+        var lifecycleDist = PmProjectLifecycle.All
+            .Select(k => new { key = k, count = projects.Count(p => p.Lifecycle == k) }).Where(x => x.count > 0).ToList();
+        var typeDist = PmProjectType.All
+            .Select(k => new { key = k, count = projects.Count(p => p.ProjectType == k) }).Where(x => x.count > 0).ToList();
+        var healthDist = new[] { "on_track", "at_risk", "overdue", "closed" }
+            .Select(h => new { key = h, count = projects.Count(p => GlobalProjectHealth(p, overdueMsByProj.GetValueOrDefault(p.Id, 0), highRiskByProj.GetValueOrDefault(p.Id, 0), today) == h) })
+            .Where(x => x.count > 0).ToList();
+
+        // 健康/风险预警清单
+        bool Active(PmProject p) => p.Lifecycle != PmProjectLifecycle.Evaluated && p.Lifecycle != PmProjectLifecycle.Archived;
+        var overBudgetList = projects.Where(p => (p.Budget ?? 0) > 0 && (p.ActualCost ?? 0) > (p.Budget ?? 0))
+            .OrderByDescending(p => (p.ActualCost ?? 0) - (p.Budget ?? 0))
+            .Take(10).Select(p => new { id = p.Id, title = p.Title, leaderName = p.LeaderName, budget = p.Budget ?? 0, actualCost = p.ActualCost ?? 0 }).ToList();
+        var stalledList = projects.Where(p => p.Lifecycle == PmProjectLifecycle.Running && p.UpdatedAt < today.AddDays(-14))
+            .OrderBy(p => p.UpdatedAt)
+            .Take(10).Select(p => new { id = p.Id, title = p.Title, leaderName = p.LeaderName, updatedAt = p.UpdatedAt, idleDays = (int)(today - p.UpdatedAt.Date).TotalDays }).ToList();
+        var highRiskList = projects.Where(p => Active(p) && highRiskByProj.GetValueOrDefault(p.Id, 0) > 0)
+            .OrderByDescending(p => highRiskByProj.GetValueOrDefault(p.Id, 0))
+            .Take(10).Select(p => new { id = p.Id, title = p.Title, leaderName = p.LeaderName, highRisks = highRiskByProj.GetValueOrDefault(p.Id, 0) }).ToList();
+        var overdueMsTotal = overdueMsByProj.Values.Sum();
+
+        // 经营数据汇总（Budget/ActualCost 可空，缺省按 0 计）
+        var totalBudget = projects.Sum(p => p.Budget ?? 0m);
+        var totalActual = projects.Sum(p => p.ActualCost ?? 0m);
+        var taskTotalSum = projects.Sum(p => (long)p.TaskCount);
+        var taskDoneSum = projects.Sum(p => (long)p.DoneTaskCount);
+
+        // 负责人负载（按 LeaderId 聚合在手项目/任务/逾期/超预算）
+        var leaderLoad = projects.Where(p => !string.IsNullOrWhiteSpace(p.LeaderId))
+            .GroupBy(p => p.LeaderId!)
+            .Select(g => new
+            {
+                leaderId = g.Key,
+                leaderName = g.Select(p => p.LeaderName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "未知",
+                projectCount = g.Count(),
+                activeCount = g.Count(Active),
+                taskTotal = g.Sum(p => (long)p.TaskCount),
+                taskDone = g.Sum(p => (long)p.DoneTaskCount),
+                overdueMilestones = g.Sum(p => overdueMsByProj.GetValueOrDefault(p.Id, 0)),
+                overBudget = g.Count(p => (p.Budget ?? 0) > 0 && (p.ActualCost ?? 0) > (p.Budget ?? 0)),
+            })
+            .OrderByDescending(x => x.activeCount).ThenByDescending(x => x.taskTotal).Take(20).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            projectTotal = projects.Count,
+            lifecycleDist, typeDist, healthDist,
+            warnings = new { overdueMilestones = overdueMsTotal, overBudget = overBudgetList, stalled = stalledList, highRisk = highRiskList },
+            business = new
+            {
+                totalBudget, totalActual,
+                budgetExecutionRate = totalBudget > 0 ? Math.Round((double)totalActual / (double)totalBudget * 100, 1) : 0,
+                taskTotal = taskTotalSum, taskDone = taskDoneSum,
+                completionRate = taskTotalSum > 0 ? (int)Math.Round(taskDoneSum * 100.0 / taskTotalSum) : 0,
+            },
+            leaderLoad,
         }));
     }
 
