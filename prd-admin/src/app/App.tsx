@@ -74,6 +74,7 @@ const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
 const ShareLinkTesterPage = lazy(() => import('@/pages/labs/ShareLinkTesterPage'));
 const MySharesPage = lazy(() => import('@/pages/labs/MySharesPage'));
+const ShortVideoTutorialPage = lazy(() => import('@/pages/short-video-tutorial/ShortVideoTutorialPage'));
 const SkillShareViewPage = lazy(() => import('@/pages/SkillShareViewPage'));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
@@ -353,6 +354,7 @@ export default function App() {
         <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="labs/share-link-tester" element={<ShareLinkTesterPage />} />
         <Route path="my/shares" element={<MySharesPage />} />
+        <Route path="short-video-tutorial" element={<RequirePermission perm="document-store.write"><ShortVideoTutorialPage /></RequirePermission>} />
         {/* open-platform 已移入 NAV_REGISTRY（SSOT），路由由其自动生成 */}
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />

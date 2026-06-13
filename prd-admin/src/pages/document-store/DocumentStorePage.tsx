@@ -997,8 +997,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   }, [storeId]);
 
   const handleOpenVideoParser = useCallback(() => {
-    navigate('/workflow-agent?template=video-link-pipeline&from=document-store');
-  }, [navigate]);
+    navigate(`/short-video-tutorial?from=document-store&storeId=${encodeURIComponent(storeId)}`);
+  }, [navigate, storeId]);
 
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
     // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）

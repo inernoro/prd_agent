@@ -1721,6 +1721,19 @@ export {
 } from '@/services/real/webPages';
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, WebPageGroup, WebPageGroupAccessRule, WebPageGroupVisibility, WebPageGroupSubjectType, WebPageGroupRole, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry, ShareAnalyticsVisitorSummary, ShareAnalyticsTrendPoint, ShareAnalyticsHourlyPoint, ShareAnalyticsVisitorStats, ShareAnalyticsCommentEntry } from '@/services/real/webPages';
 
+// ── Short Video Tutorial 短视频教程流水线 ──
+export {
+  createShortVideoTutorialRun,
+  getShortVideoTutorialRun,
+} from '@/services/real/shortVideoTutorial';
+export type {
+  CreateShortVideoTutorialInput,
+  ShortVideoTutorialRun,
+  ShortVideoTutorialRunResponse,
+  ShortVideoTutorialStage,
+  ShortVideoTutorialStageStatus,
+} from '@/services/real/shortVideoTutorial';
+
 // ── Team 团队（跨应用协作） ──
 export {
   listMyTeams,
