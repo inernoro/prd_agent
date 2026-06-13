@@ -932,23 +932,29 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
     })();
   }, [productId]);
 
-  // 版本默认填充所选功能的版本号（取该功能最新关联的版本），用户未手动改过时随功能联动。
-  const versionCreatedAt = useMemo(() => new Map(versions.map((v) => [v.id, v.createdAt])), [versions]);
+  // 版本默认填充所选功能当前归属的内部版本（plannedVersionId）；无则取纳入版本中 updatedAt 最新的一条。
+  const versionUpdatedAt = useMemo(() => new Map(versions.map((v) => [v.id, v.updatedAt])), [versions]);
   const defaultVersionForFeature = useCallback(
     (fid: string): string => {
       if (!fid) return '';
-      const linked = featureVersions.filter((x) => x.featureId === fid).map((x) => x.versionId);
+      const feature = features.find((f) => f.id === fid);
+      if (feature?.plannedVersionId) return feature.plannedVersionId;
+      const linked = [...new Set(featureVersions.filter((x) => x.featureId === fid).map((x) => x.versionId))];
       if (linked.length === 0) return '';
-      // 取关联版本里创建时间最新的那个作为默认
-      return linked.sort((a, b) => (versionCreatedAt.get(b) ?? '').localeCompare(versionCreatedAt.get(a) ?? ''))[0] ?? '';
+      return linked.sort((a, b) => (versionUpdatedAt.get(b) ?? '').localeCompare(versionUpdatedAt.get(a) ?? ''))[0] ?? '';
     },
-    [featureVersions, versionCreatedAt],
+    [features, featureVersions, versionUpdatedAt],
   );
 
   const onFeatureChange = (fid: string) => {
     setFeatureId(fid);
     if (!versionTouched) setVersionId(defaultVersionForFeature(fid));
   };
+
+  useEffect(() => {
+    if (!featureId || versionTouched) return;
+    setVersionId(defaultVersionForFeature(featureId));
+  }, [featureId, versionTouched, defaultVersionForFeature]);
 
   const canSubmit = !!title.trim() && !!featureId;
 
@@ -1016,7 +1022,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
                 <option value="">不关联</option>
                 {versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}
               </select>
-              <span className="text-[10px] text-white/30">默认填充所选功能的版本，可手动调整。</span>
+              <span className="text-[10px] text-white/30">默认填充所选功能当前的版本，可手动调整。</span>
             </div>
           </div>
         </Card>
