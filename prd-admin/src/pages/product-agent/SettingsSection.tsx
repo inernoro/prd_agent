@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Trash2, Save, GripVertical, X } from 'lucide-react';
+import { Plus, Trash2, Save, GripVertical, X, AlertTriangle } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import {
@@ -23,6 +23,7 @@ import {
   listProductApplicationAdmins,
   addProductApplicationAdmin,
   removeProductApplicationAdmin,
+  resetProductAgentDemoData,
   type ProductApplicationAdmin,
 } from '@/services/real/productAgent';
 import type { Product, FormField, FormFieldType, ProductEntityType, ProductCategory, RequirementType, DescTemplate } from './types';
@@ -101,7 +102,7 @@ const PRESET_FIELDS: Partial<Record<ProductEntityType, { label: string; type: st
 };
 
 export function SettingsSection() {
-  const [mode, setMode] = useState<'form' | 'desc' | 'category' | 'reqtype' | 'admins'>('form');
+  const [mode, setMode] = useState<'form' | 'desc' | 'category' | 'reqtype' | 'admins' | 'debug'>('form');
   const [entityType, setEntityType] = useState<ProductEntityType>('requirement');
   const [productScope, setProductScope] = useState(''); // '' = 全局
   const [products, setProducts] = useState<Product[]>([]);
@@ -123,8 +124,9 @@ export function SettingsSection() {
           <button onClick={() => setMode('category')} className={`px-3 py-1.5 text-sm ${mode === 'category' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>产品类型</button>
           <button onClick={() => setMode('reqtype')} className={`px-3 py-1.5 text-sm ${mode === 'reqtype' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>需求类型</button>
           <button onClick={() => setMode('admins')} className={`px-3 py-1.5 text-sm ${mode === 'admins' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>管理员</button>
+          <button onClick={() => setMode('debug')} className={`px-3 py-1.5 text-sm ${mode === 'debug' ? 'bg-amber-500/15 text-amber-200' : 'text-white/50 hover:bg-white/5'}`}>调试</button>
         </div>
-        {mode !== 'category' && mode !== 'reqtype' && mode !== 'admins' && (
+        {mode !== 'category' && mode !== 'reqtype' && mode !== 'admins' && mode !== 'debug' && (
           <>
             <div className="w-px h-6 bg-white/10" />
             {ENTITY_TYPES.map((e) => (
@@ -157,6 +159,8 @@ export function SettingsSection() {
 
       {mode === 'admins' ? (
         <ApplicationAdminManager />
+      ) : mode === 'debug' ? (
+        <DebugDataResetPanel />
       ) : mode === 'form' ? (
         <FormTemplateEditor key={`f-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
       ) : mode === 'desc' ? (
@@ -240,6 +244,96 @@ function ApplicationAdminManager() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+const DEBUG_RESET_CONFIRM = '清空演示数据';
+
+function DebugDataResetPanel() {
+  const [confirmPhrase, setConfirmPhrase] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [result, setResult] = useState<Record<string, number> | null>(null);
+
+  const reset = async () => {
+    if (confirmPhrase.trim() !== DEBUG_RESET_CONFIRM) {
+      setMessage(`请输入确认语：${DEBUG_RESET_CONFIRM}`);
+      return;
+    }
+    setBusy(true);
+    setMessage('正在清空业务数据…');
+    setResult(null);
+    const response = await resetProductAgentDemoData(confirmPhrase.trim());
+    setBusy(false);
+    if (!response.success) {
+      setMessage(response.error?.message ?? '清空失败');
+      return;
+    }
+    setResult(response.data.deleted);
+    setConfirmPhrase('');
+    setMessage(response.data.message);
+  };
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-4">
+      <div className="rounded-xl border border-amber-400/25 bg-amber-500/[0.06] p-4">
+        <div className="flex items-start gap-2">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-300" />
+          <div>
+            <div className="text-sm font-medium text-amber-100">调试模式 · 清空演示数据</div>
+            <div className="mt-1 text-xs leading-5 text-white/50">
+              仅删除产品管理业务数据，便于重新导入演示。会清空：产品、版本、正式/内部版本、需求、功能、客户、知识库文档、追溯到产品的缺陷及关联评论等。
+            </div>
+            <div className="mt-2 text-xs leading-5 text-white/40">
+              不会删除：表单模板、描述模板、产品类型、需求类型、流转规则、应用管理员名单。
+            </div>
+            <div className="mt-2 text-[11px] text-amber-200/70">此功能为临时调试入口，演示准备完成后将移除。</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <label className="block">
+          <span className="mb-1.5 block text-xs text-white/50">输入确认语以继续</span>
+          <input
+            value={confirmPhrase}
+            onChange={(event) => setConfirmPhrase(event.target.value)}
+            placeholder={DEBUG_RESET_CONFIRM}
+            className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-400/40"
+          />
+        </label>
+        <button
+          onClick={() => void reset()}
+          disabled={busy || confirmPhrase.trim() !== DEBUG_RESET_CONFIRM}
+          className="mt-4 flex items-center gap-1.5 rounded-lg border border-red-500/35 bg-red-500/15 px-4 py-2 text-sm text-red-100 hover:bg-red-500/25 disabled:opacity-40"
+        >
+          {busy ? <MapSpinner size={14} /> : <Trash2 size={14} />}
+          清空全部业务数据
+        </button>
+        {message && <div className="mt-3 text-xs text-white/55">{message}</div>}
+      </div>
+
+      {result && (
+        <div className="overflow-hidden rounded-xl border border-white/10">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-white/[0.03] text-white/45">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">集合</th>
+                <th className="px-4 py-2.5 font-medium">删除条数</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(result).map(([key, count]) => (
+                <tr key={key} className="border-t border-white/5">
+                  <td className="px-4 py-2 font-mono text-white/60">{key}</td>
+                  <td className="px-4 py-2 text-white/80">{count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

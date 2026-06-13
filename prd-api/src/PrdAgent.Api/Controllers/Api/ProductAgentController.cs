@@ -176,6 +176,104 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { removed = true }));
     }
 
+    /// <summary>
+    /// [调试] 清空产品管理全部业务数据，保留表单/流程/类型/管理员等配置。仅应用管理员可用，上线前移除。
+    /// </summary>
+    [HttpPost("settings/debug/reset-all-data")]
+    public async Task<IActionResult> ResetProductAgentDemoData([FromBody] ProductAgentDebugResetRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (!string.Equals(request.ConfirmPhrase?.Trim(), "清空演示数据", StringComparison.Ordinal))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "确认语不正确，请输入：清空演示数据"));
+
+        var userId = GetUserId();
+        _logger.LogWarning("产品管理调试清空：用户 {UserId} 触发全量业务数据删除", userId);
+
+        var deleted = new Dictionary<string, long>();
+
+        var products = await _db.Products.Find(FilterDefinition<Product>.Empty).ToListAsync();
+        var storeIds = products
+            .Where(p => !string.IsNullOrWhiteSpace(p.KnowledgeStoreId))
+            .Select(p => p.KnowledgeStoreId!)
+            .ToHashSet(StringComparer.Ordinal);
+        var versionStoreIds = await _db.ProductVersions
+            .Find(FilterDefinition<ProductVersion>.Empty)
+            .Project(v => v.KnowledgeStoreId)
+            .ToListAsync();
+        foreach (var storeId in versionStoreIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+            storeIds.Add(storeId!);
+
+        if (storeIds.Count > 0)
+        {
+            var storeIdList = storeIds.ToList();
+            deleted["document_entries"] = (await _db.DocumentEntries.DeleteManyAsync(
+                Builders<DocumentEntry>.Filter.In(e => e.StoreId, storeIdList))).DeletedCount;
+            deleted["document_store_likes"] = (await _db.DocumentStoreLikes.DeleteManyAsync(
+                Builders<DocumentStoreLike>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
+            deleted["document_store_favorites"] = (await _db.DocumentStoreFavorites.DeleteManyAsync(
+                Builders<DocumentStoreFavorite>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
+            deleted["document_store_share_links"] = (await _db.DocumentStoreShareLinks.DeleteManyAsync(
+                Builders<DocumentStoreShareLink>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
+            deleted["document_store_agent_runs"] = (await _db.DocumentStoreAgentRuns.DeleteManyAsync(
+                Builders<DocumentStoreAgentRun>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
+            deleted["document_store_conversations"] = (await _db.DocumentStoreConversations.DeleteManyAsync(
+                Builders<DocumentStoreConversation>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
+            deleted["document_store_view_events"] = (await _db.DocumentStoreViewEvents.DeleteManyAsync(
+                Builders<DocumentStoreViewEvent>.Filter.In(x => x.StoreId, storeIdList))).DeletedCount;
+            deleted["document_store_sync_links"] = (await _db.DocumentStoreSyncLinks.DeleteManyAsync(
+                Builders<DocumentStoreSyncLink>.Filter.Or(
+                    Builders<DocumentStoreSyncLink>.Filter.In(x => x.LocalStoreId, storeIdList),
+                    Builders<DocumentStoreSyncLink>.Filter.In(x => x.RemoteStoreId, storeIdList)))).DeletedCount;
+            deleted["document_stores"] = (await _db.DocumentStores.DeleteManyAsync(
+                Builders<DocumentStore>.Filter.In(s => s.Id, storeIdList))).DeletedCount;
+        }
+
+        var tracedDefectIds = await _db.DefectReports
+            .Find(d => d.TracedProductId != null && d.TracedProductId != "")
+            .Project(d => d.Id)
+            .ToListAsync();
+        if (tracedDefectIds.Count > 0)
+        {
+            deleted["defect_messages"] = (await _db.DefectMessages.DeleteManyAsync(
+                Builders<DefectMessage>.Filter.In(m => m.DefectId, tracedDefectIds))).DeletedCount;
+            deleted["defect_reports"] = (await _db.DefectReports.DeleteManyAsync(
+                Builders<DefectReport>.Filter.In(d => d.Id, tracedDefectIds))).DeletedCount;
+        }
+        else
+        {
+            deleted["defect_messages"] = 0;
+            deleted["defect_reports"] = 0;
+        }
+
+        deleted["product_item_activities"] = (await _db.ProductItemActivities.DeleteManyAsync(FilterDefinition<ProductItemActivity>.Empty)).DeletedCount;
+        deleted["product_item_summaries"] = (await _db.ProductItemSummaries.DeleteManyAsync(FilterDefinition<ProductItemSummary>.Empty)).DeletedCount;
+        deleted["version_upgrade_requests"] = (await _db.VersionUpgradeRequests.DeleteManyAsync(FilterDefinition<VersionUpgradeRequest>.Empty)).DeletedCount;
+        deleted["feature_versions"] = (await _db.FeatureVersions.DeleteManyAsync(FilterDefinition<FeatureVersion>.Empty)).DeletedCount;
+        deleted["features"] = (await _db.Features.DeleteManyAsync(FilterDefinition<Feature>.Empty)).DeletedCount;
+        deleted["requirements"] = (await _db.Requirements.DeleteManyAsync(FilterDefinition<Requirement>.Empty)).DeletedCount;
+        deleted["product_releases"] = (await _db.ProductReleases.DeleteManyAsync(FilterDefinition<ProductRelease>.Empty)).DeletedCount;
+        deleted["product_initiations"] = (await _db.ProductInitiations.DeleteManyAsync(FilterDefinition<ProductInitiation>.Empty)).DeletedCount;
+        deleted["product_versions"] = (await _db.ProductVersions.DeleteManyAsync(FilterDefinition<ProductVersion>.Empty)).DeletedCount;
+        deleted["customers"] = (await _db.Customers.DeleteManyAsync(FilterDefinition<Customer>.Empty)).DeletedCount;
+        deleted["products"] = (await _db.Products.DeleteManyAsync(FilterDefinition<Product>.Empty)).DeletedCount;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            deleted,
+            preserved = new[]
+            {
+                "product_form_templates",
+                "product_workflow_definitions",
+                "product_categories",
+                "requirement_types",
+                "product_desc_templates",
+                "product_agent_settings",
+            },
+            message = "产品管理业务数据已清空，配置项未改动。",
+        }));
+    }
+
     // ════════════════════════ 产品 Product ════════════════════════
 
     /// <summary>创建产品（自动生成产品编号）</summary>
@@ -5693,6 +5791,11 @@ public class ImportSimpleItemRow
 public class ProductApplicationAdminRequest
 {
     public string UserId { get; set; } = string.Empty;
+}
+
+public class ProductAgentDebugResetRequest
+{
+    public string? ConfirmPhrase { get; set; }
 }
 
 public class BatchRequest

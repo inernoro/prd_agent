@@ -778,6 +778,13 @@ export function addProductApplicationAdmin(userId: string) {
 export function removeProductApplicationAdmin(userId: string) {
   return apiRequest<{ removed: boolean }>(`/api/product/settings/admins/${userId}`, { method: 'DELETE' });
 }
+export function resetProductAgentDemoData(confirmPhrase: string) {
+  return apiRequest<{
+    deleted: Record<string, number>;
+    preserved: string[];
+    message: string;
+  }>('/api/product/settings/debug/reset-all-data', { method: 'POST', body: { confirmPhrase } });
+}
 export function createProductDefect(productId: string, body: { title: string; description?: string; grade?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
 }
