@@ -1605,6 +1605,13 @@ export function DocBrowser({
   // 在任何嵌套上下文都铺满视口（遵守 .claude/rules/frontend-modal.md）。
   const [readerFullscreen, setReaderFullscreen] = useState(false);
   const toggleReaderFullscreen = useCallback(() => setReaderFullscreen((v) => !v), []);
+  // 右侧栏（本页章节 TOC / 批注栏）可收起，给正文让出宽度。纯 UI 偏好，sessionStorage 持久化
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(() => sessionStorage.getItem('doc-browser-right-collapsed') === '1');
+  const toggleRightPanel = useCallback(() => setRightPanelCollapsed((v) => {
+    const next = !v;
+    sessionStorage.setItem('doc-browser-right-collapsed', next ? '1' : '0');
+    return next;
+  }), []);
   // ESC 退出全屏
   useEffect(() => {
     if (!readerFullscreen) return;
@@ -3288,6 +3295,20 @@ export function DocBrowser({
                   {commentCount > 0 ? `${commentCount} 条评论` : '评论'}
                 </button>
               )}
+              {/* 收起/展开右侧栏（本页章节 / 批注栏），给正文让宽 */}
+              {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && tocContent && !isMobile && (
+                <button
+                  onClick={toggleRightPanel}
+                  className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                  style={{
+                    background: rightPanelCollapsed ? 'rgba(255,255,255,0.04)' : 'rgba(59,130,246,0.1)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: rightPanelCollapsed ? 'var(--text-muted)' : 'rgba(96,165,250,0.95)',
+                  }}
+                  title={rightPanelCollapsed ? '显示本页章节 / 批注栏' : '收起本页章节 / 批注栏'}>
+                  <PanelRight size={11} /> {rightPanelCollapsed ? '章节' : '收起'}
+                </button>
+              )}
               {/* 全屏阅读（CSS 全屏覆盖层，ESC 退出） */}
               {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
@@ -3555,8 +3576,9 @@ export function DocBrowser({
               </div>
               </div>
               {/* 右侧栏：margin 布局且有评论 → 批注栏常驻（取代 TOC）；否则 → 本页章节导航。
-                  移动端单栏阅读不挂右侧 TOC（否则又把正文挤窄），isMobile 时隐藏 DocToc。 */}
-              {(() => {
+                  移动端单栏阅读不挂右侧 TOC（否则又把正文挤窄），isMobile 时隐藏 DocToc。
+                  rightPanelCollapsed 时整列收起，给正文让宽（工具栏「收起/章节」切换）。 */}
+              {!rightPanelCollapsed && (() => {
                 const showMargin = inlineCommentLayout === 'margin' && !contentLoading && !editMode
                   && !!tocContent && inlineCommentItems.length > 0 && !marginCollapsed;
                 if (showMargin) {
@@ -3580,7 +3602,7 @@ export function DocBrowser({
                 ) : null;
               })()}
               {/* 激活批注的牵引连线（active-only，业界 Word/Figma 做法）：仅 margin 布局且有激活项时出现 */}
-              {inlineCommentLayout === 'margin' && !marginCollapsed && !editMode && !contentLoading
+              {inlineCommentLayout === 'margin' && !marginCollapsed && !rightPanelCollapsed && !editMode && !contentLoading
                 && tocContent && inlineCommentItems.length > 0 && activeCommentKey && (
                 <InlineCommentConnector activeKey={activeCommentKey} color={threadColor(activeCommentKey)} boundsRef={contentAreaRef} />)}
             </div>

@@ -10,7 +10,7 @@
  *      GET /api/pm/knowledge/entries/:id/content（只读正文）
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Library, Search, X, FileText, ChevronDown, ChevronRight, FolderKanban, Eye } from 'lucide-react';
+import { Library, Search, X, FileText, ChevronDown, ChevronRight, FolderKanban, Eye, ArrowLeft } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { getPmKnowledgeOverview, listPmKnowledgeEntries, getPmKnowledgeEntryContent } from '@/services';
@@ -70,6 +70,8 @@ export function GlobalKnowledgeView() {
   // 选中文档（右侧只读预览）；预览只在选中项所属项目内导航
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>();
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  // 列表优先：默认看全宽列表，点文档才进该项目的全宽 DocBrowser 详情，避免多列嵌套挤压正文
+  const [viewMode, setViewMode] = useState<'list' | 'detail'>('list');
 
   // 总览（项目分组 + 筛选枚举）
   useEffect(() => {
@@ -141,10 +143,18 @@ export function GlobalKnowledgeView() {
     return entries.filter((e) => e.projectId === selectedProjectId).map(toDocEntry);
   }, [entries, selectedProjectId]);
 
-  const onPick = (e: PmGlobalKnowledgeEntry) => {
+  const openDetail = (e: PmGlobalKnowledgeEntry) => {
     setSelectedProjectId(e.projectId ?? null);
     setSelectedEntryId(e.id);
+    setViewMode('detail');
   };
+  const backToList = () => setViewMode('list');
+
+  // 详情态所属项目（用于详情头展示项目名/编号）
+  const detailProject = useMemo(
+    () => overview?.projects.find((p) => p.projectId === selectedProjectId) ?? null,
+    [overview, selectedProjectId],
+  );
 
   const toggleGroup = (key: string) => setCollapsed((prev) => {
     const next = new Set(prev);
@@ -158,6 +168,40 @@ export function GlobalKnowledgeView() {
   const hasFilter = !!(projectType || lifecycle || category || contentType || createdBy || keyword);
 
   if (loadingOverview) return <div className="flex-1 min-h-0 flex items-center justify-center"><MapSectionLoader text="正在汇总全局知识库…" /></div>;
+
+  // 详情态：全宽进入该项目的知识库浏览器（DocBrowser），顶部「返回列表」
+  if (viewMode === 'detail' && selectedEntryId && previewEntries.length > 0) {
+    return (
+      <div className="flex flex-col gap-2 h-full min-h-0">
+        <div className="shrink-0 flex items-center gap-2 flex-wrap">
+          <button onClick={backToList} className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded-lg hover:opacity-80" style={{ color: 'var(--text-secondary)', background: 'var(--bg-card)' }}>
+            <ArrowLeft size={14} /> 返回列表
+          </button>
+          {detailProject && (
+            <>
+              {detailProject.projectType && (
+                <span className="w-2 h-2 rounded-full" style={{ background: PROJECT_TYPE_REGISTRY[detailProject.projectType]?.color }} />
+              )}
+              <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{detailProject.title}</span>
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{detailProject.projectNo}</span>
+            </>
+          )}
+          <span className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1" style={{ background: 'rgba(59,130,246,0.12)', color: '#60A5FA' }}>
+            <Eye size={10} />只读
+          </span>
+        </div>
+        <div className="flex-1 min-w-0 min-h-0 rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+          <DocBrowser
+            entries={previewEntries}
+            selectedEntryId={selectedEntryId}
+            onSelectEntry={setSelectedEntryId}
+            loadContent={loadContent}
+            onBackToList={backToList}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
@@ -229,80 +273,57 @@ export function GlobalKnowledgeView() {
         </div>
       </div>
 
-      {/* 主体：左侧分组列表 + 右侧只读预览 */}
-      <div className="flex-1 min-h-0 flex gap-3">
-        {/* 左：分组列表（默认展开） */}
-        <div className="w-[380px] shrink-0 min-h-0 flex flex-col rounded-xl border" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-          <div className="shrink-0 px-3 py-2 border-b text-[12px]" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
-            共 {total} 篇文档{hasFilter ? '（已筛选）' : ''}
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-1.5" style={{ overscrollBehavior: 'contain' }}>
-            {loadingEntries ? (
-              <MapSectionLoader text="正在加载文档…" />
-            ) : groups.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center gap-2 py-12 text-center" style={{ color: 'var(--text-muted)' }}>
-                <FolderKanban size={32} style={{ opacity: 0.4 }} />
-                <div className="text-[13px]">{hasFilter ? '没有匹配的文档，试试放宽筛选' : '暂无任何项目知识库文档'}</div>
-              </div>
-            ) : (
-              groups.map((g) => {
-                const open = !collapsed.has(g.key);
-                return (
-                  <div key={g.key} className="rounded-lg border" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)' }}>
-                    <button onClick={() => toggleGroup(g.key)} className="w-full flex items-center gap-2 px-2.5 py-2 text-left">
-                      {open ? <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} /> : <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />}
-                      {g.color && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: g.color }} />}
-                      <span className="text-[12.5px] font-medium truncate flex-1 min-w-0" style={{ color: 'var(--text-primary)' }}>{g.label}</span>
-                      {g.sub && <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>{g.sub}</span>}
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>{g.items.length}</span>
-                    </button>
-                    {open && (
-                      <div className="flex flex-col pb-1">
-                        {g.items.map((e) => {
-                          const on = selectedEntryId === e.id;
-                          return (
-                            <button key={e.id} onClick={() => onPick(e)}
-                              className="flex items-start gap-2 px-2.5 py-1.5 mx-1 rounded-md text-left transition-colors"
-                              style={{ background: on ? 'rgba(59,130,246,0.14)' : 'transparent' }}>
-                              <FileText size={13} className="mt-0.5 shrink-0" style={{ color: on ? '#60A5FA' : 'var(--text-muted)' }} />
-                              <div className="min-w-0 flex-1">
-                                <div className="text-[12.5px] truncate" style={{ color: on ? '#93C5FD' : 'var(--text-primary)' }}>{e.title}</div>
-                                <div className="text-[10px] flex items-center gap-2 truncate" style={{ color: 'var(--text-muted)' }}>
-                                  {groupBy !== 'project' && e.projectTitle && <span className="truncate">{e.projectTitle}</span>}
-                                  {e.category && <span>{e.category}</span>}
-                                  {e.createdByName && <span>{e.createdByName}</span>}
-                                  <span>{relTime(e.updatedAt)}</span>
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
+      {/* 列表（全宽，默认展开分组）：点文档进详情。去掉右侧常驻 DocBrowser，避免多列挤压 */}
+      <div className="flex-1 min-h-0 overflow-y-auto rounded-xl border" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', overscrollBehavior: 'contain' }}>
+        <div className="sticky top-0 z-[1] px-4 py-2 border-b text-[12px]" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-muted)' }}>
+          共 {total} 篇文档{hasFilter ? '（已筛选）' : ''} · 点击文档进入只读阅读
         </div>
-
-        {/* 右：只读预览（复用 DocBrowser，含 createPortal 全屏） */}
-        <div className="flex-1 min-w-0 min-h-0 rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-          {selectedEntryId && previewEntries.length > 0 ? (
-            <DocBrowser
-              entries={previewEntries}
-              selectedEntryId={selectedEntryId}
-              onSelectEntry={setSelectedEntryId}
-              loadContent={loadContent}
-            />
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center gap-2 text-center" style={{ color: 'var(--text-muted)' }}>
-              <Library size={36} style={{ opacity: 0.3 }} />
-              <div className="text-[13px]">从左侧选择一篇文档查看正文</div>
-              <div className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>支持全屏阅读（右上角「全屏」按钮，ESC 退出）</div>
-            </div>
-          )}
-        </div>
+        {loadingEntries ? (
+          <div className="py-16"><MapSectionLoader text="正在加载文档…" /></div>
+        ) : groups.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-20 text-center" style={{ color: 'var(--text-muted)' }}>
+            <FolderKanban size={36} style={{ opacity: 0.4 }} />
+            <div className="text-[13px]">{hasFilter ? '没有匹配的文档，试试放宽筛选' : '暂无任何项目知识库文档'}</div>
+          </div>
+        ) : (
+          <div className="p-3 flex flex-col gap-3">
+            {groups.map((g) => {
+              const open = !collapsed.has(g.key);
+              return (
+                <div key={g.key}>
+                  <button onClick={() => toggleGroup(g.key)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left rounded-md hover:bg-[var(--bg-base)]">
+                    {open ? <ChevronDown size={15} style={{ color: 'var(--text-muted)' }} /> : <ChevronRight size={15} style={{ color: 'var(--text-muted)' }} />}
+                    {g.color && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: g.color }} />}
+                    <span className="text-[13.5px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{g.label}</span>
+                    {g.sub && <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{g.sub}</span>}
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: 'var(--bg-base)', color: 'var(--text-muted)' }}>{g.items.length}</span>
+                  </button>
+                  {open && (
+                    <div className="grid gap-2 mt-2 pl-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+                      {g.items.map((e) => (
+                        <button key={e.id} onClick={() => openDetail(e)}
+                          className="text-left rounded-lg border p-3 transition-colors hover:border-[rgba(59,130,246,0.4)]"
+                          style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)' }}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText size={14} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
+                            <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{e.title}</span>
+                          </div>
+                          {e.summary && <div className="text-[11px] mt-1.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>{e.summary}</div>}
+                          <div className="text-[10.5px] mt-2 flex items-center gap-2 flex-wrap" style={{ color: 'var(--text-muted)' }}>
+                            {groupBy !== 'project' && e.projectTitle && <span className="truncate max-w-[140px]">{e.projectTitle}</span>}
+                            {e.category && <span className="px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-card)' }}>{e.category}</span>}
+                            {e.createdByName && <span>{e.createdByName}</span>}
+                            <span>{relTime(e.updatedAt)}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
