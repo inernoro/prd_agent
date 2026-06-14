@@ -476,6 +476,7 @@ export function ReprocessChatDrawer({
   const entryIdRef = useRef(conversationKey);
   const initialInputAppliedRef = useRef(false);
   const restoredShortVideoRunRef = useRef<string | null>(null);
+  const shortVideoPollTokenRef = useRef(0);
   // 同步 apply 锁：和 sendLockRef 同思路，state 异步 setApplying 之前快速双击会让
   // 两次 handleApply 都跑过 if(applying) 检查，跑两次写回（Codex P2 十轮）
   const applyLockRef = useRef(false);
@@ -496,9 +497,19 @@ export function ReprocessChatDrawer({
     });
   }, []);
 
+  const nextShortVideoPollToken = useCallback(() => {
+    shortVideoPollTokenRef.current += 1;
+    return shortVideoPollTokenRef.current;
+  }, []);
+
+  const isShortVideoPollActive = useCallback((ownerKey: string, pollToken: number) => (
+    entryIdRef.current === ownerKey && shortVideoPollTokenRef.current === pollToken
+  ), []);
+
   // 中止当前 stream 的统一入口：除了 abort fetch，还要清 streamingId 和 sendLockRef，
   // 否则 chip / 输入框会一直 disabled（Bugbot #2）
   const abortCurrentStream = useCallback(() => {
+    shortVideoPollTokenRef.current += 1;
     cancelStreamRef.current?.();
     cancelStreamRef.current = null;
     sendLockRef.current = false;
@@ -1025,11 +1036,11 @@ export function ReprocessChatDrawer({
     cancelStreamRef.current = stop;
   }, [entryId, loadingDoc, docLoadError, messages, docContent, docTruncated, scrollToBottom, capabilityForAgent, selectedParams]);
 
-  const pollShortVideoRun = useCallback(async (runId: string, messageId: string, ownerKey: string) => {
+  const pollShortVideoRun = useCallback(async (runId: string, messageId: string, ownerKey: string, pollToken: number) => {
     for (let i = 0; i < 240; i += 1) {
-      if (entryIdRef.current !== ownerKey) return;
+      if (!isShortVideoPollActive(ownerKey, pollToken)) return;
       const res = await getShortVideoMaterialRun(runId);
-      if (entryIdRef.current !== ownerKey) return;
+      if (!isShortVideoPollActive(ownerKey, pollToken)) return;
       if (!res.success || !res.data) {
         const message = res.error?.message || '无法读取短视频后台任务';
         setMessages((prev) => prev.map((m) => m.id === messageId
@@ -1061,7 +1072,9 @@ export function ReprocessChatDrawer({
         setStreamingId(null);
         sendLockRef.current = false;
         onStoreChanged?.();
-        window.setTimeout(() => onStoreChanged?.(), 1200);
+        window.setTimeout(() => {
+          if (isShortVideoPollActive(ownerKey, pollToken)) onStoreChanged?.();
+        }, 1200);
         return;
       }
 
@@ -1086,14 +1099,14 @@ export function ReprocessChatDrawer({
       await new Promise((resolve) => window.setTimeout(resolve, 1500));
     }
 
-    if (entryIdRef.current === ownerKey) {
+    if (isShortVideoPollActive(ownerKey, pollToken)) {
       setMessages((prev) => prev.map((m) => m.id === messageId
         ? { ...m, streaming: false, phase: 'error', content: `${m.content}\n\n（后台任务等待超时，请稍后重新打开查看服务端状态）` }
         : m));
       setStreamingId(null);
       sendLockRef.current = false;
     }
-  }, [onStoreChanged]);
+  }, [isShortVideoPollActive, onStoreChanged]);
 
   useEffect(() => {
     if (!isShortVideoMode) return;
@@ -1124,8 +1137,12 @@ export function ReprocessChatDrawer({
       ];
     });
     setStreamingId(messageId);
-    void pollShortVideoRun(runId, messageId, ownerKey);
-  }, [conversationKey, isShortVideoMode, pollShortVideoRun, storeId]);
+    const pollToken = nextShortVideoPollToken();
+    void pollShortVideoRun(runId, messageId, ownerKey, pollToken);
+    return () => {
+      if (shortVideoPollTokenRef.current === pollToken) shortVideoPollTokenRef.current += 1;
+    };
+  }, [conversationKey, isShortVideoMode, nextShortVideoPollToken, pollShortVideoRun, storeId]);
 
   const runShortVideoTool = useCallback(async (userText: string) => {
     if (sendLockRef.current) return;
@@ -1135,6 +1152,7 @@ export function ReprocessChatDrawer({
       return;
     }
     sendLockRef.current = true;
+    const pollToken = nextShortVideoPollToken();
     setError(null);
 
     const userMsgId = 'u-' + Date.now();
@@ -1184,7 +1202,7 @@ export function ReprocessChatDrawer({
           }
         : m));
       toast.success('短视频后台任务已创建', '可以刷新页面，进度会从服务端恢复');
-      await pollShortVideoRun(result.run.id, asstMsgId, ownerKey);
+      await pollShortVideoRun(result.run.id, asstMsgId, ownerKey, pollToken);
     } catch (e) {
       if (entryIdRef.current !== ownerKey) return;
       const message = e instanceof Error ? e.message : '网络异常';
@@ -1198,7 +1216,7 @@ export function ReprocessChatDrawer({
         sendLockRef.current = false;
       }
     }
-  }, [conversationKey, pollShortVideoRun, scrollToBottom, storeId]);
+  }, [conversationKey, nextShortVideoPollToken, pollShortVideoRun, scrollToBottom, storeId]);
 
   const handleSendInput = useCallback(() => {
     if (!input.trim()) return;

@@ -178,7 +178,7 @@ public sealed class ShortVideoMaterialProcessor
         MarkStage(run, "source", "running", $"正在把视频文件保存到知识库「{store.Name}」");
         await SaveRunAsync(run);
 
-        var videoMaterial = await DownloadVideoMaterialAsync(parsed, run.VideoUrl);
+        var videoMaterial = await DownloadVideoMaterialAsync(parsed);
         var sourceEntry = await CreateVideoEntryAsync(
             store,
             run.UserId,
@@ -315,11 +315,9 @@ public sealed class ShortVideoMaterialProcessor
             store.PrimaryEntryId = entryId;
     }
 
-    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(ParsedShortVideoSource parsed, string originalUrl)
+    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(ParsedShortVideoSource parsed)
     {
-        var videoUrl = FirstNonEmpty(parsed.VideoUrl, originalUrl);
-        if (string.IsNullOrWhiteSpace(videoUrl))
-            throw new InvalidOperationException("短视频解析器未返回可下载的视频地址");
+        var videoUrl = RequireResolvedVideoUrl(parsed.VideoUrl);
 
         var node = new WorkflowNode
         {
@@ -719,8 +717,16 @@ public sealed class ShortVideoMaterialProcessor
         return null;
     }
 
-    private static string? FirstNonEmpty(params string?[] values)
-        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
+    internal static string RequireResolvedVideoUrl(string? parsedVideoUrl)
+    {
+        var videoUrl = parsedVideoUrl?.Trim();
+        if (string.IsNullOrWhiteSpace(videoUrl))
+            throw new InvalidOperationException("短视频解析器未返回可下载的视频文件地址，已停止保存原始视频，避免把分享页当作视频入库");
+        if (!Uri.TryCreate(videoUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            throw new InvalidOperationException("短视频解析器返回的视频文件地址无效，已停止保存原始视频");
+        return videoUrl;
+    }
 
     private static string? CleanTitle(string? title)
     {

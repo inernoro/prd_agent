@@ -10,6 +10,19 @@ const selectedItems: SyncItemSummary[] = [
 ];
 
 describe('SendToPeerDialog queue state', () => {
+  it('keeps selected items idle before a transfer starts', () => {
+    const state = deriveQueueState(selectedItems.slice(0, 2), false, null, null, null);
+
+    expect(state.selectedCount).toBe(2);
+    expect(state.runningCount).toBe(0);
+    expect(state.waitingCount).toBe(0);
+    expect(state.failedCount).toBe(0);
+    expect(state.currentLabel).toBe('已选择，等待开始');
+    expect(state.itemStates.get('kb-1')).toBe('selected');
+    expect(state.itemStates.get('kb-2')).toBe('selected');
+    expect(state.itemProgress.get('kb-1')).toBe(0);
+  });
+
   it('keeps summary buckets balanced while a transfer is running', () => {
     const state = deriveQueueState(selectedItems, true, {
       step: 3,
@@ -82,5 +95,19 @@ describe('SendToPeerDialog queue state', () => {
     expect(state.itemStates.get('kb-1')).toBe('skipped');
     expect(state.currentLabel).toBe('全部无变化，已跳过');
     expect(state.reverseLabel).toBe('无变化，已跳过');
+  });
+
+  it('marks every selected queue item failed when the transfer request fails before item results', () => {
+    const state = deriveQueueState(selectedItems.slice(0, 3), false, null, null, '目标端不可用');
+
+    expect(state.selectedCount).toBe(3);
+    expect(state.failedCount).toBe(3);
+    expect(state.waitingCount).toBe(0);
+    expect(state.currentLabel).toBe('同步失败');
+    expect(state.itemStates.get('kb-1')).toBe('failed');
+    expect(state.itemStates.get('kb-2')).toBe('failed');
+    expect(state.itemStates.get('kb-3')).toBe('failed');
+    expect(state.itemProgress.get('kb-1')).toBe(100);
+    expect(state.doneCount + state.skippedCount + state.runningCount + state.waitingCount + state.failedCount).toBe(state.selectedCount);
   });
 });
