@@ -110,6 +110,7 @@ export default function VisualStoryboardPage() {
     const idem = `sb_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const created = await createImageGenRun({
       input: {
+        appKey: 'visual-agent',
         modelId: activeModel.modelName,
         platformId: activeModel.platformId,
         items: targets.map((t) => ({ prompt: t.prompt, count: 1, size })),
