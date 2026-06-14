@@ -52,13 +52,13 @@ public static class ApiKeyCryptoKeyRing
             return ApiKeyDecryptResult.Missing;
 
         var primary = GetPrimarySecret(configuration);
-        var plain = ApiKeyCrypto.Decrypt(encryptedKey, primary);
+        var plain = DecryptPlausiblePlainText(encryptedKey, primary);
         if (!string.IsNullOrWhiteSpace(plain))
             return new ApiKeyDecryptResult(true, plain, false);
 
         foreach (var legacy in GetLegacySecrets(configuration))
         {
-            plain = ApiKeyCrypto.Decrypt(encryptedKey, legacy);
+            plain = DecryptPlausiblePlainText(encryptedKey, legacy);
             if (!string.IsNullOrWhiteSpace(plain))
                 return new ApiKeyDecryptResult(true, plain, true);
         }
@@ -68,6 +68,20 @@ public static class ApiKeyCryptoKeyRing
 
     public static string Encrypt(string plainText, IConfiguration configuration)
         => ApiKeyCrypto.Encrypt(plainText, GetPrimarySecret(configuration));
+
+    private static string DecryptPlausiblePlainText(string encryptedKey, string secret)
+    {
+        var plain = ApiKeyCrypto.Decrypt(encryptedKey, secret);
+        return IsPlausiblePlainSecret(plain) ? plain : string.Empty;
+    }
+
+    internal static bool IsPlausiblePlainSecret(string? plainText)
+    {
+        if (string.IsNullOrWhiteSpace(plainText))
+            return false;
+
+        return plainText.All(c => c != '\uFFFD' && (!char.IsControl(c) || c is '\t' or '\n' or '\r'));
+    }
 
     public static string? DecryptPlainOrNull(string? encryptedKey, IConfiguration configuration)
     {

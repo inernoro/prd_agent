@@ -56,6 +56,20 @@ public class ApiKeyCryptoKeyRingTests
         result.UsedLegacySecret.ShouldBeTrue();
     }
 
+    [Fact]
+    public void Decrypt_ShouldKeepSymbolRichApiKey()
+    {
+        var config = BuildConfig(primary: "primary-secret-for-api-key-crypto-2026", jwt: "jwt-secret-for-login-token-2026-only");
+        var plainText = "sk-test_ABC+123/xyz==";
+        var cipher = ApiKeyCryptoKeyRing.Encrypt(plainText, config);
+
+        var result = ApiKeyCryptoKeyRing.Decrypt(cipher, config);
+
+        result.Success.ShouldBeTrue();
+        result.PlainText.ShouldBe(plainText);
+        result.UsedLegacySecret.ShouldBeFalse();
+    }
+
     private static IConfiguration BuildConfig(string primary, string jwt)
         => new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
