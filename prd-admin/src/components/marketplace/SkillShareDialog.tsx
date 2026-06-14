@@ -29,12 +29,8 @@ export function SkillShareDialog() {
     if (target) setDays(0);
   }, [target]);
 
-  // 把「生成中」状态同步给 store —— 生成期间别处的 open() 会被 busy 闸忽略，
-  // 防止 in-flight 请求用着旧 skill id、界面却被换成另一技能（Bugbot Medium）。
-  useEffect(() => {
-    setBusy(sharing);
-    return () => setBusy(false);
-  }, [sharing, setBusy]);
+  // 组件卸载时兜底清掉 busy 闸，避免极端情况下残留导致 open() 永久被忽略。
+  useEffect(() => () => setBusy(false), [setBusy]);
 
   useEffect(() => {
     if (!target) return;
@@ -48,8 +44,15 @@ export function SkillShareDialog() {
   if (!target) return null;
 
   const onGenerate = async () => {
-    const ok = await shareSkill(target.id, days);
-    if (ok) close();
+    // 同步置 busy 闸（不走 effect）——点击到 await 让出前的同一 tick 内就生效，
+    // 别处的 open() 立刻被忽略，杜绝 in-flight 请求用旧 id 而界面被换成另一技能（Bugbot Medium）。
+    setBusy(true);
+    try {
+      const ok = await shareSkill(target.id, days);
+      if (ok) close();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const modal = (
