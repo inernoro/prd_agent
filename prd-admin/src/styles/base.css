@@ -237,3 +237,15 @@ select optgroup {
   background: rgba(255, 255, 255, 0.04) !important;
   border-color: rgba(255, 255, 255, 0.06) !important;
 }
+
+/* react-syntax-highlighter (Prism) 代码块 token span 防类名碰撞。
+   Prism 的 markdown 语法会给表格的每个管道符/单元格 token 打上字面类名
+   `table`（还有 table-header-row / table-line 等），它与 Tailwind v4 的显示
+   工具类 `.table { display: table }` 同名，导致代码块里示例表格的每个单元格
+   都被变成 display:table 块、各占一行（海鲜市场技能预览 SKILL.md 右侧失真的
+   根因）。这里把代码块内所有 Prism token 强制回退为 inline，使任何与 Tailwind
+   display 工具类（table/block/flex/grid 等）撞名的 token 都不会再被重排。
+   选择器写在 tailwind 工具层之外（无 @layer）且特异度更高，稳定压过 `.table`。 */
+[class*="language-"] .token {
+  display: inline;
+}

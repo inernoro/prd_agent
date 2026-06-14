@@ -11,7 +11,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Hash, Search, ShieldCheck, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
+import { ArrowLeft, Clock, Hash, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
 import type { MixedMarketplaceItem } from '@/lib/marketplaceTypes';
 import { QuickConnectPanel } from './QuickConnectPanel';
@@ -359,9 +359,8 @@ export const MarketplacePage: React.FC = () => {
                 forking={forkingId === item.data.id}
               />
             );
-            // 官方条目单独成「官方推荐」区，不挤进社区瀑布流（避免埋没用户上传）
-            const officialItems = filtered.filter((i) => i.data.ownerUserId === 'official');
-            const communityItems = filtered.filter((i) => i.data.ownerUserId !== 'official');
+            // 官方与社区同列同序：按当前排序（热门/最新）混排，不再把官方置顶成独立「官方推荐」区。
+            // 官方卡自身带「官方」徽章（MarketplaceCard.mkt-card-official）标识身份，无需单独成区。
             const gridStyle = {
               gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
               maxWidth: '1400px',
@@ -369,31 +368,9 @@ export const MarketplacePage: React.FC = () => {
             } as const;
             return (
               <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-                {officialItems.length > 0 && (
-                  <div className="mb-6">
-                    <div className="flex items-center gap-2 mb-3">
-                      <ShieldCheck size={14} className="text-token-accent" />
-                      <span className="text-[13px] font-semibold text-token-secondary">官方推荐</span>
-                      <span className="text-[11px] text-token-muted">{officialItems.length} 个内置技能</span>
-                    </div>
-                    <div className="grid gap-4" style={gridStyle}>
-                      {officialItems.map(renderCard)}
-                    </div>
-                  </div>
-                )}
-                {communityItems.length > 0 && (
-                  <div>
-                    {officialItems.length > 0 && (
-                      <div className="flex items-center gap-2 mb-3">
-                        <Store size={14} className="text-token-muted" />
-                        <span className="text-[13px] font-semibold text-token-secondary">社区上传</span>
-                      </div>
-                    )}
-                    <div className="grid gap-4" style={gridStyle}>
-                      {communityItems.map(renderCard)}
-                    </div>
-                  </div>
-                )}
+                <div className="grid gap-4" style={gridStyle}>
+                  {filtered.map(renderCard)}
+                </div>
               </div>
             );
           })()
