@@ -1,15 +1,14 @@
 using MongoDB.Driver;
-using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
 /// <summary>
-/// 平台密钥完整性自检 —— 启动后及每 6 小时扫描全部启用平台，
-/// 用当前 Jwt:Secret 试解密 ApiKeyEncrypted。「密文存在但解出为空」
-/// 意味着部署环境的加密密钥与存量密文不匹配（典型诱因：CDS_JWT_SECRET
-/// 被轮换后容器重建）——此前这种故障完全静默，直到用户撞上 401 才暴露。
+/// 平台密钥完整性自检 —— 启动后及每 6 小时扫描全部启用平台和中继，
+/// 用 ApiKeyCrypto:Secret 钥匙环试解密 API key 密文。「密文存在但解出为空」
+/// 意味着部署环境的数据加密密钥与存量密文不匹配。
 ///
 /// 历史背景：2026-06-12 CDS 全局 CDS_JWT_SECRET 为修另一项目的 HS512 弱钥
 /// 被更换，跨项目穿透导致本系统 6 个平台 key 全部不可解密，模型池调用
@@ -62,17 +61,107 @@ public class PlatformKeyIntegrityWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-        var jwtSecret = _configuration["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-
         var platforms = await db.LLMPlatforms
             .Find(p => p.Enabled)
             .ToListAsync(ct);
 
-        var unreadable = platforms
-            .Where(p => !string.IsNullOrWhiteSpace(p.ApiKeyEncrypted)
-                && string.IsNullOrWhiteSpace(ApiKeyCrypto.Decrypt(p.ApiKeyEncrypted, jwtSecret)))
-            .Select(p => p.Name)
-            .ToList();
+        var exchanges = await db.ModelExchanges
+            .Find(e => e.Enabled)
+            .ToListAsync(ct);
+        var models = await db.LLMModels
+            .Find(m => m.Enabled)
+            .ToListAsync(ct);
+        var configs = await db.LLMConfigs
+            .Find(c => true)
+            .ToListAsync(ct);
+
+        var unreadable = new List<string>();
+        var rotated = 0;
+        var canRotate = ApiKeyCryptoKeyRing.HasDedicatedPrimarySecret(_configuration);
+
+        foreach (var platform in platforms.Where(p => !string.IsNullOrWhiteSpace(p.ApiKeyEncrypted)))
+        {
+            var result = ApiKeyCryptoKeyRing.Decrypt(platform.ApiKeyEncrypted, _configuration);
+            if (!result.Success)
+            {
+                unreadable.Add(platform.Name);
+                continue;
+            }
+
+            if (canRotate && result.UsedLegacySecret)
+            {
+                await db.LLMPlatforms.UpdateOneAsync(
+                    p => p.Id == platform.Id,
+                    Builders<LLMPlatform>.Update
+                        .Set(p => p.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(result.PlainText, _configuration))
+                        .Set(p => p.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+                rotated++;
+            }
+        }
+
+        foreach (var exchange in exchanges.Where(e => !string.IsNullOrWhiteSpace(e.TargetApiKeyEncrypted)))
+        {
+            var result = ApiKeyCryptoKeyRing.Decrypt(exchange.TargetApiKeyEncrypted, _configuration);
+            if (!result.Success)
+            {
+                unreadable.Add(exchange.Name);
+                continue;
+            }
+
+            if (canRotate && result.UsedLegacySecret)
+            {
+                await db.ModelExchanges.UpdateOneAsync(
+                    e => e.Id == exchange.Id,
+                    Builders<ModelExchange>.Update
+                        .Set(e => e.TargetApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(result.PlainText, _configuration))
+                        .Set(e => e.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+                rotated++;
+            }
+        }
+
+        foreach (var model in models.Where(m => !string.IsNullOrWhiteSpace(m.ApiKeyEncrypted)))
+        {
+            var result = ApiKeyCryptoKeyRing.Decrypt(model.ApiKeyEncrypted, _configuration);
+            if (!result.Success)
+            {
+                unreadable.Add($"模型:{model.Name}");
+                continue;
+            }
+
+            if (canRotate && result.UsedLegacySecret)
+            {
+                await db.LLMModels.UpdateOneAsync(
+                    m => m.Id == model.Id,
+                    Builders<LLMModel>.Update
+                        .Set(m => m.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(result.PlainText, _configuration))
+                        .Set(m => m.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+                rotated++;
+            }
+        }
+
+        foreach (var config in configs.Where(c => !string.IsNullOrWhiteSpace(c.ApiKeyEncrypted)))
+        {
+            var result = ApiKeyCryptoKeyRing.Decrypt(config.ApiKeyEncrypted, _configuration);
+            if (!result.Success)
+            {
+                unreadable.Add($"旧配置:{config.Provider}/{config.Model}");
+                continue;
+            }
+
+            if (canRotate && result.UsedLegacySecret)
+            {
+                await db.LLMConfigs.UpdateOneAsync(
+                    c => c.Id == config.Id,
+                    Builders<LLMConfig>.Update
+                        .Set(c => c.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(result.PlainText, _configuration))
+                        .Set(c => c.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+                rotated++;
+            }
+        }
 
         var existing = await db.AdminNotifications
             .Find(n => n.Key == NotificationKey && n.Status == "open")
@@ -89,21 +178,23 @@ public class PlatformKeyIntegrityWorker : BackgroundService
                         .Set(x => x.HandledAt, DateTime.UtcNow)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow),
                     cancellationToken: ct);
-                _logger.LogInformation("[PlatformKeyIntegrity] 平台密钥已恢复可解密，告警自动关闭");
+                _logger.LogInformation("[PlatformKeyIntegrity] 平台和中继密钥已恢复可解密，告警自动关闭");
             }
+            if (rotated > 0)
+                _logger.LogInformation("[PlatformKeyIntegrity] 已将 {Count} 个旧密文自动重加密到 ApiKeyCrypto:Secret", rotated);
             return;
         }
 
         var names = string.Join("、", unreadable);
         var message =
-            $"以下平台的 API key 用当前 Jwt:Secret 解密为空：{names}。" +
+            $"以下模型相关 API key 用当前 ApiKeyCrypto:Secret 钥匙环解密为空：{names}。" +
             "所有依赖这些平台的模型池调用将以空凭据请求上游（401）。" +
-            "典型原因：部署环境的 JWT_SECRET 被轮换（如 CDS 全局密钥变更后容器重建）。" +
-            "修复：恢复原 JWT_SECRET（或在 CDS 项目环境变量钉住 Jwt__Secret），" +
-            "或在 模型平台 重新保存各平台 API key。";
+            "典型原因：部署环境的数据加密密钥被轮换，或存量密文来自另一套历史密钥。" +
+            "修复：配置 ApiKeyCrypto__LegacySecrets 后重启触发自动迁移，" +
+            "或在模型平台重新保存各平台 API key。";
 
         _logger.LogError(
-            "[PlatformKeyIntegrity] {Count} 个平台 API key 无法解密：{Names}。环境加密密钥与存量密文不匹配，模型池调用将全部失败",
+            "[PlatformKeyIntegrity] {Count} 个模型相关 API key 无法解密：{Names}。环境数据加密密钥与存量密文不匹配，模型池调用将全部失败",
             unreadable.Count, names);
 
         var now = DateTime.UtcNow;

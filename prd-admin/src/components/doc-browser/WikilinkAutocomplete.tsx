@@ -31,7 +31,7 @@ interface Trigger {
 function detectTrigger(text: string, cursor: number): Trigger | null {
   const before = text.slice(0, cursor);
   // 先匹配 `[[` —— Obsidian 风格；优先级最高
-  const bracketMatch = before.match(/\[\[([^\[\]\n]*)$/);
+  const bracketMatch = before.match(/\[\[([^\][\n]*)$/);
   if (bracketMatch) {
     return { start: cursor - bracketMatch[0].length, query: bracketMatch[1], kind: 'bracket' };
   }

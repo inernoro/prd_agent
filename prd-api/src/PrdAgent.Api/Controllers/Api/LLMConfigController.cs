@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -60,7 +61,7 @@ public class LLMConfigController : ControllerBase
             c.EnablePromptCache,
             c.CreatedAt,
             c.UpdatedAt,
-            apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(c.ApiKeyEncrypted, GetJwtSecret()))
+            apiKeyMasked = ApiKeyCryptoKeyRing.Mask(c.ApiKeyEncrypted, _config)
         });
 
         return Ok(ApiResponse<object>.Ok(response));
@@ -77,7 +78,7 @@ public class LLMConfigController : ControllerBase
             Id = await _idGenerator.GenerateIdAsync("config"),
             Provider = request.Provider,
             Model = request.Model,
-            ApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()),
+            ApiKeyEncrypted = ApiKeyCryptoKeyRing.Encrypt(request.ApiKey, _config),
             ApiEndpoint = request.ApiEndpoint,
             MaxTokens = request.MaxTokens,
             Temperature = request.Temperature,
@@ -113,7 +114,7 @@ public class LLMConfigController : ControllerBase
 
         if (!string.IsNullOrEmpty(request.ApiKey))
         {
-            update = update.Set(c => c.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()));
+            update = update.Set(c => c.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(request.ApiKey, _config));
         }
 
         var result = await _db.LLMConfigs.UpdateOneAsync(c => c.Id == configId, update);
@@ -172,7 +173,6 @@ public class LLMConfigController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { configId, isActive = true }));
     }
 
-    private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }
 
 public class CreateLLMConfigRequest

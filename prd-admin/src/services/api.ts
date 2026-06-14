@@ -1164,6 +1164,11 @@ export const api = {
     shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
   },
+  // ============ Short Video Materials 短视频素材解析 ============
+  shortVideoMaterials: {
+    runs: () => '/api/short-video-materials/runs',
+    byId: (runId: string) => `/api/short-video-materials/runs/${runId}`,
+  },
   // ============ 公开主页（/u/:username 无需登录） ============
   publicProfile: {
     byUsername: (username: string) => `/api/public/u/${encodeURIComponent(username)}`,

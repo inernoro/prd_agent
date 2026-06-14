@@ -605,6 +605,23 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-short-video-parser',
+    name: '短视频解析',
+    description: '在知识库内把抖音/TikTok 等短视频链接解析成原始素材、字幕文稿和时间轴片段',
+    icon: 'Video',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'tool',
+    agentKey: 'short-video-parser',
+    routePath: '/document-store',
+    permission: 'document-store.write',
+    tags: ['短视频', '抖音', 'TikTok', '解析', '素材', '字幕', '时间轴', '知识库'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    createdByName: '官方',
+    wip: true,
+  },
   // ========== 普通版工具（统一对话界面，无独立存储与生命周期）==========
   {
     id: 'builtin-code-reviewer',
