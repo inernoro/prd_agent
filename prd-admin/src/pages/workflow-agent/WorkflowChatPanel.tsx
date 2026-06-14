@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
-import { Send, X, Code, CheckCircle2, Wand2, AlertTriangle } from 'lucide-react';
+import { Send, X, Code, CheckCircle2, Wand2, AlertTriangle, GitBranch, KeyRound, ListChecks } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useSseStream } from '@/lib/useSseStream';
@@ -7,7 +7,7 @@ import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { StreamingText } from '@/components/streaming';
 import { getChatHistory } from '@/services';
 import { api } from '@/services/api';
-import type { WorkflowChatGenerated } from '@/services/contracts/workflowAgent';
+import type { WorkflowChatGenerated, WorkflowValidationResult } from '@/services/contracts/workflowAgent';
 
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
@@ -41,6 +41,7 @@ interface UiMessage {
   content: string;
   generated?: WorkflowChatGenerated;
   generatedWorkflowId?: string;
+  validation?: WorkflowValidationResult;
   isStreaming?: boolean;
   timestamp: string;
 }
@@ -98,6 +99,16 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
         setMessages((prev) =>
           prev.map((m) =>
             m.id === id ? { ...m, generated: obj.generated } : m,
+          ),
+        );
+      },
+      workflow_validation: (data: unknown) => {
+        const obj = data as WorkflowValidationResult;
+        const id = assistantMsgIdRef.current;
+        if (!id) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id ? { ...m, validation: obj } : m,
           ),
         );
       },
@@ -523,6 +534,106 @@ function ChatMessage({
               应用到编辑器
             </Button>
           )}
+        </div>
+      )}
+
+      {/* 自动校验 / 接线 / 待补项 */}
+      {message.validation && <ValidationCard validation={message.validation} />}
+    </div>
+  );
+}
+
+// ─── 自动校验结果卡片 ───────────────────────────────────────
+
+function ValidationCard({ validation }: { validation: WorkflowValidationResult }) {
+  const { valid, issues, wireNotes, requiredInputs } = validation;
+  const hasNotes = wireNotes.length > 0;
+  const hasMissing = requiredInputs.length > 0;
+
+  return (
+    <div
+      style={{
+        background: valid ? 'rgba(59,130,246,0.06)' : 'rgba(234,179,8,0.08)',
+        border: `1px solid ${valid ? 'rgba(59,130,246,0.18)' : 'rgba(234,179,8,0.25)'}`,
+        borderRadius: 10,
+        padding: '10px 12px',
+        fontSize: 12,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+      }}
+    >
+      {/* 校验状态 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {valid ? (
+          <CheckCircle2 size={14} style={{ color: 'rgba(59,130,246,0.9)' }} />
+        ) : (
+          <AlertTriangle size={14} style={{ color: 'rgba(234,179,8,0.95)' }} />
+        )}
+        <span style={{ fontWeight: 600, color: 'rgba(255,255,255,0.9)' }}>
+          {valid ? '已自动校验 · 结构可执行' : '已自动校验 · 仍有需修正项'}
+        </span>
+      </div>
+
+      {/* 残留结构问题 */}
+      {issues.length > 0 && (
+        <ul style={{ margin: 0, paddingLeft: 18, color: 'rgba(234,179,8,0.95)', lineHeight: 1.6 }}>
+          {issues.map((it, i) => (
+            <li key={i}>{it.message}</li>
+          ))}
+        </ul>
+      )}
+
+      {/* 自动接线说明 */}
+      {hasNotes && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.55)', marginBottom: 3 }}>
+            <GitBranch size={12} />
+            <span>自动接线</span>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
+            {wireNotes.map((n, i) => (
+              <li key={i}>{n}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 待补齐项 */}
+      {hasMissing && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.7)', marginBottom: 4 }}>
+            <ListChecks size={12} />
+            <span style={{ fontWeight: 600 }}>补齐这 {requiredInputs.length} 项即可运行</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {requiredInputs.map((inp) => (
+              <div
+                key={`${inp.scope}-${inp.nodeId ?? ''}-${inp.key}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  borderRadius: 6,
+                  padding: '5px 8px',
+                }}
+              >
+                {inp.isSecret && <KeyRound size={11} style={{ color: 'rgba(234,179,8,0.9)', flexShrink: 0 }} />}
+                <span style={{ color: 'rgba(255,255,255,0.85)' }}>{inp.label}</span>
+                {inp.nodeName && (
+                  <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>· {inp.nodeName}</span>
+                )}
+                {inp.scope === 'variable' && (
+                  <span style={{ color: 'rgba(139,92,246,0.8)', fontSize: 11 }}>变量</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 4 }}>
+            打开对应节点配置填写；密钥项请填到工作流变量。
+          </div>
         </div>
       )}
     </div>

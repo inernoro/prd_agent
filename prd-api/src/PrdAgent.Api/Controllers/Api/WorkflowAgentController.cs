@@ -27,6 +27,7 @@ public class WorkflowAgentController : ControllerBase
     private readonly IRunEventStore _eventStore;
     private readonly ILlmGateway _gateway;
     private readonly WorkflowAiFillService _aiFillService;
+    private readonly PrdAgent.Core.Services.WorkflowValidationService _validation;
     private readonly ILogger<WorkflowAgentController> _logger;
 
     public WorkflowAgentController(
@@ -35,6 +36,7 @@ public class WorkflowAgentController : ControllerBase
         IRunEventStore eventStore,
         ILlmGateway gateway,
         WorkflowAiFillService aiFillService,
+        PrdAgent.Core.Services.WorkflowValidationService validation,
         ILogger<WorkflowAgentController> logger)
     {
         _db = db;
@@ -42,6 +44,7 @@ public class WorkflowAgentController : ControllerBase
         _eventStore = eventStore;
         _gateway = gateway;
         _aiFillService = aiFillService;
+        _validation = validation;
         _logger = logger;
     }
 
@@ -1718,7 +1721,7 @@ public class WorkflowAgentController : ControllerBase
                 try
                 {
                     var payload = JsonSerializer.Serialize(new { type = "delta", content = chunk.Content }, SseJsonOptions);
-                    await Response.WriteAsync($"event: message\ndata: {payload}\n\n");
+                    await Response.WriteAsync($"data: {payload}\n\n");
                     await Response.Body.FlushAsync();
                 }
                 catch (ObjectDisposedException) { break; }
@@ -1731,7 +1734,7 @@ public class WorkflowAgentController : ControllerBase
             try
             {
                 var errPayload = JsonSerializer.Serialize(new { type = "error", content = $"AI 服务异常: {ex.Message}" }, SseJsonOptions);
-                await Response.WriteAsync($"event: message\ndata: {errPayload}\n\n");
+                await Response.WriteAsync($"data: {errPayload}\n\n");
                 await Response.Body.FlushAsync();
             }
             catch { /* client disconnected */ }
@@ -1743,11 +1746,43 @@ public class WorkflowAgentController : ControllerBase
 
         if (generated != null)
         {
+            // 6.1 校验 → 自动接线 → 缺项扫描；结构有误则回喂 LLM 自愈（最多 2 轮）
+            SanitizeNodeConfigs(generated.Nodes ?? new());
+            var proc = _validation.Process(generated);
+
+            var healRound = 0;
+            while (!proc.Valid && healRound < 2)
+            {
+                healRound++;
+                await TryWriteChatSseAsync(new { type = "delta", content = $"\n\n_正在校验并自动修正工作流配置（第 {healRound} 轮）…_" });
+                var repaired = await TryRepairWorkflowAsync(generated, proc.Issues, userId, CancellationToken.None);
+                if (repaired == null) break;
+                SanitizeNodeConfigs(repaired.Nodes ?? new());
+                var reproc = _validation.Process(repaired);
+                // 仅当修正后问题更少（或全部消除）才采纳，避免越修越糟
+                if (reproc.Valid || reproc.Issues.Count < proc.Issues.Count)
+                {
+                    generated = repaired;
+                    proc = reproc;
+                }
+                else break;
+            }
+
             generated.IsNew = isNew;
+
+            // 6.2 推送校验结果（自动接线说明 + 待补项 + 残留问题）
+            await TryWriteChatSseAsync(new
+            {
+                type = "workflow_validation",
+                valid = proc.Valid,
+                issues = proc.Issues.Select(i => new { i.Target, i.Message }).ToList(),
+                wireNotes = proc.WireNotes,
+                requiredInputs = proc.RequiredInputs,
+            });
 
             if (isNew)
             {
-                // 新建场景：直接创建工作流
+                // 新建场景：直接创建工作流（已规范化插槽 + 自动接线）
                 var workflow = new Workflow
                 {
                     Name = generated.Name ?? "AI 生成的工作流",
@@ -1768,44 +1803,35 @@ public class WorkflowAgentController : ControllerBase
                     Builders<WorkflowChatMessage>.Update.Set(m => m.WorkflowId, workflow.Id),
                     cancellationToken: CancellationToken.None);
 
-                try
+                await TryWriteChatSseAsync(new
                 {
-                    var autoApplyPayload = JsonSerializer.Serialize(new
+                    type = "workflow_created",
+                    workflowId = workflow.Id,
+                    requiredInputs = proc.RequiredInputs,
+                    workflow = new
                     {
-                        type = "workflow_created",
-                        workflowId = workflow.Id,
-                        workflow = new
-                        {
-                            workflow.Id, workflow.Name, workflow.Description,
-                            workflow.Nodes, workflow.Edges, workflow.Variables,
-                        }
-                    }, SseJsonOptions);
-                    await Response.WriteAsync($"event: message\ndata: {autoApplyPayload}\n\n");
-                    await Response.Body.FlushAsync();
-                }
-                catch { /* client disconnected */ }
+                        workflow.Id, workflow.Name, workflow.Description,
+                        workflow.Nodes, workflow.Edges, workflow.Variables,
+                    }
+                });
 
-                _logger.LogInformation("[{AppKey}] Chat auto-created workflow: {WorkflowId}", AppKey, workflow.Id);
+                _logger.LogInformation("[{AppKey}] Chat auto-created workflow: {WorkflowId} valid={Valid} wired={Wired} missing={Missing}",
+                    AppKey, workflow.Id, proc.Valid, proc.WireNotes.Count, proc.RequiredInputs.Count);
             }
             else
             {
                 // 修改场景：返回 generated 供前端确认
-                try
+                await TryWriteChatSseAsync(new
                 {
-                    var confirmPayload = JsonSerializer.Serialize(new
+                    type = "workflow_generated",
+                    workflowId = request.WorkflowId,
+                    requiredInputs = proc.RequiredInputs,
+                    generated = new
                     {
-                        type = "workflow_generated",
-                        workflowId = request.WorkflowId,
-                        generated = new
-                        {
-                            generated.Name, generated.Description,
-                            generated.Nodes, generated.Edges, generated.Variables,
-                        }
-                    }, SseJsonOptions);
-                    await Response.WriteAsync($"event: message\ndata: {confirmPayload}\n\n");
-                    await Response.Body.FlushAsync();
-                }
-                catch { /* client disconnected */ }
+                        generated.Name, generated.Description,
+                        generated.Nodes, generated.Edges, generated.Variables,
+                    }
+                });
             }
         }
 
@@ -1822,13 +1848,85 @@ public class WorkflowAgentController : ControllerBase
         await _db.WorkflowChatMessages.InsertOneAsync(assistantMsg, cancellationToken: CancellationToken.None);
 
         // 8. 结束
+        await TryWriteChatSseAsync(new { type = "done" });
+    }
+
+    /// <summary>
+    /// 写一条工作流对话 SSE 事件（纯 data 行，前端按 data.type 分发；不带 event: 名）。
+    /// 客户端断开时静默跳过。
+    /// </summary>
+    private async Task TryWriteChatSseAsync(object data)
+    {
         try
         {
-            var donePayload = JsonSerializer.Serialize(new { type = "done" }, SseJsonOptions);
-            await Response.WriteAsync($"event: message\ndata: {donePayload}\n\n");
+            var payload = JsonSerializer.Serialize(data, SseJsonOptions);
+            await Response.WriteAsync($"data: {payload}\n\n");
             await Response.Body.FlushAsync();
         }
         catch { /* client disconnected */ }
+    }
+
+    /// <summary>
+    /// 结构校验失败时，把问题清单 + 当前配置回喂 LLM，请求一份修正版工作流 JSON。
+    /// compute-then-send：本方法只负责「修正生成」，不落库、不二次解析业务状态。
+    /// </summary>
+    private async Task<WorkflowChatGenerated?> TryRepairWorkflowAsync(
+        WorkflowChatGenerated broken,
+        List<PrdAgent.Core.Services.WorkflowValidationIssue> issues,
+        string userId,
+        CancellationToken ct)
+    {
+        var brokenJson = JsonSerializer.Serialize(new
+        {
+            broken.Name, broken.Description, broken.Nodes, broken.Edges, broken.Variables,
+        }, SseJsonOptions);
+        var issueText = string.Join("\n", issues.Select(i => $"- [{i.Target}] {i.Message}"));
+
+        var repairPrompt = $$"""
+            下面这份工作流配置存在结构问题，请修正后**只输出修正版 JSON**（用 ```json 包裹），不要任何解释文字。
+
+            ## 待修正问题
+            {{issueText}}
+
+            ## 当前配置
+            ```json
+            {{brokenJson}}
+            ```
+
+            ## 修正要求
+            - 停用/未开放的舱（如定时触发 timer、Webhook 接收）一律替换为可用舱：周期性运行改用「手动触发 manual-trigger」并在 description 注明计划（定时触发待开放）
+            - 删除指向不存在节点的连线，消除任何环
+            - 每个舱的必填字段给出合理值，或引用已在 variables 声明的变量（用双花括号包裹变量 key）
+            - 保持原有业务意图不变，只做最小修正
+            """;
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.WorkflowAgent.ChatRepair.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildChatSystemPrompt(null) },
+                    new JsonObject { ["role"] = "user", ["content"] = repairPrompt },
+                },
+                ["temperature"] = 0.1,
+            },
+            TimeoutSeconds = 60,
+            Context = new GatewayRequestContext { UserId = userId },
+        };
+
+        try
+        {
+            var response = await _gateway.SendAsync(gatewayRequest, ct);
+            return TryParseWorkflowFromResponse(response.Content ?? string.Empty);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[{AppKey}] Workflow repair LLM call failed", AppKey);
+            return null;
+        }
     }
 
     /// <summary>获取工作流对话历史</summary>
@@ -1963,9 +2061,10 @@ public class WorkflowAgentController : ControllerBase
         // 注入可用舱类型
         sb.AppendLine("## 可用舱类型");
         sb.AppendLine();
+        var disabledCapsules = new List<CapsuleTypeMeta>();
         foreach (var capsule in CapsuleTypeRegistry.All)
         {
-            if (capsule.DisabledReason != null) continue;
+            if (capsule.DisabledReason != null) { disabledCapsules.Add(capsule); continue; }
             sb.AppendLine($"### {capsule.Name} (typeKey: `{capsule.TypeKey}`, 类别: {capsule.Category})");
             sb.AppendLine($"描述: {capsule.Description}");
             if (capsule.ConfigSchema.Count > 0)
@@ -1987,6 +2086,17 @@ public class WorkflowAgentController : ControllerBase
                 sb.Append("输出插槽: ");
                 sb.AppendLine(string.Join(", ", capsule.DefaultOutputSlots.Select(s => $"`{s.SlotId}` ({s.DataType})")));
             }
+            sb.AppendLine();
+        }
+
+        // 暂未开放的能力：明确告知 AI 不要使用，避免造出跑不起来的工作流（no-rootless-tree）
+        if (disabledCapsules.Count > 0)
+        {
+            sb.AppendLine("## 暂未开放的能力（禁止使用）");
+            sb.AppendLine("以下舱尚未开放，**不要**在工作流里使用它们：");
+            foreach (var c in disabledCapsules)
+                sb.AppendLine($"- {c.Name}（`{c.TypeKey}`）：{c.DisabledReason}");
+            sb.AppendLine("如用户需要「定时/周期性运行」或「Webhook 触发」，请改用「手动触发（manual-trigger）」，并在 description 里注明计划（例如：计划每天 9 点运行，定时触发待开放）。");
             sb.AppendLine();
         }
 
@@ -2067,8 +2177,8 @@ public class WorkflowAgentController : ControllerBase
 
 ## 注意事项
 - nodeId 使用简短的 kebab-case，如 "node-1", "fetch-bugs", "export-csv"
-- 每个节点的 outputSlots 和 inputSlots 必须与舱类型的默认插槽匹配
-- edges 连接上游的 outputSlot 到下游的 inputSlot
+- **插槽与连线会由系统自动校验和补全**：你只需把 nodes 按执行顺序排列、给出 edges 的 sourceNodeId/targetNodeId 即可；slotId 可省略或写默认值，系统会按数据类型自动接线、自动修正错误的插槽 id
+- 必填配置字段务必给出合理值，或引用已在 variables 声明的变量；Cookie / Token / 密钥等敏感值声明为变量并设 isSecret:true（系统会提示用户补齐，你不要编造）
 - 变量引用格式为 {{变量key}}，可在节点 config 中使用
 - 如果用户只是在聊天不需要配置工作流，正常回复即可，不要输出 JSON
 """);

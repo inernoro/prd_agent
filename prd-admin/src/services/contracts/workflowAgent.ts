@@ -421,6 +421,30 @@ export interface WorkflowChatGenerated {
   isNew?: boolean;
 }
 
+/** AI 生成后仍需用户补齐才能跑的一项（必填配置或 secret 变量） */
+export interface WorkflowRequiredInput {
+  key: string;
+  label: string;
+  /** text | password | textarea | select | number 等 */
+  type: string;
+  required: boolean;
+  isSecret: boolean;
+  /** config = 节点配置字段 | variable = 工作流变量 */
+  scope: 'config' | 'variable';
+  nodeId?: string;
+  nodeName?: string;
+  helpTip?: string;
+  placeholder?: string;
+}
+
+/** 工作流校验/自动接线结果（SSE workflow_validation 事件） */
+export interface WorkflowValidationResult {
+  valid: boolean;
+  issues: { target: string; message: string }[];
+  wireNotes: string[];
+  requiredInputs: WorkflowRequiredInput[];
+}
+
 export type GetChatHistoryContract = (input: {
   workflowId: string;
   afterSeq?: number;
