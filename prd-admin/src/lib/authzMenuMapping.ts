@@ -124,6 +124,12 @@ export const menuList: MenuDef[] = [
     permissions: ['defect-agent.use', 'defect-agent.manage'],
   },
   {
+    appKey: 'tapd-bug-agent',
+    label: 'TAPD 缺陷自动提报',
+    icon: 'Bug',
+    permissions: ['tapd-bug-agent.use'],
+  },
+  {
     appKey: 'arena-agent',
     label: 'AI 竞技场智能体',
     icon: 'Swords',
@@ -283,6 +289,7 @@ export const allPermissions: PermissionDef[] = [
   { key: 'front-end-agent.use', label: '前端搭档智能体', description: 'API 接入、组件生成、前端报错诊断和视觉样式建议', category: 'use' },
   { key: 'defect-agent.use', label: '缺陷管理智能体', description: '提交和查看缺陷', category: 'use' },
   { key: 'defect-agent.manage', label: '缺陷管理智能体 - 管理', description: '设置模板、指派处理人', category: 'manage' },
+  { key: 'tapd-bug-agent.use', label: 'TAPD 缺陷自动提报', description: '整理并创建 TAPD 缺陷', category: 'use' },
   { key: 'arena-agent.use', label: 'AI 竞技场智能体', description: '模型盲评对战', category: 'use' },
   { key: 'ai-toolbox.use', label: 'AI 百宝箱', description: '使用 AI 百宝箱功能', category: 'use' },
   { key: 'ai-toolbox.manage', label: 'AI 百宝箱 - 管理', description: '管理工作流、配置等', category: 'manage' },

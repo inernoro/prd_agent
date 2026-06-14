@@ -75,6 +75,11 @@ public static class AdminPermissionCatalog
     public const string DefectAgentManage = "defect-agent.manage";
 
     /// <summary>
+    /// TAPD 缺陷自动提报智能体权限：整理并创建 TAPD 缺陷
+    /// </summary>
+    public const string TapdBugAgentUse = "tapd-bug-agent.use";
+
+    /// <summary>
     /// 视频 Agent 权限：文章转视频教程生成
     /// </summary>
     public const string VideoAgentUse = "video-agent.use";
@@ -206,6 +211,16 @@ public static class AdminPermissionCatalog
     public const string ProjectRouteAgentManage = "project-route-agent.manage";
 
     /// <summary>
+    /// 商品溯源智能体权限（普通用户）：业务知识问答 + 案例排查 + 代码差异对比
+    /// </summary>
+    public const string ChannelTraceAgentUse = "channel-trace-agent.use";
+
+    /// <summary>
+    /// 商品溯源智能体管理权限（管理员）：维护防窜物流业务知识库与线上问题案例
+    /// </summary>
+    public const string ChannelTraceAgentManage = "channel-trace-agent.manage";
+
+    /// <summary>
     /// 网页托管权限（读）：查看托管站点列表
     /// </summary>
     public const string WebPagesRead = "web-pages.read";
@@ -270,6 +285,12 @@ public static class AdminPermissionCatalog
     /// 项目管理-审计日志权限：查看项目操作留痕（合规/追溯，管理层级）
     /// </summary>
     public const string PmAgentAudit = "pm-agent.audit";
+
+    /// <summary>
+    /// 项目管理-全局总览权限：跨全公司项目的只读洞察看板（不论是否为干系人/成员均可见），
+    /// 给管理层提供全局掌控视角。仅查看分析、不做操作（管理层级，区别于 PmAgentUse）
+    /// </summary>
+    public const string PmAgentGlobal = "pm-agent.global";
 
     /// <summary>
     /// 产品管理智能体权限：产品/版本/需求/功能/客户的创建编辑、关系串联、知识图谱、缺陷追溯（普通用户级 Agent 权限）
@@ -351,6 +372,7 @@ public static class AdminPermissionCatalog
         new(LiteraryAgentUse, "文学创作智能体", "文章配图智能生成"),
         new(DefectAgentUse, "缺陷管理智能体", "提交和查看缺陷"),
         new(DefectAgentManage, "缺陷管理智能体-管理", "设置模板、指派、项目/Webhook管理"),
+        new(TapdBugAgentUse, "TAPD 缺陷自动提报智能体", "整理并创建 TAPD 缺陷"),
         new(VideoAgentUse, "视频创作智能体", "文章转视频教程生成"),
         new(ArenaAgentUse, "AI 竞技场智能体", "模型盲评对战"),
         new(AiToolboxUse, "AI 百宝箱", "使用 AI 百宝箱功能"),
@@ -418,6 +440,9 @@ public static class AdminPermissionCatalog
         new(ProjectRouteAgentUse, "项目路由智能体", "上传方案 md，自动识别应用/模块并定位仓库 routemap 项目路径"),
         new(ProjectRouteAgentManage, "项目路由智能体-管理", "维护公共站点说明 md 与仓库登记"),
 
+        new(ChannelTraceAgentUse, "商品溯源智能体", "防窜物流业务知识问答、线上问题案例排查、业务与代码差异对比"),
+        new(ChannelTraceAgentManage, "商品溯源智能体-管理", "维护防窜物流业务知识库与线上问题案例"),
+
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
         new(WebPagesViewAll, "网页托管-查看全部", "跨用户查看全部托管站点及阅读量/访客记录（高级权限）"),
@@ -436,6 +461,7 @@ public static class AdminPermissionCatalog
         new(PmAgentUse, "项目管理智能体", "项目立项、任务看板、甘特图与 AI 需求拆解"),
         new(PmAgentDashboard, "项目管理-组织NPSS看板", "查看公司级 NPSS 经营看板与奖金测算（仅授予管理层）"),
         new(PmAgentAudit, "项目管理-审计日志", "查看项目操作留痕审计日志（合规/追溯，仅授予管理层）"),
+        new(PmAgentGlobal, "项目管理-全局总览", "跨全公司项目只读洞察看板（全局掌控视角，仅授予管理层）"),
 
         new(ProductAgentUse, "产品管理智能体", "产品-版本-需求-功能-缺陷-客户全链路串联、知识图谱、知识库挂载"),
         new(ProductAgentManage, "产品管理-管理", "自定义表单模板与流程定义、删除产品等管理操作"),

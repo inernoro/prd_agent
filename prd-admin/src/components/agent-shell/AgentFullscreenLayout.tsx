@@ -4,9 +4,9 @@
  * 由 product-agent 的 ProductAgentLayout 抽取而来，供产品管理 / 项目管理等
  * 全屏智能体复用。深色画布，强调色可按智能体定制（产品=青色，项目=蓝色）。
  */
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
-import type { LucideIcon } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 
 export interface NavItem<K extends string = string> {
@@ -40,14 +40,35 @@ export function AgentFullscreenLayout<K extends string>({
   accent?: string;
   children: ReactNode;
 }) {
+  // 左侧导航可收起（释放横向空间）；纯 UI 偏好，sessionStorage 持久化（遵守 no-localstorage）
+  const [collapsed, setCollapsed] = useState(() => sessionStorage.getItem('agent-nav-collapsed') === '1');
+  const toggleCollapsed = () => setCollapsed((v) => {
+    const next = !v;
+    sessionStorage.setItem('agent-nav-collapsed', next ? '1' : '0');
+    return next;
+  });
+
   return (
     <div className="h-screen min-h-0 flex bg-[#0f1014]">
-      {/* 左侧导航 */}
-      <aside className="w-52 shrink-0 flex flex-col border-r border-white/10 bg-[#121317]">
-        <div className="px-4 py-4 border-b border-white/10 shrink-0">
-          {topSlot}
-          <div className="text-white font-semibold truncate">{title}</div>
-          {subtitle && <div className="text-[11px] text-white/40 mt-0.5 truncate">{subtitle}</div>}
+      {/* 左侧导航（可收起为图标条） */}
+      <aside className={`${collapsed ? 'w-14' : 'w-52'} shrink-0 flex flex-col border-r border-white/10 bg-[#121317] transition-[width] duration-150`}>
+        <div className={`${collapsed ? 'px-2' : 'px-4'} py-4 border-b border-white/10 shrink-0`}>
+          {!collapsed && topSlot}
+          <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between gap-2'}`}>
+            {!collapsed && (
+              <div className="min-w-0">
+                <div className="text-white font-semibold truncate">{title}</div>
+                {subtitle && <div className="text-[11px] text-white/40 mt-0.5 truncate">{subtitle}</div>}
+              </div>
+            )}
+            <button
+              onClick={toggleCollapsed}
+              title={collapsed ? '展开导航' : '收起导航'}
+              className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0"
+            >
+              {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
+          </div>
         </div>
         <nav className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-0.5" style={{ overscrollBehavior: 'contain' }}>
           {items
@@ -58,23 +79,22 @@ export function AgentFullscreenLayout<K extends string>({
               return (
                 <div key={it.key}>
                   {it.dividerBefore && (
-                    <>
-                      {it.groupLabel ? (
-                        <div className="px-3 pt-3 pb-1 text-[11px] font-medium text-white/40">{it.groupLabel}</div>
-                      ) : (
-                        <div className="my-1.5 mx-2 border-t border-white/10" />
-                      )}
-                    </>
+                    (it.groupLabel && !collapsed) ? (
+                      <div className="px-3 pt-3 pb-1 text-[11px] font-medium text-white/40">{it.groupLabel}</div>
+                    ) : (
+                      <div className="my-1.5 mx-2 border-t border-white/10" />
+                    )
                   )}
                   <button
                     onClick={() => onSelect(it.key)}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors border-l-2 ${
+                    title={collapsed ? it.label : undefined}
+                    className={`w-full flex items-center ${collapsed ? 'justify-center px-0' : 'gap-2.5 px-3'} py-2 rounded-lg text-sm transition-colors border-l-2 ${
                       isActive ? 'text-white' : 'text-white/55 hover:text-white hover:bg-white/5 border-transparent'
                     }`}
                     style={isActive ? { borderLeftColor: accent, background: `${accent}1A` } : undefined}
                   >
                     <Icon size={16} className="shrink-0" style={isActive ? { color: accent } : undefined} />
-                    <span className="truncate">{it.label}</span>
+                    {!collapsed && <span className="truncate">{it.label}</span>}
                   </button>
                 </div>
               );

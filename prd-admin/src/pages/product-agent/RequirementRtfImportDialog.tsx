@@ -14,7 +14,6 @@ import {
   type RtfImportRequirement,
 } from './requirementRtfImport';
 import { REQUIREMENT_SOURCE_RTF } from './requirementSource';
-import { applyFallbackProductToRows } from './requirementImportRouting';
 
 interface ParsedRequirementItem {
   file: File;
@@ -35,14 +34,12 @@ export function RequirementRtfImportDialog({
   onClose,
   onImported,
   crossProductRoute = false,
-  fallbackProductName,
 }: {
   productId: string;
   files: File[];
   onClose: () => void;
   onImported: () => Promise<void>;
   crossProductRoute?: boolean;
-  fallbackProductName?: string;
 }) {
   const [parsedFiles, setParsedFiles] = useState<ParsedFile[]>([]);
   const [parsing, setParsing] = useState(true);
@@ -194,12 +191,9 @@ export function RequirementRtfImportDialog({
     }
 
     setProgress(`正在写入 ${rows.length} 条需求`);
-    const rowsToImport = crossProductRoute
-      ? applyFallbackProductToRows(rows, fallbackProductName)
-      : rows;
     const imported = crossProductRoute
-      ? await importOverviewRequirements(rowsToImport)
-      : await importRequirements(productId, rowsToImport);
+      ? await importOverviewRequirements(rows)
+      : await importRequirements(productId, rows);
     setImporting(false);
     if (!imported.success) {
       setProgress(imported.error?.message ?? '导入失败');

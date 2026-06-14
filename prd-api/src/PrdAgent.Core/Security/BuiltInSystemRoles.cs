@@ -28,6 +28,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.LiteraryAgentUse,
                 AdminPermissionCatalog.DefectAgentUse,
                 AdminPermissionCatalog.DefectAgentManage,
+                AdminPermissionCatalog.TapdBugAgentUse,
                 AdminPermissionCatalog.VideoAgentUse,
                 AdminPermissionCatalog.ArenaAgentUse,
                 AdminPermissionCatalog.ReportAgentUse,
@@ -45,6 +46,8 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.PaAgentUse,
                 AdminPermissionCatalog.FrontEndAgentUse,
                 AdminPermissionCatalog.ProjectRouteAgentUse,
+                AdminPermissionCatalog.ChannelTraceAgentUse,
+                AdminPermissionCatalog.ChannelTraceAgentManage,
                 AdminPermissionCatalog.TaskTreeViewAll,
                 // 管理权限
                 AdminPermissionCatalog.ModelsRead,
@@ -76,6 +79,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.VisualAgentUse,
                 AdminPermissionCatalog.LiteraryAgentUse,
                 AdminPermissionCatalog.DefectAgentUse,
+                AdminPermissionCatalog.TapdBugAgentUse,
                 AdminPermissionCatalog.VideoAgentUse,
                 AdminPermissionCatalog.ArenaAgentUse,
                 AdminPermissionCatalog.ReportAgentUse,
@@ -91,6 +95,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.PaAgentUse,
                 AdminPermissionCatalog.FrontEndAgentUse,
                 AdminPermissionCatalog.ProjectRouteAgentUse,
+                AdminPermissionCatalog.ChannelTraceAgentUse,
                 // 只读管理权限
                 AdminPermissionCatalog.UsersRead,
                 AdminPermissionCatalog.GroupsRead,
@@ -116,6 +121,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.VisualAgentUse,
                 AdminPermissionCatalog.LiteraryAgentUse,
                 AdminPermissionCatalog.DefectAgentUse,
+                AdminPermissionCatalog.TapdBugAgentUse,
                 AdminPermissionCatalog.VideoAgentUse,
                 AdminPermissionCatalog.ArenaAgentUse,
                 AdminPermissionCatalog.ReportAgentUse,
@@ -132,6 +138,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.PaAgentUse,
                 AdminPermissionCatalog.FrontEndAgentUse,
                 AdminPermissionCatalog.ProjectRouteAgentUse,
+                AdminPermissionCatalog.ChannelTraceAgentUse,
                 // PRD Agent 读取提示词需要 settings.read，但不应默认展示"提示词管理"（前端已改为 prompts.write 才可见）
                 AdminPermissionCatalog.SettingsRead,
                 // 网页托管（基础功能，人人可用）

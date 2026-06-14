@@ -49,6 +49,8 @@ const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
 const FrontEndAgentPage = lazy(() => import('@/pages/front-end-agent').then(m => ({ default: m.FrontEndAgentPage })));
 const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
+const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
+const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
@@ -418,6 +420,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/tapd-bug-agent',
+    permission: 'tapd-bug-agent.use',
+    element: shellGuarded('tapd-bug-agent.use', <TapdBugReportPage />),
+    nav: {
+      label: 'TAPD 缺陷自动提报',
+      shortLabel: '提缺陷',
+      description: '口语描述转标准四要素，确认后自动创建 TAPD 缺陷',
+      icon: 'Bug',
+      section: 'toolbox',
+      appKey: 'tapd-bug-agent',
+      wip: true,
+      tags: ['TAPD', '缺陷', '提单', '测试', '智能体'],
+    },
+  },
+  {
     // 任务独立详情页（全屏路由，参数化子路由，不进导航）
     path: '/pm-agent/p/:projectId/task/:taskId',
     placement: 'fullscreen',
@@ -504,6 +521,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'project-route-agent',
       wip: true,
       tags: ['路由', 'routemap', '项目定位', '仓库', '方案'],
+    },
+  },
+  {
+    path: '/channel-trace-agent',
+    permission: 'channel-trace-agent.use',
+    element: shellGuarded('channel-trace-agent.use', <ChannelTraceAgentPage />),
+    nav: {
+      label: '商品溯源智能体',
+      shortLabel: '溯源',
+      description: '防窜物流业务知识问答、线上问题案例排查、业务规则与代码实现差异对比',
+      icon: 'PackageSearch',
+      section: 'toolbox',
+      appKey: 'channel-trace-agent',
+      wip: true,
+      tags: ['防窜', '物流', '溯源', '商品', '知识库', '排查', '代码对比'],
     },
   },
   {

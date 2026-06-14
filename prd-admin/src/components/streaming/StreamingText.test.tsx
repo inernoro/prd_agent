@@ -54,4 +54,25 @@ describe('StreamingText maxTailChars (尾部窗口 + 绝对 offset key 不闪烁
     expect(count).toBeLessThanOrEqual(11);
     expect(count).toBeGreaterThan(5);
   });
+
+  it('animateTailChars 不截断全文, 但只对尾部生成动画 span', () => {
+    const longText = ['起因说明', 'word '.repeat(200), '结尾结论'].join('\n');
+    const html = renderToStaticMarkup(
+      <StreamingText text={longText} streaming animateTailChars={60} cursor={false} />,
+    );
+    const textOnly = html.replace(/<[^>]+>/g, '');
+
+    expect(textOnly).toContain('起因说明');
+    expect(textOnly).toContain('结尾结论');
+    expect(countTokenSpans(html)).toBeLessThan(50);
+  });
+
+  it('block 模式输出块级换行约束类', () => {
+    const html = renderToStaticMarkup(
+      <StreamingText text={'第一行\n第二行'} streaming block cursor={false} />,
+    );
+
+    expect(html).toContain('streaming-text--block');
+    expect(html).toContain('<br/>');
+  });
 });
