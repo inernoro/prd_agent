@@ -150,6 +150,156 @@ public class ImageGenController : ControllerBase
     }
 
     /// <summary>
+    /// 视觉分镜台：把一段想法/文章拆成若干"镜头"，每镜产出一个关键帧图 prompt（喂给生图引擎渲染）
+    /// + 一个运动 prompt（预留给后续 image-to-video）。纯 LLM 调用；前端拿到后用现有生图链路渲染关键帧。
+    /// </summary>
+    [HttpPost("storyboard-script")]
+    public async Task<IActionResult> StoryboardScript([FromBody] StoryboardScriptRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var brief = (request?.Brief ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(brief))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先填写想法或文章内容"));
+        if (brief.Length > 20000) brief = brief[..20000];
+
+        var style = (request?.Style ?? string.Empty).Trim();
+        var sceneCount = Math.Clamp(request?.SceneCount ?? 0, 0, 12);
+
+        const string appCallerCode = AppCallerRegistry.VisualAgent.Storyboard.Script;
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: adminId,
+            ViewRole: "ADMIN",
+            DocumentChars: brief.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: null,
+            RequestType: "chat",
+            AppCallerCode: appCallerCode));
+
+        var countHint = sceneCount > 0
+            ? $"必须恰好拆成 {sceneCount} 个镜头。"
+            : "拆成 4-8 个镜头（按内容繁简自定）。";
+        var styleLine = string.IsNullOrWhiteSpace(style)
+            ? "（你自定一种最适合内容的统一视觉风格）"
+            : $"：{style}";
+
+        var systemPrompt =
+            "你是一位电影分镜导演 + 概念美术。把用户给的想法/文章拆成一组\"镜头\"，每个镜头先以一张关键帧静态图存在（后续可让它动起来）。\n"
+            + countHint + "\n\n"
+            + "每个镜头输出：\n"
+            + "- topic：中文小标题（不超过 8 字）\n"
+            + "- keyframePrompt：英文关键帧图生成 prompt，描述画面主体、构图、镜头景别（wide/medium/close-up）、光影、色调、质感，电影级，细节充分（30-60 词）\n"
+            + "- motionPrompt：英文运动 prompt，描述这张图动起来时的镜头运动与主体动作（10-25 词），预留给后续 image-to-video\n"
+            + "- duration：该镜头建议时长秒数（整数 3-8）\n\n"
+            + "整组镜头视觉风格必须高度统一" + styleLine + "。每个 keyframePrompt 里都要体现这个统一风格，保证人物/色调/质感连贯。\n\n"
+            + "只输出 JSON，不要解释、不要 markdown 代码块：\n"
+            + "{\"title\":\"整组分镜中文标题(不超过14字)\",\"style\":\"英文统一风格描述\",\"scenes\":[{\"topic\":\"..\",\"keyframePrompt\":\"..\",\"motionPrompt\":\"..\",\"duration\":5}]}";
+
+        var userMsg = string.IsNullOrWhiteSpace(style) ? brief : $"统一风格要求：{style}\n\n内容：\n{brief}";
+
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.Chat, null, ct);
+        if (!resolution.Success)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, $"模型调度失败：{resolution.ErrorMessage}"));
+
+        var resp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new System.Text.Json.Nodes.JsonObject
+            {
+                ["messages"] = new System.Text.Json.Nodes.JsonArray
+                {
+                    new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = userMsg },
+                },
+                ["temperature"] = 0.8,
+            },
+            TimeoutSeconds = 120,
+        }, resolution, ct);
+
+        if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, $"分镜生成失败：{resp.ErrorCode ?? "未知错误"}"));
+
+        var text = ExtractChatText(resp.Content);
+        var parsed = ParseStoryboard(text);
+        if (parsed == null || parsed.Scenes.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "分镜解析失败，请重试或调整描述"));
+
+        return Ok(ApiResponse<StoryboardScriptResponse>.Ok(parsed));
+    }
+
+    private static string ExtractChatText(string apiResponseJson)
+    {
+        try
+        {
+            var doc = System.Text.Json.Nodes.JsonNode.Parse(apiResponseJson)?.AsObject();
+            return doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>() ?? string.Empty;
+        }
+        catch { return apiResponseJson; }
+    }
+
+    private static StoryboardScriptResponse? ParseStoryboard(string text)
+    {
+        var t = (text ?? string.Empty).Trim();
+        var s = t.IndexOf('{');
+        var e = t.LastIndexOf('}');
+        if (s < 0 || e <= s) return null;
+        try
+        {
+            var obj = System.Text.Json.Nodes.JsonNode.Parse(t[s..(e + 1)])?.AsObject();
+            var arr = obj?["scenes"]?.AsArray();
+            if (obj == null || arr == null) return null;
+
+            var res = new StoryboardScriptResponse
+            {
+                Title = obj["title"]?.GetValue<string>()?.Trim() ?? "未命名分镜",
+                Style = obj["style"]?.GetValue<string>()?.Trim() ?? string.Empty,
+                Scenes = new List<StoryboardSceneDto>()
+            };
+
+            for (var i = 0; i < arr.Count; i++)
+            {
+                var it = arr[i]?.AsObject();
+                if (it == null) continue;
+                var kf = it["keyframePrompt"]?.GetValue<string>()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(kf)) continue;
+
+                var dur = 5;
+                var dn = it["duration"];
+                if (dn != null)
+                {
+                    try { dur = dn.GetValue<int>(); }
+                    catch
+                    {
+                        try { dur = (int)Math.Round(dn.GetValue<double>()); }
+                        catch
+                        {
+                            try { int.TryParse(dn.GetValue<string>(), out dur); } catch { /* keep default */ }
+                        }
+                    }
+                }
+                if (dur < 3) dur = 3;
+                if (dur > 8) dur = 8;
+
+                res.Scenes.Add(new StoryboardSceneDto
+                {
+                    Index = res.Scenes.Count,
+                    Topic = it["topic"]?.GetValue<string>()?.Trim() ?? $"镜头 {res.Scenes.Count + 1}",
+                    KeyframePrompt = kf,
+                    MotionPrompt = it["motionPrompt"]?.GetValue<string>()?.Trim() ?? string.Empty,
+                    Duration = dur
+                });
+            }
+
+            return res.Scenes.Count > 0 ? res : null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// 获取模型适配信息（尺寸选项、能力等，纯静态注册表查询，无需数据库）
     /// </summary>
     /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-4-turbo）</param>
@@ -1968,6 +2118,36 @@ public class ImageGenRunPlanItemInput
     public string Prompt { get; set; } = string.Empty;
     public int Count { get; set; } = 1;
     public string? Size { get; set; }
+}
+
+// ===== 视觉分镜台 storyboard-script =====
+
+public class StoryboardScriptRequest
+{
+    /// <summary>想法描述或整篇文章/PRD（必填）</summary>
+    public string? Brief { get; set; }
+
+    /// <summary>统一视觉风格（可选，留空让 AI 自定）</summary>
+    public string? Style { get; set; }
+
+    /// <summary>期望镜头数（可选，0 = 由 AI 自定 4-8 个）</summary>
+    public int? SceneCount { get; set; }
+}
+
+public class StoryboardScriptResponse
+{
+    public string Title { get; set; } = string.Empty;
+    public string Style { get; set; } = string.Empty;
+    public List<StoryboardSceneDto> Scenes { get; set; } = new();
+}
+
+public class StoryboardSceneDto
+{
+    public int Index { get; set; }
+    public string Topic { get; set; } = string.Empty;
+    public string KeyframePrompt { get; set; } = string.Empty;
+    public string MotionPrompt { get; set; } = string.Empty;
+    public int Duration { get; set; } = 5;
 }
 
 // ===== 多图组合生成 =====

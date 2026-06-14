@@ -381,6 +381,8 @@ export const api = {
       sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
       /** 获取所有生图场景的模型池（合并去重） */
       models: () => '/api/visual-agent/image-gen/models',
+      /** 视觉分镜台：把想法/文章拆成镜头（含每镜关键帧图 prompt + 运动 prompt） */
+      storyboardScript: () => '/api/visual-agent/image-gen/storyboard-script',
       /** 根据平台侧模型ID获取适配信息（尺寸选项等） */
       adapterInfo: (modelId: string) => `/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       /** Visual Agent 域内日志查询（避免跨权限调用 /api/logs/llm） */

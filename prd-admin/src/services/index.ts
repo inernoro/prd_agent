@@ -64,6 +64,7 @@ import type {
   PlanImageGenContract,
   RunImageGenBatchStreamContract,
   RunImageGenRunStreamContract,
+  ScriptStoryboardContract,
   StreamImageGenRunWithRetryContract,
 } from '@/services/contracts/imageGen';
 import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertModelLabGroupContract } from '@/services/contracts/modelLabGroups';
@@ -357,6 +358,7 @@ import {
   getImageGenRunReal,
   getImageGenSizeCapsReal,
   planImageGenReal,
+  scriptStoryboardReal,
   runImageGenBatchStreamReal,
   runImageGenRunStreamReal,
   streamImageGenRunWithRetryReal,
@@ -921,6 +923,7 @@ export const upsertModelLabModelSet: UpsertModelLabModelSetContract = withAuth(u
 export const runModelLabStream: RunModelLabStreamContract = withAuth(runModelLabStreamReal);
 
 export const planImageGen: PlanImageGenContract = withAuth(planImageGenReal);
+export const scriptStoryboard: ScriptStoryboardContract = withAuth(scriptStoryboardReal);
 export const clarifyImageGenPrompt: ClarifyImageGenPromptContract = withAuth(clarifyImageGenPromptReal);
 export const generateImageGen: GenerateImageGenContract = withAuth(generateImageGenReal);
 export const runImageGenBatchStream: RunImageGenBatchStreamContract = withAuth(runImageGenBatchStreamReal);

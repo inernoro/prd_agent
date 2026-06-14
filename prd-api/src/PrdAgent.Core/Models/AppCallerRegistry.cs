@@ -288,6 +288,21 @@ public static class VisualAgent
         public const string ExtractStyle = "visual-agent.image-gen.extract-style::vision";
     }
 
+    /// <summary>
+    /// 视觉分镜台（storyboard-first）：把想法/文章拆成镜头，每镜先以关键帧图存在。
+    /// 关键帧渲染复用 VisualAgent.Image.Text2Img 生图链路，这里只负责"拆镜 + 写每镜的图 prompt / 运动 prompt"。
+    /// </summary>
+    public static class Storyboard
+    {
+        [AppCallerMetadata(
+            "视觉分镜台-拆镜",
+            "把想法/文章拆成镜头，生成每镜关键帧图 prompt + 运动 prompt（预留 image-to-video）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ImageGen"
+        )]
+        public const string Script = "visual-agent.storyboard.script::chat";
+    }
+
     public static class Scene
     {
         [AppCallerMetadata(
