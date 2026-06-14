@@ -47,18 +47,22 @@ export function BatchBar({
       <div className="w-40">
         <UserSearchSelect value="" onChange={(uid) => uid && run('assign', { assigneeId: uid })} placeholder="选处理人" />
       </div>
-      <div className="w-px h-5 bg-white/15" />
-      <span className="text-[11px] text-white/50">分级</span>
-      {GRADES.map((g) => (
-        <button
-          key={g}
-          disabled={busy}
-          onClick={() => run('grade', { grade: g })}
-          className="px-2 py-1 rounded-md text-xs border text-white/60 border-white/10 hover:bg-white/10 disabled:opacity-50"
-        >
-          {ITEM_GRADE_LABEL[g]}
-        </button>
-      ))}
+      {entityType === 'requirement' && (
+        <>
+          <div className="w-px h-5 bg-white/15" />
+          <span className="text-[11px] text-white/50">分级</span>
+          {GRADES.map((g) => (
+            <button
+              key={g}
+              disabled={busy}
+              onClick={() => run('grade', { grade: g })}
+              className="px-2 py-1 rounded-md text-xs border text-white/60 border-white/10 hover:bg-white/10 disabled:opacity-50"
+            >
+              {ITEM_GRADE_LABEL[g]}
+            </button>
+          ))}
+        </>
+      )}
       <div className="w-px h-5 bg-white/15" />
       <button
         disabled={busy}

@@ -71,10 +71,23 @@ import type {
   UpdatePmRiskContract,
   DeletePmRiskContract,
   GetPmBurndownContract,
+  ListPmBriefingsContract,
+  GetPmBriefingContract,
+  DeletePmBriefingContract,
+  ToggleBriefingShareContract,
+  SaveBriefingToHostingContract,
+  ListBriefingStylesContract,
+  RestylePmBriefingContract,
+  RenamePmBriefingContract,
   GetPmMyTodosContract,
   GetPmAgentPreferencesContract,
   UpdatePmQuickActionsContract,
   GetPmReportSummaryContract,
+  GetPmKnowledgeOverviewContract,
+  ListPmKnowledgeEntriesContract,
+  GetPmKnowledgeEntryContentContract,
+  GetPmGlobalProjectsContract,
+  GetPmGlobalSummaryContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -262,9 +275,11 @@ export const deletePmGoalCycleReal: DeletePmGoalCycleContract = async (cycleId) 
 
 // ── 审计日志 ──
 export const listPmAuditLogsReal: ListPmAuditLogsContract = async (opts) => {
-  const { projectId, page = 1, pageSize = 50 } = opts ?? {};
+  const { projectId, keyword, method, page = 1, pageSize = 50 } = opts ?? {};
   const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (projectId) qs.set('projectId', projectId);
+  if (keyword && keyword.trim()) qs.set('keyword', keyword.trim());
+  if (method) qs.set('method', method);
   return await apiRequest(`${api.pm.auditLogs()}?${qs.toString()}`, { method: 'GET' });
 };
 
@@ -301,6 +316,32 @@ export const deletePmRiskReal: DeletePmRiskContract = async (riskId) => {
 
 export const getPmBurndownReal: GetPmBurndownContract = async (projectId) => {
   return await apiRequest(api.pm.projects.burndown(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+// ── 项目简报 ──
+export const listPmBriefingsReal: ListPmBriefingsContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.briefings(encodeURIComponent(projectId)), { method: 'GET' });
+};
+export const getPmBriefingReal: GetPmBriefingContract = async (briefingId) => {
+  return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'GET' });
+};
+export const deletePmBriefingReal: DeletePmBriefingContract = async (briefingId) => {
+  return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'DELETE' });
+};
+export const toggleBriefingShareReal: ToggleBriefingShareContract = async (briefingId, enabled) => {
+  return await apiRequest(api.pm.briefings.share(encodeURIComponent(briefingId)), { method: 'POST', body: { enabled } });
+};
+export const saveBriefingToHostingReal: SaveBriefingToHostingContract = async (briefingId) => {
+  return await apiRequest(api.pm.briefings.saveToHosting(encodeURIComponent(briefingId)), { method: 'POST', body: {} });
+};
+export const listBriefingStylesReal: ListBriefingStylesContract = async () => {
+  return await apiRequest(api.pm.briefings.styles(), { method: 'GET' });
+};
+export const restylePmBriefingReal: RestylePmBriefingContract = async (briefingId, style) => {
+  return await apiRequest(api.pm.briefings.restyle(encodeURIComponent(briefingId)), { method: 'POST', body: { style } });
+};
+export const renamePmBriefingReal: RenamePmBriefingContract = async (briefingId, title) => {
+  return await apiRequest(api.pm.briefings.item(encodeURIComponent(briefingId)), { method: 'PUT', body: { title } });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {
@@ -408,4 +449,39 @@ export const updatePmQuickActionsReal: UpdatePmQuickActionsContract = async (qui
 
 export const getPmReportSummaryReal: GetPmReportSummaryContract = async (scope) => {
   return await apiRequest(api.pm.reportsSummary(scope), { method: 'GET' });
+};
+
+// ── 全局知识库（管理层洞察，仅 pm-agent.dashboard）──
+
+export const getPmKnowledgeOverviewReal: GetPmKnowledgeOverviewContract = async () => {
+  return await apiRequest(api.pm.knowledgeOverview(), { method: 'GET' });
+};
+
+export const listPmKnowledgeEntriesReal: ListPmKnowledgeEntriesContract = async (filter) => {
+  const q = new URLSearchParams();
+  if (filter) {
+    for (const [k, v] of Object.entries(filter)) {
+      if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
+    }
+  }
+  return await apiRequest(api.pm.knowledgeEntries(q.toString()), { method: 'GET' });
+};
+
+export const getPmKnowledgeEntryContentReal: GetPmKnowledgeEntryContentContract = async (entryId) => {
+  return await apiRequest(api.pm.knowledgeEntryContent(encodeURIComponent(entryId)), { method: 'GET' });
+};
+
+// ── 全局总览（管理层只读洞察，跨全公司项目） ──
+
+export const getPmGlobalProjectsReal: GetPmGlobalProjectsContract = async (filters) => {
+  return await apiRequest(api.pm.globalProjects({
+    page: filters.page, pageSize: filters.pageSize, sort: filters.sort,
+    lifecycle: filters.lifecycle, type: filters.type, leaderId: filters.leaderId, health: filters.health, q: filters.q,
+  }), { method: 'GET' });
+};
+
+export const getPmGlobalSummaryReal: GetPmGlobalSummaryContract = async (filters) => {
+  return await apiRequest(api.pm.globalSummary({
+    lifecycle: filters.lifecycle, type: filters.type, leaderId: filters.leaderId, q: filters.q,
+  }), { method: 'GET' });
 };

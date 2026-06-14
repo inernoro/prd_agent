@@ -46,6 +46,8 @@ export type CdsEventType =
   | 'operator.request.completed'
   | 'operator.request.failed'
   | 'infra.flap.circuit-breaker'
+  // 2026-06-11:Agent 请求观测台 — 会话活动事件(创建/状态翻转/收发节点)
+  | 'agent-session.activity'
   | 'heartbeat';
 
 export type ConnectionState =
@@ -131,6 +133,14 @@ interface StoreState {
     ts: string;
     requestId?: string;
   } | null;
+  /** 2026-06-11:Agent 请求活动事件的最新 envelope(观测台据此静默刷新列表) */
+  lastAgentActivityEvent: {
+    ts: string;
+    projectId?: string;
+    sessionId?: string;
+    eventType?: string;
+    status?: string;
+  } | null;
   /** 连续失败次数(用于退避 + 是否进 disconnected) */
   consecutiveErrors: number;
   /** 最近一次错误 */
@@ -148,6 +158,7 @@ const INITIAL_STATE: StoreState = {
   lastFlapEvent: null,
   lastAccessRequestEvent: null,
   lastOperatorRequestEvent: null,
+  lastAgentActivityEvent: null,
   consecutiveErrors: 0,
   lastError: null,
 };
@@ -241,6 +252,8 @@ function openConnection(): void {
     'operator.request.completed',
     'operator.request.failed',
     'infra.flap.circuit-breaker',
+    // 2026-06-11:Agent 请求观测台实时行内更新
+    'agent-session.activity',
     'heartbeat',
   ];
   for (const type of types) {
@@ -352,6 +365,21 @@ function routeEvent(type: CdsEventType, envelope: CdsEventEnvelope): void {
           type: evtType,
           ts: envelope.ts,
           requestId: data.requestId ?? data.id,
+        },
+      });
+      break;
+    }
+    case 'agent-session.activity': {
+      const data = (envelope.data || {}) as {
+        projectId?: string; sessionId?: string; eventType?: string; status?: string;
+      };
+      setState({
+        lastAgentActivityEvent: {
+          ts: envelope.ts,
+          projectId: data.projectId,
+          sessionId: data.sessionId,
+          eventType: data.eventType,
+          status: data.status,
         },
       });
       break;

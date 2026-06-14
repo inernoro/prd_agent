@@ -162,6 +162,46 @@ function FadeIn({ children }: { children: React.ReactNode }) {
   return <span style={{ opacity: shown ? 1 : 0, transition: 'opacity 0.45s ease' }}>{children}</span>;
 }
 
+function getPeerSyncLabel(store: Pick<DocumentStore, 'peerSyncStatus' | 'peerSyncDirection'>) {
+  if (store.peerSyncStatus === 'syncing') return '正在跨系统同步';
+  if (store.peerSyncStatus === 'error') return '跨系统同步异常';
+  switch (store.peerSyncDirection) {
+    case 'both': return '双向同步';
+    case 'push': return '已发送到对端';
+    case 'pull': return '已从对端拉取';
+    case 'received': return '已接收对端同步';
+    default: return '已跨系统同步';
+  }
+}
+
+function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | DocumentStoreWithPreview; compact?: boolean }) {
+  if (!store.peerSyncStatus) return null;
+  const isError = store.peerSyncStatus === 'error';
+  const isSyncing = store.peerSyncStatus === 'syncing';
+  const Icon = isError ? AlertCircle : isSyncing ? FolderSync : store.peerSyncDirection === 'both' ? Network : Send;
+  const label = getPeerSyncLabel(store);
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full border font-semibold"
+      style={{
+        padding: compact ? '2px 7px' : '5px 9px',
+        fontSize: compact ? 9 : 11,
+        background: isError ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.12)',
+        borderColor: isError ? 'rgba(239,68,68,0.30)' : 'rgba(245,158,11,0.35)',
+        color: isError ? 'rgba(252,165,165,0.96)' : 'rgba(252,211,77,0.96)',
+      }}
+      title={[
+        label,
+        store.peerSyncNodeName ? `对端：${store.peerSyncNodeName}` : '',
+        store.peerSyncLastResult || '',
+      ].filter(Boolean).join('\n')}
+    >
+      <Icon size={compact ? 9 : 12} />
+      {label}
+    </span>
+  );
+}
+
 // ── 创建空间对话框 ──
 function CreateStoreDialog({ onClose, onCreated }: {
   onClose: () => void;
@@ -1017,7 +1057,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         }
         actions={
           <div className="flex items-center gap-2">
-            {/* 同步状态徽章：仅当本库已加入同步配对时显示（右上角） */}
+            <PeerSyncBadge store={store} />
+            {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示（右上角） */}
             <StoreSyncBadge storeId={store.id} onManage={onManageSync} />
             {/* 发布到智识殿堂开关 */}
             {store.isPublic ? (
@@ -1140,6 +1181,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           onRenameEntry={handleRenameEntry}
           onMoveEntry={handleMoveEntry}
           onSaveContent={handleSaveContent}
+          enableSelectionAi
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
           onCreateDocument={handleCreateDocument}
@@ -1538,8 +1580,14 @@ export function DocumentStorePage() {
       setSelectedStoreId(null);
       setTab(t as StoreTab);
       navigate(location.pathname, { replace: true });
+      return;
     }
-  }, [location.search, location.pathname, navigate]);
+    if (location.hash === '#guide-list') {
+      setSelectedStoreId(null);
+      setTab('mine');
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.search, location.hash, location.pathname, navigate]);
 
   // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
   const [search, setSearch] = useState<string>(() => sessionStorage.getItem('doc-store-search') ?? '');
@@ -2217,6 +2265,7 @@ export function DocumentStorePage() {
                                 <Share2 size={9} /> 已分享
                               </span>
                             )}
+                            <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
                           </div>
                           {/* 副标题行：分类(首个标签) · N 篇文章 —— 复刻设计稿图1 */}
                           <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>

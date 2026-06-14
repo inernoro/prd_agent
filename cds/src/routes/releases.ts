@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
 import type { ReleaseTarget } from '../types.js';
-import { ReleaseService } from '../services/release-service.js';
+import { ReleaseService, probeHealthcheckStatus } from '../services/release-service.js';
 import { releaseEvents } from '../services/release-events.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { assertProjectAccess } from './projects.js';
@@ -222,7 +222,39 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     }
     if (rejectProjectMismatch(req, res, existing.projectId)) return;
     try {
-      const run = await service.startRollback(req.params.id, resolveActorFromRequest(req));
+      const body = (req.body || {}) as Record<string, unknown>;
+      const targetReleaseId = typeof body.targetReleaseId === 'string' && body.targetReleaseId.trim()
+        ? body.targetReleaseId.trim()
+        : undefined;
+      if (targetReleaseId) {
+        const targetRun = deps.stateService.getReleaseRun(targetReleaseId);
+        if (!targetRun) {
+          res.status(404).json({ error: 'rollback target release run not found' });
+          return;
+        }
+        if (rejectProjectMismatch(req, res, targetRun.projectId)) return;
+      }
+      const run = await service.startRollback(req.params.id, resolveActorFromRequest(req), targetReleaseId);
+      res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/releases/runs/:id/retry', async (req, res) => {
+    const source = deps.stateService.getReleaseRun(req.params.id);
+    if (!source) {
+      res.status(404).json({ error: 'ReleaseRun not found' });
+      return;
+    }
+    if (rejectProjectMismatch(req, res, source.projectId)) return;
+    try {
+      const run = await service.startRelease({
+        branchId: source.branchId,
+        targetId: source.targetId,
+        previewUrl: source.artifact?.previewUrl || '',
+        operator: resolveActorFromRequest(req),
+      });
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
@@ -264,27 +296,38 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     });
   });
 
-  router.get('/releases/center', (req, res) => {
+  router.get('/releases/center', async (req, res) => {
     const projectId = resolveReadableProjectId(req, res);
     if (projectId === false) return;
     if (projectId) service.ensureDefaultPlans(projectId);
     const targets = deps.stateService.getReleaseTargets(projectId);
     const runs = deps.stateService.getReleaseRuns(projectId ? { projectId } : {});
-    const rows = targets.map((target) => {
+    const rows = await Promise.all(targets.map(async (target) => {
       const targetRuns = runs.filter((run) => run.targetId === target.id);
-      const current = targetRuns.find((run) => run.status === 'success');
+      const successfulRuns = targetRuns.filter((run) => run.status === 'success' || run.status === 'rollback_success');
+      const current = successfulRuns[0];
       const latest = targetRuns[0];
+      const latestIsSuccessful = latest ? ['success', 'rollback_success'].includes(latest.status) : false;
+      const rollbackDefaultReleaseId = latestIsSuccessful && latest
+        ? deps.stateService.getLatestSuccessfulReleaseRun(target.id, latest.releaseId)?.releaseId || ''
+        : successfulRuns[0]?.releaseId || '';
+      const health = target.ssh?.healthcheckUrl
+        ? await probeHealthcheckStatus(target.ssh.healthcheckUrl, 2_500)
+        : { status: 'unknown' as const, url: '', checkedAt: new Date().toISOString(), message: '未配置健康检查 URL' };
       return {
         target,
         currentVersion: current?.releaseId || '',
         currentCommit: current?.commitSha || '',
         latestRun: latest,
         lastReleasedAt: current?.finishedAt || current?.startedAt || '',
-        healthStatus: latest?.status === 'success' ? 'healthy' : latest?.status?.includes('failed') ? 'failed' : latest?.status || 'unknown',
+        health,
+        healthStatus: health.status,
         lastOperator: latest?.operator || '',
-        canRollback: Boolean(current?.previousReleaseId || deps.stateService.getLatestSuccessfulReleaseRun(target.id, current?.releaseId)),
+        canRollback: Boolean(rollbackDefaultReleaseId),
+        successfulRuns: successfulRuns.slice(0, 20),
+        rollbackDefaultReleaseId,
       };
-    });
+    }));
     res.json({ rows, plans: deps.stateService.getReleasePlans(projectId), runs: runs.slice(0, 50) });
   });
 

@@ -4657,7 +4657,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!['select', 'show', 'describe', 'desc', 'explain'].includes(head)) {
       throw new Error('第一阶段 SQL Console 只允许 SELECT / SHOW / DESCRIBE / EXPLAIN');
     }
-    if (head === 'select' && /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|set|use|load|outfile|dumpfile|lock|unlock)\b/i.test(withoutTrailing)) {
+    // 危险关键字检查必须覆盖全部放行语句头，不只 select：PostgreSQL 的
+    // EXPLAIN ANALYZE UPDATE ... 会真实执行底层 UPDATE，仅查 select 头会被
+    // 绕过 /data/query-write 的 data-write 权限与确认门（PR #799 Codex P1）
+    if (/\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|set|use|load|outfile|dumpfile|lock|unlock)\b/i.test(withoutTrailing)) {
       throw new Error('检测到写入或高风险关键字，已拒绝执行');
     }
     return withoutTrailing;
@@ -4937,7 +4940,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (withoutTrailing.includes(';')) {
       throw new Error('MongoDB Console 一次只允许执行一条命令');
     }
-    if (/\b(insert|insertOne|insertMany|update|updateOne|updateMany|delete|deleteOne|deleteMany|drop|dropDatabase|dropCollection|create|createCollection|aggregate|mapReduce|eval|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer)\b/i.test(withoutTrailing) || /\$where\b/i.test(withoutTrailing)) {
+    if (/\b(insert|insertOne|insertMany|update|updateOne|updateMany|delete|deleteOne|deleteMany|drop|dropDatabase|dropCollection|create|createCollection|aggregate|mapReduce|eval|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer)\b/i.test(withoutTrailing) || /\$where/i.test(withoutTrailing)) {
       throw new Error('MongoDB Console 当前只允许只读 find 查询');
     }
 

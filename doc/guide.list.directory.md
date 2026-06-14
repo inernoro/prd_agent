@@ -263,6 +263,9 @@
 - [知识库跨环境同步设计](design.document-store-sync) `design.document-store-sync`
   > 任一知识库与另一处库（跨环境/本环境两库）永久令牌配对、单/双向手动同步、血缘 ID 幂等 upsert、签名快照改动检测；含组件架构/数据流/双向决策架构图
 
+- [知识库引用网络设计](design.knowledge-base-mention-network) `design.knowledge-base-mention-network`
+  > mentions 通用 @ 账本 + WikiLinkParser 双链解析 + 反向链接面板 + WikilinkHoverCard + 宇宙图 Graph View 架构设计；MVP 仅 document→document，v2 候选跨实体/AI 补链
+
 - [涌现探索器设计](design.emergence-explorer) `design.emergence-explorer`
   > 种子→探索→涌现三维度 + SSE 流式 + ReactFlow 画布的架构设计
 
@@ -711,6 +714,8 @@
   > 4 条 open：OpenRouter CDN 7 天过期、混合渲染 ffmpeg normalize、直出心跳文案分级、成本预估 tooltip
 - [知识库划词评论（批注栏/内联 + 就地输入 + 回读闭环）· 债务台账](debt.kb-inline-comment) `debt.kb-inline-comment`
   > 6 条边界：图片批注未做、inline 卡片定位 MVP、批注栏按时间非锚点排序、批注栏/TOC 互斥、回读为轮询、偏好走 localStorage
+- [知识库划词 AI 局部编辑（AI 改写 + 选区配图）· 债务台账](debt.kb-selection-ai) `debt.kb-selection-ai`
+  > 8 条边界：歧义选区禁替换、无撤销、无乐观锁、配图定位失败落文末、动作集首批 5 个、仅文本类条目、编辑态无入口、后端编译依赖 CDS
 
 - [工作流 Agent · 债务台账](debt.workflow-agent) `debt.workflow-agent`
   > 7 条 open：video-to-text asr 模式 ASR 池绑定 / maxItems 硬编码 / LlmRequestContext / 转写失败兜底 / ffmpeg 检测 / Play 后无返回 / count 与 maxItems 联动
@@ -738,10 +743,16 @@
   > 5 条 open：--write 重序列化丢注释 / 自愈覆盖面有限 / 占位值需人工 / 真机冒烟依赖 CDS / 发布脚本需真实 owner
 
 - [演讲智能体 · 债务台账](debt.speech-agent) `debt.speech-agent`
+
+- [团队动态（团队脉搏）· 债务台账](debt.team-activity) `debt.team-activity`
+  > 6 条边界：排行按原始计数可刷量 / 直方图近 5000 条采样 / 整小时时区近似 / 环比同长上一窗 / TargetUrl 深链未通 / 鉴权态验收依赖人工
   > 11 条 open：输入仅支持粘贴 / 视图非画布 / 无 Run-Worker / 无配图 / 无备注 / 无播放态 / 无发布 / 白天主题待适配 / 无节点增删 / 无 chunk / CDS 自测待补
 
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
+
+- [知识库引用网络 · 债务台账](debt.knowledge-base-mention-network) `debt.knowledge-base-mention-network`
+  > 双链/反向链接/宇宙图 MVP 后续债务：跨实体引用、AI 自动补链、时间轴回放等候选项
 
 - [网页托管 · 债务台账](debt.web-hosting) `debt.web-hosting`
   > 3 条 open：reveal 纵向子页 remap / 合成事件 isTrusted=false 长尾 / 未覆盖工作流生成内容

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List, User, BarChart3, Award, CalendarRange } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List, User, BarChart3, Award, CalendarRange, GripVertical, ArrowUp, ArrowDown } from 'lucide-react';
 import { GoalsDashboard } from './goals-canvas/GoalsDashboard';
+import { GoalDetailDrawer } from './goals-canvas/GoalDetailDrawer';
 
 const CONFIDENCE_DOT: Record<string, { label: string; color: string }> = {
   high: { label: '信心高', color: '#10B981' }, medium: { label: '信心中', color: '#F59E0B' }, low: { label: '信心低', color: '#EF4444' },
@@ -16,6 +17,9 @@ import { GOAL_STATUS_REGISTRY, GOAL_SCOPE, MILESTONE_HEALTH_REGISTRY, GOAL_MAX_D
 import { GoalsCanvas } from './goals-canvas/GoalsCanvas';
 import { GoalDecomposePanel } from './GoalDecomposePanel';
 import { CycleManagerModal } from './CycleManagerModal';
+import { useFormDraft, pmDraftKey } from './useFormDraft';
+import { DraftRestoreBar } from './DraftRestoreBar';
+import { midOrderKey } from './orderKeyUtils';
 
 interface Props {
   projectId: string;
@@ -28,6 +32,8 @@ interface Props {
   /** 目标画布反查列表点击跳转 */
   onNavigateTask?: (taskId: string) => void;
   onNavigateWeekly?: (reportId: string) => void;
+  /** 目标侧操作可能联动里程碑（设为/取消里程碑、删除目标），通知父级刷新 milestones，否则「里程碑」tab 看到的是旧数据 */
+  onMilestonesChanged?: () => void;
 }
 
 const STATUS_KEYS: PmGoalStatus[] = ['on_track', 'at_risk', 'done', 'abandoned'];
@@ -42,19 +48,22 @@ function fmtDate(s?: string | null) {
  * 项目目标 —— 以业务目标为北极星，团队目标（全员可见）+ 我的个人目标（仅本人）。
  * 团队目标进度可由关联里程碑自动滚动（auto）或手填（manual）。团队目标写操作限项目经理。
  */
-export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalChange, onNavigateTask, onNavigateWeekly }: Props) {
+export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalChange, onNavigateTask, onNavigateWeekly, onMilestonesChanged }: Props) {
   const [goals, setGoals] = useState<PmGoal[]>([]);
   const [milestones, setMilestones] = useState<PmMilestone[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null); // null | `new:{scope}:{parentId|root}` | id
   const [draft, setDraft] = useState<SavePmGoalInput>({});
+  const [pristineDraft, setPristineDraft] = useState<SavePmGoalInput>({}); // 编辑起点，供草稿「是否改动过」判定 + 放弃还原
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [view, setView] = useState<'canvas' | 'list' | 'dashboard'>('canvas');
   const [cycles, setCycles] = useState<PmGoalCycle[]>([]);
   const [showCycleMgr, setShowCycleMgr] = useState(false);
   // AI 拆解目标：null=未打开；{scope} 项目级拆顶层；{parentGoalId,...} 针对某目标拆子目标
   const [aiTarget, setAiTarget] = useState<{ parentGoalId?: string; parentTitle?: string; scope: PmGoalScope } | null>(null);
+  // 仪表盘视图点卡片 → 打开与画布同一个目标详情抽屉（三视图编辑同源同步）
+  const [dashboardGoal, setDashboardGoal] = useState<PmGoal | null>(null);
 
   const load = useCallback(async () => {
     const [gr, mr, cr] = await Promise.all([listPmGoals(projectId), listPmMilestones(projectId), listPmGoalCycles(projectId)]);
@@ -103,20 +112,34 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
     [milestones],
   );
 
-  const startCreate = (scope: PmGoalScope, parentId?: string) => {
+  // 草稿缓存：编辑目标时误关/误跳页后重开自动恢复
+  const { hasDraft, clearDraft, dismissHint } = useFormDraft({
+    key: editing ? pmDraftKey('goal', projectId, editing) : null,
+    value: draft,
+    pristine: pristineDraft,
+    onRestore: (s) => setDraft(s),
+  });
+
+  const startCreate = (scope: PmGoalScope, parentId?: string, orderKey?: number) => {
+    const init: SavePmGoalInput = { scope, parentId, status: 'on_track', progress: 0, progressMode: 'auto', ...(orderKey != null ? { orderKey } : {}) };
     setEditing(`new:${scope}:${parentId ?? 'root'}`);
-    setDraft({ scope, parentId, status: 'on_track', progress: 0, progressMode: 'auto' });
+    setDraft(init); setPristineDraft(init);
     if (parentId) setExpanded((prev) => new Set(prev).add(parentId));
   };
-  const startEdit = (g: PmGoal) => { setEditing(g.id); setDraft({ title: g.title, description: g.description || '', metric: g.metric || '', period: g.period || '', progress: g.progress, progressMode: g.progressMode, status: g.status }); };
-  const cancelEdit = () => { setEditing(null); setDraft({}); };
+  const startEdit = (g: PmGoal) => {
+    const init: SavePmGoalInput = { title: g.title, description: g.description || '', metric: g.metric || '', period: g.period || '', progress: g.progress, progressMode: g.progressMode, status: g.status };
+    setEditing(g.id); setDraft(init); setPristineDraft(init);
+  };
+  const cancelEdit = () => { clearDraft(); setEditing(null); setDraft({}); };
 
   const saveDraft = async () => {
     if (!draft.title?.trim()) { toast.error('请填写目标标题', ''); return; }
     if (!editing) return;
     setBusyId(editing);
     const res = editing.startsWith('new:') ? await createPmGoal(projectId, draft) : await updatePmGoal(editing, draft);
-    if (res.success) { toast.success(editing.startsWith('new:') ? '已新增' : '已保存', ''); cancelEdit(); await load(); }
+    // 目标标题/描述/负责人改动会级联到联动里程碑(AutoFromGoal)，且里程碑「关联目标」下拉读实时标题，
+    // 故保存后必须通知父级一并刷新 goals + milestones，否则切到「里程碑」tab 看到的是旧目标名
+    if (res.success) { clearDraft(); toast.success(editing.startsWith('new:') ? '已新增' : '已保存', ''); cancelEdit(); await load(); onMilestonesChanged?.(); }
     else toast.error('保存失败', res.error?.message || '');
     setBusyId(null);
   };
@@ -137,7 +160,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
 
   const toggleGoalMilestone = async (g: PmGoal) => {
     const res = await setGoalAsMilestone(g.id, !g.isMilestone);
-    if (res.success) { toast.success(g.isMilestone ? '已取消里程碑' : '已设为里程碑', g.isMilestone ? '' : '已在「里程碑」同步显示'); await load(); }
+    if (res.success) { toast.success(g.isMilestone ? '已取消里程碑' : '已设为里程碑', g.isMilestone ? '' : '已在「里程碑」同步显示'); await load(); onMilestonesChanged?.(); }
     else toast.error('操作失败', res.error?.message || '');
   };
 
@@ -149,9 +172,39 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
     if (!window.confirm(msg)) return;
     setBusyId(g.id);
     const res = await deletePmGoal(g.id);
-    if (res.success) { await load(); } // 级联删子树，重新拉取以反映整棵子树移除
+    if (res.success) { await load(); onMilestonesChanged?.(); } // 级联删子树 + 联动里程碑，父级 milestones 一并刷新
     else toast.error('删除失败', res.error?.message || '');
     setBusyId(null);
+  };
+
+  // 同级目标排序：同一父目标（或同为顶层）+ 同范围的兄弟，按 orderKey 排序
+  const normParent = useCallback((g: PmGoal) => (g.parentId && idSet.has(g.parentId) ? g.parentId : null), [idSet]);
+  const siblingsOf = useCallback(
+    (g: PmGoal) => goals.filter((x) => x.scope === g.scope && normParent(x) === normParent(g)).sort((a, b) => (a.orderKey ?? 0) - (b.orderKey ?? 0)),
+    [goals, normParent],
+  );
+  const [dragGoalId, setDragGoalId] = useState<string | null>(null);
+
+  // 拖拽重排：把 dragId 放到 target 之前（仅限同级兄弟）
+  const reorderGoal = async (dragId: string, target: PmGoal) => {
+    if (dragId === target.id) return;
+    const dragged = goals.find((x) => x.id === dragId);
+    if (!dragged || dragged.scope !== target.scope || normParent(dragged) !== normParent(target)) return; // 非同级不处理
+    const sibs = siblingsOf(target).filter((x) => x.id !== dragId);
+    const idx = sibs.findIndex((x) => x.id === target.id);
+    const newKey = midOrderKey(idx > 0 ? sibs[idx - 1].orderKey : null, target.orderKey);
+    const res = await updatePmGoal(dragId, { orderKey: newKey });
+    if (res.success) await load(); else toast.error('排序失败', res.error?.message || '');
+  };
+
+  // 向上/向下添加同级目标：在相邻兄弟间取 orderKey 中值定位插入点
+  const addSibling = (g: PmGoal, dir: 'above' | 'below') => {
+    const sibs = siblingsOf(g);
+    const i = sibs.findIndex((x) => x.id === g.id);
+    const key = dir === 'above'
+      ? midOrderKey(i > 0 ? sibs[i - 1].orderKey : null, g.orderKey)
+      : midOrderKey(g.orderKey, i < sibs.length - 1 ? sibs[i + 1].orderKey : null);
+    startCreate(g.scope, normParent(g) ?? undefined, key);
   };
 
   if (loading) return <div className="flex-1 min-h-0 flex items-center justify-center"><MapSectionLoader text="正在加载目标…" /></div>;
@@ -160,6 +213,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
     const mode = draft.progressMode ?? 'auto';
     return (
       <div className="rounded-lg border p-3 flex flex-col gap-2" style={{ borderColor: 'var(--border-strong)', background: 'var(--bg-elevated)' }}>
+        {hasDraft && <DraftRestoreBar onDiscard={() => { setDraft(pristineDraft); clearDraft(); }} onDismiss={dismissHint} />}
         <input autoFocus value={draft.title || ''} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} placeholder="目标标题"
           className="w-full text-[13px] rounded-md px-2 py-1.5 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
         <textarea value={draft.description || ''} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} placeholder="目标描述（可选）" rows={2}
@@ -206,21 +260,42 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
     if (editing === g.id) return renderEditor(g.id);
     const st = GOAL_STATUS_REGISTRY[g.status];
     const canHaveChildren = depth + 1 < GOAL_MAX_DEPTH;
+    const isDragging = dragGoalId === g.id;
     return (
-      <div className="group rounded-lg border p-3 flex flex-col gap-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+      <div
+        className="group rounded-lg border p-3 flex flex-col gap-2"
+        style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', opacity: isDragging ? 0.5 : 1 }}
+        onDragOver={canWrite && dragGoalId ? (e) => { e.preventDefault(); } : undefined}
+        onDrop={canWrite && dragGoalId ? (e) => { e.preventDefault(); e.stopPropagation(); const id = dragGoalId; setDragGoalId(null); if (id) reorderGoal(id, g); } : undefined}
+      >
         <div className="flex items-start gap-2">
+          {canWrite && (
+            <span
+              draggable
+              onDragStart={(e) => { e.stopPropagation(); setDragGoalId(g.id); e.dataTransfer.effectAllowed = 'move'; }}
+              onDragEnd={() => setDragGoalId(null)}
+              className="shrink-0 cursor-grab active:cursor-grabbing pt-0.5 opacity-0 group-hover:opacity-100"
+              style={{ color: 'var(--text-muted)' }}
+              title="拖拽调整同级顺序"
+            ><GripVertical size={14} /></span>
+          )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
               {depth > 0 && (
                 <span className="text-[9.5px] px-1 py-0.5 rounded shrink-0 tabular-nums" style={{ background: 'var(--bg-base)', color: 'var(--text-muted)' }}>L{depth + 1}</span>
               )}
               <span className="text-[13px] font-medium break-words" style={{ color: 'var(--text-primary)' }}>{g.title}</span>
+              {g.isMilestone && (
+                <span className="text-[9.5px] px-1 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5" style={{ background: 'rgba(168,85,247,0.14)', color: '#A855F7' }} title="已设为里程碑，在「里程碑」同步显示"><Flag size={9} />里程碑</span>
+              )}
             </div>
             {g.description && <div className="text-[11.5px] mt-0.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>{g.description}</div>}
           </div>
           <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: `${st.color}22`, color: st.color }}>{st.label}</span>
           {canWrite && (
             <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
+              <button onClick={() => addSibling(g, 'above')} className="p-1 rounded" title="在上方添加同级目标" style={{ color: 'var(--text-muted)' }}><ArrowUp size={13} /></button>
+              <button onClick={() => addSibling(g, 'below')} className="p-1 rounded" title="在下方添加同级目标" style={{ color: 'var(--text-muted)' }}><ArrowDown size={13} /></button>
               <button onClick={() => setAiTarget({ parentGoalId: g.id, parentTitle: g.title, scope: g.scope })} className="p-1 rounded disabled:opacity-30" title={canHaveChildren ? 'AI 拆细为子目标' : '已达最大层级'} style={{ color: '#F59E0B' }} disabled={!canHaveChildren}><Sparkles size={13} /></button>
               <button onClick={() => startCreate(g.scope, g.id)} className="p-1 rounded disabled:opacity-30" title={canHaveChildren ? '加子目标' : '已达最大层级'} style={{ color: 'var(--text-muted)' }} disabled={!canHaveChildren}><Plus size={13} /></button>
               <button onClick={() => toggleGoalMilestone(g)} className="p-1 rounded" title={g.isMilestone ? '取消里程碑' : '设为里程碑（在里程碑同步显示）'} style={{ color: g.isMilestone ? '#A855F7' : 'var(--text-muted)' }}><Flag size={13} /></button>
@@ -329,9 +404,11 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
       </div>
 
       {view === 'canvas' ? (
-        <GoalsCanvas projectId={projectId} businessGoal={businessGoal} canManage={canManage} goals={goals} onReload={load} onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
+        <GoalsCanvas projectId={projectId} businessGoal={businessGoal} canManage={canManage} goals={goals}
+          onReload={() => { load(); onMilestonesChanged?.(); /* 画布抽屉内可设为/取消里程碑、删目标，需同步父级 milestones */ }}
+          onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
       ) : view === 'dashboard' ? (
-        <GoalsDashboard goals={goals} cycles={cycles} />
+        <GoalsDashboard goals={goals} cycles={cycles} onOpen={(g) => setDashboardGoal(g)} />
       ) : (
       <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
       {/* 业务目标北极星（可编辑） */}
@@ -373,8 +450,10 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
               return (
                 <div key={m.id} className="shrink-0 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', minWidth: 150 }}>
                   <div className="flex items-center gap-1.5">
-                    <span style={{ width: 9, height: 9, background: h.color, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 2 }} />
-                    <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>{m.title}</span>
+                    {m.autoFromGoal
+                      ? <Target size={10} style={{ color: h.color, flexShrink: 0 }} aria-label="来自目标" />
+                      : <span style={{ width: 9, height: 9, background: h.color, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 2 }} />}
+                    <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }} title={m.autoFromGoal ? `${m.title}（来自目标）` : m.title}>{m.title}</span>
                   </div>
                   <div className="text-[10.5px] mt-1" style={{ color: 'var(--text-muted)' }}>
                     {m.dueAt ? `${fmtDate(m.dueAt)} · ` : ''}{m.progress}% · <span style={{ color: h.color }}>{h.label}</span>
@@ -395,6 +474,14 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalC
           onClose={() => setAiTarget(null)} onCreated={() => { setAiTarget(null); load(); }} />
       )}
       </div>
+      )}
+
+      {dashboardGoal && (
+        <GoalDetailDrawer projectId={projectId} goal={dashboardGoal} allGoals={goals} businessGoal={businessGoal}
+          canWrite={dashboardGoal.scope === 'personal' || canManage}
+          onClose={() => setDashboardGoal(null)}
+          onSaved={() => { setDashboardGoal(null); load(); onMilestonesChanged?.(); }}
+          onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
       )}
 
       {showCycleMgr && (

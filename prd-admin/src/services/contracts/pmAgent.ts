@@ -78,6 +78,8 @@ export type PmProject = {
   isExcellent: boolean;
   excellenceAwardedAt?: string | null;
   wipLimits?: Partial<Record<PmTaskStatus, number>> | null;
+  /** 里程碑交付物类型字典（空 = 前端用内置默认） */
+  deliverableTypes?: string[];
   stakeholders: PmStakeholder[];
   evaluation?: PmEvaluation | null;
   evaluationRound?: PmEvaluationRound | null;
@@ -289,6 +291,7 @@ export type UpdatePmProjectInput = Partial<{
   plannedEndAt: string;
   budget: number;
   actualCost: number;
+  deliverableTypes: string[];
   valueCoefficient: number;
   wipLimits: Record<string, number>;
   memberIds: string[];
@@ -573,13 +576,14 @@ export type PmAuditLog = {
   targetId?: string | null;
   createdAt: string;
 };
-export type ListPmAuditLogsContract = (opts?: { projectId?: string; page?: number; pageSize?: number }) => Promise<ApiResponse<{ items: PmAuditLog[]; total: number; page: number; pageSize: number }>>;
+export type ListPmAuditLogsContract = (opts?: { projectId?: string; keyword?: string; method?: string; page?: number; pageSize?: number }) => Promise<ApiResponse<{ items: PmAuditLog[]; total: number; page: number; pageSize: number }>>;
 
 // ── 里程碑 ──
 export type PmMilestoneStatus = 'planned' | 'reached' | 'cancelled';
 export type PmMilestoneHealth = 'on_track' | 'at_risk' | 'overdue' | 'reached' | 'cancelled';
 export type PmMilestoneCriterion = { id: string; text: string; done: boolean };
-export type PmDeliverableType = 'weekly' | 'decision' | 'link';
+/** 内置 weekly/decision/link/doc/other + 项目级自定义类型（自由字符串，字典见 PmProject.deliverableTypes） */
+export type PmDeliverableType = string;
 export type PmDeliverableRef = { type: PmDeliverableType; refId?: string | null; title: string; url?: string | null };
 export type PmMilestone = {
   id: string;
@@ -606,6 +610,8 @@ export type PmMilestone = {
   blockedBy?: string[];
   status: PmMilestoneStatus;
   orderKey: number;
+  /** 由目标「设为里程碑」联动创建（与目标同生命周期，取消即删除） */
+  autoFromGoal?: boolean;
   taskTotal: number;
   taskDone: number;
   progress: number;
@@ -629,6 +635,42 @@ export type SavePmMilestoneInput = Partial<{
 }>;
 /** AI 建议的里程碑草稿 */
 export type PmMilestoneDraft = { title: string; description?: string; acceptanceCriteria?: string[]; dueDate?: string };
+
+// ── 项目简报 ──
+export type PmBriefing = {
+  id: string;
+  projectId: string;
+  title: string;
+  /** 自包含 HTML（列表接口不返回，详情接口返回） */
+  html?: string;
+  /** 生成所用模型 */
+  model?: string | null;
+  /** 简报风格 key（classic/dark/warm/minimal/vivid） */
+  style?: string;
+  /** 是否支持切换风格（有渲染数据快照；旧版本简报为 false） */
+  canRestyle?: boolean;
+  /** 分享是否开启（P2） */
+  shared: boolean;
+  shareToken?: string | null;
+  hostedSiteId?: string | null;
+  /** 托管站点入口 URL（保存到网页托管后回填） */
+  hostedSiteUrl?: string | null;
+  /** 报告周期（可空=全周期简报） */
+  periodFrom?: string | null;
+  periodTo?: string | null;
+  createdBy: string;
+  createdByName?: string | null;
+  createdAt: string;
+};
+export type PmBriefingStyle = { key: string; label: string; accent: string; pageBg: string };
+export type ListPmBriefingsContract = (projectId: string) => Promise<ApiResponse<{ items: PmBriefing[] }>>;
+export type GetPmBriefingContract = (briefingId: string) => Promise<ApiResponse<PmBriefing>>;
+export type DeletePmBriefingContract = (briefingId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+export type ToggleBriefingShareContract = (briefingId: string, enabled: boolean) => Promise<ApiResponse<{ shared: boolean; shareToken?: string | null }>>;
+export type SaveBriefingToHostingContract = (briefingId: string) => Promise<ApiResponse<{ siteId: string; siteUrl: string }>>;
+export type ListBriefingStylesContract = () => Promise<ApiResponse<{ items: PmBriefingStyle[] }>>;
+export type RestylePmBriefingContract = (briefingId: string, style: string) => Promise<ApiResponse<{ style: string; html: string }>>;
+export type RenamePmBriefingContract = (briefingId: string, title: string) => Promise<ApiResponse<{ updated: boolean; title: string }>>;
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
 export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
 export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;
@@ -781,3 +823,172 @@ export interface PmReportSummary {
   };
 }
 export type GetPmReportSummaryContract = (scope?: PmProjectScope) => Promise<ApiResponse<PmReportSummary>>;
+
+// ── 全局知识库（管理层洞察，仅 pm-agent.dashboard）──
+
+/** 全局知识库总览中的一个项目分组 */
+export interface PmGlobalKnowledgeProject {
+  projectId: string;
+  projectNo: string;
+  title: string;
+  projectType: PmProjectType;
+  lifecycle: PmProjectLifecycle;
+  leaderName?: string | null;
+  storeId: string;
+  docCount: number;
+  categories: string[];
+  lastUpdatedAt?: string | null;
+}
+
+/** 全局知识库总览：项目分组 + 筛选维度枚举 + 全局统计 */
+export interface PmGlobalKnowledgeOverview {
+  projects: PmGlobalKnowledgeProject[];
+  totalProjects: number;
+  totalDocs: number;
+  byType: Record<string, number>;
+  byLifecycle: Record<string, number>;
+  facets: {
+    creators: Array<{ userId: string; name: string; count: number }>;
+    categories: string[];
+    contentTypes: string[];
+  };
+}
+
+/** 全局知识库的一条文档（含项目归属冗余字段，供分组与展示） */
+export interface PmGlobalKnowledgeEntry {
+  id: string;
+  storeId: string;
+  parentId?: string | null;
+  isFolder: boolean;
+  title: string;
+  summary?: string | null;
+  contentType: string;
+  sourceType: string;
+  category?: string | null;
+  tags: string[];
+  fileSize: number;
+  metadata?: Record<string, string>;
+  createdBy: string;
+  createdByName?: string | null;
+  updatedBy?: string | null;
+  updatedByName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastChangedAt?: string | null;
+  projectId?: string | null;
+  projectNo?: string | null;
+  projectTitle?: string | null;
+  projectType?: PmProjectType | null;
+  lifecycle?: PmProjectLifecycle | null;
+}
+
+/** 全局知识库条目筛选参数（全部可选） */
+export interface PmGlobalKnowledgeFilter {
+  projectId?: string;
+  projectType?: PmProjectType;
+  lifecycle?: PmProjectLifecycle;
+  category?: string;
+  tag?: string;
+  sourceType?: string;
+  contentType?: string;
+  createdBy?: string;
+  keyword?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface PmGlobalKnowledgeEntriesResult {
+  items: PmGlobalKnowledgeEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PmGlobalKnowledgeContent {
+  entryId: string;
+  title: string;
+  content: string | null;
+  contentType: string;
+  fileUrl: string | null;
+  hasContent: boolean;
+}
+
+export type GetPmKnowledgeOverviewContract = () => Promise<ApiResponse<PmGlobalKnowledgeOverview>>;
+export type ListPmKnowledgeEntriesContract = (filter?: PmGlobalKnowledgeFilter) => Promise<ApiResponse<PmGlobalKnowledgeEntriesResult>>;
+export type GetPmKnowledgeEntryContentContract = (entryId: string) => Promise<ApiResponse<PmGlobalKnowledgeContent>>;
+
+// ───────── 全局总览（管理层只读洞察，跨全公司项目） ─────────
+export type PmGlobalHealth = 'on_track' | 'at_risk' | 'overdue' | 'closed';
+
+export interface PmGlobalFilters {
+  lifecycle?: PmProjectLifecycle;
+  type?: PmProjectType;
+  leaderId?: string;
+  health?: PmGlobalHealth;
+  q?: string;
+}
+
+export interface PmGlobalProjectRow {
+  id: string;
+  projectNo: string;
+  title: string;
+  projectType: PmProjectType;
+  lifecycle: PmProjectLifecycle;
+  leaderId?: string | null;
+  leaderName?: string | null;
+  taskTotal: number;
+  taskDone: number;
+  completionRate: number;
+  budget: number;
+  actualCost: number;
+  overBudget: boolean;
+  overdueMilestones: number;
+  highRisks: number;
+  stalled: boolean;
+  health: PmGlobalHealth;
+  plannedEndAt?: string | null;
+  updatedAt: string;
+}
+
+export interface PmGlobalProjectsResult {
+  items: PmGlobalProjectRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PmGlobalSummary {
+  projectTotal: number;
+  lifecycleDist: Array<{ key: PmProjectLifecycle; count: number }>;
+  typeDist: Array<{ key: PmProjectType; count: number }>;
+  healthDist: Array<{ key: PmGlobalHealth; count: number }>;
+  warnings: {
+    overdueMilestones: number;
+    overBudget: Array<{ id: string; title: string; leaderName?: string | null; budget: number; actualCost: number }>;
+    stalled: Array<{ id: string; title: string; leaderName?: string | null; updatedAt: string; idleDays: number }>;
+    highRisk: Array<{ id: string; title: string; leaderName?: string | null; highRisks: number }>;
+  };
+  business: {
+    totalBudget: number;
+    totalActual: number;
+    budgetExecutionRate: number;
+    taskTotal: number;
+    taskDone: number;
+    completionRate: number;
+  };
+  leaderLoad: Array<{
+    leaderId: string;
+    leaderName: string;
+    projectCount: number;
+    activeCount: number;
+    taskTotal: number;
+    taskDone: number;
+    overdueMilestones: number;
+    overBudget: number;
+  }>;
+}
+
+export type GetPmGlobalProjectsContract = (filters: PmGlobalFilters & { page?: number; pageSize?: number; sort?: string }) => Promise<ApiResponse<PmGlobalProjectsResult>>;
+export type GetPmGlobalSummaryContract = (filters: PmGlobalFilters) => Promise<ApiResponse<PmGlobalSummary>>;

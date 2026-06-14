@@ -58,6 +58,9 @@ public class InfraAgentSession
 
     public string Title { get; set; } = string.Empty;
 
+    /// <summary>调用方应用标识（CDS 观测台按 app 筛选用，如 md-to-ppt / infra-console）</summary>
+    public string? ClientApp { get; set; }
+
     public string Status { get; set; } = InfraAgentSessionStatuses.Idle;
 
     public bool IsArchived { get; set; }

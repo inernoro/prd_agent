@@ -1,0 +1,78 @@
+{
+  "name": "coral",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-coral)",
+  "license": "MIT",
+  "slideCount": 10,
+  "layouts": [
+    {
+      "file": "01-slide-1.html",
+      "layout": "slide-1",
+      "classAttr": "slide slide-1",
+      "chars": 1645,
+      "summary": "VENTURE QUARTERLY STRATEGY SESSION 2026 Location 7TH FLOOR May 15 / 09:00 Start 2026"
+    },
+    {
+      "file": "02-slide-2.html",
+      "layout": "slide-2",
+      "classAttr": "slide slide-2",
+      "chars": 594,
+      "summary": "01 / Overview REDEFINING THE BOUNDARIES OF WHAT IS POSSIBLE We bring together diverse pers"
+    },
+    {
+      "file": "03-slide-3.html",
+      "layout": "slide-3",
+      "classAttr": "slide slide-3",
+      "chars": 988,
+      "summary": "03 CORE PILLARS Innovation Pushing boundaries with cutting-edge solutions and forward-thin"
+    },
+    {
+      "file": "04-slide-4.html",
+      "layout": "slide-4",
+      "classAttr": "slide slide-4",
+      "chars": 1308,
+      "summary": "02 / Performance GROWTH METRICS +147% Year Over Year 2.4M Total Reach 89% Retention Rate 1"
+    },
+    {
+      "file": "05-slide-5.html",
+      "layout": "slide-5",
+      "classAttr": "slide slide-5",
+      "chars": 421,
+      "summary": "IMPACT GLOBAL INITIATIVE 2026 Phase One / Launch Q2 12 Cities / 4 Continents"
+    },
+    {
+      "file": "06-slide-6.html",
+      "layout": "slide-6",
+      "classAttr": "slide slide-6",
+      "chars": 1364,
+      "summary": "KEY OBJECTIVES Strategic priorities for the upcoming fiscal period A EXPAND REACH Enter ne"
+    },
+    {
+      "file": "07-slide-7.html",
+      "layout": "slide-7",
+      "classAttr": "slide slide-7",
+      "chars": 549,
+      "summary": "\" The best way to predict the future is to create it with intention, precision, and the co"
+    },
+    {
+      "file": "08-slide-8.html",
+      "layout": "slide-8",
+      "classAttr": "slide slide-8",
+      "chars": 2215,
+      "summary": "03 / Roadmap PROJECT TIMELINE Q1 Discovery Research &amp; planning phase with stakeholder "
+    },
+    {
+      "file": "09-slide-9.html",
+      "layout": "slide-9",
+      "classAttr": "slide slide-9",
+      "chars": 1240,
+      "summary": "LEADERSHIP The people driving our vision forward JD Jordan Davis Chief Executive MK Morgan"
+    },
+    {
+      "file": "10-slide-10.html",
+      "layout": "slide-10",
+      "classAttr": "slide slide-10",
+      "chars": 1422,
+      "summary": "THANK YOU Let's build something extraordinary together. Reach out to start the conversatio"
+    }
+  ]
+}

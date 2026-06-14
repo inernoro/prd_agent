@@ -1,0 +1,31 @@
+
+
+</div>
+
+
+<script>
+(function () {
+  var slides = [].slice.call(document.querySelectorAll('.slide'));
+  if (!slides.length) return;
+  var i = slides.findIndex(function (s) { return s.classList.contains('is-active'); });
+  if (i < 0) {
+    i = Math.max(0, slides.findIndex(function (s) { return s.classList.contains('active'); }));
+    slides[i].classList.add('is-active');
+  }
+  function go(n) {
+    if (n < 0 || n >= slides.length || n === i) return;
+    slides[i].classList.remove('is-active');
+    i = n;
+    slides[i].classList.add('is-active');
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(i + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(i - 1); }
+    else if (e.key === 'Home') { go(0); }
+    else if (e.key === 'End') { go(slides.length - 1); }
+  });
+})();
+</script>
+
+</body>
+</html>

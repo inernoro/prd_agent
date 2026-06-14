@@ -81,6 +81,27 @@ public class DocumentStore
     /// </summary>
     public string? SyncToken { get; set; }
 
+    /// <summary>系统互联同步状态：syncing / synced / error。由 Peer Sync 写入，用于列表与详情页标识。</summary>
+    public string? PeerSyncStatus { get; set; }
+
+    /// <summary>系统互联同步方向：push / pull / both / received。</summary>
+    public string? PeerSyncDirection { get; set; }
+
+    /// <summary>最近一次系统互联同步的对端节点 ID。</summary>
+    public string? PeerSyncNodeId { get; set; }
+
+    /// <summary>最近一次系统互联同步的对端节点名称。</summary>
+    public string? PeerSyncNodeName { get; set; }
+
+    /// <summary>最近一次系统互联同步的对端地址。</summary>
+    public string? PeerSyncNodeBaseUrl { get; set; }
+
+    /// <summary>最近一次系统互联同步时间。</summary>
+    public DateTime? PeerSyncLastAt { get; set; }
+
+    /// <summary>最近一次系统互联同步结果摘要。</summary>
+    public string? PeerSyncLastResult { get; set; }
+
     /// <summary>
     /// 绑定的产品管理对象（product-agent），格式 "product:{id}" 或 "version:{id}"。
     /// 非空表示这是某产品/版本的知识库（整体库 / 版本库），从个人/公开列表中隐藏，

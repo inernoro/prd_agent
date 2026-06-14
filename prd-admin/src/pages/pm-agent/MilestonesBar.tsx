@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, Flag } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, Flag, Target } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -115,8 +115,11 @@ export function MilestonesBar({ projectId, milestones, canManage, onChanged }: P
               );
             }
             return (
-              <div key={m.id} className="group flex items-center gap-2 rounded-md border px-2.5 py-1.5" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-elevated)' }}>
-                <span style={{ width: 10, height: 10, background: h.color, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 2 }} />
+              <div key={m.id} className="group flex items-center gap-2 rounded-md border px-2.5 py-1.5" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-elevated)' }}
+                title={m.autoFromGoal ? '由目标「设为里程碑」联动创建，与目标同步' : undefined}>
+                {m.autoFromGoal
+                  ? <Target size={11} style={{ color: h.color, flexShrink: 0 }} />
+                  : <span style={{ width: 10, height: 10, background: h.color, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 2 }} />}
                 <div className="flex flex-col">
                   <span className="text-[12px] leading-tight" style={{ color: 'var(--text-primary)' }}>{m.title}</span>
                   <span className="text-[10px] leading-tight" style={{ color: 'var(--text-muted)' }}>

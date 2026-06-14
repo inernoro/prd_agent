@@ -137,6 +137,7 @@ def test_generic_workspace_uses_directory_slug_for_local_fallback(monkeypatch):
 
     assert cdscli._project_slug_hint("/tmp/workspace") == "workspace"
     assert cdscli._project_slug_hints("/tmp/workspace") == ["workspace"]
+    assert cdscli._fallback_project_slug("/tmp/workspace") == "workspace"
 
 
 def test_preview_branch_match_rejects_unverified_repo_alias(monkeypatch):

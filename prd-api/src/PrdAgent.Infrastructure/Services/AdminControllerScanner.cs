@@ -34,6 +34,17 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         "/api/web-pages/comments/",
         // 知识库公开端点（智识殿堂浏览/详情/分享）
         "/api/document-store/public/",
+        // 项目简报匿名分享页（token 即凭证，Controller 端点 [AllowAnonymous] + token 查库校验；
+        // 不豁免会被本中间件在认证前拦成 401「未授权」）
+        "/api/pm/briefings/shared/",
+        // 知识库（document-store）的 stores/entries 业务路由：普通用户功能（私人知识库/项目知识库/产品知识库），
+        // 每个端点都有业务层鉴权（LoadWritable/ReadableStoreAsync、OwnerId 过滤、CanRead/CanWriteStoreAsync），
+        // 不应再叠加 document-store.read/write 管理权限位 —— 否则普通用户上传/编辑被中间件拦成 403「无权限」
+        // （2026-06-12 用户反馈：新项目知识库上传文件报 PERMISSION_DENIED）。只豁免管理权限检查，
+        // [Authorize] 登录要求与业务层鉴权全部保留（与 /api/web-pages/comments/ 豁免同款先例）。
+        // 注意：豁免后中间件不再注入 permissions claims，DocumentStoreController 已改为权限服务回查兜底。
+        "/api/document-store/stores",
+        "/api/document-store/entries",
     };
 
     // 站点维度评论相关路由（siteId 在路径中段，无法用 PublicRoutes 的 StartsWith 前缀命中）：

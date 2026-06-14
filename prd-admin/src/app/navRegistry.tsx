@@ -33,6 +33,7 @@ const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => (
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
 const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.TaskDetailPage })));
+const PmMilestoneDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.MilestoneDetailPage })));
 const PmProjectDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.ProjectDetailPage })));
 const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
 const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
@@ -61,6 +62,7 @@ const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 const MdToPptAgentPage = lazy(() => import('@/pages/md-to-ppt-agent/MdToPptAgentPage').then(m => ({ default: m.MdToPptAgentPage })));
+const TechDocFormatAgentPage = lazy(() => import('@/pages/tech-doc-format-agent').then(m => ({ default: m.TechDocFormatAgentPage })));
 const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
 const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
@@ -424,6 +426,13 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     element: fullscreenGuarded('pm-agent.use', <PmTaskDetailPage />),
   },
   {
+    // 里程碑独立详情页（OKR + DoD + 任务 + 交付物管理；参数化子路由，不进导航）
+    path: '/pm-agent/p/:projectId/milestone/:milestoneId',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmMilestoneDetailPage />),
+  },
+  {
     // 项目层视图（进入某个具体项目：目标/里程碑/任务等 9 大模块），参数化子路由，全屏，不进导航
     path: '/pm-agent/p/:projectId',
     placement: 'fullscreen',
@@ -447,25 +456,25 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
-    // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
-    path: '/product-agent/p/:productId',
-    placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
-  },
-  {
-    // 知识详情页（独立路由，静态段 knowledge 优先于下方 :kind 通配），全屏，不进导航
+    // 知识详情页（静态段 knowledge 优先于 :kind 通配），全屏，不进导航
     path: '/product-agent/p/:productId/knowledge/:entryId',
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
   },
   {
-    // 对象独立详情/新建页（需求/功能/缺陷，:id 为 new 时是新建），参数化子路由，全屏，不进导航
+    // 对象独立详情/新建页（需求/功能/缺陷/版本/立项/release，:id 为 new 时是新建），必须排在单产品路由之前
     path: '/product-agent/p/:productId/:kind/:id',
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
+  },
+  {
+    // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
+    path: '/product-agent/p/:productId',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
   },
   {
     path: '/product-agent',
@@ -539,6 +548,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'md-to-ppt-agent',
       tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
+      wip: true,
+    },
+  },
+  {
+    path: '/tech-doc-format-agent',
+    permission: 'access',
+    element: shellGuarded('access', <TechDocFormatAgentPage />),
+    nav: {
+      label: '技术分析文档格式校验 Agent',
+      shortLabel: '技分',
+      description: '按 PM2502 模板生成技术分析文档，并检查上传文档的标题、表格和微格式',
+      icon: 'FileText',
+      section: 'toolbox',
+      appKey: 'tech-doc-format-agent',
+      tags: ['技术分析', '文档格式', 'PM2502', '模板校验'],
       wip: true,
     },
   },

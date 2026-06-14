@@ -234,6 +234,7 @@ export const allPermissions: PermissionDef[] = [
 
   // 团队动态
   { key: 'team-activity.read', label: '团队动态 - 读', description: '查看全员工作动态时间线', category: 'read' },
+  { key: 'team-activity.manage', label: '团队动态 - 管理', description: '处理行为洞察（确认/已修复/忽略/转缺陷关联）', category: 'manage' },
 
   // 开放平台
   { key: 'open-platform.manage', label: '开放平台 - 管理', description: '管理 API 应用', category: 'manage' },

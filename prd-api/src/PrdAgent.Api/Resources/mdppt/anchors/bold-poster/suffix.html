@@ -1,0 +1,48 @@
+
+
+  </div>
+
+  <script>
+    (function() {
+      const slides = document.querySelectorAll('.slide');
+      const progress = document.getElementById('progress');
+      const counter = document.getElementById('counter');
+      const total = slides.length;
+      let current = 0;
+
+      function show(i) {
+        slides.forEach((s, idx) => s.classList.toggle('active', idx === i));
+        progress.style.width = ((i + 1) / total * 100) + '%';
+        counter.textContent = String(i + 1).padStart(2, '0') + ' / ' + String(total).padStart(2, '0');
+      }
+
+      function next() { if (current < total - 1) { current++; show(current); } }
+      function prev() { if (current > 0) { current--; show(current); } }
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ' || e.key === 'Enter' || e.key === 'PageDown') {
+          e.preventDefault(); next();
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+          e.preventDefault(); prev();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        const x = e.clientX;
+        const w = window.innerWidth;
+        if (x > w / 2) next(); else prev();
+      });
+
+      let tx = 0;
+      document.addEventListener('touchstart', (e) => { tx = e.changedTouches[0].screenX; });
+      document.addEventListener('touchend', (e) => {
+        const dx = e.changedTouches[0].screenX - tx;
+        if (dx < -50) next();
+        else if (dx > 50) prev();
+      });
+
+      show(0);
+    })();
+  </script>
+</body>
+</html>

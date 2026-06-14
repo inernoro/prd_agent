@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Check, Trash2, Plus, ListTodo, Milestone as MilestoneIcon, CircleCheck, Flag, Lock, Package, ShieldAlert, FileText, Gavel, ExternalLink } from 'lucide-react';
+import { X, Check, Trash2, Plus, ListTodo, Milestone as MilestoneIcon, CircleCheck, Flag, Lock, Package, ShieldAlert, FileText, Gavel, ExternalLink, Target } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -9,6 +9,8 @@ import { createPmMilestone, updatePmMilestone, deletePmMilestone, listPmWeeklyRe
 import type { PmMilestone, PmGoal, PmTask, PmWeeklyReport, PmDecision, PmRisk, PmDeliverableType } from '@/services/contracts/pmAgent';
 import { MILESTONE_HEALTH_REGISTRY, TASK_STATUS_REGISTRY, riskScore, riskScoreColor } from './pmConstants';
 import { fmtDate } from './materialUtils';
+import { useFormDraft, pmDraftKey } from './useFormDraft';
+import { DraftRestoreBar } from './DraftRestoreBar';
 
 interface DraftCriterion { id: string; text: string; done: boolean }
 interface DraftDeliverable { type: PmDeliverableType; refId?: string; title: string; url?: string }
@@ -66,7 +68,8 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
   const linkedRisks = useMemo(() => (milestone ? risks.filter((r) => r.relatedMilestoneId === milestone.id) : []), [risks, milestone]);
   const unreachedPrereqs = dependsOn.filter((id) => msById.get(id) && msById.get(id)!.status !== 'reached');
 
-  useEffect(() => {
+  // 把表单还原为里程碑原始内容（新建则清空）。供初始化与「放弃草稿」复用。
+  const resetToOriginal = useCallback(() => {
     if (milestone) {
       setTitle(milestone.title);
       setDescription(milestone.description || '');
@@ -81,6 +84,35 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
       setTitle(''); setDescription(''); setDueAt(''); setReachedAt(''); setGoalId(''); setOwnerId(''); setCriteria([]); setDependsOn([]); setDeliverables([]);
     }
   }, [milestone]);
+
+  useEffect(() => { resetToOriginal(); }, [resetToOriginal]);
+
+  // 草稿缓存：编辑中误关/误跳页后重开自动恢复（仅可管理时启用）
+  const draftKey = canManage ? pmDraftKey('milestone', projectId, milestone?.id) : null;
+  const draftSnapshot = useMemo(
+    () => ({ title, description, dueAt, reachedAt, goalId, ownerId, criteria, dependsOn, deliverables }),
+    [title, description, dueAt, reachedAt, goalId, ownerId, criteria, dependsOn, deliverables],
+  );
+  const draftPristine = useMemo(() => ({
+    title: milestone?.title ?? '',
+    description: milestone?.description || '',
+    dueAt: milestone?.dueAt ? milestone.dueAt.slice(0, 10) : '',
+    reachedAt: milestone?.reachedAt ? milestone.reachedAt.slice(0, 10) : '',
+    goalId: milestone?.goalId || '',
+    ownerId: milestone?.ownerId || '',
+    criteria: (milestone?.acceptanceCriteria ?? []).map((c) => ({ id: c.id, text: c.text, done: c.done })),
+    dependsOn: milestone?.dependsOn ?? [],
+    deliverables: (milestone?.deliverables ?? []).map((d) => ({ type: d.type, refId: d.refId ?? undefined, title: d.title, url: d.url ?? undefined })),
+  }), [milestone]);
+  const { hasDraft, clearDraft, dismissHint } = useFormDraft({
+    key: draftKey,
+    value: draftSnapshot,
+    pristine: draftPristine,
+    onRestore: (s) => {
+      setTitle(s.title); setDescription(s.description); setDueAt(s.dueAt); setReachedAt(s.reachedAt);
+      setGoalId(s.goalId); setOwnerId(s.ownerId); setCriteria(s.criteria); setDependsOn(s.dependsOn); setDeliverables(s.deliverables);
+    },
+  });
 
   // 拉取交付物候选 + 反查风险（一次）
   useEffect(() => {
@@ -155,7 +187,7 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
       ? await createPmMilestone(projectId, { ...buildPayload(), ...reachedPayload })
       : await updatePmMilestone(milestone!.id, { ...buildPayload(), ...reachedPayload });
     setSaving(false);
-    if (res.success) { toast.success(isCreate ? '已新增' : '已保存', ''); onSaved(); }
+    if (res.success) { clearDraft(); toast.success(isCreate ? '已新增' : '已保存', ''); onSaved(); }
     else toast.error('保存失败', res.error?.message || '');
   };
 
@@ -172,7 +204,7 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
     setSaving(true);
     const res = await updatePmMilestone(milestone.id, buildPayload(isReached ? 'planned' : 'reached'));
     setSaving(false);
-    if (res.success) { toast.success(isReached ? '已取消达成' : '已标记达成', ''); onSaved(); }
+    if (res.success) { clearDraft(); toast.success(isReached ? '已取消达成' : '已标记达成', ''); onSaved(); }
     else toast.error('操作失败', res.error?.message || '');
   };
 
@@ -191,7 +223,7 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
     setSaving(true);
     const res = await deletePmMilestone(milestone.id);
     setSaving(false);
-    if (res.success) { toast.success('已删除', ''); onSaved(); }
+    if (res.success) { clearDraft(); toast.success('已删除', ''); onSaved(); }
     else toast.error('删除失败', res.error?.message || '');
   };
 
@@ -202,11 +234,21 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
         <div className="flex items-center gap-2 px-5 py-4 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <MilestoneIcon size={16} style={{ color: '#A855F7' }} />
           <span className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{isCreate ? '新增里程碑' : '里程碑详情'}</span>
+          {!isCreate && milestone && (
+            <a href={`/pm-agent/p/${projectId}/milestone/${milestone.id}`} className="text-[11px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:underline shrink-0"
+              style={{ color: '#A855F7', background: 'rgba(168,85,247,0.10)' }} title="打开里程碑详情页（OKR / 验收 / 任务 / 交付物集中管理）">
+              <ExternalLink size={10} />详情页
+            </a>
+          )}
+          {milestone?.autoFromGoal && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 shrink-0" style={{ background: 'rgba(168,85,247,0.14)', color: '#A855F7' }} title="由目标「设为里程碑」联动创建，与目标同步（在目标侧取消即移除）"><Target size={9} />来自目标</span>
+          )}
           {health && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: `${health.color}22`, color: health.color }}>{health.label}</span>}
           <button onClick={onClose} className="ml-auto p-1 rounded hover:opacity-70 shrink-0" style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
         </div>
 
         <div className="flex-1 px-5 py-4 flex flex-col gap-3" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {hasDraft && <DraftRestoreBar onDiscard={() => { resetToOriginal(); clearDraft(); }} onDismiss={dismissHint} />}
           {!canManage && !isCreate && (
             <div className="text-[11px] rounded-md px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-muted)' }}>只读：仅立项人 / 负责人可编辑里程碑</div>
           )}

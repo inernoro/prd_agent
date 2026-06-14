@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { Button } from '@/components/design/Button';
@@ -8,6 +8,8 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { useAuthStore } from '@/stores/authStore';
 import type { PmProject, PmProjectType, PmOperationSubType } from '@/services/contracts/pmAgent';
 import { PROJECT_TYPE_REGISTRY, OPERATION_SUBTYPE_REGISTRY } from './pmConstants';
+import { useFormDraft, pmDraftKey } from './useFormDraft';
+import { DraftRestoreBar } from './DraftRestoreBar';
 
 interface Props {
   onClose: () => void;
@@ -30,6 +32,30 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
   const [plannedEndAt, setPlannedEndAt] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // 草稿缓存：立项填到一半误关弹窗后重开自动恢复
+  const draftSnapshot = useMemo(
+    () => ({ title, businessGoal, description, projectType, operationSubType, strategyAlignment, leaderId, plannedStartAt, plannedEndAt }),
+    [title, businessGoal, description, projectType, operationSubType, strategyAlignment, leaderId, plannedStartAt, plannedEndAt],
+  );
+  const draftPristine = useMemo(
+    () => ({ title: '', businessGoal: '', description: '', projectType: 'general' as PmProjectType, operationSubType: 'routine' as PmOperationSubType, strategyAlignment: '', leaderId: myId, plannedStartAt: '', plannedEndAt: '' }),
+    [myId],
+  );
+  const { hasDraft, clearDraft, dismissHint } = useFormDraft({
+    key: pmDraftKey('project', myId || 'me', 'new'),
+    value: draftSnapshot,
+    pristine: draftPristine,
+    onRestore: (s) => {
+      setTitle(s.title); setBusinessGoal(s.businessGoal); setDescription(s.description); setProjectType(s.projectType);
+      setOperationSubType(s.operationSubType); setStrategyAlignment(s.strategyAlignment); setLeaderId(s.leaderId);
+      setPlannedStartAt(s.plannedStartAt); setPlannedEndAt(s.plannedEndAt);
+    },
+  });
+  const discardDraft = () => {
+    setTitle(''); setBusinessGoal(''); setDescription(''); setProjectType('general'); setOperationSubType('routine');
+    setStrategyAlignment(''); setLeaderId(myId); setPlannedStartAt(''); setPlannedEndAt(''); clearDraft();
+  };
 
   // 日期输入(YYYY-MM-DD) → ISO；开始时间允许早于当前时间，不做过去校验
   const toIso = (v: string) => (v ? new Date(v + 'T00:00:00').toISOString() : undefined);
@@ -54,6 +80,7 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
     });
     setLoading(false);
     if (res.success) {
+      clearDraft();
       onCreated(res.data);
     } else {
       setError(res.error?.message || '创建失败');
@@ -79,6 +106,7 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
 
         {/* Body */}
         <div className="px-5 py-4 flex flex-col gap-3.5" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {hasDraft && <DraftRestoreBar onDiscard={discardDraft} onDismiss={dismissHint} />}
           <div>
             <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>项目名称 <span style={{ color: '#EF4444' }}>*</span></label>
             <input className={inputCls} style={inputStyle} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例如：MAP 数字劳动力平台 V2" />

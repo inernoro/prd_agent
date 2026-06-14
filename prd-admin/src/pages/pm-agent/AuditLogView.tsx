@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, ShieldCheck, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowLeft, ShieldCheck, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -12,6 +12,7 @@ interface Props {
 }
 
 const PAGE_SIZE = 50;
+const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' } as const;
 
 function fmt(s: string) {
   const d = new Date(s);
@@ -27,18 +28,28 @@ export function AuditLogView({ onBack }: Props) {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [keyword, setKeyword] = useState('');
+  const [method, setMethod] = useState('');
 
-  const load = useCallback(async (p: number) => {
-    setLoading(true);
-    const res = await listPmAuditLogs({ page: p, pageSize: PAGE_SIZE });
-    if (res.success) { setItems(res.data.items); setTotal(res.data.total); }
-    else toast.error('加载失败', res.error?.message || '');
-    setLoading(false);
-  }, []);
+  // 搜索/筛选变更 → 回到第 1 页
+  useEffect(() => { setPage(1); }, [keyword, method]);
 
-  useEffect(() => { load(page); }, [load, page]);
+  // 加载（关键词防抖）
+  useEffect(() => {
+    let alive = true;
+    const t = window.setTimeout(async () => {
+      setLoading(true);
+      const res = await listPmAuditLogs({ page, pageSize: PAGE_SIZE, keyword: keyword.trim() || undefined, method: method || undefined });
+      if (!alive) return;
+      if (res.success) { setItems(res.data.items); setTotal(res.data.total); }
+      else toast.error('加载失败', res.error?.message || '');
+      setLoading(false);
+    }, keyword ? 300 : 0);
+    return () => { alive = false; window.clearTimeout(t); };
+  }, [page, keyword, method]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const hasFilter = !!(keyword || method);
 
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
@@ -52,6 +63,25 @@ export function AuditLogView({ onBack }: Props) {
           <ShieldCheck size={20} style={{ color: '#10B981' }} />
           <h2 className="text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>操作审计日志</h2>
           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>项目管理所有写操作留痕（合规 / 追溯）· 共 {total} 条</span>
+        </div>
+        {/* 顶部搜索 + 操作方法筛选 */}
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
+          <div className="relative">
+            <Search size={13} style={{ color: 'var(--text-muted)', position: 'absolute', left: 8, top: 8 }} />
+            <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索操作 / 路径"
+              className="rounded-lg pl-7 pr-2.5 py-1.5 text-[12px] outline-none border" style={{ ...inputStyle, width: 220 }} />
+          </div>
+          <select value={method} onChange={(e) => setMethod(e.target.value)} className="rounded-lg px-2.5 py-1.5 text-[12px] outline-none border" style={inputStyle}>
+            <option value="">全部操作方法</option>
+            <option value="POST">POST（新建）</option>
+            <option value="PUT">PUT（更新）</option>
+            <option value="DELETE">DELETE（删除）</option>
+          </select>
+          {hasFilter && (
+            <button onClick={() => { setKeyword(''); setMethod(''); }} className="inline-flex items-center gap-1 text-[12px] px-2 py-1.5 rounded-lg" style={{ color: 'var(--text-muted)' }}>
+              <X size={12} />清空
+            </button>
+          )}
         </div>
       </div>
 

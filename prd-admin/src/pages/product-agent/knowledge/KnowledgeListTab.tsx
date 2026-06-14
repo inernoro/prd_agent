@@ -18,6 +18,7 @@ import type { DocumentStore, DocumentEntry } from '@/services/contracts/document
 import type { ProductVersion } from '../types';
 import { fileKindOf, fmtSize, fmtTime, isUploadedFile, isEditableText, NO_CATEGORY, FOCUS_BOX } from './shared';
 import { VersionLinkDialog } from './VersionLinkDialog';
+import { SelectionActionBar, SelectableRow, useSelectableListExport } from '../selectableList';
 
 const PAGE_SIZE = 20;
 
@@ -150,6 +151,30 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  const { selection, exportSelected } = useSelectableListExport(
+    items,
+    (e) => e.id,
+    {
+      filename: `knowledge-${productId}.csv`,
+      headers: ['标题', '分类', '类型', '大小'],
+      mapRow: (e) => [e.title, e.category ?? '', fileKindOf(e.contentType).label, fmtSize(e.fileSize)],
+    },
+  );
+  const deleteSelected = async () => {
+    if (!window.confirm(`确认删除选中的 ${selection.count} 篇文档？`)) return;
+    for (const id of selection.selectedIds) {
+      const res = await deleteDocumentEntry(id);
+      if (!res.success) {
+        toast.error('删除失败', res.error?.message);
+        return;
+      }
+    }
+    selection.clear();
+    toast.success('已删除选中文档');
+    onChanged();
+    await reload();
+  };
+
   const selectCls = 'px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/70 outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]';
 
   return (
@@ -199,6 +224,15 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
 
       {/* 列表 */}
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5" style={{ overscrollBehavior: 'contain' }} data-tour-id="knowledge-list">
+        <SelectionActionBar
+          mode="export"
+          selection={selection}
+          onExport={exportSelected}
+          onDelete={deleteSelected}
+          deleteLabel="删除选中文档"
+          exportLabel="导出选中"
+          className="shrink-0"
+        />
         {loading ? (
           <MapSectionLoader text="正在加载知识…" />
         ) : items.length === 0 ? (
@@ -220,10 +254,22 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
             const Icon = kind.icon;
             const vIds = e.versionIds ?? [];
             return (
-              <div
+              <SelectableRow
                 key={e.id}
+                id={e.id}
+                selection={selection}
                 onClick={() => goDetail(e.id)}
                 className="pa-row group cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.02]"
+                trailing={
+                  <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(ev) => ev.stopPropagation()}>
+                    <RowBtn title="查看详情" onClick={() => goDetail(e.id)}><Eye size={13} /></RowBtn>
+                    {isEditableText(e.contentType) && <RowBtn title="编辑" onClick={() => goDetail(e.id, true)}><Pencil size={13} /></RowBtn>}
+                    <RowBtn title="关联版本" onClick={() => setLinkTarget(e)}><GitBranch size={13} /></RowBtn>
+                    <RowBtn title="移动到文件夹" onClick={() => setMoveTarget(e)}><FolderInput size={13} /></RowBtn>
+                    {isUploadedFile(e) && <RowBtn title="重新上传" onClick={() => handleReplace(e.id)}><RefreshCw size={13} /></RowBtn>}
+                    <RowBtn title="删除" danger onClick={() => void handleDelete(e)}><Trash2 size={13} /></RowBtn>
+                  </div>
+                }
               >
                 <Icon size={16} className="shrink-0" style={{ color: kind.color }} />
                 <div className="min-w-0 flex-1">
@@ -265,15 +311,7 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                     {kind.label} · {fmtSize(e.fileSize)} · {e.updatedByName || e.createdBy} 更新于 {fmtTime(e.updatedAt)}
                   </div>
                 </div>
-                <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(ev) => ev.stopPropagation()}>
-                  <RowBtn title="查看详情" onClick={() => goDetail(e.id)}><Eye size={13} /></RowBtn>
-                  {isEditableText(e.contentType) && <RowBtn title="编辑" onClick={() => goDetail(e.id, true)}><Pencil size={13} /></RowBtn>}
-                  <RowBtn title="关联版本" onClick={() => setLinkTarget(e)}><GitBranch size={13} /></RowBtn>
-                  <RowBtn title="移动到文件夹" onClick={() => setMoveTarget(e)}><FolderInput size={13} /></RowBtn>
-                  {isUploadedFile(e) && <RowBtn title="重新上传" onClick={() => handleReplace(e.id)}><RefreshCw size={13} /></RowBtn>}
-                  <RowBtn title="删除" danger onClick={() => void handleDelete(e)}><Trash2 size={13} /></RowBtn>
-                </div>
-              </div>
+              </SelectableRow>
             );
           })
         )}

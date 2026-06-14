@@ -192,6 +192,9 @@ export const api = {
   teamActivity: {
     logs: () => '/api/team-activity/logs',
     modules: () => '/api/team-activity/modules',
+    stats: () => '/api/team-activity/stats',
+    insights: () => '/api/team-activity/insights',
+    insightState: () => '/api/team-activity/insights/state',
   },
 
   // ============ Skills 技能管理 ============
@@ -446,6 +449,41 @@ export const api = {
         // 档 3 对齐度检查
         alignment: (id: string) => `/api/pr-review/items/${id}/ai/alignment`,
         alignmentStream: (id: string) => `/api/pr-review/items/${id}/ai/alignment/stream`,
+      },
+    },
+  },
+
+  // ============ 技术分析文档格式校验 Agent ============
+  techDocFormatAgent: {
+    github: {
+      auth: {
+        status: () => '/api/tech-doc-format-agent/github/auth/status',
+        deviceStart: () => '/api/tech-doc-format-agent/github/auth/device/start',
+        devicePoll: () => '/api/tech-doc-format-agent/github/auth/device/poll',
+      },
+      repositories: (query?: string, page?: number, pageSize?: number) => {
+        const q = new URLSearchParams();
+        if (query) q.set('query', query);
+        if (page) q.set('page', String(page));
+        if (pageSize) q.set('pageSize', String(pageSize));
+        const qs = q.toString();
+        return `/api/tech-doc-format-agent/github/repositories${qs ? `?${qs}` : ''}`;
+      },
+      tree: (owner: string, repo: string, path?: string, branch?: string) => {
+        const q = new URLSearchParams();
+        q.set('owner', owner);
+        q.set('repo', repo);
+        if (path) q.set('path', path);
+        if (branch) q.set('branch', branch);
+        return `/api/tech-doc-format-agent/github/tree?${q.toString()}`;
+      },
+      context: (owner: string, repo: string, path?: string, branch?: string) => {
+        const q = new URLSearchParams();
+        q.set('owner', owner);
+        q.set('repo', repo);
+        if (path) q.set('path', path);
+        if (branch) q.set('branch', branch);
+        return `/api/tech-doc-format-agent/github/context?${q.toString()}`;
       },
     },
   },
@@ -1093,6 +1131,7 @@ export const api = {
     fromContent: () => '/api/web-pages/from-content',
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
+    content: (id: string) => `/api/web-pages/${id}/content`,
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
@@ -1229,6 +1268,9 @@ export const api = {
       // 批次 D：划词评论
       inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
       inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
+      // 划词 AI 局部改写（SSE 直流）
+      selectionRewrite: (entryId: string) => `/api/document-store/entries/${entryId}/selection-rewrite`,
+      selectionRewriteActions: () => '/api/document-store/selection-rewrite/actions',
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
@@ -1416,6 +1458,8 @@ export const api = {
       risks: (projectId: string) => `/api/pm/projects/${projectId}/risks`,
       burndown: (projectId: string) => `/api/pm/projects/${projectId}/burndown`,
       closureReport: (projectId: string) => `/api/pm/projects/${projectId}/closure-report`,
+      briefings: (projectId: string) => `/api/pm/projects/${projectId}/briefings`,
+      briefingsGenerate: (projectId: string) => `/api/pm/projects/${projectId}/briefings/generate`,
       healthDiagnosis: (projectId: string) => `/api/pm/projects/${projectId}/health-diagnosis`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
@@ -1440,6 +1484,19 @@ export const api = {
     // 首页工作台（跨项目）
     myTodos: () => '/api/pm/my-todos',
     reportsSummary: (scope?: string) => `/api/pm/reports/summary${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`,
+    // 全局总览（管理层只读洞察，跨全公司项目）
+    globalProjects: (q: Record<string, string | number | undefined>) => {
+      const sp = new URLSearchParams();
+      Object.entries(q).forEach(([k, v]) => { if (v !== undefined && v !== '') sp.set(k, String(v)); });
+      const s = sp.toString();
+      return `/api/pm/global/projects${s ? `?${s}` : ''}`;
+    },
+    globalSummary: (q: Record<string, string | undefined>) => {
+      const sp = new URLSearchParams();
+      Object.entries(q).forEach(([k, v]) => { if (v !== undefined && v !== '') sp.set(k, String(v)); });
+      const s = sp.toString();
+      return `/api/pm/global/summary${s ? `?${s}` : ''}`;
+    },
     preferences: () => '/api/pm/preferences',
     quickActions: () => '/api/pm/preferences/quick-actions',
     assistantAsk: () => '/api/pm/assistant/ask',
@@ -1473,12 +1530,26 @@ export const api = {
     milestones: {
       item: (milestoneId: string) => `/api/pm/milestones/${milestoneId}`,
     },
+    briefings: {
+      item: (briefingId: string) => `/api/pm/briefings/${briefingId}`,
+      share: (briefingId: string) => `/api/pm/briefings/${briefingId}/share`,
+      saveToHosting: (briefingId: string) => `/api/pm/briefings/${briefingId}/save-to-hosting`,
+      restyle: (briefingId: string) => `/api/pm/briefings/${briefingId}/restyle`,
+      refine: (briefingId: string) => `/api/pm/briefings/${briefingId}/refine`,
+      styles: () => '/api/pm/briefings/styles',
+      /** 匿名分享页（后端直接返回 text/html，可直接浏览器打开） */
+      sharedView: (token: string) => `/api/pm/briefings/shared/${token}`,
+    },
     risks: {
       item: (riskId: string) => `/api/pm/risks/${riskId}`,
     },
     dashboard: () => '/api/pm/dashboard',
     auditLogs: () => '/api/pm/audit-logs',
     rewardConfig: () => '/api/pm/reward-config',
+    // 全局知识库（管理层洞察，仅 pm-agent.dashboard）
+    knowledgeOverview: () => '/api/pm/knowledge/overview',
+    knowledgeEntries: (query?: string) => `/api/pm/knowledge/entries${query ? `?${query}` : ''}`,
+    knowledgeEntryContent: (entryId: string) => `/api/pm/knowledge/entries/${entryId}/content`,
   },
 } as const;
 

@@ -248,6 +248,24 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     createdAt: new Date().toISOString(),
   },
   {
+    id: 'builtin-md-to-ppt',
+    name: 'MD 转网页 PPT',
+    description: '粘贴 Markdown 或直接描述主题，AI 生成 reveal.js 网页演示文稿，5 种差异化主题可选',
+    icon: 'FileText',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'agent',
+    agentKey: 'md-to-ppt-agent',
+    routePath: '/md-to-ppt-agent',
+    permission: 'access',
+    tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    // wip 已摘除（2026-06-10）：预览环境真人路径验收通过——登录→发需求→大纲→
+    // CDS Agent 生成 8 页 deck→Reveal 渲染→翻页交互，全链路 8/11 步 pass，
+    // 失败 3 步为驱动脚本选择器问题与推理模型思考期实况空窗（同日已修）
+  },
+  {
     id: 'builtin-task-tree',
     name: '个人任务树',
     description: '分层任务管理，对话摘取任务、卡点上报，一眼看清推进进度',
@@ -521,6 +539,23 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
     createdByName: '官方',
+  },
+  {
+    id: 'builtin-tech-doc-format-agent',
+    name: '技术分析文档格式校验 Agent',
+    description: '按 PM2502 模板生成技术分析文档，并检查上传文档的标题、表格和微格式',
+    icon: 'FileText',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'agent',
+    agentKey: 'tech-doc-format-agent',
+    routePath: '/tech-doc-format-agent',
+    permission: 'access',
+    tags: ['技术分析', '文档格式', 'PM2502', '模板校验'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    createdByName: '官方',
+    wip: true,
   },
   {
     id: 'builtin-share-link-tester',

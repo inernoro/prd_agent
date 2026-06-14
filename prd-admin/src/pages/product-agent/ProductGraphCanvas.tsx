@@ -56,7 +56,8 @@ import {
   type GraphNode,
   type GraphEdge,
 } from '@/services/real/productAgent';
-import { ITEM_GRADE_LABEL, effectiveDefectGrade } from './types';
+import { defectSeverityTierLabel } from './types';
+import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 
 type NodeType = GraphNode['type'];
 
@@ -219,6 +220,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
     () => Object.fromEntries(ALL_TYPES.map((t) => [t, true])) as Record<NodeType, boolean>,
   );
   const [stateFilter, setStateFilter] = useState('');
+  const [productFilter, setProductFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
   const [keyword, setKeyword] = useState('');
   const [mode, setMode] = useState<'collapse' | 'trace'>('collapse');
@@ -310,11 +312,29 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       }
     }
 
+    const effectiveProductId = productId ?? (productFilter ? productFilter.replace(/^product:/, '') : '');
+
+    // 产品过滤（跨产品总览）：从产品根 BFS 可达子图
+    let productScope: Set<string> | null = null;
+    if (overview && productFilter) {
+      productScope = new Set<string>([productFilter]);
+      const queue = [productFilter];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        for (const nb of derived.adj.get(cur) ?? []) {
+          if (!productScope.has(nb)) {
+            productScope.add(nb);
+            queue.push(nb);
+          }
+        }
+      }
+    }
+
     // 版本过滤：以版本为中心 2 跳可达 + 产品根
     let versionScope: Set<string> | null = null;
     if (versionFilter) {
       versionScope = new Set<string>([versionFilter]);
-      if (productId) versionScope.add(`product:${productId}`);
+      if (effectiveProductId) versionScope.add(`product:${effectiveProductId}`);
       let frontier = [versionFilter];
       for (let hop = 0; hop < 2; hop++) {
         const next: string[] = [];
@@ -344,11 +364,12 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       }
       if (!typeOn[n.type]) continue;
       if (stateFilter && (n.state ?? '') !== stateFilter) continue;
+      if (productScope && !productScope.has(n.id)) continue;
       if (versionScope && !versionScope.has(n.id)) continue;
       vis.add(n.id);
     }
     return { visibleIds: vis, matchIds: match };
-  }, [raw, derived, typeOn, stateFilter, versionFilter, keyword, productId]);
+  }, [raw, derived, typeOn, stateFilter, productFilter, versionFilter, keyword, productId, overview]);
 
   // ── 追溯集合：从锚点沿关系路径(无向)可达 ──
   const traceIds = useMemo(() => {
@@ -586,7 +607,23 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
     raw?.nodes.forEach((n) => n.state && s.add(n.state));
     return Array.from(s).sort();
   }, [raw]);
-  const versionOptions = useMemo(() => (raw?.nodes ?? []).filter((n) => n.type === 'version'), [raw]);
+  const productOptions = useMemo(
+    () => (raw?.nodes ?? []).filter((n) => n.type === 'product').sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')),
+    [raw],
+  );
+  const versionOptions = useMemo(() => {
+    const versions = (raw?.nodes ?? []).filter((n) => n.type === 'version');
+    if (!overview || !productFilter) return versions;
+    const pid = productFilter.replace(/^product:/, '');
+    return versions.filter((v) => v.productId === pid);
+  }, [raw, overview, productFilter]);
+
+  useEffect(() => {
+    if (!productFilter || !versionFilter) return;
+    const pid = productFilter.replace(/^product:/, '');
+    const vNode = raw?.nodes.find((n) => n.id === versionFilter);
+    if (vNode?.productId && vNode.productId !== pid) setVersionFilter('');
+  }, [productFilter, versionFilter, raw]);
 
   if (loading) return <MapSectionLoader text="正在生成知识图谱…" />;
   if (error) return <div className="text-sm text-red-300/80 text-center py-10">{error}</div>;
@@ -632,6 +669,21 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
             {stateOptions.map((s) => (
               <option key={s} value={s}>
                 {s}
+              </option>
+            ))}
+          </select>
+        )}
+        {/* 产品过滤（跨产品总览） */}
+        {overview && productOptions.length > 0 && (
+          <select
+            value={productFilter}
+            onChange={(e) => setProductFilter(e.target.value)}
+            className="px-2 py-1 rounded-md text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none max-w-[160px]"
+          >
+            <option value="">全部产品</option>
+            {productOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
               </option>
             ))}
           </select>
@@ -850,9 +902,9 @@ function NodeDrawer({
           const cName = new Map((cRes.success ? cRes.data.items : []).map((c) => [c.id, c.name] as [string, string]));
           const vName = new Map((vRes.success ? vRes.data.items : []).map((v) => [v.id, v.versionName] as [string, string]));
           r.push(
-            { label: '编号', value: o.requirementNo },
+            { label: 'ID', value: o.requirementNo },
             { label: '分级', value: o.grade },
-            { label: '状态', value: o.currentState || '-' },
+            { label: '状态', value: resolveRequirementStateLabel(o.currentState) || '-' },
             { label: '关联客户', value: o.customerIds.map((id) => cName.get(id) ?? id).join('、') || '—' },
             { label: '归属版本', value: o.versionIds.map((id) => vName.get(id) ?? id).join('、') || '—' },
           );
@@ -861,7 +913,7 @@ function NodeDrawer({
       } else if (type === 'feature') {
         const res = await listFeatures(productId);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
-        if (o) { r.push({ label: '编号', value: o.featureNo }, { label: '分级', value: o.grade }, { label: '状态', value: o.currentState || '-' }, { label: '实现需求', value: String(o.requirementIds.length) }); d = o.description ?? ''; }
+        if (o) { r.push({ label: '编号', value: o.featureNo }, { label: '状态', value: o.currentState || '-' }, { label: '实现需求', value: String(o.requirementIds.length) }); d = o.description ?? ''; }
       } else if (type === 'version') {
         const res = await listVersions(productId);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
@@ -873,7 +925,7 @@ function NodeDrawer({
       } else if (type === 'defect') {
         const res = await listTracedDefects(productId);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
-        if (o) { r.push({ label: '编号', value: o.defectNo }, { label: '状态', value: o.status }, { label: '等级', value: ITEM_GRADE_LABEL[effectiveDefectGrade(o)] }, { label: '追溯', value: o.tracedRequirementId ? '需求' : o.tracedVersionId ? '版本' : '产品' }); }
+        if (o) { r.push({ label: 'ID', value: o.defectNo }, { label: '状态', value: o.status }, { label: '严重程度', value: defectSeverityTierLabel(o) }, { label: '追溯', value: o.tracedRequirementId ? '需求' : o.tracedVersionId ? '版本' : '产品' }); }
       } else if (type === 'product') {
         const res = await getProduct(productId);
         const o = res.success ? res.data : undefined;

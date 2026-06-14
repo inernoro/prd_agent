@@ -1,20 +1,30 @@
 /**
- * 团队动态 — 全员工作日志时间线（仅管理员，team-activity.read）。
+ * 团队动态 — 团队脉搏 + 全员工作日志时间线（仅管理员，team-activity.read）。
  * 数据由后端 ActivityLogActionFilter 按白名单自动留痕，本页只读：
- * 按天分组的时间线流 + 按人/模块/时间筛选 + 加载更多分页。
+ * 顶部脉搏面板（总量/模块能量/时段热力/成员排行）+ 按天分组时间线（连续同类动作折叠）。
+ * 隐私脱敏开关默认开启：标题与姓名打码，适合投屏/旁观场景。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Activity, Eye, EyeOff, Radar } from 'lucide-react';
 import { PageHeader, GlassCard, Button } from '@/components/design';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { resolveAvatarUrl } from '@/lib/avatar';
-import { getTeamActivityLogs, getTeamActivityModules } from '@/services';
-import type { ActivityModuleOption, TeamActivityItem } from '@/services/contracts/teamActivity';
+import { getTeamActivityLogs, getTeamActivityModules, getTeamActivityStats } from '@/services';
+import type { ActivityModuleOption, TeamActivityItem, TeamActivityStatsData } from '@/services/contracts/teamActivity';
+import { CategoryStatsPanel, MemberStatsPanel } from './StatsPanels';
+import { InsightsPanel } from './InsightsPanel';
+import { getModuleMeta } from './moduleMeta';
+import { getActionIcon } from './actionIcons';
+import { aggregateConsecutive, maskName, type AggregatedActivity } from './pulse';
 
 const PAGE_SIZE = 30;
+
+// 隐私脱敏为纯 UI 偏好（发版后旧值无害），按 no-localstorage.md 例外清单允许 localStorage 记忆
+const PRIVACY_KEY = 'team-activity-privacy-mask';
 
 type RangeKey = 'all' | 'today' | 'week' | 'month';
 
@@ -24,6 +34,14 @@ const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
   { key: 'week', label: '本周' },
   { key: 'month', label: '本月' },
 ];
+
+/** 环比文案：脉搏的对照窗口与所选范围同长（昨天/上周/上月）；「全部」无环比 */
+const COMPARE_LABELS: Record<RangeKey, string | null> = {
+  all: null,
+  today: '较昨日',
+  week: '较上周',
+  month: '较上月',
+};
 
 function rangeFrom(key: RangeKey): string | undefined {
   if (key === 'all') return undefined;
@@ -55,7 +73,25 @@ function dayLabelOf(key: string): string {
   return sameYear ? `${Number(m)}月${Number(d)}日` : `${y}年${Number(m)}月${Number(d)}日`;
 }
 
+function readPrivacyPreference(): boolean {
+  try {
+    return (localStorage.getItem(PRIVACY_KEY) ?? '1') === '1';
+  } catch {
+    return true;
+  }
+}
+
 export default function TeamActivityPage() {
+  // 视图切换：feed（动态流）/ insights（行为洞察），深链 ?tab=insights
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = searchParams.get('tab') === 'insights' ? 'insights' : 'feed';
+  const switchView = useCallback(
+    (next: 'feed' | 'insights') => {
+      setSearchParams(next === 'insights' ? { tab: 'insights' } : {}, { replace: true });
+    },
+    [setSearchParams]
+  );
+
   const [items, setItems] = useState<TeamActivityItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -63,13 +99,18 @@ export default function TeamActivityPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modules, setModules] = useState<ActivityModuleOption[]>([]);
+  const [stats, setStats] = useState<TeamActivityStatsData | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [privacy, setPrivacy] = useState(readPrivacyPreference);
 
   const [filterUserId, setFilterUserId] = useState('');
   const [filterModule, setFilterModule] = useState('');
-  const [filterRange, setFilterRange] = useState<RangeKey>('all');
+  // 默认「今天」：脉搏回答的是「团队此刻在干嘛」，历史全量是查询场景而非默认视图
+  const [filterRange, setFilterRange] = useState<RangeKey>('today');
 
   // 过期响应守卫：快速切换筛选 / 加载更多与刷新竞态时，丢弃晚到的旧请求结果
   const fetchIdRef = useRef(0);
+  const statsFetchIdRef = useRef(0);
 
   useEffect(() => {
     void getTeamActivityModules().then((res) => {
@@ -115,6 +156,41 @@ export default function TeamActivityPage() {
     void load(1, false);
   }, [load]);
 
+  // 脉搏聚合统计随同一组筛选条件刷新（统计不分页）
+  useEffect(() => {
+    const fetchId = ++statsFetchIdRef.current;
+    setStatsLoading(true);
+    void getTeamActivityStats({
+      userId: filterUserId || undefined,
+      module: filterModule || undefined,
+      from: rangeFrom(filterRange),
+    }).then((res) => {
+      if (statsFetchIdRef.current !== fetchId) return;
+      if (res.success) setStats(res.data);
+      setStatsLoading(false);
+    });
+  }, [filterUserId, filterModule, filterRange]);
+
+  const togglePrivacy = useCallback(() => {
+    setPrivacy((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(PRIVACY_KEY, next ? '1' : '0');
+      } catch {
+        // 存储不可用时仅影响记忆，不影响本次切换
+      }
+      return next;
+    });
+  }, []);
+
+  // 聚合即导航：脉搏面板里点模块/成员 = 切换对应筛选（再点一次取消）
+  const pickModule = useCallback((key: string) => {
+    setFilterModule((prev) => (prev === key ? '' : key));
+  }, []);
+  const pickActor = useCallback((actorId: string) => {
+    setFilterUserId((prev) => (prev === actorId ? '' : actorId));
+  }, []);
+
   const hasMore = items.length < total;
 
   const dayGroups = useMemo(() => {
@@ -125,40 +201,108 @@ export default function TeamActivityPage() {
       if (last && last.key === key) last.items.push(item);
       else groups.push({ key, items: [item] });
     }
-    return groups;
+    // 连续同类动作折叠发生在天分组内部，不跨天合并
+    return groups.map((g) => ({ key: g.key, total: g.items.length, rows: aggregateConsecutive(g.items) }));
   }, [items]);
 
   return (
-    <div className="flex flex-col gap-4 h-full min-h-0">
-      <PageHeader title="团队动态" description="全员工作动态时间线（按白名单动作自动留痕）" />
+    // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡
+    <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1840 }}>
+      <PageHeader title="团队动态" description="团队脉搏总览 + 动态时间线 + 行为洞察（按白名单动作与路由信号自动采集）" />
 
-      {/* 筛选栏：人 / 模块 / 时间快捷段 */}
+      {/* 筛选栏：视图切换 / 人 / 模块 / 时间快捷段 / 隐私脱敏 */}
       <div className="flex items-center gap-3 flex-wrap shrink-0">
-        <div className="w-52">
-          <UserSearchSelect
-            value={filterUserId}
-            onChange={setFilterUserId}
-            showAllOption
-            allOptionLabel="全部成员"
-            placeholder="按成员筛选"
-            uiSize="sm"
-          />
+        {/* 视图切换：动态流（发生了什么）/ 行为洞察（哪里不好用） */}
+        <div className="flex items-center gap-1 p-0.5 rounded-md border border-white/10 bg-white/[0.02]">
+          <button
+            type="button"
+            onClick={() => switchView('feed')}
+            className={`inline-flex items-center gap-1.5 px-2.5 h-[24px] rounded text-[12px] transition-colors ${
+              view === 'feed' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:text-white/75'
+            }`}
+          >
+            <Activity size={13} />
+            动态流
+          </button>
+          <button
+            type="button"
+            onClick={() => switchView('insights')}
+            className={`inline-flex items-center gap-1.5 px-2.5 h-[24px] rounded text-[12px] transition-colors ${
+              view === 'insights' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:text-white/75'
+            }`}
+          >
+            <Radar size={13} />
+            行为洞察
+          </button>
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <FilterChip active={filterModule === ''} label="全部模块" onClick={() => setFilterModule('')} />
-          {modules.map((m) => (
-            <FilterChip key={m.key} active={filterModule === m.key} label={m.label} onClick={() => setFilterModule(m.key)} />
-          ))}
-        </div>
+
+        {view === 'feed' ? (
+          <>
+            <div className="w-52">
+              <UserSearchSelect
+                value={filterUserId}
+                onChange={setFilterUserId}
+                showAllOption
+                allOptionLabel="全部成员"
+                placeholder="按成员筛选"
+                uiSize="sm"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <FilterChip active={filterModule === ''} label="全部模块" onClick={() => setFilterModule('')} />
+              {modules.map((m) => (
+                <FilterChip key={m.key} active={filterModule === m.key} label={m.label} onClick={() => setFilterModule(m.key)} />
+              ))}
+            </div>
+          </>
+        ) : null}
         <div className="flex items-center gap-1.5 ml-auto">
           {RANGE_OPTIONS.map((r) => (
             <FilterChip key={r.key} active={filterRange === r.key} label={r.label} onClick={() => setFilterRange(r.key)} />
           ))}
+          {view === 'feed' ? (
+            <button
+              type="button"
+              onClick={togglePrivacy}
+              title={privacy ? '匿名模式：隐藏成员姓名（文档标题保持明文），点击切换实名' : '实名模式：点击切换匿名（隐藏成员姓名）'}
+              className={`inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
+                privacy
+                  ? 'bg-violet-500/15 text-violet-200 border-violet-500/35'
+                  : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
+              }`}
+            >
+              {privacy ? <EyeOff size={13} /> : <Eye size={13} />}
+              {privacy ? '匿名' : '实名'}
+            </button>
+          ) : null}
         </div>
       </div>
 
-      {/* 时间线主体 */}
-      <GlassCard className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+      {view === 'insights' ? (
+        <InsightsPanel from={rangeFrom(filterRange)} />
+      ) : (
+      // 控制台三栏：两侧统计栏各自滚动，中间时间线吃满剩余宽度
+      <div
+        className="flex-1 grid gap-4"
+        style={{ minHeight: 0, gridTemplateColumns: '264px minmax(0, 1fr) 300px' }}
+      >
+        {/* 左栏：成员统计 */}
+        <div
+          className="flex flex-col gap-4 min-h-0"
+          style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
+          <MemberStatsPanel
+            stats={stats}
+            loading={statsLoading}
+            privacy={privacy}
+            compareLabel={COMPARE_LABELS[filterRange]}
+            activeActorId={filterUserId}
+            onPickActor={pickActor}
+          />
+        </div>
+
+        {/* 中栏：时间线主体 */}
+        <GlassCard className="flex flex-col" style={{ minHeight: 0 }}>
         <div
           className="flex-1 px-5 py-4"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
@@ -183,17 +327,25 @@ export default function TeamActivityPage() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-4">
               {dayGroups.map((g) => (
-                <div key={g.key} className="flex flex-col gap-1">
-                  <div className="flex items-center gap-3 pb-1">
+                <div key={g.key} className="flex flex-col">
+                  {/* 吸顶日期头：长流滚动时始终知道自己看到哪一天 */}
+                  <div
+                    className="sticky top-0 z-10 flex items-center gap-3 py-1.5 -mx-5 px-5 backdrop-blur-md"
+                    style={{ background: 'rgba(16,17,19,0.72)' }}
+                  >
                     <span className="text-[12px] font-semibold text-white/70">{dayLabelOf(g.key)}</span>
                     <span className="flex-1 h-px bg-white/5" />
-                    <span className="text-[11px] text-white/30">{g.items.length} 条</span>
+                    <span className="text-[11px] text-white/30">{g.total} 条</span>
                   </div>
-                  {g.items.map((item) => (
-                    <ActivityRow key={item.id} item={item} />
-                  ))}
+                  <div className="relative">
+                    {/* 时间线 rail：把同一天的事件串成一条线（GitLab 式） */}
+                    <span className="absolute left-4 top-3 bottom-3 w-px bg-white/[0.06]" aria-hidden />
+                    {g.rows.map((row) => (
+                      <ActivityRow key={row.id} group={row} privacy={privacy} />
+                    ))}
+                  </div>
                 </div>
               ))}
 
@@ -209,7 +361,22 @@ export default function TeamActivityPage() {
             </div>
           )}
         </div>
-      </GlassCard>
+        </GlassCard>
+
+        {/* 右栏：分类统计 */}
+        <div
+          className="flex flex-col gap-4 min-h-0"
+          style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
+          <CategoryStatsPanel
+            stats={stats}
+            loading={statsLoading}
+            activeModule={filterModule}
+            onPickModule={pickModule}
+          />
+        </div>
+      </div>
+      )}
     </div>
   );
 }
@@ -219,9 +386,9 @@ function FilterChip({ active, label, onClick }: { active: boolean; label: string
     <button
       type="button"
       onClick={onClick}
-      className={`px-2.5 h-[26px] rounded-full text-[12px] border transition-colors ${
+      className={`px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
         active
-          ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40'
+          ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/35'
           : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
       }`}
     >
@@ -230,23 +397,60 @@ function FilterChip({ active, label, onClick }: { active: boolean; label: string
   );
 }
 
-function ActivityRow({ item }: { item: TeamActivityItem }) {
+function ActivityRow({ group, privacy }: { group: AggregatedActivity; privacy: boolean }) {
+  const item = group.head;
+  const meta = getModuleMeta(item.module);
+  const ActionIcon = getActionIcon(item.action);
+  const actorName = item.actorName || item.actorId;
+  // 标题按业界惯例全文显示（GitHub/GitLab 的对象名都是明文链接），隐私脱敏只作用于人名
+  const titles = group.titles;
+  // 折叠条数超过去重标题数时补「等」，提示还有同类对象未列出
+  const hasMoreTargets = group.count > titles.length && titles.length > 0;
+
   return (
-    <div className="flex items-center gap-3 py-2 px-1 rounded-lg hover:bg-white/[0.03] transition-colors">
-      <UserAvatar
-        src={resolveAvatarUrl({ avatarFileName: item.actorAvatarFileName })}
-        alt={item.actorName ?? ''}
-        className="w-8 h-8 rounded-full shrink-0 object-cover"
-      />
-      <div className="flex-1 min-w-0 text-[13px] leading-relaxed">
-        <span className="text-white/85 font-medium">{item.actorName || item.actorId}</span>
-        <span className="text-white/45"> 在 </span>
-        <span className="text-white/70">{item.moduleLabel}</span>
-        <span className="text-white/45"> {item.actionLabel}</span>
-        {item.targetTitle ? <span className="text-cyan-200/90"> 《{item.targetTitle}》</span> : null}
+    <div className="relative flex items-start gap-3 py-2 rounded-lg hover:bg-white/[0.03] transition-colors">
+      {/* 头像 + 模块色动作图标徽章（GitLab 时间线式事件类型标识） */}
+      <span className="relative z-10 shrink-0">
+        <UserAvatar
+          src={resolveAvatarUrl({ avatarFileName: item.actorAvatarFileName })}
+          alt={actorName}
+          className="w-8 h-8 rounded-full object-cover block"
+        />
+        <span
+          className="absolute -bottom-0.5 -right-1 w-4 h-4 rounded-full flex items-center justify-center"
+          style={{ background: '#16171a', border: `1px solid ${meta.border}` }}
+        >
+          <ActionIcon size={9} style={{ color: meta.accent }} />
+        </span>
+      </span>
+      <div className="flex-1 min-w-0 text-[13px] leading-relaxed pt-1">
+        <span className="text-white/90 font-semibold">{privacy ? maskName(actorName) : actorName}</span>
+        <span className="text-white/50"> {item.actionLabel}</span>
+        {titles.map((t, i) => (
+          <span key={i} className="text-cyan-200/90">
+            {' '}
+            《{t}》
+          </span>
+        ))}
+        {hasMoreTargets ? <span className="text-white/50"> 等</span> : null}
+        {group.count > 1 ? (
+          <span
+            className="inline-block ml-2 px-1.5 py-px rounded text-[11px] font-semibold tabular-nums align-[1px]"
+            style={{ background: meta.soft, color: meta.accent }}
+          >
+            ×{group.count}
+          </span>
+        ) : null}
       </div>
-      {/* 列表场景关闭逐行自刷新定时器（项目惯例，长列表 N 行 N 个 interval 会拖性能） */}
-      <RelativeTime value={item.createdAt} refreshIntervalMs={0} className="text-[11px] text-white/35 shrink-0" />
+      {/* 右侧元信息：模块归属 + 时间戳（第三优先级，弱化） */}
+      <div className="flex items-center gap-2.5 shrink-0 pt-1.5">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-white/35">
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: meta.accent }} />
+          {item.moduleLabel}
+        </span>
+        {/* 列表场景关闭逐行自刷新定时器（项目惯例，长列表 N 行 N 个 interval 会拖性能） */}
+        <RelativeTime value={item.createdAt} refreshIntervalMs={0} className="text-[11px] text-white/35" />
+      </div>
     </div>
   );
 }

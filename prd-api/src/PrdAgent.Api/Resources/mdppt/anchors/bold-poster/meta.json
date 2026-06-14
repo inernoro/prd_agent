@@ -1,0 +1,78 @@
+{
+  "name": "bold-poster",
+  "upstream": "nexu-io/open-design (html-ppt-zhangzara-bold-poster)",
+  "license": "MIT",
+  "slideCount": 10,
+  "layouts": [
+    {
+      "file": "01-slide-hero.html",
+      "layout": "slide-hero",
+      "classAttr": "slide slide-hero",
+      "chars": 536,
+      "summary": "Q3 Strategic Overview &mdash; Fiscal Year 2026 Apex Group Ltd. Annual Report Building scal"
+    },
+    {
+      "file": "02-slide-red.html",
+      "layout": "slide-red",
+      "classAttr": "slide slide-red",
+      "chars": 235,
+      "summary": "\"We don't follow markets. We build the infrastructure they run on.\" &mdash; Our operating "
+    },
+    {
+      "file": "03-slide-summary.html",
+      "layout": "slide-summary",
+      "classAttr": "slide slide-summary",
+      "chars": 2162,
+      "summary": "Executive Summary Apex Group Ltd. partners with ambitious enterprise teams to turn complex"
+    },
+    {
+      "file": "04-slide-financial.html",
+      "layout": "slide-financial",
+      "classAttr": "slide slide-financial",
+      "chars": 2195,
+      "summary": "Financial Performance $12.4M Annual Recurring Revenue Net revenue retention of 118% driven"
+    },
+    {
+      "file": "05-slide-stat.html",
+      "layout": "slide-stat",
+      "classAttr": "slide slide-stat",
+      "chars": 713,
+      "summary": "96% 48 Active Clients 12 Countries 99.97% Platform Uptime Customer satisfaction score acro"
+    },
+    {
+      "file": "06-slide-services.html",
+      "layout": "slide-services",
+      "classAttr": "slide slide-services",
+      "chars": 2159,
+      "summary": "Service Lines Strategy Market analysis, competitive positioning, and multi-year roadmaps t"
+    },
+    {
+      "file": "07-slide-roadmap.html",
+      "layout": "slide-roadmap",
+      "classAttr": "slide slide-roadmap",
+      "chars": 2662,
+      "summary": "Phase One &mdash; Complete (FY22-FY24) Foundation Core platform refined. Enterprise-grade "
+    },
+    {
+      "file": "08-slide-pillars.html",
+      "layout": "slide-pillars",
+      "classAttr": "slide slide-pillars",
+      "chars": 1937,
+      "summary": "01 Clarity Every decision is documented, traceable, and communicated with context. Clear D"
+    },
+    {
+      "file": "09-slide-global.html",
+      "layout": "slide-global",
+      "classAttr": "slide slide-global",
+      "chars": 2074,
+      "summary": "Global Presence Headquarters San Francisco Primary engineering, design, and executive lead"
+    },
+    {
+      "file": "10-slide-close.html",
+      "layout": "slide-close",
+      "classAttr": "slide slide-close",
+      "chars": 411,
+      "summary": "Thank You Ready to explore what we can build together? hello@apexgroup.co &mdash; San Fran"
+    }
+  ]
+}

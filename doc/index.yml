@@ -283,13 +283,16 @@ docs:
   debt.cds-agent: CDS Agent 工作台 · 债务台账（R1 商业级 / Lite 边界 / 文档熵减）
   debt.cds-state-json: CDS state.json 影子存储债务台账
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
+  plan.md-to-ppt-next-wave: MD 转 PPT 下一波执行计划（大纲右侧编辑器/状态机/澄清问卷/编辑深修）
   debt.md-to-ppt: MD 转网页 PPT · 债务台账（预览 iframe same-origin 安全债 / KB 注入未实现）
   debt.changelog-center: 更新中心（终身存储 + SSE 推送）债务台账
   debt.cds-tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
   debt.cds-visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
   debt.speech-agent: 演讲智能体 · 债务台账（MVP 已知边界 + Phase 2 backlog）
+  debt.team-activity: 团队动态（团队脉搏）· 债务台账（排行刷量计分 / 直方图采样 / 深链下钻未通）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.kb-inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
+  debt.kb-selection-ai: 知识库划词 AI 局部编辑（AI 改写 + 选区配图）债务台账
   debt.web-hosting: 网页托管 · 债务台账（幻灯片翻页方向兼容垫片边界）
   debt.share-link-security: 分享链接安全债务台账
   debt.web-hosting-client-ip: 网页托管真实客户端 IP（XFF 解析）债务台账
