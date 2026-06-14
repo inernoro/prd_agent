@@ -5,3 +5,4 @@
 | fix | prd-admin | 技能分享弹窗 busy 闸改为生成时同步置位（不走 effect），杜绝点击到 effect 之间的竞态窗口 |
 | feat | prd-api | 「我的分享」聚合新增技能分享（marketplace_skill），跨 5 类统一管理；技能分享链接 /s/skill/{token} 可在「我的分享」查看/复制 |
 | feat | prd-admin | 「我的分享」页新增「技能」分类标签与筛选 |
+| polish | prd-admin | 海鲜市场官方技能去置顶：取消「官方推荐」独立置顶区，官方与社区技能按当前排序（热门/最新）混排，官方身份仍由卡片「官方」徽章标识 |
