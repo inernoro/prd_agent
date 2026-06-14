@@ -11,6 +11,23 @@ export interface ShortVideoMaterialStage {
   at: string;
 }
 
+/** 短视频展示卡片（后端从平台原始元数据抽取的干净字段，前端直接渲染）。 */
+export interface ShortVideoCard {
+  coverUrl?: string | null;
+  videoUrl?: string | null;
+  title: string;
+  authorName?: string | null;
+  authorAvatarUrl?: string | null;
+  platform: string;
+  durationSec?: number | null;
+  hashtags?: string[] | null;
+  likeCount?: number | null;
+  commentCount?: number | null;
+  shareCount?: number | null;
+  collectCount?: number | null;
+  playCount?: number | null;
+}
+
 export interface ShortVideoMaterialRun {
   id: string;
   userId: string;
@@ -21,6 +38,9 @@ export interface ShortVideoMaterialRun {
   inputSourceText?: string;
   sourceMode: 'manual' | 'tikhub-video' | 'metadata-fallback' | string;
   parserMessage?: string;
+  parsedMetadataJson?: string | null;
+  sourceVideoUrl?: string | null;
+  card?: ShortVideoCard | null;
   status: 'queued' | 'running' | 'done' | 'failed' | string;
   stages: ShortVideoMaterialStage[];
   storeId?: string;

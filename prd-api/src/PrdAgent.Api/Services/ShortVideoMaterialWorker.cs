@@ -170,6 +170,7 @@ public sealed class ShortVideoMaterialProcessor
         run.SourceMode = parsed.SourceMode;
         run.ParsedMetadataJson = parsed.MetadataJson;
         run.ParserMessage = parsed.Message;
+        run.Card = BuildShortVideoCard(parsed.MetadataJson, title, run.Platform, parsed.CoverUrl);
         MarkStage(run, "parse", "done", parsed.Message);
         await SaveRunAsync(run);
 
@@ -191,6 +192,9 @@ public sealed class ShortVideoMaterialProcessor
             run.Id,
             now);
         run.SourceEntryId = sourceEntry.Id;
+        run.SourceVideoUrl = videoMaterial.Url;
+        if (run.Card != null)
+            run.Card.VideoUrl = videoMaterial.Url; // 入库后改用 COS 永久地址播放
         MarkStage(run, "source", "done", "原始视频已作为知识库文件入库");
         await SaveRunAsync(run);
 
@@ -651,6 +655,133 @@ public sealed class ShortVideoMaterialProcessor
             ?? _config["TikHub:ApiBaseUrl"]
             ?? Environment.GetEnvironmentVariable("TIKHUB_API_BASE_URL")
             ?? "https://api.tikhub.dev").TrimEnd('/');
+
+    /// <summary>
+    /// 从短视频解析器返回的原始元数据中抽取一张干净的展示卡片。
+    /// 解析器把 author/statistics/hashtags 透传成了嵌套 JSON 字符串，这里集中解开，
+    /// 让前端直接渲染（遵循「业务数据描述由后端维护」原则）。
+    /// </summary>
+    private static ShortVideoCard BuildShortVideoCard(string? metadataJson, string title, string platform, string? coverUrlFallback)
+    {
+        var card = new ShortVideoCard
+        {
+            Title = title,
+            Platform = platform,
+            CoverUrl = coverUrlFallback,
+        };
+        if (string.IsNullOrWhiteSpace(metadataJson)) return card;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            var root = doc.RootElement;
+
+            var cover = GetJsonString(root, "coverUrl", "cover_url", "cover", "origin_cover");
+            if (!string.IsNullOrWhiteSpace(cover)) card.CoverUrl = cover;
+
+            // 时长：解析器以毫秒字符串透传
+            var durationRaw = GetJsonString(root, "duration", "video_duration");
+            if (long.TryParse(durationRaw, out var durMs) && durMs > 0)
+                card.DurationSec = (int)Math.Round(durMs / 1000.0);
+
+            // author 可能是昵称字符串，也可能是被透传成字符串的嵌套对象
+            var authorEl = ResolveMaybeNestedJson(root, "author");
+            if (authorEl is { ValueKind: JsonValueKind.Object } ao)
+            {
+                card.AuthorName = GetJsonString(ao, "nickname", "name", "unique_id");
+                card.AuthorAvatarUrl = ExtractFirstUrl(ao, "avatar_thumb", "avatar_medium", "avatar_larger", "avatar_168x168", "avatar_300x300");
+            }
+            else
+            {
+                var authorName = GetJsonString(root, "author", "author_name", "nickname");
+                if (!string.IsNullOrWhiteSpace(authorName) && !authorName.TrimStart().StartsWith("{"))
+                    card.AuthorName = authorName;
+            }
+
+            // statistics 同理
+            var statsEl = ResolveMaybeNestedJson(root, "statistics", "stats");
+            if (statsEl is { ValueKind: JsonValueKind.Object } so)
+            {
+                card.LikeCount = GetJsonLong(so, "digg_count", "like_count", "likes");
+                card.CommentCount = GetJsonLong(so, "comment_count", "comments");
+                card.ShareCount = GetJsonLong(so, "share_count", "shares");
+                card.CollectCount = GetJsonLong(so, "collect_count", "favourite_count", "collects");
+                card.PlayCount = GetJsonLong(so, "play_count", "view_count", "plays");
+            }
+
+            // hashtags：数组，每项含 hashtag_name
+            var tagsEl = ResolveMaybeNestedJson(root, "hashtags", "text_extra");
+            if (tagsEl is { ValueKind: JsonValueKind.Array } ta)
+            {
+                foreach (var t in ta.EnumerateArray())
+                {
+                    var name = t.ValueKind == JsonValueKind.String
+                        ? t.GetString()
+                        : GetJsonString(t, "hashtag_name", "name", "caption");
+                    name = name?.TrimStart('#').Trim();
+                    if (!string.IsNullOrWhiteSpace(name) && !card.Hashtags.Contains(name))
+                        card.Hashtags.Add(name);
+                    if (card.Hashtags.Count >= 8) break;
+                }
+            }
+        }
+        catch
+        {
+            // 抽取失败不影响主流程，卡片至少有封面 + 标题
+        }
+        return card;
+    }
+
+    /// <summary>读取某字段；若它被透传成了 JSON 字符串则二次 Parse 还原为对象/数组。</summary>
+    private static JsonElement? ResolveMaybeNestedJson(JsonElement root, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!root.TryGetProperty(name, out var el)) continue;
+            if (el.ValueKind is JsonValueKind.Object or JsonValueKind.Array) return el;
+            if (el.ValueKind == JsonValueKind.String)
+            {
+                var s = el.GetString();
+                if (!string.IsNullOrWhiteSpace(s) && (s.TrimStart().StartsWith("{") || s.TrimStart().StartsWith("[")))
+                {
+                    try
+                    {
+                        using var nested = JsonDocument.Parse(s);
+                        return nested.RootElement.Clone();
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static string? ExtractFirstUrl(JsonElement obj, params string[] imageFieldNames)
+    {
+        foreach (var f in imageFieldNames)
+        {
+            if (!obj.TryGetProperty(f, out var img) || img.ValueKind != JsonValueKind.Object) continue;
+            if (img.TryGetProperty("url_list", out var ul) && ul.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var u in ul.EnumerateArray())
+                {
+                    var s = u.GetString();
+                    if (!string.IsNullOrWhiteSpace(s)) return s;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static long? GetJsonLong(JsonElement obj, params string[] names)
+    {
+        foreach (var n in names)
+        {
+            if (!obj.TryGetProperty(n, out var el)) continue;
+            if (el.ValueKind == JsonValueKind.Number && el.TryGetInt64(out var v)) return v;
+            if (el.ValueKind == JsonValueKind.String && long.TryParse(el.GetString(), out var sv)) return sv;
+        }
+        return null;
+    }
 
     private static ParsedVideoMetadata ExtractParsedMetadata(string? json)
     {

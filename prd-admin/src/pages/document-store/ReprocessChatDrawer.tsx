@@ -13,6 +13,9 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming';
 import { ChatMarkdown } from '@/pages/pa-agent/ChatMarkdown';
 import { VisualCreationMiniPanel } from '@/components/visual-creation/VisualCreationMiniPanel';
+import { PosterFeedCardView } from '@/components/weekly-poster/WeeklyPosterModal';
+import type { WeeklyPosterPage } from '@/services/real/weeklyPoster';
+import type { ShortVideoCard } from '@/services/real/shortVideoMaterials';
 import {
   listReprocessAgents,
   createReprocessAgent,
@@ -150,6 +153,8 @@ type ChatMessage = {
   phase?: 'thinking' | 'streaming' | 'done' | 'error';
   applied?: 'replace' | 'append' | 'new';
   quickActions?: ChatQuickAction[];
+  /** 短视频解析运行：用于把粘贴链接的回复渲染成仿真短视频卡片（而非文字块） */
+  shortVideoRun?: import('@/services').ShortVideoMaterialRun;
 };
 
 type ChatQuickAction = {
@@ -289,6 +294,34 @@ function shortVideoResultFromRun(run: import('@/services').ShortVideoMaterialRun
   };
 }
 
+/** 把后端抽取的短视频卡片映射成海报 feed-card 组件所需的 WeeklyPosterPage（直接复用，不改组件）。 */
+function shortVideoCardToPosterPage(card: ShortVideoCard): WeeklyPosterPage {
+  const playable = card.videoUrl || undefined;        // 优先 COS 永久地址；入库前为空，仅显示封面
+  const cover = card.coverUrl || undefined;
+  return {
+    order: 0,
+    title: card.title || '短视频',
+    body: '',
+    imagePrompt: '',
+    imageUrl: playable ?? cover ?? null,               // 有视频则播放视频，否则展示封面
+    secondaryImageUrl: cover ?? null,                  // <video poster> 封面
+    accentColor: null,
+    authorName: card.authorName ?? null,
+    authorAvatarUrl: card.authorAvatarUrl ?? null,
+    platform: card.platform ?? null,
+    durationSec: card.durationSec ?? null,
+    hashtags: card.hashtags ?? null,
+    stats: {
+      likes: card.likeCount ?? null,
+      comments: card.commentCount ?? null,
+      shares: card.shareCount ?? null,
+      collects: card.collectCount ?? null,
+      plays: card.playCount ?? null,
+    },
+    transcriptCues: null,
+  };
+}
+
 const SHORT_VIDEO_STAGE_LABELS: Record<string, string> = {
   parse: '解析链接',
   source: '保存原始视频',
@@ -296,6 +329,20 @@ const SHORT_VIDEO_STAGE_LABELS: Record<string, string> = {
   timeline: '整理时间线',
   ready: '准备继续加工',
 };
+
+/** 卡片下方的一行状态（取代大段进度文字块；解析细节等卡片之后才轮到）。 */
+function shortVideoCompactStatus(run: import('@/services').ShortVideoMaterialRun): { text: string; tone: 'busy' | 'done' | 'error' } {
+  if (run.status === 'failed') return { text: '解析失败，可重试', tone: 'error' };
+  const stages = run.stages ?? [];
+  const running = stages.find((s) => s.status === 'running');
+  if (running) return { text: `${SHORT_VIDEO_STAGE_LABELS[running.key] || running.label}…`, tone: 'busy' };
+  if (run.status === 'done') {
+    const transcript = stages.find((s) => s.key === 'transcript');
+    if (transcript?.status === 'failed') return { text: '视频已入库（转写稍后可单独执行）', tone: 'done' };
+    return { text: '已入库，可继续加工', tone: 'done' };
+  }
+  return { text: '正在处理…', tone: 'busy' };
+}
 
 function getShortVideoStageLabel(stage: import('@/services').ShortVideoMaterialStage): string {
   return SHORT_VIDEO_STAGE_LABELS[stage.key] || stage.label;
@@ -1065,6 +1112,7 @@ export function ReprocessChatDrawer({
               ...m,
               streaming: false,
               phase: 'done',
+              shortVideoRun: run,
               content: buildShortVideoResultMessage(result),
               quickActions: buildShortVideoQuickActions(result),
             }
@@ -1081,7 +1129,7 @@ export function ReprocessChatDrawer({
       if (run.status === 'failed') {
         const message = run.errorMessage || '短视频解析失败';
         setMessages((prev) => prev.map((m) => m.id === messageId
-          ? { ...m, streaming: false, phase: 'error', content: `${formatShortVideoProgress(run)}\n\n（解析失败：${message}）` }
+          ? { ...m, streaming: false, phase: 'error', shortVideoRun: run, content: `${formatShortVideoProgress(run)}\n\n（解析失败：${message}）` }
           : m));
         setStreamingId(null);
         sendLockRef.current = false;
@@ -1093,6 +1141,7 @@ export function ReprocessChatDrawer({
             ...m,
             streaming: true,
             phase: 'streaming',
+            shortVideoRun: run,
             content: formatShortVideoProgress(run),
           }
         : m));
@@ -2193,6 +2242,30 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError, mode }: {
   );
 }
 
+// ── 短视频卡片块：粘贴链接后用仿真短视频卡片展示封面+视频，取代文字块 ──
+function ShortVideoCardBlock({ run }: { run: import('@/services').ShortVideoMaterialRun }) {
+  const card = run.card;
+  const page = useMemo(() => (card ? shortVideoCardToPosterPage(card) : undefined), [card]);
+  if (!page) return null;
+  const status = shortVideoCompactStatus(run);
+  const toneColor = status.tone === 'error'
+    ? 'rgba(248,113,113,0.95)'
+    : status.tone === 'done'
+      ? 'rgba(110,231,158,0.9)'
+      : 'rgba(96,165,250,0.9)';
+  return (
+    <div>
+      <div style={{ width: '100%', maxWidth: 300, aspectRatio: '9 / 16', margin: '0 auto' }}>
+        <PosterFeedCardView page={page} />
+      </div>
+      <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px]" style={{ color: toneColor }}>
+        {status.tone === 'busy' && <MapSpinner size={9} />}
+        {status.text}
+      </div>
+    </div>
+  );
+}
+
 // ── 消息气泡 ──
 function MessageBubble({
   msg, applying, onApply, onApplyArtifact, onOutbound, onQuickAction, allowApply,
@@ -2276,7 +2349,9 @@ function MessageBubble({
             </span>
           )}
         </div>
-        {msg.streaming && msg.content ? (
+        {msg.shortVideoRun?.card ? (
+          <ShortVideoCardBlock run={msg.shortVideoRun} />
+        ) : msg.streaming && msg.content ? (
           <StreamingText text={msg.content} streaming mode="blur" />
         ) : msg.content ? (
           <ChatMarkdown content={msg.content} />
