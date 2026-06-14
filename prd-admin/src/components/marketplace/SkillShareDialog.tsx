@@ -20,6 +20,7 @@ const EXPIRY_OPTIONS: { label: string; days: number }[] = [
 export function SkillShareDialog() {
   const target = useSkillShareDialogStore((s) => s.target);
   const close = useSkillShareDialogStore((s) => s.close);
+  const setBusy = useSkillShareDialogStore((s) => s.setBusy);
   const { sharing, shareSkill } = useSkillShare();
   const [days, setDays] = useState(0);
 
@@ -27,6 +28,13 @@ export function SkillShareDialog() {
   useEffect(() => {
     if (target) setDays(0);
   }, [target]);
+
+  // 把「生成中」状态同步给 store —— 生成期间别处的 open() 会被 busy 闸忽略，
+  // 防止 in-flight 请求用着旧 skill id、界面却被换成另一技能（Bugbot Medium）。
+  useEffect(() => {
+    setBusy(sharing);
+    return () => setBusy(false);
+  }, [sharing, setBusy]);
 
   useEffect(() => {
     if (!target) return;

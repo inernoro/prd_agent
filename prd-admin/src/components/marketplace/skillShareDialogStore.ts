@@ -5,13 +5,22 @@ export type SkillShareTarget = { id: string; title: string };
 
 type SkillShareDialogState = {
   target: SkillShareTarget | null;
+  /** 正在生成链接中。生成期间忽略 open()，避免别处的分享按钮把 target 换掉、
+   *  导致界面显示 A 技能但复制到的是 B 技能的链接（in-flight 请求仍用旧 id）。 */
+  busy: boolean;
   open: (target: SkillShareTarget) => void;
+  setBusy: (busy: boolean) => void;
   close: () => void;
 };
 
-export const useSkillShareDialogStore = create<SkillShareDialogState>((set) => ({
+export const useSkillShareDialogStore = create<SkillShareDialogState>((set, get) => ({
   target: null,
-  open: (target) => set({ target }),
+  busy: false,
+  open: (target) => {
+    if (get().busy) return;
+    set({ target });
+  },
+  setBusy: (busy) => set({ busy }),
   close: () => set({ target: null }),
 }));
 

@@ -4,7 +4,7 @@ import { X, Share2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 import { SkillContentBrowser } from './SkillContentBrowser';
-import { skillShareDialog } from './skillShareDialogStore';
+import { skillShareDialog, useSkillShareDialogStore } from './skillShareDialogStore';
 
 /**
  * 技能详情弹窗 —— 近全屏（82vw / 85vh），左文件树 + 右内容，默认 SKILL.md。
@@ -22,7 +22,11 @@ export function SkillDetailModal({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      // 分享弹窗在上层时，Esc 先关它，不要连详情弹窗一起关掉（Bugbot Medium）。
+      // 两个 window keydown 监听按注册顺序触发：详情先注册先跑，此刻 target 仍在 → 让位。
+      if (useSkillShareDialogStore.getState().target) return;
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
