@@ -514,6 +514,10 @@ public class PeerSyncController : ControllerBase
                 var perItem = new List<string>();
                 var itemOk = true;
                 var pushOk = true;
+                var created = 0;
+                var updated = 0;
+                var skipped = 0;
+                var failed = 0;
                 var assetsRewritten = 0;
                 var assetRewriteFailed = 0;
                 if (direction is "push" or "both")
@@ -540,6 +544,10 @@ public class PeerSyncController : ControllerBase
                     {
                         anyPeerContact = true;
                         perItem.Add("发送 " + (outcome.Message ?? "完成"));
+                        created += outcome.Created;
+                        updated += outcome.Updated;
+                        skipped += outcome.Skipped;
+                        failed += outcome.Failed;
                         assetsRewritten += outcome.AssetsRewritten;
                         assetRewriteFailed += outcome.AssetRewriteFailed;
                         if (outcome.Failed > 0 || outcome.AssetRewriteFailed > 0) { itemOk = false; pushOk = false; anyFail = true; }
@@ -572,6 +580,10 @@ public class PeerSyncController : ControllerBase
                     AttachPeerApplyOptions(bundle, request.PreserveTimestamps ?? true, request.RewriteAssetLinks ?? true, node.BaseUrl);
                     var outcome = await resource.ApplyAsync(bundle, actor, mode, itemId, ct);
                     perItem.Add("拉取 " + (outcome.Message ?? "完成"));
+                    created += outcome.Created;
+                    updated += outcome.Updated;
+                    skipped += outcome.Skipped;
+                    failed += outcome.Failed;
                     assetsRewritten += outcome.AssetsRewritten;
                     assetRewriteFailed += outcome.AssetRewriteFailed;
                     if (outcome.Failed > 0 || outcome.AssetRewriteFailed > 0) { itemOk = false; anyFail = true; }
@@ -582,7 +594,7 @@ public class PeerSyncController : ControllerBase
                 }
                 await MarkPeerSyncAsync(resource.ResourceType, itemId, itemOk ? "synced" : "error", direction, node,
                     string.Join("；", perItem), ct);
-                results.Add(new { itemId, ok = itemOk, message = string.Join("；", perItem), assetsRewritten, assetRewriteFailed });
+                results.Add(new { itemId, ok = itemOk, message = string.Join("；", perItem), created, updated, skipped, failed, assetsRewritten, assetRewriteFailed });
             }
             catch (Exception ex)
             {

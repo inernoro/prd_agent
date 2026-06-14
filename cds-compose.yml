@@ -26,6 +26,9 @@ x-cds-env:
   # R2_PREFIX: ""
   # R2_ENDPOINT: ""
   JWT_SECRET: "TODO: 请填写实际值"
+  ApiKeyCrypto__Secret: "TODO: 请填写实际值"
+  # 如需迁移旧平台密文，可临时填写旧数据加密密钥，多个用英文分号分隔；迁移完成后删除。
+  # ApiKeyCrypto__LegacySecrets: ""
   AI_ACCESS_KEY: "TODO: 请填写实际值"
 
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换

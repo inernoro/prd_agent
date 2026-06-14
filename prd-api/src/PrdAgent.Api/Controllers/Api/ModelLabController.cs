@@ -12,6 +12,7 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.Prompts.Templates;
+using PrdAgent.Infrastructure.Security;
 using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -201,7 +202,6 @@ public class ModelLabController : ControllerBase
         Response.Headers.Connection = "keep-alive";
 
         var adminId = GetAdminId();
-        var jwtSecret = _config["Jwt:Secret"] ?? throw new InvalidOperationException("JWT Secret not configured");
         // 业务规则：不再使用“全局开关”，而是以“主模型 enablePromptCache”作为总开关
         var mainModel = await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(cancellationToken);
         var mainEnablePromptCache = mainModel == null ? false : (mainModel.EnablePromptCache ?? true);
@@ -240,7 +240,7 @@ public class ModelLabController : ControllerBase
                 try
                 {
                     var queueMs = (long)Math.Max(0, (DateTime.UtcNow - queuedAt).TotalMilliseconds);
-                    await RunOneModelAsync(sm, run, jwtSecret, mainEnablePromptCache, effective, writeLock, queueMs, cancellationToken);
+                    await RunOneModelAsync(sm, run, mainEnablePromptCache, effective, writeLock, queueMs, cancellationToken);
                 }
                 finally
                 {
@@ -274,7 +274,6 @@ public class ModelLabController : ControllerBase
     private async Task RunOneModelAsync(
         ModelLabSelectedModel selected,
         ModelLabRun run,
-        string jwtSecret,
         bool mainEnablePromptCache,
         EffectiveRunRequest effective,
         SemaphoreSlim writeLock,
@@ -384,7 +383,7 @@ public class ModelLabController : ControllerBase
                 return;
             }
 
-            var (platformApiUrl, platformApiKey, fallbackPlatformType) = ResolveApiConfigForPlatform(platform, jwtSecret);
+            var (platformApiUrl, platformApiKey, fallbackPlatformType) = ResolveApiConfigForPlatform(platform);
             if (string.IsNullOrWhiteSpace(platformApiUrl) || string.IsNullOrWhiteSpace(platformApiKey))
             {
                 var errItem = new ModelLabRunItem
@@ -485,7 +484,7 @@ public class ModelLabController : ControllerBase
             return;
         }
 
-        var (apiUrl, apiKey, platformType, resolvedPlatformId, resolvedPlatformName) = ResolveApiConfigForModel(model, jwtSecret);
+        var (apiUrl, apiKey, platformType, resolvedPlatformId, resolvedPlatformName) = ResolveApiConfigForModel(model);
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
             var errItem = new ModelLabRunItem
@@ -986,10 +985,10 @@ public class ModelLabController : ControllerBase
             imageBase64List: imageBase64List);
     }
 
-    private (string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName) ResolveApiConfigForModel(LLMModel model, string jwtSecret)
+    private (string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName) ResolveApiConfigForModel(LLMModel model)
     {
         string? apiUrl = model.ApiUrl;
-        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
+        string? apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _config);
         string? platformType = null;
         string? platformId = model.PlatformId;
         string? platformName = null;
@@ -1002,17 +1001,17 @@ public class ModelLabController : ControllerBase
             if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
             {
                 apiUrl ??= platform.ApiUrl;
-                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                apiKey ??= ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
             }
         }
 
         return (apiUrl, apiKey, platformType, platformId, platformName);
     }
 
-    private static (string? apiUrl, string? apiKey, string? platformType) ResolveApiConfigForPlatform(LLMPlatform platform, string jwtSecret)
+    private (string? apiUrl, string? apiKey, string? platformType) ResolveApiConfigForPlatform(LLMPlatform platform)
     {
         var apiUrl = platform.ApiUrl;
-        var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
         var platformType = platform.PlatformType?.ToLowerInvariant();
         return (apiUrl, apiKey, platformType);
     }
@@ -1133,5 +1132,4 @@ internal class EffectiveRunRequest
         ImageBase64List = imageBase64List ?? new()
     };
 }
-
 

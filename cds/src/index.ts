@@ -39,6 +39,7 @@ import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } fr
 import { shouldRetryInterruptedWebhookDispatch } from './services/deploy-dispatch-retry.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
+import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -364,6 +365,7 @@ if (!['json', 'mongo', 'mongo-split', 'auto'].includes(rawStorageMode)) {
     `Unknown CDS_STORAGE_MODE '${rawStorageMode}'. Valid values: 'json' | 'mongo' | 'mongo-split' | 'auto'.`,
   );
 }
+const stateBootstrapMode = resolveStateBootstrapMode(process.env.CDS_STATE_BOOTSTRAP_MODE);
 /**
  * P4 Part 18 (D.2): storage-mode resolution.
  *
@@ -446,14 +448,20 @@ async function initStateService(): Promise<void> {
       try { await splitHandle.close(); } catch { /* best effort */ }
       throw err;
     }
-    // Seed: 全空 mongo + 有 state.json → 把 JSON 一次性导入 split collections
-    if (splitStore.load() === null) {
-      const jsonStore = new JsonStateBackingStore(stateFile);
-      const existing = jsonStore.load();
-      if (existing) {
-        console.log('  [storage] mongo-split 全空但 state.json 存在 — seed 数据中');
-        await splitStore.seedIfEmpty(existing);
-      }
+    // Seed: 全空 mongo + 有 state.json → 仅在显式 migrate 模式下导入。
+    // 新安装默认 fresh，避免旧 repoRoot 里的 .cds/state.json 污染新 CDS。
+    const splitSeedResult = await seedStateFromJsonIfAllowed(
+      stateBootstrapMode,
+      splitStore,
+      new JsonStateBackingStore(stateFile),
+    );
+    if (splitSeedResult === 'seeded') {
+      console.log('  [storage] mongo-split 全空且 CDS_STATE_BOOTSTRAP_MODE=migrate — 从 state.json seed 数据');
+    } else if (splitSeedResult === 'skipped') {
+      console.warn(
+        '  [storage] mongo-split 全空但 state.json 存在 — 默认 fresh 启动，已跳过旧数据导入。'
+        + ' 如需迁移旧数据，设置 CDS_STATE_BOOTSTRAP_MODE=migrate 后重启。',
+      );
     }
     stateService = new StateService(stateFile, config.repoRoot, splitStore);
     stateService.load();
@@ -490,16 +498,21 @@ async function initStateService(): Promise<void> {
 
   // Mongo init succeeded. If the collection is fresh (load() returned
   // null from the init-time query) AND a state.json exists on disk,
-  // import the file snapshot once so existing deployments can
-  // opt-in to mongo without losing data. After the seed, mongo owns
-  // the canonical state.
-  if (mongoStore.load() === null) {
-    const jsonStore = new JsonStateBackingStore(stateFile);
-    const existing = jsonStore.load();
-    if (existing) {
-      console.log('  [storage] mongo is empty but state.json exists — seeding mongo from file');
-      await mongoStore.seedIfEmpty(existing);
-    }
+  // import the file snapshot only when operators explicitly opt in.
+  // Default fresh startup must not silently carry old default data into
+  // a new CDS instance.
+  const mongoSeedResult = await seedStateFromJsonIfAllowed(
+    stateBootstrapMode,
+    mongoStore,
+    new JsonStateBackingStore(stateFile),
+  );
+  if (mongoSeedResult === 'seeded') {
+    console.log('  [storage] mongo is empty and CDS_STATE_BOOTSTRAP_MODE=migrate — seeding mongo from file');
+  } else if (mongoSeedResult === 'skipped') {
+    console.warn(
+      '  [storage] mongo is empty but state.json exists — default fresh startup skipped file seed. '
+      + 'Set CDS_STATE_BOOTSTRAP_MODE=migrate to import legacy state.',
+    );
   }
 
   stateService = new StateService(stateFile, config.repoRoot, mongoStore);

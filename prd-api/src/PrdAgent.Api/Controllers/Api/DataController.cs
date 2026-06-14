@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 using System.Security.Claims;
 using System.Text.Json;
 
@@ -80,7 +81,7 @@ public class DataController : ControllerBase
                 PlatformType = p.PlatformType,
                 ProviderId = string.IsNullOrWhiteSpace(providerId) ? null : providerId,
                 ApiUrl = p.ApiUrl,
-                ApiKey = ApiKeyCrypto.Decrypt(p.ApiKeyEncrypted, GetJwtSecret()),
+                ApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(p.ApiKeyEncrypted, _config) ?? string.Empty,
                 EnabledModels = enabled
             };
         }).ToList();
@@ -430,7 +431,7 @@ public class DataController : ControllerBase
 
                     if (!string.IsNullOrWhiteSpace(p.ApiKey))
                     {
-                        update = update.Set(x => x.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(p.ApiKey ?? string.Empty, GetJwtSecret()));
+                        update = update.Set(x => x.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(p.ApiKey ?? string.Empty, _config));
                     }
 
                     await _db.LLMPlatforms.UpdateOneAsync(x => x.Id == cur.Id, update);
@@ -448,7 +449,7 @@ public class DataController : ControllerBase
                     PlatformType = p.PlatformType,
                     ProviderId = string.IsNullOrWhiteSpace(p.ProviderId) ? null : p.ProviderId,
                     ApiUrl = p.ApiUrl,
-                    ApiKeyEncrypted = ApiKeyCrypto.Encrypt(p.ApiKey ?? string.Empty, GetJwtSecret()),
+                    ApiKeyEncrypted = ApiKeyCryptoKeyRing.Encrypt(p.ApiKey ?? string.Empty, _config),
                     Enabled = true,
                     MaxConcurrency = 5,
                     Remark = null,
@@ -900,7 +901,6 @@ public class DataController : ControllerBase
         return Ok(ApiResponse<DataPurgeResponse>.Ok(payload));
     }
 
-    private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }
 
 public class ExportedConfigV1
@@ -1118,5 +1118,4 @@ public class AdminUserPreviewItem
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
 }
-
 

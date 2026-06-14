@@ -63,6 +63,23 @@ public class DocumentStorePeerSyncTimestampTests
         Assert.False(NeedsRecordTimestampRefresh(existing, incoming, preserveTimestamps: false));
     }
 
+    [Fact]
+    public void PeerSourceContentHashDoesNotMakeMetadataDrift()
+    {
+        var existing = new Dictionary<string, string>
+        {
+            ["syncLineageId"] = "entry-1",
+            ["peerSourceContentHash"] = "abc",
+            ["kind"] = "acceptance-report",
+        };
+        var incoming = new Dictionary<string, string>
+        {
+            ["kind"] = "acceptance-report",
+        };
+
+        Assert.True(MetaEqual(existing, incoming));
+    }
+
     private static bool NeedsRecordTimestampRefresh(
         DocumentEntry existing,
         SyncRecord incoming,
@@ -73,5 +90,14 @@ public class DocumentStorePeerSyncTimestampTests
             BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
         return (bool)method.Invoke(null, new object[] { existing, incoming, preserveTimestamps })!;
+    }
+
+    private static bool MetaEqual(Dictionary<string, string>? existing, Dictionary<string, string>? incoming)
+    {
+        var method = typeof(DocumentStoreSyncResource).GetMethod(
+            "MetaEqual",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        return (bool)method.Invoke(null, new object?[] { existing, incoming })!;
     }
 }

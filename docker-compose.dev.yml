@@ -99,6 +99,8 @@ services:
       - Redis__ConnectionString=redis:6379
       - Jwt__Secret=${JWT_SECRET:-YourSuperSecretKeyForJwtTokenGeneration2024!}
       - Jwt__Issuer=prdagent
+      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-YourApiKeyCryptoSecretForLocalDev2026!}
+      - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       - Session__TimeoutMinutes=30
       # 资产存储：tencentCos / cloudflareR2
       # - 强制”绝不落盘”时：选择对象存储 provider

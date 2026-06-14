@@ -27,6 +27,7 @@ namespace PrdAgent.Infrastructure.Sync.Resources;
 public class DocumentStoreSyncResource : ISyncableResource
 {
     private const string SyncLineageKey = "syncLineageId";
+    private const string PeerSourceContentHashKey = "peerSourceContentHash";
 
     private readonly MongoDbContext _db;
     private readonly IDocumentService _documentService;
@@ -148,6 +149,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                 OwnerEmail = owner?.Email,
                 CreatedAt = store.CreatedAt,
                 UpdatedAt = store.UpdatedAt,
+                TemplateKey = store.TemplateKey,
             },
             Records = records,
         };
@@ -223,6 +225,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                 Description = bundle.Item.Description,
                 OwnerId = ownerUserId,
                 Tags = bundle.Item.Tags ?? new List<string>(),
+                TemplateKey = bundle.Item.TemplateKey,
                 CreatedAt = options.PreserveTimestamps && bundle.Item.CreatedAt.HasValue ? bundle.Item.CreatedAt.Value : DateTime.UtcNow,
                 UpdatedAt = options.PreserveTimestamps && bundle.Item.UpdatedAt.HasValue ? bundle.Item.UpdatedAt.Value : DateTime.UtcNow,
             };
@@ -390,6 +393,34 @@ public class DocumentStoreSyncResource : ISyncableResource
                 if (byLineage.TryGetValue(fe.LineageId, out var exEntry) && !exEntry.IsFolder)
                 {
                     if (addOnly) { skipped++; continue; }
+                    var sourceContentHash = Sha256Hex(content);
+                    var targetMetadata = WithPeerSourceContentHash(WithLineage(fe.Metadata, fe.LineageId), sourceContentHash);
+                    var recordFieldsChanged = exEntry.Title != fe.Title || exEntry.ParentId != parentId
+                        || !TagsEqual(exEntry.Tags, fe.Tags) || exEntry.Summary != fe.Summary
+                        || !MetaEqual(exEntry.Metadata, fe.Metadata);
+                    var timestampsChanged = NeedsRecordTimestampRefresh(exEntry, fe, options.PreserveTimestamps);
+                    if (!recordFieldsChanged && HasAppliedSourceContent(exEntry.Metadata, sourceContentHash))
+                    {
+                        if (timestampsChanged)
+                        {
+                            var timestampUpdate = Builders<DocumentEntry>.Update
+                                .Set(e => e.UpdatedBy, actorUserId)
+                                .Set(e => e.UpdatedByName, actorName)
+                                .Set(e => e.UpdatedAt, PickTime(fe.UpdatedAt))
+                                .Set(e => e.Metadata, targetMetadata);
+                            if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
+                                timestampUpdate = timestampUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+                            if (options.PreserveTimestamps && (fe.LastChangedAt.HasValue || fe.UpdatedAt.HasValue))
+                                timestampUpdate = timestampUpdate.Set(e => e.LastChangedAt, PickTime(fe.LastChangedAt ?? fe.UpdatedAt));
+
+                            await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exEntry.Id, timestampUpdate, cancellationToken: ct);
+                        }
+                        skipped++;
+                        continue;
+                    }
+                    var existingContent = !string.IsNullOrEmpty(exEntry.DocumentId)
+                        ? (await _documentService.GetByIdAsync(exEntry.DocumentId))?.RawContent ?? string.Empty
+                        : string.Empty;
                     if (options.RewriteAssetLinks)
                     {
                         var rewrite = await RewriteEmbeddedAssetsAsync(content, options.SourceBaseUrl, ct);
@@ -397,16 +428,16 @@ public class DocumentStoreSyncResource : ISyncableResource
                         assetsRewritten += rewrite.Rewritten;
                         assetRewriteFailed += rewrite.Failed;
                     }
-                    var existingContent = !string.IsNullOrEmpty(exEntry.DocumentId)
-                        ? (await _documentService.GetByIdAsync(exEntry.DocumentId))?.RawContent ?? string.Empty
-                        : string.Empty;
-                    var contentChanged = Sha256Hex(existingContent) != Sha256Hex(content)
-                        || exEntry.Title != fe.Title || exEntry.ParentId != parentId
-                        || !TagsEqual(exEntry.Tags, fe.Tags) || exEntry.Summary != fe.Summary
-                        || !MetaEqual(exEntry.Metadata, fe.Metadata);
-                    var timestampsChanged = NeedsRecordTimestampRefresh(exEntry, fe, options.PreserveTimestamps);
+                    var contentChanged = Sha256Hex(existingContent) != Sha256Hex(content) || recordFieldsChanged;
                     if (!contentChanged && !timestampsChanged)
                     {
+                        if (!HasAppliedSourceContent(exEntry.Metadata, sourceContentHash))
+                        {
+                            await _db.DocumentEntries.UpdateOneAsync(
+                                e => e.Id == exEntry.Id,
+                                Builders<DocumentEntry>.Update.Set(e => e.Metadata, targetMetadata),
+                                cancellationToken: ct);
+                        }
                         skipped++;
                         continue;
                     }
@@ -415,7 +446,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                         var timeOnlyUpdate = Builders<DocumentEntry>.Update
                             .Set(e => e.UpdatedBy, actorUserId)
                             .Set(e => e.UpdatedByName, actorName)
-                            .Set(e => e.UpdatedAt, PickTime(fe.UpdatedAt));
+                            .Set(e => e.UpdatedAt, PickTime(fe.UpdatedAt))
+                            .Set(e => e.Metadata, targetMetadata);
                         if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
                             timeOnlyUpdate = timeOnlyUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
                         if (options.PreserveTimestamps && (fe.LastChangedAt.HasValue || fe.UpdatedAt.HasValue))
@@ -438,7 +470,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                         .Set(e => e.ContentIndex, content.Length > 2000 ? content[..2000] : content)
                         .Set(e => e.FileSize, fe.FileSize)
                         .Set(e => e.ContentType, string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType)
-                        .Set(e => e.Metadata, WithLineage(fe.Metadata, fe.LineageId))
+                        .Set(e => e.Metadata, targetMetadata)
                         .Set(e => e.UpdatedBy, actorUserId)
                         .Set(e => e.UpdatedByName, actorName)
                         .Set(e => e.UpdatedAt, updatedAt)
@@ -459,6 +491,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                         assetsRewritten += rewrite.Rewritten;
                         assetRewriteFailed += rewrite.Failed;
                     }
+                    var sourceContentHash = Sha256Hex(fe.Content);
                     var parsed = await BuildAndSaveDocAsync(content, fe.Title);
                     var entry = new DocumentEntry
                     {
@@ -471,7 +504,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                         ContentType = string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType,
                         FileSize = fe.FileSize,
                         Tags = fe.Tags ?? new List<string>(),
-                        Metadata = WithLineage(fe.Metadata, fe.LineageId),
+                        Metadata = WithPeerSourceContentHash(WithLineage(fe.Metadata, fe.LineageId), sourceContentHash),
                         DocumentId = parsed.Id,
                         ContentIndex = content.Length > 2000 ? content[..2000] : content,
                         CreatedBy = actorUserId,
@@ -514,7 +547,8 @@ public class DocumentStoreSyncResource : ISyncableResource
             storeUpdate = storeUpdate
                 .Set(s => s.Name, string.IsNullOrWhiteSpace(item.Name) ? target.Name : item.Name)
                 .Set(s => s.Description, item.Description)
-                .Set(s => s.Tags, item.Tags ?? new List<string>());
+                .Set(s => s.Tags, item.Tags ?? new List<string>())
+                .Set(s => s.TemplateKey, item.TemplateKey);
             if (options.PreserveTimestamps && item.CreatedAt.HasValue)
                 storeUpdate = storeUpdate.Set(s => s.CreatedAt, PickTime(item.CreatedAt));
         }
@@ -801,6 +835,17 @@ public class DocumentStoreSyncResource : ISyncableResource
         return m;
     }
 
+    private static Dictionary<string, string> WithPeerSourceContentHash(Dictionary<string, string> metadata, string sourceContentHash)
+    {
+        metadata[PeerSourceContentHashKey] = sourceContentHash;
+        return metadata;
+    }
+
+    private static bool HasAppliedSourceContent(Dictionary<string, string>? metadata, string sourceContentHash)
+        => metadata != null
+            && metadata.TryGetValue(PeerSourceContentHashKey, out var applied)
+            && string.Equals(applied, sourceContentHash, StringComparison.Ordinal);
+
     private async Task<ParsedPrd> BuildAndSaveDocAsync(string content, string title)
     {
         ParsedPrd parsed;
@@ -865,7 +910,7 @@ public class DocumentStoreSyncResource : ISyncableResource
     private static bool MetaEqual(Dictionary<string, string>? a, Dictionary<string, string>? b)
     {
         static string Norm(Dictionary<string, string>? m) => string.Join("\n", (m ?? new())
-            .Where(kv => kv.Key != SyncLineageKey)
+            .Where(kv => kv.Key != SyncLineageKey && kv.Key != PeerSourceContentHashKey)
             .OrderBy(kv => kv.Key, StringComparer.Ordinal)
             .Select(kv => kv.Key + "=" + kv.Value));
         return Norm(a) == Norm(b);
