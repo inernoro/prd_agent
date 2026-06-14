@@ -103,6 +103,20 @@
 
 **关联**：`CapsuleExecutor.cs` `ExecuteVideoToTextAsync` metadata 分支、`PosterFeedCardView`。
 
+### 6. 自动配置闭环：缺项卡只读 + 入口未对话化（2026-06-14 Phase 1）
+
+**已落地**（`design.workflow-auto-config.md` 首期）：`WorkflowValidationService` 校验 + 自动接线 + 自愈 + 缺项扫描，对话气泡新增「已自动校验/接线/待补项」卡；已用 Playwright 直连预览域名验收（AI 一句话生成 → 「结构可执行」+ 列出 TAPD 工作空间 ID / Cookie 两项待补）。
+
+**当前边界**：
+- **缺项卡是只读清单**，不是可填表单：用户看到「补齐这 N 项」后仍需手动进对应节点配置 / 工作流变量填写，未做「就地填 → 一键写回」。Phase 2 应复用 `TemplatePickerDialog` 的字段组件做可填表单 + 提交后 patch 工作流（含 cookie 验证 / workspace 下拉 / secret 落变量）。
+- **空状态未对话化**：`WorkflowListPage` 空状态仍是「新建工作流 / 从模板」，未把「描述你想做什么」大输入框作为默认入口（Phase 3）。当前对话入口只在画布编辑器内的「AI」按钮。
+- **自动接线仅覆盖线性场景**：`AutoWireEdges` 在「零有效连线 + ≥2 节点」时按声明顺序链式连接；condition/merge 等分支/汇聚拓扑仍依赖 LLM 给出正确 edges（给错会被修正插槽，但不会自动补分支结构）。
+- **structured output 未启用**：仍靠 ```json 提取 + 自愈回路兜底，未确认 Gateway 是否支持 response_format 强制结构化（Phase 2 决策 5）。
+- **xUnit 单测已写未本地执行**：本环境无 dotnet SDK，`WorkflowValidationServiceTests`（11 例）随提交进 CI；本地校验走 CDS 静态构建（dotnet publish 通过）+ Playwright 端到端取证。
+- **requiredInputs 未持久化**：校验结果只在本次 SSE 推送，刷新/重载对话历史不带 `requiredInputs`（`WorkflowChatGenerated` 未存该字段）。
+
+**估时**：Phase 2 可填缺项卡 3-4h；Phase 3 空状态对话化 1-2h。
+
 ---
 
 ## 待落地（任务 D 上线后追加）
