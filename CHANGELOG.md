@@ -8,6 +8,953 @@
 
 ## [未发布]
 
+### 2026-06-15
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 修复 API Key 钥匙环误把错误密钥解出的乱码当作有效明文 |
+
+### 2026-06-14
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| ops | deploy | 兼容正式环境仅配置项目 JWT 时的 API Key 加密密钥空值默认 |
+| fix | cds | self-update 后仅在 forwarder 运行时文件变化时重启 forwarder |
+| fix | cds | 修复 forwarder-run 覆盖运行时签名导致 master 重启时反复重启 forwarder 的问题 |
+| fix | cds | 兼容旧版裸 forwarder 签名文件，升级时只迁移签名不重启业务转发进程 |
+| fix | cds | forwarder 自同步签名仅纳入实际运行的 JS 文件，避免 source map 和类型声明变化触发重启 |
+| fix | cds | forwarder 自同步优先按源码签名判断，避免构建产物波动导致 master 重启时误重启业务转发进程 |
+| fix | cds | forwarder 自同步在 Git 仓库内优先使用 HEAD 源码 blob 签名，避免 pnpm/install/systemd 环境差异造成签名抖动 |
+| fix | cds | master-run 在 systemd 非交互环境下以 CI=true 执行 pnpm install，避免 pnpm 要求确认删除 node_modules 导致 master 启动失败 |
+| fix | cds | self-update 默认跳过分支操作排空等待，仅在请求显式传 drain 参数时等待 |
+| fix | prd-admin | 修复对端同步队列待开始与全局失败状态展示不一致 |
+| fix | prd-admin | 修复短视频后台轮询在抽屉关闭或切换后继续写入界面 |
+| fix | prd-api | 短视频下载前强制要求解析器返回真实媒体地址 |
+| polish | prd-admin | 优化知识库短视频解析结果按钮分组，将已入库产物与继续加工动作分区展示 |
+| feat | prd-api | 短视频解析改为服务端后台 run 执行，阶段进度和入库产物持久化到 MongoDB |
+| feat | prd-admin | 短视频解析前端轮询服务端 run，刷新后可恢复后台进度并动态展示结果按钮 |
+| polish | prd-admin | 短视频解析结果展示服务端解析说明，明确元数据降级和待补充文案骨架状态 |
+| polish | prd-admin | 优化短视频解析后台进度文案，隐藏内部状态码并改为用户可理解的处理进度 |
+| polish | prd-api | 调整短视频解析 run 阶段持久化文案，避免刷新恢复后显示内部工程词 |
+| security | prd-api | 短视频素材与视频转文字下载改用 SafeOutbound 校验，阻断内网地址 SSRF |
+| security | prd-api | 模型平台 API key 加密改为独立 ApiKeyCrypto__Secret，兼容旧 JWT 密文并支持自动迁移 |
+| security | cds | 项目容器不再使用 CDS_JWT_SECRET 兜底注入 Jwt__Secret，避免 CDS 自身密钥轮换穿透业务项目 |
+| fix | prd-api | 短视频解析改为视频优先入库，禁止把平台描述冒充字幕文稿 |
+| fix | prd-api | 修复 TikHub 抖音视频对象解析为超长 JSON 导致无法下载的问题 |
+| fix | prd-api | 短视频 ASR 兼容现有 Whisper/OpenAI 普通模型池，不再只支持 doubao 流式转写 |
+| fix | prd-admin | 短视频解析新链接发送时清理旧回复，并按视频、原始文字、后续加工展示动作 |
+| fix | prd-api | 更新短视频解析器 TikHub 调用到 OpenAPI 新端点，修复旧接口返回 HTML 导致降级的问题 |
+
+### 2026-06-13
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-admin | 处理人选择新增「负责人/产品管理员/应用管理员」快捷项，保留手动搜索 |
+| polish | prd-admin | 产品管理模块所有处理人输入统一接入产品维度快捷选择组件 |
+| polish | prd-admin | 管理员设置页新增产品/管理员两列表，管理员按分号展示 |
+| fix | cds | 新 CDS 空 Mongo 首启默认 fresh，不再静默导入旧 state.json 生成遗留 default 数据 |
+| fix | prd-admin | 修复 CI：tsc 类型错误、版本导入「产品」列误匹配、单测补全 |
+| fix | prd-api | ProductImportProductRoutingTests / ProductEntityNumberingTests 补 using Xunit 修复 Server Build CS0246 |
+| test | prd-api | DefectSeverityCatalog TAPD 优先级映射测试 |
+| fix | prd-admin | 修复小技巧自动开讲未复用导航逻辑导致同路由详情态找不到锚点 |
+| fix | prd-api | 修复知识库与同步教程 seed 的落点和过时锚点 |
+| fix | prd-admin | 新建缺陷关联版本默认取功能 plannedVersionId，兜底纳入版本中 updatedAt 最新 |
+| docs | 下载 | 产品管理系统设计理念 MD 与 50 条需求 CSV 测试数据 |
+| feat | prd-admin | 缺陷导入支持 RTF 与「处理人」「创建人」列解析 |
+| feat | prd-api | 缺陷/需求批量导入按 TAPD 处理人姓名匹配系统用户并写入 AssigneeId |
+| feat | prd-api | 缺陷总览导入新增 overview/defects/import，按应用/产品列跨产品路由 |
+| feat | prd-admin | 缺陷总览导入取消手动选归属产品，按文件应用/所属产品列自动匹配系统产品 |
+| fix | prd-admin | 缺陷导入：TAPD「优先级」唯一映射为系统「严重程度」，无值留空 |
+| fix | prd-api | 缺陷导入移除优先级→Grade 误映射，仅写 structuredData 严重程度 |
+| fix | prd-api | 移除编译失败的 DefectPriorityCatalog，TAPD 优先级改映射严重程度 |
+| polish | prd-admin | 功能目录工具栏单行对齐，宽搜索模式隐藏 0/0 命中计数 |
+| fix | prd-admin | 修复 listFilter FilterBar 未解构 showResultCount 导致 tsc 失败 |
+| polish | prd-admin | 历史数据导入入口收敛至总览菜单（管理员），功能目录保留单产品页导入 |
+| polish | prd-admin | 移除单产品版本/需求页的历史导入按钮 |
+| feat | prd-admin | 发起立项表单改为产品搜索选择，移除系统/应用/部门/需求描述手填 |
+| feat | prd-api | 立项创建关联产品并自动填充部门与系统/应用 legacy 字段 |
+| feat | prd-api | 立项记录新增 Agent 评审尝试历史、会议稿次结构与 PATCH meeting 回填接口 |
+| feat | prd-admin | 内部版本详情页新增「立项详情」Tab：Agent 评审记录 + 线下评审会稿次编辑 |
+| feat | prd-admin | 立项向导第三步支持选择计划稿次（1–3 稿）；评审失败可重新发起、决策待办可继续决策 |
+| polish | prd-admin | 内部版本列表新增 Agent 评审分列；操作列按需显示「重新发起立项」「会议结果」 |
+| polish | prd-admin | 立项向导第 2/3 步新增「上一步」；回退修改基础信息时 PATCH 更新原记录 |
+| feat | prd-api | 立项 PATCH 基础信息；decision_pending 状态允许重新同步 Agent 评审 |
+| fix | prd-api | 修复 MdToPpt 整篇生成复用预热会话时未校验所选模型配置的问题 |
+| polish | prd-admin | 主页缺陷列表加长搜索框、五维筛选、追踪按钮移至筛选项右侧 |
+| polish | prd-admin | 主页需求列表同步宽搜索框与追踪按钮位置 |
+| polish | prd-admin | 单产品需求/缺陷、功能目录、版本工作流列表统一工具栏布局与主体字段筛选 |
+| feat | prd-api | 跨产品缺陷列表 API 返回处理人字段 |
+| fix | prd-admin | 产品负责人多选去掉下拉重复搜索框并统一正式占位文案 |
+| polish | prd-admin | 优化对端同步弹窗的队列状态、反向校验与主操作展示 |
+| polish | prd-admin | 收敛对端同步弹窗视觉层级，区分可点击控件与只读监控信息 |
+| polish | prd-admin | 优化知识库卡片分享与跨系统同步状态展示，避免长文案在窄卡片中竖排换行 |
+| fix | prd-admin | 修复对端同步进行中取消勾选后任务卡片误显示为未选的问题 |
+| fix | prd-api | peer-sync 同步结果返回结构化新增/更新/跳过统计，并同步知识库模板键 |
+| perf | prd-api | 知识库互传记录源正文 hash，已同步内容二次同步时跳过图片重传和重复合并 |
+| polish | prd-admin | peer-sync 队列增加已跳过状态，文档树时间统一为紧凑绝对时间 |
+| polish | prd-admin | 将知识库卡片双向同步状态图标调整为左右双向箭头，提升语义可读性 |
+| polish | prd-admin | 优化知识库跨系统同步弹窗右侧传输预览动效 |
+| polish | prd-admin | 重设计知识库跨系统同步右侧状态面板,突出成功失败结果 |
+| fix | prd-api | 修复知识库跨系统同步在内容未变时跳过原始时间回写的问题 |
+| fix | prd-api | 修复知识库跨系统同步图片重传的域名识别与精确替换问题 |
+| fix | prd-api | 修复受保护知识库被对端失败 apply 标记为同步错误的问题 |
+| fix | prd-admin | 修复发送到对端弹窗加载错误误判为同步失败的问题 |
+| fix | prd-api | 对齐产品工作流默认流转数量与目录测试断言 |
+| chore | .claude | 修复视觉验收归档 local 模式默认输出目录绕过代码库保护的问题 |
+| ci | github-actions | 将预览冒烟和 Playwright E2E 移出 PR 必经 CI,改为独立手动验收 workflow |
+| docs | repo | 清理 GitHub 根目录展示,重写 README 并归档原型与冒烟样本 |
+| feat | prd-api | 跨系统知识库同步支持保留原时间、允许覆盖、目标域图片重传和同步状态回写 |
+| polish | prd-admin | 重做发送到对端节点弹窗为左右同步工作台，并在知识库列表与详情展示跨系统同步标识 |
+| fix | prd-api | 项目管理：目标标题/描述/负责人更新后级联同步到联动里程碑(AutoFromGoal)，修复里程碑显示旧目标名 |
+| fix | prd-admin | 项目管理：目标编辑保存后刷新父级 goals/milestones，里程碑「关联目标」下拉与列表同步最新目标名 |
+| feat | prd-admin | 项目管理：目标/里程碑/任务/立项表单新增草稿缓存(sessionStorage)，误关弹窗或误跳页后重开自动恢复未保存内容 |
+| feat | prd-admin | 项目管理：目标支持同级拖拽排序 + 向上/向下添加同级；里程碑支持拖拽排序(改为手动顺序优先) |
+| feat | prd-api | 项目管理：新建目标支持指定 OrderKey，用于「向上/向下添加同级」按相邻中值定位插入点 |
+| feat | prd-api | 项目管理：新增全局总览只读端点(global/projects + global/summary)，跨全公司项目多维筛选+健康预警+经营汇总+负责人负载，权限 pm-agent.global |
+| feat | prd-admin | 项目管理：新增「全局总览」菜单(NPSS看板上方，仅管理层)，四块只读洞察(项目总表/健康预警/经营汇总/负载分析) |
+| fix | prd-admin | 修复项目知识库预览全屏不展开（DocBrowser 阅读区改用 createPortal 全屏覆盖层，替代原生 Fullscreen API） |
+| feat | prd-api | 项目管理智能体新增全局知识库只读端点（knowledge/overview + entries + entry content，仅 pm-agent.dashboard，绕过项目成员鉴权） |
+| feat | prd-admin | 项目管理智能体工作台新增「全局知识库」菜单：管理员只读洞察全部项目知识库，多维筛选 + 默认展开分组 + DocBrowser 正文预览 |
+| fix | prd-admin | 修复知识库全屏覆盖层背景误用半透明 token 导致整页穿透（改用不透明 --bg-base）；修复上传 PDF 等文件后标题回退显示文件名（放开提取正文类型参与正文标题推导，仅排除 HTML/XML 源码） |
+| refactor | prd-admin | 全局知识库改为列表→详情两段式（列表全宽、点文档进该项目全宽 DocBrowser），解决多列嵌套挤压正文；Agent 全屏左导航支持收起/展开；DocBrowser 阅读区右侧本页章节/批注栏支持收起 |
+| fix | prd-admin | 修复全局知识库详情阅读区高度截断（DocBrowser wrapper 补 flex flex-col 使 flex-1 生效）；列表改扁平表格行+服务端分页（应对文档多）+ 新增项目筛选；去除"只读/掌控全局"等冗余文案；DocBrowser「+」新建按钮仅在有写操作时显示（只读态不再露占位项） |
+| feat | prd-api | 项目管理审计日志端点新增 keyword（路径/操作 regex）+ method 筛选参数 |
+| feat | prd-admin | 项目管理审计日志顶部新增搜索框 + 操作方法筛选（关键词防抖、筛选重置页码） |
+| fix | prd-admin | 修复 MD 转 PPT 大纲流取消后仍可能回写草稿的问题 |
+| fix | prd-api | 修复 MD 转 PPT 整坨 JSON fallback 大纲未持久化导致刷新恢复为空的问题 |
+| fix | cds | 修复 Agent 请求观测台只在 stop 时落历史导致完成或失败请求重启后丢失的问题 |
+| fix | cds | 修正 cdscli preview-url 本地 fallback slug 说明与实际优先级不一致的问题 |
+| polish | prd-admin | 产品管理员一览从设置页移至应用配置页 |
+| polish | prd-admin | 产品管理员一览改为应用配置页独立标签（需求/功能/缺陷/产品管理员） |
+| fix | prd-admin | 修复版本详情 TS 类型与未使用导入导致 CI tsc 失败 |
+| fix | prd-api | 工作流内置流转边数量与 pending 状态迁移测试对齐当前目录 |
+| fix | prd-api | 修复 ProductAgentController 解析 customerNames 时 GetValueKind 未加括号导致 CS8978 编译失败 |
+| fix | prd-api | 补充 System.Text.Json 引用修复 JsonValueKind CS0103 编译失败 |
+| feat | prd-api | 设置调试入口：清空产品管理全部业务数据（保留配置） |
+| feat | prd-admin | 设置页新增「调试」tab，确认后一键清空演示数据 |
+| fix | prd-api | 调试清空收紧范围：知识库仅删 product-agent 挂载，缺陷仅删追溯/导入记录 |
+| feat | prd-admin | 产品/需求/功能列表标题展示当前筛选结果总数 |
+| feat | prd-api | 新建产品编号改为 TAPD 风格纯数字（全局递增） |
+| feat | prd-admin | 产品管理全量列表统一复选框多选，复用 listSelection + ListBatchBar 支持批量导出/删除/指派 |
+| refactor | prd-admin | 新增 selectableList 组合层，各 tab 收敛 useOverviewTableSelection + SelectionActionBar + SelectableRow，消除重复样板代码 |
+| fix | prd-admin | 列表多选复选框列统一固定宽度居中，表头全选与行复选框垂直对齐 |
+| feat | prd-api | 产品支持多位负责人 OwnerIds，创建/导入默认留空不再绑定当前用户 |
+| feat | prd-admin | 产品新建/修改弹窗增加多选负责人，列表空负责人显示待认领 |
+| refactor | prd-admin | 内部/正式版本表格与详情去掉系统/应用列，合并为产品列 |
+| test | prd-admin | workflowTransitionGuard 与 versionBasicInfoCatalog 补充用例 |
+| feat | prd-api | 产品编号改为「类型前缀-全局序号」，调层级只改前缀不改号 |
+| feat | prd-admin | 记录详情标题旁新增追踪星标与复制菜单（标题/ID/链接/标题+链接） |
+| feat | prd-admin | 需求/功能/缺陷/版本列表工具栏新增「追踪」筛选，仅显示已追踪记录 |
+| fix | prd-admin | 正式版本详情页：基础信息改卡片属性表，需求/功能/缺陷三标签改列表，加载失败时 listReleases 兜底 |
+| feat | prd-admin | 全局产品总览「产品」区块新增卡片/列表视图切换，列表复用 OverviewDataTable |
+| fix | prd-api | 工作台 AI 助手创建需求时识别客户提出方：写入 CustomerIds、需求来源，并加载全局客户名录 |
+| fix | prd-api | 工作台助手：客户未建档时先多轮确认再 create_customer+需求；禁止客户名称文本兜底；前端传对话历史 |
+| polish | prd-admin | 新建需求保存禁用时顶栏展示校验原因并高亮来源补充字段 |
+| fix | prd-api | 新建需求 CurrentState 回退内置 new（待评审），ResolveInitialStateAsync 不再返回 null，LegacyStateMap 迁移误写的 state |
+| fix | prd-admin | 新建需求顶栏展示初始状态「待评审」，表单模板排除 state/状态 字段避免与流程状态混淆 |
+| polish | prd-admin | 列表多选复选框默认低透明度，悬停行/单元格时显现，选中态保持可见 |
+| feat | prd-api | 需求导入无外部 ID 时自动分配纯数字 RequirementNo 并同步 ExternalId，同批导入全局递增 |
+| fix | prd-api | 需求编号改为全库全局递增（不再按产品隔离），与 TAPD/设计理念一致 |
+| fix | prd-api | 缺陷编号改为全库 DefectReports 单表全局递增；T/V 版本编码全库全局递增 |
+| refactor | prd-api | 功能编号按正式版本清单（OfficialReleaseId）递增；抽取 ProductEntityNumbering SSOT |
+| fix | prd-admin | CSV 空需求 ID 列解析为未提供，交由后端自动编号 |
+| fix | prd-api | 单产品需求导入写入指定产品；overview 我的需求含负责人 |
+| fix | prd-admin | 需求 CSV 无应用列时支持默认归属产品，0 条写入时明确提示 |
+| feat | prd-admin | 新建需求按来源动态展示必填补充项（客户/规划/活动/竞品） |
+| feat | prd-admin | 知识库添加短视频解析入口，并在百宝箱注册短视频解析常用工具 |
+| feat | prd-api | 新增短视频素材解析接口，复用短视频解析胶囊并沉淀原始素材、字幕文稿和时间轴片段 |
+| feat | prd-admin | 将短视频解析改为知识库内素材加工工具，解析产物作为知识库资产继续再加工 |
+| fix | prd-admin | 修复全量 lint 阻断的正则转义与条件 Hook 问题 |
+| polish | prd-admin | 优化短视频素材入库弹窗的遮罩透明度、结果表达和素材包产物可读性 |
+| refactor | prd-admin | 将短视频解析入口改为复用知识库智能体对话，短视频链接作为默认工具输入处理 |
+| fix | prd-admin | 修复短视频工具会话冷启动时未默认选中短视频解析智能体的问题 |
+| polish | prd-admin | 内部版本与正式版本详情页容器改为全宽布局 |
+| fix | prd-admin | 版本详情页固定四标签结构：基础信息对齐立项/上线语雀 Excel 全列，需求/功能/缺陷空列表仍保留表头 |
+| fix | prd-admin | 历史导入正式版本（announcement_pending）进入详情四标签只读视图，不再落入申领表单 |
+| fix | prd-api | 版本工作流导入时将备注与项目组成员写入 legacyData 供详情页展示 |
+| feat | prd-api | 版本总览导入新增 overview/versions/import，按应用/产品列跨产品路由 |
+| refactor | prd-api | 需求/缺陷导入移除 forcedProductId 兜底产品分支，单产品入口复用核心方法统一按行路由 |
+| polish | prd-admin | 历史导入弹窗移除「默认归属产品」选择，需求/缺陷/版本统一按文件应用/产品列自动匹配，未匹配行跳过 |
+| rule | .claude | 强化视觉验收技能,禁止截图和临时验收产物写入代码库 |
+
+### 2026-06-12
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 统一拓扑页基础设施数据入口到独立资源控制台，并支持资源深链直接打开数据页签 |
+| security | cds | 修复项目级 key 可在发布目标中引用跨项目服务器凭据的问题 |
+| feat | cds | 发布中心升级为站点发布作战台，补齐健康探测、失败重试和版本选择回滚闭环 |
+| polish | cds | 发布中心默认入口改为 `/release-center`，项目 query 仅作为多项目覆盖使用 |
+| polish | cds | 将发布中心与分支发布弹窗改为站点发布视角，补齐发布确认信息、步骤化发布记录、发布脚本可执行检查和移动端弹窗约束 |
+| fix | prd-admin | 商品溯源智能体：问题排查长回答改为块级可换行气泡，流式输出只动画尾部但保留全文，避免回答若干行后被压缩成空框 |
+| fix | prd-admin | 清理标签截断工具正则中的非法全角空白字符，解除前端全仓 lint 阻塞 |
+| feat | prd-admin | 商品溯源智能体 Tab 支持 `?tab=cases` 深链，预览验收可直接打开问题排查页 |
+| fix | prd-admin | 商品溯源智能体-问题排查：修复 AI 回答流式输出几行后塌缩成空框（onDone/onError 的 setMessages 惰性 updater 读到被同步清空的 streamRef，落库空内容；改为先取局部常量再提交） |
+| fix | prd-admin | 商品溯源智能体：修复问题排查生成中向上滑动时回答被压缩——自动滚动改为仅在用户贴底时触发（向上滑离底即停），并用即时滚动替代 smooth，避免与用户滚动相互打架 |
+| fix | prd-admin | 商品溯源智能体：彻底修复问题排查长回答被压缩成一行——气泡外层 flex flex-col 容器在内容含 overflow 子元素时 flex item 自动最小高度塌成 0，改为普通块级布局（与业务知识一致） |
+| fix | prd-admin | 商品溯源智能体：修复问题排查/业务知识流式回答在若干行后被压缩成代码框（局部未闭合 markdown 重渲染），统一改用 StreamingText（流式渲染纯文本、完成后渲染 markdown） |
+| fix | prd-admin | 商品溯源智能体：各 Tab 改为常驻挂载（display 切换），切换 Tab 不再清空业务知识/问题排查的对话记录 |
+| feat | prd-admin | 商品溯源智能体：业务知识 / 案例文件导入新增口令校验弹窗（口令 090676）才能导入 |
+| fix | prd-admin | combobox 内嵌 input 加 no-focus-ring，修复搜索框「框中框」重复渲染观感 |
+| polish | prd-admin | 功能详情/新建功能「主需求与关联需求」改用 ItemSearchSelect + ItemMultiSearchSelect（对齐客户选择交互） |
+| feat | prd-admin | 产品管理评论区支持微信式 @ 成员：输入 @ 弹出检索下拉并提醒对应用户 |
+| fix | prd-api | 缺陷导入只读 TAPD「严重程度」列五档映射 V2.6，镜像 TAPD严重程度 |
+| fix | prd-admin | 缺陷导入支持 xlsx，不再误读「优先级」「缺陷等级」列 |
+| feat | prd-api | 应用配置缺陷工作流种子、POST /transition 支持 defect、流转联动需求↔缺陷 |
+| feat | prd-api | 缺陷 ProductDefectClassification 字段；需求 FormData 产品缺陷标记 |
+| feat | prd-admin | 应用配置版本 tab 改为缺陷；流转矩阵支持跨对象联动配置 |
+| feat | prd-admin | 需求详情勾选产品缺陷；缺陷详情勾选非产品缺陷 + WorkflowBar 流转 |
+| feat | prd-admin | 缺陷详情按 TAPD 结构重建（25 个对齐字段 + 评论/变更历史 + 附件区） |
+| feat | prd-api | TapdDefectFieldCatalog + 缺陷 structuredData 更新接口 |
+| polish | prd-admin | 功能详情「所属功能模块」改为可搜索选择框 |
+| chore | doc | 熵清理：D3 补缺 2 条(debt/design.knowledge-base-mention-network)，D6 处理 5 条 changelog(里程碑/peer-sync/pm/产品卡片) |
+| fix | prd-admin | 功能目录树左右栏撑满视口高度，主页功能 tab 去掉 SectionShell 滚动包裹 |
+| feat | prd-admin | 功能 tab 改为左侧无限层级目录树 + 右侧子树表格，支持 CSV/Excel 导入目录结构 |
+| feat | prd-api | 新增 POST products/{productId}/features/import-tree 按路径导入功能树 |
+| feat | prd-admin | 功能详情页按 V2.6 字段规范重组：基础信息/版本信息/需求关联/缺陷关联/交付内容 |
+| polish | prd-admin | 功能「计划版本」改为「内部版本号」，立项必选并链到内部版本详情；验收标准去掉 AC 缩写并补充说明 |
+| polish | prd-admin | 功能表单「正式上线版本号」统一为「正式版本号」 |
+| feat | prd-api | 功能目录导入须指定正式版本，导入记录写入 OfficialReleaseId 并按版本隔离路径幂等 |
+| feat | prd-admin | 导入弹窗增加正式版本必选；功能清单筛选改为正式版本（V 号） |
+| feat | prd-admin | 所属功能模块改为功能目录树逐级点选 + 搜索快捷定位，选中后保存完整目录路径 |
+| fix | prd-admin | 功能对象移除分级（P0-P3）UI：新建/详情/总览/图谱/看板/批量操作不再展示或编辑分级 |
+| fix | prd-admin | 修复产品管理 SingleProductView Row 可选删除与 VersionWorkflowTab 未使用符号的 tsc 报错 |
+| polish | prd-admin | 功能目录树默认展开 3 级 |
+| polish | prd-admin | 前端搭档智能体图标统一为项目管理智能体同款 |
+| polish | prd-admin | 前端搭档智能体生成按钮升级为液态动效 |
+| fix | prd-admin | 历史导入需求/缺陷描述与评论中的 @用户名 渲染为高亮 mention 标签 |
+| fix | prd-admin | 产品动态评论空 content 兜底，避免 ActivityTimeline 类型报错 |
+| fix | prd-api | 导入按「应用」匹配产品，未匹配行跳过，移除兜底落入 |
+| fix | prd-admin | 版本/需求导入 UI 去掉兜底产品选择，预览未匹配为跳过 |
+| fix | prd-api | 版本工作流/需求导入按 Excel「应用」列匹配系统产品，支持跨产品路由 |
+| fix | prd-admin | 版本工作流导入预览展示「应用→产品」映射，全局导入走 overview API |
+| feat | prd-admin | 立项向导第二步 Agent 评审增加进度条、过程日志与分项评分实时展示 |
+| test | prd-admin | 立项评审进度计算单元测试 |
+| fix | prd-admin | 立项评审 SSE 完成后跳过易失败的 getSubmission，直接同步并支持重试 |
+| feat | prd-admin | 知识库划词 AI 局部编辑：选中文字浮层从「添加评论」扩展为 评论 / AI 改写 / 配图 动作条；AI 改写支持润色/精简/扩写/书面化/纠错 + 自定义指令，流式生成 + diff 对比 + 替换原文（唯一定位校验，歧义禁替换）/ 插到原文后；配图内嵌视觉创作 mini 面板，按选区与文档上下文生成并插入选区段落之后 |
+| feat | prd-api | 新增知识库划词改写 SSE 端点 POST /api/document-store/entries/{id}/selection-rewrite（服务端定位选区 + 截取上下文窗口喂 LLM）与动作清单端点 GET /api/document-store/selection-rewrite/actions（SelectionRewriteActionRegistry 为 SSOT），注册 AppCallerCode document-store.selection-rewrite::chat |
+| test | prd-admin | 新增 selectionEdit 纯函数单测 16 例（选区定位/DOM 序号指认/歧义拒绝/替换/段落后插入/frontmatter 前缀拼接/图片 markdown 清洗） |
+| fix | prd-admin | 划词改写选区定位改为 DOM 序号指认（Bugbot High）：同文多处出现时 useContentSelection 的 offset/contextBefore 恒指向第一处，旧逻辑会替换错位置；现从真实 DOM Range 数"选区前同文出现次数"指认第几处，序号与正文统计不一致即禁用替换 |
+| fix | prd-admin | 划词改写浮层展示模型 thinking 流（Codex P2）：推理模型先吐思考时不再只有 spinner |
+| fix | prd-admin | 分享阅读页「返回我的知识库」按钮常驻显示：旧逻辑仅登录态渲染，未登录标签页里入口整个消失（用户反馈"找不到回知识库"）；匿名点击走登录，文案如实标注 |
+| fix | prd-admin | 划词改写「替换原文」可用性改为实时计算（Bugbot Medium：打开浮层时冻结的 canReplace 会过期）；新增 isReplaceSafe 守卫——选区落在 wikilink/markdown 链接标记内部时禁用替换，防止 AI 结果拼进括号中间破坏语法（Bugbot Medium） |
+| fix | prd-admin | 划词配图浮层隐藏「插入原文+配图」按钮（Codex P2：选区场景原文已在文档里，该动作会丢弃文本参数且语义重复）；VisualCreationMiniPanel 的 onInsertImageWithText 改为可选 prop |
+| polish | prd-admin | 产品/需求/缺陷列表条数从页面标题移至表头「产品名称/标题」列 |
+| polish | prd-admin | 功能页标题去掉条数后缀 |
+| polish | prd-admin | 主页功能 tab 产品选择改为可搜索下拉，置于「全部版本」左侧 |
+| polish | prd-admin | 主页功能面板对齐单产品 FeatureCatalogTab：产品标签 + 版本筛选，操作钮移至搜索框右侧 |
+| feat | prd-admin | 全局功能页为管理员启用「导入目录结构」按钮 |
+| fix | prd-admin | 产品管理总览支持 ?section=versions 等深链直达左侧导航分区 |
+| polish | prd-admin | 全局总览需求分区标题由「需求（跨产品）」改为「需求」 |
+| polish | prd-admin | 全局总览页缺陷/版本/知识库标题去掉「跨产品」后缀 |
+| fix | prd-admin | 总览 section 深链改为 URL 派生状态，对齐 SingleProductView 模式 |
+| polish | prd-admin | 全局总览表格标题默认截断 40 字，列宽可拖动并 sessionStorage 记忆 |
+| fix | prd-admin | 产品负责人多选去掉下拉重复搜索框并统一正式占位文案 |
+| feat | prd-api | 跨产品版本 overview 接口扩展为与单产品版本 tab 同构的全字段宽表数据 |
+| feat | prd-admin | 主页版本列表对齐单产品内部/正式版本表列（只读，无操作列） |
+| fix | prd-admin | 目标设为里程碑后「里程碑」tab 看不到：GoalsPanel 联动操作（设为/取消里程碑、删目标）通过 onMilestonesChanged 通知父级刷新 milestones，不再依赖整页刷新 |
+| fix | prd-admin | 里程碑日历视图新增「未排期」区域：无截止日的里程碑（含目标联动里程碑）不再隐身，可点开补日期 |
+| fix | prd-api | 删除目标时级联清理 AutoFromGoal 联动里程碑，不再留孤儿数据（手动建的关联里程碑不动） |
+| feat | prd-api | 里程碑列表返回 autoFromGoal 字段，前端可区分目标联动里程碑 |
+| feat | prd-admin | 目标/里程碑视觉区分：联动里程碑在时间轴/日历/管理条/详情抽屉显示 Target 图标 + 「来自目标」紫色标记；设为里程碑的目标在列表卡与画布节点常显紫色 Flag 标记 |
+| feat | prd-api | AI 项目简报：POST /api/pm/projects/:id/briefings/generate SSE 生成（硬数据服务端统计 + LLM 结构化内容 + 模板渲染自包含 HTML），简报列表/详情/删除端点，pm_briefings 集合，注册 pm-agent.briefing::chat |
+| feat | prd-admin | 报表 tab 新增「项目简报」区块：生成（SSE 阶段/思考/逐字全程可视化 + 模型名展示）、历史列表、iframe 预览、下载 HTML 单文件 |
+| feat | prd-api | 简报分享与托管：POST /briefings/:id/share 开关分享（可撤销 token），GET /briefings/shared/:token 匿名直出 HTML，POST /briefings/:id/save-to-hosting 一键存网页托管；审计过滤器登记简报动作 |
+| feat | prd-admin | 简报预览弹窗新增「开启分享/复制链接/撤销分享」「保存到网页托管」操作，列表显示分享中/已托管标记 |
+| fix | prd-api | 简报匿名分享被 AdminPermissionMiddleware 拦成 401：/api/pm/briefings/shared/ 加入扫描器 PublicRoutes 白名单（token 即凭证） |
+| feat | prd-api | 简报 5 套风格主题（经典商务/暗夜科技/暖纸杂志/极简黑白/活力渐变）：生成时可选，落库渲染数据快照，POST /briefings/:id/restyle 切换风格即时重渲染不重调 LLM；styles 清单端点 SSOT |
+| feat | prd-admin | 简报生成弹窗新增风格选择卡；预览弹窗新增全屏切换、切换风格面板；保存到托管成功后按钮变「打开托管站点」+ 列表「已托管」可点击直达，反馈不再依赖弹窗 |
+| feat | prd-api | 简报重命名端点 PUT /api/pm/briefings/:id（owner/leader/创建者，120 字上限），审计登记 |
+| feat | prd-admin | 「资料」tab 新增「简报」子 tab 管理主场：搜索/风格筛选/行内重命名/批量删除/超 10 条按月分组，?sub= 深链直达；报表 tab 简报区块瘦身为最近 3 条轻入口 + 「管理全部」跳转 |
+| polish | prd-api | 简报 HTML 去掉页脚「由 PRD Agent 生成 · 模型」注释（模型名系统内弹窗仍可见） |
+| feat | prd-api | 简报报告周期：生成接受 from/to（中国时区自然日），叙事数据按周期取（周期内达成里程碑/周期内周报），总体指标保持截至当前真值；标题与页头带报告周期，periodFrom/To 落库 |
+| feat | prd-api | 简报调整：POST /briefings/:id/refine（SSE），复用落库硬数据快照 + 原内容 + 自然语言指令重写并原地覆盖（不重调统计、不留旧版本）；生成端点支持可选补充要求 note |
+| feat | prd-admin | 生成弹窗新增报告周期选择（本周/上周/本月/上月/全周期/自定义）与「补充要求」输入；预览弹窗新增「调整内容」：自然语言描述 → SSE 流式重写 → 原地刷新 |
+| fix | prd-api | 简报调整偶发「LLM 流式失败: No cookie auth credentials found」：PM 智能体所有 LLM 流式调用在零产出失败时自动重试（至多 3 次，每次重新走模型解析切换池内健康平台） |
+| refactor | prd-admin | 项目知识库移除「成员作品」子视图与二级标题，只保留知识文档直出 |
+| feat | prd-api | 网页托管新增 GET /api/web-pages/:id/content：服务端代理读取站点入口 HTML（owner/团队成员可读，2MB 上限，包装资产站拒绝），供知识库导入绕开浏览器跨域 |
+| feat | prd-admin | 项目知识库新增「从网页托管导入」：选择我的/团队共享站点，HTML 内容一键导入为知识文档（可预览） |
+| revert | prd-admin | 按用户要求下线简报「调整内容」入口（预览弹窗按钮/面板/流式重写 UI 移除；后端 refine 端点暂留无入口，记入债务台账） |
+| feat | prd-admin | 知识库 HTML 文档真渲染：fileTypeRegistry 新增 html 类型（Globe 图标 + html 预览），FilePreview 对 HTML 正文用 sandbox iframe srcDoc 渲染页面而非源码（编辑态仍可改源码） |
+| feat | prd-admin | 知识库双击文件名即可重命名（复用既有重命名弹窗，文件夹双击仍为展开/收起） |
+| polish | prd-admin | 「从网页托管导入」并入文档列表统一「添加」菜单（与新建文档/上传文件/新建文件夹同级），移除右上角独立按钮，内容区上移；HTML 文档不再被 <!DOCTYPE html> 源码首行污染「正文标题」 |
+| fix | prd-api | 知识库上传/编辑被拦 403「无权限」：document-store 的 stores/entries 业务路由从 AdminPermissionMiddleware 豁免（登录 + 业务层 CanRead/CanWrite 鉴权保留）；控制器权限位改为权限服务回查兜底（豁免后中间件不再注入 claims，避免识途/产品知识库管理员判定失效） |
+| fix | prd-admin | 任务开始/截止日期保存后少一天（看似保存不了）：日期改为纯日期字符串提交（与里程碑同口径），不再经本地时区转 UTC ISO |
+| fix | prd-admin | 普通用户搜不到人：成员/干系人/会议参会人三处面板弃用管理员 /api/users 预取，统一走 UserSearchSelect 的 directory 搜索（仅需登录）；组件新增 onSelectUser 回传用户对象供记录姓名快照 |
+| fix | prd-admin | 知识库编辑/预览区铺满高度（KnowledgePanel 内层 wrapper 补 flex 容器，DocBrowser flex-1 生效） |
+| feat | prd-admin | 知识库阅读区「全屏」按钮（原生 Fullscreen API，ESC 退出，MD/HTML 通用） |
+| feat | prd-admin | 双击重命名改为行内编辑（原地 input，Enter 保存/Esc 取消/失焦保存），不再弹框；右键菜单弹框保留 |
+| feat | prd-admin | Markdown 富文本编辑：引入 @uiw/react-md-editor（懒加载独立 chunk），富文本（所见即所得）/源码双模式切换，源码模式保留 [[ 引用自动补全；HTML 等仍编辑源码 |
+| feat | prd-admin | 目标三视图统一编辑：仪表盘卡片点击打开与画布同一个 GoalDetailDrawer，保存同源刷新，数据同步 |
+| polish | prd-admin | 目标抽屉信息架构重排：「AI 拆细 / 加子目标」上移头部常驻可见，「删除目标」收进底部危险区，不再埋在正文中部 |
+| feat | prd-api | 项目级「里程碑交付物类型」字典：PmProject.DeliverableTypes（更新端点整表替换，去空去重限 30），交付物 Type 放开为自由字符串 |
+| feat | prd-admin | 里程碑详情页 /pm-agent/p/:projectId/milestone/:id：OKR（关联目标 + KR 完成度条）、验收标准 DoD 勾选/增删、名下任务直达任务详情、交付物管理（内置 + 项目自定义类型即时增删）、标题行内改/计划日/负责人/标记达成；抽屉头部加「详情页」入口 |
+| polish | prd-admin | 「应用」改一级菜单，页标题「应用配置」；移除升级申请子标签 |
+| chore | prd-admin | 新增产品管理智能体全量功能目录测试 Excel（163 条，对齐导入列格式） |
+| feat | prd-admin | 产品列表卡片收藏与「收藏」筛选；搜索框加长并修复聚焦时外边框高亮 |
+| test | prd-admin | productFavoriteStorage 单元测试 |
+| polish | prd-admin | 产品管理跨产品图谱增加「全部产品」筛选，联动版本下拉仅显示所选产品版本 |
+| fix | prd-admin | 移除产品管理侧栏标题上方错误渲染的全局搜索框 |
+| feat | prd-admin | 产品内需求改为逐字段表格，并在主页面集中提供需求、功能、缺陷、版本历史数据导入 |
+| feat | prd-admin | 产品管理设置新增应用管理员维护，仅应用管理员可见历史数据导入入口 |
+| feat | prd-api | 新增产品管理应用管理员名单、跨产品版本列表及功能、缺陷、版本幂等导入接口 |
+| feat | prd-admin | 按产品研发管理规范 V2.6 补齐功能新建表单和详情页的模块、类型、主需求、版本、规则与验收字段 |
+| feat | prd-api | 扩展功能实体与接口，持久化并校验产品研发管理规范 V2.6 要求的功能字段 |
+| feat | prd-api | 产品内需求/缺陷列表支持 mine 参数（负责人/处理人或处理人/上报人） |
+| feat | prd-admin | 单产品需求/缺陷 tab 默认仅展示当前账号相关记录 |
+| polish | prd-admin | 主页跨产品需求/缺陷文案明确为全部记录汇总 |
+| feat | prd-api | ProductRelease 增加功能清单 FeatureManifest、继承上一正式版 API |
+| feat | prd-admin | 功能 tab 按正式版本号展示清单；申领正式版本号改为详情页双标签 |
+| feat | prd-admin | 新增 ReleaseWorkflowDetail（基础信息 + 功能清单，标注相对上版变更） |
+| feat | prd-admin | 新建需求智能填充增强：回填需求来源/客户/父需求/关联功能，并支持语音输入 |
+| feat | prd-api | 需求 AI 智能填充扩展提示词与字段解析（来源/客户/父需求/功能/版本 ID 匹配） |
+| feat | prd-api | 需求 AI 填表增强：注入已有需求/功能/客户/版本目录并扩展 JSON 输出字段 |
+| feat | prd-admin | 新增 applyRequirementAiFill 将 AI 结果映射到表单（来源/客户/父需求/关联功能） |
+| fix | prd-admin | 新建需求表单隐藏「产品缺陷」勾选，创建时不写入该标记，转缺陷由成立后工作流处理 |
+| feat | prd-admin | 新建需求页按 TAPD 布局重做（左描述右属性 + combobox 字段） |
+| feat | prd-admin | 新建需求补需求来源下拉、客户名称历史搜索与 + 快速新建 |
+| fix | prd-admin | 新建需求移除归属版本必填，创建后再在详情/关联关系维护 |
+| fix | prd-admin | 客户名称快速新建 + 移入下拉弹窗顶栏右侧 |
+| fix | prd-admin | 用户表单不再展示模板内部名「需求默认表单」，附件区统一标题「附件」 |
+| fix | prd-admin | 新建需求附件移至右侧基本信息下方，左侧编辑器下不再展示 |
+| fix | prd-admin | 新建需求表单全宽布局，右侧属性栏加宽减压 |
+| fix | prd-admin | UserSearchSelect 改为单输入框 combobox，移除下拉内第二层搜索 |
+| test | prd-admin | 新增 requirementCreateValidation 与 customerRecentStorage 单元测试 |
+| fix | prd-admin | 新建需求关联功能改为非必填，RelationField 改用单层 combobox 输入 |
+| feat | prd-admin | 流程模板状态配置改为表格式（颜色/名称/说明/起始/结束/删除确认） |
+| fix | prd-admin | 状态定义区补回状态说明列并固定列宽，名称列不再挤占其他列 |
+| feat | prd-api | WorkflowState 新增 Description 字段供状态说明存储 |
+| refactor | prd-admin | 应用配置移除功能流转页，功能状态改读所属计划版本 |
+| feat | prd-api | 需求工作流 7 状态补全状态说明种子文案（SeedRevision 7） |
+| fix | prd-admin | 应用配置恢复功能标签（流转矩阵+状态定义），功能详情恢复 WorkflowBar |
+| feat | prd-api | 新增产品批量导入 API（应用管理员，同名跳过） |
+| feat | prd-admin | 产品列表新增导入产品（CSV/Excel）及 19 个应用初始模板 |
+| fix | prd-admin | 修复产品导入 Excel 解析静默失败，新增一键加载初始模板与解析反馈 |
+| feat | prd-api | 功能工作流「已取消」改为「已下架」并补全 5 状态说明种子（FeatureWorkflowRevision 1） |
+| feat | prd-admin | 新增 featureWorkflowCatalog 兜底目录与已下架展示名 |
+| fix | prd-admin | 需求列表表格改为全宽 table-fixed 列宽比例，操作列不再挤在页面左侧 |
+| fix | prd-admin | 修复 CDS 构建失败：OverviewShell ??/|| 括号、VersionWorkflowTab Td、测试桩与死代码 |
+| feat | prd-api | 新增 RequirementType 实体与 requirement-types CRUD，内置 5 类需求类型种子 |
+| feat | prd-api | 需求 AI 智能填充按可配置类型定义识别 formData.需求类型 |
+| feat | prd-admin | 新建/详情需求表单增加需求类型下拉 |
+| feat | prd-admin | 设置页新增「需求类型」可视化管理（名称 + 定义 + 新建分类） |
+| fix | prd-admin | 需求来源选项与需求类型解耦（来源改为客户反馈/内部规划等） |
+| fix | prd-api | 修复 UpsertRequirementType 重复声明 dup 导致 CS0136 编译失败 |
+| fix | prd-admin | RTF 需求导入图片按魔数校正 mime、去重上传，失败跳过并继续导入 |
+| test | prd-admin | 补充 RTF 图片嗅探与失败占位清理单测 |
+| fix | prd-admin | TAPD 批量导出 RTF 按 ID 行拆分为多条需求导入，预览与写入支持单文件多记录 |
+| test | prd-admin | requirementRtfImport 增补多需求拆分用例 |
+| feat | prd-api | 新增 TAPD 缺陷自动提报智能体后端预览流与确认提交接口 |
+| feat | prd-admin | 新增 TAPD 缺陷自动提报百宝箱入口和草稿确认页面 |
+| fix | prd-api | TAPD 缺陷短句描述自动补全前置条件、复现步骤、实际结果和预期结果 |
+| fix | prd-admin | TAPD 缺陷自动提报改为页面直填 Cookie，不再依赖外部授权 |
+| fix | prd-admin | TAPD 缺陷自动提报移除 add_bug_token 与 dsc_token 手动输入要求 |
+| fix | prd-admin | TAPD 缺陷类型下拉改为逻辑错误、不符方案、功能遗漏、历史缺陷、产品缺陷 |
+| docs | doc | 补充 TAPD 缺陷自动提报智能体权限、SRS 与 README 说明 |
+| feat | prd-api | 需求/缺陷 ID 统一 TAPD 纯数字规则：导入保留 TAPD ID，新建在本产品最大 ID（含已导入）基础上 +1 |
+| fix | prd-api | 缺陷导入写入 StructuredData「缺陷ID」、重导按 DefectNo 兜底匹配并同步 ProductExternalId |
+| polish | prd-admin | 需求/缺陷列表与详情统一「ID」列；缺陷 xlsx 解析保留 TAPD 中文状态 |
+| refactor | prd-api | 需求默认工作流对齐 TAPD 米多需求收集工作流（7 状态 + 流转矩阵 + 遗留状态迁移 + 导入映射） |
+| refactor | prd-api | 流程定义增加 SeedRevision/IsUserCustomized：仅初始化写入 TAPD 种子，管理员保存后不再覆盖 |
+| docs | prd-api | 新增 tapd-requirement-workflow.seed.json 作为 TAPD 工作流初始化 SSOT |
+| fix | prd-api | 修正需求状态排序与 TAPD 一致：已上线/已拒绝在已排期之前（seed_revision=3） |
+| refactor | prd-api | TapdRequirementWorkflow 重命名为 RequirementWorkflowCatalog：运行时 SSOT 为 MongoDB 流程定义，Catalog 仅种子/迁移 |
+| refactor | prd-api | 流转/标签解析改为 workflowDef 优先，支持用户自定义状态；MapImportedStatusLabel 仅 import 路径 |
+| docs | prd-api | requirement-workflow.seed.json 替代 tapd-requirement-workflow.seed.json（MAP 内置种子文档） |
+| refactor | prd-admin | requirementWorkflowCatalog + utils：工作流 API 优先，内置目录仅兜底 |
+| polish | prd-admin | 需求模块去外部品牌：RTF 导入/字段/列表/详情统一为 MAP 原生文案与命名 |
+| refactor | prd-admin | tapdRtf* 重命名为 requirementRtfImport*；sourceSystem 新写入 rtf |
+| test | prd-admin | requirementWorkflowUtils 单元测试 |
+| test | prd-api | RequirementWorkflowCatalog 单元测试（31 边、短标签、workflowDef 优先解析） |
+| polish | prd-api | 跨产品 overview/requirements 返回 stateLabel；存量状态 Key 幂等规范化迁移 |
+| fix | prd-admin | 需求详情移除属性栏重复状态（state_N），顶部 WorkflowBar 用导入快照兜底展示中文状态 |
+| feat | prd-api | Wave3：流转 AllowedRoles/RequiredFieldKeys 校验 + ProductWorkflowTransitionGuard |
+| feat | prd-api | 流转到已上线默认限制 product_admin/owner；种子 revision 升至 5 |
+| feat | prd-admin | WorkflowTransitionDialog 替代 window.prompt；WorkflowBar/看板按权限过滤 |
+| feat | prd-admin | 设置页流转编辑支持角色多选与必填字段配置 |
+| test | prd-api | ProductWorkflowTransitionGuard 单元测试 |
+| test | prd-admin | workflowTransitionGuard 单元测试 |
+| feat | prd-api | Wave4：已立项/已排期/已上线闸门 + 立项/上线通过自动流转需求状态 |
+| feat | prd-api | 流转支持 versionIds/initiationId/releaseId；已排期种子必填归属版本 |
+| feat | prd-admin | 流转弹窗支持选择立项单、上线单、归属版本 |
+| test | prd-api | RequirementWorkflowTransitionGates 单元测试 |
+| refactor | prd-admin | 流程模板从「设置」拆至主页「应用」菜单独立入口 |
+| feat | prd-admin | 团队动态升级「团队脉搏」：新增顶部聚合面板（动作总量滚动数字 / 模块能量条 / 24h 活跃热力 / 成员排行），时间线按模块配色并折叠连续同类动作（×N 徽章） |
+| feat | prd-admin | 团队动态新增隐私脱敏开关（默认开启）：动态标题与成员姓名打码，适合投屏与旁观场景，偏好本地记忆 |
+| feat | prd-api | 团队动态新增聚合统计端点 GET /api/team-activity/stats（总量 / 环比上一窗 / 活跃成员 / 模块分布 / 成员排行 / 小时直方图），支撑脉搏面板 |
+| polish | prd-admin | 团队脉搏产品化打磨：默认范围改「今天」、动作总量带环比趋势（较昨日/上周/上月）、模块图例与成员排行可点击下钻筛选、单模块时隐藏零信息量比例条 |
+| style | prd-admin | 团队动态视觉对标业界（GitHub/GitLab/Linear）：时间线改 rail + 头像角标动作图标 + 吸顶日期头，活跃时段改平滑面积曲线，脉搏面板加分栏线与氛围光；标题恢复全文显示，匿名模式仅隐藏成员姓名 |
+| style | prd-admin | 团队动态超宽屏排版修正：页面居中限宽 1240px 消除面板真空区与超长视线距离；视觉去「圆润饱满」——药丸统一小圆角、能量条/排行条细线化、撤掉径向柔光 |
+| feat | prd-admin | 团队动态改控制台三栏布局：左栏成员统计（脉搏总量+环比+成员排行）、中栏时间线、右栏分类统计（模块分布/动作类型/活跃时段），两侧统计可点击下钻 |
+| feat | prd-api | 团队动态 stats 端点新增动作类型分布聚合（Top 10，标签来自白名单注册表） |
+| feat | prd-admin | 团队动态新增「行为洞察」视图：从沉默的行为信号聚合带证据的改进方向（频繁报错/等待过久/停留过久/秒退放弃/反复横跳），每条注明涉及人数、次数、位置与建议 |
+| feat | prd-admin | 新增全局行为信号采集器 behaviorTracker：路由级可见停留与跳转批量上报，标签页隐藏不计时，登录后生效 |
+| feat | prd-api | 新增 behavior_events 集合与 POST /api/behavior/events 批量采集端点；team-activity 新增 GET insights 聚合分析端点（API 日志 + 路由信号双数据源） |
+| feat | prd-admin | 行为洞察处理闭环：洞察可「转为缺陷 / 确认待改 / 已修复 / 忽略」，忽略项指纹级持久化不再打扰，可一键恢复；转缺陷自动携带证据生成缺陷内容并关联展示 |
+| feat | prd-api | 新增 behavior_insight_states 集合与 POST /api/team-activity/insights/state 端点；insights 查询按指纹挂载处理状态并默认过滤已忽略项 |
+| style | prd-admin | 洞察面板视觉去 AI 感：单卡分隔行替代漂浮盒子、左缘信号色条、目标/指标走 mono 字体、琥珀色强调主操作；脉搏大数字改实色微光、排行条单色化 |
+| feat | prd-admin | 行为洞察新增 AI 简报：一键流式生成面向产品负责人的洞察简报（SSE 打字效果 + 顶部模型可见），完成后可一键发布到知识库「行为洞察简报」存档 |
+| feat | prd-api | 新增 GET /api/team-activity/insights/brief SSE 端点（ILlmGateway 流式 + LlmRequestContext + AppCallerRegistry 登记 insight-brief），洞察计算抽出 ComputeInsightsAsync 供查询与简报共用 |
+| fix | prd-admin | AI 简报发布防重复：发布成功后按钮变「已发布」徽章，同日重复发布幂等更新同一篇文档而非新建；发布中禁用按钮 |
+| fix | prd-api | AI 简报流式中断治理：SSE 每 10 秒心跳防代理空闲断连（写锁防交叉写入）、max_tokens 提至 8192、超时放宽 300s、done 事件带 complete 标记 |
+| fix | prd-admin | AI 简报前端识别中断：未收到显式 done 即结束时提示「生成被中断」并提供重新生成，半截简报不允许发布 |
+| fix | prd-admin | 评审修复（Bugbot）：环比零基线明示「全为新增」不再误标无动作；洞察视图明示「全部=近30天」口径；登出不再丢弃待传行为事件队列 |
+| fix | prd-api | 评审修复（Codex）：AI 简报过滤已忽略洞察（与 insights 查询口径一致）；新增 team-activity.manage 写权限，洞察状态变更与只读查看权限分离 |
+| feat | prd-api | 需求/功能/缺陷工作流统一为需求 7 状态；需求新增「转为缺陷」、缺陷新增「非产品缺陷」并联动创建对端记录 |
+| feat | prd-api | 功能工作流对齐需求 7 状态并保留「已下架」；仅已上线可下架，下架后可重新打开 |
+| feat | prd-admin | 同步工作流状态标签兜底与缺陷状态展示 |
+| polish | prd-admin | 新建功能页布局对齐功能详情（属性/主需求分卡、补父功能） |
+| refactor | prd-admin | 内部版本详情改为单列布局：属性字段表 + 需求/功能列表表格，移除动态区 |
+| feat | prd-admin | 版本页仅保留正式版本与内部版本两个标签，两标签均支持 Excel/CSV 历史数据导入 |
+| refactor | prd-admin | 移除跨产品版本「历史版本」tab 及单产品旧版版本折叠区 |
+| feat | prd-admin | 网页托管团队空间：双击团队名/专题名/分类名就地重命名（Enter 保存、Esc 取消，按编辑权限门控） |
+| feat | prd-api | 团队成员支持角色标签（如「前端组」），新增成员标签端点；网页托管分组支持受限可见性与按成员/标签授权规则，列表、单查、分组操作全链路按规则隔离 |
+| feat | prd-admin | 团队管理面板支持给成员打角色标签；空间 owner 可对专题/分类设置访问权限（跟随空间/受限+授权规则），受限分组带锁标识 |
+| refactor | prd-admin | 网页托管团队空间信息架构重组：横向分组 chips 改为左侧树形导航（全部/未分组/专题/分类，含计数、新建、改名、删除、权限入口），结构一目了然 |
+| polish | prd-api | 网页托管页面教程第 11 步文案同步树形导航改版（锚点对账：webpages-folders 个人/团队空间各落一处） |
+| polish | prd-admin | 团队空间交互打磨：新建/加入改行内输入（去浮层零跳动、支持名称创建或 INV- 邀请码加入）；团队/分组改名与成员标签增删全部乐观更新不闪刷；双击当前团队不再触发整页重载；标签删除按钮加大可点区域 |
+| polish | prd-admin | 新建团队空间输入框占位改「输入团队空间名称」并加创建/加入按钮（Enter 同效）；成员角色标签支持双击就地改名（同名自动合并） |
+| polish | prd-admin | 应用配置流转改为 TAPD 风格矩阵表，规则详情收入设置弹窗 |
+| polish | prd-admin | 应用配置移除流程名称标题与输入（系统即单一工作流） |
+| fix | prd-admin | 修复语雀版本 Excel 导入：空表头行误判、非定制项目映射、V/T 号为「-」跳过 |
+| fix | prd-api | 总览版本列表补全 ProductRelease/ProductInitiation 集合映射，修复导入后列表空白 |
+| fix | prd-api | 版本工作流导入：负责人写入 legacyData，列表按 CreatedBy 可见 |
+| fix | prd-admin | 导入弹窗 created=0 时不关闭；表格展示历史负责人 |
+| test | prd-admin | 补充语雀上线/立项导出格式解析单测 |
+
+### 2026-06-11
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | cds | 补齐资源工作台 MongoDB find 命令、PostgreSQL schema 表树与数据库初始化入口 |
+| fix | cds | 修复资源工作台读取未展开数据库环境变量导致 PostgreSQL 连接失败 |
+| chore | doc | 熵清理：D1 重命名 1 个，D2 +2 index.yml，D3 +2 guide.list，D6 +5 manifest |
+| fix | prd-admin | 修复版本页导入历史上线和历史立项弹窗被滚动容器裁剪、点击后无可见反馈的问题 |
+| feat | prd-admin | 知识库详情页工具栏新增「关系图谱」按钮（Obsidian 同款入口），点击进入宇宙图 |
+| fix | prd-admin | 宇宙图「返回」按钮修正，凭 sessionStorage 回到原知识库详情而非空白列表页 |
+| polish | peer-sync | 系统互联添加对端页改为居中工作台布局，弱化纯黑面板，连接串空状态改为紧凑操作区 |
+| fix | peer-sync | 连接串有效期调整为 3 天，仍保持使用一次后失效 |
+| feat | prd-admin | 项目管理智能体全屏改版：两层信息架构（工作台层左侧一级导航 + 项目层独立全屏路由，项目内 9 大模块迁移到项目层左侧导航，URL 持久化） |
+| feat | prd-admin | 项目管理智能体新增首页 AI 工作台：70% 跨项目 AI 助手（SSE 流式 + 对话创建项目/目标/里程碑/任务）+ 30% 我的待办 / 可配置便捷操作 |
+| feat | prd-admin | 项目管理智能体新增一级「报表」页：跨项目执行数据（生命周期/任务/里程碑/风险四区，纯 CSS 可视化） |
+| feat | prd-api | PmAgentController 新增首页工作台端点：POST /api/pm/assistant/ask（SSE 动作协议）、GET /api/pm/my-todos、GET /api/pm/reports/summary、便捷操作偏好读写；AppCallerRegistry 注册 pm-agent.assistant::chat |
+| refactor | prd-admin | 抽取 AgentFullscreenLayout 与 agent-cards.css 为跨智能体共享件（product-agent 原文件转发兼容），项目卡片对齐 pa-card 动效（蓝色强调） |
+| polish | prd-admin | 项目头部精简：AI 健康诊断 / AI 结案报告 / 结案评价收进「更多操作」下拉，层次更清晰 |
+| feat | prd-admin | 项目管理/产品管理智能体 AI 助手输入框左下角支持上传附件作为上下文（md / pdf），可基于文档内容分析与批量创建（共享 AssistantAttachments 组件） |
+| feat | prd-api | 新增 AI 助手附件解析端点 POST /api/pm/assistant/attachments 与 /api/product/assistant/attachments（PdfPig 提取纯文本，无状态不落库），ask 请求支持 attachments 回传拼接上下文 |
+| feat | prd-admin | 产品管理智能体工作台改版：AI助手内嵌主区（70%）+ 右栏我的待办/快捷操作（30%），移除右上角抽屉入口 |
+| feat | prd-admin | 工作台新增「快捷操作」卡片：注册表模式收录 13 个系统操作，支持勾选/排序配置，默认创建需求/创建缺陷 |
+| feat | prd-api | 新增产品管理智能体用户偏好端点（GET /api/product/preferences、PUT /api/product/preferences/quick-actions），配置用户级跨产品共用 |
+| refactor | prd-admin | 工作台数据展示区（KPI/需求分级/缺陷状态/版本生命周期）并入报表 tab，报表重构为 KPI/进度/分布/版本四分区并去重 |
+| refactor | prd-api | 产品 analytics 接口扩展返回 counts 与需求分级/缺陷状态/版本生命周期分布，前端不再拉列表自算 |
+| polish | prd-admin | AI助手输入框增高为 Codex 桌面端风格大输入框（3 行起步 + 框内操作行），新增浏览器语音输入（Web Speech API，不支持自动隐藏） |
+| polish | prd-admin | 工作台右栏「我的待办 / 快捷操作」按 7:3 固定分高，各自内部滚动 |
+| feat | prd-api | AI助手具备创建能力：对话中可直接创建需求/功能/缺陷（动作指令随流尾解析执行，创建逻辑与 REST 端点对齐），SSE 新增 action 事件 |
+| feat | prd-admin | AI助手对话内渲染创建结果卡片（编号+标题，点击直达详情页，失败显示原因），空状态提示创建用法 |
+| fix | prd-admin | AI助手输入框聚焦不再出现全局紫色 focus 环；语音聆听中发送后静默取消识别，输入框不再残留已发送文本 |
+| feat | prd-admin | 需求支持批量导入 TAPD RTF 并还原字段、正文、图片与评论 |
+| feat | prd-api | 需求模型保留 TAPD 来源快照并支持按外部 ID 幂等导入 |
+| feat | prd-api | 新增团队动态功能：全局白名单审计过滤器（ActivityLogActionFilter）自动留痕知识库/缺陷/周报/视觉/文学/网页托管 6 模块的关键写操作，新集合 activity_logs，新端点 /api/team-activity/logs + modules，新权限 team-activity.read |
+| feat | prd-admin | 新增「团队动态」管理页（/team-activity）：按天分组时间线流，头像 + 「谁 在 哪个模块 做了什么《对象标题》」+ 相对时间，支持按成员/模块/时间范围筛选与加载更多 |
+| test | prd-api | 新增 ActivityActionRegistryGuardTests：白名单 Controller.Action 复合键与真实 Controller 反射比对，防重命名后动态静默断流 |
+| fix | prd-admin | 教程抽屉自动弹出严格按页:删除"定向推送(isTargeted)自动弹+切全部教程"旧路径,改为仅本页存在未学会的更新教程时自动展开本页列表,无教程页面不再弹窗 |
+| fix | prd-api | daily-tips /visible 的 isTargeted 与置顶排序不再把 Track 统计埋点产生的 Delivery 记录误判为"被推送",根治普通教程被污染成"为你推送"后到处自动弹窗 |
+| feat | prd-admin | 多步教程气泡新增「我已学会」一键退出口（标记学会该页不再自动弹），给觉得弹窗烦的用户无需走完整套即可退出 |
+| feat | prd-admin | 教程关闭飞回入口动画扩展到所有关闭路径（X/点空白/ESC/我已学会/完成），并放慢一倍（720ms→1440ms）解决「看不见」 |
+| feat | prd-admin | 新增「轻微提醒更新」(*-update-reminder) 第三类自动弹出：进页以单步悬浮气泡轻提醒新功能，看过即永不再弹 |
+| feat | prd-api | 新增 visual-agent-paste-update-reminder seed（视觉创作首页可粘贴图片提醒），并把视觉创作 page-guide 第 4 步同步补充粘贴/拖入说明 |
+| fix | prd-admin | 轻微提醒更新：同 session 内本页 page-guide 刚走完不再紧跟弹 reminder（避免重复打断），并占当天自动弹额度防抽屉在气泡上层展开 |
+| fix | prd-admin | 单步教程 5s 自动淡出 / autoClick 完成的关闭也走飞回动画，与手动关闭口径一致 |
+| fix | prd-admin | 轻微提醒更新只在精确目标页且锚点存在时才弹/标记学会，避免在编辑器子路由(/visual-agent/:id)弹空目标并永久消费 |
+| fix | prd-admin | 视觉创作首页拖拽：移入内部子元素(textarea等)不再误清拖拽高亮，消除提示蒙层闪烁 |
+| fix | prd-admin | markLearned 对非 page-guide 也记乐观学会版本，避免标记落库失败后陈旧刷新把 reminder 恢复成未学会、与 session 锁不一致 |
+| fix | prd-admin | 轻微提醒更新去掉锚点 DOM 预检(懒加载页首跑锚点未挂会导致永不自动弹)，只保留精确路由门，锚点就绪交 SpotlightOverlay 轮询兜底 |
+| fix | prd-admin | 抽屉自动展开的 reminder 抑制守卫加精确路由判断，避免子路由(/visual-agent/:id)上不会弹的 reminder 误抑制周更新抽屉 |
+| fix | prd-api | 新增跨产品 overview/releases 与 overview/initiations 列表接口 |
+| fix | prd-admin | 主页版本 tab 分正式/立项/历史三栏，行点击进三标签详情 |
+| fix | prd-admin | 历史版本详情改为基础信息/需求/功能三标签 |
+| fix | prd-admin | 正式版本列表整行可点进详情；路由注册顺序修正 |
+| feat | prd-api | 新增 GET /api/product/initiations/{id} 立项详情接口 |
+| feat | prd-admin | 内部版本立项详情页：基础信息 / 需求 / 功能三标签，列表可点击进入 |
+| feat | prd-admin | 正式版本详情扩展为「基础信息 / 需求 / 功能」三标签，需求可跳转对象详情 |
+| feat | prd-admin | 视觉创作首页输入框支持直接粘贴（Ctrl/Cmd+V）和拖入剪贴板/本地图片作为参考图，与编辑器画板交互对齐 |
+| feat | prd-admin | 网页托管一级导航改为「个人空间 / 团队空间」两级结构，团队以标签平铺展示 |
+| feat | prd-api | 网页托管密码分享链支持团队成员免密访问（外部访客仍需密码） |
+| feat | prd-api | 网页托管团队空间新增「专题/日常分类」分组实体（web_page_groups）与站点归组、复制进团队端点 |
+| feat | prd-admin | 网页托管团队空间支持创建专题/分类、按分组筛选、批量移入分组、从个人空间物理复制网页进团队 |
+| feat | prd-api | 知识库/网页托管团队作用域支持不传 teamId 的跨团队聚合查询 |
+| feat | prd-admin | 知识库团队空间改版：团队下拉框改标签平铺、默认「全部」聚合，并展示团队共享的网页托管站点 |
+| fix | prd-admin | 团队空间卡片分节改按专题/分类切分（修正误显示文件夹「未分类」），分组开关文案随空间切换 |
+| polish | prd-admin | 分享页密码屏增加「团队成员？登录后可免密访问」入口与已登录非成员提示 |
+| fix | prd-api | 网页托管分享数字短链改为按需懒分配，默认创建只发不可枚举的 /s/wp/{token} 长链，不再无脑写入 short_links 集合 |
+| feat | prd-api | 新增 POST /api/web-pages/shares/{shareId}/short-link 端点，支持事后为已存在分享按需生成数字短链（幂等） |
+| fix | prd-admin | 分享管理面板主链接/复制/预览默认走字母长链，修复「用户没选数字短链却总拿到 /s/{seq} 数字链」问题；数字短链改为单独「生成/复制」按钮主动获取 |
+| feat | prd-api | 知识库新增双链 + 反向链接基础设施（mentions 通用账本 + WikiLinkParser + MentionService + MentionsController） |
+| feat | prd-api | 文档保存时自动解析 [[xxx]] 写入 mentions；删除时级联清理 |
+| feat | prd-admin | MarkdownViewer 渲染 [[xxx]] 为可点击蓝链；DocBrowser 新增 contentFooter 插槽 |
+| feat | prd-admin | DocumentStorePage 文档底部展示反向链接面板（被引用 + 出链），点击跳转 |
+| feat | prd-admin | 新增「知识宇宙图」页面（Obsidian Graph View 风格），力导向布局 + Filters/Groups/Display/Forces 设置面板 |
+| feat | prd-admin | navRegistry 注册 /document-store/:storeId/universe 路由（wip 标记，待验收后转正式） |
+| feat | prd-admin | 编辑器双链自动补全：输入 `[[` 或 `@` 弹下拉框，上下键选 + Enter 确认 + Esc/Tab 取消 |
+| feat | prd-admin | 双链悬停预览卡：鼠标停在 `[[xxx]]` 上浮出标题 + 摘要；目标不存在时变橙色虚线 + 提示「文档不存在」 |
+| feat | prd-admin | 新增 `lib/wikilinkCache.ts` 客户端缓存（标题 → 条目摘要）；DocumentStorePage 在 entries 变化时同步喂 |
+| test | prd-api | 新增 WikiLinkParserTests（13 个场景：空输入/单链/带别名/多链/中文/嵌套/换行/上下文/去重防御等） |
+| docs | doc | 数据字典补 `mentions` 集合段；`.claude/rules/codebase-snapshot.md` 集合数 118→119 + 引用网络功能进"已完成"清单 |
+
+### 2026-06-10
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | skills | 验收技能新增「证据链连线」硬门禁（standard §3.6 + archive_report.py 准入第 8 项）：pass 用例必须连图、IMG 引用必须在 manifest、禁止「文字记录」充当证据；SKILL.md 强制全量读图核对 |
+| fix | skills | verify-open 死页判定改为仅在内容未渲染时生效（全文扫词会误杀正文合法含「不存在/已失效」的报告），关键词改用完整短语 |
+| feat | cds | 新增数据库初始化自动识别、推荐与部署后执行流程，支持 Prisma、Drizzle、TypeORM、Sequelize、Django、Alembic、Rails 与 schema.sql/init.sql，并在数据库服务卡片提供导入 SQL、重新初始化和手动迁移命令兜底入口 |
+feat(cds): add SSH release control plane MVP
+
+- Add ReleaseTarget, ReleasePlan, ReleaseRun and ReleaseArtifact state models.
+- Add `/api/releases/*` APIs for SSH targets, preflight checks, release logs, release runs and rollback.
+- Add release center UI and branch-card release entry for running preview branches.
+| fix | prd-api | 更新中心 GitHub 提交总数改为仓库全历史总数（本地 git rev-list --count，浅克隆时用 GitHub API Link header 反推兜底），不再把「最近一周条数」当总数展示 |
+| feat | prd-admin | 更新中心 GitHub 提交列表按自然周分组展示（本周/上周语义化标签 + 日期范围），chip 与说明文案区分「仓库总提交」与「近一周条数」 |
+| feat | prd-api | 彩蛋：GitHub 提交作者名与系统用户名自动匹配（忽略大小写、去数字与分隔符、容忍姓名前后颠倒），命中时返回系统用户显示名 |
+| feat | prd-admin | GitHub 提交行作者展示合并为单 chip：命中系统用户时直接显示系统名（GitHub 原名进 tooltip），不再单列两个名字 |
+| feat | prd-api | 识别 commit message 的 Co-authored-by 联合作者（本地 git trailers + GitHub API 双路径），每位联合作者同样做系统用户匹配 |
+| feat | prd-api | 用户名匹配支持剥离团队通用组织后缀（如 yurenping-miduo 匹配 yurenping） |
+| feat | prd-admin | 更新中心面板动态化：统计数字滚动、新提交到达扫光、同步状态呼吸点、AI 总结按钮流光 |
+| feat | prd-admin | 筛选标签 Telegram 式热度角标：常驻类型彩色 + 右上角近 30 天条目数徽章，最热标签火焰角标 + 流光描边 + 呼吸光晕，点击迸发同色粒子 |
+| polish | prd-admin | 热度视觉收敛：火焰并入最热标签徽章（修复与相邻角标遮挡）、去掉 chip 整体呼吸/流光只保留火花跳动、口径提示「近 30 天热度」弱化挪至筛选行尾 |
+| feat | prd-api | 商品溯源智能体：新增「排查清单」（内置防窜模板 + 自定义 CRUD，channel_trace_checklists 集合） |
+| feat | prd-api | 商品溯源智能体：诊断会话一键沉淀为缺陷（复用缺陷 Agent DefectReport，草稿态） |
+| feat | prd-api | 商品溯源智能体：诊断会话导出 Markdown 证据包（问答 + 召回案例 + 命中代码） |
+| feat | prd-api | 商品溯源智能体：业务知识问答 / 对话诊断支持粘贴页面 HTML/文本上下文（去标签转纯文本） |
+| perf | prd-api | 商品溯源智能体：案例检索改用词重合排序 + 子串兜底，召回更全（替代纯正则 OR） |
+| feat | prd-admin | 商品溯源智能体：新增「排查清单」Tab（模板/自定义、逐项勾选进度、另存为我的清单） |
+| feat | prd-admin | 商品溯源智能体：问题排查界面新增「导出证据包」「沉淀为缺陷」按钮 + 粘贴上下文输入 |
+| feat | prd-admin | 商品溯源智能体：业务知识问答新增「粘贴页面 HTML/文本」输入 |
+| chore | doc | 熵清理：D2 index.yml +3 条，D3 guide.list +2 条，D6 manifest +5 条 |
+| fix | prd-admin | vite build 关 sourcemap、esbuild minify 降低 CDS static 部署 OOM 风险 |
+| fix | cds-compose | admin 构建增加 NODE_OPTIONS=--max-old-space-size=4096 |
+| fix | prd-admin | CDS 构建检测 VITE_BUILD_ID：关 minify、限 rollup 并行；新增 cds-vite-build.sh |
+| fix | cds-compose | admin 默认改 dev(Vite HMR) 秒级就绪；static 走 scripts/cds-vite-build.sh |
+| feat | prd-admin | 前端搭档智能体页面精简布局：右侧 PDA/项目表弹窗入口、标题文案与流式动效 |
+| feat | prd-admin | 截图视觉诊断支持 Ctrl+V 粘贴截图、预览与上传，随请求发送 Vision 识图 |
+| feat | prd-admin | 粒子宇宙凄凉背景（星尘/流星/冷色星云）+ 按钮手型悬停抬起与按下反馈 |
+| feat | prd-admin | 怀旧星夜视觉：暖色标题/胶片颗粒/扫描线、密集流星与暖色玻璃面板 |
+| refactor | prd-admin | 前端搭档视觉对齐视觉创作智能体：夜景+粒子漩涡、全息标题、靛紫玻璃面板 |
+| refactor | prd-admin | 抽取共享 NightSkyBackground 组件供视觉/前端搭档复用 |
+| fix | prd-admin | 目标技术栈默认改为 Vue3 + UniApp 小程序 |
+| feat | prd-api | 前端搭档智能体截图诊断接入 Vision 多模态，注册 front-end-agent.assistant::vision |
+| fix | .claude/skills/cds | cdscli preview-url 本地推算优先 git remote 仓库名，修复 Cloud Agent workspace 目录拼错预览域 |
+| fix | prd-api | 修复 CDS Agent 会话事件按 payload 内容判重导致重复 delta token 被丢弃（Agent 引擎生成 PPT 全文乱码的根因），改为按 CDS seq 水位线去重并随轮询增量拉取 |
+| feat | prd-admin | MD 转 PPT 生成/精修全程流式可视化：等待面板实时滚动展示 AI 正在输出的 HTML 与已接收字符数，不再静止转圈干等 |
+| fix | prd-admin | 风格语义纠偏：删除前端 !important CSS 换皮覆盖层，风格是 AI 生成时参照的设计语言；生成后切换风格改为 AI 参照新风格整体重绘 |
+| fix | prd-api | MD 转 PPT patch 接口支持 theme 字段，换风格重绘按对应风格系统提示词执行 |
+| refactor | prd-api | MD 转 PPT 移除 MAP 直出引擎与模型列表接口，convert/patch 全部走 CDS Agent 会话；Agent 路径补发 model 事件（模型可见性） |
+| refactor | prd-admin | MD 转 PPT 删除引擎/模型选择 UI（含 ModelChipPopover），模型名改为只读 chip 回显 |
+| feat | prd-admin | 生成等待面板重设计：幻灯页进度卡逐张点亮（解析流式 HTML 的 section 与页标题）+ 总进度条 + 阶段文案 + 代码流尾巴，消除空等体感 |
+| feat | prd-admin | 生成等待主视觉升级为实况渲染（对标 Gamma）：每页 HTML 流式闭合后立即在 iframe 真实渲染成幻灯页，默认跟随最新完成页，底部页卡可点击回看；首页出现前用骨架幻灯过渡 |
+| feat | prd-api | 新增 /api/md-to-ppt/prewarm：大纲确认期间预创建并启动 CDS Agent 会话，convert 自动复用，把 5-15s 环境启动开销藏进用户阅读大纲的时间 |
+| feat | prd-admin | 大纲生成成功后静默预热 Agent 会话（fire-and-forget，失败不打扰用户） |
+| feat | prd-api | MD 转 PPT 透传推理模型 thinking 事件到 SSE（deepseek-v3.2 实测思考占总耗时 90%，思考期必须有内容可看） |
+| feat | prd-admin | 等待面板新增 AI 思考过程实时流（思考期主视觉），状态行显示已思考字数 |
+| feat | prd-admin | 百宝箱「MD 转网页 PPT」摘除 wip 标记（预览环境真人路径验收通过：8 页 deck 生成/渲染/翻页全链路跑通） |
+| fix | claude-sdk-sidecar | 修复假流式根因：官方 SDK 路径开启 include_partial_messages，token 级 text_delta/thinking_delta 实时产出（此前正文等整条消息生成完一次性爆发），完整消息块去重防正文双倍 |
+| feat | prd-admin | MD 转 PPT 历史生成：右上「历史」入口列出过往 runs，点击载入旧 deck 继续精修/编辑/换模板/发布 |
+| feat | prd-api | MD 转 PPT 自定义模板：上传参考图由视觉模型提取风格规范（配色/字体/版式），生成与重绘时作为 AI 设计参照；模板 CRUD 接口 + md_to_ppt_templates 集合 |
+| feat | prd-admin | 右侧空状态改为模板画廊：官方 5 套大卡片迷你预览 + 自定义模板卡片 + 上传参考图新建，模板不再藏在设置里；工具栏色点扩展自定义模板，「风格」统一更名「模板」 |
+| feat | prd-admin | 知识库引用升级大模态：库列表 → 文档列表 → 内容预览 → 确认引用，不再盲选 |
+| feat | prd-admin | 思考流移入对话气泡（对话归对话，中间只放 PPT 预览）；输入框聚焦整圈高亮（边框+光环）；左侧对话栏宽度可拖拽（280-640px，localStorage 记忆） |
+| fix | prd-admin | 输入框聚焦内圈浏览器默认 outline 残留清除（只留外壳整圈高亮）；知识库预览复用全站 MarkdownContent 渲染（不再裸文本） |
+| fix | prd-admin | 调整大纲不再按文本长度重估页数（沿用上一版页数，除非用户明确要求增减）；生成等待的「Agent 环境准备」移入对话气泡，预览区只留产物 |
+| fix | prd-admin | 编辑模式可编辑范围扩展 .stat/.stat-l/.lead/.eyebrow/.chip/.quote（大数字等 div 文本块此前点不中） |
+| feat | prd-admin | 大纲右侧编辑器：大纲生成后在右侧大空间逐页编辑（标题/要点/增删页/上下移），即改即存且刷新恢复（outline-ready 状态持久化）；头部常驻「确认生成」，底部「让 AI 调整」输入 |
+| feat | prd-api | 大纲接口扩展澄清问卷：需求确有歧义时模型返回最多 3 题（单选/多选/填空），无歧义不出题 |
+| feat | prd-admin | 澄清问卷卡（opendesign 式）：右侧填写 → 保存并发送给 AI 重排大纲，可跳过；对话输入在大纲阶段直接路由为 AI 调整大纲 |
+| feat | prd-admin | 大纲编辑器页卡改网格布局（一排 3-4 个自适应列宽，「添加一页」为网格末位虚线卡） |
+| feat | skills | 验收标准 v2.5 两条硬门禁：报告必含「验收地址」段（标的物深链+分支+commit，与报告同域名）；证据必须步骤式（>=3 个「## 步骤 N」逐段配图，集中 EVIDENCE 在证据板渲染为空）——archive_report.py 机检同步 |
+| fix | prd-api | 澄清问卷出题阈值微调：未指明受众/正式程度且显著影响内容时应出 1-2 题（需求明确时仍禁止出题） |
+| feat | prd-admin | 大纲规划等待改产物形状动画（3:4 骨架卡逐张脉冲浮现，替代居中转圈）；页卡改 3:4 竖卡比例 |
+| feat | prd-admin | 大纲卡拖拽换位（替代上下按钮），换位区间序号 1.6s 紫色渐变高亮——变化必须被看见 |
+| fix | prd-admin | AI 调整大纲时编辑器保持在场（内联蒙层+状态条），不再切全屏规划态造成"大纲全消失"错觉；调整返回后仅改动页渐变高亮 |
+| fix | prd-api | 调整任务硬约束：未被调整要求点名的页 title/bullets 逐字原样保留（修"定向修改结果全文案被重写"） |
+| feat | rules | 新增 miduo-review-lens.md：用户审查习惯六镜头（等待产物感/比例美感/交互成本/变化可感知/AI最小惊讶/证据闭环），交付前强制自查 |
+| feat | prd-api | 并行逐页生成编排（用户架构提案落地）：大纲定稿 → deck 壳子确定（设计系统 head）→ 4 路子智能体并行各画一页 → 每页完成即推 page 事件 → 服务端拼装；frame/page 新 SSE 事件 |
+| feat | prd-api | 逐页提示词反「套模板」：组件类降级为可选工具箱，每页给版式自由 + 相邻页差异化指令 + 版式轮换建议 |
+| feat | prd-admin | 等待面板 pages 模式：页卡按真实完成并行点亮（可点已亮页卡先看该页实况渲染），进度 X/Y 页为服务端真实进度——不再依赖 token 流，绕开 sidecar 假流式 |
+| fix | prd-admin | 刷新恢复对账：run 完成/失败时翻转聊天里残留的「正在生成」气泡（修"图片返回了还显示生成中"）；等待计时改用服务端 run.createdAt 基准（修刷新后计时归零） |
+| fix | prd-api | 大纲提示词加厚：每页 3-5 条要点、每条 12-30 字带具体落点，禁止空壳短语（修"大纲内容太少"） |
+| feat | prd-api | 官方模板扩容至 10 套：新增极光渐变 / 日落炽橙 / 森林有机 / 鎏金深紫 / 海洋玻璃（参照 Gamma 系风格族谱），每套含完整设计 token 与气质描述 |
+| feat | prd-admin | 模板画廊卡升级：真渐变/格纸纹理迷你幻灯预览 + 主题字体示例标题 + 角标数据 + 一句话气质描述（替代原始的"Aa 标题示意"色块条） |
+| refactor | prd-admin | 删除头部「设置」收起面板（模板 chips 与画廊重复）：生成前选模板唯一入口为右侧画廊，生成后切换走预览工具栏色点 |
+| docs | doc | plan.md-to-ppt-next-wave 新增 §9 用户模板共享走海鲜市场（IForkable + CONFIG_TYPE_REGISTRY 方案）与 §10 官方模板扩容节奏清单 |
+| fix | prd-api | P0 修复并行逐页生成的页面黑屏：section 根元素 inline display/min-height:100vh 覆盖 reveal 隐藏规则导致当前页被推出视口；新增 SanitizeSection 消毒（布局样式挪入 pp-root 包裹层、尺寸定位属性剥离、vh 单位替换）+ 5 条回归测试 |
+| feat | prd-api | deck 壳子注入溢出自适应守卫脚本：内容高于 700px 设计框时对 pp-root 等比缩小（兜底） |
+| fix | prd-api | 逐页提示词版面硬约束：禁止 vh/vw、根元素禁止 style、内容预算（要点不超过 5 条）、横向时间线最多 4 项且每项 min-width 170px（修文字逐字竖排挤压） |
+| feat | prd-api | 新增 GET /api/md-to-ppt/profiles + convert/patch/prewarm 支持 runtimeProfileId：用户在 PPT 页随时切换生成模型（与基础设施运行配置同数据源）；预热会话与所选模型不匹配时弃用重建 |
+| feat | prd-admin | 输入框旁新增模型 chip + 切换弹层：任何时候可换模型，选择持久化并随生成/精修/预热下发 |
+| feat | prd-admin | 生成期底部页卡升级为真实缩略图（完成页用同一设计系统迷你渲染，一眼看到每页效果），未完成页骨架占位 |
+| feat | prd-admin | 并行生成全程对话同步：壳子确定/每页完成/最终汇总都更新聊天气泡（左侧保持主力语言交互，不再静默） |
+| feat | prd-admin | 预览工具栏新增「重绘本页」：定向只重绘当前页（修复溢出/挤压排版），内容逐字保留其余页不动 |
+| feat | prd-admin | 生成后切换模板改为先确认再重绘（确认条说明耗时与影响），杜绝误触模板色点白白触发 1 分钟整体重绘 |
+| fix | prd-admin | 模型切换弹层补点击外部关闭（fixed 背板），不再只能点 chip 收起 |
+| feat | prd-api | 定向单页 patch：SlideIndex 命中时只把目标页交给单个子智能体重画并原位替换（页级提示词+消毒+心跳），不再整篇 58KB 重出（旧路径实测 7 分钟未完成）；失败回落整篇路径 |
+| fix | prd-api | 标签碎片守卫：上游偶发丢字符（deepseek/OpenRouter 实测 finalText 缺 26 个 "<"）导致标签当正文渲染——ExtractSection 检测损坏自动走重试/兜底链路 + 3 条回归测试 |
+| fix | prd-admin | 输入框底部工具行视觉修整：快捷键提示挪进 placeholder/按钮 title（原被模型 chip 挤成两行折叠）；模型 chip 只显示短名（vendor 前缀去掉，全名在 tooltip） |
+| feat | prd-api | 官方模板 +2 套（借鉴 open-design.ai 招牌设计系统）：工坊拼贴 Atelier Zero（暖纸/珊瑚单热点/Inter 800 混 Playfair Italic/罗马数字章节/mono 微注）与 Kami 纸墨（羊皮纸/墨蓝 ≤5%/衬线单字重 500 禁粗禁斜/四级暖灰/实色 tag） |
+| feat | prd-admin | 模板画廊新增工坊拼贴 / Kami 纸墨两张卡（官方共 12 套），迷你预览含纸面径向晕影与衬线示例标题 |
+| feat | prd-admin | 基础设施服务页模型运行配置补全 CRUD 接线：卡片新增 编辑/设为默认/测试连通/两击确认删除（后端 PUT/DELETE/test 早已就绪，此前 UI 只读改不了）；表单区分新增/修改模式（编辑留空 key 沿用原 key）；新增「从模型管理导入」一键建配置 |
+| feat | prd-admin | /infra-services 支持 ?tab=config 深链直达配置 tab；失效连接默认折叠（12 条尸体卡不再占满首屏）；PPT 模型弹层只有一条配置时给出去基础设施新增的引导链 |
+| fix | prd-admin | 基础设施操作台整段上移到页面第二屏（原埋在测试台/架构介绍下第四屏，用户两次找不到模型配置）；「配置」tab 排第一并设为默认——进页即见模型运行配置 |
+| feat | prd-api | 模型池直选（用户提案落地）：GET /api/md-to-ppt/pool-models 列出启用池模型 + POST profiles/from-pool 一键物化为运行配置（幂等复用平台 baseUrl/key，零手填）；无池调度概念——选中哪个就把哪个的配置原样传给 CDS，由 CDS 自行发请求 |
+| feat | prd-admin | PPT 模型弹层新增「从模型池直选」组：搜索模型/平台、点选即自动建配置并选中、已物化标「已就绪」；不再要求用户去基础设施页手抄 baseUrl/key |
+| feat | prd-api | InfraAgentRuntimeProfileService 新增 ImportFromPoolAsync：任选池内模型物化为运行配置（协议/runtime 自动推断、key 加密存储、不抢默认位） |
+| feat | prd-api | 流式逐页大纲 POST /api/md-to-ppt/outline-stream：模型按 JSONL 输出（首行 meta 含整体配色/排字/气质，随后每页一行含 design 设计意图），服务端逐行解析每成功一页立刻推 SSE——第一页几秒内可见；兜底整 JSON 解析 |
+| feat | prd-api | 页级 design 字段贯通：大纲设计意图（版式/视觉装置/排字/强调）随 OutlinePages 直接喂给并行子智能体的页级提示词（设计闭环非摆设） |
+| feat | prd-admin | 大纲编辑器流式化：meta 到达即出编辑器骨架（脉冲占位卡），每页到达填充真卡并渐变高亮；卡片新增可编辑设计意图行；流式中确认禁用、序列化大纲带设计行 |
+| feat | cds | Agent 请求观测台（用户信任诉求落地）：新页 /agent-requests/:projectId——一条条请求实时列表（title/clientApp/clientUser/model/状态/耗时/事件数 + 收发内容预览）、按用户/应用/状态/关键字筛选、行展开看完整事件流；项目卡心电图按钮直达 |
+| feat | cds | 会话打标 + 聚合端点：POST agent-sessions 接受 title/clientUser/clientApp；GET /projects/:id/agent-requests 合并 live 会话与持久历史（state 持久 ring buffer 500 条，重启后历史可查）；结构性事件发布 agent-session.activity 到全局 SSE 总线（text_delta 不发防洪水）+ 5 条路由测试 |
+| feat | prd-api | MAP 创建 CDS 会话补传观测台标签：title/clientUser(userId)/clientApp；CreateInfraAgentSessionRequest 加 ClientApp，MdToPpt 全部会话标记 md-to-ppt |
+| fix | prd-api | CDS 会话失联秒级对账：CDS 自更新/重启清空内存会话后，MAP 轮询撞 session_not_found 立即标记会话 failed + 落 error 事件（此前空转 4 分钟才超时）——页级重试随即重建新会话（两次真实事故根因：并行 agent 频繁 self-update 生产 CDS） |
+| feat | prd-admin | 锚定 deck 前端适配：实况/缩略图改为完整单页 deck（prefix+active slide+suffix，模板自带运行时缩放居中）；iframe 控制协议双模式（reveal + zhangzara 方向键/active 类，MutationObserver 报页码）；编辑器序列化兼容无 reveal 结构 |
+| fix | prd-admin | SSE 断线不再误报"生成失败"：error 前先对账 run 真实状态，活着转后台跟踪轮询到终态（修用户截图实锤的 network error 误报） |
+| fix | prd-admin | 锚定 deck 页码桥 v2：active/is-active/current 类 + 视口中心 elementFromPoint 反查 + 800ms 兜底轮询（monochrome 等不打类标的运行时页码也跟手） |
+| feat | prd-admin | 输入框大气化（用户点名）：composer 加高加圆角、聚焦上浮+饱满光环；页卡缩略图 hover 浮起投影（交互灵动） |
+| fix | prd-admin | looksLikeDeck 识别锚定 deck（div.slide）：retro-zine 等 div 容器模板生成完被误判"结果异常"丢弃的问题 |
+| fix | prd-api | 单页故障绝不杀整本：RunAgentOnceAsync 永不抛（传输异常折叠为页错误走重试/兜底）+ 并行任务体全链路兜底页（实测单页 HttpClient 100s 超时异常逃逸炸掉整个 deck） |
+| fix | prd-admin | PPT 工作台修复加号菜单「引用知识库/添加文件」点不动：composer 卡 focus-within transform 创建 stacking context 导致 z-10 菜单被 z-5 关闭蒙层盖住，移除 translate 保留光环动效 |
+| feat | prd-api | PPT 锚定模板新增 2 套暗色 deck（cyber-terminal/dark-graph，来自 open-design hermes/graphify）：Tech 极黑、极光渐变不再映射到浅色锚，提取器 v3 支持非 zhangzara 目录、is-active 修饰符、注释取版式名并为无运行时静态 deck 附加通用键盘导航 |
+| fix | prd-api | 暗色锚定 deck 翻页失效修复：提取时剥掉模板自带 Static-preview fallback 样式块（强制所有 slide 可见），导航运行时类切换即可真实翻页 |
+| fix | prd-api | 模型池直选凭据预检：pool-models 返回 available/unavailableReason，平台 key 缺失或解密失败的模型提前标记；from-pool 报错区分「未配 key」与「key 解密失败（环境加密密钥不匹配）」并给出修复指引 |
+| fix | prd-admin | 模型池弹层把凭据预检不过的模型置灰显示原因，不再让用户点了才撞「缺少 API key」报错 |
+| fix | cds | Jwt__Secret 注入改为项目环境变量优先、CDS 全局值仅兜底：根治换 CDS_JWT_SECRET 跨项目穿透打哑其他项目存量密文的联动事故 |
+| feat | prd-api | 新增 PlatformKeyIntegrityWorker：启动及每 6 小时自检平台 API key 可解密性，发现环境密钥不匹配立即 LogError + 全局站内告警（幂等，恢复后自动关闭），杜绝密钥哑掉两小时无人知的静默故障 |
+| chore | - | 删除过期验收驱动 e2e/lifecycle.mjs（写死旧分支 URL 的一次性脚本）；新增 .claude/rules/cross-project-isolation.md 跨项目隔离原则与共享通道清单 |
+| chore | - | 合并 main（218 个提交）进开发分支：container.ts 环境构建采用 main 的 resolveProfileRuntimeEnv 重构并移植 Jwt 项目级优先修复，remote-hosts.ts 合并双方 import；CDS 1932 测试、API 943 测试、admin 419 测试全绿 |
+| feat | prd-api | 平台密钥自愈端点 POST /api/mds/platforms/:id/restore-key-from-profile：密钥环境不匹配时从仍可解密的运行配置（DataProtection）服务端恢复平台 key 并用当前密钥重加密，明文不出进程、同 host 守卫防错配 |
+| fix | prd-admin | 重绘单页不再冒充全部重绘：单页 patch 保持整份 deck 可见，仅顶部状态条提示「仅重绘第 N 页」，不再铺满 8 张等待骨架（后端本就只 splice 替换目标 section，是前端骨架误导） |
+| fix | prd-admin | 大纲卡片由 3:4 竖比例改 1:1，减约 1/4 高度，消除内容只占一半的空白 |
+| fix | prd-admin | 页码指示器改为视口可见度优先判定（cur），修复锚定 deck 末页仍显示 1/N 的问题（诉求 6） |
+| fix | prd-admin | 编辑模式下锚定 deck 所有页平铺可滚动可编辑，不再只能编辑第一页（诉求 8） |
+| feat | prd-admin | 全屏改为自定义演示模式，底部新增子页缩略条（点击跳页 + 方向键 + Esc 退出），不再只有单张全屏 PPT（诉求 9） |
+| fix | prd-api | 锚定页提示词新增硬约束：内容不得压到页脚、视觉装置（图表/SVG/大数字）不得留空占位（诉求 4/7） |
+| fix | prd-api | 兜底页不再裸奔：子智能体两次输出无效时，降级页继承版式范本的装饰块（网格/扫描线/背景 SVG）与页脚，仍穿设计系统的衣服 |
+| polish | prd-admin | 演示模式缩略条加渲染微光占位，iframe 逐张渐进渲染期间不再是黑块 |
+| fix | prd-admin | 刷新中断对账：大纲规划（客户端 SSE 无服务端 run）被刷新打断后，气泡不再永远停在「正在规划大纲」，挂载时翻转为可重试的中断提示 |
+| fix | prd-api | dark-graph 锚定模板范本去 emoji（PR #799 Codex P1）：图标位 pictograph 全部替换为终端风等宽字符标记，全锚定资产 emoji 清零 |
+| fix | - | AGENTS.md 修正 cdscli 路径（.Codex/skills 不存在，实际在 .claude/skills，Bugbot Medium）；cdscli 去重 _repo_name_from_git_ref 双定义并让 _fallback_project_slug 与 _project_slug_hints 共用同一优先序（Bugbot Medium/Low），pytest 125 绿 |
+| security | cds | 只读 SQL Console 危险关键字检查扩到全部放行语句头：堵 PostgreSQL EXPLAIN ANALYZE UPDATE 绕过写权限门（PR #799 Codex P1，main 既有） |
+| feat | prd-api,prd-admin | 大纲生成纳入服务器权威性（server-authority.md）：大纲也是一次 Run（op=outline），结果落库 OutlineJson，客户端刷新/断开后后台跑完仍可按 runId 取回，不再「刷新即丢」「永远转圈」 |
+| fix | - | 验收技能 L0 档步骤式证据门禁按档位缩放（Bugbot Medium）：L0 轻量验收不再被「>=3 步骤」硬卡，下限=min(档位截图下限,3) |
+| security | cds | MongoDB 只读 Console $where 正则修复（PR #799 Codex P2）：去掉前导 \b 边界（{/空格后永不成立），堵 db.find({$where:...}) 服务端 JS 谓词绕过 |
+| fix | cds | 部署日志 entrypoint 空格警告字符串去 emoji（⚠ → [警告]，PR #799 Codex P1，铁律 §0） |
+| chore | - | 清理仓库存量验收图片与废弃设计原型：删 doc/acceptance/（43 文件 1.7M 历史验收报告+截图，违反 doc/ 扁平+前缀规则）+ design-mockups/（7 文件 1.1M 零引用设计探索），共减约 2.8M/12 图；gitignore doc/acceptance/ 防本地验收产物再入库 |
+| feat | prd-admin | MD转PPT 页位恢复：编辑保存/换主题/精修后 iframe 重载不再跳回第 1 页（ready 信号 + goto 回跳，借鉴 open-design） |
+| feat | prd-admin | MD转PPT 圈选反馈：工具栏「圈选反馈」拖框圈选幻灯片区域 + 写要求，自动反查选区内元素文本组装成精修指令填入输入框（不自动发送） |
+| feat | prd-admin | MD转PPT 编辑模式升级：悬浮工具条新增 6 色文字颜色、左中右对齐、撤销（最多 20 步）；序列化时清洗 reveal 运行时状态，产物更纯净 |
+| feat | prd-admin | MD转PPT 工具栏模型 chip 可点击弹层切换（借鉴 open-design InlineModelSwitcher），免去翻设置面板 |
+| feat | prd-admin | MD转PPT 生成完成后显示「下一步」引导条：精修建议 chip（填入输入框）+ 下载 HTML + 发布为网页 |
+| fix | prd-admin | MD转PPT 页位恢复竞态修复：新 iframe 初始页码上报会清零实时跟踪 ref，改为重载触发时快照进 pendingRestoreRef，ready 按快照回跳 |
+| fix | prd-admin | MD转PPT 编辑器样式写入改 setProperty important：修复主题覆盖层 !important 压住编辑颜色导致改色无效（验收 driver 实测捕获） |
+| feat | prd-admin | MD转PPT 新增所见即所得编辑模式：点击幻灯片文字直接修改内容，悬浮工具条 A+/A- 调整字号，postMessage 同步回主应用，退出时自动保存 |
+| feat | prd-admin | MD转PPT 预览工具栏新增页码指示（N / M）、5 主题快速切换色点（即时换肤）、下载独立 HTML、全屏演示按钮 |
+| feat | prd-admin | MD转PPT 空状态新增 3 个快速开始示例（产品发布会/季度业务汇报/技术方案评审），点击一键填入输入框 |
+| fix | prd-admin | MD转PPT 修复翻页按钮在沙箱 iframe（opaque origin）下完全失效的问题，翻页改走 postMessage 通道 |
+| fix | prd-admin | MD转PPT 修复发布/下载的 HTML 不携带前端注入主题样式导致主题丢失的问题；发布标题改为取自 deck title |
+| fix | prd-admin | MD转PPT 下载文件名清洗非法字符，下载 anchor 挂载 DOM 后触发（Firefox 兼容） |
+| feat | prd-admin | MD转PPT 对话区布局改造（借鉴 open-design composer-shell）：左栏 288 加宽到 340px，输入区卡片化（无边框 textarea 自动增高 + 底部工具行 + 实底发送主按钮 + focus 高亮整卡），底部留白避开 CDS 预览挂件遮挡 |
+| feat | prd-api | MD转PPT 新增 GET /api/md-to-ppt/models 端点（列出 chat 池可切换模型），Convert/Patch 支持 Model 参数经 ExpectedModel 传给 Gateway 调度 |
+| feat | prd-admin | MD转PPT 设置面板新增模型选择器（仅直出引擎）：自动调度 / deepseek-v4-flash / deepseek-v4-pro 等 chat 池模型可切换 |
+# 2026-06-10 系统互联 http→https 规范化
+
+## 背景
+
+对端连接串可能携带 `http://` baseUrl，但实际站点由 nginx 301 到 `https://`。系统互联的 `PeerSync` HttpClient 出于 SSRF 防护禁用了自动重定向，因此握手会把 301 当作失败。
+
+## 变更
+
+- 新增 `PeerSyncRedirectHelper`，只允许同 host、同 peer-sync 端点的 `http -> https` 重定向规范化。
+- 新增配对握手遇到上述 301/302/307/308 时，显式重试 HTTPS，并在成功后存储规范化后的 HTTPS baseUrl。
+- 配对后的连通测试、资源 push/pull 调用也支持同样的一次性规范化，并在成功后回写 HTTPS baseUrl。
+- 仍不启用全局自动重定向；跨 host、跳到非 peer-sync 路径、携带 query/fragment 的重定向继续按失败处理。
+
+## 验证
+
+- `curl -X POST http://map.ebcone.net/api/peer-sync/handshake` 返回 301 到 `https://map.ebcone.net/api/peer-sync/handshake`。
+- `curl -X POST https://map.ebcone.net/api/peer-sync/handshake` 可到达 peer-sync 端点，返回业务层 400。
+- `dotnet build prd-api/PrdAgent.sln --no-restore`
+| polish | prd-admin | 产品管理智能体卡片 hover 交互统一：grid 可点击卡片复用 pa-card（上浮+青色辉光+错峰入场），列表行/看板卡/紧凑项新增 pa-row（描边提亮+辉光，不上浮） |
+| polish | prd-admin | 产品智能体工作台/报表/追溯矩阵/概览图表/活动时间线卡片补齐统一 hover 动效，与产品卡一致 |
+| fix | prd-api | 修复产品知识库"文档空间不存在"：DocumentStore 读写判定补齐全局产品管理权限（Super/ProductAgentAdmin/ProductAgentManage），与产品访问口径对齐 |
+| refactor | prd-admin | 产品知识库重构 P0：新增 4-Tab 知识模块（知识列表/分类管理/文件夹管理/标签管理），知识列表支持筛选/搜索/分页/增删改/重新上传，新增独立知识详情页路由 |
+| feat | prd-api | DocumentEntry 新增 VersionIds 字段（知识关联版本 N:N），条目列表支持 category/tag/versionId/excludeFolders 过滤，更新端点支持 versionIds |
+| feat | prd-admin | 产品知识库重构 P1：版本详情「本版本知识」调取卡（从产品库按版本筛选+关联知识对话框），总览知识库改为跨产品聚合列表（搜索/产品筛选/分页/进详情页） |
+| refactor | prd-api | 版本独立知识库下线：懒迁移旧版本库条目进产品库（VersionIds 标记归属，幂等），新增总览聚合知识端点 /overview/knowledge/entries |
+| chore | prd-admin | 清理死代码：VersionRelationModal / KnowledgeStoreModal / ProductKnowledgePanel 下线 |
+| feat | prd-admin | 知识详情页重写：左侧文件夹目录快速切换、HTML 直接预览+代码模式切换、富文本编辑器（图片上传/粘贴/拖拽 + 附件上传），新建文档默认富文本 |
+| feat | prd-api | DocumentStore 内容更新端点支持可选 contentType（富文本编辑后置为 text/html） |
+| fix | prd-admin | 知识详情 HTML 预览改为沙箱 iframe 真实网页渲染（保留自带样式/布局/脚本视觉，预览容器放宽至 1400px），富文本片段仍走主题内联渲染 |
+| polish | prd-admin | 知识详情：预览/代码切换仅对完整 HTML 网页显示（md/富文本片段不再显示）；显示卡片与富文本编辑器宽度/样式统一；列表点标题快捷改名；详情目录双击标题改名 |
+| fix | prd-admin | 富文本工具栏逐项修复：execCommand 前确保光标在编辑器内（修「点了没反应」），标题/引用/代码块改为可切回正文的块级切换，styleWithCSS=false 输出语义标签 |
+| fix | prd-admin | 富文本工具栏根治：新增 knowledge-rich 作用域 CSS（Tailwind preflight 重置了 h2/blockquote/ul/pre 默认样式导致 formatBlock 生效但视觉无变化），编辑器与片段渲染同 class 所见即所得 |
+| fix | prd-admin | 知识格式纠错：contentType 误标 html 但正文无标签的按 Markdown 渲染与编辑（保存自动纠正类型），详情页新增「格式」手动切换（Markdown/富文本）；md 预览/编辑宽度与 HTML 统一为 1400 |
+| feat | prd-api | UpdateEntry 支持可选 contentType（格式纠错 Markdown 与 HTML 互转） |
+| fix | prd-admin | md 格式显示 HTML 裸标签乱码根治：新增 HTML↔Markdown 轻量互转；格式切换真正转换正文、markdown 模式遇 HTML 正文兜底按 HTML 渲染、进编辑自动 HTML→干净 Markdown |
+| feat | prd-admin | 知识编辑器升级：编辑态富文本/Markdown 模式切换（正文实时互转）、统一外壳、Markdown 专属语法工具栏（光标处插入）、富文本新增文字颜色调色板 |
+| feat | prd-admin | 知识目录升级：文件夹/文件分区显示并加大字号，文件可拖入文件夹/拖回根目录，同容器内拖拽排序（持久化 sortOrder），文件夹双击改名；列表行新增「移动到文件夹」 |
+| feat | prd-api | DocumentEntry 新增 SortOrder（目录手动排序），UpdateEntry 支持写入 |
+| feat | prd-api | 新增识途 Agent（shitu-agent）：四分类知识库 find-or-create + 严格 RAG 问答 SSE |
+| feat | prd-api | DocumentStore 新增 ShituCategoryRef，个人知识库列表与互传排除识途库 |
+| feat | prd-admin | 新增识途页面：四 Tab + 问答窗 + 内嵌知识库，注册百宝箱与导航 |
+| feat | prd-admin | 识途新增使用帮助抽屉与作者署名（魏喜胜），百宝箱卡片同步展示作者 |
+| polish | prd-admin | 识途使用帮助抽屉去掉作者展示，页头与百宝箱保留 |
+| feat | prd-api | CCAS Agent meta 返回 authorName（魏喜胜） |
+| feat | prd-admin | CCAS 页头与百宝箱卡片展示作者魏喜胜 |
+
+### 2026-06-09
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 修复 CI 的 CDS Build & Test 失败：cds/pnpm-workspace.yaml 只有 allowBuilds 没有 packages 字段，CI 的 pnpm 9 在 `pnpm store path` 时报 "packages field missing or empty" → store path 为空 → actions/cache 拿不到 path 直接失败。补一个匹配不到任何子包的占位 glob(packages/*)满足 pnpm 9 字段校验，同时保留 allowBuilds(host 的 pnpm 11 仍需它批准 native build) |
+| feat | cds | 将分支服务标签升级为统一资源 chip，新增后端分支资源聚合 API，并在分支抽屉新增应用、数据库、缓存资源控制台 |
+| feat | cds | 新增资源外部访问策略、资源审计查询和数据库克隆任务状态，MySQL 空库创建可生成分支级独立连接变量 |
+| feat | cds | MySQL clone-main 任务接入 mysqldump 后台复制，执行过程中记录进度、失败原因，并在完成后注入分支级连接变量 |
+| feat | cds | 分支资源控制台新增 MySQL 资源级备份列表、手动备份和恢复覆盖接口，恢复前自动生成安全备份并写入破坏性操作审计 |
+| feat | cds | 资源连接页新增 MySQL 分支凭据重置、连接变量注入依赖应用和反向依赖展示，注入写入分支 profile override 并记录审计 |
+| feat | cds | MySQL 资源数据页接入只读表列表、schema、数据预览和只读 SQL Console，查询按分支数据库执行并记录审计 |
+| feat | cds | PostgreSQL 资源复用 SQL 数据面板，支持表列表、schema、只读预览和只读 SQL Console，并按 runtime 使用 PostgreSQL 引号规则 |
+| feat | cds | Redis 资源数据页接入只读 key browser、TTL、value preview 和 memory usage，后端仅执行 SCAN/TYPE/TTL/MEMORY/GET 等只读命令 |
+| feat | cds | MongoDB 资源数据页接入 database/collection/document browser 和 JSON 只读 query console，后端只接受 filter/projection/sort object 不执行任意 JS |
+| feat | cds | 资源写操作新增 member/developer/admin 权限门控，生产资源公网访问、备份恢复、连接已有数据库等高风险操作要求 admin 权限 |
+| feat | cds | 资源连接页新增外部访问 TTL 与 IP allowlist 表单，备份页新增从备份创建新库和连接已有数据库入口，后端写入分支级 env 并记录任务审计 |
+| feat | cds | 资源级备份恢复扩展到 PostgreSQL、MongoDB、Redis，PostgreSQL/MongoDB 支持空库创建、clone-main 和从备份创建分支独立库 |
+| feat | cds | 资源设置页新增清空数据、删除分支数据库、执行写 SQL 的危险操作入口，后端强制管理员权限、资源名确认、安全备份和审计日志 |
+| fix | cds | MySQL clone-main 复制任务现在检查 mysqldump/mysql 导入退出码，失败时正确落到任务失败状态并记录失败原因 |
+| feat | cds | 新增资源权限摘要 API，资源控制台按服务端判定的 member/developer/admin 权限禁用重启、外部访问、备份恢复、凭据、克隆和危险操作按钮 |
+| feat | cds | 资源详情指标/日志 tab 接入资源级 metrics/logs API，数据库、缓存等 infra 容器不再显示占位指标和占位日志 |
+| feat | cds | 资源公网 TCP 访问接入受管 Docker proxy 与 iptables allowlist，数据库外部连接串使用动态端口并在资源连接页显示网络层执行状态 |
+| fix | cds | MongoDB 数据面板支持切换 database 后查询 collection/document，资源连接页新增按权限复制真实可用连接串，避免 Redis 只复制星号密码 |
+| fix | cds-skill | bump CDS 技能版本 0.6.7 → 0.6.8，让已合入的 `X-Cds-Cli-Latest` 更新提醒对旧 0.6.7 客户端可见 |
+| fix | cds | CDS API 响应统一下发 `X-Cds-Cli-Latest`，让旧版 `cdscli` 普通请求也能提示运行 `cdscli update` 升级 |
+| fix | cds-skill | CDS 技能 `SKILL.md` frontmatter 版本与 `cdscli.py VERSION` 对齐，并新增守卫测试防止两处版本再次漂移 |
+| docs | cds-skill | drop-in 升级说明改为优先 `cdscli version && cdscli update`，手动重装仅作为旧包兜底 |
+| docs | doc | 新增 CDS 技能版本与更新架构文档，沉淀版本权威源、响应头提醒、更新路径和 findmapskills 边界 |
+| docs | skills | 同步本地 findmapskills 文档到 1.1.0，补充海鲜市场上传幂等覆盖与 slug/version 决策规则 |
+| fix | prd-admin | 更新中心类型筛选改为固定中文枚举，并新增 changelog 碎片与 commit message hook 校验脚本，避免新增记录继续出现难懂的英文自由类型 |
+| feat | prd-api | 商品溯源智能体：业务知识/线上问题支持导入文件入库（知识 1 文件 1 条、案例 AI 解析为多条结构化案例 SSE 流式） |
+| feat | prd-api | 商品溯源智能体代码对比改造：内置 fc_codeapi/fc_YmSystem 两仓库，新增 ChannelTraceCodeScanService 子 agent（描述抽关键词→克隆扫描→命中代码→AI 异同分析），GitHub PAT 走配置 ChannelTrace__GitHubToken |
+| feat | prd-admin | 商品溯源智能体：知识/案例 Tab 增加导入文件入口；代码对比 Tab 改为描述驱动，展示内置仓库/关键词/命中代码 + token 未配置告警 |
+| feat | prd-api | 商品溯源智能体线上问题诊断升级为多轮对话：新增 ChannelTraceDiagnoseSession 会话存储 + diagnose/ask SSE 端点（每轮召回历史案例 + 扫描内置仓库代码定位 + 信息不足时主动追问引导补齐），会话 CRUD 端点 |
+| feat | prd-admin | 商品溯源智能体「问题排查」Tab 改为多轮对话式 UI：流式问答、召回案例/命中代码可视、历史会话切换与新建对话 |
+| fix | prd-api | 修复商品溯源「线上问题」导入大文件（如 93 条缺陷汇总）耗时很久且最终失败：原单次 LLM 解析全文 → 输出超 max_tokens 被截断 → JSON 解析失败。改为分段解析 + 逐条入库 + 增量进度 + 容错 JSON 提取，单段失败不影响整体 |
+| feat | prd-api | 商品溯源代码扫描 GitHub PAT 解析增加通用环境变量兜底（GITHUB_TOKEN/GH_TOKEN/GITHUB_PAT/GITHUB_ACCESS_TOKEN/MIDOUTECH_GITHUB_TOKEN），不再仅限 ChannelTrace__GitHubToken |
+| feat | prd-api | 商品溯源业务知识问答支持上传防窜后台页面截图（视觉识别）/ 文档作为上下文；系统提示词强化：识别到「怎么操作/在哪操作/线上问题如何在后台排查」时输出「操作步骤」分步指引（入口路径→点哪些菜单按钮），内置防窜系统访问入口导航（不含账号密码） |
+| feat | prd-admin | 商品溯源「业务知识」问答框支持附加截图/文档（多选），用于让 AI 识别页面与关键操作 |
+| feat | prd-api | 新增商品溯源智能体（channel-trace-agent）：防窜物流业务知识库 + 线上问题案例库 + 业务/代码差异对比，三类能力均走 ILlmGateway SSE 流式 |
+| feat | prd-admin | 新增商品溯源智能体页面（百宝箱 wip），三 Tab：业务知识问答、线上问题智能排查、业务规则 vs 代码实现差异对比 |
+# 2026-06-09 知识库验收报告图标与列表样式
+
+## 背景
+
+知识库列表中的验收报告此前仍使用普通文档图标，并通过左侧竖向色条表达验收结论。实际扫读时，左侧色条和条目图标含义重叠，且验收报告的文档类型不够明确。
+
+## 变更
+
+- 验收报告条目识别 `metadata.kind=acceptance-report`、`metadata.type=acceptance-report`、合法 `metadata.verdict`，以及历史标签 `视觉验收` / `验收报告`。
+- 验收报告使用 `ClipboardCheck` 图标，与行业里常见的“清单 + 勾选”验收/审核语义一致。
+- 移除知识库条目左侧验收结论竖条和选中态竖条；结论继续由 `通过 L1`、`有条件 L2` 等 chip 表达，避免同一状态重复编码。
+
+## 验证
+
+- `pnpm --prefix prd-admin tsc --noEmit`
+| feat | prd-api | 新增前端搭档智能体流式助手接口，支持 API 接入、组件生成、报错诊断和视觉样式建议 |
+| feat | prd-admin | 新增前端搭档智能体页面与百宝箱入口，支持四类任务流式生成前端交付方案 |
+| feat | prd-admin | 前端搭档智能体新增前端项目表，可按项目名、技术栈、仓库和构建地址查询项目位置 |
+| feat | prd-admin | 前端搭档智能体新增 PDA 项目手册，沉淀 uniapp-pda 项目说明、操作要点和发布流程 |
+| feat | prd-admin | MD转PPT智能体页面重构为对话+预览双栏布局（大纲先行确认流程、左侧聊天面板、右侧 reveal.js iframe 实时预览） |
+| feat | prd-api | 新增 POST /api/md-to-ppt/outline 大纲规划端点（JSON，非 SSE，支持附件/知识库上下文/历史对话） |
+| fix | prd-admin | P1 安全漏洞：iframe sandbox 移除 allow-same-origin，注入内存存储 shim，消除 LLM 生成脚本访问主应用鉴权 Token 的风险 |
+| feat | prd-admin | 新增知识库引用选择器（KbPicker）和大纲确认气泡（OutlineBubble）组件 |
+| feat | prd-admin | 新增 "+" 菜单支持文件上传和知识库引用，对话历史通过 sessionStorage 持久化跨刷新恢复 |
+| feat | prd-api | AppCallerRegistry 新增 md-to-ppt-agent.outline::chat 和 md-to-ppt-agent.chat-refine::chat 两个注册常量 |
+| fix | prd-api | MdToPpt MAP路径：超时从180s提升至600s，OperationCanceledException改为发error事件而非静默吞掉，添加SSE keepalive防代理断连 |
+| fix | prd-admin | mdToPptService：stream意外关闭未收到done/error时调用onError解除前端"生成中"卡死 |
+| feat | prd-admin | MD转PPT：前端注入主题 CSS 覆盖层，确保主题始终正确渲染（不依赖 LLM 输出） |
+| feat | prd-admin | MD转PPT：注入 Google Fonts（Inter 400-900），提升排版质量 |
+| feat | prd-admin | MD转PPT：显示模型徽章（模型名 + 平台）在 artifact 工具栏 |
+| feat | prd-api | MD转PPT：扩充 CSS 组件库（.feat 功能列表 / .table 对比表 / .step-row 流程 / .callout 标注） |
+| feat | prd-api | MD转PPT：5 种主题增加风格个性描述，版式库扩展至 10 种，质量自检覆盖视觉多样性 |
+| feat | prd-admin | MD转PPT：借鉴 open-design 重设计 5 种差异化主题（Tech 极黑/钴蓝格纸/纸墨编辑/复古 Zine/Swiss 极简），各主题 !important 覆盖 reveal.js 元素级样式 |
+| feat | prd-admin | MD转PPT：钴蓝格纸主题注入 CSS 方格纸背景，Swiss 极简主题添加页眉页脚发丝线，Tech 极黑主题添加渐变光晕 |
+| feat | prd-admin | MD转PPT：扩充字体栈（JetBrains Mono / Newsreader / Hanken Grotesk / Playfair Display / Space Grotesk / Noto Serif SC），各主题字形各异 |
+| feat | prd-api | MD转PPT：更新后端 ThemeTokens 5 个新主题描述，提示词强化字体/背景/层叠约定 |
+| fix | prd-admin | MD转PPT：修复刷新后历史记录丢失问题——改用 lazy useState initializer 在首次渲染前从 sessionStorage 恢复状态，消除 saveSession 以空初始 state 覆写的竞态 |
+| fix | prd-admin | MD转PPT：将工具注册到百宝箱 BUILTIN_TOOLS，修复百宝箱找不到「MD 转网页 PPT」卡片的 P1 缺陷 |
+| fix | prd-api | MD转PPT patch 页码归一:前端"指定第几页"是 1-based 原样下发,后端原先又 +1(输入 3 改成第 4 页)、留空写成"第 0 页";改为直接用 1-based 页码,留空时提示"按要求修改整份 PPT" |
+| fix | cds | 修复 CDS Agent 会话可观测面板:事件字段对齐后端真实形状(payload/createdAt,原误写 data/ts 导致时间 Invalid Date、摘要永远为空)、tool 事件读 toolName、过滤流末尾 keepalive 垃圾行、新增思考事件标签 |
+| fix | cds | CDS Agent 会话详情改为按 afterSeq 持续重连轮询:CDS stream 端点是一次性(回放缓冲事件+keepalive 后即 Connection:close),运行中会话单次读完即假死,现轮询到终态事件才停 |
+| fix | cds | CDS Agent 会话列表 5s 自动刷新改 silent(不再每 5 秒闪 loading 骨架) + loadSessions 加 fetchSeq 守卫(切项目时旧请求晚返回不再覆盖新列表) |
+| fix | cds | 修复 Agent 会话端点跨租户越权:authenticateProjectRequest 原把所有 _aiSession 当 admin 等价放行,导致项目级 Agent Key(cdsp_*)改 URL 里的 projectId 就能列/控制别的项目的 Agent 会话;改为项目级 key 强制 cdsProjectKey.projectId === 路由 projectId,全局超级密钥与人类 cookie 仍放行 |
+| fix | cds | self-update boot 预检(#746 guard#3)不再重复 install:仅当 runPnpmInstallWithCache 命中缓存跳过真实 install 时才补跑 boot 预检;helper 本轮已用同一条命令真实跑过则不再跑第二遍(省双倍 install 时间、避免第二次偶发失败误伤) |
+| fix | cds | self-update boot 预检测试随 guard#3 条件化更新:本 mock 无 lockfile stamp(install 真实跑)时 cdsDir 命令数从 3 改为 2(真实 install + tsc),boot 预检仅在缓存跳过时补跑 |
+| fix | prd-api | MD转PPT CDS Agent 引擎补齐 server-authority:客户端断开时 SSE 心跳写失败不再 break(原会提前掉进超时分支落半成品 HTML 并 StopAsync 掉还在跑的会话),改标记 clientGone 继续轮询到 done/error/timeout 完整落库,客户端凭 runId 重连 |
+| fix | prd-admin | CDS Agent code 模式「知识库/工作区」selector 暂禁用并标注「开发中」:后端尚无把知识库灌进 Agent 会话上下文的能力,createInfraAgentSession 也无此字段,避免"选了却不生效"误导(债务见 doc/debt.md-to-ppt.md) |
+| fix | prd-admin | 知识库再加工确认窗写回失败不再误关:performApply 返回写回成功与否,confirmPendingApply 仅成功才关 diff 预览,失败时保留预览供用户直接重试 |
+| fix | cds | CDS Agent 会话详情流补 stale 守卫:切会话/关窗后,上一会话晚返回的 SSE 事件不再 append(原会把两个会话时间线混在一起),且被 abort 的旧轮询不再误置新会话的 streaming=false |
+| feat | prd-admin | 产品管理智能体缺陷「严重度+优先级」统一为 P0-P3「等级」，与需求/功能口径一致 |
+| feat | prd-api | DefectReport 新增 Grade 字段；产品缺陷创建/编辑/图谱/概览/转需求改用 grade（旧数据由 severity 兜底） |
+| fix | prd-admin | 产品管理智能体工作台「我的待办」及缺陷列表/概览/状态分布图，缺陷状态由英文(submitted)改为中文标签(已提交/待处理等) |
+| feat | prd-api | 工作台「我的待办」新增 GET /products/{id}/my-todos 端点，只返回需我处理项（需求/功能按状态责任人+未到终态，缺陷跟我相关+未完成） |
+| fix | prd-admin | 工作台「我的待办」改用 my-todos 端点，已处理/已流转/已完成的需求·功能·缺陷自动从待办消失，需求/功能状态显示中文工作流状态名 |
+| fix | prd-admin | 产品管理智能体评论区@提醒：改用 /api/teams/search-users（普通成员可用），修复非管理员列表空无法@；KanbanBoard 处理人姓名同步改造 |
+| fix | prd-admin | UserSearchSelect 下拉空间不足时向上翻转 + 按可用空间限高 + 左边界夹取，修复评论区@弹层靠底被裁切显示不全 |
+| fix | prd-api | 工作台「我的待办」缺陷改为按状态责任人过滤：上报人仅在草稿/待验收才显示，提交流转到处理环节后从上报人待办消失（修复 reporter 提交后仍挂待办） |
+| feat | prd-api | 产品管理智能体新增工作助手问答 SSE 端点 POST /products/{id}/assistant/ask：以该产品全量数据+知识库文档为上下文流式回答，严格按产品成员权限闸口、只限本产品、知识库仅取文本索引截断 |
+| feat | prd-admin | 工作台新增「工作助手」入口，点击从右侧滑出抽屉(占视口30%)，问答形式调用AI，预置本月需求分析/需求矩阵分析/缺陷分析三个快捷问题 |
+| feat | prd-api | AI助手上下文补全人员(处理人/负责人/上报人/团队)与关系(功能→需求、缺陷→追溯对象)，prompt 改为纯文本输出+深度分析(关系挖掘/人员负载/经验总结建议)，修复"查无某人"；端点重命名为 AI助手 |
+| fix | prd-admin | AI助手回答去除 Markdown 标记渲染为纯文本(stripMarkdown)；「工作助手」改名「AI助手」 |
+| fix | prd-admin | UserSearchSelect 已选 value 在关闭态预拉目录解析显示名，修复「处理人」已指派却显示占位空白 |
+| fix | prd-admin | AI助手抽屉改主流聊天样式：用户/AI 各带头像+气泡(底色+边框)，回答可一键复制，字号收小；对话存 sessionStorage(按产品隔离)关闭重开不丢+手动清除；工作台入口移到 SectionShell 右上角不占空间 |
+| feat | prd-admin | 需求/功能/缺陷列表新增搜索+多字段筛选(客户端)：关键词搜编号/标题/描述，可按等级/状态/处理人/负责人/上报人/版本/客户/关联功能/时间等筛选；默认展示核心项，「筛选设置」可自定义显示哪些(按列表类型存localStorage) |
+| fix | prd-admin | 图谱「关系分析」去除 Markdown 标记渲染为纯文本 + 一键复制；stripMarkdown 提取为 lib 共享工具(AI助手复用) |
+| fix | prd-api | 追溯关系分析 prompt 改为简洁纯文本输出(3-5 要点、禁 Markdown 标记、保留关键信息与风险) |
+| feat | scripts | 新增 Claude Code 技能迁移脚本，支持从 `.claude/skills` 迁移到 `.agents/skills`、`~/.codex/skills` 或任意目标目录，并提供 copy/link 两种模式、dry-run、指定技能、覆盖和 manifest 输出 |
+| feat | prd-admin | 新增技术分析文档格式校验 Agent，支持 PM2502 模板生成、上传检查、需求文件上传、GitHub 项目路径选择、流式生成后自动校验 |
+| feat | prd-admin | 技术分析文档格式校验 Agent 新增内容质量校验，阻断只输出模板占位或残留 PM2502 示例内容 |
+| feat | prd-api | 新增技术分析文档格式校验 Agent 的 GitHub Device Flow、仓库列表、目录浏览与项目关键文件读取接口 |
+
+### 2026-06-08
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-admin | 项目业务目标(北极星)支持内联编辑:目标列表卡片右上角编辑,保存走 updatePmProject,头部「目标」同步更新(owner/leader 可编辑) |
+| perf | cds | 登录页右侧访问区重构为可登录 runtime board：账号/密码保持上下结构，session/console/preview 节点在同一面板内静态连线，首页 Enter Console/Access 改为本页原地切换访问态，并增加 board morph、输入展开与 Access 收缩动画 |
+| fix | cds | 分支卡片服务标签移除立方体容器图标，改用状态圆点，避免 chip 内出现块状图形干扰 |
+| chore | doc | 熵清理：D2 +7 index.yml，D3 +7 guide.list，D6 +5 changelog manifest |
+| fix | prd-admin | 修复里程碑详情日期/负责人行样式错乱:两个日期同行各占半,负责人独占一行 |
+| feat | prd-api | 目标可设为里程碑:POST /api/pm/goals/:id/milestone 开/关,开→建联动里程碑(AutoFromGoal,GoalId 关联),关→删;PmMilestone 加 AutoFromGoal;目标列表返回 isMilestone |
+| feat | prd-admin | 目标「设为里程碑」开关:画布(GoalDetailDrawer)开关 + 列表行 Flag 按钮,设置后在里程碑同步显示,团队/个人目标均支持 |
+| fix | prd-admin | 目标详情「详细描述」默认 5 行高度(minHeight 120)可拖拽,「进展/信心」框统一同高 |
+| feat | prd-api | 目标支持调整层级:POST /api/pm/goals/:id/reparent(同范围+防环+层级上限校验+子树深度级联) |
+| feat | prd-admin | 目标画布支持拖拽改层级(Xmind 式):拖到另一目标=成为其子目标,拖到北极星/个人根=升为顶层,落空回弹 |
+| fix | prd-api | 修复 MD转PPT SSE 两个引擎(MAP/CDS Agent)均 524 超时：SetSseHeaders 不再手动写 Transfer-Encoding: chunked(由 Kestrel 管理)，与既有 SSE 控制器一致 |
+| fix | prd-api | MD转PPT SSE 末尾一次性吐出：补 IHttpResponseBodyFeature.DisableBuffering() 禁用 Kestrel 响应缓冲(与既有 SSE 控制器一致) + Cache-Control no-transform + 2KB padding |
+| fix | cds | 修复 pnpm-workspace.yaml allowBuilds 占位字符串导致 master-run 启动崩溃：pnpm 11 把未批准的 native build(cpu-features/esbuild/ssh2)当 fatal(ERR_PNPM_IGNORED_BUILDS exit 1)→ exit 78 崩溃循环；改为 allowBuilds:true 显式批准 |
+| feat | cds | #746 self-update 加固：guard#3 boot-install smoke(swap 前用 master-run 确切命令跑真实 pnpm install，挡住"编译过但启动崩"，两次 502 都是从 cached-install skip 缝里溜过) + guard#2 分支落后 main 非阻断警告 |
+| fix | cds | 修复 Sidecar Pool 观测面板对仪表盘操作者永远 401：agent-sessions 端点的 authenticateProjectRequest 只认 Bearer 连接 token，浏览器带的是 cds_token cookie；改为人类 cookie 登录(_cdsCookieAuth)/AI 超级密钥(_aiSession)等 admin 等价会话直接放行 |
+| fix | prd-api | 大幅提升 MD转PPT 生成质量：内置完整 reveal.js 设计系统提示词(卡片/数据/光晕/强调条) + 强制每页结构杜绝空洞页；标题改实色(原渐变 color:transparent 在嵌入式渲染会整页消失) + 服务端兜底剥离 emoji(规则#0) |
+| fix | prd-admin | 修复 MD转PPT 预览里递归显示整个 MAP 应用而非幻灯：iframe sandbox 去掉 allow-same-origin(生成 HTML 跑在本应用同源里，reveal 的 history/相对跳转会把 iframe 导航回应用 /) + onDone 校验返回的确实是网页 PPT(非 SPA 外壳/空内容) |
+| fix | prd-api | 修复 MD转PPT 幻灯整页空白(只剩光晕)：设计系统里 `.reveal .slides section>*{position:relative}` 优先级高于 `.orb{position:absolute}`，把装饰光晕变成 relative 块占掉 ~700px 流高把正文挤出可视区。服务端 InjectDeckCssFix 强制 .orb 绝对定位(预览+发布都生效) + 提示词移除该冲突规则 |
+| fix | prd-admin | MD转PPT 翻页体验：结果工具栏加显眼的上一页/下一页按钮(直接驱动预览 iframe 的 reveal，免去用户找小箭头/点 iframe 取焦点的『翻不了页』困惑) + 生成期间不再糊原始 HTML 流，只显示增长中的字符计数作进度 |
+| feat | prd-api | MD转PPT 落库可重连(server-authority)：生成创建 MdToPptRun 记录(running)并经 SSE run 事件下发 runId，done/error/timeout 全落库；MAP 路径客户端断开不再 return 中止(clientGone 只跳过 SSE 写入、继续生成并落库)；新增 GET runs/{id} + GET runs 历史 |
+| feat | prd-admin | MD转PPT 刷新不再丢：收到 run 事件存 runId 到 sessionStorage，进页/刷新后凭 runId 重连——还在跑就轮询、已完成直接还原结果 |
+| feat | prd-api | MD转PPT 多风格模板：提示词从单一深色玻璃改为 BuildPptSystemPrompt(theme) 按风格出不同设计系统(深色玻璃/浅色简洁/紫色渐变/商务蓝/暖色大地，各一套配色 token)；标题/正文全 token 化(var(--ink)/var(--a1))，浅色模板也能正常显示 |
+| feat | prd-admin | MD转PPT 生成前定页数(按内容约 N 页，可改) + 风格模板下拉带描述(不用描述清楚自己要什么，直接选) + 引擎选择(MAP直调/CDS Agent)移到左侧选项区显眼位置 |
+| fix | prd-admin | 项目资料-成员作品卡片无预览:网页托管作品无封面图时改用缩放 iframe 实时预览托管页(无封面图才白占位) |
+| feat | prd-api | 里程碑健康度:有「实际完成时间」(ReachedAt)即视为已完成、不再判逾期(早于/等于计划截止=按时);UpdateMilestone 支持设置/清空实际完成时间 |
+| feat | prd-admin | 里程碑详情新增「实际完成」时间填写,保存即按是否晚于计划截止提示按时/逾期;修复完成的里程碑被误标已逾期 |
+| fix | prd-admin, prd-api | 系统互联添加对端收敛为单一连接串流程；后端添加改为 prepare/confirm/ping 后才落正式 PeerNode，失败不保存半连接状态 |
+| fix | prd-admin | 修复项目管理-目标画布:有"业务目标北极星"根节点时仍显示"还没有目标"空状态导致重叠;改为按画布实际节点数判断,真无节点才显示 |
+| feat | prd-api | 项目管理任务支持进度百分比(ProgressPercent)+父任务按子任务自动汇总(roll-up) |
+| feat | prd-api | 项目管理新增任务工作日志(pm_task_work_logs):处理人按天记录做了什么、填报进度,带进度时联动任务进度 |
+| feat | prd-api | 任务子任务强制两级约束:创建/挂载子任务时拒绝三级嵌套 |
+| feat | prd-admin | pmAgent 服务层新增工作日志 CRUD + PmTask 进度字段类型 |
+| feat | prd-admin | 新增任务独立详情页(/pm-agent/p/:projectId/task/:taskId):双栏布局,左侧描述/工作日志/动态,右侧状态/进度/负责人/子任务/依赖 |
+| feat | prd-admin | 新增任务工作日志面板 TaskWorkLogPanel:按天分组时间线 + 新增/编辑/删除 + 进度滑块联动 |
+| feat | prd-admin | 子任务增强:支持新建子任务 + 选择已有任务挂为子任务(两级约束),抽屉/详情页双入口 |
+| feat | prd-admin | 看板卡片/列表行新增进度条;抽屉新增进度滑块 + 进详情页入口;PmAgentPage 支持 ?project 深链返回 |
+| feat | prd-admin | 新建任务改为进入新建详情页(task/new 空表单,填全字段保存才落库),快速添加框可预填标题 |
+| feat | prd-admin | 产品管理智能体产品卡片新增动效:入场淡入上浮错峰 + 悬停抬升青色辉光,含 reduced-motion 降级 |
+| feat | prd-admin | 百宝箱"产品管理智能体"入口卡片新增动态卡面:知识图谱链路(节点脉冲+连线数据流光+彗星沿链流动+光晕漂移),悬停提速,reduced-motion 降级 |
+| fix | prd-admin | 首页 AGENTS 区"产品管理智能体"卡片同步知识图谱动态卡面(AgentLauncherPage 之前漏接,只有百宝箱 ToolCard 接了) |
+| feat | prd-admin | 产品管理-新建缺陷:优先级与关联功能改为必填,移除关联需求,版本默认填充所选功能的版本号(可改) |
+| feat | prd-api | 建产品缺陷接口支持 featureId,写入缺陷的 TracedFeatureId |
+| fix | prd-admin | 产品管理-删除产品增加二次确认弹窗(列表行 + 单产品视图两处) |
+| fix | prd-admin | 产品管理-单产品视图当前 tab 记入 URL,从对象详情返回时停在原 tab(不再回弹工作台) |
+| feat | prd-admin | 产品管理-缺陷详情页对齐需求详情:标题/描述/严重度/优先级/状态/处理人/关联功能/版本可就地编辑保存 |
+| feat | prd-api | 产品内缺陷编辑接口 PUT products/{id}/defects/{defectId}(更新核心字段,完整流转仍在缺陷管理) |
+| feat | prd-admin | 产品管理-缺陷详情保持独立闭环:去掉「解除追溯」「在缺陷管理打开完整缺陷」,「转为需求」移到右上角 |
+| feat | prd-admin | 产品管理-缺陷 tab 去掉「关联已有缺陷」,缺陷在本产品内独立新建(不从全局缺陷池关联) |
+| feat | prd-admin | 产品管理-新建缺陷改为独立全屏页(对齐新建需求):富文本描述+严重度+优先级+处理人+关联需求/版本,删除原3字段弹窗 |
+| feat | prd-api | 建产品缺陷接口扩展 priority + assigneeId(回填处理人显示名),对齐新建需求字段 |
+| feat | prd-admin | 产品图谱去掉"全部展开/收起"(无节点级折叠,实为死按钮),换成"整理/离散"布局切换 |
+| feat | prd-admin | 图谱新增"离散"布局:自写轻量力导向(斥力+边弹簧+向心,确定性种子),参考 Obsidian 有机散布,不挤不规则;"整理"=按类型分列 |
+| feat | prd-admin | 图谱圆点缩小(9+desc*2)、动效加大(浮动-8px/脉冲1.42/常态呼吸错峰)、新增悬停激活追溯(移出取消,点击固定保留) |
+| feat | prd-admin | 图谱离散布局新增实时拖拽力导向(Obsidian 式):拖动节点,关联点经弹簧+斥力丝滑跟随,松手落点固定其余 settle;仅拖动期间运行 rAF,reduce-motion 无碍 |
+| feat | prd-api | 产品图谱新增「追溯关系分析」SSE 端点:按前端传入关系链(节点+关系边)从 DB 补全描述/时间戳,AI 流式分析前因后果/关键对象关系/时间节点 |
+| feat | prd-admin | 图谱节点抽屉(需求/功能/缺陷)新增「关系分析」按钮:点亮整条追溯链并流式展示 AI 关系分析(StreamingText) |
+| fix | prd-admin | 修复用户选择器普通成员搜不到用户:UserSearchSelect 改用仅登录的 /api/teams/search-users,不再误用管理员 /api/users(需 users.read) |
+
+### 2026-06-07
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 修复 CDS Agent direct-sidecar 路径多轮对话上下文丢失问题，LoadConversationHistoryAsync 加载最近 20 条历史消息（字符预算 40000）并作为完整对话链传给 LLM |
+| feat | prd-admin | 新增 MD 转网页 PPT 智能体页面（左侧输入/右侧流式预览+iframe 展示，支持局部修改与发布） |
+| feat | prd-api | MdToPptController 重写：ILlmGateway 直出 reveal.js HTML，新增 patch 局部修改端点 |
+| feat | prd-api | AppCallerRegistry 新增 MdToPptAgent 三条注册项（html-generate/patch/convert） |
+| feat | prd-api | MD 转网页 PPT 后端改用 CDS Agent 会话（IInfraAgentSessionService）生成 reveal.js HTML，支持 SSE 流式推送 delta/done/error 事件，会话出现在 CDS 控制台 Sidecar Pool 列表 |
+| fix | prd-api | MD转PPT 走 CDS Agent 的 convert/patch SSE 补 keepalive 心跳(每~10s),根治 agent 慢/思考期间无数据导致的 Cloudflare HTTP 524 超时(server-authority 规则#4 子智能体漏了) |
+| feat | prd-admin | MD转PPT 新增生成引擎切换（MAP直调 / CDS Agent），默认走 MAP 直调路径 |
+| feat | prd-api | MD转PPT MAP直调引擎：通过 ILlmGateway.StreamAsync 直接流式生成，不经过 CDS Agent |
+| fix | prd-api | MD转PPT CDS Agent 路径改用 DenyAll toolPolicy，修复因 tool-call 循环导致的 HTTP 524 超时 |
+| feat | prd-api | MD转PPT Agent 路径新增全链路诊断：per-stage 耗时/事件计数/tool-loop 告警，通过 diag SSE 事件实时推送前端 |
+| feat | prd-admin | MD转PPT 前端实时展示 diag 诊断面板，CDS Agent 引擎下颜色编码显示各阶段耗时与 tool-call 次数 |
+
+### 2026-06-06
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | CDS Agent 事件流不再注入每条消息的传输内幕 debug 日志（cds-session-transport/operator-debug-only），移到服务端日志，消除用户事件时间线刷屏 |
+| fix | prd-admin | CDS Agent「同步系统主模型」按钮改为「一键启用默认模型」+ 解释 tooltip（说明何时/为何出现），消除莫名其妙的困惑 |
+| fix | prd-api | CDS Agent 改为真流式：ImportCdsStreamEventsAsync 增量读取 CDS SSE（边读边落库），前端 /stream 实时转发逐字呈现，消除「不流式 / 很久不返回」 |
+| fix | prd-api | CDS Agent 发送不再卡死：SendMessage 把消息 POST 到 CDS 后立即入队返回，由 InfraAgentRuntimeWorker 后台拉流落库（与 HTTP 解耦，server-authority），消除「发送卡 2 秒→一直等→死掉」 |
+| fix | prd-admin | CDS Agent 事件「详情」仅在展开后确有内容时才显示，空 payload 事件不再展开成「{}」/空（修复"展开折叠没内容"） |
+| feat | prd-api | CDS Agent 新增工作区文件注入接口 POST /api/infra-agent-sessions/{id}/inject-files（path 1 接缝 v1，复用 CDS files 端点，不改边车镜像），用于把知识库文件喂给 agent 处理 |
+| fix | prd-admin | CDS Agent 输入区重做：真输入框做成醒目带边框可输入+自动聚焦，去掉看着像输入框的提示框，修复"框选错半天无法输入" |
+| fix | prd-admin | CDS Agent 新建会话不再起怪名「远程巡检任务」，默认从首条消息自动命名（留空→「新会话」） |
+| fix | prd-admin | CDS Agent 对话流隐去纯内部状态/日志气泡（后台状态 running/dispatching run/陈旧用时），只保留用户/Agent消息+工具/错误/审批；运行状态看右侧面板 |
+| fix | prd-admin | CDS Agent 简洁模式右栏精简：Git/证据/运行摘要/调试 等运维遥测收起，只留「准备情况/运行进展」，让简洁模式回归纯净聊天（用户心智：这是聊天不是运维台）；专业模式不变 |
+| fix | prd-admin | CDS Agent 回复按 markdown 渲染：本轮收到 done 即渲染（不再因会话持续 live 而一直纯文本展示 ##/**/反引号） |
+| fix | prd-admin | CDS Agent 输入区按 Codex 极简：去掉「官方 SDK」徽标+「不要求仓库…」说明+冗余提示，Code 巡检改名「代码」，思考指示改「Agent 思考中…」 |
+| feat | prd-admin | CDS Agent 输入栏加模型选择器（参照 Codex）：新会话可直接选模型（解决配了 v4 却跑 v3.2 → 选对的那个），运行中显示当前模型 |
+| feat | prd-admin | CDS Agent 展示思考过程：推理模型 thinking 内容流式显示在「Agent 思考中」气泡，消除推理期间空白 |
+| feat | cds | CDS Agent 边车 sdk_events 映射 thinking 块 + remote-hosts 透传 thinking 事件给 MAP（原先只透 text_delta/tool_use/tool_result，思考被丢弃） |
+| feat | cds | CDS Agent 边车 agent_loop 两条上游链路都透出思考：raw-anthropic 识别 thinking_delta；openai-compatible(OpenRouter) 请求体加 include_reasoning/reasoning + 解析 reasoning/reasoning_content，根治「等 40 秒才出第一个字」 |
+| feat | prd-api | CDS Agent MAP 端打通 thinking 事件：SidecarEventType/InfraAgentRuntimeEventType/InfraAgentEventTypes 三处枚举补 Thinking，direct-sidecar 路径 switch 落 thinking 事件（不计入 finalText），CDS-managed 路径本就透传 |
+| fix | prd-admin | CDS Agent 输入框不再发送后从中间跳到底部:输入区永远停底部(空状态也在底部),中间只放引导;根治布局跳变 |
+| fix | prd-admin | CDS Agent 流式回复 markdown 不再「结束啪一下变样」:同一个 StreamingText 贯穿流式→完成两阶段(blur 过渡),不再换组件硬切 |
+| fix | prd-admin | CDS Agent 右栏「结果可复盘」不再显示原始事件序号(一句闲聊刷几十个事件的噪音),改为「回复已生成」/真实产物数 |
+| fix | prd-admin | CDS Agent 等待文案收敛:有思考显示「正在思考」,否则「正在生成回复」,「推理较慢」提示仅在等待≥15s 才出,不再一上来吓唬人 |
+| fix | prd-admin | CDS Agent 右栏不再把「运行日志」当产物:纯聊天不再误报「1个产物」,真实文件/diff/命令/快照才计入产物数 |
+| fix | prd-admin | CDS Agent 发送后消息不再「闪一下消失再出现」:乐观消息改 null 绑定(不再误绑到超时旧会话)+按内容(剥模式前缀)与服务端消息去重,新建会话切换也无空窗 |
+| fix | prd-admin | CDS Agent 发送时不再弹「正在发送任务/复制诊断」开发者卡片:该诊断卡仅失败时出现,正常进度由对话气泡+右栏承载 |
+| fix | prd-admin | CDS Agent 无模型配置时自动启用系统默认主模型(静默,失败保留手动按钮兜底):刷新后不再卡在「请先同步系统主模型」三连警告 |
+| fix | prd-admin | CDS Agent 兑现「回车发送」:输入框此前没有 onKeyDown,回车只换行不发送;补 Enter 发送(Shift+Enter 换行,输入法组字回车不误发) |
+| fix | prd-admin | CDS Agent 输入区抄 Codex 融合一体:模式/模型/停止/发送合并到输入框底栏一行,textarea 无边框透明融入容器,去掉顶部独立 tab 行+分隔线+提示文案,发送改圆形箭头,不再臃肿拆分 |
+| fix | prd-admin | CDS Agent 右栏「准备情况/运行进展」可折叠(顶栏按钮):折叠后聊天主区占满宽度,借鉴 Codex 右侧不占固定栏 |
+| fix | prd-admin | CDS Agent 刷新后不再 10 秒空白:首屏 loadAll 期间主区显示加载动画(MapSectionLoader),不再空等 |
+| fix | prd-api | CDS Agent 会话一轮回复结束(done)即转 idle(可复用、不计时超时),不再停留 running 直到超时:根治「历史消失(每次发送新建会话)」+「任务列表全是新会话已超时尸体」;CDS-managed 与 direct-sidecar 两条路径都修;done 后停止拉流释放 worker |
+| fix | prd-admin | CDS Agent 输入框选中高亮走外层容器(focus-within ring),不再高亮内层 textarea(符合 surface 选中规则) |
+| fix | prd-admin | CDS Agent 追问复用同一会话:已 provision 过(有 cdsSessionId)的会话不再 re-start,直接发消息(CDS 会话被回收时由 SendMessage 按同一 MAP 会话重建),根治「追问时上一轮历史丢失/新建会话」 |
+| fix | prd-admin | CDS Agent 输入框 textarea 加 .no-focus-ring 压掉全局 textarea:focus-visible 内框描边,选中高亮只落外层容器(此前外环加了但内框蓝还在) |
+| refactor | prd-admin | CDS Agent 代码模式工作区改为以文件夹/知识库为主，GitHub 降级为可选钩子 |
+
+### 2026-06-05
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-admin | 知识库「AI 文档对话」写回前新增 diff 预览确认闸：replace/append 显示逐行红删绿增、new 可改标题，确认后才落库，让用户感知改动 |
+| feat | prd-admin | 知识库「AI 文档对话」面板顶部展示当前调用的「模型 · 平台」（从流式 onStart 透出，不硬编码），提升 AI 调用可观测性 |
+| feat | prd-api | AgentUniverse 流式新增 model 事件：内置智能体（文学/PRD/缺陷）适配器透出 gateway 真实解析到的模型·平台，对齐 ai-model-visibility 规则 |
+| feat | prd-api | 知识库新增目录列表接口 GET stores/{id}/folders；apply-content 的 new 模式支持 parentId 落到指定目录（校验同库文件夹） |
+| feat | prd-admin | 知识库「AI 文档对话」另存为新文档可选择落点目录（目录选择器，按层级缩进），让智能体产出能填充到指定目录 |
+
+### 2026-06-03
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-admin | 首页改造（A2 深空玻璃方向）：hero 背景图降级为氛围层（压暗+降饱和+轻模糊+底部 scrim 熔进深空底色），Agent 封面图与功能卡背景统一降饱和并套同一层暗角蒙版，消除卡片画风割裂的拼贴廉价感 |
+
+
 ### 2026-06-07
 
 | 类型 | 模块 | 描述 |
