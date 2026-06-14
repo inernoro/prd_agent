@@ -482,7 +482,7 @@ function directionShortLabel(direction: PeerTransferDirection) {
   return '双向';
 }
 
-type QueueItemState = 'unselected' | 'waiting' | 'running' | 'done' | 'skipped' | 'failed';
+type QueueItemState = 'unselected' | 'selected' | 'waiting' | 'running' | 'done' | 'skipped' | 'failed';
 
 interface QueueState {
   selectedCount: number;
@@ -508,12 +508,13 @@ export function deriveQueueState(
   error: string | null,
 ): QueueState {
   const resultMap = new Map((results || []).map((r) => [r.itemId, r]));
+  const hasGlobalError = !results && Boolean(error);
   const skippedCount = results?.filter(isSkippedResult).length ?? 0;
   const doneCount = results?.filter((r) => r.ok && !isSkippedResult(r)).length ?? 0;
   const failedCount = results?.filter((r) => !r.ok).length ?? (error ? selectedItems.length : 0);
   const settledCount = doneCount + skippedCount + failedCount;
-  const runningCount = submitting && selectedItems.length > settledCount ? 1 : 0;
-  const waitingCount = Math.max(0, selectedItems.length - settledCount - runningCount);
+  const runningCount = submitting && !hasGlobalError && selectedItems.length > settledCount ? 1 : 0;
+  const waitingCount = submitting ? Math.max(0, selectedItems.length - settledCount - runningCount) : 0;
   const activeIndex = submitting ? Math.min(settledCount, Math.max(0, selectedItems.length - 1)) : -1;
   const activeItem = activeIndex >= 0 ? selectedItems[activeIndex] || null : null;
   const activeStep = progress?.step ?? 0;
@@ -527,12 +528,17 @@ export function deriveQueueState(
       itemProgress.set(item.itemId, 100);
       return;
     }
+    if (hasGlobalError) {
+      itemStates.set(item.itemId, 'failed');
+      itemProgress.set(item.itemId, 100);
+      return;
+    }
     if (submitting && index === activeIndex) {
       itemStates.set(item.itemId, 'running');
       itemProgress.set(item.itemId, stepProgress(activeStep));
       return;
     }
-    itemStates.set(item.itemId, submitting && index > activeIndex ? 'waiting' : 'waiting');
+    itemStates.set(item.itemId, submitting && index > activeIndex ? 'waiting' : 'selected');
     itemProgress.set(item.itemId, 0);
   });
 
@@ -547,7 +553,7 @@ export function deriveQueueState(
     failedCount,
     activeItem,
     activeStep,
-    currentLabel: progress?.stage || (results ? (skippedCount === results.length ? '全部无变化，已跳过' : '同步结果已返回') : selectedItems.length > 0 ? '等待开始同步' : '等待选择知识库'),
+    currentLabel: progress?.stage || (hasGlobalError ? '同步失败' : results ? (skippedCount === results.length ? '全部无变化，已跳过' : '同步结果已返回') : selectedItems.length > 0 ? '已选择，等待开始' : '等待选择知识库'),
     reverseLabel,
     etaLabel: submitting ? `约 ${formatDuration(etaSeconds)}` : '无进行中任务',
     itemStates,
@@ -681,7 +687,7 @@ function QueueItemCard({ item, onToggle, state, progress, result, active }: {
         <div className="min-w-0">
           <div className="mb-2 flex items-center justify-between gap-3 text-xs">
             <StatusPill icon={active ? <MapSpinner size={12} /> : state === 'done' || state === 'skipped' ? <CheckCircle2 size={13} /> : state === 'failed' ? <AlertTriangle size={13} /> : <Clock3 size={13} />} text={queueStateLabel(state)} tone={tone} />
-            <span className="font-semibold" style={{ color: statusColor(tone) }}>{inQueue ? `${progress}%` : '未选'}</span>
+            <span className="font-semibold" style={{ color: statusColor(tone) }}>{state === 'selected' ? '待启动' : inQueue ? `${progress}%` : '未选'}</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full" style={{ background: 'rgba(148,163,184,0.14)' }}>
             <div className="h-full rounded-full transition-all" style={{ width: `${inQueue ? progress : 0}%`, background: state === 'failed' ? 'rgb(248,113,113)' : 'linear-gradient(90deg, rgb(94,234,212), rgb(134,239,172))' }} />
@@ -725,6 +731,7 @@ function queueStateTone(state: QueueItemState): StatusTone {
   if (state === 'skipped') return 'slate';
   if (state === 'running') return 'gold';
   if (state === 'failed') return 'red';
+  if (state === 'selected') return 'teal';
   return 'slate';
 }
 
@@ -733,6 +740,7 @@ function queueStateLabel(state: QueueItemState) {
   if (state === 'skipped') return '已跳过';
   if (state === 'running') return '同步中';
   if (state === 'failed') return '失败';
+  if (state === 'selected') return '已选';
   if (state === 'waiting') return '等待';
   return '未选择';
 }
