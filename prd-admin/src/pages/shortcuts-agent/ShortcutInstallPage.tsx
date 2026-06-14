@@ -1,6 +1,8 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
+import { copyToClipboard } from '@/lib/clipboard';
+import { toast } from '@/lib/toast';
 
 interface InstallData {
   name: string;
@@ -48,34 +50,29 @@ export default function ShortcutInstallPage() {
       .catch(() => setError('网络错误，请稍后重试'));
   }, [id, token]);
 
-  const doCopy = (text: string) => {
-    return navigator.clipboard.writeText(text).catch(() => {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-    });
-  };
-
-  // 复制配置 JSON 到剪贴板
-  const copyConfig = async () => {
-    if (!data) return;
+  // 复制配置 JSON 到剪贴板，返回是否成功
+  const copyConfig = async (): Promise<boolean> => {
+    if (!data) return false;
     const config = JSON.stringify({
       token,
       endpoint: `${data.serverUrl}/api/shortcuts/collect`,
       name: data.name,
     });
-    await doCopy(config);
-    setStep(1);
+    const ok = await copyToClipboard(config);
+    if (ok) {
+      setStep(1);
+      toast.success('配置已复制到剪贴板');
+    } else {
+      toast.error('复制失败', '当前环境不支持自动复制，请长按下方 Token / 接口地址手动复制');
+    }
+    return ok;
   };
 
   const installICloudTemplate = async () => {
     if (!data?.iCloudUrl) return;
-    await copyConfig();
+    // 配置必须先进剪贴板，模板首次运行才能读到；复制失败就不跳转，避免装出来用不了
+    const ok = await copyConfig();
+    if (!ok) return;
     setStep(2);
     window.location.href = data.iCloudUrl;
   };
@@ -239,8 +236,8 @@ export default function ShortcutInstallPage() {
           marginTop: 20, paddingTop: 16,
           borderTop: '1px solid rgba(255,255,255,0.08)',
         }}>
-          <InfoRow label="Token" value={token} onCopy={() => doCopy(token)} mono />
-          <InfoRow label="收藏接口" value={`${data.serverUrl}/api/shortcuts/collect`} onCopy={() => doCopy(`${data.serverUrl}/api/shortcuts/collect`)} />
+          <InfoRow label="Token" value={token} mono />
+          <InfoRow label="收藏接口" value={`${data.serverUrl}/api/shortcuts/collect`} />
         </div>
 
         {/* ── 功能 ── */}
@@ -280,10 +277,19 @@ function StepItem({ n, done, children }: { n: number; done?: boolean; children: 
   );
 }
 
-function InfoRow({ label, value, onCopy, mono }: {
-  label: string; value: string; onCopy: () => void; mono?: boolean;
+function InfoRow({ label, value, mono }: {
+  label: string; value: string; mono?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(value);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      toast.error('复制失败', '请长按上方文本手动复制');
+    }
+  };
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8,
@@ -301,11 +307,7 @@ function InfoRow({ label, value, onCopy, mono }: {
         {value}
       </span>
       <button
-        onClick={() => {
-          onCopy();
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        }}
+        onClick={handleCopy}
         style={{
           padding: '4px 10px', borderRadius: 6, fontSize: 11, border: 'none',
           cursor: 'pointer', flexShrink: 0,

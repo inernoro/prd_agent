@@ -38,6 +38,7 @@ import {
   type ShortcutTemplateItem,
   type ShortcutCollectionItem,
 } from '@/services/real/shortcutsAgent';
+import { copyWithFeedback } from '@/lib/clipboard';
 
 // ─── Binding type labels (收藏是必备功能，绑定是附加功能) ───
 const BINDING_LABELS: Record<string, { label: string; icon: typeof Bookmark; color: string }> = {
@@ -809,14 +810,16 @@ function QRCodePanel({
     name,
   });
 
-  const copyToken = () => {
-    navigator.clipboard.writeText(token);
+  const copyToken = async () => {
+    const ok = await copyWithFeedback(token, { successMessage: 'Token 已复制', label: 'Token' });
+    if (!ok) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const copyConfig = () => {
-    navigator.clipboard.writeText(installConfig);
+  const copyConfig = async () => {
+    const ok = await copyWithFeedback(installConfig, { successMessage: '安装配置已复制', label: '安装配置' });
+    if (!ok) return;
     setConfigCopied(true);
     setTimeout(() => setConfigCopied(false), 2000);
   };
