@@ -21,6 +21,7 @@ globs: ["prd-api/src/**/*.cs"]
 | `visual-agent` | 视觉创作 |
 | `prd-agent` | PRD 解读 |
 | `defect-agent` | 缺陷管理 |
+| `tapd-bug-agent` | TAPD 缺陷自动提报 |
 | `video-agent` | 视频生成 |
 | `report-agent` | 周报管理 |
 | `review-agent` | 产品评审员 |

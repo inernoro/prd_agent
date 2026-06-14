@@ -1,0 +1,1 @@
+export { TapdBugReportPage } from './TapdBugReportPage';

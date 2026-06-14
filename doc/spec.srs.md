@@ -35,7 +35,7 @@
   - `(platformId, modelId)` 作为业务唯一标识
 
 - **应用身份隔离** ✅ 新增：
-  - 每个应用通过 `appKey` 标识。当前 8 个 appKey：`prd-agent`、`visual-agent`、`literary-agent`、`defect-agent`、`video-agent`、`report-agent`、`review-agent`、`pr-review`
+  - 每个应用通过 `appKey` 标识。当前 appKey 清单维护在 `.claude/rules/app-identity.md`
   - Controller 层硬编码 appKey，不由前端传递
   - 权威清单维护在 `.claude/rules/app-identity.md`，新增 Agent 时须同步更新
 
@@ -1948,6 +1948,7 @@ sequenceDiagram
 | `visual-agent` | 视觉创作 Agent | 高级视觉创作工作区 |
 | `literary-agent` | 文学创作 Agent | 文章配图、文学创作场景 |
 | `defect-agent` | 缺陷管理 Agent | 缺陷提交与跟踪 |
+| `tapd-bug-agent` | TAPD 缺陷自动提报 Agent | 口语缺陷描述整理为标准四要素，确认后创建 TAPD 缺陷 |
 | `report-agent` | 周报管理 Agent | 周报创建、提交、审阅管理 |
 | `front-end-agent` | 前端搭档智能体 | API 接入、组件生成、前端报错诊断和视觉样式建议 |
 
@@ -2254,11 +2255,38 @@ sequenceDiagram
 
 **设计文档**：`doc/spec.front-end-agent.md`
 
-### 4.26 技术分析文档格式校验 Agent
+### 4.26 TAPD 缺陷自动提报智能体（TAPD Bug Agent）
+
+#### 4.26.1 TAPD-BUG-001 缺陷草稿整理与确认提交
+
+| 属性 | 描述 |
+|------|------|
+| 需求编号 | TAPD-BUG-001 |
+| 需求名称 | TAPD 缺陷自动提报 |
+| 优先级 | **[应该]** |
+| 实现层 | Web 管理后台 + 后端 LLM Gateway + 页面直填 TAPD Cookie |
+
+**功能详述**：
+1. 用户从百宝箱进入 `/tapd-bug-agent` 页面。
+2. 用户在页面直接粘贴 TAPD 请求 Cookie，并填写工作空间 ID，无需先创建外部授权，也无需手动填写 TAPD 表单令牌。
+3. 用户输入口语化缺陷现象，后端通过 `ILlmGateway` 流式整理为 TAPD 标准草稿：标题、前置条件、复现步骤、实际结果、预期结果、严重程度、优先级、缺陷类型、处理人、所属版本。
+4. 后端通过 SSE 推送阶段、模型、思考过程、原始输出和最终草稿；前端展示缺失项，四要素不完整时禁止提交。
+5. 用户确认后调用 `POST /api/tapd-bug-agent/submit`，请求必须包含 `confirmed: true`。后端只创建 TAPD 缺陷，不提供修改或删除 TAPD 缺陷的接口。
+6. 提交成功后展示 TAPD 返回的缺陷 ID 与详情链接。
+
+**API 端点**：
+- `POST /api/tapd-bug-agent/preview/stream` — TAPD 缺陷草稿流式整理，SSE 事件包括 `stage` / `model` / `thinking` / `typing` / `draft` / `done` / `error`。
+- `POST /api/tapd-bug-agent/submit` — 用户确认后的 TAPD 创建缺陷接口，必须包含 `confirmed: true`。
+
+**权限定义**：`tapd-bug-agent.use`
+
+**应用标识**：`tapd-bug-agent`
+
+### 4.27 技术分析文档格式校验 Agent
 
 > 2026-06-09 新增，作为百宝箱工具入口发布，首期状态为 `wip: true`。
 
-#### 4.26.1 TECHDOC-001 PM2502 技术分析文档生成与校验
+#### 4.27.1 TECHDOC-001 PM2502 技术分析文档生成与校验
 
 | 属性 | 描述 |
 |------|------|
@@ -2298,7 +2326,6 @@ sequenceDiagram
 - [ ] 对只输出模板占位的生成结果必须判定为待修复
 - [ ] 上传错误格式文档时能报告具体缺失标题、错误顺序或表格问题
 - [ ] AI 流式生成过程中持续显示阶段提示，完成后自动执行格式校验
-
 
 ---
 

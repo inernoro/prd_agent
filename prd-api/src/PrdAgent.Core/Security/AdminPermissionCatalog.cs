@@ -75,6 +75,11 @@ public static class AdminPermissionCatalog
     public const string DefectAgentManage = "defect-agent.manage";
 
     /// <summary>
+    /// TAPD 缺陷自动提报智能体权限：整理并创建 TAPD 缺陷
+    /// </summary>
+    public const string TapdBugAgentUse = "tapd-bug-agent.use";
+
+    /// <summary>
     /// 视频 Agent 权限：文章转视频教程生成
     /// </summary>
     public const string VideoAgentUse = "video-agent.use";
@@ -367,6 +372,7 @@ public static class AdminPermissionCatalog
         new(LiteraryAgentUse, "文学创作智能体", "文章配图智能生成"),
         new(DefectAgentUse, "缺陷管理智能体", "提交和查看缺陷"),
         new(DefectAgentManage, "缺陷管理智能体-管理", "设置模板、指派、项目/Webhook管理"),
+        new(TapdBugAgentUse, "TAPD 缺陷自动提报智能体", "整理并创建 TAPD 缺陷"),
         new(VideoAgentUse, "视频创作智能体", "文章转视频教程生成"),
         new(ArenaAgentUse, "AI 竞技场智能体", "模型盲评对战"),
         new(AiToolboxUse, "AI 百宝箱", "使用 AI 百宝箱功能"),

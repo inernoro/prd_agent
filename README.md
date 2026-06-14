@@ -61,6 +61,7 @@ Root directory policy:
 | --- | --- |
 | PRD and knowledge workspace | Markdown PRDs, document stores, Q&A, citations, comments, sharing, and cross-system peer sync |
 | Product and defect operations | Product workflows, requirement/feature/defect lifecycle management, statistics, and review loops |
+| TAPD bug reporting | Natural language defect descriptions become editable four-part TAPD bug drafts, then create-only submission after confirmation |
 | Report and review agents | Weekly reports, review workflows, webhook feedback, and team reporting |
 | Visual and literary workflows | Image generation, visual analysis, article illustration, and watermark support |
 | Workflow automation | Visual workflow builder, scheduled execution, secrets, and run history |
