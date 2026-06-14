@@ -470,8 +470,16 @@ export class ContainerService {
       Object.assign(mergedEnv, customEnv);
     }
 
-    mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
-    mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
+    // JWT — 项目环境变量优先，CDS master 自己的 secret 只做兜底。
+    // 历史行为是无条件用 CDS 进程的 CDS_JWT_SECRET 覆盖所有项目容器的
+    // Jwt__Secret：一把全局钥匙同时耦合 CDS 自身鉴权、各应用 JWT 签名、
+    // 以及 prd-agent 用同一值做的 API key AES 加密。2026-06-12 为修
+    // miduo-backend HS512 弱钥换了 CDS_JWT_SECRET，连带把 prd-agent 全部
+    // 平台 key 存量密文打成不可解密（跨项目穿透事故）。
+    // 按 scope-naming 规则 JWT_SECRET 是项目级配置：项目 customEnv 显式
+    // 定义了 Jwt__Secret/Jwt__Issuer 就尊重它，未定义才注入全局值。
+    if (!mergedEnv['Jwt__Secret']) mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
+    if (!mergedEnv['Jwt__Issuer']) mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
     if (entry.branch) {
       mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
@@ -574,10 +582,10 @@ export class ContainerService {
         onOutput?.(`── entrypoint 覆盖: (清空 image ENTRYPOINT) ──\n`);
       } else if (/\s/.test(ep)) {
         onOutput?.(
-          `── ⚠ cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
-          `── ⚠ 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
+          `── [警告] cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
+          `── [警告] 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
           `(CDS 已默认 sh -c 包装 command) ──\n` +
-          `── ⚠ 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
+          `── [警告] 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
         );
       } else {
         entrypointFlags.push(`--entrypoint ${JSON.stringify(ep)}`);
@@ -826,6 +834,7 @@ export class ContainerService {
       throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
     }
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
+
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const envFlag = `--env-file "${envFilePath}"`;
     const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount } =

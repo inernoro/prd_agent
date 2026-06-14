@@ -189,6 +189,7 @@ builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 // 模型池故障通知与自动探活
 builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();
 builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHealthProbeService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWorker>();
 
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
@@ -390,6 +391,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReviewAgent.ReviewWebhookServic
 
 // Project Route Agent: 浅克隆缓存服务（任意第三方仓库 git clone --depth=1）
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ProjectRouteAgent.GitRepoCacheService>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ChannelTraceAgent.ChannelTraceCodeScanService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>

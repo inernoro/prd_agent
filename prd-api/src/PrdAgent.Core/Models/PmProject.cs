@@ -119,6 +119,10 @@ public class PmProject
     /// <summary>看板 WIP 限制（status → 在制上限），未设置的列不限制</summary>
     public Dictionary<string, int> WipLimits { get; set; } = new();
 
+    /// <summary>项目级「里程碑交付物类型」字典（owner/leader 可维护，里程碑详情页即时增删）。
+    /// 空列表 = 前端使用内置默认（周报/决策/外链/文档/其他）。</summary>
+    public List<string> DeliverableTypes { get; set; } = new();
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

@@ -27,6 +27,8 @@ globs: ["prd-api/src/**/*.cs"]
 | `review-agent` | 产品评审员 |
 | `pr-review` | PR 审查工作台 |
 | `project-route-agent` | 项目路由智能体（方案 → 仓库 routemap 项目路径） |
+| `channel-trace-agent` | 商品溯源智能体（防窜物流业务知识 + 线上问题案例排查 + 业务/代码差异对比） |
+| `tech-doc-format-agent` | 技术分析文档格式校验 Agent |
 | `front-end-agent` | 前端搭档智能体 |
 
 ## 水印配置

@@ -29,6 +29,7 @@ public class PeerSyncController : ControllerBase
     private readonly ISafeOutboundUrlValidator _urlValidator;
     private readonly IHttpClientFactory _httpFactory;
     private readonly IAdminPermissionService _permissionService;
+    private readonly IConfiguration _config;
     private readonly ILogger<PeerSyncController> _logger;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -44,6 +45,7 @@ public class PeerSyncController : ControllerBase
         ISafeOutboundUrlValidator urlValidator,
         IHttpClientFactory httpFactory,
         IAdminPermissionService permissionService,
+        IConfiguration config,
         ILogger<PeerSyncController> logger)
     {
         _db = db;
@@ -52,6 +54,7 @@ public class PeerSyncController : ControllerBase
         _urlValidator = urlValidator;
         _httpFactory = httpFactory;
         _permissionService = permissionService;
+        _config = config;
         _logger = logger;
     }
 
@@ -405,7 +408,15 @@ public class PeerSyncController : ControllerBase
 
         var actor = await BuildActorAsync(node!.CreatedBy, ct);
         var mode = req.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
+        AttachPeerApplyOptions(req.Bundle, req.PreserveTimestamps ?? true, req.RewriteAssetLinks ?? true, req.SourceBaseUrl);
         var outcome = await resource.ApplyAsync(req.Bundle, actor, mode, req.TargetKey, ct);
+        var receiverDirection = string.Equals(req.Direction, "both", StringComparison.OrdinalIgnoreCase) ? "both" : "received";
+        var success = outcome.Failed == 0 && outcome.AssetRewriteFailed == 0;
+        if (!string.IsNullOrWhiteSpace(outcome.TargetItemId))
+        {
+            await MarkPeerSyncAsync(resource.ResourceType, outcome.TargetItemId, success ? "synced" : "error", receiverDirection, node,
+                outcome.Message, ct);
+        }
         return Ok(ApiResponse<object>.Ok(outcome));
     }
 
@@ -473,6 +484,7 @@ public class PeerSyncController : ControllerBase
 
         var mode = request.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
         var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
+        var sourceBaseUrl = GetRequestBaseUrl();
 
         // PR #742 Review High：授权门——每个 itemId 必须出现在 actor 自己的 ListItemsAsync 结果里。
         // 这一道门同时拦：(a) 越权 push 自己看不到的条目；(b) pull 到不存在/不可写的目标 store/project。
@@ -496,21 +508,26 @@ public class PeerSyncController : ControllerBase
             }
             try
             {
+                await MarkPeerSyncAsync(resource.ResourceType, itemId, "syncing", direction, node, "正在跨系统同步", ct);
                 // PR #742 review fix：每条目独立 ok 标记。Push 或 Pull 任一阶段 outcome.Failed>0、
                 // outcome 为 null（对端返回无效）、bundle 为 null 都判失败，前端可正确标红、不再误显示"成功"。
                 var perItem = new List<string>();
                 var itemOk = true;
                 var pushOk = true;
+                var assetsRewritten = 0;
+                var assetRewriteFailed = 0;
                 if (direction is "push" or "both")
                 {
                     var bundle = await resource.ExportAsync(itemId, actor, ct);
                     if (bundle == null)
                     {
+                        await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, "本地条目不存在或无权访问", ct);
                         results.Add(new { itemId, ok = false, message = "本地条目不存在或无权访问" });
                         anyFail = true;
                         continue;
                     }
-                    var outcome = await PushToPeerAsync(node, resource.ResourceType, bundle, itemId, mode, ct);
+                    AttachPeerApplyOptions(bundle, request.PreserveTimestamps ?? true, request.RewriteAssetLinks ?? true, sourceBaseUrl);
+                    var outcome = await PushToPeerAsync(node, resource.ResourceType, bundle, itemId, mode, direction, request, sourceBaseUrl, ct);
                     // outcome != null = 已收到对端 HTTP 响应 = 通信成功（即便 Failed>0 也算"通"了）
                     if (outcome == null)
                     {
@@ -523,7 +540,9 @@ public class PeerSyncController : ControllerBase
                     {
                         anyPeerContact = true;
                         perItem.Add("发送 " + (outcome.Message ?? "完成"));
-                        if (outcome.Failed > 0) { itemOk = false; pushOk = false; anyFail = true; }
+                        assetsRewritten += outcome.AssetsRewritten;
+                        assetRewriteFailed += outcome.AssetRewriteFailed;
+                        if (outcome.Failed > 0 || outcome.AssetRewriteFailed > 0) { itemOk = false; pushOk = false; anyFail = true; }
                     }
                 }
                 // PR #742 review High：both 模式下若 push 失败仍跑 pull 会用对端覆盖本地未推上去的改动 ——
@@ -533,7 +552,9 @@ public class PeerSyncController : ControllerBase
                     var bundle = await PullFromPeerAsync(node, resource.ResourceType, itemId, ct);
                     if (bundle == null)
                     {
-                        results.Add(new { itemId, ok = false, message = string.Join("；", perItem.Append("拉取 失败（对端条目不存在或不可达）")) });
+                        var message = string.Join("；", perItem.Append("拉取 失败（对端条目不存在或不可达）"));
+                        await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, message, ct);
+                        results.Add(new { itemId, ok = false, message });
                         anyFail = true;
                         continue;
                     }
@@ -541,24 +562,32 @@ public class PeerSyncController : ControllerBase
                     // 可能回 bundle.ResourceType 与本地请求的不一致，直接 ApplyAsync 会用错 handler 污染数据。
                     if (!string.Equals(bundle.ResourceType, resource.ResourceType, StringComparison.Ordinal))
                     {
-                        results.Add(new { itemId, ok = false, message = string.Join("；", perItem.Append($"拉取 失败（对端 bundle.resourceType={bundle.ResourceType} 与请求 {resource.ResourceType} 不匹配）")) });
+                        var message = string.Join("；", perItem.Append($"拉取 失败（对端 bundle.resourceType={bundle.ResourceType} 与请求 {resource.ResourceType} 不匹配）"));
+                        await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, message, ct);
+                        results.Add(new { itemId, ok = false, message });
                         anyFail = true;
                         continue;
                     }
                     anyPeerContact = true; // bundle != null = 对端 HTTP 200 应答 = 通信成功
+                    AttachPeerApplyOptions(bundle, request.PreserveTimestamps ?? true, request.RewriteAssetLinks ?? true, node.BaseUrl);
                     var outcome = await resource.ApplyAsync(bundle, actor, mode, itemId, ct);
                     perItem.Add("拉取 " + (outcome.Message ?? "完成"));
-                    if (outcome.Failed > 0) { itemOk = false; anyFail = true; }
+                    assetsRewritten += outcome.AssetsRewritten;
+                    assetRewriteFailed += outcome.AssetRewriteFailed;
+                    if (outcome.Failed > 0 || outcome.AssetRewriteFailed > 0) { itemOk = false; anyFail = true; }
                 }
                 else if (direction == "both" && !pushOk)
                 {
                     perItem.Add("拉取 已跳过（push 未成功，避免对端覆盖本地未推上去的改动）");
                 }
-                results.Add(new { itemId, ok = itemOk, message = string.Join("；", perItem) });
+                await MarkPeerSyncAsync(resource.ResourceType, itemId, itemOk ? "synced" : "error", direction, node,
+                    string.Join("；", perItem), ct);
+                results.Add(new { itemId, ok = itemOk, message = string.Join("；", perItem), assetsRewritten, assetRewriteFailed });
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[peer-sync] transfer item {ItemId} failed", itemId);
+                await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, ex.Message, ct);
                 results.Add(new { itemId, ok = false, message = ex.Message });
                 anyFail = true;
             }
@@ -578,9 +607,75 @@ public class PeerSyncController : ControllerBase
     // 内部辅助
     // ═══════════════════════════════════════════════════════════════
 
-    private async Task<SyncApplyOutcome?> PushToPeerAsync(PeerNode node, string type, SyncResourceBundle bundle, string targetKey, SyncApplyMode mode, CancellationToken ct)
+    private string GetRequestBaseUrl()
     {
-        var payload = new ApplyRequest { Bundle = bundle, TargetKey = targetKey, Mode = mode == SyncApplyMode.AddOnly ? "add-only" : "overwrite" };
+        var envBase = Environment.GetEnvironmentVariable("PEER_SELF_BASE_URL");
+        if (!string.IsNullOrWhiteSpace(envBase))
+            return envBase.Trim().TrimEnd('/');
+        return Request.ResolveServerUrl(_config).TrimEnd('/');
+    }
+
+    private static void AttachPeerApplyOptions(
+        SyncResourceBundle bundle,
+        bool preserveTimestamps,
+        bool rewriteAssetLinks,
+        string? sourceBaseUrl)
+    {
+        bundle.Item.Extras ??= new Dictionary<string, JsonElement>();
+        bundle.Item.Extras["peerApplyOptions"] = JsonSerializer.SerializeToElement(new
+        {
+            preserveTimestamps,
+            rewriteAssetLinks,
+            sourceBaseUrl,
+        }, JsonOpts);
+    }
+
+    private async Task MarkPeerSyncAsync(
+        string resourceType,
+        string? itemId,
+        string status,
+        string direction,
+        PeerNode node,
+        string? result,
+        CancellationToken ct)
+    {
+        if (!string.Equals(resourceType, "document-store", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(itemId))
+            return;
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == itemId,
+            Builders<DocumentStore>.Update
+                .Set(s => s.PeerSyncStatus, status)
+                .Set(s => s.PeerSyncDirection, direction)
+                .Set(s => s.PeerSyncNodeId, node.RemoteNodeId)
+                .Set(s => s.PeerSyncNodeName, node.DisplayName)
+                .Set(s => s.PeerSyncNodeBaseUrl, node.BaseUrl)
+                .Set(s => s.PeerSyncLastAt, DateTime.UtcNow)
+                .Set(s => s.PeerSyncLastResult, result),
+            cancellationToken: ct);
+    }
+
+    private async Task<SyncApplyOutcome?> PushToPeerAsync(
+        PeerNode node,
+        string type,
+        SyncResourceBundle bundle,
+        string targetKey,
+        SyncApplyMode mode,
+        string direction,
+        TransferRequest request,
+        string sourceBaseUrl,
+        CancellationToken ct)
+    {
+        var payload = new ApplyRequest
+        {
+            Bundle = bundle,
+            TargetKey = targetKey,
+            Mode = mode == SyncApplyMode.AddOnly ? "add-only" : "overwrite",
+            Direction = direction,
+            PreserveTimestamps = request.PreserveTimestamps ?? true,
+            RewriteAssetLinks = request.RewriteAssetLinks ?? true,
+            SourceBaseUrl = sourceBaseUrl,
+        };
         var (ok, json, status) = await CallPeerAsync(node, HttpMethod.Post, $"/api/peer-sync/resources/{type}/apply", payload, ct);
         if (!ok) throw new InvalidOperationException($"对端 apply 失败（HTTP {status}）");
         return ExtractData<SyncApplyOutcome>(json);
@@ -780,6 +875,10 @@ public class PeerSyncController : ControllerBase
         public SyncResourceBundle? Bundle { get; set; }
         public string? TargetKey { get; set; }
         public string? Mode { get; set; }
+        public string? Direction { get; set; }
+        public bool? PreserveTimestamps { get; set; }
+        public bool? RewriteAssetLinks { get; set; }
+        public string? SourceBaseUrl { get; set; }
     }
 
     public class TransferRequest
@@ -789,5 +888,7 @@ public class PeerSyncController : ControllerBase
         public List<string>? ItemIds { get; set; }
         public string? Direction { get; set; }
         public string? Mode { get; set; }
+        public bool? PreserveTimestamps { get; set; }
+        public bool? RewriteAssetLinks { get; set; }
     }
 }

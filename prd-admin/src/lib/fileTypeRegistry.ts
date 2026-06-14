@@ -19,10 +19,11 @@ import {
   FileVideo,
   Presentation,
   Archive,
+  Globe,
 } from 'lucide-react';
 
 /** 预览类型枚举 */
-export type FilePreviewKind = 'text' | 'image' | 'video' | 'audio' | 'pdf' | 'none';
+export type FilePreviewKind = 'text' | 'html' | 'image' | 'video' | 'audio' | 'pdf' | 'none';
 
 export interface FileTypeConfig {
   /** 标准扩展名列表（含点，小写） */
@@ -120,12 +121,21 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     preview: 'text',
     editable: true,
   },
+  html: {
+    extensions: ['.html', '.htm'],
+    mimeKeywords: ['html'],
+    icon: Globe,
+    color: 'rgba(249,115,22,0.85)',
+    label: 'HTML',
+    preview: 'html',
+    editable: true,
+  },
   xml: {
-    extensions: ['.xml', '.html', '.htm'],
-    mimeKeywords: ['xml', 'html'],
+    extensions: ['.xml'],
+    mimeKeywords: ['xml'],
     icon: FileCode,
     color: 'rgba(168,85,247,0.7)',
-    label: 'Markup',
+    label: 'XML',
     preview: 'text',
     editable: true,
   },

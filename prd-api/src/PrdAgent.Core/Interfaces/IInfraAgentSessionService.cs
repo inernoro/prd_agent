@@ -86,7 +86,8 @@ public record CreateInfraAgentSessionRequest(
     string? TraceId = null,
     string? WorkspaceRoot = null,
     string? GitRepository = null,
-    string? GitRef = null
+    string? GitRef = null,
+    string? ClientApp = null
 );
 
 public record StartInfraAgentSessionRequest(

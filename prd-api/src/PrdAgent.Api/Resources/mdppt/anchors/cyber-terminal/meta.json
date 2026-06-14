@@ -1,0 +1,64 @@
+{
+  "name": "cyber-terminal",
+  "upstream": "nexu-io/open-design (html-ppt-hermes-cyber-terminal)",
+  "license": "MIT",
+  "slideCount": 8,
+  "layouts": [
+    {
+      "file": "01-cover.html",
+      "layout": "cover",
+      "classAttr": "slide",
+      "chars": 902,
+      "summary": "~/hermes · zsh · 118x42 · 01:37:04 whoami --hermes HERMES AGENT / v0.9.2 一个号称能「自主跑完整软件工程任务"
+    },
+    {
+      "file": "02-section-divider.html",
+      "layout": "section-divider",
+      "classAttr": "slide",
+      "chars": 586,
+      "summary": "section · 01/04 cat chapter_01.md // Setup 从 brew install hermes 到第一次 prompt —— 一共 4 分 22 "
+    },
+    {
+      "file": "03-content-spec-cards.html",
+      "layout": "content-spec-cards",
+      "classAttr": "slide",
+      "chars": 1354,
+      "summary": "benchmark · cold-start 开箱数据 cold start → first-successful-task 三次平均 install time 42s 单 bin"
+    },
+    {
+      "file": "04-code.html",
+      "layout": "code",
+      "classAttr": "slide",
+      "chars": 1478,
+      "summary": "trace · hermes run hermes run \"refactor auth module to use pkce\" ↓ 真实 trace (节选) # hermes "
+    },
+    {
+      "file": "05-chart.html",
+      "layout": "chart",
+      "classAttr": "slide",
+      "chars": 3686,
+      "summary": "benchmark · hermes vs openclaw 72 小时对比 同一组 48 个 GitHub issue，两个 agent 各跑一遍 100% 75% 50% 25"
+    },
+    {
+      "file": "06-stats.html",
+      "layout": "stats",
+      "classAttr": "slide",
+      "chars": 878,
+      "summary": "tldr echo $VERDICT 7.8 / 10 值得装，还不值得完全依赖。 + strong points • rust 本体冷启快 • trace 可读性极强 • dif"
+    },
+    {
+      "file": "07-cta.html",
+      "layout": "cta",
+      "classAttr": "slide",
+      "chars": 986,
+      "summary": "install 想自己跑一遍？ 三条命令，不到 5 分钟就能看见它干第一件事。 # 1. install $ brew install hermes-agent/tap/herme"
+    },
+    {
+      "file": "08-thanks.html",
+      "layout": "thanks",
+      "classAttr": "slide",
+      "chars": 613,
+      "summary": "EOF exit 0 // thanks 完整 trace、48 个任务的 PR 列表、benchmark 脚本都在 github.com/lewis/hermes-review "
+    }
+  ]
+}

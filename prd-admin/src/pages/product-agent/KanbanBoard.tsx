@@ -10,11 +10,20 @@ import { Clock, AlertTriangle, User } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
-import { listRequirements, listFeatures, transition } from '@/services/real/productAgent';
+import { getProduct, listRequirements, listFeatures, transition } from '@/services/real/productAgent';
+import { useAuthStore } from '@/stores/authStore';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { ITEM_GRADE_LABEL } from './types';
-import type { Requirement, Feature } from './types';
+import type { Requirement, Feature, WorkflowTransition } from './types';
 import { slaInfo } from './sla';
+import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
+import {
+  canExecuteWorkflowTransition,
+  isGlobalProductAdmin,
+  transitionNeedsDialog,
+  type ProductWorkflowContext,
+} from './workflowTransitionGuard';
+import { WorkflowTransitionDialog } from './WorkflowTransitionDialog';
 import './product-cards.css';
 
 type Item = (Requirement | Feature) & { title: string; currentState?: string | null; grade: string; assigneeId?: string | null; stateEnteredAt?: string | null };
@@ -28,6 +37,29 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   const [dragId, setDragId] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [swimlane, setSwimlane] = useState<'none' | 'assignee' | 'grade'>('none');
+  const showGrade = entityType === 'requirement';
+  useEffect(() => {
+    if (!showGrade) setSwimlane((s) => (s === 'grade' ? 'none' : s));
+  }, [showGrade]);
+  const [product, setProduct] = useState<ProductWorkflowContext | null>(null);
+  const [pendingTransition, setPendingTransition] = useState<{ item: Item; transition: WorkflowTransition } | null>(null);
+
+  const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
+  const permissions = useAuthStore((s) => s.permissions);
+  const isGlobalAdmin = isGlobalProductAdmin(permissions);
+
+  useEffect(() => {
+    void getProduct(productId).then((res) => {
+      if (res.success) {
+        setProduct({
+          ownerId: res.data.ownerId,
+          ownerIds: res.data.ownerIds,
+          adminIds: res.data.adminIds,
+          memberIds: res.data.memberIds,
+        });
+      }
+    });
+  }, [productId]);
 
   const reload = useCallback(async () => {
     const res = entityType === 'requirement' ? await listRequirements(productId) : await listFeatures(productId);
@@ -66,34 +98,57 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   const drop = async (targetKey: string) => {
     const item = items.find((i) => i.id === dragId);
     setDragId(null);
-    if (!item || item.currentState === targetKey) return;
+    if (!item) return;
+    const fromKey = entityType === 'requirement'
+      ? normalizeRequirementStateKey(item.currentState ?? initialKey, workflow)
+      : (item.currentState ?? initialKey);
+    if (fromKey === targetKey) return;
     const tr = (workflow?.transitions ?? []).find(
-      (t) => t.toState === targetKey && (!t.fromState || t.fromState === (item.currentState ?? initialKey)),
+      (t) => t.toState === targetKey && (!t.fromState || t.fromState === fromKey),
     );
     if (!tr) {
       setHint(`不能直接从「${stateLabel(item.currentState)}」拖到「${stateLabel(targetKey)}」：没有定义对应的流转`);
       setTimeout(() => setHint(null), 3500);
       return;
     }
-    if (tr.requireComment) {
-      const c = window.prompt(`「${tr.label}」需要填写备注`);
-      if (c == null) return;
-      const res = await transition({ entityType, entityId: item.id, transitionKey: tr.key, comment: c });
-      if (res.success) await reload();
+    const entity = {
+      ownerId: 'ownerId' in item ? item.ownerId : undefined,
+      assigneeId: item.assigneeId,
+      title: item.title,
+      grade: item.grade,
+      versionIds: 'versionIds' in item ? item.versionIds : [],
+    };
+    if (product && currentUserId && !canExecuteWorkflowTransition(currentUserId, tr, product, isGlobalAdmin, entity)) {
+      setHint('当前账号无权执行该流转');
+      setTimeout(() => setHint(null), 3500);
+      return;
+    }
+    if (transitionNeedsDialog(tr, entity)) {
+      setPendingTransition({ item, transition: tr });
       return;
     }
     const res = await transition({ entityType, entityId: item.id, transitionKey: tr.key });
     if (res.success) await reload();
-    else setHint(res.error?.message ?? '流转失败');
+    else {
+      setHint(res.error?.message ?? '流转失败');
+      setTimeout(() => setHint(null), 3500);
+    }
   };
 
-  const stateLabel = (key?: string | null) => states.find((s) => s.key === key)?.label ?? key ?? '未设置';
-  const colKeyOf = (it: Item) => (states.some((s) => s.key === it.currentState) ? it.currentState! : initialKey);
+  const stateLabel = (key?: string | null) => {
+    if (entityType === 'requirement') return resolveRequirementStateLabel(key, workflow);
+    return states.find((s) => s.key === key)?.label ?? key ?? '未设置';
+  };
+  const colKeyOf = (it: Item) => {
+    const raw = it.currentState ?? initialKey;
+    const key = entityType === 'requirement' ? normalizeRequirementStateKey(raw, workflow) : raw;
+    return states.some((s) => s.key === key) ? key : initialKey;
+  };
 
   // 泳道分组
   const lanes = useMemo<{ key: string; label: string; items: Item[] }[]>(() => {
     if (swimlane === 'none') return [{ key: 'all', label: '', items }];
-    if (swimlane === 'grade') {
+    if (showGrade && swimlane === 'grade') {
       return ['p0', 'p1', 'p2', 'p3']
         .map((g) => ({ key: g, label: ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] ?? g, items: items.filter((i) => i.grade === g) }))
         .filter((l) => l.items.length > 0);
@@ -105,11 +160,11 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
       (groups.get(k) ?? groups.set(k, []).get(k)!).push(it);
     }
     return [...groups.entries()].map(([k, its]) => ({ key: k, label: k === '__none__' ? '未指派' : nameOf(k), items: its }));
-  }, [swimlane, items, nameOf]);
+  }, [swimlane, items, nameOf, showGrade]);
 
   const totalOf = (stateKey: string) => items.filter((it) => colKeyOf(it) === stateKey).length;
 
-  if (!workflow) return <div className="text-sm text-white/40 py-10 text-center">该对象类型还没有可用的工作流，去「设置 → 流程模板」配置。</div>;
+  if (!workflow) return <div className="text-sm text-white/40 py-10 text-center">该对象类型还没有可用的工作流，去「应用 → 应用配置」配置。</div>;
   if (loading) return <MapSectionLoader text="正在加载看板…" />;
 
   const showLane = swimlane !== 'none';
@@ -119,7 +174,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
       <div className="shrink-0 flex items-center gap-2">
         <span className="text-[11px] text-white/40">泳道</span>
         <div className="flex rounded-lg border border-white/10 overflow-hidden">
-          {(['none', 'assignee', 'grade'] as const).map((m) => (
+          {(['none', 'assignee', ...(showGrade ? (['grade'] as const) : [])] as const).map((m) => (
             <button key={m} onClick={() => setSwimlane(m)} className={`px-2.5 py-1 text-xs ${swimlane === m ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>
               {m === 'none' ? '无' : m === 'assignee' ? '按处理人' : '按分级'}
             </button>
@@ -183,7 +238,9 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
                           >
                             <div className="text-sm text-white/90 line-clamp-2">{it.title}</div>
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[it.grade as keyof typeof ITEM_GRADE_LABEL] ?? it.grade}</span>
+                              {showGrade && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[it.grade as keyof typeof ITEM_GRADE_LABEL] ?? it.grade}</span>
+                              )}
                               {it.assigneeId && swimlane !== 'assignee' && (
                                 <span className="text-[10px] text-white/50 inline-flex items-center gap-0.5"><User size={10} /> {nameOf(it.assigneeId)}</span>
                               )}
@@ -204,6 +261,25 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
           ))}
         </div>
       </div>
+      {pendingTransition && (
+        <WorkflowTransitionDialog
+          open
+          productId={productId}
+          workflow={workflow}
+          entityType={entityType}
+          entityId={pendingTransition.item.id}
+          transition={pendingTransition.transition}
+          entity={{
+            ownerId: 'ownerId' in pendingTransition.item ? pendingTransition.item.ownerId : undefined,
+            assigneeId: pendingTransition.item.assigneeId,
+            title: pendingTransition.item.title,
+            grade: pendingTransition.item.grade,
+            versionIds: 'versionIds' in pendingTransition.item ? pendingTransition.item.versionIds : [],
+          }}
+          onClose={() => setPendingTransition(null)}
+          onDone={() => void reload()}
+        />
+      )}
     </div>
   );
 }

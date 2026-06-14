@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { ChevronRight, ChevronDown, Sparkles, Plus, Pencil, Compass, Lock } from 'lucide-react';
+import { ChevronRight, ChevronDown, Sparkles, Plus, Pencil, Compass, Lock, Flag } from 'lucide-react';
 import { GOAL_STATUS_REGISTRY } from '../pmConstants';
 import type { GoalNodeData } from './goalCanvasLayout';
 
@@ -55,6 +55,7 @@ function GoalNodeInner({ data, selected }: NodeProps & { data: GoalNodeData }) {
             <span className="text-[9px] px-1 py-0.5 rounded shrink-0 tabular-nums" style={{ background: 'var(--bg-base)', color: 'var(--text-muted)' }}>L{depth + 1}</span>
           )}
           <span className="text-[12.5px] font-medium truncate flex-1" style={{ color: 'var(--text-primary)' }} title={g.title}>{g.title}</span>
+          {g.isMilestone && <Flag size={11} className="shrink-0" style={{ color: '#A855F7' }} aria-label="已设为里程碑" />}
           <span className="text-[9px] px-1.5 py-0.5 rounded shrink-0" style={{ background: `${st.color}22`, color: st.color }}>{st.label}</span>
         </div>
         <div className="flex items-center gap-2">

@@ -946,6 +946,17 @@ public static class DocumentStoreAgent
         )]
         public const string Generate = "document-store.reprocess::chat";
     }
+
+    public static class Selection
+    {
+        [AppCallerMetadata(
+            "知识库划词局部改写",
+            "对文档中用户划选的片段做局部 AI 改写（润色/精简/扩写/纠错等），结合选区上下文输出可直接替换的 Markdown 片段",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DocumentStore"
+        )]
+        public const string Rewrite = "document-store.selection-rewrite::chat";
+    }
 }
 
 /// <summary>
@@ -1034,6 +1045,17 @@ public static class Admin
             Category = "Management"
         )]
         public const string Reclassify = "prd-agent-web.platforms.reclassify::intent";
+    }
+
+    public static class TeamActivity
+    {
+        [AppCallerMetadata(
+            "团队动态-行为洞察简报",
+            "把行为洞察（报错/慢端点/停留/秒退/横跳）聚合结果生成给产品负责人的中文简报（SSE 流式）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string InsightBrief = "prd-admin.team-activity.insight-brief::chat";
     }
 
     public static class Changelog
@@ -1350,6 +1372,17 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.assistant::chat";
     }
+
+    public static class Briefing
+    {
+        [AppCallerMetadata(
+            "AI 项目简报",
+            "基于项目实时数据(目标/里程碑/任务/风险)生成对外汇报简报内容，服务端渲染为自包含 HTML 页，可分享/下载/托管",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.briefing::chat";
+    }
 }
 
 /// <summary>
@@ -1590,6 +1623,74 @@ public static class ProjectRouteAgent
 }
 
 /// <summary>
+/// 商品溯源智能体 — 防窜物流业务知识问答 + 线上问题案例排查 + 业务/代码差异对比
+/// </summary>
+public static class ChannelTraceAgent
+{
+    public const string AppName = "商品溯源智能体";
+
+    public static class Knowledge
+    {
+        [AppCallerMetadata(
+            "商品溯源-业务知识问答",
+            "基于防窜物流业务知识库回答用户提问，帮助快速理解业务",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Chat = "channel-trace-agent.knowledge::chat";
+
+        [AppCallerMetadata(
+            "商品溯源-业务知识截图识别",
+            "用户上传防窜后台页面截图时，结合视觉识别关键业务操作并给出操作流程",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "ChannelTrace"
+        )]
+        public const string Vision = "channel-trace-agent.knowledge::vision";
+    }
+
+    public static class Diagnose
+    {
+        [AppCallerMetadata(
+            "商品溯源-线上问题排查",
+            "基于历史案例库召回相似案例，为新线上问题给出快速排查路径",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Chat = "channel-trace-agent.diagnose::chat";
+    }
+
+    public static class CodeDiff
+    {
+        [AppCallerMetadata(
+            "商品溯源-业务代码差异对比",
+            "对比防窜物流业务规则描述与当前代码实现，输出差异清单",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Chat = "channel-trace-agent.code-diff::chat";
+
+        [AppCallerMetadata(
+            "商品溯源-代码检索关键词抽取",
+            "从用户功能描述中抽取用于扫描仓库代码的检索关键词",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Keywords = "channel-trace-agent.code-diff.keywords::chat";
+    }
+
+    public static class CaseImport
+    {
+        [AppCallerMetadata(
+            "商品溯源-案例文件解析",
+            "把导入的历史 bug 文件解析为结构化线上问题案例（标题/现象/根因/排查）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Chat = "channel-trace-agent.case-import::chat";
+    }
+}
+
+/// <summary>
 /// CDS Agent 工作台 — 基础设施 Agent 会话
 /// </summary>
 public static class InfraAgent
@@ -1644,6 +1745,33 @@ public static class MdToPptAgent
             Category = "Document"
         )]
         public const string Patch = "md-to-ppt-agent.patch::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-大纲规划",
+            "根据用户内容和对话指令，规划 PPT 大纲（页数+每页标题和要点），JSON 格式返回供用户确认后生成",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Outline = "md-to-ppt-agent.outline::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-对话精修",
+            "基于用户自然语言指令（如修改配色/加页/改布局）对已有 PPT 进行对话式精修，调用 Patch 端点实现",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string ChatRefine = "md-to-ppt-agent.chat-refine::chat";
+    }
+
+    public static class Template
+    {
+        [AppCallerMetadata(
+            "MD转PPT-模板风格提取",
+            "用户上传参考图创建自定义模板时，视觉模型从图中提取风格规范（配色/字体气质/版式特征），生成 PPT 时作为 AI 的设计参照",
+            ModelTypes = new[] { PrdAgent.Core.Models.ModelTypes.Vision },
+            Category = "Document"
+        )]
+        public const string Extract = "md-to-ppt-agent.template-extract::vision";
     }
 }
 }

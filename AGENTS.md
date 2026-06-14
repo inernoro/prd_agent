@@ -285,7 +285,7 @@ https://${tail}-${prefix}-${projectSlug}.miduo.org/
 每次 push 后**只跑这条**，把输出原文贴到交付消息里的【预览】行：
 
 ```bash
-python3 .Codex/skills/cds/cli/cdscli.py --human preview-url
+python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 ```
 
 ```

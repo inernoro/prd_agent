@@ -24,7 +24,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 | **归档密钥 env**(仅 doc-store 模式) | 落库鉴权 | `AI_ACCESS_KEY`(AI 超级密钥)、`MAP_AI_USER`(impersonate 谁) |
 | **cdscli**(可选) | 自动取预览域名 | 仓库内 `.claude/skills/cds/cli/cdscli.py`;没有就在 config 填 `previewUrlOverride` |
 
-`report.mode=local` 时**只需 Playwright + Python**,不需要任何密钥/网络——报告写本地 `doc/acceptance/`。
+`report.mode=local` 时**只需 Playwright + Python**,不需要任何密钥/网络——报告写本机临时目录,默认 `/tmp/map-acceptance-local`。不得写入仓库内 `doc/acceptance/`。
 
 接入新仓库:见文末"跨仓库复用",改 `acceptance.config.json` 一处即可。
 
@@ -34,6 +34,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 2. **人类可读优先**:报告首屏是"验收速览卡"(Verdict + 一句话结论 + 元信息表),不是 YAML。
 3. **命名 + 防 `---`**:报告名业界状态前置 `[{verdict_cn}] {目标} · 验收报告 · {项目} · {日期}`;正文必须以 `# 标题` 打头(目录显示名取 summary 首行,见标准 §2.1)。`archive_report.py` 已内置,手工归档也照此。
 4. **准入门槛(入口准则)**:归档前强制校验——目标有意义、档位/Verdict 合法、截图数达档位下限、证据完整、报告结构齐、无半成品残留;**任一不达标直接拒收、不写库**(见标准 §3.5)。输入不对,输出不可能对。
+5. **证据文件不进代码库**:截图、录屏、临时 HTML、manifest、报告草稿等验收产物必须写到 `/tmp`、系统临时目录、对象存储或知识库,**禁止落到 git 仓库目录内**。默认配置已把 `screenshot.outDir` 与 `report.localOutDir` 指向 `/tmp`;`harness.mjs` 和 `archive_report.py` 会拒绝仓库内截图路径。归档前必须看一眼 `git status --short`,发现 `*.png/*.jpg/*.jpeg/*.webp/*.gif/*.mp4/*.webm` 或 `doc/acceptance/`、`acceptance-*`、`peer-sync-effect-*.html` 这类验收产物在仓库内,先移到 `/tmp` 或删除,不得提交。
 
 ## 取证选材与标注（重点,2026-05-31 强化）
 
@@ -104,7 +105,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
    - **v1.0 机读产物**:`writeManifest` 同时写 `result.json`(verdict/autoFindings/themeSupport/timing),供下游 Agent 直接消费。
    - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 `debt.visual-acceptance-skill.md`)。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
-3. **读图核对**:截图用 Read 工具读回,肉眼级核对(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。
+3. **读图核对（全量,不许抽查)**:manifest 里**每一张**截图都用 Read 工具读回,肉眼级核对 caption 与图内容一致(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。图文不符 → 修 driver 重拍,**禁止改 caption 迁就错图**。pass 用例必须连图、图必须独立可证 claim(反例:声称"下拉含 8 选项"但图里下拉收起——先 `select.size=N` 展开再截)、关键词断言不得同义反复(排除自己输入的消息,锚定产物区域)。详见 standard §3.6 证据链连线,准入第 8 项机检兜底。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。
 4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。
    - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 tags 标记**(脚本自动写 `[verdict_cn, type, tier]`),不靠改名表达状态。
    - 正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。
@@ -179,7 +180,7 @@ python3 $SKILL/scripts/read_comments.py --config $SKILL/acceptance.config.json \
 
 ## 跨仓库复用
 
-整个技能项目无关,耦合点全在 `acceptance.config.json`:预览域名命令、登录选择器与 env、文档空间 API base、报告库名、截图参数。别的仓库装本技能 + 改配置即用;`report.mode=local` 时退化为写 `doc/acceptance/` 本地 md + 截图,不依赖文档空间。
+整个技能项目无关,耦合点全在 `acceptance.config.json`:预览域名命令、登录选择器与 env、文档空间 API base、报告库名、截图参数。别的仓库装本技能 + 改配置即用;`report.mode=local` 时退化为写 `/tmp/map-acceptance-local` 这类仓库外临时目录,不依赖文档空间。
 
 ## 与既有技能的关系
 

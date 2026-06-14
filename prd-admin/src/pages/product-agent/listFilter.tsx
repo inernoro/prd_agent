@@ -9,6 +9,10 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { Search, SlidersHorizontal, X } from 'lucide-react';
 
+/** 与 ProductsSection 搜索框同宽（跨产品列表工具栏 SSOT） */
+export const OVERVIEW_LIST_SEARCH_BOX =
+  'flex flex-1 min-w-[280px] max-w-xl items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 h-8 transition-colors focus-within:border-cyan-500/40 focus-within:bg-white/[0.07]';
+
 export interface FilterFieldDef<T> {
   key: string;
   label: string;
@@ -40,8 +44,26 @@ export function useListFilter<T>(opts: {
   fields: FilterFieldDef<T>[];
   keywordOf: (item: T) => string;
   keywordPlaceholder?: string;
+  /** 是否显示「筛选设置」齿轮（跨产品需求等固定筛选项场景可关闭） */
+  showFilterSettings?: boolean;
+  /** 搜索框外层 class（默认窄 w-44；跨产品总览传 OVERVIEW_LIST_SEARCH_BOX） */
+  searchBoxClassName?: string;
+  /** 筛选项右侧附加控件（如「追踪」切换） */
+  trailing?: ReactNode;
+  /** 是否在工具栏末尾展示「命中数/总数」（总览宽工具栏默认关闭，列表区另有统计） */
+  showResultCount?: boolean;
 }): { bar: ReactNode; filtered: T[]; activeCount: number } {
-  const { items, storageKey, fields, keywordOf, keywordPlaceholder } = opts;
+  const {
+    items,
+    storageKey,
+    fields,
+    keywordOf,
+    keywordPlaceholder,
+    showFilterSettings = true,
+    searchBoxClassName,
+    trailing,
+    showResultCount = !searchBoxClassName,
+  } = opts;
   const [kw, setKw] = useState('');
   const [values, setValues] = useState<Record<string, string>>({});
   const [visible, setVisible] = useState<string[]>(() => loadVisible(storageKey, fields));
@@ -88,6 +110,10 @@ export function useListFilter<T>(opts: {
       activeCount={activeCount}
       resultCount={filtered.length}
       total={items.length}
+      showFilterSettings={showFilterSettings}
+      searchBoxClassName={searchBoxClassName}
+      trailing={trailing}
+      showResultCount={showResultCount}
     />
   );
 
@@ -108,6 +134,10 @@ function FilterBar<T>({
   activeCount,
   resultCount,
   total,
+  showFilterSettings,
+  searchBoxClassName,
+  trailing,
+  showResultCount,
 }: {
   items: T[];
   fields: FilterFieldDef<T>[];
@@ -122,6 +152,10 @@ function FilterBar<T>({
   activeCount: number;
   resultCount: number;
   total: number;
+  showFilterSettings: boolean;
+  searchBoxClassName?: string;
+  trailing?: ReactNode;
+  showResultCount: boolean;
 }) {
   const [gearOpen, setGearOpen] = useState(false);
   const gearRef = useRef<HTMLDivElement>(null);
@@ -140,17 +174,31 @@ function FilterBar<T>({
   const toggle = (k: string) =>
     setVisible((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
 
+  const wideSearch = Boolean(searchBoxClassName);
+
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <div className="relative">
-        <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-white/35 pointer-events-none" />
-        <input
-          value={kw}
-          onChange={(e) => setKw(e.target.value)}
-          placeholder={keywordPlaceholder ?? '搜索…'}
-          className="h-8 w-44 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 pl-7 pr-2 outline-none focus:border-cyan-500/40"
-        />
-      </div>
+    <div className={`flex min-w-0 flex-1 items-center gap-2 ${wideSearch ? 'flex-nowrap' : 'flex-wrap'}`}>
+      {wideSearch ? (
+        <div className={searchBoxClassName}>
+          <Search size={14} className="shrink-0 text-white/35" />
+          <input
+            value={kw}
+            onChange={(e) => setKw(e.target.value)}
+            placeholder={keywordPlaceholder ?? '搜索…'}
+            className="min-w-0 flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/35"
+          />
+        </div>
+      ) : (
+        <div className="relative">
+          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-white/35 pointer-events-none" />
+          <input
+            value={kw}
+            onChange={(e) => setKw(e.target.value)}
+            placeholder={keywordPlaceholder ?? '搜索…'}
+            className="h-8 w-44 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 pl-7 pr-2 outline-none focus:border-cyan-500/40"
+          />
+        </div>
+      )}
       {visibleFields.map((f) => {
         const opts = f.options(items);
         return (
@@ -170,6 +218,7 @@ function FilterBar<T>({
           </select>
         );
       })}
+      {trailing}
       {activeCount > 0 && (
         <button
           onClick={reset}
@@ -179,39 +228,43 @@ function FilterBar<T>({
           <X size={12} /> 清空({activeCount})
         </button>
       )}
-      <div ref={gearRef} className="relative">
-        <button
-          onClick={() => setGearOpen((v) => !v)}
-          className="h-8 flex items-center gap-1 px-2 rounded-lg border border-white/10 text-xs text-white/55 hover:text-white hover:bg-white/5"
-          title="筛选设置：选择显示哪些筛选项"
-        >
-          <SlidersHorizontal size={13} /> 筛选设置
-        </button>
-        {gearOpen && (
-          <div className="absolute z-50 right-0 mt-1 w-48 rounded-lg border border-white/10 bg-[#16171c] p-2 shadow-xl">
-            <div className="text-[11px] text-white/40 px-1 pb-1">显示哪些筛选项</div>
-            <div className="max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-              {fields.map((f) => (
-                <label
-                  key={f.key}
-                  className="flex items-center gap-2 px-1 py-1 rounded hover:bg-white/5 cursor-pointer text-xs text-white/75"
-                >
-                  <input
-                    type="checkbox"
-                    checked={visible.includes(f.key)}
-                    onChange={() => toggle(f.key)}
-                    className="accent-cyan-500"
-                  />
-                  {f.label}
-                </label>
-              ))}
+      {showFilterSettings && (
+        <div ref={gearRef} className="relative">
+          <button
+            onClick={() => setGearOpen((v) => !v)}
+            className="h-8 flex items-center gap-1 px-2 rounded-lg border border-white/10 text-xs text-white/55 hover:text-white hover:bg-white/5"
+            title="筛选设置：选择显示哪些筛选项"
+          >
+            <SlidersHorizontal size={13} /> 筛选设置
+          </button>
+          {gearOpen && (
+            <div className="absolute z-50 right-0 mt-1 w-48 rounded-lg border border-white/10 bg-[#16171c] p-2 shadow-xl">
+              <div className="text-[11px] text-white/40 px-1 pb-1">显示哪些筛选项</div>
+              <div className="max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {fields.map((f) => (
+                  <label
+                    key={f.key}
+                    className="flex items-center gap-2 px-1 py-1 rounded hover:bg-white/5 cursor-pointer text-xs text-white/75"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visible.includes(f.key)}
+                      onChange={() => toggle(f.key)}
+                      className="accent-cyan-500"
+                    />
+                    {f.label}
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
-      <span className="text-[11px] text-white/30 ml-auto shrink-0">
-        {resultCount}/{total}
-      </span>
+          )}
+        </div>
+      )}
+      {showResultCount && (
+        <span className="text-[11px] text-white/30 ml-auto shrink-0">
+          {resultCount}/{total}
+        </span>
+      )}
     </div>
   );
 }

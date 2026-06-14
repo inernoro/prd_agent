@@ -11,6 +11,7 @@ import { getOverviewKnowledgeEntries, listProducts } from '@/services/real/produ
 import type { OverviewKnowledgeEntryRow } from '@/services/real/productAgent';
 import type { Product } from '../types';
 import { fileKindOf, fmtSize, fmtTime, FOCUS_BOX } from './shared';
+import { SelectionActionBar, SelectableRow, useSelectableListExport } from '../selectableList';
 import '../product-cards.css';
 
 const PAGE_SIZE = 20;
@@ -49,6 +50,16 @@ export function OverviewKnowledgeList() {
   const hasFilter = !!(appliedKeyword || productFilter);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  const { selection, exportSelected } = useSelectableListExport(
+    rows,
+    (r) => r.entry.id,
+    {
+      filename: 'overview-knowledge.csv',
+      headers: ['标题', '产品', '分类', '类型', '大小'],
+      mapRow: (r) => [r.entry.title, r.productName ?? '', r.entry.category ?? '', fileKindOf(r.entry.contentType).label, fmtSize(r.entry.fileSize)],
+    },
+  );
+
   const goDetail = (r: OverviewKnowledgeEntryRow) => {
     if (r.productId) navigate(`/product-agent/p/${r.productId}/knowledge/${r.entry.id}`);
   };
@@ -62,7 +73,7 @@ export function OverviewKnowledgeList() {
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }}
-            placeholder="跨产品搜索知识（标题 / 全文），回车确认"
+            placeholder="搜索知识（标题 / 全文），回车确认"
             className="no-focus-ring bg-transparent text-sm text-white outline-none w-64"
           />
           {keyword && <button onClick={clearAll} className="text-white/30 hover:text-white"><X size={13} /></button>}
@@ -80,6 +91,7 @@ export function OverviewKnowledgeList() {
       </div>
 
       <div className="flex flex-col gap-1.5">
+        <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
         {loading ? (
           <MapSectionLoader text="正在聚合各产品知识…" />
         ) : rows.length === 0 ? (
@@ -93,10 +105,26 @@ export function OverviewKnowledgeList() {
             const kind = fileKindOf(r.entry.contentType);
             const Icon = kind.icon;
             return (
-              <div
+              <SelectableRow
                 key={r.entry.id}
+                id={r.entry.id}
+                selection={selection}
                 onClick={() => goDetail(r)}
                 className="pa-row group cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.02]"
+                trailing={
+                  <>
+                    <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/55">
+                      {r.productName ?? '未知产品'}
+                    </span>
+                    <button
+                      onClick={(ev) => { ev.stopPropagation(); if (r.productId) navigate(`/product-agent/p/${r.productId}?tab=knowledge`); }}
+                      className="shrink-0 flex items-center gap-1 text-[11px] text-white/35 hover:text-cyan-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="进入产品知识库"
+                    >
+                      产品知识库 <ArrowRight size={11} />
+                    </button>
+                  </>
+                }
               >
                 <Icon size={16} className="shrink-0" style={{ color: kind.color }} />
                 <div className="min-w-0 flex-1">
@@ -111,17 +139,7 @@ export function OverviewKnowledgeList() {
                     {kind.label} · {fmtSize(r.entry.fileSize)} · 更新于 {fmtTime(r.entry.updatedAt)}
                   </div>
                 </div>
-                <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/55">
-                  {r.productName ?? '未知产品'}
-                </span>
-                <button
-                  onClick={(ev) => { ev.stopPropagation(); if (r.productId) navigate(`/product-agent/p/${r.productId}?tab=knowledge`); }}
-                  className="shrink-0 flex items-center gap-1 text-[11px] text-white/35 hover:text-cyan-300 opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="进入产品知识库"
-                >
-                  产品知识库 <ArrowRight size={11} />
-                </button>
-              </div>
+              </SelectableRow>
             );
           })
         )}

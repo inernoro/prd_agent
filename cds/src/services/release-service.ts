@@ -50,6 +50,14 @@ export interface ReleaseStartInput {
   previewUrl?: string;
 }
 
+export interface ReleaseHealthProbe {
+  status: 'healthy' | 'failed' | 'unknown';
+  url: string;
+  checkedAt: string;
+  responseTimeMs?: number;
+  message?: string;
+}
+
 export class ReleaseService {
   constructor(private readonly stateService: StateService) {}
 
@@ -230,16 +238,19 @@ export class ReleaseService {
     return this.stateService.getReleaseRun(releaseId)!;
   }
 
-  async startRollback(releaseId: string, operator?: string): Promise<ReleaseRun> {
+  async startRollback(releaseId: string, operator?: string, targetReleaseId?: string): Promise<ReleaseRun> {
     const current = this.stateService.getReleaseRun(releaseId);
     if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
     const target = this.stateService.getReleaseTarget(current.targetId);
     if (!target?.ssh) throw new Error('回滚需要站点发布目标');
-    if (!target.ssh.rollbackCommand?.trim()) throw new Error('未配置回滚命令');
-    const previous = current.previousReleaseId
-      ? this.stateService.getReleaseRun(current.previousReleaseId)
-      : this.stateService.getLatestSuccessfulReleaseRun(current.targetId, current.releaseId);
+    const previous = targetReleaseId
+      ? this.stateService.getReleaseRun(targetReleaseId)
+      : current.previousReleaseId
+        ? this.stateService.getReleaseRun(current.previousReleaseId)
+        : this.stateService.getLatestSuccessfulReleaseRun(current.targetId, current.releaseId);
     if (!previous) throw new Error('没有可回滚的上一版本');
+    if (previous.targetId !== current.targetId) throw new Error('回滚目标版本不属于当前发布目标');
+    if (!['success', 'rollback_success'].includes(previous.status)) throw new Error('只能回滚到成功版本');
 
     const rollbackId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const run: ReleaseRun = {
@@ -253,13 +264,15 @@ export class ReleaseService {
       status: 'rollback_running',
       startedAt: new Date().toISOString(),
       operator,
-      previousReleaseId: previous.previousReleaseId,
+      previousReleaseId: current.releaseId,
       rollbackOf: current.releaseId,
+      rollbackTargetReleaseId: previous.releaseId,
       logs: [],
       seq: 0,
     };
     this.stateService.addReleaseRun(run);
-    this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId}`, 'rollback');
+    const strategy = target.ssh.rollbackCommand?.trim() ? 'rollbackCommand' : '重新发布历史版本';
+    this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
     void this.runRollback(rollbackId, target, previous).catch((err) => {
       this.failRun(rollbackId, err, 'rollback_failed');
     });
@@ -273,11 +286,9 @@ export class ReleaseService {
     if (!target?.ssh) throw new Error('SSH target not found');
     this.patchStatus(releaseId, 'running');
     this.emitLog(releaseId, 'info', `连接目标 ${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`, 'connect');
-    await this.sshExec(target, 'echo cds-release-connect-ok', releaseId);
-    this.emitLog(releaseId, 'info', '准备 release 参数', 'prepare');
-    const command = buildReleaseCommand(target, run, target.ssh.deployCommand);
-    this.emitLog(releaseId, 'info', '执行发布命令', 'deploy');
-    await this.sshExec(target, command, releaseId);
+    await this.sshExec(target, 'echo cds-release-connect-ok', releaseId, 'connect');
+    this.emitLog(releaseId, 'info', `进入站点目录 ${target.ssh.appPath || '.'}`, 'prepare');
+    await this.runDeployCommand(releaseId, target, run, target.ssh.deployCommand);
     this.patchStatus(releaseId, 'healthchecking');
     this.emitLog(releaseId, 'info', `健康检查 ${target.ssh.healthcheckUrl}`, 'healthcheck');
     await probeHealthcheck(target.ssh.healthcheckUrl);
@@ -290,11 +301,22 @@ export class ReleaseService {
   }
 
   private async runRollback(releaseId: string, target: ReleaseTarget, previous: ReleaseRun): Promise<void> {
-    if (!target.ssh?.rollbackCommand) throw new Error('未配置回滚命令');
-    this.emitLog(releaseId, 'info', `执行回滚命令，目标版本 ${previous.releaseId}`, 'rollback');
-    await this.sshExec(target, buildReleaseCommand(target, previous, target.ssh.rollbackCommand, releaseId), releaseId);
-    this.emitLog(releaseId, 'info', `健康检查 ${target.ssh.healthcheckUrl}`, 'healthcheck');
-    await probeHealthcheck(target.ssh.healthcheckUrl);
+    const ssh = target.ssh;
+    if (!ssh) throw new Error('回滚需要站点发布目标');
+    const rollbackRun = this.stateService.getReleaseRun(releaseId);
+    if (!rollbackRun) throw new Error(`ReleaseRun not found: ${releaseId}`);
+    const rollbackCommand = ssh.rollbackCommand?.trim();
+    if (rollbackCommand) {
+      this.emitLog(releaseId, 'info', `执行回滚命令，目标版本 ${previous.releaseId}`, 'rollback');
+      await this.sshExec(target, buildReleaseCommand(target, rollbackRun, rollbackCommand), releaseId, 'rollback');
+    } else {
+      const deployCommand = ssh.deployCommand?.trim();
+      if (!deployCommand) throw new Error('未配置发布命令，无法重新发布历史版本');
+      this.emitLog(releaseId, 'info', `重新发布历史成功版本 ${previous.releaseId}`, 'rollback');
+      await this.runDeployCommand(releaseId, target, rollbackRun, deployCommand);
+    }
+    this.emitLog(releaseId, 'info', `健康检查 ${ssh.healthcheckUrl}`, 'healthcheck');
+    await probeHealthcheck(ssh.healthcheckUrl);
     const done = this.stateService.patchReleaseRun(releaseId, {
       status: 'rollback_success',
       finishedAt: new Date().toISOString(),
@@ -318,13 +340,32 @@ export class ReleaseService {
     releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId, run } });
   }
 
+  private async runDeployCommand(releaseId: string, target: ReleaseTarget, run: ReleaseRun, rawCommand: string): Promise<void> {
+    const scripts = extractReleaseScriptPaths(rawCommand);
+    if (isDefaultScriptChain(rawCommand, scripts)) {
+      for (const script of scripts) {
+        const phase = releaseScriptPhase(script);
+        this.emitLog(releaseId, 'info', `执行 ${script}`, phase);
+        try {
+          await this.sshExec(target, buildReleaseCommand(target, run, script), releaseId, phase);
+        } catch (err) {
+          this.emitLog(releaseId, 'error', `脚本 ${script} 执行失败: ${(err as Error).message}`, phase);
+          throw err;
+        }
+      }
+      return;
+    }
+    this.emitLog(releaseId, 'info', '执行发布命令', 'deploy');
+    await this.sshExec(target, buildReleaseCommand(target, run, rawCommand), releaseId, 'deploy');
+  }
+
   private emitLog(releaseId: string, level: 'info' | 'warn' | 'error', message: string, phase?: string): void {
     const run = this.stateService.appendReleaseRunLog(releaseId, { level, message: maskLog(message), phase });
     const log = run.logs[run.logs.length - 1];
     releaseEvents.emitEvent({ type: 'release.log', payload: { releaseId, log } });
   }
 
-  private async sshExec(target: ReleaseTarget, cmd: string, releaseId?: string): Promise<string> {
+  private async sshExec(target: ReleaseTarget, cmd: string, releaseId?: string, logPhase = 'ssh'): Promise<string> {
     if (!target.ssh) throw new Error('target is not SSH');
     const keyHost = this.stateService.getRemoteHost(target.ssh.privateKeyRef);
     if (!keyHost) throw new Error(`privateKeyRef not found: ${target.ssh.privateKeyRef}`);
@@ -354,7 +395,7 @@ export class ReleaseService {
         else stderr += text;
         if (releaseId) {
           for (const line of text.split(/\r?\n/).filter(Boolean)) {
-            this.emitLog(releaseId, level, line.slice(0, 1000), 'ssh');
+            this.emitLog(releaseId, level, line.slice(0, 1000), logPhase);
           }
         }
       };
@@ -405,6 +446,13 @@ export function extractReleaseScriptPaths(rawCommand: string): string[] {
   return Array.from(new Set(matches));
 }
 
+export function isDefaultScriptChain(rawCommand: string, scripts = extractReleaseScriptPaths(rawCommand)): boolean {
+  return rawCommand.replace(/\s+/g, ' ').trim() === './fast.sh && ./exec_dep.sh'
+    && scripts.length === 2
+    && scripts[0] === './fast.sh'
+    && scripts[1] === './exec_dep.sh';
+}
+
 export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]): string {
   if (!target.ssh) throw new Error('target is not SSH');
   const uniqueScripts = Array.from(new Set(scripts));
@@ -413,6 +461,10 @@ export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]
   }
   const renderedScripts = uniqueScripts.map((script) => shellQuote(script)).join(' ');
   return `cd ${shellQuote(target.ssh.appPath || '.')} && for f in ${renderedScripts}; do test -f "$f" || { echo "missing script: $f"; exit 41; }; test -x "$f" || { echo "script is not executable: $f"; exit 42; }; done`;
+}
+
+export function releaseScriptPhase(script: string): string {
+  return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
 }
 
 function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {
@@ -433,16 +485,39 @@ function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand:
   return `cd ${shellQuote(ssh.appPath || '.')} && ${renderedEnv} ${rawCommand}`;
 }
 
-async function probeHealthcheck(url: string): Promise<void> {
-  const parsed = new URL(url);
+async function probeHealthcheck(url: string, timeoutMs = 8_000): Promise<void> {
+  const result = await probeHealthcheckStatus(url, timeoutMs);
+  if (result.status !== 'healthy') throw new Error(result.message || 'healthcheck failed');
+}
+
+export async function probeHealthcheckStatus(url: string, timeoutMs = 8_000): Promise<ReleaseHealthProbe> {
+  const checkedAt = new Date().toISOString();
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { status: 'failed', url, checkedAt, message: 'healthcheckUrl must be a valid URL' };
+  }
   if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('healthcheckUrl must be http or https');
+    return { status: 'failed', url, checkedAt, message: 'healthcheckUrl must be http or https' };
   }
   const ctrl = new AbortController();
-  const timer = global.setTimeout(() => ctrl.abort(), 8_000);
+  const started = Date.now();
+  const timer = global.setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, { method: 'GET', signal: ctrl.signal });
-    if (!res.ok) throw new Error(`healthcheck HTTP ${res.status}`);
+    await res.arrayBuffer().catch(() => undefined);
+    const responseTimeMs = Date.now() - started;
+    if (!res.ok) return { status: 'failed', url, checkedAt, responseTimeMs, message: `healthcheck HTTP ${res.status}` };
+    return { status: 'healthy', url, checkedAt, responseTimeMs };
+  } catch (err) {
+    return {
+      status: 'failed',
+      url,
+      checkedAt,
+      responseTimeMs: Date.now() - started,
+      message: (err as Error).name === 'AbortError' ? `healthcheck timeout after ${timeoutMs}ms` : (err as Error).message,
+    };
   } finally {
     global.clearTimeout(timer);
   }

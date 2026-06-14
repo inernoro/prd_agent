@@ -140,6 +140,13 @@ public class MongoDbContext
     public IMongoCollection<ProjectRouteSiteSpec> ProjectRouteSiteSpecs => _database.GetCollection<ProjectRouteSiteSpec>("project_route_site_specs");
     public IMongoCollection<ProjectRoutePlan> ProjectRoutePlans => _database.GetCollection<ProjectRoutePlan>("project_route_plans");
 
+    // Channel Trace Agent 商品溯源智能体（防窜物流业务知识 + 线上问题案例 + 业务/代码差异对比）
+    public IMongoCollection<ChannelTraceKnowledge> ChannelTraceKnowledge => _database.GetCollection<ChannelTraceKnowledge>("channel_trace_knowledge");
+    public IMongoCollection<ChannelTraceCase> ChannelTraceCases => _database.GetCollection<ChannelTraceCase>("channel_trace_cases");
+    public IMongoCollection<ChannelTraceDiff> ChannelTraceDiffs => _database.GetCollection<ChannelTraceDiff>("channel_trace_diffs");
+    public IMongoCollection<ChannelTraceDiagnoseSession> ChannelTraceDiagnoseSessions => _database.GetCollection<ChannelTraceDiagnoseSession>("channel_trace_diagnose_sessions");
+    public IMongoCollection<ChannelTraceChecklist> ChannelTraceChecklists => _database.GetCollection<ChannelTraceChecklist>("channel_trace_checklists");
+
     // CCAS Agent 赋码采集关联系统综合智能体
     public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset> CcasEquipmentAssets
         => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset>("ccas_equipment_assets");
@@ -247,6 +254,7 @@ public class MongoDbContext
 
     // MD 转网页 PPT 生成运行记录（server-authority：刷新可重连/查看）
     public IMongoCollection<MdToPptRun> MdToPptRuns => _database.GetCollection<MdToPptRun>("md_to_ppt_runs");
+    public IMongoCollection<MdToPptTemplate> MdToPptTemplates => _database.GetCollection<MdToPptTemplate>("md_to_ppt_templates");
 
     // Desktop 更新加速缓存
     public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
@@ -350,9 +358,16 @@ public class MongoDbContext
     public IMongoCollection<PmMilestone> PmMilestones => _database.GetCollection<PmMilestone>("pm_milestones");
     public IMongoCollection<PmRisk> PmRisks => _database.GetCollection<PmRisk>("pm_risks");
     public IMongoCollection<PmAuditLog> PmAuditLogs => _database.GetCollection<PmAuditLog>("pm_audit_logs");
+    public IMongoCollection<PmBriefing> PmBriefings => _database.GetCollection<PmBriefing>("pm_briefings");
 
     // 团队动态（全平台白名单写操作留痕，ActivityLogActionFilter 写入）
     public IMongoCollection<ActivityLog> ActivityLogs => _database.GetCollection<ActivityLog>("activity_logs");
+
+    // 行为信号事件（行为洞察面板采集层，前端 behaviorTracker 批量上报）
+    public IMongoCollection<BehaviorEvent> BehaviorEvents => _database.GetCollection<BehaviorEvent>("behavior_events");
+
+    // 行为洞察处理状态（确认/已修复/忽略 + 转缺陷关联，按 kind|target 指纹持久化）
+    public IMongoCollection<BehaviorInsightState> BehaviorInsightStates => _database.GetCollection<BehaviorInsightState>("behavior_insight_states");
 
     // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
     public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
@@ -364,6 +379,7 @@ public class MongoDbContext
     public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");
     public IMongoCollection<Customer> Customers => _database.GetCollection<Customer>("customers");
     public IMongoCollection<ProductCategory> ProductCategories => _database.GetCollection<ProductCategory>("product_categories");
+    public IMongoCollection<RequirementType> RequirementTypes => _database.GetCollection<RequirementType>("requirement_types");
     public IMongoCollection<ProductDescTemplate> ProductDescTemplates => _database.GetCollection<ProductDescTemplate>("product_desc_templates");
     public IMongoCollection<ProductItemActivity> ProductItemActivities => _database.GetCollection<ProductItemActivity>("product_item_activities");
     public IMongoCollection<ProductItemSummary> ProductItemSummaries => _database.GetCollection<ProductItemSummary>("product_item_summaries");

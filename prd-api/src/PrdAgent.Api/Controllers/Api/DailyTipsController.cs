@@ -535,6 +535,11 @@ public sealed class DailyTipsController : ControllerBase
     private static readonly DateTime FeatureTip2026W21ExpireAt =
         new(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc);
 
+    // 「轻微提醒更新」(视觉创作首页可粘贴图片)的固定下线时间。同样锚定发布日,不能用 now.AddDays(n)。
+    // 过此日期后新用户不再看到这条新功能气泡(老用户看过即 markLearned,本就不再弹)。
+    private static readonly DateTime VisualPasteReminderExpireAt =
+        new(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+
     /// <summary>
     /// 已退役的 seed SourceId：被新版各页 *-page-guide 完整教程取代的旧版精简短教程。
     /// 老环境若曾跑过 /seed 把它们落了库，新旧 SourceId 不冲突会导致新旧并存（Codex P2）。
@@ -583,6 +588,23 @@ public sealed class DailyTipsController : ControllerBase
         // 的短 tip 全部删掉;用户说「短短的流程一条流程的给删掉」。
         return new List<DailyTip>
         {
+            // ===== 轻微提醒更新（*-update-reminder，单步悬浮气泡，进页自动弹一次、看过即不再显示）=====
+            // 与下面「新功能公告」(feature-release，自动展开抽屉让用户「跟我做」)不同:
+            // reminder 直接在功能位置弹一个轻量气泡,告诉用户「这里更新了」,不要求走流程。
+            // 前端 isUpdateReminderTip 据 sourceId 含 `-update-reminder` 识别,走 Spotlight 气泡路径,
+            // 弹出当下即 markLearned → 不管取消还是「知道了」都不再显示(详见 onboarding-tips 规则)。
+            T("visual-agent-paste-update-reminder", "card",
+                "新功能 · 可以直接粘贴图片了",
+                "视觉创作首页现在支持直接粘贴剪贴板里的图片了:复制任意图片后,点一下输入框按 Ctrl/Cmd+V 即可作为参考图;也能把本地图片直接拖进输入框。",
+                "/visual-agent",
+                "知道了",
+                "[data-tour-id=visual-image-btn]",
+                1,
+                autoAction: null,
+                endAt: VisualPasteReminderExpireAt,
+                sourceType: "update-reminder",
+                tier: "advanced"),
+
             // ===== 新功能公告（feature-release，7 天后自动过期，避免过时弹窗堆首页）=====
             // 这两条对应 2026-W20/W21 上线的能力，默认推送给所有用户。过期后由 /visible 的
             // EndAt 过滤自动隐藏；下一批新功能上线时替换此处两条即可（属时效内容，定期更新）。
@@ -920,7 +942,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=visual-page-title]", Title = "第 1 步：欢迎来到视觉创作", Body = "不用自己配 API key，平台已接好多个生图模型，描述一句话就能出图。", NavigateTo = "/visual-agent" },
                         new() { Selector = "[data-tour-id=visual-subtitle]", Title = "第 2 步：它能做什么", Body = "海报、插画、品牌视觉、参考图改造……用一句话描述需求即可。" },
                         new() { Selector = "[data-tour-id=visual-prompt-input]", Title = "第 3 步：写下你想要的画面", Body = "中英文都行，越具体越好（主体 + 场景 + 风格）。" },
-                        new() { Selector = "[data-tour-id=visual-image-btn]", Title = "第 4 步：上传参考图", Body = "有参考图就点「图片」上传，AI 会参考它的构图或风格。" },
+                        new() { Selector = "[data-tour-id=visual-image-btn]", Title = "第 4 步：上传参考图", Body = "有参考图就点「图片」上传，AI 会参考它的构图或风格。也可直接 Ctrl/Cmd+V 粘贴剪贴板里的图片，或把本地图片拖进输入框。" },
                         new() { Selector = "[data-tour-id=visual-size-btn]", Title = "第 5 步：选画布尺寸", Body = "点尺寸按钮选常见规格（方图 / 竖图 / 横图 / 海报等）。" },
                         new() { Selector = "[data-tour-id=visual-scenarios]", Title = "第 6 步：场景快捷标签", Body = "不知道怎么写？点下面的预设场景一键套用提示词。" },
                         new() { Selector = "[data-tour-id=visual-pro]", Title = "第 7 步：Pro 高级能力", Body = "高亮的 Pro 标签提供更强的设计与编排能力，点开了解。" },
@@ -937,7 +959,7 @@ public sealed class DailyTipsController : ControllerBase
             T("document-store-page-guide", "card",
                 "知识库：本页 8 步上手教程",
                 "从总览、搜索筛选排序到新建、上传、发布到智识殿堂，一次走遍。",
-                "/document-store",
+                "/document-store#guide-list",
                 "开始本页教程",
                 "[data-tour-id=library-toolbar], [data-tour-id=library-tabs]",
                 0,
@@ -980,9 +1002,9 @@ public sealed class DailyTipsController : ControllerBase
                     {
                         new() { Selector = "[data-tour-id=sync-toolbar], [data-tour-id=library-sync-tab]", Title = "第 1 步：进入「跨环境同步」页签", Body = "同步让一个知识库的内容在两处保持一致——可以是测试/正式两个环境，也可以是本环境的两个库。这里就是同步管理中心（单库粒度，只搬这一个库的文档，不碰账号或别的库）。", NavigateTo = "/document-store?tab=sync" },
                         new() { Selector = "[data-tour-id=library-sync-tab], [data-tour-id=sync-toolbar]", Title = "第 2 步：「跨环境同步」页签", Body = "顶部最右的「跨环境同步」页签就是入口，以后从这里进来管理所有同步配对。" },
-                        new() { Selector = "[data-tour-id=sync-toolbar]", Title = "第 3 步：同步工具栏", Body = "这里有「启动链接」「生成连接链接」「刷新」，下面列出你所有的同步配对。" },
-                        new() { Selector = "[data-tour-id=sync-start-link]", Title = "第 4 步：启动链接（建立配对）", Body = "两种方式二选一：跨环境就粘贴对方给的 skblink 链接；本环境两个库就直接选 A、B。还能选方向：双向 / 只推 / 只拉。" },
-                        new() { Selector = "[data-tour-id=sync-generate-link]", Title = "第 5 步：生成连接链接（给对端）", Body = "想让别的环境连过来，就在这里选库生成一条 skblink 永久链接发过去。令牌永久有效、不会过期，不想要了可在库里撤销。" },
+                        new() { Selector = "[data-tour-id=sync-toolbar]", Title = "第 3 步：同步工具栏", Body = "这里有本地库配对入口和刷新按钮，下面列出你所有的同步配对。" },
+                        new() { Selector = "[data-tour-id=sync-start-link]", Title = "第 4 步：建立本地配对", Body = "本环境两个库可直接选 A、B 建立配对，还能选方向：双向 / 只推 / 只拉。" },
+                        new() { Selector = "[data-tour-id=sync-start-link]", Title = "第 5 步：跨环境改走系统互联", Body = "跨环境手粘链接路径已下架；需要跨环境时，按顶部提示到「设置 → 系统互联」配对节点，再回到知识库列表用「发送到」。" },
                         new() { Selector = "[data-tour-id=sync-list]", Title = "第 6 步：配对列表与立即同步", Body = "每条配对可随时切方向、点「立即同步」、或「撤销」。改动后显示「待同步」，同步完显示绿色「已同步」对勾。" },
                         new() { Selector = "[data-tour-id=sync-list]", Title = "第 7 步：库详情看同步徽章", Body = "进入任何一个同步中的知识库，右上角都会显示同步状态徽章（已同步 / 待同步 / 出错），点它能回到这里管理。看完点「完成」" },
                     },

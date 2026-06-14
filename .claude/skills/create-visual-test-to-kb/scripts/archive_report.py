@@ -20,6 +20,9 @@
 local 模式不读任何 env、不发任何网络请求。
 """
 import argparse, json, os, subprocess, datetime, re, shutil, time
+from pathlib import Path
+
+LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
 
 
 def curl(args, retries=5):
@@ -60,6 +63,41 @@ def build_meta(report_id, now, reviewer, a, preview):
     )
 
 
+def repo_root():
+    try:
+        out = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True, stderr=subprocess.DEVNULL).strip()
+        return Path(out).resolve() if out else None
+    except Exception:
+        return None
+
+
+def is_inside_repo(path, root=None):
+    if os.environ.get("ALLOW_REPO_ACCEPTANCE_ARTIFACTS") == "1":
+        return False
+    root = root or repo_root()
+    if not root:
+        return False
+    try:
+        Path(path).resolve().relative_to(root)
+        return True
+    except Exception:
+        return False
+
+
+def artifact_path_errors(manifest, cfg=None):
+    errs = []
+    root = repo_root()
+    for m in manifest:
+        p = m.get("path", "")
+        if p and is_inside_repo(p, root):
+            errs.append(f"[证据文件位置] 截图位于代码库内：{Path(p).resolve()}。验收截图必须写到 /tmp、对象存储或知识库,不得进入 git diff")
+    if cfg and cfg.get("report", {}).get("mode") == "local":
+        out_dir = cfg.get("report", {}).get("localOutDir") or LOCAL_DEFAULT_OUT_DIR
+        if is_inside_repo(out_dir, root):
+            errs.append(f"[本地输出位置] localOutDir 位于代码库内：{Path(out_dir).resolve()}。local 模式默认应写 /tmp/map-acceptance-local")
+    return errs
+
+
 def assemble(title, body, evidence, meta, img_md=None):
     """正文以 H1 标题打头（根治目录 `---`，见标准 §2.1），机读字段在文末注释。
     支持两种图片占位：
@@ -74,7 +112,7 @@ def assemble(title, body, evidence, meta, img_md=None):
 
 
 def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
-    out_dir = cfg["report"].get("localOutDir", "doc/acceptance")
+    out_dir = cfg["report"].get("localOutDir") or LOCAL_DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     shot_dir = os.path.join(out_dir, report_id)
     os.makedirs(shot_dir, exist_ok=True)
@@ -232,7 +270,7 @@ JUNK_TARGETS = {"test", "测试", "xxx", "demo", "tmp", "临时", "aaa", "todo"}
 PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\}|IMG:)")
 
 
-def validate_inputs(a, body, manifest):
+def validate_inputs(a, body, manifest, cfg=None):
     """返回拒收原因列表（空 = 通过准入）。结构层校验，语义层(Verdict 一致性)由人/工具把关。"""
     errs = []
     t = (a.target or "").strip()
@@ -245,6 +283,7 @@ def validate_inputs(a, body, manifest):
     need = TIER_MIN_SHOTS.get(a.tier, 3)
     if len(manifest) < need:
         errs.append(f"[证据] 截图数 {len(manifest)} < {a.tier} 下限 {need}")
+    errs.extend(artifact_path_errors(manifest, cfg))
     for m in manifest:
         p = m.get("path", "")
         if not os.path.isfile(p) or os.path.getsize(p) < 1024:
@@ -284,6 +323,77 @@ def validate_inputs(a, body, manifest):
     for kw in ("TODO", "待填", "待补"):
         if kw in body:
             errs.append(f"[半成品] 报告含未完成标记：{kw}")
+
+    # ── v2.3 证据链连线（2026-06-10，用户指出「问题原因和结果截图完全不同/有些完全没有连线」后新增）──
+    # 1) 正文 {{IMG:name}} 必须能连回 manifest（防图文脱节）
+    # 2) 「验收用例」表里状态为 pass 的行，证据列必须引用真实截图（「图XX」且 manifest 有以 XX 开头的图）；
+    #    「文字记录 / 无 / N.A.」一律拒收——没有图的断言不允许进 pass 报告。
+    mani_names = [(m.get("name") or "").strip() for m in manifest]
+    for ph in re.findall(r"\{\{IMG:([^}]+)\}\}", body):
+        if ph.strip() not in mani_names:
+            errs.append(f"[断链] 正文引用 {{{{IMG:{ph.strip()}}}}} 不在 manifest（图文脱节）")
+    in_case_table = False
+    for line in body.splitlines():
+        ls = line.strip()
+        if ls.startswith("#"):
+            in_case_table = "验收用例" in ls
+            continue
+        if not in_case_table or not ls.startswith("|"):
+            continue
+        cells = [c.strip() for c in ls.strip("|").split("|")]
+        if len(cells) < 3 or not any(c.lower() == "pass" for c in cells):
+            continue  # 表头/分隔行/非 pass 行不查
+        evidence = cells[-1]
+        if re.fullmatch(r"(文字记录|文字断言|日志|无|—|-{1,3}|N/?\.?A\.?)?", evidence, re.I):
+            errs.append(f"[断链] pass 用例无图证据（证据列={evidence!r}），无图断言不得 pass：{ls[:70]}")
+            continue
+        refs = re.findall(r"图\s*([0-9]+[a-zA-Z]?)", evidence)
+        if not refs:
+            errs.append(f"[断链] pass 用例证据列未引用截图（需「图XX」连到 manifest）：{ls[:70]}")
+        else:
+            for r0 in refs:
+                if not any(n.lower().startswith(r0.lower()) for n in mani_names):
+                    errs.append(f"[断链] pass 用例引用「图{r0}」但 manifest 无以 {r0} 开头的截图：{ls[:70]}")
+
+    # ── v2.4 诉求连线（2026-06-10 第二波：用户在证据板上发现「诉求 3 由 0 张证据证明（无连线）」）──
+    # 「需求一一对应表」里状态为已落地/已实现/完成/pass 的行，最后一列必须连到证据：
+    # 引用「图XX」（manifest 有对应图）或「用例N」（用例行自身已被 v2.3 强制连图）。
+    # 没连线的"已落地"诉求 = 无证声称，整份报告拒收。
+    in_req_table = False
+    for line in body.splitlines():
+        ls = line.strip()
+        if ls.startswith("#"):
+            in_req_table = "需求一一对应" in ls
+            continue
+        if not in_req_table or not ls.startswith("|"):
+            continue
+        cells = [c.strip() for c in ls.strip("|").split("|")]
+        if len(cells) < 3:
+            continue
+        if not any(re.fullmatch(r"(已落地|已实现|已完成|完成|pass|done)", c, re.I) for c in cells):
+            continue  # 表头/分隔行/未落地行不查（未做的诉求本来就没有图）
+        tail = cells[-1]
+        img_refs = re.findall(r"图\s*([0-9]+[a-zA-Z]?)", tail)
+        case_refs = re.findall(r"用例\s*[0-9]+", tail)
+        if not img_refs and not case_refs:
+            errs.append(f"[断链] 已落地诉求 0 证据连线（需引用「图XX」或「用例N」）：{ls[:70]}")
+            continue
+        for r0 in img_refs:
+            if not any(n.lower().startswith(r0.lower()) for n in mani_names):
+                errs.append(f"[断链] 诉求引用「图{r0}」但 manifest 无以 {r0} 开头的截图：{ls[:70]}")
+
+    # ── v2.5 验收地址 + 步骤式证据（2026-06-11 用户指出：报告无标的物地址无法跳转；
+    #    集中 {{EVIDENCE}} 在证据板渲染成「没有可解析的证据步骤」）──
+    if "验收地址" not in body or "http" not in body:
+        errs.append("[结构] 报告缺「验收地址」段（被验收功能页的可点击深链 + 分支/commit）——读者必须能从报告一键跳到标的物")
+    # 步骤式证据门禁按档位缩放：与 TIER_MIN_SHOTS 一致，L0 轻量验收不应被
+    #「>=3 步骤」硬卡（Bugbot：L0 只要 1 图却被 3 步骤门拒）。下限 = min(档位截图下限, 3)。
+    step_floor = min(TIER_MIN_SHOTS.get(a.tier, 3), 3)
+    step_heads = re.findall(r"^## 步骤\s*\d+", body, re.M)
+    img_count = len(re.findall(r"\{\{IMG:", body))
+    if len(step_heads) < step_floor or img_count < step_floor:
+        errs.append(f"[结构] 证据必须步骤式：{a.tier} 档需 >={step_floor} 个「## 步骤 N」段且逐段 {{{{IMG:}}}} 配图（当前步骤={len(step_heads)} 配图={img_count}）。"
+                    "证据板按步骤解析，集中 {{EVIDENCE}} 会渲染成『没有可解析的证据步骤』")
     return errs
 
 
@@ -319,7 +429,7 @@ def main():
     manifest = json.load(open(a.manifest))
 
     # 准入校验：不达标直接拒收，不写库（--force 越权但告警）
-    errs = validate_inputs(a, body, manifest)
+    errs = validate_inputs(a, body, manifest, cfg)
     if errs:
         head = "准入校验未通过，已拒收（输入不对，输出不可能对）：" if not a.force else "准入校验未通过，但 --force 强行继续："
         print(head)

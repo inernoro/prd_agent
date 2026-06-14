@@ -9,6 +9,8 @@ import { toast } from '@/lib/toast';
 import { updatePmTask, deletePmTask, createPmTask, getPmTaskActivities, addPmTaskComment, getPmMembers } from '@/services';
 import type { PmMember, PmMilestone, PmGoal, PmTask, PmTaskStatus, PmTaskPriority, PmTaskActivity } from '@/services/contracts/pmAgent';
 import { TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, progressColor } from './pmConstants';
+import { useFormDraft, pmDraftKey } from './useFormDraft';
+import { DraftRestoreBar } from './DraftRestoreBar';
 
 const FIELD_LABEL: Record<string, string> = { status: '状态', priority: '优先级', assignee: '负责人', title: '标题' };
 const codeLabel = (field: string, v?: string | null) => {
@@ -35,7 +37,9 @@ const STATUSES: PmTaskStatus[] = ['backlog', 'todo', 'in_progress', 'done', 'can
 const PRIORITIES: PmTaskPriority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 
 const toDateInput = (iso?: string | null) => (iso ? iso.slice(0, 10) : '');
-const fromDateInput = (v: string) => (v ? new Date(v + 'T00:00:00').toISOString() : undefined);
+// 日期按纯日期字符串提交（后端存 UTC 零点），与里程碑同口径。
+// 此前转本地 00:00 再 toISOString 会在东八区变成前一天 16:00Z，回显 slice(0,10) 少一天，看似「保存不了」。
+const fromDateInput = (v: string) => (v ? v : undefined);
 
 /**
  * 任务详情抽屉（P0）— 点卡片打开，集中编辑全部字段。
@@ -75,6 +79,43 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
   useEffect(() => {
     getPmMembers(task.projectId).then((res) => { if (res.success) setMembers(res.data.members); });
   }, [task.projectId]);
+
+  // 草稿缓存：编辑任务时误关/误跳页后重开自动恢复
+  const draftSnapshot = useMemo(
+    () => ({ title, description, status, priority, assigneeId, milestoneId, goalId, estimateDays, startAt, dueAt, labels, dependsOn, progress }),
+    [title, description, status, priority, assigneeId, milestoneId, goalId, estimateDays, startAt, dueAt, labels, dependsOn, progress],
+  );
+  const draftPristine = useMemo(() => ({
+    title: task.title,
+    description: task.description ?? '',
+    status: task.status,
+    priority: task.priority,
+    assigneeId: task.assigneeId ?? '',
+    milestoneId: task.milestoneId ?? '',
+    goalId: task.goalId ?? '',
+    estimateDays: task.estimateDays != null ? String(task.estimateDays) : '',
+    startAt: toDateInput(task.startAt),
+    dueAt: toDateInput(task.dueAt),
+    labels: (task.labels ?? []).join(', '),
+    dependsOn: task.dependsOn ?? [],
+    progress: task.progressPercent ?? 0,
+  }), [task]);
+  const { hasDraft, clearDraft, dismissHint } = useFormDraft({
+    key: pmDraftKey('task', task.projectId, task.id),
+    value: draftSnapshot,
+    pristine: draftPristine,
+    onRestore: (s) => {
+      setTitle(s.title); setDescription(s.description); setStatus(s.status); setPriority(s.priority);
+      setAssigneeId(s.assigneeId); setMilestoneId(s.milestoneId); setGoalId(s.goalId); setEstimateDays(s.estimateDays);
+      setStartAt(s.startAt); setDueAt(s.dueAt); setLabels(s.labels); setDependsOn(s.dependsOn); setProgress(s.progress);
+    },
+  });
+  const restoreTaskOriginal = useCallback(() => {
+    setTitle(task.title); setDescription(task.description ?? ''); setStatus(task.status); setPriority(task.priority);
+    setAssigneeId(task.assigneeId ?? ''); setMilestoneId(task.milestoneId ?? ''); setGoalId(task.goalId ?? '');
+    setEstimateDays(task.estimateDays != null ? String(task.estimateDays) : ''); setStartAt(toDateInput(task.startAt)); setDueAt(toDateInput(task.dueAt));
+    setLabels((task.labels ?? []).join(', ')); setDependsOn(task.dependsOn ?? []); setProgress(task.progressPercent ?? 0);
+  }, [task]);
 
   const mentionMatches = mentionQuery === null ? [] : members.filter((m) =>
     m.displayName.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6);
@@ -170,6 +211,7 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
     });
     setSaving(false);
     if (res.success) {
+      clearDraft();
       toast.success('已保存', '');
       onSaved({
         ...task,
@@ -186,7 +228,7 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
   const remove = async () => {
     if (!window.confirm('确定删除该任务（含子任务）？')) return;
     const res = await deletePmTask(task.id);
-    if (res.success) { toast.success('已删除', ''); onDeleted(task.id); }
+    if (res.success) { clearDraft(); toast.success('已删除', ''); onDeleted(task.id); }
     else toast.error('删除失败', res.error?.message || '');
   };
 
@@ -215,6 +257,7 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
 
         {/* Body */}
         <div className="flex-1 px-5 py-4 flex flex-col gap-3.5" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {hasDraft && <DraftRestoreBar onDiscard={() => { restoreTaskOriginal(); clearDraft(); }} onDismiss={dismissHint} />}
           <div>
             <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>标题</label>
             <input className={inputCls} style={inputStyle} value={title} onChange={(e) => setTitle(e.target.value)} />

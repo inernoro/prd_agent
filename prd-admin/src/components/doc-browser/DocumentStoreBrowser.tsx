@@ -23,6 +23,8 @@ interface Props {
   enableCategories?: boolean;
   /** 首次进入（store 无分类）时种子化的预置分类名。仅 enableCategories+canWrite 时生效。 */
   categoryPresets?: string[];
+  /** 「添加」菜单项：从网页托管导入（可写时透传给 DocBrowser）。选择/导入流程由调用方实现。 */
+  onImportFromHosting?: () => void;
 }
 
 const NO_CAT = '__none__';
@@ -32,7 +34,7 @@ const NO_CAT = '__none__';
  * 复用文件夹/多格式上传/MD·HTML 预览/标签全套能力。供「项目知识库」等场景接入。
  * enableCategories 时额外提供：分类筛选 + 快速新建 + 分类/标签集中管理 + 右键改分类。
  */
-export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, categoryPresets }: Props) {
+export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, categoryPresets, onImportFromHosting }: Props) {
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>();
@@ -335,6 +337,7 @@ export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, cate
     onCreateFolder: handleCreateFolder,
     onCreateDocument: handleCreateDocument,
     onUploadFile: () => fileInputRef.current?.click(),
+    onImportFromHosting,
     onReplaceFile: handleReplaceFile,
   } : {};
 

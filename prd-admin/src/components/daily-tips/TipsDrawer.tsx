@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT, START_TUTORIAL_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide, filterPageTips, isUpdateTip, pickAutoOpenUpdateTip } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, filterPageTips, isUpdateTip, isUpdateReminderTip, pickAutoOpenUpdateTip, routePathOf } from './pageGuideMatch';
 import { difficultyMeta } from './difficultyMeta';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload, SPOTLIGHT_PAYLOAD_UPDATED_EVENT } from './TipsRotator';
@@ -39,6 +39,10 @@ const AUTO_OPEN_DATE_KEY = 'tipsBookAutoOpenedDate';
  *  逼着人人都过一遍；本 session 内每条只自动开一次（避免切页反复弹），跨 session 未完成会再弹，
  *  直到用户点「完成」走完最后一步（SpotlightOverlay 末步才 markLearned）。 */
 const AUTO_STARTED_GUIDES_KEY = 'tipsAutoStartedGuides';
+/** 轻微提醒更新:本 session 已自动「悬浮气泡」弹过的 *-update-reminder sourceId 集合。
+ *  跨 session 的「只弹一次」由 markLearned(服务端)兜底——气泡弹出当下即标记学会,
+ *  之后不管用户取消还是点「知道了」都不再显示。本 session set 仅防同 session 内切页重弹。 */
+const AUTO_STARTED_REMINDERS_KEY = 'tipsAutoStartedReminders';
 
 function todayStr(): string {
   const d = new Date();
@@ -233,6 +237,11 @@ export function TipsDrawer() {
   useEffect(() => {
     if (!loaded) return;
     if (pageGuideHere) return; // 本页有未走完教程 → 由 Spotlight 自动开讲,不抢着展开抽屉(避免叠加)
+    // 本页有未学会的「轻微提醒更新」且其精确目标页正是当前页 → 由下面的 Spotlight 气泡 effect 独占
+    // 自动弹,抽屉不抢(避免双弹)。必须带精确路由判断:filterPageTips 会把 reminder 前缀匹配到子路由
+    // (/visual-agent/:id),但 reminder 只在精确列表页弹;不判精确路由的话,子路由上的周更新教程抽屉会被
+    // 这条「其实不会弹」的 reminder 误抑制(Bugbot Medium)。
+    if (pageTips.some((t) => isUpdateReminderTip(t) && !t.learned && location.pathname === routePathOf(t.actionUrl))) return;
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     const opened = readAutoOpenedIds();
     const updateTip = pickAutoOpenUpdateTip(pageTips, opened);
@@ -250,7 +259,54 @@ export function TipsDrawer() {
     // pageGuideHere 必须进 deps:否则首屏若落在「有教程页」early-return 后,
     // 切到「有更新页」时本 effect 不再 fire,更新提醒整 session 失效(Bugbot)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, pageTips, pageGuideHere]);
+  }, [loaded, pageTips, pageGuideHere, location.pathname]);
+
+  // ── 轻微提醒更新:进入页面自动「悬浮气泡」弹一次,看过即不再显示 ──────────────
+  // 用户诉求(2026-06-11):刚上线的小功能(如视觉创作首页可粘贴图片),用一个轻量悬浮气泡
+  // 提醒「这里更新了」即可,不要做成要走流程的教程。进入对应页默认弹一次、只弹一次,
+  // 不管用户取消还是点「知道了」都不再显示。
+  //
+  // 机制:写 Spotlight payload 直接在功能位置弹单步气泡(writeSpotlightPayload),
+  // 同时立即 markLearned —— 非 page-guide 学会即从 items 移除 + 服务端持久化,跨 session 永不再弹。
+  // 与抽屉自动展开互斥(上面的 effect 已用 isUpdateReminderTip 抑制)。优先级低于本页 *-page-guide
+  // 强制开讲(新人先走完整套教程,reminder 等下次进页时再弹)。
+  useEffect(() => {
+    if (!loaded) return;
+    if (pageGuideHere) return; // 本页有未走完的新手教程 → 先让 Spotlight 走完整套,不抢
+    const reminder = pageTips.find((t) => isUpdateReminderTip(t) && !t.learned);
+    if (!reminder || !reminder.sourceId) return;
+    // 只在「精确目标页」弹/标记学会(Codex P2):reminder 是非 page-guide,filterPageTips 会把它
+    // 前缀匹配到子路由(如 /visual-agent/:id 编辑器),但锚点(visual-image-btn)只在列表页存在。
+    // 精确路由(非子路由前缀)即可阻止「在编辑器子路由弹空目标 + markLearned 永久消费」。
+    // 不在此处再 document.querySelector(锚点):列表页走 Suspense 懒加载,本 effect 首次跑时锚点可能
+    // 还没挂上;若因找不到锚点就 return 且不再重试(deps 不含 DOM 就绪信号),reminder 可能永远不自动弹
+    // (Bugbot High)。锚点就绪交给 SpotlightOverlay 自身轮询(最多 10s + 「正在定位」提示)兜底:
+    // 写 payload 后它会等锚点出现再画气泡;精确路由已保证锚点终会出现,不会误消费。
+    if (location.pathname !== routePathOf(reminder.actionUrl)) return;
+    // 同 session 内本页 *-page-guide 刚自动开讲/走完(完成时 markLearned 让 pageGuideHere 同 session 变 null)
+    // → 不要紧接着再弹更新提醒:新人刚走完整套教程(里面已讲到该新功能),立刻又弹气泡是重复打断(Codex P2)。
+    // 留到「下次进页」(page-guide 非本 session 新开)再弹。filterPageTips 不按 learned 过滤,
+    // 已学会的 page-guide 仍在 pageTips 里,可据此拿到本页 page-guide 的 sourceId。
+    let startedGuides: Set<string>;
+    try { startedGuides = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
+    catch { startedGuides = new Set(); }
+    const pageGuide = pageTips.find((t) => typeof t.sourceId === 'string' && t.sourceId.endsWith('-page-guide'));
+    if (pageGuide?.sourceId && startedGuides.has(pageGuide.sourceId)) return;
+
+    let started: Set<string>;
+    try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_REMINDERS_KEY) || '[]')); }
+    catch { started = new Set(); }
+    if (started.has(reminder.sourceId)) return;
+    started.add(reminder.sourceId);
+    try { sessionStorage.setItem(AUTO_STARTED_REMINDERS_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
+    // 占用当天「自动弹一次」额度:reminder 弹出当下即 markLearned 会把它移出 pageTips,
+    // 上方抽屉自动展开 effect 的「有未学会 reminder 就跳过」守卫随之失效;若本页同时还有未学会的
+    // 周更新教程,抽屉会在 reminder 气泡上层再自动展开(Bugbot Medium)。这里占掉日额度,抽屉本 session 不再自动弹。
+    markAutoOpenedToday();
+    void trackTip(reminder.id, 'clicked');
+    writeSpotlightPayload(reminder); // 在 [data-tour-id=...] 位置弹单步气泡
+    void markLearned(reminder.id);   // 看过即标记学会 → 之后永不再弹(取消/知道了都一样)
+  }, [loaded, pageTips, pageGuideHere, markLearned, location.pathname]);
 
   // ── 新用户兜底自动弹抽屉:已移除 ──────────────────────────
   // 历史上「本日第一次访问且本页有任意 tip 就自动展开抽屉」会在用户没点任何按钮时
@@ -259,26 +315,6 @@ export function TipsDrawer() {
   // 不需要再自动展开抽屉来「证明书的存在」。保留的自动行为只剩两类(均为明确意图、均按页限定):
   //   1) 本页有未学会的更新教程 → 上面的 effect 自动弹(本页列表);
   //   2) 本页未走完的 *-page-guide → 下面的 effect 走 Spotlight 强制开讲(onboarding 规则)。
-
-  // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
-  // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
-  // 机制:tips 已被后端过滤掉「已学会」的——所以本页教程还在 tips 里 = 没走完 → 自动开讲。
-  //   只标 markLearned(末步「完成」)才算过,中途关闭不算,下次进该页(跨 session)会再弹。
-  //   本 session 每条只自动弹一次(sessionStorage 记忆),避免同 session 内切来切去反复打断。
-  useEffect(() => {
-    if (!loaded) return;
-    const guide = pageGuideHere;
-    if (!guide || !guide.sourceId) return;
-    let started: Set<string>;
-    try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
-    catch { started = new Set(); }
-    if (started.has(guide.sourceId)) return;
-    started.add(guide.sourceId);
-    try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
-    // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲
-    void trackTip(guide.id, 'clicked');
-    writeSpotlightPayload(guide);
-  }, [loaded, pageGuideHere]);
 
   // 关闭抽屉后复位回「本页」,保证下次打开还是本页教程语义
   useEffect(() => {
@@ -342,6 +378,25 @@ export function TipsDrawer() {
     },
     [navigate, location.pathname],
   );
+
+  // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
+  // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
+  // 机制:tips 已被后端过滤掉「已学会」的——所以本页教程还在 tips 里 = 没走完 → 自动开讲。
+  //   只标 markLearned(末步「完成」)才算过,中途关闭不算,下次进该页(跨 session)会再弹。
+  //   本 session 每条只自动弹一次(sessionStorage 记忆),避免同 session 内切来切去反复打断。
+  useEffect(() => {
+    if (!loaded) return;
+    const guide = pageGuideHere;
+    if (!guide || !guide.sourceId) return;
+    let started: Set<string>;
+    try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
+    catch { started = new Set(); }
+    if (started.has(guide.sourceId)) return;
+    started.add(guide.sourceId);
+    try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
+    // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲
+    handleOpenTip(guide);
+  }, [loaded, pageGuideHere, handleOpenTip]);
 
   // 单套教程直接开讲(TipsEntryButton 派发 START_TUTORIAL_EVENT):找到该 tip 直接走 handleOpenTip,不展开面板。
   useEffect(() => {

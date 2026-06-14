@@ -7,13 +7,14 @@
  * 需求/功能 的「新建」走独立页面（/product-agent/p/:productId/:kind/new）；查看走详情页。
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download } from 'lucide-react';
 import { ProductAssistantPanel } from './ProductAssistantPanel';
 import { QuickActionsCard } from './QuickActionsCard';
-import { TapdRtfImportDialog } from './TapdRtfImportDialog';
+import { requirementSourceLabel } from './requirementSource';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { KnowledgeModule } from './knowledge/KnowledgeModule';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
@@ -21,19 +22,29 @@ import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
 import { ProductTeamTab } from './ProductTeamSection';
 import { ReportsTab } from './ReportsTab';
-import { BatchBar } from './BatchBar';
+import {
+  SelectionActionBar,
+  SelectableRow,
+  ListTableSelectionCell,
+  ListTableSelectionHeader,
+  useOverviewTableSelection,
+} from './selectableList';
+import type { TableSelectionProps } from './listSelection';
+import { LIST_SELECTION_COL_WIDTH, listSelectionRowClass } from './listSelection';
+import { downloadListCsv } from './listExport';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import './product-cards.css';
 import { VersionWorkflowTab } from './VersionWorkflowTab';
+import { FeatureCatalogTab } from './FeatureCatalogTab';
 import {
   getProduct,
+  getOverviewStats,
   listVersions,
   createVersion,
   deleteVersion,
   listRequirements,
   deleteRequirement,
   listFeatures,
-  deleteFeature,
   listTracedDefects,
   listCustomers,
   untraceDefect,
@@ -44,11 +55,22 @@ import {
 } from '@/services/real/productAgent';
 import { searchDirectoryUsers } from '@/services';
 import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, effectiveDefectGrade } from './types';
-import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, type FilterFieldDef } from './listFilter';
-import { toCSV, downloadCSV } from '@/lib/csv';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, readDefectPriorityGrade, readDefectSeverityLevel } from './types';
+import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
+import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
+import { useAuthStore } from '@/stores/authStore';
+import { WorkflowTransitionDialog } from './WorkflowTransitionDialog';
+import {
+  canExecuteWorkflowTransition,
+  isGlobalProductAdmin,
+  transitionNeedsDialog,
+  type ProductWorkflowContext,
+} from './workflowTransitionGuard';
+import { TrackedFilterToggle } from './TrackedFilterToggle';
+import { filterByTracked } from './productRecordTrackStorage';
+import type { WorkflowTransition } from './types';
 
 type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
 
@@ -93,6 +115,7 @@ export function SingleProductView() {
   const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   // 当前 tab 记录在 URL（?tab=），从对象详情页返回时能停在原 tab，而不是回弹到工作台。
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -114,6 +137,9 @@ export function SingleProductView() {
 
   useEffect(() => {
     void reload();
+    void getOverviewStats().then((res) => {
+      if (res.success) setIsAdmin(res.data.isAdmin);
+    });
   }, [reload]);
 
   if (loading) {
@@ -168,6 +194,14 @@ export function SingleProductView() {
         <div className="flex-1 min-h-0">
           <ProductGraphCanvas productId={product.id} />
         </div>
+      ) : active === 'features' ? (
+        <div className="flex h-full min-h-0 flex-1 flex-col">
+          <FeatureCatalogTab productId={product.id} showImport={isAdmin} />
+        </div>
+      ) : active === 'requirements' ? (
+        <div className="flex h-full min-h-0 flex-1 flex-col">
+          <RequirementsTab productId={product.id} />
+        </div>
       ) : active === 'board' ? (
         <div className="flex-1 min-h-0 p-4">
           <BoardTab productId={product.id} />
@@ -179,8 +213,6 @@ export function SingleProductView() {
       ) : (
         <SectionShell title={SECTION_TITLE[active]}>
           {active === 'versions' && <VersionsTab productId={product.id} />}
-          {active === 'requirements' && <RequirementsTab productId={product.id} />}
-          {active === 'features' && <FeaturesTab productId={product.id} />}
           {active === 'reports' && <ReportsTab productId={product.id} />}
           {active === 'defects' && <DefectsTab productId={product.id} />}
           {active === 'team' && <ProductTeamTab productId={product.id} />}
@@ -190,21 +222,16 @@ export function SingleProductView() {
   );
 }
 
-// ── 看板（按状态分列拖拽流转）──
+// ── 看板（需求按状态分列拖拽流转；功能无独立流转，跟随所属版本）──
 function BoardTab({ productId }: { productId: string }) {
-  const [kind, setKind] = useState<'requirement' | 'feature'>('requirement');
   return (
     <div className="h-full min-h-0 flex flex-col gap-3">
       <div className="shrink-0 flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-white/80">看板</h2>
-        <span className="text-[11px] text-white/35">拖拽卡片到目标列即可流转状态</span>
-        <div className="flex rounded-lg border border-white/10 overflow-hidden ml-auto">
-          <button onClick={() => setKind('requirement')} className={`px-3 py-1 text-xs ${kind === 'requirement' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>需求</button>
-          <button onClick={() => setKind('feature')} className={`px-3 py-1 text-xs ${kind === 'feature' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>功能</button>
-        </div>
+        <h2 className="text-sm font-semibold text-white/80">需求看板</h2>
+        <span className="text-[11px] text-white/35">拖拽卡片到目标列即可流转需求状态；功能状态请查看所属版本</span>
       </div>
       <div className="flex-1 min-h-0">
-        <KanbanBoard key={kind} productId={productId} entityType={kind} />
+        <KanbanBoard productId={productId} entityType="requirement" />
       </div>
     </div>
   );
@@ -363,22 +390,19 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [items, setItems] = useState<Requirement[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [tapdRtfFiles, setTapdRtfFiles] = useState<File[]>([]);
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const fileRef = useRef<HTMLInputElement>(null);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const nameOf = useDirectoryNames();
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
-  const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   useEffect(() => {
     void listVersions(productId).then((r) => { if (r.success) setVersions(r.data.items); });
     void listCustomers().then((r) => { if (r.success) setCustomers(r.data.items); });
   }, [productId]);
 
-  const stateLabel = useCallback((key: string) => workflow?.states.find((s) => s.key === key)?.label ?? key, [workflow]);
+  const stateLabel = useCallback((key: string) => resolveRequirementStateLabel(key, workflow), [workflow]);
   const versionName = useMemo(() => new Map(versions.map((v) => [v.id, v.versionName])), [versions]);
   const customerName = useMemo(() => new Map(customers.map((c) => [c.id, c.name])), [customers]);
   const fields = useMemo<FilterFieldDef<Requirement>[]>(() => [
@@ -386,28 +410,50 @@ function RequirementsTab({ productId }: { productId: string }) {
     { key: 'state', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.currentState ?? '', stateLabel), test: (r, v) => (r.currentState ?? '') === v },
     { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.assigneeId ?? '', nameOf), test: (r, v) => (r.assigneeId ?? '') === v },
     { key: 'owner', label: '负责人', options: (its) => distinctOptions(its, (r) => r.ownerId ?? '', nameOf), test: (r, v) => (r.ownerId ?? '') === v },
-    { key: 'source', label: '数据来源', options: (its) => distinctOptions(its, (r) => r.sourceSystem ?? '', (value) => value === 'tapd' ? 'TAPD 导入' : value), test: (r, v) => (r.sourceSystem ?? '') === v },
-    { key: 'sourceState', label: 'TAPD 状态', options: (its) => distinctOptions(its, (r) => r.sourceSnapshot?.status ?? '', (value) => value), test: (r, v) => (r.sourceSnapshot?.status ?? '') === v },
+    { key: 'source', label: '数据来源', options: (its) => distinctOptions(its, (r) => r.sourceSystem ?? '', requirementSourceLabel), test: (r, v) => (r.sourceSystem ?? '') === v },
     { key: 'version', label: '关联版本', options: (its) => distinctMultiOptions(its, (r) => r.versionIds, (id) => versionName.get(id) ?? id), test: (r, v) => r.versionIds.includes(v) },
     { key: 'customer', label: '关联客户', options: (its) => distinctMultiOptions(its, (r) => r.customerIds, (id) => customerName.get(id) ?? id), test: (r, v) => r.customerIds.includes(v) },
     { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (r, v) => inTimeRange(r.createdAt, v) },
   ], [stateLabel, nameOf, versionName, customerName]);
-  const { bar, filtered } = useListFilter({
+  const { bar, filtered: filterBarFiltered } = useListFilter({
     items,
     storageKey: 'pa-list-filters:requirement',
     fields,
     keywordOf: (r) => `${r.requirementNo} ${r.externalId ?? ''} ${r.title} ${r.description ?? ''} ${Object.values(r.sourceSnapshot?.fields ?? {}).join(' ')}`,
-    keywordPlaceholder: '搜索 MAP/TAPD 编号、标题、描述',
+    keywordPlaceholder: '搜索 ID、标题、描述',
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
+  });
+  const filtered = useMemo(
+    () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId, recordId: r.id })),
+    [filterBarFiltered, trackedOnly, productId],
+  );
+
+
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
+    filename: `需求-${productId}.csv`,
+    headers: ['ID', '标题', '分级', '状态', '描述'],
+    mapRow: (r) => [
+      r.requirementNo,
+      r.title,
+      ITEM_GRADE_LABEL[r.grade] ?? r.grade,
+      stateLabel(r.currentState ?? ''),
+      r.description ?? '',
+    ],
   });
 
-  const exportCsv = () => {
-    const rows = items.map((r) => [r.requirementNo, r.externalId ?? '', r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, r.currentState ?? '', r.sourceSnapshot?.status ?? '', r.description ?? '']);
-    downloadCSV(`需求-${productId}.csv`, toCSV(['MAP编号', 'TAPD ID', '标题', '分级', 'MAP状态', 'TAPD状态', '描述'], rows));
+  const exportCsv = (onlySelected = false) => {
+    if (onlySelected) {
+      exportSelected();
+      return;
+    }
+    const rows = items.map((r) => [r.requirementNo, r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
+    downloadListCsv(`需求-${productId}.csv`, ['ID', '标题', '分级', '状态', '描述'], rows);
   };
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await listRequirements(productId);
+    const res = await listRequirements(productId, { mine: true });
     if (res.success) setItems(res.data.items);
     setLoading(false);
   }, [productId]);
@@ -416,81 +462,75 @@ function RequirementsTab({ productId }: { productId: string }) {
     void reload();
   }, [reload]);
 
-  if (loading) return <MapSectionLoader text="正在加载需求…" />;
+  if (loading) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center">
+        <MapSectionLoader text="正在加载需求…" />
+      </div>
+    );
+  }
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+    <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
+      <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".rtf,application/rtf,text/rtf"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              const rtfFiles = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith('.rtf'));
-              if (rtfFiles.length > 0) setTapdRtfFiles(rtfFiles);
-              e.target.value = '';
-            }}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs"
-          >
-            <Upload size={13} /> 导入 TAPD RTF
-          </button>
-          <button onClick={exportCsv} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
+          <button onClick={() => exportCsv(false)} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
             <Download size={13} /> 导出CSV
           </button>
           {items.length > 0 && <ViewToggle view={view} setView={setView} />}
         </div>
       </div>
+      <p className="shrink-0 text-xs text-white/35">仅显示你作为负责人或处理人的需求。</p>
       {items.length === 0 ? (
-        <EmptyHint text="还没有需求。点「新建需求」打开独立页面填写，可分级并关联客户、版本、功能，被缺陷追溯。" />
+        <EmptyHint text="没有与你相关的需求。你是负责人或处理人的需求会出现在这里；点「新建需求」可创建新条目。" />
       ) : (
         <>
-        {bar}
+        <div className="shrink-0 w-full min-w-0 flex items-center gap-2 flex-wrap">
+          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
+        </div>
         {filtered.length === 0 ? (
-          <div className="text-center text-white/35 text-sm py-10">没有匹配的需求，调整筛选条件试试。</div>
+          <div className="text-center text-white/35 text-sm py-10">
+            {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : '没有匹配的需求，调整筛选条件试试。'}
+          </div>
         ) : view === 'board' && workflow && workflow.states.length > 0 ? (
-        <StateBoard items={filtered} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
+        <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
+          <StateBoard items={filtered} productId={productId} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
+        </div>
       ) : view === 'board' ? (
-        <GradeBoard
-          items={filtered}
-          onCardClick={(r) => openDetail(r.id)}
-          renderSub={(r) => `${r.requirementNo}${r.externalId ? ` · TAPD ${r.externalId}` : ''} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
-        />
-      ) : (
-        <div className="flex flex-col gap-2">
-          {selected.size > 0 && (
-            <BatchBar entityType="requirement" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
-          )}
-          <RequirementDataTable
+        <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
+          <GradeBoard
             items={filtered}
-            selected={selected}
-            toggleSelected={toggleSel}
-            openDetail={openDetail}
-            stateLabel={stateLabel}
-            nameOf={nameOf}
-            versionName={versionName}
-            customerName={customerName}
-            onDelete={async (id) => {
-              await deleteRequirement(id);
-              await reload();
-            }}
+            onCardClick={(r) => openDetail(r.id)}
+            renderSub={(r) => `${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
           />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-2 w-full min-w-0">
+          <SelectionActionBar
+            mode="entity"
+            entityType="requirement"
+            selection={selection}
+            onDone={reload}
+            onExport={() => exportCsv(true)}
+          />
+          <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-white/10" style={{ overscrollBehavior: 'contain' }}>
+            <RequirementDataTable
+              items={filtered}
+              selection={tableSelection}
+              openDetail={openDetail}
+              stateLabel={stateLabel}
+              nameOf={nameOf}
+              versionName={versionName}
+              customerName={customerName}
+              onDelete={async (id) => {
+                await deleteRequirement(id);
+                await reload();
+              }}
+            />
+          </div>
         </div>
       )}
         </>
-      )}
-      {tapdRtfFiles.length > 0 && (
-        <TapdRtfImportDialog
-          productId={productId}
-          files={tapdRtfFiles}
-          onClose={() => setTapdRtfFiles([])}
-          onImported={reload}
-        />
       )}
     </div>
   );
@@ -498,8 +538,7 @@ function RequirementsTab({ productId }: { productId: string }) {
 
 function RequirementDataTable({
   items,
-  selected,
-  toggleSelected,
+  selection,
   openDetail,
   stateLabel,
   nameOf,
@@ -508,8 +547,7 @@ function RequirementDataTable({
   onDelete,
 }: {
   items: Requirement[];
-  selected: Set<string>;
-  toggleSelected: (id: string) => void;
+  selection: TableSelectionProps;
   openDetail: (id: string) => void;
   stateLabel: (key: string) => string;
   nameOf: (id?: string | null) => string;
@@ -521,126 +559,69 @@ function RequirementDataTable({
     .filter((field) => field !== 'ID')
     .sort((left, right) => left.localeCompare(right, 'zh-CN')), [items]);
   const rows = orderByHierarchy(items);
-  const cell = 'max-w-56 truncate px-3 py-2 text-xs text-white/60';
+  const cell = 'truncate px-3 py-2 text-xs text-white/60';
+  const dynamicColCount = sourceFields.length;
+  const minTableWidth = 1060 + dynamicColCount * 120;
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-white/10">
-      <table className="min-w-max whitespace-nowrap text-left text-sm">
-        <thead className="sticky top-0 z-10 bg-[#181a20] text-[11px] text-white/45">
-          <tr>
-            <th className="w-10 px-3 py-2 font-medium">选择</th>
-            <th className="px-3 py-2 font-medium">MAP 编号</th>
-            <th className="px-3 py-2 font-medium">TAPD ID</th>
-            <th className="min-w-72 px-3 py-2 font-medium">标题</th>
-            <th className="px-3 py-2 font-medium">分级</th>
-            <th className="px-3 py-2 font-medium">MAP 状态</th>
-            <th className="px-3 py-2 font-medium">处理人</th>
-            <th className="px-3 py-2 font-medium">负责人</th>
-            <th className="px-3 py-2 font-medium">关联版本</th>
-            <th className="px-3 py-2 font-medium">关联客户</th>
-            {sourceFields.map((field) => <th key={field} className="px-3 py-2 font-medium">{field}</th>)}
-            <th className="px-3 py-2 font-medium">创建时间</th>
-            <th className="px-3 py-2 font-medium">更新时间</th>
-            <th className="w-16 px-3 py-2 font-medium">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ item, depth }) => (
-            <tr key={item.id} onClick={() => openDetail(item.id)} className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]">
-              <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} className="accent-cyan-500" /></td>
-              <td className={cell}>{item.requirementNo}</td>
-              <td className={cell}>{item.externalId || '-'}</td>
-              <td className="max-w-96 px-3 py-2 text-white/85"><div className="truncate" style={{ paddingLeft: depth * 20 }}>{depth > 0 && <span className="mr-1 text-white/25">└</span>}{item.title}</div></td>
-              <td className={cell}>{ITEM_GRADE_LABEL[item.grade]}</td>
-              <td className={cell}>{stateLabel(item.currentState ?? '') || '-'}</td>
-              <td className={cell}>{nameOf(item.assigneeId)}</td>
-              <td className={cell}>{nameOf(item.ownerId)}</td>
-              <td className={cell}>{item.versionIds.map((id) => versionName.get(id) ?? id).join('、') || '-'}</td>
-              <td className={cell}>{item.customerIds.map((id) => customerName.get(id) ?? id).join('、') || '-'}</td>
-              {sourceFields.map((field) => <td key={field} className={cell} title={item.sourceSnapshot?.fields?.[field]}>{item.sourceSnapshot?.fields?.[field] || '-'}</td>)}
-              <td className={cell}>{new Date(item.createdAt).toLocaleString('zh-CN')}</td>
-              <td className={cell}>{new Date(item.updatedAt).toLocaleString('zh-CN')}</td>
-              <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}><button onClick={() => void onDelete(item.id)} className="text-white/30 hover:text-red-300" title="删除"><Trash2 size={14} /></button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ── 功能 tab（新建走独立页）──
-function FeaturesTab({ productId }: { productId: string }) {
-  const navigate = useNavigate();
-  const [items, setItems] = useState<Feature[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const { workflow } = useEffectiveWorkflow('feature', productId);
-  const nameOf = useDirectoryNames();
-  const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const res = await listFeatures(productId);
-    if (res.success) setItems(res.data.items);
-    setLoading(false);
-  }, [productId]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  const stateLabel = useCallback((key: string) => workflow?.states.find((s) => s.key === key)?.label ?? key, [workflow]);
-  const featureTitle = useMemo(() => new Map(items.map((f) => [f.id, f.title])), [items]);
-  const fields = useMemo<FilterFieldDef<Feature>[]>(() => [
-    { key: 'grade', label: '等级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (f, v) => f.grade === v },
-    { key: 'state', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (f) => f.currentState ?? '', stateLabel), test: (f, v) => (f.currentState ?? '') === v },
-    { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (f) => f.assigneeId ?? '', nameOf), test: (f, v) => (f.assigneeId ?? '') === v },
-    { key: 'owner', label: '负责人', options: (its) => distinctOptions(its, (f) => f.ownerId ?? '', nameOf), test: (f, v) => (f.ownerId ?? '') === v },
-    { key: 'parent', label: '父功能', options: (its) => distinctOptions(its, (f) => f.parentId ?? '', (id) => featureTitle.get(id) ?? id), test: (f, v) => (f.parentId ?? '') === v },
-    { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (f, v) => inTimeRange(f.createdAt, v) },
-  ], [stateLabel, nameOf, featureTitle]);
-  const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:feature', fields, keywordOf: (f) => `${f.featureNo} ${f.title} ${f.description ?? ''}`, keywordPlaceholder: '搜索编号/标题/描述' });
-
-  if (loading) return <MapSectionLoader text="正在加载功能…" />;
-  return (
-    <div className="flex flex-col gap-3">
-      <NewButton label="新建功能" onClick={() => navigate(`/product-agent/p/${productId}/feature/new`)} />
-      {items.length === 0 ? (
-        <EmptyHint text="还没有功能。点「新建功能」打开独立页面填写。功能跨版本演进，可实现需求、被版本纳入（功能版本化）。" />
-      ) : (
-        <>
-        {bar}
-        {filtered.length === 0 ? (
-          <div className="text-center text-white/35 text-sm py-10">没有匹配的功能，调整筛选条件试试。</div>
-        ) : (
-        <div className="flex flex-col gap-2">
-          {selected.size > 0 && (
-            <BatchBar entityType="feature" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
-          )}
-          {orderByHierarchy(filtered).map(({ item: f, depth }) => (
-            <div key={f.id} style={{ marginLeft: depth * 24 }} className="flex items-center gap-2">
-              <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggleSel(f.id)} className="accent-cyan-500 shrink-0" />
-              <div className={`flex-1 min-w-0 ${depth > 0 ? 'border-l-2 border-white/10 pl-2' : ''}`}>
-                <Row
-                  title={f.title}
-                  badge={ITEM_GRADE_LABEL[f.grade]}
-                  sub={`${f.featureNo} · 实现需求 ${f.requirementIds.length}`}
-                  onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
-                  actionLabel="查看详情"
-                  onDelete={async () => {
-                    await deleteFeature(f.id);
-                    await reload();
-                  }}
-                />
+    <table className="w-full table-fixed text-left text-sm" style={{ minWidth: minTableWidth }}>
+      <colgroup>
+        <col style={{ width: LIST_SELECTION_COL_WIDTH }} />
+        <col style={{ width: '8%' }} />
+        <col style={{ width: dynamicColCount > 0 ? '20%' : '26%' }} />
+        <col style={{ width: '5%' }} />
+        <col style={{ width: '8%' }} />
+        <col style={{ width: '8%' }} />
+        <col style={{ width: '8%' }} />
+        <col style={{ width: '9%' }} />
+        <col style={{ width: '9%' }} />
+        {sourceFields.map((field) => <col key={field} style={{ width: '8%' }} />)}
+        <col style={{ width: '9%' }} />
+        <col style={{ width: '9%' }} />
+        <col style={{ width: 48 }} />
+      </colgroup>
+      <thead className="sticky top-0 z-10 bg-[#0f1014] text-[11px] text-white/45 border-b border-white/10">
+        <tr>
+          <ListTableSelectionHeader selection={selection} disabled={rows.length === 0} />
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">ID</th>
+          <th className="px-3 py-2.5 font-medium">{formatListSectionTitle('标题', items.length)}</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">分级</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">MAP 状态</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">处理人</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">负责人</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">关联版本</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">关联客户</th>
+          {sourceFields.map((field) => <th key={field} className="px-3 py-2.5 font-medium whitespace-nowrap">{field}</th>)}
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">创建时间</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">更新时间</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(({ item, depth }) => (
+          <tr key={item.id} onClick={() => openDetail(item.id)} className={listSelectionRowClass('cursor-pointer border-t border-white/5 hover:bg-white/[0.03]')}>
+            <ListTableSelectionCell selection={selection} id={item.id} />
+            <td className={`${cell} whitespace-nowrap font-mono text-cyan-200/80`}>{item.requirementNo}</td>
+            <td className="px-3 py-2 text-white/85">
+              <div className="truncate" style={{ paddingLeft: depth * 20 }} title={item.title}>
+                {depth > 0 && <span className="mr-1 text-white/25">└</span>}
+                {item.title}
               </div>
-            </div>
-          ))}
-        </div>
-      )}
-        </>
-      )}
-    </div>
+            </td>
+            <td className={`${cell} whitespace-nowrap`}>{ITEM_GRADE_LABEL[item.grade]}</td>
+            <td className={cell} title={stateLabel(item.currentState ?? '')}>{stateLabel(item.currentState ?? '') || '-'}</td>
+            <td className={cell} title={nameOf(item.assigneeId)}>{nameOf(item.assigneeId)}</td>
+            <td className={cell} title={nameOf(item.ownerId)}>{nameOf(item.ownerId)}</td>
+            <td className={cell} title={item.versionIds.map((id) => versionName.get(id) ?? id).join('、') || '-'}>{item.versionIds.map((id) => versionName.get(id) ?? id).join('、') || '-'}</td>
+            <td className={cell} title={item.customerIds.map((id) => customerName.get(id) ?? id).join('、') || '-'}>{item.customerIds.map((id) => customerName.get(id) ?? id).join('、') || '-'}</td>
+            {sourceFields.map((field) => <td key={field} className={cell} title={item.sourceSnapshot?.fields?.[field]}>{item.sourceSnapshot?.fields?.[field] || '-'}</td>)}
+            <td className={`${cell} whitespace-nowrap`}>{new Date(item.createdAt).toLocaleString('zh-CN')}</td>
+            <td className={`${cell} whitespace-nowrap`}>{new Date(item.updatedAt).toLocaleString('zh-CN')}</td>
+            <td className="px-3 py-2 text-center" onClick={(event) => event.stopPropagation()}><button onClick={() => void onDelete(item.id)} className="text-white/30 hover:text-red-300" title="删除"><Trash2 size={14} /></button></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -649,12 +630,13 @@ function DefectsTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<TracedDefect[]>([]);
   const [loading, setLoading] = useState(true);
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [features, setFeatures] = useState<Feature[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await listTracedDefects(productId);
+    const res = await listTracedDefects(productId, { mine: true });
     if (res.success) setItems(res.data.items);
     setLoading(false);
   }, [productId]);
@@ -678,7 +660,8 @@ function DefectsTab({ productId }: { productId: string }) {
     return m;
   }, [items]);
   const fields = useMemo<FilterFieldDef<TracedDefect>[]>(() => [
-    { key: 'grade', label: '等级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (d, v) => effectiveDefectGrade(d) === v },
+    { key: 'severity', label: '严重程度', defaultVisible: true, options: () => (['致命', '严重', '一般', '轻微'] as const).map((label) => ({ value: label, label })), test: (d, v) => readDefectSeverityLevel(d) === v },
+    { key: 'priority', label: '优先级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (d, v) => readDefectPriorityGrade(d) === v },
     { key: 'status', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (d) => d.status, defectStatusLabel), test: (d, v) => d.status === v },
     { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (d) => d.assigneeId ?? '', (id) => personName.get(id) ?? id), test: (d, v) => (d.assigneeId ?? '') === v },
     { key: 'reporter', label: '上报人', options: (its) => distinctOptions(its, (d) => d.reporterId ?? '', (id) => personName.get(id) ?? id), test: (d, v) => (d.reporterId ?? '') === v },
@@ -686,7 +669,25 @@ function DefectsTab({ productId }: { productId: string }) {
     { key: 'version', label: '关联版本', options: (its) => distinctOptions(its, (d) => d.tracedVersionId ?? '', (id) => versionName.get(id) ?? id), test: (d, v) => (d.tracedVersionId ?? '') === v },
     { key: 'created', label: '提交时间', options: () => TIME_PRESETS, test: (d, v) => inTimeRange(d.createdAt, v) },
   ], [personName, featureName, versionName]);
-  const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索编号/标题/描述' });
+  const { bar, filtered: filterBarFiltered } = useListFilter({
+    items,
+    storageKey: 'pa-list-filters:defect',
+    fields,
+    keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`,
+    keywordPlaceholder: '搜索 ID、标题、描述',
+    searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
+  });
+  const filtered = useMemo(
+    () => filterByTracked(filterBarFiltered, trackedOnly, 'defect', (d) => ({ productId, recordId: d.id })),
+    [filterBarFiltered, trackedOnly, productId],
+  );
+
+  const { selection, exportSelected } = useOverviewTableSelection(filtered, {
+    filename: `defects-${productId}.csv`,
+    headers: ['ID', '标题', '状态', '严重程度'],
+    mapRow: (d) => [d.defectNo, d.title ?? '', defectStatusLabel(d.status), readDefectSeverityLevel(d) ?? ''],
+  });
 
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
@@ -699,28 +700,55 @@ function DefectsTab({ productId }: { productId: string }) {
           <Plus size={15} /> 新建缺陷
         </button>
       </div>
+      <p className="text-xs text-white/35">仅显示你作为处理人或上报人的缺陷。</p>
       {items.length === 0 ? (
-        <EmptyHint text="还没有缺陷。点上方「新建缺陷」创建本产品的第一个缺陷。" />
+        <EmptyHint text="没有与你相关的缺陷。你是处理人或上报人的缺陷会出现在这里；点「新建缺陷」可创建新条目。" />
       ) : (
         <>
-        {bar}
+        <div className="flex w-full min-w-0 items-center gap-2 flex-wrap">
+          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
+        </div>
+        <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
         {filtered.length === 0 ? (
-          <div className="text-center text-white/35 text-sm py-10">没有匹配的缺陷，调整筛选条件试试。</div>
+          <div className="text-center text-white/35 text-sm py-10">
+            {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : '没有匹配的缺陷，调整筛选条件试试。'}
+          </div>
         ) : (
         <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-3 px-3 py-2 text-[11px] font-medium text-white/45 border-b border-white/10">
+            <span className="w-24 shrink-0">ID</span>
+            <span className="min-w-0 flex-1">{formatListSectionTitle('标题', filtered.length)}</span>
+            <span className="w-16 shrink-0 text-right">状态</span>
+          </div>
           {filtered.map((d) => (
-            <Row
+            <SelectableRow
               key={d.id}
-              title={d.title || '(无标题)'}
-              badge={defectStatusLabel(d.status)}
-              sub={`${d.defectNo}${d.tracedRequirementId ? ' · 已追溯到需求' : d.tracedVersionId ? ' · 已追溯到版本' : ' · 仅追溯到产品'}`}
+              id={d.id}
+              selection={selection}
               onClick={() => navigate(`/product-agent/p/${productId}/defect/${d.id}`)}
-              actionLabel="查看详情"
-              onDelete={async () => {
-                await untraceDefect(d.id);
-                await reload();
-              }}
-            />
+              className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02]"
+              trailing={
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="opacity-0 group-hover:opacity-100 text-[11px] text-cyan-300/70 transition-opacity">查看详情</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void untraceDefect(d.id).then(reload); }}
+                    className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="min-w-0 text-left flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-white/90 truncate">{d.title || '(无标题)'}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 shrink-0">{defectStatusLabel(d.status)}</span>
+                </div>
+                <div className="text-[11px] text-white/40 mt-0.5 truncate">
+                  {`${d.defectNo}${d.tracedRequirementId ? ' · 已追溯到需求' : d.tracedVersionId ? ' · 已追溯到版本' : ' · 仅追溯到产品'}`}
+                </div>
+              </div>
+            </SelectableRow>
           ))}
         </div>
         )}
@@ -732,11 +760,12 @@ function DefectsTab({ productId }: { productId: string }) {
 
 // ════════════════════════ 复用小组件 ════════════════════════
 
-function NewButton({ label, onClick }: { label: string; onClick: () => void }) {
+function NewButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
+      disabled={disabled}
+      className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
     >
       <Plus size={15} /> {label}
     </button>
@@ -808,7 +837,7 @@ function Row({
   title: string;
   sub?: string;
   badge?: string;
-  onDelete: () => void;
+  onDelete?: () => void;
   onClick?: () => void;
   actionLabel?: string;
 }) {
@@ -829,12 +858,14 @@ function Row({
         {onClick && actionLabel && (
           <span className="opacity-0 group-hover:opacity-100 text-[11px] text-cyan-300/70 transition-opacity">{actionLabel}</span>
         )}
-        <button
-          onClick={onDelete}
-          className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity"
-        >
-          <Trash2 size={14} />
-        </button>
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity"
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -847,37 +878,64 @@ function EmptyHint({ text }: { text: string }) {
 /** 按工作流状态分列的看板，支持拖拽卡片改状态（走合法流转）。 */
 function StateBoard({
   items,
+  productId,
   workflow,
   onCardClick,
   onChanged,
 }: {
   items: Requirement[];
+  productId: string;
   workflow: WorkflowDefinition;
   onCardClick: (r: Requirement) => void;
   onChanged: () => void;
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overState, setOverState] = useState<string | null>(null);
+  const [product, setProduct] = useState<ProductWorkflowContext | null>(null);
+  const [pendingTransition, setPendingTransition] = useState<{ item: Requirement; transition: WorkflowTransition } | null>(null);
+  const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
+  const permissions = useAuthStore((s) => s.permissions);
+  const isGlobalAdmin = isGlobalProductAdmin(permissions);
   const states = [...workflow.states].sort((a, b) => a.sortOrder - b.sortOrder);
   const initial = states.find((s) => s.isInitial)?.key ?? states[0]?.key;
+
+  useEffect(() => {
+    void getProduct(productId).then((res) => {
+      if (res.success) {
+        setProduct({
+          ownerId: res.data.ownerId,
+          ownerIds: res.data.ownerIds,
+          adminIds: res.data.adminIds,
+          memberIds: res.data.memberIds,
+        });
+      }
+    });
+  }, [productId]);
 
   const drop = async (toState: string) => {
     const r = items.find((x) => x.id === dragId);
     setDragId(null);
     setOverState(null);
     if (!r) return;
-    const from = r.currentState ?? initial;
+    const from = normalizeRequirementStateKey(r.currentState ?? initial, workflow);
     if (from === toState) return;
     const t = workflow.transitions.find((tr) => tr.toState === toState && (!tr.fromState || tr.fromState === from));
-    if (!t) return; // 没有合法流转
-    const res = await transition({ entityType: 'requirement', entityId: r.id, transitionKey: t.key, comment: t.requireComment ? '看板拖拽流转' : undefined });
+    if (!t) return;
+    const entity = { ownerId: r.ownerId, assigneeId: r.assigneeId, title: r.title, grade: r.grade, versionIds: r.versionIds };
+    if (product && currentUserId && !canExecuteWorkflowTransition(currentUserId, t, product, isGlobalAdmin, entity)) return;
+    if (transitionNeedsDialog(t, entity)) {
+      setPendingTransition({ item: r, transition: t });
+      return;
+    }
+    const res = await transition({ entityType: 'requirement', entityId: r.id, transitionKey: t.key });
     if (res.success) onChanged();
   };
 
   return (
+    <>
     <div className="flex gap-3 overflow-x-auto pb-2" style={{ overscrollBehavior: 'contain' }}>
       {states.map((s) => {
-        const list = items.filter((r) => (r.currentState ?? initial) === s.key);
+        const list = items.filter((r) => normalizeRequirementStateKey(r.currentState ?? initial, workflow) === s.key);
         return (
           <div
             key={s.key}
@@ -913,6 +971,26 @@ function StateBoard({
         );
       })}
     </div>
+    {pendingTransition && (
+      <WorkflowTransitionDialog
+        open
+        productId={productId}
+        workflow={workflow}
+        entityType="requirement"
+        entityId={pendingTransition.item.id}
+        transition={pendingTransition.transition}
+        entity={{
+          ownerId: pendingTransition.item.ownerId,
+          assigneeId: pendingTransition.item.assigneeId,
+          title: pendingTransition.item.title,
+          grade: pendingTransition.item.grade,
+          versionIds: pendingTransition.item.versionIds,
+        }}
+        onClose={() => setPendingTransition(null)}
+        onDone={onChanged}
+      />
+    )}
+    </>
   );
 }
 

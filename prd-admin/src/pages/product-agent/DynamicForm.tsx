@@ -1,7 +1,7 @@
 /**
  * 产品管理智能体 — 动态表单渲染 + 有效模板/流程解析（让全局设置真正驱动页面）。
  *
- * 字段控件真实实现（参考 TAPD）：
+ * 字段控件：文本/数字/日期/下拉/用户/关联对象/富文本/附件等。
  *  - file 附件：多文件上传(uploadAttachment) + 图片缩略图/下载/删除，支持拖拽
  *  - richtext 富文本：contentEditable 排版工具栏(粗体/斜体/下划线/列表/标题) + 截图粘贴/拖拽上传
  *  - relation 对象关联：按 relationEntityType 拉本产品对象多选
@@ -11,8 +11,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Upload, X, FileText, Bold, Italic, Underline, List, ListOrdered, Heading, RemoveFormatting } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { ItemSearchOption } from '@/components/itemSearchCombobox';
+import { ItemMultiSearchSelect } from '@/components/ItemMultiSearchSelect';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { sanitizeHtml, cleanPastedHtml } from '@/lib/sanitizeHtml';
+import { enrichContentWithMentions } from '@/lib/mentionRender';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   listFormTemplates,
@@ -84,11 +87,17 @@ export function FormFieldsRenderer({
   values,
   onChange,
   productId,
+  hideLabels = false,
+  fileUploadHint,
 }: {
   fields: FormField[];
   values: Record<string, string>;
   onChange: (key: string, value: string) => void;
   productId?: string | null;
+  /** 用于右侧属性栏等已带标签的场景 */
+  hideLabels?: boolean;
+  /** 附件上传区文案；传空字符串则仅显示图标 */
+  fileUploadHint?: string;
 }) {
   if (fields.length === 0) return null;
   const sorted = [...fields].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -96,19 +105,21 @@ export function FormFieldsRenderer({
     <div className="flex flex-col gap-3">
       {sorted.map((f) => (
         <div key={f.key} className="flex flex-col gap-1">
-          <label className="text-xs text-white/55">
-            {f.label || f.key}
-            {f.required && <span className="text-red-300/70 ml-1">*</span>}
-          </label>
-          <FieldControl field={f} value={values[f.key] ?? f.defaultValue ?? ''} onChange={(v) => onChange(f.key, v)} productId={productId ?? null} />
-          {f.helpText && <span className="text-[11px] text-white/30">{f.helpText}</span>}
+          {!hideLabels && (
+            <label className="text-xs text-white/55">
+              {f.label || f.key}
+              {f.required && <span className="text-red-300/70 ml-1">*</span>}
+            </label>
+          )}
+          <FieldControl field={f} value={values[f.key] ?? f.defaultValue ?? ''} onChange={(v) => onChange(f.key, v)} productId={productId ?? null} fileUploadHint={fileUploadHint} />
+          {!hideLabels && f.helpText && <span className="text-[11px] text-white/30">{f.helpText}</span>}
         </div>
       ))}
     </div>
   );
 }
 
-function FieldControl({ field, value, onChange, productId }: { field: FormField; value: string; onChange: (v: string) => void; productId: string | null }) {
+function FieldControl({ field, value, onChange, productId, fileUploadHint }: { field: FormField; value: string; onChange: (v: string) => void; productId: string | null; fileUploadHint?: string }) {
   const base = 'px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
   switch (field.type) {
     case 'textarea':
@@ -116,7 +127,7 @@ function FieldControl({ field, value, onChange, productId }: { field: FormField;
     case 'richtext':
       return <RichTextField value={value} onChange={onChange} />;
     case 'file':
-      return <FileField value={value} onChange={onChange} />;
+      return <FileField value={value} onChange={onChange} uploadHint={fileUploadHint} />;
     case 'relation':
       return <RelationField value={value} onChange={onChange} entityType={field.relationEntityType || inferRelationTarget(field.label)} productId={productId} />;
     case 'user':
@@ -177,7 +188,7 @@ function parseAttachments(value: string): AttachItem[] {
   }
 }
 
-function FileField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function FileField({ value, onChange, uploadHint = '点击或拖拽上传附件（图片/文档等）' }: { value: string; onChange: (v: string) => void; uploadHint?: string }) {
   const items = parseAttachments(value);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -206,10 +217,10 @@ function FileField({ value, onChange }: { value: string; onChange: (v: string) =
           if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files);
         }}
         onClick={() => inputRef.current?.click()}
-        className="flex items-center justify-center gap-2 px-3 py-3 rounded-lg border border-dashed border-white/15 text-white/50 text-sm hover:border-cyan-500/40 hover:text-white/70 cursor-pointer"
+        className={`flex items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 text-white/50 text-sm hover:border-cyan-500/40 hover:text-white/70 cursor-pointer ${uploadHint === '' ? 'px-3 py-2' : 'px-3 py-3'}`}
       >
         {uploading ? <MapSpinner size={14} /> : <Upload size={15} />}
-        {uploading ? '上传中…' : '点击或拖拽上传附件（图片/文档等）'}
+        {uploading ? '上传中…' : uploadHint}
         <input
           ref={inputRef}
           type="file"
@@ -252,7 +263,9 @@ export function RichTextField({ value, onChange, minHeight = 120, placeholder }:
   // 未聚焦时同步外部值（初次加载 / 切换对象），聚焦输入时不打断
   useEffect(() => {
     const el = ref.current;
-    if (el && document.activeElement !== el && el.innerHTML !== value) el.innerHTML = sanitizeHtml(value);
+    if (el && document.activeElement !== el && el.innerHTML !== value) {
+      el.innerHTML = sanitizeHtml(enrichContentWithMentions(value));
+    }
   }, [value]);
 
   const exec = (cmd: string, arg?: string) => {
@@ -351,11 +364,19 @@ function inferRelationTarget(label?: string): string | undefined {
   return undefined;
 }
 
+function relationComboboxMeta(entityType: string): { placeholder: string; countUnit: string } {
+  switch (entityType) {
+    case 'feature': return { placeholder: '搜索功能...', countUnit: '个' };
+    case 'requirement': return { placeholder: '搜索需求...', countUnit: '条' };
+    case 'version': return { placeholder: '搜索版本...', countUnit: '个' };
+    case 'customer': return { placeholder: '搜索客户...', countUnit: '个' };
+    default: return { placeholder: '搜索并选择...', countUnit: '项' };
+  }
+}
+
 function RelationField({ value, onChange, entityType, productId }: { value: string; onChange: (v: string) => void; entityType?: string | null; productId: string | null }) {
-  const [options, setOptions] = useState<{ id: string; label: string }[]>([]);
+  const [options, setOptions] = useState<ItemSearchOption[]>([]);
   const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
   const selected = value ? value.split(',').filter(Boolean) : [];
 
   useEffect(() => {
@@ -363,10 +384,10 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
     let alive = true;
     setLoading(true);
     void (async () => {
-      let opts: { id: string; label: string }[] = [];
+      let opts: ItemSearchOption[] = [];
       if (entityType === 'requirement') {
         const r = await listRequirements(productId);
-        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.title }));
+        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.title, subLabel: x.requirementNo }));
       } else if (entityType === 'feature') {
         const r = await listFeatures(productId);
         if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.title }));
@@ -375,7 +396,7 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
         if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.versionName }));
       } else if (entityType === 'customer') {
         const r = await listCustomers();
-        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.name }));
+        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.name, subLabel: x.company ?? undefined }));
       }
       if (alive) {
         setOptions(opts);
@@ -388,54 +409,17 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
   }, [productId, entityType]);
 
   if (!entityType) return <div className="text-[11px] text-white/30">未配置关联对象类型</div>;
-  const labelOf = (id: string) => options.find((o) => o.id === id)?.label ?? id;
-  const toggle = (id: string) => {
-    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
-    onChange(next.join(','));
-  };
-  const q = query.trim().toLowerCase();
-  const filtered = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
+  const { placeholder, countUnit } = relationComboboxMeta(entityType);
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-white/70">
-        <span className="flex flex-wrap gap-1 min-w-0">
-          {selected.length === 0 ? <span className="text-white/40">点击选择关联对象</span> : selected.map((id) => (
-            <span key={id} className="text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-200 inline-flex items-center gap-1 max-w-[160px]">
-              <span className="truncate">{labelOf(id)}</span>
-              <X size={11} className="shrink-0 hover:text-white" onClick={(e) => { e.stopPropagation(); toggle(id); }} />
-            </span>
-          ))}
-        </span>
-        <span className="text-white/30 text-xs shrink-0">{open ? '收起' : selected.length > 0 ? `已选 ${selected.length}` : '展开'}</span>
-      </button>
-      {open && (
-        <div className="border-t border-white/10">
-          <div className="p-1.5">
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={`搜索${options.length > 0 ? `（共 ${options.length} 项）` : ''}…`}
-              className="w-full px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white outline-none focus:border-cyan-500/40"
-            />
-          </div>
-          <div className="max-h-60 overflow-y-auto px-1 pb-1" style={{ overscrollBehavior: 'contain' }}>
-            {loading ? (
-              <div className="text-[11px] text-white/40 py-3 text-center">加载中…</div>
-            ) : filtered.length === 0 ? (
-              <div className="text-[11px] text-white/30 py-3 text-center">{options.length === 0 ? '没有可选对象' : '无匹配结果'}</div>
-            ) : (
-              filtered.map((o) => (
-                <label key={o.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
-                  <input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggle(o.id)} className="accent-cyan-500 shrink-0" />
-                  <span className="text-sm text-white/80 truncate">{o.label}</span>
-                </label>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+    <ItemMultiSearchSelect
+      value={selected}
+      onChange={(ids) => onChange(ids.join(','))}
+      options={options}
+      placeholder={placeholder}
+      countUnit={countUnit}
+      uiSize="md"
+      emptyText={loading ? '加载中…' : '暂无可选项'}
+    />
   );
 }

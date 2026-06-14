@@ -5,7 +5,7 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { toast } from '@/lib/toast';
-import { getPmMembers, setPmMembers, setPmObservers, getUsers } from '@/services';
+import { getPmMembers, setPmMembers, setPmObservers } from '@/services';
 import type { PmMember } from '@/services/contracts/pmAgent';
 import type { AdminUser } from '@/types/admin';
 
@@ -31,7 +31,6 @@ export function MembersPanel({ projectId, canManage }: Props) {
   const [pickMember, setPickMember] = useState('');
   const [pickObserver, setPickObserver] = useState('');
   const [dirty, setDirty] = useState(false);
-  const [users, setUsers] = useState<AdminUser[]>([]);
 
   const load = useCallback(async () => {
     const res = await getPmMembers(projectId);
@@ -46,30 +45,23 @@ export function MembersPanel({ projectId, canManage }: Props) {
   }, [projectId]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    void getUsers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) setUsers(res.data.items.filter((u) => u.status === 'Active'));
-    });
-  }, []);
 
-  const toMember = (uid: string): PmMember => {
-    const u = users.find((x) => x.userId === uid);
-    return { userId: uid, displayName: u?.displayName || uid, avatarFileName: u?.avatarFileName ?? null };
-  };
-
-  // 互斥：加成员时从观察者剔除；加观察者时从成员剔除（项目经理不可作观察者）
-  const addMember = (uid: string) => {
+  // 互斥：加成员时从观察者剔除；加观察者时从成员剔除（项目经理不可作观察者）。
+  // 姓名/头像由 UserSearchSelect 的 onSelectUser 直接给到（directory 搜索普通用户可用，不再预取管理员用户列表）
+  const addMember = (u: AdminUser) => {
     setPickMember('');
+    const uid = u.userId;
     if (!uid || members.some((m) => m.userId === uid)) return;
     setObservers((prev) => prev.filter((o) => o.userId !== uid));
-    setMembers((prev) => [...prev, toMember(uid)]);
+    setMembers((prev) => [...prev, { userId: uid, displayName: u.displayName || u.username || uid, avatarFileName: u.avatarFileName ?? null }]);
     setDirty(true);
   };
-  const addObserver = (uid: string) => {
+  const addObserver = (u: AdminUser) => {
     setPickObserver('');
+    const uid = u.userId;
     if (!uid || uid === leaderId || observers.some((o) => o.userId === uid)) return;
     setMembers((prev) => prev.filter((m) => m.userId !== uid));
-    setObservers((prev) => [...prev, toMember(uid)]);
+    setObservers((prev) => [...prev, { userId: uid, displayName: u.displayName || u.username || uid, avatarFileName: u.avatarFileName ?? null }]);
     setDirty(true);
   };
   const removeMember = (uid: string) => { setMembers((prev) => prev.filter((m) => m.userId !== uid)); setDirty(true); };
@@ -134,7 +126,7 @@ export function MembersPanel({ projectId, canManage }: Props) {
         </div>
         {canManage && (
           <div className="flex items-center gap-2" style={{ maxWidth: 320 }}>
-            <UserSearchSelect value={pickMember} onChange={addMember} users={users} placeholder="搜索并添加成员…" uiSize="sm" />
+            <UserSearchSelect value={pickMember} onChange={() => {}} onSelectUser={addMember} placeholder="搜索并添加成员…" uiSize="sm" />
             <Plus size={15} style={{ color: 'var(--text-muted)' }} />
           </div>
         )}
@@ -156,7 +148,7 @@ export function MembersPanel({ projectId, canManage }: Props) {
         </div>
         {canManage && (
           <div className="flex items-center gap-2" style={{ maxWidth: 320 }}>
-            <UserSearchSelect value={pickObserver} onChange={addObserver} users={users} placeholder="搜索并添加观察者…" uiSize="sm" />
+            <UserSearchSelect value={pickObserver} onChange={() => {}} onSelectUser={addObserver} placeholder="搜索并添加观察者…" uiSize="sm" />
             <Plus size={15} style={{ color: 'var(--text-muted)' }} />
           </div>
         )}

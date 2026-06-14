@@ -119,9 +119,13 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
     // 其余 tip:本地立即移除(避免视觉延迟)。调用失败不回滚 — 用户下次刷新最多再看一次。
     const tip = get().items.find((t) => t.id === id);
     const isPageGuide = typeof tip?.sourceId === 'string' && tip.sourceId.endsWith('-page-guide');
+    // 记进本会话乐观学会版本(sourceId → 学会时版本号),后续 load 整包替换 items 时按版本 gate 叠加 learned。
+    // page-guide 与非 page-guide 都记:成功落库后服务端是权威源(非 page-guide 被 FilterLearned 移除、不会再回显);
+    // 但若 markLearned 请求失败、稍后某次 load 又把它当「未学会」拉回,applyLocalLearned 会按版本 gate 重新叠加
+    // learned —— 避免「轻微提醒更新 sessionStorage 已锁(本会话不再自动弹)却被恢复成未学会」的不一致
+    // (Bugbot: Reminder session lock before learn)。版本被 admin bump 时不压制,教程仍正常重现。
+    if (tip?.sourceId) locallyLearnedVersions.set(tip.sourceId, tip.version ?? 1);
     if (isPageGuide) {
-      // 记进本会话乐观学会版本(sourceId → 学会时版本号),后续 load 整包替换 items 时按版本 gate 叠加 learned(Bugbot)
-      if (tip?.sourceId) locallyLearnedVersions.set(tip.sourceId, tip.version ?? 1);
       set({ items: get().items.map((t) => (t.id === id ? { ...t, learned: true } : t)) });
     } else {
       set({ items: get().items.filter((t) => t.id !== id) });
