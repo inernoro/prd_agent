@@ -1,6 +1,16 @@
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { useState, useEffect } from 'react';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
+import {
+  AlertTriangle,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
+  ShieldCheck,
+} from 'lucide-react';
 import { copyToClipboard } from '@/lib/clipboard';
 import { toast } from '@/lib/toast';
 
@@ -13,6 +23,55 @@ interface InstallData {
   canDownloadSigned?: boolean;
   iCloudUrl?: string;
   serverUrl: string;
+}
+
+// ─── 可操作的错误视图：每种失败都有「为什么 + 下一步怎么办」，不留死胡同 ───
+interface InstallError {
+  title: string;
+  hint: string;
+  canRetry: boolean;
+}
+
+const ERROR_VIEWS = {
+  invalidLink: {
+    title: '链接不完整',
+    hint: '这个安装链接缺少必要信息。请重新扫一次分享者发给你的二维码，或让对方再发一次完整链接。',
+    canRetry: false,
+  },
+  expired: {
+    title: '授权已过期',
+    hint: '这个快捷指令的授权到期了。请让分享者在「快捷指令」页面点一下「延长 3 年」，再把新的二维码发给你。',
+    canRetry: true,
+  },
+  invalidToken: {
+    title: '链接已失效',
+    hint: '密钥不匹配，通常是分享者重新生成过快捷指令。请向对方要一张新的二维码。',
+    canRetry: false,
+  },
+  notFound: {
+    title: '快捷指令不存在',
+    hint: '这个快捷指令可能已被分享者删除。请向对方确认，或让其重新创建后再发你。',
+    canRetry: false,
+  },
+  network: {
+    title: '网络不稳定',
+    hint: '没能连上服务器。请检查手机网络后点下方「重试」。',
+    canRetry: true,
+  },
+} satisfies Record<string, InstallError>;
+
+function resolveInstallError(code?: string): InstallError {
+  switch (code) {
+    case 'EXPIRED':
+      return ERROR_VIEWS.expired;
+    case 'TOKEN_MISMATCH':
+    case 'INVALID_TOKEN':
+      return ERROR_VIEWS.invalidToken;
+    case 'NOT_FOUND':
+      return ERROR_VIEWS.notFound;
+    default:
+      return ERROR_VIEWS.network;
+  }
 }
 
 /**
@@ -30,25 +89,35 @@ export default function ShortcutInstallPage() {
   const token = searchParams.get('t') || '';
 
   const [data, setData] = useState<InstallData | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<InstallError | null>(null);
+  const [loading, setLoading] = useState(true);
   const [step, setStep] = useState(0); // 0=初始, 1=已复制配置, 2=已打开App
 
-  useEffect(() => {
+  const loadData = useCallback(async () => {
     if (!id || !token) {
-      setError('链接无效');
+      setError(ERROR_VIEWS.invalidLink);
+      setLoading(false);
       return;
     }
-    fetch(`/api/shortcuts/${id}/install-data?t=${encodeURIComponent(token)}`)
-      .then(async (res) => {
-        const json = await res.json();
-        if (json.success && json.data) {
-          setData(json.data);
-        } else {
-          setError(json.message || '加载失败');
-        }
-      })
-      .catch(() => setError('网络错误，请稍后重试'));
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/shortcuts/${id}/install-data?t=${encodeURIComponent(token)}`);
+      const json = await res.json();
+      if (json.success && json.data) {
+        setData(json.data);
+      } else {
+        // ApiResponse 的错误码在 error.code，不是顶层 message
+        setError(resolveInstallError(json?.error?.code));
+      }
+    } catch {
+      setError(ERROR_VIEWS.network);
+    } finally {
+      setLoading(false);
+    }
   }, [id, token]);
+
+  useEffect(() => { loadData(); }, [loadData]);
 
   // 复制配置 JSON 到剪贴板，返回是否成功
   const copyConfig = async (): Promise<boolean> => {
@@ -77,24 +146,39 @@ export default function ShortcutInstallPage() {
     window.location.href = data.iCloudUrl;
   };
 
-  if (error) {
+  if (loading) {
     return (
       <div style={containerStyle}>
-        <div style={cardStyle}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>😕</div>
-          <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>{error}</h1>
-          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.5)' }}>
-            请确认链接是否正确，或联系管理员
-          </p>
-        </div>
+        <MapSectionLoader />
       </div>
     );
   }
 
-  if (!data) {
+  if (error || !data) {
+    const view = error ?? ERROR_VIEWS.network;
     return (
       <div style={containerStyle}>
-        <MapSectionLoader />
+        <div style={cardStyle}>
+          <AlertTriangle size={44} style={{ color: '#ff9500', marginBottom: 14 }} />
+          <h1 style={{ fontSize: 19, fontWeight: 700, marginBottom: 10 }}>{view.title}</h1>
+          <p style={{
+            fontSize: 14, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6,
+            marginBottom: view.canRetry ? 20 : 0,
+          }}>
+            {view.hint}
+          </p>
+          {view.canRetry && (
+            <button
+              onClick={loadData}
+              style={{
+                ...btnStyle, background: '#007aff',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              <RefreshCw size={16} /> 重试
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -240,6 +324,12 @@ export default function ShortcutInstallPage() {
           <InfoRow label="收藏接口" value={`${data.serverUrl}/api/shortcuts/collect`} />
         </div>
 
+        {/* ── 连接自检：装完点一下就知道通没通，不用瞎猜 ── */}
+        <VerifyConnection token={token} shortcutName={data.name} />
+
+        {/* ── 遇到问题（常见卡点自助排查） ── */}
+        <HelpFaq />
+
         {/* ── 功能 ── */}
         <div style={{
           marginTop: 16, paddingTop: 14,
@@ -319,6 +409,169 @@ function InfoRow({ label, value, mono }: {
       </button>
     </div>
   );
+}
+
+// ─── 连接自检 ───
+// 装完快捷指令后，点一下就知道密钥通不通、收藏有没有到，省得用户对着手机干瞪眼。
+// 走 GET /collections（带 token），非破坏性：只验证授权 + 读回收藏数，不会写脏数据。
+type VerifyState =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'ok'; total: number; latest?: string }
+  | { kind: 'unauthorized' }
+  | { kind: 'network' };
+
+function VerifyConnection({ token, shortcutName }: { token: string; shortcutName: string }) {
+  const [state, setState] = useState<VerifyState>({ kind: 'idle' });
+
+  const check = async () => {
+    setState({ kind: 'checking' });
+    try {
+      // 相对路径走当前站点，避免跨域；token 通过 Authorization 头校验（与快捷指令实际收藏同一把锁）
+      const res = await fetch('/api/shortcuts/collections?page=1&pageSize=3', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 401) {
+        setState({ kind: 'unauthorized' });
+        return;
+      }
+      const json = await res.json();
+      if (json?.success && json.data) {
+        const total: number = json.data.total ?? json.data.Total ?? 0;
+        const items: Array<{ url?: string; text?: string }> = json.data.items ?? json.data.Items ?? [];
+        const first = items[0];
+        const latest = first?.url || first?.text || undefined;
+        setState({ kind: 'ok', total, latest });
+      } else {
+        setState({ kind: json?.error?.code ? 'unauthorized' : 'network' });
+      }
+    } catch {
+      setState({ kind: 'network' });
+    }
+  };
+
+  return (
+    <div style={{
+      marginTop: 16, padding: '14px 14px 16px', borderRadius: 12,
+      background: 'rgba(0,122,255,0.08)', border: '1px solid rgba(0,122,255,0.18)',
+      textAlign: 'left',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <ShieldCheck size={15} style={{ color: '#0a84ff', flexShrink: 0 }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>
+          装完了？点这里自检
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5, marginBottom: 10 }}>
+        建议先在任意 App 点一次分享 → 选「{shortcutName}」，再来点下方按钮，确认收藏真的通了。
+      </p>
+
+      <button
+        onClick={check}
+        disabled={state.kind === 'checking'}
+        style={{
+          width: '100%', padding: '11px 0', borderRadius: 10, border: 'none',
+          fontSize: 14, fontWeight: 600, cursor: state.kind === 'checking' ? 'default' : 'pointer',
+          background: 'rgba(0,122,255,0.85)', color: '#fff',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          opacity: state.kind === 'checking' ? 0.7 : 1,
+        }}
+      >
+        {state.kind === 'checking'
+          ? <><MapSpinner size={15} /> 检测中…</>
+          : <><RefreshCw size={14} /> 检查连接是否正常</>}
+      </button>
+
+      {state.kind === 'ok' && (
+        <ResultLine tone="ok">
+          连接正常，已收藏 {state.total} 条。
+          {state.latest
+            ? <> 最新一条：<span style={{ color: 'rgba(255,255,255,0.85)' }}>{truncate(state.latest, 40)}</span>，安装成功！</>
+            : <> 还没有收藏记录，去任意 App 点分享 → 选「{shortcutName}」试一下。</>}
+        </ResultLine>
+      )}
+      {state.kind === 'unauthorized' && (
+        <ResultLine tone="bad">
+          连接失败：密钥无效或已过期。请向分享给你的人要一张新的二维码。
+        </ResultLine>
+      )}
+      {state.kind === 'network' && (
+        <ResultLine tone="bad">网络不稳定，没连上服务器。请检查网络后再点一次。</ResultLine>
+      )}
+    </div>
+  );
+}
+
+function ResultLine({ tone, children }: { tone: 'ok' | 'bad'; children: React.ReactNode }) {
+  const color = tone === 'ok' ? '#34c759' : '#ff453a';
+  const Icon = tone === 'ok' ? CheckCircle2 : XCircle;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10,
+      fontSize: 12.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.7)',
+    }}>
+      <Icon size={15} style={{ color, flexShrink: 0, marginTop: 1 }} />
+      <span>{children}</span>
+    </div>
+  );
+}
+
+// ─── 常见卡点自助排查（折叠，不抢主流程） ───
+const FAQ_ITEMS: { q: string; a: React.ReactNode }[] = [
+  {
+    q: '点了安装没反应？',
+    a: <>需要 iPhone 系统 iOS 15 及以上，且已安装系统自带的「快捷指令」App（误删可在 App Store 重新下载）。</>,
+  },
+  {
+    q: '提示「不受信任的快捷指令」无法添加？',
+    a: <>打开 iPhone 设置 → 快捷指令 → 打开「允许不受信任的快捷指令」（需先在快捷指令 App 至少运行过一次）。</>,
+  },
+  {
+    q: '分享菜单里找不到它？',
+    a: <>打开「快捷指令」App → 长按这条快捷指令 → 详情 → 打开「在分享表单中显示」。</>,
+  },
+  {
+    q: '运行后提示没有网络权限？',
+    a: <>首次运行 iOS 会询问是否允许访问网络/剪贴板，请全部选「允许」，否则收藏发不出去。</>,
+  },
+];
+
+function HelpFaq() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: 14, textAlign: 'left' }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+          padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer',
+          color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: 600,
+        }}
+      >
+        <HelpCircle size={15} style={{ color: 'rgba(255,255,255,0.6)' }} />
+        <span style={{ flex: 1, textAlign: 'left' }}>遇到问题？点我看常见排查</span>
+        {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+      </button>
+      {open && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 2px 6px' }}>
+          {FAQ_ITEMS.map((item, i) => (
+            <div key={i}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: 3 }}>
+                {item.q}
+              </div>
+              <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
+                {item.a}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 // ─── Styles ───
