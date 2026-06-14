@@ -206,6 +206,16 @@ public static class AdminPermissionCatalog
     public const string ProjectRouteAgentManage = "project-route-agent.manage";
 
     /// <summary>
+    /// 商品溯源智能体权限（普通用户）：业务知识问答 + 案例排查 + 代码差异对比
+    /// </summary>
+    public const string ChannelTraceAgentUse = "channel-trace-agent.use";
+
+    /// <summary>
+    /// 商品溯源智能体管理权限（管理员）：维护防窜物流业务知识库与线上问题案例
+    /// </summary>
+    public const string ChannelTraceAgentManage = "channel-trace-agent.manage";
+
+    /// <summary>
     /// 网页托管权限（读）：查看托管站点列表
     /// </summary>
     public const string WebPagesRead = "web-pages.read";
@@ -423,6 +433,9 @@ public static class AdminPermissionCatalog
 
         new(ProjectRouteAgentUse, "项目路由智能体", "上传方案 md，自动识别应用/模块并定位仓库 routemap 项目路径"),
         new(ProjectRouteAgentManage, "项目路由智能体-管理", "维护公共站点说明 md 与仓库登记"),
+
+        new(ChannelTraceAgentUse, "商品溯源智能体", "防窜物流业务知识问答、线上问题案例排查、业务与代码差异对比"),
+        new(ChannelTraceAgentManage, "商品溯源智能体-管理", "维护防窜物流业务知识库与线上问题案例"),
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),

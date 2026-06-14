@@ -1,0 +1,338 @@
+import { apiRequest } from './apiClient';
+import type { ApiResponse } from '@/types/api';
+
+// ──────────────────────────────────────────────
+// 类型
+// ──────────────────────────────────────────────
+
+export interface ChannelTraceKnowledge {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  createdBy: string;
+  createdByName: string;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ChannelTraceCaseSeverity = 'low' | 'medium' | 'high';
+
+export interface ChannelTraceCase {
+  id: string;
+  title: string;
+  symptom: string;
+  rootCause?: string | null;
+  resolution?: string | null;
+  tags: string[];
+  severity: ChannelTraceCaseSeverity;
+  createdBy: string;
+  createdByName: string;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ChannelTraceDiffStatus = 'Queued' | 'Running' | 'Done' | 'Error';
+
+export interface ChannelTraceCodeHit {
+  repo: string;
+  path: string;
+  snippet: string;
+  score: number;
+}
+
+export interface ChannelTraceDiff {
+  id: string;
+  title: string;
+  /** 用户对功能的描述（期望行为），历史字段名沿用 businessRule */
+  businessRule: string;
+  codeContent: string;
+  codeLocation?: string | null;
+  keywords: string[];
+  scannedRepos: string[];
+  codeHits: ChannelTraceCodeHit[];
+  diffReport?: string | null;
+  status: ChannelTraceDiffStatus;
+  errorMessage?: string | null;
+  model?: string | null;
+  modelPlatform?: string | null;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  completedAt?: string | null;
+}
+
+export interface ChannelTraceCodeScanRepo {
+  name: string;
+  branch: string;
+}
+
+/** 智能排查时召回的相似案例（轻量字段） */
+export interface ChannelTraceRelatedCase {
+  id: string;
+  title: string;
+  severity: ChannelTraceCaseSeverity;
+  tags: string[];
+}
+
+// ──────────────────────────────────────────────
+// 业务知识库
+// ──────────────────────────────────────────────
+
+export async function listKnowledge(
+  keyword?: string,
+): Promise<ApiResponse<{ items: ChannelTraceKnowledge[] }>> {
+  const qs = keyword ? `?keyword=${encodeURIComponent(keyword)}` : '';
+  return apiRequest(`/api/channel-trace-agent/knowledge${qs}`);
+}
+
+export async function createKnowledge(payload: {
+  title: string;
+  content: string;
+  tags?: string[];
+}): Promise<ApiResponse<{ item: ChannelTraceKnowledge }>> {
+  return apiRequest('/api/channel-trace-agent/knowledge', { method: 'POST', body: payload });
+}
+
+export async function updateKnowledge(
+  id: string,
+  payload: { title: string; content: string; tags?: string[] },
+): Promise<ApiResponse<{ item: ChannelTraceKnowledge }>> {
+  return apiRequest(`/api/channel-trace-agent/knowledge/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: payload,
+  });
+}
+
+export async function deleteKnowledge(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/channel-trace-agent/knowledge/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** 从已上传附件导入一条业务知识 */
+export async function importKnowledge(payload: {
+  attachmentId: string;
+  title?: string;
+  tags?: string[];
+}): Promise<ApiResponse<{ item: ChannelTraceKnowledge }>> {
+  return apiRequest('/api/channel-trace-agent/knowledge/import', { method: 'POST', body: payload });
+}
+
+/** 业务知识问答 SSE 流地址（POST，内联 SSE，断线重发） */
+export const knowledgeAskUrl = '/api/channel-trace-agent/knowledge/ask';
+
+// ──────────────────────────────────────────────
+// 线上问题案例库
+// ──────────────────────────────────────────────
+
+export async function listCases(
+  keyword?: string,
+): Promise<ApiResponse<{ items: ChannelTraceCase[] }>> {
+  const qs = keyword ? `?keyword=${encodeURIComponent(keyword)}` : '';
+  return apiRequest(`/api/channel-trace-agent/cases${qs}`);
+}
+
+export interface UpsertCasePayload {
+  title: string;
+  symptom: string;
+  rootCause?: string;
+  resolution?: string;
+  tags?: string[];
+  severity?: ChannelTraceCaseSeverity;
+}
+
+export async function createCase(
+  payload: UpsertCasePayload,
+): Promise<ApiResponse<{ item: ChannelTraceCase }>> {
+  return apiRequest('/api/channel-trace-agent/cases', { method: 'POST', body: payload });
+}
+
+export async function updateCase(
+  id: string,
+  payload: UpsertCasePayload,
+): Promise<ApiResponse<{ item: ChannelTraceCase }>> {
+  return apiRequest(`/api/channel-trace-agent/cases/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: payload,
+  });
+}
+
+export async function deleteCase(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/channel-trace-agent/cases/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** 从已上传附件导入线上问题案例 SSE 流地址（POST，AI 解析为多条案例入库） */
+export const caseImportUrl = '/api/channel-trace-agent/cases/import';
+
+// ── 线上问题对话式诊断（多轮会话）──
+
+export interface ChannelTraceDiagnoseMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  relatedCaseIds: string[];
+  codeHits: ChannelTraceCodeHit[];
+  model?: string | null;
+  modelPlatform?: string | null;
+  createdAt: string;
+}
+
+export interface ChannelTraceDiagnoseSession {
+  id: string;
+  title: string;
+  messages: ChannelTraceDiagnoseMessage[];
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChannelTraceDiagnoseSessionSummary {
+  id: string;
+  title: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listDiagnoseSessions(): Promise<
+  ApiResponse<{ items: ChannelTraceDiagnoseSessionSummary[] }>
+> {
+  return apiRequest('/api/channel-trace-agent/diagnose/sessions');
+}
+
+export async function getDiagnoseSession(
+  id: string,
+): Promise<ApiResponse<{ item: ChannelTraceDiagnoseSession }>> {
+  return apiRequest(`/api/channel-trace-agent/diagnose/sessions/${encodeURIComponent(id)}`);
+}
+
+export async function deleteDiagnoseSession(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/channel-trace-agent/diagnose/sessions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** 对话式诊断 SSE 流地址（POST，body: { sessionId?, message, contextText? }） */
+export const diagnoseAskUrl = '/api/channel-trace-agent/diagnose/ask';
+
+/** 把一段诊断会话一键沉淀为缺陷（复用缺陷 Agent） */
+export async function diagnoseToDefect(
+  sessionId: string,
+  payload?: { title?: string; severity?: string },
+): Promise<ApiResponse<{ defectId: string; defectNo: string; title: string }>> {
+  return apiRequest(
+    `/api/channel-trace-agent/diagnose/sessions/${encodeURIComponent(sessionId)}/to-defect`,
+    { method: 'POST', body: payload ?? {} },
+  );
+}
+
+/** 导出诊断会话「证据包」Markdown（前端下载/复制） */
+export async function exportDiagnoseSession(
+  sessionId: string,
+): Promise<ApiResponse<{ fileName: string; markdown: string }>> {
+  return apiRequest(
+    `/api/channel-trace-agent/diagnose/sessions/${encodeURIComponent(sessionId)}/export`,
+  );
+}
+
+// ──────────────────────────────────────────────
+// 排查清单（内置模板 + 自定义）
+// ──────────────────────────────────────────────
+
+export interface ChannelTraceChecklistStep {
+  text: string;
+  hint?: string | null;
+}
+
+export interface ChannelTraceChecklist {
+  id: string;
+  title: string;
+  scene: string;
+  steps: ChannelTraceChecklistStep[];
+  tags: string[];
+  isBuiltin: boolean;
+  createdBy: string;
+  createdByName: string;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertChecklistPayload {
+  title: string;
+  scene?: string;
+  steps: ChannelTraceChecklistStep[];
+  tags?: string[];
+}
+
+export async function getChecklistTemplates(): Promise<
+  ApiResponse<{ items: ChannelTraceChecklist[] }>
+> {
+  return apiRequest('/api/channel-trace-agent/checklists/templates');
+}
+
+export async function listChecklists(): Promise<ApiResponse<{ items: ChannelTraceChecklist[] }>> {
+  return apiRequest('/api/channel-trace-agent/checklists');
+}
+
+export async function createChecklist(
+  payload: UpsertChecklistPayload,
+): Promise<ApiResponse<{ item: ChannelTraceChecklist }>> {
+  return apiRequest('/api/channel-trace-agent/checklists', { method: 'POST', body: payload });
+}
+
+export async function updateChecklist(
+  id: string,
+  payload: UpsertChecklistPayload,
+): Promise<ApiResponse<{ item: ChannelTraceChecklist }>> {
+  return apiRequest(`/api/channel-trace-agent/checklists/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: payload,
+  });
+}
+
+export async function deleteChecklist(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/channel-trace-agent/checklists/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+// ──────────────────────────────────────────────
+// 业务/代码差异对比
+// ──────────────────────────────────────────────
+
+export async function listDiffs(
+  page = 1,
+  pageSize = 50,
+): Promise<
+  ApiResponse<{ items: ChannelTraceDiff[]; total: number; page: number; pageSize: number }>
+> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return apiRequest(`/api/channel-trace-agent/diffs?${params}`);
+}
+
+export async function getDiff(id: string): Promise<ApiResponse<{ item: ChannelTraceDiff }>> {
+  return apiRequest(`/api/channel-trace-agent/diffs/${encodeURIComponent(id)}`);
+}
+
+export async function deleteDiff(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/channel-trace-agent/diffs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** 内置代码扫描仓库配置 */
+export async function getCodeScanRepos(): Promise<
+  ApiResponse<{ repos: ChannelTraceCodeScanRepo[]; tokenConfigured: boolean }>
+> {
+  return apiRequest('/api/channel-trace-agent/diffs/repos');
+}
+
+/** 描述驱动的功能 vs 代码异同分析 SSE 流地址（POST） */
+export const diffCompareUrl = '/api/channel-trace-agent/diffs/compare';

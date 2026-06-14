@@ -1,0 +1,845 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  Send,
+  Plus,
+  Pencil,
+  Trash2,
+  Loader2,
+  X,
+  Stethoscope,
+  Search,
+  Upload,
+  MessageSquarePlus,
+  History,
+  FileCode,
+  ClipboardPaste,
+  FileDown,
+  Bug,
+} from 'lucide-react';
+import { useSseStream } from '@/lib/useSseStream';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { StreamingText } from '@/components/streaming/StreamingText';
+import { ImportPasswordModal } from './ImportPasswordModal';
+import { uploadAttachment } from '@/services/real/aiToolbox';
+import {
+  listCases,
+  createCase,
+  updateCase,
+  deleteCase,
+  caseImportUrl,
+  diagnoseAskUrl,
+  listDiagnoseSessions,
+  getDiagnoseSession,
+  deleteDiagnoseSession,
+  diagnoseToDefect,
+  exportDiagnoseSession,
+  type ChannelTraceCase,
+  type ChannelTraceCaseSeverity,
+  type ChannelTraceRelatedCase,
+  type ChannelTraceCodeHit,
+  type ChannelTraceDiagnoseMessage,
+  type ChannelTraceDiagnoseSessionSummary,
+  type UpsertCasePayload,
+} from '@/services/real/channelTraceAgent';
+
+const SEVERITY_META: Record<ChannelTraceCaseSeverity, { label: string; cls: string }> = {
+  low: { label: '低', cls: 'bg-sky-500/10 text-sky-300' },
+  medium: { label: '中', cls: 'bg-amber-500/10 text-amber-300' },
+  high: { label: '高', cls: 'bg-rose-500/10 text-rose-300' },
+};
+
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  relatedCases?: ChannelTraceRelatedCase[];
+  codeHits?: { repo: string; path: string }[];
+}
+
+export function CasesTab() {
+  const [items, setItems] = useState<ChannelTraceCase[]>([]);
+  const [keyword, setKeyword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editing, setEditing] = useState<ChannelTraceCase | null>(null);
+  const [importMsg, setImportMsg] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 对话式诊断状态
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [model, setModel] = useState<{ model?: string; platform?: string } | null>(null);
+  const [streamingText, setStreamingText] = useState('');
+  const [curRelated, setCurRelated] = useState<ChannelTraceRelatedCase[]>([]);
+  const [curHits, setCurHits] = useState<{ repo: string; path: string }[]>([]);
+  const [sessions, setSessions] = useState<ChannelTraceDiagnoseSessionSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [showPaste, setShowPaste] = useState(false);
+  const [contextText, setContextText] = useState('');
+  const [actionMsg, setActionMsg] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [sinking, setSinking] = useState(false);
+  const [importPwOpen, setImportPwOpen] = useState(false);
+  const streamRef = useRef('');
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // 是否「钉」在底部：用户向上滑离开底部后置 false，停止自动滚动（避免与用户滚动打架）
+  const pinnedRef = useRef(true);
+
+  const { phase, phaseMessage, isStreaming, start } = useSseStream({
+    url: diagnoseAskUrl,
+    method: 'POST',
+    onTyping: (t) => {
+      streamRef.current += t;
+      setStreamingText(streamRef.current);
+    },
+    onEvent: {
+      session: (d) => setSessionId((d as { sessionId: string }).sessionId),
+      model: (d) => setModel(d as { model?: string; platform?: string }),
+      relatedCases: (d) => setCurRelated((d as { items: ChannelTraceRelatedCase[] }).items ?? []),
+      codeHits: (d) => setCurHits((d as { items: { repo: string; path: string }[] }).items ?? []),
+    },
+    onDone: () => {
+      // 关键：必须先把 streamRef.current 取到局部常量再 setMessages。
+      // setMessages 的函数式 updater 是「惰性」执行的（React 在随后的渲染阶段才调用它），
+      // 而下方 `streamRef.current = ''` 是「同步」执行的，会在 updater 真正运行前就把 ref 清空。
+      // 若 updater 内直接读 streamRef.current，落库的就是空串 → 气泡渲染空内容 → 回答塌缩成空框。
+      const finalText = streamRef.current;
+      const finalRelated = curRelated;
+      const finalHits = curHits;
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: finalText,
+          relatedCases: finalRelated,
+          codeHits: finalHits,
+        },
+      ]);
+      streamRef.current = '';
+      setStreamingText('');
+      void loadSessions();
+    },
+    onError: () => {
+      // 出错时把已流出的内容固化为一条 assistant 消息，避免丢失
+      // 同 onDone：先取局部常量，避免惰性 updater 读到已被同步清空的 streamRef。
+      const finalText = streamRef.current;
+      if (finalText) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: finalText }]);
+      }
+      streamRef.current = '';
+      setStreamingText('');
+    },
+  });
+
+  const load = useCallback(async (kw?: string) => {
+    setLoading(true);
+    try {
+      const res = await listCases(kw);
+      if (res.success && res.data) setItems(res.data.items);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadSessions = useCallback(async () => {
+    const res = await listDiagnoseSessions();
+    if (res.success && res.data) setSessions(res.data.items);
+  }, []);
+
+  const importStream = useSseStream({
+    url: caseImportUrl,
+    method: 'POST',
+    onEvent: {
+      case: (d) => {
+        const c = d as { title: string; index: number };
+        setImportMsg(`已解析第 ${c.index} 条：${c.title}`);
+      },
+    },
+    onPhase: (m) => setImportMsg(m),
+    onDone: (d) => {
+      const count = (d as { count?: number }).count ?? 0;
+      setImportMsg(`导入完成，共 ${count} 条案例`);
+      void load(keyword);
+      window.setTimeout(() => setImportMsg(''), 4000);
+    },
+    onError: (m) => setImportMsg(`导入失败：${m}`),
+  });
+
+  useEffect(() => {
+    void load();
+    void loadSessions();
+  }, [load, loadSessions]);
+
+  // 用户滚动时记录是否仍贴着底部（阈值 80px）。一旦向上滑离开底部，pinned=false。
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  // 仅在用户处于底部时才自动滚动；用即时滚动避免流式高频更新下 smooth 抖动/与用户滚动冲突。
+  useEffect(() => {
+    if (!pinnedRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, streamingText]);
+
+  const send = () => {
+    if (!input.trim() || isStreaming) return;
+    const text = input.trim();
+    pinnedRef.current = true;
+    setInput('');
+    setModel(null);
+    setCurRelated([]);
+    setCurHits([]);
+    streamRef.current = '';
+    setStreamingText('');
+    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+    void start({
+      body: {
+        sessionId: sessionId ?? undefined,
+        message: text,
+        contextText: contextText.trim() || undefined,
+      },
+    });
+    setContextText('');
+  };
+
+  const exportEvidence = async () => {
+    if (!sessionId || exporting) return;
+    setExporting(true);
+    setActionMsg('');
+    try {
+      const res = await exportDiagnoseSession(sessionId);
+      if (res.success && res.data) {
+        const blob = new Blob([res.data.markdown], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = res.data.fileName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setActionMsg('已导出证据包 .md');
+      } else {
+        setActionMsg(res.error?.message || '导出失败');
+      }
+    } finally {
+      setExporting(false);
+      window.setTimeout(() => setActionMsg(''), 4000);
+    }
+  };
+
+  const sinkToDefect = async () => {
+    if (!sessionId || sinking) return;
+    if (!window.confirm('把这段诊断会话沉淀为一条缺陷（草稿态，可在「缺陷管理」继续处理）？')) return;
+    setSinking(true);
+    setActionMsg('');
+    try {
+      const res = await diagnoseToDefect(sessionId);
+      if (res.success && res.data) {
+        setActionMsg(`已沉淀为缺陷 ${res.data.defectNo}，可在「缺陷管理」查看`);
+      } else {
+        setActionMsg(res.error?.message || '沉淀失败');
+      }
+    } finally {
+      setSinking(false);
+      window.setTimeout(() => setActionMsg(''), 6000);
+    }
+  };
+
+  const newSession = () => {
+    if (isStreaming) return;
+    pinnedRef.current = true;
+    setSessionId(null);
+    setMessages([]);
+    setCurRelated([]);
+    setCurHits([]);
+    streamRef.current = '';
+    setStreamingText('');
+    setModel(null);
+  };
+
+  const openSession = async (id: string) => {
+    setHistoryOpen(false);
+    pinnedRef.current = true;
+    const res = await getDiagnoseSession(id);
+    if (res.success && res.data) {
+      const s = res.data.item;
+      setSessionId(s.id);
+      setMessages(
+        s.messages.map((m: ChannelTraceDiagnoseMessage) => ({
+          role: m.role,
+          content: m.content,
+          codeHits: (m.codeHits ?? []).map((h: ChannelTraceCodeHit) => ({ repo: h.repo, path: h.path })),
+        })),
+      );
+      setStreamingText('');
+      streamRef.current = '';
+    }
+  };
+
+  const removeSession = async (id: string) => {
+    const res = await deleteDiagnoseSession(id);
+    if (res.success) {
+      if (sessionId === id) newSession();
+      void loadSessions();
+    }
+  };
+
+  const onDelete = async (id: string) => {
+    if (!window.confirm('确定删除该案例？')) return;
+    const res = await deleteCase(id);
+    if (res.success) void load(keyword);
+  };
+
+  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImportMsg('上传文件中…');
+    const up = await uploadAttachment(file);
+    if (!up.success || !up.data) {
+      setImportMsg(`上传失败：${up.error?.message || ''}`);
+      return;
+    }
+    void importStream.start({ body: { attachmentId: up.data.attachmentId } });
+  };
+
+  return (
+    <div className="h-full min-h-0 flex">
+      {/* 左：对话式诊断 */}
+      <div className="flex-1 min-w-0 flex flex-col border-r border-white/10">
+        <div className="shrink-0 px-6 pt-4 pb-3 flex items-center gap-2">
+          <div className="text-sm font-medium text-white/85 inline-flex items-center gap-1.5">
+            <Stethoscope className="w-4 h-4 text-emerald-400" />
+            线上问题对话式诊断
+          </div>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              onClick={exportEvidence}
+              disabled={!sessionId || exporting || isStreaming}
+              title="导出本次诊断的证据包（Markdown：问答 + 召回案例 + 命中代码）"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
+            >
+              {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+              导出
+            </button>
+            <button
+              onClick={sinkToDefect}
+              disabled={!sessionId || sinking || isStreaming}
+              title="把诊断结论沉淀为缺陷（复用缺陷管理，草稿态可继续指派/跟踪）"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
+            >
+              {sinking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bug className="w-3.5 h-3.5" />}
+              沉淀缺陷
+            </button>
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setHistoryOpen((v) => !v);
+                  if (!historyOpen) void loadSessions();
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10"
+              >
+                <History className="w-3.5 h-3.5" />
+                历史
+              </button>
+              {historyOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 w-72 max-h-80 overflow-y-auto rounded-lg border border-white/10 bg-[#15161b] shadow-xl z-20"
+                  style={{ overscrollBehavior: 'contain' }}
+                >
+                  {sessions.length === 0 ? (
+                    <div className="text-xs text-white/40 px-3 py-4 text-center">暂无历史会话</div>
+                  ) : (
+                    sessions.map((s) => (
+                      <div
+                        key={s.id}
+                        className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer group"
+                        onClick={() => void openSession(s.id)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-white/85 truncate">{s.title}</div>
+                          <div className="text-[10px] text-white/40">
+                            {s.messageCount} 条 · {new Date(s.updatedAt).toLocaleString('zh-CN')}
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void removeSession(s.id);
+                          }}
+                          className="shrink-0 p-1 rounded text-white/30 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={newSession}
+              disabled={isStreaming}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5" />
+              新对话
+            </button>
+          </div>
+        </div>
+
+        {model?.model && (
+          <div className="shrink-0 px-6 pb-1 text-[11px] text-white/40 font-mono">
+            ● {model.model}
+            {model.platform ? ` · ${model.platform}` : ''}
+          </div>
+        )}
+        {actionMsg && (
+          <div className="shrink-0 px-6 pb-1 text-[11px] text-emerald-300/80">{actionMsg}</div>
+        )}
+
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="flex-1 px-6 py-3 space-y-3"
+          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
+          {messages.length === 0 && !isStreaming && (
+            <div className="text-sm text-white/35 py-10 text-center">
+              描述线上问题，AI 会召回相似历史案例 + 到内置仓库定位代码，初步分析原因；
+              <br />
+              信息不足时会主动追问，引导你逐步补齐信息链条直到定位问题。
+            </div>
+          )}
+
+          {messages.map((m, i) =>
+            m.role === 'user' ? (
+              <div key={i} className="flex justify-end">
+                <div className="min-w-0 max-w-[80%] rounded-xl bg-emerald-500/15 border border-emerald-500/25 px-3.5 py-2 text-sm text-white/90 whitespace-pre-wrap break-words">
+                  {m.content}
+                </div>
+              </div>
+            ) : (
+              <div key={i} className="min-w-0 space-y-1.5">
+                <MsgMeta related={m.relatedCases} hits={m.codeHits} />
+                <div className="min-w-0 max-w-full rounded-xl bg-white/3 border border-white/10 px-4 py-3 text-white/90 break-words">
+                  <AssistantAnswer content={m.content} />
+                </div>
+              </div>
+            ),
+          )}
+
+          {isStreaming && (
+            <div className="min-w-0 space-y-1.5">
+              <MsgMeta related={curRelated} hits={curHits} />
+              {streamingText ? (
+                <div className="min-w-0 max-w-full rounded-xl bg-white/3 border border-white/10 px-4 py-3 text-white/90 break-words">
+                  <AssistantAnswer content={streamingText} streaming />
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-white/50 py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {phaseMessage || 'AI 正在分析…'}
+                </div>
+              )}
+            </div>
+          )}
+
+          {phase === 'error' && !isStreaming && (
+            <div className="text-sm text-rose-400">{phaseMessage || '请求失败'}</div>
+          )}
+        </div>
+
+        <div className="shrink-0 px-6 py-3 border-t border-white/10">
+          {showPaste && (
+            <div className="mb-2">
+              <textarea
+                value={contextText}
+                onChange={(e) => setContextText(e.target.value)}
+                rows={3}
+                placeholder="粘贴防窜后台报错弹窗 / 列表数据的 HTML 或文本，作为本轮补充上下文（提交后自动清空）。"
+                className="w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/85 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40 font-mono"
+              />
+            </div>
+          )}
+          <div className="flex items-end gap-2">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send();
+              }}
+              rows={2}
+              placeholder="描述线上问题现象 / 回答 AI 的追问（Ctrl/⌘+Enter 发送）"
+              className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+            />
+            <button
+              onClick={() => setShowPaste((v) => !v)}
+              title="粘贴后台页面 HTML / 文本作为上下文"
+              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border text-sm hover:bg-white/10 ${
+                showPaste || contextText.trim()
+                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                  : 'bg-white/5 border-white/10 text-white/75'
+              }`}
+            >
+              <ClipboardPaste className="w-4 h-4" />
+            </button>
+            <button
+              onClick={send}
+              disabled={isStreaming || !input.trim()}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              发送
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 右：案例库管理 */}
+      <div className="w-[360px] shrink-0 flex flex-col">
+        <div className="shrink-0 px-4 pt-5 pb-3 flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void load(keyword);
+              }}
+              placeholder="搜索案例"
+              className="w-full rounded-lg bg-white/5 border border-white/10 pl-8 pr-3 py-1.5 text-sm text-white/85 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+            />
+          </div>
+          <button
+            onClick={() => setImportPwOpen(true)}
+            disabled={importStream.isStreaming}
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10 disabled:opacity-40"
+            title="导入历史 bug 文件，AI 自动解析为案例（需口令）"
+          >
+            {importStream.isStreaming ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Upload className="w-3.5 h-3.5" />
+            )}
+            导入
+          </button>
+          <button
+            onClick={() => {
+              setEditing(null);
+              setEditorOpen(true);
+            }}
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            记录
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".md,.txt,.pdf,.doc,.docx,.xls,.xlsx,.csv"
+            onChange={onImportFile}
+          />
+        </div>
+        {importMsg && (
+          <div className="shrink-0 px-4 pb-2 text-[11px] text-emerald-300/80 inline-flex items-center gap-1.5">
+            {importStream.isStreaming && <Loader2 className="w-3 h-3 animate-spin" />}
+            {importMsg}
+          </div>
+        )}
+        <div
+          className="flex-1 px-4 pb-4 space-y-2"
+          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
+          {loading ? (
+            <div className="text-sm text-white/40 py-6 text-center">加载中…</div>
+          ) : items.length === 0 ? (
+            <div className="text-sm text-white/35 py-10 text-center">
+              暂无案例，点击「记录」或「导入」沉淀线上问题排查经验。
+            </div>
+          ) : (
+            items.map((it) => (
+              <div
+                key={it.id}
+                className="rounded-lg bg-white/3 border border-white/10 px-3 py-2.5 group"
+              >
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded ${SEVERITY_META[it.severity].cls}`}
+                      >
+                        {SEVERITY_META[it.severity].label}
+                      </span>
+                      <span className="text-sm text-white/90 font-medium truncate">{it.title}</span>
+                    </div>
+                    <div className="text-xs text-white/45 mt-1 line-clamp-2 whitespace-pre-wrap">
+                      {it.symptom}
+                    </div>
+                    {it.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {it.tags.map((t) => (
+                          <span
+                            key={t}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300/80"
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="shrink-0 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => {
+                        setEditing(it);
+                        setEditorOpen(true);
+                      }}
+                      className="p-1 rounded text-white/40 hover:text-white/80 hover:bg-white/10"
+                      title="编辑"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => onDelete(it.id)}
+                      className="p-1 rounded text-white/40 hover:text-rose-400 hover:bg-white/10"
+                      title="删除"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {editorOpen && (
+        <CaseEditorModal
+          initial={editing}
+          onClose={() => setEditorOpen(false)}
+          onSaved={() => {
+            setEditorOpen(false);
+            void load(keyword);
+          }}
+        />
+      )}
+
+      {importPwOpen && (
+        <ImportPasswordModal
+          title="案例导入口令"
+          onClose={() => setImportPwOpen(false)}
+          onConfirm={() => {
+            setImportPwOpen(false);
+            fileInputRef.current?.click();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AssistantAnswer({ content, streaming = false }: { content: string; streaming?: boolean }) {
+  return (
+    <StreamingText
+      text={content}
+      streaming={streaming}
+      mode="blur"
+      markdown
+      block
+      animateTailChars={1800}
+      className="text-[14.5px] leading-[1.85]"
+      renderMarkdown={(c) => <MarkdownContent content={c} variant="reading" />}
+    />
+  );
+}
+
+function MsgMeta({
+  related,
+  hits,
+}: {
+  related?: ChannelTraceRelatedCase[];
+  hits?: { repo: string; path: string }[];
+}) {
+  if ((!related || related.length === 0) && (!hits || hits.length === 0)) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+      {related && related.length > 0 && (
+        <span className="text-white/45">召回案例：</span>
+      )}
+      {related?.slice(0, 5).map((c) => (
+        <span key={c.id} className="px-1.5 py-0.5 rounded bg-white/5 text-white/70">
+          {c.title}
+        </span>
+      ))}
+      {hits && hits.length > 0 && (
+        <span className="text-white/45 inline-flex items-center gap-1 ml-1">
+          <FileCode className="w-3 h-3" />
+          命中代码 {hits.length}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CaseEditorModal({
+  initial,
+  onClose,
+  onSaved,
+}: {
+  initial: ChannelTraceCase | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(initial?.title ?? '');
+  const [symptom, setSymptom] = useState(initial?.symptom ?? '');
+  const [rootCause, setRootCause] = useState(initial?.rootCause ?? '');
+  const [resolution, setResolution] = useState(initial?.resolution ?? '');
+  const [tagsInput, setTagsInput] = useState((initial?.tags ?? []).join(', '));
+  const [severity, setSeverity] = useState<ChannelTraceCaseSeverity>(initial?.severity ?? 'medium');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const save = async () => {
+    if (!title.trim() || !symptom.trim()) {
+      setError('标题与现象均不能为空');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    const tags = tagsInput
+      .split(/[,，]/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const payload: UpsertCasePayload = {
+      title: title.trim(),
+      symptom: symptom.trim(),
+      rootCause: rootCause.trim() || undefined,
+      resolution: resolution.trim() || undefined,
+      tags,
+      severity,
+    };
+    try {
+      const res = initial ? await updateCase(initial.id, payload) : await createCase(payload);
+      if (res.success) onSaved();
+      else setError(res.error?.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-2xl rounded-xl border border-white/10 bg-[#0f1014] flex flex-col"
+        style={{ maxHeight: '85vh' }}
+      >
+        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-white/10">
+          <div className="text-sm font-medium text-white/90">
+            {initial ? '编辑问题案例' : '记录问题案例'}
+          </div>
+          <button onClick={onClose} className="p-1 rounded text-white/40 hover:text-white/80">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 px-5 py-4 space-y-3" style={{ minHeight: 0, overflowY: 'auto' }}>
+          <div>
+            <label className="text-xs text-white/55">标题</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+            />
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="text-xs text-white/55">严重程度</label>
+              <select
+                value={severity}
+                onChange={(e) => setSeverity(e.target.value as ChannelTraceCaseSeverity)}
+                className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+              >
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="text-xs text-white/55">标签（逗号分隔）</label>
+              <input
+                value={tagsInput}
+                onChange={(e) => setTagsInput(e.target.value)}
+                placeholder="上码失败, 关联错乱"
+                className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-white/55">问题现象</label>
+            <textarea
+              value={symptom}
+              onChange={(e) => setSymptom(e.target.value)}
+              rows={3}
+              className="mt-1 w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-white/55">根因（可选）</label>
+            <textarea
+              value={rootCause}
+              onChange={(e) => setRootCause(e.target.value)}
+              rows={2}
+              className="mt-1 w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-white/55">排查步骤 / 解决方案（可选，支持 Markdown）</label>
+            <textarea
+              value={resolution}
+              onChange={(e) => setResolution(e.target.value)}
+              rows={5}
+              className="mt-1 w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 font-mono leading-relaxed focus:outline-none focus:border-emerald-500/40"
+            />
+          </div>
+          {error && <div className="text-xs text-rose-400">{error}</div>}
+        </div>
+        <div className="shrink-0 flex justify-end gap-2 px-5 py-3.5 border-t border-white/10">
+          <button
+            onClick={onClose}
+            className="px-3.5 py-1.5 rounded-lg text-sm text-white/70 hover:bg-white/5"
+          >
+            取消
+          </button>
+          <button
+            onClick={save}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40"
+          >
+            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            保存
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
