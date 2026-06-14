@@ -28,6 +28,7 @@
 | 视觉创作 Agent | `visual-agent.use` | 高级视觉创作工作区 |
 | 文学创作 Agent | `literary-agent.use` | 文章配图智能生成 |
 | 缺陷管理 Agent | `defect-agent.use` | 提交和查看缺陷 |
+| TAPD 缺陷自动提报 Agent | `tapd-bug-agent.use` | 整理并创建 TAPD 缺陷 |
 | 视频 Agent | `video-agent.use` | 文章转视频教程生成 |
 | 竞技场 Agent | `arena-agent.use` | 模型盲评对战 |
 | AI 百宝箱 | `ai-toolbox.use` | 多 Agent 协同工具箱 |

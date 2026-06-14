@@ -140,6 +140,13 @@ public class MongoDbContext
     public IMongoCollection<ProjectRouteSiteSpec> ProjectRouteSiteSpecs => _database.GetCollection<ProjectRouteSiteSpec>("project_route_site_specs");
     public IMongoCollection<ProjectRoutePlan> ProjectRoutePlans => _database.GetCollection<ProjectRoutePlan>("project_route_plans");
 
+    // Channel Trace Agent 商品溯源智能体（防窜物流业务知识 + 线上问题案例 + 业务/代码差异对比）
+    public IMongoCollection<ChannelTraceKnowledge> ChannelTraceKnowledge => _database.GetCollection<ChannelTraceKnowledge>("channel_trace_knowledge");
+    public IMongoCollection<ChannelTraceCase> ChannelTraceCases => _database.GetCollection<ChannelTraceCase>("channel_trace_cases");
+    public IMongoCollection<ChannelTraceDiff> ChannelTraceDiffs => _database.GetCollection<ChannelTraceDiff>("channel_trace_diffs");
+    public IMongoCollection<ChannelTraceDiagnoseSession> ChannelTraceDiagnoseSessions => _database.GetCollection<ChannelTraceDiagnoseSession>("channel_trace_diagnose_sessions");
+    public IMongoCollection<ChannelTraceChecklist> ChannelTraceChecklists => _database.GetCollection<ChannelTraceChecklist>("channel_trace_checklists");
+
     // CCAS Agent 赋码采集关联系统综合智能体
     public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset> CcasEquipmentAssets
         => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset>("ccas_equipment_assets");

@@ -577,7 +577,7 @@ export function ProjectDetailPage() {
         </div>
       )}
 
-      {tab === 'goals' && <GoalsPanel projectId={projectId} businessGoal={project.businessGoal} canManage={project.ownerId === myId || project.leaderId === myId} onBusinessGoalChange={(v) => setProject((p) => (p ? { ...p, businessGoal: v } : p))} onNavigateTask={navigateToTask} onNavigateWeekly={navigateToWeekly} onMilestonesChanged={loadMilestones} />}
+      {tab === 'goals' && <GoalsPanel projectId={projectId} businessGoal={project.businessGoal} canManage={project.ownerId === myId || project.leaderId === myId} onBusinessGoalChange={(v) => setProject((p) => (p ? { ...p, businessGoal: v } : p))} onNavigateTask={navigateToTask} onNavigateWeekly={navigateToWeekly} onMilestonesChanged={() => { loadMilestones(); loadGoals(); }} />}
 
       {tab === 'members' && (
         <MembersPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId} />

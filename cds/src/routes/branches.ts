@@ -57,7 +57,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
-import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutMs } from '../services/restart-drain.js';
+import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 2026-05-28 重构:状态权威源迁移到 services/self-status-cache.ts。
@@ -2005,10 +2005,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   async function waitForRestartSafeBranchOperationsForRoute(
     source: string,
-    // Cursor Bugbot(PR #684, High):默认走 deploy-safe SSOT(180s + env 覆盖),
-    // 不再硬编码 5s —— 否则 self-update / self-force-sync 几乎必然在 deploy 中途
-    // process.exit 强制重启,留下不一致状态。见 restart-drain.ts 注释。
-    timeoutMs = resolveRestartDrainTimeoutMs(),
+    // 默认 timeout=0: self-update 不再为 in-flight branch operation 等 180s。
+    // 需要强一致排空时由请求显式传 drain=true 或 drainTimeoutMs。
+    timeoutMs: number,
     intervalMs = 1000,
   ) {
     return waitForRestartSafeBranchOperations({
@@ -16993,6 +16992,7 @@ cdscli project list --human
     // fast-path,让"重复测试同一版本更新"成为可能。详见 self-force-sync 上方注释。
     let { branch, force } = req.body as { branch?: string; force?: boolean };
     const forceMode = force === true;
+    const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
 
     initSSE(res);
     // 2026-05-07 actor 真名修复(用户反馈"七八轮还是 actor: unknown"):
@@ -17552,23 +17552,23 @@ cdscli project list --human
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
-      // 2026-05-28 用户反馈"为什么一定要等?":砍掉等待+deferred 路径。
-      // 5s 优雅窗口给即将完成的 op,但即便等不到也直接 restart——docker
-      // 容器归 daemon 管,cds-master 重启后已存在的容器继续跑;断掉的 SSE
-      // 由 webhook/UI auto-reconnect 兜底;重启后 reconcile 用 docker ps 核对。
-      // 仍保留 server-event-log 审计("self-update.restart.deferred" 这条
-      // event 在 restart-drain.ts 里仍会写),但不再阻塞 restart。
-      // 2026-06-03(Bugbot #716):排空等待前把 step 切到 'drain',让进行中 UI
-      // 高亮"排空+重启"段,而不是停在 web-build 干等(可达 180s)。'drain' 不在
-      // SELF_UPDATE_TIMING_KEYS 表里,计时仅走下面的显式 merge,避免与 restartMs 双计。
-      send('drain', 'running', '等待 in-flight 分支操作排空(最多 180s)…');
+      // 2026-06-14:默认不等排空。master work / branch operation coordinator
+      // 已负责 interruptAll + 重启后 reconcile。只有请求显式 drain=true 或
+      // drainTimeoutMs>0 时才等待,避免日常更新被旧 180s 窗口拖成数分钟。
       const drainStartedAt = Date.now();
-      const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-update');
+      const restartDrain = restartDrainTimeoutMs > 0
+        ? await (async () => {
+            send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
+            return waitForRestartSafeBranchOperationsForRoute('api.self-update', restartDrainTimeoutMs);
+          })()
+        : { ok: true, active: [] };
       // 把排空等待计入 timings(可达 180s)。此前不记导致进度条各 step 之和远小于
       // totalMs,UI 大片留白且"总计"对不上。
       const drainMs = Date.now() - drainStartedAt;
       timingRecorder.merge({ drainMs });
-      if (!restartDrain.ok) {
+      if (restartDrainTimeoutMs <= 0) {
+        send('drain', 'done', '已跳过排空等待(默认策略,立即重启)');
+      } else if (!restartDrain.ok) {
         send(
           'drain',
           'warning',
@@ -17759,6 +17759,7 @@ cdscli project list --human
     // 可以反复点同一 commit 看更新链路。"强制更新"按钮应当传 force:true。
     const { branch, force } = (req.body || {}) as { branch?: string; force?: boolean };
     const forceMode = force === true;
+    const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
 
     initSSE(res);
     // 2026-05-07 同 /api/self-update:actor 真名 + 落盘 SSOT。
@@ -18371,15 +18372,19 @@ cdscli project list --human
       // helper 保证两端口行为一致。
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
-      // 同 self-update:5s 优雅窗口 + 不阻塞 restart。详见上一处注释。
-      // 2026-06-03(Bugbot #716):同 self-update,排空等待前把 step 切到 'drain'
-      // 让 UI 高亮排空段;'drain' 不在 timing key 表,计时仅走显式 merge。
-      send('drain', 'running', '等待 in-flight 分支操作排空(最多 180s)…');
+      // 同 self-update:默认不等排空;显式 drain=true 或 drainTimeoutMs>0 才等待。
       const drainStartedAt = Date.now();
-      const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-force-sync');
+      const restartDrain = restartDrainTimeoutMs > 0
+        ? await (async () => {
+            send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
+            return waitForRestartSafeBranchOperationsForRoute('api.self-force-sync', restartDrainTimeoutMs);
+          })()
+        : { ok: true, active: [] };
       const drainMs = Date.now() - drainStartedAt;
       timingRecorder.merge({ drainMs });
-      if (!restartDrain.ok) {
+      if (restartDrainTimeoutMs <= 0) {
+        send('drain', 'done', '已跳过排空等待(默认策略,立即重启)');
+      } else if (!restartDrain.ok) {
         send(
           'drain',
           'warning',

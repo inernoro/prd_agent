@@ -14,6 +14,14 @@
   display: inline;
 }
 
+.streaming-text--block {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .streaming-text .streaming-u {
   display: inline-block;
   /* 防止 inline-block 之间的 baseline 漂移 */

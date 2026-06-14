@@ -64,6 +64,7 @@ import type { Requirement, Feature, Product, ProductVersion, ProductRelease, Cus
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 import { slaInfo } from './sla';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
+import { ProductAssigneePicker } from './ProductAssigneePicker';
 
 const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
   basic: '基础功能',
@@ -174,7 +175,7 @@ export function ProductObjectDetailPage() {
           <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-200">正式版本</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-          <div className="mx-auto w-full max-w-4xl py-5 px-5">
+          <div className="w-full px-5 xl:px-8 py-5">
             <ReleaseWorkflowDetail productId={productId} releaseId={id} isNew={isNew} />
           </div>
         </div>
@@ -192,7 +193,7 @@ export function ProductObjectDetailPage() {
           <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">内部版本</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-          <div className="mx-auto w-full max-w-4xl py-5 px-5">
+          <div className="w-full px-5 xl:px-8 py-5">
             <InitiationWorkflowDetail productId={productId} initiationId={id} />
           </div>
         </div>
@@ -833,7 +834,7 @@ function FeatureCreateForm({
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>处理人</FieldLabel>
-                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+                <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>父功能</FieldLabel>
@@ -932,23 +933,29 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
     })();
   }, [productId]);
 
-  // 版本默认填充所选功能的版本号（取该功能最新关联的版本），用户未手动改过时随功能联动。
-  const versionCreatedAt = useMemo(() => new Map(versions.map((v) => [v.id, v.createdAt])), [versions]);
+  // 版本默认填充所选功能当前归属的内部版本（plannedVersionId）；无则取纳入版本中 updatedAt 最新的一条。
+  const versionUpdatedAt = useMemo(() => new Map(versions.map((v) => [v.id, v.updatedAt])), [versions]);
   const defaultVersionForFeature = useCallback(
     (fid: string): string => {
       if (!fid) return '';
-      const linked = featureVersions.filter((x) => x.featureId === fid).map((x) => x.versionId);
+      const feature = features.find((f) => f.id === fid);
+      if (feature?.plannedVersionId) return feature.plannedVersionId;
+      const linked = [...new Set(featureVersions.filter((x) => x.featureId === fid).map((x) => x.versionId))];
       if (linked.length === 0) return '';
-      // 取关联版本里创建时间最新的那个作为默认
-      return linked.sort((a, b) => (versionCreatedAt.get(b) ?? '').localeCompare(versionCreatedAt.get(a) ?? ''))[0] ?? '';
+      return linked.sort((a, b) => (versionUpdatedAt.get(b) ?? '').localeCompare(versionUpdatedAt.get(a) ?? ''))[0] ?? '';
     },
-    [featureVersions, versionCreatedAt],
+    [features, featureVersions, versionUpdatedAt],
   );
 
   const onFeatureChange = (fid: string) => {
     setFeatureId(fid);
     if (!versionTouched) setVersionId(defaultVersionForFeature(fid));
   };
+
+  useEffect(() => {
+    if (!featureId || versionTouched) return;
+    setVersionId(defaultVersionForFeature(featureId));
+  }, [featureId, versionTouched, defaultVersionForFeature]);
 
   const canSubmit = !!title.trim() && !!featureId;
 
@@ -1000,7 +1007,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel>处理人</FieldLabel>
-              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+              <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} />
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel required>关联功能</FieldLabel>
@@ -1016,7 +1023,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
                 <option value="">不关联</option>
                 {versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}
               </select>
-              <span className="text-[10px] text-white/30">默认填充所选功能的版本，可手动调整。</span>
+              <span className="text-[10px] text-white/30">默认填充所选功能当前的版本，可手动调整。</span>
             </div>
           </div>
         </Card>
@@ -1191,7 +1198,7 @@ function RequirementDetail({
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>处理人</FieldLabel>
-                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+                <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} />
               </div>
               <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
                 <input
@@ -1656,7 +1663,7 @@ function FeatureDetail({
               <UserSearchSelect value={ownerId} onChange={setOwnerId} uiSize="md" />
             </TapdPropertyRow>
             <TapdPropertyRow label="处理人">
-              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} uiSize="md" />
+              <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} uiSize="md" />
             </TapdPropertyRow>
             <TapdPropertyRow label="父功能">
               <ParentSelect

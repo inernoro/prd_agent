@@ -385,6 +385,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceService>();
 
 // Defect Agent: 催办 Worker + Webhook 通知服务
+builder.Services.AddScoped<PrdAgent.Api.Services.TapdBugAgentService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DefectWebhookService>();
 
@@ -393,6 +394,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReviewAgent.ReviewWebhookServic
 
 // Project Route Agent: 浅克隆缓存服务（任意第三方仓库 git clone --depth=1）
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ProjectRouteAgent.GitRepoCacheService>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ChannelTraceAgent.ChannelTraceCodeScanService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
@@ -1212,6 +1214,14 @@ builder.Services.AddHttpClient("WebhookClient")
 builder.Services.AddHttpClient("webhook")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddHttpClient("TapdBugAgent", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+})
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false
+    });
 builder.Services.AddHttpClient("GitHubApi", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);

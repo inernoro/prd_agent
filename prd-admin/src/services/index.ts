@@ -2024,6 +2024,9 @@ export {
   submitPmScoreReal as submitPmScore,
   finalizePmEvaluationReal as finalizePmEvaluation,
   getPmDashboardReal as getPmDashboard,
+  getPmKnowledgeOverviewReal as getPmKnowledgeOverview,
+  listPmKnowledgeEntriesReal as listPmKnowledgeEntries,
+  getPmKnowledgeEntryContentReal as getPmKnowledgeEntryContent,
   getPmRewardConfigReal as getPmRewardConfig,
   updatePmRewardConfigReal as updatePmRewardConfig,
   togglePmExcellenceReal as togglePmExcellence,
@@ -2093,6 +2096,8 @@ export {
   getPmAgentPreferencesReal as getPmAgentPreferences,
   updatePmQuickActionsReal as updatePmQuickActions,
   getPmReportSummaryReal as getPmReportSummary,
+  getPmGlobalProjectsReal as getPmGlobalProjects,
+  getPmGlobalSummaryReal as getPmGlobalSummary,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,

@@ -21,7 +21,7 @@ export const TAPD_DEFECT_FIELD = {
   defectGrade: '缺陷等级',
   /** V2.6 四档：致命/严重/一般/轻微 */
   defectSeverity: '严重程度',
-  /** TAPD 导出列原文：紧急/高/中/低/无关紧要 */
+  /** TAPD 导出「优先级」列原文：紧急/高/中/低/无关紧要（导入时映射为严重程度） */
   tapdSeveritySource: 'TAPD严重程度',
   defectDivision: '缺陷划分',
   feedbackPerson: '反馈人',

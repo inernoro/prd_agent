@@ -1,5 +1,5 @@
 /**
- * 产品管理智能体 — 全局设置（表单 / 描述 / 产品类型 / 需求类型 / 管理员；流转规则见「应用 → 应用配置」）。
+ * 产品管理智能体 — 全局设置（表单 / 描述 / 产品类型 / 需求类型 / 应用管理员；产品管理员见「应用 → 应用配置」）。
  *
  * 全局默认（ProductId 留空）+ 允许选某产品覆盖。复用后端 form-templates / desc-templates CRUD。
  * 作用对象类型：需求 / 功能 / 版本 / 客户。
@@ -123,7 +123,7 @@ export function SettingsSection() {
           <button onClick={() => setMode('desc')} className={`px-3 py-1.5 text-sm ${mode === 'desc' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>描述模板</button>
           <button onClick={() => setMode('category')} className={`px-3 py-1.5 text-sm ${mode === 'category' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>产品类型</button>
           <button onClick={() => setMode('reqtype')} className={`px-3 py-1.5 text-sm ${mode === 'reqtype' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>需求类型</button>
-          <button onClick={() => setMode('admins')} className={`px-3 py-1.5 text-sm ${mode === 'admins' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>管理员</button>
+          <button onClick={() => setMode('admins')} className={`px-3 py-1.5 text-sm ${mode === 'admins' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>应用管理员</button>
           <button onClick={() => setMode('debug')} className={`px-3 py-1.5 text-sm ${mode === 'debug' ? 'bg-amber-500/15 text-amber-200' : 'text-white/50 hover:bg-white/5'}`}>调试</button>
         </div>
         {mode !== 'category' && mode !== 'reqtype' && mode !== 'admins' && mode !== 'debug' && (
@@ -183,9 +183,9 @@ function ApplicationAdminManager() {
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const result = await listProductApplicationAdmins();
-    if (result.success) setItems(result.data.items);
-    else setMessage(result.error?.message ?? '管理员名单加载失败');
+    const adminResult = await listProductApplicationAdmins();
+    if (adminResult.success) setItems(adminResult.data.items);
+    else setMessage(adminResult.error?.message ?? '管理员名单加载失败');
     setLoading(false);
   }, []);
   useEffect(() => { void reload(); }, [reload]);
@@ -221,7 +221,7 @@ function ApplicationAdminManager() {
     <div className="flex flex-col gap-4">
       <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <div className="text-sm font-medium text-white/75">产品管理应用管理员</div>
-        <div className="mt-1 text-xs leading-5 text-white/40">只有名单内管理员可看到并执行需求、功能、缺陷、版本的历史数据导入。管理员可重复导入，带外部 ID 的数据按原记录更新。</div>
+        <div className="mt-1 text-xs leading-5 text-white/40">只有名单内管理员可看到并执行历史数据导入：产品、需求、缺陷、版本请在产品管理总览对应菜单导入；功能目录仅在单产品「功能」页导入。可重复导入，带外部 ID 的数据按原记录更新。</div>
         <div className="mt-4 flex items-center gap-2">
           <div className="min-w-0 flex-1"><UserSearchSelect value={selectedUserId} onChange={setSelectedUserId} placeholder="搜索 MAP 用户" showAllOption={false} /></div>
           <button onClick={() => void add()} disabled={!selectedUserId || busy} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-3 py-2 text-sm text-cyan-100 disabled:opacity-40">

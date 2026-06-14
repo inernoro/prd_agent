@@ -44,6 +44,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'md-to-ppt-agent': 'PPT',
   'tech-doc-format-agent': '技分',
   'front-end-agent': '前端',
+  'tapd-bug-agent': '提缺陷',
 
   // ── 基础设施 ──────────────────────────
   'marketplace': '市场',

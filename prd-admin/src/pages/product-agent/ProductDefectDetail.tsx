@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Bug, ExternalLink, GitBranch, Image as ImageIcon, Paperclip, Share2, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { ProductAssigneePicker } from './ProductAssigneePicker';
 import {
   convertDefectToRequirement,
   updateProductDefect,
@@ -281,7 +281,7 @@ export function ProductDefectDetail({
       );
     }
     if (field.key === TAPD_DEFECT_FIELD.currentOwner) {
-      return <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />;
+      return <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} />;
     }
     const value = derivedStructured[field.key] ?? '';
     if (field.kind === 'url') {

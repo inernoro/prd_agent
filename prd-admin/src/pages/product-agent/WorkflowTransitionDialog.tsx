@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { ProductAssigneePicker } from './ProductAssigneePicker';
 import { listInitiations, listReleases, listVersions, transition } from '@/services/real/productAgent';
 import type { ItemGrade, ProductEntityType, ProductInitiation, ProductRelease, ProductVersion, WorkflowDefinition, WorkflowTransition } from './types';
 import { ITEM_GRADE_LABEL } from './types';
@@ -210,7 +210,13 @@ export function WorkflowTransitionDialog({
           {fields.includes('assigneeId') && (
             <label className="flex flex-col gap-1.5">
               <span className="text-xs text-white/55">{WORKFLOW_TRANSITION_FIELD_LABELS.assigneeId} *</span>
-              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} placeholder="选择处理人" uiSize="md" />
+              <ProductAssigneePicker
+                productId={productId ?? ''}
+                value={assigneeId}
+                onChange={setAssigneeId}
+                placeholder="选择处理人"
+                uiSize="md"
+              />
             </label>
           )}
           {(fields.includes('versionIds') || gateFields.includes('versionIds')) && (

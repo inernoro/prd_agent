@@ -22,6 +22,7 @@ import type {
   DescTemplate,
   ProductMembersResult,
   ProductInitiation,
+  InitiationMeetingDraftRound,
   ProductRelease,
   ReleaseFeatureItem,
 } from '@/pages/product-agent/types';
@@ -108,18 +109,26 @@ export function getInitiation(id: string) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}`);
 }
 export function createInitiation(productId: string, body: {
+  linkedProductId: string;
   projectType: 'standard' | 'custom';
-  systemName?: string;
-  appName?: string;
   customerSource?: string;
   planName: string;
-  requirementDescription?: string;
-  departmentName?: string;
   planUrl?: string;
   versionType: 'major' | 'medium' | 'minor';
   requirementIds: string[];
 }) {
   return apiRequest<ProductInitiation>(`/api/product/products/${productId}/initiations`, { method: 'POST', body });
+}
+export function updateInitiation(id: string, body: {
+  linkedProductId: string;
+  projectType: 'standard' | 'custom';
+  customerSource?: string;
+  planName: string;
+  planUrl?: string;
+  versionType: 'major' | 'medium' | 'minor';
+  requirementIds: string[];
+}) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}`, { method: 'PATCH', body });
 }
 export function syncInitiationReview(id: string, submissionId: string) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/review`, { method: 'POST', body: { submissionId } });
@@ -128,8 +137,12 @@ export function decideInitiation(id: string, body: {
   reviewMeetingRequired: boolean;
   expectedMeetingAt?: string;
   primaryOwnerId?: string;
+  meetingDraftCount?: number;
 }) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/decision`, { method: 'POST', body });
+}
+export function updateInitiationMeeting(id: string, body: { rounds: InitiationMeetingDraftRound[] }) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/meeting`, { method: 'PATCH', body });
 }
 export function approveInitiation(id: string, comment?: string) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/approve`, { method: 'POST', body: { comment } });
@@ -174,10 +187,26 @@ export function importVersionWorkflow(productId: string, body: {
   kind: 'initiation' | 'release';
   rows: Array<Record<string, unknown>>;
 }) {
-  return apiRequest<{ created: number; errors: { row: number; message: string }[] }>(
+  return apiRequest<ImportRoutedResult>(
     `/api/product/products/${productId}/version-workflow/import`,
     { method: 'POST', body },
   );
+}
+
+export function importOverviewVersionWorkflow(body: {
+  kind: 'initiation' | 'release';
+  rows: Array<Record<string, unknown>>;
+}) {
+  return apiRequest<ImportRoutedResult>('/api/product/overview/version-workflow/import', { method: 'POST', body });
+}
+
+export interface ImportRoutedResult {
+  created: number;
+  updated?: number;
+  skipped?: number;
+  errors?: { row: number; message: string }[];
+  routed?: Record<string, number>;
+  unmatched?: Array<{ row?: number; label?: string; title?: string; planName?: string }>;
 }
 
 // ── 需求 ──
@@ -323,14 +352,21 @@ export interface ImportRequirementRow {
 }
 
 export function importRequirements(productId: string, rows: ImportRequirementRow[]) {
-  return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
+  return apiRequest<ImportRoutedResult>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
+}
+
+export function importOverviewRequirements(rows: ImportRequirementRow[]) {
+  return apiRequest<ImportRoutedResult>('/api/product/overview/requirements/import', {
+    method: 'POST',
+    body: { rows },
+  });
 }
 
 export interface ImportSimpleItemRow {
   title: string;
   description?: string;
   grade?: string;
-  /** TAPD 导出「严重程度」列原文 */
+  /** TAPD 导出「优先级」列原文（导入时映射为严重程度） */
   tapdSeverityRaw?: string;
   /** 严重程度 V2.6 四档（致命/严重/一般/轻微）；缺陷 CSV 解析产出 */
   severity?: string;
@@ -339,6 +375,12 @@ export interface ImportSimpleItemRow {
   externalId?: string;
   plannedAt?: string;
   completedAt?: string;
+  /** TAPD 处理人姓名（导入时后端按显示名匹配用户） */
+  handlerNames?: string[];
+  /** TAPD 创建人 / 上报人姓名 */
+  reporterNames?: string[];
+  /** 来源扩展字段（如 CSV「应用」列） */
+  sourceFields?: Record<string, string>;
 }
 
 export function importFeatures(productId: string, rows: ImportSimpleItemRow[]) {
@@ -366,8 +408,21 @@ export function importFeatureTree(productId: string, officialReleaseId: string, 
 export function importDefects(productId: string, rows: ImportSimpleItemRow[]) {
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/defects/import`, { method: 'POST', body: { rows } });
 }
+export function importOverviewDefects(rows: ImportSimpleItemRow[]) {
+  return apiRequest<ImportRoutedResult>('/api/product/overview/defects/import', {
+    method: 'POST',
+    body: { rows },
+  });
+}
 export function importVersions(productId: string, rows: ImportSimpleItemRow[]) {
   return apiRequest<{ created: number; updated: number }>(`/api/product/products/${productId}/versions/import`, { method: 'POST', body: { rows } });
+}
+
+export function importOverviewVersions(rows: ImportSimpleItemRow[]) {
+  return apiRequest<ImportRoutedResult>('/api/product/overview/versions/import', {
+    method: 'POST',
+    body: { rows },
+  });
 }
 
 // ── 报表 / 统计分析 ──
@@ -697,23 +752,57 @@ export interface OverviewReleaseRow {
   id: string;
   productId: string;
   productName: string;
+  systemName?: string | null;
+  appName?: string | null;
+  legacyData?: Record<string, string>;
   vCode: string;
   tCode?: string | null;
+  initiationId?: string | null;
+  projectType: string;
   planName: string;
   versionType: string;
-  status: string;
+  departmentName?: string | null;
+  ownerId?: string | null;
+  ownerName?: string | null;
+  teamMemberIds: string[];
+  teamMemberNames: string[];
+  planUrl?: string | null;
   plannedReleaseAt?: string | null;
+  openBrandScope: string;
+  requirementIds: string[];
+  requirementTitles: string[];
   requirementCount: number;
-  initiationId?: string | null;
+  announcementUrl?: string | null;
+  status: string;
+  isTemporaryOptimization: boolean;
   updatedAt: string;
 }
 export interface OverviewInitiationRow {
   id: string;
   productId: string;
   productName: string;
+  systemName?: string | null;
+  appName?: string | null;
+  legacyData?: Record<string, string>;
+  projectType: string;
+  customerSource?: string | null;
   tCode?: string | null;
   planName: string;
   versionType: string;
+  requirementDescription?: string | null;
+  departmentName?: string | null;
+  primaryOwnerId?: string | null;
+  ownerName?: string | null;
+  firstDraftMeetingAt?: string | null;
+  secondDraftMeetingAt?: string | null;
+  thirdDraftMeetingAt?: string | null;
+  projectAt?: string | null;
+  needUiDesign?: boolean | null;
+  planUrl?: string | null;
+  developmentStatus: string;
+  remark?: string | null;
+  reviewScore?: number | null;
+  reviewPassed?: boolean | null;
   status: string;
   requirementCount: number;
   updatedAt: string;
@@ -745,6 +834,7 @@ export function getOverviewFeatures(params?: { grade?: string; keyword?: string;
 export interface OverviewDefectRow {
   id: string; productId: string; productName: string; defectNo: string; title?: string | null;
   status: string; grade?: string | null; severityTier?: string | null; structuredData?: Record<string, string>;
+  assigneeId?: string | null; assigneeName?: string | null;
   tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
 }
 export function getOverviewDefects(params?: { status?: string; keyword?: string }) {
