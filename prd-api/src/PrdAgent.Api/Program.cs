@@ -27,6 +27,7 @@ using PrdAgent.Infrastructure.Repositories;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Infrastructure.Security;
 using Serilog;
 using Serilog.Events;
 using Microsoft.Extensions.Configuration;
@@ -566,6 +567,16 @@ if (jwtSecretBytes.Length < 32)
     throw new InvalidOperationException($"JWT Secret 过短（当前 {jwtSecretBytes.Length} bytes），至少需要 32 bytes。请更新配置项 Jwt:Secret（环境变量：Jwt__Secret）。");
 }
 
+var apiKeyCryptoSecret = builder.Configuration["ApiKeyCrypto:Secret"];
+if (string.IsNullOrWhiteSpace(apiKeyCryptoSecret))
+{
+    Log.Warning("ApiKeyCrypto:Secret 未配置；平台 API key 密文将临时兼容使用 Jwt:Secret。正式环境请配置 ApiKeyCrypto__Secret。");
+}
+else if (Encoding.UTF8.GetBytes(apiKeyCryptoSecret.Trim()).Length < 32)
+{
+    throw new InvalidOperationException($"ApiKeyCrypto Secret 过短（当前 {Encoding.UTF8.GetBytes(apiKeyCryptoSecret.Trim()).Length} bytes），至少需要 32 bytes。请更新配置项 ApiKeyCrypto:Secret（环境变量：ApiKeyCrypto__Secret）。");
+}
+
 var jwtSigningKey = new SymmetricSecurityKey(jwtSecretBytes);
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "prdagent";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "prdagent";
@@ -823,7 +834,6 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var db = sp.GetRequiredService<MongoDbContext>();
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var config = sp.GetRequiredService<IConfiguration>();
-    var jwtSecret = config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
     var logWriter = sp.GetRequiredService<ILlmRequestLogWriter>();
     var ctxAccessor = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var claudeLogger = sp.GetRequiredService<ILogger<ClaudeClient>>();
@@ -833,7 +843,7 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var mainEnablePromptCache = mainModel != null ? (mainModel.EnablePromptCache ?? true) : false;
     if (mainModel != null)
     {
-        var (apiUrl, apiKey) = ResolveApiConfigForModel(mainModel, db, jwtSecret);
+        var (apiUrl, apiKey) = ResolveApiConfigForModel(mainModel, db, config);
         
         if (!string.IsNullOrWhiteSpace(apiUrl) && !string.IsNullOrWhiteSpace(apiKey))
         {
@@ -872,7 +882,7 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var activeConfig = db.LLMConfigs.Find(c => c.IsActive).FirstOrDefault();
     if (activeConfig != null)
     {
-        var apiKey = ApiKeyCrypto.Decrypt(activeConfig.ApiKeyEncrypted, jwtSecret);
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(activeConfig.ApiKeyEncrypted, config);
         
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
@@ -908,10 +918,10 @@ builder.Services.AddScoped<ILLMClient>(sp =>
 });
 
 // 辅助方法：解析模型的 API 配置（与 AdminModelsController 中的逻辑一致）
-static (string? apiUrl, string? apiKey) ResolveApiConfigForModel(LLMModel model, MongoDbContext db, string jwtSecret)
+static (string? apiUrl, string? apiKey) ResolveApiConfigForModel(LLMModel model, MongoDbContext db, IConfiguration config)
 {
     string? apiUrl = model.ApiUrl;
-    string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
+    string? apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, config);
 
     // 如果模型没有配置，从平台继承
     if (model.PlatformId != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
@@ -922,7 +932,7 @@ static (string? apiUrl, string? apiKey) ResolveApiConfigForModel(LLMModel model,
             apiUrl ??= platform.ApiUrl;
             if (string.IsNullOrEmpty(apiKey))
             {
-                apiKey = ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, config);
             }
         }
     }

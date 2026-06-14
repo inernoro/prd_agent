@@ -10,6 +10,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Security;
 
 using PrdAgent.Api.Services.MdToPpt;
 
@@ -962,7 +963,6 @@ public class MdToPptController : ControllerBase
         // 凭据预检（2026-06-12 用户报「选 Qwen 报缺少 API key」）：物化运行配置需要解出
         // 平台/模型 key 的明文，部署环境的加密密钥若与存量密文不匹配会解密为空——
         // 这种模型在弹层里必须提前标记不可用并给出原因，不能让用户点了才撞 4xx。
-        var jwtSecret = _configuration["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
         var platformById = platforms.ToDictionary(p => p.Id, p => p);
         string? UnavailableReason(LLMModel m)
         {
@@ -973,8 +973,8 @@ public class MdToPptController : ControllerBase
                 && platformById.TryGetValue(m.PlatformId, out var plat))
                 cipher = plat.ApiKeyEncrypted;
             if (string.IsNullOrWhiteSpace(cipher)) return "平台未配置 API key";
-            if (string.IsNullOrWhiteSpace(ApiKeyCrypto.Decrypt(cipher, jwtSecret)))
-                return "平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请在 模型平台 重新保存该平台的 key";
+            if (!ApiKeyCryptoKeyRing.Decrypt(cipher, _configuration).Success)
+                return "平台 API key 无法解密（部署环境数据加密密钥与存量配置不匹配），请在模型平台重新保存该平台的 key";
             return null;
         }
 

@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 using System.Text.Json;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -124,7 +125,7 @@ public class ModelsController : ControllerBase
             Name = request.Name,
             ModelName = reqMid,
             ApiUrl = request.ApiUrl,
-            ApiKeyEncrypted = string.IsNullOrEmpty(request.ApiKey) ? null : ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()),
+            ApiKeyEncrypted = string.IsNullOrEmpty(request.ApiKey) ? null : ApiKeyCryptoKeyRing.Encrypt(request.ApiKey, _config),
             PlatformId = request.PlatformId,
             Group = request.Group,
             Timeout = request.Timeout,
@@ -186,7 +187,7 @@ public class ModelsController : ControllerBase
 
         if (!string.IsNullOrEmpty(request.ApiKey))
         {
-            update = update.Set(m => m.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()));
+            update = update.Set(m => m.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(request.ApiKey, _config));
         }
 
         var result = await _db.LLMModels.UpdateOneAsync(m => m.Id == id, update);
@@ -642,7 +643,7 @@ public class ModelsController : ControllerBase
     private async Task<(string? apiUrl, string? apiKey, string? platformType)> ResolveApiConfig(LLMModel model)
     {
         string? apiUrl = model.ApiUrl;
-        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, GetJwtSecret());
+        string? apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _config);
         string? platformType = null;
 
         if (model.PlatformId != null)
@@ -651,7 +652,7 @@ public class ModelsController : ControllerBase
             if (platform != null)
             {
                 apiUrl ??= platform.ApiUrl;
-                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret());
+                apiKey ??= ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
                 platformType ??= platform.PlatformType;
             }
         }
@@ -677,7 +678,7 @@ public class ModelsController : ControllerBase
         m.Name,
         m.ModelName,
         m.ApiUrl,
-        apiKeyMasked = string.IsNullOrEmpty(m.ApiKeyEncrypted) ? null : ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(m.ApiKeyEncrypted, GetJwtSecret())),
+        apiKeyMasked = ApiKeyCryptoKeyRing.Mask(m.ApiKeyEncrypted, _config),
         m.PlatformId,
         platformName = m.PlatformId != null && platformMap.TryGetValue(m.PlatformId, out var name) ? name : null,
         m.Group,
@@ -702,8 +703,6 @@ public class ModelsController : ControllerBase
         m.CreatedAt,
         m.UpdatedAt
     };
-
-    private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 
     /// <summary>
     /// 根据平台侧模型ID直接获取适配信息（无需查询数据库，支持任意模型）

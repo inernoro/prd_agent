@@ -11,6 +11,7 @@ using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 
@@ -856,7 +857,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         string? apiKey = null;
         if (!string.IsNullOrWhiteSpace(model.ApiKeyEncrypted))
         {
-            apiKey = NormalizeOptional(ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, GetJwtSecret()));
+            apiKey = NormalizeOptional(ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _configuration));
             keyUnreadable |= apiKey == null; // 密文存在但解不出 = 加密密钥不匹配
         }
         string? platformType = null;
@@ -869,7 +870,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 apiUrl ??= NormalizeOptional(platform.ApiUrl);
                 if (apiKey == null && !string.IsNullOrWhiteSpace(platform.ApiKeyEncrypted))
                 {
-                    apiKey = NormalizeOptional(ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret()));
+                    apiKey = NormalizeOptional(ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _configuration));
                     keyUnreadable |= apiKey == null;
                 }
                 platformType = NormalizeOptional(platform.PlatformType);
@@ -923,5 +924,4 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return NormalizeBaseUrl(value);
     }
 
-    private string GetJwtSecret() => _configuration["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }

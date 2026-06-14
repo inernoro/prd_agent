@@ -8,6 +8,7 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Transformers;
+using PrdAgent.Infrastructure.Security;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -60,7 +61,7 @@ public class ExchangeController : ControllerBase
             .SortByDescending(e => e.CreatedAt)
             .ToListAsync(ct);
 
-        var result = list.Select(e => BuildExchangeDto(e, GetJwtSecret()));
+        var result = list.Select(BuildExchangeDto);
 
         return Ok(ApiResponse<object>.Ok(new { items = result }));
     }
@@ -72,7 +73,7 @@ public class ExchangeController : ControllerBase
     ///   - platformName: 用户自定义的 Exchange Name，替代硬编码的 "模型中继 (Exchange)"
     ///   - legacyPlatformId: 继续暴露 "__exchange__"，前端需兼容旧模型池数据时用
     /// </summary>
-    private static object BuildExchangeDto(ModelExchange e, string jwtSecret)
+    private object BuildExchangeDto(ModelExchange e)
     {
         var effectiveModels = e.GetEffectiveModels();
         return new
@@ -92,7 +93,7 @@ public class ExchangeController : ControllerBase
                 m.Enabled
             }).ToList(),
             e.TargetUrl,
-            apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(e.TargetApiKeyEncrypted, jwtSecret)),
+            apiKeyMasked = ApiKeyCryptoKeyRing.Mask(e.TargetApiKeyEncrypted, _config),
             e.TargetAuthScheme,
             e.TransformerType,
             e.TransformerConfig,
@@ -120,7 +121,7 @@ public class ExchangeController : ControllerBase
         if (exchange == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Exchange 不存在"));
 
-        return Ok(ApiResponse<object>.Ok(BuildExchangeDto(exchange, GetJwtSecret())));
+        return Ok(ApiResponse<object>.Ok(BuildExchangeDto(exchange)));
     }
 
     /// <summary>
@@ -156,7 +157,7 @@ public class ExchangeController : ControllerBase
             ModelAliases = NormalizeModelAliases(request.ModelAliases),
             Models = normalizedModels,
             TargetUrl = request.TargetUrl.Trim(),
-            TargetApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.TargetApiKey ?? string.Empty, GetJwtSecret()),
+            TargetApiKeyEncrypted = ApiKeyCryptoKeyRing.Encrypt(request.TargetApiKey ?? string.Empty, _config),
             TargetAuthScheme = string.IsNullOrWhiteSpace(request.TargetAuthScheme) ? "Bearer" : request.TargetAuthScheme.Trim(),
             TransformerType = string.IsNullOrWhiteSpace(request.TransformerType) ? "passthrough" : request.TransformerType.Trim(),
             TransformerConfig = request.TransformerConfig,
@@ -208,7 +209,7 @@ public class ExchangeController : ControllerBase
         // 仅在提供了新 ApiKey 时更新
         if (!string.IsNullOrEmpty(request.TargetApiKey))
         {
-            update = update.Set(e => e.TargetApiKeyEncrypted, ApiKeyCrypto.Encrypt(request.TargetApiKey, GetJwtSecret()));
+            update = update.Set(e => e.TargetApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(request.TargetApiKey, _config));
         }
 
         await _db.ModelExchanges.UpdateOneAsync(e => e.Id == id, update, cancellationToken: ct);
@@ -459,7 +460,7 @@ public class ExchangeController : ControllerBase
         var actualTargetUrl = transformer.ResolveTargetUrl(templatedUrl, standardBody, exchange.TransformerConfig)
                               ?? templatedUrl;
 
-        var apiKey = ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret());
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config) ?? string.Empty;
         var httpRequest = new HttpRequestMessage(HttpMethod.Post, actualTargetUrl)
         {
             Content = new StringContent(transformedRequest.ToJsonString(), System.Text.Encoding.UTF8, "application/json")
@@ -755,7 +756,7 @@ public class ExchangeController : ControllerBase
             }
 
             // 从 Exchange 配置获取认证信息
-            var apiKey = ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret());
+            var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config) ?? string.Empty;
             string appKey = "", accessKey = apiKey;
             if (apiKey.Contains('|'))
             {
@@ -901,7 +902,7 @@ public class ExchangeController : ControllerBase
             ModelAliases = NormalizeModelAliases(template.Preset.ModelAliases),
             Models = NormalizeExchangeModels(template.Preset.Models),
             TargetUrl = template.Preset.TargetUrl,
-            TargetApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.ApiKey.Trim(), GetJwtSecret()),
+            TargetApiKeyEncrypted = ApiKeyCryptoKeyRing.Encrypt(request.ApiKey.Trim(), _config),
             TargetAuthScheme = template.Preset.TargetAuthScheme ?? "Bearer",
             TransformerType = template.Preset.TransformerType ?? "passthrough",
             TransformerConfig = template.Preset.TransformerConfig,
@@ -916,8 +917,6 @@ public class ExchangeController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new { exchange.Id, exchange.Name, modelCount = exchange.Models.Count }));
     }
-
-    private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 
     private static void SetTestAuthHeader(HttpRequestMessage req, string? authScheme, string? apiKey)
     {
