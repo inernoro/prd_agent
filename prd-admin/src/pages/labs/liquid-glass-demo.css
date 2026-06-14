@@ -1,0 +1,205 @@
+/*
+ * 液态玻璃三方对照 demo 专用样式
+ *
+ * 评估背景：用户反馈现有液态玻璃"做得烂"，给了 bubbbly 的 WebGL 折射案例做参照。
+ * bubbbly 的灵魂是「边缘折射 + 棱光 + 保清晰」，而非重模糊。
+ * 本 demo 把三种做法叠在同一张会动的背景上并排对比，供真人选型：
+ *   - current  : 现有 GlassCard 做法（blur(40px) 重模糊，背景糊成一坨）
+ *   - clarity  : B 方案 —— 降模糊保清晰 + 真正的边缘棱光/镜面反光（全浏览器通用）
+ *   - refract  : A 方案 —— SVG feDisplacementMap 真折射（最接近 bubbbly，Safari 自动降级到 clarity）
+ *
+ * 这是 labs 评估页，不接入线上任何业务路径。
+ */
+
+/* ── 舞台：会动的高对比背景（折射要有细节才看得出来）── */
+.lgd-scene {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  min-height: 540px;
+  isolation: isolate;
+}
+
+/* 背景照片质感：多个彩色光斑缓慢漂移 */
+.lgd-scene::before {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  z-index: 0;
+  background:
+    radial-gradient(38% 38% at 22% 30%, #ff6b6b 0%, transparent 60%),
+    radial-gradient(42% 42% at 78% 28%, #4dabf7 0%, transparent 60%),
+    radial-gradient(46% 46% at 35% 78%, #f7b733 0%, transparent 62%),
+    radial-gradient(40% 40% at 82% 80%, #20c997 0%, transparent 60%),
+    radial-gradient(50% 50% at 50% 50%, #845ef7 0%, transparent 70%);
+  filter: saturate(1.1);
+  animation: lgd-drift 18s ease-in-out infinite alternate;
+}
+
+/* 背景网格 + 文字行：折射这些细线/文字时玻璃感最明显 */
+.lgd-scene::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.16) 1px, transparent 1px);
+  background-size: 38px 38px;
+  pointer-events: none;
+}
+
+.lgd-scene[data-scene='light']::before {
+  background:
+    radial-gradient(40% 40% at 25% 30%, #ffd6a5 0%, transparent 60%),
+    radial-gradient(42% 42% at 78% 30%, #a0c4ff 0%, transparent 60%),
+    radial-gradient(46% 46% at 35% 78%, #caffbf 0%, transparent 62%),
+    radial-gradient(40% 40% at 82% 80%, #ffc6ff 0%, transparent 60%),
+    radial-gradient(60% 60% at 50% 50%, #ffffff 0%, transparent 75%);
+}
+.lgd-scene[data-scene='light'] {
+  background: #eef2f7;
+}
+.lgd-scene[data-scene='dark'] {
+  background: #0a0a12;
+}
+.lgd-scene[data-scene='light']::after {
+  background-image:
+    linear-gradient(rgba(20, 24, 40, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 24, 40, 0.12) 1px, transparent 1px);
+}
+
+@keyframes lgd-drift {
+  0%   { transform: translate3d(-4%, -3%, 0) scale(1.05) rotate(0deg); }
+  50%  { transform: translate3d(3%, 2%, 0) scale(1.12) rotate(4deg); }
+  100% { transform: translate3d(5%, -2%, 0) scale(1.06) rotate(-3deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lgd-scene::before { animation: none; }
+}
+
+/* 背景中的高对比标语，便于观察折射对文字边缘的扭曲 */
+.lgd-scene-caption {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 96px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  color: rgba(255, 255, 255, 0.14);
+  user-select: none;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+.lgd-scene[data-scene='light'] .lgd-scene-caption {
+  color: rgba(20, 24, 40, 0.12);
+}
+
+/* ── 玻璃卡通用 ── */
+.lgd-card {
+  position: absolute;
+  z-index: 2;
+  width: 280px;
+  border-radius: 24px;
+  padding: 20px 22px;
+  cursor: grab;
+  touch-action: none;
+  color: #fff;
+  transition: box-shadow 0.15s ease;
+}
+.lgd-card:active { cursor: grabbing; }
+.lgd-scene[data-scene='light'] .lgd-card { color: #15151c; }
+
+.lgd-card-label {
+  position: absolute;
+  top: -26px;
+  left: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.6));
+  white-space: nowrap;
+}
+
+/* ── 方案 current：现有 GlassCard 做法（重模糊）── */
+.lgd-current {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: var(--lgd-current-blur, blur(40px) saturate(180%) brightness(1.1));
+  -webkit-backdrop-filter: var(--lgd-current-blur, blur(40px) saturate(180%) brightness(1.1));
+  box-shadow:
+    0 16px 32px -8px rgba(10, 10, 14, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.15),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.15);
+}
+
+/* ── 方案 clarity（B）：降模糊保清晰 + 真棱光/镜面反光 ── */
+.lgd-clarity {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  backdrop-filter: var(--lgd-clarity-blur, blur(7px) saturate(150%));
+  -webkit-backdrop-filter: var(--lgd-clarity-blur, blur(7px) saturate(150%));
+  box-shadow:
+    0 20px 40px -12px rgba(0, 0, 0, 0.45),
+    inset 0 1px 1px rgba(255, 255, 255, 0.7),      /* 顶边亮线（光从上方打下来）*/
+    inset 1px 0 0 rgba(255, 255, 255, 0.25),
+    inset -1px 0 0 rgba(255, 255, 255, 0.18),
+    inset 0 -10px 20px -16px rgba(255, 255, 255, 0.35); /* 底部内反光 */
+}
+/* 左上角镜面高光（玻璃的"反射环境光"），靠 ::after 叠一层径向高光 */
+.lgd-clarity::after,
+.lgd-refract::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 8% 0%, rgba(255, 255, 255, 0.5) 0%, transparent 38%),
+    radial-gradient(100% 60% at 100% 100%, rgba(255, 255, 255, 0.12) 0%, transparent 40%);
+  mix-blend-mode: screen;
+}
+
+/* ── 方案 refract（A）：SVG feDisplacementMap 真折射 ── */
+.lgd-refract {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  backdrop-filter: url(#lgd-liquid) blur(1px) saturate(150%);
+  -webkit-backdrop-filter: blur(7px) saturate(150%); /* WebKit 不支持 url() 折射，退到 clarity 级模糊 */
+  box-shadow:
+    0 22px 44px -12px rgba(0, 0, 0, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 -12px 24px -18px rgba(255, 255, 255, 0.4);
+}
+
+/* 浅色舞台下，卡片高光改用暖白 + 更实的边，避免在亮底上"飘" */
+.lgd-scene[data-scene='light'] .lgd-current,
+.lgd-scene[data-scene='light'] .lgd-clarity,
+.lgd-scene[data-scene='light'] .lgd-refract {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.25) 100%);
+  border-color: rgba(255, 255, 255, 0.8);
+  box-shadow:
+    0 20px 40px -14px rgba(31, 38, 58, 0.28),
+    inset 0 1px 1px rgba(255, 255, 255, 0.9),
+    inset 0 -10px 20px -16px rgba(255, 255, 255, 0.6);
+}
+
+/* 卡片内容排版 */
+.lgd-card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.lgd-card-avatar {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #22d3ee);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 18px; color: #fff;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.4), 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+.lgd-card-title { font-size: 16px; font-weight: 800; line-height: 1.2; }
+.lgd-card-sub { font-size: 12px; opacity: 0.78; margin-top: 2px; }
+.lgd-card-stats { display: flex; gap: 18px; margin-top: 4px; }
+.lgd-stat-num { font-size: 20px; font-weight: 800; }
+.lgd-stat-label { font-size: 11px; opacity: 0.7; }
