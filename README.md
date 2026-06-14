@@ -107,7 +107,7 @@ Purpose: help testers report defects like filling a shipping label. The user wri
 Usage:
 1. Open **AI Toolbox → TAPD 缺陷自动提报**.
 2. Paste the TAPD request `Cookie` directly on the page.
-3. Fill `workspaceId` and the temporary TAPD `add_bug_token` from the TAPD add-bug page request.
+3. Fill `workspaceId`.
 4. Enter the bug description and click **生成缺陷草稿**.
 5. Review the draft and click **确认提交到 TAPD**.
 

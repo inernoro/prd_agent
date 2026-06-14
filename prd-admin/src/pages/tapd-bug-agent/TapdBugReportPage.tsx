@@ -125,8 +125,6 @@ function TextLinesEditor({
 export function TapdBugReportPage() {
   const [tapdCookie, setTapdCookie] = useState('');
   const [workspaceId, setWorkspaceId] = useState('');
-  const [addBugToken, setAddBugToken] = useState('');
-  const [dscToken, setDscToken] = useState('');
   const [naturalText, setNaturalText] = useState('');
   const [draft, setDraft] = useState<TapdBugDraft>(DEFAULT_DRAFT);
   const [stageMessage, setStageMessage] = useState('等待输入缺陷描述');
@@ -142,8 +140,7 @@ export function TapdBugReportPage() {
   const readyToSubmit =
     normalizedDraft.missingFields.length === 0 &&
     tapdCookie.trim().length > 0 &&
-    workspaceId.trim().length > 0 &&
-    addBugToken.trim().length > 0;
+    workspaceId.trim().length > 0;
 
   const patchDraft = (patch: Partial<TapdBugDraft>) => {
     setDraft((prev) => normalizeDraft({ ...prev, ...patch }));
@@ -187,8 +184,8 @@ export function TapdBugReportPage() {
       toast.error('缺陷信息不完整', `请补齐：${finalDraft.missingFields.join('、')}`);
       return;
     }
-    if (!tapdCookie || !workspaceId || !addBugToken) {
-      toast.error('TAPD 提交配置不完整', '请填写 Cookie、工作空间 ID 与 add_bug_token');
+    if (!tapdCookie || !workspaceId) {
+      toast.error('TAPD 提交配置不完整', '请填写 Cookie 和工作空间 ID');
       return;
     }
 
@@ -199,8 +196,6 @@ export function TapdBugReportPage() {
       const res = await submitTapdBugReal({
         cookie: tapdCookie,
         workspaceId,
-        addBugToken,
-        dscToken,
         confirmed: true,
         draft: finalDraft,
       });
@@ -281,7 +276,7 @@ export function TapdBugReportPage() {
                   Cookie 只随本次提交请求发送到后端，不保存到外部授权中心。
                 </p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 <div className="flex flex-col gap-2">
                   <FieldLabel required>工作空间 ID</FieldLabel>
                   <input
@@ -292,29 +287,9 @@ export function TapdBugReportPage() {
                     style={inputStyle}
                   />
                 </div>
-                <div className="flex flex-col gap-2">
-                  <FieldLabel required>add_bug_token</FieldLabel>
-                  <input
-                    value={addBugToken}
-                    onChange={(e) => setAddBugToken(e.target.value)}
-                    placeholder="从新增缺陷页抓包获取"
-                    className="h-10 rounded-xl px-3 text-sm outline-none"
-                    style={inputStyle}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col gap-2">
-                <FieldLabel>dsc_token（可选）</FieldLabel>
-                <input
-                  value={dscToken}
-                  onChange={(e) => setDscToken(e.target.value)}
-                  placeholder="Cookie 中已有 dsc-token 时可不填"
-                  className="h-10 rounded-xl px-3 text-sm outline-none"
-                  style={inputStyle}
-                />
               </div>
               <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                提示：如果 Cookie 中包含 dsc-token，下面的 dsc_token 可以不填。
+                只需要 Cookie 和工作空间 ID。其他 TAPD 表单令牌由后端兼容处理。
               </p>
             </div>
           </GlassCard>

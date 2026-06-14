@@ -161,13 +161,8 @@ public class TapdBugAgentService
 
         var cookie = request.Cookie.Trim();
 
-        var addBugToken = FirstNonEmpty(request.AddBugToken);
-        if (string.IsNullOrWhiteSpace(addBugToken))
-            throw new ArgumentException("缺少 add_bug_token，请从 TAPD 新增缺陷页面抓包后填写");
-
-        var dscToken = FirstNonEmpty(request.DscToken, ExtractCookieValue(cookie, "dsc-token"));
-        if (string.IsNullOrWhiteSpace(dscToken))
-            throw new ArgumentException("缺少 dsc_token，请从 TAPD Cookie 或抓包字段中填写");
+        var addBugToken = FirstNonEmpty(request.AddBugToken) ?? "null";
+        var dscToken = FirstNonEmpty(request.DscToken, ExtractCookieValue(cookie, "dsc-token")) ?? string.Empty;
 
         var workspaceId = request.WorkspaceId.Trim();
         var descriptionHtml = BuildDescriptionHtml(
