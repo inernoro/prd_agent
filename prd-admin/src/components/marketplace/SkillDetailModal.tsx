@@ -4,7 +4,7 @@ import { X, Share2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 import { SkillContentBrowser } from './SkillContentBrowser';
-import { useSkillShare } from './useSkillShare';
+import { skillShareDialog } from './skillShareDialogStore';
 
 /**
  * 技能详情弹窗 —— 近全屏（82vw / 85vh），左文件树 + 右内容，默认 SKILL.md。
@@ -19,8 +19,6 @@ export function SkillDetailModal({
   skill: MarketplaceSkillDto;
   onClose: () => void;
 }) {
-  const { sharing, shareSkill } = useSkillShare();
-
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -71,12 +69,11 @@ export function SkillDetailModal({
           <Button
             size="sm"
             variant="secondary"
-            disabled={sharing}
-            onClick={() => shareSkill(skill.id)}
+            onClick={() => skillShareDialog.open({ id: skill.id, title: skill.title })}
             title="生成公开分享链接"
           >
             <Share2 size={13} />
-            {sharing ? '生成中…' : '分享'}
+            分享
           </Button>
           <button
             type="button"
