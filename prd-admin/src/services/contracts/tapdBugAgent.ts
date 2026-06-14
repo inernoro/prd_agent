@@ -5,7 +5,7 @@ export interface TapdBugDraft {
   module: string;
   severity: 'fatal' | 'serious' | 'normal' | 'minor';
   priority: 'urgent' | 'high' | 'medium' | 'low';
-  bugType: '逻辑错误' | '界面展示' | '兼容性' | '性能' | '需求不符';
+  bugType: '逻辑错误' | '不符方案' | '功能遗漏' | '历史缺陷' | '产品缺陷';
   currentOwner: string;
   versionReport: string;
   preconditions: string[];

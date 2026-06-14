@@ -56,6 +56,22 @@ public class TapdBugAgentServiceTests
     }
 
     [Fact]
+    public void NormalizeDraft_ShouldUseUpdatedTapdBugTypeValues()
+    {
+        var valid = TapdBugAgentService.NormalizeDraft(new TapdBugDraft
+        {
+            BugType = "功能遗漏",
+        }, "页面缺少搜索按钮");
+        var oldValue = TapdBugAgentService.NormalizeDraft(new TapdBugDraft
+        {
+            BugType = "界面展示",
+        }, "页面缺少搜索按钮");
+
+        Assert.Equal("功能遗漏", valid.BugType);
+        Assert.Equal("逻辑错误", oldValue.BugType);
+    }
+
+    [Fact]
     public void BuildDescriptionHtml_ShouldEscapeUserInput()
     {
         var html = TapdBugAgentService.BuildDescriptionHtml(

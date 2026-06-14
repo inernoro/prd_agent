@@ -26,7 +26,7 @@ public class TapdBugAgentService
 
     private static readonly HashSet<string> BugTypeValues = new(StringComparer.Ordinal)
     {
-        "逻辑错误", "界面展示", "兼容性", "性能", "需求不符"
+        "逻辑错误", "不符方案", "功能遗漏", "历史缺陷", "产品缺陷"
     };
 
     private readonly ILlmGateway _gateway;
@@ -357,7 +357,7 @@ public class TapdBugAgentService
             4. 四要素必须拆成数组：preconditions、steps、actualResult、expectedResult。
             5. 默认 module/versionReport 为“附近门店组件精准筛选”，currentOwner 为“黄卫杰;”。
             6. severity 只能是 fatal/serious/normal/minor，默认 serious；priority 只能是 urgent/high/medium/low，默认 high。
-            7. bugType 只能是 逻辑错误/界面展示/兼容性/性能/需求不符，默认 逻辑错误。
+            7. bugType 只能是 逻辑错误/不符方案/功能遗漏/历史缺陷/产品缺陷，默认 逻辑错误。
             返回 JSON 字段：
             title, module, severity, priority, bugType, currentOwner, versionReport,
             preconditions, steps, actualResult, expectedResult, missingFields

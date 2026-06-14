@@ -399,10 +399,10 @@ export function TapdBugReportPage() {
                   style={inputStyle}
                 >
                   <option value="逻辑错误">逻辑错误</option>
-                  <option value="界面展示">界面展示</option>
-                  <option value="兼容性">兼容性</option>
-                  <option value="性能">性能</option>
-                  <option value="需求不符">需求不符</option>
+                  <option value="不符方案">不符方案</option>
+                  <option value="功能遗漏">功能遗漏</option>
+                  <option value="历史缺陷">历史缺陷</option>
+                  <option value="产品缺陷">产品缺陷</option>
                 </select>
               </div>
               <div className="flex flex-col gap-2">
