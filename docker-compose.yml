@@ -55,7 +55,7 @@ services:
       - Jwt__Secret=${JWT_SECRET}
       - Jwt__Issuer=prdagent
       # 项目数据加密密钥：用于模型平台 API key 等持久化密文，必须独立于 JWT_SECRET
-      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET}
+      - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       - Session__TimeoutMinutes=30
       # 资产存储：tencentCos / cloudflareR2
@@ -120,5 +120,4 @@ volumes:
 networks:
   prdagent-network:
     external: true
-
 
