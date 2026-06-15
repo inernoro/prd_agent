@@ -75,6 +75,16 @@ function resolveInstallError(code?: string): InstallError {
   }
 }
 
+// 安装配置 JSON（SSOT）：iCloud 模板首次运行从剪贴板读取这段（含 token/endpoint/name）。
+// 复制按钮与「完整配置」可手动复制行共用，避免两处拼接漂移。
+function buildInstallConfig(token: string, serverUrl: string, name: string): string {
+  return JSON.stringify({
+    token,
+    endpoint: `${serverUrl}/api/shortcuts/collect`,
+    name,
+  });
+}
+
 /**
  * 公开安装引导页 — iPhone 扫码后打开此页面
  * 路由: /s/shortcut/:id?t=scs-xxx
@@ -132,11 +142,7 @@ export default function ShortcutInstallPage() {
   // 复制配置 JSON 到剪贴板，返回是否成功
   const copyConfig = async (): Promise<boolean> => {
     if (!data) return false;
-    const config = JSON.stringify({
-      token,
-      endpoint: `${data.serverUrl}/api/shortcuts/collect`,
-      name: data.name,
-    });
+    const config = buildInstallConfig(token, data.serverUrl, data.name);
     const ok = await copyToClipboard(config);
     setCopyTried(true); // 无论成败都算「尝试过」，解锁后续手动入口
     if (ok) {
@@ -354,6 +360,14 @@ export default function ShortcutInstallPage() {
         }}>
           <InfoRow label="Token" value={token} mono />
           <InfoRow label="收藏接口" value={`${data.serverUrl}/api/shortcuts/collect`} />
+          {(hasICloud || canDownloadSigned) && (
+            <>
+              <InfoRow label="完整配置" value={buildInstallConfig(token, data.serverUrl, data.name)} mono />
+              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5, margin: '2px 2px 0' }}>
+                iCloud 模板首次运行会从剪贴板读取「完整配置」。若自动复制被浏览器拦截，请长按上方这整段手动复制后再打开模板。
+              </p>
+            </>
+          )}
         </div>
 
         {/* ── 连接自检：装完点一下就知道通没通，不用瞎猜 ── */}
