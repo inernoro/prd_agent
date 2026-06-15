@@ -780,6 +780,7 @@ public class ShortcutsController : ControllerBase
     [HttpGet("collections")]
     public async Task<IActionResult> GetCollections(
         [FromQuery] string? keyword,
+        [FromQuery] string? shortcutId,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
@@ -803,6 +804,12 @@ public class ShortcutsController : ControllerBase
         {
             filterBuilder.Eq(x => x.UserId, userId)
         };
+
+        // 按某个快捷指令收窄（安装页「连接自检」用，确认正是这条指令产生了收藏）
+        if (!string.IsNullOrWhiteSpace(shortcutId))
+        {
+            filters.Add(filterBuilder.Eq(x => x.ShortcutId, shortcutId));
+        }
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {

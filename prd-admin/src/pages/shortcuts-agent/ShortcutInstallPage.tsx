@@ -1,5 +1,5 @@
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -94,7 +94,11 @@ export default function ShortcutInstallPage() {
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState(0); // 0=初始, 1=已复制配置, 2=已打开App
 
+  // 防陈旧响应：重试 / 路由参数变更会触发重叠 fetch，旧响应不得覆盖新结果
+  const loadSeqRef = useRef(0);
+
   const loadData = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     if (!id || !token) {
       setError(ERROR_VIEWS.invalidLink);
       setLoading(false);
@@ -105,6 +109,7 @@ export default function ShortcutInstallPage() {
     try {
       const res = await fetch(`/api/shortcuts/${id}/install-data?t=${encodeURIComponent(token)}`);
       const json = await res.json();
+      if (loadSeqRef.current !== seq) return; // 已有更新的请求发出，丢弃本次
       if (json.success && json.data) {
         setData(json.data);
       } else {
@@ -112,9 +117,10 @@ export default function ShortcutInstallPage() {
         setError(resolveInstallError(json?.error?.code));
       }
     } catch {
+      if (loadSeqRef.current !== seq) return;
       setError(ERROR_VIEWS.network);
     } finally {
-      setLoading(false);
+      if (loadSeqRef.current === seq) setLoading(false);
     }
   }, [id, token]);
 
@@ -346,7 +352,7 @@ export default function ShortcutInstallPage() {
         </div>
 
         {/* ── 连接自检：装完点一下就知道通没通，不用瞎猜 ── */}
-        <VerifyConnection token={token} shortcutName={data.name} />
+        <VerifyConnection token={token} shortcutId={id || ''} shortcutName={data.name} />
 
         {/* ── 遇到问题（常见卡点自助排查） ── */}
         <HelpFaq />
@@ -442,21 +448,28 @@ type VerifyState =
   | { kind: 'unauthorized' }
   | { kind: 'network' };
 
-function VerifyConnection({ token, shortcutName }: { token: string; shortcutName: string }) {
+function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; shortcutId: string; shortcutName: string }) {
   const [state, setState] = useState<VerifyState>({ kind: 'idle' });
+  // 防陈旧响应：连点自检会重叠 fetch，只认最后一次的结果
+  const checkSeqRef = useRef(0);
 
   const check = async () => {
+    const seq = ++checkSeqRef.current;
     setState({ kind: 'checking' });
     try {
       // 相对路径走当前站点，避免跨域；token 通过 Authorization 头校验（与快捷指令实际收藏同一把锁）
-      const res = await fetch('/api/shortcuts/collections?page=1&pageSize=3', {
+      // 按 shortcutId 收窄：只看「这条指令」产生的收藏，避免误把别的指令的旧收藏当成本次安装成功
+      const params = new URLSearchParams({ page: '1', pageSize: '3' });
+      if (shortcutId) params.set('shortcutId', shortcutId);
+      const res = await fetch(`/api/shortcuts/collections?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 401) {
-        setState({ kind: 'unauthorized' });
+        if (checkSeqRef.current === seq) setState({ kind: 'unauthorized' });
         return;
       }
       const json = await res.json();
+      if (checkSeqRef.current !== seq) return; // 已有更新的自检发出，丢弃本次
       if (json?.success && json.data) {
         const total: number = json.data.total ?? json.data.Total ?? 0;
         const items: Array<{ url?: string; text?: string }> = json.data.items ?? json.data.Items ?? [];
@@ -467,7 +480,7 @@ function VerifyConnection({ token, shortcutName }: { token: string; shortcutName
         setState({ kind: json?.error?.code ? 'unauthorized' : 'network' });
       }
     } catch {
-      setState({ kind: 'network' });
+      if (checkSeqRef.current === seq) setState({ kind: 'network' });
     }
   };
 
