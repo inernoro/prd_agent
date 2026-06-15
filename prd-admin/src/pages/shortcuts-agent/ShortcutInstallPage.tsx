@@ -477,7 +477,9 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
         const latest = first?.url || first?.text || undefined;
         setState({ kind: 'ok', total, latest });
       } else {
-        setState({ kind: json?.error?.code ? 'unauthorized' : 'network' });
+        // 鉴权失败（token 无效/过期）后端返回 401，已在上面处理；
+        // 走到这里的都是服务端/限流等其他错误，按可重试的网络问题提示，别误报「密钥无效」
+        setState({ kind: 'network' });
       }
     } catch {
       if (checkSeqRef.current === seq) setState({ kind: 'network' });
@@ -518,10 +520,12 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
 
       {state.kind === 'ok' && (
         <ResultLine tone="ok">
-          连接正常，已收藏 {state.total} 条。
-          {state.latest
-            ? <> 最新一条：<span style={{ color: 'rgba(255,255,255,0.85)' }}>{truncate(state.latest, 40)}</span>，安装成功！</>
-            : <> 还没有收藏记录，去任意 App 点分享 → 选「{shortcutName}」试一下。</>}
+          {/* 以 total 为准判定是否已收藏，避免「已收藏 N 条」却又说「还没有收藏记录」自相矛盾 */}
+          {state.total > 0
+            ? <>连接正常，已收藏 {state.total} 条{state.latest
+                ? <>，最新一条：<span style={{ color: 'rgba(255,255,255,0.85)' }}>{truncate(state.latest, 40)}</span></>
+                : null}，安装成功！</>
+            : <>连接正常（密钥有效）。还没有收藏记录，去任意 App 点分享 → 选「{shortcutName}」试一下。</>}
         </ResultLine>
       )}
       {state.kind === 'unauthorized' && (
