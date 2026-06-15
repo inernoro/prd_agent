@@ -2175,6 +2175,7 @@ export {
   listKnowledgeEntries,
   getKnowledgeEntryContent,
   CCAS_PRD_STREAM_URL,
+  CCAS_PRD_REVISE_STREAM_URL,
   CCAS_FLOW_PARSE_STREAM_URL,
   CCAS_QA_STREAM_URL,
   CCAS_SQL_AI_STREAM_URL,

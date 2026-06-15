@@ -164,6 +164,7 @@ export async function deleteCcasFlowDiagram(id: string): Promise<ApiResponse<{ d
 // ──────────────────────────────────────────────
 
 export const CCAS_PRD_STREAM_URL = '/api/ccas-agent/prd/stream';
+export const CCAS_PRD_REVISE_STREAM_URL = '/api/ccas-agent/prd/revise/stream';
 export const CCAS_FLOW_PARSE_STREAM_URL = '/api/ccas-agent/flow/parse-stream';
 export const CCAS_QA_STREAM_URL = '/api/ccas-agent/qa/stream';
 export const CCAS_SQL_AI_STREAM_URL = '/api/ccas-agent/sql-ai/stream';
