@@ -6571,7 +6571,10 @@ function safeChart(canvasId, config) {
                     }
                     else
                     {
-                        var gatewayResult = await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, resolution.ToGatewayResolution());
+                        var gwRes = resolution.ToGatewayResolution();
+                        var gatewayResult = IsChatAudioModel(gwRes.ActualModel)
+                            ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
+                            : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
                         transcript = gatewayResult.Transcript;
                         if (gatewayResult.Cues.Count > 0)
                         {
@@ -6580,7 +6583,7 @@ function safeChart(canvasId, config) {
                         }
                         else
                         {
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成，转写 {transcript.Length} 字");
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成（model={gwRes.ActualModel}），转写 {transcript.Length} 字");
                         }
                     }
                 }
@@ -6749,6 +6752,114 @@ function safeChart(canvasId, config) {
         }
 
         return ParseGatewayAsrTranscript(rawResp.Content);
+    }
+
+    /// <summary>
+    /// 判断该模型是否走「多模态 chat + 音频输入」路径做转写（如 OpenRouter 的 openai/gpt-audio、
+    /// gemini 系等）。这些平台没有 Whisper 的 /v1/audio/transcriptions 端点，只能把音频当作
+    /// chat 消息里的 input_audio 发给多模态模型，让它逐字转写。whisper 仍走 multipart。
+    /// </summary>
+    private static bool IsChatAudioModel(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return false;
+        var m = model.ToLowerInvariant();
+        if (m.Contains("whisper")) return false;       // Whisper 走 /v1/audio/transcriptions
+        return m.Contains("audio")                      // gpt-audio / gpt-4o-audio-preview / qwen-audio ...
+            || m.Contains("gemini")                     // gemini 原生支持音频输入
+            || m.Contains("gpt-4o");                    // 4o 系支持音频
+    }
+
+    /// <summary>
+    /// 通过多模态 chat completions（input_audio）做转写。用于 OpenRouter / Gemini 等没有
+    /// Whisper 端点、但模型本身能听音频的平台。返回纯转写文本（无时间戳 cue）。
+    /// </summary>
+    private static async Task<GatewayAsrTranscript> TranscribeAudioViaChatAsync(
+        ILlmGateway gateway,
+        string appCallerCode,
+        byte[] audioBytes,
+        GatewayModelResolution resolution)
+    {
+        var base64 = Convert.ToBase64String(audioBytes);
+        var body = new JsonObject
+        {
+            ["model"] = resolution.ActualModel,
+            ["modalities"] = new JsonArray("text"),
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["type"] = "text",
+                            ["text"] = "请把这段音频逐字转写成中文/原语言文字，尽量一字不差保留原话。只输出转写出的文字内容本身，不要任何解释、说明、引号或额外前后缀。",
+                        },
+                        new JsonObject
+                        {
+                            ["type"] = "input_audio",
+                            ["input_audio"] = new JsonObject
+                            {
+                                ["data"] = base64,
+                                ["format"] = "wav",
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/chat/completions",
+            IsMultipart = false,
+            RequestBody = body,
+            TimeoutSeconds = 600,
+        };
+
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new InvalidOperationException($"Gateway 语音转写(chat)调用失败: {detail}");
+        }
+
+        var text = ExtractChatCompletionContent(rawResp.Content);
+        return new GatewayAsrTranscript(text.Trim(), new JsonArray());
+    }
+
+    /// <summary>从 chat completions 响应里取 choices[0].message.content（兼容字符串与多模态数组）。</summary>
+    private static string ExtractChatCompletionContent(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("choices", out var choices)
+                && choices.ValueKind == JsonValueKind.Array
+                && choices.GetArrayLength() > 0
+                && choices[0].TryGetProperty("message", out var msg)
+                && msg.TryGetProperty("content", out var content))
+            {
+                if (content.ValueKind == JsonValueKind.String)
+                    return content.GetString() ?? "";
+                if (content.ValueKind == JsonValueKind.Array)
+                {
+                    var parts = new StringBuilder();
+                    foreach (var part in content.EnumerateArray())
+                    {
+                        if (part.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                            parts.Append(t.GetString());
+                    }
+                    return parts.ToString();
+                }
+            }
+        }
+        catch { /* 解析失败返回空，由上层判失败 */ }
+        return "";
     }
 
     private static GatewayAsrTranscript ParseGatewayAsrTranscript(string json)
