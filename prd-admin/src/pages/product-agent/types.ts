@@ -68,6 +68,31 @@ export interface ProductStructureNode {
   sortOrder: number;
 }
 
+/** 产品规则状态 */
+export type ProductRuleStatus = 'draft' | 'active' | 'deprecated';
+
+/** 产品规则（单产品维度的全局核心规则；content 为 Markdown 正文） */
+export interface ProductRule {
+  id: string;
+  productId: string;
+  category?: string | null;
+  title: string;
+  content: string;
+  status: ProductRuleStatus;
+  sortOrder: number;
+}
+
+/** 产品字典/术语（单产品维度；definition 为 Markdown 定义） */
+export interface ProductTerm {
+  id: string;
+  productId: string;
+  term: string;
+  aliases: string[];
+  definition: string;
+  category?: string | null;
+  sortOrder: number;
+}
+
 /** 详情描述模板（按对象类型，富文本骨架，方便一键套用） */
 export interface DescTemplate {
   id: string;

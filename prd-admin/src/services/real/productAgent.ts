@@ -23,6 +23,8 @@ import type {
   ProductEntityType,
   ProductCategory,
   ProductStructureNode,
+  ProductRule,
+  ProductTerm,
   RequirementType,
   ProductGradeOption,
   GradeDimension,
@@ -270,6 +272,34 @@ export function deleteProductStructureNode(nodeId: string) {
 /** 设置/取消功能在结构树上的挂载（structureNodeId 传 null = 取消归类）。 */
 export function setFeatureStructureNode(featureId: string, structureNodeId: string | null) {
   return apiRequest<Feature>(`/api/product/features/${featureId}/structure-node`, { method: 'PUT', body: { structureNodeId } });
+}
+
+// ── 产品规则（单产品维度的全局核心规则）──
+export function listProductRules(productId: string) {
+  return apiRequest<ListWrap<ProductRule>>(`/api/product/products/${productId}/rules`);
+}
+export function upsertProductRule(
+  productId: string,
+  body: { id?: string; category?: string | null; title: string; content?: string | null; status?: string; sortOrder?: number },
+) {
+  return apiRequest<ProductRule>(`/api/product/products/${productId}/rules`, { method: 'POST', body });
+}
+export function deleteProductRule(ruleId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/rules/${ruleId}`, { method: 'DELETE' });
+}
+
+// ── 产品字典/术语 ──
+export function listProductTerms(productId: string) {
+  return apiRequest<ListWrap<ProductTerm>>(`/api/product/products/${productId}/terms`);
+}
+export function upsertProductTerm(
+  productId: string,
+  body: { id?: string; term: string; aliases?: string[]; definition?: string | null; category?: string | null; sortOrder?: number },
+) {
+  return apiRequest<ProductTerm>(`/api/product/products/${productId}/terms`, { method: 'POST', body });
+}
+export function deleteProductTerm(termId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/terms/${termId}`, { method: 'DELETE' });
 }
 
 // ── 功能版本化 ──

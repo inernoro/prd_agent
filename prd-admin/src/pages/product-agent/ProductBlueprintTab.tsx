@@ -8,17 +8,20 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, X, Save, Puzzle, FolderTree } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, X, Save, Puzzle, FolderTree, ScrollText, BookText } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import {
   listProductStructure, upsertProductStructureNode, deleteProductStructureNode,
   listFeatures, setFeatureStructureNode,
+  listProductRules, upsertProductRule, deleteProductRule,
+  listProductTerms, upsertProductTerm, deleteProductTerm,
 } from '@/services/real/productAgent';
-import type { ProductStructureNode, Feature } from './types';
+import type { ProductStructureNode, Feature, ProductRule, ProductRuleStatus, ProductTerm } from './types';
 
-type BlueprintSub = 'structure' | 'features';
+type BlueprintSub = 'structure' | 'features' | 'rules' | 'terms';
 
 export function ProductBlueprintTab({ productId, isAdmin }: { productId: string; isAdmin: boolean }) {
   const [sub, setSub] = useState<BlueprintSub>('structure');
@@ -27,13 +30,18 @@ export function ProductBlueprintTab({ productId, isAdmin }: { productId: string;
       <div className="shrink-0 border-b border-white/10 px-6 py-3">
         <h2 className="text-base font-semibold text-white">产品蓝图</h2>
         <p className="mt-0.5 text-xs text-white/40">产品级定义层：先定义产品骨架与功能全景，再推进需求/功能/缺陷。</p>
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <SubTab on={sub === 'structure'} onClick={() => setSub('structure')} icon={FolderTree}>产品结构</SubTab>
           <SubTab on={sub === 'features'} onClick={() => setSub('features')} icon={Puzzle}>功能清单</SubTab>
+          <SubTab on={sub === 'rules'} onClick={() => setSub('rules')} icon={ScrollText}>产品规则</SubTab>
+          <SubTab on={sub === 'terms'} onClick={() => setSub('terms')} icon={BookText}>产品字典</SubTab>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-6" style={{ overscrollBehavior: 'contain' }}>
-        {sub === 'structure' ? <StructureTab productId={productId} isAdmin={isAdmin} /> : <FeatureInventoryTab productId={productId} isAdmin={isAdmin} />}
+        {sub === 'structure' && <StructureTab productId={productId} isAdmin={isAdmin} />}
+        {sub === 'features' && <FeatureInventoryTab productId={productId} isAdmin={isAdmin} />}
+        {sub === 'rules' && <RulesTab productId={productId} isAdmin={isAdmin} />}
+        {sub === 'terms' && <TermsTab productId={productId} isAdmin={isAdmin} />}
       </div>
     </div>
   );
@@ -308,5 +316,230 @@ function FeatureInventoryTab({ productId, isAdmin }: { productId: string; isAdmi
         )}
       </div>
     </div>
+  );
+}
+
+// ════════════════════════ 产品规则 ════════════════════════
+
+const RULE_STATUS_META: Record<ProductRuleStatus, { label: string; cls: string }> = {
+  active: { label: '生效', cls: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' },
+  draft: { label: '草稿', cls: 'border-white/15 bg-white/5 text-white/55' },
+  deprecated: { label: '废弃', cls: 'border-rose-400/25 bg-rose-400/10 text-rose-300' },
+};
+
+function RulesTab({ productId, isAdmin }: { productId: string; isAdmin: boolean }) {
+  const [rules, setRules] = useState<ProductRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<ProductRule | 'new' | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const res = await listProductRules(productId);
+    if (res.success) setRules(res.data.items);
+    setLoading(false);
+  }, [productId]);
+  useEffect(() => { void reload(); }, [reload]);
+
+  const groups = useMemo(() => {
+    const m = new Map<string, ProductRule[]>();
+    for (const r of rules) { const k = r.category?.trim() || '未分类'; if (!m.has(k)) m.set(k, []); m.get(k)!.push(r); }
+    return [...m.entries()];
+  }, [rules]);
+
+  const remove = async (r: ProductRule) => {
+    const ok = await systemDialog.confirm({ title: '删除规则', message: `删除规则「${r.title}」？`, tone: 'danger', confirmText: '删除', cancelText: '取消' });
+    if (!ok) return;
+    const res = await deleteProductRule(r.id);
+    if (res.success) { toast.success('已删除'); void reload(); }
+    else toast.error('删除失败', res.error?.message);
+  };
+  const toggle = (id: string) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  if (loading) return <MapSectionLoader text="正在加载产品规则…" />;
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-white/45">定义产品全局、核心的规则（业务规则 / 约定 / 红线）。正文支持 Markdown，可用 [[术语]] 引用字典。</p>
+        {isAdmin && <button onClick={() => setEditing('new')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30"><Plus size={14} /> 规则</button>}
+      </div>
+      {rules.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-white/15 py-12 text-center text-sm text-white/40">还没有产品规则。{isAdmin ? '点「规则」添加第一条。' : '请联系产品管理员维护。'}</div>
+      ) : (
+        groups.map(([cat, rs]) => (
+          <div key={cat} className="flex flex-col gap-1.5">
+            <div className="text-xs font-medium text-white/45">{cat}</div>
+            <div className="divide-y divide-white/5 rounded-xl border border-white/10">
+              {rs.map((r) => {
+                const open = expanded.has(r.id);
+                return (
+                  <div key={r.id} className="px-3 py-2.5">
+                    <div className="group flex items-center gap-2">
+                      <button onClick={() => toggle(r.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                        {open ? <ChevronDown size={14} className="shrink-0 text-white/40" /> : <ChevronRight size={14} className="shrink-0 text-white/40" />}
+                        <span className="truncate text-sm text-white/90">{r.title}</span>
+                        <span className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] ${RULE_STATUS_META[r.status].cls}`}>{RULE_STATUS_META[r.status].label}</span>
+                      </button>
+                      {isAdmin && (
+                        <span className="flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100">
+                          <button onClick={() => setEditing(r)} className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-white"><Pencil size={13} /></button>
+                          <button onClick={() => remove(r)} className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-red-300"><Trash2 size={13} /></button>
+                        </span>
+                      )}
+                    </div>
+                    {open && r.content?.trim() && <div className="mt-2 pl-6 text-sm"><MarkdownViewer content={r.content} /></div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))
+      )}
+      {editing && <RuleModal productId={productId} rule={editing === 'new' ? null : editing} siblingCount={rules.length} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void reload(); }} />}
+    </div>
+  );
+}
+
+function RuleModal({ productId, rule, siblingCount, onClose, onSaved }: { productId: string; rule: ProductRule | null; siblingCount: number; onClose: () => void; onSaved: () => void }) {
+  const [title, setTitle] = useState(rule?.title ?? '');
+  const [category, setCategory] = useState(rule?.category ?? '');
+  const [status, setStatus] = useState<ProductRuleStatus>(rule?.status ?? 'active');
+  const [content, setContent] = useState(rule?.content ?? '');
+  const [saving, setSaving] = useState(false);
+  const inputCls = 'rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25';
+
+  const save = async () => {
+    if (!title.trim()) { toast.error('请填写规则标题'); return; }
+    setSaving(true);
+    const res = await upsertProductRule(productId, { id: rule?.id, category: category.trim() || null, title: title.trim(), content, status, sortOrder: rule?.sortOrder ?? siblingCount });
+    setSaving(false);
+    if (res.success) { toast.success(rule ? '已保存' : '已添加'); onSaved(); }
+    else toast.error('保存失败', res.error?.message);
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4" onClick={onClose}>
+      <div className="flex w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-[#16181d]" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><h3 className="text-sm font-semibold text-white">{rule ? '编辑规则' : '添加规则'}</h3><button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button></div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
+          <div className="flex gap-3">
+            <div className="flex flex-1 flex-col gap-1.5"><label className="text-xs text-white/55">标题 *</label><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="规则标题" className={inputCls} autoFocus /></div>
+            <div className="flex w-32 flex-col gap-1.5"><label className="text-xs text-white/55">状态</label>
+              <select value={status} onChange={(e) => setStatus(e.target.value as ProductRuleStatus)} className={inputCls}>
+                <option value="active">生效</option><option value="draft">草稿</option><option value="deprecated">废弃</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">分类（可选）</label><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="如：业务规则 / 数据约束 / 命名约定" className={inputCls} /></div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">正文（Markdown，可用 [[术语]] 引用字典）</label><textarea value={content} onChange={(e) => setContent(e.target.value)} rows={12} placeholder="规则内容…" className={`${inputCls} resize-y`} style={{ minHeight: 220 }} /></div>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/60 hover:bg-white/5">取消</button><button onClick={save} disabled={saving || !title.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ════════════════════════ 产品字典 ════════════════════════
+
+function TermsTab({ productId, isAdmin }: { productId: string; isAdmin: boolean }) {
+  const [terms, setTerms] = useState<ProductTerm[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<ProductTerm | 'new' | null>(null);
+  const [kw, setKw] = useState('');
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const res = await listProductTerms(productId);
+    if (res.success) setTerms(res.data.items);
+    setLoading(false);
+  }, [productId]);
+  useEffect(() => { void reload(); }, [reload]);
+
+  const filtered = useMemo(() => {
+    const q = kw.trim().toLowerCase();
+    if (!q) return terms;
+    return terms.filter((t) => `${t.term} ${(t.aliases ?? []).join(' ')} ${t.category ?? ''}`.toLowerCase().includes(q));
+  }, [terms, kw]);
+
+  const remove = async (t: ProductTerm) => {
+    const ok = await systemDialog.confirm({ title: '删除术语', message: `删除术语「${t.term}」？`, tone: 'danger', confirmText: '删除', cancelText: '取消' });
+    if (!ok) return;
+    const res = await deleteProductTerm(t.id);
+    if (res.success) { toast.success('已删除'); void reload(); }
+    else toast.error('删除失败', res.error?.message);
+  };
+
+  if (loading) return <MapSectionLoader text="正在加载产品字典…" />;
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="min-w-0 flex-1 text-xs text-white/45">定义产品核心概念与术语，统一口径。定义支持 Markdown。</p>
+        <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜索术语" className="w-40 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25" />
+        {isAdmin && <button onClick={() => setEditing('new')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30"><Plus size={14} /> 术语</button>}
+      </div>
+      {filtered.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-white/15 py-12 text-center text-sm text-white/40">{terms.length === 0 ? (isAdmin ? '还没有术语。点「术语」添加第一个核心概念。' : '还没有术语。') : '没有匹配的术语。'}</div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {filtered.map((t) => (
+            <div key={t.id} className="group rounded-xl border border-white/10 bg-white/[0.02] p-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-white">{t.term}</span>
+                {(t.aliases ?? []).length > 0 && <span className="text-xs text-white/40">（{(t.aliases ?? []).join(' / ')}）</span>}
+                {t.category && <span className="rounded border border-white/10 px-1.5 py-px text-[10px] text-white/45">{t.category}</span>}
+                {isAdmin && (
+                  <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                    <button onClick={() => setEditing(t)} className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-white"><Pencil size={13} /></button>
+                    <button onClick={() => remove(t)} className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-red-300"><Trash2 size={13} /></button>
+                  </span>
+                )}
+              </div>
+              {t.definition?.trim() && <div className="mt-1.5 text-sm"><MarkdownViewer content={t.definition} /></div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {editing && <TermModal productId={productId} term={editing === 'new' ? null : editing} siblingCount={terms.length} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void reload(); }} />}
+    </div>
+  );
+}
+
+function TermModal({ productId, term, siblingCount, onClose, onSaved }: { productId: string; term: ProductTerm | null; siblingCount: number; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(term?.term ?? '');
+  const [aliasText, setAliasText] = useState((term?.aliases ?? []).join(', '));
+  const [category, setCategory] = useState(term?.category ?? '');
+  const [definition, setDefinition] = useState(term?.definition ?? '');
+  const [saving, setSaving] = useState(false);
+  const inputCls = 'rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25';
+
+  const save = async () => {
+    if (!name.trim()) { toast.error('请填写术语'); return; }
+    setSaving(true);
+    const aliases = aliasText.split(/[,，]/).map((a) => a.trim()).filter(Boolean);
+    const res = await upsertProductTerm(productId, { id: term?.id, term: name.trim(), aliases, definition, category: category.trim() || null, sortOrder: term?.sortOrder ?? siblingCount });
+    setSaving(false);
+    if (res.success) { toast.success(term ? '已保存' : '已添加'); onSaved(); }
+    else toast.error('保存失败', res.error?.message);
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4" onClick={onClose}>
+      <div className="flex w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-[#16181d]" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><h3 className="text-sm font-semibold text-white">{term ? '编辑术语' : '添加术语'}</h3><button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button></div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
+          <div className="flex gap-3">
+            <div className="flex flex-1 flex-col gap-1.5"><label className="text-xs text-white/55">术语 *</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="核心概念名" className={inputCls} autoFocus /></div>
+            <div className="flex flex-1 flex-col gap-1.5"><label className="text-xs text-white/55">分类（可选）</label><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="如：业务 / 数据 / 角色" className={inputCls} /></div>
+          </div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">别名（可选，逗号分隔）</label><input value={aliasText} onChange={(e) => setAliasText(e.target.value)} placeholder="如：SKU, 货品" className={inputCls} /></div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">定义（Markdown）</label><textarea value={definition} onChange={(e) => setDefinition(e.target.value)} rows={10} placeholder="该术语的准确定义…" className={`${inputCls} resize-y`} style={{ minHeight: 180 }} /></div>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/60 hover:bg-white/5">取消</button><button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
+      </div>
+    </div>,
+    document.body,
   );
 }

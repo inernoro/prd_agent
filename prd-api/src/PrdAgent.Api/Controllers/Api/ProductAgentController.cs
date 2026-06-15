@@ -2639,6 +2639,163 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
+    // ════════════════════════ 产品规则 ProductRule ════════════════════════
+
+    /// <summary>该产品全部核心规则（按 SortOrder、CreatedAt 排序）。读=登录可访问产品即可。</summary>
+    [HttpGet("products/{productId}/rules")]
+    public async Task<IActionResult> ListProductRules(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var items = await _db.ProductRules.Find(r => r.ProductId == productId && !r.IsDeleted)
+            .SortBy(r => r.SortOrder).ThenBy(r => r.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新产品规则（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("products/{productId}/rules")]
+    public async Task<IActionResult> UpsertProductRule(string productId, [FromBody] UpsertProductRuleRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "规则标题不能为空"));
+
+        var title = request.Title.Trim();
+        var content = (request.Content ?? "").Trim();
+        var category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim();
+        var allowedStatus = new[] { "draft", "active", "deprecated" };
+        var status = allowedStatus.Contains((request.Status ?? "").Trim()) ? request.Status!.Trim() : "active";
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.ProductRules.Find(r => r.Id == request.Id && r.ProductId == productId && !r.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品规则不存在"));
+            var u = Builders<ProductRule>.Update
+                .Set(r => r.Category, category)
+                .Set(r => r.Title, title)
+                .Set(r => r.Content, content)
+                .Set(r => r.Status, status)
+                .Set(r => r.SortOrder, request.SortOrder)
+                .Set(r => r.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductRules.UpdateOneAsync(r => r.Id == request.Id, u);
+            var updated = await _db.ProductRules.Find(r => r.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var item = new ProductRule
+        {
+            ProductId = productId,
+            Category = category,
+            Title = title,
+            Content = content,
+            Status = status,
+            SortOrder = request.SortOrder,
+            OwnerId = GetUserId(),
+        };
+        await _db.ProductRules.InsertOneAsync(item);
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    /// <summary>删除产品规则（软删除，需管理权限）。</summary>
+    [HttpDelete("rules/{ruleId}")]
+    public async Task<IActionResult> DeleteProductRule(string ruleId)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var item = await _db.ProductRules.Find(r => r.Id == ruleId && !r.IsDeleted).FirstOrDefaultAsync();
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品规则不存在"));
+        if (await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        await _db.ProductRules.UpdateOneAsync(r => r.Id == ruleId,
+            Builders<ProductRule>.Update.Set(r => r.IsDeleted, true).Set(r => r.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ════════════════════════ 产品字典/术语 ProductTerm ════════════════════════
+
+    /// <summary>该产品全部术语（按 SortOrder、CreatedAt 排序）。读=登录可访问产品即可。</summary>
+    [HttpGet("products/{productId}/terms")]
+    public async Task<IActionResult> ListProductTerms(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var items = await _db.ProductTerms.Find(t => t.ProductId == productId && !t.IsDeleted)
+            .SortBy(t => t.SortOrder).ThenBy(t => t.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新产品术语（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("products/{productId}/terms")]
+    public async Task<IActionResult> UpsertProductTerm(string productId, [FromBody] UpsertProductTermRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Term))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "术语不能为空"));
+
+        var term = request.Term.Trim();
+        var definition = (request.Definition ?? "").Trim();
+        var category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim();
+        var aliases = (request.Aliases ?? new List<string>())
+            .Select(a => (a ?? "").Trim())
+            .Where(a => a.Length > 0)
+            .Distinct()
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.ProductTerms.Find(t => t.Id == request.Id && t.ProductId == productId && !t.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品术语不存在"));
+            var u = Builders<ProductTerm>.Update
+                .Set(t => t.Term, term)
+                .Set(t => t.Aliases, aliases)
+                .Set(t => t.Definition, definition)
+                .Set(t => t.Category, category)
+                .Set(t => t.SortOrder, request.SortOrder)
+                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductTerms.UpdateOneAsync(t => t.Id == request.Id, u);
+            var updated = await _db.ProductTerms.Find(t => t.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var item = new ProductTerm
+        {
+            ProductId = productId,
+            Term = term,
+            Aliases = aliases,
+            Definition = definition,
+            Category = category,
+            SortOrder = request.SortOrder,
+            OwnerId = GetUserId(),
+        };
+        await _db.ProductTerms.InsertOneAsync(item);
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    /// <summary>删除产品术语（软删除，需管理权限）。</summary>
+    [HttpDelete("terms/{termId}")]
+    public async Task<IActionResult> DeleteProductTerm(string termId)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var item = await _db.ProductTerms.Find(t => t.Id == termId && !t.IsDeleted).FirstOrDefaultAsync();
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品术语不存在"));
+        if (await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        await _db.ProductTerms.UpdateOneAsync(t => t.Id == termId,
+            Builders<ProductTerm>.Update.Set(t => t.IsDeleted, true).Set(t => t.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
     // ════════════════════════ 通用等级目录 ProductGradeOption ════════════════════════
 
     private async Task EnsureGradeOptionsSeededAsync(string dimension, string entityType)
@@ -7202,6 +7359,26 @@ public class UpsertProductStructureNodeRequest
 public class SetFeatureStructureNodeRequest
 {
     public string? StructureNodeId { get; set; }
+}
+
+public class UpsertProductRuleRequest
+{
+    public string? Id { get; set; }
+    public string? Category { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? Content { get; set; }
+    public string? Status { get; set; }
+    public int SortOrder { get; set; }
+}
+
+public class UpsertProductTermRequest
+{
+    public string? Id { get; set; }
+    public string Term { get; set; } = string.Empty;
+    public List<string>? Aliases { get; set; }
+    public string? Definition { get; set; }
+    public string? Category { get; set; }
+    public int SortOrder { get; set; }
 }
 
 public class UpsertGradeOptionRequest
