@@ -72,6 +72,7 @@ export function parseProductHistoryCsv(text: string, _options?: { entityType?: H
   const externalIdIndex = indexOf('需求 id', '外部id', '外部 id', 'externalid', 'external id', '编号', 'id', '缺陷id');
   const appIndex = indexOf('应用', '所属应用', '应用名称', '应用产品', '应用/产品');
   const productIndex = indexOf('产品', '所属产品', '产品名称', '产品线', '系统产品');
+  const categoryIndex = indexOf('分类', '类别', '所属分类');
   const plannedIndex = indexOf('计划发布时间', '预计结束', 'planned');
   const completedIndex = indexOf('实际发布时间', '完成时间', 'released', 'completed');
   const effectiveTitleIndex = titleIndex >= 0 ? titleIndex : 0;
@@ -79,7 +80,8 @@ export function parseProductHistoryCsv(text: string, _options?: { entityType?: H
     const rawGrade = gradeIndex >= 0 ? values[gradeIndex]?.trim() : undefined;
     const appName = appIndex >= 0 ? values[appIndex]?.trim() : undefined;
     const productName = productIndex >= 0 ? values[productIndex]?.trim() : undefined;
-    const routeLabel = appName || productName;
+    const categoryName = categoryIndex >= 0 ? values[categoryIndex]?.trim() : undefined;
+    const routeLabel = appName || productName || categoryName;
     return {
       title: values[effectiveTitleIndex]?.trim() ?? '',
       description: descriptionIndex >= 0 ? values[descriptionIndex]?.trim() : undefined,
@@ -168,7 +170,7 @@ export function ProductHistoryImportDialog({
     const baseRows = rows as ImportRequirementRow[];
     const rowsToImport = baseRows;
     if (isCrossProduct && rowsToImport.every((row) => !rowHasProductRouteHint(row))) {
-      setMessage('无法路由：请为文件增加「应用」或「产品/所属产品」列，或在标题前加【产品名】。');
+      setMessage('无法路由：请确认文件的「分类」或「应用/产品」列填的是系统已有产品名，或在标题前加【产品名】。');
       return;
     }
     setBusy(true);
@@ -197,7 +199,7 @@ export function ProductHistoryImportDialog({
     if (created + updated === 0) {
       setMessage(
         skipped > 0
-          ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「应用/产品」未匹配系统产品被跳过。请检查文件列或标题【产品名】。`
+          ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「分类/应用/产品」未匹配系统产品被跳过。请确认这些列填的是系统已有产品名，或在标题前加【产品名】。`
           : `未写入任何${TYPE_LABEL[type]}，请检查文件内容。`,
       );
       return;
@@ -231,7 +233,7 @@ export function ProductHistoryImportDialog({
             <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
             <div className="mt-1 text-xs text-white/45">
               {isCrossProduct
-                ? '按文件「应用」或「产品/所属产品」列匹配系统产品；未匹配行跳过，不手动选归属产品。'
+                ? '按文件「分类」或「应用/产品」列自动匹配系统产品；未匹配行跳过，无需手动选归属产品。'
                 : '可重复导入；有外部 ID 时更新原记录，无 ID 时系统自动分配纯数字编号。'}
             </div>
           </div>
@@ -273,6 +275,9 @@ export function ProductHistoryImportDialog({
                     || row.sourceFields?.['产品名称']
                     || row.sourceFields?.['产品线']
                     || row.sourceFields?.['系统产品']
+                    || row.sourceFields?.['分类']
+                    || row.sourceFields?.['类别']
+                    || row.sourceFields?.['所属分类']
                     || (row.title?.match(/^【([^】]+)】/)?.[1] ?? '');
                   return (
                     <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5">
@@ -293,7 +298,7 @@ export function ProductHistoryImportDialog({
         <div className="flex shrink-0 items-center justify-between border-t border-white/10 px-5 py-4">
           <div className="text-xs text-white/35">
             {isCrossProduct
-              ? '按文件「应用/产品/所属产品」列自动路由到系统产品'
+              ? '按文件「分类/应用/产品」列自动路由到系统产品'
               : selectedProduct ? `将写入：${selectedProduct.name}` : '请选择产品'}
           </div>
           <div className="flex gap-2">

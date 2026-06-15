@@ -8,6 +8,11 @@ describe('requirementImportRouting', () => {
     expect(rowHasProductRouteHint({ title: '无路由信息', sourceFields: undefined })).toBe(false);
   });
 
+  it('detects TAPD 分类 column as product route hint', () => {
+    expect(rowHasProductRouteHint({ title: '【石漫】筹货分析', sourceFields: { 分类: '防窜物流' } })).toBe(true);
+    expect(rowHasProductRouteHint({ title: '普通标题', sourceFields: { 类别: '智能营销' } })).toBe(true);
+  });
+
   it('injects fallback product name when row lacks route hint', () => {
     const rows = applyFallbackProductToRows([
       { title: '需求甲', grade: 'p1' },

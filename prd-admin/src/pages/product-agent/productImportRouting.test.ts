@@ -23,6 +23,11 @@ describe('productImportRouting', () => {
     expect(extractProductLabelFromFields({ 应用: '互动营销', 系统: '大数据引擎系统' })).toBe('互动营销');
   });
 
+  it('maps TAPD 分类 field to product label when 应用/产品 absent', () => {
+    expect(extractProductLabelFromFields({ 状态: '待评审', 分类: '互动营销' })).toBe('互动营销');
+    expect(resolveImportProductId(products, { sourceFields: { 分类: '互动营销' } }).productId).toBe('p1');
+  });
+
   it('prefers appName on version workflow rows', () => {
     expect(resolveProductLabelFromVersionRow('互动营销', '大数据引擎系统', { 产品: '互动营销' })).toBe('互动营销');
   });

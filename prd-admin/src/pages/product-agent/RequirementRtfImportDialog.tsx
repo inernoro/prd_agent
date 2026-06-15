@@ -45,7 +45,7 @@ export function RequirementRtfImportDialog({
   const [parsing, setParsing] = useState(true);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState('');
-  const [result, setResult] = useState<{ created: number; updated: number; skippedImages: number } | null>(null);
+  const [result, setResult] = useState<{ created: number; updated: number; skipped: number; skippedImages: number } | null>(null);
   const [imageWarnings, setImageWarnings] = useState<string[]>([]);
 
   const validItems = useMemo(
@@ -200,15 +200,15 @@ export function RequirementRtfImportDialog({
       if (warningMessages.length > 0) setImageWarnings(warningMessages.slice(0, 8));
       return;
     }
-    setResult({
-      created: imported.data.created,
-      updated: imported.data.updated ?? 0,
-      skippedImages: skippedImageCount,
-    });
+    const created = imported.data.created;
+    const updated = imported.data.updated ?? 0;
+    const skipped = imported.data.skipped ?? 0;
+    setResult({ created, updated, skipped, skippedImages: skippedImageCount });
     setImageWarnings(warningMessages.slice(0, 8));
     setProgress(skippedImageCount > 0 ? `导入完成，${skippedImageCount} 张图片未上传（需求正文已去除对应占位）` : '');
     await onImported();
-    onClose();
+    // 全部因未匹配产品被跳过时保留弹窗，让用户看到原因；否则自动关闭
+    if (created + updated > 0) onClose();
   };
 
   const failedFileCount = parsedFiles.filter((item) => item.error).length;
@@ -281,10 +281,18 @@ export function RequirementRtfImportDialog({
         <div className="shrink-0 px-5 py-4 border-t border-white/10">
           {progress && <div className="mb-3 text-xs text-cyan-200/80">{progress}</div>}
           {result && (
-            <div className="mb-3 text-xs text-emerald-200">
-              导入完成：新增 {result.created} 条，更新 {result.updated} 条
-              {result.skippedImages > 0 ? `，跳过 ${result.skippedImages} 张图片` : ''}。
-            </div>
+            result.created + result.updated === 0 ? (
+              <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                未写入任何需求：{result.skipped} 条因「分类/产品」未匹配到系统产品被跳过。
+                请确认导出文件的「分类」（或「应用/产品」）列填的是系统已有产品名，或在标题前加【产品名】。
+              </div>
+            ) : (
+              <div className="mb-3 text-xs text-emerald-200">
+                导入完成：新增 {result.created} 条，更新 {result.updated} 条
+                {result.skipped > 0 ? `，${result.skipped} 条因未匹配产品被跳过` : ''}
+                {result.skippedImages > 0 ? `，跳过 ${result.skippedImages} 张图片` : ''}。
+              </div>
+            )
           )}
           {imageWarnings.length > 0 && (
             <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">

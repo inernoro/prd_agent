@@ -3,6 +3,7 @@ import type { Product } from './types';
 const PRODUCT_FIELD_KEYS = [
   '应用', '所属应用', '应用名称', '应用产品', '应用/产品',
   '产品', '所属产品', '产品名称', '产品线', '系统产品',
+  '分类', '类别', '所属分类', 'category',
   'product', 'productname', 'app', 'appname',
 ];
 
