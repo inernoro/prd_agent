@@ -2,7 +2,7 @@
  * 产品管理智能体 — 管理层总览 shell（默认着陆，公司层视角）。
  *
  * 路由：/product-agent
- * 左侧持久导航：概览 / 产品 / … / 图谱 / 应用 / 设置（后两项限 admin）。
+ * 左侧持久导航：概览 / 产品 / … / 图谱 / 应用 / 设置（全员可见；写操作仍由后端权限控制）。
  * 概览仪表盘：KPI 卡片 + ECharts 图表 + 最近活动流。需求/功能/缺陷为跨产品数据表。
  * 数据按可访问范围（admin 看全部），后端 /api/product/overview/*。
  */
@@ -125,8 +125,8 @@ export function OverviewShell() {
     { key: 'customers', label: '客户', icon: Users },
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
-    { key: 'workflow', label: '应用', icon: GitBranch, hidden: !isAdmin, dividerBefore: true },
-    { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin },
+    { key: 'workflow', label: '应用', icon: GitBranch, dividerBefore: true },
+    { key: 'settings', label: '设置', icon: Settings },
   ];
 
   return (
