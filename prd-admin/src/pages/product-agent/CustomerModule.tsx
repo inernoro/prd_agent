@@ -22,7 +22,7 @@ import {
 } from '@/services/real/productAgent';
 import type { Customer, CustomerFollowUp } from './types';
 import { RichTextField, useEffectiveTemplate, FormFieldsRenderer } from './DynamicForm';
-import { MarketingConsultPanel } from './MarketingConsultPanel';
+import { MarketingConsultModule } from './MarketingConsultPanel';
 
 const CERT_STATUS_OPTIONS = ['未认证', '已认证', '认证失败'];
 const FOLLOW_UP_PLACEHOLDER =
@@ -47,7 +47,7 @@ export function CustomerModule({ isAdmin }: { isAdmin: boolean }) {
       </div>
       {subModule === 'manage'
         ? <CustomerManage isAdmin={isAdmin} onConsult={goConsult} />
-        : <CustomerConsultSubModule initialCustomerId={consultCustomerId} />}
+        : <MarketingConsultModule initialCustomerId={consultCustomerId} />}
     </div>
   );
 }
@@ -444,71 +444,6 @@ function FollowUpTimeline({ customerId }: { customerId: string }) {
             </div>
           ))}
         </div>
-      )}
-    </div>
-  );
-}
-
-// ════════════════════════ 营销问策（独立子模块） ════════════════════════
-
-function CustomerConsultSubModule({ initialCustomerId }: { initialCustomerId: string | null }) {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(initialCustomerId);
-
-  useEffect(() => {
-    void (async () => {
-      const res = await listCustomers({});
-      if (res.success) setCustomers(res.data.items);
-      setLoading(false);
-    })();
-  }, []);
-
-  // 从快捷入口带入的客户
-  useEffect(() => {
-    if (initialCustomerId) setSelectedId(initialCustomerId);
-  }, [initialCustomerId]);
-
-  const selected = customers.find((c) => c.id === selectedId) ?? null;
-  const filtered = keyword.trim()
-    ? customers.filter((c) => `${c.name} ${c.merchantNo ?? ''} ${c.shortName ?? ''}`.toLowerCase().includes(keyword.trim().toLowerCase()))
-    : customers;
-
-  if (loading) return <MapSectionLoader text="正在加载客户…" />;
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
-        <div className="flex items-center gap-2">
-          <Sparkles size={15} className="text-cyan-300" />
-          <span className="text-sm font-medium text-white/80">营销问策智能体</span>
-          <span className="text-xs text-white/40">选择一个客户，结合其全部信息与问策知识库做专业营销评估</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5">
-            <Search size={14} className="text-white/40" />
-            <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索客户" className="w-44 bg-transparent text-sm text-white outline-none" />
-          </div>
-          <select
-            value={selectedId ?? ''}
-            onChange={(e) => setSelectedId(e.target.value || null)}
-            className="min-w-[200px] rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500/40"
-          >
-            <option value="">选择客户…</option>
-            {filtered.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}{c.merchantNo ? `（${c.merchantNo}）` : ''}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {selected ? (
-        <MarketingConsultPanel key={selected.id} customerId={selected.id} customerName={selected.name} />
-      ) : customers.length === 0 ? (
-        <div className="py-12 text-center text-sm text-white/40">还没有客户。请先在「客户管理」新增客户，再来做营销问策。</div>
-      ) : (
-        <div className="py-12 text-center text-sm text-white/40">请在上方选择一个客户开始营销问策。</div>
       )}
     </div>
   );

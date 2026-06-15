@@ -409,6 +409,8 @@ export interface MarketingConsultAiContent {
 export interface MarketingConsultListItem {
   id: string;
   customerId: string;
+  /** 客户名（自由问策为 null） */
+  customerName?: string | null;
   title: string;
   template: MarketingTemplate;
   model?: string | null;

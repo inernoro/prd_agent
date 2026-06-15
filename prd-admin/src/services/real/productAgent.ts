@@ -332,6 +332,11 @@ export function listConsultReports(customerId: string) {
   return apiRequest<ListWrap<MarketingConsultListItem>>(`/api/product/customers/${customerId}/consult`);
 }
 
+/** 全部问策报告列表（精简，含客户名 / 自由问策）。营销问策子模块左侧列表用。 */
+export function listAllConsultReports() {
+  return apiRequest<ListWrap<MarketingConsultListItem>>('/api/product/consult');
+}
+
 /** 问策报告详情（含 html）。 */
 export function getConsultReport(reportId: string) {
   return apiRequest<MarketingConsultReport>(`/api/product/consult/${reportId}`);
@@ -362,13 +367,13 @@ export function saveConsultToHosting(reportId: string) {
 }
 
 /**
- * 生成营销问策报告的 SSE 端点（POST）。前端用 useSseStream 接：
- *   useSseStream({ url: consultGenerateUrl(customerId), method: 'POST', body: { input?, note?, template? } })
- * input 为空 = 一键问策（后端自动聚合客户全量信息 + 动态跟进 + 问策知识库）。
+ * 生成营销问策报告的 SSE 端点（POST）。前端用 connectSse 接：
+ *   connectSse({ url: consultGenerateUrl(), method: 'POST', body: { customerId?, input?, note?, template? } })
+ * 带 customerId 且 input 空 = 对该客户一键问策；仅 input = 自由文本问策（不绑定客户）。
  * 事件：stage{stage,message} / model{model} / thinking{text} / typing{text} / error{message} / done{reportId,title,model}。
  */
-export function consultGenerateUrl(customerId: string) {
-  return `/api/product/customers/${customerId}/consult/generate`;
+export function consultGenerateUrl() {
+  return '/api/product/consult/generate';
 }
 
 /** 匿名分享报告的直链（text/html，可直接 window.open）。 */

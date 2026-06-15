@@ -1743,7 +1743,26 @@ public class ProductAgentController : ControllerBase
         if (customer == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
         var reports = await _db.MarketingConsultReports.Find(r => r.CustomerId == customerId && !r.IsDeleted)
             .SortByDescending(r => r.CreatedAt).Limit(50).ToListAsync();
-        var items = reports.Select(ToConsultListItem).ToList();
+        var items = reports.Select(r => ToConsultListItem(r, customer.Name)).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>全部问策报告列表（精简，含客户名 / 自由问策标注）。登录可读，营销问策子模块左侧列表。</summary>
+    [HttpGet("consult")]
+    public async Task<IActionResult> ListAllConsult()
+    {
+        var reports = await _db.MarketingConsultReports.Find(r => !r.IsDeleted)
+            .SortByDescending(r => r.CreatedAt).Limit(200).ToListAsync();
+        var custIds = reports.Where(r => !string.IsNullOrEmpty(r.CustomerId)).Select(r => r.CustomerId).Distinct().ToList();
+        var nameMap = new Dictionary<string, string>();
+        if (custIds.Count > 0)
+        {
+            var custs = await _db.Customers.Find(c => custIds.Contains(c.Id)).ToListAsync();
+            foreach (var c in custs) nameMap[c.Id] = c.Name;
+        }
+        var items = reports.Select(r => ToConsultListItem(
+            r,
+            string.IsNullOrEmpty(r.CustomerId) ? null : (nameMap.TryGetValue(r.CustomerId, out var n) ? n : "（已删除客户）"))).ToList();
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -1760,9 +1779,9 @@ public class ProductAgentController : ControllerBase
     /// 生成营销问策报告（SSE 流式）。input 为空 = 一键问策（自动聚合客户全量信息 + 动态跟进）。
     /// 阶段：collecting → generating → rendering；事件 stage / model / thinking / typing / error / done(reportId)。
     /// </summary>
-    [HttpPost("customers/{customerId}/consult/generate")]
+    [HttpPost("consult/generate")]
     [Produces("text/event-stream")]
-    public async Task GenerateConsult(string customerId, [FromQuery] string? template, [FromBody] GenerateConsultRequest? request)
+    public async Task GenerateConsult([FromQuery] string? template, [FromBody] GenerateConsultRequest? request)
     {
         Response.ContentType = "text/event-stream; charset=utf-8";
         Response.Headers.CacheControl = "no-cache";
@@ -1776,8 +1795,21 @@ public class ProductAgentController : ControllerBase
         }
 
         var userId = GetUserId();
-        var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
-        if (customer == null) { await Sse("error", new { message = "客户不存在" }); await Sse("done", new { error = "客户不存在" }); return; }
+        // 可选客户：带 customerId 则绑定该客户；否则纯自由文本问策
+        Customer? customer = null;
+        var customerId = request?.CustomerId?.Trim();
+        if (!string.IsNullOrWhiteSpace(customerId))
+        {
+            customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
+            if (customer == null) { await Sse("error", new { message = "客户不存在" }); await Sse("done", new { error = "客户不存在" }); return; }
+        }
+        // 既无客户又无输入：无从问策
+        if (customer == null && string.IsNullOrWhiteSpace(request?.Input))
+        {
+            await Sse("error", new { message = "请输入客户情况，或选择一个已有客户" });
+            await Sse("done", new { error = "缺少问策输入" });
+            return;
+        }
 
         var templateRaw = request?.Template ?? template;
         var consultTemplate = MarketingReportRenderer.IsValidTemplate(templateRaw) ? templateRaw! : MarketingReportRenderer.DefaultTemplate;
@@ -1823,10 +1855,11 @@ public class ProductAgentController : ControllerBase
         var html = MarketingReportRenderer.Render(renderData);
 
         var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var titleSubject = customer?.Name ?? renderData.CustomerName;
         var report = new MarketingConsultReport
         {
-            CustomerId = customerId,
-            Title = $"{customer.Name} 营销问策 · {MarketingReportRenderer.ToCst(DateTime.UtcNow):yyyy-MM-dd}",
+            CustomerId = customerId ?? string.Empty,
+            Title = $"{titleSubject} 营销问策 · {MarketingReportRenderer.ToCst(DateTime.UtcNow):yyyy-MM-dd}",
             InputText = (request?.Input ?? "").Trim(),
             Model = model,
             Template = consultTemplate,
@@ -1923,10 +1956,11 @@ public class ProductAgentController : ControllerBase
 
     // ── 营销问策内部辅助 ──
 
-    private object ToConsultListItem(MarketingConsultReport r) => new
+    private object ToConsultListItem(MarketingConsultReport r, string? customerName = null) => new
     {
         id = r.Id,
         customerId = r.CustomerId,
+        customerName,
         title = r.Title,
         template = r.Template,
         model = r.Model,
@@ -1976,8 +2010,25 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>聚合客户硬数据 + 动态跟进 + 用户输入 → (给 LLM 的文本摘要, 渲染数据)。input 为空即一键问策。</summary>
     private async Task<(string summary, MarketingReportRenderer.RenderData data)> BuildConsultDataAsync(
-        Customer c, string? userInput, string? userNote)
+        Customer? c, string? userInput, string? userNote)
     {
+        // 无客户（自由文本问策）：渲染主体名取输入首句摘要，summary 仅含用户输入
+        if (c == null)
+        {
+            var subject = DeriveFreeConsultSubject(userInput);
+            var freeData = new MarketingReportRenderer.RenderData { CustomerName = subject, GeneratedAt = DateTime.UtcNow };
+            var fsb = new System.Text.StringBuilder();
+            fsb.AppendLine("本次为「自由文本问策」，没有绑定系统内已有客户，以下为用户描述的客户情况（数据以此为准，不得编造未提供的数字）：");
+            fsb.AppendLine((userInput ?? "").Trim());
+            if (!string.IsNullOrWhiteSpace(userNote))
+            {
+                fsb.AppendLine();
+                fsb.AppendLine("用户对本次问策的额外要求：");
+                fsb.AppendLine(userNote.Trim());
+            }
+            return (fsb.ToString(), freeData);
+        }
+
         var followUps = await _db.CustomerFollowUps.Find(f => f.CustomerId == c.Id && !f.IsDeleted)
             .SortByDescending(f => f.CreatedAt).Limit(20).ToListAsync();
 
@@ -2037,6 +2088,15 @@ public class ProductAgentController : ControllerBase
             sb.AppendLine(userNote.Trim());
         }
         return (sb.ToString(), data);
+    }
+
+    /// <summary>自由问策（无客户）时，从用户输入派生一个简短主体名作报告标题/头部。</summary>
+    private static string DeriveFreeConsultSubject(string? input)
+    {
+        var text = (input ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(text)) return "自由问策";
+        var firstLine = text.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "自由问策";
+        return firstLine.Length > 16 ? firstLine[..16] + "…" : firstLine;
     }
 
     /// <summary>极简 HTML → 纯文本（跟进内容是富文本 HTML，喂 LLM 前去标签）。</summary>
@@ -7133,10 +7193,13 @@ public class CustomerFollowUpRequest
     public string Content { get; set; } = string.Empty;
 }
 
-/// <summary>生成营销问策请求。Input 为空 = 一键问策（自动聚合客户全量信息 + 动态跟进）。</summary>
+/// <summary>生成营销问策请求。CustomerId 可空：带 CustomerId 且 Input 空 = 对该客户一键问策；
+/// 仅 Input = 自由文本问策（不绑定客户）。两者皆空则报错。</summary>
 public class GenerateConsultRequest
 {
-    /// <summary>用户输入的客户情况（可空，空则一键问策）</summary>
+    /// <summary>关联客户 Id（可空，自由文本问策时不传）</summary>
+    public string? CustomerId { get; set; }
+    /// <summary>用户输入的客户情况（可空，带 CustomerId 时空则一键问策）</summary>
     public string? Input { get; set; }
     /// <summary>本次问策的额外要求（可空）</summary>
     public string? Note { get; set; }
