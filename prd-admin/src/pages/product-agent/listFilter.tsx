@@ -52,7 +52,7 @@ export function useListFilter<T>(opts: {
   showFilterSettings?: boolean;
   /** 搜索框外层 class（默认窄 w-44；跨产品总览传 OVERVIEW_LIST_SEARCH_BOX） */
   searchBoxClassName?: string;
-  /** 筛选项右侧附加控件（如「追踪」切换） */
+  /** 筛选项右侧附加控件（如「追踪」切换，应紧挨最后一个筛选下拉） */
   trailing?: ReactNode;
   /** 是否在工具栏末尾展示「命中数/总数」（总览宽工具栏默认关闭，列表区另有统计） */
   showResultCount?: boolean;

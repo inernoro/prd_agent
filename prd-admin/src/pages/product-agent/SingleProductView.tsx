@@ -423,6 +423,7 @@ function RequirementsTab({ productId }: { productId: string }) {
     keywordPlaceholder: '搜索标题 / 编号',
     showFilterSettings: false,
     searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId, recordId: r.id })),
@@ -472,7 +473,6 @@ function RequirementsTab({ productId }: { productId: string }) {
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
       <div className={PRODUCT_LIST_TOOLBAR_ROW}>
-        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
         <div className="flex min-w-0 flex-1 items-center gap-2">{bar}</div>
         <input
           ref={fileRef}
@@ -698,6 +698,7 @@ function DefectsTab({ productId }: { productId: string }) {
     keywordPlaceholder: '搜索标题 / 编号',
     showFilterSettings: false,
     searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'defect', (d) => ({ productId, recordId: d.id })),
@@ -720,7 +721,6 @@ function DefectsTab({ productId }: { productId: string }) {
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
       <div className={PRODUCT_LIST_TOOLBAR_ROW}>
-        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
         <div className="flex min-w-0 flex-1 items-center gap-2">{bar}</div>
         <NewButton label="新建缺陷" onClick={() => navigate(`/product-agent/p/${productId}/defect/new`)} />
       </div>

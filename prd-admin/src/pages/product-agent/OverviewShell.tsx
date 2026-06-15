@@ -488,6 +488,7 @@ function RequirementsTable({
     keywordPlaceholder: '搜索标题 / 编号',
     showFilterSettings: false,
     searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId: r.productId, recordId: r.id })),
@@ -521,7 +522,6 @@ function RequirementsTable({
   return (
     <div className="w-full min-w-0">
       <div className={`${PRODUCT_LIST_TOOLBAR_ROW} mb-3`}>
-        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
         <div className="flex min-w-0 flex-1 items-center gap-2">{bar}</div>
         <div className="flex shrink-0 items-center gap-2">
           <MineToggle mine={mine} setMine={setMine} />
@@ -662,6 +662,7 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
     keywordPlaceholder: '搜索标题 / 编号',
     showFilterSettings: false,
     searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
+    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
 
   const reload = useCallback(async () => {
@@ -689,7 +690,6 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
   return (
     <div className="w-full min-w-0">
       <div className={`${PRODUCT_LIST_TOOLBAR_ROW} mb-3`}>
-        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
         <div className="flex min-w-0 flex-1 items-center gap-2">{bar}</div>
         <div className="flex shrink-0 items-center gap-2">
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
