@@ -131,7 +131,7 @@ function splitMembers(raw?: string): string[] | undefined {
 function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImportKind, headerRowIndex: number): VersionWorkflowImportRow[] {
   const planIndex = indexOfHeader(headers, '产品立项方案名称', '方案名称', '方案');
   const systemIndex = indexOfHeader(headers, '系统');
-  const appIndex = indexOfHeader(headers, '应用', '应用/产品', '产品');
+  const appIndex = indexOfHeader(headers, '应用', '所属应用', '应用名称', '应用产品', '应用/产品', '产品');
   const productIndex = indexOfExactHeader(headers, '产品');
   const projectTypeIndex = indexOfHeader(headers, '项目类别');
   const versionTypeIndex = indexOfHeader(headers, '版本类别', '版本级别');

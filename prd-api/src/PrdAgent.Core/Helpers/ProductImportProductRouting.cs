@@ -14,7 +14,9 @@ public static class ProductImportProductRouting
     /// <summary>来源字段 → 系统产品标签（「应用」优先，对应语雀/Excel 导出列）。</summary>
     private static readonly string[] ProductFieldKeys =
     {
-        "应用", "产品", "所属产品", "产品名称", "产品线", "product", "productname",
+        "应用", "所属应用", "应用名称", "应用产品", "应用/产品",
+        "产品", "所属产品", "产品名称", "产品线", "系统产品",
+        "product", "productname", "app", "appname",
     };
 
     public static string? ExtractTitleBracketLabel(string? title)

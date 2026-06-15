@@ -127,6 +127,7 @@ export function VersionWorkflowImportDialog({
       ].filter(Boolean).join('，') + '。',
     );
     await onImported();
+    onClose();
   };
 
   return createPortal(

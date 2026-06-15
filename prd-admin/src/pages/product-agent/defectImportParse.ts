@@ -18,12 +18,15 @@ function headerIndex(headers: string[], ...names: string[]): number {
   );
 }
 
-const PRODUCT_COLUMN_NAMES = ['产品', '所属产品', '产品名称', '产品线'] as const;
+const APP_COLUMN_NAMES = ['应用', '所属应用', '应用名称', '应用产品', '应用/产品'] as const;
+const PRODUCT_COLUMN_NAMES = ['产品', '所属产品', '产品名称', '产品线', '系统产品'] as const;
 
 /** 从 TAPD 导出列解析「应用/产品」路由字段（与后端 ProductImportProductRouting 对齐） */
 export function buildDefectProductSourceFields(headers: string[], values: string[]): Record<string, string> | undefined {
   const trimmedHeaders = headers.map((h) => h.trim());
-  const appIndex = headerIndex(trimmedHeaders, '应用', '应用/产品');
+  const appIndex = trimmedHeaders.findIndex((header) =>
+    APP_COLUMN_NAMES.some((name) => header === name),
+  );
   const productIndex = trimmedHeaders.findIndex((header) =>
     PRODUCT_COLUMN_NAMES.some((name) => header === name),
   );

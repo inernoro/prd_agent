@@ -70,8 +70,8 @@ export function parseProductHistoryCsv(text: string, _options?: { entityType?: H
   const gradeIndex = indexOf('分级', '等级', '级别', 'grade');
   const statusIndex = indexOf('状态', '生命周期', 'status', 'lifecycle');
   const externalIdIndex = indexOf('需求 id', '外部id', '外部 id', 'externalid', 'external id', '编号', 'id', '缺陷id');
-  const appIndex = indexOf('应用', '应用/产品');
-  const productIndex = indexOf('产品', '所属产品', '产品名称', '产品线');
+  const appIndex = indexOf('应用', '所属应用', '应用名称', '应用产品', '应用/产品');
+  const productIndex = indexOf('产品', '所属产品', '产品名称', '产品线', '系统产品');
   const plannedIndex = indexOf('计划发布时间', '预计结束', 'planned');
   const completedIndex = indexOf('实际发布时间', '完成时间', 'released', 'completed');
   const effectiveTitleIndex = titleIndex >= 0 ? titleIndex : 0;
@@ -208,6 +208,7 @@ export function ProductHistoryImportDialog({
       }。`,
     );
     await onImported();
+    onClose();
   };
 
   if (rtfFiles.length > 0 && (productId || crossProductRoute)) {
@@ -265,10 +266,13 @@ export function ProductHistoryImportDialog({
                 <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th>{isCrossProduct && <th className="px-3 py-2">归属产品</th>}<th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
                 <tbody>{rows.slice(0, 30).map((row, index) => {
                   const routeLabel = row.sourceFields?.['应用']
+                    || row.sourceFields?.['所属应用']
+                    || row.sourceFields?.['应用名称']
                     || row.sourceFields?.['所属产品']
                     || row.sourceFields?.['产品']
                     || row.sourceFields?.['产品名称']
                     || row.sourceFields?.['产品线']
+                    || row.sourceFields?.['系统产品']
                     || (row.title?.match(/^【([^】]+)】/)?.[1] ?? '');
                   return (
                     <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5">

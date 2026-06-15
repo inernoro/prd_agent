@@ -1,6 +1,9 @@
 import type { ImportRequirementRow } from '@/services/real/productAgent';
 
-const PRODUCT_FIELD_KEYS = ['应用', '产品', '所属产品', '产品名称', '产品线'] as const;
+const PRODUCT_FIELD_KEYS = [
+  '应用', '所属应用', '应用名称', '应用产品', '应用/产品',
+  '产品', '所属产品', '产品名称', '产品线', '系统产品',
+] as const;
 
 /** 行是否自带可路由到系统产品的标签（应用列或标题【前缀】） */
 export function rowHasProductRouteHint(row: Pick<ImportRequirementRow, 'title' | 'sourceFields'>): boolean {

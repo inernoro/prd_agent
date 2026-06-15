@@ -208,6 +208,7 @@ export function RequirementRtfImportDialog({
     setImageWarnings(warningMessages.slice(0, 8));
     setProgress(skippedImageCount > 0 ? `导入完成，${skippedImageCount} 张图片未上传（需求正文已去除对应占位）` : '');
     await onImported();
+    onClose();
   };
 
   const failedFileCount = parsedFiles.filter((item) => item.error).length;
