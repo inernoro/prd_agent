@@ -656,12 +656,23 @@ public class OpenAIImageClient
 
             gatewayResp = await SendViaGatewayAsync(ct);
 
+            _logger.LogWarning(
+                "[OpenAIImageClient][DIAG] 首发结果: success={Su} status={S} errCode={E} errMsg={EM} apiUrl={ApiUrl} isOpenRouter={IsOR}",
+                gatewayResp.Success, gatewayResp.StatusCode, gatewayResp.ErrorCode,
+                (gatewayResp.ErrorMessage ?? "").Length > 80 ? gatewayResp.ErrorMessage![..80] : gatewayResp.ErrorMessage,
+                apiUrl, isOpenRouter);
+
             // OpenRouter 兜底：images/generations 返回 404（该平台图片生成只走 chat/completions+modalities），
             // 自动改用 OpenRouter 协议重试一次（不依赖 apiUrl 字符串匹配，对自定义域名/代理也成立）。
-            if (gatewayResp.StatusCode == 404 && !isOpenRouter && !forceOpenRouter)
+            var looks404 = gatewayResp.StatusCode == 404
+                || (gatewayResp.ErrorMessage ?? "").Contains("404", StringComparison.OrdinalIgnoreCase)
+                || (gatewayResp.ErrorMessage ?? "").Contains("not found", StringComparison.OrdinalIgnoreCase)
+                || (gatewayResp.ErrorMessage ?? "").Contains("No endpoints", StringComparison.OrdinalIgnoreCase)
+                || (gatewayResp.Content ?? "").Contains("\"code\":404", StringComparison.OrdinalIgnoreCase);
+            if (!gatewayResp.Success && looks404 && !isOpenRouter && !forceOpenRouter)
             {
                 _logger.LogWarning(
-                    "[OpenAIImageClient] images/generations 返回 404，改用 chat/completions+modalities 重试。apiUrl={ApiUrl}, model={Model}",
+                    "[OpenAIImageClient] images/generations 疑似 404，改用 chat/completions+modalities 重试。apiUrl={ApiUrl}, model={Model}",
                     apiUrl, effectiveModelName);
                 forceOpenRouter = true;
                 gatewayResp = await SendViaGatewayAsync(ct);
