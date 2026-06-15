@@ -91,6 +91,125 @@ function FlyingToken({
 }
 
 /**
+ * 把一条阻尼谐振子(弹簧)采样成 WAAPI 关键帧 —— 这是 iOS/SwiftUI `.spring(response,dampingFraction)`
+ * 的手感来源:位移带自然过冲再收敛,而非贝塞尔那种「编出来」的速度曲线。
+ * response=弹簧周期(越小越快),zeta=阻尼系数(1=不过冲,<1 越小越弹);sx0/sy0=撞击瞬间的初始挤压。
+ * v 在过冲段会 >1,自动得到反向挤压(secondary motion),正是「被撞扁又回弹」的实感。
+ */
+function springScaleFrames(response: number, zeta: number, sx0: number, sy0: number, n = 48): Keyframe[] {
+  const w0 = (2 * Math.PI) / response;
+  const settle = response * (zeta < 1 ? 2.4 : 1.7);
+  const frames: Keyframe[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = (settle * i) / n;
+    let v: number;
+    if (zeta < 1) {
+      const wd = w0 * Math.sqrt(1 - zeta * zeta);
+      v = 1 - Math.exp(-zeta * w0 * t) * (Math.cos(wd * t) + ((zeta * w0) / wd) * Math.sin(wd * t));
+    } else {
+      v = 1 - Math.exp(-w0 * t) * (1 + w0 * t);
+    }
+    const sx = sx0 + (1 - sx0) * v;
+    const sy = sy0 + (1 - sy0) * v;
+    frames.push({ transform: `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`, offset: i / n });
+  }
+  return frames;
+}
+
+/**
+ * 毕业帽飞回入口「落地」那一刻叠在 pill 位置上的辉光 + 涟漪(诉求:接住时发个光、闪一闪)。
+ * 只动 opacity/transform(合成层,不动 box-shadow 扩散),fixed 定位到 pill 实测 rect,
+ * 中心镂空的环形 halo 不遮挡 pill 文字。pill 本体的弹簧挤压由 triggerEntryLanding 直接对真实节点跑。
+ */
+function EntryLandingFx({
+  rect,
+  onDone,
+}: {
+  rect: { x: number; y: number; w: number; h: number };
+  onDone: () => void;
+}) {
+  const glowRef = useRef<HTMLDivElement>(null);
+  const rippleRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const glow = glowRef.current;
+    const ripple = rippleRef.current;
+    const anims: Animation[] = [];
+    if (glow) {
+      const a = glow.animate(
+        [
+          { opacity: 0, transform: 'scale(0.55)' },
+          { opacity: 0.95, transform: 'scale(1.05)', offset: 0.12 },
+          { opacity: 0.3, transform: 'scale(1.25)', offset: 0.4 },
+          { opacity: 0, transform: 'scale(1.45)' },
+        ],
+        { duration: 620, easing: 'cubic-bezier(.2,.7,.3,1)' },
+      );
+      a.onfinish = onDone;
+      anims.push(a);
+    } else {
+      onDone();
+    }
+    if (ripple) {
+      anims.push(
+        ripple.animate(
+          [
+            { opacity: 0.9, transform: 'scale(1)' },
+            { opacity: 0, transform: 'scale(1.9)' },
+          ],
+          { duration: 520, easing: 'cubic-bezier(.1,.6,.3,1)' },
+        ),
+      );
+    }
+    return () => {
+      anims.forEach((a) => {
+        a.onfinish = null;
+        a.cancel();
+      });
+    };
+  }, [onDone]);
+  return createPortal(
+    <>
+      <div
+        ref={glowRef}
+        style={{
+          position: 'fixed',
+          left: rect.x - 16,
+          top: rect.y - 16,
+          width: rect.w + 32,
+          height: rect.h + 32,
+          borderRadius: 18,
+          zIndex: 10000,
+          pointerEvents: 'none',
+          opacity: 0,
+          transformOrigin: 'center',
+          // 中心镂空的环形辉光:不盖 pill 文字,只在边缘点亮一圈
+          background:
+            'radial-gradient(closest-side, rgba(167,139,250,0) 46%, rgba(167,139,250,0.55) 70%, rgba(167,139,250,0) 100%)',
+          filter: 'blur(2px)',
+        }}
+      />
+      <div
+        ref={rippleRef}
+        style={{
+          position: 'fixed',
+          left: rect.x,
+          top: rect.y,
+          width: rect.w,
+          height: rect.h,
+          borderRadius: 10,
+          zIndex: 10000,
+          pointerEvents: 'none',
+          opacity: 0,
+          transformOrigin: 'center',
+          border: '1.5px solid rgba(196,181,253,0.9)',
+        }}
+      />
+    </>,
+    document.body,
+  );
+}
+
+/**
  * JetBrains-style 功能高亮 + 自动引导。
  *
  * 挂载时从 sessionStorage 读取 SpotlightActionPayload(新)或 SPOTLIGHT_TARGET_KEY(旧兼容):
@@ -126,6 +245,8 @@ export function SpotlightOverlay() {
   /** 完成飞回动画的起止坐标(诉求 6),null=不播放 */
   const [flyBack, setFlyBack] = useState<{ from: { x: number; y: number }; to: { x: number; y: number } } | null>(null);
   const clearFlyBack = useCallback(() => setFlyBack(null), []);
+  /** 毕业帽落地后在 pill 位置播放的「接住」辉光/涟漪 rect(诉求:发个光、闪一闪),null=不播放 */
+  const [landFx, setLandFx] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
   // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
   // 初次 mount 读一次;TipsRotator 写完 payload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
@@ -198,6 +319,34 @@ export function SpotlightOverlay() {
       to: { x: er.left + er.width / 2, y: er.top + er.height / 2 },
     });
   }, [currentSelector]);
+
+  // ---- 毕业帽落地:对它实际飞向的那个 pill 节点跑「接住」动画(弹簧挤压 + 辉光/涟漪)----
+  // 全站「教程」入口是同一个组件 TipsEntryButton(都带 data-tour-entry),且本 Overlay 是 App 根
+  // 全局唯一挂载 —— 所以这套接住效果改这一处,任何页面、任何关闭路径(完成/我已学会/X/ESC)只要
+  // 帽子飞回来就一致触发。参数与已验收 demo 同:response 0.42 / dampingFraction 0.55(推荐档)。
+  const triggerEntryLanding = useCallback(() => {
+    const entry = document.querySelector('[data-tour-entry]');
+    if (!(entry instanceof HTMLElement)) return;
+    const r = entry.getBoundingClientRect();
+    try {
+      // 非等比挤压(撞击 X 宽 Y 扁 → 弹簧收敛回 1,过冲自然反挤压)
+      entry.animate(springScaleFrames(0.42, 0.55, 1.16, 0.86), { duration: 560, easing: 'linear' });
+      // 边框/字色点亮一下再回落(末帧留空 → 回到 pill 自身 inline 基础样式)
+      entry.animate(
+        [{ borderColor: 'rgba(196,181,253,0.95)', color: '#fff', offset: 0 }, { offset: 1 }],
+        { duration: 700, easing: 'ease-out' },
+      );
+    } catch {
+      /* 老浏览器不支持 WAAPI 时静默降级,不影响教程功能本身 */
+    }
+    setLandFx({ x: r.left, y: r.top, w: r.width, h: r.height });
+  }, []);
+
+  // FlyingToken 落地回调:先清掉飞行体,再让 pill「接住」(发光闪一下)。
+  const onTokenLanded = useCallback(() => {
+    clearFlyBack();
+    triggerEntryLanding();
+  }, [clearFlyBack, triggerEntryLanding]);
 
   // 统一关闭:先播飞回动画,再隐藏卡片。flyBack 与 dismissed 同帧设置,
   // FlyingToken 在 dismissed 后仍由 flyBackNode 续播(见底部渲染)。
@@ -457,10 +606,18 @@ export function SpotlightOverlay() {
 
   // 完成飞回动画即使在 dismissed 后也要继续播放(completeTour 同帧设了 flyBack + dismissed)。
   const flyBackNode = flyBack
-    ? createPortal(<FlyingToken from={flyBack.from} to={flyBack.to} onDone={clearFlyBack} />, document.body)
+    ? createPortal(<FlyingToken from={flyBack.from} to={flyBack.to} onDone={onTokenLanded} />, document.body)
     : null;
+  // 帽子落地后的「接住」辉光/涟漪 —— 与 flyBackNode 一样,dismissed 后仍需续播(落地发生在飞行结束、卡片已隐藏时)。
+  const landFxNode = landFx ? <EntryLandingFx rect={landFx} onDone={() => setLandFx(null)} /> : null;
 
-  if (dismissed || !payload) return flyBackNode;
+  if (dismissed || !payload)
+    return (
+      <>
+        {flyBackNode}
+        {landFxNode}
+      </>
+    );
 
   // 「等待中」阶段:payload 有但 rect 还没到 & 未超时 → 显示蓝色「正在定位…」小卡片
   // 避免用户点跳转后 6s 内啥都看不到,以为没反应
