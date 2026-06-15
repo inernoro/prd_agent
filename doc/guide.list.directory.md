@@ -638,15 +638,10 @@
 
 - [AI 文本辅助通用 Domain 设计](plan.ai-text-assist) `plan.ai-text-assist`
 - [MD转PPT 对话式 artifact 工作台改造计划](plan.md-to-ppt-chat-redesign) `plan.md-to-ppt-chat-redesign`
-  > AI 文本辅助功能的通用领域模型设计
-- [MD 转 PPT 下一波计划](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
-  > 大纲右侧编辑器 + 状态机 + 澄清问卷，来自 2026-06-10 用户 11 条反馈的大件
+  > MD 转 PPT 对话式工作台改造的实施计划
 
 - [MD 转 PPT 下一波执行计划](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
-  > 大纲右侧编辑器/状态机/澄清问卷/编辑深修的下一波执行计划
-
-- [MD 转 PPT 下一波计划（大纲编辑器 + 状态机 + 澄清问卷）](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
-  > 基于 2026-06-10 用户反馈的后续实施计划
+  > MD 转 PPT 下一波：大纲右侧编辑器 / 状态机 / 澄清问卷 / 编辑深修
 
 - [配图标记手动干预](plan.manual-image-marking-control) `plan.manual-image-marking-control`
   > 配图标记从"自动黑盒"升级为"提示词+位置策略+段落级操作"的分阶段计划（Phase 1/2/3）
