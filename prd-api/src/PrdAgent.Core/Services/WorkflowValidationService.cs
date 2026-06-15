@@ -169,6 +169,13 @@ public class WorkflowValidationService
                 srcSlot = src.OutputSlots.FirstOrDefault(s => !outUsed.Contains(s.SlotId)) ?? src.OutputSlots[0];
                 notes.Add($"「{src.Name}」输出插槽自动校正为 {srcSlot.SlotId}");
             }
+            else if (src.OutputSlots.Count > 1 && outUsed.Contains(srcSlot.SlotId))
+            {
+                // 多输出舱（如 condition）两条出边都猜成同一分支槽 → 改用未占用的分支槽，
+                // 否则 WorkflowRunWorker 只按 sourceSlotId 激活，false 分支永不可达
+                var alt = src.OutputSlots.FirstOrDefault(s => !outUsed.Contains(s.SlotId));
+                if (alt != null) { srcSlot = alt; notes.Add($"「{src.Name}」重复分支输出槽改用 {alt.SlotId}"); }
+            }
             outUsed.Add(srcSlot.SlotId);
 
             // 修复 targetSlotId：显式有效保留；否则优先未占用 + dataType 兼容 → 未占用 → 兼容 → 第一个
@@ -180,6 +187,13 @@ public class WorkflowValidationService
                           ?? tgt.InputSlots.FirstOrDefault(s => s.DataType == srcSlot.DataType)
                           ?? tgt.InputSlots[0];
                 notes.Add($"「{tgt.Name}」输入插槽自动校正为 {tgtSlot.SlotId}");
+            }
+            else if (tgt.InputSlots.Count > 1 && inUsed.Contains(tgtSlot.SlotId))
+            {
+                // 多输入舱（如 data-merger）两条入边都猜成同一输入槽 → 改用未占用的输入槽
+                var alt = tgt.InputSlots.FirstOrDefault(s => s.DataType == srcSlot.DataType && !inUsed.Contains(s.SlotId))
+                          ?? tgt.InputSlots.FirstOrDefault(s => !inUsed.Contains(s.SlotId));
+                if (alt != null) { tgtSlot = alt; notes.Add($"「{tgt.Name}」重复输入槽改用 {alt.SlotId}"); }
             }
             inUsed.Add(tgtSlot.SlotId);
 

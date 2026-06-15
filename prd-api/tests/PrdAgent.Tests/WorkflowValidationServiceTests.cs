@@ -270,6 +270,34 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void ConditionDuplicateExplicitSlot_IsReassigned()
+    {
+        // 两条出边都显式写成 cond-true（语法有效但重复）→ 第二条应改到 cond-false
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("m1", CapsuleTypes.ManualTrigger),
+                Node("cond", CapsuleTypes.Condition),
+                Node("a", CapsuleTypes.HttpRequest, new() { ["url"] = "https://a.com", ["method"] = "GET" }),
+                Node("b", CapsuleTypes.HttpRequest, new() { ["url"] = "https://b.com", ["method"] = "GET" }),
+            },
+            Edges = new()
+            {
+                new() { SourceNodeId = "m1", SourceSlotId = "manual-out", TargetNodeId = "cond", TargetSlotId = "cond-in" },
+                new() { SourceNodeId = "cond", SourceSlotId = "cond-true", TargetNodeId = "a", TargetSlotId = "http-in" },
+                new() { SourceNodeId = "cond", SourceSlotId = "cond-true", TargetNodeId = "b", TargetSlotId = "http-in" },
+            },
+        };
+
+        var r = _svc.Process(g);
+        var condOut = g.Edges!.Where(e => e.SourceNodeId == "cond").Select(e => e.SourceSlotId).ToList();
+        Assert.Equal(2, condOut.Distinct().Count());
+        Assert.Contains("cond-true", condOut);
+        Assert.Contains("cond-false", condOut);
+    }
+
+    [Fact]
     public void Cycle_ProducesIssue()
     {
         var g = new WorkflowChatGenerated
