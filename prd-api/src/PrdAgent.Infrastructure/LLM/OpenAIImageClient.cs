@@ -368,6 +368,9 @@ public class OpenAIImageClient
         // 通过 Gateway 发送请求（Gateway 负责：模型调度、HTTP 请求、日志记录、健康管理）
         // 构建 GatewayRawRequest
         GatewayRawResponse gatewayResp;
+        // 若 images/generations 返回 404（OpenRouter 这类平台图片生成走 chat/completions+modalities），
+        // 置位后用 OpenRouter 协议重试一次。与 isOpenRouter 快速路径互补，且不依赖 apiUrl 字符串匹配。
+        var forceOpenRouter = false;
         try
         {
             // 定义发送函数（支持重试）
@@ -455,7 +458,8 @@ public class OpenAIImageClient
                     }, resolution, token);
                 }
                 // OpenRouter 图片生成：chat/completions + modalities（文生图 / 图生图统一走这条）
-                else if (isOpenRouter)
+                // isOpenRouter = apiUrl 命中；forceOpenRouter = images/generations 返回 404 后的兜底重试
+                else if (isOpenRouter || forceOpenRouter)
                 {
                     JsonNode userContent;
                     if (initImageBase64 != null)
@@ -651,6 +655,17 @@ public class OpenAIImageClient
             }
 
             gatewayResp = await SendViaGatewayAsync(ct);
+
+            // OpenRouter 兜底：images/generations 返回 404（该平台图片生成只走 chat/completions+modalities），
+            // 自动改用 OpenRouter 协议重试一次（不依赖 apiUrl 字符串匹配，对自定义域名/代理也成立）。
+            if (gatewayResp.StatusCode == 404 && !isOpenRouter && !forceOpenRouter)
+            {
+                _logger.LogWarning(
+                    "[OpenAIImageClient] images/generations 返回 404，改用 chat/completions+modalities 重试。apiUrl={ApiUrl}, model={Model}",
+                    apiUrl, effectiveModelName);
+                forceOpenRouter = true;
+                gatewayResp = await SendViaGatewayAsync(ct);
+            }
 
             // 平台特定的尺寸错误处理：使用适配器自动修正
             // 自适应模型完全不发尺寸字段，跳过此分支以免 reqObj 不存在 size 属性时 NRE
