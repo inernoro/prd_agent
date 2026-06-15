@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Sparkles, Loader2, Star, Trash2, RefreshCw, AlertCircle, Plus } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Sparkles, Loader2, Star, Trash2, RefreshCw, AlertCircle, Plus, Upload } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import {
   generateCcasEquipment,
+  uploadCcasEquipment,
   listCcasEquipment,
   toggleCcasEquipmentFavorite,
   deleteCcasEquipment,
@@ -25,6 +26,10 @@ export function CcasEquipmentTab({ meta }: Props) {
   const [styleKey, setStyleKey] = useState(meta.equipmentStyles[0]?.key ?? 'isometric-3d');
   const [extraPrompt, setExtraPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadNote, setUploadNote] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [items, setItems] = useState<CcasEquipmentAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterStyle, setFilterStyle] = useState<string>('');
@@ -72,6 +77,50 @@ export function CcasEquipmentTab({ meta }: Props) {
       toast.error(res.error?.message || '生成失败');
     }
   }, [equipmentType, styleKey, extraPrompt]);
+
+  const onPickUploadFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('仅支持图片文件（jpg / png / webp / gif）');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('图片不能超过 10MB');
+      return;
+    }
+    setUploadFile(file);
+    setError(null);
+  }, []);
+
+  const onUpload = useCallback(async () => {
+    const t = equipmentType.trim();
+    if (!t) {
+      toast.error('请输入设备类型');
+      return;
+    }
+    if (!uploadFile) {
+      toast.error('请选择要上传的图片');
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    const res = await uploadCcasEquipment(uploadFile, {
+      equipmentType: t,
+      note: uploadNote.trim() || undefined,
+    });
+    setUploading(false);
+    if (res.success && res.data) {
+      toast.success(`已上传「${t}」素材`);
+      setItems((prev) => [res.data!.asset, ...prev]);
+      setUploadFile(null);
+      setUploadNote('');
+    } else {
+      setError(res.error?.message || '上传失败');
+      toast.error(res.error?.message || '上传失败');
+    }
+  }, [equipmentType, uploadFile, uploadNote]);
 
   const onToggleFav = useCallback(async (id: string, current: boolean) => {
     const res = await toggleCcasEquipmentFavorite(id, !current);
@@ -160,6 +209,53 @@ export function CcasEquipmentTab({ meta }: Props) {
             提示：生成的素材保存在你的私人库中，可在「流程图」Tab 选用。模型选择由后台模型池决定。
           </div>
         </section>
+
+        <section className="rounded-lg border border-white/10 bg-white/5 p-4">
+          <h2 className="text-sm font-medium text-white mb-3 flex items-center gap-1.5">
+            <Upload className="w-4 h-4" /> 上传本地图片
+          </h2>
+
+          <p className="text-[11px] text-white/45 mb-2 leading-relaxed">
+            有现场实拍或设计稿时可直接上传，设备类型与上方共用；流程图会按设备名自动匹配。
+          </p>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="hidden"
+            onChange={onPickUploadFile}
+          />
+
+          <Button
+            variant="ghost"
+            onClick={() => fileInputRef.current?.click()}
+            className="!h-8 !w-full !text-xs !mb-2"
+          >
+            {uploadFile ? `已选：${uploadFile.name}` : '选择图片（≤ 10MB）'}
+          </Button>
+
+          <label className="block text-xs text-white/65 mb-1">备注（可选）</label>
+          <textarea
+            value={uploadNote}
+            onChange={(e) => setUploadNote(e.target.value)}
+            rows={2}
+            placeholder="如：石湾 2 号线现场实拍"
+            className="w-full mb-3 rounded-md bg-black/30 border border-white/15 px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-400/60"
+          />
+
+          <Button
+            onClick={onUpload}
+            disabled={uploading || !equipmentType.trim() || !uploadFile}
+            className="!h-9 !w-full !text-xs"
+          >
+            {uploading ? (
+              <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> 上传中…</>
+            ) : (
+              <><Upload className="w-3.5 h-3.5 mr-1" /> 上传入库</>
+            )}
+          </Button>
+        </section>
       </div>
 
       {/* 右：素材网格 */}
@@ -199,7 +295,7 @@ export function CcasEquipmentTab({ meta }: Props) {
             <div className="col-span-full text-center text-sm text-white/40 py-12">加载中…</div>
           ) : items.length === 0 ? (
             <div className="col-span-full text-center text-sm text-white/40 py-12">
-              暂无素材，去左侧生成第一张
+              暂无素材，去左侧生成或上传第一张
             </div>
           ) : (
             items.map((it) => (

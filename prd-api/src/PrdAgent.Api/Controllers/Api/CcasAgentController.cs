@@ -11,6 +11,8 @@ using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.CcasAgent;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -21,7 +23,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 赋码采集关联系统综合智能体（ccas-agent）
 /// 三大子能力：
 ///   1) PRD 文档生成（按米多 product-document-generator skill 模板，工程版 / 敏捷版双模板）
-///   2) 设备素材库（按预设风格生成 + 复用，供流程图节点引用）
+///   2) 设备素材库（按预设风格生成 / 本地上传 + 复用，供流程图节点引用）
 ///   3) 流程示意图绘制（LLM 解析输入 → 节点 + 边 JSON → 前端 ReactFlow 拼装素材图渲染）
 /// </summary>
 [ApiController]
@@ -288,6 +290,12 @@ public class CcasAgentController : ControllerBase
     // 子能力 2：设备素材库
     // ──────────────────────────────────────────────
 
+    private const long MaxEquipmentUploadBytes = 10 * 1024 * 1024;
+    private static readonly HashSet<string> AllowedEquipmentUploadMimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif",
+    };
+
     public class GenerateEquipmentRequest
     {
         /// <summary>设备类型/中文名（必填，例如：裹包机 / 龙门架 / 工业相机）</summary>
@@ -445,6 +453,91 @@ public class CcasAgentController : ControllerBase
             model = resolution.ActualModel,
             platform = resolution.ActualPlatformName,
         }));
+    }
+
+    /// <summary>
+    /// 上传本地设备图片并入库。风格固定为 user-upload，供流程图按设备名匹配。
+    /// </summary>
+    [HttpPost("equipment/upload")]
+    [RequestSizeLimit(MaxEquipmentUploadBytes)]
+    public async Task<IActionResult> UploadEquipment(
+        [FromForm] IFormFile file,
+        [FromForm] string equipmentType,
+        [FromForm] string? note,
+        CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var equipType = (equipmentType ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(equipType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "equipmentType 不能为空"));
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择图片文件"));
+        if (file.Length > MaxEquipmentUploadBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片大小不能超过 10MB"));
+
+        var mimeType = (file.ContentType ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(mimeType) || !AllowedEquipmentUploadMimeTypes.Contains(mimeType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"不支持的图片类型：{mimeType}"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        if (bytes.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片内容为空"));
+
+        StoredAsset stored;
+        try
+        {
+            stored = await _assetStorage.SaveAsync(
+                bytes,
+                mimeType,
+                CancellationToken.None,
+                domain: AppDomainPaths.DomainCcasAgent,
+                type: AppDomainPaths.TypeImg);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CcasAgent equipment 上传落盘失败 user={UserId}", userId);
+            return StatusCode(StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "图片上传失败，请稍后重试"));
+        }
+
+        var width = 0;
+        var height = 0;
+        try
+        {
+            using var image = Image.Load<Rgba32>(bytes);
+            width = image.Width;
+            height = image.Height;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "CcasAgent equipment 上传图片尺寸解析失败，继续入库");
+        }
+
+        var noteText = (note ?? string.Empty).Trim();
+        var asset = new CcasEquipmentAsset
+        {
+            OwnerUserId = userId,
+            EquipmentType = equipType,
+            StyleKey = "user-upload",
+            Prompt = "[用户上传]",
+            OriginalUserInput = string.IsNullOrWhiteSpace(noteText) ? null : noteText,
+            Url = stored.Url,
+            OriginalUrl = stored.Url,
+            Mime = mimeType,
+            Width = width,
+            Height = height,
+            SizeBytes = stored.SizeBytes,
+        };
+        await _db.CcasEquipmentAssets.InsertOneAsync(asset, cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { asset }));
     }
 
     /// <summary>
