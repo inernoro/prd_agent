@@ -1850,6 +1850,112 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    // ════════════════════════ 通用等级目录 ProductGradeOption ════════════════════════
+
+    private async Task EnsureGradeOptionsSeededAsync(string dimension, string entityType)
+    {
+        var existingIds = (await _db.ProductGradeOptions
+                .Find(o => o.Dimension == dimension && o.EntityType == entityType)
+                .Project(o => o.Id).ToListAsync())
+            .ToHashSet();
+        var missing = ProductGradeOption.BuildBuiltinSeeds(dimension, entityType)
+            .Where(s => !existingIds.Contains(s.Id)).ToList();
+        if (missing.Count > 0)
+            await _db.ProductGradeOptions.InsertManyAsync(missing);
+    }
+
+    /// <summary>等级目录列表（按 dimension + entityType 过滤；首次访问自动补齐内置项）。</summary>
+    [HttpGet("grade-options")]
+    public async Task<IActionResult> ListGradeOptions([FromQuery] string dimension, [FromQuery] string entityType)
+    {
+        if (!ProductGradeOption.Dimensions.Contains(dimension))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的维度（priority / severity）"));
+        if (!ProductGradeOption.EntityTypes.Contains(entityType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的对象类型（requirement / feature / defect）"));
+        await EnsureGradeOptionsSeededAsync(dimension, entityType);
+        var items = await _db.ProductGradeOptions
+            .Find(o => o.Dimension == dimension && o.EntityType == entityType && !o.IsDeleted)
+            .SortBy(o => o.SortOrder).ThenBy(o => o.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新等级项（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("grade-options")]
+    public async Task<IActionResult> UpsertGradeOption([FromBody] UpsertGradeOptionRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "等级名称不能为空"));
+        if (!ProductGradeOption.Dimensions.Contains(request.Dimension))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的维度（priority / severity）"));
+        if (!ProductGradeOption.EntityTypes.Contains(request.EntityType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的对象类型（requirement / feature / defect）"));
+        await EnsureGradeOptionsSeededAsync(request.Dimension, request.EntityType);
+        var name = request.Name.Trim();
+        var color = string.IsNullOrWhiteSpace(request.Color) ? "#60A5FA" : request.Color.Trim();
+        var definition = (request.Definition ?? "").Trim();
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.ProductGradeOptions.Find(o => o.Id == request.Id && !o.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "等级项不存在"));
+            var nameConflict = await _db.ProductGradeOptions.Find(o =>
+                o.Dimension == existing.Dimension && o.EntityType == existing.EntityType
+                && o.Name == name && o.Id != request.Id && !o.IsDeleted).AnyAsync();
+            if (nameConflict)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已存在同名等级项"));
+            var u = Builders<ProductGradeOption>.Update
+                .Set(o => o.Name, name)
+                .Set(o => o.Color, color)
+                .Set(o => o.Definition, definition)
+                .Set(o => o.SortOrder, request.SortOrder)
+                .Set(o => o.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductGradeOptions.UpdateOneAsync(o => o.Id == request.Id, u);
+            var updated = await _db.ProductGradeOptions.Find(o => o.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var nameExists = await _db.ProductGradeOptions.Find(o =>
+            o.Dimension == request.Dimension && o.EntityType == request.EntityType
+            && o.Name == name && !o.IsDeleted).AnyAsync();
+        if (nameExists)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已存在同名等级项"));
+        var maxOrder = (await _db.ProductGradeOptions
+                .Find(o => o.Dimension == request.Dimension && o.EntityType == request.EntityType && !o.IsDeleted)
+                .SortByDescending(o => o.SortOrder).FirstOrDefaultAsync())?.SortOrder ?? -1;
+        var item = new ProductGradeOption
+        {
+            Dimension = request.Dimension,
+            EntityType = request.EntityType,
+            Name = name,
+            Color = color,
+            Definition = definition,
+            SortOrder = request.SortOrder > 0 ? request.SortOrder : maxOrder + 1,
+            IsBuiltin = false,
+            OwnerId = GetUserId(),
+        };
+        await _db.ProductGradeOptions.InsertOneAsync(item);
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    /// <summary>删除等级项（软删除，需管理权限）。内置项不可删除。</summary>
+    [HttpDelete("grade-options/{optionId}")]
+    public async Task<IActionResult> DeleteGradeOption(string optionId)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var item = await _db.ProductGradeOptions.Find(o => o.Id == optionId && !o.IsDeleted).FirstOrDefaultAsync();
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "等级项不存在"));
+        if (item.IsBuiltin)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "内置等级项不可删除，可修改名称、颜色与定义"));
+        await _db.ProductGradeOptions.UpdateOneAsync(o => o.Id == optionId,
+            Builders<ProductGradeOption>.Update.Set(o => o.IsDeleted, true).Set(o => o.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
     // ════════════════════════ 详情描述模板 ProductDescTemplate ════════════════════════
 
     /// <summary>描述模板列表（按对象类型过滤）。</summary>
@@ -6290,6 +6396,17 @@ public class UpsertRequirementTypeRequest
 {
     public string? Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string? Definition { get; set; }
+    public int SortOrder { get; set; }
+}
+
+public class UpsertGradeOptionRequest
+{
+    public string? Id { get; set; }
+    public string Dimension { get; set; } = string.Empty;
+    public string EntityType { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? Color { get; set; }
     public string? Definition { get; set; }
     public int SortOrder { get; set; }
 }

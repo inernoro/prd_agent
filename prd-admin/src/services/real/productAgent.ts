@@ -19,6 +19,9 @@ import type {
   ProductEntityType,
   ProductCategory,
   RequirementType,
+  ProductGradeOption,
+  GradeDimension,
+  GradeEntityType,
   DescTemplate,
   ProductMembersResult,
   ProductInitiation,
@@ -313,6 +316,18 @@ export function upsertRequirementType(body: Partial<RequirementType> & { id?: st
 }
 export function deleteRequirementType(typeId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/requirement-types/${typeId}`, { method: 'DELETE' });
+}
+
+// ── 等级目录（优先级 / 严重程度，按对象类型）──
+export function listGradeOptions(params: { dimension: GradeDimension; entityType: GradeEntityType }) {
+  const qs = `?dimension=${encodeURIComponent(params.dimension)}&entityType=${encodeURIComponent(params.entityType)}`;
+  return apiRequest<ListWrap<ProductGradeOption>>(`/api/product/grade-options${qs}`);
+}
+export function upsertGradeOption(body: Partial<ProductGradeOption> & { id?: string }) {
+  return apiRequest<ProductGradeOption>('/api/product/grade-options', { method: 'POST', body });
+}
+export function deleteGradeOption(optionId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/grade-options/${optionId}`, { method: 'DELETE' });
 }
 
 // ── 详情描述模板 ──

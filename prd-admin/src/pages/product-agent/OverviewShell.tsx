@@ -20,7 +20,6 @@ import {
   BookOpen,
   Share2,
   Settings,
-  GitBranch,
   Upload,
   ArrowLeft,
   Search,
@@ -35,8 +34,7 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { ProductsSection } from './ProductsSection';
-import { SettingsSection } from './SettingsSection';
-import { WorkflowTemplateSection } from './WorkflowTemplateSection';
+import { ProductSettingsHub } from './ProductSettingsHub';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
@@ -72,9 +70,9 @@ import { formatInitiationReviewScore } from './initiationWorkflowUtils';
 import { formatVersionBasicBool, formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { filterByTracked } from './productRecordTrackStorage';
 
-type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
+type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
-const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'workflow', 'settings']);
+const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'settings']);
 
 function parseOverviewSection(value: string | null): Section {
   if (value && SECTION_KEYS.has(value as Section)) return value as Section;
@@ -127,8 +125,7 @@ export function OverviewShell() {
     { key: 'customers', label: '客户', icon: Users },
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
-    { key: 'workflow', label: '应用', icon: GitBranch, hidden: !isAdmin, dividerBefore: true },
-    { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin },
+    { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin, dividerBefore: true },
   ];
 
   return (
@@ -204,16 +201,7 @@ export function OverviewShell() {
           </div>
         </div>
       )}
-      {active === 'workflow' && (
-        <SectionShell title="应用配置" desc="需求、功能、缺陷的状态及流转规则（全局默认，可按产品覆盖）；产品管理员一览见同名标签">
-          <WorkflowTemplateSection />
-        </SectionShell>
-      )}
-      {active === 'settings' && (
-        <SectionShell title="全局设置" desc="表单/描述模板、产品类型、需求类型与应用管理员（历史导入权限）">
-          <SettingsSection />
-        </SectionShell>
-      )}
+      {active === 'settings' && <ProductSettingsHub />}
     </ProductAgentLayout>
   );
 }

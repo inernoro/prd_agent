@@ -117,7 +117,7 @@ public static class Desktop
 /// </summary>
 public static class Product
 {
-    public const string AppName = "产品管理智能体";
+    public const string AppName = "产品管理";
 
     [AppCallerMetadata(
         "产品管理-图谱摘要",
@@ -1305,7 +1305,7 @@ public static class TapdBugAgent
 /// </summary>
 public static class ProjectManagement
 {
-    public const string AppName = "项目管理智能体";
+    public const string AppName = "项目管理";
 
     public static class Decompose
     {

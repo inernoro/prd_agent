@@ -381,6 +381,7 @@ public class MongoDbContext
     public IMongoCollection<Customer> Customers => _database.GetCollection<Customer>("customers");
     public IMongoCollection<ProductCategory> ProductCategories => _database.GetCollection<ProductCategory>("product_categories");
     public IMongoCollection<RequirementType> RequirementTypes => _database.GetCollection<RequirementType>("requirement_types");
+    public IMongoCollection<ProductGradeOption> ProductGradeOptions => _database.GetCollection<ProductGradeOption>("product_grade_options");
     public IMongoCollection<ProductDescTemplate> ProductDescTemplates => _database.GetCollection<ProductDescTemplate>("product_desc_templates");
     public IMongoCollection<ProductItemActivity> ProductItemActivities => _database.GetCollection<ProductItemActivity>("product_item_activities");
     public IMongoCollection<ProductItemSummary> ProductItemSummaries => _database.GetCollection<ProductItemSummary>("product_item_summaries");

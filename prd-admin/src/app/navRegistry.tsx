@@ -461,7 +461,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     permission: 'pm-agent.use',
     element: fullscreenGuarded('pm-agent.use', <PmAgentPage />),
     nav: {
-      label: '项目管理智能体',
+      label: '项目管理',
       shortLabel: '项目',
       description: '项目立项、任务看板、甘特图，AI 自动拆解需求为任务（对齐 PMO 方法论）',
       icon: 'FolderKanban',
@@ -498,7 +498,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <OverviewShell />),
     nav: {
-      label: '产品管理智能体',
+      label: '产品管理',
       shortLabel: '产品',
       description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱',
       icon: 'Boxes',

@@ -39,6 +39,24 @@ export interface RequirementType {
   isBuiltin: boolean;
 }
 
+/** 等级目录维度：优先级 / 严重程度 */
+export type GradeDimension = 'priority' | 'severity';
+
+/** 等级目录承载的对象类型（需求 / 功能 / 缺陷） */
+export type GradeEntityType = 'requirement' | 'feature' | 'defect';
+
+/** 通用等级目录项（优先级/严重程度可增删改查；内置项不可删除，AI 按 definition 识别） */
+export interface ProductGradeOption {
+  id: string;
+  dimension: GradeDimension;
+  entityType: GradeEntityType;
+  name: string;
+  color: string;
+  definition: string;
+  sortOrder: number;
+  isBuiltin: boolean;
+}
+
 /** 详情描述模板（按对象类型，富文本骨架，方便一键套用） */
 export interface DescTemplate {
   id: string;
