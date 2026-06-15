@@ -1745,6 +1745,7 @@ public class WorkflowAgentController : ControllerBase
         var responseText = fullResponse.ToString();
         var generated = TryParseWorkflowFromResponse(responseText);
         PrdAgent.Core.Services.WorkflowProcessResult? proc = null;
+        string? createdWorkflowId = null;
 
         if (generated != null)
         {
@@ -1800,6 +1801,7 @@ public class WorkflowAgentController : ControllerBase
                 };
                 SanitizeNodeConfigs(workflow.Nodes);
                 await _db.Workflows.InsertOneAsync(workflow, cancellationToken: CancellationToken.None);
+                createdWorkflowId = workflow.Id;
 
                 // 更新对话消息关联
                 await _db.WorkflowChatMessages.UpdateManyAsync(
@@ -1842,7 +1844,8 @@ public class WorkflowAgentController : ControllerBase
         // 7. 保存 assistant 消息
         var assistantMsg = new WorkflowChatMessage
         {
-            WorkflowId = request.WorkflowId ?? (generated != null && isNew ? "auto" : null),
+            // 自动创建场景用真实的新工作流 id（之前误写 "auto" 导致按真实 id 加载历史时丢失这条 assistant 回复 + 校验快照）
+            WorkflowId = request.WorkflowId ?? createdWorkflowId,
             Role = "assistant",
             Content = responseText,
             Generated = generated,
