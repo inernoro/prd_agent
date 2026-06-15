@@ -293,8 +293,9 @@ public class WorkflowValidationServiceTests
         };
 
         var r = _svc.Process(g);
-        Assert.Contains(r.RequiredInputs, x => x.Key == "cookie" && x.NodeId == "t1");
-        Assert.Contains(r.RequiredInputs, x => x.Key == "dscToken" && x.NodeId == "t1");
+        // cookie(textarea)/dscToken(text) 类型不是 password，但按 key 判定应标 secret 并掩码
+        Assert.Contains(r.RequiredInputs, x => x.Key == "cookie" && x.NodeId == "t1" && x.IsSecret && x.Type == "password");
+        Assert.Contains(r.RequiredInputs, x => x.Key == "dscToken" && x.NodeId == "t1" && x.IsSecret);
         Assert.DoesNotContain(r.RequiredInputs, x => x.Key == "authToken"); // basic 模式专用，不该出现
     }
 

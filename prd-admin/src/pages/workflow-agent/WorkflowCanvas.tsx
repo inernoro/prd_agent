@@ -850,7 +850,8 @@ function CanvasInner({
       setVarDefs(newVarDefs);
       setVars((prev) => {
         const next = { ...prev };
-        for (const v of newVarDefs) if (v.defaultValue) next[v.key] = v.defaultValue;
+        // != null 而非 truthy：合法默认 "0" / 空串也要覆盖旧值
+        for (const v of newVarDefs) if (v.defaultValue != null) next[v.key] = v.defaultValue;
         return next;
       });
       setDirty(true);

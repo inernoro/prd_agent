@@ -1849,6 +1849,7 @@ public class WorkflowAgentController : ControllerBase
             Role = "assistant",
             Content = responseText,
             Generated = generated,
+            GeneratedWorkflowId = createdWorkflowId,
             Validation = proc == null ? null : new WorkflowChatValidation
             {
                 Valid = proc.Valid,

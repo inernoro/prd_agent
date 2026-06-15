@@ -312,13 +312,16 @@ public class WorkflowValidationService
 
                 var key = $"{node.NodeId}:{field.Key}";
                 if (!seen.Add(key)) continue;
+                // cookie(textarea)/dscToken(text) 等凭证字段名像密钥但类型不是 password →
+                // 用 key 判定补上 secret，让补齐表单掩码显示（与变量同口径）
+                var fieldSecret = field.FieldType == "password" || LooksLikeSecretKey(field.Key);
                 inputs.Add(new WorkflowRequiredInput
                 {
                     Key = field.Key,
                     Label = field.Label,
-                    Type = field.FieldType,
+                    Type = fieldSecret ? "password" : field.FieldType,
                     Required = true,
-                    IsSecret = field.FieldType == "password",
+                    IsSecret = fieldSecret,
                     Scope = "config",
                     NodeId = node.NodeId,
                     NodeName = node.Name,

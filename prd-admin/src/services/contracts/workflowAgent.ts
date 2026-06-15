@@ -408,6 +408,8 @@ export interface WorkflowChatMessage {
   content: string;
   generated?: WorkflowChatGenerated;
   validation?: WorkflowValidationResult;
+  /** 本条消息自动创建出的工作流 id（有值表示提案已落库，刷新后不再显示应用/补齐入口） */
+  generatedWorkflowId?: string;
   userId: string;
   createdAt: string;
   seq: number;

@@ -155,6 +155,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
               role: m.role,
               content: m.content,
               generated: m.generated ?? undefined,
+              generatedWorkflowId: m.generatedWorkflowId ?? undefined,
               validation: m.validation ?? undefined,
               timestamp: m.createdAt,
             }))
