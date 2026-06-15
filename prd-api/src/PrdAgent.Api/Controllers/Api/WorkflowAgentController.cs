@@ -2193,6 +2193,7 @@ public class WorkflowAgentController : ControllerBase
 ## 注意事项
 - nodeId 使用简短的 kebab-case，如 "node-1", "fetch-bugs", "export-csv"
 - **插槽与连线会由系统自动校验和补全**：你只需把 nodes 按执行顺序排列、给出 edges 的 sourceNodeId/targetNodeId 即可；slotId 可省略或写默认值，系统会按数据类型自动接线、自动修正错误的插槽 id
+- **多输出舱（如条件判断 condition 的 cond-true/cond-false）请为每条出边显式写对 sourceSlotId 区分分支**，否则系统只能按顺序猜测分支归属
 - 必填配置字段务必给出合理值，或引用已在 variables 声明的变量；Cookie / Token / 密钥等敏感值声明为变量并设 isSecret:true（系统会提示用户补齐，你不要编造）
 - 变量引用格式为 {{变量key}}，可在节点 config 中使用
 - 如果用户只是在聊天不需要配置工作流，正常回复即可，不要输出 JSON
@@ -2228,13 +2229,8 @@ public class WorkflowAgentController : ControllerBase
             var generated = JsonSerializer.Deserialize<WorkflowChatGenerated>(jsonStr, options);
             if (generated?.Nodes == null || generated.Nodes.Count == 0) return null;
 
-            // 校验舱类型合法性
-            foreach (var node in generated.Nodes)
-            {
-                if (!CapsuleTypes.All.Contains(node.NodeType) && !WorkflowNodeTypes.All.Contains(node.NodeType))
-                    return null;
-            }
-
+            // 不在此处因「未知舱类型」整体丢弃——交给 WorkflowValidationService 报结构问题 +
+            // 自愈回路修正（否则模型一个 typo 就让用户只看到一段纯文本、无卡片无修复）
             return generated;
         }
         catch

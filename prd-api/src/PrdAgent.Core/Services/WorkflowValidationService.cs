@@ -78,6 +78,12 @@ public class WorkflowValidationService
         var nodeById = new Dictionary<string, WorkflowNode>();
         foreach (var n in nodes) nodeById[n.NodeId] = n;
         var repaired = new List<WorkflowEdge>();
+        // 每个源/目标节点已被占用的插槽：修复无效 slotId 时挑「未占用」的，保住 condition
+        // true/false、merger in-1/in-2 等多槽分支不被全部塌到第一个槽
+        var usedOut = new Dictionary<string, HashSet<string>>();
+        var usedIn = new Dictionary<string, HashSet<string>>();
+        HashSet<string> OutOf(string id) => usedOut.TryGetValue(id, out var s) ? s : usedOut[id] = new();
+        HashSet<string> InOf(string id) => usedIn.TryGetValue(id, out var s) ? s : usedIn[id] = new();
 
         foreach (var edge in g.Edges!)
         {
@@ -93,18 +99,29 @@ public class WorkflowValidationService
                 continue;
             }
 
-            // 修复 sourceSlotId
-            var srcSlot = src.OutputSlots.FirstOrDefault(s => s.SlotId == edge.SourceSlotId)
-                          ?? src.OutputSlots[0];
-            if (srcSlot.SlotId != edge.SourceSlotId)
-                notes.Add($"「{src.Name}」输出插槽自动校正为 {srcSlot.SlotId}");
+            var outUsed = OutOf(src.NodeId);
+            var inUsed = InOf(tgt.NodeId);
 
-            // 修复 targetSlotId（优先精确匹配 → dataType 兼容 → 第一个）
-            var tgtSlot = tgt.InputSlots.FirstOrDefault(s => s.SlotId == edge.TargetSlotId)
+            // 修复 sourceSlotId：显式且有效则保留；无效/空 → 挑一个未占用的输出槽（分支不塌）
+            var srcSlot = src.OutputSlots.FirstOrDefault(s => s.SlotId == edge.SourceSlotId);
+            if (srcSlot == null)
+            {
+                srcSlot = src.OutputSlots.FirstOrDefault(s => !outUsed.Contains(s.SlotId)) ?? src.OutputSlots[0];
+                notes.Add($"「{src.Name}」输出插槽自动校正为 {srcSlot.SlotId}");
+            }
+            outUsed.Add(srcSlot.SlotId);
+
+            // 修复 targetSlotId：显式有效保留；否则优先未占用 + dataType 兼容 → 未占用 → 兼容 → 第一个
+            var tgtSlot = tgt.InputSlots.FirstOrDefault(s => s.SlotId == edge.TargetSlotId);
+            if (tgtSlot == null)
+            {
+                tgtSlot = tgt.InputSlots.FirstOrDefault(s => s.DataType == srcSlot.DataType && !inUsed.Contains(s.SlotId))
+                          ?? tgt.InputSlots.FirstOrDefault(s => !inUsed.Contains(s.SlotId))
                           ?? tgt.InputSlots.FirstOrDefault(s => s.DataType == srcSlot.DataType)
                           ?? tgt.InputSlots[0];
-            if (tgtSlot.SlotId != edge.TargetSlotId)
                 notes.Add($"「{tgt.Name}」输入插槽自动校正为 {tgtSlot.SlotId}");
+            }
+            inUsed.Add(tgtSlot.SlotId);
 
             repaired.Add(new WorkflowEdge
             {

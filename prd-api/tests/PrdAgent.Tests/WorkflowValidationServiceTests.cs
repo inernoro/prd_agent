@@ -240,6 +240,36 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void ConditionBranches_GetDistinctOutputSlots()
+    {
+        // condition 的两条出边即使 sourceSlotId 空/错，也要分到 cond-true / cond-false，
+        // 不能都塌到第一个槽（否则 true/false 分支被一起激活/跳过）
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("m1", CapsuleTypes.ManualTrigger),
+                Node("cond", CapsuleTypes.Condition),
+                Node("a", CapsuleTypes.HttpRequest, new() { ["url"] = "https://a.com", ["method"] = "GET" }),
+                Node("b", CapsuleTypes.HttpRequest, new() { ["url"] = "https://b.com", ["method"] = "GET" }),
+            },
+            Edges = new()
+            {
+                new() { SourceNodeId = "m1", SourceSlotId = "manual-out", TargetNodeId = "cond", TargetSlotId = "cond-in" },
+                new() { SourceNodeId = "cond", SourceSlotId = "", TargetNodeId = "a", TargetSlotId = "http-in" },
+                new() { SourceNodeId = "cond", SourceSlotId = "", TargetNodeId = "b", TargetSlotId = "http-in" },
+            },
+        };
+
+        var r = _svc.Process(g);
+        var condOut = g.Edges!.Where(e => e.SourceNodeId == "cond").Select(e => e.SourceSlotId).ToList();
+        Assert.Equal(2, condOut.Count);
+        Assert.Equal(2, condOut.Distinct().Count());
+        Assert.Contains("cond-true", condOut);
+        Assert.Contains("cond-false", condOut);
+    }
+
+    [Fact]
     public void Cycle_ProducesIssue()
     {
         var g = new WorkflowChatGenerated
