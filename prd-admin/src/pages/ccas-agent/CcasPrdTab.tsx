@@ -1,7 +1,7 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Sparkles, RefreshCw, StopCircle, FileDown, CheckCircle2, AlertCircle, Loader2,
-  Upload, BookOpen, X,
+  Upload, BookOpen, X, LayoutList, FileStack,
 } from 'lucide-react';
 import { connectSse } from '@/lib/useSseStream';
 import { CCAS_PRD_STREAM_URL } from '@/services';
@@ -9,6 +9,11 @@ import type { CcasMeta } from '@/services';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { CcasKnowledgePickerDrawer, type SelectedEntrySnapshot } from './CcasKnowledgePickerDrawer';
+import {
+  CcasPrdReviseChat,
+  mergeCcasPrdParts,
+  splitCcasPrdMerged,
+} from './CcasPrdReviseChat';
 
 interface Props {
   meta: CcasMeta;
@@ -29,7 +34,8 @@ interface ReferenceInfo {
  * 工作流：
  *   1) 选模板 → 填表 → （可选）上传 .md/.txt 或粘贴 → （可选）从知识库勾选参考资料
  *   2) 生成 Part A → 用户确认 → 生成 Part B
- *   3) 下载完整 markdown
+ *   3) 底部「改稿助手」多轮追问，在整篇 Markdown 上流式修订
+ *   4) 下载完整 markdown
  */
 export function CcasPrdTab({ meta }: Props) {
   const [templateKey, setTemplateKey] = useState<string>(meta.templates[0]?.key ?? 'engineering-main');
@@ -48,6 +54,10 @@ export function CcasPrdTab({ meta }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [referenceSelected, setReferenceSelected] = useState<SelectedEntrySnapshot[]>([]);
   const [referenceInfo, setReferenceInfo] = useState<ReferenceInfo | null>(null);
+  const [previewMode, setPreviewMode] = useState<'split' | 'merged'>('split');
+  const [reviseChatKey, setReviseChatKey] = useState(0);
+  const [reviseBusy, setReviseBusy] = useState(false);
+  const hadPartBRef = useRef(false);
 
   // 关联模式标签（透传给抽屉做高亮提示）
   const associationModeLabel = (() => {
@@ -199,10 +209,34 @@ export function CcasPrdTab({ meta }: Props) {
     setErrorMsg(null);
     setModel({});
     setReferenceInfo(null);
+    setPreviewMode('split');
+    hadPartBRef.current = false;
+    setReviseChatKey((k) => k + 1);
+  }, []);
+
+  const mergedMarkdown = useMemo(
+    () => mergeCcasPrdParts(partA, partB),
+    [partA, partB]
+  );
+
+  const isStreaming = phase === 'A-streaming' || phase === 'B-streaming';
+
+  const canRevise = !!partA.trim() && !isStreaming && !reviseBusy;
+
+  const handleReviseDocumentChange = useCallback((markdown: string) => {
+    setPreviewMode('merged');
+    const split = splitCcasPrdMerged(markdown, hadPartBRef.current);
+    setPartA(split.partA);
+    setPartB(split.partB);
+    if (split.partB.trim()) {
+      setPhase('B-done');
+    } else if (split.partA.trim()) {
+      setPhase('A-done');
+    }
   }, []);
 
   const downloadMarkdown = useCallback(() => {
-    const merged = [partA, partB].filter(Boolean).join('\n\n---\n\n');
+    const merged = mergedMarkdown;
     if (!merged.trim()) {
       toast.error('暂无内容可下载');
       return;
@@ -214,9 +248,12 @@ export function CcasPrdTab({ meta }: Props) {
     a.download = `ccas-prd-${templateKey}-${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [partA, partB, templateKey]);
+  }, [mergedMarkdown, templateKey]);
 
-  const isStreaming = phase === 'A-streaming' || phase === 'B-streaming';
+  // Part B 出现后记住，改稿拆分时按 --- 还原双栏
+  if (partB.trim()) {
+    hadPartBRef.current = true;
+  }
 
   return (
     <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-4 overflow-hidden">
@@ -356,7 +393,7 @@ export function CcasPrdTab({ meta }: Props) {
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => streamPart('A')}
-              disabled={isStreaming || !input.trim()}
+              disabled={isStreaming || reviseBusy || !input.trim()}
               className="!h-9 !px-3 !text-xs"
             >
               {phase === 'A-streaming' ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
@@ -365,7 +402,7 @@ export function CcasPrdTab({ meta }: Props) {
             <Button
               variant="primary"
               onClick={() => streamPart('B')}
-              disabled={isStreaming || phase !== 'A-done' || !partA.trim()}
+              disabled={isStreaming || reviseBusy || phase !== 'A-done' || !partA.trim()}
               className="!h-9 !px-3 !text-xs"
               title={phase !== 'A-done' ? '先完成并确认 Part A' : '继续生成 Part B'}
             >
@@ -411,38 +448,98 @@ export function CcasPrdTab({ meta }: Props) {
         </section>
       </div>
 
-      {/* 右：输出 */}
+      {/* 右：输出 + 改稿 */}
       <div className="flex flex-col gap-3 min-h-0">
-        <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/30">
-          <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center justify-between">
-            <h2 className="text-sm font-medium text-white">Part A · 价值层</h2>
-            <div className="text-[11px] text-white/45">
-              {phase === 'A-streaming' && '生成中…'}
-              {phase === 'A-done' && '✓ 完成'}
+        <div className="shrink-0 flex items-center justify-between gap-2 px-0.5">
+          <div className="text-[11px] text-white/45">
+            {canRevise ? '初稿生成后可使用底部改稿助手多轮调整' : '生成 Part A 后解锁改稿'}
+          </div>
+          {partA.trim() && (
+            <div className="flex rounded-md border border-white/10 overflow-hidden text-[10px]">
+              <button
+                type="button"
+                onClick={() => setPreviewMode('split')}
+                className={`px-2 py-1 inline-flex items-center gap-1 ${
+                  previewMode === 'split' ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/5'
+                }`}
+              >
+                <LayoutList className="w-3 h-3" />
+                分章
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewMode('merged')}
+                className={`px-2 py-1 inline-flex items-center gap-1 ${
+                  previewMode === 'merged' ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/5'
+                }`}
+              >
+                <FileStack className="w-3 h-3" />
+                整篇
+              </button>
             </div>
-          </div>
-          <div
-            className="flex-1 px-4 py-3 text-sm text-white/85 font-mono leading-relaxed whitespace-pre-wrap"
-            style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
-          >
-            {partA || <span className="text-white/30">点击左侧"生成 Part A"开始</span>}
-          </div>
-        </section>
-        <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/30">
-          <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center justify-between">
-            <h2 className="text-sm font-medium text-white">Part B · 设计层 / 全局规范层</h2>
-            <div className="text-[11px] text-white/45">
-              {phase === 'B-streaming' && '生成中…'}
-              {phase === 'B-done' && '✓ 完成'}
+          )}
+        </div>
+
+        {previewMode === 'merged' ? (
+          <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/30">
+            <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center justify-between">
+              <h2 className="text-sm font-medium text-white">整篇文档</h2>
+              <div className="text-[11px] text-white/45">
+                {mergedMarkdown.length.toLocaleString()} 字
+              </div>
             </div>
-          </div>
-          <div
-            className="flex-1 px-4 py-3 text-sm text-white/85 font-mono leading-relaxed whitespace-pre-wrap"
-            style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
-          >
-            {partB || <span className="text-white/30">Part A 完成并确认后生成</span>}
-          </div>
-        </section>
+            <div
+              className="flex-1 px-4 py-3 text-sm text-white/85 font-mono leading-relaxed whitespace-pre-wrap"
+              style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+            >
+              {mergedMarkdown || <span className="text-white/30">点击左侧生成 Part A 开始</span>}
+            </div>
+          </section>
+        ) : (
+          <>
+            <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/30">
+              <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center justify-between">
+                <h2 className="text-sm font-medium text-white">Part A · 价值层</h2>
+                <div className="text-[11px] text-white/45">
+                  {phase === 'A-streaming' && '生成中…'}
+                  {phase === 'A-done' && '完成'}
+                </div>
+              </div>
+              <div
+                className="flex-1 px-4 py-3 text-sm text-white/85 font-mono leading-relaxed whitespace-pre-wrap"
+                style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+              >
+                {partA || <span className="text-white/30">点击左侧"生成 Part A"开始</span>}
+              </div>
+            </section>
+            <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/30">
+              <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center justify-between">
+                <h2 className="text-sm font-medium text-white">Part B · 设计层 / 全局规范层</h2>
+                <div className="text-[11px] text-white/45">
+                  {phase === 'B-streaming' && '生成中…'}
+                  {phase === 'B-done' && '完成'}
+                </div>
+              </div>
+              <div
+                className="flex-1 px-4 py-3 text-sm text-white/85 font-mono leading-relaxed whitespace-pre-wrap"
+                style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+              >
+                {partB || <span className="text-white/30">Part A 完成并确认后生成</span>}
+              </div>
+            </section>
+          </>
+        )}
+
+        <CcasPrdReviseChat
+          key={reviseChatKey}
+          templateKey={templateKey}
+          currentMarkdown={mergedMarkdown}
+          originalInput={input}
+          referenceSelected={referenceSelected}
+          onDocumentChange={handleReviseDocumentChange}
+          enabled={!!partA.trim() && !isStreaming}
+          onBusyChange={setReviseBusy}
+        />
       </div>
 
       <CcasKnowledgePickerDrawer
