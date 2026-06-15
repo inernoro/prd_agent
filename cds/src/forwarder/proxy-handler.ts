@@ -26,6 +26,7 @@ import type { ProxyStats, RouteRecord } from './types.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import {
+  classifyHttpRequestKind,
   createBodyCapture,
   isBinaryContentType,
   createRequestId,
@@ -207,6 +208,12 @@ export class ProxyHandler {
       } else {
         this.opts.httpLogStore?.record({
           layer: 'forwarder',
+          requestKind: classifyHttpRequestKind({
+            layer: 'forwarder',
+            method: req.method || 'GET',
+            path: originalUrl,
+            headers: req.headers,
+          }),
           requestId,
           method: req.method || 'GET',
           protocol: String(req.headers['x-forwarded-proto'] || 'http').split(',')[0],
@@ -237,14 +244,45 @@ export class ProxyHandler {
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
+    const requestKind = classifyHttpRequestKind({
+      layer: 'forwarder',
+      method: req.method || 'GET',
+      path: originalUrl,
+      headers: req.headers,
+    });
+    const activeRequestId = this.opts.httpLogStore?.beginActive?.({
+      layer: 'forwarder',
+      requestKind,
+      requestId,
+      method: req.method || 'GET',
+      protocol: String(req.headers['x-forwarded-proto'] || 'http').split(',')[0],
+      host,
+      path: originalUrl,
+      remoteAddr: (req.headers['cf-connecting-ip'] as string)
+        || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+        || req.socket?.remoteAddress,
+      branchId: route.branchId ?? null,
+      upstream: `${upstreamHost}:${upstreamPort}`,
+      request: {
+        headers: redactHeaders(req.headers),
+      },
+    });
+    let activeCompleted = false;
+    const completeActiveRequest = () => {
+      if (activeCompleted || !activeRequestId) return;
+      activeCompleted = true;
+      this.opts.httpLogStore?.completeActive?.(activeRequestId);
+    };
     const logHttp = (
       status: number,
       response: { bodyPreview?: string; bodyBytes?: number } = {},
       outcome?: 'ok' | 'client-error' | 'server-error' | 'upstream-error' | 'timeout',
       error?: { code?: string; message?: string },
     ) => {
+      completeActiveRequest();
       this.opts.httpLogStore?.record({
         layer: 'forwarder',
+        requestKind,
         requestId,
         method: req.method || 'GET',
         protocol: String(req.headers['x-forwarded-proto'] || 'http').split(',')[0],
@@ -269,6 +307,7 @@ export class ProxyHandler {
         error,
       });
     };
+    res.on('close', completeActiveRequest);
     if (process.env.CDS_FORWARDER_ACCESS_LOG === '1') {
       this.opts.logger?.info?.(
         `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,

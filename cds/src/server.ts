@@ -52,10 +52,13 @@ import type { CdsConfig, IShellExecutor } from './types.js';
 import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 import {
   bodyPreviewFromUnknown,
+  classifyHttpRequestKind,
   createBodyCapture,
   createRequestId,
   redactHeaders,
+  type ActiveHttpRequestRecord,
   type HttpLogRecord,
+  type HttpRequestKind,
   type HttpLogSink,
 } from './services/http-log-store.js';
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -131,6 +134,17 @@ function percentile(sortedAsc: number[], p: number): number {
   return sortedAsc[idx];
 }
 
+function parseHttpRequestKind(value: unknown): HttpRequestKind | undefined {
+  return value === 'user-traffic'
+    || value === 'control-plane'
+    || value === 'deploy'
+    || value === 'container-op'
+    || value === 'polling'
+    || value === 'sse'
+    ? value
+    : undefined;
+}
+
 function isNoiseHttpLog(log: HttpLogRecord): boolean {
   const pathValue = (log.path || '').split('?')[0] || '/';
   const headers = log.request?.headers || {};
@@ -145,6 +159,7 @@ function isNoiseHttpLog(log: HttpLogRecord): boolean {
 function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
   endpoint: string;
   method: string;
+  requestKind: HttpRequestKind;
   count: number;
   rps: number;
   windowMs: number;
@@ -169,6 +184,7 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
   const groups = new Map<string, {
     endpoint: string;
     method: string;
+    requestKind: HttpRequestKind;
     durations: number[];
     errorCount: number;
     cacheHitCount: number;
@@ -178,13 +194,20 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
   }>();
   for (const log of logs) {
     const method = (log.method || 'GET').toUpperCase();
+    const requestKind = log.requestKind || classifyHttpRequestKind({
+      layer: log.layer,
+      method,
+      path: log.path,
+      headers: log.request?.headers,
+    });
     const endpoint = normalizeHttpLogPath(log.path);
-    const key = `${method} ${endpoint}`;
+    const key = `${requestKind} ${method} ${endpoint}`;
     const existing = groups.get(key);
     if (!existing) {
       groups.set(key, {
         endpoint,
         method,
+        requestKind,
         durations: [log.durationMs],
         errorCount: log.status >= 400 ? 1 : 0,
         cacheHitCount: log.response?.headers?.['x-cds-cache'] === 'hit' ? 1 : 0,
@@ -213,6 +236,7 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
       return {
         endpoint: group.endpoint,
         method: group.method,
+        requestKind: group.requestKind,
         count,
         rps: Number((count / (windowMs / 1000)).toFixed(3)),
         windowMs,
@@ -241,6 +265,42 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
 function summarizeFrequentHttpLogs(logs: HttpLogRecord[]): ReturnType<typeof summarizeSlowHttpLogs> {
   return summarizeSlowHttpLogs(logs)
     .sort((a, b) => (b.count - a.count) || (b.rps - a.rps) || (b.p95Ms - a.p95Ms));
+}
+
+function filterHttpLogsByKind(logs: HttpLogRecord[], requestKind: HttpRequestKind): HttpLogRecord[] {
+  return logs.filter((log) => (log.requestKind || classifyHttpRequestKind({
+    layer: log.layer,
+    method: log.method,
+    path: log.path,
+    headers: log.request?.headers,
+  })) === requestKind);
+}
+
+function summarizeActiveHttpRequests(active: ActiveHttpRequestRecord[]): {
+  total: number;
+  over10s: number;
+  over30s: number;
+  over60s: number;
+  byKind: Record<HttpRequestKind, number>;
+} {
+  const byKind: Record<HttpRequestKind, number> = {
+    'user-traffic': 0,
+    'control-plane': 0,
+    deploy: 0,
+    'container-op': 0,
+    polling: 0,
+    sse: 0,
+  };
+  for (const request of active) {
+    byKind[request.requestKind] += 1;
+  }
+  return {
+    total: active.length,
+    over10s: active.filter((request) => request.ageMs >= 10_000).length,
+    over30s: active.filter((request) => request.ageMs >= 30_000).length,
+    over60s: active.filter((request) => request.ageMs >= 60_000).length,
+    byKind,
+  };
 }
 
 export interface ServerDeps {
@@ -544,6 +604,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /proxy-log': '查看转发日志',
     'GET /proxy-log/stream': '订阅转发日志流',
     'GET /http-logs': '查看 HTTP 请求日志',
+    'GET /http-logs/active': '查看运行中 HTTP 请求',
+    'GET /http-logs/slow': '查看慢 HTTP 请求排行',
+    'GET /perf/overview': '查看性能概览',
     'GET /server-events': '查看服务器/容器事件日志',
     'GET /config-snapshots': '列出配置快照',
     'POST /config-snapshots': '手动保存配置快照',
@@ -1268,6 +1331,31 @@ export function createServer(deps: ServerDeps): express.Express {
     }
 
     const start = Date.now();
+    const requestKind = classifyHttpRequestKind({
+      layer: 'master',
+      method: req.method || 'GET',
+      path: req.originalUrl || req.url || '/',
+      headers: req.headers,
+    });
+    const activeRequestId = deps.httpLogStore?.beginActive?.({
+      layer: 'master',
+      requestKind,
+      requestId,
+      method: req.method || 'GET',
+      protocol: String(req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0] || undefined,
+      host: String(req.headers.host || ''),
+      path: req.originalUrl || req.url || '/',
+      remoteAddr: getRemoteAddr(req),
+      request: {
+        headers: redactHeaders(req.headers),
+      },
+    });
+    let activeCompleted = false;
+    const completeActiveRequest = () => {
+      if (activeCompleted || !activeRequestId) return;
+      activeCompleted = true;
+      deps.httpLogStore?.completeActive?.(activeRequestId);
+    };
     const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
     req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     const responseCapture = createBodyCapture();
@@ -1289,6 +1377,7 @@ export function createServer(deps: ServerDeps): express.Express {
     };
 
     res.once('finish', () => {
+      completeActiveRequest();
       const status = res.statusCode || 0;
       const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
       const parsedReqBody = bodyPreviewFromUnknown(req.body, req.headers['content-type']);
@@ -1297,6 +1386,7 @@ export function createServer(deps: ServerDeps): express.Express {
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
         layer: 'master',
+        requestKind,
         requestId,
         method: req.method || 'GET',
         protocol: String(req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0] || undefined,
@@ -1319,6 +1409,7 @@ export function createServer(deps: ServerDeps): express.Express {
         },
       });
     });
+    res.once('close', completeActiveRequest);
     next();
   });
 
@@ -2448,6 +2539,7 @@ export function createServer(deps: ServerDeps): express.Express {
       : (typeof req.query.path === 'string' ? req.query.path : undefined);
     const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
     const profileId = typeof req.query.profileId === 'string' ? req.query.profileId : undefined;
+    const requestKind = parseHttpRequestKind(req.query.requestKind);
     const since = typeof req.query.since === 'string' ? req.query.since : undefined;
     const until = typeof req.query.until === 'string' ? req.query.until : undefined;
     const minDurationRaw = typeof req.query.minDurationMs === 'string' ? Number.parseInt(req.query.minDurationMs, 10) : undefined;
@@ -2468,12 +2560,55 @@ export function createServer(deps: ServerDeps): express.Express {
       pathContains,
       branchId,
       profileId,
+      requestKind,
       since,
       until,
       minDurationMs,
       sort,
     });
     res.json({ logs, total: logs.length });
+  });
+
+  app.get('/api/http-logs/active', async (req, res) => {
+    const reader = deps.httpLogStore?.findActive;
+    if (!reader) {
+      res.json({
+        ok: false,
+        disabled: true,
+        active: [],
+        total: 0,
+        message: 'HTTP active 请求表未启用；当前日志 sink 不支持 findActive。',
+      });
+      return;
+    }
+    const limit = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const minAgeRaw = typeof req.query.minAgeMs === 'string' ? Number.parseInt(req.query.minAgeMs, 10) : undefined;
+    const minAgeMs = Number.isFinite(minAgeRaw) ? minAgeRaw : undefined;
+    const sortRaw = typeof req.query.sort === 'string' ? req.query.sort : undefined;
+    const active = reader.call(deps.httpLogStore, {
+      limit,
+      requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
+      host: typeof req.query.host === 'string' ? req.query.host : undefined,
+      layer: req.query.layer === 'master' || req.query.layer === 'master-proxy' || req.query.layer === 'forwarder'
+        ? req.query.layer
+        : undefined,
+      method: typeof req.query.method === 'string' ? req.query.method : undefined,
+      pathContains: typeof req.query.pathContains === 'string'
+        ? req.query.pathContains
+        : (typeof req.query.path === 'string' ? req.query.path : undefined),
+      branchId: typeof req.query.branchId === 'string' ? req.query.branchId : undefined,
+      profileId: typeof req.query.profileId === 'string' ? req.query.profileId : undefined,
+      requestKind: parseHttpRequestKind(req.query.requestKind),
+      minAgeMs,
+      sort: sortRaw === 'started' ? 'started' : 'age',
+    });
+    res.json({
+      ok: true,
+      disabled: false,
+      active,
+      total: active.length,
+      generatedAt: new Date().toISOString(),
+    });
   });
 
   app.get('/api/http-logs/slow', async (req, res) => {
@@ -2510,6 +2645,7 @@ export function createServer(deps: ServerDeps): express.Express {
       : undefined;
     const minDurationRaw = typeof req.query.minDurationMs === 'string' ? Number.parseInt(req.query.minDurationMs, 10) : undefined;
     const minDurationMs = Number.isFinite(minDurationRaw) ? minDurationRaw : undefined;
+    const sort = req.query.sort === 'recent' ? 'recent' : 'duration';
     const rawLogs = await reader.call(deps.httpLogStore, {
       limit: sample,
       since,
@@ -2518,10 +2654,11 @@ export function createServer(deps: ServerDeps): express.Express {
       method: typeof req.query.method === 'string' ? req.query.method : undefined,
       minStatus: typeof req.query.minStatus === 'string' ? Number.parseInt(req.query.minStatus, 10) || undefined : undefined,
       minDurationMs,
+      requestKind: parseHttpRequestKind(req.query.requestKind),
       pathContains: typeof req.query.pathContains === 'string'
         ? req.query.pathContains
         : (typeof req.query.path === 'string' ? req.query.path : undefined),
-      sort: 'recent',
+      sort,
     });
     const logs = includeNoise ? rawLogs : rawLogs.filter((log) => !isNoiseHttpLog(log));
     const endpoints = summarizeSlowHttpLogs(logs).slice(0, top);
@@ -2529,6 +2666,7 @@ export function createServer(deps: ServerDeps): express.Express {
       ok: true,
       disabled: false,
       includeNoise,
+      sort,
       sampleSize: rawLogs.length,
       filteredSampleSize: logs.length,
       noiseExcludedCount: rawLogs.length - logs.length,
@@ -2555,10 +2693,14 @@ export function createServer(deps: ServerDeps): express.Express {
     const sample = Math.max(1, Math.min(sampleRaw, 5000));
     const topRaw = Number.parseInt(String(req.query.top || '10'), 10) || 10;
     const top = Math.max(1, Math.min(topRaw, 50));
-    const logs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'recent' });
+    const recentLogs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'recent' });
+    const durationLogs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'duration' });
+    const active = deps.httpLogStore?.findActive?.({ limit: 200, sort: 'age' }) || [];
+    const logs = recentLogs;
     const normalLogs = logs.filter((log) => !isNoiseHttpLog(log));
     const noiseLogs = logs.filter(isNoiseHttpLog);
     const errorLogs = logs.filter((log) => log.status >= 500);
+    const durationNormalLogs = durationLogs.filter((log) => !isNoiseHttpLog(log));
     const recentSelfUpdateTimings = deps.stateService.getSelfUpdateHistory(20).map((record) => ({
       ts: record.ts,
       branch: record.branch,
@@ -2575,12 +2717,23 @@ export function createServer(deps: ServerDeps): express.Express {
       ok: true,
       disabled: false,
       sampleSize: logs.length,
+      durationSampleSize: durationLogs.length,
       noiseCount: noiseLogs.length,
       window: {
         newest: logs[0]?.ts || null,
         oldest: logs[logs.length - 1]?.ts || null,
       },
-      slowEndpoints: summarizeSlowHttpLogs(normalLogs).slice(0, top),
+      slowEndpoints: summarizeSlowHttpLogs(durationNormalLogs).slice(0, top),
+      slowByKind: {
+        userTraffic: summarizeSlowHttpLogs(filterHttpLogsByKind(durationNormalLogs, 'user-traffic')).slice(0, top),
+        controlPlane: summarizeSlowHttpLogs(filterHttpLogsByKind(durationNormalLogs, 'control-plane')).slice(0, top),
+        deploy: summarizeSlowHttpLogs(filterHttpLogsByKind(durationLogs, 'deploy')).slice(0, top),
+        containerOp: summarizeSlowHttpLogs(filterHttpLogsByKind(durationLogs, 'container-op')).slice(0, top),
+        polling: summarizeSlowHttpLogs(filterHttpLogsByKind(durationLogs, 'polling')).slice(0, top),
+        sse: summarizeSlowHttpLogs(filterHttpLogsByKind(durationLogs, 'sse')).slice(0, top),
+      },
+      activeRequests: active,
+      activeSummary: summarizeActiveHttpRequests(active),
       frequentEndpoints: summarizeFrequentHttpLogs(normalLogs).slice(0, top),
       errorEndpoints: summarizeSlowHttpLogs(errorLogs).slice(0, top),
       noiseEndpoints: summarizeFrequentHttpLogs(noiseLogs).slice(0, top),

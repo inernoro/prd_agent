@@ -13,7 +13,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { CdsConfig } from '../../src/types.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
-import type { HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
+import type { ActiveHttpRequestRecord, HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
 
 /**
  * Integration regression test: verifies that routes mounted after the
@@ -173,7 +173,7 @@ describe('Server route ordering (regression)', () => {
     });
   }
 
-  function buildRealServerWithHttpLogs(logs: HttpLogRecord[]): express.Express {
+  function buildRealServerWithHttpLogs(logs: HttpLogRecord[], active: ActiveHttpRequestRecord[] = []): express.Express {
     const stateFile = path.join(tmpDir, 'state.json');
     const stateService = new StateService(stateFile);
     stateService.load();
@@ -186,11 +186,28 @@ describe('Server route ordering (regression)', () => {
             if (filter.method && log.method !== filter.method.toUpperCase()) return false;
             if (filter.minStatus && log.status < filter.minStatus) return false;
             if (filter.pathContains && !log.path.includes(filter.pathContains)) return false;
+            if (filter.minDurationMs && log.durationMs < filter.minDurationMs) return false;
+            if (filter.requestKind && log.requestKind !== filter.requestKind) return false;
             if (filter.since && log.ts < new Date(filter.since)) return false;
             if (filter.until && log.ts > new Date(filter.until)) return false;
             return true;
           })
-          .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+          .sort((a, b) => filter.sort === 'duration'
+            ? (b.durationMs - a.durationMs) || (b.ts.getTime() - a.ts.getTime())
+            : b.ts.getTime() - a.ts.getTime())
+          .slice(0, limit);
+      },
+      findActive(filter = {}) {
+        const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
+        return active
+          .filter((request) => {
+            if (filter.requestKind && request.requestKind !== filter.requestKind) return false;
+            if (filter.minAgeMs && request.ageMs < filter.minAgeMs) return false;
+            return true;
+          })
+          .sort((a, b) => filter.sort === 'started'
+            ? new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime()
+            : b.ageMs - a.ageMs)
           .slice(0, limit);
       },
     };
@@ -307,7 +324,7 @@ describe('Server route ordering (regression)', () => {
     expect(res.headers['x-cds-cli-latest']).toBe('9.8.7');
   });
 
-  it('real createServer exposes slow HTTP endpoint rankings from recent samples', async () => {
+  it('real createServer exposes slow HTTP endpoint rankings from duration samples', async () => {
     const base = {
       _id: 'unused',
       ts: new Date('2026-05-27T08:00:00.000Z'),
@@ -349,6 +366,99 @@ describe('Server route ordering (regression)', () => {
     expect(body.endpoints[0].slowest.requestId).toBe('r2');
     expect(body.endpoints.map((endpoint: { endpoint: string }) => endpoint.endpoint)).toContain('/api/executors/capacity');
     expect(body.endpoints.map((endpoint: { endpoint: string }) => endpoint.endpoint)).toContain('/api/branches/stream');
+  });
+
+  it('slow HTTP ranking defaults to duration samples so completed long tasks are not hidden by recent noise', async () => {
+    const base = {
+      _id: 'unused',
+      ts: new Date('2026-05-27T08:00:00.000Z'),
+      layer: 'master' as const,
+      requestId: 'req',
+      method: 'GET',
+      protocol: 'http',
+      host: 'cds.test',
+      path: '/api/projects/prd-agent/instances',
+      status: 200,
+      durationMs: 2,
+      outcome: 'ok' as const,
+      request: {},
+      response: {},
+    };
+    const logs: HttpLogRecord[] = [
+      ...Array.from({ length: 20 }, (_, index) => ({
+        ...base,
+        _id: `noise-${index}`,
+        requestId: `noise-${index}`,
+        ts: new Date(`2026-05-27T08:01:${String(index).padStart(2, '0')}.000Z`),
+      })),
+      {
+        ...base,
+        _id: 'deploy-slow',
+        requestId: 'deploy-slow',
+        ts: new Date('2026-05-27T07:59:00.000Z'),
+        method: 'POST',
+        path: '/api/branches/prd-agent-main/deploy',
+        requestKind: 'deploy',
+        durationMs: 42_000,
+      },
+    ];
+    const app = buildRealServerWithHttpLogs(logs);
+    server = await startServer(app);
+
+    const res = await request(server, '/api/http-logs/slow?sample=10&top=3&includeNoise=1');
+
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.sort).toBe('duration');
+    expect(body.endpoints[0]).toMatchObject({
+      requestKind: 'deploy',
+      method: 'POST',
+      endpoint: '/api/branches/:branchId/deploy',
+      maxMs: 42_000,
+    });
+  });
+
+  it('real createServer exposes active HTTP requests with age and kind filters', async () => {
+    const active: ActiveHttpRequestRecord[] = [
+      {
+        id: 'active-deploy',
+        startedAt: new Date('2026-05-27T08:00:00.000Z'),
+        ageMs: 45_000,
+        layer: 'master',
+        requestKind: 'deploy',
+        requestId: 'active-deploy',
+        method: 'POST',
+        host: '127.0.0.1:9900',
+        path: '/api/branches/prd-agent-main/deploy',
+        branchId: 'prd-agent-main',
+        request: {},
+      },
+      {
+        id: 'active-poll',
+        startedAt: new Date('2026-05-27T08:00:20.000Z'),
+        ageMs: 2_000,
+        layer: 'master',
+        requestKind: 'polling',
+        requestId: 'active-poll',
+        method: 'GET',
+        host: 'cds.test',
+        path: '/api/projects/prd-agent/instances',
+        request: {},
+      },
+    ];
+    const app = buildRealServerWithHttpLogs([], active);
+    server = await startServer(app);
+
+    const res = await request(server, '/api/http-logs/active?requestKind=deploy&minAgeMs=30000');
+
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.total).toBe(1);
+    expect(body.active[0]).toMatchObject({
+      requestKind: 'deploy',
+      requestId: 'active-deploy',
+      ageMs: 45_000,
+    });
   });
 
   it('cluster router returns JSON when mounted BEFORE installSpaFallback', async () => {

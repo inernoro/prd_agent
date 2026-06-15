@@ -7,6 +7,7 @@ import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import {
+  classifyHttpRequestKind,
   createBodyCapture,
   isBinaryContentType,
   createRequestId,
@@ -1734,14 +1735,46 @@ ${shouldAutoRefresh ? `;(function(){
     if (typeof clientReq.on === 'function') {
       clientReq.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     }
+    const requestKind = classifyHttpRequestKind({
+      layer: 'master-proxy',
+      method: clientReq.method || 'GET',
+      path: clientReq.url || '/',
+      headers: clientReq.headers,
+    });
+    const activeRequestId = this.httpLogStore?.beginActive?.({
+      layer: 'master-proxy',
+      requestKind,
+      requestId,
+      method: clientReq.method || 'GET',
+      protocol: String(clientReq.headers['x-forwarded-proto'] || 'http').split(',')[0],
+      host: String(clientReq.headers.host || ''),
+      path: clientReq.url || '/',
+      remoteAddr: (clientReq.headers['cf-connecting-ip'] as string)
+        || (clientReq.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+        || clientReq.socket?.remoteAddress,
+      branchId: branchCtx?.branchId ?? null,
+      profileId: branchCtx?.profileId ?? null,
+      upstream,
+      request: {
+        headers: redactHeaders(clientReq.headers),
+      },
+    });
+    let activeCompleted = false;
+    const completeActiveRequest = () => {
+      if (activeCompleted || !activeRequestId) return;
+      activeCompleted = true;
+      this.httpLogStore?.completeActive?.(activeRequestId);
+    };
     const logHttp = (
       status: number,
       response: { bodyPreview?: string; bodyBytes?: number } = {},
       outcome?: 'ok' | 'client-error' | 'server-error' | 'upstream-error' | 'timeout',
       error?: { code?: string; message?: string },
     ) => {
+      completeActiveRequest();
       this.httpLogStore?.record({
         layer: 'master-proxy',
+        requestKind,
         requestId,
         method: clientReq.method || 'GET',
         protocol: String(clientReq.headers['x-forwarded-proto'] || 'http').split(',')[0],
@@ -1767,6 +1800,9 @@ ${shouldAutoRefresh ? `;(function(){
         error,
       });
     };
+    if (typeof clientRes.on === 'function') {
+      clientRes.on('close', completeActiveRequest);
+    }
     const url = new URL(upstream);
     const options: http.RequestOptions = {
       hostname: url.hostname,
