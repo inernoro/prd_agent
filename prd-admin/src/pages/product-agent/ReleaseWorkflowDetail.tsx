@@ -476,30 +476,29 @@ export function ReleaseWorkflowDetail({
             </WorkflowDetailCard>
           )}
           {tab === 'manifest' && (
-            <WorkflowDetailCard title={`功能清单 · ${releaseLinkedFeatures.length} 条`}>
-              <WorkflowRecordTable
-                emptyText="该正式版本下还没有功能记录"
-                rows={releaseLinkedFeatures}
-                onRowClick={(id) => navigate(`/product-agent/p/${productId}/feature/${id}`)}
-                columns={featureDetailColumns()}
-              />
-              {canCompleteRelease && (
-                <div className="mt-4 border-t border-white/10 pt-4">
-                  <FeatureManifestPanel
-                    navigate={navigate}
-                    productId={productId}
-                    features={features}
-                    featureById={featureById}
-                    manifest={manifest}
-                    removedFromPrevious={removedFromPrevious}
-                    previousVCode={previousVCode}
-                    readOnly={readOnly}
-                    onAdd={addFeatureToManifest}
-                    onRemove={removeFeatureFromManifest}
-                    onChangeType={setItemChangeType}
-                    onChangeNote={setItemChangeNote}
-                  />
-                </div>
+            <WorkflowDetailCard title={`功能清单 · ${canCompleteRelease ? manifest.length : releaseLinkedFeatures.length} 条`}>
+              {canCompleteRelease ? (
+                <FeatureManifestPanel
+                  navigate={navigate}
+                  productId={productId}
+                  features={features}
+                  featureById={featureById}
+                  manifest={manifest}
+                  removedFromPrevious={removedFromPrevious}
+                  previousVCode={previousVCode}
+                  readOnly={readOnly}
+                  onAdd={addFeatureToManifest}
+                  onRemove={removeFeatureFromManifest}
+                  onChangeType={setItemChangeType}
+                  onChangeNote={setItemChangeNote}
+                />
+              ) : (
+                <WorkflowRecordTable
+                  emptyText="该正式版本下还没有功能记录"
+                  rows={releaseLinkedFeatures}
+                  onRowClick={(id) => navigate(`/product-agent/p/${productId}/feature/${id}`)}
+                  columns={featureDetailColumns()}
+                />
               )}
             </WorkflowDetailCard>
           )}
