@@ -218,6 +218,16 @@ public class SubtitleGenerationProcessor
             }
         }
 
+        // 多模态 chat 音频模型（OpenRouter openai/gpt-audio、gemini 等）→ 没有 Whisper /v1/audio/transcriptions
+        // 端点，只能把音频以 input_audio 发到 /v1/chat/completions 让多模态模型逐字转写。
+        if (IsChatAudioModel(resolution.ActualModel))
+        {
+            _logger.LogInformation(
+                "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
+                resolution.ActualModel, resolution.ActualPlatformName);
+            return await TranscribeViaChatAudioAsync(run, bytes, resolution.ToGatewayResolution());
+        }
+
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
         //
         // multipart 字段：保持与 c237e6d (19:22 跑通版本) 完全一致。
@@ -399,6 +409,107 @@ public class SubtitleGenerationProcessor
         }
 
         return segments;
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 路径 B2：多模态 chat 音频转写（OpenRouter gpt-audio / gemini 等，无 Whisper 端点）
+    // 把音频 base64 作为 input_audio 发到 /v1/chat/completions，模型直接逐字转写。
+    // 无逐句时间戳 → 返回单段（StartSec=EndSec=0）。
+    // ──────────────────────────────────────────────────────
+
+    private static bool IsChatAudioModel(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return false;
+        var m = model.ToLowerInvariant();
+        if (m.Contains("whisper")) return false;
+        return m.Contains("audio") || m.Contains("gemini") || m.Contains("gpt-4o");
+    }
+
+    private async Task<List<SubtitleSegment>> TranscribeViaChatAudioAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        GatewayModelResolution gwResolution)
+    {
+        var base64 = Convert.ToBase64String(audioBytes);
+        var requestBody = new JsonObject
+        {
+            ["model"] = gwResolution.ActualModel,
+            ["modalities"] = new JsonArray("text"),
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["type"] = "text",
+                            ["text"] = "请把这段音频逐字转写成文字，尽量一字不差保留原话。只输出转写出的文字本身，不要任何解释、说明或前后缀。",
+                        },
+                        new JsonObject
+                        {
+                            ["type"] = "input_audio",
+                            ["input_audio"] = new JsonObject { ["data"] = base64, ["format"] = "wav" },
+                        },
+                    },
+                },
+            },
+        };
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/chat/completions",
+            IsMultipart = false,
+            RequestBody = requestBody,
+            TimeoutSeconds = 600,
+            Context = new GatewayRequestContext { UserId = run.UserId },
+        };
+
+        var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
+        if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new SubtitleAsrException(
+                $"多模态 chat 音频转写调用失败: {detail}",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["model"] = gwResolution.ActualModel ?? "" }));
+        }
+
+        var text = ExtractChatCompletionContent(rawResp.Content);
+        var segments = new List<SubtitleSegment>();
+        if (!string.IsNullOrWhiteSpace(text))
+            segments.Add(new SubtitleSegment(0, 0, text.Trim()));
+        return segments;
+    }
+
+    private static string ExtractChatCompletionContent(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("choices", out var choices)
+                && choices.ValueKind == JsonValueKind.Array
+                && choices.GetArrayLength() > 0
+                && choices[0].TryGetProperty("message", out var msg)
+                && msg.TryGetProperty("content", out var content))
+            {
+                if (content.ValueKind == JsonValueKind.String)
+                    return content.GetString() ?? "";
+                if (content.ValueKind == JsonValueKind.Array)
+                {
+                    var sb = new StringBuilder();
+                    foreach (var p in content.EnumerateArray())
+                        if (p.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                            sb.Append(t.GetString());
+                    return sb.ToString();
+                }
+            }
+        }
+        catch { /* 解析失败返回空 */ }
+        return "";
     }
 
     // ──────────────────────────────────────────────────────
