@@ -111,9 +111,11 @@ export default function LiquidGlassDemoPage() {
 
   return (
     <div className="flex flex-col gap-5 h-full min-h-0">
-      {/* SVG 真折射滤镜：fractalNoise 噪声驱动 feDisplacementMap 扭曲背景。scale 由滑杆控制。 */}
+      {/* SVG 真折射滤镜：fractalNoise 噪声驱动 feDisplacementMap 扭曲背景。
+          注意：浏览器不会因为 feDisplacementMap 的 scale 属性变化而重算 backdrop-filter，
+          所以滤镜 id 随 scale 变化，强制 backdrop-filter 重新解析引用。 */}
       <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
-        <filter id="lgd-liquid" x="-20%" y="-20%" width="140%" height="140%" colorInterpolationFilters="sRGB">
+        <filter id={`lgd-liquid-${scale}`} x="-20%" y="-20%" width="140%" height="140%" colorInterpolationFilters="sRGB">
           <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves={2} seed={92} result="noise" />
           <feGaussianBlur in="noise" stdDeviation="2" result="softNoise" />
           <feDisplacementMap in="SourceGraphic" in2="softNoise" scale={scale} xChannelSelector="R" yChannelSelector="G" />
@@ -144,7 +146,7 @@ export default function LiquidGlassDemoPage() {
       {/* 控制条 */}
       <div className="flex flex-wrap items-center gap-6 text-sm text-[var(--text-secondary)]">
         <label className="flex items-center gap-3">
-          <span className="whitespace-nowrap">背景模糊 {blur}px</span>
+          <span className="whitespace-nowrap">背景模糊 (B/A) {blur}px</span>
           <input
             type="range"
             min={0}
@@ -166,7 +168,7 @@ export default function LiquidGlassDemoPage() {
           />
         </label>
         <span className="text-xs text-[var(--text-muted)]">
-          提示：折射强度仅作用于 A 方案；Safari/WebKit 不支持 backdrop 的 SVG 滤镜，会自动退到 clarity 级模糊（这是 A 方案的已知边界）。
+          提示：背景模糊作用于 B/A 两张卡（current 固定 40px 作为现状基线，不随滑杆变）；折射强度仅作用于 A。Safari/WebKit 不支持 backdrop 的 SVG 滤镜，会自动退到 clarity 级模糊（A 方案的已知边界）。
         </span>
       </div>
 
@@ -178,33 +180,39 @@ export default function LiquidGlassDemoPage() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerUp}
-        style={
-          {
-            '--lgd-current-blur': `blur(40px) saturate(180%) brightness(1.1)`,
-            '--lgd-clarity-blur': `blur(${blur}px) saturate(150%)`,
-          } as React.CSSProperties
-        }
       >
         <div className="lgd-scene-caption">PRD&nbsp;AGENT</div>
-        {CARDS.map((meta) => (
-          <div
-            key={meta.key}
-            className={`lgd-card ${meta.className}`}
-            style={{
-              left: pos[meta.key].x,
-              top: pos[meta.key].y,
-              // A 方案的背景模糊随滑杆走（叠在 url(#lgd-liquid) 折射之上）
-              ...(meta.key === 'refract'
-                ? ({
-                    backdropFilter: `url(#lgd-liquid) blur(${Math.max(1, blur - 5)}px) saturate(150%)`,
-                  } as React.CSSProperties)
-                : {}),
-            }}
-            onPointerDown={onPointerDown(meta.key)}
-          >
-            <GlassCardSample meta={meta} />
-          </div>
-        ))}
+        {CARDS.map((meta) => {
+          // backdrop-filter 全部走 inline,每帧用最新的 blur/scale 重算,避免
+          // CSS 变量 / SVG 属性变化不触发 backdrop-filter 重算的浏览器坑。
+          // current 固定 40px(代表现状基线,不随滑杆),clarity/refract 随滑杆。
+          let backdropFilter: string;
+          let webkitBackdropFilter: string;
+          if (meta.key === 'current') {
+            backdropFilter = webkitBackdropFilter = 'blur(40px) saturate(180%) brightness(1.1)';
+          } else if (meta.key === 'clarity') {
+            backdropFilter = webkitBackdropFilter = `blur(${blur}px) saturate(150%)`;
+          } else {
+            // A 折射:url() 折射 + 少量模糊;WebKit 不支持 url() backdrop,退到等效模糊
+            backdropFilter = `url(#lgd-liquid-${scale}) blur(${Math.max(0, blur - 5)}px) saturate(150%)`;
+            webkitBackdropFilter = `blur(${blur}px) saturate(150%)`;
+          }
+          return (
+            <div
+              key={meta.key}
+              className={`lgd-card ${meta.className}`}
+              style={{
+                left: pos[meta.key].x,
+                top: pos[meta.key].y,
+                backdropFilter,
+                WebkitBackdropFilter: webkitBackdropFilter,
+              }}
+              onPointerDown={onPointerDown(meta.key)}
+            >
+              <GlassCardSample meta={meta} />
+            </div>
+          );
+        })}
       </div>
 
       <p className="text-xs text-[var(--text-muted)]">
