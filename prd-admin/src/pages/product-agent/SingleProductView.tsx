@@ -39,6 +39,7 @@ import { VersionWorkflowTab } from './VersionWorkflowTab';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import {
   getProduct,
+  getOverviewStats,
   listVersions,
   createVersion,
   deleteVersion,
@@ -114,6 +115,7 @@ export function SingleProductView() {
   const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   // 当前 tab 记录在 URL（?tab=），从对象详情页返回时能停在原 tab，而不是回弹到工作台。
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -135,6 +137,9 @@ export function SingleProductView() {
 
   useEffect(() => {
     void reload();
+    void getOverviewStats().then((res) => {
+      if (res.success) setIsAdmin(res.data.isAdmin);
+    });
   }, [reload]);
 
   if (loading) {
@@ -191,7 +196,7 @@ export function SingleProductView() {
         </div>
       ) : active === 'features' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">
-          <FeatureCatalogTab productId={product.id} />
+          <FeatureCatalogTab productId={product.id} showImport={isAdmin} />
         </div>
       ) : active === 'requirements' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">
@@ -406,7 +411,7 @@ function RequirementsTab({ productId }: { productId: string }) {
   const versionName = useMemo(() => new Map(versions.map((v) => [v.id, v.versionName])), [versions]);
   const customerName = useMemo(() => new Map(customers.map((c) => [c.id, c.name])), [customers]);
   const fields = useMemo<FilterFieldDef<Requirement>[]>(() => [
-    { key: 'grade', label: '等级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (r, v) => r.grade === v },
+    { key: 'grade', label: '优先级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (r, v) => r.grade === v },
     { key: 'state', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.currentState ?? '', stateLabel), test: (r, v) => (r.currentState ?? '') === v },
     { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.assigneeId ?? '', nameOf), test: (r, v) => (r.assigneeId ?? '') === v },
     { key: 'owner', label: '负责人', options: (its) => distinctOptions(its, (r) => r.ownerId ?? '', nameOf), test: (r, v) => (r.ownerId ?? '') === v },
@@ -433,7 +438,7 @@ function RequirementsTab({ productId }: { productId: string }) {
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
     filename: `需求-${productId}.csv`,
-    headers: ['ID', '标题', '分级', '状态', '描述'],
+    headers: ['ID', '标题', '优先级', '状态', '描述'],
     mapRow: (r) => [
       r.requirementNo,
       r.title,
@@ -449,7 +454,7 @@ function RequirementsTab({ productId }: { productId: string }) {
       return;
     }
     const rows = items.map((r) => [r.requirementNo, r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, stateLabel(r.currentState ?? ''), r.sourceSnapshot?.status ?? '', r.description ?? '']);
-    downloadListCsv(`需求-${productId}.csv`, ['ID', '标题', '分级', '状态', '描述'], rows);
+    downloadListCsv(`需求-${productId}.csv`, ['ID', '标题', '优先级', '状态', '描述'], rows);
   };
 
   const reload = useCallback(async () => {
@@ -606,7 +611,7 @@ function RequirementDataTable({
           <ListTableSelectionHeader selection={selection} disabled={rows.length === 0} />
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">ID</th>
           <th className="px-3 py-2.5 font-medium">{formatListSectionTitle('标题', items.length)}</th>
-          <th className="px-3 py-2.5 font-medium whitespace-nowrap">分级</th>
+          <th className="px-3 py-2.5 font-medium whitespace-nowrap">优先级</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">MAP 状态</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">处理人</th>
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">负责人</th>
@@ -1031,7 +1036,7 @@ function StateBoard({
   );
 }
 
-/** 按分级（P0-P3）分列的看板 */
+/** 按优先级（P0-P3）分列的看板 */
 function GradeBoard({
   items,
   onCardClick,
