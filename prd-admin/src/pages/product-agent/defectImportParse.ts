@@ -20,6 +20,7 @@ function headerIndex(headers: string[], ...names: string[]): number {
 
 const APP_COLUMN_NAMES = ['应用', '所属应用', '应用名称', '应用产品', '应用/产品'] as const;
 const PRODUCT_COLUMN_NAMES = ['产品', '所属产品', '产品名称', '产品线', '系统产品'] as const;
+const CATEGORY_COLUMN_NAMES = ['分类', '类别', '所属分类', 'category'] as const;
 
 /** 从 TAPD 导出列解析「应用/产品」路由字段（与后端 ProductImportProductRouting 对齐） */
 export function buildDefectProductSourceFields(headers: string[], values: string[]): Record<string, string> | undefined {
@@ -29,6 +30,9 @@ export function buildDefectProductSourceFields(headers: string[], values: string
   );
   const productIndex = trimmedHeaders.findIndex((header) =>
     PRODUCT_COLUMN_NAMES.some((name) => header === name),
+  );
+  const categoryIndex = trimmedHeaders.findIndex((header) =>
+    CATEGORY_COLUMN_NAMES.some((name) => header === name),
   );
   const fields: Record<string, string> = {};
   if (appIndex >= 0) {
@@ -40,6 +44,13 @@ export function buildDefectProductSourceFields(headers: string[], values: string
     if (product) {
       const key = trimmedHeaders[productIndex] as (typeof PRODUCT_COLUMN_NAMES)[number];
       fields[key] = product;
+    }
+  }
+  if (categoryIndex >= 0) {
+    const category = values[categoryIndex]?.trim();
+    if (category) {
+      const key = trimmedHeaders[categoryIndex] as (typeof CATEGORY_COLUMN_NAMES)[number];
+      fields[key] = category;
     }
   }
   return Object.keys(fields).length > 0 ? fields : undefined;

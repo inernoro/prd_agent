@@ -86,4 +86,12 @@ describe('mapDefectImportRows', () => {
     ]);
     expect(rows[0].sourceFields).toEqual({ 应用: '米多大数据引擎', 所属产品: '防窜物流' });
   });
+
+  it('parses 分类 column for cross-product routing', () => {
+    const headers = [...tapdHeaders, '分类'];
+    const rows = mapDefectImportRows(headers, [
+      ['1023034', '登录失败', '偶发', 'new', '高', '', '互动营销'],
+    ]);
+    expect(rows[0].sourceFields).toEqual({ 分类: '互动营销' });
+  });
 });

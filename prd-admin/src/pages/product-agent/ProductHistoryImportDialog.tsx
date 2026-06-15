@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FileSpreadsheet, Upload, X } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   importDefects,
@@ -80,14 +81,21 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-export function parseProductHistoryCsv(text: string, _options?: { entityType?: HistoryImportType }): ImportSimpleItemRow[] {
-  const parsed = parseCsv(text);
+function cellStr(value: unknown): string {
+  if (value == null) return '';
+  return String(value).trim();
+}
+
+function parseProductHistoryRows(
+  parsed: string[][],
+  options?: { entityType?: HistoryImportType; sourceSystem?: string },
+): ImportSimpleItemRow[] {
   if (parsed.length < 2) return [];
   const headers = parsed[0].map((value) => value.trim().toLowerCase());
   const indexOf = (...names: string[]) => headers.findIndex((header) => names.some((name) => header.includes(name)));
   const titleIndex = indexOf('标题', '名称', '版本名', 'title', 'name');
   const descriptionIndex = indexOf('描述', '内容', 'description', 'desc');
-  const gradeIndex = indexOf('分级', '等级', '级别', 'grade');
+  const gradeIndex = indexOf('分级', '等级', '级别', '优先级', 'priority', 'grade');
   const statusIndex = indexOf('状态', '生命周期', 'status', 'lifecycle');
   const externalIdIndex = indexOf('需求 id', '外部id', '外部 id', 'externalid', 'external id', '编号', 'id', '缺陷id');
   const appIndex = indexOf('应用', '所属应用', '应用名称', '应用产品', '应用/产品');
@@ -107,13 +115,40 @@ export function parseProductHistoryCsv(text: string, _options?: { entityType?: H
       description: descriptionIndex >= 0 ? values[descriptionIndex]?.trim() : undefined,
       grade: rawGrade?.toLowerCase(),
       status: statusIndex >= 0 ? values[statusIndex]?.trim().toLowerCase() : undefined,
-      sourceSystem: 'csv',
+      sourceSystem: options?.sourceSystem ?? 'csv',
       externalId: externalIdIndex >= 0 ? (values[externalIdIndex]?.trim() || undefined) : undefined,
       plannedAt: plannedIndex >= 0 ? values[plannedIndex]?.trim() : undefined,
       completedAt: completedIndex >= 0 ? values[completedIndex]?.trim() : undefined,
       sourceFields: routeLabel ? { 应用: routeLabel } : undefined,
     };
   }).filter((row) => row.title);
+}
+
+export function parseProductHistoryCsv(text: string, options?: { entityType?: HistoryImportType }): ImportSimpleItemRow[] {
+  return parseProductHistoryRows(parseCsv(text), { ...options, sourceSystem: 'csv' });
+}
+
+export function parseProductHistoryXlsxBuffer(buffer: ArrayBuffer, options?: { entityType?: HistoryImportType }): ImportSimpleItemRow[] {
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+  const sheet = workbook.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: '',
+    raw: false,
+    dateNF: 'yyyy-mm-dd hh:mm:ss',
+  });
+  return parseProductHistoryRows(matrix.map((row) => (row ?? []).map(cellStr)), { ...options, sourceSystem: 'excel' });
+}
+
+async function parseProductHistoryFile(file: File, options?: { entityType?: HistoryImportType }): Promise<ImportSimpleItemRow[]> {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith('.csv')) return parseProductHistoryCsv(await file.text(), options);
+  if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+    return parseProductHistoryXlsxBuffer(await file.arrayBuffer(), options);
+  }
+  throw new Error('不支持的文件格式，请上传 CSV、Excel（.xlsx / .xls）或 RTF');
 }
 
 export function ProductHistoryImportDialog({
@@ -170,13 +205,15 @@ export function ProductHistoryImportDialog({
       return n.endsWith('.csv') || n.endsWith('.xlsx') || n.endsWith('.xls');
     });
     if (!spreadsheet) {
-      setMessage(type === 'defect' ? '请选择 TAPD 导出的 CSV 或 Excel（.xlsx）。' : '请选择 CSV 文件。需求还可选择 RTF 导出文件。');
+      setMessage(type === 'requirement' || type === 'defect'
+        ? '请选择 TAPD 导出的 RTF、CSV 或 Excel（.xlsx / .xls）文件。'
+        : '请选择 CSV 或 Excel（.xlsx / .xls）文件。');
       return;
     }
     try {
       const parsedRows = type === 'defect'
         ? await parseDefectImportFile(spreadsheet)
-        : parseProductHistoryCsv(await spreadsheet.text(), { entityType: type });
+        : await parseProductHistoryFile(spreadsheet, { entityType: type });
       setRows(parsedRows);
       setMessage(parsedRows.length > 0 ? `已读取 ${parsedRows.length} 条，确认后写入。` : '没有识别到有效数据，请检查标题列。');
     } catch (err) {
@@ -194,44 +231,50 @@ export function ProductHistoryImportDialog({
       return;
     }
     setBusy(true);
-    const result = type === 'requirement'
-      ? (crossProductRoute
-        ? await importOverviewRequirements(rowsToImport)
-        : await importRequirements(productId, rowsToImport))
-      : type === 'feature'
-        ? await importFeatures(productId, rows)
-        : type === 'defect'
-          ? (crossProductRoute
-            ? await importOverviewDefects(rowsToImport)
-            : await importDefects(productId, rows))
-          : crossProductRoute
-            ? await importOverviewVersions(rowsToImport)
-            : await importVersions(productId, rows);
-    setBusy(false);
-    if (!result.success) {
-      setMessage(result.error?.message ?? '导入失败');
-      return;
-    }
-    const data = result.data;
-    const created = data.created ?? 0;
-    const updated = data.updated ?? 0;
-    const skipped = 'skipped' in data ? (data.skipped ?? 0) : 0;
-    const unmatchedFeedback = formatUnmatchedProductFeedback('unmatched' in data ? data.unmatched : undefined);
-    if (created + updated === 0) {
+    setMessage('');
+    try {
+      const result = type === 'requirement'
+        ? (crossProductRoute
+          ? await importOverviewRequirements(rowsToImport)
+          : await importRequirements(productId, rowsToImport))
+        : type === 'feature'
+          ? await importFeatures(productId, rows)
+          : type === 'defect'
+            ? (crossProductRoute
+              ? await importOverviewDefects(rowsToImport)
+              : await importDefects(productId, rows))
+            : crossProductRoute
+              ? await importOverviewVersions(rowsToImport)
+              : await importVersions(productId, rows);
+      if (!result.success) {
+        setMessage(result.error?.message ?? '导入失败');
+        return;
+      }
+      const data = result.data;
+      const created = data.created ?? 0;
+      const updated = data.updated ?? 0;
+      const skipped = 'skipped' in data ? (data.skipped ?? 0) : 0;
+      const unmatchedFeedback = formatUnmatchedProductFeedback('unmatched' in data ? data.unmatched : undefined);
+      if (created + updated === 0) {
+        setMessage(
+          skipped > 0
+            ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「分类/应用/产品」未匹配系统产品被跳过。${unmatchedFeedback}请确认这些列填的是系统已有产品名，或在标题前加【产品名】。`
+            : `未写入任何${TYPE_LABEL[type]}，请检查文件内容。`,
+        );
+        return;
+      }
       setMessage(
-        skipped > 0
-          ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「分类/应用/产品」未匹配系统产品被跳过。${unmatchedFeedback}请确认这些列填的是系统已有产品名，或在标题前加【产品名】。`
-          : `未写入任何${TYPE_LABEL[type]}，请检查文件内容。`,
+        `导入完成：新增 ${created} 条，更新 ${updated} 条${
+          skipped > 0 ? `，${skipped} 条因未匹配产品已跳过` : ''
+        }。${unmatchedFeedback}`,
       );
-      return;
+      await onImported();
+      if (skipped === 0) onClose();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '导入请求失败，请稍后重试');
+    } finally {
+      setBusy(false);
     }
-    setMessage(
-      `导入完成：新增 ${created} 条，更新 ${updated} 条${
-        skipped > 0 ? `，${skipped} 条因未匹配产品已跳过` : ''
-      }。${unmatchedFeedback}`,
-    );
-    await onImported();
-    if (skipped === 0) onClose();
   };
 
   if (rtfFiles.length > 0 && (productId || crossProductRoute)) {
@@ -271,14 +314,16 @@ export function ProductHistoryImportDialog({
           )}
           <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025]">
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
-            <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 RTF' : type === 'defect' ? 'TAPD 导出 CSV / Excel / RTF' : 'CSV'} 文件</div>
-            <div className="mt-1 text-xs text-white/35">{type === 'defect' ? 'TAPD「优先级」→ 系统「严重程度」；其它列无值则留空' : '需求 RTF 支持多选；CSV 首行需为字段名'}</div>
+            <div className="text-sm text-white/70">
+              选择 {type === 'requirement' || type === 'defect' ? 'RTF / CSV / Excel' : 'CSV / Excel'} 文件
+            </div>
+            <div className="mt-1 text-xs text-white/35">{type === 'defect' ? 'TAPD「优先级」→ 系统「严重程度」；其它列无值则留空' : '需求 RTF 支持多选；CSV/Excel 首行需为字段名'}</div>
           </button>
           <input
             ref={inputRef}
             type="file"
             multiple={type === 'requirement'}
-            accept={type === 'requirement' ? '.csv,.rtf,text/csv,application/rtf' : type === 'defect' ? '.csv,.xlsx,.xls,.rtf,text/csv,application/rtf' : '.csv,text/csv'}
+            accept={type === 'requirement' || type === 'defect' ? '.rtf,.csv,.xlsx,.xls,text/csv,application/rtf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : '.csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
             className="hidden"
             onChange={(event) => void readFiles(Array.from(event.target.files ?? []))}
           />
@@ -324,7 +369,7 @@ export function ProductHistoryImportDialog({
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="rounded-lg border border-white/10 px-3.5 py-2 text-sm text-white/60 hover:bg-white/5 hover:text-white">取消</button>
-            <button onClick={() => void commit()} disabled={busy || (needsProductPicker && !productId) || rows.length === 0} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40">
+            <button type="button" onClick={() => void commit()} disabled={busy || (needsProductPicker && !productId) || rows.length === 0} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40">
               {busy ? <MapSpinner size={14} /> : <Upload size={14} />} 确认导入 {rows.length} 条
             </button>
           </div>
