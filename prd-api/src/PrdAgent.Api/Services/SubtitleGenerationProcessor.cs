@@ -192,6 +192,11 @@ public class SubtitleGenerationProcessor
 
         await UpdateProgressAsync(db, runStore, run, 50, "识别中");
 
+        // 临时诊断（Warning 级，确保可见）：确认 chat-audio 路由是否生效
+        _logger.LogWarning(
+            "[doc-store-agent][ASR-DISPATCH] model={Model} isChatAudio={IsChat} isExchange={IsExchange} transformer={Tt}",
+            resolution.ActualModel, IsChatAudioModel(resolution.ActualModel), resolution.IsExchange, resolution.ExchangeTransformerType);
+
         // 三路分发（参考 TranscriptRunWorker.cs:159-192）
         if (resolution.IsExchange)
         {
