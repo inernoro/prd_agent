@@ -85,12 +85,18 @@ export default function LiquidGlassDemoPage() {
         dx: e.clientX - rect.left - pos[key].x,
         dy: e.clientY - rect.top - pos[key].y,
       };
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      // 在卡片自身上捕获指针,后续 move/up 全部派发到这张卡(即使指针移出卡片范围)
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* 个别环境不支持指针捕获,move 仍可工作 */
+      }
     },
     [pos],
   );
 
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+  // move/up 挂在卡片上(配合 currentTarget 捕获),不依赖向 scene 冒泡
+  const onCardPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     const rect = sceneRef.current?.getBoundingClientRect();
     if (!drag || !rect) return;
@@ -99,8 +105,13 @@ export default function LiquidGlassDemoPage() {
     setPos((p) => ({ ...p, [drag.key]: { x, y } }));
   }, []);
 
-  const onPointerUp = useCallback(() => {
+  const onCardPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     dragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* 指针可能已释放 */
+    }
   }, []);
 
   const reset = () => {
@@ -177,9 +188,6 @@ export default function LiquidGlassDemoPage() {
         ref={sceneRef}
         className="lgd-scene flex-1 min-h-0"
         data-scene={scene}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
       >
         <div className="lgd-scene-caption">PRD&nbsp;AGENT</div>
         {CARDS.map((meta) => {
@@ -208,6 +216,8 @@ export default function LiquidGlassDemoPage() {
                 WebkitBackdropFilter: webkitBackdropFilter,
               }}
               onPointerDown={onPointerDown(meta.key)}
+              onPointerMove={onCardPointerMove}
+              onPointerUp={onCardPointerUp}
             >
               <GlassCardSample meta={meta} />
             </div>
