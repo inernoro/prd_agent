@@ -440,8 +440,33 @@ public class WorkflowValidationServiceTests
 
         var r = _svc.Process(g);
         Assert.Contains(r.RequiredInputs, x => x.Key == "api_token" && x.Scope == "variable" && x.IsSecret);
-        var headers = (Dictionary<string, object?>)g.Nodes![0].Config["headers"]!;
-        Assert.Equal("Bearer {{api_token}}", headers["Authorization"]);
+        // 对象型 config 被序列化成 JSON 字符串（执行器用 GetConfigString 读），占位规范化为 {{api_token}}
+        var headers = g.Nodes![0].Config["headers"];
+        Assert.IsType<string>(headers);
+        Assert.Contains("Bearer {{api_token}}", (string)headers!);
+    }
+
+    [Fact]
+    public void TapdCustomCurl_SkipsCookieCredentialPrompts()
+    {
+        // 设了 customCurl（兜底路径）时不应再强求 cookie/dscToken
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("t1", CapsuleTypes.TapdCollector, new()
+                {
+                    ["authMode"] = "cookie",
+                    ["workspaceId"] = "50116108",
+                    ["dataType"] = "bugs",
+                    ["customCurl"] = "curl 'https://tapd.cn/...' -H 'Cookie: xxx'",
+                }),
+            },
+        };
+
+        var r = _svc.Process(g);
+        Assert.DoesNotContain(r.RequiredInputs, x => x.Key == "cookie");
+        Assert.DoesNotContain(r.RequiredInputs, x => x.Key == "dscToken");
     }
 
     [Fact]

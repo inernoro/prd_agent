@@ -52,7 +52,14 @@ public class WorkflowValidationService
         {
             if (node.Config == null) continue;
             foreach (var k in node.Config.Keys.ToList())
-                node.Config[k] = NormalizePlaceholdersIn(node.Config[k]);
+            {
+                var v = NormalizePlaceholdersIn(node.Config[k]);
+                // 执行器统一用 GetConfigString 读 config（按 string）；dict/list 会被 ToString 成类型名而破。
+                // 故把对象/数组型 config 值序列化成 JSON 字符串（内嵌占位已在上一步规范化）。
+                if (v is Dictionary<string, object?> || v is List<object?>)
+                    v = JsonSerializer.Serialize(v);
+                node.Config[k] = v;
+            }
         }
     }
 
@@ -379,7 +386,9 @@ public class WorkflowValidationService
 
             // 需校验的字段 = schema 必填字段 ∪ 条件必填字段（如 TAPD authMode=cookie 时 cookie/dscToken 必填）
             var requiredFields = meta.ConfigSchema.Where(f => f.Required).ToList();
-            if (ConditionalRequired.TryGetValue(node.NodeType, out var conds))
+            // customCurl 兜底路径会在读 cookie/dscToken/authToken 之前返回，设了就不强求这些凭证
+            var hasCustomCurl = !string.IsNullOrWhiteSpace(ToConfigString(GetConfigValue(node, "customCurl")));
+            if (!hasCustomCurl && ConditionalRequired.TryGetValue(node.NodeType, out var conds))
             {
                 foreach (var (whenKey, whenValue, requiredKey) in conds)
                 {
