@@ -25,6 +25,9 @@ export type DocumentStore = {
   tagColors?: Record<string, string>;
   /** 可管理的分类清单（知识库一等维度；空=未启用分类） */
   categories?: string[];
+  /** 本库默认文档排序（服务端持久化，换设备/重登录/刷新都保持）。
+   *  default / created-desc / created-asc / updated-desc / updated-asc / title-asc。 */
+  defaultSortMode?: string;
   /** 系统互联同步状态：syncing / synced / error */
   peerSyncStatus?: 'syncing' | 'synced' | 'error' | string | null;
   /** 系统互联同步方向：push / pull / both / received */

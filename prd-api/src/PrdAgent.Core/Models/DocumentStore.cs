@@ -42,6 +42,14 @@ public class DocumentStore
     /// <summary>置顶条目 ID 列表（多个文档可置顶，影响排序）</summary>
     public List<string> PinnedEntryIds { get; set; } = new();
 
+    /// <summary>
+    /// 本知识库的默认文档排序方式（服务端持久化，换设备/重登录/刷新都保持）。
+    /// 取值：default（手动/血缘序）/ created-desc（最新创建在前）/ created-asc /
+    /// updated-desc（最近更新在前）/ updated-asc / title-asc（标题 A→Z）。
+    /// null = 未设置，前端按模板默认（验收库 created-desc，其余 default）兜底。
+    /// </summary>
+    public string? DefaultSortMode { get; set; }
+
     /// <summary>用户自定义 tag 颜色映射（tagName → 调色板 key：red/orange/yellow/green/teal/blue/purple/gray）。
     /// 缺省时前端按 tag 名哈希自动分色。详见 prd-admin/src/lib/tagPalette.ts。</summary>
     public Dictionary<string, string> TagColors { get; set; } = new();

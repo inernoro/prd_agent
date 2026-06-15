@@ -62,12 +62,16 @@ export async function listPeerItems(resourceType: string) {
   return await apiRequest<{ items: SyncItemSummary[] }>(api.peerSync.items(resourceType), { method: 'GET' });
 }
 
-/** 发起互传 */
+/** 强制对齐模式：remote=远端为准 / local=本地为准 / both=同时对准 */
+export type PeerAlign = 'remote' | 'local' | 'both';
+
+/** 发起互传（普通方向 direction，或强制对齐 align —— align 设置后覆盖 direction/mode） */
 export async function transferToPeer(params: {
   nodeId: string;
   resourceType: string;
   itemIds: string[];
-  direction: PeerTransferDirection;
+  direction?: PeerTransferDirection;
+  align?: PeerAlign;
   mode?: PeerApplyMode;
   preserveTimestamps?: boolean;
   rewriteAssetLinks?: boolean;
@@ -75,6 +79,43 @@ export async function transferToPeer(params: {
   return await apiRequest<{ direction: string; results: TransferItemResult[]; anyFail: boolean }>(
     api.peerSync.transfer(),
     { method: 'POST', body: params },
+  );
+}
+
+/** 同步运行台账（进行中 / 发出去 / 收进来 / 历史） */
+export interface PeerSyncRun {
+  id: string;
+  resourceType: string;
+  itemId: string;
+  itemName: string;
+  /** push / pull / both / received / align-remote / align-local / align-both */
+  direction: string;
+  /** outgoing（本端发起）/ incoming（对端推来） */
+  origin: 'outgoing' | 'incoming' | string;
+  peerNodeId: string;
+  peerNodeName: string;
+  peerNodeBaseUrl?: string | null;
+  status: 'syncing' | 'synced' | 'skipped' | 'error' | string;
+  created: number;
+  updated: number;
+  skipped: number;
+  deleted: number;
+  failed: number;
+  assetsRewritten: number;
+  assetRewriteFailed: number;
+  message?: string | null;
+  triggeredByUserId: string;
+  triggeredByName?: string | null;
+  durationMs: number;
+  startedAt: string;
+  finishedAt?: string | null;
+}
+
+/** 列出同步运行台账。itemId 省略=当前用户全部可见条目；传 itemId=限定单库。 */
+export async function listPeerSyncRuns(resourceType: string, itemId?: string) {
+  return await apiRequest<{ items: PeerSyncRun[] }>(
+    api.peerSync.runs(resourceType, itemId),
+    { method: 'GET' },
   );
 }
 

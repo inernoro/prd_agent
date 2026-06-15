@@ -1316,6 +1316,8 @@ export const api = {
     nodes: () => '/api/peer-sync/nodes',
     items: (type: string) => `/api/peer-sync/resources/${type}/items`,
     transfer: () => '/api/peer-sync/transfer',
+    runs: (type: string, itemId?: string) =>
+      `/api/peer-sync/runs?resourceType=${encodeURIComponent(type)}${itemId ? `&itemId=${encodeURIComponent(itemId)}` : ''}`,
     // 管理侧（设置 → 系统互联）
     adminList: () => '/api/admin/peer-nodes',
     adminPairingCode: () => '/api/admin/peer-nodes/pairing-code',

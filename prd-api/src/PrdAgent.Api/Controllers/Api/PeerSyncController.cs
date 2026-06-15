@@ -407,15 +407,21 @@ public class PeerSyncController : ControllerBase
                 $"bundle.resourceType={req.Bundle.ResourceType} 与端点 {resource.ResourceType} 不匹配"));
 
         var actor = await BuildActorAsync(node!.CreatedBy, ct);
-        var mode = req.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
+        var mode = ParseMode(req.Mode);
         AttachPeerApplyOptions(req.Bundle, req.PreserveTimestamps ?? true, req.RewriteAssetLinks ?? true, req.SourceBaseUrl);
+        var startedAt = DateTime.UtcNow;
         var outcome = await resource.ApplyAsync(req.Bundle, actor, mode, req.TargetKey, ct);
-        var receiverDirection = string.Equals(req.Direction, "both", StringComparison.OrdinalIgnoreCase) ? "both" : "received";
+        // incoming：对端推/对齐过来。mirror 时对端是「本地为准」，本端被镜像（可能删条目）。
+        var receiverDirection = mode == SyncApplyMode.Mirror ? "align-local"
+            : string.Equals(req.Direction, "both", StringComparison.OrdinalIgnoreCase) ? "both" : "received";
         var success = outcome.Failed == 0 && outcome.AssetRewriteFailed == 0;
         if (!string.IsNullOrWhiteSpace(outcome.TargetItemId))
         {
             await MarkPeerSyncAsync(resource.ResourceType, outcome.TargetItemId, success ? "synced" : "error", receiverDirection, node,
                 outcome.Message, ct);
+            await RecordRunAsync(resource.ResourceType, outcome.TargetItemId, req.Bundle.Item?.Name ?? "",
+                receiverDirection, PeerSyncOrigin.Incoming, node, outcome, success, node.CreatedBy, "对端节点",
+                startedAt, ct);
         }
         return Ok(ApiResponse<object>.Ok(outcome));
     }
@@ -474,15 +480,34 @@ public class PeerSyncController : ControllerBase
         var resource = _registry.Resolve(request.ResourceType);
         if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
 
-        var direction = (request.Direction ?? "push").Trim().ToLowerInvariant();
-        if (direction is not ("push" or "pull" or "both"))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方向无效（push/pull/both）"));
-        // PR #742 review P2：非双向资源拒绝 pull/both，否则 push-only 的 DefectSyncResource 等会被绕过状态机
-        // 反向 import 对端数据（例如把对端的 resolved 缺陷拉回本地覆盖本地未结的状态）。
-        if (!resource.SupportsBidirectional && direction != "push")
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"{resource.DisplayName}是单向（push-only）资源，不支持 {direction}"));
+        // 强制对齐（force-align）：remote=远端为准(pull+镜像删) / local=本地为准(push+镜像删) / both=同时对准(both,不删)。
+        // 镜像删除是 MAP 知识库传输协议里唯一的数据破坏路径，前端必须二次确认后才带 align。
+        var align = string.IsNullOrWhiteSpace(request.Align) ? null : request.Align!.Trim().ToLowerInvariant();
+        string direction;
+        SyncApplyMode mode;
+        if (align != null)
+        {
+            if (align is not ("remote" or "local" or "both"))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "对齐模式无效（remote/local/both）"));
+            if (!resource.SupportsBidirectional)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"{resource.DisplayName}是单向资源，不支持强制对齐"));
+            direction = align == "remote" ? "pull" : align == "local" ? "push" : "both";
+            mode = align == "both" ? SyncApplyMode.Overwrite : SyncApplyMode.Mirror;
+        }
+        else
+        {
+            direction = (request.Direction ?? "push").Trim().ToLowerInvariant();
+            if (direction is not ("push" or "pull" or "both"))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方向无效（push/pull/both）"));
+            // PR #742 review P2：非双向资源拒绝 pull/both，否则 push-only 的 DefectSyncResource 等会被绕过状态机
+            // 反向 import 对端数据（例如把对端的 resolved 缺陷拉回本地覆盖本地未结的状态）。
+            if (!resource.SupportsBidirectional && direction != "push")
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"{resource.DisplayName}是单向（push-only）资源，不支持 {direction}"));
+            mode = request.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
+        }
+        // 运行台账里记录的「方向/动作」：对齐用 align-*，普通走 push/pull/both。
+        var runDirection = align != null ? $"align-{align}" : direction;
 
-        var mode = request.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
         var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
         var sourceBaseUrl = GetRequestBaseUrl();
 
@@ -491,6 +516,7 @@ public class PeerSyncController : ControllerBase
         // ListItemsAsync 已经按 actor 视角做了访问过滤，此处用集合判定，资源层不必再各自重复鉴权。
         var allowedItems = await resource.ListItemsAsync(actor, ct);
         var allowedSet = allowedItems.Select(i => i.ItemId).ToHashSet(StringComparer.Ordinal);
+        var itemNames = allowedItems.GroupBy(i => i.ItemId).ToDictionary(g => g.Key, g => g.First().Name, StringComparer.Ordinal);
 
         var results = new List<object>();
         var anyFail = false;
@@ -506,8 +532,13 @@ public class PeerSyncController : ControllerBase
                 anyFail = true;
                 continue;
             }
+            string? runId = null;
+            var itemStartedAt = DateTime.UtcNow;
             try
             {
+                // 先落「进行中」运行台账，再开干 —— 这样另一个浏览器 tab / 同步中心轮询能看到 in-progress（动起来）。
+                runId = await StartRunAsync(resource.ResourceType, itemId,
+                    itemNames.GetValueOrDefault(itemId, string.Empty), runDirection, node, actor, itemStartedAt, ct);
                 await MarkPeerSyncAsync(resource.ResourceType, itemId, "syncing", direction, node, "正在跨系统同步", ct);
                 // PR #742 review fix：每条目独立 ok 标记。Push 或 Pull 任一阶段 outcome.Failed>0、
                 // outcome 为 null（对端返回无效）、bundle 为 null 都判失败，前端可正确标红、不再误显示"成功"。
@@ -517,6 +548,7 @@ public class PeerSyncController : ControllerBase
                 var created = 0;
                 var updated = 0;
                 var skipped = 0;
+                var deleted = 0;
                 var failed = 0;
                 var assetsRewritten = 0;
                 var assetRewriteFailed = 0;
@@ -526,6 +558,7 @@ public class PeerSyncController : ControllerBase
                     if (bundle == null)
                     {
                         await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, "本地条目不存在或无权访问", ct);
+                        await FinishRunAsync(runId, PeerSyncRunStatus.Error, 0, 0, 0, 0, 1, 0, 0, "本地条目不存在或无权访问", itemStartedAt, ct);
                         results.Add(new { itemId, ok = false, message = "本地条目不存在或无权访问" });
                         anyFail = true;
                         continue;
@@ -547,6 +580,7 @@ public class PeerSyncController : ControllerBase
                         created += outcome.Created;
                         updated += outcome.Updated;
                         skipped += outcome.Skipped;
+                        deleted += outcome.Deleted;
                         failed += outcome.Failed;
                         assetsRewritten += outcome.AssetsRewritten;
                         assetRewriteFailed += outcome.AssetRewriteFailed;
@@ -562,6 +596,7 @@ public class PeerSyncController : ControllerBase
                     {
                         var message = string.Join("；", perItem.Append("拉取 失败（对端条目不存在或不可达）"));
                         await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, message, ct);
+                        await FinishRunAsync(runId, PeerSyncRunStatus.Error, created, updated, skipped, deleted, failed + 1, assetsRewritten, assetRewriteFailed, message, itemStartedAt, ct);
                         results.Add(new { itemId, ok = false, message });
                         anyFail = true;
                         continue;
@@ -572,6 +607,7 @@ public class PeerSyncController : ControllerBase
                     {
                         var message = string.Join("；", perItem.Append($"拉取 失败（对端 bundle.resourceType={bundle.ResourceType} 与请求 {resource.ResourceType} 不匹配）"));
                         await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, message, ct);
+                        await FinishRunAsync(runId, PeerSyncRunStatus.Error, created, updated, skipped, deleted, failed + 1, assetsRewritten, assetRewriteFailed, message, itemStartedAt, ct);
                         results.Add(new { itemId, ok = false, message });
                         anyFail = true;
                         continue;
@@ -583,6 +619,7 @@ public class PeerSyncController : ControllerBase
                     created += outcome.Created;
                     updated += outcome.Updated;
                     skipped += outcome.Skipped;
+                    deleted += outcome.Deleted;
                     failed += outcome.Failed;
                     assetsRewritten += outcome.AssetsRewritten;
                     assetRewriteFailed += outcome.AssetRewriteFailed;
@@ -592,14 +629,20 @@ public class PeerSyncController : ControllerBase
                 {
                     perItem.Add("拉取 已跳过（push 未成功，避免对端覆盖本地未推上去的改动）");
                 }
-                await MarkPeerSyncAsync(resource.ResourceType, itemId, itemOk ? "synced" : "error", direction, node,
-                    string.Join("；", perItem), ct);
-                results.Add(new { itemId, ok = itemOk, message = string.Join("；", perItem), created, updated, skipped, failed, assetsRewritten, assetRewriteFailed });
+                var summary = string.Join("；", perItem);
+                await MarkPeerSyncAsync(resource.ResourceType, itemId, itemOk ? "synced" : "error", direction, node, summary, ct);
+                // 没有任何增删改 = 跳过，台账标 skipped 让「发出去/历史」一眼看出本轮无变化。
+                var runStatus = !itemOk ? PeerSyncRunStatus.Error
+                    : (created == 0 && updated == 0 && deleted == 0) ? PeerSyncRunStatus.Skipped
+                    : PeerSyncRunStatus.Synced;
+                await FinishRunAsync(runId, runStatus, created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed, summary, itemStartedAt, ct);
+                results.Add(new { itemId, ok = itemOk, message = summary, created, updated, skipped, deleted, failed, assetsRewritten, assetRewriteFailed });
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[peer-sync] transfer item {ItemId} failed", itemId);
                 await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, ex.Message, ct);
+                await FinishRunAsync(runId, PeerSyncRunStatus.Error, 0, 0, 0, 0, 1, 0, 0, ex.Message, itemStartedAt, ct);
                 results.Add(new { itemId, ok = false, message = ex.Message });
                 anyFail = true;
             }
@@ -613,6 +656,36 @@ public class PeerSyncController : ControllerBase
         await _db.PeerNodes.UpdateOneAsync(n => n.Id == node.Id, nodeUpdate, cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { direction, results, anyFail }));
+    }
+
+    /// <summary>同步中心：列出运行台账（进行中 / 发出去 / 收进来 / 历史，前端按 origin/direction/status 分组）。
+    /// itemId 为空 = 该用户全部可见条目的记录；否则限定单条目（带访问校验）。</summary>
+    [Authorize]
+    [HttpGet("runs")]
+    public async Task<IActionResult> ListRuns(
+        [FromQuery] string resourceType, [FromQuery] string? itemId, [FromQuery] int limit, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(resourceType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 resourceType"));
+        var resource = _registry.Resolve(resourceType);
+        if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
+        var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
+        var allowed = (await resource.ListItemsAsync(actor, ct)).Select(i => i.ItemId).ToHashSet(StringComparer.Ordinal);
+
+        var take = limit is <= 0 or > 200 ? 80 : limit;
+        var filter = Builders<PeerSyncRun>.Filter.Eq(r => r.ResourceType, resourceType);
+        if (!string.IsNullOrWhiteSpace(itemId))
+        {
+            if (!allowed.Contains(itemId))
+                return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<PeerSyncRun>() }));
+            filter &= Builders<PeerSyncRun>.Filter.Eq(r => r.ItemId, itemId);
+        }
+        else
+        {
+            filter &= Builders<PeerSyncRun>.Filter.In(r => r.ItemId, allowed);
+        }
+        var runs = await _db.PeerSyncRuns.Find(filter).SortByDescending(r => r.StartedAt).Limit(take).ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items = runs }));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -667,6 +740,106 @@ public class PeerSyncController : ControllerBase
             cancellationToken: ct);
     }
 
+    private static SyncApplyMode ParseMode(string? mode) => mode switch
+    {
+        "mirror" => SyncApplyMode.Mirror,
+        "add-only" => SyncApplyMode.AddOnly,
+        _ => SyncApplyMode.Overwrite,
+    };
+
+    private static string ModeToString(SyncApplyMode mode) => mode switch
+    {
+        SyncApplyMode.Mirror => "mirror",
+        SyncApplyMode.AddOnly => "add-only",
+        _ => "overwrite",
+    };
+
+    /// <summary>落一条「进行中」运行台账，返回 runId 供完成时回填。</summary>
+    private async Task<string> StartRunAsync(
+        string resourceType, string itemId, string itemName, string direction,
+        PeerNode node, SyncActor actor, DateTime startedAt, CancellationToken ct)
+    {
+        var run = new PeerSyncRun
+        {
+            ResourceType = resourceType,
+            ItemId = itemId,
+            ItemName = itemName,
+            Direction = direction,
+            Origin = PeerSyncOrigin.Outgoing,
+            PeerNodeId = node.RemoteNodeId,
+            PeerNodeName = node.DisplayName,
+            PeerNodeBaseUrl = node.BaseUrl,
+            Status = PeerSyncRunStatus.Syncing,
+            TriggeredByUserId = actor.UserId,
+            TriggeredByName = actor.UserName,
+            StartedAt = startedAt,
+        };
+        await _db.PeerSyncRuns.InsertOneAsync(run, cancellationToken: ct);
+        return run.Id;
+    }
+
+    /// <summary>回填运行台账的最终状态与计数。</summary>
+    private async Task FinishRunAsync(
+        string? runId, string status, int created, int updated, int skipped, int deleted,
+        int failed, int assetsRewritten, int assetRewriteFailed, string? message,
+        DateTime startedAt, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(runId)) return;
+        var now = DateTime.UtcNow;
+        await _db.PeerSyncRuns.UpdateOneAsync(r => r.Id == runId,
+            Builders<PeerSyncRun>.Update
+                .Set(r => r.Status, status)
+                .Set(r => r.Created, created)
+                .Set(r => r.Updated, updated)
+                .Set(r => r.Skipped, skipped)
+                .Set(r => r.Deleted, deleted)
+                .Set(r => r.Failed, failed)
+                .Set(r => r.AssetsRewritten, assetsRewritten)
+                .Set(r => r.AssetRewriteFailed, assetRewriteFailed)
+                .Set(r => r.Message, message)
+                .Set(r => r.DurationMs, (int)Math.Max(0, (now - startedAt).TotalMilliseconds))
+                .Set(r => r.FinishedAt, now),
+            cancellationToken: ct);
+    }
+
+    /// <summary>一次性落一条 incoming 运行台账（对端 apply 过来，无两阶段进行中）。</summary>
+    private async Task RecordRunAsync(
+        string resourceType, string itemId, string itemName, string direction, string origin,
+        PeerNode node, SyncApplyOutcome outcome, bool success,
+        string triggeredByUserId, string? triggeredByName, DateTime startedAt, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var status = !success ? PeerSyncRunStatus.Error
+            : (outcome.Created == 0 && outcome.Updated == 0 && outcome.Deleted == 0) ? PeerSyncRunStatus.Skipped
+            : PeerSyncRunStatus.Synced;
+        var run = new PeerSyncRun
+        {
+            ResourceType = resourceType,
+            ItemId = itemId,
+            ItemName = itemName,
+            Direction = direction,
+            Origin = origin,
+            PeerNodeId = node.RemoteNodeId,
+            PeerNodeName = node.DisplayName,
+            PeerNodeBaseUrl = node.BaseUrl,
+            Status = status,
+            Created = outcome.Created,
+            Updated = outcome.Updated,
+            Skipped = outcome.Skipped,
+            Deleted = outcome.Deleted,
+            Failed = outcome.Failed,
+            AssetsRewritten = outcome.AssetsRewritten,
+            AssetRewriteFailed = outcome.AssetRewriteFailed,
+            Message = outcome.Message,
+            TriggeredByUserId = triggeredByUserId,
+            TriggeredByName = triggeredByName,
+            DurationMs = (int)Math.Max(0, (now - startedAt).TotalMilliseconds),
+            StartedAt = startedAt,
+            FinishedAt = now,
+        };
+        await _db.PeerSyncRuns.InsertOneAsync(run, cancellationToken: ct);
+    }
+
     private async Task<SyncApplyOutcome?> PushToPeerAsync(
         PeerNode node,
         string type,
@@ -682,7 +855,7 @@ public class PeerSyncController : ControllerBase
         {
             Bundle = bundle,
             TargetKey = targetKey,
-            Mode = mode == SyncApplyMode.AddOnly ? "add-only" : "overwrite",
+            Mode = ModeToString(mode),
             Direction = direction,
             PreserveTimestamps = request.PreserveTimestamps ?? true,
             RewriteAssetLinks = request.RewriteAssetLinks ?? true,
@@ -900,6 +1073,8 @@ public class PeerSyncController : ControllerBase
         public List<string>? ItemIds { get; set; }
         public string? Direction { get; set; }
         public string? Mode { get; set; }
+        /// <summary>强制对齐：remote（远端为准）/ local（本地为准）/ both（同时对准）。设置后覆盖 Direction/Mode。</summary>
+        public string? Align { get; set; }
         public bool? PreserveTimestamps { get; set; }
         public bool? RewriteAssetLinks { get; set; }
     }
