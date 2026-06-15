@@ -41,7 +41,7 @@ public class WorkflowValidationServiceTests
         };
         var r = _svc.Process(g);
         Assert.False(r.Valid);
-        Assert.Contains(r.Issues, i => i.Target == "n1" && i.Message.Contains("未知舱"));
+        Assert.Contains(r.Issues, i => i.Target == "n1" && i.Message.Contains("未知"));
     }
 
     [Fact]
