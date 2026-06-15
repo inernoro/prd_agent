@@ -15,7 +15,7 @@ type Tab = 'prd' | 'equipment' | 'flow' | 'qa' | 'sql';
 
 const TABS: { key: Tab; label: string; icon: React.ReactNode; desc: string }[] = [
   { key: 'prd', label: 'PRD 文档生成', icon: <FileText className="w-4 h-4" />, desc: '按米多 product-document-generator 模板生成 / 优化产品文档（工程版 / 敏捷版）' },
-  { key: 'equipment', label: '设备素材库', icon: <ImageIcon className="w-4 h-4" />, desc: '按预设风格生成产线设备图，攒一份属于你的素材库，给流程图节点用' },
+  { key: 'equipment', label: '设备素材库', icon: <ImageIcon className="w-4 h-4" />, desc: 'AI 生成或上传本地产线设备图，攒一份属于你的素材库，给流程图节点用' },
   { key: 'flow', label: '流程示意图', icon: <GitBranch className="w-4 h-4" />, desc: 'AI 解析输入 → 节点 + 边 JSON → ReactFlow 拼装素材图，可拖动微调 + 导出' },
   { key: 'qa', label: '智能客服', icon: <MessageSquare className="w-4 h-4" />, desc: '基于知识库的严格 RAG 问答，知识库没有就明说不杜撰；可开联网开关补充模型公开知识' },
   { key: 'sql', label: 'SQL助手', icon: <Database className="w-4 h-4" />, desc: '服务 CCAS 业务的数据库 SQL 辅助工具集：IN 子句转换、列表去重等批量字符串处理；后续会继续扩展' },

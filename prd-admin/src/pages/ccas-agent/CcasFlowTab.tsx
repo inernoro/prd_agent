@@ -414,7 +414,7 @@ function FlowInner({ meta }: Props) {
             </div>
           )}
           <div className="text-[11px] text-white/40 leading-relaxed">
-            提示：节点的设备图来自「设备素材库」（按设备名匹配）。先在素材库 Tab 生成对应风格的设备图，再回来生成流程图，节点会自动套图。
+            提示：节点的设备图来自「设备素材库」（按设备名匹配）。先在素材库 Tab 生成或上传对应设备图，再回来生成流程图，节点会自动套图。
           </div>
         </section>
 

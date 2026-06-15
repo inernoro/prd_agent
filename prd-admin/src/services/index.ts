@@ -2164,6 +2164,7 @@ export type {
 export {
   getCcasMeta,
   generateCcasEquipment,
+  uploadCcasEquipment,
   listCcasEquipment,
   toggleCcasEquipmentFavorite,
   deleteCcasEquipment,
