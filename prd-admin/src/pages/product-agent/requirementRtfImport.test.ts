@@ -3,6 +3,7 @@ import {
   normalizeRtfImage,
   parseRequirementRtfBytes,
   replaceImportImageMarkers,
+  rtfImageToDataUrl,
   sniffImageFormat,
   stripFailedImageMarkers,
 } from './requirementRtfImport';
@@ -76,6 +77,22 @@ describe('parseRequirementRtfBytes', () => {
       refIndex: 0,
     });
     expect(normalized).toBeNull();
+  });
+
+  it('normalizes mislabeled jpeg and can preserve it as inline data url', () => {
+    const jpegBytes = new Uint8Array([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46,
+      0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0xff, 0xd9,
+    ]);
+    const normalized = normalizeRtfImage({
+      fileName: 'import-1.png',
+      mimeType: 'image/png',
+      bytes: jpegBytes,
+      refIndex: 0,
+    });
+    expect(normalized?.mimeType).toBe('image/jpeg');
+    expect(normalized?.fileName).toBe('import-1.jpg');
+    expect(rtfImageToDataUrl(normalized!)).toMatch(/^data:image\/jpeg;base64,/);
   });
 
   it('strips failed image markers from html', () => {

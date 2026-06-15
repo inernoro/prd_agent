@@ -134,6 +134,15 @@ export function rtfImageToUploadFile(image: RtfImportImage): File {
   return new File([copy], image.fileName, { type: image.mimeType });
 }
 
+export function rtfImageToDataUrl(image: RtfImportImage): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let index = 0; index < image.bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...image.bytes.slice(index, index + chunkSize));
+  }
+  return `data:${image.mimeType};base64,${btoa(binary)}`;
+}
+
 function findGroupStart(input: string, controlIndex: number): number {
   for (let index = controlIndex; index >= 0; index -= 1) {
     if (input[index] === '{') return index;

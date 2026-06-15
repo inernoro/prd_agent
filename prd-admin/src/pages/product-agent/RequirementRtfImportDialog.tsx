@@ -8,6 +8,7 @@ import {
   normalizeRtfImage,
   parseRequirementRtfBytes,
   replaceImportImageMarkers,
+  rtfImageToDataUrl,
   rtfImageToUploadFile,
   stripFailedImageMarkers,
   type RtfImportImage,
@@ -122,6 +123,18 @@ export function RequirementRtfImportDialog({
     return detail ? `${fileName}：${detail}` : `${fileName}：上传失败`;
   };
 
+  const uploadImageWithRetry = async (image: RtfImportImage, attempts = 3) => {
+    let last: Awaited<ReturnType<typeof uploadAttachment>> | null = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      last = await uploadAttachment(rtfImageToUploadFile(image));
+      if (last.success && last.data) return last;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => { setTimeout(resolve, 500 * (attempt + 1)); });
+      }
+    }
+    return last ?? { success: false, data: null, error: { code: 'UPLOAD_FAILED', message: '上传失败' } };
+  };
+
   const runImport = async () => {
     setImporting(true);
     setResult(null);
@@ -146,16 +159,16 @@ export function RequirementRtfImportDialog({
       }
 
       setProgress(progressLabel);
-      let uploaded = await uploadAttachment(rtfImageToUploadFile(normalized));
+      const uploaded = await uploadImageWithRetry(normalized);
       if (!uploaded.success || !uploaded.data) {
-        await new Promise((resolve) => { setTimeout(resolve, 600); });
-        uploaded = await uploadAttachment(rtfImageToUploadFile(normalized));
-      }
-      if (!uploaded.success || !uploaded.data) {
-        failedRefIndices.add(image.refIndex);
-        skippedImageCount += 1;
-        warningMessages.push(formatUploadError(normalized.fileName, uploaded));
-        return false;
+        uploadedByRef.set(image.refIndex, {
+          index: normalized.refIndex,
+          url: rtfImageToDataUrl(normalized),
+          fileName: normalized.fileName,
+          attachmentId: '',
+        });
+        warningMessages.push(`${formatUploadError(normalized.fileName, uploaded)}，已以内嵌图片保留`);
+        return true;
       }
 
       uploadedByRef.set(image.refIndex, {
@@ -186,7 +199,7 @@ export function RequirementRtfImportDialog({
         const cached = uploadedByRef.get(image.refIndex);
         if (!cached) continue;
         uploadedImages.push({ index: cached.index, url: cached.url, fileName: cached.fileName });
-        attachmentIds.push(cached.attachmentId);
+        if (cached.attachmentId) attachmentIds.push(cached.attachmentId);
       }
 
       const failedForRequirement = requirement.images
