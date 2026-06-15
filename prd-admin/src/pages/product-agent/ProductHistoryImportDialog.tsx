@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { FileSpreadsheet, Upload, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { toast } from '@/lib/toast';
 import {
   importDefects,
   importFeatures,
@@ -222,16 +223,24 @@ export function ProductHistoryImportDialog({
   };
 
   const commit = async () => {
-    if (rows.length === 0) return;
-    if (needsProductPicker && !productId) return;
+    if (rows.length === 0) {
+      setMessage('没有可导入的数据，请先选择文件。');
+      return;
+    }
+    if (needsProductPicker && !productId) {
+      setMessage('请先选择归属产品。');
+      return;
+    }
     const baseRows = rows as ImportRequirementRow[];
     const rowsToImport = baseRows;
     if (isCrossProduct && rowsToImport.every((row) => !rowHasProductRouteHint(row))) {
-      setMessage('无法路由：请确认文件的「分类」或「应用/产品」列填的是系统已有产品名，或在标题前加【产品名】。');
+      const routeMsg = '无法路由：请确认文件的「分类」或「应用/产品」列填的是系统已有产品名，或在标题前加【产品名】。';
+      setMessage(routeMsg);
+      toast.warning('无法导入', routeMsg);
       return;
     }
     setBusy(true);
-    setMessage('');
+    setMessage(`正在导入 ${rows.length} 条${TYPE_LABEL[type]}，请稍候…`);
     try {
       const result = type === 'requirement'
         ? (crossProductRoute
@@ -247,31 +256,41 @@ export function ProductHistoryImportDialog({
               ? await importOverviewVersions(rowsToImport)
               : await importVersions(productId, rows);
       if (!result.success) {
-        setMessage(result.error?.message ?? '导入失败');
+        const errMsg = result.error?.message ?? '导入失败';
+        setMessage(errMsg);
+        toast.error('导入失败', errMsg);
         return;
       }
       const data = result.data;
+      if (!data) {
+        const errMsg = '服务器未返回导入结果，请稍后重试';
+        setMessage(errMsg);
+        toast.error('导入失败', errMsg);
+        return;
+      }
       const created = data.created ?? 0;
       const updated = data.updated ?? 0;
       const skipped = 'skipped' in data ? (data.skipped ?? 0) : 0;
       const unmatchedFeedback = formatUnmatchedProductFeedback('unmatched' in data ? data.unmatched : undefined);
       if (created + updated === 0) {
-        setMessage(
-          skipped > 0
-            ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「分类/应用/产品」未匹配系统产品被跳过。${unmatchedFeedback}请确认这些列填的是系统已有产品名，或在标题前加【产品名】。`
-            : `未写入任何${TYPE_LABEL[type]}，请检查文件内容。`,
-        );
+        const emptyMsg = skipped > 0
+          ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「分类/应用/产品」未匹配系统产品被跳过。${unmatchedFeedback}请确认这些列填的是系统已有产品名，或在标题前加【产品名】。`
+          : `未写入任何${TYPE_LABEL[type]}，请检查文件内容。`;
+        setMessage(emptyMsg);
+        toast.warning('未写入数据', skipped > 0 ? `${skipped} 条未匹配系统产品` : '请检查文件内容');
         return;
       }
-      setMessage(
-        `导入完成：新增 ${created} 条，更新 ${updated} 条${
-          skipped > 0 ? `，${skipped} 条因未匹配产品已跳过` : ''
-        }。${unmatchedFeedback}`,
-      );
+      const okMsg = `导入完成：新增 ${created} 条，更新 ${updated} 条${
+        skipped > 0 ? `，${skipped} 条因未匹配产品已跳过` : ''
+      }。${unmatchedFeedback}`;
+      setMessage(okMsg);
+      toast.success('导入完成', `新增 ${created} 条，更新 ${updated} 条`);
       await onImported();
       if (skipped === 0) onClose();
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : '导入请求失败，请稍后重试');
+      const errMsg = err instanceof Error ? err.message : '导入请求失败，请稍后重试';
+      setMessage(errMsg);
+      toast.error('导入失败', errMsg);
     } finally {
       setBusy(false);
     }
@@ -359,7 +378,20 @@ export function ProductHistoryImportDialog({
               </table>
             </div>
           )}
-          {message && <div className="mt-3 text-xs text-white/55">{message}</div>}
+          {message && (
+            <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+              busy
+                ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-100'
+                : message.includes('失败') || message.includes('无法') || message.includes('未写入')
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+                  : message.includes('完成')
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
+                    : 'border-white/10 bg-white/[0.03] text-white/55'
+            }`}>
+              {busy && <span className="mr-2 inline-flex align-middle"><MapSpinner size={14} /></span>}
+              {message}
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center justify-between border-t border-white/10 px-5 py-4">
           <div className="text-xs text-white/35">
@@ -369,8 +401,14 @@ export function ProductHistoryImportDialog({
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="rounded-lg border border-white/10 px-3.5 py-2 text-sm text-white/60 hover:bg-white/5 hover:text-white">取消</button>
-            <button type="button" onClick={() => void commit()} disabled={busy || (needsProductPicker && !productId) || rows.length === 0} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40">
-              {busy ? <MapSpinner size={14} /> : <Upload size={14} />} 确认导入 {rows.length} 条
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); void commit(); }}
+              disabled={busy || (needsProductPicker && !productId) || rows.length === 0}
+              className="flex min-w-[148px] items-center justify-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {busy ? <MapSpinner size={16} /> : <Upload size={14} />}
+              {busy ? '导入中…' : `确认导入 ${rows.length} 条`}
             </button>
           </div>
         </div>
