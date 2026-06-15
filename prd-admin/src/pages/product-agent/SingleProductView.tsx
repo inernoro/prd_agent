@@ -7,7 +7,7 @@
  * 需求/功能 的「新建」走独立页面（/product-agent/p/:productId/:kind/new）；查看走详情页。
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
 import { ProductAssistantPanel } from './ProductAssistantPanel';
@@ -56,7 +56,7 @@ import {
 import { searchDirectoryUsers } from '@/services';
 import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, readDefectPriorityGrade, readDefectSeverityLevel } from './types';
-import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
+import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, OVERVIEW_LIST_SEARCH_BOX, PRODUCT_LIST_TOOLBAR_ROW, type FilterFieldDef } from './listFilter';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
@@ -471,37 +471,29 @@ function RequirementsTab({ productId }: { productId: string }) {
   }
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
-      <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap">
-        <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
-        <div className="flex items-center gap-1.5">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".rtf,application/rtf,text/rtf"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              const rtfFiles = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith('.rtf'));
-              if (rtfFiles.length > 0) setRtfImportFiles(rtfFiles);
-              e.target.value = '';
-            }}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs"
-          >
-            <Upload size={13} /> 导入 RTF
-          </button>
-          <button onClick={() => exportCsv(false)} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
-            <Download size={13} /> 导出CSV
-          </button>
-          {items.length > 0 && <ViewToggle view={view} setView={setView} />}
-        </div>
-      </div>
-      <p className="shrink-0 text-xs text-white/35">仅显示你作为负责人或处理人的需求。</p>
-      <div className="shrink-0 w-full min-w-0 flex flex-wrap items-center gap-2">
+      <div className={PRODUCT_LIST_TOOLBAR_ROW}>
         <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-        <div className="min-w-0 flex-1">{bar}</div>
+        <div className="flex min-w-0 flex-1 items-center gap-2">{bar}</div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".rtf,application/rtf,text/rtf"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const rtfFiles = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith('.rtf'));
+            if (rtfFiles.length > 0) setRtfImportFiles(rtfFiles);
+            e.target.value = '';
+          }}
+        />
+        <ToolbarSecondaryButton onClick={() => fileRef.current?.click()}>
+          <Upload size={13} /> 导入 RTF
+        </ToolbarSecondaryButton>
+        <ToolbarSecondaryButton onClick={() => exportCsv(false)} disabled={items.length === 0}>
+          <Download size={13} /> 导出CSV
+        </ToolbarSecondaryButton>
+        {items.length > 0 && <ViewToggle view={view} setView={setView} />}
+        <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
       </div>
       {items.length === 0 ? (
         <EmptyHint text="没有与你相关的需求。你是负责人或处理人的需求会出现在这里；点「新建需求」可创建新条目。" />
@@ -727,13 +719,10 @@ function DefectsTab({ productId }: { productId: string }) {
   }
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
-      <div className="shrink-0 flex items-center gap-2">
-        <NewButton label="新建缺陷" onClick={() => navigate(`/product-agent/p/${productId}/defect/new`)} />
-      </div>
-      <p className="shrink-0 text-xs text-white/35">仅显示你作为处理人或上报人的缺陷。</p>
-      <div className="shrink-0 w-full min-w-0 flex flex-wrap items-center gap-2">
+      <div className={PRODUCT_LIST_TOOLBAR_ROW}>
         <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-        <div className="min-w-0 flex-1">{bar}</div>
+        <div className="flex min-w-0 flex-1 items-center gap-2">{bar}</div>
+        <NewButton label="新建缺陷" onClick={() => navigate(`/product-agent/p/${productId}/defect/new`)} />
       </div>
       {items.length === 0 ? (
         <EmptyHint text="没有与你相关的缺陷。你是处理人或上报人的缺陷会出现在这里；点「新建缺陷」可创建新条目。" />
@@ -794,31 +783,55 @@ function DefectsTab({ productId }: { productId: string }) {
 function NewButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
-      className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/15 px-3 text-xs text-cyan-200 hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-40"
     >
-      <Plus size={15} /> {label}
+      <Plus size={14} /> {label}
+    </button>
+  );
+}
+
+function ToolbarSecondaryButton({
+  onClick,
+  disabled,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-white/10 px-2.5 text-xs text-white/60 hover:bg-white/5 hover:text-white disabled:opacity-40"
+    >
+      {children}
     </button>
   );
 }
 
 function ViewToggle({ view, setView }: { view: 'list' | 'board'; setView: (v: 'list' | 'board') => void }) {
   return (
-    <>
+    <div className="inline-flex h-8 shrink-0 items-center rounded-lg border border-white/10 p-0.5">
       <button
+        type="button"
         onClick={() => setView('list')}
-        className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs ${view === 'list' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
+        className={`flex h-7 items-center gap-1 rounded-md px-2 text-xs ${view === 'list' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
       >
         <List size={13} /> 列表
       </button>
       <button
+        type="button"
         onClick={() => setView('board')}
-        className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs ${view === 'board' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
+        className={`flex h-7 items-center gap-1 rounded-md px-2 text-xs ${view === 'board' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
       >
         <LayoutGrid size={13} /> 看板
       </button>
-    </>
+    </div>
   );
 }
 

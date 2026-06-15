@@ -35,7 +35,7 @@ import {
   type TableSelectionProps,
 } from './listSelection';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
-import { OVERVIEW_LIST_SEARCH_BOX } from './listFilter';
+import { OVERVIEW_LIST_SEARCH_BOX, PRODUCT_LIST_TOOLBAR_ROW } from './listFilter';
 import { filterByTracked } from './productRecordTrackStorage';
 import { InitiationMeetingRoundsEditor } from './InitiationWorkflowPanel';
 import {
@@ -130,29 +130,25 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
       <Tab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</Tab>
     </div>
     {tab === 'release' ? <>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className={PRODUCT_LIST_TOOLBAR_ROW}>
         <RecordToolbar query={query} onQueryChange={setQuery} ownerId={releaseOwnerId} onOwnerChange={setReleaseOwnerId}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
-        <div className="flex flex-wrap items-center gap-2">
-          <Primary onClick={() => navigate(`/product-agent/p/${productId}/release/new`)} disabled={approved.length === 0}><Plus size={14} />申领正式版本号</Primary>
-          <button onClick={() => navigate(`/product-agent/p/${productId}/release/new?temporary=1`)} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">临时优化需求</button>
-          <span className="group relative"><HelpCircle size={15} className="cursor-help text-white/35" />
-            <span className="invisible absolute right-0 top-6 z-20 w-72 rounded-lg border border-white/10 bg-[#181a20] p-3 text-xs leading-5 text-white/65 shadow-xl group-hover:visible">
-              月度常规计划外、紧急且工作量较小的优化。产品工作量原则上不超过 3 天，研发不超过 5 天；无需 T 号，按小版本自动审批。
-            </span>
+        <Primary onClick={() => navigate(`/product-agent/p/${productId}/release/new`)} disabled={approved.length === 0}><Plus size={14} />申领正式版本号</Primary>
+        <button type="button" onClick={() => navigate(`/product-agent/p/${productId}/release/new?temporary=1`)} className="inline-flex h-8 shrink-0 items-center rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 text-xs text-amber-200">临时优化需求</button>
+        <span className="group relative shrink-0"><HelpCircle size={15} className="cursor-help text-white/35" />
+          <span className="invisible absolute right-0 top-6 z-20 w-72 rounded-lg border border-white/10 bg-[#181a20] p-3 text-xs leading-5 text-white/65 shadow-xl group-hover:visible">
+            月度常规计划外、紧急且工作量较小的优化。产品工作量原则上不超过 3 天，研发不超过 5 天；无需 T 号，按小版本自动审批。
           </span>
-        </div>
+        </span>
       </div>
       <ReleaseTable productId={productId} productName={productName} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
     </> : <>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className={PRODUCT_LIST_TOOLBAR_ROW}>
         <RecordToolbar query={query} onQueryChange={setQuery} scope={recordScope} onScopeChange={setRecordScope}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
-        <div className="flex gap-2">
-          <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
-        </div>
+        <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
       </div>
       <InitiationTable
         productId={productId}
@@ -701,9 +697,10 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
   trackedOnly?: boolean;
   onTrackedOnlyChange?: (value: boolean) => void;
 }) {
-  const filterClassName = 'h-8 rounded-lg border border-white/10 bg-[#111318] px-3 text-xs text-white/75 outline-none focus:border-cyan-400/50';
-  return <div className="flex flex-wrap items-center gap-2">
-    <div className={OVERVIEW_LIST_SEARCH_BOX}>
+  const filterClassName = 'h-8 shrink-0 rounded-lg border border-white/10 bg-[#111318] px-3 text-xs text-white/75 outline-none focus:border-cyan-400/50';
+  return (
+    <div className={`${PRODUCT_LIST_TOOLBAR_ROW} min-w-0 flex-1`}>
+      <div className={`${OVERVIEW_LIST_SEARCH_BOX} shrink-0`}>
       <Search size={14} className="shrink-0 text-white/35" />
       <input
         value={query}
@@ -735,7 +732,8 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
       {statuses.map((value) => <option key={value} value={value}>{STATUS_LABEL[value] ?? value}</option>)}
     </select>
     {onTrackedOnlyChange && <TrackedFilterToggle active={trackedOnly ?? false} onChange={onTrackedOnlyChange} />}
-  </div>;
+    </div>
+  );
 }
 
 function Stepper({ step }: { step: number }) { return <div className="mb-6 flex">{['基础信息', 'Agent 评审', '立项决策'].map((label, i) => <div key={label} className="flex flex-1 items-center last:flex-none"><div className={`flex items-center gap-2 text-xs ${step >= i + 1 ? 'text-cyan-300' : 'text-white/30'}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full border ${step > i + 1 ? 'border-cyan-400 bg-cyan-400 text-slate-950' : step === i + 1 ? 'border-cyan-400' : 'border-white/15'}`}>{step > i + 1 ? <CheckCircle2 size={15} /> : i + 1}</span>{label}</div>{i < 2 && <div className={`mx-3 h-px flex-1 ${step > i + 1 ? 'bg-cyan-400' : 'bg-white/10'}`} />}</div>)}</div>; }
@@ -814,7 +812,7 @@ function RequirementChecks({ requirements, selected, onChange }: {
     </div>
   </div>;
 }
-function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>; }
+function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-cyan-400 px-3 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>; }
 function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/65">{props.children}</button>; }
 function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40'}`}>{children}</button>; }
 function Table({ headers, children, selection }: {

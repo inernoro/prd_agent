@@ -21,7 +21,7 @@ export function TrackedFilterToggle({
     <button
       type="button"
       onClick={() => onChange(!active)}
-      className={`flex h-8 items-center gap-1 px-2.5 rounded-md text-xs border transition-colors ${
+      className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2.5 text-xs transition-colors ${
         active
           ? 'bg-amber-500/15 text-amber-200 border-amber-500/35'
           : 'text-white/50 border-white/10 hover:bg-white/5 hover:text-amber-200/90'

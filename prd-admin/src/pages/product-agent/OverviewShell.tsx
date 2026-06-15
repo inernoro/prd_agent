@@ -66,7 +66,7 @@ import type { Customer, Product } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel, readDefectPriorityGrade, readDefectSeverityLevel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
-import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
+import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, PRODUCT_LIST_TOOLBAR_ROW, type FilterFieldDef } from './listFilter';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
 
@@ -398,7 +398,7 @@ function MineToggle({ mine, setMine }: { mine: boolean; setMine: (v: boolean) =>
   return (
     <button
       onClick={() => setMine(!mine)}
-      className={`px-2.5 py-1 rounded-md text-xs border ${mine ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+      className={`inline-flex h-8 shrink-0 items-center rounded-md border px-2.5 text-xs ${mine ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
     >
       我负责的
     </button>
@@ -413,7 +413,7 @@ const SEVERITY_BADGE = (label: string) => (
 );
 function AdminImportButton({ onClick }: { onClick: () => void }) {
   return (
-    <button onClick={onClick} className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20">
+    <button type="button" onClick={onClick} className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 text-xs text-cyan-200 hover:bg-cyan-500/20">
       <Upload size={13} /> 导入历史数据
     </button>
   );
@@ -520,10 +520,10 @@ function RequirementsTable({
   if (loading) return <MapSectionLoader text="正在加载需求…" />;
   return (
     <div className="w-full min-w-0">
-      <div className="flex items-center gap-2 flex-wrap mb-3">
+      <div className={`${PRODUCT_LIST_TOOLBAR_ROW} mb-3`}>
         <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-        <div className="flex-1 min-w-0">{bar}</div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex min-w-0 flex-1 items-center gap-2">{bar}</div>
+        <div className="flex shrink-0 items-center gap-2">
           <MineToggle mine={mine} setMine={setMine} />
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
         </div>
@@ -688,10 +688,10 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
     <div className="w-full min-w-0">
-      <div className="flex items-center gap-2 flex-wrap mb-3">
+      <div className={`${PRODUCT_LIST_TOOLBAR_ROW} mb-3`}>
         <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
-        <div className="flex-1 min-w-0">{bar}</div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex min-w-0 flex-1 items-center gap-2">{bar}</div>
+        <div className="flex shrink-0 items-center gap-2">
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
         </div>
       </div>

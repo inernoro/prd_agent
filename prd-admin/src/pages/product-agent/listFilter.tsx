@@ -11,7 +11,11 @@ import { Search, SlidersHorizontal, X } from 'lucide-react';
 
 /** 与 ProductsSection 搜索框同宽（跨产品列表工具栏 SSOT） */
 export const OVERVIEW_LIST_SEARCH_BOX =
-  'flex flex-1 min-w-[280px] max-w-xl items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 h-8 transition-colors focus-within:border-cyan-500/40 focus-within:bg-white/[0.07]';
+  'flex flex-1 min-w-[160px] max-w-md items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 h-8 transition-colors focus-within:border-cyan-500/40 focus-within:bg-white/[0.07]';
+
+/** 产品列表工具栏：搜索 + 筛选 + 操作按钮同一行，窄屏横向滚动 */
+export const PRODUCT_LIST_TOOLBAR_ROW =
+  'shrink-0 flex flex-nowrap items-center gap-2 overflow-x-auto';
 
 export interface FilterFieldDef<T> {
   key: string;
