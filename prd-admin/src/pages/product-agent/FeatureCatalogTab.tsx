@@ -248,6 +248,7 @@ export function FeatureCatalogTab({
   );
 
   const selectedNode = selectedId ? scopedFeatures.find((f) => f.id === selectedId) : null;
+  const treeVisible = selectedNode != null;
 
   const toggleExpand = (id: string) => {
     setExpanded((prev) => {
@@ -283,40 +284,40 @@ export function FeatureCatalogTab({
         </div>
       )}
       <div className="flex h-full min-h-0 flex-1">
-        <aside className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-white/10 bg-[#121317]">
-          <div className="shrink-0 border-b border-white/10 px-3 py-2">
-            <div className="flex items-center gap-1.5 text-[11px] text-white/40">
-              <FolderTree size={13} /> 功能目录
-            </div>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-2" style={{ overscrollBehavior: 'contain' }}>
-            <button
-              type="button"
-              onClick={() => setSelectedId(null)}
-              className={`mb-1 flex w-full items-center rounded-md px-2 py-1.5 text-left text-xs ${
-                selectedId === null ? 'bg-cyan-500/15 text-cyan-100' : 'text-white/60 hover:bg-white/5'
-              }`}
-            >
-              全部功能
-              <span className="ml-auto text-[10px] text-white/30">{scopedFeatures.length}</span>
-            </button>
-            {tree.length === 0 ? (
-              <div className="px-2 py-6 text-center text-[11px] text-white/30">
-                暂无目录。可「导入目录结构」或「新建功能」。
+        {treeVisible && (
+          <aside className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-white/10 bg-[#121317]">
+            <div className="shrink-0 border-b border-white/10 px-3 py-2">
+              <div className="flex items-center gap-1.5 text-[11px] text-white/40">
+                <FolderTree size={13} /> 功能目录
               </div>
-            ) : tree.map((node) => (
-              <FeatureTreeNodeRow
-                key={node.feature.id}
-                node={node}
-                depth={0}
-                selectedId={selectedId}
-                expanded={expanded}
-                onSelect={selectNode}
-                onToggle={toggleExpand}
-              />
-            ))}
-          </div>
-        </aside>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-2" style={{ overscrollBehavior: 'contain' }}>
+              <button
+                type="button"
+                onClick={() => setSelectedId(null)}
+                className="mb-1 flex w-full items-center rounded-md px-2 py-1.5 text-left text-xs text-white/60 hover:bg-white/5"
+              >
+                全部功能
+                <span className="ml-auto text-[10px] text-white/30">{scopedFeatures.length}</span>
+              </button>
+              {tree.length === 0 ? (
+                <div className="px-2 py-6 text-center text-[11px] text-white/30">
+                  暂无目录。可「导入目录结构」或「新建功能」。
+                </div>
+              ) : tree.map((node) => (
+                <FeatureTreeNodeRow
+                  key={node.feature.id}
+                  node={node}
+                  depth={0}
+                  selectedId={selectedId}
+                  expanded={expanded}
+                  onSelect={selectNode}
+                  onToggle={toggleExpand}
+                />
+              ))}
+            </div>
+          </aside>
+        )}
 
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-[#0f1014]">
           <div className="shrink-0 border-b border-white/10 px-4 py-2.5">
@@ -326,7 +327,7 @@ export function FeatureCatalogTab({
             <div className="text-[11px] text-white/40 mt-0.5">
               {selectedNode
                 ? `展示「${selectedNode.title}」及其下所有层级共 ${visibleRows.length} 条记录`
-                : `共 ${visibleRows.length} 条功能记录`}
+                : `默认展示全部 ${visibleRows.length} 条功能记录；点击记录后进入对应功能清单`}
             </div>
           </div>
           <div className="shrink-0 flex flex-nowrap items-center gap-2 border-b border-white/10 px-4 py-2.5 overflow-x-auto">
@@ -425,7 +426,7 @@ export function FeatureCatalogTab({
                   {visibleRows.map((f) => (
                     <tr
                       key={f.id}
-                      onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
+                      onClick={() => selectNode(f.id)}
                       className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')}
                     >
                       <ListTableSelectionCell selection={tableSelection} id={f.id} />
