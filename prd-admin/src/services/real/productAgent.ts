@@ -22,6 +22,7 @@ import type {
   WorkflowDefinition,
   ProductEntityType,
   ProductCategory,
+  ProductStructureNode,
   RequirementType,
   ProductGradeOption,
   GradeDimension,
@@ -251,6 +252,24 @@ export function updateFeature(featureId: string, body: Partial<Feature>) {
 }
 export function deleteFeature(featureId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/features/${featureId}`, { method: 'DELETE' });
+}
+
+// ── 产品结构（功能模块/能力骨架树）+ 功能清单挂载 ──
+export function listProductStructure(productId: string) {
+  return apiRequest<ListWrap<ProductStructureNode>>(`/api/product/products/${productId}/structure`);
+}
+export function upsertProductStructureNode(
+  productId: string,
+  body: { id?: string; parentId?: string | null; name: string; description?: string | null; nodeType?: string | null; sortOrder?: number },
+) {
+  return apiRequest<ProductStructureNode>(`/api/product/products/${productId}/structure`, { method: 'POST', body });
+}
+export function deleteProductStructureNode(nodeId: string) {
+  return apiRequest<{ deleted: boolean; deletedCount: number }>(`/api/product/structure/${nodeId}`, { method: 'DELETE' });
+}
+/** 设置/取消功能在结构树上的挂载（structureNodeId 传 null = 取消归类）。 */
+export function setFeatureStructureNode(featureId: string, structureNodeId: string | null) {
+  return apiRequest<Feature>(`/api/product/features/${featureId}/structure-node`, { method: 'PUT', body: { structureNodeId } });
 }
 
 // ── 功能版本化 ──

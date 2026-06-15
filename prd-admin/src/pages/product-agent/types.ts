@@ -57,6 +57,17 @@ export interface ProductGradeOption {
   isBuiltin: boolean;
 }
 
+/** 产品结构节点（功能模块/能力骨架树；扁平列表，靠 parentId 自建树） */
+export interface ProductStructureNode {
+  id: string;
+  productId: string;
+  parentId?: string | null;
+  name: string;
+  description?: string | null;
+  nodeType?: string | null;
+  sortOrder: number;
+}
+
 /** 详情描述模板（按对象类型，富文本骨架，方便一键套用） */
 export interface DescTemplate {
   id: string;
@@ -300,6 +311,8 @@ export interface Feature {
   remark?: string | null;
   grade: ItemGrade;
   parentId?: string | null;
+  /** 挂载到的产品结构节点 ID（功能模块/能力骨架树；空=未归类） */
+  structureNodeId?: string | null;
   requirementIds: string[];
   currentState?: string | null;
   templateId?: string | null;

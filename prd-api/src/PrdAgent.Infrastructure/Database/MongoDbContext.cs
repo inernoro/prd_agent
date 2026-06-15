@@ -378,6 +378,7 @@ public class MongoDbContext
     public IMongoCollection<Requirement> Requirements => _database.GetCollection<Requirement>("requirements");
     public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
     public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");
+    public IMongoCollection<ProductStructureNode> ProductStructureNodes => _database.GetCollection<ProductStructureNode>("product_structure_nodes");
     public IMongoCollection<Customer> Customers => _database.GetCollection<Customer>("customers");
     public IMongoCollection<CustomerFollowUp> CustomerFollowUps => _database.GetCollection<CustomerFollowUp>("customer_follow_ups");
     public IMongoCollection<MarketingConsultReport> MarketingConsultReports => _database.GetCollection<MarketingConsultReport>("marketing_consult_reports");

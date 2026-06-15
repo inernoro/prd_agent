@@ -2518,6 +2518,127 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    // ════════════════════════ 产品结构（功能模块/能力骨架树）ProductStructureNode ════════════════════════
+
+    /// <summary>该产品全部结构节点（扁平列表，含 parentId/sortOrder，前端自建树）。读=登录可访问产品即可。</summary>
+    [HttpGet("products/{productId}/structure")]
+    public async Task<IActionResult> ListProductStructure(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var items = await _db.ProductStructureNodes.Find(n => n.ProductId == productId && !n.IsDeleted)
+            .SortBy(n => n.SortOrder).ThenBy(n => n.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新结构节点（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("products/{productId}/structure")]
+    public async Task<IActionResult> UpsertProductStructureNode(string productId, [FromBody] UpsertProductStructureNodeRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "节点名称不能为空"));
+        var name = request.Name.Trim();
+        var parentId = string.IsNullOrWhiteSpace(request.ParentId) ? null : request.ParentId.Trim();
+        if (parentId != null && !await _db.ProductStructureNodes.Find(n => n.Id == parentId && n.ProductId == productId && !n.IsDeleted).AnyAsync())
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "父节点不属于当前产品或已删除"));
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.ProductStructureNodes.Find(n => n.Id == request.Id && n.ProductId == productId && !n.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "结构节点不存在"));
+            if (parentId == request.Id)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "父节点不能是自身"));
+            var u = Builders<ProductStructureNode>.Update
+                .Set(n => n.Name, name)
+                .Set(n => n.Description, request.Description?.Trim())
+                .Set(n => n.NodeType, string.IsNullOrWhiteSpace(request.NodeType) ? null : request.NodeType.Trim())
+                .Set(n => n.ParentId, parentId)
+                .Set(n => n.SortOrder, request.SortOrder)
+                .Set(n => n.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductStructureNodes.UpdateOneAsync(n => n.Id == request.Id, u);
+            var updated = await _db.ProductStructureNodes.Find(n => n.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var node = new ProductStructureNode
+        {
+            ProductId = productId,
+            ParentId = parentId,
+            Name = name,
+            Description = request.Description?.Trim(),
+            NodeType = string.IsNullOrWhiteSpace(request.NodeType) ? null : request.NodeType.Trim(),
+            SortOrder = request.SortOrder,
+            OwnerId = GetUserId(),
+        };
+        await _db.ProductStructureNodes.InsertOneAsync(node);
+        return Ok(ApiResponse<object>.Ok(node));
+    }
+
+    /// <summary>删除结构节点（软删除，需管理权限）。级联软删该节点及全部后代，并把挂在这些节点上的功能 StructureNodeId 置空。</summary>
+    [HttpDelete("structure/{nodeId}")]
+    public async Task<IActionResult> DeleteProductStructureNode(string nodeId)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var node = await _db.ProductStructureNodes.Find(n => n.Id == nodeId && !n.IsDeleted).FirstOrDefaultAsync();
+        if (node == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "结构节点不存在"));
+        if (await FindAccessibleProductAsync(node.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        // 收集该节点及其全部后代（同产品内按 ParentId 自底向上展开）
+        var all = await _db.ProductStructureNodes.Find(n => n.ProductId == node.ProductId && !n.IsDeleted).ToListAsync();
+        var childrenByParent = all.Where(n => n.ParentId != null)
+            .GroupBy(n => n.ParentId!)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToList());
+        var toDelete = new List<string>();
+        var queue = new Queue<string>();
+        queue.Enqueue(nodeId);
+        while (queue.Count > 0)
+        {
+            var cur = queue.Dequeue();
+            toDelete.Add(cur);
+            if (childrenByParent.TryGetValue(cur, out var kids))
+                foreach (var kid in kids) queue.Enqueue(kid);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.ProductStructureNodes.UpdateManyAsync(
+            n => toDelete.Contains(n.Id),
+            Builders<ProductStructureNode>.Update.Set(n => n.IsDeleted, true).Set(n => n.UpdatedAt, now));
+        // 解除指向被删节点的功能挂载，避免悬挂引用
+        await _db.Features.UpdateManyAsync(
+            f => f.StructureNodeId != null && toDelete.Contains(f.StructureNodeId),
+            Builders<Feature>.Update.Set(f => f.StructureNodeId, null).Set(f => f.UpdatedAt, now));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true, deletedCount = toDelete.Count }));
+    }
+
+    /// <summary>设置 / 取消功能在结构树上的挂载（需管理权限）。structureNodeId 传 null = 取消归类。</summary>
+    [HttpPut("features/{featureId}/structure-node")]
+    public async Task<IActionResult> SetFeatureStructureNode(string featureId, [FromBody] SetFeatureStructureNodeRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var feature = await _db.Features.Find(f => f.Id == featureId && !f.IsDeleted).FirstOrDefaultAsync();
+        if (feature == null || await FindAccessibleProductAsync(feature.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "功能不存在或无权访问"));
+
+        var nodeId = string.IsNullOrWhiteSpace(request.StructureNodeId) ? null : request.StructureNodeId.Trim();
+        if (nodeId != null && !await _db.ProductStructureNodes.Find(n => n.Id == nodeId && n.ProductId == feature.ProductId && !n.IsDeleted).AnyAsync())
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "结构节点不属于当前产品或已删除"));
+
+        await _db.Features.UpdateOneAsync(f => f.Id == featureId,
+            Builders<Feature>.Update.Set(f => f.StructureNodeId, nodeId).Set(f => f.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.Features.Find(f => f.Id == featureId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
     // ════════════════════════ 通用等级目录 ProductGradeOption ════════════════════════
 
     private async Task EnsureGradeOptionsSeededAsync(string dimension, string entityType)
@@ -7066,6 +7187,21 @@ public class UpsertRequirementTypeRequest
     public string Name { get; set; } = string.Empty;
     public string? Definition { get; set; }
     public int SortOrder { get; set; }
+}
+
+public class UpsertProductStructureNodeRequest
+{
+    public string? Id { get; set; }
+    public string? ParentId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? NodeType { get; set; }
+    public int SortOrder { get; set; }
+}
+
+public class SetFeatureStructureNodeRequest
+{
+    public string? StructureNodeId { get; set; }
 }
 
 public class UpsertGradeOptionRequest
