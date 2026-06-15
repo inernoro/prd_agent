@@ -35,10 +35,28 @@ public class WorkflowValidationService
         }
 
         NormalizeSlots(generated.Nodes);
+        NormalizeConfigPlaceholders(generated.Nodes);
         result.WireNotes.AddRange(AutoWireEdges(generated));
         result.Issues.AddRange(ValidateStructure(generated));
         result.RequiredInputs.AddRange(ScanMissingInputs(generated));
         return result;
+    }
+
+    /// <summary>
+    /// 把 config 字符串里带空格的占位 {{ host }} 规范化成运行时认的精确形式 {{host}}。
+    /// 否则 CapsuleExecutor.ReplaceVariables 只替换精确 {{host}}，会带着字面 {{ host }} 跑。
+    /// </summary>
+    private static void NormalizeConfigPlaceholders(List<WorkflowNode> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            if (node.Config == null) continue;
+            foreach (var k in node.Config.Keys.ToList())
+            {
+                if (node.Config[k] is string str && str.Contains("{{"))
+                    node.Config[k] = VariableRefRegex.Replace(str, m => "{{" + m.Groups[1].Value + "}}");
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────

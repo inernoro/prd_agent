@@ -394,6 +394,20 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void SpacedPlaceholder_IsNormalizedToExactForm()
+    {
+        // {{ host }}（带空格）应被规范化成运行时认的 {{host}}，并仍 surface host
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new() { Node("h1", CapsuleTypes.HttpRequest, new() { ["url"] = "https://{{ host }}/api", ["method"] = "GET" }) },
+        };
+
+        var r = _svc.Process(g);
+        Assert.Equal("https://{{host}}/api", g.Nodes![0].Config["url"]);
+        Assert.Contains(r.RequiredInputs, x => x.Key == "host" && x.Scope == "variable");
+    }
+
+    [Fact]
     public void EmbeddedUndeclaredVariable_BecomesVariableInput()
     {
         // url 内嵌未声明变量 {{host}} → 应 surface 成可填变量，而不是当已填静默通过
