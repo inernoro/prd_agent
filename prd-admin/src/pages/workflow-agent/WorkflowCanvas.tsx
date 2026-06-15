@@ -823,9 +823,11 @@ function CanvasInner({
     }
     // 更新画布节点和边
     if (generated.nodes || generated.edges) {
-      // 变量：模型给的非空数组才采纳；空/缺省时保留现有 varDefs（含缺项卡填入的默认值，如 cookie），
-      // 避免「模型回空数组」把已填值清掉、保存时丢变量
-      const newVarDefs = (generated.variables && generated.variables.length > 0) ? generated.variables : varDefs;
+      // 变量：区分「显式空数组 []」与「整字段省略 undefined」——
+      // 显式 [] = 模型明确说没有变量（采纳，丢掉旧的，避免残留 stale MISSING_VARIABLE）；
+      // 省略 = 不动现有 varDefs（保留缺项卡填入的默认值，如 cookie）。
+      // 缺项卡填入的值会进 generated.variables（非空），故两种语义都不丢已填值。
+      const newVarDefs = generated.variables !== undefined ? generated.variables : varDefs;
       const updatedWf: Workflow = {
         ...workflow,
         name: generated.name ?? workflow.name,

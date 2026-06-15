@@ -45,6 +45,16 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void LegacyAliasNodeType_IsFlagged()
+    {
+        // data-collector 是旧别名，注册表无 meta/schema → 视为不可用，应报问题交自愈
+        var g = new WorkflowChatGenerated { Nodes = new() { Node("n1", "data-collector") } };
+        var r = _svc.Process(g);
+        Assert.False(r.Valid);
+        Assert.Contains(r.Issues, i => i.Target == "n1");
+    }
+
+    [Fact]
     public void DisabledCapsule_ProducesIssue()
     {
         // timer 标了 DisabledReason（开发中）→ 应判不可用

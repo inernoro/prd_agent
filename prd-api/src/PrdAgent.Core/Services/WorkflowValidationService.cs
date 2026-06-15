@@ -194,8 +194,9 @@ public class WorkflowValidationService
             var meta = CapsuleTypeRegistry.Get(node.NodeType);
             if (meta == null)
             {
-                if (!WorkflowNodeTypes.All.Contains(node.NodeType))
-                    issues.Add(new(node.NodeId, $"未知舱类型「{node.NodeType}」，请改用可用舱"));
+                // 注册表里没有的类型一律视为不可用（含 data-collector 等旧别名——它们在注册表里
+                // 无 meta/schema/slots，不是可运行舱），交自愈替换为真正的舱
+                issues.Add(new(node.NodeId, $"未知或已废弃舱类型「{node.NodeType}」，请改用可用舱"));
                 continue;
             }
             if (!string.IsNullOrEmpty(meta.DisabledReason))

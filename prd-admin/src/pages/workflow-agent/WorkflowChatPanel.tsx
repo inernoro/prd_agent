@@ -226,14 +226,16 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
   useEffect(() => {
     if (!initialInput) return;
     onInitialInputConsumed?.();
-    if (autoSend && !autoSentRef.current) {
+    // 只有「确实能发出去」才置 autoSent 并发送，否则退回预填——避免空文本/正在流式时
+    // 既没发消息又把历史加载挡掉，留下空面板无可重试
+    if (autoSend && !autoSentRef.current && initialInput.trim() && !isStreaming) {
       autoSentRef.current = true;
       void doSend(initialInput, '');
     } else {
       setInput(initialInput);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
-  }, [initialInput, autoSend, onInitialInputConsumed, doSend]);
+  }, [initialInput, autoSend, isStreaming, onInitialInputConsumed, doSend]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
