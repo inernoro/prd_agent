@@ -34,6 +34,7 @@ import {
   BarChart3,
   Send,
   Network,
+  MoreHorizontal,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -45,6 +46,7 @@ import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection'
 import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
+import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
@@ -249,6 +251,25 @@ function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChan
         })}
       </div>
     </div>
+  );
+}
+
+// 顶栏「更多」下拉菜单项
+function MoreItem({ icon, label, onClick, disabled, dataTourId }: {
+  icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean; dataTourId?: string;
+}) {
+  return (
+    <button
+      type="button"
+      data-tour-id={dataTourId}
+      onClick={onClick}
+      disabled={disabled}
+      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] transition-colors hover:bg-white/6 disabled:opacity-50"
+      style={{ color: 'var(--text-primary)' }}
+    >
+      <span className="text-token-muted">{icon}</span>
+      {label}
+    </button>
   );
 }
 
@@ -771,6 +792,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   /** 同步中心 / 发送到对端弹窗（本库范围） */
   const [showSyncCenter, setShowSyncCenter] = useState(false);
   const [showSendToPeerDetail, setShowSendToPeerDetail] = useState(false);
+  /** 本库是否有进行中的同步（轮询运行台账得出，驱动「同步」按钮动起来） */
+  const [syncActive, setSyncActive] = useState(false);
+  /** 顶栏「更多」下拉 */
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -802,6 +828,31 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
     }
     setLoading(false);
   }, [storeId]);
+
+  // 轮询本库运行台账：有 syncing 记录时让顶栏「同步」按钮动起来（含对端推来的 incoming）。
+  // 4s 一刷足够即时；无任务时也保持 4s（payload 很小），关页自动停。
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      const res = await listPeerSyncRuns('document-store', storeId);
+      if (alive && res.success && res.data) {
+        setSyncActive((res.data.items || []).some(r => r.status === 'syncing'));
+      }
+    };
+    void check();
+    const t = window.setInterval(check, 4000);
+    return () => { alive = false; window.clearInterval(t); };
+  }, [storeId]);
+
+  // 「更多」下拉点外关闭
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [moreOpen]);
 
   // 文档列表排序：服务端持久化（换设备 / 重登录 / 刷新都保持）。store.defaultSortMode 为 SSOT。
   const handleChangeSort = useCallback(async (mode: DocBrowserSortMode) => {
@@ -1104,6 +1155,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
     );
   }
 
+  // 同步进行中：本库有 syncing 运行记录，或服务端最近状态为 syncing → 按钮动起来
+  const syncBusy = syncActive || store.peerSyncStatus === 'syncing';
+
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden"
       onDragEnter={handleDragEnter} onDragLeave={handleDragLeave}
@@ -1129,67 +1183,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         }
         actions={
           <div className="flex items-center gap-2">
-            {/* 同步中心入口：有任务进行中时转圈「动起来」，点击进入进行中/发出去/收进来/历史 + 强制对齐 */}
+            {/* 同步中心入口：有任务进行中时转圈 + 脉冲 + 文案「同步中…」，点击进入四视图 + 强制对齐 */}
             <button
               onClick={() => setShowSyncCenter(true)}
-              className="surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all"
-              style={store.peerSyncStatus === 'error' ? { color: 'rgba(252,165,165,0.96)' } : store.peerSyncStatus === 'syncing' ? { color: 'rgba(252,211,77,0.96)' } : undefined}
+              className={`surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all ${syncBusy ? 'animate-pulse' : ''}`}
+              style={syncBusy
+                ? { color: 'rgba(252,211,77,0.98)', background: 'rgba(245,158,11,0.14)', boxShadow: 'inset 0 0 0 1px rgba(245,158,11,0.42)' }
+                : store.peerSyncStatus === 'error' ? { color: 'rgba(252,165,165,0.96)' } : undefined}
               title="同步中心：进行中 / 发出去 / 收进来 / 历史，以及强制对齐（远端为准 / 本地为准 / 同时对准）"
             >
-              {store.peerSyncStatus === 'syncing' ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
-              同步
+              {syncBusy ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
+              {syncBusy ? '同步中…' : '同步'}
             </button>
-            {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示（右上角） */}
+            {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示 */}
             <StoreSyncBadge storeId={store.id} onManage={onManageSync} />
-            {/* 发布到智识殿堂开关 */}
-            {store.isPublic ? (
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => onOpenLibrary(store.id)}
-                  className="surface-action-accent flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all"
-                  title="已发布到智识殿堂，点击前往公开页"
-                >
-                  <Globe size={11} />
-                  已发布
-                  <ArrowUpRight size={11} />
-                </button>
-                <button
-                  onClick={handleTogglePublish}
-                  disabled={publishing}
-                  className="surface-action flex h-7 cursor-pointer items-center gap-1 rounded-[8px] px-2 text-[11px] font-semibold transition-all disabled:opacity-60"
-                  title="取消发布"
-                >
-                  {publishing ? <MapSpinner size={11} /> : <GlobeLock size={11} />}
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={handleTogglePublish}
-                disabled={publishing}
-                className="surface-action-accent flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all disabled:opacity-60"
-                title="发布到智识殿堂，让更多人看到"
-                data-tour-id="document-store-publish"
-              >
-                {publishing ? <MapSpinner size={11} /> : <GlobeLock size={11} />}
-                发布到智识殿堂
-              </button>
-            )}
-            <Button
-              variant="secondary"
-              size="xs"
-              onClick={() => navigate(`/document-store/${storeId}/universe`)}
-              title="打开知识宇宙图：Obsidian 风格力导向布局，看本库文档之间的双链关系网"
-            >
-              <Network size={13} /> 关系图谱
-            </Button>
-            <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)} title="查看本知识库的访客统计报表">
-              <BarChart3 size={13} /> 统计
-            </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
-            </Button>
-            <Button variant="secondary" size="xs" onClick={() => setShowSubscribe(true)}>
-              <Rss size={13} /> 添加订阅
             </Button>
             <Button
               variant="primary"
@@ -1201,6 +1210,30 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
               {uploading ? '上传中…' : '上传文档'}
             </Button>
+            {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
+            <div className="relative" ref={moreRef}>
+              <Button variant="secondary" size="xs" onClick={() => setMoreOpen(o => !o)} title="更多操作">
+                <MoreHorizontal size={14} /> 更多
+              </Button>
+              {moreOpen && (
+                <div
+                  className="absolute right-0 top-[34px] z-[120] min-w-[200px] rounded-[10px] py-1 shadow-lg"
+                  style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}
+                >
+                  {store.isPublic ? (
+                    <>
+                      <MoreItem icon={<ArrowUpRight size={14} />} label="前往公开页" onClick={() => { setMoreOpen(false); onOpenLibrary(store.id); }} />
+                      <MoreItem icon={<GlobeLock size={14} />} label={publishing ? '处理中…' : '取消发布'} disabled={publishing} onClick={handleTogglePublish} />
+                    </>
+                  ) : (
+                    <MoreItem icon={<Globe size={14} />} label={publishing ? '处理中…' : '发布到智识殿堂'} disabled={publishing} onClick={handleTogglePublish} dataTourId="document-store-publish" />
+                  )}
+                  <MoreItem icon={<Network size={14} />} label="关系图谱" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/universe`); }} />
+                  <MoreItem icon={<BarChart3 size={14} />} label="访客统计" onClick={() => { setMoreOpen(false); setShowViewers(true); }} />
+                  <MoreItem icon={<Rss size={14} />} label="添加订阅" onClick={() => { setMoreOpen(false); setShowSubscribe(true); }} />
+                </div>
+              )}
+            </div>
           </div>
         }
       />
