@@ -72,6 +72,9 @@ public static class CcasEquipmentStyles
         new("3d-render",
             "3D 渲染",
             "high-quality 3D rendered industrial equipment, octane render, studio lighting, neutral grey background, photo-realistic textures, no text, no watermark"),
+        new("user-upload",
+            "用户上传",
+            "user uploaded equipment photograph or illustration"),
     };
 
     public static StylePreset? FindByKey(string key)
