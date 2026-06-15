@@ -1780,9 +1780,11 @@ public class WorkflowAgentController : ControllerBase
                 requiredInputs = proc.RequiredInputs,
             });
 
-            if (isNew)
+            // 仅当结构校验通过才落库自动创建；自愈仍失败的不持久化残缺工作流，
+            // 退回 workflow_generated 草稿让用户看到问题、确认或继续修（修改场景同理）。
+            if (isNew && proc.Valid)
             {
-                // 新建场景：直接创建工作流（已规范化插槽 + 自动接线）
+                // 新建场景：直接创建工作流（已规范化插槽 + 自动接线 + 校验通过）
                 var workflow = new Workflow
                 {
                     Name = generated.Name ?? "AI 生成的工作流",
@@ -1820,7 +1822,7 @@ public class WorkflowAgentController : ControllerBase
             }
             else
             {
-                // 修改场景：返回 generated 供前端确认
+                // 修改场景，或新建但校验未通过：返回 generated 草稿供前端确认/补齐（不落库残缺工作流）
                 await TryWriteChatSseAsync(new
                 {
                     type = "workflow_generated",

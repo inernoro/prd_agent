@@ -107,15 +107,18 @@
 
 **已落地**（`design.workflow-auto-config.md` 首期）：`WorkflowValidationService` 校验 + 自动接线 + 自愈 + 缺项扫描，对话气泡新增「已自动校验/接线/待补项」卡；已用 Playwright 直连预览域名验收（AI 一句话生成 → 「结构可执行」+ 列出 TAPD 工作空间 ID / Cookie 两项待补）。
 
-**当前边界**：
-- **缺项卡是只读清单**，不是可填表单：用户看到「补齐这 N 项」后仍需手动进对应节点配置 / 工作流变量填写，未做「就地填 → 一键写回」。Phase 2 应复用 `TemplatePickerDialog` 的字段组件做可填表单 + 提交后 patch 工作流（含 cookie 验证 / workspace 下拉 / secret 落变量）。
-- **空状态未对话化**：`WorkflowListPage` 空状态仍是「新建工作流 / 从模板」，未把「描述你想做什么」大输入框作为默认入口（Phase 3）。当前对话入口只在画布编辑器内的「AI」按钮。
-- **自动接线仅覆盖线性场景**：`AutoWireEdges` 在「零有效连线 + ≥2 节点」时按声明顺序链式连接；condition/merge 等分支/汇聚拓扑仍依赖 LLM 给出正确 edges（给错会被修正插槽，但不会自动补分支结构）。
-- **structured output 未启用**：仍靠 ```json 提取 + 自愈回路兜底，未确认 Gateway 是否支持 response_format 强制结构化（Phase 2 决策 5）。
-- **xUnit 单测已写未本地执行**：本环境无 dotnet SDK，`WorkflowValidationServiceTests`（11 例）随提交进 CI；本地校验走 CDS 静态构建（dotnet publish 通过）+ Playwright 端到端取证。
-- **requiredInputs 未持久化**：校验结果只在本次 SSE 推送，刷新/重载对话历史不带 `requiredInputs`（`WorkflowChatGenerated` 未存该字段）。
+**已落地（Phase 2 + 3，2026-06-15）**：
+- 缺项卡改为**就地可填表单**（密钥掩码），一键「补齐并应用到编辑器」把值烘焙进节点配置/变量；
+- 列表页**「一句话生成工作流」入口**：描述需求 → 建空白流进画布 → AI 自动生成（走 isNew=false 的 confirm 路径，缺项卡可填可用）；
+- 重复 nodeId 容错 + 仅校验通过才落库（PR #830 Bugbot/Codex 反馈已修）。
 
-**估时**：Phase 2 可填缺项卡 3-4h；Phase 3 空状态对话化 1-2h。
+**当前边界**：
+- **自动接线仅覆盖线性场景**：`AutoWireEdges` 在「零有效连线 + ≥2 节点」时按声明顺序链式连接；condition/merge 等分支/汇聚拓扑仍依赖 LLM 给出正确 edges（给错会被修正插槽，但不会自动补分支结构）。
+- **structured output 未启用**：仍靠 ```json 提取 + 自愈回路兜底，未确认 Gateway 是否支持 response_format 强制结构化。
+- **纯 isNew 路径的缺项卡只读**：后端 `workflow_created`（自动建流）的卡片无 `onApply` → 缺项只读。但 UI 的创建流程（列表「一句话起步」）走的是 blank-first + isNew=false 的 confirm 路径，缺项卡可填；故该只读路径用户不可达，留待将来若要支持「无 workflowId 直接建流」时补 `POST workflows/{id}/fill` 端点。
+- **requiredInputs 未持久化**：校验结果只在本次 SSE 推送，刷新/重载对话历史不带 `requiredInputs`。
+
+**估时**：自动接线分支拓扑 / structured output 各 2-3h。
 
 ---
 

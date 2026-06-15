@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   ReactFlow,
   Background,
@@ -271,6 +272,22 @@ function CanvasInner({
   // ── P4: AI 助手 ──
   const [showChatPanel, setShowChatPanel] = useState(false);
   const [chatInitialInput, setChatInitialInput] = useState<string | undefined>();
+  const [chatAutoSend, setChatAutoSend] = useState(false);
+
+  // 列表页「一句话起步」：带着 aiPrompt 进来 → 自动开面板并发送一次
+  const location = useLocation();
+  const aiPromptConsumed = useRef(false);
+  useEffect(() => {
+    const prompt = (location.state as { aiPrompt?: string } | null)?.aiPrompt;
+    if (prompt && !aiPromptConsumed.current) {
+      aiPromptConsumed.current = true;
+      setShowChatPanel(true);
+      setChatAutoSend(true);
+      setChatInitialInput(prompt);
+      // 清掉 history.state，刷新/返回不再重复发送
+      try { window.history.replaceState({}, ''); } catch { /* ignore */ }
+    }
+  }, [location.state]);
 
   // ── 右键菜单 ──
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
@@ -1238,7 +1255,8 @@ function CanvasInner({
               onApplyWorkflow={handleApplyWorkflow}
               onClose={() => setShowChatPanel(false)}
               initialInput={chatInitialInput}
-              onInitialInputConsumed={() => setChatInitialInput(undefined)}
+              autoSend={chatAutoSend}
+              onInitialInputConsumed={() => { setChatInitialInput(undefined); setChatAutoSend(false); }}
             />
           </div>
         )}

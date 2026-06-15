@@ -33,6 +33,8 @@ interface Props {
   initialInput?: string;
   /** initialInput 被消费后通知外部清空，避免重复填入 */
   onInitialInputConsumed?: () => void;
+  /** 为 true 时 initialInput 注入后自动发送一次（用于"列表页一句话起步"） */
+  autoSend?: boolean;
 }
 
 interface UiMessage {
@@ -46,7 +48,7 @@ interface UiMessage {
   timestamp: string;
 }
 
-export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initialInput, onInitialInputConsumed }: Props) {
+export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initialInput, onInitialInputConsumed, autoSend }: Props) {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [codeSnippet, setCodeSnippet] = useState('');
@@ -157,15 +159,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
       .finally(() => setLoadingHistory(false));
   }, [workflowId]);
 
-  // 外部注入初始输入（如"AI 填写"预填）
-  useEffect(() => {
-    if (initialInput) {
-      setInput(initialInput);
-      onInitialInputConsumed?.();
-      // 延迟聚焦，等 DOM 渲染完
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-  }, [initialInput, onInitialInputConsumed]);
+  const autoSentRef = useRef(false);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -189,14 +183,14 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
     }
   }, [phase]);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  const doSend = useCallback(async (rawText: string, code: string) => {
+    const text = rawText.trim();
     if (!text || isStreaming) return;
 
     const userMsg: UiMessage = {
       id: `u-${Date.now()}`,
       role: 'user',
-      content: text + (codeSnippet ? `\n\n\`\`\`\n${codeSnippet}\n\`\`\`` : ''),
+      content: text + (code ? `\n\n\`\`\`\n${code}\n\`\`\`` : ''),
       timestamp: new Date().toISOString(),
     };
 
@@ -218,10 +212,25 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
       body: {
         workflowId: workflowId || undefined,
         instruction: text,
-        codeSnippet: codeSnippet || undefined,
+        codeSnippet: code || undefined,
       },
     });
-  }, [input, codeSnippet, workflowId, isStreaming, start]);
+  }, [workflowId, isStreaming, start]);
+
+  const handleSend = useCallback(() => doSend(input, codeSnippet), [doSend, input, codeSnippet]);
+
+  // 外部注入初始输入（如"AI 填写"预填 / 列表页一句话起步）
+  useEffect(() => {
+    if (!initialInput) return;
+    onInitialInputConsumed?.();
+    if (autoSend && !autoSentRef.current) {
+      autoSentRef.current = true;
+      void doSend(initialInput, '');
+    } else {
+      setInput(initialInput);
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, [initialInput, autoSend, onInitialInputConsumed, doSend]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -521,7 +530,8 @@ function ChatMessage({
               <div>{message.generated.variables!.length} 个变量</div>
             )}
           </div>
-          {onApply && (
+          {/* 有缺项时唯一应用入口走下方校验卡的「补齐并应用」，避免这里用未填值覆盖 */}
+          {onApply && !(message.validation && message.validation.requiredInputs.length > 0) && (
             <Button
               size="sm"
               onClick={() => onApply()}
@@ -602,9 +612,10 @@ function ValidationCard({
   const canFill = hasMissing && !!generated && !!onApply;
   const [values, setValues] = useState<Record<string, string>>({});
   const [applied, setApplied] = useState(false);
+  const allFilled = requiredInputs.every((inp) => (values[reqKey(inp)] ?? '').trim() !== '');
 
   function handleFillApply() {
-    if (!generated || !onApply) return;
+    if (!generated || !onApply || !allFilled) return;
     onApply(bakeFilledValues(generated, requiredInputs, values));
     setApplied(true);
   }
@@ -709,13 +720,14 @@ function ValidationCard({
               <Button
                 size="sm"
                 onClick={handleFillApply}
+                disabled={!allFilled}
                 style={{
-                  background: 'rgba(139,92,246,0.25)',
-                  border: '1px solid rgba(139,92,246,0.35)',
-                  color: 'rgba(196,181,253,0.95)',
+                  background: allFilled ? 'rgba(139,92,246,0.25)' : 'rgba(255,255,255,0.06)',
+                  border: `1px solid ${allFilled ? 'rgba(139,92,246,0.35)' : 'rgba(255,255,255,0.12)'}`,
+                  color: allFilled ? 'rgba(196,181,253,0.95)' : 'rgba(255,255,255,0.4)',
                 }}
               >
-                {applied ? '已补齐并应用' : '补齐并应用到编辑器'}
+                {applied ? '已补齐并应用' : allFilled ? '补齐并应用到编辑器' : `请先填写全部 ${requiredInputs.length} 项`}
               </Button>
               {applied && (
                 <span style={{ color: 'rgba(34,197,94,0.85)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>

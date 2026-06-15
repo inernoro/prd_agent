@@ -73,7 +73,10 @@ public class WorkflowValidationService
     {
         var notes = new List<string>();
         var nodes = g.Nodes!;
-        var nodeById = nodes.ToDictionary(n => n.NodeId, n => n);
+        // 节点 ID 可能重复（LLM 偶发）：用 last-wins 构表避免 ToDictionary 抛异常；
+        // 重复本身由 ValidateStructure 报为结构问题。
+        var nodeById = new Dictionary<string, WorkflowNode>();
+        foreach (var n in nodes) nodeById[n.NodeId] = n;
         var repaired = new List<WorkflowEdge>();
 
         foreach (var edge in g.Edges!)
@@ -156,6 +159,10 @@ public class WorkflowValidationService
         var issues = new List<WorkflowValidationIssue>();
         var nodes = g.Nodes!;
 
+        // 节点 ID 必须唯一（重复会让连线/拓扑出现歧义）
+        foreach (var dupId in nodes.GroupBy(n => n.NodeId).Where(grp => grp.Count() > 1).Select(grp => grp.Key))
+            issues.Add(new(dupId, $"节点 ID「{dupId}」重复，必须唯一"));
+
         foreach (var node in nodes)
         {
             var meta = CapsuleTypeRegistry.Get(node.NodeType);
@@ -178,8 +185,10 @@ public class WorkflowValidationService
 
     private static bool HasCycle(List<WorkflowNode> nodes, List<WorkflowEdge> edges)
     {
-        var indegree = nodes.ToDictionary(n => n.NodeId, _ => 0);
-        var adj = nodes.ToDictionary(n => n.NodeId, _ => new List<string>());
+        // 节点 ID 可能重复：用 last-wins 构表（去重后按 distinct id 数判环，避免重复 id 造成假阳性）
+        var indegree = new Dictionary<string, int>();
+        var adj = new Dictionary<string, List<string>>();
+        foreach (var n in nodes) { indegree[n.NodeId] = 0; adj[n.NodeId] = new List<string>(); }
         foreach (var e in edges)
         {
             if (!indegree.ContainsKey(e.TargetNodeId) || !adj.ContainsKey(e.SourceNodeId)) continue;
@@ -196,7 +205,7 @@ public class WorkflowValidationService
             foreach (var next in adj[n])
                 if (--indegree[next] == 0) queue.Enqueue(next);
         }
-        return visited != nodes.Count;
+        return visited != indegree.Count;
     }
 
     // ─────────────────────────────────────────────────────────

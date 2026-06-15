@@ -120,6 +120,25 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void DuplicateNodeId_ProducesIssue_AndDoesNotThrow()
+    {
+        // LLM 偶发同 nodeId：不能崩，应报结构问题
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("dup", CapsuleTypes.ManualTrigger),
+                Node("dup", CapsuleTypes.HttpRequest, new() { ["url"] = "https://x.com", ["method"] = "GET" }),
+            },
+            Edges = new(),
+        };
+
+        var r = _svc.Process(g);   // 不抛异常
+        Assert.False(r.Valid);
+        Assert.Contains(r.Issues, i => i.Target == "dup" && i.Message.Contains("重复"));
+    }
+
+    [Fact]
     public void Cycle_ProducesIssue()
     {
         var g = new WorkflowChatGenerated
