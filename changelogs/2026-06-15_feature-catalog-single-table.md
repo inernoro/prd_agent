@@ -1,3 +1,4 @@
 | fix | prd-admin | 功能清单视图左侧仅展示当前节点子树，避免整棵树与右侧表重复 |
 | fix | prd-admin | 正式版本详情功能标签待公告编辑态只保留一份清单，去除双表叠显 |
 | polish | prd-admin | 重写产品管理系统功能目录导入测试 CSV：仅含代码已实现能力，去除导入实现细节与预留项 |
+| fix | prd-admin | 列表筛选设置弹窗改用 createPortal 挂 body，避免被工具栏 overflow 裁切 |

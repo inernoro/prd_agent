@@ -6,7 +6,8 @@
  *  - 任意「单选下拉」筛选字段（选项基于当前列表去重生成，由调用方 fields 提供）；
  *  - 用户自定义显示哪些筛选项（齿轮设置），按列表类型存 localStorage（纯 UI 偏好）。
  */
-import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, SlidersHorizontal, X } from 'lucide-react';
 
 /** 与 ProductsSection 搜索框同宽（跨产品列表工具栏 SSOT） */
@@ -162,11 +163,41 @@ function FilterBar<T>({
   showResultCount: boolean;
 }) {
   const [gearOpen, setGearOpen] = useState(false);
-  const gearRef = useRef<HTMLDivElement>(null);
+  const gearBtnRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
+
+  const updatePopoverPos = () => {
+    const btn = gearBtnRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const width = 192;
+    setPopoverPos({
+      top: rect.bottom + 4,
+      left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+    });
+  };
+
+  useLayoutEffect(() => {
+    if (!gearOpen) {
+      setPopoverPos(null);
+      return;
+    }
+    updatePopoverPos();
+    window.addEventListener('resize', updatePopoverPos);
+    window.addEventListener('scroll', updatePopoverPos, true);
+    return () => {
+      window.removeEventListener('resize', updatePopoverPos);
+      window.removeEventListener('scroll', updatePopoverPos, true);
+    };
+  }, [gearOpen]);
+
   useEffect(() => {
     if (!gearOpen) return;
     const h = (e: MouseEvent) => {
-      if (gearRef.current && !gearRef.current.contains(e.target as Node)) setGearOpen(false);
+      const t = e.target as Node;
+      if (gearBtnRef.current?.contains(t) || popoverRef.current?.contains(t)) return;
+      setGearOpen(false);
     };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
@@ -233,16 +264,22 @@ function FilterBar<T>({
         </button>
       )}
       {showFilterSettings && (
-        <div ref={gearRef} className="relative">
+        <>
           <button
+            ref={gearBtnRef}
+            type="button"
             onClick={() => setGearOpen((v) => !v)}
-            className="h-8 flex items-center gap-1 px-2 rounded-lg border border-white/10 text-xs text-white/55 hover:text-white hover:bg-white/5"
+            className="h-8 shrink-0 flex items-center gap-1 px-2 rounded-lg border border-white/10 text-xs text-white/55 hover:text-white hover:bg-white/5"
             title="筛选设置：选择显示哪些筛选项"
           >
             <SlidersHorizontal size={13} /> 筛选设置
           </button>
-          {gearOpen && (
-            <div className="absolute z-50 right-0 mt-1 w-48 rounded-lg border border-white/10 bg-[#16171c] p-2 shadow-xl">
+          {gearOpen && popoverPos && createPortal(
+            <div
+              ref={popoverRef}
+              className="fixed z-[10000] w-48 rounded-lg border border-white/10 bg-[#16171c] p-2 shadow-xl"
+              style={{ top: popoverPos.top, left: popoverPos.left }}
+            >
               <div className="text-[11px] text-white/40 px-1 pb-1">显示哪些筛选项</div>
               <div className="max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                 {fields.map((f) => (
@@ -260,9 +297,10 @@ function FilterBar<T>({
                   </label>
                 ))}
               </div>
-            </div>
+            </div>,
+            document.body,
           )}
-        </div>
+        </>
       )}
       {showResultCount && (
         <span className="text-[11px] text-white/30 ml-auto shrink-0">
