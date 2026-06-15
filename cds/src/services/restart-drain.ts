@@ -27,14 +27,15 @@ export interface RestartDrainResult {
 /**
  * 重启前等待 in-flight 分支操作排空的默认上限(SSOT,utility 与 route 包装共用)。
  *
- * 2026-05-29 Cursor Bugbot(High + Medium):此前被改成 5_000ms,但典型 deploy
- * (docker build + 启动 + 状态写入)动辄数分钟,5s 几乎必然在 deploy 中途强制重启
- * cds-master,打断协调器的 lease 生命周期,留下半构建容器 / 不一致的分支状态。
- * "容器归 docker 管、SSE 会重连"只覆盖容器本身存活,覆盖不了进程内正在进行的状态
- * 写入。这与本仓库 server-authority 规则(不中断服务端任务)一致 —— 恢复到 deploy-safe
- * 的 180s。仍可用 CDS_RESTART_DRAIN_TIMEOUT_MS 覆盖(0 = 不等,立即重启)。
+ * 2026-06-14: self-update 默认不再等待分支操作排空。分支操作协调器已经会在
+ * master 重启前 interruptAll,重启后也有 docker/state reconcile 兜底。把所有
+ * self-update 默认卡到 180s 会把“正在部署/日志流还在”的普通场景放大成 3-4 分钟
+ * 等待。需要强一致排空时,请求显式传 drain=true 或 drainTimeoutMs。
  */
-export const DEFAULT_RESTART_DRAIN_TIMEOUT_MS = 180_000;
+export const DEFAULT_RESTART_DRAIN_TIMEOUT_MS = 0;
+
+/** 显式传 drain=true 但没给 drainTimeoutMs 时使用的排空窗口。 */
+export const DEFAULT_EXPLICIT_RESTART_DRAIN_TIMEOUT_MS = 180_000;
 
 /** 解析 env 覆盖;非法/缺省回落到 DEFAULT_RESTART_DRAIN_TIMEOUT_MS(单一来源)。 */
 export function resolveRestartDrainTimeoutMs(): number {
@@ -42,6 +43,37 @@ export function resolveRestartDrainTimeoutMs(): number {
   if (raw === undefined || raw === '') return DEFAULT_RESTART_DRAIN_TIMEOUT_MS;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_RESTART_DRAIN_TIMEOUT_MS;
+}
+
+export function resolveExplicitRestartDrainTimeoutMs(): number {
+  const raw = process.env.CDS_RESTART_DRAIN_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return DEFAULT_EXPLICIT_RESTART_DRAIN_TIMEOUT_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_EXPLICIT_RESTART_DRAIN_TIMEOUT_MS;
+}
+
+function isTruthyDrainFlag(value: unknown): boolean {
+  return value === true || value === 'true' || value === '1' || value === 1 || value === 'yes';
+}
+
+function parseNonNegativeMs(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+export function resolveRestartDrainTimeoutFromRequest(body: unknown): number {
+  const source = body && typeof body === 'object'
+    ? body as Record<string, unknown>
+    : {};
+  const explicitTimeout =
+    parseNonNegativeMs(source.drainTimeoutMs) ??
+    parseNonNegativeMs(source.restartDrainTimeoutMs);
+  if (explicitTimeout !== null) return explicitTimeout;
+  if (isTruthyDrainFlag(source.drain) || isTruthyDrainFlag(source.waitForDrain)) {
+    return resolveExplicitRestartDrainTimeoutMs();
+  }
+  return DEFAULT_RESTART_DRAIN_TIMEOUT_MS;
 }
 
 export function summarizeActiveBranchOperations(active: ActiveOperation[]): RestartDrainActiveOperation[] {

@@ -8,7 +8,7 @@ import {
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe, Maximize2,
+  ClipboardCheck, Globe, Maximize2, Minimize2, Video,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -409,6 +409,8 @@ export type DocBrowserProps = {
   onUploadFile?: () => void;
   /** 「添加」菜单项：从网页托管导入（提供时显示）。具体选择/导入流程由调用方实现。 */
   onImportFromHosting?: () => void;
+  /** 「添加」菜单项：把短视频链接解析成知识库素材资产。 */
+  onOpenVideoParser?: () => void;
   /**
    * 加载文档预览数据。
    * 返回包含文本内容 + 二进制文件 URL + MIME 类型的对象，
@@ -1324,6 +1326,7 @@ function TreeNode({
               <RelativeTime
                 value={entry[timeField]!}
                 refreshIntervalMs={0}
+                mode="compact"
                 className="text-[9.5px] tabular-nums text-token-muted"
                 title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
               />
@@ -1413,6 +1416,7 @@ function TreeNode({
             <RelativeTime
               value={entry[timeField]!}
               refreshIntervalMs={0}
+              mode="compact"
               className="text-[9.5px] tabular-nums text-token-muted"
               title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
             />
@@ -1506,6 +1510,18 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
   );
 }
 
+// 阅读列全屏包裹：非全屏原位渲染；全屏时 createPortal 到 body 铺满视口（fixed inset-0）。
+// 物理脱离 AgentFullscreenLayout 等祖先布局上下文，杜绝「点全屏不展开」。
+function ReaderColumnFrame({ fullscreen, children }: { fullscreen: boolean; children: ReactNode }) {
+  if (!fullscreen) return <>{children}</>;
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100vh', background: 'var(--bg-base)' }}>
+      {children}
+    </div>,
+    document.body,
+  );
+}
+
 // ── DocBrowser 主组件 ──
 
 export function DocBrowser({
@@ -1528,6 +1544,7 @@ export function DocBrowser({
   onCreateDocument,
   onUploadFile,
   onImportFromHosting,
+  onOpenVideoParser,
   onSearch,
   onOpenSubscription,
   onGenerateSubtitle,
@@ -1587,14 +1604,26 @@ export function DocBrowser({
   const [inlineRenameId, setInlineRenameId] = useState<string | null>(null);
   // Markdown 编辑模式：rich=所见即所得（MDEditor），source=纯文本（保留 [[wikilink]] 自动补全）
   const [mdEditRich, setMdEditRich] = useState(true);
-  // 阅读区全屏（原生 Fullscreen API：保持 React 树不动，ESC 退出）
-  const readerSectionRef = useRef<HTMLDivElement>(null);
-  const toggleReaderFullscreen = useCallback(() => {
-    const el = readerSectionRef.current;
-    if (!el) return;
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void el.requestFullscreen().catch(() => toast.error('当前浏览器不支持全屏', ''));
-  }, []);
+  // 阅读区全屏：用 createPortal 到 body 的 CSS 全屏覆盖层（不走原生 Fullscreen API）。
+  // 原生 requestFullscreen 在 AgentFullscreenLayout（h-screen、不走 AppShell）这类深层嵌套
+  // 上下文里不可靠，会出现「点全屏不展开」。createPortal + fixed inset-0 物理脱离祖先，
+  // 在任何嵌套上下文都铺满视口（遵守 .claude/rules/frontend-modal.md）。
+  const [readerFullscreen, setReaderFullscreen] = useState(false);
+  const toggleReaderFullscreen = useCallback(() => setReaderFullscreen((v) => !v), []);
+  // 右侧栏（本页章节 TOC / 批注栏）可收起，给正文让出宽度。纯 UI 偏好，sessionStorage 持久化
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(() => sessionStorage.getItem('doc-browser-right-collapsed') === '1');
+  const toggleRightPanel = useCallback(() => setRightPanelCollapsed((v) => {
+    const next = !v;
+    sessionStorage.setItem('doc-browser-right-collapsed', next ? '1' : '0');
+    return next;
+  }), []);
+  // ESC 退出全屏
+  useEffect(() => {
+    if (!readerFullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setReaderFullscreen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [readerFullscreen]);
   // 左侧面板宽度（可拖拽调整，sessionStorage 持久化）
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const saved = sessionStorage.getItem('doc-browser-sidebar-width');
@@ -2206,8 +2235,9 @@ export function DocBrowser({
     const lines = new Map<string, string>();
     for (const e of entries) {
       if (e.isFolder || !e.summary) continue;
-      // HTML 等非纯文本文档的 summary 是源码片段（首行常为 <!DOCTYPE html>），不参与正文标题推导
-      if (getFileTypeConfig(e.title, e.contentType).preview !== 'text') continue;
+      // 只跳过 HTML/XML 等「summary 是源码片段」的类型（首行常为 <!DOCTYPE html> / 标签），不参与正文标题推导；
+      // PDF / Word / PPT 等的 summary 是后端提取出的纯正文，应参与（否则上传 PDF 后标题回退显示文件名）。
+      if (getFileTypeConfig(e.title, e.contentType).preview === 'html' || e.summary.trimStart().startsWith('<')) continue;
       const { title, body } = parseFrontmatter(e.summary);
       let display = (title ?? '').trim();
       if (!display) {
@@ -2666,6 +2696,8 @@ export function DocBrowser({
                 </span>
               )}
             </div>
+            {/* 「+」新建：仅在有写操作时显示（只读调用方不传写回调 → 不渲染，避免只剩占位项） */}
+            {(onCreateDocument || onUploadFile || onImportFromHosting || onCreateFolder) && (
             <div ref={addMenuRef} className="relative">
               <button
                 onClick={() => setShowAddMenu(v => !v)}
@@ -2699,6 +2731,15 @@ export function DocBrowser({
                       onClick={() => { onImportFromHosting(); setShowAddMenu(false); }}>
                       <Globe size={12} className="text-token-accent" />
                       从网页托管导入
+                    </button>
+                  )}
+                  {onOpenVideoParser && (
+                    <button
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+                      onClick={() => { onOpenVideoParser(); setShowAddMenu(false); }}
+                      title="把抖音/TikTok 等链接解析为原始素材、字幕文稿和时间轴片段">
+                      <Video size={12} className="text-token-accent" />
+                      解析短视频
                     </button>
                   )}
                   {onCreateFolder && (
@@ -2736,6 +2777,7 @@ export function DocBrowser({
                 </div>
               )}
             </div>
+            )}
           </div>
           {/* tag 筛选条：≤6 个内联 chip 行；>6 个收进"标签筛选"下拉（点开弹长方形面板多选），避免一长串横向溢出 */}
           {allTagsRanked.length > 0 && (
@@ -3016,7 +3058,9 @@ export function DocBrowser({
         </div>
       )}
 
-      {/* 右侧：文档预览。移动端：占满整宽，仅在「进正文(mobileDetail)」时显示，否则让列表占满。 */}
+      {/* 右侧：文档预览。移动端：占满整宽，仅在「进正文(mobileDetail)」时显示，否则让列表占满。
+          全屏时整列经 ReaderColumnFrame createPortal 到 body 铺满视口。 */}
+      <ReaderColumnFrame fullscreen={readerFullscreen}>
       <div
         className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
         style={{ minHeight: 0, display: isMobile && !mobileDetail ? 'none' : undefined }}
@@ -3268,14 +3312,28 @@ export function DocBrowser({
                   {commentCount > 0 ? `${commentCount} 条评论` : '评论'}
                 </button>
               )}
-              {/* 全屏阅读（原生全屏，ESC 退出） */}
+              {/* 收起/展开右侧栏（本页章节 / 批注栏），给正文让宽 */}
+              {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && tocContent && !isMobile && (
+                <button
+                  onClick={toggleRightPanel}
+                  className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                  style={{
+                    background: rightPanelCollapsed ? 'rgba(255,255,255,0.04)' : 'rgba(59,130,246,0.1)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: rightPanelCollapsed ? 'var(--text-muted)' : 'rgba(96,165,250,0.95)',
+                  }}
+                  title={rightPanelCollapsed ? '显示本页章节 / 批注栏' : '收起本页章节 / 批注栏'}>
+                  <PanelRight size={11} /> {rightPanelCollapsed ? '章节' : '收起'}
+                </button>
+              )}
+              {/* 全屏阅读（CSS 全屏覆盖层，ESC 退出） */}
               {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
                   className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                   style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
-                  title="全屏阅读（ESC 退出）">
-                  <Maximize2 size={11} /> 全屏
+                  title={readerFullscreen ? '退出全屏（ESC）' : '全屏阅读（ESC 退出）'}>
+                  {readerFullscreen ? <><Minimize2 size={11} /> 退出全屏</> : <><Maximize2 size={11} /> 全屏</>}
                 </button>
               )}
               {/* 编辑/保存按钮（仅对可编辑类型显示） */}
@@ -3335,8 +3393,8 @@ export function DocBrowser({
                 );
               })()}
             </div>
-            {/* 内容区 + 右侧本页章节导航（F1）。ref 供「全屏」用原生 Fullscreen API 放大本区 */}
-            <div ref={readerSectionRef} className="flex-1 flex min-w-0 relative" style={{ minHeight: 0, background: 'var(--bg-card)' }}>
+            {/* 内容区 + 右侧本页章节导航（F1）。 */}
+            <div className="flex-1 flex min-w-0 relative" style={{ minHeight: 0, background: 'var(--bg-card)' }}>
               {/* 内容列包裹：让进度条 absolute 限定在本列宽度内，不跨到右侧 TOC 列（Bugbot Low） */}
               <div className="flex-1 min-w-0 relative flex flex-col" style={{ minHeight: 0 }}>
               {/* 阅读进度条（仅正文预览态）；切文档时按 key 重挂归零 */}
@@ -3535,8 +3593,9 @@ export function DocBrowser({
               </div>
               </div>
               {/* 右侧栏：margin 布局且有评论 → 批注栏常驻（取代 TOC）；否则 → 本页章节导航。
-                  移动端单栏阅读不挂右侧 TOC（否则又把正文挤窄），isMobile 时隐藏 DocToc。 */}
-              {(() => {
+                  移动端单栏阅读不挂右侧 TOC（否则又把正文挤窄），isMobile 时隐藏 DocToc。
+                  rightPanelCollapsed 时整列收起，给正文让宽（工具栏「收起/章节」切换）。 */}
+              {!rightPanelCollapsed && (() => {
                 const showMargin = inlineCommentLayout === 'margin' && !contentLoading && !editMode
                   && !!tocContent && inlineCommentItems.length > 0 && !marginCollapsed;
                 if (showMargin) {
@@ -3560,7 +3619,7 @@ export function DocBrowser({
                 ) : null;
               })()}
               {/* 激活批注的牵引连线（active-only，业界 Word/Figma 做法）：仅 margin 布局且有激活项时出现 */}
-              {inlineCommentLayout === 'margin' && !marginCollapsed && !editMode && !contentLoading
+              {inlineCommentLayout === 'margin' && !marginCollapsed && !rightPanelCollapsed && !editMode && !contentLoading
                 && tocContent && inlineCommentItems.length > 0 && activeCommentKey && (
                 <InlineCommentConnector activeKey={activeCommentKey} color={threadColor(activeCommentKey)} boundsRef={contentAreaRef} />)}
             </div>
@@ -3589,6 +3648,7 @@ export function DocBrowser({
           </div>
         )}
       </div>
+      </ReaderColumnFrame>
 
       {/* 右键菜单 */}
       {contextMenu && (

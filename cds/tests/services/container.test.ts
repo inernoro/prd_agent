@@ -74,7 +74,7 @@ describe('ContainerService', () => {
       await service.runService({
         ...makeEntry(),
         githubCommitSha: '47c74c1f5aabbccddeeff0011223344556677889',
-      }, makeProfile(), makeService());
+      }, makeProfile(), makeService(), undefined, { JWT_SECRET: 'project-jwt-secret' });
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'));
       expect(runCmd).toBeDefined();
@@ -93,10 +93,27 @@ describe('ContainerService', () => {
 
       // Verify env file contents
       const envFileContent = writeSpy.mock.calls[0][1] as string;
-      expect(envFileContent).toContain('Jwt__Secret=test-secret');
+      expect(envFileContent).toContain('JWT_SECRET=project-jwt-secret');
+      expect(envFileContent).toContain('Jwt__Secret=project-jwt-secret');
       expect(envFileContent).toContain('Jwt__Issuer=prdagent');
       expect(envFileContent).toContain('VITE_GIT_BRANCH=feature/a');
       expect(envFileContent).toContain('VITE_BUILD_ID=47c74c1f5aab');
+
+      writeSpy.mockRestore();
+    });
+
+    it('does not inject CDS jwt secret into project containers when project secret is absent', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid789', stderr: '', exitCode: 0 }));
+      const writeSpy = vi.spyOn(fs, 'writeFileSync');
+
+      await service.runService(makeEntry(), makeProfile(), makeService());
+
+      const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(envFileContent).not.toContain('Jwt__Secret=test-secret');
+      expect(envFileContent).not.toContain('Jwt__Secret=');
+      expect(envFileContent).toContain('Jwt__Issuer=prdagent');
 
       writeSpy.mockRestore();
     });
@@ -448,7 +465,7 @@ describe('ContainerService', () => {
 
       const envFileContent = writeSpy.mock.calls[0][1] as string;
       expect(envFileContent).toContain('DATABASE_URL=postgres://user:pass@postgres:5432/app');
-      expect(envFileContent).toContain('Jwt__Secret=test-secret');
+      expect(envFileContent).not.toContain('Jwt__Secret=test-secret');
       writeSpy.mockRestore();
     });
   });

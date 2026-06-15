@@ -24,6 +24,7 @@ const TYPE_META: Record<string, { label: string; color: string; bg: string }> = 
   report:         { label: '周报',     color: '#a78bfa', bg: 'rgba(167, 139, 250, 0.12)' },
   document_store: { label: '知识库',   color: '#34d399', bg: 'rgba(52, 211, 153, 0.12)' },
   workflow:       { label: '工作流',   color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.12)' },
+  marketplace_skill: { label: '技能',  color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.12)' },
 };
 
 function getTypeMeta(t: string) {

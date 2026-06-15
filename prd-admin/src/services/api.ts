@@ -617,6 +617,12 @@ export const api = {
     },
   },
 
+  // ============ TAPD Bug Agent 缺陷自动提报 ============
+  tapdBugAgent: {
+    previewStream: () => '/api/tapd-bug-agent/preview/stream',
+    submit: () => '/api/tapd-bug-agent/submit',
+  },
+
   // ============ Report Agent 周报管理 ============
   reportAgent: {
     teams: {
@@ -1158,6 +1164,11 @@ export const api = {
     shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
   },
+  // ============ Short Video Materials 短视频素材解析 ============
+  shortVideoMaterials: {
+    runs: () => '/api/short-video-materials/runs',
+    byId: (runId: string) => `/api/short-video-materials/runs/${runId}`,
+  },
   // ============ 公开主页（/u/:username 无需登录） ============
   publicProfile: {
     byUsername: (username: string) => `/api/public/u/${encodeURIComponent(username)}`,
@@ -1484,6 +1495,19 @@ export const api = {
     // 首页工作台（跨项目）
     myTodos: () => '/api/pm/my-todos',
     reportsSummary: (scope?: string) => `/api/pm/reports/summary${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`,
+    // 全局总览（管理层只读洞察，跨全公司项目）
+    globalProjects: (q: Record<string, string | number | undefined>) => {
+      const sp = new URLSearchParams();
+      Object.entries(q).forEach(([k, v]) => { if (v !== undefined && v !== '') sp.set(k, String(v)); });
+      const s = sp.toString();
+      return `/api/pm/global/projects${s ? `?${s}` : ''}`;
+    },
+    globalSummary: (q: Record<string, string | undefined>) => {
+      const sp = new URLSearchParams();
+      Object.entries(q).forEach(([k, v]) => { if (v !== undefined && v !== '') sp.set(k, String(v)); });
+      const s = sp.toString();
+      return `/api/pm/global/summary${s ? `?${s}` : ''}`;
+    },
     preferences: () => '/api/pm/preferences',
     quickActions: () => '/api/pm/preferences/quick-actions',
     assistantAsk: () => '/api/pm/assistant/ask',
@@ -1533,6 +1557,10 @@ export const api = {
     dashboard: () => '/api/pm/dashboard',
     auditLogs: () => '/api/pm/audit-logs',
     rewardConfig: () => '/api/pm/reward-config',
+    // 全局知识库（管理层洞察，仅 pm-agent.dashboard）
+    knowledgeOverview: () => '/api/pm/knowledge/overview',
+    knowledgeEntries: (query?: string) => `/api/pm/knowledge/entries${query ? `?${query}` : ''}`,
+    knowledgeEntryContent: (entryId: string) => `/api/pm/knowledge/entries/${entryId}/content`,
   },
 } as const;
 

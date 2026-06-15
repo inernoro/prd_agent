@@ -1721,6 +1721,19 @@ export {
 } from '@/services/real/webPages';
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, WebPageGroup, WebPageGroupAccessRule, WebPageGroupVisibility, WebPageGroupSubjectType, WebPageGroupRole, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry, ShareAnalyticsVisitorSummary, ShareAnalyticsTrendPoint, ShareAnalyticsHourlyPoint, ShareAnalyticsVisitorStats, ShareAnalyticsCommentEntry } from '@/services/real/webPages';
 
+// ── Short Video Materials 短视频素材解析 ──
+export {
+  createShortVideoMaterialRun,
+  getShortVideoMaterialRun,
+} from '@/services/real/shortVideoMaterials';
+export type {
+  CreateShortVideoMaterialInput,
+  ShortVideoMaterialRun,
+  ShortVideoMaterialRunResponse,
+  ShortVideoMaterialStage,
+  ShortVideoMaterialStageStatus,
+} from '@/services/real/shortVideoMaterials';
+
 // ── Team 团队（跨应用协作） ──
 export {
   listMyTeams,
@@ -2011,6 +2024,9 @@ export {
   submitPmScoreReal as submitPmScore,
   finalizePmEvaluationReal as finalizePmEvaluation,
   getPmDashboardReal as getPmDashboard,
+  getPmKnowledgeOverviewReal as getPmKnowledgeOverview,
+  listPmKnowledgeEntriesReal as listPmKnowledgeEntries,
+  getPmKnowledgeEntryContentReal as getPmKnowledgeEntryContent,
   getPmRewardConfigReal as getPmRewardConfig,
   updatePmRewardConfigReal as updatePmRewardConfig,
   togglePmExcellenceReal as togglePmExcellence,
@@ -2080,6 +2096,8 @@ export {
   getPmAgentPreferencesReal as getPmAgentPreferences,
   updatePmQuickActionsReal as updatePmQuickActions,
   getPmReportSummaryReal as getPmReportSummary,
+  getPmGlobalProjectsReal as getPmGlobalProjects,
+  getPmGlobalSummaryReal as getPmGlobalSummary,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,

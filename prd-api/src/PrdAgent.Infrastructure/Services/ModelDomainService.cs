@@ -3,12 +3,12 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
-using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Security;
 using AppCallerRegistry = PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Infrastructure.Services;
@@ -54,12 +54,11 @@ public class ModelDomainService : IModelDomainService
             throw new InvalidOperationException("未配置可用模型");
         }
 
-        var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
         // 业务规则：不再使用“全局开关”，而是以“主模型是否启用 Prompt Cache”作为总开关；
         // 同时仍尊重当前模型的 enablePromptCache（不是所有模型都适合开启 cache）。
         var mainEnablePromptCache = mainModel == null ? false : (mainModel.EnablePromptCache ?? true);
 
-        var (apiUrl, apiKey, platformType, platformId, platformName) = await ResolveApiConfigForModelAsync(model, jwtSecret, ct);
+        var (apiUrl, apiKey, platformType, platformId, platformName) = await ResolveApiConfigForModelAsync(model, ct);
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("模型 API 配置不完整");
@@ -228,11 +227,10 @@ public class ModelDomainService : IModelDomainService
 
     private async Task<(string? apiUrl, string? apiKey, string? platformType, string? platformId, string? platformName)> ResolveApiConfigForModelAsync(
         LLMModel model,
-        string jwtSecret,
         CancellationToken ct)
     {
         string? apiUrl = model.ApiUrl;
-        string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
+        string? apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _config);
         string? platformType = null;
         string? platformId = model.PlatformId;
         string? platformName = null;
@@ -245,7 +243,7 @@ public class ModelDomainService : IModelDomainService
             if (platform != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
             {
                 apiUrl ??= platform.ApiUrl;
-                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                apiKey ??= ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
             }
         }
 
@@ -323,5 +321,4 @@ public class ModelDomainService : IModelDomainService
     }
 
 }
-
 

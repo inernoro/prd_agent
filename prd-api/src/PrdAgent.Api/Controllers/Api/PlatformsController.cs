@@ -10,6 +10,7 @@ using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -90,11 +91,9 @@ public class PlatformsController : ControllerBase
             .SortByDescending(e => e.CreatedAt)
             .ToListAsync();
 
-        var jwtSecret = GetJwtSecret();
-
         var realItems = platforms.Select(p =>
         {
-            var keyState = ResolveApiKeyState(p.ApiKeyEncrypted, jwtSecret);
+            var keyState = ResolveApiKeyState(p.ApiKeyEncrypted);
             return new PlatformListItem
             {
                 Id = p.Id,
@@ -119,7 +118,7 @@ public class PlatformsController : ControllerBase
         // 其 Id 直接作为 PlatformId（新模型池写入会用此 Id，而不是 "__exchange__"）
         var exchangeItems = exchanges.Select(e =>
         {
-            var keyState = ResolveApiKeyState(e.TargetApiKeyEncrypted, jwtSecret);
+            var keyState = ResolveApiKeyState(e.TargetApiKeyEncrypted);
             return new PlatformListItem
             {
                 Id = e.Id,
@@ -174,16 +173,16 @@ public class PlatformsController : ControllerBase
 
     private sealed record ApiKeyState(bool HasApiKey, string Status, string? Masked);
 
-    private static ApiKeyState ResolveApiKeyState(string? encryptedKey, string jwtSecret)
+    private ApiKeyState ResolveApiKeyState(string? encryptedKey)
     {
         if (string.IsNullOrWhiteSpace(encryptedKey))
             return new ApiKeyState(false, "missing", null);
 
-        var plain = ApiKeyCrypto.Decrypt(encryptedKey, jwtSecret);
-        if (string.IsNullOrWhiteSpace(plain))
+        var result = ApiKeyCryptoKeyRing.Decrypt(encryptedKey, _config);
+        if (!result.Success)
             return new ApiKeyState(false, "unreadable", null);
 
-        return new ApiKeyState(true, "configured", ApiKeyCrypto.Mask(plain));
+        return new ApiKeyState(true, result.UsedLegacySecret ? "legacy" : "configured", ApiKeyCrypto.Mask(result.PlainText));
     }
 
     /// <summary>
@@ -198,7 +197,7 @@ public class PlatformsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("PLATFORM_NOT_FOUND", "平台不存在"));
         }
 
-        var keyState = ResolveApiKeyState(platform.ApiKeyEncrypted, GetJwtSecret());
+        var keyState = ResolveApiKeyState(platform.ApiKeyEncrypted);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -238,7 +237,7 @@ public class PlatformsController : ControllerBase
             PlatformType = request.PlatformType,
             ProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim(),
             ApiUrl = request.ApiUrl,
-            ApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()),
+            ApiKeyEncrypted = ApiKeyCryptoKeyRing.Encrypt(request.ApiKey, _config),
             Enabled = request.Enabled,
             MaxConcurrency = request.MaxConcurrency,
             Remark = request.Remark
@@ -276,7 +275,7 @@ public class PlatformsController : ControllerBase
 
         if (!string.IsNullOrEmpty(request.ApiKey))
         {
-            update = update.Set(p => p.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()));
+            update = update.Set(p => p.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(request.ApiKey, _config));
         }
 
         var result = await _db.LLMPlatforms.UpdateOneAsync(p => p.Id == id, update);
@@ -345,7 +344,7 @@ public class PlatformsController : ControllerBase
         }
 
         var update = Builders<LLMPlatform>.Update
-            .Set(p => p.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(secret.ApiKey, GetJwtSecret()))
+            .Set(p => p.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(secret.ApiKey, _config))
             .Set(p => p.UpdatedAt, DateTime.UtcNow);
         await _db.LLMPlatforms.UpdateOneAsync(p => p.Id == id, update);
 
@@ -827,7 +826,7 @@ public class PlatformsController : ControllerBase
     private async Task<List<AvailableModelDto>> FetchModelsFromApi(LLMPlatform platform, string? requestPurpose)
     {
         var endpoint = GetModelsEndpoint(platform.ApiUrl);
-        var apiKey = ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret());
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config) ?? string.Empty;
         var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
         var apiKeyEmpty = string.IsNullOrWhiteSpace(apiKey);
 
@@ -1096,7 +1095,7 @@ public class PlatformsController : ControllerBase
         m.Name,
         m.ModelName,
         m.ApiUrl,
-        apiKeyMasked = string.IsNullOrEmpty(m.ApiKeyEncrypted) ? null : ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(m.ApiKeyEncrypted, GetJwtSecret())),
+        apiKeyMasked = ApiKeyCryptoKeyRing.Mask(m.ApiKeyEncrypted, _config),
         m.PlatformId,
         m.Group,
         m.Timeout,
@@ -1116,7 +1115,6 @@ public class PlatformsController : ControllerBase
         m.UpdatedAt
     };
 
-    private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }
 
 public class ModelsApiResponse

@@ -3,7 +3,10 @@ import type { ActiveOperation } from '../../src/services/branch-operation-coordi
 import {
   waitForRestartSafeBranchOperations,
   resolveRestartDrainTimeoutMs,
+  resolveExplicitRestartDrainTimeoutMs,
+  resolveRestartDrainTimeoutFromRequest,
   DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
+  DEFAULT_EXPLICIT_RESTART_DRAIN_TIMEOUT_MS,
 } from '../../src/services/restart-drain.js';
 
 function activeOperation(kind: ActiveOperation['request']['kind'] = 'deploy'): ActiveOperation {
@@ -26,8 +29,6 @@ function activeOperation(kind: ActiveOperation['request']['kind'] = 'deploy'): A
   };
 }
 
-// 2026-05-29 Cursor Bugbot(PR #684, High):默认排空上限必须是 deploy-safe 的 180s,
-// 不再是会打断 deploy 的 5s;env 覆盖仍生效(0 = 不等)。
 describe('resolveRestartDrainTimeoutMs', () => {
   const original = process.env.CDS_RESTART_DRAIN_TIMEOUT_MS;
   afterEach(() => {
@@ -35,13 +36,13 @@ describe('resolveRestartDrainTimeoutMs', () => {
     else process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = original;
   });
 
-  it('默认 180s(deploy-safe,不是被改坏的 5s)', () => {
+  it('默认不等待排空', () => {
     delete process.env.CDS_RESTART_DRAIN_TIMEOUT_MS;
-    expect(DEFAULT_RESTART_DRAIN_TIMEOUT_MS).toBe(180_000);
-    expect(resolveRestartDrainTimeoutMs()).toBe(180_000);
+    expect(DEFAULT_RESTART_DRAIN_TIMEOUT_MS).toBe(0);
+    expect(resolveRestartDrainTimeoutMs()).toBe(0);
   });
 
-  it('env 覆盖生效(含 0 = 立即重启不等)', () => {
+  it('env 覆盖生效', () => {
     process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = '0';
     expect(resolveRestartDrainTimeoutMs()).toBe(0);
     process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = '30000';
@@ -50,9 +51,28 @@ describe('resolveRestartDrainTimeoutMs', () => {
 
   it('非法 env 回落默认', () => {
     process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = 'abc';
-    expect(resolveRestartDrainTimeoutMs()).toBe(180_000);
+    expect(resolveRestartDrainTimeoutMs()).toBe(0);
     process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = '-5';
-    expect(resolveRestartDrainTimeoutMs()).toBe(180_000);
+    expect(resolveRestartDrainTimeoutMs()).toBe(0);
+  });
+
+  it('显式 drain=true 使用 180s 安全窗口', () => {
+    delete process.env.CDS_RESTART_DRAIN_TIMEOUT_MS;
+    expect(DEFAULT_EXPLICIT_RESTART_DRAIN_TIMEOUT_MS).toBe(180_000);
+    expect(resolveExplicitRestartDrainTimeoutMs()).toBe(180_000);
+    expect(resolveRestartDrainTimeoutFromRequest({ drain: true })).toBe(180_000);
+    expect(resolveRestartDrainTimeoutFromRequest({ waitForDrain: 'true' })).toBe(180_000);
+  });
+
+  it('请求 drainTimeoutMs 精确控制排空窗口', () => {
+    expect(resolveRestartDrainTimeoutFromRequest({ drainTimeoutMs: 30_000 })).toBe(30_000);
+    expect(resolveRestartDrainTimeoutFromRequest({ restartDrainTimeoutMs: '15000' })).toBe(15_000);
+    expect(resolveRestartDrainTimeoutFromRequest({ drainTimeoutMs: 0, drain: true })).toBe(0);
+  });
+
+  it('无请求参数时始终不排空', () => {
+    process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = '30000';
+    expect(resolveRestartDrainTimeoutFromRequest({})).toBe(0);
   });
 });
 

@@ -1282,6 +1282,25 @@ public static class TaskTreeAgent
 }
 
 /// <summary>
+/// TAPD 缺陷自动提报智能体
+/// </summary>
+public static class TapdBugAgent
+{
+    public const string AppName = "TAPD 缺陷自动提报智能体";
+
+    public static class Extract
+    {
+        [AppCallerMetadata(
+            "TAPD 缺陷草稿整理",
+            "把用户口语化缺陷描述整理为 TAPD 标准缺陷四要素和固定字段",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Extract"
+        )]
+        public const string Chat = "tapd-bug-agent.extract::chat";
+    }
+}
+
+/// <summary>
 /// 项目管理智能体（PM Agent）
 /// </summary>
 public static class ProjectManagement
@@ -1600,6 +1619,74 @@ public static class ProjectRouteAgent
             Category = "ProjectRoute"
         )]
         public const string RoutemapMatch = "project-route-agent.resolve.routemap::chat";
+    }
+}
+
+/// <summary>
+/// 商品溯源智能体 — 防窜物流业务知识问答 + 线上问题案例排查 + 业务/代码差异对比
+/// </summary>
+public static class ChannelTraceAgent
+{
+    public const string AppName = "商品溯源智能体";
+
+    public static class Knowledge
+    {
+        [AppCallerMetadata(
+            "商品溯源-业务知识问答",
+            "基于防窜物流业务知识库回答用户提问，帮助快速理解业务",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Chat = "channel-trace-agent.knowledge::chat";
+
+        [AppCallerMetadata(
+            "商品溯源-业务知识截图识别",
+            "用户上传防窜后台页面截图时，结合视觉识别关键业务操作并给出操作流程",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "ChannelTrace"
+        )]
+        public const string Vision = "channel-trace-agent.knowledge::vision";
+    }
+
+    public static class Diagnose
+    {
+        [AppCallerMetadata(
+            "商品溯源-线上问题排查",
+            "基于历史案例库召回相似案例，为新线上问题给出快速排查路径",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Chat = "channel-trace-agent.diagnose::chat";
+    }
+
+    public static class CodeDiff
+    {
+        [AppCallerMetadata(
+            "商品溯源-业务代码差异对比",
+            "对比防窜物流业务规则描述与当前代码实现，输出差异清单",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Chat = "channel-trace-agent.code-diff::chat";
+
+        [AppCallerMetadata(
+            "商品溯源-代码检索关键词抽取",
+            "从用户功能描述中抽取用于扫描仓库代码的检索关键词",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Keywords = "channel-trace-agent.code-diff.keywords::chat";
+    }
+
+    public static class CaseImport
+    {
+        [AppCallerMetadata(
+            "商品溯源-案例文件解析",
+            "把导入的历史 bug 文件解析为结构化线上问题案例（标题/现象/根因/排查）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Chat = "channel-trace-agent.case-import::chat";
     }
 }
 

@@ -140,6 +140,13 @@ public class MongoDbContext
     public IMongoCollection<ProjectRouteSiteSpec> ProjectRouteSiteSpecs => _database.GetCollection<ProjectRouteSiteSpec>("project_route_site_specs");
     public IMongoCollection<ProjectRoutePlan> ProjectRoutePlans => _database.GetCollection<ProjectRoutePlan>("project_route_plans");
 
+    // Channel Trace Agent 商品溯源智能体（防窜物流业务知识 + 线上问题案例 + 业务/代码差异对比）
+    public IMongoCollection<ChannelTraceKnowledge> ChannelTraceKnowledge => _database.GetCollection<ChannelTraceKnowledge>("channel_trace_knowledge");
+    public IMongoCollection<ChannelTraceCase> ChannelTraceCases => _database.GetCollection<ChannelTraceCase>("channel_trace_cases");
+    public IMongoCollection<ChannelTraceDiff> ChannelTraceDiffs => _database.GetCollection<ChannelTraceDiff>("channel_trace_diffs");
+    public IMongoCollection<ChannelTraceDiagnoseSession> ChannelTraceDiagnoseSessions => _database.GetCollection<ChannelTraceDiagnoseSession>("channel_trace_diagnose_sessions");
+    public IMongoCollection<ChannelTraceChecklist> ChannelTraceChecklists => _database.GetCollection<ChannelTraceChecklist>("channel_trace_checklists");
+
     // CCAS Agent 赋码采集关联系统综合智能体
     public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset> CcasEquipmentAssets
         => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset>("ccas_equipment_assets");
@@ -270,6 +277,7 @@ public class MongoDbContext
 
     // Video Agent 视频转文档
     public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
+    public IMongoCollection<ShortVideoMaterialRun> ShortVideoMaterialRuns => _database.GetCollection<ShortVideoMaterialRun>("short_video_material_runs");
 
     // 作品投稿展示
     public IMongoCollection<Submission> Submissions => _database.GetCollection<Submission>("submissions");
@@ -1561,6 +1569,9 @@ public class MongoDbContext
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
+        ShortVideoMaterialRuns.Indexes.CreateOne(new CreateIndexModel<ShortVideoMaterialRun>(
+            Builders<ShortVideoMaterialRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_short_video_material_runs_user_created" }));
         // HostedSites：按标签多值索引
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.Tags),

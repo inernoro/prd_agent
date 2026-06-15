@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { AlertCircle, Package, ShieldCheck } from 'lucide-react';
+import { AlertCircle, Download, Package, ShieldCheck } from 'lucide-react';
 import { viewSkillShare, type ViewSkillShareData } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import { SkillContentBrowser } from '@/components/marketplace/SkillContentBrowser';
@@ -100,6 +100,21 @@ export default function SkillShareViewPage() {
             由 海鲜市场{data.createdByName ? ` · ${data.createdByName}` : ''} 分享（只读）
           </div>
         </div>
+        {/* 右上角：下载技能压缩包（公开端点，免登录可下，校验 token/过期/吊销） */}
+        <a
+          href={`/api/marketplace/skills/public/skill-share/${token}/zip-content`}
+          download={data.skill.originalFileName || `${data.skill.title || 'skill'}.zip`}
+          className="shrink-0 inline-flex h-8 items-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors"
+          style={{
+            background: 'var(--accent-primary, rgba(56,189,248,0.16))',
+            border: '1px solid rgba(56,189,248,0.3)',
+            color: '#fff',
+          }}
+          title="下载技能压缩包"
+        >
+          <Download size={13} />
+          下载技能压缩包
+        </a>
         {!isAuthenticated && (
           <a
             href="/login"

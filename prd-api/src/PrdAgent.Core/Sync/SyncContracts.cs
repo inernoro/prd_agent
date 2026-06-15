@@ -104,6 +104,9 @@ public sealed class SyncBundleItem
     /// <summary>源条目的更新时间。接收方勾选“保存原时间”时用于避免全部变成同步时刻。</summary>
     public DateTime? UpdatedAt { get; set; }
 
+    /// <summary>知识库模板键等资源级展示策略。旧节点缺省为 null。</summary>
+    public string? TemplateKey { get; set; }
+
     /// <summary>未知 / 扩展字段（向下兼容：接收方不认识就原样保留）。</summary>
     public Dictionary<string, JsonElement> Extras { get; set; } = new();
 }

@@ -679,12 +679,10 @@ public class ModelGroupsController : ControllerBase
             .Find(p => platformIds.Contains(p.Id))
             .ToListAsync();
 
-        var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-
         // 构建模型池
         var httpDispatcher = new HttpPoolDispatcher(new DefaultHttpClientFactory());
         var factory = new ModelPoolFactory(httpDispatcher, _logger);
-        var pool = factory.Create(group, platforms, jwtSecret);
+        var pool = factory.Create(group, platforms, _config);
 
         // 执行测试
         var testRequest = new PoolTestRequest

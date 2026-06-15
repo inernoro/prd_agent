@@ -74,10 +74,9 @@ export function ProductTeamTab({ productId }: { productId: string }) {
     if (res.success) await reload();
   };
 
-  if (loading) return <MapSectionLoader text="正在加载团队…" />;
-  if (!data) return <div className="text-white/40 text-sm">团队信息加载失败</div>;
-
-  const { members, canManageMembers, canManageAdmins } = data;
+  const members = data?.members ?? [];
+  const canManageMembers = data?.canManageMembers ?? false;
+  const canManageAdmins = data?.canManageAdmins ?? false;
   const { selection, exportSelected } = useSelectableListExport(
     members,
     (m) => m.userId,
@@ -97,6 +96,9 @@ export function ProductTeamTab({ productId }: { productId: string }) {
     selection.clear();
     await reload();
   };
+
+  if (loading) return <MapSectionLoader text="正在加载团队…" />;
+  if (!data) return <div className="text-white/40 text-sm">团队信息加载失败</div>;
 
   return (
     <div className="flex flex-col gap-4">

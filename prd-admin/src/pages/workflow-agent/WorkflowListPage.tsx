@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { listWorkflows, createWorkflow, deleteWorkflow } from '@/services';
 import type { Workflow, WorkflowNode, WorkflowEdge } from '@/services/contracts/workflowAgent';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -597,6 +597,7 @@ function buildTestWorkflowTemplate(): {
 
 export function WorkflowListPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { viewMode, setViewMode, setSelectedWorkflow, setSelectedExecution } = useWorkflowStore();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -604,10 +605,18 @@ export function WorkflowListPage() {
   const [creatingTest, setCreatingTest] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [templateImporting, setTemplateImporting] = useState(false);
+  const initialTemplateId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('template');
+  }, [location.search]);
 
   useEffect(() => {
     reload();
   }, []);
+
+  useEffect(() => {
+    if (initialTemplateId) setTemplateOpen(true);
+  }, [initialTemplateId]);
 
   async function reload() {
     setLoading(true);
@@ -692,6 +701,11 @@ export function WorkflowListPage() {
     setViewMode('execution-list');
   }
 
+  function closeTemplatePicker() {
+    setTemplateOpen(false);
+    if (initialTemplateId) navigate('/workflow-agent', { replace: true });
+  }
+
   if (viewMode === 'execution-list') return <ExecutionListPanel />;
   if (viewMode === 'execution-detail') return <ExecutionDetailPanel />;
 
@@ -764,9 +778,10 @@ export function WorkflowListPage() {
       {/* 模板选择器弹窗 */}
       <TemplatePickerDialog
         open={templateOpen}
-        onClose={() => setTemplateOpen(false)}
+        onClose={closeTemplatePicker}
         onImport={handleImportTemplate}
         importing={templateImporting}
+        initialTemplateId={initialTemplateId}
       />
     </div>
   );

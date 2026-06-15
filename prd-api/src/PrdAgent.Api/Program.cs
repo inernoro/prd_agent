@@ -27,6 +27,7 @@ using PrdAgent.Infrastructure.Repositories;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Infrastructure.Security;
 using Serilog;
 using Serilog.Events;
 using Microsoft.Extensions.Configuration;
@@ -338,7 +339,9 @@ builder.Services.AddHttpClient("DocStoreAgent");
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoMaterialProcessor>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ShortVideoMaterialWorker>();
 // 启动时把内置「再加工·智能体」种入 DB（reprocess_agents 集合）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
 
@@ -382,6 +385,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceService>();
 
 // Defect Agent: 催办 Worker + Webhook 通知服务
+builder.Services.AddScoped<PrdAgent.Api.Services.TapdBugAgentService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DefectWebhookService>();
 
@@ -390,6 +394,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReviewAgent.ReviewWebhookServic
 
 // Project Route Agent: 浅克隆缓存服务（任意第三方仓库 git clone --depth=1）
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ProjectRouteAgent.GitRepoCacheService>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ChannelTraceAgent.ChannelTraceCodeScanService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
@@ -562,6 +567,16 @@ var jwtSecretBytes = Encoding.UTF8.GetBytes(jwtSecret.Trim());
 if (jwtSecretBytes.Length < 32)
 {
     throw new InvalidOperationException($"JWT Secret 过短（当前 {jwtSecretBytes.Length} bytes），至少需要 32 bytes。请更新配置项 Jwt:Secret（环境变量：Jwt__Secret）。");
+}
+
+var apiKeyCryptoSecret = builder.Configuration["ApiKeyCrypto:Secret"];
+if (string.IsNullOrWhiteSpace(apiKeyCryptoSecret))
+{
+    Log.Warning("ApiKeyCrypto:Secret 未配置；平台 API key 密文将临时兼容使用 Jwt:Secret。正式环境请配置 ApiKeyCrypto__Secret。");
+}
+else if (Encoding.UTF8.GetBytes(apiKeyCryptoSecret.Trim()).Length < 32)
+{
+    throw new InvalidOperationException($"ApiKeyCrypto Secret 过短（当前 {Encoding.UTF8.GetBytes(apiKeyCryptoSecret.Trim()).Length} bytes），至少需要 32 bytes。请更新配置项 ApiKeyCrypto:Secret（环境变量：ApiKeyCrypto__Secret）。");
 }
 
 var jwtSigningKey = new SymmetricSecurityKey(jwtSecretBytes);
@@ -821,7 +836,6 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var db = sp.GetRequiredService<MongoDbContext>();
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
     var config = sp.GetRequiredService<IConfiguration>();
-    var jwtSecret = config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
     var logWriter = sp.GetRequiredService<ILlmRequestLogWriter>();
     var ctxAccessor = sp.GetRequiredService<ILLMRequestContextAccessor>();
     var claudeLogger = sp.GetRequiredService<ILogger<ClaudeClient>>();
@@ -831,7 +845,7 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var mainEnablePromptCache = mainModel != null ? (mainModel.EnablePromptCache ?? true) : false;
     if (mainModel != null)
     {
-        var (apiUrl, apiKey) = ResolveApiConfigForModel(mainModel, db, jwtSecret);
+        var (apiUrl, apiKey) = ResolveApiConfigForModel(mainModel, db, config);
         
         if (!string.IsNullOrWhiteSpace(apiUrl) && !string.IsNullOrWhiteSpace(apiKey))
         {
@@ -870,7 +884,7 @@ builder.Services.AddScoped<ILLMClient>(sp =>
     var activeConfig = db.LLMConfigs.Find(c => c.IsActive).FirstOrDefault();
     if (activeConfig != null)
     {
-        var apiKey = ApiKeyCrypto.Decrypt(activeConfig.ApiKeyEncrypted, jwtSecret);
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(activeConfig.ApiKeyEncrypted, config);
         
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
@@ -906,10 +920,10 @@ builder.Services.AddScoped<ILLMClient>(sp =>
 });
 
 // 辅助方法：解析模型的 API 配置（与 AdminModelsController 中的逻辑一致）
-static (string? apiUrl, string? apiKey) ResolveApiConfigForModel(LLMModel model, MongoDbContext db, string jwtSecret)
+static (string? apiUrl, string? apiKey) ResolveApiConfigForModel(LLMModel model, MongoDbContext db, IConfiguration config)
 {
     string? apiUrl = model.ApiUrl;
-    string? apiKey = string.IsNullOrEmpty(model.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
+    string? apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, config);
 
     // 如果模型没有配置，从平台继承
     if (model.PlatformId != null && (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey)))
@@ -920,7 +934,7 @@ static (string? apiUrl, string? apiKey) ResolveApiConfigForModel(LLMModel model,
             apiUrl ??= platform.ApiUrl;
             if (string.IsNullOrEmpty(apiKey))
             {
-                apiKey = ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, config);
             }
         }
     }
@@ -1200,6 +1214,14 @@ builder.Services.AddHttpClient("WebhookClient")
 builder.Services.AddHttpClient("webhook")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddHttpClient("TapdBugAgent", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+})
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false
+    });
 builder.Services.AddHttpClient("GitHubApi", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);

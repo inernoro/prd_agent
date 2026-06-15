@@ -5,11 +5,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
-using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.ModelPool;
 
@@ -202,8 +202,6 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
         {
             _lastProbeTime[endpointKey] = DateTime.UtcNow;
 
-            var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
-
             // 获取平台信息
             var platform = await db.LLMPlatforms
                 .Find(p => p.Id == model.PlatformId && p.Enabled)
@@ -216,9 +214,7 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
                 return;
             }
 
-            var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted)
-                ? null
-                : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+            var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
 
             // 构建轻量探活请求
             var success = await SendProbeRequestAsync(sp, platform, model.ModelId, apiKey, group, ct);
@@ -240,7 +236,7 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
                 await db.ModelGroups.UpdateOneAsync(filter, update, cancellationToken: ct);
 
                 _logger.LogInformation(
-                    "[HealthProbe] ✅ 探活成功，模型已恢复: Pool={Pool}, Model={Model}@{Platform}",
+                    "[HealthProbe] 探活成功，模型已恢复: Pool={Pool}, Model={Model}@{Platform}",
                     group.Name, model.ModelId, platform.Name);
 
                 // 发送恢复通知
@@ -261,7 +257,7 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
             else
             {
                 _logger.LogDebug(
-                    "[HealthProbe] ❌ 探活失败，保持当前状态: Pool={Pool}, Model={Model}@{Platform}, Status={Status}",
+                    "[HealthProbe] 探活失败，保持当前状态: Pool={Pool}, Model={Model}@{Platform}, Status={Status}",
                     group.Name, model.ModelId, platform.Name, model.HealthStatus);
             }
         }
