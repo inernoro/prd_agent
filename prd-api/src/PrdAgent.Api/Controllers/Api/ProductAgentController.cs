@@ -34,14 +34,20 @@ public class ProductAgentController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IFileContentExtractor _fileExtractor;
+    private readonly MarketingConsultService _marketingConsult;
+    private readonly IHostedSiteService _hostedSites;
+    private readonly IHostEnvironment _env;
 
-    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext, IFileContentExtractor fileExtractor)
+    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext, IFileContentExtractor fileExtractor, MarketingConsultService marketingConsult, IHostedSiteService hostedSites, IHostEnvironment env)
     {
         _db = db;
         _logger = logger;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _fileExtractor = fileExtractor;
+        _marketingConsult = marketingConsult;
+        _hostedSites = hostedSites;
+        _env = env;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -1718,6 +1724,440 @@ public class ProductAgentController : ControllerBase
         await _db.CustomerFollowUps.UpdateOneAsync(f => f.Id == followUpId,
             Builders<CustomerFollowUp>.Update.Set(f => f.IsDeleted, true).Set(f => f.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ════════════════════════ 营销问策 MarketingConsult（客户详情 Tab）════════════════════════
+    // 全链路对照「项目简报 PmBriefing」复用：LLM 产 JSON → MarketingReportRenderer 渲染 HTML →
+    // 分享 Token / 切模版重渲染 / 保存网页托管。鉴权同客户读/写（登录可读，创建者/管理员可删除性操作）。
+
+    /// <summary>营销问策可选模版清单（SSOT，前端模版选择器消费）。</summary>
+    [HttpGet("consult/templates")]
+    public IActionResult ListConsultTemplates()
+        => Ok(ApiResponse<object>.Ok(new { items = MarketingReportRenderer.Templates.Select(t => new { key = t.Key, label = t.Label, accent = t.Accent, pageBg = t.PageBg }).ToList() }));
+
+    /// <summary>该客户的历史问策报告列表（精简字段，不含 html）。登录可读。</summary>
+    [HttpGet("customers/{customerId}/consult")]
+    public async Task<IActionResult> ListConsultReports(string customerId)
+    {
+        var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (customer == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
+        var reports = await _db.MarketingConsultReports.Find(r => r.CustomerId == customerId && !r.IsDeleted)
+            .SortByDescending(r => r.CreatedAt).Limit(50).ToListAsync();
+        var items = reports.Select(ToConsultListItem).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>问策报告详情（含 html）。登录可读。</summary>
+    [HttpGet("consult/{reportId}")]
+    public async Task<IActionResult> GetConsultReport(string reportId)
+    {
+        var r = await _db.MarketingConsultReports.Find(x => x.Id == reportId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "问策报告不存在"));
+        return Ok(ApiResponse<object>.Ok(ToConsultDetail(r)));
+    }
+
+    /// <summary>
+    /// 生成营销问策报告（SSE 流式）。input 为空 = 一键问策（自动聚合客户全量信息 + 动态跟进）。
+    /// 阶段：collecting → generating → rendering；事件 stage / model / thinking / typing / error / done(reportId)。
+    /// </summary>
+    [HttpPost("customers/{customerId}/consult/generate")]
+    [Produces("text/event-stream")]
+    public async Task GenerateConsult(string customerId, [FromQuery] string? template, [FromBody] GenerateConsultRequest? request)
+    {
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        async Task Sse(string evt, object data)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(data);
+            await Response.WriteAsync($"event: {evt}\ndata: {json}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        var userId = GetUserId();
+        var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (customer == null) { await Sse("error", new { message = "客户不存在" }); await Sse("done", new { error = "客户不存在" }); return; }
+
+        var templateRaw = request?.Template ?? template;
+        var consultTemplate = MarketingReportRenderer.IsValidTemplate(templateRaw) ? templateRaw! : MarketingReportRenderer.DefaultTemplate;
+
+        await Sse("stage", new { stage = "collecting", message = "正在汇总客户信息与跟进动态…" });
+
+        // 聚合客户硬数据 + 动态跟进 + 用户输入（input 为空即一键问策）
+        var (customerSummary, renderData) = await BuildConsultDataAsync(customer, request?.Input, request?.Note);
+        var knowledgeContext = await BuildConsultKnowledgeContextAsync(userId);
+
+        await Sse("stage", new { stage = "generating", message = "AI 正在撰写营销问策评估…" });
+        string? err = null;
+        string? model = null;
+
+        // 在 LLM 调用前打开 LlmRequestContext 作用域（规则 llm-gateway：UserId 必填，否则 User not found）。
+        // MarketingConsultService 内部同时也走 GatewayRequestContext.UserId，双保险。
+        MarketingConsultAiContent? ai;
+        using (_llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
+            ViewRole: null, DocumentChars: customerSummary.Length, DocumentHash: null,
+            SystemPromptRedacted: "product-marketing-consult", RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Product.MarketingConsult)))
+        {
+            ai = await _marketingConsult.GenerateAsync(
+                customerSummary, knowledgeContext, userId,
+                onContent: async text => await Sse("typing", new { text }),
+                onThinking: async text => await Sse("thinking", new { text }),
+                onError: e => err = e,
+                onModel: m => model = m);
+        }
+        if (model != null) await Sse("model", new { model });
+        if (ai == null)
+        {
+            await Sse("error", new { message = err ?? "营销问策生成失败" });
+            await Sse("done", new { error = err ?? "营销问策生成失败" });
+            return;
+        }
+
+        await Sse("stage", new { stage = "rendering", message = "正在渲染报告页面…" });
+        renderData.Ai = ai;
+        renderData.Model = model;
+        renderData.Template = consultTemplate;
+        var html = MarketingReportRenderer.Render(renderData);
+
+        var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var report = new MarketingConsultReport
+        {
+            CustomerId = customerId,
+            Title = $"{customer.Name} 营销问策 · {MarketingReportRenderer.ToCst(DateTime.UtcNow):yyyy-MM-dd}",
+            InputText = (request?.Input ?? "").Trim(),
+            Model = model,
+            Template = consultTemplate,
+            Html = html,
+            RenderDataJson = System.Text.Json.JsonSerializer.Serialize(renderData),
+            AiContentJson = System.Text.Json.JsonSerializer.Serialize(ai),
+            CreatedByUserId = userId,
+            CreatedByName = creatorName,
+        };
+        await _db.MarketingConsultReports.InsertOneAsync(report);
+        await Sse("done", new { reportId = report.Id, title = report.Title, model });
+    }
+
+    /// <summary>切换问策报告模版 —— 用落库的渲染数据快照重渲染，零 LLM。登录可操作。</summary>
+    [HttpPost("consult/{reportId}/restyle")]
+    public async Task<IActionResult> RestyleConsult(string reportId, [FromQuery] string? template, [FromBody] RestyleConsultRequest? request)
+    {
+        var r = await _db.MarketingConsultReports.Find(x => x.Id == reportId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "问策报告不存在"));
+        var templateKey = request?.Template ?? template;
+        if (!MarketingReportRenderer.IsValidTemplate(templateKey))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未知的报告模版"));
+        if (string.IsNullOrWhiteSpace(r.RenderDataJson))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该报告无渲染快照，不支持切换模版，请重新生成"));
+
+        MarketingReportRenderer.RenderData? data;
+        try { data = System.Text.Json.JsonSerializer.Deserialize<MarketingReportRenderer.RenderData>(r.RenderDataJson); }
+        catch { data = null; }
+        if (data == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "报告渲染数据损坏，请重新生成"));
+
+        data.Template = templateKey!;
+        var html = MarketingReportRenderer.Render(data);
+        await _db.MarketingConsultReports.UpdateOneAsync(x => x.Id == reportId,
+            Builders<MarketingConsultReport>.Update
+                .Set(x => x.Html, html)
+                .Set(x => x.Template, templateKey!)
+                .Set(x => x.RenderDataJson, System.Text.Json.JsonSerializer.Serialize(data))
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { template = templateKey, html }));
+    }
+
+    /// <summary>开启/关闭问策报告分享。开启生成可撤销 token；关闭置空即失效。登录可操作。</summary>
+    [HttpPost("consult/{reportId}/share")]
+    public async Task<IActionResult> ToggleConsultShare(string reportId, [FromBody] ToggleConsultShareRequest request)
+    {
+        var r = await _db.MarketingConsultReports.Find(x => x.Id == reportId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "问策报告不存在"));
+
+        if (request.Enabled)
+        {
+            var token = string.IsNullOrEmpty(r.ShareToken) ? MarketingConsultReport.GenerateShareToken() : r.ShareToken;
+            await _db.MarketingConsultReports.UpdateOneAsync(x => x.Id == reportId,
+                Builders<MarketingConsultReport>.Update.Set(x => x.ShareToken, token).Set(x => x.UpdatedAt, DateTime.UtcNow));
+            return Ok(ApiResponse<object>.Ok(new { shared = true, shareToken = token }));
+        }
+        await _db.MarketingConsultReports.UpdateOneAsync(x => x.Id == reportId,
+            Builders<MarketingConsultReport>.Update.Set(x => x.ShareToken, (string?)null).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { shared = false, shareToken = (string?)null }));
+    }
+
+    /// <summary>匿名查看分享的问策报告 —— 直接返回 text/html；token 被撤销即 404。</summary>
+    [HttpGet("consult/shared/{token}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ViewSharedConsult(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+        var r = await _db.MarketingConsultReports.Find(x => x.ShareToken == token && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+        return Content(r.Html, "text/html; charset=utf-8");
+    }
+
+    /// <summary>把问策报告保存到网页托管。复用 HostedSite 体系，SourceType=api。登录可操作。</summary>
+    [HttpPost("consult/{reportId}/save-to-hosting")]
+    public async Task<IActionResult> SaveConsultToHosting(string reportId)
+    {
+        var userId = GetUserId();
+        var r = await _db.MarketingConsultReports.Find(x => x.Id == reportId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "问策报告不存在"));
+        var customer = await _db.Customers.Find(c => c.Id == r.CustomerId).FirstOrDefaultAsync();
+
+        var site = await _hostedSites.CreateFromContentAsync(
+            userId, r.Html, r.Title, $"营销问策 · {customer?.Name ?? r.Title}",
+            sourceType: "api", sourceRef: $"marketing-consult:{r.Id}",
+            tags: new List<string> { "营销问策" }, folder: null, CancellationToken.None);
+        await _db.MarketingConsultReports.UpdateOneAsync(x => x.Id == reportId,
+            Builders<MarketingConsultReport>.Update
+                .Set(x => x.HostedSiteId, site.Id)
+                .Set(x => x.HostedSiteUrl, site.SiteUrl)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, siteUrl = site.SiteUrl }));
+    }
+
+    // ── 营销问策内部辅助 ──
+
+    private object ToConsultListItem(MarketingConsultReport r) => new
+    {
+        id = r.Id,
+        customerId = r.CustomerId,
+        title = r.Title,
+        template = r.Template,
+        model = r.Model,
+        verdict = SafeVerdict(r.AiContentJson),
+        canRestyle = !string.IsNullOrWhiteSpace(r.RenderDataJson),
+        shared = !string.IsNullOrEmpty(r.ShareToken),
+        shareToken = r.ShareToken,
+        hostedSiteId = r.HostedSiteId,
+        hostedSiteUrl = r.HostedSiteUrl,
+        createdByUserId = r.CreatedByUserId,
+        createdByName = r.CreatedByName,
+        createdAt = r.CreatedAt,
+    };
+
+    private object ToConsultDetail(MarketingConsultReport r)
+    {
+        MarketingConsultAiContent? ai = null;
+        if (!string.IsNullOrWhiteSpace(r.AiContentJson))
+            try { ai = System.Text.Json.JsonSerializer.Deserialize<MarketingConsultAiContent>(r.AiContentJson); } catch { ai = null; }
+        return new
+        {
+            id = r.Id,
+            customerId = r.CustomerId,
+            title = r.Title,
+            template = r.Template,
+            model = r.Model,
+            html = r.Html,
+            aiContent = ai,
+            inputText = r.InputText,
+            canRestyle = !string.IsNullOrWhiteSpace(r.RenderDataJson),
+            shared = !string.IsNullOrEmpty(r.ShareToken),
+            shareToken = r.ShareToken,
+            hostedSiteId = r.HostedSiteId,
+            hostedSiteUrl = r.HostedSiteUrl,
+            createdByUserId = r.CreatedByUserId,
+            createdByName = r.CreatedByName,
+            createdAt = r.CreatedAt,
+        };
+    }
+
+    private static string? SafeVerdict(string? aiContentJson)
+    {
+        if (string.IsNullOrWhiteSpace(aiContentJson)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<MarketingConsultAiContent>(aiContentJson)?.Verdict; }
+        catch { return null; }
+    }
+
+    /// <summary>聚合客户硬数据 + 动态跟进 + 用户输入 → (给 LLM 的文本摘要, 渲染数据)。input 为空即一键问策。</summary>
+    private async Task<(string summary, MarketingReportRenderer.RenderData data)> BuildConsultDataAsync(
+        Customer c, string? userInput, string? userNote)
+    {
+        var followUps = await _db.CustomerFollowUps.Find(f => f.CustomerId == c.Id && !f.IsDeleted)
+            .SortByDescending(f => f.CreatedAt).Limit(20).ToListAsync();
+
+        var data = new MarketingReportRenderer.RenderData
+        {
+            CustomerName = c.Name,
+            MerchantNo = c.MerchantNo,
+            Industry = c.Industry,
+            Region = c.Region,
+            Company = c.Company,
+            GeneratedAt = DateTime.UtcNow,
+        };
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"客户名称：{c.Name}");
+        if (!string.IsNullOrWhiteSpace(c.MerchantNo)) sb.AppendLine($"商户编号：{c.MerchantNo}");
+        if (!string.IsNullOrWhiteSpace(c.ShortName)) sb.AppendLine($"商户简称：{c.ShortName}");
+        if (!string.IsNullOrWhiteSpace(c.Company)) sb.AppendLine($"所属公司：{c.Company}");
+        if (!string.IsNullOrWhiteSpace(c.Industry)) sb.AppendLine($"所属行业：{c.Industry}");
+        if (!string.IsNullOrWhiteSpace(c.Region)) sb.AppendLine($"所在区域：{c.Region}");
+        if (!string.IsNullOrWhiteSpace(c.Status)) sb.AppendLine($"商户状态：{c.Status}");
+        if (!string.IsNullOrWhiteSpace(c.CertStatus)) sb.AppendLine($"认证状态：{c.CertStatus}");
+        if (!string.IsNullOrWhiteSpace(c.Contact)) sb.AppendLine($"联系方式：{c.Contact}");
+        if (!string.IsNullOrWhiteSpace(c.Description)) sb.AppendLine($"客户描述：{c.Description}");
+        if (c.Tags.Count > 0) sb.AppendLine($"标签：{string.Join(" / ", c.Tags)}");
+        if (c.OpenedAt.HasValue) sb.AppendLine($"开户时间：{MarketingReportRenderer.ToCst(c.OpenedAt.Value):yyyy-MM-dd}");
+        if (c.FormData.Count > 0)
+            sb.AppendLine($"其他档案字段：{string.Join("；", c.FormData.Where(kv => !string.IsNullOrWhiteSpace(kv.Value)).Select(kv => $"{kv.Key}={kv.Value}"))}");
+
+        if (followUps.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"动态跟进记录（最近 {followUps.Count} 条，倒序）：");
+            foreach (var f in followUps)
+            {
+                var plain = StripHtmlToPlain(f.Content);
+                if (plain.Length > 400) plain = plain[..400] + "…";
+                sb.AppendLine($"- [{MarketingReportRenderer.ToCst(f.CreatedAt):yyyy-MM-dd}] {plain}");
+            }
+        }
+        else
+        {
+            sb.AppendLine();
+            sb.AppendLine("动态跟进记录：暂无");
+        }
+
+        if (!string.IsNullOrWhiteSpace(userInput))
+        {
+            sb.AppendLine();
+            sb.AppendLine("用户补充的客户情况（优先参考，但不得编造未提供的数字）：");
+            sb.AppendLine(userInput.Trim());
+        }
+        if (!string.IsNullOrWhiteSpace(userNote))
+        {
+            sb.AppendLine();
+            sb.AppendLine("用户对本次问策的额外要求：");
+            sb.AppendLine(userNote.Trim());
+        }
+        return (sb.ToString(), data);
+    }
+
+    /// <summary>极简 HTML → 纯文本（跟进内容是富文本 HTML，喂 LLM 前去标签）。</summary>
+    private static string StripHtmlToPlain(string? html)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return string.Empty;
+        var text = System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", " ");
+        text = System.Net.WebUtility.HtmlDecode(text);
+        text = System.Text.RegularExpressions.Regex.Replace(text, "\\s+", " ").Trim();
+        return text;
+    }
+
+    // ── 问策知识库（复用 DocumentStore）find-or-create + 种子灌入 ──
+
+    private const string ConsultKnowledgeRef = "marketing-consult";
+
+    /// <summary>
+    /// find-or-create「问策知识库」DocumentStore（按 appKey=product-agent + ShituCategoryRef=marketing-consult 维度幂等）。
+    /// 首次为空时把 SeedData/marketing-consult/*.md 作为 DocumentEntry 灌入。返回知识库各条目摘录拼接（每篇截断）。
+    /// </summary>
+    private async Task<string?> BuildConsultKnowledgeContextAsync(string ownerUserId)
+    {
+        DocumentStore? store;
+        try { store = await EnsureConsultKnowledgeStoreAsync(ownerUserId); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[marketing-consult] ensure knowledge store failed, continue without knowledge");
+            return null;
+        }
+        if (store == null) return null;
+
+        var entries = await _db.DocumentEntries
+            .Find(e => e.StoreId == store.Id && !e.IsFolder)
+            .Limit(20).ToListAsync();
+        if (entries.Count == 0) return null;
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var e in entries)
+        {
+            var body = !string.IsNullOrWhiteSpace(e.ContentIndex) ? e.ContentIndex
+                     : (!string.IsNullOrWhiteSpace(e.Summary) ? e.Summary : "");
+            if (string.IsNullOrWhiteSpace(body)) continue;
+            // 每篇最多取约 4000 字符，避免上下文过长
+            if (body.Length > 4000) body = body[..4000] + "…";
+            sb.AppendLine($"《{e.Title}》");
+            sb.AppendLine(body);
+            sb.AppendLine();
+        }
+        var ctx = sb.ToString();
+        return string.IsNullOrWhiteSpace(ctx) ? null : ctx;
+    }
+
+    /// <summary>find-or-create 问策知识库；首次创建后从种子目录灌入条目（幂等：已存在条目则不重复灌）。</summary>
+    private async Task<DocumentStore?> EnsureConsultKnowledgeStoreAsync(string ownerUserId)
+    {
+        var store = await _db.DocumentStores
+            .Find(s => s.AppKey == "product-agent" && s.ShituCategoryRef == ConsultKnowledgeRef)
+            .FirstOrDefaultAsync();
+        if (store == null)
+        {
+            store = new DocumentStore
+            {
+                Name = "问策知识库",
+                Description = "营销问策方法论参考（全域粉销 / 营销四力 4FM），供 AI 评估引用。",
+                OwnerId = ownerUserId,
+                AppKey = "product-agent",
+                ShituCategoryRef = ConsultKnowledgeRef,
+                Tags = new List<string> { "营销问策" },
+            };
+            await _db.DocumentStores.InsertOneAsync(store);
+        }
+
+        var existing = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == store.Id && !e.IsFolder);
+        if (existing == 0)
+            await SeedConsultKnowledgeEntriesAsync(store, ownerUserId);
+        return store;
+    }
+
+    /// <summary>从 SeedData/marketing-consult/*.md 读取并灌入知识库条目（内容存 ContentIndex，便于直接读取）。</summary>
+    private async Task SeedConsultKnowledgeEntriesAsync(DocumentStore store, string ownerUserId)
+    {
+        var dir = Path.Combine(_env.ContentRootPath, "SeedData", "marketing-consult");
+        if (!Directory.Exists(dir))
+        {
+            _logger.LogWarning("[marketing-consult] seed dir not found: {Dir}", dir);
+            return;
+        }
+        var files = Directory.GetFiles(dir, "*.md").OrderBy(f => f).ToList();
+        var entries = new List<DocumentEntry>();
+        foreach (var file in files)
+        {
+            string raw;
+            try { raw = await System.IO.File.ReadAllTextAsync(file); }
+            catch (Exception ex) { _logger.LogWarning(ex, "[marketing-consult] read seed file failed: {File}", file); continue; }
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var title = Path.GetFileNameWithoutExtension(file);
+            // 标题去掉「01-」之类的排序前缀
+            var m = System.Text.RegularExpressions.Regex.Match(title, "^\\d+[-_.\\s]+(.+)$");
+            if (m.Success) title = m.Groups[1].Value;
+            var content = raw.Trim();
+            // ContentIndex 承载知识正文（截断保护，知识库读取走此字段）
+            var stored = content.Length > 12000 ? content[..12000] : content;
+            entries.Add(new DocumentEntry
+            {
+                StoreId = store.Id,
+                Title = title,
+                Summary = stored.Length > 200 ? stored[..200] : stored,
+                ContentIndex = stored,
+                ContentType = "text/markdown",
+                SourceType = DocumentSourceType.Migration,
+                FileSize = System.Text.Encoding.UTF8.GetByteCount(content),
+                CreatedBy = ownerUserId,
+                Tags = new List<string> { "营销问策" },
+            });
+        }
+        if (entries.Count > 0)
+        {
+            await _db.DocumentEntries.InsertManyAsync(entries);
+            await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+                Builders<DocumentStore>.Update.Set(s => s.DocumentCount, entries.Count).Set(s => s.UpdatedAt, DateTime.UtcNow));
+        }
     }
 
     // ════════════════════════ 产品类型 ProductCategory ════════════════════════
@@ -6691,6 +7131,29 @@ public class UpsertCustomerRequest
 public class CustomerFollowUpRequest
 {
     public string Content { get; set; } = string.Empty;
+}
+
+/// <summary>生成营销问策请求。Input 为空 = 一键问策（自动聚合客户全量信息 + 动态跟进）。</summary>
+public class GenerateConsultRequest
+{
+    /// <summary>用户输入的客户情况（可空，空则一键问策）</summary>
+    public string? Input { get; set; }
+    /// <summary>本次问策的额外要求（可空）</summary>
+    public string? Note { get; set; }
+    /// <summary>报告模版 key（可空，走默认 exec）；与 query ?template= 二选一</summary>
+    public string? Template { get; set; }
+}
+
+/// <summary>切换问策报告模版请求。</summary>
+public class RestyleConsultRequest
+{
+    public string? Template { get; set; }
+}
+
+/// <summary>开启/关闭问策报告分享请求。</summary>
+public class ToggleConsultShareRequest
+{
+    public bool Enabled { get; set; }
 }
 
 public class AiFillRequirementRequest

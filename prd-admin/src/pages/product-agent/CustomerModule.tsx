@@ -7,7 +7,7 @@
  *   营销问策（结合问策知识库的 AI 评估，P2 接入）
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Plus, Search, Trash2, Save, Clock, User as UserIcon, Sparkles } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Trash2, Save, Clock, User as UserIcon } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -22,6 +22,7 @@ import {
 } from '@/services/real/productAgent';
 import type { Customer, CustomerFollowUp } from './types';
 import { RichTextField } from './DynamicForm';
+import { MarketingConsultPanel } from './MarketingConsultPanel';
 
 const CERT_STATUS_OPTIONS = ['未认证', '已认证', '认证失败'];
 const FOLLOW_UP_PLACEHOLDER =
@@ -173,7 +174,7 @@ function CustomerDetail({
           />
         )}
         {!isNew && tab === 'follow-up' && <FollowUpTimeline customerId={customer!.id} />}
-        {!isNew && tab === 'consult' && <ConsultPlaceholder />}
+        {!isNew && tab === 'consult' && <MarketingConsultPanel customer={customer!} />}
       </div>
     </div>
   );
@@ -371,20 +372,6 @@ function FollowUpTimeline({ customerId }: { customerId: string }) {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-// ── 营销问策（P2 接入） ──
-
-function ConsultPlaceholder() {
-  return (
-    <div className="flex max-w-2xl flex-col items-center gap-3 rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-6 py-12 text-center">
-      <Sparkles size={22} className="text-cyan-300/70" />
-      <div className="text-sm font-medium text-white/75">营销问策</div>
-      <div className="text-xs leading-5 text-white/45">
-        结合客户全部信息与「问策知识库」，由 AI 输出专业营销评估，并可一键生成 HTML 可视化报告、分享或保存到网页托管。该能力即将上线。
-      </div>
     </div>
   );
 }

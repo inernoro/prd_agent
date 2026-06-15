@@ -15,6 +15,9 @@ import type {
   FeatureVersion,
   Customer,
   CustomerFollowUp,
+  MarketingTemplate,
+  MarketingConsultListItem,
+  MarketingConsultReport,
   FormTemplate,
   WorkflowDefinition,
   ProductEntityType,
@@ -302,6 +305,75 @@ export function createCustomerFollowUp(customerId: string, body: { content: stri
 }
 export function deleteCustomerFollowUp(followUpId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/follow-ups/${followUpId}`, { method: 'DELETE' });
+}
+
+// ── 营销问策 MarketingConsult（客户详情 Tab，全链路对照项目简报）──
+
+/**
+ * 4 套专业报告模版（SSOT 仍在后端 MarketingReportRenderer.Templates；此处为前端 picker 兜底清单，
+ * 需要后端动态色值时调 listConsultTemplates()）。
+ */
+export const MARKETING_TEMPLATES: { key: MarketingTemplate; label: string; desc: string }[] = [
+  { key: 'exec', label: '行政简报', desc: '克制稳重的深蓝商务（默认）' },
+  { key: 'consulting', label: '咨询报告', desc: '麦肯锡式黑红，强调结构与依据' },
+  { key: 'dashboard', label: '数据看板', desc: '暗夜科技，指标导向，四力高光' },
+  { key: 'magazine', label: '高端杂志', desc: '暖纸衬线，大字标题' },
+];
+
+/** 报告模版清单（后端 SSOT，带预览色）。 */
+export function listConsultTemplates() {
+  return apiRequest<ListWrap<{ key: MarketingTemplate; label: string; accent: string; pageBg: string }>>(
+    '/api/product/consult/templates',
+  );
+}
+
+/** 该客户的历史问策报告列表（精简，不含 html）。 */
+export function listConsultReports(customerId: string) {
+  return apiRequest<ListWrap<MarketingConsultListItem>>(`/api/product/customers/${customerId}/consult`);
+}
+
+/** 问策报告详情（含 html）。 */
+export function getConsultReport(reportId: string) {
+  return apiRequest<MarketingConsultReport>(`/api/product/consult/${reportId}`);
+}
+
+/** 切换报告模版（零 LLM，用落库快照重渲染）。返回新 html。 */
+export function restyleConsultReport(reportId: string, template: MarketingTemplate) {
+  return apiRequest<{ template: MarketingTemplate; html: string }>(
+    `/api/product/consult/${reportId}/restyle`,
+    { method: 'POST', body: { template } },
+  );
+}
+
+/** 开启/关闭报告分享。enabled=true 返回 shareToken。 */
+export function shareConsultReport(reportId: string, enabled: boolean) {
+  return apiRequest<{ shared: boolean; shareToken: string | null }>(
+    `/api/product/consult/${reportId}/share`,
+    { method: 'POST', body: { enabled } },
+  );
+}
+
+/** 保存报告到网页托管，回写 hostedSiteUrl。 */
+export function saveConsultToHosting(reportId: string) {
+  return apiRequest<{ siteId: string; siteUrl: string }>(
+    `/api/product/consult/${reportId}/save-to-hosting`,
+    { method: 'POST' },
+  );
+}
+
+/**
+ * 生成营销问策报告的 SSE 端点（POST）。前端用 useSseStream 接：
+ *   useSseStream({ url: consultGenerateUrl(customerId), method: 'POST', body: { input?, note?, template? } })
+ * input 为空 = 一键问策（后端自动聚合客户全量信息 + 动态跟进 + 问策知识库）。
+ * 事件：stage{stage,message} / model{model} / thinking{text} / typing{text} / error{message} / done{reportId,title,model}。
+ */
+export function consultGenerateUrl(customerId: string) {
+  return `/api/product/customers/${customerId}/consult/generate`;
+}
+
+/** 匿名分享报告的直链（text/html，可直接 window.open）。 */
+export function consultSharedUrl(token: string) {
+  return `/api/product/consult/shared/${token}`;
 }
 
 // ── 通用表单模板引擎 ──

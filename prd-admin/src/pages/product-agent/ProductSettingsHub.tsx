@@ -396,10 +396,18 @@ function GradeOptionRow({ option, onChanged }: { option: ProductGradeOption; onC
 
 function ConsultKnowledgePanel() {
   return (
-    <div className="rounded-xl border border-dashed border-white/15 bg-white/[0.02] p-4">
-      <div className="text-sm font-medium text-white/75">营销问策专属知识库</div>
-      <div className="mt-1 text-xs leading-5 text-white/40">
-        营销问策智能体将基于此知识库内容输出专业评估。知识库管理入口随「客户 → 营销问策」功能一同上线，届时默认内置全域粉销相关资料。
+    <div className="flex flex-col gap-3">
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <div className="text-sm font-medium text-white/75">营销问策专属知识库</div>
+        <div className="mt-1 text-xs leading-5 text-white/45">
+          「客户 → 营销问策」生成评估时，会以本知识库内容（全域粉销 / 营销四力模型 4FM）作为专业依据。首次使用问策时，系统自动创建「问策知识库」并内置 3 份默认资料：营销四力模型 4FM、全域粉销营销范式革命、缩量内卷时代快消品营销。
+        </div>
+      </div>
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <div className="text-sm font-medium text-white/75">维护与扩充</div>
+        <div className="mt-1 text-xs leading-5 text-white/45">
+          需要新增 / 编辑 / 删除问策资料时，前往左侧导航「知识库」，打开名为「问策知识库」的文档空间进行管理；新增内容会即时纳入后续问策评估的上下文。
+        </div>
       </div>
     </div>
   );

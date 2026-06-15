@@ -372,6 +372,77 @@ export interface CustomerFollowUp {
   createdAt: string;
 }
 
+// ── 营销问策 MarketingConsult（客户详情 Tab，全链路对照项目简报）──
+
+/** 报告模版 key（对齐后端 MarketingReportRenderer.Templates，4 套专业模版） */
+export type MarketingTemplate = 'exec' | 'consulting' | 'dashboard' | 'magazine';
+
+/** 总体营销健康判定 */
+export type MarketingVerdict = 'healthy' | 'watch' | 'risk';
+
+/** 四力（4FM）单维评分 */
+export interface MarketingForceScore {
+  name: string;
+  score: number;
+  comment: string;
+}
+
+/** 营销问策风险条目 */
+export interface MarketingConsultRisk {
+  text: string;
+  level: 'high' | 'medium' | 'low';
+}
+
+/** AI 结构化评估内容（对齐后端 MarketingConsultAiContent） */
+export interface MarketingConsultAiContent {
+  summary: string;
+  verdict: MarketingVerdict;
+  verdictNote: string;
+  forces: MarketingForceScore[];
+  strengths: string[];
+  risks: MarketingConsultRisk[];
+  suggestions: string[];
+  nextActions: string[];
+}
+
+/** 问策报告列表项（精简，不含 html，对齐后端 ToConsultListItem） */
+export interface MarketingConsultListItem {
+  id: string;
+  customerId: string;
+  title: string;
+  template: MarketingTemplate;
+  model?: string | null;
+  verdict?: MarketingVerdict | null;
+  canRestyle: boolean;
+  shared: boolean;
+  shareToken?: string | null;
+  hostedSiteId?: string | null;
+  hostedSiteUrl?: string | null;
+  createdByUserId: string;
+  createdByName?: string | null;
+  createdAt: string;
+}
+
+/** 问策报告详情（含 html，对齐后端 ToConsultDetail） */
+export interface MarketingConsultReport {
+  id: string;
+  customerId: string;
+  title: string;
+  template: MarketingTemplate;
+  model?: string | null;
+  html: string;
+  aiContent?: MarketingConsultAiContent | null;
+  inputText?: string;
+  canRestyle: boolean;
+  shared: boolean;
+  shareToken?: string | null;
+  hostedSiteId?: string | null;
+  hostedSiteUrl?: string | null;
+  createdByUserId: string;
+  createdByName?: string | null;
+  createdAt: string;
+}
+
 /** 表单字段类型 */
 export type FormFieldType =
   | 'text'

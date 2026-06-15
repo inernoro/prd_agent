@@ -150,6 +150,14 @@ public static class Product
         Category = "Analysis"
     )]
     public const string WorkAssistant = "product-agent.work-assistant::chat";
+
+    [AppCallerMetadata(
+        "产品管理-营销问策",
+        "客户详情「营销问策」：聚合客户全量信息 + 动态跟进 + 问策知识库（全域粉销/4FM），AI 产出专业营销评估报告，服务端渲染为自包含 HTML 多模版页，可分享/托管（SSE 流式）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string MarketingConsult = "product-agent.marketing-consult::chat";
 }
 
 /// <summary>
