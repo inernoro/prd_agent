@@ -116,7 +116,7 @@ public class WorkflowValidationServiceTests
         var edge = Assert.Single(g.Edges!);
         Assert.Equal("m1", edge.SourceNodeId);
         Assert.Equal("h1", edge.TargetNodeId);
-        Assert.Contains(r.WireNotes, n => n.Contains("自动连接"));
+        Assert.Contains(r.WireNotes, n => n.Contains("自动补全"));
     }
 
     [Fact]
@@ -221,6 +221,29 @@ public class WorkflowValidationServiceTests
 
         Assert.Contains(r.RequiredInputs, x => x.Key == "url" && x.Scope == "config" && x.NodeId == "h1");
         Assert.DoesNotContain(r.RequiredInputs, x => x.Key == "method");
+    }
+
+    [Fact]
+    public void TapdCollector_CookieMode_RequiresCookieAndDscToken()
+    {
+        // authMode=cookie 时 cookie/dscToken 条件必填（schema 里是 Required=false）
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("t1", CapsuleTypes.TapdCollector, new()
+                {
+                    ["authMode"] = "cookie",
+                    ["workspaceId"] = "50116108",
+                    ["dataType"] = "bugs",
+                }),
+            },
+        };
+
+        var r = _svc.Process(g);
+        Assert.Contains(r.RequiredInputs, x => x.Key == "cookie" && x.NodeId == "t1");
+        Assert.Contains(r.RequiredInputs, x => x.Key == "dscToken" && x.NodeId == "t1");
+        Assert.DoesNotContain(r.RequiredInputs, x => x.Key == "authToken"); // basic 模式专用，不该出现
     }
 
     [Fact]

@@ -48,7 +48,7 @@ import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type {
-  Workflow, WorkflowNode, WorkflowEdge as WfEdge,
+  Workflow, WorkflowNode, WorkflowEdge as WfEdge, WorkflowVariable,
   CapsuleTypeMeta, CapsuleCategoryInfo, WorkflowExecution,
   CapsuleConfigField, ExecutionArtifact, CapsuleTestRunResult,
   WorkflowChatGenerated,
@@ -243,6 +243,8 @@ function CanvasInner({
 
   // ── 变量管理 ──
   const [showVarsDialog, setShowVarsDialog] = useState(false);
+  // 变量定义（key/label/isSecret/defaultValue）——可被 AI 缺项补齐更新，保存时必须回传
+  const [varDefs, setVarDefs] = useState<WorkflowVariable[]>(workflow.variables ?? []);
   const [vars, setVars] = useState<Record<string, string>>(() => {
     const defaults: Record<string, string> = {};
     for (const v of workflow.variables ?? []) {
@@ -550,6 +552,7 @@ function CanvasInner({
         id: workflow.id,
         nodes: flowToWorkflowNodes(nodes, nodeConfigs),
         edges: flowToWorkflowEdges(edges),
+        variables: varDefs,
       });
       if (res.success && res.data) {
         setDirty(false);
@@ -704,7 +707,7 @@ function CanvasInner({
 
   function handleExecuteClick() {
     // 如果有变量需要填写，先弹出变量对话框
-    if (workflow.variables?.length) {
+    if (varDefs.length) {
       setShowVarsDialog(true);
     } else {
       doExecute({});
@@ -713,7 +716,7 @@ function CanvasInner({
 
   async function doExecute(variables: Record<string, string>) {
     // 验证必填变量
-    for (const v of workflow.variables ?? []) {
+    for (const v of varDefs) {
       if (v.required && !variables[v.key]) {
         addLog('error', `请填写「${v.label}」`);
         setShowLogPanel(true);
@@ -838,6 +841,14 @@ function CanvasInner({
         configs[n.nodeId] = n.config ?? {};
       }
       setNodeConfigs(configs);
+      // 同步变量定义（含缺项补齐填入的 defaultValue），并把默认值带进运行时变量值
+      const newVarDefs = generated.variables ?? varDefs;
+      setVarDefs(newVarDefs);
+      setVars((prev) => {
+        const next = { ...prev };
+        for (const v of newVarDefs) if (v.defaultValue) next[v.key] = v.defaultValue;
+        return next;
+      });
       setDirty(true);
       pushHistory();
       addLog('success', 'AI 方案已应用到画布');
@@ -1265,7 +1276,7 @@ function CanvasInner({
       {/* 变量输入对话框 */}
       {showVarsDialog && (
         <ExecuteVarsDialog
-          variables={workflow.variables ?? []}
+          variables={varDefs}
           values={vars}
           onChange={(key, val) => setVars(prev => ({ ...prev, [key]: val }))}
           onExecute={() => { setShowVarsDialog(false); doExecute(vars); }}

@@ -10,3 +10,5 @@
 | fix | prd-api | 工作流校验对重复变量 key / null 节点 config 容错，不再崩 SSE；SSE 错误事件补 message 字段让前端显示真实失败原因 |
 | fix | prd-api | 自动接线改为「补缺连线」：漏接一跳的处理节点自动从前序节点补上游，避免它当空输入独立根却被判可执行 |
 | fix | prd-admin | 「一句话起步」auto-send 与历史加载竞态：历史晚返回不再覆盖刚追加的流式消息 |
+| fix | prd-admin | 画布保存补回 variables：AI 缺项补齐填入的变量默认值（如 cookie）不再在 handleSave 时丢失，并带入执行变量 |
+| fix | prd-api | 缺项扫描新增条件必填：TAPD 选 Cookie 认证时 cookie/dscToken 必填、选 Open API 时 authToken 必填，避免漏报后执行才炸 |

@@ -223,6 +223,27 @@ public class WorkflowValidationService
     // 4. 缺项扫描：必填配置 / secret 变量未填 → 补齐表单
     // ─────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// 条件必填：某字段在另一字段取特定值时才必填（ConfigSchema 无法表达，集中声明在此）。
+    /// 例：tapd-collector 选 Cookie 认证时 cookie/dscToken 必填，选 Open API 时 authToken 必填。
+    /// </summary>
+    private static readonly Dictionary<string, List<(string WhenKey, string WhenValue, string RequiredKey)>> ConditionalRequired = new()
+    {
+        [CapsuleTypes.TapdCollector] = new()
+        {
+            ("authMode", "cookie", "cookie"),
+            ("authMode", "cookie", "dscToken"),
+            ("authMode", "basic", "authToken"),
+        },
+    };
+
+    private static object? GetConfigValue(WorkflowNode node, string key)
+    {
+        object? raw = null;
+        node.Config?.TryGetValue(key, out raw);
+        return raw;
+    }
+
     private static List<WorkflowRequiredInput> ScanMissingInputs(WorkflowChatGenerated g)
     {
         var inputs = new List<WorkflowRequiredInput>();
@@ -237,7 +258,21 @@ public class WorkflowValidationService
             var meta = CapsuleTypeRegistry.Get(node.NodeType);
             if (meta == null) continue;
 
-            foreach (var field in meta.ConfigSchema.Where(f => f.Required))
+            // 需校验的字段 = schema 必填字段 ∪ 条件必填字段（如 TAPD authMode=cookie 时 cookie/dscToken 必填）
+            var requiredFields = meta.ConfigSchema.Where(f => f.Required).ToList();
+            if (ConditionalRequired.TryGetValue(node.NodeType, out var conds))
+            {
+                foreach (var (whenKey, whenValue, requiredKey) in conds)
+                {
+                    var actual = ToConfigString(GetConfigValue(node, whenKey))
+                                 ?? meta.ConfigSchema.FirstOrDefault(f => f.Key == whenKey)?.DefaultValue;
+                    if (!string.Equals(actual, whenValue, StringComparison.OrdinalIgnoreCase)) continue;
+                    var cf = meta.ConfigSchema.FirstOrDefault(f => f.Key == requiredKey);
+                    if (cf != null && requiredFields.All(rf => rf.Key != cf.Key)) requiredFields.Add(cf);
+                }
+            }
+
+            foreach (var field in requiredFields)
             {
                 object? raw = null;
                 node.Config?.TryGetValue(field.Key, out raw); // Config 可能为 null（"config": null）
