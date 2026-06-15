@@ -662,18 +662,18 @@ public class OpenAIImageClient
                 (gatewayResp.ErrorMessage ?? "").Length > 80 ? gatewayResp.ErrorMessage![..80] : gatewayResp.ErrorMessage,
                 apiUrl, isOpenRouter);
 
-            // OpenRouter 兜底：images/generations 返回 404（该平台图片生成只走 chat/completions+modalities），
-            // 自动改用 OpenRouter 协议重试一次（不依赖 apiUrl 字符串匹配，对自定义域名/代理也成立）。
-            var looks404 = gatewayResp.StatusCode == 404
-                || (gatewayResp.ErrorMessage ?? "").Contains("404", StringComparison.OrdinalIgnoreCase)
-                || (gatewayResp.ErrorMessage ?? "").Contains("not found", StringComparison.OrdinalIgnoreCase)
-                || (gatewayResp.ErrorMessage ?? "").Contains("No endpoints", StringComparison.OrdinalIgnoreCase)
-                || (gatewayResp.Content ?? "").Contains("\"code\":404", StringComparison.OrdinalIgnoreCase);
-            if (!gatewayResp.Success && looks404 && !isOpenRouter && !forceOpenRouter)
+            // OpenRouter 兜底：部分平台（OpenRouter 等）图片生成不走 /images/generations，而是 chat/completions+modalities。
+            // images/generations 失败（非尺寸类 400/413）时，自动改用 OpenRouter 协议重试一次。
+            // 不依赖 apiUrl 字符串匹配 / 不依赖具体 StatusCode 包装方式，对自定义域名 / 代理同样成立；
+            // 仅文生图触发（图生图 multipart 不同协议），forceOpenRouter 保证最多重试一次。
+            var nonSizeFailure = !gatewayResp.Success
+                && gatewayResp.StatusCode != 400
+                && gatewayResp.StatusCode != 413;
+            if (nonSizeFailure && initImageBase64 == null && !isOpenRouter && !forceOpenRouter)
             {
                 _logger.LogWarning(
-                    "[OpenAIImageClient] images/generations 疑似 404，改用 chat/completions+modalities 重试。apiUrl={ApiUrl}, model={Model}",
-                    apiUrl, effectiveModelName);
+                    "[OpenAIImageClient] images/generations 失败(status={Status})，改用 chat/completions+modalities 重试。apiUrl={ApiUrl}, model={Model}",
+                    gatewayResp.StatusCode, apiUrl, effectiveModelName);
                 forceOpenRouter = true;
                 gatewayResp = await SendViaGatewayAsync(ct);
             }
