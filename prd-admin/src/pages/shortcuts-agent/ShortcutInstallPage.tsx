@@ -93,6 +93,9 @@ export default function ShortcutInstallPage() {
   const [error, setError] = useState<InstallError | null>(null);
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState(0); // 0=初始, 1=已复制配置, 2=已打开App
+  // 是否已尝试过复制（无论成功失败）。复制被浏览器拦截时 step 不会进 1，
+  // 但用户照提示手动复制后仍需能打开编辑器，故用它解锁后续入口，避免卡死。
+  const [copyTried, setCopyTried] = useState(false);
 
   // 防陈旧响应：重试 / 路由参数变更会触发重叠 fetch，旧响应不得覆盖新结果
   const loadSeqRef = useRef(0);
@@ -135,6 +138,7 @@ export default function ShortcutInstallPage() {
       name: data.name,
     });
     const ok = await copyToClipboard(config);
+    setCopyTried(true); // 无论成败都算「尝试过」，解锁后续手动入口
     if (ok) {
       setStep(1);
       toast.success('配置已复制到剪贴板');
@@ -271,16 +275,17 @@ export default function ShortcutInstallPage() {
                 style={{
                   ...btnStyle,
                   textDecoration: 'none',
-                  background: step >= 1 ? '#007aff' : 'rgba(255,255,255,0.12)',
-                  color: step >= 1 ? '#fff' : 'rgba(255,255,255,0.4)',
-                  pointerEvents: step >= 1 ? 'auto' : 'none',
+                  // 复制成功或「尝试过复制」（含被拦截后手动复制）即解锁，避免自动复制失败时卡死
+                  background: step >= 1 || copyTried ? '#007aff' : 'rgba(255,255,255,0.12)',
+                  color: step >= 1 || copyTried ? '#fff' : 'rgba(255,255,255,0.4)',
+                  pointerEvents: step >= 1 || copyTried ? 'auto' : 'none',
                 }}
               >
                 打开快捷指令编辑器
               </a>
             )}
 
-            {step < 1 && (
+            {step < 1 && !copyTried && (
               <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6 }}>
                 请先复制配置
               </p>
@@ -444,45 +449,76 @@ function InfoRow({ label, value, mono }: {
 type VerifyState =
   | { kind: 'idle' }
   | { kind: 'checking' }
-  | { kind: 'ok'; total: number; latest?: string }
+  | { kind: 'received'; latest?: string }   // 检测到「新增」收藏 = 本次安装确实跑通
+  | { kind: 'connected' }                   // 密钥有效，但本次会话还没检测到新收藏
   | { kind: 'unauthorized' }
   | { kind: 'network' };
+
+type CountResult =
+  | { ok: true; total: number; latest?: string }
+  | { ok: false; reason: 'unauthorized' | 'network' };
+
+// 拉取「这条快捷指令」的收藏数 + 最新一条（按 shortcutId 收窄，token 走 Authorization 头）
+async function fetchShortcutCollectionCount(token: string, shortcutId: string): Promise<CountResult> {
+  try {
+    const params = new URLSearchParams({ page: '1', pageSize: '3' });
+    if (shortcutId) params.set('shortcutId', shortcutId);
+    const res = await fetch(`/api/shortcuts/collections?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 401) return { ok: false, reason: 'unauthorized' };
+    const json = await res.json();
+    if (json?.success && json.data) {
+      const total: number = json.data.total ?? json.data.Total ?? 0;
+      const items: Array<{ url?: string; text?: string }> = json.data.items ?? json.data.Items ?? [];
+      const latest = items[0]?.url || items[0]?.text || undefined;
+      return { ok: true, total, latest };
+    }
+    // 非 401 失败（鉴权失败后端已返 401）：当作可重试的网络/服务端问题
+    return { ok: false, reason: 'network' };
+  } catch {
+    return { ok: false, reason: 'network' };
+  }
+}
 
 function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; shortcutId: string; shortcutName: string }) {
   const [state, setState] = useState<VerifyState>({ kind: 'idle' });
   // 防陈旧响应：连点自检会重叠 fetch，只认最后一次的结果
   const checkSeqRef = useRef(0);
+  // 基线：进页面时静默记下「这条指令」已有的收藏数。只有检测到「新增」才判定安装成功，
+  // 避免分享者历史/早期测试产生的旧收藏，让首次安装者一点按钮就误报「安装成功」。
+  const baselineRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    baselineRef.current = null;
+    fetchShortcutCollectionCount(token, shortcutId).then((r) => {
+      if (!cancelled && r.ok) baselineRef.current = r.total;
+    });
+    return () => { cancelled = true; };
+  }, [token, shortcutId]);
 
   const check = async () => {
     const seq = ++checkSeqRef.current;
     setState({ kind: 'checking' });
-    try {
-      // 相对路径走当前站点，避免跨域；token 通过 Authorization 头校验（与快捷指令实际收藏同一把锁）
-      // 按 shortcutId 收窄：只看「这条指令」产生的收藏，避免误把别的指令的旧收藏当成本次安装成功
-      const params = new URLSearchParams({ page: '1', pageSize: '3' });
-      if (shortcutId) params.set('shortcutId', shortcutId);
-      const res = await fetch(`/api/shortcuts/collections?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.status === 401) {
-        if (checkSeqRef.current === seq) setState({ kind: 'unauthorized' });
-        return;
-      }
-      const json = await res.json();
-      if (checkSeqRef.current !== seq) return; // 已有更新的自检发出，丢弃本次
-      if (json?.success && json.data) {
-        const total: number = json.data.total ?? json.data.Total ?? 0;
-        const items: Array<{ url?: string; text?: string }> = json.data.items ?? json.data.Items ?? [];
-        const first = items[0];
-        const latest = first?.url || first?.text || undefined;
-        setState({ kind: 'ok', total, latest });
-      } else {
-        // 鉴权失败（token 无效/过期）后端返回 401，已在上面处理；
-        // 走到这里的都是服务端/限流等其他错误，按可重试的网络问题提示，别误报「密钥无效」
-        setState({ kind: 'network' });
-      }
-    } catch {
-      if (checkSeqRef.current === seq) setState({ kind: 'network' });
+    const r = await fetchShortcutCollectionCount(token, shortcutId);
+    if (checkSeqRef.current !== seq) return; // 已有更新的自检发出，丢弃本次
+    if (!r.ok) {
+      setState({ kind: r.reason });
+      return;
+    }
+    const baseline = baselineRef.current;
+    if (baseline === null) {
+      // 基线还没拿到（进页面那次拉取失败/未完成）：用本次结果建基线，先报「已连接」，引导分享后再点
+      baselineRef.current = r.total;
+      setState({ kind: 'connected' });
+      return;
+    }
+    if (r.total > baseline) {
+      baselineRef.current = r.total; // 推进基线，避免重复点重复报喜
+      setState({ kind: 'received', latest: r.latest });
+    } else {
+      setState({ kind: 'connected' });
     }
   };
 
@@ -518,14 +554,16 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
           : <><RefreshCw size={14} /> 检查连接是否正常</>}
       </button>
 
-      {state.kind === 'ok' && (
+      {state.kind === 'received' && (
         <ResultLine tone="ok">
-          {/* 以 total 为准判定是否已收藏，避免「已收藏 N 条」却又说「还没有收藏记录」自相矛盾 */}
-          {state.total > 0
-            ? <>连接正常，已收藏 {state.total} 条{state.latest
-                ? <>，最新一条：<span style={{ color: 'rgba(255,255,255,0.85)' }}>{truncate(state.latest, 40)}</span></>
-                : null}，安装成功！</>
-            : <>连接正常（密钥有效）。还没有收藏记录，去任意 App 点分享 → 选「{shortcutName}」试一下。</>}
+          收到新收藏，安装成功！{state.latest
+            ? <> 最新一条：<span style={{ color: 'rgba(255,255,255,0.85)' }}>{truncate(state.latest, 40)}</span></>
+            : null}
+        </ResultLine>
+      )}
+      {state.kind === 'connected' && (
+        <ResultLine tone="info">
+          连接正常（密钥有效）。还没检测到新收藏——请先在任意 App 点分享 → 选「{shortcutName}」，再点一次上面的按钮确认。
         </ResultLine>
       )}
       {state.kind === 'unauthorized' && (
@@ -540,9 +578,9 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
   );
 }
 
-function ResultLine({ tone, children }: { tone: 'ok' | 'bad'; children: React.ReactNode }) {
-  const color = tone === 'ok' ? '#34c759' : '#ff453a';
-  const Icon = tone === 'ok' ? CheckCircle2 : XCircle;
+function ResultLine({ tone, children }: { tone: 'ok' | 'bad' | 'info'; children: React.ReactNode }) {
+  const color = tone === 'ok' ? '#34c759' : tone === 'info' ? '#0a84ff' : '#ff453a';
+  const Icon = tone === 'ok' ? CheckCircle2 : tone === 'info' ? Info : XCircle;
   return (
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10,
