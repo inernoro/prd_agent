@@ -104,6 +104,7 @@ public class VideoGenService : IVideoGenService
             DirectAspectRatio = aspect,
             DirectResolution = resolution,
             DirectDuration = duration,
+            DirectFirstFrameUrl = string.IsNullOrWhiteSpace(request?.DirectFirstFrameUrl) ? null : request!.DirectFirstFrameUrl!.Trim(),
             TotalDurationSeconds = duration,
             CurrentPhase = "queued",
             CreatedAt = DateTime.UtcNow,

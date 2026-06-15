@@ -11,6 +11,7 @@ import {
   scriptStoryboard,
   streamImageGenRunWithRetry,
 } from '@/services';
+import { createVideoGenRunReal, getVideoGenRunReal } from '@/services/real/videoAgent';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 
 type Aspect = '16:9' | '9:16' | '1:1';
@@ -23,8 +24,15 @@ type SceneVM = {
   duration: number;
   kfStatus: 'idle' | 'running' | 'done' | 'error';
   kfUrl?: string | null;
+  /** 关键帧公开 HTTPS URL（COS），用于图生视频的首帧 */
+  kfPublicUrl?: string | null;
   kfError?: string | null;
   editing?: boolean;
+  /** image-to-video「动起来」状态 */
+  vidStatus?: 'idle' | 'running' | 'done' | 'error';
+  vidUrl?: string | null;
+  vidError?: string | null;
+  vidPhase?: string | null;
 };
 
 const ASPECTS: { key: Aspect; label: string; size: string; ratio: string }[] = [
@@ -148,8 +156,13 @@ export default function VisualStoryboardPage() {
           if (!tgt) return;
           const b64 = (o.base64 as string | null | undefined) ?? null;
           const url = (o.url as string | null | undefined) ?? null;
+          const originalUrl = (o.originalUrl as string | null | undefined) ?? null;
           const src = url || (b64 ? (b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`) : null);
-          setScenes((prev) => prev.map((s) => (s.index === tgt.sceneIndex ? { ...s, kfStatus: 'done', kfUrl: src } : s)));
+          // 图生视频首帧需要公开 HTTPS 链接（base64 不可用）：优先原图 COS URL
+          const publicUrl = /^https?:/.test(String(originalUrl)) ? originalUrl : /^https?:/.test(String(url)) ? url : null;
+          setScenes((prev) =>
+            prev.map((s) => (s.index === tgt.sceneIndex ? { ...s, kfStatus: 'done', kfUrl: src, kfPublicUrl: publicUrl } : s)),
+          );
         } else if (t === 'imageError') {
           const itemIndex = Number(o.itemIndex ?? -1);
           const tgt = targets[itemIndex];
@@ -213,6 +226,58 @@ export default function VisualStoryboardPage() {
     const s = scenes.find((x) => x.index === sceneIndex);
     if (!s || !activeModel) return;
     await renderKeyframes([{ sceneIndex, prompt: s.keyframePrompt }]);
+  };
+
+  /** 让关键帧动起来：图生视频（首帧 = 已确认的关键帧，复用视频智能体直出链路 + Wan 2.6） */
+  const animateScene = async (sceneIndex: number) => {
+    const s = scenes.find((x) => x.index === sceneIndex);
+    if (!s || s.kfStatus !== 'done') return;
+    if (!s.kfPublicUrl) {
+      toast.warning('该关键帧暂无公开链接，无法转视频，请先重绘这一镜');
+      return;
+    }
+    setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'running', vidError: null, vidPhase: '提交中' } : x)));
+
+    // Wan 2.6 仅支持 5/10s：分镜时长就近取 5
+    const duration = (s.duration || 5) >= 8 ? 10 : 5;
+    const directPrompt = `${s.keyframePrompt}. Camera & motion: ${s.motionPrompt || 'subtle natural motion, cinematic'}`;
+
+    const created = await createVideoGenRunReal({
+      mode: 'direct',
+      directPrompt,
+      directFirstFrameUrl: s.kfPublicUrl,
+      directAspectRatio: aspect,
+      directResolution: '720p',
+      directDuration: duration,
+      articleTitle: `分镜 ${sceneIndex + 1}：${s.topic}`,
+    });
+    if (!created.success || !created.data?.runId) {
+      setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: created.error?.message || '提交失败' } : x)));
+      return;
+    }
+    const runId = created.data.runId;
+
+    // 轮询直出结果（服务器权威：后台 worker 提交 → 轮询 OpenRouter → 下载 COS）
+    const deadline = Date.now() + 6 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const res = await getVideoGenRunReal(runId);
+      if (!res.success || !res.data) continue;
+      const run = res.data;
+      const st = String(run.status || '');
+      if (st === 'Completed' && run.videoAssetUrl) {
+        setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'done', vidUrl: run.videoAssetUrl, vidPhase: null } : x)));
+        return;
+      }
+      if (st === 'Failed' || st === 'Cancelled') {
+        setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: run.errorMessage || '视频生成失败' } : x)));
+        return;
+      }
+      // 进度文案（拉取 → 生成 → 下载）
+      const phaseLabel = run.currentPhase === 'downloading' ? '下载中' : run.currentPhase === 'videogen-polling' ? '生成中' : '生成中';
+      setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidPhase: phaseLabel } : x)));
+    }
+    setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: '生成超时，请重试' } : x)));
   };
 
   const fillExample = () => {
@@ -362,7 +427,26 @@ export default function VisualStoryboardPage() {
                         className="relative w-full"
                         style={{ aspectRatio: aspectInfo.ratio, background: 'rgba(0,0,0,0.22)' }}
                       >
-                        {!skeleton && s.kfStatus === 'done' && s.kfUrl ? (
+                        {!skeleton && s.vidUrl ? (
+                          <>
+                            <video
+                              src={s.vidUrl}
+                              className="w-full h-full block"
+                              style={{ objectFit: 'cover', background: '#000' }}
+                              controls
+                              loop
+                              muted
+                              autoPlay
+                              playsInline
+                            />
+                            <div
+                              className="absolute left-2 top-2 inline-flex items-center gap-1 text-[11px] font-semibold rounded-full px-2 h-6"
+                              style={{ background: 'rgba(99,102,241,0.85)', color: '#fff' }}
+                            >
+                              <Film size={11} /> 视频
+                            </div>
+                          </>
+                        ) : !skeleton && s.kfStatus === 'done' && s.kfUrl ? (
                           <>
                             <img
                               src={s.kfUrl}
@@ -380,6 +464,28 @@ export default function VisualStoryboardPage() {
                             >
                               <Maximize2 size={14} />
                             </button>
+                            {s.vidStatus === 'running' ? (
+                              <div
+                                className="absolute inset-0 flex flex-col items-center justify-center gap-2"
+                                style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}
+                              >
+                                <MapSpinner size={20} />
+                                <span className="text-xs font-semibold" style={{ color: '#fff' }}>
+                                  让画面动起来 · {s.vidPhase || '生成中'}…
+                                </span>
+                                <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                                  Wan 2.6 图生视频，约 1-3 分钟
+                                </span>
+                              </div>
+                            ) : null}
+                            {s.vidStatus === 'error' ? (
+                              <div
+                                className="absolute inset-x-0 bottom-0 px-2 py-1 text-[11px] text-center"
+                                style={{ background: 'rgba(127,29,29,0.85)', color: '#fff' }}
+                              >
+                                {s.vidError || '视频生成失败'}
+                              </div>
+                            ) : null}
                           </>
                         ) : (
                           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
@@ -478,12 +584,18 @@ export default function VisualStoryboardPage() {
                             </button>
                             <button
                               type="button"
-                              disabled
-                              title="需配置「视频生成」模型池后开启（image-to-video，让关键帧动起来）"
-                              className="ml-auto inline-flex items-center gap-1 text-[11px] rounded-[9px] px-2 h-7 cursor-not-allowed"
-                              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', opacity: 0.6 }}
+                              onClick={() => animateScene(s.index)}
+                              disabled={s.kfStatus !== 'done' || s.vidStatus === 'running'}
+                              title="图生视频：以这张关键帧为首帧，让画面动起来（Wan 2.6）"
+                              className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold rounded-[9px] px-2 h-7 disabled:opacity-50 transition-all"
+                              style={{
+                                border: '1px solid rgba(99,102,241,0.4)',
+                                color: s.vidStatus === 'done' ? 'var(--text-secondary)' : '#c7d2fe',
+                                background: s.vidStatus === 'done' ? 'transparent' : 'rgba(99,102,241,0.12)',
+                              }}
                             >
-                              <Play size={11} /> 动起来
+                              {s.vidStatus === 'running' ? <MapSpinner size={11} /> : <Play size={11} />}
+                              {s.vidStatus === 'done' ? '重生成' : s.vidStatus === 'running' ? '生成中' : '动起来'}
                             </button>
                           </div>
                         ) : null}

@@ -176,6 +176,7 @@ public class VideoGenRunWorker : BackgroundService
             AppCallerCode = appCallerCode,
             Model = run.DirectVideoModel, // 用户偏好（可空）；由模型池决定最终选择
             Prompt = prompt,
+            FirstFrameImageUrl = run.DirectFirstFrameUrl, // 设置则走图生视频（视觉分镜台「动起来」）
             AspectRatio = run.DirectAspectRatio,
             Resolution = run.DirectResolution,
             DurationSeconds = run.DirectDuration,

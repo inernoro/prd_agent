@@ -49,6 +49,19 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             ["model"] = resolution.ActualModel,
             ["prompt"] = request.Prompt
         };
+        // 图生视频：把首帧图作为 first_frame 传给视频模型（OpenRouter /videos frame_images 协议）
+        if (!string.IsNullOrWhiteSpace(request.FirstFrameImageUrl))
+        {
+            body["frame_images"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["type"] = "image_url",
+                    ["image_url"] = new JsonObject { ["url"] = request.FirstFrameImageUrl },
+                    ["frame_type"] = "first_frame"
+                }
+            };
+        }
         if (!string.IsNullOrWhiteSpace(request.AspectRatio)) body["aspect_ratio"] = request.AspectRatio;
         if (!string.IsNullOrWhiteSpace(request.Resolution)) body["resolution"] = request.Resolution;
         if (request.DurationSeconds.HasValue) body["duration"] = request.DurationSeconds.Value;
