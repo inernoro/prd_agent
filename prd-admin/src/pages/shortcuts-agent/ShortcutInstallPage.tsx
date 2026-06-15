@@ -265,15 +265,32 @@ export default function ShortcutInstallPage() {
             </button>
 
             {hasICloud ? (
-              <button
-                onClick={installICloudTemplate}
-                style={{
-                  ...btnStyle,
-                  background: '#007aff',
-                }}
-              >
-                复制配置并安装 iCloud 模板
-              </button>
+              <>
+                <button
+                  onClick={installICloudTemplate}
+                  style={{
+                    ...btnStyle,
+                    background: '#007aff',
+                  }}
+                >
+                  复制配置并安装 iCloud 模板
+                </button>
+                {/* 自动复制被浏览器拦截（installICloudTemplate 会中止跳转）时的兜底：
+                    用户照提示长按手动复制「完整配置」后，仍能从这里直接打开 iCloud 模板，不卡死 */}
+                {copyTried && (
+                  <a
+                    href={data.iCloudUrl}
+                    onClick={() => setStep(2)}
+                    style={{
+                      ...secondaryBtnStyle,
+                      marginTop: 10,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    已手动复制完整配置？点此打开 iCloud 模板
+                  </a>
+                )}
+              </>
             ) : (
               <a
                 href="shortcuts://create-shortcut"
@@ -458,36 +475,33 @@ function InfoRow({ label, value, mono }: {
 }
 
 // ─── 连接自检 ───
-// 装完快捷指令后，点一下就知道密钥通不通、收藏有没有到，省得用户对着手机干瞪眼。
-// 走 GET /collections（带 token），非破坏性：只验证授权 + 读回收藏数，不会写脏数据。
+// 点一下验证「这条快捷指令的密钥能否被服务器接受」——这是安装后最常见、也是用户唯一
+// 自己排查不了的失败点（密钥失效/过期）。
+//
+// 为什么只验密钥、不报「收到第几条收藏」：scs- token 属于「分享者本人账号」且可被多人共用，
+// 收藏是按账号汇总、不区分安装者；任何人用同一 token 收藏都会让计数变化。所以靠计数判定
+// 「本次安装成功」本质不可靠（基线竞态、串到别人的收藏）。这里只做诚实的事：探活密钥。
+// 走 GET /collections（带 token），非破坏性，仅看 200/401，不展示任何收藏内容。
 type VerifyState =
   | { kind: 'idle' }
   | { kind: 'checking' }
-  | { kind: 'received'; latest?: string }   // 检测到「新增」收藏 = 本次安装确实跑通
-  | { kind: 'connected' }                   // 密钥有效，但本次会话还没检测到新收藏
+  | { kind: 'ok' }
   | { kind: 'unauthorized' }
   | { kind: 'network' };
 
-type CountResult =
-  | { ok: true; total: number; latest?: string }
-  | { ok: false; reason: 'unauthorized' | 'network' };
+type ProbeResult = { ok: true } | { ok: false; reason: 'unauthorized' | 'network' };
 
-// 拉取「这条快捷指令」的收藏数 + 最新一条（按 shortcutId 收窄，token 走 Authorization 头）
-async function fetchShortcutCollectionCount(token: string, shortcutId: string): Promise<CountResult> {
+// 用 token 探活：能被服务器接受即「密钥有效」，401 即失效/过期，其余按网络问题。
+async function probeShortcutToken(token: string, shortcutId: string): Promise<ProbeResult> {
   try {
-    const params = new URLSearchParams({ page: '1', pageSize: '3' });
+    const params = new URLSearchParams({ page: '1', pageSize: '1' });
     if (shortcutId) params.set('shortcutId', shortcutId);
     const res = await fetch(`/api/shortcuts/collections?${params.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.status === 401) return { ok: false, reason: 'unauthorized' };
     const json = await res.json();
-    if (json?.success && json.data) {
-      const total: number = json.data.total ?? json.data.Total ?? 0;
-      const items: Array<{ url?: string; text?: string }> = json.data.items ?? json.data.Items ?? [];
-      const latest = items[0]?.url || items[0]?.text || undefined;
-      return { ok: true, total, latest };
-    }
+    if (json?.success) return { ok: true };
     // 非 401 失败（鉴权失败后端已返 401）：当作可重试的网络/服务端问题
     return { ok: false, reason: 'network' };
   } catch {
@@ -499,41 +513,13 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
   const [state, setState] = useState<VerifyState>({ kind: 'idle' });
   // 防陈旧响应：连点自检会重叠 fetch，只认最后一次的结果
   const checkSeqRef = useRef(0);
-  // 基线：进页面时静默记下「这条指令」已有的收藏数。只有检测到「新增」才判定安装成功，
-  // 避免分享者历史/早期测试产生的旧收藏，让首次安装者一点按钮就误报「安装成功」。
-  const baselineRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    baselineRef.current = null;
-    fetchShortcutCollectionCount(token, shortcutId).then((r) => {
-      if (!cancelled && r.ok) baselineRef.current = r.total;
-    });
-    return () => { cancelled = true; };
-  }, [token, shortcutId]);
 
   const check = async () => {
     const seq = ++checkSeqRef.current;
     setState({ kind: 'checking' });
-    const r = await fetchShortcutCollectionCount(token, shortcutId);
+    const r = await probeShortcutToken(token, shortcutId);
     if (checkSeqRef.current !== seq) return; // 已有更新的自检发出，丢弃本次
-    if (!r.ok) {
-      setState({ kind: r.reason });
-      return;
-    }
-    const baseline = baselineRef.current;
-    if (baseline === null) {
-      // 基线还没拿到（进页面那次拉取失败/未完成）：用本次结果建基线，先报「已连接」，引导分享后再点
-      baselineRef.current = r.total;
-      setState({ kind: 'connected' });
-      return;
-    }
-    if (r.total > baseline) {
-      baselineRef.current = r.total; // 推进基线，避免重复点重复报喜
-      setState({ kind: 'received', latest: r.latest });
-    } else {
-      setState({ kind: 'connected' });
-    }
+    setState(r.ok ? { kind: 'ok' } : { kind: r.reason });
   };
 
   return (
@@ -545,11 +531,11 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <ShieldCheck size={15} style={{ color: '#0a84ff', flexShrink: 0 }} />
         <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>
-          装完了？点这里自检
+          装完了？点这里验证密钥
         </span>
       </div>
       <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5, marginBottom: 10 }}>
-        建议先在任意 App 点一次分享 → 选「{shortcutName}」，再来点下方按钮，确认收藏真的通了。
+        点一下确认这条快捷指令的密钥仍然有效、能被服务器接受——安装后最常见的失败就是密钥失效。
       </p>
 
       <button
@@ -565,24 +551,17 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
       >
         {state.kind === 'checking'
           ? <><MapSpinner size={15} /> 检测中…</>
-          : <><RefreshCw size={14} /> 检查连接是否正常</>}
+          : <><RefreshCw size={14} /> 验证密钥是否有效</>}
       </button>
 
-      {state.kind === 'received' && (
+      {state.kind === 'ok' && (
         <ResultLine tone="ok">
-          收到新收藏，安装成功！{state.latest
-            ? <> 最新一条：<span style={{ color: 'rgba(255,255,255,0.85)' }}>{truncate(state.latest, 40)}</span></>
-            : null}
-        </ResultLine>
-      )}
-      {state.kind === 'connected' && (
-        <ResultLine tone="info">
-          连接正常（密钥有效）。还没检测到新收藏——请先在任意 App 点分享 → 选「{shortcutName}」，再点一次上面的按钮确认。
+          密钥有效，服务器可正常接收。装好后在任意 App 点分享 → 选「{shortcutName}」即可收藏。
         </ResultLine>
       )}
       {state.kind === 'unauthorized' && (
         <ResultLine tone="bad">
-          连接失败：密钥无效或已过期。请向分享给你的人要一张新的二维码。
+          密钥无效或已过期。请向分享给你的人要一张新的二维码。
         </ResultLine>
       )}
       {state.kind === 'network' && (
@@ -592,9 +571,9 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
   );
 }
 
-function ResultLine({ tone, children }: { tone: 'ok' | 'bad' | 'info'; children: React.ReactNode }) {
-  const color = tone === 'ok' ? '#34c759' : tone === 'info' ? '#0a84ff' : '#ff453a';
-  const Icon = tone === 'ok' ? CheckCircle2 : tone === 'info' ? Info : XCircle;
+function ResultLine({ tone, children }: { tone: 'ok' | 'bad'; children: React.ReactNode }) {
+  const color = tone === 'ok' ? '#34c759' : '#ff453a';
+  const Icon = tone === 'ok' ? CheckCircle2 : XCircle;
   return (
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10,
@@ -658,10 +637,6 @@ function HelpFaq() {
       )}
     </div>
   );
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 // ─── Styles ───
