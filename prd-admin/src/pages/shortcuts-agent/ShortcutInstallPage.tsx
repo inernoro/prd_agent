@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   ShieldCheck,
+  Info,
 } from 'lucide-react';
 import { copyToClipboard } from '@/lib/clipboard';
 import { toast } from '@/lib/toast';
@@ -196,6 +197,21 @@ export default function ShortcutInstallPage() {
           PrdAgent 快捷指令
         </div>
 
+        {/* 纯手动兜底场景：诚实告知用户为什么要多走几步，降低挫败感 */}
+        {!canDownloadSigned && !hasICloud && (
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', gap: 8, textAlign: 'left',
+            padding: '12px 14px', marginBottom: 16, borderRadius: 12,
+            background: 'rgba(255,149,0,0.1)', border: '1px solid rgba(255,149,0,0.22)',
+          }}>
+            <Info size={16} style={{ color: '#ff9500', flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.72)', lineHeight: 1.55 }}>
+              这条快捷指令还没配「一键安装模板」，需要手动添加一次（约 1 分钟）。
+              照下面步骤做完，再用底部「连接自检」确认即可——不是你的问题，跟着做一定能成。
+            </span>
+          </div>
+        )}
+
         {canDownloadSigned ? (
           <>
             <a
@@ -298,18 +314,23 @@ export default function ShortcutInstallPage() {
           ) : (
             <>
               <StepItem n={1} done={step >= 1}>
-                点击上方「复制配置」
+                点击上方「复制配置到剪贴板」
               </StepItem>
               <StepItem n={2} done={step >= 2}>
                 打开「快捷指令」App → 点右上角 <strong>+</strong> 新建
               </StepItem>
               <StepItem n={3}>
-                搜索并添加「获取URL内容」操作
+                搜索并添加「获取 URL 内容」操作
               </StepItem>
               <StepItem n={4}>
-                <strong>URL</strong>: 粘贴收藏接口地址<br/>
-                <strong>方法</strong>: POST<br/>
-                <strong>头部</strong>: Authorization = Bearer {token.slice(0, 8)}...
+                展开操作里的<strong>「显示更多」</strong>，按下方信息填：<br/>
+                <strong>URL</strong>：粘贴下方「收藏接口」地址<br/>
+                <strong>方法</strong>：POST<br/>
+                <strong>请求体</strong>：JSON，加一项 <code style={{ fontFamily: 'monospace' }}>url</code> = 要收藏的链接<br/>
+                <strong>头部</strong>：Authorization = Bearer +下方完整 Token
+              </StepItem>
+              <StepItem n={5}>
+                保存并命名，运行一次后用下方「连接自检」确认是否成功
               </StepItem>
             </>
           )}
