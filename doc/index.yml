@@ -276,6 +276,7 @@ docs:
   debt.onboarding-tips: 页面教程(小技巧)系统 · 债务台账
   debt.pm-agent: 项目管理智能体 · 债务台账
   debt.product-agent: 产品管理智能体 · 债务台账
+  debt.shortcuts-agent: 快捷指令 Agent · 债务台账（一键安装前置条件/Agent 绑定 Phase2/签名 409 降级）
   debt.video-agent: 视频生成 Agent · 债务台账
   debt.workflow-agent: 工作流 Agent · 债务台账
   debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账

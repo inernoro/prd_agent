@@ -710,6 +710,8 @@
   > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
   > Phase 1 MVP 仅交付执行层；治理层（干系人/NPSS/奖金/盘点）待 Phase 2-3；Leader 职级强校验待 User 加字段
+- [快捷指令 Agent · 债务台账](debt.shortcuts-agent) `debt.shortcuts-agent`
+  > 3 条 open：一键安装依赖管理员配 iCloud 模板/macOS 签名（前端无法替代）、Agent 绑定仍是 Phase2 占位、签名直出 409 会露原始 JSON
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`
   > 4 条 open：OpenRouter CDN 7 天过期、混合渲染 ffmpeg normalize、直出心跳文案分级、成本预估 tooltip
 - [知识库划词评论（批注栏/内联 + 就地输入 + 回读闭环）· 债务台账](debt.kb-inline-comment) `debt.kb-inline-comment`
