@@ -27,6 +27,26 @@ const TYPE_LABEL: Record<HistoryImportType, string> = {
   version: '版本',
 };
 
+type UnmatchedProductRow = { label?: string; title?: string; planName?: string };
+
+function formatUnmatchedProductFeedback(unmatched?: UnmatchedProductRow[]): string {
+  const map = new Map<string, { count: number; example?: string }>();
+  for (const item of unmatched ?? []) {
+    const label = item.label?.trim();
+    if (!label) continue;
+    const current = map.get(label) ?? { count: 0 };
+    current.count += 1;
+    const example = (item.title ?? item.planName)?.trim();
+    if (example && !current.example) current.example = example;
+    map.set(label, current);
+  }
+  const lines = Array.from(map.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 8)
+    .map(([label, item]) => `${label} ${item.count} 条${item.example ? `，例如「${item.example}」` : ''}`);
+  return lines.length > 0 ? ` 未识别到系统产品的分类：${lines.join('；')}。` : '';
+}
+
 function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -196,21 +216,22 @@ export function ProductHistoryImportDialog({
     const created = data.created ?? 0;
     const updated = data.updated ?? 0;
     const skipped = 'skipped' in data ? (data.skipped ?? 0) : 0;
+    const unmatchedFeedback = formatUnmatchedProductFeedback('unmatched' in data ? data.unmatched : undefined);
     if (created + updated === 0) {
       setMessage(
         skipped > 0
-          ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「分类/应用/产品」未匹配系统产品被跳过。请确认这些列填的是系统已有产品名，或在标题前加【产品名】。`
+          ? `未写入任何${TYPE_LABEL[type]}：${skipped} 条因「分类/应用/产品」未匹配系统产品被跳过。${unmatchedFeedback}请确认这些列填的是系统已有产品名，或在标题前加【产品名】。`
           : `未写入任何${TYPE_LABEL[type]}，请检查文件内容。`,
       );
       return;
     }
     setMessage(
       `导入完成：新增 ${created} 条，更新 ${updated} 条${
-        skipped > 0 ? `，${skipped} 条「应用」未匹配已跳过` : ''
-      }。`,
+        skipped > 0 ? `，${skipped} 条因未匹配产品已跳过` : ''
+      }。${unmatchedFeedback}`,
     );
     await onImported();
-    onClose();
+    if (skipped === 0) onClose();
   };
 
   if (rtfFiles.length > 0 && (productId || crossProductRoute)) {
