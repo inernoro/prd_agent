@@ -152,7 +152,11 @@ export default function ShortcutInstallPage() {
       setStep(1);
       toast.success('配置已复制到剪贴板');
     } else {
-      toast.error('复制失败', '当前环境不支持自动复制，请长按下方 Token / 接口地址手动复制');
+      // iCloud/签名模板从剪贴板读的是整段 JSON，必须指向「完整配置」；纯手动流程才是 Token+接口
+      const needsFullConfig = !!data.iCloudUrl || (!!data.canDownloadSigned && !!data.downloadUrl);
+      toast.error('复制失败', needsFullConfig
+        ? '当前环境不支持自动复制，请长按下方「完整配置」整段手动复制，再打开 iCloud 模板'
+        : '当前环境不支持自动复制，请长按下方 Token / 接口地址手动复制');
     }
     return ok;
   };
