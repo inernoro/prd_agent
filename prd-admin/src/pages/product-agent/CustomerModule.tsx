@@ -1,13 +1,13 @@
 /**
- * 产品管理 — 客户模块（master-detail）。
+ * 产品管理 — 客户模块。
  *
- * 列表 → 选中某客户 → 详情三 Tab：
- *   客户信息（商户基础字段，对应「客户表单」默认基础模块）
- *   动态跟进（富文本时间线，记录时间/创建人/内容）
- *   营销问策（结合问策知识库的 AI 评估，P2 接入）
+ * 两个平级子模块：
+ *   客户管理：列表（可新增，按客户表单配置渲染自定义字段）→ 详情（基本信息 + 动态跟进）
+ *   营销问策：独立智能体（自带客户选择器）。列表/详情提供「营销问策」快捷入口，
+ *             点击把该客户作为上下文带入营销问策子模块。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Plus, Search, Trash2, Save, Clock, User as UserIcon } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Trash2, Save, Clock, User as UserIcon, Sparkles } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -21,14 +21,51 @@ import {
   deleteCustomerFollowUp,
 } from '@/services/real/productAgent';
 import type { Customer, CustomerFollowUp } from './types';
-import { RichTextField } from './DynamicForm';
+import { RichTextField, useEffectiveTemplate, FormFieldsRenderer } from './DynamicForm';
 import { MarketingConsultPanel } from './MarketingConsultPanel';
 
 const CERT_STATUS_OPTIONS = ['未认证', '已认证', '认证失败'];
 const FOLLOW_UP_PLACEHOLDER =
   '客户在什么时间做了什么事情；客户有什么新的动态；客户提了什么需求或者遇到了什么问题；我们与客户达成了什么共识等等。';
 
+type SubModule = 'manage' | 'consult';
+
 export function CustomerModule({ isAdmin }: { isAdmin: boolean }) {
+  const [subModule, setSubModule] = useState<SubModule>('manage');
+  const [consultCustomerId, setConsultCustomerId] = useState<string | null>(null);
+
+  const goConsult = (customerId: string) => {
+    setConsultCustomerId(customerId);
+    setSubModule('consult');
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <SubModuleTab on={subModule === 'manage'} onClick={() => setSubModule('manage')}>客户管理</SubModuleTab>
+        <SubModuleTab on={subModule === 'consult'} onClick={() => setSubModule('consult')}>营销问策</SubModuleTab>
+      </div>
+      {subModule === 'manage'
+        ? <CustomerManage isAdmin={isAdmin} onConsult={goConsult} />
+        : <CustomerConsultSubModule initialCustomerId={consultCustomerId} />}
+    </div>
+  );
+}
+
+function SubModuleTab({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-lg border px-3.5 py-1.5 text-sm ${on ? 'border-cyan-500/45 bg-cyan-500/15 text-cyan-200' : 'border-white/10 text-white/55 hover:bg-white/5'}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ════════════════════════ 客户管理（列表 + 详情） ════════════════════════
+
+function CustomerManage({ isAdmin, onConsult }: { isAdmin: boolean; onConsult: (customerId: string) => void }) {
   const [rows, setRows] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
@@ -51,6 +88,7 @@ export function CustomerModule({ isAdmin }: { isAdmin: boolean }) {
         onSavedNew={(c) => setSelected(c)}
         onDeleted={() => { setSelected(null); void reload(); }}
         onUpdated={() => void reload()}
+        onConsult={onConsult}
       />
     );
   }
@@ -90,6 +128,7 @@ export function CustomerModule({ isAdmin }: { isAdmin: boolean }) {
                 <th className="px-4 py-2.5 font-medium">认证状态</th>
                 <th className="px-4 py-2.5 font-medium">区域</th>
                 <th className="px-4 py-2.5 font-medium">行业</th>
+                <th className="px-4 py-2.5 font-medium text-right">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -97,7 +136,7 @@ export function CustomerModule({ isAdmin }: { isAdmin: boolean }) {
                 <tr
                   key={c.id}
                   onClick={() => setSelected(c)}
-                  className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]"
+                  className="group cursor-pointer border-t border-white/5 hover:bg-white/[0.03]"
                 >
                   <td className="px-4 py-3 font-mono text-xs text-white/45">{c.merchantNo || '-'}</td>
                   <td className="px-4 py-3 text-white/90">{c.name}</td>
@@ -105,6 +144,15 @@ export function CustomerModule({ isAdmin }: { isAdmin: boolean }) {
                   <td className="px-4 py-3 text-xs"><CertBadge value={c.certStatus} /></td>
                   <td className="px-4 py-3 text-xs text-white/55">{c.region || '-'}</td>
                   <td className="px-4 py-3 text-xs text-white/55">{c.industry || '-'}</td>
+                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => onConsult(c.id)}
+                      title="带该客户信息去营销问策"
+                      className="inline-flex items-center gap-1 rounded-md border border-cyan-500/25 px-2 py-1 text-[11px] text-cyan-300/90 opacity-0 hover:bg-cyan-500/15 group-hover:opacity-100"
+                    >
+                      <Sparkles size={11} /> 营销问策
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -124,9 +172,9 @@ function CertBadge({ value }: { value?: string | null }) {
   return <span className={`rounded-full border px-2 py-0.5 text-[11px] ${tone}`}>{value}</span>;
 }
 
-// ════════════════════════ 客户详情（三 Tab） ════════════════════════
+// ── 客户详情（基本信息 + 动态跟进） ──
 
-type DetailTab = 'info' | 'follow-up' | 'consult';
+type DetailTab = 'info' | 'follow-up';
 
 function CustomerDetail({
   customer,
@@ -135,6 +183,7 @@ function CustomerDetail({
   onSavedNew,
   onDeleted,
   onUpdated,
+  onConsult,
 }: {
   customer: Customer | null;
   isAdmin: boolean;
@@ -142,40 +191,45 @@ function CustomerDetail({
   onSavedNew: (c: Customer) => void;
   onDeleted: () => void;
   onUpdated: () => void;
+  onConsult: (customerId: string) => void;
 }) {
   const [tab, setTab] = useState<DetailTab>('info');
   const isNew = !customer;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="mb-3 flex items-center gap-3">
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-3">
         <button onClick={onBack} className="flex items-center gap-1 text-xs text-white/45 hover:text-white">
           <ArrowLeft size={13} /> 返回客户列表
         </button>
         <h3 className="text-base font-semibold text-white">{isNew ? '新增客户' : customer!.name}</h3>
+        {!isNew && (
+          <button
+            onClick={() => onConsult(customer!.id)}
+            className="ml-auto flex items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-200 hover:bg-cyan-500/25"
+          >
+            <Sparkles size={13} /> 营销问策
+          </button>
+        )}
       </div>
 
       {!isNew && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <TabBtn on={tab === 'info'} onClick={() => setTab('info')}>客户信息</TabBtn>
+        <div className="flex flex-wrap items-center gap-2">
+          <TabBtn on={tab === 'info'} onClick={() => setTab('info')}>基本信息</TabBtn>
           <TabBtn on={tab === 'follow-up'} onClick={() => setTab('follow-up')}>动态跟进</TabBtn>
-          <TabBtn on={tab === 'consult'} onClick={() => setTab('consult')}>营销问策</TabBtn>
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-        {(isNew || tab === 'info') && (
-          <CustomerInfoForm
-            customer={customer}
-            isAdmin={isAdmin}
-            onSavedNew={onSavedNew}
-            onDeleted={onDeleted}
-            onUpdated={onUpdated}
-          />
-        )}
-        {!isNew && tab === 'follow-up' && <FollowUpTimeline customerId={customer!.id} />}
-        {!isNew && tab === 'consult' && <MarketingConsultPanel customer={customer!} />}
-      </div>
+      {(isNew || tab === 'info') && (
+        <CustomerInfoForm
+          customer={customer}
+          isAdmin={isAdmin}
+          onSavedNew={onSavedNew}
+          onDeleted={onDeleted}
+          onUpdated={onUpdated}
+        />
+      )}
+      {!isNew && tab === 'follow-up' && <FollowUpTimeline customerId={customer!.id} />}
     </div>
   );
 }
@@ -191,7 +245,7 @@ function TabBtn({ on, onClick, children }: { on: boolean; onClick: () => void; c
   );
 }
 
-// ── 客户信息 ──
+// ── 客户信息（基础商户字段 + 按客户表单配置的自定义字段） ──
 
 const inputCls = 'rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25';
 
@@ -221,7 +275,12 @@ function CustomerInfoForm({
   const [contact, setContact] = useState(customer?.contact ?? '');
   const [tagsText, setTagsText] = useState((customer?.tags ?? []).join(', '));
   const [description, setDescription] = useState(customer?.description ?? '');
+  const [formData, setFormData] = useState<Record<string, string>>(customer?.formData ?? {});
   const [saving, setSaving] = useState(false);
+
+  // 「按配置项」：客户表单模板定义的自定义字段（设置 → 客户 → 客户表单）
+  const { template } = useEffectiveTemplate('customer', null);
+  const customFields = template?.fields ?? [];
 
   const save = async () => {
     if (!name.trim()) { toast.error('请填写商户名称'); return; }
@@ -240,6 +299,8 @@ function CustomerInfoForm({
       contact: contact.trim() || null,
       description: description.trim() || null,
       tags: tagsText.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
+      templateId: template?.id ?? null,
+      formData,
     };
     const res = customer ? await updateCustomer(customer.id, body) : await createCustomer(body);
     setSaving(false);
@@ -285,6 +346,18 @@ function CustomerInfoForm({
       <Field label="备注">
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="客户描述 / 备注" className={`${inputCls} resize-none`} />
       </Field>
+
+      {customFields.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+          <div className="text-xs font-medium text-white/55">自定义字段（按「设置 → 客户 → 客户表单」配置）</div>
+          <FormFieldsRenderer
+            fields={customFields}
+            values={formData}
+            onChange={(key, value) => setFormData((p) => ({ ...p, [key]: value }))}
+            productId={null}
+          />
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-500/30 disabled:opacity-40">
@@ -371,6 +444,71 @@ function FollowUpTimeline({ customerId }: { customerId: string }) {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════ 营销问策（独立子模块） ════════════════════════
+
+function CustomerConsultSubModule({ initialCustomerId }: { initialCustomerId: string | null }) {
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [keyword, setKeyword] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(initialCustomerId);
+
+  useEffect(() => {
+    void (async () => {
+      const res = await listCustomers({});
+      if (res.success) setCustomers(res.data.items);
+      setLoading(false);
+    })();
+  }, []);
+
+  // 从快捷入口带入的客户
+  useEffect(() => {
+    if (initialCustomerId) setSelectedId(initialCustomerId);
+  }, [initialCustomerId]);
+
+  const selected = customers.find((c) => c.id === selectedId) ?? null;
+  const filtered = keyword.trim()
+    ? customers.filter((c) => `${c.name} ${c.merchantNo ?? ''} ${c.shortName ?? ''}`.toLowerCase().includes(keyword.trim().toLowerCase()))
+    : customers;
+
+  if (loading) return <MapSectionLoader text="正在加载客户…" />;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+        <div className="flex items-center gap-2">
+          <Sparkles size={15} className="text-cyan-300" />
+          <span className="text-sm font-medium text-white/80">营销问策智能体</span>
+          <span className="text-xs text-white/40">选择一个客户，结合其全部信息与问策知识库做专业营销评估</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5">
+            <Search size={14} className="text-white/40" />
+            <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索客户" className="w-44 bg-transparent text-sm text-white outline-none" />
+          </div>
+          <select
+            value={selectedId ?? ''}
+            onChange={(e) => setSelectedId(e.target.value || null)}
+            className="min-w-[200px] rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500/40"
+          >
+            <option value="">选择客户…</option>
+            {filtered.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}{c.merchantNo ? `（${c.merchantNo}）` : ''}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {selected ? (
+        <MarketingConsultPanel key={selected.id} customerId={selected.id} customerName={selected.name} />
+      ) : customers.length === 0 ? (
+        <div className="py-12 text-center text-sm text-white/40">还没有客户。请先在「客户管理」新增客户，再来做营销问策。</div>
+      ) : (
+        <div className="py-12 text-center text-sm text-white/40">请在上方选择一个客户开始营销问策。</div>
       )}
     </div>
   );

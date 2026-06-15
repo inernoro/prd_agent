@@ -171,7 +171,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'customers' && (
-        <SectionShell title="客户" desc="客户信息 / 动态跟进 / 营销问策；需求可关联客户（增/改任意使用者，删除限管理员）">
+        <SectionShell title="客户" desc="客户管理（列表 + 详情：基本信息 / 动态跟进）与营销问策两个子模块；需求可关联客户">
           <CustomerModule isAdmin={isAdmin} />
         </SectionShell>
       )}

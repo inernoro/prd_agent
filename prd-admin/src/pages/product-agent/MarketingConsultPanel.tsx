@@ -25,7 +25,7 @@ import {
   consultGenerateUrl,
   consultSharedUrl,
 } from '@/services/real/productAgent';
-import type { Customer, MarketingConsultListItem, MarketingConsultReport, MarketingTemplate, MarketingVerdict } from './types';
+import type { MarketingConsultListItem, MarketingConsultReport, MarketingTemplate, MarketingVerdict } from './types';
 
 const VERDICT_META: Record<MarketingVerdict, { label: string; cls: string }> = {
   healthy: { label: '健康', cls: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' },
@@ -47,7 +47,7 @@ function fmtTime(iso: string) {
 }
 const templateLabel = (k: MarketingTemplate) => MARKETING_TEMPLATES.find((t) => t.key === k)?.label ?? k;
 
-export function MarketingConsultPanel({ customer }: { customer: Customer }) {
+export function MarketingConsultPanel({ customerId, customerName }: { customerId: string; customerName?: string }) {
   const [reports, setReports] = useState<MarketingConsultListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewing, setViewing] = useState<MarketingConsultReport | null>(null);
@@ -65,10 +65,10 @@ export function MarketingConsultPanel({ customer }: { customer: Customer }) {
   const abortRef = useRef<AbortController | null>(null);
 
   const reload = useCallback(async () => {
-    const res = await listConsultReports(customer.id);
+    const res = await listConsultReports(customerId);
     if (res.success) setReports(res.data.items);
     setLoading(false);
-  }, [customer.id]);
+  }, [customerId]);
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
@@ -88,7 +88,7 @@ export function MarketingConsultPanel({ customer }: { customer: Customer }) {
     let failed: string | null = null;
     try {
       await connectSse({
-        url: consultGenerateUrl(customer.id),
+        url: consultGenerateUrl(customerId),
         method: 'POST',
         body: { input: input.trim() || undefined, note: note.trim() || undefined, template },
         signal: controller.signal,
@@ -129,7 +129,7 @@ export function MarketingConsultPanel({ customer }: { customer: Customer }) {
       <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <div className="flex items-center gap-2">
           <Sparkles size={15} className="text-cyan-300" />
-          <span className="text-sm font-medium text-white/80">营销问策</span>
+          <span className="text-sm font-medium text-white/80">营销问策{customerName ? ` · ${customerName}` : ''}</span>
           {model && <span className="ml-1 flex items-center gap-1 font-mono text-[11px] text-white/40"><Cpu size={11} />{model}</span>}
         </div>
         <p className="text-xs leading-5 text-white/45">
