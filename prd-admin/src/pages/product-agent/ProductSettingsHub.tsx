@@ -6,7 +6,8 @@
  * 复用各底层编辑器（FormTemplateEditor / WorkflowEditor / 类型 / 描述模板 / 管理员），
  * 优先级与严重程度走通用等级目录 GradeCatalogManager。
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ShieldCheck,
   Boxes,
@@ -18,9 +19,17 @@ import {
   Plus,
   Save,
   Trash2,
+  FileText,
+  X,
 } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
-import { listProducts, upsertGradeOption, deleteGradeOption } from '@/services/real/productAgent';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
+import { toast } from '@/lib/toast';
+import {
+  listProducts, upsertGradeOption, deleteGradeOption,
+  getConsultKnowledge, getConsultKnowledgeEntry, addConsultKnowledge,
+  type ConsultKbEntry,
+} from '@/services/real/productAgent';
 import type { Product, ProductEntityType, ProductGradeOption, GradeDimension, GradeEntityType } from './types';
 import {
   FormTemplateEditor,
@@ -392,24 +401,134 @@ function GradeOptionRow({ option, onChanged }: { option: ProductGradeOption; onC
   );
 }
 
-// ════════════════════════ 问策知识库（P2 接入营销问策） ════════════════════════
+// ════════════════════════ 问策知识库（营销问策专属，文档列表 + 查看 + 添加） ════════════════════════
 
 function ConsultKnowledgePanel() {
+  const [entries, setEntries] = useState<ConsultKbEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const res = await getConsultKnowledge();
+    if (res.success) setEntries(res.data.entries);
+    setLoading(false);
+  }, []);
+  useEffect(() => { void reload(); }, [reload]);
+
   return (
     <div className="flex flex-col gap-3">
       <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <div className="text-sm font-medium text-white/75">营销问策专属知识库</div>
         <div className="mt-1 text-xs leading-5 text-white/45">
-          「客户 → 营销问策」生成评估时，会以本知识库内容（全域粉销 / 营销四力模型 4FM）作为专业依据。首次使用问策时，系统自动创建「问策知识库」并内置 3 份默认资料：营销四力模型 4FM、全域粉销营销范式革命、缩量内卷时代快消品营销。
+          「营销问策」生成评估时以本知识库内容（全域粉销 / 营销四力模型 4FM）作为专业依据。系统已内置 3 份默认资料，可在下方查看，并随时「添加资料」扩充——新增内容即时纳入后续问策上下文。
         </div>
       </div>
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-        <div className="text-sm font-medium text-white/75">维护与扩充</div>
-        <div className="mt-1 text-xs leading-5 text-white/45">
-          需要新增 / 编辑 / 删除问策资料时，前往左侧导航「知识库」，打开名为「问策知识库」的文档空间进行管理；新增内容会即时纳入后续问策评估的上下文。
-        </div>
+
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-white/50">资料列表{entries.length > 0 ? `（${entries.length}）` : ''}</span>
+        <button onClick={() => setAdding(true)} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30">
+          <Plus size={14} /> 添加资料
+        </button>
       </div>
+
+      {loading ? (
+        <MapSectionLoader text="正在加载知识库…" />
+      ) : entries.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-white/15 py-10 text-center text-sm text-white/40">还没有资料。点「添加资料」录入第一份问策参考。</div>
+      ) : (
+        <div className="divide-y divide-white/5 overflow-hidden rounded-xl border border-white/10">
+          {entries.map((e) => (
+            <button key={e.id} onClick={() => setViewingId(e.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.03]">
+              <FileText size={15} className="shrink-0 text-cyan-300/70" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm text-white/90">{e.title}</div>
+                {e.summary && <div className="truncate text-xs text-white/40">{e.summary}</div>}
+              </div>
+              <span className="shrink-0 text-[11px] text-white/35">{fmtKbMeta(e)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {viewingId && <KbEntryViewModal entryId={viewingId} onClose={() => setViewingId(null)} />}
+      {adding && <KbAddModal onClose={() => setAdding(false)} onAdded={() => { setAdding(false); void reload(); }} />}
     </div>
+  );
+}
+
+function fmtKbMeta(e: ConsultKbEntry): string {
+  const kb = e.fileSize ? `${Math.max(1, Math.round(e.fileSize / 1024))} KB` : '';
+  const d = new Date(e.createdAt);
+  const date = Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('zh-CN');
+  return [kb, date].filter(Boolean).join(' · ');
+}
+
+function KbEntryViewModal({ entryId, onClose }: { entryId: string; onClose: () => void }) {
+  const [data, setData] = useState<{ title: string; content: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    void (async () => {
+      const res = await getConsultKnowledgeEntry(entryId);
+      if (res.success) setData({ title: res.data.title, content: res.data.content });
+      else toast.error('加载失败', res.error?.message);
+      setLoading(false);
+    })();
+  }, [entryId]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="flex w-full max-w-3xl flex-col rounded-xl border border-white/10 bg-[#16181d]" style={{ height: '86vh', maxHeight: '86vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-3">
+          <h3 className="truncate text-sm font-semibold text-white">{data?.title ?? '加载中…'}</h3>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4" style={{ overscrollBehavior: 'contain' }}>
+          {loading ? <MapSectionLoader text="正在加载…" /> : data ? <MarkdownViewer content={data.content} /> : <div className="text-sm text-white/40">内容为空</div>}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function KbAddModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!title.trim() || !content.trim()) { toast.error('请填写标题与内容'); return; }
+    setSaving(true);
+    const res = await addConsultKnowledge({ title: title.trim(), content });
+    setSaving(false);
+    if (res.success) { toast.success('已添加'); onAdded(); }
+    else toast.error('添加失败', res.error?.message);
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="flex w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-[#16181d]" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-3">
+          <h3 className="text-sm font-semibold text-white">添加问策资料</h3>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4" style={{ overscrollBehavior: 'contain' }}>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="资料标题，如：某行业全域粉销打法"
+            className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25" />
+          <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={16} placeholder="资料正文（支持 Markdown）。将作为营销问策评估的参考依据。"
+            className="resize-y rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25" style={{ minHeight: 280 }} />
+        </div>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-white/10 px-5 py-3">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/60 hover:bg-white/5">取消</button>
+          <button onClick={save} disabled={saving || !title.trim() || !content.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">
+            {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

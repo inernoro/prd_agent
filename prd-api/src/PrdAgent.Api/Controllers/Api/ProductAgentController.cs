@@ -1747,12 +1747,35 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
-    /// <summary>全部问策报告列表（精简，含客户名 / 自由问策标注）。登录可读，营销问策子模块左侧列表。</summary>
+    /// <summary>全部问策报告列表（精简，含客户名 / 自由问策标注）。登录可读，营销问策子模块左侧列表。
+    /// 支持分页 + 筛选：keyword（标题模糊，不区分大小写）/ customerId / verdict / template。</summary>
     [HttpGet("consult")]
-    public async Task<IActionResult> ListAllConsult()
+    public async Task<IActionResult> ListAllConsult(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] string? keyword = null, [FromQuery] string? customerId = null,
+        [FromQuery] string? verdict = null, [FromQuery] string? template = null)
     {
-        var reports = await _db.MarketingConsultReports.Find(r => !r.IsDeleted)
-            .SortByDescending(r => r.CreatedAt).Limit(200).ToListAsync();
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var b = Builders<MarketingConsultReport>.Filter;
+        var conds = new List<FilterDefinition<MarketingConsultReport>> { b.Eq(r => r.IsDeleted, false) };
+        if (!string.IsNullOrWhiteSpace(keyword))
+            conds.Add(b.Regex(r => r.Title,
+                new MongoDB.Bson.BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(keyword.Trim()), "i")));
+        if (!string.IsNullOrWhiteSpace(customerId))
+            conds.Add(b.Eq(r => r.CustomerId, customerId.Trim()));
+        if (!string.IsNullOrWhiteSpace(verdict))
+            conds.Add(b.Eq(r => r.Verdict, verdict.Trim()));
+        if (!string.IsNullOrWhiteSpace(template))
+            conds.Add(b.Eq(r => r.Template, template.Trim()));
+
+        var filter = b.And(conds);
+        var total = await _db.MarketingConsultReports.CountDocumentsAsync(filter);
+        var reports = await _db.MarketingConsultReports.Find(filter)
+            .SortByDescending(r => r.CreatedAt)
+            .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync();
+
         var custIds = reports.Where(r => !string.IsNullOrEmpty(r.CustomerId)).Select(r => r.CustomerId).Distinct().ToList();
         var nameMap = new Dictionary<string, string>();
         if (custIds.Count > 0)
@@ -1763,7 +1786,7 @@ public class ProductAgentController : ControllerBase
         var items = reports.Select(r => ToConsultListItem(
             r,
             string.IsNullOrEmpty(r.CustomerId) ? null : (nameMap.TryGetValue(r.CustomerId, out var n) ? n : "（已删除客户）"))).ToList();
-        return Ok(ApiResponse<object>.Ok(new { items }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
     }
 
     /// <summary>问策报告详情（含 html）。登录可读。</summary>
@@ -1863,6 +1886,7 @@ public class ProductAgentController : ControllerBase
             InputText = (request?.Input ?? "").Trim(),
             Model = model,
             Template = consultTemplate,
+            Verdict = ai.Verdict,
             Html = html,
             RenderDataJson = System.Text.Json.JsonSerializer.Serialize(renderData),
             AiContentJson = System.Text.Json.JsonSerializer.Serialize(ai),
@@ -1954,6 +1978,83 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, siteUrl = site.SiteUrl }));
     }
 
+    // ── 营销问策知识库（DocumentStore）──
+
+    /// <summary>问策知识库条目列表（精简，不含全文）。ensure 库存在，按 CreatedAt 升序。登录可读。</summary>
+    [HttpGet("consult/knowledge")]
+    public async Task<IActionResult> ListConsultKnowledge()
+    {
+        var store = await EnsureConsultKnowledgeStoreAsync(GetUserId());
+        if (store == null) return Ok(ApiResponse<object>.Ok(new { storeId = (string?)null, storeName = "问策知识库", entries = new List<object>() }));
+        var entries = await _db.DocumentEntries
+            .Find(e => e.StoreId == store.Id && !e.IsFolder)
+            .SortBy(e => e.CreatedAt).ToListAsync();
+        var items = entries.Select(e => new
+        {
+            id = e.Id,
+            title = e.Title,
+            summary = e.Summary,
+            contentType = e.ContentType,
+            fileSize = e.FileSize,
+            createdAt = e.CreatedAt,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { storeId = store.Id, storeName = store.Name, entries = items }));
+    }
+
+    /// <summary>问策知识库单条全文。content 取 ContentIndex（兜底 Summary）。登录可读；条目不属于问策库或不存在 404。</summary>
+    [HttpGet("consult/knowledge/{entryId}")]
+    public async Task<IActionResult> GetConsultKnowledgeEntry(string entryId)
+    {
+        var store = await EnsureConsultKnowledgeStoreAsync(GetUserId());
+        if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库条目不存在"));
+        var e = await _db.DocumentEntries.Find(x => x.Id == entryId && x.StoreId == store.Id && !x.IsFolder).FirstOrDefaultAsync();
+        if (e == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库条目不存在"));
+        var content = !string.IsNullOrWhiteSpace(e.ContentIndex) ? e.ContentIndex : (e.Summary ?? string.Empty);
+        return Ok(ApiResponse<object>.Ok(new { id = e.Id, title = e.Title, content }));
+    }
+
+    /// <summary>新增一条问策知识库条目。需管理权限。title/content 必填。</summary>
+    [HttpPost("consult/knowledge")]
+    public async Task<IActionResult> AddConsultKnowledge([FromBody] AddConsultKnowledgeRequest request)
+    {
+        var userId = GetUserId();
+        if (!await CanManageAsync(userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var title = request?.Title?.Trim();
+        var content = request?.Content?.Trim();
+        if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题和内容不能为空"));
+
+        var store = await EnsureConsultKnowledgeStoreAsync(userId);
+        if (store == null) return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "问策知识库初始化失败"));
+
+        var entry = new DocumentEntry
+        {
+            StoreId = store.Id,
+            Title = title,
+            Summary = content.Length > 200 ? content[..200] : content,
+            ContentIndex = content,
+            ContentType = "text/markdown",
+            SourceType = DocumentSourceType.Migration,
+            FileSize = System.Text.Encoding.UTF8.GetByteCount(content),
+            CreatedBy = userId,
+            Tags = new List<string> { "营销问策" },
+        };
+        await _db.DocumentEntries.InsertOneAsync(entry);
+        var count = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == store.Id && !e.IsFolder);
+        await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+            Builders<DocumentStore>.Update.Set(s => s.DocumentCount, (int)count).Set(s => s.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id = entry.Id,
+            title = entry.Title,
+            summary = entry.Summary,
+            contentType = entry.ContentType,
+            fileSize = entry.FileSize,
+            createdAt = entry.CreatedAt,
+        }));
+    }
+
     // ── 营销问策内部辅助 ──
 
     private object ToConsultListItem(MarketingConsultReport r, string? customerName = null) => new
@@ -1964,7 +2065,8 @@ public class ProductAgentController : ControllerBase
         title = r.Title,
         template = r.Template,
         model = r.Model,
-        verdict = SafeVerdict(r.AiContentJson),
+        // 新数据直接读落库 Verdict；旧数据 Verdict 为空时回退解析 AiContentJson，保持显示不破坏
+        verdict = !string.IsNullOrWhiteSpace(r.Verdict) ? r.Verdict : SafeVerdict(r.AiContentJson),
         canRestyle = !string.IsNullOrWhiteSpace(r.RenderDataJson),
         shared = !string.IsNullOrEmpty(r.ShareToken),
         shareToken = r.ShareToken,
@@ -7217,6 +7319,13 @@ public class RestyleConsultRequest
 public class ToggleConsultShareRequest
 {
     public bool Enabled { get; set; }
+}
+
+/// <summary>新增问策知识库条目请求。title/content 必填。</summary>
+public class AddConsultKnowledgeRequest
+{
+    public string? Title { get; set; }
+    public string? Content { get; set; }
 }
 
 public class AiFillRequirementRequest

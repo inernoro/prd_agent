@@ -24,6 +24,9 @@ public class MarketingConsultReport
     /// <summary>报告模版 key：exec | consulting | dashboard | magazine（MarketingReportRenderer 模版）</summary>
     public string Template { get; set; } = "exec";
 
+    /// <summary>总体健康判定快照：healthy | watch | risk（取自 AiContent.Verdict，落库便于列表筛选/排序；旧数据为空时列表走 AiContentJson 兜底解析）</summary>
+    public string? Verdict { get; set; }
+
     /// <summary>自包含 HTML 正文（内联样式，可直接下载/托管）</summary>
     public string Html { get; set; } = string.Empty;
 

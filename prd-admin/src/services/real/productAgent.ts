@@ -332,9 +332,53 @@ export function listConsultReports(customerId: string) {
   return apiRequest<ListWrap<MarketingConsultListItem>>(`/api/product/customers/${customerId}/consult`);
 }
 
-/** 全部问策报告列表（精简，含客户名 / 自由问策）。营销问策子模块左侧列表用。 */
-export function listAllConsultReports() {
-  return apiRequest<ListWrap<MarketingConsultListItem>>('/api/product/consult');
+export interface ConsultListQuery {
+  page?: number;
+  pageSize?: number;
+  keyword?: string;
+  customerId?: string;
+  verdict?: string;
+  template?: string;
+}
+export interface ConsultListPage {
+  items: MarketingConsultListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+/** 全部问策报告列表（分页 + 搜索 + 筛选）。营销问策列表页用。 */
+export function listAllConsultReports(q: ConsultListQuery = {}) {
+  const p = new URLSearchParams();
+  if (q.page) p.set('page', String(q.page));
+  if (q.pageSize) p.set('pageSize', String(q.pageSize));
+  if (q.keyword) p.set('keyword', q.keyword);
+  if (q.customerId) p.set('customerId', q.customerId);
+  if (q.verdict) p.set('verdict', q.verdict);
+  if (q.template) p.set('template', q.template);
+  const qs = p.toString();
+  return apiRequest<ConsultListPage>(`/api/product/consult${qs ? `?${qs}` : ''}`);
+}
+
+// ── 问策知识库（DocumentStore，设置面板列表展示 + 添加） ──
+export interface ConsultKbEntry {
+  id: string;
+  title: string;
+  summary?: string | null;
+  contentType?: string | null;
+  fileSize?: number;
+  createdAt: string;
+}
+/** 问策知识库条目列表（不含全文）。 */
+export function getConsultKnowledge() {
+  return apiRequest<{ storeId: string; storeName: string; entries: ConsultKbEntry[] }>('/api/product/consult/knowledge');
+}
+/** 问策知识库单条全文。 */
+export function getConsultKnowledgeEntry(entryId: string) {
+  return apiRequest<{ id: string; title: string; content: string }>(`/api/product/consult/knowledge/${entryId}`);
+}
+/** 新增一条问策知识库资料（需管理权限）。 */
+export function addConsultKnowledge(body: { title: string; content: string }) {
+  return apiRequest<ConsultKbEntry>('/api/product/consult/knowledge', { method: 'POST', body });
 }
 
 /** 问策报告详情（含 html）。 */
