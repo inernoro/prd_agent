@@ -320,6 +320,20 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void EmbeddedUndeclaredVariable_BecomesVariableInput()
+    {
+        // url 内嵌未声明变量 {{host}} → 应 surface 成可填变量，而不是当已填静默通过
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new() { Node("h1", CapsuleTypes.HttpRequest, new() { ["url"] = "https://{{host}}/api", ["method"] = "GET" }) },
+        };
+
+        var r = _svc.Process(g);
+        Assert.Contains(r.RequiredInputs, x => x.Key == "host" && x.Scope == "variable");
+        Assert.DoesNotContain(r.RequiredInputs, x => x.Key == "url");
+    }
+
+    [Fact]
     public void ValidLinearWorkflow_PassesClean()
     {
         var g = new WorkflowChatGenerated

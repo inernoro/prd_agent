@@ -301,17 +301,13 @@ public class WorkflowValidationService
 
             foreach (var field in requiredFields)
             {
-                object? raw = null;
-                node.Config?.TryGetValue(field.Key, out raw); // Config 可能为 null（"config": null）
-                var val = ToConfigString(raw);
+                var val = ToConfigString(GetConfigValue(node, field.Key));
 
-                // 已填实值 / 引用了已声明变量 → 视为已满足
-                if (!string.IsNullOrWhiteSpace(val) && !IsUnresolvedVariableOnly(val, declaredVars))
-                    continue;
+                // 非空即视为「配置层已填」（内嵌的 {{var}} 占位由下方变量扫描单独兜）
+                if (!string.IsNullOrWhiteSpace(val)) continue;
 
                 // 有默认值的必填字段：执行时走默认，不算缺项（避免 method/timezone 之类噪音）
-                if (string.IsNullOrWhiteSpace(val) && !string.IsNullOrWhiteSpace(field.DefaultValue))
-                    continue;
+                if (!string.IsNullOrWhiteSpace(field.DefaultValue)) continue;
 
                 var key = $"{node.NodeId}:{field.Key}";
                 if (!seen.Add(key)) continue;
@@ -328,6 +324,29 @@ public class WorkflowValidationService
                     HelpTip = field.HelpTip,
                     Placeholder = field.Placeholder,
                 });
+            }
+
+            // 任意 config 值里内嵌的 {{var}} 占位（含 https://{{host}}/api、cookie 串里嵌 token 等）
+            // 若引用了未声明的变量，surface 成可填变量，避免带着未替换的占位跑
+            foreach (var kv in node.Config ?? new())
+            {
+                var s = ToConfigString(kv.Value);
+                if (string.IsNullOrEmpty(s)) continue;
+                foreach (var token in ExtractVariableRefs(s))
+                {
+                    if (declaredVars.ContainsKey(token)) continue;
+                    var key = $"var:{token}";
+                    if (!seen.Add(key)) continue;
+                    inputs.Add(new WorkflowRequiredInput
+                    {
+                        Key = token,
+                        Label = token,
+                        Type = LooksLikeSecretKey(token) ? "password" : "text",
+                        Required = true,
+                        IsSecret = LooksLikeSecretKey(token),
+                        Scope = "variable",
+                    });
+                }
             }
         }
 
@@ -350,13 +369,27 @@ public class WorkflowValidationService
         return inputs;
     }
 
-    /// <summary>值是否「只是一个未声明的变量占位」（如 "{{cookie}}" 但 cookie 未声明）。</summary>
-    private static bool IsUnresolvedVariableOnly(string val, IReadOnlyDictionary<string, WorkflowVariable> declared)
+    private static readonly System.Text.RegularExpressions.Regex VariableRefRegex =
+        new(@"\{\{\s*([A-Za-z0-9_.\-]+)\s*\}\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>提取值里所有 {{var}} 占位的变量名（排除内置 now.* 时间占位）。</summary>
+    private static IEnumerable<string> ExtractVariableRefs(string value)
     {
-        var trimmed = val.Trim();
-        if (!trimmed.StartsWith("{{") || !trimmed.EndsWith("}}")) return false;
-        var inner = trimmed[2..^2].Trim();
-        return !declared.ContainsKey(inner);
+        foreach (System.Text.RegularExpressions.Match m in VariableRefRegex.Matches(value))
+        {
+            var name = m.Groups[1].Value;
+            if (name.StartsWith("now.", StringComparison.OrdinalIgnoreCase)) continue; // ResolveDefaultValue 内置
+            yield return name;
+        }
+    }
+
+    /// <summary>变量名是否像密钥（用于决定补齐表单是否掩码）。</summary>
+    private static bool LooksLikeSecretKey(string key)
+    {
+        var k = key.ToLowerInvariant();
+        return k.Contains("cookie") || k.Contains("token") || k.Contains("secret")
+            || k.Contains("password") || k.Contains("passwd") || k.Contains("apikey")
+            || k.Contains("api_key") || k.Contains("auth");
     }
 
     private static string? ToConfigString(object? raw)

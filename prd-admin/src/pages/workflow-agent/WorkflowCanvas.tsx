@@ -823,13 +823,16 @@ function CanvasInner({
     }
     // 更新画布节点和边
     if (generated.nodes || generated.edges) {
+      // 变量：模型给的非空数组才采纳；空/缺省时保留现有 varDefs（含缺项卡填入的默认值，如 cookie），
+      // 避免「模型回空数组」把已填值清掉、保存时丢变量
+      const newVarDefs = (generated.variables && generated.variables.length > 0) ? generated.variables : varDefs;
       const updatedWf: Workflow = {
         ...workflow,
         name: generated.name ?? workflow.name,
         description: generated.description ?? workflow.description,
         nodes: generated.nodes ?? workflow.nodes,
         edges: generated.edges ?? workflow.edges,
-        variables: generated.variables ?? workflow.variables ?? [],
+        variables: newVarDefs,
       };
       const { nodes: newNodes, edges: newEdges } = workflowToFlow(updatedWf);
       const laid = newNodes.length > 1 ? autoLayoutNodes(newNodes, newEdges, 'TB') : newNodes;
@@ -842,7 +845,6 @@ function CanvasInner({
       }
       setNodeConfigs(configs);
       // 同步变量定义（含缺项补齐填入的 defaultValue），并把默认值带进运行时变量值
-      const newVarDefs = generated.variables ?? varDefs;
       setVarDefs(newVarDefs);
       setVars((prev) => {
         const next = { ...prev };
