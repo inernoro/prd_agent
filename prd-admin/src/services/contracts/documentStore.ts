@@ -287,6 +287,8 @@ export type UpdateDocumentStoreInput = {
   tagColors?: Record<string, string>;
   /** 可管理的分类清单（null/不传=不变） */
   categories?: string[];
+  /** 文档默认排序（服务端持久化）：default/created-desc/created-asc/updated-desc/updated-asc/title-asc */
+  defaultSortMode?: string;
 };
 
 export type AddDocumentEntryInput = {

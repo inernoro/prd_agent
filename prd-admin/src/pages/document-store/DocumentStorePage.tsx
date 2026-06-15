@@ -44,6 +44,7 @@ import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
+import { SyncCenterDialog } from './SyncCenterDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
@@ -96,7 +97,7 @@ import type {
   InteractionStoreCard,
   DocumentStoreAccountSummary,
 } from '@/services/contracts/documentStore';
-import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
+import type { DocBrowserEntry, EntryPreview, DocBrowserSortMode } from '@/components/doc-browser/DocBrowser';
 import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -216,6 +217,38 @@ function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | Docu
       <Icon size={12} className="flex-shrink-0" />
       <span className="truncate">{label}</span>
     </span>
+  );
+}
+
+// 库内文档排序控件（落在 DocBrowser 左栏顶部 sidebarHeader 槽位）。
+// 选中即服务端持久化（store.defaultSortMode），换设备/重登录/刷新都保持。
+function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChange: (m: DocBrowserSortMode) => void }) {
+  const opts: { key: DocBrowserSortMode; label: string }[] = [
+    { key: 'default', label: '默认' },
+    { key: 'created-desc', label: '最新创建' },
+    { key: 'updated-desc', label: '最近更新' },
+  ];
+  return (
+    <div className="flex items-center gap-1.5 px-1 pb-2">
+      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>排序</span>
+      <div className="flex items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
+        {opts.map(o => {
+          const active = o.key === value;
+          return (
+            <button
+              key={o.key}
+              onClick={() => onChange(o.key)}
+              className="rounded-[6px] px-2 py-1 text-[11px] transition-colors"
+              style={active
+                ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,180,255,0.98)', fontWeight: 600 }
+                : { color: 'var(--text-muted)' }}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -735,6 +768,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   const [docShareTarget, setDocShareTarget] = useState<{ id: string; title: string } | null>(null);
   /** 新建后需要自动进入编辑态的文档 id（用一次即清） */
   const [autoEditEntryId, setAutoEditEntryId] = useState<string | undefined>(undefined);
+  /** 同步中心 / 发送到对端弹窗（本库范围） */
+  const [showSyncCenter, setShowSyncCenter] = useState(false);
+  const [showSendToPeerDetail, setShowSendToPeerDetail] = useState(false);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -765,6 +801,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
       setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
     }
     setLoading(false);
+  }, [storeId]);
+
+  // 文档列表排序：服务端持久化（换设备 / 重登录 / 刷新都保持）。store.defaultSortMode 为 SSOT。
+  const handleChangeSort = useCallback(async (mode: DocBrowserSortMode) => {
+    setStore(prev => prev ? { ...prev, defaultSortMode: mode } : prev); // 乐观更新
+    const res = await updateDocumentStore(storeId, { defaultSortMode: mode });
+    if (!res.success) toast.error('保存排序失败', res.error?.message);
   }, [storeId]);
 
   useEffect(() => {
@@ -1086,7 +1129,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         }
         actions={
           <div className="flex items-center gap-2">
-            <PeerSyncBadge store={store} />
+            {/* 同步中心入口：有任务进行中时转圈「动起来」，点击进入进行中/发出去/收进来/历史 + 强制对齐 */}
+            <button
+              onClick={() => setShowSyncCenter(true)}
+              className="surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all"
+              style={store.peerSyncStatus === 'error' ? { color: 'rgba(252,165,165,0.96)' } : store.peerSyncStatus === 'syncing' ? { color: 'rgba(252,211,77,0.96)' } : undefined}
+              title="同步中心：进行中 / 发出去 / 收进来 / 历史，以及强制对齐（远端为准 / 本地为准 / 同时对准）"
+            >
+              {store.peerSyncStatus === 'syncing' ? <MapSpinner size={11} /> : <ArrowLeftRight size={11} />}
+              同步
+            </button>
             {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示（右上角） */}
             <StoreSyncBadge storeId={store.id} onManage={onManageSync} />
             {/* 发布到智识殿堂开关 */}
@@ -1196,8 +1248,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               }
             })();
           }}
-          /* 验收报告库：最新在前（design.acceptance-kb.md §5.A）；时间默认显示由 DocBrowser 默认值兜底 */
-          sortMode={store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default'}
+          /* 排序：服务端持久化的 store.defaultSortMode 为 SSOT；缺省按模板默认（验收库 created-desc，其余 default）兜底 */
+          sortMode={
+            (store.defaultSortMode === 'created-desc' || store.defaultSortMode === 'updated-desc' || store.defaultSortMode === 'default')
+              ? store.defaultSortMode
+              : (store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default')
+          }
+          sidebarHeader={
+            <DocSortControl
+              value={
+                (store.defaultSortMode === 'created-desc' || store.defaultSortMode === 'updated-desc' || store.defaultSortMode === 'default')
+                  ? store.defaultSortMode
+                  : (store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default')
+              }
+              onChange={handleChangeSort}
+            />
+          }
           primaryEntryId={store.primaryEntryId}
           pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}
@@ -1255,6 +1321,26 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         />
         <WikilinkHoverCard />
       </div>
+
+      {/* 同步中心（本库）：进行中 / 发出去 / 收进来 / 历史 + 强制对齐 */}
+      {showSyncCenter && (
+        <SyncCenterDialog
+          storeId={store.id}
+          storeName={store.name}
+          onClose={() => setShowSyncCenter(false)}
+          onAfterSync={() => { void loadStore(); void loadEntries(); }}
+          onOpenSend={() => { setShowSyncCenter(false); setShowSendToPeerDetail(true); }}
+        />
+      )}
+      {/* 发送到对端（本库预选） */}
+      {showSendToPeerDetail && (
+        <SendToPeerDialog
+          resourceType="document-store"
+          presetItemIds={[store.id]}
+          onClose={() => setShowSendToPeerDetail(false)}
+          onDone={() => { void loadStore(); void loadEntries(); }}
+        />
+      )}
 
       {/* 添加订阅对话框 */}
       {showSubscribe && (
