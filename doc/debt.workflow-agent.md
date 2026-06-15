@@ -113,7 +113,8 @@
 - 重复 nodeId 容错 + 仅校验通过才落库（PR #830 Bugbot/Codex 反馈已修）。
 
 **当前边界**：
-- **自动接线仅覆盖线性场景**：`AutoWireEdges` 在「零有效连线 + ≥2 节点」时按声明顺序链式连接；condition/merge 等分支/汇聚拓扑仍依赖 LLM 给出正确 edges（给错会被修正插槽，但不会自动补分支结构）。
+- **保留占位 {{input}} 的 per-capsule 归属未建模（Codex P2，主动留债）**：`{{input}}`（上游产物注入）只有 LLM 类舱的提示词字段会真正注入，http-request 的 url/body 不会。当前缺项扫描**全局**排除 `{{input}}`/`{{date}}`/`{{datetime}}`，所以 http body 里写 `{{input}}` 不会被 surface、运行时按字面发送。**为何这样取舍**：把 `{{input}}` 当「可填变量」surface 给用户是错的（用户填不了系统占位，正是已修的 P1），所以宁可全局排除；http 不注入 `{{input}}` 属执行器能力缺口，正解是让 http-request 执行器支持 `{{input}}` 注入或建「capsule×field 支持哪些保留占位」矩阵，体量较大，留待后续。AI 实际几乎只在 LLM 提示词里用 `{{input}}`，影响面小。
+- **自动接线仅覆盖线性 + 多必填槽分配**：condition 分支语义仍依赖 LLM 给对 edges。
 - **structured output 未启用**：仍靠 ```json 提取 + 自愈回路兜底，未确认 Gateway 是否支持 response_format 强制结构化。
 - **纯 isNew 路径的缺项卡只读**：后端 `workflow_created`（自动建流）的卡片无 `onApply` → 缺项只读。但 UI 的创建流程（列表「一句话起步」）走的是 blank-first + isNew=false 的 confirm 路径，缺项卡可填；故该只读路径用户不可达，留待将来若要支持「无 workflowId 直接建流」时补 `POST workflows/{id}/fill` 端点。
 - **requiredInputs 未持久化**：校验结果只在本次 SSE 推送，刷新/重载对话历史不带 `requiredInputs`。
