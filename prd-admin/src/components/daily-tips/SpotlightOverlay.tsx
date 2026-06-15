@@ -147,23 +147,30 @@ function EntryLandingFx({
   useEffect(() => {
     const glow = glowRef.current;
     const ripple = rippleRef.current;
-    // cancel-on-unmount 只跟踪辉光/涟漪(本组件自有 DOM);pill 挤压跑在常驻的真实入口节点上,
-    // 不纳入 cancel 列表,避免提前卸载时把它 cancel 出突兀的回弹。
     const anims: Animation[] = [];
+    // pill 挤压跑在常驻的真实入口节点(data-tour-entry)上,单独跟踪:卸载时**只取消仍在 delay 预约期**
+    // 的那一份(见 cleanup),避免「新教程在接住延迟未引爆时启动 → 本 FX 卸载 → 预约动画却幽灵引爆并和
+    // 下一次接住重叠」(Bugbot Medium);已进入播放期的不取消,任其自然播完(fill:none 自动复位),
+    // 这样既不留幽灵、又不会把播放中的挤压 cancel 出突兀回弹。
+    const pillAnims: Animation[] = [];
     // pill 本体弹簧挤压(非等比:撞击 X 宽 Y 扁 → 弹簧收敛回 1,过冲自然反挤压),与辉光同一 delay 引爆。
     const entry = document.querySelector('[data-tour-entry]');
     if (entry instanceof HTMLElement) {
       try {
-        entry.animate(springScaleFrames(0.42, 0.55, 1.16, 0.86), {
-          duration: 560,
-          delay: LAND_DELAY,
-          easing: 'linear',
-        });
-        entry.animate([{ borderColor: 'rgba(196,181,253,0.95)', color: '#fff', offset: 0 }, { offset: 1 }], {
-          duration: 700,
-          delay: LAND_DELAY,
-          easing: 'ease-out',
-        });
+        pillAnims.push(
+          entry.animate(springScaleFrames(0.42, 0.55, 1.16, 0.86), {
+            duration: 560,
+            delay: LAND_DELAY,
+            easing: 'linear',
+          }),
+        );
+        pillAnims.push(
+          entry.animate([{ borderColor: 'rgba(196,181,253,0.95)', color: '#fff', offset: 0 }, { offset: 1 }], {
+            duration: 700,
+            delay: LAND_DELAY,
+            easing: 'ease-out',
+          }),
+        );
       } catch {
         /* 老浏览器不支持 WAAPI 时静默降级,不影响教程功能本身 */
       }
@@ -198,6 +205,11 @@ function EntryLandingFx({
       anims.forEach((a) => {
         a.onfinish = null;
         a.cancel();
+      });
+      // pill 动画:仍在 delay 预约期(尚未视觉播放)的取消掉,防幽灵引爆;已开始播放的留它播完。
+      pillAnims.forEach((a) => {
+        const ct = typeof a.currentTime === 'number' ? a.currentTime : 0;
+        if (ct < LAND_DELAY) a.cancel();
       });
     };
   }, [onDone]);
@@ -320,6 +332,11 @@ export function SpotlightOverlay() {
       }
 
       if (!initial) return;
+      // 新教程启动前,先清掉上一次关闭遗留的「飞回 + 接住」FX:否则 setDismissed(false) 会让 landFxNode
+      // 停止渲染、EntryLandingFx 卸载,而其挂在入口节点上的预约挤压动画若还没引爆就会变成幽灵(Bugbot)。
+      // 这里显式置空 → 触发 EntryLandingFx 卸载的 cleanup(取消预约期的 pill 动画),状态也不残留。
+      setFlyBack(null);
+      setLandFx(null);
       setRect(null);
       setPayload(initial);
       setStepIndex(0);
