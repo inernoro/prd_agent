@@ -194,6 +194,10 @@ public class OpenAIImageClient
         // 获取平台适配器（优先使用模型配置，fallback 到 URL 检测）
         var platformAdapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, effectiveModelName);
         var isVolces = platformAdapter.PlatformType == "volces"; // 保留兼容变量
+        // OpenRouter 图片生成不走 /images/generations，而是 /chat/completions + modalities:[image,text]，
+        // 图片在 choices[0].message.images[].image_url.url（base64 data URI）返回。详见 doc 与 LiteLLM 同款适配。
+        var isOpenRouter = apiUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(platformType, "openrouter", StringComparison.OrdinalIgnoreCase);
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
         if (!platformAdapter.SupportsImageToImage && initImageBase64 != null)
         {
@@ -437,6 +441,60 @@ public class OpenAIImageClient
                         ExpectedModel = effectiveModelName,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
+                        IsMultipart = false,
+                        TimeoutSeconds = imageGenTimeoutSeconds,
+                        Context = new GatewayRequestContext
+                        {
+                            RequestId = requestId,
+                            SessionId = ctx?.SessionId,
+                            GroupId = ctx?.GroupId,
+                            UserId = ctx?.UserId,
+                            ViewRole = ctx?.ViewRole,
+                            QuestionText = prompt.Trim()
+                        }
+                    }, resolution, token);
+                }
+                // OpenRouter 图片生成：chat/completions + modalities（文生图 / 图生图统一走这条）
+                else if (isOpenRouter)
+                {
+                    JsonNode userContent;
+                    if (initImageBase64 != null)
+                    {
+                        var dataUri = initImageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                            ? initImageBase64
+                            : $"data:image/png;base64,{initImageBase64}";
+                        userContent = new JsonArray
+                        {
+                            new JsonObject { ["type"] = "text", ["text"] = prompt },
+                            new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = dataUri } },
+                        };
+                    }
+                    else
+                    {
+                        userContent = JsonValue.Create(prompt);
+                    }
+
+                    var orBody = new JsonObject
+                    {
+                        ["model"] = effectiveModelName,
+                        ["messages"] = new JsonArray
+                        {
+                            new JsonObject { ["role"] = "user", ["content"] = userContent },
+                        },
+                        ["modalities"] = new JsonArray { "image", "text" },
+                    };
+
+                    _logger.LogInformation(
+                        "[OpenAIImageClient] OpenRouter 图片请求(chat/completions + modalities): AppCallerCode={AppCallerCode}, HasImage={HasImage}, Model={Model}",
+                        appCallerCode, initImageBase64 != null, effectiveModelName);
+
+                    return await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+                    {
+                        AppCallerCode = appCallerCode,
+                        ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
+                        EndpointPath = "chat/completions",
+                        RequestBody = orBody,
                         IsMultipart = false,
                         TimeoutSeconds = imageGenTimeoutSeconds,
                         Context = new GatewayRequestContext
@@ -764,61 +822,107 @@ public class OpenAIImageClient
                 });
             }
 
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            var data = root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array
-                ? dataEl.EnumerateArray().ToList()
-                : new List<JsonElement>();
-
             var images = new List<ImageGenImage>();
-            var idx = 0;
-            foreach (var it in data)
+
+            // OpenRouter 图片响应：choices[0].message.images[].image_url.url（base64 data URI）
+            // 双重检测：1) isOpenRouter 标记 2) 响应体特征（兼容 OpenAI 兼容网关代理 OpenRouter 的情况）
+            var looksOpenRouterImage = isOpenRouter
+                || (body.Contains("\"choices\"", StringComparison.Ordinal)
+                    && body.Contains("\"image_url\"", StringComparison.Ordinal)
+                    && body.Contains("\"images\"", StringComparison.Ordinal));
+            if (looksOpenRouterImage)
             {
-                string? b64 = null;
-                string? url = null;
-                string? revised = null;
-                string? sizeHint = null;
-
-                if (it.TryGetProperty("b64_json", out var b64El) && b64El.ValueKind == JsonValueKind.String)
+                using var orDoc = JsonDocument.Parse(body);
+                var orIdx = 0;
+                if (orDoc.RootElement.TryGetProperty("choices", out var choicesEl) && choicesEl.ValueKind == JsonValueKind.Array)
                 {
-                    b64 = b64El.GetString();
-                }
-                // 兼容部分平台字段命名差异
-                if (string.IsNullOrWhiteSpace(b64) && it.TryGetProperty("base64", out var b64El2) && b64El2.ValueKind == JsonValueKind.String)
-                {
-                    b64 = b64El2.GetString();
-                }
-                if (it.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String)
-                {
-                    url = urlEl.GetString();
-                }
-                // Volces 会返回 data[i].size 作为实际尺寸
-                if (it.TryGetProperty("size", out var sizeEl) && sizeEl.ValueKind == JsonValueKind.String)
-                {
-                    sizeHint = sizeEl.GetString();
-                }
-                if (it.TryGetProperty("revised_prompt", out var rpEl) && rpEl.ValueKind == JsonValueKind.String)
-                {
-                    revised = rpEl.GetString();
-                }
-
-                // 兼容某些网关/代理把 b64_json 返回成 data URL（data:image/png;base64,...）
-                if (!string.IsNullOrWhiteSpace(b64) && b64.TrimStart().StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-                {
-                    var comma = b64.IndexOf(',');
-                    if (comma >= 0 && comma + 1 < b64.Length)
+                    foreach (var ch in choicesEl.EnumerateArray())
                     {
-                        b64 = b64[(comma + 1)..];
+                        if (!ch.TryGetProperty("message", out var msgEl)) continue;
+                        if (!msgEl.TryGetProperty("images", out var imgsEl) || imgsEl.ValueKind != JsonValueKind.Array) continue;
+                        foreach (var im in imgsEl.EnumerateArray())
+                        {
+                            if (!im.TryGetProperty("image_url", out var iuEl)) continue;
+                            string? u = iuEl.ValueKind == JsonValueKind.Object && iuEl.TryGetProperty("url", out var uEl) && uEl.ValueKind == JsonValueKind.String
+                                ? uEl.GetString()
+                                : (iuEl.ValueKind == JsonValueKind.String ? iuEl.GetString() : null);
+                            if (string.IsNullOrWhiteSpace(u)) continue;
+
+                            string? b64 = null;
+                            string? httpUrl = null;
+                            if (u.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var comma = u.IndexOf(',');
+                                if (comma >= 0 && comma + 1 < u.Length) b64 = u[(comma + 1)..];
+                            }
+                            else if (u.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                            {
+                                httpUrl = u;
+                            }
+                            if (string.IsNullOrWhiteSpace(b64) && string.IsNullOrWhiteSpace(httpUrl)) continue;
+
+                            images.Add(new ImageGenImage { Index = orIdx++, Base64 = b64, Url = httpUrl });
+                        }
                     }
                 }
 
-                images.Add(new ImageGenImage
+                if (images.Count == 0)
                 {
-                    Index = idx++,
-                    Base64 = string.IsNullOrWhiteSpace(b64) ? null : b64,
-                    Url = string.IsNullOrWhiteSpace(url) ? null : url,
-                    RevisedPrompt = string.IsNullOrWhiteSpace(revised) ? null : revised
-                });
+                    _logger.LogWarning("[OpenRouter] chat/completions 图片响应中未找到图片数据。Body length={Len}", body.Length);
+                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "OpenRouter 生图响应中未包含图片数据");
+                }
+            }
+            else
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                var data = root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array
+                    ? dataEl.EnumerateArray().ToList()
+                    : new List<JsonElement>();
+
+                var idx = 0;
+                foreach (var it in data)
+                {
+                    string? b64 = null;
+                    string? url = null;
+                    string? revised = null;
+
+                    if (it.TryGetProperty("b64_json", out var b64El) && b64El.ValueKind == JsonValueKind.String)
+                    {
+                        b64 = b64El.GetString();
+                    }
+                    // 兼容部分平台字段命名差异
+                    if (string.IsNullOrWhiteSpace(b64) && it.TryGetProperty("base64", out var b64El2) && b64El2.ValueKind == JsonValueKind.String)
+                    {
+                        b64 = b64El2.GetString();
+                    }
+                    if (it.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String)
+                    {
+                        url = urlEl.GetString();
+                    }
+                    if (it.TryGetProperty("revised_prompt", out var rpEl) && rpEl.ValueKind == JsonValueKind.String)
+                    {
+                        revised = rpEl.GetString();
+                    }
+
+                    // 兼容某些网关/代理把 b64_json 返回成 data URL（data:image/png;base64,...）
+                    if (!string.IsNullOrWhiteSpace(b64) && b64.TrimStart().StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var comma = b64.IndexOf(',');
+                        if (comma >= 0 && comma + 1 < b64.Length)
+                        {
+                            b64 = b64[(comma + 1)..];
+                        }
+                    }
+
+                    images.Add(new ImageGenImage
+                    {
+                        Index = idx++,
+                        Base64 = string.IsNullOrWhiteSpace(b64) ? null : b64,
+                        Url = string.IsNullOrWhiteSpace(url) ? null : url,
+                        RevisedPrompt = string.IsNullOrWhiteSpace(revised) ? null : revised
+                    });
+                }
             }
 
             // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
