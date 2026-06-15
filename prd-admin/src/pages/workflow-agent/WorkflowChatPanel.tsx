@@ -59,6 +59,8 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
   const inputRef = useRef<HTMLTextAreaElement>(null);
   /** 当前正在流式输出的 assistant 消息 ID */
   const assistantMsgIdRef = useRef<string>('');
+  /** 已自动发送过初始输入（防重复 + 防历史加载覆盖 auto-send 的消息） */
+  const autoSentRef = useRef(false);
   /** 缓存 onApplyWorkflow 最新引用 */
   const onApplyRef = useRef(onApplyWorkflow);
   onApplyRef.current = onApplyWorkflow;
@@ -144,7 +146,9 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
     setLoadingHistory(true);
     getChatHistory({ workflowId })
       .then((res) => {
-        if (res.success && res.data) {
+        // 「一句话起步」会在 mount 时 auto-send，若历史晚于 doSend 返回会覆盖刚追加的消息
+        // （新建工作流历史为空 → 直接清空流式消息）。auto-send 已发起则跳过历史回填。
+        if (res.success && res.data && !autoSentRef.current) {
           setMessages(
             res.data.messages.map((m) => ({
               id: m.id,
@@ -158,8 +162,6 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
       })
       .finally(() => setLoadingHistory(false));
   }, [workflowId]);
-
-  const autoSentRef = useRef(false);
 
   // 自动滚动到底部
   useEffect(() => {

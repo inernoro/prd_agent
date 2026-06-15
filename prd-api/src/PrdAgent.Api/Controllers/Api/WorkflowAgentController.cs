@@ -1733,7 +1733,8 @@ public class WorkflowAgentController : ControllerBase
             _logger.LogError(ex, "[{AppKey}] Chat LLM error", AppKey);
             try
             {
-                var errPayload = JsonSerializer.Serialize(new { type = "error", content = $"AI 服务异常: {ex.Message}" }, SseJsonOptions);
+                // message 字段供前端 useSseStream 错误分支读取（否则只显示通用「出错」）
+                var errPayload = JsonSerializer.Serialize(new { type = "error", content = $"AI 服务异常: {ex.Message}", message = $"AI 服务异常: {ex.Message}" }, SseJsonOptions);
                 await Response.WriteAsync($"data: {errPayload}\n\n");
                 await Response.Body.FlushAsync();
             }

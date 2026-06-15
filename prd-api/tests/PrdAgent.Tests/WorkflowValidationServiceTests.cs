@@ -139,6 +139,55 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void DuplicateVariableKeys_DoNotThrow()
+    {
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new() { Node("m1", CapsuleTypes.ManualTrigger) },
+            Variables = new()
+            {
+                new() { Key = "token", Label = "T1", Required = true, IsSecret = true },
+                new() { Key = "token", Label = "T2", Required = true, IsSecret = true },
+            },
+        };
+        var r = _svc.Process(g);   // 不抛
+        Assert.Contains(r.RequiredInputs, x => x.Key == "token");
+    }
+
+    [Fact]
+    public void NullNodeConfig_DoesNotThrow()
+    {
+        var node = Node("h1", CapsuleTypes.HttpRequest);
+        node.Config = null!;   // 模拟 "config": null
+        var g = new WorkflowChatGenerated { Nodes = new() { node } };
+        var r = _svc.Process(g);   // 不抛
+        Assert.Contains(r.RequiredInputs, x => x.Key == "url");
+    }
+
+    [Fact]
+    public void PartialEdges_OrphanNodeGetsWired()
+    {
+        // m1→h1 已连，h2 漏接：应被自动补一条上游
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("m1", CapsuleTypes.ManualTrigger),
+                Node("h1", CapsuleTypes.HttpRequest, new() { ["url"] = "https://a.com", ["method"] = "GET" }),
+                Node("h2", CapsuleTypes.HttpRequest, new() { ["url"] = "https://b.com", ["method"] = "GET" }),
+            },
+            Edges = new()
+            {
+                new() { SourceNodeId = "m1", SourceSlotId = "manual-out", TargetNodeId = "h1", TargetSlotId = "http-in" },
+            },
+        };
+
+        var r = _svc.Process(g);
+        Assert.True(r.Valid);
+        Assert.Contains(g.Edges!, e => e.TargetNodeId == "h2");   // h2 不再是孤儿
+    }
+
+    [Fact]
     public void Cycle_ProducesIssue()
     {
         var g = new WorkflowChatGenerated

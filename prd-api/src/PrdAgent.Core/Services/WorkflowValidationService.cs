@@ -122,14 +122,23 @@ public class WorkflowValidationService
             .Select(grp => grp.First())
             .ToList();
 
-        // 零有效连线但有多个节点 → 按声明顺序链式连接（最常见的线性流水线）
-        if (repaired.Count == 0 && nodes.Count >= 2)
+        // 补缺连线：任何「有输入插槽却没有上游」的节点，从最近的前序有输出节点接一条。
+        // 既覆盖"零连线 → 全链式"，也覆盖"漏接一跳 → 该节点变独立根、空输入跑"（部分连线）。
+        if (nodes.Count >= 2)
         {
-            for (var i = 0; i < nodes.Count - 1; i++)
+            var hasIncoming = new HashSet<string>(repaired.Select(e => e.TargetNodeId));
+            var added = 0;
+            for (var i = 1; i < nodes.Count; i++)
             {
-                var src = nodes[i];
-                var tgt = nodes[i + 1];
-                if (src.OutputSlots.Count == 0 || tgt.InputSlots.Count == 0) continue;
+                var tgt = nodes[i];
+                if (tgt.InputSlots.Count == 0) continue;        // 触发类/无输入 → 作为根，不补
+                if (hasIncoming.Contains(tgt.NodeId)) continue;  // 已有上游
+
+                WorkflowNode? src = null;
+                for (var j = i - 1; j >= 0; j--)
+                    if (nodes[j].OutputSlots.Count > 0) { src = nodes[j]; break; }
+                if (src == null) continue;
+
                 var srcSlot = src.OutputSlots[0];
                 var tgtSlot = tgt.InputSlots.FirstOrDefault(s => s.DataType == srcSlot.DataType)
                               ?? tgt.InputSlots[0];
@@ -141,9 +150,11 @@ public class WorkflowValidationService
                     TargetNodeId = tgt.NodeId,
                     TargetSlotId = tgtSlot.SlotId,
                 });
+                hasIncoming.Add(tgt.NodeId);
+                added++;
             }
-            if (repaired.Count > 0)
-                notes.Add($"未提供有效连线，已按顺序自动连接 {repaired.Count + 1} 个节点");
+            if (added > 0)
+                notes.Add($"自动补全 {added} 条缺失连线，确保每个处理节点都有上游输入");
         }
 
         g.Edges = repaired;
@@ -216,9 +227,10 @@ public class WorkflowValidationService
     {
         var inputs = new List<WorkflowRequiredInput>();
         var seen = new HashSet<string>();
-        var declaredVars = (g.Variables ?? new())
-            .Where(v => !string.IsNullOrWhiteSpace(v.Key))
-            .ToDictionary(v => v.Key, v => v);
+        // 变量 key 可能重复（LLM 偶发）：last-wins 构表，避免 ToDictionary 抛异常
+        var declaredVars = new Dictionary<string, WorkflowVariable>();
+        foreach (var v in g.Variables ?? new())
+            if (!string.IsNullOrWhiteSpace(v.Key)) declaredVars[v.Key] = v;
 
         foreach (var node in g.Nodes!)
         {
@@ -227,7 +239,8 @@ public class WorkflowValidationService
 
             foreach (var field in meta.ConfigSchema.Where(f => f.Required))
             {
-                node.Config.TryGetValue(field.Key, out var raw);
+                object? raw = null;
+                node.Config?.TryGetValue(field.Key, out raw); // Config 可能为 null（"config": null）
                 var val = ToConfigString(raw);
 
                 // 已填实值 / 引用了已声明变量 → 视为已满足
