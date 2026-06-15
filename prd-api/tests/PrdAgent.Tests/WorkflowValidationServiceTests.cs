@@ -379,6 +379,21 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void DeclaredVariable_ReferencedButNoDefaultNorRequired_IsSurfaced()
+    {
+        // 声明了 host 但没 required、没 defaultValue，配置里又引用了它 → 必须 surface，
+        // 否则运行时会带着字面 {{host}} 跑
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new() { Node("h1", CapsuleTypes.HttpRequest, new() { ["url"] = "https://{{host}}/api", ["method"] = "GET" }) },
+            Variables = new() { new() { Key = "host", Label = "主机", Required = false } },
+        };
+
+        var r = _svc.Process(g);
+        Assert.Contains(r.RequiredInputs, x => x.Key == "host" && x.Scope == "variable");
+    }
+
+    [Fact]
     public void EmbeddedUndeclaredVariable_BecomesVariableInput()
     {
         // url 内嵌未声明变量 {{host}} → 应 surface 成可填变量，而不是当已填静默通过

@@ -348,23 +348,26 @@ public class WorkflowValidationService
             }
 
             // 任意 config 值里内嵌的 {{var}} 占位（含 https://{{host}}/api、cookie 串里嵌 token 等）
-            // 若引用了未声明的变量，surface 成可填变量，避免带着未替换的占位跑
+            // 引用了「未声明」或「已声明但无默认值」的变量都 surface 成可填项，
+            // 避免带着未替换的占位跑（被引用即说明需要值，不看 v.Required 标记）
             foreach (var kv in node.Config ?? new())
             {
                 var s = ToConfigString(kv.Value);
                 if (string.IsNullOrEmpty(s)) continue;
                 foreach (var token in ExtractVariableRefs(s))
                 {
-                    if (declaredVars.ContainsKey(token)) continue;
+                    declaredVars.TryGetValue(token, out var dv);
+                    if (dv != null && !string.IsNullOrWhiteSpace(dv.DefaultValue)) continue; // 有默认值 → 运行时走默认
                     var key = $"var:{token}";
                     if (!seen.Add(key)) continue;
+                    var secret = dv?.IsSecret ?? LooksLikeSecretKey(token);
                     inputs.Add(new WorkflowRequiredInput
                     {
                         Key = token,
-                        Label = token,
-                        Type = LooksLikeSecretKey(token) ? "password" : "text",
+                        Label = !string.IsNullOrWhiteSpace(dv?.Label) ? dv!.Label : token,
+                        Type = secret ? "password" : (string.IsNullOrWhiteSpace(dv?.Type) ? "text" : dv!.Type),
                         Required = true,
-                        IsSecret = LooksLikeSecretKey(token),
+                        IsSecret = secret,
                         Scope = "variable",
                     });
                 }
