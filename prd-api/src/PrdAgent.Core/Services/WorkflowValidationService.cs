@@ -372,13 +372,22 @@ public class WorkflowValidationService
     private static readonly System.Text.RegularExpressions.Regex VariableRefRegex =
         new(@"\{\{\s*([A-Za-z0-9_.\-]+)\s*\}\}", System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    /// <summary>提取值里所有 {{var}} 占位的变量名（排除内置 now.* 时间占位）。</summary>
+    /// <summary>
+    /// 执行器自己注入/解析的保留占位符，不是工作流变量，不能当缺项 surface：
+    /// {{input}}=上游产物注入、{{date}}/{{datetime}}=时间、{{now.*}}=默认值时间占位。
+    /// 见 CapsuleExecutor.ExecuteLlmAnalyzerAsync / 文件导出占位替换。
+    /// </summary>
+    private static readonly HashSet<string> ReservedPlaceholders =
+        new(StringComparer.OrdinalIgnoreCase) { "input", "date", "datetime" };
+
+    /// <summary>提取值里所有 {{var}} 占位的变量名（排除执行器保留占位 input/date/datetime/now.*）。</summary>
     private static IEnumerable<string> ExtractVariableRefs(string value)
     {
         foreach (System.Text.RegularExpressions.Match m in VariableRefRegex.Matches(value))
         {
             var name = m.Groups[1].Value;
-            if (name.StartsWith("now.", StringComparison.OrdinalIgnoreCase)) continue; // ResolveDefaultValue 内置
+            if (name.StartsWith("now.", StringComparison.OrdinalIgnoreCase)) continue;
+            if (ReservedPlaceholders.Contains(name)) continue;
             yield return name;
         }
     }

@@ -320,6 +320,24 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void ReservedPlaceholders_AreNotReportedAsVariables()
+    {
+        // {{input}}（上游注入）/{{date}}（时间）是执行器保留占位，不能当缺项 surface
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("m1", CapsuleTypes.ManualTrigger),
+                Node("llm", CapsuleTypes.LlmAnalyzer, new() { ["userPromptTemplate"] = "分析这段数据：{{input}}，今天是 {{date}}" }),
+            },
+        };
+
+        var r = _svc.Process(g);
+        Assert.DoesNotContain(r.RequiredInputs, x => x.Key == "input");
+        Assert.DoesNotContain(r.RequiredInputs, x => x.Key == "date");
+    }
+
+    [Fact]
     public void EmbeddedUndeclaredVariable_BecomesVariableInput()
     {
         // url 内嵌未声明变量 {{host}} → 应 surface 成可填变量，而不是当已填静默通过
