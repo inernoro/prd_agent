@@ -10,3 +10,4 @@
 | fix | prd-admin | 安装页暴露「完整配置」JSON 可手动复制：iCloud/签名流程下自动复制被拦截时不再死胡同（模板从剪贴板读的是整段 JSON 而非仅 Token） |
 | fix | prd-admin | iCloud 流程自动复制被拦截后，新增「已手动复制？点此打开 iCloud 模板」直达链接，手动复制后仍能继续不卡死 |
 | fix | prd-admin/prd-api | 连接自检改走专用 GET /api/shortcuts/verify，校验口径与 Collect 一致（密钥有效+未禁用+未过期），修复「已禁用快捷指令自检却显示密钥有效」；前端区分禁用/失效给不同提示 |
+| fix | prd-admin | 安装页换快捷指令（路由 :id/t 变化复用组件）时重置 step/copyTried 并 remount 连接自检，避免显示上一条指令的「已复制/密钥有效」 |

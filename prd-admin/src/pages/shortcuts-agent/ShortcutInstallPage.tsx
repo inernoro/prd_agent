@@ -119,6 +119,9 @@ export default function ShortcutInstallPage() {
     }
     setLoading(true);
     setError(null);
+    // 路由 :id / t 变化会复用同一组件实例，重置每条指令独立的本地态，避免显示上一条的「已复制」等
+    setStep(0);
+    setCopyTried(false);
     try {
       const res = await fetch(`/api/shortcuts/${id}/install-data?t=${encodeURIComponent(token)}`);
       const json = await res.json();
@@ -388,7 +391,8 @@ export default function ShortcutInstallPage() {
         </div>
 
         {/* ── 连接自检：装完点一下就知道通没通，不用瞎猜 ── */}
-        <VerifyConnection token={token} shortcutName={data.name} />
+        {/* key 带上 id+token：换一条快捷指令时 remount，清掉上一条的自检结果，不串台 */}
+        <VerifyConnection key={`${id}:${token}`} token={token} shortcutName={data.name} />
 
         {/* ── 遇到问题（常见卡点自助排查） ── */}
         <HelpFaq />
