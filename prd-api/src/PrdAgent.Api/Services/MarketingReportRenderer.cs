@@ -122,7 +122,7 @@ public static class MarketingReportRenderer
         sb.Append(".page{max-width:880px;margin:0 auto;padding:32px 20px 48px}");
         sb.Append($".card{{background:{t.CardBg};border:1px solid {t.CardBorder};border-radius:{t.Radius};padding:28px 32px;margin-bottom:16px;box-shadow:{t.CardShadow}}}");
         sb.Append($".hd-kicker{{font-size:12px;letter-spacing:2px;color:{t.TextMuted};text-transform:uppercase;margin-bottom:8px}}");
-        sb.Append($"h1{{font-size:{(t.Template == "magazine" ? "30px" : "24px")};font-weight:700;letter-spacing:0.3px}}");
+        sb.Append($"h1{{font-size:{(d.Template == "magazine" ? "30px" : "24px")};font-weight:700;letter-spacing:0.3px}}");
         sb.Append($".hd-meta{{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px;font-size:13px;color:{t.TextMuted}}}");
         sb.Append(".pill{display:inline-block;font-size:12.5px;font-weight:600;padding:3px 12px;border-radius:999px;vertical-align:3px;margin-left:12px}");
         sb.Append($"h2{{font-size:15px;font-weight:700;margin-bottom:14px;padding-left:10px;border-left:3px solid {t.Accent};{t.HeadingExtra}}}");
