@@ -122,39 +122,54 @@ public class WorkflowValidationService
             .Select(grp => grp.First())
             .ToList();
 
-        // 补缺连线：任何「有输入插槽却没有上游」的节点，从最近的前序有输出节点接一条。
-        // 既覆盖"零连线 → 全链式"，也覆盖"漏接一跳 → 该节点变独立根、空输入跑"（部分连线）。
+        // 补缺连线（按插槽粒度）：
+        // - 每个「必填输入插槽」没有上游 → 从最近的、未被本节点占用的前序有输出节点接一条
+        //   （覆盖 data-merger 等多输入节点：merge-in-1/merge-in-2 都要有源）
+        // - 节点完全没有上游且无必填插槽（如纯 http 链）→ 给第一个输入槽接一条，保持线性链不断
         if (nodes.Count >= 2)
         {
-            var hasIncoming = new HashSet<string>(repaired.Select(e => e.TargetNodeId));
             var added = 0;
             for (var i = 1; i < nodes.Count; i++)
             {
                 var tgt = nodes[i];
-                if (tgt.InputSlots.Count == 0) continue;        // 触发类/无输入 → 作为根，不补
-                if (hasIncoming.Contains(tgt.NodeId)) continue;  // 已有上游
+                if (tgt.InputSlots.Count == 0) continue; // 触发类/无输入 → 作为根
 
-                WorkflowNode? src = null;
-                for (var j = i - 1; j >= 0; j--)
-                    if (nodes[j].OutputSlots.Count > 0) { src = nodes[j]; break; }
-                if (src == null) continue;
+                var filledSlots = new HashSet<string>(
+                    repaired.Where(e => e.TargetNodeId == tgt.NodeId).Select(e => e.TargetSlotId));
 
-                var srcSlot = src.OutputSlots[0];
-                var tgtSlot = tgt.InputSlots.FirstOrDefault(s => s.DataType == srcSlot.DataType)
-                              ?? tgt.InputSlots[0];
-                repaired.Add(new WorkflowEdge
+                var slotsToFill = tgt.InputSlots.Where(s => s.Required && !filledSlots.Contains(s.SlotId)).ToList();
+                if (slotsToFill.Count == 0)
                 {
-                    EdgeId = Guid.NewGuid().ToString("N")[..8],
-                    SourceNodeId = src.NodeId,
-                    SourceSlotId = srcSlot.SlotId,
-                    TargetNodeId = tgt.NodeId,
-                    TargetSlotId = tgtSlot.SlotId,
-                });
-                hasIncoming.Add(tgt.NodeId);
-                added++;
+                    // 无待补必填槽：仅当该节点完全没有上游时，给第一个输入槽补一条（线性链）
+                    if (filledSlots.Count == 0) slotsToFill.Add(tgt.InputSlots[0]);
+                    else continue;
+                }
+
+                var usedSrc = new HashSet<string>(
+                    repaired.Where(e => e.TargetNodeId == tgt.NodeId).Select(e => e.SourceNodeId));
+
+                foreach (var slot in slotsToFill)
+                {
+                    WorkflowNode? src = null;
+                    for (var j = i - 1; j >= 0; j--)
+                        if (nodes[j].OutputSlots.Count > 0 && !usedSrc.Contains(nodes[j].NodeId)) { src = nodes[j]; break; }
+                    if (src == null) break; // 没有更多可用上游 → 不强连，交给后续校验/用户
+
+                    var srcSlot = src.OutputSlots.FirstOrDefault(s => s.DataType == slot.DataType) ?? src.OutputSlots[0];
+                    repaired.Add(new WorkflowEdge
+                    {
+                        EdgeId = Guid.NewGuid().ToString("N")[..8],
+                        SourceNodeId = src.NodeId,
+                        SourceSlotId = srcSlot.SlotId,
+                        TargetNodeId = tgt.NodeId,
+                        TargetSlotId = slot.SlotId,
+                    });
+                    usedSrc.Add(src.NodeId);
+                    added++;
+                }
             }
             if (added > 0)
-                notes.Add($"自动补全 {added} 条缺失连线，确保每个处理节点都有上游输入");
+                notes.Add($"自动补全 {added} 条缺失连线，确保每个处理节点的必填输入都有上游");
         }
 
         g.Edges = repaired;
@@ -185,6 +200,18 @@ public class WorkflowValidationService
             }
             if (!string.IsNullOrEmpty(meta.DisabledReason))
                 issues.Add(new(node.NodeId, $"舱「{meta.Name}」暂未开放（{meta.DisabledReason}），请替换为可用舱（如手动触发）"));
+        }
+
+        // 必填输入插槽缺上游（gap-fill 已尽力补；补不上的在此暴露，避免「单输入合并」之类静默残缺）
+        foreach (var node in nodes)
+        {
+            var incomingSlots = g.Edges!
+                .Where(e => e.TargetNodeId == node.NodeId)
+                .Select(e => e.TargetSlotId)
+                .ToHashSet();
+            foreach (var slot in node.InputSlots.Where(s => s.Required))
+                if (!incomingSlots.Contains(slot.SlotId))
+                    issues.Add(new(node.NodeId, $"「{node.Name}」必填输入「{slot.Name}」缺少上游连线"));
         }
 
         // 成环检测（Kahn 拓扑排序）

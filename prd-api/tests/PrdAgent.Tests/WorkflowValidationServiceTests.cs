@@ -188,6 +188,48 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void Merger_TwoRequiredInputs_BothAutoWired()
+    {
+        // data-merger 有两个必填输入槽，应各自接到不同上游（不能只连一个就判通过）
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("m1", CapsuleTypes.ManualTrigger),
+                Node("a", CapsuleTypes.HttpRequest, new() { ["url"] = "https://a.com", ["method"] = "GET" }),
+                Node("b", CapsuleTypes.HttpRequest, new() { ["url"] = "https://b.com", ["method"] = "GET" }),
+                Node("mg", CapsuleTypes.DataMerger),
+            },
+            Edges = new(),
+        };
+
+        var r = _svc.Process(g);
+        var mergerIn = g.Edges!.Where(e => e.TargetNodeId == "mg").Select(e => e.TargetSlotId).ToHashSet();
+        Assert.Contains("merge-in-1", mergerIn);
+        Assert.Contains("merge-in-2", mergerIn);
+        Assert.True(r.Valid, string.Join(";", r.Issues.Select(i => i.Message)));
+    }
+
+    [Fact]
+    public void Merger_MissingSecondUpstream_FlaggedInvalid()
+    {
+        // 只有一个可用上游 → merge-in-2 补不上 → 必须报问题，不能静默通过
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("a", CapsuleTypes.HttpRequest, new() { ["url"] = "https://a.com", ["method"] = "GET" }),
+                Node("mg", CapsuleTypes.DataMerger),
+            },
+            Edges = new(),
+        };
+
+        var r = _svc.Process(g);
+        Assert.False(r.Valid);
+        Assert.Contains(r.Issues, i => i.Target == "mg" && i.Message.Contains("缺少上游"));
+    }
+
+    [Fact]
     public void Cycle_ProducesIssue()
     {
         var g = new WorkflowChatGenerated

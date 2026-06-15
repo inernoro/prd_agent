@@ -543,6 +543,9 @@ public class WorkflowChatMessage
     /// <summary>assistant 消息附带的工作流 JSON（已解析为结构化数据）</summary>
     public WorkflowChatGenerated? Generated { get; set; }
 
+    /// <summary>校验/接线/缺项结果快照（持久化后刷新对话历史仍能恢复「应用门禁」与缺项卡）</summary>
+    public WorkflowChatValidation? Validation { get; set; }
+
     public string UserId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public long Seq { get; set; }
@@ -561,4 +564,21 @@ public class WorkflowChatGenerated
 
     /// <summary>是否为新建工作流（vs 修改现有工作流）</summary>
     public bool IsNew { get; set; }
+}
+
+/// <summary>
+/// AI 生成工作流的校验快照（与 SSE workflow_validation 事件同形，随对话消息持久化）
+/// </summary>
+public class WorkflowChatValidation
+{
+    public bool Valid { get; set; }
+    public List<WorkflowChatValidationIssue> Issues { get; set; } = new();
+    public List<string> WireNotes { get; set; } = new();
+    public List<PrdAgent.Core.Services.WorkflowRequiredInput> RequiredInputs { get; set; } = new();
+}
+
+public class WorkflowChatValidationIssue
+{
+    public string Target { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
 }

@@ -155,6 +155,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
               role: m.role,
               content: m.content,
               generated: m.generated ?? undefined,
+              validation: m.validation ?? undefined,
               timestamp: m.createdAt,
             }))
           );
@@ -532,8 +533,10 @@ function ChatMessage({
               <div>{message.generated.variables!.length} 个变量</div>
             )}
           </div>
-          {/* 有缺项时唯一应用入口走下方校验卡的「补齐并应用」，避免这里用未填值覆盖 */}
-          {onApply && !(message.validation && message.validation.requiredInputs.length > 0) && (
+          {/* 仅在「校验通过且无缺项」时显示直接应用；有缺项走下方补齐卡，结构无效则不允许应用 */}
+          {onApply
+            && (!message.validation || (message.validation.valid && message.validation.requiredInputs.length === 0))
+            && (
             <Button
               size="sm"
               onClick={() => onApply()}
@@ -615,9 +618,10 @@ function ValidationCard({
   const [values, setValues] = useState<Record<string, string>>({});
   const [applied, setApplied] = useState(false);
   const allFilled = requiredInputs.every((inp) => (values[reqKey(inp)] ?? '').trim() !== '');
+  const canApply = allFilled && valid; // 结构无效（环/重复/停用舱补不掉）时不允许应用
 
   function handleFillApply() {
-    if (!generated || !onApply || !allFilled) return;
+    if (!generated || !onApply || !canApply) return;
     onApply(bakeFilledValues(generated, requiredInputs, values));
     setApplied(true);
   }
@@ -722,14 +726,14 @@ function ValidationCard({
               <Button
                 size="sm"
                 onClick={handleFillApply}
-                disabled={!allFilled}
+                disabled={!canApply}
                 style={{
-                  background: allFilled ? 'rgba(139,92,246,0.25)' : 'rgba(255,255,255,0.06)',
-                  border: `1px solid ${allFilled ? 'rgba(139,92,246,0.35)' : 'rgba(255,255,255,0.12)'}`,
-                  color: allFilled ? 'rgba(196,181,253,0.95)' : 'rgba(255,255,255,0.4)',
+                  background: canApply ? 'rgba(139,92,246,0.25)' : 'rgba(255,255,255,0.06)',
+                  border: `1px solid ${canApply ? 'rgba(139,92,246,0.35)' : 'rgba(255,255,255,0.12)'}`,
+                  color: canApply ? 'rgba(196,181,253,0.95)' : 'rgba(255,255,255,0.4)',
                 }}
               >
-                {applied ? '已补齐并应用' : allFilled ? '补齐并应用到编辑器' : `请先填写全部 ${requiredInputs.length} 项`}
+                {applied ? '已补齐并应用' : !valid ? '请先解决上方结构问题' : allFilled ? '补齐并应用到编辑器' : `请先填写全部 ${requiredInputs.length} 项`}
               </Button>
               {applied && (
                 <span style={{ color: 'rgba(34,197,94,0.85)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>

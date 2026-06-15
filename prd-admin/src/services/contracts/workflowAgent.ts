@@ -407,6 +407,7 @@ export interface WorkflowChatMessage {
   role: 'user' | 'assistant';
   content: string;
   generated?: WorkflowChatGenerated;
+  validation?: WorkflowValidationResult;
   userId: string;
   createdAt: string;
   seq: number;

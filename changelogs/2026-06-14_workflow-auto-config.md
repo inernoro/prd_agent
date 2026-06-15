@@ -12,3 +12,6 @@
 | fix | prd-admin | 「一句话起步」auto-send 与历史加载竞态：历史晚返回不再覆盖刚追加的流式消息 |
 | fix | prd-admin | 画布保存补回 variables：AI 缺项补齐填入的变量默认值（如 cookie）不再在 handleSave 时丢失，并带入执行变量 |
 | fix | prd-api | 缺项扫描新增条件必填：TAPD 选 Cookie 认证时 cookie/dscToken 必填、选 Open API 时 authToken 必填，避免漏报后执行才炸 |
+| fix | prd-api | 自动接线改为按插槽粒度：data-merger 等多输入节点的每个必填输入槽都补上游，补不上的暴露为结构问题（不再单输入静默通过） |
+| fix | prd-api | 校验结果随对话消息持久化：刷新对话历史后「应用门禁」与缺项卡可恢复 |
+| fix | prd-admin | 应用门禁加严：结构无效（环/重复/停用舱补不掉）时禁用「应用到编辑器」「补齐并应用」，并提示先解决结构问题 |

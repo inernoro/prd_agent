@@ -1744,12 +1744,13 @@ public class WorkflowAgentController : ControllerBase
         // 6. 尝试从 LLM 回复中解析工作流 JSON
         var responseText = fullResponse.ToString();
         var generated = TryParseWorkflowFromResponse(responseText);
+        PrdAgent.Core.Services.WorkflowProcessResult? proc = null;
 
         if (generated != null)
         {
             // 6.1 校验 → 自动接线 → 缺项扫描；结构有误则回喂 LLM 自愈（最多 2 轮）
             SanitizeNodeConfigs(generated.Nodes ?? new());
-            var proc = _validation.Process(generated);
+            proc = _validation.Process(generated);
 
             var healRound = 0;
             while (!proc.Valid && healRound < 2)
@@ -1845,6 +1846,13 @@ public class WorkflowAgentController : ControllerBase
             Role = "assistant",
             Content = responseText,
             Generated = generated,
+            Validation = proc == null ? null : new WorkflowChatValidation
+            {
+                Valid = proc.Valid,
+                Issues = proc.Issues.Select(i => new WorkflowChatValidationIssue { Target = i.Target, Message = i.Message }).ToList(),
+                WireNotes = proc.WireNotes,
+                RequiredInputs = proc.RequiredInputs,
+            },
             UserId = userId,
             Seq = maxSeq + 2,
         };
