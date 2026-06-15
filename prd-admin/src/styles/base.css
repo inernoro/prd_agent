@@ -35,7 +35,7 @@
 
 /* 注意：避免使用 color-mix()，部分浏览器/WebView 不支持 */
 :focus-visible {
-  outline: 2px solid rgba(99, 102, 241, 0.6);
+  outline: 2px solid rgba(34, 211, 238, 0.55);
   outline-offset: 2px;
 }
 
@@ -73,7 +73,7 @@ select:focus-visible {
   color: var(--text-primary);
   border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  caret-color: rgba(129, 140, 248, 0.85);
+  caret-color: rgba(34, 211, 238, 0.85);
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
