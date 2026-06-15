@@ -501,7 +501,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       label: '产品管理',
       shortLabel: '产品',
       description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱',
-      icon: 'Boxes',
+      icon: 'Blocks',
       section: 'toolbox',
       appKey: 'product-agent',
       wip: true,

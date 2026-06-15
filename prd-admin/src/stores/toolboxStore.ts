@@ -317,7 +317,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-product-agent',
     name: '产品管理',
     description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱（参考 TAPD）',
-    icon: 'Boxes',
+    icon: 'Blocks',
     category: 'builtin',
     type: 'builtin',
     kind: 'agent',
