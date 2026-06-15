@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent, type CSSProperties } from 'react';
 import { Send, X, Code, CheckCircle2, Wand2, AlertTriangle, GitBranch, KeyRound, ListChecks } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
@@ -7,7 +7,7 @@ import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { StreamingText } from '@/components/streaming';
 import { getChatHistory } from '@/services';
 import { api } from '@/services/api';
-import type { WorkflowChatGenerated, WorkflowValidationResult } from '@/services/contracts/workflowAgent';
+import type { WorkflowChatGenerated, WorkflowValidationResult, WorkflowRequiredInput } from '@/services/contracts/workflowAgent';
 
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
@@ -327,7 +327,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
             message={msg}
             onApply={
               msg.generated && !msg.generatedWorkflowId
-                ? () => onApplyWorkflow(msg.generated!, workflowId)
+                ? (override?: WorkflowChatGenerated) => onApplyWorkflow(override ?? msg.generated!, workflowId)
                 : undefined
             }
           />
@@ -450,7 +450,7 @@ function ChatMessage({
   onApply,
 }: {
   message: UiMessage;
-  onApply?: () => void;
+  onApply?: (override?: WorkflowChatGenerated) => void;
 }) {
   const isUser = message.role === 'user';
 
@@ -524,7 +524,7 @@ function ChatMessage({
           {onApply && (
             <Button
               size="sm"
-              onClick={onApply}
+              onClick={() => onApply()}
               style={{
                 background: 'rgba(34,197,94,0.2)',
                 border: '1px solid rgba(34,197,94,0.3)',
@@ -537,18 +537,77 @@ function ChatMessage({
         </div>
       )}
 
-      {/* 自动校验 / 接线 / 待补项 */}
-      {message.validation && <ValidationCard validation={message.validation} />}
+      {/* 自动校验 / 接线 / 待补项（可就地补齐） */}
+      {message.validation && (
+        <ValidationCard
+          validation={message.validation}
+          generated={message.generated}
+          onApply={onApply}
+        />
+      )}
     </div>
   );
 }
 
 // ─── 自动校验结果卡片 ───────────────────────────────────────
 
-function ValidationCard({ validation }: { validation: WorkflowValidationResult }) {
+function reqKey(inp: WorkflowRequiredInput) {
+  return `${inp.scope}:${inp.nodeId ?? ''}:${inp.key}`;
+}
+
+/** 把用户填的值烘焙进生成的工作流（config 字段 / 变量默认值），返回新对象。 */
+function bakeFilledValues(
+  generated: WorkflowChatGenerated,
+  requiredInputs: WorkflowRequiredInput[],
+  values: Record<string, string>,
+): WorkflowChatGenerated {
+  const g: WorkflowChatGenerated = structuredClone(generated);
+  for (const inp of requiredInputs) {
+    const v = values[reqKey(inp)];
+    if (!v || !v.trim()) continue;
+    if (inp.scope === 'config' && inp.nodeId) {
+      const node = g.nodes?.find((n) => n.nodeId === inp.nodeId);
+      if (node) node.config = { ...node.config, [inp.key]: v };
+    } else if (inp.scope === 'variable') {
+      g.variables = g.variables ?? [];
+      const variable = g.variables.find((x) => x.key === inp.key);
+      if (variable) variable.defaultValue = v;
+      else
+        g.variables.push({
+          key: inp.key,
+          label: inp.label || inp.key,
+          type: inp.isSecret ? 'string' : inp.type || 'string',
+          required: true,
+          isSecret: inp.isSecret,
+          defaultValue: v,
+        });
+    }
+  }
+  return g;
+}
+
+function ValidationCard({
+  validation,
+  generated,
+  onApply,
+}: {
+  validation: WorkflowValidationResult;
+  generated?: WorkflowChatGenerated;
+  onApply?: (override?: WorkflowChatGenerated) => void;
+}) {
   const { valid, issues, wireNotes, requiredInputs } = validation;
   const hasNotes = wireNotes.length > 0;
   const hasMissing = requiredInputs.length > 0;
+  // 仅在「待应用的提案 + 有缺项」时支持就地补齐
+  const canFill = hasMissing && !!generated && !!onApply;
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [applied, setApplied] = useState(false);
+
+  function handleFillApply() {
+    if (!generated || !onApply) return;
+    onApply(bakeFilledValues(generated, requiredInputs, values));
+    setApplied(true);
+  }
 
   return (
     <div
@@ -599,43 +658,90 @@ function ValidationCard({ validation }: { validation: WorkflowValidationResult }
         </div>
       )}
 
-      {/* 待补齐项 */}
+      {/* 待补齐项（可就地填写 → 一键应用） */}
       {hasMissing && (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.7)', marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.7)', marginBottom: 5 }}>
             <ListChecks size={12} />
             <span style={{ fontWeight: 600 }}>补齐这 {requiredInputs.length} 项即可运行</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {requiredInputs.map((inp) => (
-              <div
-                key={`${inp.scope}-${inp.nodeId ?? ''}-${inp.key}`}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {requiredInputs.map((inp) => {
+              const k = reqKey(inp);
+              return (
+                <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {inp.isSecret && <KeyRound size={11} style={{ color: 'rgba(234,179,8,0.9)', flexShrink: 0 }} />}
+                    <span style={{ color: 'rgba(255,255,255,0.85)' }}>{inp.label}</span>
+                    {inp.nodeName && (
+                      <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>· {inp.nodeName}</span>
+                    )}
+                    {inp.scope === 'variable' && (
+                      <span style={{ color: 'rgba(139,92,246,0.8)', fontSize: 11 }}>变量</span>
+                    )}
+                  </div>
+                  {canFill ? (
+                    inp.type === 'textarea' ? (
+                      <textarea
+                        value={values[k] ?? ''}
+                        onChange={(e) => { setValues((p) => ({ ...p, [k]: e.target.value })); setApplied(false); }}
+                        placeholder={inp.placeholder || inp.helpTip || `请输入${inp.label}`}
+                        rows={2}
+                        style={fillFieldStyle}
+                      />
+                    ) : (
+                      <input
+                        type={inp.isSecret || inp.type === 'password' ? 'password' : 'text'}
+                        value={values[k] ?? ''}
+                        onChange={(e) => { setValues((p) => ({ ...p, [k]: e.target.value })); setApplied(false); }}
+                        placeholder={inp.placeholder || inp.helpTip || `请输入${inp.label}`}
+                        style={fillFieldStyle}
+                      />
+                    )
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+
+          {canFill ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <Button
+                size="sm"
+                onClick={handleFillApply}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                  borderRadius: 6,
-                  padding: '5px 8px',
+                  background: 'rgba(139,92,246,0.25)',
+                  border: '1px solid rgba(139,92,246,0.35)',
+                  color: 'rgba(196,181,253,0.95)',
                 }}
               >
-                {inp.isSecret && <KeyRound size={11} style={{ color: 'rgba(234,179,8,0.9)', flexShrink: 0 }} />}
-                <span style={{ color: 'rgba(255,255,255,0.85)' }}>{inp.label}</span>
-                {inp.nodeName && (
-                  <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>· {inp.nodeName}</span>
-                )}
-                {inp.scope === 'variable' && (
-                  <span style={{ color: 'rgba(139,92,246,0.8)', fontSize: 11 }}>变量</span>
-                )}
-              </div>
-            ))}
-          </div>
-          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 4 }}>
-            打开对应节点配置填写；密钥项请填到工作流变量。
-          </div>
+                {applied ? '已补齐并应用' : '补齐并应用到编辑器'}
+              </Button>
+              {applied && (
+                <span style={{ color: 'rgba(34,197,94,0.85)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <CheckCircle2 size={12} /> 记得点右上「保存」
+                </span>
+              )}
+            </div>
+          ) : (
+            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 4 }}>
+              打开对应节点配置填写；密钥项请填到工作流变量。
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
+
+const fillFieldStyle: CSSProperties = {
+  width: '100%',
+  background: 'rgba(0,0,0,0.25)',
+  border: '1px solid rgba(255,255,255,0.12)',
+  borderRadius: 6,
+  padding: '6px 8px',
+  fontSize: 12,
+  color: 'rgba(255,255,255,0.9)',
+  outline: 'none',
+  resize: 'vertical',
+};
