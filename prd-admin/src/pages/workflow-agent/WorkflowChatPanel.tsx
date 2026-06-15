@@ -21,6 +21,12 @@ function joinUrl(base: string, path: string) {
   return `${b}/${p}`;
 }
 
+/** 从 workflow_created/generated 事件 payload 兜底构造校验快照（仅当权威 workflow_validation 缺失时用）。 */
+function validationFromPayload(obj: { valid?: boolean; requiredInputs?: WorkflowRequiredInput[] }): WorkflowValidationResult | undefined {
+  if (obj.valid === undefined && obj.requiredInputs === undefined) return undefined;
+  return { valid: obj.valid ?? false, issues: [], wireNotes: [], requiredInputs: obj.requiredInputs ?? [] };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // WorkflowChatPanel — 右侧 AI 对话面板
 // ═══════════════════════════════════════════════════════════════
@@ -84,25 +90,26 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
     },
     onEvent: {
       workflow_created: (data: unknown) => {
-        const obj = data as { workflow: WorkflowChatGenerated; workflowId: string };
+        const obj = data as { workflow: WorkflowChatGenerated; workflowId: string; valid?: boolean; requiredInputs?: WorkflowRequiredInput[] };
         const id = assistantMsgIdRef.current;
         if (!id) return;
         setMessages((prev) =>
           prev.map((m) =>
             m.id === id
-              ? { ...m, generated: obj.workflow, generatedWorkflowId: obj.workflowId }
+              ? { ...m, generated: obj.workflow, generatedWorkflowId: obj.workflowId, validation: m.validation ?? validationFromPayload(obj) }
               : m,
           ),
         );
         onApplyRef.current(obj.workflow, obj.workflowId);
       },
       workflow_generated: (data: unknown) => {
-        const obj = data as { generated: WorkflowChatGenerated };
+        const obj = data as { generated: WorkflowChatGenerated; valid?: boolean; requiredInputs?: WorkflowRequiredInput[] };
         const id = assistantMsgIdRef.current;
         if (!id) return;
+        // 用 workflow_validation 事件为权威；若它丢了/晚到，用本事件 payload 的 valid+requiredInputs 兜底门禁
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === id ? { ...m, generated: obj.generated } : m,
+            m.id === id ? { ...m, generated: obj.generated, validation: m.validation ?? validationFromPayload(obj) } : m,
           ),
         );
       },

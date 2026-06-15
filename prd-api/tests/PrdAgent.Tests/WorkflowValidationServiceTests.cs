@@ -270,9 +270,10 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
-    public void ConditionDuplicateExplicitSlot_IsReassigned()
+    public void ConditionExplicitSameSlotFanout_IsPreserved()
     {
-        // 两条出边都显式写成 cond-true（语法有效但重复）→ 第二条应改到 cond-false
+        // 两条出边都显式写成 cond-true（同槽 fan-out）是有意写法，运行时按 slot 激活全部出边 →
+        // 不能擅自改派；只有省略/猜错才分流（见 ConditionBranches_GetDistinctOutputSlots）
         var g = new WorkflowChatGenerated
         {
             Nodes = new()
@@ -292,9 +293,8 @@ public class WorkflowValidationServiceTests
 
         var r = _svc.Process(g);
         var condOut = g.Edges!.Where(e => e.SourceNodeId == "cond").Select(e => e.SourceSlotId).ToList();
-        Assert.Equal(2, condOut.Distinct().Count());
-        Assert.Contains("cond-true", condOut);
-        Assert.Contains("cond-false", condOut);
+        Assert.Equal(2, condOut.Count);
+        Assert.All(condOut, s => Assert.Equal("cond-true", s)); // 显式同槽 fan-out 原样保留
     }
 
     [Fact]

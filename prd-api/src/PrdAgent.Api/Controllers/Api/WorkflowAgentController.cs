@@ -1813,6 +1813,7 @@ public class WorkflowAgentController : ControllerBase
                 {
                     type = "workflow_created",
                     workflowId = workflow.Id,
+                    valid = proc.Valid,
                     requiredInputs = proc.RequiredInputs,
                     workflow = new
                     {
@@ -1831,6 +1832,7 @@ public class WorkflowAgentController : ControllerBase
                 {
                     type = "workflow_generated",
                     workflowId = request.WorkflowId,
+                    valid = proc.Valid,
                     requiredInputs = proc.RequiredInputs,
                     generated = new
                     {
