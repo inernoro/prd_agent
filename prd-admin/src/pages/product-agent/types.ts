@@ -339,9 +339,37 @@ export interface Customer {
   tags: string[];
   templateId?: string | null;
   formData: Record<string, string>;
+  // ── 客户信息「基础模块」默认字段（商户名称复用 name）──
+  /** 商户编号 */
+  merchantNo?: string | null;
+  /** 商户简称 */
+  shortName?: string | null;
+  /** 商户状态（自由文本，如 正常 / 停用） */
+  status?: string | null;
+  /** 认证状态（未认证 / 已认证 / 认证失败） */
+  certStatus?: string | null;
+  /** 所在区域 */
+  region?: string | null;
+  /** 所属行业 */
+  industry?: string | null;
+  /** 开户时间（ISO 字符串） */
+  openedAt?: string | null;
+  /** 过期时间（ISO 字符串） */
+  expireAt?: string | null;
   ownerId: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 客户「动态跟进」时间线条目（对齐后端 CustomerFollowUp，按时间倒序） */
+export interface CustomerFollowUp {
+  id: string;
+  customerId: string;
+  /** 跟进内容（富文本 HTML） */
+  content: string;
+  createdByUserId: string;
+  createdByName?: string | null;
+  createdAt: string;
 }
 
 /** 表单字段类型 */

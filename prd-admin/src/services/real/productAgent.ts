@@ -14,6 +14,7 @@ import type {
   Feature,
   FeatureVersion,
   Customer,
+  CustomerFollowUp,
   FormTemplate,
   WorkflowDefinition,
   ProductEntityType,
@@ -265,20 +266,42 @@ export function deleteFeatureVersion(featureVersionId: string) {
 }
 
 // ── 客户（全局，跨产品共享）──
+/** 客户写入字段（创建/更新共用；商户名称复用 name）。日期字段传 ISO 字符串或 null。 */
+export type CustomerUpsertBody = Partial<Customer> & {
+  merchantNo?: string | null;
+  shortName?: string | null;
+  status?: string | null;
+  certStatus?: string | null;
+  region?: string | null;
+  industry?: string | null;
+  openedAt?: string | null;
+  expireAt?: string | null;
+};
 export function listCustomers(params?: { keyword?: string }) {
   const q = new URLSearchParams();
   if (params?.keyword) q.set('keyword', params.keyword);
   const qs = q.toString();
   return apiRequest<ListWrap<Customer>>(`/api/product/customers${qs ? `?${qs}` : ''}`);
 }
-export function createCustomer(body: Partial<Customer>) {
+export function createCustomer(body: CustomerUpsertBody) {
   return apiRequest<Customer>('/api/product/customers', { method: 'POST', body });
 }
-export function updateCustomer(customerId: string, body: Partial<Customer>) {
+export function updateCustomer(customerId: string, body: CustomerUpsertBody) {
   return apiRequest<Customer>(`/api/product/customers/${customerId}`, { method: 'PUT', body });
 }
 export function deleteCustomer(customerId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/customers/${customerId}`, { method: 'DELETE' });
+}
+
+// ── 客户动态跟进 CustomerFollowUp（仿动态时间线，按时间倒序）──
+export function listCustomerFollowUps(customerId: string) {
+  return apiRequest<ListWrap<CustomerFollowUp>>(`/api/product/customers/${customerId}/follow-ups`);
+}
+export function createCustomerFollowUp(customerId: string, body: { content: string }) {
+  return apiRequest<CustomerFollowUp>(`/api/product/customers/${customerId}/follow-ups`, { method: 'POST', body });
+}
+export function deleteCustomerFollowUp(followUpId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/follow-ups/${followUpId}`, { method: 'DELETE' });
 }
 
 // ── 通用表单模板引擎 ──

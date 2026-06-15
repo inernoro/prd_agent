@@ -1614,6 +1614,14 @@ public class ProductAgentController : ControllerBase
             Tags = request.Tags ?? new(),
             TemplateId = request.TemplateId,
             FormData = request.FormData ?? new(),
+            MerchantNo = request.MerchantNo?.Trim(),
+            ShortName = request.ShortName?.Trim(),
+            Status = request.Status?.Trim(),
+            CertStatus = request.CertStatus?.Trim(),
+            Region = request.Region?.Trim(),
+            Industry = request.Industry?.Trim(),
+            OpenedAt = request.OpenedAt,
+            ExpireAt = request.ExpireAt,
             OwnerId = userId,
         };
         await _db.Customers.InsertOneAsync(customer);
@@ -1635,6 +1643,14 @@ public class ProductAgentController : ControllerBase
         u = u.Set(c => c.Description, request.Description?.Trim());
         if (request.Tags != null) u = u.Set(c => c.Tags, request.Tags);
         if (request.FormData != null) u = u.Set(c => c.FormData, request.FormData);
+        u = u.Set(c => c.MerchantNo, request.MerchantNo?.Trim());
+        u = u.Set(c => c.ShortName, request.ShortName?.Trim());
+        u = u.Set(c => c.Status, request.Status?.Trim());
+        u = u.Set(c => c.CertStatus, request.CertStatus?.Trim());
+        u = u.Set(c => c.Region, request.Region?.Trim());
+        u = u.Set(c => c.Industry, request.Industry?.Trim());
+        u = u.Set(c => c.OpenedAt, request.OpenedAt);
+        u = u.Set(c => c.ExpireAt, request.ExpireAt);
         await _db.Customers.UpdateOneAsync(c => c.Id == customerId, u);
         var updated = await _db.Customers.Find(c => c.Id == customerId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
@@ -1651,6 +1667,56 @@ public class ProductAgentController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅客户创建者或管理员可删除"));
         await _db.Customers.UpdateOneAsync(c => c.Id == customerId,
             Builders<Customer>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ════════════════════════ 客户动态跟进 CustomerFollowUp（仿 ProductItemActivity）════════════════════════
+
+    /// <summary>客户动态跟进列表（按时间倒序，最新在前）。登录可读。</summary>
+    [HttpGet("customers/{customerId}/follow-ups")]
+    public async Task<IActionResult> ListCustomerFollowUps(string customerId)
+    {
+        var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (customer == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
+        var items = await _db.CustomerFollowUps.Find(f => f.CustomerId == customerId && !f.IsDeleted)
+            .SortByDescending(f => f.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>新增一条客户动态跟进（富文本 HTML）。</summary>
+    [HttpPost("customers/{customerId}/follow-ups")]
+    public async Task<IActionResult> CreateCustomerFollowUp(string customerId, [FromBody] CustomerFollowUpRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "跟进内容不能为空"));
+        var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (customer == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
+        var userId = GetUserId();
+        var createdByName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var followUp = new CustomerFollowUp
+        {
+            CustomerId = customerId,
+            Content = request.Content,
+            CreatedByUserId = userId,
+            CreatedByName = createdByName,
+        };
+        await _db.CustomerFollowUps.InsertOneAsync(followUp);
+        return Ok(ApiResponse<object>.Ok(followUp));
+    }
+
+    /// <summary>删除一条客户动态跟进（软删除，仅创建人或管理员可删）。</summary>
+    [HttpDelete("follow-ups/{followUpId}")]
+    public async Task<IActionResult> DeleteCustomerFollowUp(string followUpId)
+    {
+        var followUp = await _db.CustomerFollowUps.Find(f => f.Id == followUpId && !f.IsDeleted).FirstOrDefaultAsync();
+        if (followUp == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "跟进记录不存在"));
+        if (followUp.CreatedByUserId != GetUserId() && !await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅创建人或管理员可删除"));
+        await _db.CustomerFollowUps.UpdateOneAsync(f => f.Id == followUpId,
+            Builders<CustomerFollowUp>.Update.Set(f => f.IsDeleted, true).Set(f => f.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
@@ -6610,6 +6676,21 @@ public class UpsertCustomerRequest
     public List<string>? Tags { get; set; }
     public string? TemplateId { get; set; }
     public Dictionary<string, string>? FormData { get; set; }
+
+    // ── 客户信息「基础模块」默认字段 ──
+    public string? MerchantNo { get; set; }
+    public string? ShortName { get; set; }
+    public string? Status { get; set; }
+    public string? CertStatus { get; set; }
+    public string? Region { get; set; }
+    public string? Industry { get; set; }
+    public DateTime? OpenedAt { get; set; }
+    public DateTime? ExpireAt { get; set; }
+}
+
+public class CustomerFollowUpRequest
+{
+    public string Content { get; set; } = string.Empty;
 }
 
 public class AiFillRequirementRequest

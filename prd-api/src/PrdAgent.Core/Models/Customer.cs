@@ -39,6 +39,32 @@ public class Customer
     /// <summary>自定义表单填写值</summary>
     public Dictionary<string, string> FormData { get; set; } = new();
 
+    // ── 客户信息「基础模块」默认字段（商户名称复用 Name）──
+
+    /// <summary>商户编号</summary>
+    public string? MerchantNo { get; set; }
+
+    /// <summary>商户简称</summary>
+    public string? ShortName { get; set; }
+
+    /// <summary>商户状态（自由文本，如 正常 / 停用）</summary>
+    public string? Status { get; set; }
+
+    /// <summary>认证状态（未认证 / 已认证 / 认证失败）</summary>
+    public string? CertStatus { get; set; }
+
+    /// <summary>所在区域</summary>
+    public string? Region { get; set; }
+
+    /// <summary>所属行业</summary>
+    public string? Industry { get; set; }
+
+    /// <summary>开户时间</summary>
+    public DateTime? OpenedAt { get; set; }
+
+    /// <summary>过期时间</summary>
+    public DateTime? ExpireAt { get; set; }
+
     public string OwnerId { get; set; } = string.Empty;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
