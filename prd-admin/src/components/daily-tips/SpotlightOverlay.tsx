@@ -23,6 +23,16 @@ function safeQuery(sel: string | null | undefined): Element | null {
 }
 
 /**
+ * 飞回 + 接住的共享时序(SSOT)。两段动画必须挂在同一条「合成层时钟」上,且都用 delay 预约,
+ * 不靠「飞完 onfinish → setState → 重渲染」那条主线程链路触发 —— 否则页面卡顿时主线程被占满,
+ * 帽子(合成层)早落地、闪光(主线程二次渲染)还堵在队列里,出现「接触与闪烁差几秒」的脱钩(用户 2026-06-15 实测)。
+ * LAND_DELAY 略小于 FLY_DURATION,让挤压/辉光在帽子最后接触的那一刻引爆(留 ~120ms 重叠)。
+ */
+const FLY_DURATION = 1440;
+const LAND_OVERLAP = 120;
+const LAND_DELAY = FLY_DURATION - LAND_OVERLAP;
+
+/**
  * 「飞回教程入口」完成动画(诉求 6):教程走完后,一枚毕业帽徽章从最后高亮的光圈中心
  * 飞向右上角「本页教程」pill(data-tour-entry),提醒用户"以后从这里再看",避免学完即忘。
  * 用 Web Animations API 走任意两点曲线,结束后回调清理。
@@ -55,9 +65,9 @@ function FlyingToken({
         },
         { transform: `translate(-50%,-50%) translate(${dx}px, ${dy}px) scale(0.3)`, opacity: 0 },
       ],
-      // 半速(1440ms,原 720 的两倍):用户反馈关闭教程时飞回动画太快「看不见」,
+      // 半速(FLY_DURATION,原 720 的两倍):用户反馈关闭教程时飞回动画太快「看不见」,
       // 放慢一倍让毕业帽明显地飞回右上角入口,提醒以后从这里重看。
-      { duration: 1440, easing: 'cubic-bezier(.4,0,.2,1)' },
+      { duration: FLY_DURATION, easing: 'cubic-bezier(.4,0,.2,1)' },
     );
     anim.onfinish = onDone;
     return () => {
@@ -117,9 +127,13 @@ function springScaleFrames(response: number, zeta: number, sx0: number, sy0: num
 }
 
 /**
- * 毕业帽飞回入口「落地」那一刻叠在 pill 位置上的辉光 + 涟漪(诉求:接住时发个光、闪一闪)。
- * 只动 opacity/transform(合成层,不动 box-shadow 扩散),fixed 定位到 pill 实测 rect,
- * 中心镂空的环形 halo 不遮挡 pill 文字。pill 本体的弹簧挤压由 triggerEntryLanding 直接对真实节点跑。
+ * 毕业帽飞回入口「落地」那一刻在 pill 位置引爆的「接住」效果:pill 弹簧挤压 + 环形辉光 + 涟漪。
+ *
+ * 关键:本组件在**飞行一开始**就和 FlyingToken 一起挂载,三段动画全部用 `delay: LAND_DELAY` 预约,
+ * 在合成层(GPU)上自行按点引爆 —— 不经过「飞完 onfinish → setState → 重渲染」那条主线程链路。
+ * 这样页面卡顿时帽子(合成层)与闪光(合成层)仍共享同一时钟、严丝合缝,根治「接触与闪烁差几秒」。
+ * delay 期间所有元素 opacity 0 / pill 维持原状,飞行途中不可见,落地瞬间才亮。
+ * 只动 opacity/transform(合成层,不动 box-shadow 扩散);环形 halo 中心镂空不遮挡 pill 文字。
  */
 function EntryLandingFx({
   rect,
@@ -133,7 +147,27 @@ function EntryLandingFx({
   useEffect(() => {
     const glow = glowRef.current;
     const ripple = rippleRef.current;
+    // cancel-on-unmount 只跟踪辉光/涟漪(本组件自有 DOM);pill 挤压跑在常驻的真实入口节点上,
+    // 不纳入 cancel 列表,避免提前卸载时把它 cancel 出突兀的回弹。
     const anims: Animation[] = [];
+    // pill 本体弹簧挤压(非等比:撞击 X 宽 Y 扁 → 弹簧收敛回 1,过冲自然反挤压),与辉光同一 delay 引爆。
+    const entry = document.querySelector('[data-tour-entry]');
+    if (entry instanceof HTMLElement) {
+      try {
+        entry.animate(springScaleFrames(0.42, 0.55, 1.16, 0.86), {
+          duration: 560,
+          delay: LAND_DELAY,
+          easing: 'linear',
+        });
+        entry.animate([{ borderColor: 'rgba(196,181,253,0.95)', color: '#fff', offset: 0 }, { offset: 1 }], {
+          duration: 700,
+          delay: LAND_DELAY,
+          easing: 'ease-out',
+        });
+      } catch {
+        /* 老浏览器不支持 WAAPI 时静默降级,不影响教程功能本身 */
+      }
+    }
     if (glow) {
       const a = glow.animate(
         [
@@ -142,9 +176,9 @@ function EntryLandingFx({
           { opacity: 0.3, transform: 'scale(1.25)', offset: 0.4 },
           { opacity: 0, transform: 'scale(1.45)' },
         ],
-        { duration: 620, easing: 'cubic-bezier(.2,.7,.3,1)' },
+        { duration: 620, delay: LAND_DELAY, easing: 'cubic-bezier(.2,.7,.3,1)' },
       );
-      a.onfinish = onDone;
+      a.onfinish = onDone; // 落地播完后清理(纯卸载,即便因卡顿迟到也无副作用——视觉已在合成层准时播完)
       anims.push(a);
     } else {
       onDone();
@@ -156,7 +190,7 @@ function EntryLandingFx({
             { opacity: 0.9, transform: 'scale(1)' },
             { opacity: 0, transform: 'scale(1.9)' },
           ],
-          { duration: 520, easing: 'cubic-bezier(.1,.6,.3,1)' },
+          { duration: 520, delay: LAND_DELAY, easing: 'cubic-bezier(.1,.6,.3,1)' },
         ),
       );
     }
@@ -247,6 +281,9 @@ export function SpotlightOverlay() {
   const clearFlyBack = useCallback(() => setFlyBack(null), []);
   /** 毕业帽落地后在 pill 位置播放的「接住」辉光/涟漪 rect(诉求:发个光、闪一闪),null=不播放 */
   const [landFx, setLandFx] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  // 稳定引用:landFx 与 flyBack 同帧设、要等延迟动画播完(~1940ms)才清,期间父组件会因 clearFlyBack
+  // 等重渲染。若用内联 onDone,EntryLandingFx 的 effect 会随每次父渲染重跑、把落地动画中途重启 —— 必须稳。
+  const clearLandFx = useCallback(() => setLandFx(null), []);
 
   // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
   // 初次 mount 读一次;TipsRotator 写完 payload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
@@ -306,6 +343,13 @@ export function SpotlightOverlay() {
   // 历史:飞回动画原先只在「完成」末步触发,且 720ms 太快 —— 用户关闭/取消教程时
   // 「看不见」入口在哪。现在抽成公共函数,X / 点空白 / ESC / 我已学会 / 完成 全部复用,
   // 半速播放(见 FlyingToken),让用户每次关闭都看到毕业帽飞回入口。
+  // 全站「教程」入口是同一个组件 TipsEntryButton(都带 data-tour-entry),且本 Overlay 是 App 根
+  // 全局唯一挂载 —— 所以这套飞回 + 接住效果改这一处,任何页面、任何关闭路径(完成/我已学会/X/ESC)
+  // 只要帽子飞回来就一致触发。
+  //
+  // flyBack(帽子)与 landFx(接住光效)**同帧一起设**:两者在同一次渲染里挂载,共享同一条合成层时钟。
+  // 接住动画在 EntryLandingFx 内用 delay 预约(LAND_DELAY),不靠「飞完 onfinish → setState → 重渲染」
+  // 这条主线程链路触发 —— 根治页面卡顿时「帽子早落地、闪光迟几秒」的脱钩(用户 2026-06-15 实测)。
   const flyBackToEntry = useCallback(() => {
     const entry = document.querySelector('[data-tour-entry]');
     if (!entry) return;
@@ -318,35 +362,8 @@ export function SpotlightOverlay() {
       from: { x: sr.left + sr.width / 2, y: sr.top + sr.height / 2 },
       to: { x: er.left + er.width / 2, y: er.top + er.height / 2 },
     });
+    setLandFx({ x: er.left, y: er.top, w: er.width, h: er.height });
   }, [currentSelector]);
-
-  // ---- 毕业帽落地:对它实际飞向的那个 pill 节点跑「接住」动画(弹簧挤压 + 辉光/涟漪)----
-  // 全站「教程」入口是同一个组件 TipsEntryButton(都带 data-tour-entry),且本 Overlay 是 App 根
-  // 全局唯一挂载 —— 所以这套接住效果改这一处,任何页面、任何关闭路径(完成/我已学会/X/ESC)只要
-  // 帽子飞回来就一致触发。参数与已验收 demo 同:response 0.42 / dampingFraction 0.55(推荐档)。
-  const triggerEntryLanding = useCallback(() => {
-    const entry = document.querySelector('[data-tour-entry]');
-    if (!(entry instanceof HTMLElement)) return;
-    const r = entry.getBoundingClientRect();
-    try {
-      // 非等比挤压(撞击 X 宽 Y 扁 → 弹簧收敛回 1,过冲自然反挤压)
-      entry.animate(springScaleFrames(0.42, 0.55, 1.16, 0.86), { duration: 560, easing: 'linear' });
-      // 边框/字色点亮一下再回落(末帧留空 → 回到 pill 自身 inline 基础样式)
-      entry.animate(
-        [{ borderColor: 'rgba(196,181,253,0.95)', color: '#fff', offset: 0 }, { offset: 1 }],
-        { duration: 700, easing: 'ease-out' },
-      );
-    } catch {
-      /* 老浏览器不支持 WAAPI 时静默降级,不影响教程功能本身 */
-    }
-    setLandFx({ x: r.left, y: r.top, w: r.width, h: r.height });
-  }, []);
-
-  // FlyingToken 落地回调:先清掉飞行体,再让 pill「接住」(发光闪一下)。
-  const onTokenLanded = useCallback(() => {
-    clearFlyBack();
-    triggerEntryLanding();
-  }, [clearFlyBack, triggerEntryLanding]);
 
   // 统一关闭:先播飞回动画,再隐藏卡片。flyBack 与 dismissed 同帧设置,
   // FlyingToken 在 dismissed 后仍由 flyBackNode 续播(见底部渲染)。
@@ -606,10 +623,10 @@ export function SpotlightOverlay() {
 
   // 完成飞回动画即使在 dismissed 后也要继续播放(completeTour 同帧设了 flyBack + dismissed)。
   const flyBackNode = flyBack
-    ? createPortal(<FlyingToken from={flyBack.from} to={flyBack.to} onDone={onTokenLanded} />, document.body)
+    ? createPortal(<FlyingToken from={flyBack.from} to={flyBack.to} onDone={clearFlyBack} />, document.body)
     : null;
   // 帽子落地后的「接住」辉光/涟漪 —— 与 flyBackNode 一样,dismissed 后仍需续播(落地发生在飞行结束、卡片已隐藏时)。
-  const landFxNode = landFx ? <EntryLandingFx rect={landFx} onDone={() => setLandFx(null)} /> : null;
+  const landFxNode = landFx ? <EntryLandingFx rect={landFx} onDone={clearLandFx} /> : null;
 
   if (dismissed || !payload)
     return (
