@@ -394,6 +394,29 @@ public class WorkflowValidationServiceTests
     }
 
     [Fact]
+    public void NestedJsonConfigPlaceholder_IsSurfacedAndNormalized()
+    {
+        // headers 是 JSON 对象，里面嵌 {{ api_token }} → 递归扫出并规范化
+        var g = new WorkflowChatGenerated
+        {
+            Nodes = new()
+            {
+                Node("h1", CapsuleTypes.HttpRequest, new()
+                {
+                    ["url"] = "https://x.com",
+                    ["method"] = "GET",
+                    ["headers"] = new Dictionary<string, object?> { ["Authorization"] = "Bearer {{ api_token }}" },
+                }),
+            },
+        };
+
+        var r = _svc.Process(g);
+        Assert.Contains(r.RequiredInputs, x => x.Key == "api_token" && x.Scope == "variable" && x.IsSecret);
+        var headers = (Dictionary<string, object?>)g.Nodes![0].Config["headers"]!;
+        Assert.Equal("Bearer {{api_token}}", headers["Authorization"]);
+    }
+
+    [Fact]
     public void SpacedPlaceholder_IsNormalizedToExactForm()
     {
         // {{ host }}（带空格）应被规范化成运行时认的 {{host}}，并仍 surface host

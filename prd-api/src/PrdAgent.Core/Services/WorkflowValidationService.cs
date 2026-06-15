@@ -43,7 +43,7 @@ public class WorkflowValidationService
     }
 
     /// <summary>
-    /// 把 config 字符串里带空格的占位 {{ host }} 规范化成运行时认的精确形式 {{host}}。
+    /// 把 config 字符串里带空格的占位 {{ host }} 规范化成运行时认的精确形式 {{host}}（递归进 JSON 对象/数组）。
     /// 否则 CapsuleExecutor.ReplaceVariables 只替换精确 {{host}}，会带着字面 {{ host }} 跑。
     /// </summary>
     private static void NormalizeConfigPlaceholders(List<WorkflowNode> nodes)
@@ -52,10 +52,52 @@ public class WorkflowValidationService
         {
             if (node.Config == null) continue;
             foreach (var k in node.Config.Keys.ToList())
-            {
-                if (node.Config[k] is string str && str.Contains("{{"))
-                    node.Config[k] = VariableRefRegex.Replace(str, m => "{{" + m.Groups[1].Value + "}}");
-            }
+                node.Config[k] = NormalizePlaceholdersIn(node.Config[k]);
+        }
+    }
+
+    private static object? NormalizePlaceholdersIn(object? value)
+    {
+        switch (value)
+        {
+            case string s:
+                return s.Contains("{{") ? VariableRefRegex.Replace(s, m => "{{" + m.Groups[1].Value + "}}") : s;
+            case Dictionary<string, object?> dict:
+                foreach (var k in dict.Keys.ToList()) dict[k] = NormalizePlaceholdersIn(dict[k]);
+                return dict;
+            case List<object?> list:
+                for (var i = 0; i < list.Count; i++) list[i] = NormalizePlaceholdersIn(list[i]);
+                return list;
+            default:
+                return value;
+        }
+    }
+
+    /// <summary>递归收集一个 config 值里的所有字符串叶子（string / JSON 对象/数组里的字符串）。</summary>
+    private static IEnumerable<string> CollectStrings(object? value)
+    {
+        switch (value)
+        {
+            case string s:
+                yield return s;
+                break;
+            case JsonElement je:
+                if (je.ValueKind == JsonValueKind.String) { yield return je.GetString() ?? string.Empty; }
+                else if (je.ValueKind == JsonValueKind.Object)
+                    foreach (var p in je.EnumerateObject())
+                        foreach (var x in CollectStrings(p.Value)) yield return x;
+                else if (je.ValueKind == JsonValueKind.Array)
+                    foreach (var e in je.EnumerateArray())
+                        foreach (var x in CollectStrings(e)) yield return x;
+                break;
+            case System.Collections.IDictionary dict:
+                foreach (var v in dict.Values)
+                    foreach (var x in CollectStrings(v)) yield return x;
+                break;
+            case System.Collections.IEnumerable en: // List<object?> 等（string 已在上面单独处理）
+                foreach (var item in en)
+                    foreach (var x in CollectStrings(item)) yield return x;
+                break;
         }
     }
 
@@ -365,29 +407,31 @@ public class WorkflowValidationService
                 });
             }
 
-            // 任意 config 值里内嵌的 {{var}} 占位（含 https://{{host}}/api、cookie 串里嵌 token 等）
+            // 任意 config 值里内嵌的 {{var}} 占位（含 https://{{host}}/api、headers/body 等嵌套 JSON 里的占位）
             // 引用了「未声明」或「已声明但无默认值」的变量都 surface 成可填项，
             // 避免带着未替换的占位跑（被引用即说明需要值，不看 v.Required 标记）
             foreach (var kv in node.Config ?? new())
             {
-                var s = ToConfigString(kv.Value);
-                if (string.IsNullOrEmpty(s)) continue;
-                foreach (var token in ExtractVariableRefs(s))
+                foreach (var s in CollectStrings(kv.Value))
                 {
-                    declaredVars.TryGetValue(token, out var dv);
-                    if (dv != null && !string.IsNullOrWhiteSpace(dv.DefaultValue)) continue; // 有默认值 → 运行时走默认
-                    var key = $"var:{token}";
-                    if (!seen.Add(key)) continue;
-                    var secret = dv?.IsSecret ?? LooksLikeSecretKey(token);
-                    inputs.Add(new WorkflowRequiredInput
+                    if (string.IsNullOrEmpty(s)) continue;
+                    foreach (var token in ExtractVariableRefs(s))
                     {
-                        Key = token,
-                        Label = !string.IsNullOrWhiteSpace(dv?.Label) ? dv!.Label : token,
-                        Type = secret ? "password" : (string.IsNullOrWhiteSpace(dv?.Type) ? "text" : dv!.Type),
-                        Required = true,
-                        IsSecret = secret,
-                        Scope = "variable",
-                    });
+                        declaredVars.TryGetValue(token, out var dv);
+                        if (dv != null && !string.IsNullOrWhiteSpace(dv.DefaultValue)) continue; // 有默认值 → 运行时走默认
+                        var key = $"var:{token}";
+                        if (!seen.Add(key)) continue;
+                        var secret = dv?.IsSecret ?? LooksLikeSecretKey(token);
+                        inputs.Add(new WorkflowRequiredInput
+                        {
+                            Key = token,
+                            Label = !string.IsNullOrWhiteSpace(dv?.Label) ? dv!.Label : token,
+                            Type = secret ? "password" : (string.IsNullOrWhiteSpace(dv?.Type) ? "text" : dv!.Type),
+                            Required = true,
+                            IsSecret = secret,
+                            Scope = "variable",
+                        });
+                    }
                 }
             }
         }
