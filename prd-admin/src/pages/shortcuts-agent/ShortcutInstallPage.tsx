@@ -388,7 +388,7 @@ export default function ShortcutInstallPage() {
         </div>
 
         {/* ── 连接自检：装完点一下就知道通没通，不用瞎猜 ── */}
-        <VerifyConnection token={token} shortcutId={id || ''} shortcutName={data.name} />
+        <VerifyConnection token={token} shortcutName={data.name} />
 
         {/* ── 遇到问题（常见卡点自助排查） ── */}
         <HelpFaq />
@@ -487,29 +487,36 @@ type VerifyState =
   | { kind: 'checking' }
   | { kind: 'ok' }
   | { kind: 'unauthorized' }
+  | { kind: 'disabled' }
   | { kind: 'network' };
 
-type ProbeResult = { ok: true } | { ok: false; reason: 'unauthorized' | 'network' };
+type ProbeReason = 'unauthorized' | 'disabled' | 'network';
+type ProbeResult = { ok: true } | { ok: false; reason: ProbeReason };
 
-// 用 token 探活：能被服务器接受即「密钥有效」，401 即失效/过期，其余按网络问题。
-async function probeShortcutToken(token: string, shortcutId: string): Promise<ProbeResult> {
+// 用 token 探活：走专用 /verify，校验口径与 Collect 完全一致（密钥有效 + 未禁用 + 未过期），
+// 避免「自检说密钥有效，实际收藏却被拒（已禁用）」。按 error.code 区分禁用与失效/过期。
+async function probeShortcutToken(token: string): Promise<ProbeResult> {
   try {
-    const params = new URLSearchParams({ page: '1', pageSize: '1' });
-    if (shortcutId) params.set('shortcutId', shortcutId);
-    const res = await fetch(`/api/shortcuts/collections?${params.toString()}`, {
+    const res = await fetch('/api/shortcuts/verify', {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (res.status === 401) return { ok: false, reason: 'unauthorized' };
-    const json = await res.json();
-    if (json?.success) return { ok: true };
-    // 非 401 失败（鉴权失败后端已返 401）：当作可重试的网络/服务端问题
+    if (res.ok) {
+      const json = await res.json();
+      return json?.success ? { ok: true } : { ok: false, reason: 'network' };
+    }
+    let code: string | undefined;
+    try { code = (await res.json())?.error?.code; } catch { /* 忽略解析失败 */ }
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, reason: code === 'DISABLED' ? 'disabled' : 'unauthorized' };
+    }
+    // 其余（5xx 等）当作可重试的网络/服务端问题
     return { ok: false, reason: 'network' };
   } catch {
     return { ok: false, reason: 'network' };
   }
 }
 
-function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; shortcutId: string; shortcutName: string }) {
+function VerifyConnection({ token, shortcutName }: { token: string; shortcutName: string }) {
   const [state, setState] = useState<VerifyState>({ kind: 'idle' });
   // 防陈旧响应：连点自检会重叠 fetch，只认最后一次的结果
   const checkSeqRef = useRef(0);
@@ -517,7 +524,7 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
   const check = async () => {
     const seq = ++checkSeqRef.current;
     setState({ kind: 'checking' });
-    const r = await probeShortcutToken(token, shortcutId);
+    const r = await probeShortcutToken(token);
     if (checkSeqRef.current !== seq) return; // 已有更新的自检发出，丢弃本次
     setState(r.ok ? { kind: 'ok' } : { kind: r.reason });
   };
@@ -562,6 +569,11 @@ function VerifyConnection({ token, shortcutId, shortcutName }: { token: string; 
       {state.kind === 'unauthorized' && (
         <ResultLine tone="bad">
           密钥无效或已过期。请向分享给你的人要一张新的二维码。
+        </ResultLine>
+      )}
+      {state.kind === 'disabled' && (
+        <ResultLine tone="bad">
+          这条快捷指令已被分享者停用，现在收藏会被拒绝。请联系对方重新开启，或要一张新的二维码。
         </ResultLine>
       )}
       {state.kind === 'network' && (
