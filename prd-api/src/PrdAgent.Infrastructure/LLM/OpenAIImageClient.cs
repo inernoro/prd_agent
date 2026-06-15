@@ -656,10 +656,10 @@ public class OpenAIImageClient
 
             gatewayResp = await SendViaGatewayAsync(ct);
 
-            _logger.LogWarning(
+            _logger.LogError(
                 "[OpenAIImageClient][DIAG] 首发结果: success={Su} status={S} errCode={E} errMsg={EM} apiUrl={ApiUrl} isOpenRouter={IsOR}",
                 gatewayResp.Success, gatewayResp.StatusCode, gatewayResp.ErrorCode,
-                (gatewayResp.ErrorMessage ?? "").Length > 80 ? gatewayResp.ErrorMessage![..80] : gatewayResp.ErrorMessage,
+                (gatewayResp.ErrorMessage ?? "").Length > 120 ? gatewayResp.ErrorMessage![..120] : gatewayResp.ErrorMessage,
                 apiUrl, isOpenRouter);
 
             // OpenRouter 兜底：部分平台（OpenRouter 等）图片生成不走 /images/generations，而是 chat/completions+modalities。
