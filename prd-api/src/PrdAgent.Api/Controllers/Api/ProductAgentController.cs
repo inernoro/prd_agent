@@ -4907,12 +4907,8 @@ public class ProductAgentController : ControllerBase
                 ?? (DefectStatus.All.Contains(row.Status ?? "") ? DefectWorkflowCatalog.LegacyStateMap.GetValueOrDefault(row.Status!, RequirementWorkflowCatalog.New) : RequirementWorkflowCatalog.New);
             var assignee = ResolveUserFromNames(userByName, row.HandlerNames);
             var reporter = ResolveUserFromNames(userByName, row.ReporterNames) ?? user;
-            var existing = string.IsNullOrWhiteSpace(externalId)
-                ? null
-                : await _db.DefectReports.Find(d => d.TracedProductId == targetProductId && !d.IsDeleted &&
-                    d.ProductSourceSystem == sourceSystem && d.ProductExternalId == externalId).FirstOrDefaultAsync()
-                  ?? await _db.DefectReports.Find(d => d.TracedProductId == targetProductId && !d.IsDeleted &&
-                    d.DefectNo == externalId).FirstOrDefaultAsync();
+            var existing = await FindImportDefectExistingForImportAsync(
+                targetProductId, sourceSystem, externalId);
             var rawTapdSeverity = row.TapdSeverityRaw?.Trim();
             string? severityLevel = null;
             if (!string.IsNullOrWhiteSpace(row.Severity) && DefectSeverityCatalog.AllLevels.Contains(row.Severity.Trim()))
@@ -4927,23 +4923,9 @@ public class ProductAgentController : ControllerBase
             }
             if (existing != null)
             {
-                var u = Builders<DefectReport>.Update
-                    .Set(d => d.Title, row.Title!.Trim())
-                    .Set(d => d.RawContent, row.Description?.Trim() ?? string.Empty)
-                    .Set(d => d.Status, status)
-                    .Set(d => d.UpdatedAt, DateTime.UtcNow);
-                if (assignee != null)
-                    u = u.Set(d => d.AssigneeId, assignee.UserId).Set(d => d.AssigneeName, assignee.DisplayName ?? assignee.Username);
-                if (reporter != null)
-                    u = u.Set(d => d.ReporterId, reporter.UserId).Set(d => d.ReporterName, reporter.DisplayName ?? reporter.Username);
-                if (structuredPatch.Count > 0)
-                {
-                    var mergedStructured = TapdDefectFieldCatalog.MergeStructuredData(existing.StructuredData, structuredPatch);
-                    u = u.Set(d => d.StructuredData, mergedStructured);
-                }
-                if (!string.IsNullOrWhiteSpace(externalId))
-                    u = u.Set(d => d.DefectNo, externalId).Set(d => d.ProductExternalId, externalId).Set(d => d.ProductSourceSystem, sourceSystem);
-                await _db.DefectReports.UpdateOneAsync(d => d.Id == existing.Id, u);
+                await ApplyImportedDefectUpdateAsync(
+                    existing, row, targetProductId, sourceSystem, externalId, status,
+                    assignee, reporter, structuredPatch, wfByProduct, affectedProducts);
                 updated++;
                 continue;
             }
@@ -4965,27 +4947,113 @@ public class ProductAgentController : ControllerBase
             {
                 defectNo = externalId;
             }
-            await _db.DefectReports.InsertOneAsync(new DefectReport
+            try
             {
-                DefectNo = defectNo,
-                Title = row.Title!.Trim(),
-                RawContent = row.Description?.Trim() ?? string.Empty,
-                Status = status,
-                ReporterId = reporter?.UserId ?? userId,
-                ReporterName = reporter?.DisplayName ?? reporter?.Username ?? user?.DisplayName,
-                AssigneeId = assignee?.UserId,
-                AssigneeName = assignee != null ? (assignee.DisplayName ?? assignee.Username) : null,
-                TracedProductId = targetProductId,
-                WorkflowDefId = defectWfId,
-                ProductSourceSystem = sourceSystem,
-                ProductExternalId = externalId,
-                StructuredData = structuredPatch,
-            });
-            created++;
+                await _db.DefectReports.InsertOneAsync(new DefectReport
+                {
+                    DefectNo = defectNo,
+                    Title = row.Title!.Trim(),
+                    RawContent = row.Description?.Trim() ?? string.Empty,
+                    Status = status,
+                    ReporterId = reporter?.UserId ?? userId,
+                    ReporterName = reporter?.DisplayName ?? reporter?.Username ?? user?.DisplayName,
+                    AssigneeId = assignee?.UserId,
+                    AssigneeName = assignee != null ? (assignee.DisplayName ?? assignee.Username) : null,
+                    TracedProductId = targetProductId,
+                    WorkflowDefId = defectWfId,
+                    ProductSourceSystem = sourceSystem,
+                    ProductExternalId = externalId,
+                    StructuredData = structuredPatch,
+                });
+                created++;
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                var raced = await FindImportDefectExistingForImportAsync(
+                    targetProductId, sourceSystem, externalId ?? defectNo);
+                if (raced == null)
+                    throw;
+                await ApplyImportedDefectUpdateAsync(
+                    raced, row, targetProductId, sourceSystem, externalId, status,
+                    assignee, reporter, structuredPatch, wfByProduct, affectedProducts);
+                updated++;
+            }
         }
         foreach (var pid in affectedProducts)
             await RecalcDefectCountAsync(pid);
         return Ok(ApiResponse<object>.Ok(new { created, updated, skipped, routed, unmatched }));
+    }
+
+    /// <summary>
+    /// 历史缺陷导入查重：DefectNo 有全库唯一索引 uniq_defect_reports_no，
+    /// 必须先按编号全局匹配，再回落到当前产品范围。
+    /// </summary>
+    private async Task<DefectReport?> FindImportDefectExistingForImportAsync(
+        string targetProductId,
+        string sourceSystem,
+        string? externalId)
+    {
+        if (string.IsNullOrWhiteSpace(externalId))
+            return null;
+
+        var ext = externalId.Trim();
+        var scoped = await _db.DefectReports.Find(d =>
+                d.TracedProductId == targetProductId && !d.IsDeleted &&
+                d.ProductSourceSystem == sourceSystem && d.ProductExternalId == ext)
+            .FirstOrDefaultAsync()
+            ?? await _db.DefectReports.Find(d =>
+                d.TracedProductId == targetProductId && !d.IsDeleted && d.DefectNo == ext)
+            .FirstOrDefaultAsync();
+        if (scoped != null)
+            return scoped;
+
+        return await _db.DefectReports.Find(d => !d.IsDeleted && d.DefectNo == ext).FirstOrDefaultAsync()
+            ?? await _db.DefectReports.Find(d =>
+                !d.IsDeleted && d.ProductSourceSystem == sourceSystem && d.ProductExternalId == ext)
+            .FirstOrDefaultAsync();
+    }
+
+    private async Task ApplyImportedDefectUpdateAsync(
+        DefectReport existing,
+        ImportSimpleItemRow row,
+        string targetProductId,
+        string sourceSystem,
+        string? externalId,
+        string status,
+        User? assignee,
+        User? reporter,
+        Dictionary<string, string> structuredPatch,
+        Dictionary<string, string> wfByProduct,
+        HashSet<string> affectedProducts)
+    {
+        var u = Builders<DefectReport>.Update
+            .Set(d => d.Title, row.Title!.Trim())
+            .Set(d => d.RawContent, row.Description?.Trim() ?? string.Empty)
+            .Set(d => d.Status, status)
+            .Set(d => d.UpdatedAt, DateTime.UtcNow);
+        if (assignee != null)
+            u = u.Set(d => d.AssigneeId, assignee.UserId).Set(d => d.AssigneeName, assignee.DisplayName ?? assignee.Username);
+        if (reporter != null)
+            u = u.Set(d => d.ReporterId, reporter.UserId).Set(d => d.ReporterName, reporter.DisplayName ?? reporter.Username);
+        if (structuredPatch.Count > 0)
+        {
+            var mergedStructured = TapdDefectFieldCatalog.MergeStructuredData(existing.StructuredData, structuredPatch);
+            u = u.Set(d => d.StructuredData, mergedStructured);
+        }
+        if (!string.IsNullOrWhiteSpace(externalId))
+            u = u.Set(d => d.DefectNo, externalId).Set(d => d.ProductExternalId, externalId).Set(d => d.ProductSourceSystem, sourceSystem);
+        if (!string.Equals(existing.TracedProductId, targetProductId, StringComparison.Ordinal))
+        {
+            if (!string.IsNullOrWhiteSpace(existing.TracedProductId))
+                affectedProducts.Add(existing.TracedProductId);
+            if (!wfByProduct.TryGetValue(targetProductId, out var migratedWfId))
+            {
+                (_, migratedWfId) = await ResolveDefaultsAsync(ProductEntityType.Defect, targetProductId);
+                wfByProduct[targetProductId] = migratedWfId;
+            }
+            u = u.Set(d => d.TracedProductId, targetProductId).Set(d => d.WorkflowDefId, migratedWfId);
+        }
+        await _db.DefectReports.UpdateOneAsync(d => d.Id == existing.Id, u);
     }
 
     private (List<ImportSimpleItemRow>? Rows, IActionResult? Result) ValidateSimpleImportRows(ImportSimpleItemsRequest request)

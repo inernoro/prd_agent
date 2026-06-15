@@ -7,11 +7,12 @@
  * 需求/功能 的「新建」走独立页面（/product-agent/p/:productId/:kind/new）；查看走详情页。
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
 import { ProductAssistantPanel } from './ProductAssistantPanel';
 import { QuickActionsCard } from './QuickActionsCard';
+import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
 import { requirementSourceLabel } from './requirementSource';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
@@ -38,7 +39,6 @@ import { VersionWorkflowTab } from './VersionWorkflowTab';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import {
   getProduct,
-  getOverviewStats,
   listVersions,
   createVersion,
   deleteVersion,
@@ -66,7 +66,6 @@ import {
   canExecuteWorkflowTransition,
   isGlobalProductAdmin,
   transitionNeedsDialog,
-  type ProductWorkflowContext,
 } from './workflowTransitionGuard';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
@@ -115,7 +114,6 @@ export function SingleProductView() {
   const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
   // 当前 tab 记录在 URL（?tab=），从对象详情页返回时能停在原 tab，而不是回弹到工作台。
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -137,9 +135,6 @@ export function SingleProductView() {
 
   useEffect(() => {
     void reload();
-    void getOverviewStats().then((res) => {
-      if (res.success) setIsAdmin(res.data.isAdmin);
-    });
   }, [reload]);
 
   if (loading) {
@@ -196,11 +191,15 @@ export function SingleProductView() {
         </div>
       ) : active === 'features' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">
-          <FeatureCatalogTab productId={product.id} showImport={isAdmin} />
+          <FeatureCatalogTab productId={product.id} />
         </div>
       ) : active === 'requirements' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">
           <RequirementsTab productId={product.id} />
+        </div>
+      ) : active === 'defects' ? (
+        <div className="flex h-full min-h-0 flex-1 flex-col">
+          <DefectsTab productId={product.id} />
         </div>
       ) : active === 'board' ? (
         <div className="flex-1 min-h-0 p-4">
@@ -214,7 +213,6 @@ export function SingleProductView() {
         <SectionShell title={SECTION_TITLE[active]}>
           {active === 'versions' && <VersionsTab productId={product.id} />}
           {active === 'reports' && <ReportsTab productId={product.id} />}
-          {active === 'defects' && <DefectsTab productId={product.id} />}
           {active === 'team' && <ProductTeamTab productId={product.id} />}
         </SectionShell>
       )}
@@ -391,8 +389,10 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
   const [trackedOnly, setTrackedOnly] = useState(false);
+  const [rtfImportFiles, setRtfImportFiles] = useState<File[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const nameOf = useDirectoryNames();
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
@@ -420,9 +420,9 @@ function RequirementsTab({ productId }: { productId: string }) {
     storageKey: 'pa-list-filters:requirement',
     fields,
     keywordOf: (r) => `${r.requirementNo} ${r.externalId ?? ''} ${r.title} ${r.description ?? ''} ${Object.values(r.sourceSnapshot?.fields ?? {}).join(' ')}`,
-    keywordPlaceholder: '搜索 ID、标题、描述',
+    keywordPlaceholder: '搜索标题 / 编号',
+    showFilterSettings: false,
     searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
-    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'requirement', (r) => ({ productId, recordId: r.id })),
@@ -474,6 +474,24 @@ function RequirementsTab({ productId }: { productId: string }) {
       <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".rtf,application/rtf,text/rtf"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const rtfFiles = Array.from(e.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith('.rtf'));
+              if (rtfFiles.length > 0) setRtfImportFiles(rtfFiles);
+              e.target.value = '';
+            }}
+          />
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs"
+          >
+            <Upload size={13} /> 导入 RTF
+          </button>
           <button onClick={() => exportCsv(false)} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
             <Download size={13} /> 导出CSV
           </button>
@@ -481,13 +499,23 @@ function RequirementsTab({ productId }: { productId: string }) {
         </div>
       </div>
       <p className="shrink-0 text-xs text-white/35">仅显示你作为负责人或处理人的需求。</p>
+      <div className="shrink-0 w-full min-w-0 flex flex-wrap items-center gap-2">
+        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
+        <div className="min-w-0 flex-1">{bar}</div>
+      </div>
       {items.length === 0 ? (
         <EmptyHint text="没有与你相关的需求。你是负责人或处理人的需求会出现在这里；点「新建需求」可创建新条目。" />
       ) : (
         <>
-        <div className="shrink-0 w-full min-w-0 flex items-center gap-2 flex-wrap">
-          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
-        </div>
+        {view === 'list' && (
+          <SelectionActionBar
+            mode="entity"
+            entityType="requirement"
+            selection={selection}
+            onDone={reload}
+            onExport={() => exportCsv(true)}
+          />
+        )}
         {filtered.length === 0 ? (
           <div className="text-center text-white/35 text-sm py-10">
             {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : '没有匹配的需求，调整筛选条件试试。'}
@@ -506,13 +534,6 @@ function RequirementsTab({ productId }: { productId: string }) {
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2 w-full min-w-0">
-          <SelectionActionBar
-            mode="entity"
-            entityType="requirement"
-            selection={selection}
-            onDone={reload}
-            onExport={() => exportCsv(true)}
-          />
           <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-white/10" style={{ overscrollBehavior: 'contain' }}>
             <RequirementDataTable
               items={filtered}
@@ -531,6 +552,14 @@ function RequirementsTab({ productId }: { productId: string }) {
         </div>
       )}
         </>
+      )}
+      {rtfImportFiles.length > 0 && (
+        <RequirementRtfImportDialog
+          productId={productId}
+          files={rtfImportFiles}
+          onClose={() => setRtfImportFiles([])}
+          onImported={reload}
+        />
       )}
     </div>
   );
@@ -674,9 +703,9 @@ function DefectsTab({ productId }: { productId: string }) {
     storageKey: 'pa-list-filters:defect',
     fields,
     keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`,
-    keywordPlaceholder: '搜索 ID、标题、描述',
+    keywordPlaceholder: '搜索标题 / 编号',
+    showFilterSettings: false,
     searchBoxClassName: OVERVIEW_LIST_SEARCH_BOX,
-    trailing: <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />,
   });
   const filtered = useMemo(
     () => filterByTracked(filterBarFiltered, trackedOnly, 'defect', (d) => ({ productId, recordId: d.id })),
@@ -689,32 +718,34 @@ function DefectsTab({ productId }: { productId: string }) {
     mapRow: (d) => [d.defectNo, d.title ?? '', defectStatusLabel(d.status), readDefectSeverityLevel(d) ?? ''],
   });
 
-  if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => navigate(`/product-agent/p/${productId}/defect/new`)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
-        >
-          <Plus size={15} /> 新建缺陷
-        </button>
+  if (loading) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center">
+        <MapSectionLoader text="正在加载缺陷…" />
       </div>
-      <p className="text-xs text-white/35">仅显示你作为处理人或上报人的缺陷。</p>
+    );
+  }
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
+      <div className="shrink-0 flex items-center gap-2">
+        <NewButton label="新建缺陷" onClick={() => navigate(`/product-agent/p/${productId}/defect/new`)} />
+      </div>
+      <p className="shrink-0 text-xs text-white/35">仅显示你作为处理人或上报人的缺陷。</p>
+      <div className="shrink-0 w-full min-w-0 flex flex-wrap items-center gap-2">
+        <TrackedFilterToggle active={trackedOnly} onChange={setTrackedOnly} />
+        <div className="min-w-0 flex-1">{bar}</div>
+      </div>
       {items.length === 0 ? (
         <EmptyHint text="没有与你相关的缺陷。你是处理人或上报人的缺陷会出现在这里；点「新建缺陷」可创建新条目。" />
       ) : (
         <>
-        <div className="flex w-full min-w-0 items-center gap-2 flex-wrap">
-          <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
-        </div>
         <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
         {filtered.length === 0 ? (
           <div className="text-center text-white/35 text-sm py-10">
             {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : '没有匹配的缺陷，调整筛选条件试试。'}
           </div>
         ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
           <div className="flex items-center gap-3 px-3 py-2 text-[11px] font-medium text-white/45 border-b border-white/10">
             <span className="w-24 shrink-0">ID</span>
             <span className="min-w-0 flex-1">{formatListSectionTitle('标题', filtered.length)}</span>
@@ -891,7 +922,7 @@ function StateBoard({
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overState, setOverState] = useState<string | null>(null);
-  const [product, setProduct] = useState<ProductWorkflowContext | null>(null);
+  const [product, setProduct] = useState<Pick<Product, 'ownerId' | 'adminIds' | 'memberIds'> | null>(null);
   const [pendingTransition, setPendingTransition] = useState<{ item: Requirement; transition: WorkflowTransition } | null>(null);
   const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
   const permissions = useAuthStore((s) => s.permissions);
@@ -901,14 +932,7 @@ function StateBoard({
 
   useEffect(() => {
     void getProduct(productId).then((res) => {
-      if (res.success) {
-        setProduct({
-          ownerId: res.data.ownerId,
-          ownerIds: res.data.ownerIds,
-          adminIds: res.data.adminIds,
-          memberIds: res.data.memberIds,
-        });
-      }
+      if (res.success) setProduct({ ownerId: res.data.ownerId, adminIds: res.data.adminIds, memberIds: res.data.memberIds });
     });
   }, [productId]);
 
