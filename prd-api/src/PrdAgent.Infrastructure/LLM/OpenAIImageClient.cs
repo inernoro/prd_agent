@@ -531,6 +531,12 @@ public class OpenAIImageClient
                         requestBody = JsonNode.Parse(jsonStr)?.AsObject() ?? new JsonObject();
                     }
 
+                    // [DIAG] 把运行时 apiUrl / isOpenRouter / forceOpenRouter 写进请求体，使其出现在 DB requestBodyRedacted（worker stdout 不可见时的唯一观测手段）
+                    requestBody["_diag_apiUrl"] = apiUrl;
+                    requestBody["_diag_isOpenRouter"] = isOpenRouter;
+                    requestBody["_diag_forceOpenRouter"] = forceOpenRouter;
+                    requestBody["_diag_platformType"] = platformType ?? "(null)";
+
                     _logger.LogInformation(
                         "[OpenAIImageClient] Sending request via Gateway:\n" +
                         "  AppCallerCode: {AppCallerCode}\n" +
