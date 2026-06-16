@@ -1164,7 +1164,7 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
 
       {/* 底部信息：标题 hook + 标签 chip + 渐变背景 */}
       <div
-        className="absolute inset-x-0 bottom-0 z-20 px-4 pb-20 pt-8 pointer-events-none transition-opacity duration-300"
+        className="absolute inset-x-0 bottom-0 z-20 px-4 pb-4 pt-8 pointer-events-none transition-opacity duration-300"
         style={{
           background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 35%, rgba(0,0,0,0.92) 100%)',
           opacity: hasPlayed ? 0 : 1,
