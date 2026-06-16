@@ -339,6 +339,11 @@ builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWa
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
+// MCP 连接器网关：回环转发当前 sk-ak Bearer 到自身真实接口（McpGatewayController）
+builder.Services.AddHttpClient("McpLoopback", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(120);
+});
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();

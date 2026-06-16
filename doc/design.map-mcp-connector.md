@@ -1,6 +1,6 @@
 # MAP MCP 连接器 · 设计
 
-> **版本**：v1.0 | **日期**：2026-06-16 | **状态**：草案
+> **版本**：v1.1 | **日期**：2026-06-16 | **状态**：开发中
 
 ## 一、管理摘要（30 秒看懂）
 
@@ -100,7 +100,16 @@ public class McpGatewayController : ControllerBase { ... }
 
 网关里拿到的 `scope` claim 集合，决定了 `tools/list` 能看到哪些工具、`tools/call` 能不能放行。
 
-### 5.3 工具映射：一条登记 = 一个工具
+### 5.3 工具来源：内置 + 动态两类
+
+网关的 `tools/list` 合并两个来源：
+
+- **内置工具（curated built-in）**：海鲜市场 / 知识库这类走固定 scope（`marketplace.skills:read`、`document-store:read`）的稳定能力，在 `McpBuiltinTools` 里声明（name + description + 固定 scope + method + path 模板 + 参数定义）。它们不在 `AgentOpenEndpoint` 登记表里（那张表的 scope 强制 `agent.*` 格式），所以单列一类。MVP 首批就是这一类：海鲜市场搜索/详情 + 知识库列库/列条目/读正文，共 5 个工具。
+- **动态工具**：从 `agent_open_endpoints` 登记表生成，走 `agent.{key}:{action}` scope。后台登记一条接口 = 自动多一个工具，零代码。
+
+两类工具最终都通过同一条"回环转发 Bearer"的调用路径（5.4）落到真实接口，鉴权口径一致。
+
+### 5.3.1 动态工具映射：一条登记 = 一个工具
 
 `tools/list` 时，网关查 `agent_open_endpoints`，对每条满足下面三个条件的记录生成一个 MCP 工具：
 
@@ -200,7 +209,7 @@ public class McpGatewayController : ControllerBase { ... }
 | 阶段 | 内容 | 产出 |
 |---|---|---|
 | P0 spike | 官方 C# MCP SDK 与 ApiKey 鉴权 + 动态工具的集成验证 | 选定方案 A 或 B |
-| P1 MVP | `/mcp` 端点 + `initialize`/`tools/list`/`tools/call` + 回环调用 + 单个真实 endpoint 跑通 | 后端可被真实 MCP 客户端连上并调用 |
+| P1 MVP | `/mcp` 端点 + `initialize`/`tools/list`/`tools/call` + 回环调用 + 海鲜市场 + 知识库内置工具（5 个）+ 动态工具框架 | 后端可被真实 MCP 客户端连上并调用 |
 | P2 前端 | "接入 AI"弹窗增加 MCP 连接方式 + 连接配置生成 | 用户自助接入 |
 | P3 加固 | 错误映射完善、`/mcp` 自身限流、集成测试（模拟 JSON-RPC 帧断言工具列表与调用） | 可上线 |
 | v2（不在本期） | 本地 stdio 代理包、OAuth 授权流、`InputSchemaJson` 严格 schema、`resources`/`prompts` | 后续迭代 |
