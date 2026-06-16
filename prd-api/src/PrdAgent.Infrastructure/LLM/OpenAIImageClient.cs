@@ -531,12 +531,6 @@ public class OpenAIImageClient
                         requestBody = JsonNode.Parse(jsonStr)?.AsObject() ?? new JsonObject();
                     }
 
-                    // [DIAG] 把运行时 apiUrl / isOpenRouter / forceOpenRouter 写进请求体，使其出现在 DB requestBodyRedacted（worker stdout 不可见时的唯一观测手段）
-                    requestBody["_diag_apiUrl"] = apiUrl;
-                    requestBody["_diag_isOpenRouter"] = isOpenRouter;
-                    requestBody["_diag_forceOpenRouter"] = forceOpenRouter;
-                    requestBody["_diag_platformType"] = platformType ?? "(null)";
-
                     _logger.LogInformation(
                         "[OpenAIImageClient] Sending request via Gateway:\n" +
                         "  AppCallerCode: {AppCallerCode}\n" +
@@ -661,12 +655,6 @@ public class OpenAIImageClient
             }
 
             gatewayResp = await SendViaGatewayAsync(ct);
-
-            _logger.LogError(
-                "[OpenAIImageClient][DIAG] 首发结果: success={Su} status={S} errCode={E} errMsg={EM} apiUrl={ApiUrl} isOpenRouter={IsOR}",
-                gatewayResp.Success, gatewayResp.StatusCode, gatewayResp.ErrorCode,
-                (gatewayResp.ErrorMessage ?? "").Length > 120 ? gatewayResp.ErrorMessage![..120] : gatewayResp.ErrorMessage,
-                apiUrl, isOpenRouter);
 
             // OpenRouter 兜底：部分平台（OpenRouter 等）图片生成不走 /images/generations，而是 chat/completions+modalities。
             // images/generations 失败（非尺寸类 400/413）时，自动改用 OpenRouter 协议重试一次。
