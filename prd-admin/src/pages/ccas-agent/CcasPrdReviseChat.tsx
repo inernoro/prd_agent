@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquarePlus, Send, StopCircle, Loader2, AlertCircle } from 'lucide-react';
+import { MessageSquarePlus, Send, StopCircle, AlertCircle } from 'lucide-react';
 import { connectSse } from '@/lib/useSseStream';
 import { CCAS_PRD_REVISE_STREAM_URL } from '@/services';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { SelectedEntrySnapshot } from './CcasKnowledgePickerDrawer';
+import { finalizeCcasReviseDocument, type ReviseStreamOutcome } from './ccasPrdReviseUtils';
 
 interface ReviseHistoryItem {
   role: 'user' | 'assistant';
@@ -52,6 +54,7 @@ export function CcasPrdReviseChat({
   const scrollRef = useRef<HTMLDivElement>(null);
   const sessionIdRef = useRef(`prd-revise-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const docBaseRef = useRef(currentMarkdown);
+  const activeRunRef = useRef<{ assistantId: string; baseMarkdown: string } | null>(null);
 
   const isStreaming = useMemo(() => messages.some((m) => m.streaming), [messages]);
 
@@ -72,17 +75,27 @@ export function CcasPrdReviseChat({
 
   const startNewSession = useCallback(() => {
     abortRef.current?.abort();
+    const active = activeRunRef.current;
+    if (active) {
+      onDocumentChange(finalizeCcasReviseDocument(active.baseMarkdown, '', 'aborted'));
+      activeRunRef.current = null;
+    }
     setMessages([]);
     setInput('');
     sessionIdRef.current = `prd-revise-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  }, []);
+  }, [onDocumentChange]);
 
   const abort = useCallback(() => {
     abortRef.current?.abort();
+    const active = activeRunRef.current;
+    if (active) {
+      onDocumentChange(finalizeCcasReviseDocument(active.baseMarkdown, '', 'aborted'));
+      activeRunRef.current = null;
+    }
     setMessages((arr) =>
       arr.map((m) => (m.streaming ? { ...m, streaming: false, content: m.content || '（已中止）' } : m))
     );
-  }, []);
+  }, [onDocumentChange]);
 
   const send = useCallback(
     async (textOverride?: string) => {
@@ -112,6 +125,8 @@ export function CcasPrdReviseChat({
       const ac = new AbortController();
       abortRef.current?.abort();
       abortRef.current = ac;
+      const baseMarkdown = docBaseRef.current;
+      activeRunRef.current = { assistantId, baseMarkdown };
 
       const referenceEntryIds = referenceSelected
         .filter((s) => s.kind === 'entry' && !!s.entryId)
@@ -122,7 +137,7 @@ export function CcasPrdReviseChat({
 
       const body = {
         templateKey,
-        currentMarkdown: docBaseRef.current,
+        currentMarkdown: baseMarkdown,
         message: q,
         history,
         originalInput: originalInput.trim() || undefined,
@@ -132,9 +147,17 @@ export function CcasPrdReviseChat({
       };
 
       let streamed = '';
+      let streamFailed = false;
 
       const updateAssistant = (mut: (m: ChatMessage) => ChatMessage) => {
         setMessages((arr) => arr.map((m) => (m.id === assistantId ? mut(m) : m)));
+      };
+
+      const restoreBase = (outcome: Exclude<ReviseStreamOutcome, 'completed'>) => {
+        const active = activeRunRef.current;
+        if (active?.assistantId !== assistantId) return;
+        onDocumentChange(finalizeCcasReviseDocument(active.baseMarkdown, streamed, outcome));
+        activeRunRef.current = null;
       };
 
       const { success, errorMessage } = await connectSse({
@@ -157,21 +180,28 @@ export function CcasPrdReviseChat({
               break;
             case 'typing':
               if (typeof data.text === 'string') {
+                if (activeRunRef.current?.assistantId !== assistantId) break;
                 streamed += data.text;
                 onDocumentChange(streamed);
               }
               break;
             case 'done': {
+              if (streamFailed || activeRunRef.current?.assistantId !== assistantId) break;
               const chars = streamed.length;
               const summary =
                 chars > 0
                   ? `已按你的要求更新文档（共 ${chars.toLocaleString()} 字）。可在上方预览核对，不满意可继续追问。`
                   : '改稿完成，但未收到正文，请重试或缩短指令。';
               updateAssistant((m) => ({ ...m, streaming: false, content: summary }));
-              if (chars > 0) docBaseRef.current = streamed;
+              const finalMarkdown = finalizeCcasReviseDocument(baseMarkdown, streamed, 'completed');
+              if (chars > 0) docBaseRef.current = finalMarkdown;
+              onDocumentChange(finalMarkdown);
+              activeRunRef.current = null;
               break;
             }
             case 'error':
+              streamFailed = true;
+              restoreBase('failed');
               updateAssistant((m) => ({
                 ...m,
                 streaming: false,
@@ -186,13 +216,13 @@ export function CcasPrdReviseChat({
       });
 
       if (!success) {
+        restoreBase(ac.signal.aborted ? 'aborted' : 'failed');
         updateAssistant((m) => ({
           ...m,
           streaming: false,
           errorMsg: m.errorMsg || errorMessage || '连接失败',
           content: m.content || errorMessage || '连接失败',
         }));
-        if (streamed) onDocumentChange(streamed);
       }
     },
     [
@@ -254,7 +284,7 @@ export function CcasPrdReviseChat({
               <span className="text-white/40 mr-1.5">{m.role === 'user' ? '你' : '助手'}</span>
               {m.streaming ? (
                 <span className="inline-flex items-center gap-1 text-amber-200/80">
-                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <MapSpinner size={12} />
                   正在改稿，请看上方案件实时更新…
                 </span>
               ) : m.errorMsg ? (
