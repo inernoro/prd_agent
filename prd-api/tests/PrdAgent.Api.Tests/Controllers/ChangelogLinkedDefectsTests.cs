@@ -76,4 +76,29 @@ public class ChangelogLinkedDefectsTests
         Assert.Equal("https://preview.example.com/changelog", structured["预览地址"]);
         Assert.Equal("https://report.example.com", structured["视觉验收报告"]);
     }
+
+    [Theory]
+    [InlineData(null, "pass")]
+    [InlineData("", "pass")]
+    [InlineData("PASS", "pass")]
+    [InlineData("conditional", "conditional")]
+    [InlineData("fail", "fail")]
+    [InlineData("unknown", "pass")]
+    public void NormalizeValidationVerdict_DefaultsToPass(string? input, string expected)
+    {
+        Assert.Equal(expected, DefectAgentController.NormalizeValidationVerdict(input));
+    }
+
+    [Fact]
+    public void BuildValidationNotificationMessage_UsesFailCopyForFailedAcceptance()
+    {
+        var defect = new DefectReport
+        {
+            Title = "发布中心缺陷关联混淆",
+            DefectNo = "BUG-1",
+        };
+
+        Assert.Contains("需要继续改进", DefectAgentController.BuildValidationNotificationMessage(defect, "fail"));
+        Assert.Contains("已修复并发布", DefectAgentController.BuildValidationNotificationMessage(defect, "pass"));
+    }
 }

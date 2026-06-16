@@ -34,6 +34,7 @@ public class DefectAgentController : ControllerBase
     private const string DefectResolveSkillMinVersion = "1.2.0";
     private const string CommitInfoStructuredKey = "提交信息";
     private const string SuggestedAutomationKeyName = "缺陷处理 Agent 授权";
+    private const string DefectAcceptanceStoreName = "缺陷修复验收报告";
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILogger<DefectAgentController> _logger;
@@ -2649,6 +2650,14 @@ public class DefectAgentController : ControllerBase
                 postComment = "/api/defect-agent/agent/defects/{defectId}/comments",
                 submitCommitInfo = "/api/defect-agent/agent/defects/{defectId}/commit-info",
                 updateFixStatus = "/api/defect-agent/agent/defects/{defectId}/fix-status",
+                publishedPending = "/api/defect-agent/agent/published-pending",
+                submitValidationReport = "/api/defect-agent/agent/resolution-traces/{traceId}/validation-report",
+            },
+            acceptance = new
+            {
+                skill = "create-visual-test-to-kb",
+                storeName = DefectAcceptanceStoreName,
+                note = "正式发布后才运行视觉验收。验收技能归档时复制 acceptance.config.json 到临时目录，并把 report.storeName 改为“缺陷修复验收报告”。"
             },
             agentLaunch = BuildAutomationAgentLaunchPayload(projectId, teamId, status),
         };
@@ -2777,6 +2786,15 @@ public class DefectAgentController : ControllerBase
                 return new
                 {
                     trace = t,
+                    acceptance = new
+                    {
+                        skill = "create-visual-test-to-kb",
+                        storeName = DefectAcceptanceStoreName,
+                        reportType = "修复",
+                        target = $"{t.DefectNo ?? t.DefectId} {t.DefectTitle}".Trim(),
+                        commitSha = t.CommitSha,
+                        previewUrl = t.PreviewUrl,
+                    },
                     defect = defect == null
                         ? null
                         : new
@@ -2815,22 +2833,30 @@ public class DefectAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷提交人不存在，无法通知"));
 
         var now = DateTime.UtcNow;
+        var verdict = NormalizeValidationVerdict(request.Verdict);
+        var validationStatus = verdict == "fail"
+            ? DefectResolutionValidationStatus.Failed
+            : DefectResolutionValidationStatus.Passed;
+        var knowledgeBaseName = string.IsNullOrWhiteSpace(request.KnowledgeBaseName)
+            ? DefectAcceptanceStoreName
+            : request.KnowledgeBaseName.Trim();
         var visualReportUrl = string.IsNullOrWhiteSpace(request.VisualReportUrl) ? trace.VisualReportUrl : request.VisualReportUrl.Trim();
         var knowledgeBaseUrl = string.IsNullOrWhiteSpace(request.KnowledgeBaseUrl) ? trace.KnowledgeBaseUrl : request.KnowledgeBaseUrl.Trim();
-        var actionUrl = !string.IsNullOrWhiteSpace(knowledgeBaseUrl)
-            ? knowledgeBaseUrl
-            : (!string.IsNullOrWhiteSpace(visualReportUrl) ? visualReportUrl : $"/defect-agent?id={defect.Id}");
+        if (string.IsNullOrWhiteSpace(knowledgeBaseUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "知识库验收报告地址不能为空"));
+
+        var actionUrl = knowledgeBaseUrl;
         var message = string.IsNullOrWhiteSpace(request.Message)
-            ? $"你的问题「{defect.Title ?? defect.DefectNo}」已修复并发布，验收报告已生成。"
+            ? BuildValidationNotificationMessage(defect, verdict)
             : request.Message.Trim();
 
         var notification = new AdminNotification
         {
             Key = $"defect-published-validation:{trace.Id}:{defect.ReporterId}",
             TargetUserId = defect.ReporterId,
-            Title = "你的问题已修复",
+            Title = verdict == "fail" ? "你的问题需要继续改进" : "你的问题已修复",
             Message = message,
-            Level = string.Equals(request.Verdict, "fail", StringComparison.OrdinalIgnoreCase) ? "warning" : "success",
+            Level = verdict == "fail" ? "warning" : "success",
             ActionLabel = "查看验收报告",
             ActionUrl = actionUrl,
             ActionKind = actionUrl.StartsWith("/", StringComparison.Ordinal) ? "navigate" : "external",
@@ -2842,8 +2868,13 @@ public class DefectAgentController : ControllerBase
         var update = Builders<DefectResolutionTrace>.Update
             .Set(x => x.VisualReportId, string.IsNullOrWhiteSpace(request.VisualReportId) ? trace.VisualReportId : request.VisualReportId.Trim())
             .Set(x => x.VisualReportUrl, visualReportUrl)
+            .Set(x => x.ValidationStatus, validationStatus)
+            .Set(x => x.ValidationVerdict, verdict)
+            .Set(x => x.ValidationAt, now)
+            .Set(x => x.KnowledgeBaseName, knowledgeBaseName)
             .Set(x => x.KnowledgeBaseDocId, string.IsNullOrWhiteSpace(request.KnowledgeBaseDocId) ? trace.KnowledgeBaseDocId : request.KnowledgeBaseDocId.Trim())
             .Set(x => x.KnowledgeBaseUrl, knowledgeBaseUrl)
+            .Set(x => x.FixStatus, verdict == "fail" ? DefectResolutionFixStatus.ValidationFailed : DefectResolutionFixStatus.Published)
             .Set(x => x.NotifiedUserId, defect.ReporterId)
             .Set(x => x.NotifiedAt, now)
             .Set(x => x.NotifyStatus, DefectResolutionNotifyStatus.Sent)
@@ -2854,6 +2885,8 @@ public class DefectAgentController : ControllerBase
         {
             success = true,
             traceId = trace.Id,
+            verdict,
+            knowledgeBaseName,
             notifiedUserId = defect.ReporterId,
             notificationId = notification.Id,
         }));
@@ -3429,6 +3462,20 @@ public class DefectAgentController : ControllerBase
         run.CurrentDefectTitle = null;
         run.CompletedAt ??= DateTime.UtcNow;
         RecomputeRunCounters(run);
+    }
+
+    internal static string NormalizeValidationVerdict(string? verdict)
+    {
+        var value = verdict?.Trim().ToLowerInvariant();
+        return value is "pass" or "conditional" or "fail" ? value : "pass";
+    }
+
+    internal static string BuildValidationNotificationMessage(DefectReport defect, string verdict)
+    {
+        var title = defect.Title ?? defect.DefectNo;
+        return verdict == "fail"
+            ? $"你的问题「{title}」已发布到正式环境，但验收未通过，团队会继续改进。"
+            : $"你的问题「{title}」已修复并发布，验收报告已生成。";
     }
 
     internal static Dictionary<string, string> MergeAutomationCommitStructuredData(
@@ -5222,6 +5269,7 @@ public class SubmitPublishedValidationReportRequest
 {
     public string? VisualReportId { get; set; }
     public string? VisualReportUrl { get; set; }
+    public string? KnowledgeBaseName { get; set; }
     public string? KnowledgeBaseDocId { get; set; }
     public string? KnowledgeBaseUrl { get; set; }
     public string? Verdict { get; set; }

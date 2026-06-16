@@ -225,9 +225,19 @@ Authorization: Bearer {K}
 
 对每个 item：
 
-1. 使用 `/create-visual-test-to-db` 或项目指定的视觉验收技能跑正式环境验收。
-2. 把报告归档到“缺陷修复验收报告”知识库；如果知识库不存在，先创建。
-3. 回写验收报告并通知提交人。
+1. 使用 `create-visual-test-to-kb` 跑正式环境验收。目标优先取 `item.acceptance.target`，commit 取 `item.acceptance.commitSha`，预览地址取 `item.acceptance.previewUrl`。
+2. 复制 `.claude/skills/create-visual-test-to-kb/acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本里把 `report.storeName` 改成“缺陷修复验收报告”。
+3. 用验收技能归档报告；如果知识库不存在，归档脚本按 find-or-create 逻辑创建。
+4. 归档后必须用验收技能的 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
+5. 回写验收报告并通知提交人。验收失败时不要发送“已修复”，要发送“需要继续改进”。
+
+建议归档参数：
+
+- `--target`：`item.acceptance.target`
+- `--module`：`缺陷管理`
+- `--feature`：缺陷标题或缺陷编号
+- `--type`：`修复`
+- `--verdict`：`pass`、`conditional` 或 `fail`
 
 ### 2. 回写报告并通知提交人
 
@@ -239,6 +249,7 @@ Content-Type: application/json
 {
   "visualReportId": "视觉验收报告 ID",
   "visualReportUrl": "视觉验收报告地址",
+  "knowledgeBaseName": "缺陷修复验收报告",
   "knowledgeBaseDocId": "知识库文档 ID",
   "knowledgeBaseUrl": "知识库文档地址",
   "verdict": "pass",
@@ -246,7 +257,9 @@ Content-Type: application/json
 }
 ```
 
-该接口会更新 trace 的验收报告字段，并给缺陷提交人发送通知。正式发布前不要调用。
+该接口会更新 trace 的验收状态、验收报告字段和通知状态，并给缺陷提交人发送通知。正式发布前不要调用。
+
+`knowledgeBaseUrl` 必须填写为验收报告知识库可打开地址；缺少该地址时后端会拒绝发送通知，避免用户收到无法查收的消息。
 
 ## 分享兼容流程
 

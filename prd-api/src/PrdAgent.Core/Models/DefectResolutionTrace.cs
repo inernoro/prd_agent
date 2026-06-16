@@ -64,6 +64,18 @@ public class DefectResolutionTrace
     /// <summary>视觉验收报告链接</summary>
     public string? VisualReportUrl { get; set; }
 
+    /// <summary>正式环境视觉验收状态：pending | passed | failed</summary>
+    public string ValidationStatus { get; set; } = DefectResolutionValidationStatus.Pending;
+
+    /// <summary>视觉验收结论：pass | conditional | fail</summary>
+    public string? ValidationVerdict { get; set; }
+
+    /// <summary>视觉验收完成时间</summary>
+    public DateTime? ValidationAt { get; set; }
+
+    /// <summary>知识库名称</summary>
+    public string? KnowledgeBaseName { get; set; }
+
     /// <summary>知识库文档 ID</summary>
     public string? KnowledgeBaseDocId { get; set; }
 
@@ -127,5 +139,12 @@ public static class DefectResolutionNotifyStatus
     public const string None = "none";
     public const string Pending = "pending";
     public const string Sent = "sent";
+    public const string Failed = "failed";
+}
+
+public static class DefectResolutionValidationStatus
+{
+    public const string Pending = "pending";
+    public const string Passed = "passed";
     public const string Failed = "failed";
 }
