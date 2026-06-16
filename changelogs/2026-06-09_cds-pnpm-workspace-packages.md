@@ -1,1 +1,0 @@
-| fix | cds | 修复 CI 的 CDS Build & Test 失败：cds/pnpm-workspace.yaml 只有 allowBuilds 没有 packages 字段，CI 的 pnpm 9 在 `pnpm store path` 时报 "packages field missing or empty" → store path 为空 → actions/cache 拿不到 path 直接失败。补一个匹配不到任何子包的占位 glob(packages/*)满足 pnpm 9 字段校验，同时保留 allowBuilds(host 的 pnpm 11 仍需它批准 native build) |

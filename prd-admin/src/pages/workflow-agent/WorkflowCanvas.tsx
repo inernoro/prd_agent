@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   ReactFlow,
   Background,
@@ -47,7 +48,7 @@ import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type {
-  Workflow, WorkflowNode, WorkflowEdge as WfEdge,
+  Workflow, WorkflowNode, WorkflowEdge as WfEdge, WorkflowVariable,
   CapsuleTypeMeta, CapsuleCategoryInfo, WorkflowExecution,
   CapsuleConfigField, ExecutionArtifact, CapsuleTestRunResult,
   WorkflowChatGenerated,
@@ -242,6 +243,8 @@ function CanvasInner({
 
   // ── 变量管理 ──
   const [showVarsDialog, setShowVarsDialog] = useState(false);
+  // 变量定义（key/label/isSecret/defaultValue）——可被 AI 缺项补齐更新，保存时必须回传
+  const [varDefs, setVarDefs] = useState<WorkflowVariable[]>(workflow.variables ?? []);
   const [vars, setVars] = useState<Record<string, string>>(() => {
     const defaults: Record<string, string> = {};
     for (const v of workflow.variables ?? []) {
@@ -271,6 +274,22 @@ function CanvasInner({
   // ── P4: AI 助手 ──
   const [showChatPanel, setShowChatPanel] = useState(false);
   const [chatInitialInput, setChatInitialInput] = useState<string | undefined>();
+  const [chatAutoSend, setChatAutoSend] = useState(false);
+
+  // 列表页「一句话起步」：带着 aiPrompt 进来 → 自动开面板并发送一次
+  const location = useLocation();
+  const aiPromptConsumed = useRef(false);
+  useEffect(() => {
+    const prompt = (location.state as { aiPrompt?: string } | null)?.aiPrompt;
+    if (prompt && !aiPromptConsumed.current) {
+      aiPromptConsumed.current = true;
+      setShowChatPanel(true);
+      setChatAutoSend(true);
+      setChatInitialInput(prompt);
+      // 清掉 history.state，刷新/返回不再重复发送
+      try { window.history.replaceState({}, ''); } catch { /* ignore */ }
+    }
+  }, [location.state]);
 
   // ── 右键菜单 ──
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
@@ -533,6 +552,7 @@ function CanvasInner({
         id: workflow.id,
         nodes: flowToWorkflowNodes(nodes, nodeConfigs),
         edges: flowToWorkflowEdges(edges),
+        variables: varDefs,
       });
       if (res.success && res.data) {
         setDirty(false);
@@ -687,7 +707,7 @@ function CanvasInner({
 
   function handleExecuteClick() {
     // 如果有变量需要填写，先弹出变量对话框
-    if (workflow.variables?.length) {
+    if (varDefs.length) {
       setShowVarsDialog(true);
     } else {
       doExecute({});
@@ -696,7 +716,7 @@ function CanvasInner({
 
   async function doExecute(variables: Record<string, string>) {
     // 验证必填变量
-    for (const v of workflow.variables ?? []) {
+    for (const v of varDefs) {
       if (v.required && !variables[v.key]) {
         addLog('error', `请填写「${v.label}」`);
         setShowLogPanel(true);
@@ -803,13 +823,18 @@ function CanvasInner({
     }
     // 更新画布节点和边
     if (generated.nodes || generated.edges) {
+      // 变量：区分「显式空数组 []」与「整字段省略 undefined」——
+      // 显式 [] = 模型明确说没有变量（采纳，丢掉旧的，避免残留 stale MISSING_VARIABLE）；
+      // 省略 = 不动现有 varDefs（保留缺项卡填入的默认值，如 cookie）。
+      // 缺项卡填入的值会进 generated.variables（非空），故两种语义都不丢已填值。
+      const newVarDefs = generated.variables !== undefined ? generated.variables : varDefs;
       const updatedWf: Workflow = {
         ...workflow,
         name: generated.name ?? workflow.name,
         description: generated.description ?? workflow.description,
         nodes: generated.nodes ?? workflow.nodes,
         edges: generated.edges ?? workflow.edges,
-        variables: generated.variables ?? workflow.variables ?? [],
+        variables: newVarDefs,
       };
       const { nodes: newNodes, edges: newEdges } = workflowToFlow(updatedWf);
       const laid = newNodes.length > 1 ? autoLayoutNodes(newNodes, newEdges, 'TB') : newNodes;
@@ -821,6 +846,14 @@ function CanvasInner({
         configs[n.nodeId] = n.config ?? {};
       }
       setNodeConfigs(configs);
+      // 同步变量定义（含缺项补齐填入的 defaultValue），并把默认值带进运行时变量值
+      setVarDefs(newVarDefs);
+      setVars((prev) => {
+        const next = { ...prev };
+        // != null 而非 truthy：合法默认 "0" / 空串也要覆盖旧值
+        for (const v of newVarDefs) if (v.defaultValue != null) next[v.key] = v.defaultValue;
+        return next;
+      });
       setDirty(true);
       pushHistory();
       addLog('success', 'AI 方案已应用到画布');
@@ -1238,7 +1271,8 @@ function CanvasInner({
               onApplyWorkflow={handleApplyWorkflow}
               onClose={() => setShowChatPanel(false)}
               initialInput={chatInitialInput}
-              onInitialInputConsumed={() => setChatInitialInput(undefined)}
+              autoSend={chatAutoSend}
+              onInitialInputConsumed={() => { setChatInitialInput(undefined); setChatAutoSend(false); }}
             />
           </div>
         )}
@@ -1247,7 +1281,7 @@ function CanvasInner({
       {/* 变量输入对话框 */}
       {showVarsDialog && (
         <ExecuteVarsDialog
-          variables={workflow.variables ?? []}
+          variables={varDefs}
           values={vars}
           onChange={(key, val) => setVars(prev => ({ ...prev, [key]: val }))}
           onExecute={() => { setShowVarsDialog(false); doExecute(vars); }}
