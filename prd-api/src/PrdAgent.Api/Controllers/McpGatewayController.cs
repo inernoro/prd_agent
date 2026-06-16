@@ -158,7 +158,7 @@ public class McpGatewayController : ControllerBase
         return new JsonObject { ["tools"] = tools };
     }
 
-    private static JsonObject BuiltinToolToJson(McpToolDef t)
+    internal static JsonObject BuiltinToolToJson(McpToolDef t)
     {
         var props = new JsonObject();
         var required = new JsonArray();
@@ -244,7 +244,7 @@ public class McpGatewayController : ControllerBase
         return ToolCallResult(id, st, rb);
     }
 
-    private static (string path, JsonNode? body, string? err) BuildBuiltinRequest(McpToolDef t, JsonObject args)
+    internal static (string path, JsonNode? body, string? err) BuildBuiltinRequest(McpToolDef t, JsonObject args)
     {
         var path = t.PathTemplate;
         var query = new List<string>();
@@ -351,7 +351,7 @@ public class McpGatewayController : ControllerBase
     /// scope 满足判断。镜像 AdminPermissionMiddleware.HasScopeGrant：document-store:write 隐含 read，
     /// 让只持有写 scope 的密钥也能用 knowledge_base_* 只读工具（与 REST 行为一致）。
     /// </summary>
-    private static bool ScopeSatisfies(HashSet<string> owned, string required)
+    internal static bool ScopeSatisfies(HashSet<string> owned, string required)
     {
         if (owned.Contains(required)) return true;
         if (required == McpBuiltinTools.ScopeDocStoreRead && owned.Contains(McpBuiltinTools.ScopeDocStoreWrite))
@@ -359,7 +359,7 @@ public class McpGatewayController : ControllerBase
         return false;
     }
 
-    private static string DynamicToolName(AgentOpenEndpoint e)
+    internal static string DynamicToolName(AgentOpenEndpoint e)
     {
         var action = "call";
         var first = (e.RequiredScopes ?? new List<string>()).FirstOrDefault();
@@ -377,7 +377,7 @@ public class McpGatewayController : ControllerBase
         return Regex.Replace(basePart + suffix, "[^a-zA-Z0-9_-]", "_");
     }
 
-    private static JsonObject InferSchema(string? exampleJson)
+    internal static JsonObject InferSchema(string? exampleJson)
     {
         var schema = new JsonObject { ["type"] = "object" };
         if (!string.IsNullOrWhiteSpace(exampleJson))
@@ -436,7 +436,7 @@ public class McpGatewayController : ControllerBase
     }
 
     /// <summary>替换 Path 模板里的 {param} 占位为 arguments 对应值（URL 编码）；记录已消费的键。未提供的占位原样保留（让其 404 暴露问题）。</summary>
-    private static string SubstitutePathParams(string path, JsonObject args, HashSet<string> consumed)
+    internal static string SubstitutePathParams(string path, JsonObject args, HashSet<string> consumed)
     {
         return Regex.Replace(path, @"\{([^}/]+)\}", m =>
         {
