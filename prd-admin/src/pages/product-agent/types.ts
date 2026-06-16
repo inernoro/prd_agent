@@ -115,6 +115,18 @@ export interface ReleaseFeatureItem {
 }
 export type FeatureBusinessType = 'basic' | 'core' | 'value_added';
 
+/** 功能类型标签（SSOT，避免各处重复定义；Phase B 起将由可配置「功能类型」目录覆盖） */
+export const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
+  basic: '基础功能',
+  core: '核心功能',
+  value_added: '增值功能',
+};
+export const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
+  { value: 'basic', label: '基础功能' },
+  { value: 'core', label: '核心功能' },
+  { value: 'value_added', label: '增值功能' },
+];
+
 export interface Product {
   id: string;
   productNo: string;

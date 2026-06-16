@@ -7,6 +7,7 @@
  *  - 用户自定义显示哪些筛选项（齿轮设置），按列表类型存 localStorage（纯 UI 偏好）。
  */
 import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, SlidersHorizontal, X } from 'lucide-react';
 
 /** 与 ProductsSection 搜索框同宽（跨产品列表工具栏 SSOT） */
@@ -159,18 +160,28 @@ function FilterBar<T>({
 }) {
   const [gearOpen, setGearOpen] = useState(false);
   const gearRef = useRef<HTMLDivElement>(null);
+  const [gearPos, setGearPos] = useState<{ top: number; right: number } | null>(null);
   useEffect(() => {
     if (!gearOpen) return;
+    // 弹层用 createPortal 挂 body + fixed 定位，避免被工具栏容器 overflow 裁剪（用户反馈：筛选展开看不到）
+    const btn = gearRef.current?.querySelector('button');
+    if (btn) {
+      const r = btn.getBoundingClientRect();
+      setGearPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+    }
     const h = (e: MouseEvent) => {
-      if (gearRef.current && !gearRef.current.contains(e.target as Node)) setGearOpen(false);
+      const target = e.target as Node;
+      if (gearRef.current && !gearRef.current.contains(target) && !(target as HTMLElement).closest?.('[data-filter-gear-pop]')) setGearOpen(false);
     };
+    const onScroll = () => setGearOpen(false);
     document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    window.addEventListener('scroll', onScroll, true);
+    return () => { document.removeEventListener('mousedown', h); window.removeEventListener('scroll', onScroll, true); };
   }, [gearOpen]);
 
   const visibleFields = fields.filter((f) => visible.includes(f.key));
   const selectCls =
-    'h-8 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 px-2 outline-none focus:border-cyan-500/40 max-w-[170px]';
+    'h-8 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 px-2 outline-none focus:border-cyan-500/40 max-w-[220px]';
   const toggle = (k: string) =>
     setVisible((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
 
@@ -237,10 +248,14 @@ function FilterBar<T>({
           >
             <SlidersHorizontal size={13} /> 筛选设置
           </button>
-          {gearOpen && (
-            <div className="absolute z-50 right-0 mt-1 w-48 rounded-lg border border-white/10 bg-[#16171c] p-2 shadow-xl">
+          {gearOpen && gearPos && createPortal(
+            <div
+              data-filter-gear-pop
+              className="fixed z-[10000] w-52 rounded-lg border border-white/10 bg-[#16171c] p-2 shadow-2xl"
+              style={{ top: gearPos.top, right: gearPos.right, overscrollBehavior: 'contain' }}
+            >
               <div className="text-[11px] text-white/40 px-1 pb-1">显示哪些筛选项</div>
-              <div className="max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+              <div className="max-h-72 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                 {fields.map((f) => (
                   <label
                     key={f.key}
@@ -256,7 +271,8 @@ function FilterBar<T>({
                   </label>
                 ))}
               </div>
-            </div>
+            </div>,
+            document.body,
           )}
         </div>
       )}
