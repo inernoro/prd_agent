@@ -220,9 +220,6 @@
 - [CDS Agent R0 · CDS-managed runtime fact source 设计](design.cds-agent-managed-runtime-fact-source) `design.cds-agent-managed-runtime-fact-source`
   > CDS-managed runtime 事实来源的设计文档
 
-- [CDS Agent 工作区基础设施模型](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
-  > 工作区来源从 GitHub 仓库迁移到文件夹/知识库（document_stores），GitHub 降级为可选钩子；含官方/自建边界表、数据模型、文件注入受阻说明
-
 - [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
   > CDS 一键配置与项目扫描技能的上手设计
 
@@ -332,6 +329,9 @@
 
 - [文档再加工 · 智能体调用路由设计](design.reprocess-chat-routing) `design.reprocess-chat-routing`
   > 文档再加工功能中不同智能体（视觉/文学）的调用路由与分发设计
+
+- [CDS 技能版本与更新架构](design.cds-skill-version-update) `design.cds-skill-version-update`
+  > CDS 技能唯一版本来源 + cdscli 自检落后 + 升级路径固定为 cdscli update
 
 ### 三、指南
 
@@ -703,6 +703,15 @@
 - [CDS PR #684 审查修复计划](plan.cds-pr684-review-remediation) `plan.cds-pr684-review-remediation`
   > CDS PR #684 代码审查发现问题的分阶段修复计划与进度追踪
 
+- [涌现 1 · TikTok/抖音博主订阅 → 首页广告海报](plan.emergence-1-tiktok-douyin-poster) `plan.emergence-1-tiktok-douyin-poster`
+  > Phase 1/2/3 已上线，任务 D（抖音 OAuth + cron 真订阅）待下期
+
+- [MD 转 PPT 下一波（大纲右侧编辑器 + 状态机 + 澄清问卷）](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
+  > 用户 2026-06-10 晚 11 条反馈中的大件执行清单
+
+- [产品管理智能体版本流程整改计划](plan.product-agent-version-workflow) `plan.product-agent-version-workflow`
+  > 产品版本从独立记录升级为可执行"立项到上线"完整工作流的整改计划
+
 ### 六、技术债务台账
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
@@ -798,6 +807,12 @@
 
 - [网页托管评论 · 债务台账](debt.web-hosting-comments) `debt.web-hosting-comments`
   > 网页托管评论功能的已知边界与待补实现
+
+- [CDS loading pages · 债务台账](debt.cds-nginx-loading-pages) `debt.cds-nginx-loading-pages`
+  > CDS nginx loading pages 已知边界与待补实现
+
+- [页面教程(小技巧)系统 · 债务台账](debt.onboarding-tips) `debt.onboarding-tips`
+  > 页面教程系统的已知边界与后续可补项
 
 ### 七、周报
 
@@ -947,6 +962,12 @@
 
 - [CDS Mongo 日志拆分事故复盘（2026-05-23）](report.cds-mongo-log-split-incident-2026-05-23) `report.cds-mongo-log-split-incident-2026-05-23`
   > CDS 控制面 cds-master 崩溃导致 502 的事故根因分析与复盘
+
+- [页面教程全量路由覆盖审计](report.tutorial-coverage) `report.tutorial-coverage`
+  > 页面教程(小技巧)系统全量路由覆盖审计报告
+
+- [version-20260610-1 分支改动说明](report.version-20260610-1-summary) `report.version-20260610-1-summary`
+  > 产品版本从独立记录升级为可执行完整工作流的分支改动说明
 
 ---
 
