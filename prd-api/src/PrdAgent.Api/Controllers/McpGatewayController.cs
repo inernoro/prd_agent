@@ -264,7 +264,7 @@ public class McpGatewayController : ControllerBase
                     query.Add($"{Uri.EscapeDataString(p.Name)}={Uri.EscapeDataString(JsonValToString(val!))}");
                     break;
                 case "body":
-                    (body ??= new JsonObject)[p.Name] = val!.DeepClone();
+                    (body ??= new JsonObject())[p.Name] = val!.DeepClone();
                     break;
             }
         }
