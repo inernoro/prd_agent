@@ -138,23 +138,15 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 任务完成后只做 commit + push，不得擅自调用 PR 创建工具。
 遇到阻塞无法完成的任务，向用户说明阻塞原因并等待指示，禁止提交半成品。
 
-#### 5.4 PR 描述必须简洁注明 diff
+#### 5.4 PR 描述必须走标准模板（SSOT：`.github/pull_request_template.md`）
 
-被允许创建 PR 时，描述模板必须包含「改动摘要」段落，**简洁列出 diff 范围**（修改的文件/模块 + 一句话变更说明）。禁止只写一行标题就提交。
+**任何 PR**（你创建 / 别人创建 / 平台自动创建后补写）一律按 `.github/pull_request_template.md` 填写。该文件是 PR 格式的**唯一来源**：GitHub 网页与 `gh pr create` 新建 PR 时会自动用它预填描述框；改格式只动这一个文件，本节不再内嵌副本，避免漂移。
 
-```markdown
-## 摘要
-1-3 句话说明 PR 解决了什么问题、用什么方案。
+标准段落（至少）：**摘要 / 改动 diff（按端分组、逐条「文件或模块 + 一句话」）/ 测试 / 风险与已知边界**。
 
-## 改动 diff
-- `prd-admin/src/pages/report-agent/ReportDetailPage.tsx`：浏览记录 popover 改用 createPortal + inline style
-- `changelogs/2026-04-19_xxx.md`：新增 changelog 碎片
-
-## 测试
-- [x] pnpm tsc --noEmit 通过
-- [x] pnpm lint 本文件零新增告警
-- [ ] 真人通过预览域名验收
-```
+- **AI 创建或补写 PR 时**：必须把模板所有适用段落**填实**——禁止只写一行标题、禁止只填摘要、改动 diff 禁止只写一行（必须逐条列文件/模块）。需人工验收时贴预览地址（走 cdscli，见规则 #11，禁手拼）。
+- **平台自动创建的 PR**（描述仅为起始 commit message 时）：AI 后续**必须**用本模板把它补全——标题改准 + 填齐 diff/测试/风险，不允许留「描述只写一行 / 标题与实际 diff 不符」的 PR。
+- 禁止 emoji（§0）。复杂交接（3+ 文件 / API / UI 变更）可用 `task-handoff-checklist` 技能生成内容再按本模板组织。
 
 ### 6. LLM 交互过程可视化
 
