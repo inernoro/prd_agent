@@ -2491,23 +2491,22 @@ export function DocumentStorePage() {
                         <h3 className="min-w-0 truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                           {s.name}
                         </h3>
-                        {/* 副标题：分类 · N 篇文章 + 分享/同步状态小徽标（状态归到这一行，不与标题/操作争位） */}
-                        <div className="flex items-center gap-1.5 min-w-0 mt-0.5">
-                          <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                            {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
-                          </span>
-                          {s.hasActiveShare && (
-                            <span className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
-                              style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', borderColor: 'rgba(234,179,8,0.32)' }}
-                              title="该知识库已对外分享" aria-label="已分享">
-                              <Share2 size={11} />
-                            </span>
-                          )}
-                          <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
-                        </div>
+                        {/* 副标题：分类 · N 篇文章（状态徽标移到右上角与置顶/更多同一排对齐） */}
+                        <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                          {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
+                        </p>
                       </div>
-                      {/* 右上角操作：置顶（人人可点，右侧不再空）+ 更多菜单（仅管理者）。常驻可见、尺寸放大，更醒目 */}
+                      {/* 右上角一排：状态徽标(已分享/同步圆点) + 置顶 + 更多，统一 items-center 垂直居中对齐，
+                          避免「图标比圆点偏上」——所有指示物在同一行同一基线 */}
                       <div className="flex items-center gap-1 flex-shrink-0">
+                        {s.hasActiveShare && (
+                          <span className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+                            style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', borderColor: 'rgba(234,179,8,0.32)' }}
+                            title="该知识库已对外分享" aria-label="已分享">
+                            <Share2 size={11} />
+                          </span>
+                        )}
+                        <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
                         <button
                           className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer transition-colors"
                           title={isPinned ? '取消置顶' : '置顶到最前'}
