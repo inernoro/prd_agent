@@ -296,6 +296,22 @@ public class McpGatewayController : ControllerBase
         if (!string.IsNullOrWhiteSpace(aiKey))
             req.Headers.TryAddWithoutValidation("X-AI-Access-Key", aiKey);
 
+        // 转发外部主机信息，让下游 ResolveServerUrl 构造公网绝对 URL（而非回环 127.0.0.1）。
+        // 否则海鲜市场 official skills / 任何按请求 host 拼 URL 的接口会在结果里返回 localhost 链接。
+        var clientBase = Request.Headers["X-Client-Base-Url"].ToString();
+        if (!string.IsNullOrWhiteSpace(clientBase))
+            req.Headers.TryAddWithoutValidation("X-Client-Base-Url", clientBase);
+        var fwdHost = Request.Headers["X-Forwarded-Host"].ToString();
+        if (string.IsNullOrWhiteSpace(fwdHost) && Request.Host.HasValue)
+            fwdHost = Request.Host.Value;
+        if (!string.IsNullOrWhiteSpace(fwdHost))
+        {
+            req.Headers.TryAddWithoutValidation("X-Forwarded-Host", fwdHost);
+            var fwdProto = Request.Headers["X-Forwarded-Proto"].ToString();
+            if (string.IsNullOrWhiteSpace(fwdProto)) fwdProto = Request.Scheme;
+            req.Headers.TryAddWithoutValidation("X-Forwarded-Proto", fwdProto);
+        }
+
         if (body != null && !string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
             req.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
 

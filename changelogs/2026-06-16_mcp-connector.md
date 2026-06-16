@@ -5,3 +5,5 @@
 | fix | prd-api | MCP 端点路由由顶级 `/mcp` 改为 `/api/mcp`：CDS 反代只把 `/api/*` 转后端，顶级路径被前端 SPA 兜底接走导致 404/200-html 不可达；回环同时转发 X-AI-Access-Key fallback 鉴权头 |
 | security | prd-api | MCP 回环 client 禁用自动重定向(AllowAutoRedirect=false):防回环目标返回跨主机重定向时把转发的 sk-ak/X-AI-Access-Key 凭据带到外部主机;回环异常信息改用 JsonObject 序列化防 ex.Message 破坏 JSON 信封 |
 | test | prd-api | 新增 MCP 网关纯逻辑单测 McpGatewayLogicTests（工具目录/scope写隐含读/动态工具名唯一/路径占位替换/请求拼装/inputSchema 推断），不依赖 live 密钥即可断言行为 |
+| feat | prd-api | AgentApiKeysController 增加 AiAccessKey 自助通道(全局超级密钥+X-AI-Impersonate 代用户签发 scoped sk-ak;归属校验+scope 白名单兜底),供 AI 无人值守自测开放接口 |
+| fix | prd-api | MCP 回环转发 X-Client-Base-Url/X-Forwarded-Host/X-Forwarded-Proto,使下游 ResolveServerUrl 构造公网 URL 而非 localhost(影响海鲜市场 official skills 下载链接) |

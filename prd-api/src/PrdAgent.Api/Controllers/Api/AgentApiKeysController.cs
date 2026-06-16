@@ -13,12 +13,15 @@ namespace PrdAgent.Api.Controllers.Api;
 /// <summary>
 /// 用户管理自己的 AgentApiKey（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权凭据）。
 ///
-/// 鉴权：管理接口走用户 JWT。调用这些 API 的是"接入 AI" Dialog，不是 AI 本身。
+/// 鉴权：用户 JWT（"接入 AI" Dialog），或 AiAccessKey 自助通道（全局超级密钥 +
+/// X-AI-Impersonate）。后者用于 AI/自动化无人值守为指定用户签发 scoped sk-ak。
+/// 安全边界：AiAccessKey 路径下 GetRequiredUserId() 解析为被模拟用户，Update/Revoke/Delete
+/// 均按 key.OwnerUserId 归属校验，只能动该用户自己的 key；签出的 key 自身受 scope 白名单限制。
 /// 明文 Key 只在 create / regenerate 接口返回一次；后续只存哈希。
 /// </summary>
 [ApiController]
 [Route("api/agent-api-keys")]
-[Authorize]
+[Authorize(AuthenticationSchemes = "Bearer,AiAccessKey")]
 public class AgentApiKeysController : ControllerBase
 {
     // 固定 scope 白名单（市场开放接口核心 scope）
