@@ -233,9 +233,12 @@ public class McpGatewayController : ControllerBase
             (boundUserId == null || !wl.Contains(boundUserId)))
             return ToolError(id, "调用方不在此接口的白名单内。");
 
+        // 先替换 Path 中的 {param} 占位（取自 arguments），已用于路径的键不再进 query/body
+        var consumed = new HashSet<string>(StringComparer.Ordinal);
+        var path = SubstitutePathParams(match.Path, args, consumed);
         var isGet = string.Equals(match.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
-        var pathAndQuery = isGet ? AppendQuery(match.Path, args) : match.Path;
-        JsonNode? dynBody = isGet ? null : args;
+        var pathAndQuery = isGet ? AppendQuery(path, args, consumed) : path;
+        JsonNode? dynBody = isGet ? null : BodyExcluding(args, consumed);
         var (st, rb) = await LoopbackAsync(match.HttpMethod, pathAndQuery, dynBody, ct);
         return ToolCallResult(id, st, rb);
     }
@@ -409,16 +412,43 @@ public class McpGatewayController : ControllerBase
         return n.ToJsonString();
     }
 
-    private static string AppendQuery(string path, JsonObject args)
+    private static string AppendQuery(string path, JsonObject args, HashSet<string>? skip = null)
     {
         var q = new List<string>();
         foreach (var kv in args)
         {
             if (kv.Value == null) continue;
+            if (skip != null && skip.Contains(kv.Key)) continue;
             q.Add($"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(JsonValToString(kv.Value))}");
         }
         if (q.Count == 0) return path;
         return path + (path.Contains('?') ? "&" : "?") + string.Join("&", q);
+    }
+
+    /// <summary>替换 Path 模板里的 {param} 占位为 arguments 对应值（URL 编码）；记录已消费的键。未提供的占位原样保留（让其 404 暴露问题）。</summary>
+    private static string SubstitutePathParams(string path, JsonObject args, HashSet<string> consumed)
+    {
+        return Regex.Replace(path, @"\{([^}/]+)\}", m =>
+        {
+            var key = m.Groups[1].Value;
+            if (args.TryGetPropertyValue(key, out var v) && v != null)
+            {
+                consumed.Add(key);
+                return Uri.EscapeDataString(JsonValToString(v));
+            }
+            return m.Value;
+        });
+    }
+
+    /// <summary>构造请求体：排除已用于路径替换的键。无消费键时直接返回原 args。</summary>
+    private static JsonNode? BodyExcluding(JsonObject args, HashSet<string> consumed)
+    {
+        if (consumed.Count == 0) return args;
+        var body = new JsonObject();
+        foreach (var kv in args)
+            if (!consumed.Contains(kv.Key) && kv.Value != null)
+                body[kv.Key] = kv.Value.DeepClone();
+        return body;
     }
 
     // ── JSON-RPC 信封 ──

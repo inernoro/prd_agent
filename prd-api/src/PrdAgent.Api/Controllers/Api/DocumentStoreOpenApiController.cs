@@ -55,6 +55,16 @@ public class DocumentStoreOpenApiController : ControllerBase
            || s.IsPublic
            || (s.SharedTeamIds != null && s.SharedTeamIds.Any(myTeamIds.Contains));
 
+    /// <summary>
+    /// 通用库判定：排除项目库 / 产品库 / 识途库等专用库。这些走各自专用 Agent 的访问控制
+    /// （IsPmProjectMember / IsProductKnowledgeMember / IsShituKnowledgeReadable），不在通用 MCP 范围。
+    /// ListStores 已用该条件过滤，entries/content 也必须一致拦截，避免知道 storeId/entryId 就绕过。
+    /// </summary>
+    private static bool IsGenericStore(DocumentStore s)
+        => string.IsNullOrEmpty(s.PmProjectId)
+           && string.IsNullOrEmpty(s.ProductKnowledgeRef)
+           && string.IsNullOrEmpty(s.ShituCategoryRef);
+
     /// <summary>列出当前密钥所属用户自己的知识库（排除项目库/产品库/识途库等专用库）。</summary>
     [HttpGet("stores")]
     [RequireScope(ScopeRead, ScopeWrite)]
@@ -95,7 +105,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        if (!CanRead(store, userId, myTeamIds))
+        if (!IsGenericStore(store) || !CanRead(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
 
         var resolved = limit is > 0 and <= 500 ? limit : 200;
@@ -136,7 +146,7 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        if (!CanRead(store, userId, myTeamIds))
+        if (!IsGenericStore(store) || !CanRead(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         // 与 DocumentStoreController.GetEntryContent 一致：优先 ParsedPrd.RawContent，兜底 Attachment.ExtractedText
