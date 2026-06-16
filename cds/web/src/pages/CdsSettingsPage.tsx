@@ -171,17 +171,17 @@ export function CdsSettingsPage(): JSX.Element {
           <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
             <TabsList
               aria-label="CDS 系统设置分区"
-              className="cds-surface-raised cds-hairline p-2 lg:sticky lg:top-[72px] lg:self-start"
+              className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-[72px] lg:self-start"
             >
               {tabGroups.map((group, groupIdx) => (
-                <div key={group.label} className={groupIdx === 0 ? '' : 'mt-2'}>
-                  <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-2'}`}>
+                  <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
                     {group.label}
                   </div>
                   {group.items.map((tab) => {
                     const Icon = tab.icon;
                     return (
-                      <TabsTrigger key={tab.value} value={tab.value}>
+                      <TabsTrigger key={tab.value} value={tab.value} className="cds-settings-nav-trigger">
                         <Icon className="h-4 w-4 shrink-0" />
                         <span className="truncate">{tab.label}</span>
                       </TabsTrigger>
@@ -191,7 +191,7 @@ export function CdsSettingsPage(): JSX.Element {
               ))}
             </TabsList>
 
-            <div className="cds-surface-raised cds-hairline min-w-0 p-5">
+            <div className="cds-settings-content cds-surface-raised cds-hairline min-w-0 p-5">
               <Suspense fallback={<SettingsTabFallback />}>
                 <TabsContent value="overview">
                   {activeTab === 'overview' ? <OverviewTab /> : null}
