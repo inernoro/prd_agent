@@ -116,11 +116,11 @@ public class McpGatewayController : ControllerBase
 
     private JsonObject BuildInitializeResult(JsonObject request)
     {
-        var clientVer = (request["params"] as JsonObject)?["protocolVersion"]?.GetValue<string>();
-        var ver = string.IsNullOrWhiteSpace(clientVer) ? ProtocolVersionDefault : clientVer!;
+        // 仅实现一个协议版本：始终回我方支持的版本，不回声客户端任意版本（符合 MCP 协商语义，
+        // 版本不一致时由客户端决定是否继续），避免谎称支持任意 revision。
         return new JsonObject
         {
-            ["protocolVersion"] = ver,
+            ["protocolVersion"] = ProtocolVersionDefault,
             ["capabilities"] = new JsonObject { ["tools"] = new JsonObject() },
             ["serverInfo"] = new JsonObject { ["name"] = ServerName, ["version"] = ServerVersion },
         };
@@ -318,7 +318,8 @@ public class McpGatewayController : ControllerBase
         {
             addr = addr.Replace("://0.0.0.0", "://127.0.0.1")
                        .Replace("://[::]", "://127.0.0.1")
-                       .Replace("://+", "://127.0.0.1");
+                       .Replace("://+", "://127.0.0.1")
+                       .Replace("://*", "://127.0.0.1");
             return addr.TrimEnd('/');
         }
         // 兜底：无任何本地监听信息时才用入站 host（边缘代理下可能 hairpin，仅极端兜底）。

@@ -171,6 +171,11 @@ public class McpGatewayController : ControllerBase { ... }
 |---|---|---|---|
 | POST | `/mcp` | `ApiKey`（sk-ak Bearer） | MCP 主端点，处理 JSON-RPC |
 | GET | `/mcp`（可选） | `ApiKey` | 服务端推流通道，v1 可暂不实现 |
+| GET | `/api/open/document-store/stores` | `ApiKey` + scope | 知识库工具回环目标：列出本人知识库 |
+| GET | `/api/open/document-store/stores/{storeId}/entries` | `ApiKey` + scope | 列出条目（扁平含嵌套） |
+| GET | `/api/open/document-store/entries/{entryId}/content` | `ApiKey` + scope | 读条目正文 |
+
+> 知识库工具不能直接回环到 `DocumentStoreController` 的 `stores/entries`：那些在 `AdminControllerScanner.PublicRoutes` 里（给 JWT 普通用户），跳过 scope→身份注入，其 `GetRequiredUserId()` 只读 `sub`，sk-ak 无 `sub` 会 401。故新增 `DocumentStoreOpenApiController`（`/api/open/document-store`），走与海鲜市场开放接口一致的 `ApiKey + RequireScope + boundUserId` 模式，可见性取 `CanReadStoreAsync` 的安全子集（owner ‖ public ‖ team-shared）。海鲜市场工具回环到既有 `/api/open/marketplace/skills`（同模式，无需新建）。
 
 ### 6.3 谁能用网关
 

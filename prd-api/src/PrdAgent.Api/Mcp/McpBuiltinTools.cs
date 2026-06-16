@@ -93,31 +93,27 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "knowledge_base_list_stores",
-            Description = "列出当前用户可见的知识库（文档空间）。返回每个知识库的 id、名称等，用于后续按 id 查条目。",
+            Description = "列出当前用户自己的知识库（文档空间）。返回每个知识库的 id、名称等，用于后续按 id 查条目。",
             RequiredScope = ScopeDocStoreRead,
             Method = "GET",
-            PathTemplate = "/api/document-store/stores",
+            PathTemplate = "/api/open/document-store/stores",
             Params = new List<McpToolParam>
             {
-                new() { Name = "scope", In = "query", Description = "范围筛选：team（团队）等，可选" },
-                new() { Name = "page", In = "query", Type = "integer", Description = "页码，默认 1" },
-                new() { Name = "pageSize", In = "query", Type = "integer", Description = "每页条数（1-100，默认 20）" },
+                new() { Name = "limit", In = "query", Type = "integer", Description = "返回条数上限（1-200，默认 50）" },
             },
         },
         new McpToolDef
         {
             Name = "knowledge_base_list_entries",
-            Description = "列出某个知识库下的文档条目。可用关键词搜索（含正文）。先用 knowledge_base_list_stores 拿 storeId。",
+            Description = "列出某个知识库下的文档条目（扁平返回，含嵌套文件夹内的文档）。可用关键词过滤标题。先用 knowledge_base_list_stores 拿 storeId。",
             RequiredScope = ScopeDocStoreRead,
             Method = "GET",
-            PathTemplate = "/api/document-store/stores/{storeId}/entries",
+            PathTemplate = "/api/open/document-store/stores/{storeId}/entries",
             Params = new List<McpToolParam>
             {
                 new() { Name = "storeId", In = "path", Required = true, Description = "知识库 id" },
-                new() { Name = "keyword", In = "query", Description = "关键词，可选" },
-                new() { Name = "searchContent", In = "query", Type = "boolean", Description = "是否同时搜正文，默认 false" },
-                new() { Name = "page", In = "query", Type = "integer", Description = "页码，默认 1" },
-                new() { Name = "pageSize", In = "query", Type = "integer", Description = "每页条数，默认 200" },
+                new() { Name = "keyword", In = "query", Description = "按标题关键词过滤，可选" },
+                new() { Name = "limit", In = "query", Type = "integer", Description = "返回条数上限（1-500，默认 200）" },
             },
         },
         new McpToolDef
@@ -126,7 +122,7 @@ public static class McpBuiltinTools
             Description = "读取某个文档条目的完整正文内容。先用 knowledge_base_list_entries 拿 entryId。",
             RequiredScope = ScopeDocStoreRead,
             Method = "GET",
-            PathTemplate = "/api/document-store/entries/{entryId}/content",
+            PathTemplate = "/api/open/document-store/entries/{entryId}/content",
             Params = new List<McpToolParam>
             {
                 new() { Name = "entryId", In = "path", Required = true, Description = "文档条目 id" },
