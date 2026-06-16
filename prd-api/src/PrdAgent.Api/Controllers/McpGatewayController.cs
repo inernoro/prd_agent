@@ -308,7 +308,9 @@ public class McpGatewayController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[MCP] 回环调用失败 {Method} {Path}", method, pathAndQuery);
-            return (502, $"{{\"error\":\"回环调用失败: {ex.Message}\"}}");
+            // 用 JsonObject 序列化，ex.Message 里的引号/反斜杠/换行会被正确转义，不破坏 JSON 信封
+            var errBody = new JsonObject { ["error"] = $"回环调用失败: {ex.Message}" }.ToJsonString();
+            return (502, errBody);
         }
     }
 
