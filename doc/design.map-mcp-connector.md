@@ -169,8 +169,10 @@ public class McpGatewayController : ControllerBase { ... }
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
-| POST | `/mcp` | `ApiKey`（sk-ak Bearer） | MCP 主端点，处理 JSON-RPC |
-| GET | `/mcp`（可选） | `ApiKey` | 服务端推流通道，v1 可暂不实现 |
+| POST | `/api/mcp` | `ApiKey`（sk-ak Bearer） | MCP 主端点，处理 JSON-RPC |
+| GET | `/api/mcp`（可选） | `ApiKey` | 服务端推流通道，v1 返回 405 |
+
+> 端点必须挂在 `/api/` 前缀下：CDS 反向代理（nginx）把 `/api/*` 转给 .NET 后端，其余路径转给前端 SPA。早期挂在顶级 `/mcp` 时被前端兜底页接走（返回 index.html 200），后端控制器收不到 —— 改为 `/api/mcp` 后才可达。MCP 客户端连接 URL 即 `https://<域名>/api/mcp`。
 | GET | `/api/open/document-store/stores` | `ApiKey` + scope | 知识库工具回环目标：列出本人知识库 |
 | GET | `/api/open/document-store/stores/{storeId}/entries` | `ApiKey` + scope | 列出条目（扁平含嵌套） |
 | GET | `/api/open/document-store/entries/{entryId}/content` | `ApiKey` + scope | 读条目正文 |

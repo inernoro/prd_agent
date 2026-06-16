@@ -27,7 +27,7 @@ namespace PrdAgent.Api.Controllers;
 /// 设计文档：doc/design.map-mcp-connector.md
 /// </summary>
 [ApiController]
-[Route("mcp")]
+[Route("api/mcp")]
 [Authorize(AuthenticationSchemes = "ApiKey")]
 public class McpGatewayController : ControllerBase
 {
@@ -290,6 +290,11 @@ public class McpGatewayController : ControllerBase
         var auth = Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrWhiteSpace(auth))
             req.Headers.TryAddWithoutValidation("Authorization", auth);
+        // ApiKeyAuthenticationHandler 也接受 X-AI-Access-Key 作为 fallback 鉴权头，一并转发，
+        // 否则用该头鉴权的客户端 tools/call 回环会丢凭据 → 下游 401。
+        var aiKey = Request.Headers["X-AI-Access-Key"].ToString();
+        if (!string.IsNullOrWhiteSpace(aiKey))
+            req.Headers.TryAddWithoutValidation("X-AI-Access-Key", aiKey);
 
         if (body != null && !string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
             req.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
