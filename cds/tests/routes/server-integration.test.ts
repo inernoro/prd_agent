@@ -13,7 +13,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { CdsConfig } from '../../src/types.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
-import type { ActiveHttpRequestRecord, HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
+import type { ActiveHttpRequestRecord, HttpActiveRequestFilter, HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
 
 /**
  * Integration regression test: verifies that routes mounted after the
@@ -195,7 +195,11 @@ describe('Server route ordering (regression)', () => {
     });
   }
 
-  function buildRealServerWithHttpLogs(logs: HttpLogRecord[], active: ActiveHttpRequestRecord[] = []): express.Express {
+  function buildRealServerWithHttpLogs(
+    logs: HttpLogRecord[],
+    active: ActiveHttpRequestRecord[] = [],
+    onFindActiveFilter?: (filter: HttpActiveRequestFilter) => void,
+  ): express.Express {
     const stateFile = path.join(tmpDir, 'state.json');
     const stateService = new StateService(stateFile);
     stateService.load();
@@ -220,6 +224,7 @@ describe('Server route ordering (regression)', () => {
           .slice(0, limit);
       },
       findActive(filter = {}) {
+        onFindActiveFilter?.(filter);
         const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
         return active
           .filter((request) => {
@@ -526,6 +531,17 @@ describe('Server route ordering (regression)', () => {
     expect(body.activeSummary.byKind.polling).toBe(0);
     expect(body.activeSummary.byKind.deploy).toBe(1);
     expect(body.activeRequests.map((request: ActiveHttpRequestRecord) => request.requestId)).toEqual(['real-active-deploy']);
+  });
+
+  it('real createServer expands local active source limit before final merge', async () => {
+    const seenLimits: Array<number | undefined> = [];
+    const app = buildRealServerWithHttpLogs([], [], (filter) => seenLimits.push(filter.limit));
+    server = await startServer(app);
+
+    const res = await request(server, '/api/perf/overview');
+
+    expect(res.status).toBe(200);
+    expect(seenLimits).toContain(5000);
   });
 
   it('real createServer merges active HTTP requests from the forwarder diagnostic endpoint', async () => {

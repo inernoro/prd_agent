@@ -371,13 +371,14 @@ async function collectActiveHttpRequests(
   filter: HttpActiveRequestFilter,
   options: { excludeRequestId?: string } = {},
 ): Promise<ActiveHttpRequestRecord[]> {
-  const local = store?.findActive?.(filter) || [];
-  const forwarder = await findForwarderActiveRequests({
+  // Fetch enough rows from each source before applying the final combined cap,
+  // otherwise one busy layer can hide older rows from another layer.
+  const sourceFilter = {
     ...filter,
-    // Fetch enough rows from the forwarder before applying the final combined
-    // cap, otherwise a busy data-plane process can hide older master requests.
     limit: Math.max(filter.limit ?? 200, 5000),
-  });
+  };
+  const local = store?.findActive?.(sourceFilter) || [];
+  const forwarder = await findForwarderActiveRequests(sourceFilter);
   const combined = options.excludeRequestId
     ? [...local, ...forwarder].filter((request) => request.requestId !== options.excludeRequestId)
     : [...local, ...forwarder];
