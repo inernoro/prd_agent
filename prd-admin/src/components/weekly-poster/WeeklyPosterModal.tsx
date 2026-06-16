@@ -975,6 +975,7 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
                 alt=""
                 className="absolute inset-0 w-full h-full object-cover"
                 draggable={false}
+                referrerPolicy="no-referrer"
                 onLoad={(e) => {
                   const t = e.currentTarget;
                   if (t.naturalWidth > 0 && t.naturalHeight > 0)
@@ -991,6 +992,7 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
                 alt=""
                 className="absolute inset-0 w-full h-full object-cover"
                 draggable={false}
+                referrerPolicy="no-referrer"
                 onLoad={(e) => {
                   const t = e.currentTarget;
                   if (t.naturalWidth > 0 && t.naturalHeight > 0)
@@ -1101,6 +1103,7 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
                 alt=""
                 className="w-full h-full object-cover"
                 draggable={false}
+                referrerPolicy="no-referrer"
                 onError={() => setAvatarErrored(true)}
               />
             ) : (
@@ -1165,6 +1168,8 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
         style={{
           background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 35%, rgba(0,0,0,0.92) 100%)',
           opacity: hasPlayed ? 0 : 1,
+          // 标题/标签让出右侧互动指标栏的宽度，避免窄卡片下文字压到点赞数上（元素重叠）
+          paddingRight: stats ? 60 : undefined,
         }}
       >
         <h2
