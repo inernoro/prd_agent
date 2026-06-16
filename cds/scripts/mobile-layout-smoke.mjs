@@ -2,8 +2,21 @@
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const playwrightPath = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
-const { chromium } = require(playwrightPath);
+
+function loadPlaywright() {
+  const candidates = [process.env.PWPATH, 'playwright'].filter(Boolean);
+  const failures = [];
+  for (const candidate of candidates) {
+    try {
+      return require(candidate);
+    } catch (err) {
+      failures.push(`${candidate}: ${err.message}`);
+    }
+  }
+  throw new Error(`Unable to load Playwright. Tried ${failures.join('; ')}`);
+}
+
+const { chromium } = loadPlaywright();
 
 const baseUrl = (process.argv[2] || process.env.CDS_HOST || 'http://127.0.0.1:9900').replace(/\/+$/, '');
 const viewports = [

@@ -296,6 +296,17 @@ function summarizeActiveHttpRequests(active: ActiveHttpRequestRecord[]): {
   };
 }
 
+function dedupeActiveHttpRequests(requests: ActiveHttpRequestRecord[]): ActiveHttpRequestRecord[] {
+  const byRequestId = new Map<string, ActiveHttpRequestRecord>();
+  for (const request of requests) {
+    const existing = byRequestId.get(request.requestId);
+    if (!existing || request.ageMs > existing.ageMs) {
+      byRequestId.set(request.requestId, request);
+    }
+  }
+  return Array.from(byRequestId.values());
+}
+
 function activeQueryString(filter: HttpActiveRequestFilter): string {
   const params = new URLSearchParams();
   const entries: Array<[string, string | number | undefined]> = [
@@ -379,9 +390,10 @@ async function collectActiveHttpRequests(
   };
   const local = store?.findActive?.(sourceFilter) || [];
   const forwarder = await findForwarderActiveRequests(sourceFilter);
+  const deduped = dedupeActiveHttpRequests([...local, ...forwarder]);
   const combined = options.excludeRequestId
-    ? [...local, ...forwarder].filter((request) => request.requestId !== options.excludeRequestId)
-    : [...local, ...forwarder];
+    ? deduped.filter((request) => request.requestId !== options.excludeRequestId)
+    : deduped;
   return filterActiveHttpRequests(combined, filter);
 }
 
@@ -1433,10 +1445,20 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     });
     let activeCompleted = false;
+    let activeCleanupTimer: ReturnType<typeof setTimeout> | null = null;
     const completeActiveRequest = () => {
       if (activeCompleted || !activeRequestId) return;
       activeCompleted = true;
+      if (activeCleanupTimer) {
+        clearTimeout(activeCleanupTimer);
+        activeCleanupTimer = null;
+      }
       deps.httpLogStore?.completeActive?.(activeRequestId);
+    };
+    const scheduleActiveCleanup = () => {
+      if (activeCompleted || !activeRequestId || activeCleanupTimer) return;
+      activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
+      activeCleanupTimer.unref?.();
     };
     const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
     req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
@@ -1491,7 +1513,7 @@ export function createServer(deps: ServerDeps): express.Express {
         },
       });
     });
-    res.once('close', completeActiveRequest);
+    res.once('close', scheduleActiveCleanup);
     next();
   });
 

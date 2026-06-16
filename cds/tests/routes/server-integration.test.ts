@@ -568,7 +568,13 @@ describe('Server route ordering (regression)', () => {
     process.env.CDS_FORWARDER_PORT = String((forwarder.address() as { port: number }).port);
     process.env.CDS_USE_FORWARDER = '1';
     try {
-      const app = buildRealServerWithHttpLogs([]);
+      const app = buildRealServerWithHttpLogs([], [{
+        ...forwarderActive[0],
+        id: 'master-active-deploy',
+        layer: 'master',
+        ageMs: 60_000,
+        upstream: null,
+      }]);
       server = await startServer(app);
 
       const res = await request(server, '/api/http-logs/active?requestKind=deploy&minAgeMs=30000');
