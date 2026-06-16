@@ -54,6 +54,7 @@ docs:
   design.acceptance-kb: 验收报告知识库设计（最新在前 + 结论可视 + 模板约束 + 跨环境同步）
   design.agent-universe: 智能体宇宙设计（能力契约 SSOT + 统一调用信封 + 漫威宇宙式互通）
   design.knowledge-agent-architecture: 知识库智能体架构设计（三层模型 + map/cds-agent 命名 + 借运行时不重建 + KB-as-files 进、diff 闸出）
+  design.map-mcp-connector: MAP MCP 连接器设计（把开放接口翻译成 MCP 工具，可被 Claude/Codex 接入）
   design.server-authority: 服务器权威性设计
   design.team-activity: 团队动态设计（全局白名单审计 Filter + 标题快照 + 管理员时间线）
   design.unified-skill-system: 技能系统统一设计

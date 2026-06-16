@@ -97,6 +97,8 @@
   > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
 - [知识库智能体架构设计](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
   > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
+- [MAP MCP 连接器设计](design.map-mcp-connector) `design.map-mcp-connector`
+  > 把 AgentOpenEndpoint 登记表翻译成 MCP 工具，远程 /mcp 端点（Streamable HTTP）复用 sk-ak + scope，可被 Claude/Codex 当连接器接入
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 - [团队动态设计](design.team-activity) `design.team-activity`
