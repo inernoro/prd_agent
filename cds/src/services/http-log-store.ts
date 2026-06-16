@@ -158,7 +158,7 @@ export function classifyHttpRequestKind(input: {
     || pathValue.startsWith('/api/cluster/')
     || pathValue.startsWith('/api/github/')
     || pathValue.startsWith('/api/server-events')
-    || method !== 'GET') {
+    || (input.layer === 'master' && method !== 'GET')) {
     return 'control-plane';
   }
   return 'user-traffic';

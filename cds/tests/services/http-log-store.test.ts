@@ -141,6 +141,9 @@ describe('http log body redaction', () => {
     expect(classifyHttpRequestKind({ method: 'GET', path: '/api/projects/a/instances', headers: { 'x-cds-poll': 'true' } })).toBe('polling');
     expect(classifyHttpRequestKind({ method: 'GET', path: '/api/branches/stream', headers: { accept: 'text/event-stream' } })).toBe('sse');
     expect(classifyHttpRequestKind({ method: 'GET', path: '/' })).toBe('user-traffic');
+    expect(classifyHttpRequestKind({ layer: 'forwarder', method: 'POST', path: '/login' })).toBe('user-traffic');
+    expect(classifyHttpRequestKind({ layer: 'master-proxy', method: 'POST', path: '/graphql' })).toBe('user-traffic');
+    expect(classifyHttpRequestKind({ layer: 'master', method: 'POST', path: '/internal-maintenance' })).toBe('control-plane');
   });
 
   it('tracks active requests by age and removes them on completion', () => {
