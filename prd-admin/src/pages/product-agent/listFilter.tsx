@@ -164,19 +164,36 @@ function FilterBar<T>({
   useEffect(() => {
     if (!gearOpen) return;
     // 弹层用 createPortal 挂 body + fixed 定位，避免被工具栏容器 overflow 裁剪（用户反馈：筛选展开看不到）
-    const btn = gearRef.current?.querySelector('button');
-    if (btn) {
-      const r = btn.getBoundingClientRect();
-      setGearPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
-    }
+    const anchorAtBtn = () => {
+      const btn = gearRef.current?.querySelector('button');
+      if (btn) {
+        const r = btn.getBoundingClientRect();
+        setGearPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+      }
+    };
+    anchorAtBtn();
     const h = (e: MouseEvent) => {
       const target = e.target as Node;
       if (gearRef.current && !gearRef.current.contains(target) && !(target as HTMLElement).closest?.('[data-filter-gear-pop]')) setGearOpen(false);
     };
-    const onScroll = () => setGearOpen(false);
+    // 外层滚动会让 fixed 定位失锚 → 关闭；但弹层自身的内部滚动列表（filter 字段过多时）必须保留
+    const onScroll = (e: Event) => {
+      const t = e.target as Node | null;
+      if (t && (t as HTMLElement).nodeType === 1 && (t as HTMLElement).closest?.('[data-filter-gear-pop]')) return;
+      setGearOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setGearOpen(false); };
+    const onResize = () => setGearOpen(false);
     document.addEventListener('mousedown', h);
+    document.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onScroll, true);
-    return () => { document.removeEventListener('mousedown', h); window.removeEventListener('scroll', onScroll, true); };
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('mousedown', h);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+    };
   }, [gearOpen]);
 
   const visibleFields = fields.filter((f) => visible.includes(f.key));
