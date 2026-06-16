@@ -39,6 +39,60 @@ export interface RequirementType {
   isBuiltin: boolean;
 }
 
+/** 等级目录维度：优先级 / 严重程度 */
+export type GradeDimension = 'priority' | 'severity';
+
+/** 等级目录承载的对象类型（需求 / 功能 / 缺陷） */
+export type GradeEntityType = 'requirement' | 'feature' | 'defect';
+
+/** 通用等级目录项（优先级/严重程度可增删改查；内置项不可删除，AI 按 definition 识别） */
+export interface ProductGradeOption {
+  id: string;
+  dimension: GradeDimension;
+  entityType: GradeEntityType;
+  name: string;
+  color: string;
+  definition: string;
+  sortOrder: number;
+  isBuiltin: boolean;
+}
+
+/** 产品结构节点（功能模块/能力骨架树；扁平列表，靠 parentId 自建树） */
+export interface ProductStructureNode {
+  id: string;
+  productId: string;
+  parentId?: string | null;
+  name: string;
+  description?: string | null;
+  nodeType?: string | null;
+  sortOrder: number;
+}
+
+/** 产品规则状态 */
+export type ProductRuleStatus = 'draft' | 'active' | 'deprecated';
+
+/** 产品规则（单产品维度的全局核心规则；content 为 Markdown 正文） */
+export interface ProductRule {
+  id: string;
+  productId: string;
+  category?: string | null;
+  title: string;
+  content: string;
+  status: ProductRuleStatus;
+  sortOrder: number;
+}
+
+/** 产品字典/术语（单产品维度；definition 为 Markdown 定义） */
+export interface ProductTerm {
+  id: string;
+  productId: string;
+  term: string;
+  aliases: string[];
+  definition: string;
+  category?: string | null;
+  sortOrder: number;
+}
+
 /** 详情描述模板（按对象类型，富文本骨架，方便一键套用） */
 export interface DescTemplate {
   id: string;
@@ -60,6 +114,18 @@ export interface ReleaseFeatureItem {
   changeNote?: string | null;
 }
 export type FeatureBusinessType = 'basic' | 'core' | 'value_added';
+
+/** 功能类型标签（SSOT，避免各处重复定义；Phase B 起将由可配置「功能类型」目录覆盖） */
+export const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
+  basic: '基础功能',
+  core: '核心功能',
+  value_added: '增值功能',
+};
+export const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
+  { value: 'basic', label: '基础功能' },
+  { value: 'core', label: '核心功能' },
+  { value: 'value_added', label: '增值功能' },
+];
 
 export interface Product {
   id: string;
@@ -282,6 +348,8 @@ export interface Feature {
   remark?: string | null;
   grade: ItemGrade;
   parentId?: string | null;
+  /** 挂载到的产品结构节点 ID（功能模块/能力骨架树；空=未归类） */
+  structureNodeId?: string | null;
   requirementIds: string[];
   currentState?: string | null;
   templateId?: string | null;
@@ -321,9 +389,110 @@ export interface Customer {
   tags: string[];
   templateId?: string | null;
   formData: Record<string, string>;
+  // ── 客户信息「基础模块」默认字段（商户名称复用 name）──
+  /** 商户编号 */
+  merchantNo?: string | null;
+  /** 商户简称 */
+  shortName?: string | null;
+  /** 商户状态（自由文本，如 正常 / 停用） */
+  status?: string | null;
+  /** 认证状态（未认证 / 已认证 / 认证失败） */
+  certStatus?: string | null;
+  /** 所在区域 */
+  region?: string | null;
+  /** 所属行业 */
+  industry?: string | null;
+  /** 开户时间（ISO 字符串） */
+  openedAt?: string | null;
+  /** 过期时间（ISO 字符串） */
+  expireAt?: string | null;
   ownerId: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 客户「动态跟进」时间线条目（对齐后端 CustomerFollowUp，按时间倒序） */
+export interface CustomerFollowUp {
+  id: string;
+  customerId: string;
+  /** 跟进内容（富文本 HTML） */
+  content: string;
+  createdByUserId: string;
+  createdByName?: string | null;
+  createdAt: string;
+}
+
+// ── 营销问策 MarketingConsult（客户详情 Tab，全链路对照项目简报）──
+
+/** 报告模版 key（对齐后端 MarketingReportRenderer.Templates，4 套专业模版） */
+export type MarketingTemplate = 'exec' | 'consulting' | 'dashboard' | 'magazine';
+
+/** 总体营销健康判定 */
+export type MarketingVerdict = 'healthy' | 'watch' | 'risk';
+
+/** 四力（4FM）单维评分 */
+export interface MarketingForceScore {
+  name: string;
+  score: number;
+  comment: string;
+}
+
+/** 营销问策风险条目 */
+export interface MarketingConsultRisk {
+  text: string;
+  level: 'high' | 'medium' | 'low';
+}
+
+/** AI 结构化评估内容（对齐后端 MarketingConsultAiContent） */
+export interface MarketingConsultAiContent {
+  summary: string;
+  verdict: MarketingVerdict;
+  verdictNote: string;
+  forces: MarketingForceScore[];
+  strengths: string[];
+  risks: MarketingConsultRisk[];
+  suggestions: string[];
+  nextActions: string[];
+}
+
+/** 问策报告列表项（精简，不含 html，对齐后端 ToConsultListItem） */
+export interface MarketingConsultListItem {
+  id: string;
+  customerId: string;
+  /** 客户名（自由问策为 null） */
+  customerName?: string | null;
+  title: string;
+  template: MarketingTemplate;
+  model?: string | null;
+  verdict?: MarketingVerdict | null;
+  canRestyle: boolean;
+  shared: boolean;
+  shareToken?: string | null;
+  hostedSiteId?: string | null;
+  hostedSiteUrl?: string | null;
+  createdByUserId: string;
+  createdByName?: string | null;
+  createdAt: string;
+}
+
+/** 问策报告详情（含 html，对齐后端 ToConsultDetail） */
+export interface MarketingConsultReport {
+  id: string;
+  customerId: string;
+  title: string;
+  template: MarketingTemplate;
+  model?: string | null;
+  html: string;
+  aiContent?: MarketingConsultAiContent | null;
+  inputText?: string;
+  canRestyle: boolean;
+  shared: boolean;
+  shareToken?: string | null;
+  hostedSiteId?: string | null;
+  hostedSiteUrl?: string | null;
+  createdByUserId: string;
+  createdByName?: string | null;
+  createdAt: string;
 }
 
 /** 表单字段类型 */

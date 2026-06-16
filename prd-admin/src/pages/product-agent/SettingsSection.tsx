@@ -174,7 +174,7 @@ export function SettingsSection() {
   );
 }
 
-function ApplicationAdminManager() {
+export function ApplicationAdminManager() {
   const [items, setItems] = useState<ProductApplicationAdmin[]>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -250,7 +250,7 @@ function ApplicationAdminManager() {
 
 const DEBUG_RESET_CONFIRM = '清空演示数据';
 
-function DebugDataResetPanel() {
+export function DebugDataResetPanel() {
   const [confirmPhrase, setConfirmPhrase] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -356,7 +356,7 @@ function DebugDataResetPanel() {
 
 // ════════════════════════ 描述模板管理 ════════════════════════
 
-function DescTemplateManager({ entityType }: { entityType: ProductEntityType }) {
+export function DescTemplateManager({ entityType }: { entityType: ProductEntityType }) {
   const [items, setItems] = useState<DescTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<DescTemplate | 'new' | null>(null);
@@ -500,7 +500,7 @@ function DescTemplateEditModal({
 
 // ════════════════════════ 产品类型管理 ════════════════════════
 
-function CategoryManager() {
+export function CategoryManager() {
   const { categories, reload } = useProductCategories();
   const [draftName, setDraftName] = useState('');
   const [draftColor, setDraftColor] = useState('#38bdf8');
@@ -636,7 +636,7 @@ function CategoryRow({ category, onChanged }: { category: ProductCategory; onCha
 
 // ════════════════════════ 需求类型管理 ════════════════════════
 
-function RequirementTypeManager() {
+export function RequirementTypeManager() {
   const { types, reload } = useRequirementTypes();
   const [draftName, setDraftName] = useState('');
   const [draftDefinition, setDraftDefinition] = useState('');
@@ -788,7 +788,7 @@ function RequirementTypeRow({ item, onChanged }: { item: RequirementType; onChan
 }
 
 // ════════════════════════ 表单模板编辑器 ════════════════════════
-function FormTemplateEditor({ entityType, productId }: { entityType: ProductEntityType; productId: string | null }) {
+export function FormTemplateEditor({ entityType, productId }: { entityType: ProductEntityType; productId: string | null }) {
   const [id, setId] = useState<string | undefined>(undefined);
   const [name, setName] = useState('');
   const [fields, setFields] = useState<FormField[]>([]);

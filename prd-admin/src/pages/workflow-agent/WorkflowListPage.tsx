@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Sparkles } from 'lucide-react';
 import { listWorkflows, createWorkflow, deleteWorkflow } from '@/services';
 import type { Workflow, WorkflowNode, WorkflowEdge } from '@/services/contracts/workflowAgent';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -312,6 +313,56 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onExecutions, onDelete }: {
         >
           关闭
         </button>
+      </div>
+    </GlassCard>
+  );
+}
+
+// ── 一句话起步（AI 生成入口） ───────────────────────────────
+
+const AI_STARTER_EXAMPLES = [
+  '每天定时抓取 TAPD 缺陷数据，用 LLM 分析后生成网页报告',
+  '调用一个 REST API 拉数据，提取关键字段导出 CSV',
+  '收到 Webhook 后用 LLM 总结并发站内通知',
+];
+
+function WorkflowAiStarter({ onStart, busy }: { onStart: (prompt: string) => void; busy: boolean }) {
+  const [prompt, setPrompt] = useState('');
+  function submit() { const t = prompt.trim(); if (t && !busy) onStart(t); }
+  return (
+    <GlassCard animated>
+      <div className="p-4 flex flex-col gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Sparkles className="w-4 h-4" style={{ color: 'rgba(139,92,246,0.9)' }} />
+          <span className="text-[14px] font-semibold text-token-primary">一句话生成工作流</span>
+          <span className="text-[12px] text-token-muted">描述你想做什么，AI 自动搭好并接线，缺的再补</span>
+        </div>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(); }}
+          placeholder="例如：每天定时抓取 TAPD 缺陷数据，用 LLM 分析后生成网页报告（Cmd/Ctrl+Enter 发送）"
+          rows={2}
+          disabled={busy}
+          className="prd-field w-full px-3 py-2 rounded-[8px] text-[13px] resize-y"
+        />
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {AI_STARTER_EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                onClick={() => setPrompt(ex)}
+                disabled={busy}
+                className="surface-inset text-token-muted text-[11px] px-2 py-1 rounded-full hover-bg-soft transition-colors disabled:opacity-50"
+              >
+                {ex.length > 18 ? ex.slice(0, 18) + '…' : ex}
+              </button>
+            ))}
+          </div>
+          <Button variant="primary" size="sm" onClick={submit} disabled={busy || !prompt.trim()}>
+            {busy ? '生成中…' : 'AI 生成工作流'}
+          </Button>
+        </div>
       </div>
     </GlassCard>
   );
@@ -645,6 +696,20 @@ export function WorkflowListPage() {
     setCreating(false);
   }
 
+  // 一句话起步：建一个空白工作流后，带着需求进画布让 AI 自动生成
+  async function handleStartFromAi(prompt: string) {
+    const text = prompt.trim();
+    if (!text || creating) return;
+    setCreating(true);
+    try {
+      const res = await createWorkflow({ name: 'AI 工作流', description: '', icon: 'WF', tags: [] });
+      if (res.success && res.data) {
+        navigate(`/workflow-agent/${res.data.workflow.id}/canvas`, { state: { aiPrompt: text } });
+      }
+    } catch { /* ignore */ }
+    setCreating(false);
+  }
+
   async function handleCreateTestWorkflow() {
     setCreatingTest(true);
     try {
@@ -747,6 +812,9 @@ export function WorkflowListPage() {
           </div>
         }
       />
+
+      {/* 一句话起步：描述需求 → AI 自动生成可执行工作流 */}
+      <WorkflowAiStarter onStart={handleStartFromAi} busy={creating} />
 
       <div data-tour-id="workflow-list" className="pb-6 w-full">
 

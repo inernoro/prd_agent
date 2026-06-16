@@ -25,7 +25,7 @@ import SpotlightCard from '@/components/reactbits/SpotlightCard';
 import { SkillGlyph } from './SkillGlyph';
 import { glyphWarmBg, glyphCardGlow } from '@/lib/skillGlyphRegistry';
 import { SkillDetailModal } from './SkillDetailModal';
-import { useSkillShare } from './useSkillShare';
+import { skillShareDialog } from './skillShareDialogStore';
 
 export interface MarketplaceCardProps {
   item: MixedMarketplaceItem;
@@ -135,7 +135,6 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   const typeDef = CONFIG_TYPE_REGISTRY[item.type] as ConfigTypeDefinition | undefined;
   const [localForking, setLocalForking] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const { sharing, shareSkill } = useSkillShare();
   const cardRef = React.useRef<HTMLDivElement>(null);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -312,10 +311,9 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
               <Button
                 size="xs"
                 variant="secondary"
-                disabled={sharing}
                 onClick={(e) => {
                   e.stopPropagation();
-                  void shareSkill(item.data.id);
+                  skillShareDialog.open({ id: item.data.id, title: (item.data as MarketplaceSkill).title });
                 }}
                 title="生成公开分享链接"
               >

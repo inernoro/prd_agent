@@ -270,6 +270,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
+// 工作流结构校验 + 自动接线 + 缺项扫描（纯函数，无状态）
+builder.Services.AddSingleton<PrdAgent.Core.Services.WorkflowValidationService>();
 
 // 工作流调度轮询：每 30 秒扫一次到期的 once / cron 调度，自动入队
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>();
@@ -284,6 +286,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillServic
 builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.PmAgentService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MarketingConsultService>();
 
 // 演讲智能体（长文本 → 思维导图演讲）
 builder.Services.AddScoped<PrdAgent.Api.Services.SpeechAgentService>();

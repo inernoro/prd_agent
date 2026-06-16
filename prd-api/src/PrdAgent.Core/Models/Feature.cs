@@ -56,6 +56,9 @@ public class Feature
     /// <summary>父功能 ID（功能模块分解层级，可空）</summary>
     public string? ParentId { get; set; }
 
+    /// <summary>挂载到的产品结构节点 ID（功能模块/能力骨架树，见 ProductStructureNode；空=未归类）</summary>
+    public string? StructureNodeId { get; set; }
+
     /// <summary>实现的需求 ID 列表（功能落需求，N:N）</summary>
     public List<string> RequirementIds { get; set; } = new();
 

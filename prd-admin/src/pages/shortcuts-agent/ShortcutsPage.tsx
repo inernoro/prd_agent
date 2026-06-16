@@ -38,6 +38,7 @@ import {
   type ShortcutTemplateItem,
   type ShortcutCollectionItem,
 } from '@/services/real/shortcutsAgent';
+import { copyWithFeedback } from '@/lib/clipboard';
 
 // ─── Binding type labels (收藏是必备功能，绑定是附加功能) ───
 const BINDING_LABELS: Record<string, { label: string; icon: typeof Bookmark; color: string }> = {
@@ -278,9 +279,19 @@ function ICloudTemplatePanel() {
 
       {expanded && (
         <div style={{ padding: '12px 16px 16px' }}>
+          {/* 影响说明：先讲清「不配会怎样」，再讲怎么配，促使一次性配好 */}
+          <div style={{
+            fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 12,
+            padding: '10px 12px', borderRadius: 10,
+            background: 'rgba(255,149,0,0.08)', border: '1px solid rgba(255,149,0,0.18)',
+          }}>
+            <strong style={{ color: '#ff9500' }}>配一次，全站受益。</strong>
+            未配置时，所有人扫码后只能<strong>手动新建快捷指令</strong>（步骤多、易出错）；
+            配好这个 iCloud 模板后，全站用户扫码即可<strong>一键安装</strong>。
+          </div>
           {/* 引导说明 */}
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 14 }}>
-            iOS 15+ 要求通过 iCloud 链接安装快捷指令。只需一次性配置：
+            iOS 15+ 要求通过 iCloud 链接安装快捷指令。只需一次性配置（需要一台 Mac）：
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
@@ -809,14 +820,16 @@ function QRCodePanel({
     name,
   });
 
-  const copyToken = () => {
-    navigator.clipboard.writeText(token);
+  const copyToken = async () => {
+    const ok = await copyWithFeedback(token, { successMessage: 'Token 已复制', label: 'Token' });
+    if (!ok) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const copyConfig = () => {
-    navigator.clipboard.writeText(installConfig);
+  const copyConfig = async () => {
+    const ok = await copyWithFeedback(installConfig, { successMessage: '安装配置已复制', label: '安装配置' });
+    if (!ok) return;
     setConfigCopied(true);
     setTimeout(() => setConfigCopied(false), 2000);
   };

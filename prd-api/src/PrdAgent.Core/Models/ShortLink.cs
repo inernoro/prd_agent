@@ -41,4 +41,5 @@ public static class ShortLinkTargetTypes
     public const string Report = "report";
     public const string DocumentStore = "document_store";
     public const string Toolbox = "toolbox";
+    public const string MarketplaceSkill = "marketplace_skill";
 }
