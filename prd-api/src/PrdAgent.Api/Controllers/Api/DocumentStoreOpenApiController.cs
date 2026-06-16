@@ -72,11 +72,19 @@ public class DocumentStoreOpenApiController : ControllerBase
     {
         var userId = GetBoundUserId();
         var resolved = limit is > 0 and <= 200 ? limit : 50;
-        var filter = Builders<DocumentStore>.Filter.And(
-            Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
-            Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
-            Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
-            Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null));
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        var b = Builders<DocumentStore>.Filter;
+        // 与 entries/content 的 CanRead 对齐：owner + team-shared 都可发现。
+        // 不含全站 public（那是海量 IsPublic 库的火药桶，且不属于"用户自己的知识库"）；
+        // public 库靠分享链直达，知道 id 仍可经 entries/content 读取。
+        var visible = myTeamIds.Count > 0
+            ? b.Or(b.Eq(s => s.OwnerId, userId), b.AnyIn(s => s.SharedTeamIds, myTeamIds))
+            : b.Eq(s => s.OwnerId, userId);
+        var filter = b.And(
+            visible,
+            b.Eq(s => s.PmProjectId, (string?)null),
+            b.Eq(s => s.ProductKnowledgeRef, (string?)null),
+            b.Eq(s => s.ShituCategoryRef, (string?)null));
         var items = await _db.DocumentStores.Find(filter)
             .SortByDescending(s => s.UpdatedAt)
             .Limit(resolved)
