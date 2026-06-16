@@ -286,6 +286,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillServic
 builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.PmAgentService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MarketingConsultService>();
 
 // 演讲智能体（长文本 → 思维导图演讲）
 builder.Services.AddScoped<PrdAgent.Api.Services.SpeechAgentService>();

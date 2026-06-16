@@ -34,14 +34,20 @@ public class ProductAgentController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IFileContentExtractor _fileExtractor;
+    private readonly MarketingConsultService _marketingConsult;
+    private readonly IHostedSiteService _hostedSites;
+    private readonly IHostEnvironment _env;
 
-    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext, IFileContentExtractor fileExtractor)
+    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext, IFileContentExtractor fileExtractor, MarketingConsultService marketingConsult, IHostedSiteService hostedSites, IHostEnvironment env)
     {
         _db = db;
         _logger = logger;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _fileExtractor = fileExtractor;
+        _marketingConsult = marketingConsult;
+        _hostedSites = hostedSites;
+        _env = env;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -1614,6 +1620,14 @@ public class ProductAgentController : ControllerBase
             Tags = request.Tags ?? new(),
             TemplateId = request.TemplateId,
             FormData = request.FormData ?? new(),
+            MerchantNo = request.MerchantNo?.Trim(),
+            ShortName = request.ShortName?.Trim(),
+            Status = request.Status?.Trim(),
+            CertStatus = request.CertStatus?.Trim(),
+            Region = request.Region?.Trim(),
+            Industry = request.Industry?.Trim(),
+            OpenedAt = request.OpenedAt,
+            ExpireAt = request.ExpireAt,
             OwnerId = userId,
         };
         await _db.Customers.InsertOneAsync(customer);
@@ -1635,6 +1649,14 @@ public class ProductAgentController : ControllerBase
         u = u.Set(c => c.Description, request.Description?.Trim());
         if (request.Tags != null) u = u.Set(c => c.Tags, request.Tags);
         if (request.FormData != null) u = u.Set(c => c.FormData, request.FormData);
+        u = u.Set(c => c.MerchantNo, request.MerchantNo?.Trim());
+        u = u.Set(c => c.ShortName, request.ShortName?.Trim());
+        u = u.Set(c => c.Status, request.Status?.Trim());
+        u = u.Set(c => c.CertStatus, request.CertStatus?.Trim());
+        u = u.Set(c => c.Region, request.Region?.Trim());
+        u = u.Set(c => c.Industry, request.Industry?.Trim());
+        u = u.Set(c => c.OpenedAt, request.OpenedAt);
+        u = u.Set(c => c.ExpireAt, request.ExpireAt);
         await _db.Customers.UpdateOneAsync(c => c.Id == customerId, u);
         var updated = await _db.Customers.Find(c => c.Id == customerId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
@@ -1652,6 +1674,652 @@ public class ProductAgentController : ControllerBase
         await _db.Customers.UpdateOneAsync(c => c.Id == customerId,
             Builders<Customer>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ════════════════════════ 客户动态跟进 CustomerFollowUp（仿 ProductItemActivity）════════════════════════
+
+    /// <summary>客户动态跟进列表（按时间倒序，最新在前）。登录可读。</summary>
+    [HttpGet("customers/{customerId}/follow-ups")]
+    public async Task<IActionResult> ListCustomerFollowUps(string customerId)
+    {
+        var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (customer == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
+        var items = await _db.CustomerFollowUps.Find(f => f.CustomerId == customerId && !f.IsDeleted)
+            .SortByDescending(f => f.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>新增一条客户动态跟进（富文本 HTML）。</summary>
+    [HttpPost("customers/{customerId}/follow-ups")]
+    public async Task<IActionResult> CreateCustomerFollowUp(string customerId, [FromBody] CustomerFollowUpRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "跟进内容不能为空"));
+        var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (customer == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
+        var userId = GetUserId();
+        var createdByName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var followUp = new CustomerFollowUp
+        {
+            CustomerId = customerId,
+            Content = request.Content,
+            CreatedByUserId = userId,
+            CreatedByName = createdByName,
+        };
+        await _db.CustomerFollowUps.InsertOneAsync(followUp);
+        return Ok(ApiResponse<object>.Ok(followUp));
+    }
+
+    /// <summary>删除一条客户动态跟进（软删除，仅创建人或管理员可删）。</summary>
+    [HttpDelete("follow-ups/{followUpId}")]
+    public async Task<IActionResult> DeleteCustomerFollowUp(string followUpId)
+    {
+        var followUp = await _db.CustomerFollowUps.Find(f => f.Id == followUpId && !f.IsDeleted).FirstOrDefaultAsync();
+        if (followUp == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "跟进记录不存在"));
+        if (followUp.CreatedByUserId != GetUserId() && !await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅创建人或管理员可删除"));
+        await _db.CustomerFollowUps.UpdateOneAsync(f => f.Id == followUpId,
+            Builders<CustomerFollowUp>.Update.Set(f => f.IsDeleted, true).Set(f => f.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ════════════════════════ 营销问策 MarketingConsult（客户详情 Tab）════════════════════════
+    // 全链路对照「项目简报 PmBriefing」复用：LLM 产 JSON → MarketingReportRenderer 渲染 HTML →
+    // 分享 Token / 切模版重渲染 / 保存网页托管。鉴权同客户读/写（登录可读，创建者/管理员可删除性操作）。
+
+    /// <summary>营销问策可选模版清单（SSOT，前端模版选择器消费）。</summary>
+    [HttpGet("consult/templates")]
+    public IActionResult ListConsultTemplates()
+        => Ok(ApiResponse<object>.Ok(new { items = MarketingReportRenderer.Templates.Select(t => new { key = t.Key, label = t.Label, accent = t.Accent, pageBg = t.PageBg }).ToList() }));
+
+    /// <summary>该客户的历史问策报告列表（精简字段，不含 html）。登录可读。</summary>
+    [HttpGet("customers/{customerId}/consult")]
+    public async Task<IActionResult> ListConsultReports(string customerId)
+    {
+        var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (customer == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
+        var reports = await _db.MarketingConsultReports.Find(r => r.CustomerId == customerId && !r.IsDeleted)
+            .SortByDescending(r => r.CreatedAt).Limit(50).ToListAsync();
+        var items = reports.Select(r => ToConsultListItem(r, customer.Name)).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>全部问策报告列表（精简，含客户名 / 自由问策标注）。登录可读，营销问策子模块左侧列表。
+    /// 支持分页 + 筛选：keyword（标题模糊，不区分大小写）/ customerId / verdict / template。</summary>
+    [HttpGet("consult")]
+    public async Task<IActionResult> ListAllConsult(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] string? keyword = null, [FromQuery] string? customerId = null,
+        [FromQuery] string? verdict = null, [FromQuery] string? template = null)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var b = Builders<MarketingConsultReport>.Filter;
+        var conds = new List<FilterDefinition<MarketingConsultReport>> { b.Eq(r => r.IsDeleted, false) };
+        if (!string.IsNullOrWhiteSpace(keyword))
+            conds.Add(b.Regex(r => r.Title,
+                new MongoDB.Bson.BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(keyword.Trim()), "i")));
+        if (!string.IsNullOrWhiteSpace(customerId))
+            conds.Add(b.Eq(r => r.CustomerId, customerId.Trim()));
+        if (!string.IsNullOrWhiteSpace(verdict))
+            conds.Add(b.Eq(r => r.Verdict, verdict.Trim()));
+        if (!string.IsNullOrWhiteSpace(template))
+            conds.Add(b.Eq(r => r.Template, template.Trim()));
+
+        var filter = b.And(conds);
+        var total = await _db.MarketingConsultReports.CountDocumentsAsync(filter);
+        var reports = await _db.MarketingConsultReports.Find(filter)
+            .SortByDescending(r => r.CreatedAt)
+            .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync();
+
+        var custIds = reports.Where(r => !string.IsNullOrEmpty(r.CustomerId)).Select(r => r.CustomerId).Distinct().ToList();
+        var nameMap = new Dictionary<string, string>();
+        if (custIds.Count > 0)
+        {
+            var custs = await _db.Customers.Find(c => custIds.Contains(c.Id)).ToListAsync();
+            foreach (var c in custs) nameMap[c.Id] = c.Name;
+        }
+        var items = reports.Select(r => ToConsultListItem(
+            r,
+            string.IsNullOrEmpty(r.CustomerId) ? null : (nameMap.TryGetValue(r.CustomerId, out var n) ? n : "（已删除客户）"))).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>问策报告详情（含 html）。登录可读。</summary>
+    [HttpGet("consult/{reportId}")]
+    public async Task<IActionResult> GetConsultReport(string reportId)
+    {
+        var r = await _db.MarketingConsultReports.Find(x => x.Id == reportId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "问策报告不存在"));
+        return Ok(ApiResponse<object>.Ok(ToConsultDetail(r)));
+    }
+
+    /// <summary>
+    /// 生成营销问策报告（SSE 流式）。input 为空 = 一键问策（自动聚合客户全量信息 + 动态跟进）。
+    /// 阶段：collecting → generating → rendering；事件 stage / model / thinking / typing / error / done(reportId)。
+    /// </summary>
+    [HttpPost("consult/generate")]
+    [Produces("text/event-stream")]
+    public async Task GenerateConsult([FromQuery] string? template, [FromBody] GenerateConsultRequest? request)
+    {
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        async Task Sse(string evt, object data)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(data);
+            await Response.WriteAsync($"event: {evt}\ndata: {json}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        var userId = GetUserId();
+        // 可选客户：带 customerId 则绑定该客户；否则纯自由文本问策
+        Customer? customer = null;
+        var customerId = request?.CustomerId?.Trim();
+        if (!string.IsNullOrWhiteSpace(customerId))
+        {
+            customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
+            if (customer == null) { await Sse("error", new { message = "客户不存在" }); await Sse("done", new { error = "客户不存在" }); return; }
+        }
+        // 既无客户又无输入：无从问策
+        if (customer == null && string.IsNullOrWhiteSpace(request?.Input))
+        {
+            await Sse("error", new { message = "请输入客户情况，或选择一个已有客户" });
+            await Sse("done", new { error = "缺少问策输入" });
+            return;
+        }
+
+        var templateRaw = request?.Template ?? template;
+        var consultTemplate = MarketingReportRenderer.IsValidTemplate(templateRaw) ? templateRaw! : MarketingReportRenderer.DefaultTemplate;
+
+        await Sse("stage", new { stage = "collecting", message = "正在汇总客户信息与跟进动态…" });
+
+        // 聚合客户硬数据 + 动态跟进 + 用户输入（input 为空即一键问策）
+        var (customerSummary, renderData) = await BuildConsultDataAsync(customer, request?.Input, request?.Note);
+        var knowledgeContext = await BuildConsultKnowledgeContextAsync(userId);
+
+        await Sse("stage", new { stage = "generating", message = "AI 正在撰写营销问策评估…" });
+        string? err = null;
+        string? model = null;
+
+        // 在 LLM 调用前打开 LlmRequestContext 作用域（规则 llm-gateway：UserId 必填，否则 User not found）。
+        // MarketingConsultService 内部同时也走 GatewayRequestContext.UserId，双保险。
+        MarketingConsultAiContent? ai;
+        using (_llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
+            ViewRole: null, DocumentChars: customerSummary.Length, DocumentHash: null,
+            SystemPromptRedacted: "product-marketing-consult", RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Product.MarketingConsult)))
+        {
+            ai = await _marketingConsult.GenerateAsync(
+                customerSummary, knowledgeContext, userId,
+                onContent: async text => await Sse("typing", new { text }),
+                onThinking: async text => await Sse("thinking", new { text }),
+                onError: e => err = e,
+                onModel: m => model = m);
+        }
+        if (model != null) await Sse("model", new { model });
+        if (ai == null)
+        {
+            await Sse("error", new { message = err ?? "营销问策生成失败" });
+            await Sse("done", new { error = err ?? "营销问策生成失败" });
+            return;
+        }
+
+        await Sse("stage", new { stage = "rendering", message = "正在渲染报告页面…" });
+        renderData.Ai = ai;
+        renderData.Model = model;
+        renderData.Template = consultTemplate;
+        var html = MarketingReportRenderer.Render(renderData);
+
+        var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var titleSubject = customer?.Name ?? renderData.CustomerName;
+        var report = new MarketingConsultReport
+        {
+            CustomerId = customerId ?? string.Empty,
+            Title = $"{titleSubject} 营销问策 · {MarketingReportRenderer.ToCst(DateTime.UtcNow):yyyy-MM-dd}",
+            InputText = (request?.Input ?? "").Trim(),
+            Model = model,
+            Template = consultTemplate,
+            Verdict = ai.Verdict,
+            Html = html,
+            RenderDataJson = System.Text.Json.JsonSerializer.Serialize(renderData),
+            AiContentJson = System.Text.Json.JsonSerializer.Serialize(ai),
+            CreatedByUserId = userId,
+            CreatedByName = creatorName,
+        };
+        await _db.MarketingConsultReports.InsertOneAsync(report);
+        await Sse("done", new { reportId = report.Id, title = report.Title, model });
+    }
+
+    /// <summary>切换问策报告模版 —— 用落库的渲染数据快照重渲染，零 LLM。登录可操作。</summary>
+    [HttpPost("consult/{reportId}/restyle")]
+    public async Task<IActionResult> RestyleConsult(string reportId, [FromQuery] string? template, [FromBody] RestyleConsultRequest? request)
+    {
+        var r = await _db.MarketingConsultReports.Find(x => x.Id == reportId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "问策报告不存在"));
+        var templateKey = request?.Template ?? template;
+        if (!MarketingReportRenderer.IsValidTemplate(templateKey))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未知的报告模版"));
+        if (string.IsNullOrWhiteSpace(r.RenderDataJson))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该报告无渲染快照，不支持切换模版，请重新生成"));
+
+        MarketingReportRenderer.RenderData? data;
+        try { data = System.Text.Json.JsonSerializer.Deserialize<MarketingReportRenderer.RenderData>(r.RenderDataJson); }
+        catch { data = null; }
+        if (data == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "报告渲染数据损坏，请重新生成"));
+
+        data.Template = templateKey!;
+        var html = MarketingReportRenderer.Render(data);
+        await _db.MarketingConsultReports.UpdateOneAsync(x => x.Id == reportId,
+            Builders<MarketingConsultReport>.Update
+                .Set(x => x.Html, html)
+                .Set(x => x.Template, templateKey!)
+                .Set(x => x.RenderDataJson, System.Text.Json.JsonSerializer.Serialize(data))
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { template = templateKey, html }));
+    }
+
+    /// <summary>开启/关闭问策报告分享。开启生成可撤销 token；关闭置空即失效。登录可操作。</summary>
+    [HttpPost("consult/{reportId}/share")]
+    public async Task<IActionResult> ToggleConsultShare(string reportId, [FromBody] ToggleConsultShareRequest request)
+    {
+        var r = await _db.MarketingConsultReports.Find(x => x.Id == reportId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "问策报告不存在"));
+
+        if (request.Enabled)
+        {
+            var token = string.IsNullOrEmpty(r.ShareToken) ? MarketingConsultReport.GenerateShareToken() : r.ShareToken;
+            await _db.MarketingConsultReports.UpdateOneAsync(x => x.Id == reportId,
+                Builders<MarketingConsultReport>.Update.Set(x => x.ShareToken, token).Set(x => x.UpdatedAt, DateTime.UtcNow));
+            return Ok(ApiResponse<object>.Ok(new { shared = true, shareToken = token }));
+        }
+        await _db.MarketingConsultReports.UpdateOneAsync(x => x.Id == reportId,
+            Builders<MarketingConsultReport>.Update.Set(x => x.ShareToken, (string?)null).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { shared = false, shareToken = (string?)null }));
+    }
+
+    /// <summary>匿名查看分享的问策报告 —— 直接返回 text/html；token 被撤销即 404。</summary>
+    [HttpGet("consult/shared/{token}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ViewSharedConsult(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+        var r = await _db.MarketingConsultReports.Find(x => x.ShareToken == token && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+        return Content(r.Html, "text/html; charset=utf-8");
+    }
+
+    /// <summary>把问策报告保存到网页托管。复用 HostedSite 体系，SourceType=api。登录可操作。</summary>
+    [HttpPost("consult/{reportId}/save-to-hosting")]
+    public async Task<IActionResult> SaveConsultToHosting(string reportId)
+    {
+        var userId = GetUserId();
+        var r = await _db.MarketingConsultReports.Find(x => x.Id == reportId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "问策报告不存在"));
+        var customer = await _db.Customers.Find(c => c.Id == r.CustomerId).FirstOrDefaultAsync();
+
+        var site = await _hostedSites.CreateFromContentAsync(
+            userId, r.Html, r.Title, $"营销问策 · {customer?.Name ?? r.Title}",
+            sourceType: "api", sourceRef: $"marketing-consult:{r.Id}",
+            tags: new List<string> { "营销问策" }, folder: null, CancellationToken.None);
+        await _db.MarketingConsultReports.UpdateOneAsync(x => x.Id == reportId,
+            Builders<MarketingConsultReport>.Update
+                .Set(x => x.HostedSiteId, site.Id)
+                .Set(x => x.HostedSiteUrl, site.SiteUrl)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, siteUrl = site.SiteUrl }));
+    }
+
+    // ── 营销问策知识库（DocumentStore）──
+
+    /// <summary>问策知识库条目列表（精简，不含全文）。ensure 库存在，按 CreatedAt 升序。登录可读。</summary>
+    [HttpGet("consult/knowledge")]
+    public async Task<IActionResult> ListConsultKnowledge()
+    {
+        var store = await EnsureConsultKnowledgeStoreAsync(GetUserId());
+        if (store == null) return Ok(ApiResponse<object>.Ok(new { storeId = (string?)null, storeName = "问策知识库", entries = new List<object>() }));
+        var entries = await _db.DocumentEntries
+            .Find(e => e.StoreId == store.Id && !e.IsFolder)
+            .SortBy(e => e.CreatedAt).ToListAsync();
+        var items = entries.Select(e => new
+        {
+            id = e.Id,
+            title = e.Title,
+            summary = e.Summary,
+            contentType = e.ContentType,
+            fileSize = e.FileSize,
+            createdAt = e.CreatedAt,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { storeId = store.Id, storeName = store.Name, entries = items }));
+    }
+
+    /// <summary>问策知识库单条全文。content 取 ContentIndex（兜底 Summary）。登录可读；条目不属于问策库或不存在 404。</summary>
+    [HttpGet("consult/knowledge/{entryId}")]
+    public async Task<IActionResult> GetConsultKnowledgeEntry(string entryId)
+    {
+        var store = await EnsureConsultKnowledgeStoreAsync(GetUserId());
+        if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库条目不存在"));
+        var e = await _db.DocumentEntries.Find(x => x.Id == entryId && x.StoreId == store.Id && !x.IsFolder).FirstOrDefaultAsync();
+        if (e == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库条目不存在"));
+        var content = !string.IsNullOrWhiteSpace(e.ContentIndex) ? e.ContentIndex : (e.Summary ?? string.Empty);
+        return Ok(ApiResponse<object>.Ok(new { id = e.Id, title = e.Title, content }));
+    }
+
+    /// <summary>新增一条问策知识库条目。需管理权限。title/content 必填。</summary>
+    [HttpPost("consult/knowledge")]
+    public async Task<IActionResult> AddConsultKnowledge([FromBody] AddConsultKnowledgeRequest request)
+    {
+        var userId = GetUserId();
+        if (!await CanManageAsync(userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var title = request?.Title?.Trim();
+        var content = request?.Content?.Trim();
+        if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题和内容不能为空"));
+
+        var store = await EnsureConsultKnowledgeStoreAsync(userId);
+        if (store == null) return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "问策知识库初始化失败"));
+
+        var entry = new DocumentEntry
+        {
+            StoreId = store.Id,
+            Title = title,
+            Summary = content.Length > 200 ? content[..200] : content,
+            ContentIndex = content,
+            ContentType = "text/markdown",
+            SourceType = DocumentSourceType.Migration,
+            FileSize = System.Text.Encoding.UTF8.GetByteCount(content),
+            CreatedBy = userId,
+            Tags = new List<string> { "营销问策" },
+        };
+        await _db.DocumentEntries.InsertOneAsync(entry);
+        var count = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == store.Id && !e.IsFolder);
+        await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+            Builders<DocumentStore>.Update.Set(s => s.DocumentCount, (int)count).Set(s => s.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id = entry.Id,
+            title = entry.Title,
+            summary = entry.Summary,
+            contentType = entry.ContentType,
+            fileSize = entry.FileSize,
+            createdAt = entry.CreatedAt,
+        }));
+    }
+
+    // ── 营销问策内部辅助 ──
+
+    private object ToConsultListItem(MarketingConsultReport r, string? customerName = null) => new
+    {
+        id = r.Id,
+        customerId = r.CustomerId,
+        customerName,
+        title = r.Title,
+        template = r.Template,
+        model = r.Model,
+        // 新数据直接读落库 Verdict；旧数据 Verdict 为空时回退解析 AiContentJson，保持显示不破坏
+        verdict = !string.IsNullOrWhiteSpace(r.Verdict) ? r.Verdict : SafeVerdict(r.AiContentJson),
+        canRestyle = !string.IsNullOrWhiteSpace(r.RenderDataJson),
+        shared = !string.IsNullOrEmpty(r.ShareToken),
+        shareToken = r.ShareToken,
+        hostedSiteId = r.HostedSiteId,
+        hostedSiteUrl = r.HostedSiteUrl,
+        createdByUserId = r.CreatedByUserId,
+        createdByName = r.CreatedByName,
+        createdAt = r.CreatedAt,
+    };
+
+    private object ToConsultDetail(MarketingConsultReport r)
+    {
+        MarketingConsultAiContent? ai = null;
+        if (!string.IsNullOrWhiteSpace(r.AiContentJson))
+            try { ai = System.Text.Json.JsonSerializer.Deserialize<MarketingConsultAiContent>(r.AiContentJson); } catch { ai = null; }
+        return new
+        {
+            id = r.Id,
+            customerId = r.CustomerId,
+            title = r.Title,
+            template = r.Template,
+            model = r.Model,
+            html = r.Html,
+            aiContent = ai,
+            inputText = r.InputText,
+            canRestyle = !string.IsNullOrWhiteSpace(r.RenderDataJson),
+            shared = !string.IsNullOrEmpty(r.ShareToken),
+            shareToken = r.ShareToken,
+            hostedSiteId = r.HostedSiteId,
+            hostedSiteUrl = r.HostedSiteUrl,
+            createdByUserId = r.CreatedByUserId,
+            createdByName = r.CreatedByName,
+            createdAt = r.CreatedAt,
+        };
+    }
+
+    private static string? SafeVerdict(string? aiContentJson)
+    {
+        if (string.IsNullOrWhiteSpace(aiContentJson)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<MarketingConsultAiContent>(aiContentJson)?.Verdict; }
+        catch { return null; }
+    }
+
+    /// <summary>聚合客户硬数据 + 动态跟进 + 用户输入 → (给 LLM 的文本摘要, 渲染数据)。input 为空即一键问策。</summary>
+    private async Task<(string summary, MarketingReportRenderer.RenderData data)> BuildConsultDataAsync(
+        Customer? c, string? userInput, string? userNote)
+    {
+        // 无客户（自由文本问策）：渲染主体名取输入首句摘要，summary 仅含用户输入
+        if (c == null)
+        {
+            var subject = DeriveFreeConsultSubject(userInput);
+            var freeData = new MarketingReportRenderer.RenderData { CustomerName = subject, GeneratedAt = DateTime.UtcNow };
+            var fsb = new System.Text.StringBuilder();
+            fsb.AppendLine("本次为「自由文本问策」，没有绑定系统内已有客户，以下为用户描述的客户情况（数据以此为准，不得编造未提供的数字）：");
+            fsb.AppendLine((userInput ?? "").Trim());
+            if (!string.IsNullOrWhiteSpace(userNote))
+            {
+                fsb.AppendLine();
+                fsb.AppendLine("用户对本次问策的额外要求：");
+                fsb.AppendLine(userNote.Trim());
+            }
+            return (fsb.ToString(), freeData);
+        }
+
+        var followUps = await _db.CustomerFollowUps.Find(f => f.CustomerId == c.Id && !f.IsDeleted)
+            .SortByDescending(f => f.CreatedAt).Limit(20).ToListAsync();
+
+        var data = new MarketingReportRenderer.RenderData
+        {
+            CustomerName = c.Name,
+            MerchantNo = c.MerchantNo,
+            Industry = c.Industry,
+            Region = c.Region,
+            Company = c.Company,
+            GeneratedAt = DateTime.UtcNow,
+        };
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"客户名称：{c.Name}");
+        if (!string.IsNullOrWhiteSpace(c.MerchantNo)) sb.AppendLine($"商户编号：{c.MerchantNo}");
+        if (!string.IsNullOrWhiteSpace(c.ShortName)) sb.AppendLine($"商户简称：{c.ShortName}");
+        if (!string.IsNullOrWhiteSpace(c.Company)) sb.AppendLine($"所属公司：{c.Company}");
+        if (!string.IsNullOrWhiteSpace(c.Industry)) sb.AppendLine($"所属行业：{c.Industry}");
+        if (!string.IsNullOrWhiteSpace(c.Region)) sb.AppendLine($"所在区域：{c.Region}");
+        if (!string.IsNullOrWhiteSpace(c.Status)) sb.AppendLine($"商户状态：{c.Status}");
+        if (!string.IsNullOrWhiteSpace(c.CertStatus)) sb.AppendLine($"认证状态：{c.CertStatus}");
+        if (!string.IsNullOrWhiteSpace(c.Contact)) sb.AppendLine($"联系方式：{c.Contact}");
+        if (!string.IsNullOrWhiteSpace(c.Description)) sb.AppendLine($"客户描述：{c.Description}");
+        if (c.Tags.Count > 0) sb.AppendLine($"标签：{string.Join(" / ", c.Tags)}");
+        if (c.OpenedAt.HasValue) sb.AppendLine($"开户时间：{MarketingReportRenderer.ToCst(c.OpenedAt.Value):yyyy-MM-dd}");
+        if (c.FormData.Count > 0)
+            sb.AppendLine($"其他档案字段：{string.Join("；", c.FormData.Where(kv => !string.IsNullOrWhiteSpace(kv.Value)).Select(kv => $"{kv.Key}={kv.Value}"))}");
+
+        if (followUps.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"动态跟进记录（最近 {followUps.Count} 条，倒序）：");
+            foreach (var f in followUps)
+            {
+                var plain = StripHtmlToPlain(f.Content);
+                if (plain.Length > 400) plain = plain[..400] + "…";
+                sb.AppendLine($"- [{MarketingReportRenderer.ToCst(f.CreatedAt):yyyy-MM-dd}] {plain}");
+            }
+        }
+        else
+        {
+            sb.AppendLine();
+            sb.AppendLine("动态跟进记录：暂无");
+        }
+
+        if (!string.IsNullOrWhiteSpace(userInput))
+        {
+            sb.AppendLine();
+            sb.AppendLine("用户补充的客户情况（优先参考，但不得编造未提供的数字）：");
+            sb.AppendLine(userInput.Trim());
+        }
+        if (!string.IsNullOrWhiteSpace(userNote))
+        {
+            sb.AppendLine();
+            sb.AppendLine("用户对本次问策的额外要求：");
+            sb.AppendLine(userNote.Trim());
+        }
+        return (sb.ToString(), data);
+    }
+
+    /// <summary>自由问策（无客户）时，从用户输入派生一个简短主体名作报告标题/头部。</summary>
+    private static string DeriveFreeConsultSubject(string? input)
+    {
+        var text = (input ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(text)) return "自由问策";
+        var firstLine = text.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "自由问策";
+        return firstLine.Length > 16 ? firstLine[..16] + "…" : firstLine;
+    }
+
+    /// <summary>极简 HTML → 纯文本（跟进内容是富文本 HTML，喂 LLM 前去标签）。</summary>
+    private static string StripHtmlToPlain(string? html)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return string.Empty;
+        var text = System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", " ");
+        text = System.Net.WebUtility.HtmlDecode(text);
+        text = System.Text.RegularExpressions.Regex.Replace(text, "\\s+", " ").Trim();
+        return text;
+    }
+
+    // ── 问策知识库（复用 DocumentStore）find-or-create + 种子灌入 ──
+
+    private const string ConsultKnowledgeRef = "marketing-consult";
+
+    /// <summary>
+    /// find-or-create「问策知识库」DocumentStore（按 appKey=product-agent + ShituCategoryRef=marketing-consult 维度幂等）。
+    /// 首次为空时把 SeedData/marketing-consult/*.md 作为 DocumentEntry 灌入。返回知识库各条目摘录拼接（每篇截断）。
+    /// </summary>
+    private async Task<string?> BuildConsultKnowledgeContextAsync(string ownerUserId)
+    {
+        DocumentStore? store;
+        try { store = await EnsureConsultKnowledgeStoreAsync(ownerUserId); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[marketing-consult] ensure knowledge store failed, continue without knowledge");
+            return null;
+        }
+        if (store == null) return null;
+
+        var entries = await _db.DocumentEntries
+            .Find(e => e.StoreId == store.Id && !e.IsFolder)
+            .Limit(20).ToListAsync();
+        if (entries.Count == 0) return null;
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var e in entries)
+        {
+            var body = !string.IsNullOrWhiteSpace(e.ContentIndex) ? e.ContentIndex
+                     : (!string.IsNullOrWhiteSpace(e.Summary) ? e.Summary : "");
+            if (string.IsNullOrWhiteSpace(body)) continue;
+            // 每篇最多取约 4000 字符，避免上下文过长
+            if (body.Length > 4000) body = body[..4000] + "…";
+            sb.AppendLine($"《{e.Title}》");
+            sb.AppendLine(body);
+            sb.AppendLine();
+        }
+        var ctx = sb.ToString();
+        return string.IsNullOrWhiteSpace(ctx) ? null : ctx;
+    }
+
+    /// <summary>find-or-create 问策知识库；首次创建后从种子目录灌入条目（幂等：已存在条目则不重复灌）。</summary>
+    private async Task<DocumentStore?> EnsureConsultKnowledgeStoreAsync(string ownerUserId)
+    {
+        var store = await _db.DocumentStores
+            .Find(s => s.AppKey == "product-agent" && s.ShituCategoryRef == ConsultKnowledgeRef)
+            .FirstOrDefaultAsync();
+        if (store == null)
+        {
+            store = new DocumentStore
+            {
+                Name = "问策知识库",
+                Description = "营销问策方法论参考（全域粉销 / 营销四力 4FM），供 AI 评估引用。",
+                OwnerId = ownerUserId,
+                AppKey = "product-agent",
+                ShituCategoryRef = ConsultKnowledgeRef,
+                Tags = new List<string> { "营销问策" },
+            };
+            await _db.DocumentStores.InsertOneAsync(store);
+        }
+
+        var existing = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == store.Id && !e.IsFolder);
+        if (existing == 0)
+            await SeedConsultKnowledgeEntriesAsync(store, ownerUserId);
+        return store;
+    }
+
+    /// <summary>从 SeedData/marketing-consult/*.md 读取并灌入知识库条目（内容存 ContentIndex，便于直接读取）。</summary>
+    private async Task SeedConsultKnowledgeEntriesAsync(DocumentStore store, string ownerUserId)
+    {
+        var dir = Path.Combine(_env.ContentRootPath, "SeedData", "marketing-consult");
+        if (!Directory.Exists(dir))
+        {
+            _logger.LogWarning("[marketing-consult] seed dir not found: {Dir}", dir);
+            return;
+        }
+        var files = Directory.GetFiles(dir, "*.md").OrderBy(f => f).ToList();
+        var entries = new List<DocumentEntry>();
+        foreach (var file in files)
+        {
+            string raw;
+            try { raw = await System.IO.File.ReadAllTextAsync(file); }
+            catch (Exception ex) { _logger.LogWarning(ex, "[marketing-consult] read seed file failed: {File}", file); continue; }
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var title = Path.GetFileNameWithoutExtension(file);
+            // 标题去掉「01-」之类的排序前缀
+            var m = System.Text.RegularExpressions.Regex.Match(title, "^\\d+[-_.\\s]+(.+)$");
+            if (m.Success) title = m.Groups[1].Value;
+            var content = raw.Trim();
+            // ContentIndex 承载知识正文（截断保护，知识库读取走此字段）
+            var stored = content.Length > 12000 ? content[..12000] : content;
+            entries.Add(new DocumentEntry
+            {
+                StoreId = store.Id,
+                Title = title,
+                Summary = stored.Length > 200 ? stored[..200] : stored,
+                ContentIndex = stored,
+                ContentType = "text/markdown",
+                SourceType = DocumentSourceType.Migration,
+                FileSize = System.Text.Encoding.UTF8.GetByteCount(content),
+                CreatedBy = ownerUserId,
+                Tags = new List<string> { "营销问策" },
+            });
+        }
+        if (entries.Count > 0)
+        {
+            await _db.DocumentEntries.InsertManyAsync(entries);
+            await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+                Builders<DocumentStore>.Update.Set(s => s.DocumentCount, entries.Count).Set(s => s.UpdatedAt, DateTime.UtcNow));
+        }
     }
 
     // ════════════════════════ 产品类型 ProductCategory ════════════════════════
@@ -1847,6 +2515,390 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"该类型正被 {inUse} 条需求使用，无法删除"));
         await _db.RequirementTypes.UpdateOneAsync(t => t.Id == typeId,
             Builders<RequirementType>.Update.Set(t => t.IsDeleted, true).Set(t => t.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ════════════════════════ 产品结构（功能模块/能力骨架树）ProductStructureNode ════════════════════════
+
+    /// <summary>该产品全部结构节点（扁平列表，含 parentId/sortOrder，前端自建树）。读=登录可访问产品即可。</summary>
+    [HttpGet("products/{productId}/structure")]
+    public async Task<IActionResult> ListProductStructure(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var items = await _db.ProductStructureNodes.Find(n => n.ProductId == productId && !n.IsDeleted)
+            .SortBy(n => n.SortOrder).ThenBy(n => n.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新结构节点（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("products/{productId}/structure")]
+    public async Task<IActionResult> UpsertProductStructureNode(string productId, [FromBody] UpsertProductStructureNodeRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "节点名称不能为空"));
+        var name = request.Name.Trim();
+        var parentId = string.IsNullOrWhiteSpace(request.ParentId) ? null : request.ParentId.Trim();
+        if (parentId != null && !await _db.ProductStructureNodes.Find(n => n.Id == parentId && n.ProductId == productId && !n.IsDeleted).AnyAsync())
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "父节点不属于当前产品或已删除"));
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.ProductStructureNodes.Find(n => n.Id == request.Id && n.ProductId == productId && !n.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "结构节点不存在"));
+            if (parentId == request.Id)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "父节点不能是自身"));
+            var u = Builders<ProductStructureNode>.Update
+                .Set(n => n.Name, name)
+                .Set(n => n.Description, request.Description?.Trim())
+                .Set(n => n.NodeType, string.IsNullOrWhiteSpace(request.NodeType) ? null : request.NodeType.Trim())
+                .Set(n => n.ParentId, parentId)
+                .Set(n => n.SortOrder, request.SortOrder)
+                .Set(n => n.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductStructureNodes.UpdateOneAsync(n => n.Id == request.Id, u);
+            var updated = await _db.ProductStructureNodes.Find(n => n.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var node = new ProductStructureNode
+        {
+            ProductId = productId,
+            ParentId = parentId,
+            Name = name,
+            Description = request.Description?.Trim(),
+            NodeType = string.IsNullOrWhiteSpace(request.NodeType) ? null : request.NodeType.Trim(),
+            SortOrder = request.SortOrder,
+            OwnerId = GetUserId(),
+        };
+        await _db.ProductStructureNodes.InsertOneAsync(node);
+        return Ok(ApiResponse<object>.Ok(node));
+    }
+
+    /// <summary>删除结构节点（软删除，需管理权限）。级联软删该节点及全部后代，并把挂在这些节点上的功能 StructureNodeId 置空。</summary>
+    [HttpDelete("structure/{nodeId}")]
+    public async Task<IActionResult> DeleteProductStructureNode(string nodeId)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var node = await _db.ProductStructureNodes.Find(n => n.Id == nodeId && !n.IsDeleted).FirstOrDefaultAsync();
+        if (node == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "结构节点不存在"));
+        if (await FindAccessibleProductAsync(node.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        // 收集该节点及其全部后代（同产品内按 ParentId 自底向上展开）
+        var all = await _db.ProductStructureNodes.Find(n => n.ProductId == node.ProductId && !n.IsDeleted).ToListAsync();
+        var childrenByParent = all.Where(n => n.ParentId != null)
+            .GroupBy(n => n.ParentId!)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToList());
+        var toDelete = new List<string>();
+        var queue = new Queue<string>();
+        queue.Enqueue(nodeId);
+        while (queue.Count > 0)
+        {
+            var cur = queue.Dequeue();
+            toDelete.Add(cur);
+            if (childrenByParent.TryGetValue(cur, out var kids))
+                foreach (var kid in kids) queue.Enqueue(kid);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.ProductStructureNodes.UpdateManyAsync(
+            n => toDelete.Contains(n.Id),
+            Builders<ProductStructureNode>.Update.Set(n => n.IsDeleted, true).Set(n => n.UpdatedAt, now));
+        // 解除指向被删节点的功能挂载，避免悬挂引用
+        await _db.Features.UpdateManyAsync(
+            f => f.StructureNodeId != null && toDelete.Contains(f.StructureNodeId),
+            Builders<Feature>.Update.Set(f => f.StructureNodeId, null).Set(f => f.UpdatedAt, now));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true, deletedCount = toDelete.Count }));
+    }
+
+    /// <summary>设置 / 取消功能在结构树上的挂载（需管理权限）。structureNodeId 传 null = 取消归类。</summary>
+    [HttpPut("features/{featureId}/structure-node")]
+    public async Task<IActionResult> SetFeatureStructureNode(string featureId, [FromBody] SetFeatureStructureNodeRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var feature = await _db.Features.Find(f => f.Id == featureId && !f.IsDeleted).FirstOrDefaultAsync();
+        if (feature == null || await FindAccessibleProductAsync(feature.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "功能不存在或无权访问"));
+
+        var nodeId = string.IsNullOrWhiteSpace(request.StructureNodeId) ? null : request.StructureNodeId.Trim();
+        if (nodeId != null && !await _db.ProductStructureNodes.Find(n => n.Id == nodeId && n.ProductId == feature.ProductId && !n.IsDeleted).AnyAsync())
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "结构节点不属于当前产品或已删除"));
+
+        await _db.Features.UpdateOneAsync(f => f.Id == featureId,
+            Builders<Feature>.Update.Set(f => f.StructureNodeId, nodeId).Set(f => f.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.Features.Find(f => f.Id == featureId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    // ════════════════════════ 产品规则 ProductRule ════════════════════════
+
+    /// <summary>该产品全部核心规则（按 SortOrder、CreatedAt 排序）。读=登录可访问产品即可。</summary>
+    [HttpGet("products/{productId}/rules")]
+    public async Task<IActionResult> ListProductRules(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var items = await _db.ProductRules.Find(r => r.ProductId == productId && !r.IsDeleted)
+            .SortBy(r => r.SortOrder).ThenBy(r => r.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新产品规则（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("products/{productId}/rules")]
+    public async Task<IActionResult> UpsertProductRule(string productId, [FromBody] UpsertProductRuleRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "规则标题不能为空"));
+
+        var title = request.Title.Trim();
+        var content = (request.Content ?? "").Trim();
+        var category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim();
+        var allowedStatus = new[] { "draft", "active", "deprecated" };
+        var status = allowedStatus.Contains((request.Status ?? "").Trim()) ? request.Status!.Trim() : "active";
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.ProductRules.Find(r => r.Id == request.Id && r.ProductId == productId && !r.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品规则不存在"));
+            var u = Builders<ProductRule>.Update
+                .Set(r => r.Category, category)
+                .Set(r => r.Title, title)
+                .Set(r => r.Content, content)
+                .Set(r => r.Status, status)
+                .Set(r => r.SortOrder, request.SortOrder)
+                .Set(r => r.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductRules.UpdateOneAsync(r => r.Id == request.Id, u);
+            var updated = await _db.ProductRules.Find(r => r.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var item = new ProductRule
+        {
+            ProductId = productId,
+            Category = category,
+            Title = title,
+            Content = content,
+            Status = status,
+            SortOrder = request.SortOrder,
+            OwnerId = GetUserId(),
+        };
+        await _db.ProductRules.InsertOneAsync(item);
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    /// <summary>删除产品规则（软删除，需管理权限）。</summary>
+    [HttpDelete("rules/{ruleId}")]
+    public async Task<IActionResult> DeleteProductRule(string ruleId)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var item = await _db.ProductRules.Find(r => r.Id == ruleId && !r.IsDeleted).FirstOrDefaultAsync();
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品规则不存在"));
+        if (await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        await _db.ProductRules.UpdateOneAsync(r => r.Id == ruleId,
+            Builders<ProductRule>.Update.Set(r => r.IsDeleted, true).Set(r => r.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ════════════════════════ 产品字典/术语 ProductTerm ════════════════════════
+
+    /// <summary>该产品全部术语（按 SortOrder、CreatedAt 排序）。读=登录可访问产品即可。</summary>
+    [HttpGet("products/{productId}/terms")]
+    public async Task<IActionResult> ListProductTerms(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var items = await _db.ProductTerms.Find(t => t.ProductId == productId && !t.IsDeleted)
+            .SortBy(t => t.SortOrder).ThenBy(t => t.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新产品术语（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("products/{productId}/terms")]
+    public async Task<IActionResult> UpsertProductTerm(string productId, [FromBody] UpsertProductTermRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Term))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "术语不能为空"));
+
+        var term = request.Term.Trim();
+        var definition = (request.Definition ?? "").Trim();
+        var category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim();
+        var aliases = (request.Aliases ?? new List<string>())
+            .Select(a => (a ?? "").Trim())
+            .Where(a => a.Length > 0)
+            .Distinct()
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.ProductTerms.Find(t => t.Id == request.Id && t.ProductId == productId && !t.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品术语不存在"));
+            var u = Builders<ProductTerm>.Update
+                .Set(t => t.Term, term)
+                .Set(t => t.Aliases, aliases)
+                .Set(t => t.Definition, definition)
+                .Set(t => t.Category, category)
+                .Set(t => t.SortOrder, request.SortOrder)
+                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductTerms.UpdateOneAsync(t => t.Id == request.Id, u);
+            var updated = await _db.ProductTerms.Find(t => t.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var item = new ProductTerm
+        {
+            ProductId = productId,
+            Term = term,
+            Aliases = aliases,
+            Definition = definition,
+            Category = category,
+            SortOrder = request.SortOrder,
+            OwnerId = GetUserId(),
+        };
+        await _db.ProductTerms.InsertOneAsync(item);
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    /// <summary>删除产品术语（软删除，需管理权限）。</summary>
+    [HttpDelete("terms/{termId}")]
+    public async Task<IActionResult> DeleteProductTerm(string termId)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var item = await _db.ProductTerms.Find(t => t.Id == termId && !t.IsDeleted).FirstOrDefaultAsync();
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品术语不存在"));
+        if (await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        await _db.ProductTerms.UpdateOneAsync(t => t.Id == termId,
+            Builders<ProductTerm>.Update.Set(t => t.IsDeleted, true).Set(t => t.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ════════════════════════ 通用等级目录 ProductGradeOption ════════════════════════
+
+    private async Task EnsureGradeOptionsSeededAsync(string dimension, string entityType)
+    {
+        var existingIds = (await _db.ProductGradeOptions
+                .Find(o => o.Dimension == dimension && o.EntityType == entityType)
+                .Project(o => o.Id).ToListAsync())
+            .ToHashSet();
+        var missing = ProductGradeOption.BuildBuiltinSeeds(dimension, entityType)
+            .Where(s => !existingIds.Contains(s.Id)).ToList();
+        if (missing.Count > 0)
+            await _db.ProductGradeOptions.InsertManyAsync(missing);
+    }
+
+    /// <summary>等级目录列表（按 dimension + entityType 过滤；首次访问自动补齐内置项）。</summary>
+    [HttpGet("grade-options")]
+    public async Task<IActionResult> ListGradeOptions([FromQuery] string dimension, [FromQuery] string entityType)
+    {
+        if (!ProductGradeOption.Dimensions.Contains(dimension))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的维度（priority / severity）"));
+        if (!ProductGradeOption.EntityTypes.Contains(entityType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的对象类型（requirement / feature / defect）"));
+        await EnsureGradeOptionsSeededAsync(dimension, entityType);
+        var items = await _db.ProductGradeOptions
+            .Find(o => o.Dimension == dimension && o.EntityType == entityType && !o.IsDeleted)
+            .SortBy(o => o.SortOrder).ThenBy(o => o.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新等级项（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("grade-options")]
+    public async Task<IActionResult> UpsertGradeOption([FromBody] UpsertGradeOptionRequest request)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "等级名称不能为空"));
+        if (!ProductGradeOption.Dimensions.Contains(request.Dimension))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的维度（priority / severity）"));
+        if (!ProductGradeOption.EntityTypes.Contains(request.EntityType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的对象类型（requirement / feature / defect）"));
+        await EnsureGradeOptionsSeededAsync(request.Dimension, request.EntityType);
+        var name = request.Name.Trim();
+        var color = string.IsNullOrWhiteSpace(request.Color) ? "#60A5FA" : request.Color.Trim();
+        var definition = (request.Definition ?? "").Trim();
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.ProductGradeOptions.Find(o => o.Id == request.Id && !o.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "等级项不存在"));
+            var nameConflict = await _db.ProductGradeOptions.Find(o =>
+                o.Dimension == existing.Dimension && o.EntityType == existing.EntityType
+                && o.Name == name && o.Id != request.Id && !o.IsDeleted).AnyAsync();
+            if (nameConflict)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已存在同名等级项"));
+            var u = Builders<ProductGradeOption>.Update
+                .Set(o => o.Name, name)
+                .Set(o => o.Color, color)
+                .Set(o => o.Definition, definition)
+                .Set(o => o.SortOrder, request.SortOrder)
+                .Set(o => o.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductGradeOptions.UpdateOneAsync(o => o.Id == request.Id, u);
+            var updated = await _db.ProductGradeOptions.Find(o => o.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var nameExists = await _db.ProductGradeOptions.Find(o =>
+            o.Dimension == request.Dimension && o.EntityType == request.EntityType
+            && o.Name == name && !o.IsDeleted).AnyAsync();
+        if (nameExists)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已存在同名等级项"));
+        var maxOrder = (await _db.ProductGradeOptions
+                .Find(o => o.Dimension == request.Dimension && o.EntityType == request.EntityType && !o.IsDeleted)
+                .SortByDescending(o => o.SortOrder).FirstOrDefaultAsync())?.SortOrder ?? -1;
+        var item = new ProductGradeOption
+        {
+            Dimension = request.Dimension,
+            EntityType = request.EntityType,
+            Name = name,
+            Color = color,
+            Definition = definition,
+            SortOrder = request.SortOrder > 0 ? request.SortOrder : maxOrder + 1,
+            IsBuiltin = false,
+            OwnerId = GetUserId(),
+        };
+        await _db.ProductGradeOptions.InsertOneAsync(item);
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    /// <summary>删除等级项（软删除，需管理权限）。内置项不可删除。</summary>
+    [HttpDelete("grade-options/{optionId}")]
+    public async Task<IActionResult> DeleteGradeOption(string optionId)
+    {
+        if (!await CanManageAsync(GetUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var item = await _db.ProductGradeOptions.Find(o => o.Id == optionId && !o.IsDeleted).FirstOrDefaultAsync();
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "等级项不存在"));
+        if (item.IsBuiltin)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "内置等级项不可删除，可修改名称、颜色与定义"));
+        await _db.ProductGradeOptions.UpdateOneAsync(o => o.Id == optionId,
+            Builders<ProductGradeOption>.Update.Set(o => o.IsDeleted, true).Set(o => o.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
@@ -6294,6 +7346,52 @@ public class UpsertRequirementTypeRequest
     public int SortOrder { get; set; }
 }
 
+public class UpsertProductStructureNodeRequest
+{
+    public string? Id { get; set; }
+    public string? ParentId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? NodeType { get; set; }
+    public int SortOrder { get; set; }
+}
+
+public class SetFeatureStructureNodeRequest
+{
+    public string? StructureNodeId { get; set; }
+}
+
+public class UpsertProductRuleRequest
+{
+    public string? Id { get; set; }
+    public string? Category { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? Content { get; set; }
+    public string? Status { get; set; }
+    public int SortOrder { get; set; }
+}
+
+public class UpsertProductTermRequest
+{
+    public string? Id { get; set; }
+    public string Term { get; set; } = string.Empty;
+    public List<string>? Aliases { get; set; }
+    public string? Definition { get; set; }
+    public string? Category { get; set; }
+    public int SortOrder { get; set; }
+}
+
+public class UpsertGradeOptionRequest
+{
+    public string? Id { get; set; }
+    public string Dimension { get; set; } = string.Empty;
+    public string EntityType { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? Color { get; set; }
+    public string? Definition { get; set; }
+    public int SortOrder { get; set; }
+}
+
 public class UpsertDescTemplateRequest
 {
     public string? Id { get; set; }
@@ -6493,6 +7591,54 @@ public class UpsertCustomerRequest
     public List<string>? Tags { get; set; }
     public string? TemplateId { get; set; }
     public Dictionary<string, string>? FormData { get; set; }
+
+    // ── 客户信息「基础模块」默认字段 ──
+    public string? MerchantNo { get; set; }
+    public string? ShortName { get; set; }
+    public string? Status { get; set; }
+    public string? CertStatus { get; set; }
+    public string? Region { get; set; }
+    public string? Industry { get; set; }
+    public DateTime? OpenedAt { get; set; }
+    public DateTime? ExpireAt { get; set; }
+}
+
+public class CustomerFollowUpRequest
+{
+    public string Content { get; set; } = string.Empty;
+}
+
+/// <summary>生成营销问策请求。CustomerId 可空：带 CustomerId 且 Input 空 = 对该客户一键问策；
+/// 仅 Input = 自由文本问策（不绑定客户）。两者皆空则报错。</summary>
+public class GenerateConsultRequest
+{
+    /// <summary>关联客户 Id（可空，自由文本问策时不传）</summary>
+    public string? CustomerId { get; set; }
+    /// <summary>用户输入的客户情况（可空，带 CustomerId 时空则一键问策）</summary>
+    public string? Input { get; set; }
+    /// <summary>本次问策的额外要求（可空）</summary>
+    public string? Note { get; set; }
+    /// <summary>报告模版 key（可空，走默认 exec）；与 query ?template= 二选一</summary>
+    public string? Template { get; set; }
+}
+
+/// <summary>切换问策报告模版请求。</summary>
+public class RestyleConsultRequest
+{
+    public string? Template { get; set; }
+}
+
+/// <summary>开启/关闭问策报告分享请求。</summary>
+public class ToggleConsultShareRequest
+{
+    public bool Enabled { get; set; }
+}
+
+/// <summary>新增问策知识库条目请求。title/content 必填。</summary>
+public class AddConsultKnowledgeRequest
+{
+    public string? Title { get; set; }
+    public string? Content { get; set; }
 }
 
 public class AiFillRequirementRequest

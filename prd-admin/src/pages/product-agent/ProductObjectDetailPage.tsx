@@ -61,21 +61,11 @@ import {
   type TracedDefect,
 } from '@/services/real/productAgent';
 import type { Requirement, Feature, Product, ProductVersion, ProductRelease, Customer, FeatureVersion, FeatureBusinessType, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, FEATURE_TYPE_LABEL, FEATURE_TYPES } from './types';
 import { slaInfo } from './sla';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { ProductAssigneePicker } from './ProductAssigneePicker';
 
-const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
-  basic: '基础功能',
-  core: '核心功能',
-  value_added: '增值功能',
-};
-const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
-  { value: 'basic', label: '基础功能' },
-  { value: 'core', label: '核心功能' },
-  { value: 'value_added', label: '增值功能' },
-];
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
 // ── 自定义字段去重 / 分栏 ──

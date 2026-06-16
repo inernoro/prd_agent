@@ -25,13 +25,7 @@ import { LIST_SELECTION_COL_WIDTH, listSelectionRowClass } from './listSelection
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
 import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
-import { ITEM_GRADE_LABEL, type Feature, type FeatureBusinessType, type Product, type ProductRelease } from './types';
-
-const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
-  basic: '基础功能',
-  core: '核心功能',
-  value_added: '增值功能',
-};
+import { ITEM_GRADE_LABEL, FEATURE_TYPE_LABEL, type Feature, type FeatureBusinessType, type Product, type ProductRelease } from './types';
 
 function FeatureTreeNodeRow({
   node,
