@@ -157,18 +157,24 @@ public class DocumentStoreOpenApiController : ControllerBase
         if (!IsGenericStore(store) || !CanRead(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        // 与 DocumentStoreController.GetEntryContent 一致：优先 ParsedPrd.RawContent，兜底 Attachment.ExtractedText
+        // 与 DocumentStoreController.GetEntryContent 一致：优先 ParsedPrd.RawContent，兜底 Attachment.ExtractedText，
+        // 并附带 Attachment.Url（纯附件且无可提取正文时，让客户端仍能拿到文件下载地址）。
         string? content = null;
         string? title = null;
+        string? fileUrl = null;
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var doc = await _documentService.GetByIdAsync(entry.DocumentId);
             if (doc != null) { content = doc.RawContent; title = doc.Title; }
         }
-        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        if (!string.IsNullOrEmpty(entry.AttachmentId))
         {
             var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync(ct);
-            if (att != null) { content = att.ExtractedText; title = att.FileName; }
+            if (att != null)
+            {
+                if (string.IsNullOrEmpty(content)) { content = att.ExtractedText; title ??= att.FileName; }
+                fileUrl = string.IsNullOrEmpty(att.Url) ? null : att.Url;
+            }
         }
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -176,6 +182,7 @@ public class DocumentStoreOpenApiController : ControllerBase
             title = title ?? entry.Title,
             content,
             contentType = entry.ContentType,
+            fileUrl,
             hasContent = !string.IsNullOrEmpty(content),
         }));
     }

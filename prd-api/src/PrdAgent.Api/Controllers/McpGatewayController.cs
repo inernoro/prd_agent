@@ -282,6 +282,8 @@ public class McpGatewayController : ControllerBase
     private async Task<(int status, string body)> LoopbackAsync(string method, string pathAndQuery, JsonNode? body, CancellationToken ct)
     {
         var baseUrl = ResolveLoopbackBase();
+        if (string.IsNullOrEmpty(baseUrl))
+            return (502, "{\"error\":\"无法解析本地回环地址，已拒绝转发（不回落入站 Host）\"}");
         var client = _httpFactory.CreateClient("McpLoopback");
         using var req = new HttpRequestMessage(new HttpMethod(method), baseUrl + pathAndQuery);
 
@@ -306,7 +308,7 @@ public class McpGatewayController : ControllerBase
     }
 
     /// <summary>解析自身 Kestrel 本地监听地址（127.0.0.1:port），绕过反向代理与网络策略。</summary>
-    private string ResolveLoopbackBase()
+    private string? ResolveLoopbackBase()
     {
         // 候选来源：Kestrel 实际监听地址 + ASPNETCORE_URLS 环境变量。优先 http，避免对自身做 TLS 主机名校验。
         var candidates = new List<string>();
@@ -326,8 +328,9 @@ public class McpGatewayController : ControllerBase
                        .Replace("://*", "://127.0.0.1");
             return addr.TrimEnd('/');
         }
-        // 兜底：无任何本地监听信息时才用入站 host（边缘代理下可能 hairpin，仅极端兜底）。
-        return $"{Request.Scheme}://{Request.Host}";
+        // 失败关闭：解析不到本地监听地址时返回 null，绝不回落入站 Host。
+        // 否则被伪造的 Host 头会把转发的 sk-ak（且本 client 关了证书校验）发到攻击者主机。
+        return null;
     }
 
     // ======================================================================
