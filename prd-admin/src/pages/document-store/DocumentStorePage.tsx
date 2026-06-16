@@ -2497,10 +2497,10 @@ export function DocumentStorePage() {
                             {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
                           </span>
                           {s.hasActiveShare && (
-                            <span className="inline-flex h-[18px] items-center gap-1 flex-shrink-0 rounded-full px-1.5 text-[10px] font-medium"
-                              style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.32)' }}
+                            <span className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+                              style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', borderColor: 'rgba(234,179,8,0.32)' }}
                               title="该知识库已对外分享" aria-label="已分享">
-                              <Share2 size={9} /> 已分享
+                              <Share2 size={11} />
                             </span>
                           )}
                           <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
