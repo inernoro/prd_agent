@@ -339,10 +339,17 @@ builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWa
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
-// MCP 连接器网关：回环转发当前 sk-ak Bearer 到自身真实接口（McpGatewayController）
+// MCP 连接器网关：回环转发当前 sk-ak Bearer 到自身真实接口（McpGatewayController）。
+// 该 client 只用于回环调用自身，故放行证书校验，兼容仅配置 https 监听时对 127.0.0.1 的 TLS 主机名不匹配。
 builder.Services.AddHttpClient("McpLoopback", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(120);
+}).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
+{
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = (_, _, _, _) => true,
+    },
 });
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();

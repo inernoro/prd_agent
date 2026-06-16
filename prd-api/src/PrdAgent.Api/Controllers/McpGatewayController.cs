@@ -94,14 +94,15 @@ public class McpGatewayController : ControllerBase
 
         var method = obj["method"]?.GetValue<string>();
         var id = obj.TryGetPropertyValue("id", out var idNode) ? idNode : null;
-        var isNotification = id == null;
+
+        // JSON-RPC 2.0：通知（无 id）一律不回响应。下列方法均为只读/幂等，无需为通知执行副作用。
+        // notifications/initialized 等通知到这里直接静默。
+        if (id == null) return null;
 
         switch (method)
         {
             case "initialize":
                 return RpcResult(id, BuildInitializeResult(obj));
-            case "notifications/initialized":
-                return null; // 通知，无需响应
             case "ping":
                 return RpcResult(id, new JsonObject());
             case "tools/list":
@@ -109,7 +110,6 @@ public class McpGatewayController : ControllerBase
             case "tools/call":
                 return await HandleToolsCallAsync(id, obj["params"] as JsonObject, ct);
             default:
-                if (isNotification) return null; // 未知通知，静默忽略
                 return RpcError(id, -32601, $"Method not found: {method}");
         }
     }
@@ -136,10 +136,10 @@ public class McpGatewayController : ControllerBase
         var boundUserId = User.FindFirst("boundUserId")?.Value;
         var tools = new JsonArray();
 
-        // 内置工具：持有对应固定 scope 才可见
+        // 内置工具：持有对应固定 scope（含写隐含读）才可见
         foreach (var t in McpBuiltinTools.All)
         {
-            if (scopes.Contains(t.RequiredScope))
+            if (ScopeSatisfies(scopes, t.RequiredScope))
                 tools.Add(BuiltinToolToJson(t));
         }
 
@@ -211,7 +211,7 @@ public class McpGatewayController : ControllerBase
         var bt = McpBuiltinTools.All.FirstOrDefault(t => t.Name == name);
         if (bt != null)
         {
-            if (!scopes.Contains(bt.RequiredScope))
+            if (!ScopeSatisfies(scopes, bt.RequiredScope))
                 return ToolError(id, $"权限不足：此工具需要 scope {bt.RequiredScope}，当前密钥未授权。");
             var (path, body, err) = BuildBuiltinRequest(bt, args);
             if (err != null) return ToolError(id, err);
@@ -304,9 +304,16 @@ public class McpGatewayController : ControllerBase
     /// <summary>解析自身 Kestrel 本地监听地址（127.0.0.1:port），绕过反向代理与网络策略。</summary>
     private string ResolveLoopbackBase()
     {
+        // 候选来源：Kestrel 实际监听地址 + ASPNETCORE_URLS 环境变量。优先 http，避免对自身做 TLS 主机名校验。
+        var candidates = new List<string>();
         var feat = _server.Features.Get<IServerAddressesFeature>();
-        var addr = feat?.Addresses?.FirstOrDefault(a => a.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-                   ?? feat?.Addresses?.FirstOrDefault();
+        if (feat?.Addresses != null) candidates.AddRange(feat.Addresses);
+        var envUrls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
+        if (!string.IsNullOrWhiteSpace(envUrls))
+            candidates.AddRange(envUrls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+        var addr = candidates.FirstOrDefault(a => a.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+                   ?? candidates.FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(addr))
         {
             addr = addr.Replace("://0.0.0.0", "://127.0.0.1")
@@ -314,6 +321,7 @@ public class McpGatewayController : ControllerBase
                        .Replace("://+", "://127.0.0.1");
             return addr.TrimEnd('/');
         }
+        // 兜底：无任何本地监听信息时才用入站 host（边缘代理下可能 hairpin，仅极端兜底）。
         return $"{Request.Scheme}://{Request.Host}";
     }
 
@@ -324,6 +332,18 @@ public class McpGatewayController : ControllerBase
     private HashSet<string> OwnedScopes() =>
         User.FindAll("scope").Select(c => c.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// scope 满足判断。镜像 AdminPermissionMiddleware.HasScopeGrant：document-store:write 隐含 read，
+    /// 让只持有写 scope 的密钥也能用 knowledge_base_* 只读工具（与 REST 行为一致）。
+    /// </summary>
+    private static bool ScopeSatisfies(HashSet<string> owned, string required)
+    {
+        if (owned.Contains(required)) return true;
+        if (required == McpBuiltinTools.ScopeDocStoreRead && owned.Contains(McpBuiltinTools.ScopeDocStoreWrite))
+            return true;
+        return false;
+    }
+
     private static string DynamicToolName(AgentOpenEndpoint e)
     {
         var action = "call";
@@ -333,9 +353,14 @@ public class McpGatewayController : ControllerBase
             var idx = first.IndexOf(':');
             if (idx >= 0 && idx < first.Length - 1) action = first[(idx + 1)..];
         }
-        var raw = $"{e.AgentKey}__{action}";
-        var clean = Regex.Replace(raw, "[^a-zA-Z0-9_-]", "_");
-        return clean.Length <= 64 ? clean : clean[..64];
+        // 末尾带 6 位 endpoint id 短码，保证不同 endpoint 即便同 agentKey + 同 action 也唯一；
+        // tools/list 与 tools/call 都走本函数，命名天然一致，不会出现重名互相遮蔽。
+        var idShort = e.Id.Length >= 6 ? e.Id[..6] : e.Id;
+        var suffix = "__" + idShort;
+        var basePart = $"{e.AgentKey}__{action}";
+        var maxBase = 64 - suffix.Length;
+        if (basePart.Length > maxBase) basePart = basePart[..maxBase];
+        return Regex.Replace(basePart + suffix, "[^a-zA-Z0-9_-]", "_");
     }
 
     private static JsonObject InferSchema(string? exampleJson)

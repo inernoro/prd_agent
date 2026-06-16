@@ -56,6 +56,7 @@ public static class McpBuiltinTools
 {
     public const string ScopeMarketplaceRead = "marketplace.skills:read";
     public const string ScopeDocStoreRead = "document-store:read";
+    public const string ScopeDocStoreWrite = "document-store:write";
 
     public static readonly IReadOnlyList<McpToolDef> All = new List<McpToolDef>
     {
