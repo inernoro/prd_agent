@@ -358,12 +358,11 @@ public class McpGatewayController : ControllerBase
             var idx = first.IndexOf(':');
             if (idx >= 0 && idx < first.Length - 1) action = first[(idx + 1)..];
         }
-        // 末尾带 6 位 endpoint id 短码，保证不同 endpoint 即便同 agentKey + 同 action 也唯一；
-        // tools/list 与 tools/call 都走本函数，命名天然一致，不会出现重名互相遮蔽。
-        var idShort = e.Id.Length >= 6 ? e.Id[..6] : e.Id;
-        var suffix = "__" + idShort;
+        // 末尾带【完整】endpoint id（Guid N，32 hex）作后缀，id 全局唯一 ⇒ 工具名必唯一
+        // （6 位前缀理论上仍可能撞）；tools/list 与 tools/call 都走本函数，命名天然一致。
+        var suffix = "__" + e.Id;
         var basePart = $"{e.AgentKey}__{action}";
-        var maxBase = 64 - suffix.Length;
+        var maxBase = Math.Max(0, 64 - suffix.Length);
         if (basePart.Length > maxBase) basePart = basePart[..maxBase];
         return Regex.Replace(basePart + suffix, "[^a-zA-Z0-9_-]", "_");
     }
