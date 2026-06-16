@@ -48,4 +48,32 @@ public class ChangelogLinkedDefectsTests
 
         Assert.Equal(DefectResolutionPublishStatus.Published, status);
     }
+
+    [Fact]
+    public void MergeAutomationCommitStructuredData_WritesCommitInfoKeys()
+    {
+        var structured = DefectAgentController.MergeAutomationCommitStructuredData(
+            new Dictionary<string, string> { ["已有字段"] = "保留" },
+            new SubmitAutomationCommitInfoRequest
+            {
+                CommitSha = "ABCDEF1234567890",
+                CommitMessage = "fix(prd-admin): 修复缺陷",
+                CommitUrl = "https://example.com/commit/abcdef1",
+                Repository = "prd-agent",
+                Branch = "codex/defect-automation",
+                PreviewUrl = "https://preview.example.com/changelog",
+                VisualReportUrl = "https://report.example.com",
+            });
+
+        Assert.Equal("保留", structured["已有字段"]);
+        Assert.Equal("abcdef1234567890", structured["提交信息"]);
+        Assert.Equal("abcdef1234567890", structured["修复提交"]);
+        Assert.Equal("abcdef1", structured["修复提交短ID"]);
+        Assert.Equal("fix(prd-admin): 修复缺陷", structured["修复提交说明"]);
+        Assert.Equal("https://example.com/commit/abcdef1", structured["修复提交地址"]);
+        Assert.Equal("prd-agent", structured["修复仓库"]);
+        Assert.Equal("codex/defect-automation", structured["修复分支"]);
+        Assert.Equal("https://preview.example.com/changelog", structured["预览地址"]);
+        Assert.Equal("https://report.example.com", structured["视觉验收报告"]);
+    }
 }
