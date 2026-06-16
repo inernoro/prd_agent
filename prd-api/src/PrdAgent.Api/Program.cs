@@ -346,6 +346,9 @@ builder.Services.AddHttpClient("McpLoopback", c =>
     c.Timeout = TimeSpan.FromSeconds(120);
 }).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
 {
+    // 不跟随重定向：回环只该打到自身后端，若目标返回跨主机重定向，跟过去会把转发的
+    // sk-ak / X-AI-Access-Key 凭据带到外部主机（凭据外泄）。让重定向以非 2xx 原样返回。
+    AllowAutoRedirect = false,
     SslOptions = new System.Net.Security.SslClientAuthenticationOptions
     {
         RemoteCertificateValidationCallback = (_, _, _, _) => true,

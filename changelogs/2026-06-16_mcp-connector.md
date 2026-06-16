@@ -3,3 +3,4 @@
 | fix | prd-api | MCP 网关处理 PR 二轮评审：协议版本回我方支持版本（不回声客户端任意版本）、回环地址解析补 `://*` 通配符 |
 | fix | prd-api | MCP 动态工具 tools/call 替换 Path 中的 {param} 占位（原样转发会让路由参数原文漏到 loopback）；document-store 开放接口的 entries/content 也排除项目库/产品库/识途库专用库（与 stores 列表一致，防止知道 id 绕过） |
 | fix | prd-api | MCP 端点路由由顶级 `/mcp` 改为 `/api/mcp`：CDS 反代只把 `/api/*` 转后端，顶级路径被前端 SPA 兜底接走导致 404/200-html 不可达；回环同时转发 X-AI-Access-Key fallback 鉴权头 |
+| security | prd-api | MCP 回环 client 禁用自动重定向(AllowAutoRedirect=false):防回环目标返回跨主机重定向时把转发的 sk-ak/X-AI-Access-Key 凭据带到外部主机;回环异常信息改用 JsonObject 序列化防 ex.Message 破坏 JSON 信封 |
