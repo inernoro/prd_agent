@@ -12,6 +12,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "audit:ui": "node ../scripts/audit-cds-ui-regressions.mjs",
+    "smoke:mobile-layout": "node scripts/mobile-layout-smoke.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
