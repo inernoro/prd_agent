@@ -72,6 +72,7 @@ export default function LiquidGlassDemoPage() {
   const [scene, setScene] = useState<'dark' | 'light'>('dark');
   const [blur, setBlur] = useState(7);
   const [scale, setScale] = useState(60);
+  const [bare, setBare] = useState(false);
   const [pos, setPos] = useState(INITIAL_POS);
   const sceneRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ key: CardKey; dx: number; dy: number } | null>(null);
@@ -146,6 +147,13 @@ export default function LiquidGlassDemoPage() {
               {scene === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
               {scene === 'dark' ? '切到浅色舞台' : '切到深色舞台'}
             </Button>
+            <Button
+              variant={bare ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => setBare((b) => !b)}
+            >
+              {bare ? '裸玻璃：开' : '裸玻璃：关'}
+            </Button>
             <Button variant="ghost" size="sm" onClick={reset}>
               <RotateCcw size={14} />
               复位
@@ -186,10 +194,19 @@ export default function LiquidGlassDemoPage() {
       {/* 舞台 */}
       <div
         ref={sceneRef}
-        className="lgd-scene flex-1 min-h-0"
+        className={`lgd-scene flex-1 min-h-0${bare ? ' lgd-bare' : ''}`}
         data-scene={scene}
       >
         <div className="lgd-scene-caption">PRD&nbsp;AGENT</div>
+        {/* 探针层：背后细密文字,模糊/折射对它的处理一眼可辨 */}
+        <div className="lgd-probe" aria-hidden>
+          {Array.from({ length: 18 }).map((_, i) => (
+            <div key={i}>
+              PRD·AGENT·LIQUID·GLASS·0123456789·ABCDEFGHIJ·{i.toString().padStart(2, '0')}·細密文字探针·
+              REFRACTION·CLARITY·棱光·折射·清晰度·
+            </div>
+          ))}
+        </div>
         {CARDS.map((meta) => {
           // backdrop-filter 全部走 inline,每帧用最新的 blur/scale 重算,避免
           // CSS 变量 / SVG 属性变化不触发 backdrop-filter 重算的浏览器坑。
