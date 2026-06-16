@@ -93,11 +93,12 @@ public class McpGatewayController : ControllerBase
             return RpcError(null, -32600, "Invalid Request");
 
         var method = obj["method"]?.GetValue<string>();
-        var id = obj.TryGetPropertyValue("id", out var idNode) ? idNode : null;
 
-        // JSON-RPC 2.0：通知（无 id）一律不回响应。下列方法均为只读/幂等，无需为通知执行副作用。
-        // notifications/initialized 等通知到这里直接静默。
-        if (id == null) return null;
+        // JSON-RPC 2.0：通知 = "id" 成员【缺失】（不是 id:null）。只有缺失才不回响应；
+        // 显式 "id": null 仍是请求，须回带 null id 的响应（否则该客户端会一直等）。
+        var hasId = obj.TryGetPropertyValue("id", out var idNode);
+        if (!hasId) return null;
+        var id = idNode;
 
         switch (method)
         {
