@@ -83,8 +83,11 @@ services:
       - "5000"
     command: >-
       cd prd-api &&
+      rm -rf src/PrdAgent.Api/obj src/PrdAgent.Api/bin
+      src/PrdAgent.Core/obj src/PrdAgent.Core/bin
+      src/PrdAgent.Infrastructure/obj src/PrdAgent.Infrastructure/bin &&
       dotnet restore &&
-      dotnet build --no-restore &&
+      dotnet build --no-restore --no-incremental &&
       dotnet run --project src/PrdAgent.Api --no-build --urls http://0.0.0.0:5000
     depends_on:
       mongodb: { condition: service_healthy }
