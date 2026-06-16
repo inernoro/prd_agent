@@ -55,6 +55,37 @@ export interface ActiveHttpRequestRecord {
   request: HttpLogRecord['request'];
 }
 
+export interface HttpActiveRequestFilter {
+  limit?: number;
+  requestId?: string;
+  host?: string;
+  layer?: HttpLogRecord['layer'];
+  method?: string;
+  pathContains?: string;
+  branchId?: string;
+  profileId?: string;
+  requestKind?: HttpRequestKind;
+  minAgeMs?: number;
+  sort?: 'started' | 'age';
+}
+
+export interface HttpRecentLogFilter {
+  limit?: number;
+  requestId?: string;
+  host?: string;
+  layer?: HttpLogRecord['layer'];
+  minStatus?: number;
+  method?: string;
+  pathContains?: string;
+  branchId?: string;
+  profileId?: string;
+  requestKind?: HttpRequestKind;
+  since?: string | Date;
+  until?: string | Date;
+  minDurationMs?: number;
+  sort?: 'recent' | 'duration';
+}
+
 export interface HttpLogStoreOptions {
   uri: string;
   databaseName?: string;
@@ -68,35 +99,8 @@ export interface HttpLogSink {
   record(record: Omit<HttpLogRecord, '_id' | 'ts'> & { ts?: Date | string }): void;
   beginActive?(record: Omit<ActiveHttpRequestRecord, 'id' | 'startedAt' | 'ageMs'> & { startedAt?: Date | string }): string;
   completeActive?(id: string): void;
-  findActive?(filter?: {
-    limit?: number;
-    requestId?: string;
-    host?: string;
-    layer?: HttpLogRecord['layer'];
-    method?: string;
-    pathContains?: string;
-    branchId?: string;
-    profileId?: string;
-    requestKind?: HttpRequestKind;
-    minAgeMs?: number;
-    sort?: 'started' | 'age';
-  }): ActiveHttpRequestRecord[];
-  findRecent?(filter?: {
-    limit?: number;
-    requestId?: string;
-    host?: string;
-    layer?: HttpLogRecord['layer'];
-    minStatus?: number;
-    method?: string;
-    pathContains?: string;
-    branchId?: string;
-    profileId?: string;
-    requestKind?: HttpRequestKind;
-    since?: string | Date;
-    until?: string | Date;
-    minDurationMs?: number;
-    sort?: 'recent' | 'duration';
-  }): Promise<HttpLogRecord[]>;
+  findActive?(filter?: HttpActiveRequestFilter): ActiveHttpRequestRecord[];
+  findRecent?(filter?: HttpRecentLogFilter): Promise<HttpLogRecord[]>;
 }
 
 const DEFAULT_COLLECTION = 'cds_http_logs';
@@ -126,8 +130,8 @@ export function classifyHttpRequestKind(input: {
   const accept = String((headers as Record<string, unknown>).accept || '').toLowerCase();
 
   if (String((headers as Record<string, unknown>)['x-cds-poll'] || '').toLowerCase() === 'true') return 'polling';
+  if (/^\/api\/branches\/[^/]+\/deploy(?:\/[^/]+)?$/.test(pathValue)) return 'deploy';
   if (accept.includes('text/event-stream') || pathValue.endsWith('/stream') || pathValue.includes('/stream/')) return 'sse';
-  if (/^\/api\/branches\/[^/]+\/deploy$/.test(pathValue)) return 'deploy';
   if (/^\/api\/branches\/[^/]+\/(stop|restart|pull|container-logs|container-exec|container-env|logs)$/.test(pathValue)) return 'container-op';
   if (pathValue.startsWith('/api/')
     || pathValue.startsWith('/_cds/api/')
@@ -141,6 +145,33 @@ export function classifyHttpRequestKind(input: {
     return 'control-plane';
   }
   return 'user-traffic';
+}
+
+export function filterActiveHttpRequests(
+  requests: ActiveHttpRequestRecord[],
+  filter: HttpActiveRequestFilter = {},
+): ActiveHttpRequestRecord[] {
+  const pathContains = filter.pathContains?.trim().toLowerCase();
+  const minAgeMs = Number.isFinite(filter.minAgeMs) ? Math.max(0, Math.floor(filter.minAgeMs || 0)) : 0;
+  const rows = requests
+    .filter((request) => {
+      if (filter.requestId && request.requestId !== filter.requestId) return false;
+      if (filter.host && request.host !== filter.host) return false;
+      if (filter.layer && request.layer !== filter.layer) return false;
+      if (filter.method && request.method.toUpperCase() !== filter.method.toUpperCase()) return false;
+      if (filter.branchId && request.branchId !== filter.branchId) return false;
+      if (filter.profileId && request.profileId !== filter.profileId) return false;
+      if (filter.requestKind && request.requestKind !== filter.requestKind) return false;
+      if (pathContains && !request.path.toLowerCase().includes(pathContains)) return false;
+      if (minAgeMs > 0 && request.ageMs < minAgeMs) return false;
+      return true;
+    });
+  const limit = Math.max(1, Math.min(filter.limit ?? 200, 5000));
+  return rows
+    .sort((left, right) => filter.sort === 'started'
+      ? new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime()
+      : right.ageMs - left.ageMs)
+    .slice(0, limit);
 }
 
 function normalizeContentType(value: unknown): string {
@@ -471,45 +502,14 @@ export class HttpLogStore {
     this.activeRequests.delete(id);
   }
 
-  findActive(filter: {
-    limit?: number;
-    requestId?: string;
-    host?: string;
-    layer?: HttpLogRecord['layer'];
-    method?: string;
-    pathContains?: string;
-    branchId?: string;
-    profileId?: string;
-    requestKind?: HttpRequestKind;
-    minAgeMs?: number;
-    sort?: 'started' | 'age';
-  } = {}): ActiveHttpRequestRecord[] {
+  findActive(filter: HttpActiveRequestFilter = {}): ActiveHttpRequestRecord[] {
     const now = Date.now();
-    const pathContains = filter.pathContains?.trim().toLowerCase();
-    const minAgeMs = Number.isFinite(filter.minAgeMs) ? Math.max(0, Math.floor(filter.minAgeMs || 0)) : 0;
     const rows = [...this.activeRequests.values()]
       .map((request) => ({
         ...request,
         ageMs: Math.max(0, now - new Date(request.startedAt).getTime()),
-      }))
-      .filter((request) => {
-        if (filter.requestId && request.requestId !== filter.requestId) return false;
-        if (filter.host && request.host !== filter.host) return false;
-        if (filter.layer && request.layer !== filter.layer) return false;
-        if (filter.method && request.method.toUpperCase() !== filter.method.toUpperCase()) return false;
-        if (filter.branchId && request.branchId !== filter.branchId) return false;
-        if (filter.profileId && request.profileId !== filter.profileId) return false;
-        if (filter.requestKind && request.requestKind !== filter.requestKind) return false;
-        if (pathContains && !request.path.toLowerCase().includes(pathContains)) return false;
-        if (minAgeMs > 0 && request.ageMs < minAgeMs) return false;
-        return true;
-      });
-    const limit = Math.max(1, Math.min(filter.limit ?? 200, 5000));
-    return rows
-      .sort((left, right) => filter.sort === 'started'
-        ? new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime()
-        : right.ageMs - left.ageMs)
-      .slice(0, limit);
+      }));
+    return filterActiveHttpRequests(rows, filter);
   }
 
   private shouldPersist(record: Omit<HttpLogRecord, '_id' | 'ts'> & { ts?: Date | string }): boolean {
@@ -525,22 +525,7 @@ export class HttpLogStore {
     return true;
   }
 
-  async findRecent(filter: {
-    limit?: number;
-    requestId?: string;
-    host?: string;
-    layer?: HttpLogRecord['layer'];
-    minStatus?: number;
-    method?: string;
-    pathContains?: string;
-    branchId?: string;
-    profileId?: string;
-    requestKind?: HttpRequestKind;
-    since?: string | Date;
-    until?: string | Date;
-    minDurationMs?: number;
-    sort?: 'recent' | 'duration';
-  } = {}): Promise<HttpLogRecord[]> {
+  async findRecent(filter: HttpRecentLogFilter = {}): Promise<HttpLogRecord[]> {
     if (!this.collection) return [];
     const query: Record<string, unknown> = {};
     if (filter.requestId) query.requestId = filter.requestId;

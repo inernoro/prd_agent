@@ -55,8 +55,10 @@ import {
   classifyHttpRequestKind,
   createBodyCapture,
   createRequestId,
+  filterActiveHttpRequests,
   redactHeaders,
   type ActiveHttpRequestRecord,
+  type HttpActiveRequestFilter,
   type HttpLogRecord,
   type HttpRequestKind,
   type HttpLogSink,
@@ -301,6 +303,94 @@ function summarizeActiveHttpRequests(active: ActiveHttpRequestRecord[]): {
     over60s: active.filter((request) => request.ageMs >= 60_000).length,
     byKind,
   };
+}
+
+function parseActiveLayer(value: unknown): HttpLogRecord['layer'] | undefined {
+  return value === 'master' || value === 'master-proxy' || value === 'forwarder' ? value : undefined;
+}
+
+function activeQueryString(filter: HttpActiveRequestFilter): string {
+  const params = new URLSearchParams();
+  const entries: Array<[string, string | number | undefined]> = [
+    ['limit', filter.limit],
+    ['requestId', filter.requestId],
+    ['host', filter.host],
+    ['layer', filter.layer],
+    ['method', filter.method],
+    ['pathContains', filter.pathContains],
+    ['branchId', filter.branchId],
+    ['profileId', filter.profileId],
+    ['requestKind', filter.requestKind],
+    ['minAgeMs', filter.minAgeMs],
+    ['sort', filter.sort],
+  ];
+  for (const [key, value] of entries) {
+    if (value == null || value === '') continue;
+    params.set(key, String(value));
+  }
+  const text = params.toString();
+  return text ? `?${text}` : '';
+}
+
+function forwarderDiagnosticsPort(): number {
+  const raw = Number.parseInt(process.env.CDS_FORWARDER_PORT || '9090', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 9090;
+}
+
+function coerceForwarderActiveRecords(value: unknown): ActiveHttpRequestRecord[] {
+  const active = (value as { active?: unknown })?.active;
+  if (!Array.isArray(active)) return [];
+  return active.flatMap((item) => {
+    const row = item as Partial<ActiveHttpRequestRecord>;
+    if (!row || typeof row !== 'object') return [];
+    if (!row.id || !row.requestId || !row.method || !row.path || !row.layer || !row.requestKind) return [];
+    const startedAt = row.startedAt ? new Date(row.startedAt) : new Date();
+    const ageMs = Number.isFinite(row.ageMs) ? Math.max(0, Math.floor(row.ageMs || 0)) : Math.max(0, Date.now() - startedAt.getTime());
+    return [{
+      id: String(row.id),
+      startedAt,
+      ageMs,
+      layer: row.layer,
+      requestKind: row.requestKind,
+      requestId: String(row.requestId),
+      method: String(row.method),
+      protocol: row.protocol,
+      host: row.host ? String(row.host) : undefined,
+      path: String(row.path),
+      remoteAddr: row.remoteAddr,
+      branchId: row.branchId ?? null,
+      profileId: row.profileId ?? null,
+      upstream: row.upstream ?? null,
+      request: row.request || {},
+    }];
+  });
+}
+
+async function findForwarderActiveRequests(filter: HttpActiveRequestFilter): Promise<ActiveHttpRequestRecord[]> {
+  if (process.env.CDS_USE_FORWARDER !== '1' && !process.env.CDS_FORWARDER_PORT) return [];
+  try {
+    const json = await httpGetJson(
+      `http://127.0.0.1:${forwarderDiagnosticsPort()}/__forwarder/active${activeQueryString(filter)}`,
+      1000,
+    );
+    return coerceForwarderActiveRecords(json);
+  } catch {
+    return [];
+  }
+}
+
+async function collectActiveHttpRequests(
+  store: HttpLogSink | null | undefined,
+  filter: HttpActiveRequestFilter,
+): Promise<ActiveHttpRequestRecord[]> {
+  const local = store?.findActive?.(filter) || [];
+  const forwarder = await findForwarderActiveRequests({
+    ...filter,
+    // Fetch enough rows from the forwarder before applying the final combined
+    // cap, otherwise a busy data-plane process can hide older master requests.
+    limit: Math.max(filter.limit ?? 200, 5000),
+  });
+  return filterActiveHttpRequests([...local, ...forwarder], filter);
 }
 
 export interface ServerDeps {
@@ -2585,13 +2675,11 @@ export function createServer(deps: ServerDeps): express.Express {
     const minAgeRaw = typeof req.query.minAgeMs === 'string' ? Number.parseInt(req.query.minAgeMs, 10) : undefined;
     const minAgeMs = Number.isFinite(minAgeRaw) ? minAgeRaw : undefined;
     const sortRaw = typeof req.query.sort === 'string' ? req.query.sort : undefined;
-    const active = reader.call(deps.httpLogStore, {
+    const filter: HttpActiveRequestFilter = {
       limit,
       requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
       host: typeof req.query.host === 'string' ? req.query.host : undefined,
-      layer: req.query.layer === 'master' || req.query.layer === 'master-proxy' || req.query.layer === 'forwarder'
-        ? req.query.layer
-        : undefined,
+      layer: parseActiveLayer(req.query.layer),
       method: typeof req.query.method === 'string' ? req.query.method : undefined,
       pathContains: typeof req.query.pathContains === 'string'
         ? req.query.pathContains
@@ -2601,7 +2689,8 @@ export function createServer(deps: ServerDeps): express.Express {
       requestKind: parseHttpRequestKind(req.query.requestKind),
       minAgeMs,
       sort: sortRaw === 'started' ? 'started' : 'age',
-    });
+    };
+    const active = await collectActiveHttpRequests(deps.httpLogStore, filter);
     res.json({
       ok: true,
       disabled: false,
@@ -2695,7 +2784,7 @@ export function createServer(deps: ServerDeps): express.Express {
     const top = Math.max(1, Math.min(topRaw, 50));
     const recentLogs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'recent' });
     const durationLogs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'duration' });
-    const active = deps.httpLogStore?.findActive?.({ limit: 200, sort: 'age' }) || [];
+    const active = await collectActiveHttpRequests(deps.httpLogStore, { limit: 200, sort: 'age' });
     const logs = recentLogs;
     const normalLogs = logs.filter((log) => !isNoiseHttpLog(log));
     const noiseLogs = logs.filter(isNoiseHttpLog);

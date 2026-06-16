@@ -31,6 +31,9 @@ import {
   isBinaryContentType,
   createRequestId,
   redactHeaders,
+  filterActiveHttpRequests,
+  type ActiveHttpRequestRecord,
+  type HttpActiveRequestFilter,
   type HttpLogSink,
 } from '../services/http-log-store.js';
 
@@ -307,7 +310,6 @@ export class ProxyHandler {
         error,
       });
     };
-    res.on('close', completeActiveRequest);
     if (process.env.CDS_FORWARDER_ACCESS_LOG === '1') {
       this.opts.logger?.info?.(
         `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
@@ -687,6 +689,11 @@ export class ProxyHandler {
 
   getStats(): ProxyStats {
     return this.stats.snapshot();
+  }
+
+  getActiveRequests(filter: HttpActiveRequestFilter = {}): ActiveHttpRequestRecord[] {
+    const active = this.opts.httpLogStore?.findActive?.({ limit: 5000, sort: 'age' }) || [];
+    return filterActiveHttpRequests(active, filter);
   }
 
   /**

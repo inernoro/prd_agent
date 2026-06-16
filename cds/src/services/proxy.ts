@@ -1800,9 +1800,6 @@ ${shouldAutoRefresh ? `;(function(){
         error,
       });
     };
-    if (typeof clientRes.on === 'function') {
-      clientRes.on('close', completeActiveRequest);
-    }
     const url = new URL(upstream);
     const options: http.RequestOptions = {
       hostname: url.hostname,

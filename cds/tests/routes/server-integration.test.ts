@@ -84,6 +84,24 @@ async function request(server: http.Server, urlPath: string): Promise<HttpRespon
   });
 }
 
+async function startForwarderActiveServer(active: ActiveHttpRequestRecord[]): Promise<http.Server> {
+  const forwarder = http.createServer((req, res) => {
+    if ((req.url || '').startsWith('/__forwarder/active')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        active,
+        total: active.length,
+        generatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not_found' }));
+  });
+  await new Promise<void>((resolve) => forwarder.listen(0, '127.0.0.1', resolve));
+  return forwarder;
+}
+
 describe('Server route ordering (regression)', () => {
   let tmpDir: string;
   let webDir: string;
@@ -459,6 +477,63 @@ describe('Server route ordering (regression)', () => {
       requestId: 'active-deploy',
       ageMs: 45_000,
     });
+  });
+
+  it('real createServer merges active HTTP requests from the forwarder diagnostic endpoint', async () => {
+    const forwarderActive: ActiveHttpRequestRecord[] = [
+      {
+        id: 'forwarder-active-deploy',
+        startedAt: new Date('2026-06-16T08:00:00.000Z'),
+        ageMs: 61_000,
+        layer: 'forwarder',
+        requestKind: 'deploy',
+        requestId: 'forwarder-active-deploy',
+        method: 'POST',
+        host: 'preview.miduo.org',
+        path: '/api/branches/prd-agent-main/deploy/api',
+        branchId: 'prd-agent-main',
+        profileId: 'api',
+        upstream: '127.0.0.1:10001',
+        request: {},
+      },
+    ];
+    const forwarder = await startForwarderActiveServer(forwarderActive);
+    const oldPort = process.env.CDS_FORWARDER_PORT;
+    const oldUseForwarder = process.env.CDS_USE_FORWARDER;
+    process.env.CDS_FORWARDER_PORT = String((forwarder.address() as { port: number }).port);
+    process.env.CDS_USE_FORWARDER = '1';
+    try {
+      const app = buildRealServerWithHttpLogs([]);
+      server = await startServer(app);
+
+      const res = await request(server, '/api/http-logs/active?requestKind=deploy&minAgeMs=30000');
+
+      expect(res.status).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.total).toBe(1);
+      expect(body.active[0]).toMatchObject({
+        layer: 'forwarder',
+        requestKind: 'deploy',
+        requestId: 'forwarder-active-deploy',
+        profileId: 'api',
+      });
+
+      const overviewRes = await request(server, '/api/perf/overview');
+      expect(overviewRes.status).toBe(200);
+      const overview = JSON.parse(overviewRes.body);
+      expect(overview.activeSummary.byKind.deploy).toBe(1);
+      expect(overview.activeRequests[0]).toMatchObject({
+        layer: 'forwarder',
+        requestKind: 'deploy',
+        requestId: 'forwarder-active-deploy',
+      });
+    } finally {
+      if (oldPort == null) delete process.env.CDS_FORWARDER_PORT;
+      else process.env.CDS_FORWARDER_PORT = oldPort;
+      if (oldUseForwarder == null) delete process.env.CDS_USE_FORWARDER;
+      else process.env.CDS_USE_FORWARDER = oldUseForwarder;
+      await new Promise<void>((resolve) => forwarder.close(() => resolve()));
+    }
   });
 
   it('cluster router returns JSON when mounted BEFORE installSpaFallback', async () => {

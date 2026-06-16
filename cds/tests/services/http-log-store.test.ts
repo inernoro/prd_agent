@@ -122,6 +122,12 @@ describe('http log body redaction', () => {
 
   it('classifies deploy, polling, sse, and user traffic requests', () => {
     expect(classifyHttpRequestKind({ method: 'POST', path: '/api/branches/prd-agent-main/deploy' })).toBe('deploy');
+    expect(classifyHttpRequestKind({ method: 'POST', path: '/api/branches/prd-agent-main/deploy/api' })).toBe('deploy');
+    expect(classifyHttpRequestKind({
+      method: 'POST',
+      path: '/api/branches/prd-agent-main/deploy/api',
+      headers: { accept: 'text/event-stream' },
+    })).toBe('deploy');
     expect(classifyHttpRequestKind({ method: 'GET', path: '/api/projects/a/instances', headers: { 'x-cds-poll': 'true' } })).toBe('polling');
     expect(classifyHttpRequestKind({ method: 'GET', path: '/api/branches/stream', headers: { accept: 'text/event-stream' } })).toBe('sse');
     expect(classifyHttpRequestKind({ method: 'GET', path: '/' })).toBe('user-traffic');

@@ -32,7 +32,7 @@ import { ProxyHandler } from './forwarder/proxy-handler.js';
 import { resolveRoute } from './forwarder/route-resolver.js';
 import type { RouteRecord } from './forwarder/types.js';
 import { buildForwarderWaitingPageHtml } from './forwarder/waiting-page.js';
-import { httpLogStoreFromEnv } from './services/http-log-store.js';
+import { httpLogStoreFromEnv, type HttpActiveRequestFilter, type HttpLogRecord, type HttpRequestKind } from './services/http-log-store.js';
 
 const FORWARDER_PORT = Number.parseInt(
   process.env.CDS_FORWARDER_PORT ?? '9090',
@@ -143,12 +143,50 @@ function watchRoutesJson(): void {
   }
 }
 
+function parseDiagnosticLayer(value: string | null): HttpLogRecord['layer'] | undefined {
+  return value === 'master' || value === 'master-proxy' || value === 'forwarder' ? value : undefined;
+}
+
+function parseDiagnosticRequestKind(value: string | null): HttpRequestKind | undefined {
+  return value === 'user-traffic'
+    || value === 'control-plane'
+    || value === 'deploy'
+    || value === 'container-op'
+    || value === 'polling'
+    || value === 'sse'
+    ? value
+    : undefined;
+}
+
+function nonEmptyQuery(value: string | null): string | undefined {
+  return value && value.trim() ? value : undefined;
+}
+
+function parseDiagnosticActiveFilter(searchParams: URLSearchParams): HttpActiveRequestFilter {
+  const limitRaw = Number.parseInt(searchParams.get('limit') || '', 10);
+  const minAgeRaw = Number.parseInt(searchParams.get('minAgeMs') || '', 10);
+  return {
+    limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
+    requestId: nonEmptyQuery(searchParams.get('requestId')),
+    host: nonEmptyQuery(searchParams.get('host')),
+    layer: parseDiagnosticLayer(searchParams.get('layer')),
+    method: nonEmptyQuery(searchParams.get('method')),
+    pathContains: nonEmptyQuery(searchParams.get('pathContains')) || nonEmptyQuery(searchParams.get('path')),
+    branchId: nonEmptyQuery(searchParams.get('branchId')),
+    profileId: nonEmptyQuery(searchParams.get('profileId')),
+    requestKind: parseDiagnosticRequestKind(searchParams.get('requestKind')),
+    minAgeMs: Number.isFinite(minAgeRaw) ? minAgeRaw : undefined,
+    sort: searchParams.get('sort') === 'started' ? 'started' : 'age',
+  };
+}
+
 function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): boolean {
   // 用 path(去掉 query string)做匹配,Cursor Bugbot Low:监控/LB 加 cache-bust
   // 参数 `?v=1` 时原 url === '/path' 不匹配,fallthrough 到 404。
   const rawUrl = req.url ?? '';
   if (!rawUrl.startsWith('/__forwarder/')) return false;
-  const url = rawUrl.split('?')[0];
+  const parsedUrl = new URL(rawUrl, 'http://127.0.0.1');
+  const url = parsedUrl.pathname;
   // Cursor Bugbot Medium 安全:forwarder 在 nginx 后面时 remoteAddress 永远是
   // 127.0.0.1(nginx)→ 老 isLoopback 检查永远 true → 公网用户能 dump 完整路由
   // 表(branchId/branchName/upstreamPort 全泄露)。新检查:**同时**要求 socket
@@ -201,6 +239,21 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(proxy.getStats()));
+    return true;
+  }
+  if (url === '/__forwarder/active') {
+    if (!isLoopback) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'forbidden' }));
+      return true;
+    }
+    const active = proxy.getActiveRequests(parseDiagnosticActiveFilter(parsedUrl.searchParams));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      active,
+      total: active.length,
+      generatedAt: new Date().toISOString(),
+    }));
     return true;
   }
   res.writeHead(404, { 'Content-Type': 'application/json' });
