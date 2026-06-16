@@ -235,9 +235,9 @@ public class McpGatewayController : ControllerBase
 
         // 先替换 Path 中的 {param} 占位（取自 arguments），已用于路径的键不再进 query/body
         var consumed = new HashSet<string>(StringComparer.Ordinal);
-        var path = SubstitutePathParams(match.Path, args, consumed);
+        var dynPath = SubstitutePathParams(match.Path, args, consumed);
         var isGet = string.Equals(match.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
-        var pathAndQuery = isGet ? AppendQuery(path, args, consumed) : path;
+        var pathAndQuery = isGet ? AppendQuery(dynPath, args, consumed) : dynPath;
         JsonNode? dynBody = isGet ? null : BodyExcluding(args, consumed);
         var (st, rb) = await LoopbackAsync(match.HttpMethod, pathAndQuery, dynBody, ct);
         return ToolCallResult(id, st, rb);
