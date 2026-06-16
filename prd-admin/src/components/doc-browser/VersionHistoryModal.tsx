@@ -1,0 +1,207 @@
+import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { History, RotateCcw, X } from 'lucide-react';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { toast } from '@/lib/toast';
+import { RelativeTime } from '@/components/ui/RelativeTime';
+
+/** 版本元信息（不含正文） */
+export type VersionMeta = {
+  id: string;
+  versionNumber: number;
+  charCount: number;
+  sizeBytes: number;
+  source: string;
+  restoredFromVersionId?: string | null;
+  createdBy: string;
+  createdByName?: string | null;
+  createdAt: string;
+};
+
+/** 版本完整正文 */
+export type VersionFull = VersionMeta & { content: string };
+
+/** 版本控制接口：由可写知识库注入，DocBrowser 透传给本弹窗。 */
+type ApiLike<T> = { success: boolean; data?: T | null; error?: { message?: string } | null };
+
+export type VersionApi = {
+  list: (entryId: string, page: number, pageSize: number) => Promise<ApiLike<{ items: VersionMeta[]; total: number }>>;
+  get: (entryId: string, versionId: string) => Promise<ApiLike<VersionFull>>;
+  restore: (entryId: string, versionId: string) => Promise<ApiLike<{ updatedAt: string; fromVersionNumber: number }>>;
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  edit: '编辑',
+  restore: '恢复',
+  sync: '外部同步',
+  import: '导入',
+};
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+type Props = {
+  entryId: string;
+  entryTitle: string;
+  api: VersionApi;
+  /** 恢复成功后回调：把恢复后的正文 + 服务端新 updatedAt 交给 DocBrowser 就地更新 preview。 */
+  onRestored: (content: string, updatedAt: string) => void;
+  onClose: () => void;
+};
+
+/**
+ * 知识库历史版本弹窗：左列版本列表，右列选中版本正文预览，可一键恢复。
+ * 遵循 frontend-modal.md：createPortal 到 body + inline style 控高 + 滚动区 min-h:0。
+ */
+export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onClose }: Props) {
+  const [versions, setVersions] = useState<VersionMeta[] | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<VersionFull | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+
+  const loadList = useCallback(async () => {
+    const res = await api.list(entryId, 1, 100);
+    if (res.success && res.data) {
+      setVersions(res.data.items);
+      if (res.data.items.length > 0) setSelectedId(res.data.items[0].id);
+    } else {
+      setVersions([]);
+      toast.error('加载版本失败', res.error?.message);
+    }
+  }, [api, entryId]);
+
+  useEffect(() => { void loadList(); }, [loadList]);
+
+  useEffect(() => {
+    if (!selectedId) { setDetail(null); return; }
+    let alive = true;
+    setDetailLoading(true);
+    void api.get(entryId, selectedId).then(res => {
+      if (!alive) return;
+      setDetail(res.success && res.data ? res.data : null);
+      setDetailLoading(false);
+    });
+    return () => { alive = false; };
+  }, [api, entryId, selectedId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const handleRestore = useCallback(async () => {
+    if (!detail) return;
+    setRestoring(true);
+    try {
+      const res = await api.restore(entryId, detail.id);
+      if (res.success && res.data) {
+        toast.success('已恢复到该版本', `版本 #${detail.versionNumber} 的内容已写回当前文档`);
+        onRestored(detail.content, res.data.updatedAt);
+        onClose();
+      } else {
+        toast.error('恢复失败', res.error?.message);
+      }
+    } finally {
+      setRestoring(false);
+    }
+  }, [api, detail, entryId, onRestored, onClose]);
+
+  const modal = (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.55)' }}
+      onClick={onClose}>
+      <div
+        className="rounded-xl flex flex-col"
+        style={{ width: 'min(960px, 92vw)', height: '80vh', maxHeight: '80vh', background: 'var(--bg-card)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))' }}
+        onClick={(e) => e.stopPropagation()}>
+        {/* 头部 */}
+        <div className="shrink-0 flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <History size={15} style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }} />
+            <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>历史版本</span>
+            <span className="text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>· {entryTitle}</span>
+          </div>
+          <button onClick={onClose} className="h-7 w-7 rounded-lg flex items-center justify-center cursor-pointer" style={{ color: 'var(--text-muted)' }}>
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* 主体：左列表 + 右预览 */}
+        <div className="flex-1 flex min-h-0">
+          {/* 版本列表 */}
+          <div className="shrink-0 flex flex-col" style={{ width: 280, borderRight: '1px solid rgba(255,255,255,0.08)', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            {versions === null ? (
+              <MapSectionLoader text="正在加载版本…" />
+            ) : versions.length === 0 ? (
+              <div className="px-4 py-8 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                还没有历史版本。<br />编辑并保存文档后，这里会自动留存每一次修改。
+              </div>
+            ) : (
+              versions.map((v, idx) => {
+                const active = v.id === selectedId;
+                return (
+                  <button
+                    key={v.id}
+                    onClick={() => setSelectedId(v.id)}
+                    className="text-left px-4 py-3 cursor-pointer flex flex-col gap-1"
+                    style={{
+                      background: active ? 'rgba(59,130,246,0.1)' : 'transparent',
+                      borderLeft: active ? '2px solid rgba(59,130,246,0.7)' : '2px solid transparent',
+                      borderBottom: '1px solid rgba(255,255,255,0.04)',
+                    }}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>版本 #{v.versionNumber}</span>
+                      {idx === 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>当前</span>
+                      )}
+                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>{SOURCE_LABEL[v.source] ?? v.source}</span>
+                    </div>
+                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <RelativeTime value={v.createdAt} /> · {v.charCount} 字 · {formatBytes(v.sizeBytes)}
+                    </div>
+                    {v.createdByName && (
+                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{v.createdByName}</div>
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* 正文预览 */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="flex-1 min-h-0 overflow-auto px-5 py-4" style={{ overscrollBehavior: 'contain' }}>
+              {detailLoading ? (
+                <MapSectionLoader text="正在加载正文…" />
+              ) : detail ? (
+                <pre className="text-[12px] whitespace-pre-wrap break-words font-mono" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))', margin: 0 }}>{detail.content || '（空内容）'}</pre>
+              ) : (
+                <div className="text-[12px] py-8 text-center" style={{ color: 'var(--text-muted)' }}>选择左侧版本查看正文</div>
+              )}
+            </div>
+            {/* 底部操作 */}
+            <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              <button
+                onClick={handleRestore}
+                disabled={!detail || restoring || (versions != null && versions[0]?.id === detail?.id)}
+                className="h-8 px-3 rounded-lg text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', color: 'rgba(147,197,253,0.95)' }}
+                title={versions != null && versions[0]?.id === detail?.id ? '这已经是当前版本' : '把该版本内容写回当前文档（当前内容会自动保留为新版本）'}>
+                {restoring ? <MapSpinner size={12} /> : <RotateCcw size={12} />}
+                恢复此版本
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
+}

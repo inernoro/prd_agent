@@ -40,6 +40,7 @@ public class DocumentStoreController : ControllerBase
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
     private readonly DocStoreServices.MentionService _mentions;
+    private readonly DocStoreServices.DocumentVersionService _versions;
     private readonly ILlmGateway _gateway;
     private readonly ILogger<DocumentStoreController> _logger;
 
@@ -64,6 +65,7 @@ public class DocumentStoreController : ControllerBase
         ITeamService teams,
         ITeamActivityService teamActivity,
         DocStoreServices.MentionService mentions,
+        DocStoreServices.DocumentVersionService versions,
         IAdminPermissionService adminPermissions,
         ILlmGateway gateway,
         ILogger<DocumentStoreController> logger)
@@ -77,6 +79,7 @@ public class DocumentStoreController : ControllerBase
         _teams = teams;
         _teamActivity = teamActivity;
         _mentions = mentions;
+        _versions = versions;
         _adminPermissions = adminPermissions;
         _gateway = gateway;
         _logger = logger;
@@ -934,6 +937,8 @@ public class DocumentStoreController : ControllerBase
         var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.EntryId != null && idsToDelete.Contains(v.EntryId));
         var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => idsToDelete.Contains(c.EntryId));
         var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => idsToDelete.Contains(r.SourceEntryId));
+        // 历史版本：级联清理这些条目的全部版本快照
+        var versionsDeleted = await _db.DocumentEntryVersions.DeleteManyAsync(v => idsToDelete.Contains(v.EntryId));
         // 双链账本：清掉以这些 entry 为 from 或 to 的所有引用
         var mentionsDeleted = await _mentions.CascadeDeleteAsync(MentionEntityType.Document, idsToDelete);
 
@@ -973,10 +978,10 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.UpdatedAt, DateTime.UtcNow));
 
         _logger.LogInformation(
-            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs} mentions={Mentions}",
+            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs} versions={Versions} mentions={Mentions}",
             entryId, entry.StoreId, userId,
             entriesResult.DeletedCount, syncLogsResult.DeletedCount, documentsDeleted, attachmentsDeleted,
-            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount, mentionsDeleted);
+            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount, versionsDeleted.DeletedCount, mentionsDeleted);
 
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryDeleted, "entry", entryId, entryTitle);
 
@@ -1053,11 +1058,13 @@ public class DocumentStoreController : ControllerBase
         }
 
         // 更新或创建 ParsedPrd
+        string? oldContent = null; // 改动前正文：用于把基线快照进版本历史，使首次编辑也能恢复到原始内容
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var doc = await _documentService.GetByIdAsync(entry.DocumentId);
             if (doc != null)
             {
+                oldContent = doc.RawContent;
                 // 重新解析并保存
                 var parsed = await _documentService.ParseAsync(content);
                 parsed.Id = doc.Id;
@@ -1104,6 +1111,12 @@ public class DocumentStoreController : ControllerBase
         // 重算双链账本：解析正文里的 [[xxx]]，写入 mentions 集合
         var mentionsWritten = await _mentions.ResyncDocumentMentionsAsync(store.Id, entryId, content);
 
+        // 版本快照（知识库版本控制）：先把改动前基线落库（去重，仅首次/外部覆盖时真正写入），
+        // 再把本次保存的新正文落库。最新版本恒等于当前正文。快照只存文本、不碰任何图片资产。
+        if (oldContent != null)
+            await _versions.SnapshotAsync(entryId, store.Id, oldContent, DocumentVersionSource.Edit, userId, userName);
+        await _versions.SnapshotAsync(entryId, store.Id, content, DocumentVersionSource.Edit, userId, userName);
+
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryUpdated, "entry", entryId, entry.Title);
 
         return Ok(ApiResponse<object>.Ok(new
@@ -1115,6 +1128,231 @@ public class DocumentStoreController : ControllerBase
             inlineCommentsRebound = rebindStats.rebound,
             inlineCommentsOrphaned = rebindStats.orphaned,
             mentionsWritten,
+        }));
+    }
+
+    // ───────────────────────── 知识库版本控制 ─────────────────────────
+
+    /// <summary>列出某条文档的历史版本（按版本号倒序，不含正文）。</summary>
+    [HttpGet("entries/{entryId}/versions")]
+    public async Task<IActionResult> ListEntryVersions(string entryId, [FromQuery] int page = 1, [FromQuery] int pageSize = 30)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var (items, total) = await _versions.ListAsync(entryId, page, pageSize);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = items.Select(v => new
+            {
+                id = v.Id,
+                versionNumber = v.VersionNumber,
+                charCount = v.CharCount,
+                sizeBytes = v.SizeBytes,
+                source = v.Source,
+                restoredFromVersionId = v.RestoredFromVersionId,
+                createdBy = v.CreatedBy,
+                createdByName = v.CreatedByName,
+                createdAt = v.CreatedAt,
+            }),
+            total,
+            page,
+            pageSize,
+        }));
+    }
+
+    /// <summary>取某个历史版本的完整正文（用于预览 / diff）。</summary>
+    [HttpGet("entries/{entryId}/versions/{versionId}")]
+    public async Task<IActionResult> GetEntryVersion(string entryId, string versionId)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var version = await _versions.GetAsync(versionId);
+        if (version == null || version.EntryId != entryId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id = version.Id,
+            versionNumber = version.VersionNumber,
+            content = version.Content,
+            charCount = version.CharCount,
+            sizeBytes = version.SizeBytes,
+            source = version.Source,
+            restoredFromVersionId = version.RestoredFromVersionId,
+            createdBy = version.CreatedBy,
+            createdByName = version.CreatedByName,
+            createdAt = version.CreatedAt,
+        }));
+    }
+
+    /// <summary>
+    /// 恢复某个历史版本：把该版本正文写回当前正文。
+    /// 恢复前会先把「当前正文」快照保留（去重，外部同步覆盖过的内容也能找回），
+    /// 再写入目标版本内容并记一条 source=restore 的新版本。<b>全程只写文本，不删除任何图片资产。</b>
+    /// </summary>
+    [HttpPost("entries/{entryId}/versions/{versionId}/restore")]
+    public async Task<IActionResult> RestoreEntryVersion(string entryId, string versionId)
+    {
+        var (userId, userName) = await GetActorInfoAsync();
+        var (entry, store, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null || store is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        if (entry.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持版本恢复"));
+
+        var version = await _versions.GetAsync(versionId);
+        if (version == null || version.EntryId != entryId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在"));
+
+        var updatedAt = await ApplyContentToEntryAsync(
+            entry, store, version.Content, userId, userName, DocumentVersionSource.Restore, versionId);
+        await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryUpdated, "entry", entryId, entry.Title);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            restored = true,
+            fromVersionNumber = version.VersionNumber,
+            updatedAt,
+        }));
+    }
+
+    /// <summary>
+    /// 把一段正文写入条目（解析存 ParsedPrd + 更新摘要/索引 + 重锚评论 + 重算双链 + 版本快照）。
+    /// 供版本恢复复用，与 UpdateEntryContent 的核心写入路径保持一致。
+    /// </summary>
+    private async Task<DateTime> ApplyContentToEntryAsync(
+        DocumentEntry entry, DocumentStore store, string content,
+        string userId, string? userName, string source, string? restoredFromVersionId)
+    {
+        content ??= string.Empty;
+        string? oldContent = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null)
+            {
+                oldContent = doc.RawContent;
+                var parsed = await _documentService.ParseAsync(content);
+                parsed.Id = doc.Id;
+                parsed.Title = doc.Title;
+                await _documentService.SaveAsync(parsed);
+            }
+        }
+        else
+        {
+            var parsed = await _documentService.ParseAsync(content);
+            parsed.Title = entry.Title;
+            await _documentService.SaveAsync(parsed);
+            entry.DocumentId = parsed.Id;
+        }
+
+        var now = DateTime.UtcNow;
+        var summary = content.Length > 200 ? content[..200] : content;
+        var contentIndex = content.Length > 2000 ? content[..2000] : content;
+        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entry.Id, Builders<DocumentEntry>.Update
+            .Set(e => e.DocumentId, entry.DocumentId)
+            .Set(e => e.Summary, summary.Trim())
+            .Set(e => e.ContentIndex, contentIndex.Trim())
+            .Set(e => e.UpdatedBy, userId)
+            .Set(e => e.UpdatedByName, userName)
+            .Set(e => e.UpdatedAt, now));
+
+        await RebindInlineCommentsAsync(entry.Id, content);
+        await _mentions.ResyncDocumentMentionsAsync(store.Id, entry.Id, content);
+
+        // 先保留改动前正文（去重；外部同步覆盖过的内容借此也能找回），再记本次新内容
+        if (oldContent != null)
+            await _versions.SnapshotAsync(entry.Id, store.Id, oldContent, DocumentVersionSource.Sync, userId, userName);
+        await _versions.SnapshotAsync(entry.Id, store.Id, content, source, userId, userName, restoredFromVersionId);
+        return now;
+    }
+
+    /// <summary>
+    /// 知识库大小统计：聚合正文字节、附件字节、图片附件字节/数量、历史版本占用，
+    /// 供前端在库卡片/详情展示「这个知识库有多大」。
+    /// </summary>
+    [HttpGet("stores/{storeId}/size")]
+    public async Task<IActionResult> GetStoreSize(string storeId)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        var entries = await _db.DocumentEntries
+            .Find(e => e.StoreId == storeId)
+            .ToListAsync();
+
+        int docCount = 0, folderCount = 0;
+        long documentBytes = 0, attachmentBytes = 0, imageBytes = 0;
+        int imageCount = 0;
+
+        // 收集文本文档 id 与附件 id，批量查后聚合，避免 N 次单查
+        var documentIds = entries.Where(e => !e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
+            .Select(e => e.DocumentId!).Distinct().ToList();
+        var attachmentIds = entries.Where(e => !string.IsNullOrEmpty(e.AttachmentId))
+            .Select(e => e.AttachmentId!).Distinct().ToList();
+
+        foreach (var e in entries)
+        {
+            if (e.IsFolder) folderCount++;
+            else docCount++;
+        }
+
+        if (documentIds.Count > 0)
+        {
+            var docs = await _db.Documents
+                .Find(d => documentIds.Contains(d.Id))
+                .Project<ParsedPrd>(Builders<ParsedPrd>.Projection.Include(d => d.RawContent))
+                .ToListAsync();
+            foreach (var d in docs)
+                documentBytes += System.Text.Encoding.UTF8.GetByteCount(d.RawContent ?? string.Empty);
+        }
+
+        if (attachmentIds.Count > 0)
+        {
+            var atts = await _db.Attachments
+                .Find(a => attachmentIds.Contains(a.AttachmentId))
+                .ToListAsync();
+            foreach (var a in atts)
+            {
+                attachmentBytes += a.Size;
+                if (a.Type == AttachmentType.Image)
+                {
+                    imageBytes += a.Size;
+                    imageCount++;
+                }
+            }
+        }
+
+        var (versionBytes, versionCount) = await _versions.StoreVersionStatsAsync(storeId);
+
+        var totalBytes = documentBytes + attachmentBytes;
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            storeId,
+            entryCount = docCount,
+            folderCount,
+            documentBytes,
+            attachmentBytes,
+            imageBytes,
+            imageCount,
+            versionBytes,
+            versionCount,
+            // totalBytes 为「当前内容」体量（正文 + 附件，图片含在附件里），不含历史版本占用
+            totalBytes,
         }));
     }
 

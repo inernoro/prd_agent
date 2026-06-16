@@ -307,6 +307,7 @@ public class MongoDbContext
     public IMongoCollection<ReprocessAgent> ReprocessAgents => _database.GetCollection<ReprocessAgent>("reprocess_agents");
     public IMongoCollection<DocumentStoreViewEvent> DocumentStoreViewEvents => _database.GetCollection<DocumentStoreViewEvent>("document_store_view_events");
     public IMongoCollection<DocumentInlineComment> DocumentInlineComments => _database.GetCollection<DocumentInlineComment>("document_inline_comments");
+    public IMongoCollection<DocumentEntryVersion> DocumentEntryVersions => _database.GetCollection<DocumentEntryVersion>("document_entry_versions");
     public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
     public IMongoCollection<DocumentStoreSyncLink> DocumentStoreSyncLinks => _database.GetCollection<DocumentStoreSyncLink>("document_store_sync_links");
 

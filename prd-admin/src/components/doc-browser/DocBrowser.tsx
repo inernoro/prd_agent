@@ -307,6 +307,7 @@ function TagFilterDropdown({
   );
 }
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { VersionHistoryModal, type VersionApi } from './VersionHistoryModal';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { motion } from 'motion/react';
 import ShinyText from '@/components/reactbits/ShinyText';
@@ -318,7 +319,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
-import { Workflow } from 'lucide-react';
+import { Workflow, History } from 'lucide-react';
 import { listInlineComments, createInlineComment, deleteInlineComment } from '@/services';
 import { toast } from '@/lib/toast';
 import { DocToc } from './DocToc';
@@ -398,7 +399,19 @@ export type DocBrowserProps = {
   /** 重命名条目（修改 title）。提供时右键菜单会出现"重命名"项。 */
   onRenameEntry?: (entryId: string, newTitle: string) => Promise<void>;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
-  onSaveContent?: (entryId: string, content: string) => Promise<void>;
+  /**
+   * 写回正文。返回服务端最新 updatedAt（用于把 loadedContentKey 推进到同一版本，
+   * 短路掉因 entries.updatedAt 变化触发的内容重拉 —— 避免保存/插入图片后整页闪烁回顶）。
+   * 兼容旧返回 void。
+   */
+  onSaveContent?: (entryId: string, content: string) => Promise<{ updatedAt?: string } | void>;
+  /**
+   * 版本控制接口（私人/团队知识库可写场景注入）。提供时编辑器顶部显示「历史版本」按钮，
+   * 可查看历史、预览、恢复。恢复后由 DocBrowser 直接更新本地 preview，不触发整页重拉。
+   */
+  versionApi?: VersionApi;
+  /** 版本恢复成功后通知页面层同步 entries[].updatedAt（避免随后内容重拉） */
+  onEntryContentRestored?: (entryId: string, updatedAt: string) => void;
   /**
    * 划词 AI 局部编辑（改写选区 / 为选区配图）。仅在可写场景（如私人知识库）开启；
    * 需同时提供 onSaveContent（写回走同一条 PUT content 路径，服务端自动重锚定行内评论）。
@@ -1538,6 +1551,8 @@ export function DocBrowser({
   onRenameEntry,
   onMoveEntry,
   onSaveContent,
+  versionApi,
+  onEntryContentRestored,
   enableSelectionAi,
   loadContent,
   onCreateFolder,
@@ -1578,6 +1593,7 @@ export function DocBrowser({
   const [contentLoading, setContentLoading] = useState(false);
   // 内容加载缓存键：以 entryId + updatedAt 组合作内容版本，替换文件后 updatedAt 变化即触发重载
   const [loadedContentKey, setLoadedContentKey] = useState<string | null>(null);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -1977,6 +1993,26 @@ export function DocBrowser({
     };
   }, [liveSelection, trackedEntryForComments]);
 
+  // 本地保存提交：写回正文后，立即把 preview 更新为刚保存的权威内容，并将 loadedContentKey
+  // 推进到服务端返回的新 updatedAt。这样后续因父级 entries[].updatedAt 变化触发的
+  // loadEntryContent(`${id}:${newUpdatedAt}`) 会命中缓存键短路（contentKey === loadedContentKey）,
+  // 不再 setPreview(null) 重新拉取 —— 根除"保存/划词配图后整页闪烁、滚动回到顶部、
+  // （github 订阅文档）插入的图片被服务端旧正文盖掉而消失"三连症状。
+  // 返回是否成功；失败时不动 preview/key，由调用方按既有逻辑处理。
+  const commitLocalSave = useCallback(async (entryId: string, content: string): Promise<boolean> => {
+    if (!onSaveContent) return false;
+    let result: { updatedAt?: string } | void;
+    try {
+      result = await onSaveContent(entryId, content);
+    } catch {
+      return false; // toast 由页面层 onSaveContent 内部抛出
+    }
+    setPreview(prev => (prev ? { ...prev, text: content } : prev));
+    const ua = result && typeof result === 'object' ? result.updatedAt : undefined;
+    if (ua) setLoadedContentKey(`${entryId}:${ua}`);
+    return true;
+  }, [onSaveContent]);
+
   // AI 编辑写回：基于选区在正文 body 中重定位（offset 校验 → 唯一 indexOf → 上下文消歧），
   // 替换/插入后拼回 frontmatter 前缀，走既有 onSaveContent（PUT content，服务端自动
   // 重锚定行内评论 + 重算双链账本）。歧义无法消除时拒绝替换，宁缺毋错。
@@ -1985,7 +2021,7 @@ export function DocBrowser({
     mode: 'replace' | 'insert-after',
     newText: string,
   ): Promise<boolean> => {
-    if (!onSaveContent) return false;
+    if (!onSaveContent) return false; // commitLocalSave 内部亦校验，此处早退避免无谓重定位
     if (target.entryId !== selectedEntryId || !preview?.text || typeof selectionRawContent !== 'string') {
       toast.error('文档已切换', '请重新划选后再试');
       return false;
@@ -2010,16 +2046,12 @@ export function DocBrowser({
         : `${body.replace(/\n+$/, '')}\n\n${newText}\n`;
     }
     const newFull = frontmatterPrefixOf(raw, body) + newBody;
-    try {
-      await onSaveContent(target.entryId, newFull);
-    } catch {
-      return false; // 失败提示由 onSaveContent 调用方（页面层）toast
-    }
-    setPreview(prev => (prev ? { ...prev, text: newFull } : prev));
+    const ok = await commitLocalSave(target.entryId, newFull);
+    if (!ok) return false; // 失败提示由 onSaveContent 调用方（页面层）toast
     // 写回已触发服务端行内评论重锚定，重拉一次让本地高亮位置跟上
     void refreshComments();
     return true;
-  }, [onSaveContent, selectedEntryId, preview, selectionRawContent, refreshComments]);
+  }, [onSaveContent, commitLocalSave, selectedEntryId, preview, selectionRawContent, refreshComments]);
 
   // 划词配图：生成的图片以 markdown 形式插入选区所在段落之后
   const handleInsertSelectionImage = useCallback(async (url: string, name?: string) => {
@@ -3344,6 +3376,15 @@ export function DocBrowser({
                 if (!cfg.editable) return null;
                 return (
                   <div className="flex items-center gap-1.5">
+                    {versionApi && !editMode && (
+                      <button
+                        onClick={() => setVersionHistoryOpen(true)}
+                        className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
+                        title="查看并恢复历史版本">
+                        <History size={11} /> 历史版本
+                      </button>
+                    )}
                     {editMode ? (
                       <>
                         {/* Markdown：富文本（所见即所得）/ 源码（支持 [[ 自动补全）双模式 */}
@@ -3361,9 +3402,8 @@ export function DocBrowser({
                             if (!selectedEntryId) return;
                             setSaving(true);
                             try {
-                              await onSaveContent(selectedEntryId, editContent);
-                              setPreview(prev => prev ? { ...prev, text: editContent } : prev);
-                              setEditMode(false);
+                              const ok = await commitLocalSave(selectedEntryId, editContent);
+                              if (ok) setEditMode(false);
                             } finally {
                               setSaving(false);
                             }
@@ -3744,6 +3784,21 @@ export function DocBrowser({
             // 能评论、关掉后 margin/composer/overlay 仍按只读禁写，Bugbot Medium），并带 fetchIdRef 守卫。
             void refreshComments();
           }}
+        />
+      )}
+      {versionHistoryOpen && versionApi && selectedEntryData && !selectedEntryData.isFolder && (
+        <VersionHistoryModal
+          entryId={selectedEntryData.id}
+          entryTitle={selectedEntryData.title}
+          api={versionApi}
+          onRestored={(content, updatedAt) => {
+            // 恢复后就地更新 preview + 推进 loadedContentKey，避免整页重拉闪烁
+            setPreview(prev => (prev ? { ...prev, text: content } : prev));
+            setLoadedContentKey(`${selectedEntryData.id}:${updatedAt}`);
+            if (editMode) { setEditMode(false); setEditContent(''); }
+            onEntryContentRestored?.(selectedEntryData.id, updatedAt);
+          }}
+          onClose={() => setVersionHistoryOpen(false)}
         />
       )}
     </div>

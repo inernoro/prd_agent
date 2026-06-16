@@ -48,6 +48,7 @@ import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
+import { StoreSizeBadge } from './StoreSizeBadge';
 import {
   listDocumentStoresWithPreview,
   createDocumentStore,
@@ -66,6 +67,9 @@ import {
   deleteDocumentEntry,
   moveDocumentEntry,
   updateDocumentContent,
+  listEntryVersions,
+  getEntryVersion,
+  restoreEntryVersion,
   setFolderPrimaryChild,
   rebuildContentIndex,
   addDocumentEntry,
@@ -973,11 +977,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           updatedByName: res.data.updatedByName ?? e.updatedByName,
         } : e));
       toast.success('已保存');
+      // 返回服务端最新 updatedAt：DocBrowser 用它推进 loadedContentKey，短路掉保存后的内容重拉
+      return { updatedAt: res.data.updatedAt };
     } else {
       toast.error('保存失败', res.error?.message);
       throw new Error(res.error?.message ?? '保存失败');
     }
   }, []);
+
+  // 版本控制接口：透传给 DocBrowser → VersionHistoryModal
+  const versionApi = useMemo(() => ({
+    list: (entryId: string, page: number, pageSize: number) => listEntryVersions(entryId, page, pageSize),
+    get: (entryId: string, versionId: string) => getEntryVersion(entryId, versionId),
+    restore: (entryId: string, versionId: string) => restoreEntryVersion(entryId, versionId),
+  }), []);
 
   const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     const res = await getDocumentContent(entryId);
@@ -1082,6 +1095,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
             <span className="text-[11px] text-token-muted tabular-nums">
               <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
             </span>
+            <StoreSizeBadge storeId={store.id} refreshKey={entries.length} />
           </div>
         }
         actions={
@@ -1210,6 +1224,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           onRenameEntry={handleRenameEntry}
           onMoveEntry={handleMoveEntry}
           onSaveContent={handleSaveContent}
+          versionApi={versionApi}
+          onEntryContentRestored={(entryId, updatedAt) => {
+            setEntries(prev => prev.map(e => e.id === entryId ? { ...e, updatedAt } : e));
+          }}
           enableSelectionAi
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
