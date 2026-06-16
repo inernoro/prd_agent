@@ -2627,10 +2627,19 @@ public class DefectAgentController : ControllerBase
                 ConfidenceScore = Math.Clamp(i.ConfidenceScore, 0, 100),
                 Analysis = i.Analysis?.Trim(),
                 FixSuggestion = i.FixSuggestion?.Trim(),
+                CommitSha = NormalizeCommitSha(i.CommitSha),
+                ShortSha = ResolveShortSha(i.CommitSha, i.ShortSha),
+                CommitMessage = i.CommitMessage?.Trim(),
+                CommitUrl = i.CommitUrl?.Trim(),
+                Repository = i.Repository?.Trim(),
+                Branch = i.Branch?.Trim(),
+                PreviewUrl = i.PreviewUrl?.Trim(),
+                VisualReportUrl = i.VisualReportUrl?.Trim(),
             }).ToList(),
         };
 
         await _db.DefectFixReports.InsertOneAsync(report, cancellationToken: CancellationToken.None);
+        await UpsertResolutionTracesAsync(report, share, CancellationToken.None);
 
         // 创建通知
         var notification = new AdminNotification
@@ -2654,6 +2663,69 @@ public class DefectAgentController : ControllerBase
         await LogOpenPlatformRequestAsync(appId, startedAt, sw.ElapsedMilliseconds, "POST", 200, null, boundUserId);
 
         return Ok(ApiResponse<object>.Ok(new { reportId = report.Id, itemCount = report.Items.Count }));
+    }
+
+    private async Task UpsertResolutionTracesAsync(DefectFixReport report, DefectShareLink share, CancellationToken ct)
+    {
+        foreach (var item in report.Items)
+        {
+            var commitSha = NormalizeCommitSha(item.CommitSha);
+            if (string.IsNullOrWhiteSpace(commitSha))
+                continue;
+
+            var now = DateTime.UtcNow;
+            var filter = Builders<DefectResolutionTrace>.Filter.And(
+                Builders<DefectResolutionTrace>.Filter.Eq(x => x.DefectId, item.DefectId),
+                Builders<DefectResolutionTrace>.Filter.Eq(x => x.CommitSha, commitSha));
+            var update = Builders<DefectResolutionTrace>.Update
+                .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+                .SetOnInsert(x => x.CreatedAt, now)
+                .Set(x => x.DefectId, item.DefectId)
+                .Set(x => x.DefectNo, item.DefectNo)
+                .Set(x => x.DefectTitle, item.DefectTitle)
+                .Set(x => x.FixReportId, report.Id)
+                .Set(x => x.ShareLinkId, share.Id)
+                .Set(x => x.ShareToken, share.Token)
+                .Set(x => x.AgentName, report.AgentName)
+                .Set(x => x.AgentIdentifier, report.AgentIdentifier)
+                .Set(x => x.Repository, item.Repository)
+                .Set(x => x.Branch, item.Branch)
+                .Set(x => x.CommitSha, commitSha)
+                .Set(x => x.ShortSha, ResolveShortSha(commitSha, item.ShortSha))
+                .Set(x => x.CommitMessage, item.CommitMessage)
+                .Set(x => x.CommitUrl, item.CommitUrl)
+                .Set(x => x.PreviewUrl, item.PreviewUrl)
+                .Set(x => x.VisualReportUrl, item.VisualReportUrl)
+                .Set(x => x.RiskLevel, DefectResolutionRiskLevel.Light)
+                .Set(x => x.FixStatus, string.IsNullOrWhiteSpace(item.VisualReportUrl)
+                    ? DefectResolutionFixStatus.Fixed
+                    : DefectResolutionFixStatus.PreviewVerified)
+                .Set(x => x.PublishStatus, DefectResolutionPublishStatus.Unknown)
+                .Set(x => x.UpdatedAt, now);
+
+            await _db.DefectResolutionTraces.UpdateOneAsync(
+                filter,
+                update,
+                new UpdateOptions { IsUpsert = true },
+                ct);
+        }
+    }
+
+    private static string? NormalizeCommitSha(string? commitSha)
+    {
+        var value = commitSha?.Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value.ToLowerInvariant();
+    }
+
+    private static string? ResolveShortSha(string? commitSha, string? shortSha)
+    {
+        var explicitShort = shortSha?.Trim();
+        if (!string.IsNullOrWhiteSpace(explicitShort))
+            return explicitShort;
+        var normalized = NormalizeCommitSha(commitSha);
+        return string.IsNullOrWhiteSpace(normalized)
+            ? null
+            : normalized[..Math.Min(7, normalized.Length)];
     }
 
     private static string ComputeReportStatus(List<DefectFixReportItem> items)
@@ -4270,6 +4342,14 @@ public class DefectFixReportItemRequest
     public int ConfidenceScore { get; set; }
     public string? Analysis { get; set; }
     public string? FixSuggestion { get; set; }
+    public string? CommitSha { get; set; }
+    public string? ShortSha { get; set; }
+    public string? CommitMessage { get; set; }
+    public string? CommitUrl { get; set; }
+    public string? Repository { get; set; }
+    public string? Branch { get; set; }
+    public string? PreviewUrl { get; set; }
+    public string? VisualReportUrl { get; set; }
 }
 
 public class ReviewDefectFixItemRequest
