@@ -663,6 +663,17 @@ public static class WorkflowAgent
         public const string Chat = "workflow-agent.error-analyzer::chat";
     }
 
+    public static class ChatRepair
+    {
+        [AppCallerMetadata(
+            "工作流-配置自愈",
+            "AI 生成的工作流配置结构校验失败时自动修正（替换停用舱/删除悬空连线/消除环/补必填字段）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.chat-repair::chat";
+    }
+
     public static class AiFill
     {
         [AppCallerMetadata(

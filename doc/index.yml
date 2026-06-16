@@ -63,6 +63,7 @@ docs:
   design.open-platform: 开放平台功能概要
   design.external-authorization: 外部授权中心（TAPD/语雀/GitHub 凭证统一管理）
   design.workflow-engine: 工作流引擎设计方案
+  design.workflow-auto-config: 工作流自动配置（AI 生成校验自愈 + 降低配置门槛）
   design.workflow-control-flow-sse: 工作流引擎 v2 流程控制舱与 SSE 实时推送设计
   design.admin: PRD Admin 设计系统规范
   design.account-data-sharing: 账户数据共享设计文档
@@ -276,6 +277,7 @@ docs:
   debt.onboarding-tips: 页面教程(小技巧)系统 · 债务台账
   debt.pm-agent: 项目管理智能体 · 债务台账
   debt.product-agent: 产品管理智能体 · 债务台账
+  debt.shortcuts-agent: 快捷指令 Agent · 债务台账（一键安装前置条件/Agent 绑定 Phase2/签名 409 降级）
   debt.video-agent: 视频生成 Agent · 债务台账
   debt.workflow-agent: 工作流 Agent · 债务台账
   debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账
@@ -327,6 +329,7 @@ docs:
   report.claude-agent-sdk-map-intrusion-root-cause-2026-05-18: Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告
   report.cds-agent-current-progress: CDS Agent 当前进度面板
   report.cds-agent-workbench-2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
+  report.2026-W24: 周报 2026-W24 (06-08 ~ 06-14)
   report.2026-W23: 周报 2026-W23 (06-01 ~ 06-07)
   report.2026-W22: 周报 2026-W22 (05-25 ~ 05-31)
   report.2026-W21: 周报 2026-W21 (05-18 ~ 05-24)
