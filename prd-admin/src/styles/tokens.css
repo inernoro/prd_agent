@@ -35,10 +35,11 @@
   --border-primary:   rgba(255, 255, 255, 0.12);
   --border-secondary: rgba(255, 255, 255, 0.06);
 
-  /* 玻璃效果变量（默认值，可被主题系统覆盖） */
-  --glass-bg-start: rgba(255, 255, 255, 0.04);
-  --glass-bg-end: rgba(255, 255, 255, 0.01);
-  --glass-border: rgba(255, 255, 255, 0.12);
+  /* 玻璃效果变量（默认值，可被主题系统覆盖）
+     B 方案（2026-06-16）：底色提一档 + 边框提亮，配合低模糊保证正文在花哨背景上仍耐读、玻璃边缘更清晰。 */
+  --glass-bg-start: rgba(255, 255, 255, 0.07);
+  --glass-bg-end: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.18);
   --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
   /* Glass 组件变量（与 prd-desktop 对齐） */
