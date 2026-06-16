@@ -77,6 +77,8 @@ export type UserPreferences = {
   visualAgentPreferences?: VisualAgentPreferences;
   literaryAgentPreferences?: LiteraryAgentPreferences;
   agentSwitcherPreferences?: AgentSwitcherPreferences;
+  /** 用户置顶的知识库 ID 列表（按用户视角排前） */
+  documentStorePinnedIds?: string[];
 };
 
 export type GetUserPreferencesContract = () => Promise<ApiResponse<UserPreferences>>;

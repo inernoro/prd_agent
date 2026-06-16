@@ -35,6 +35,15 @@ import {
   Send,
   Network,
   MoreHorizontal,
+  Pin,
+  ClipboardCheck,
+  CalendarDays,
+  GraduationCap,
+  Bug,
+  Newspaper,
+  Image as ImageIcon,
+  Boxes,
+  type LucideIcon,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -47,6 +56,7 @@ import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
+import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
@@ -81,6 +91,7 @@ import {
   listMyLikedDocumentStores,
   setStoreTeams,
   getStoresAnalyticsSummary,
+  getUserPreferences,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -271,6 +282,21 @@ function MoreItem({ icon, label, onClick, disabled, dataTourId }: {
       {label}
     </button>
   );
+}
+
+// 按知识库类别选图标（模板键 / appKey / 首个标签关键词 → lucide 图标），让卡片一眼看出类别。
+function iconForStore(store: { templateKey?: string; appKey?: string | null; tags?: string[]; name?: string }): LucideIcon {
+  if (store.templateKey === ACCEPTANCE_TEMPLATE_KEY) return ClipboardCheck; // 验收报告
+  const hay = `${store.appKey ?? ''} ${(store.tags ?? []).join(' ')} ${store.name ?? ''}`.toLowerCase();
+  const has = (...kw: string[]) => kw.some(k => hay.includes(k));
+  if (has('日报', 'daily')) return CalendarDays;
+  if (has('周报', 'weekly', 'report', '报告')) return Newspaper;
+  if (has('教程', 'guide', 'tutorial', '指南', '手册')) return GraduationCap;
+  if (has('缺陷', 'bug', 'defect', '问题')) return Bug;
+  if (has('视觉', 'image', 'visual', '海报', '图片')) return ImageIcon;
+  if (has('文档', 'doc', '规格', 'spec', '需求', 'prd')) return FileText;
+  if (has('产品', 'product', '项目', 'project')) return Boxes;
+  return Library;
 }
 
 // ── 创建空间对话框 ──
@@ -1731,6 +1757,9 @@ export function DocumentStorePage() {
   const [showSendToPeer, setShowSendToPeer] = useState(false);
   const [editTarget, setEditTarget] = useState<{ id: string; name: string; tags: string[] } | null>(null);
   const [shareTeamTarget, setShareTeamTarget] = useState<{ id: string; name: string; teamIds: string[] } | null>(null);
+  // 置顶：用户级，服务端持久化（跨设备/重登录保持）。openCardMenuId = 当前展开「更多」菜单的卡片 id。
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
@@ -1754,6 +1783,39 @@ export function DocumentStorePage() {
       navigate(location.pathname, { replace: true });
     }
   }, [location.search, location.hash, location.pathname, navigate]);
+
+  // 置顶 ID 服务端加载（跨设备/重登录保持）
+  useEffect(() => {
+    let alive = true;
+    getUserPreferences().then(res => {
+      if (alive && res.success) setPinnedIds(new Set(res.data.documentStorePinnedIds ?? []));
+    });
+    return () => { alive = false; };
+  }, []);
+
+  // 切换置顶：乐观更新 + 服务端持久化（失败回滚 + 提示）
+  const handleTogglePin = useCallback((storeId: string) => {
+    setPinnedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(storeId)) next.delete(storeId); else next.add(storeId);
+      const ids = [...next];
+      updateDocumentStorePins(ids).then(res => {
+        if (!res.success) {
+          setPinnedIds(prev2 => prev2); // 失败时下次刷新自动纠正
+          toast.error('置顶保存失败', res.error?.message);
+        }
+      });
+      return next;
+    });
+  }, []);
+
+  // 卡片「更多」菜单点外关闭
+  useEffect(() => {
+    if (!openCardMenuId) return;
+    const onDown = () => setOpenCardMenuId(null);
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [openCardMenuId]);
 
   // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
   const [search, setSearch] = useState<string>(() => sessionStorage.getItem('doc-store-search') ?? '');
@@ -1951,6 +2013,10 @@ export function DocumentStorePage() {
       filtered = filtered.filter(s => (s.tags ?? []).some(t => want.has(t)));
     }
     const cmp = (a: DocumentStoreWithPreview, b: DocumentStoreWithPreview) => {
+      // 置顶优先：被置顶的库永远排在最前（不受当前排序键影响）
+      const pa = pinnedIds.has(a.id) ? 1 : 0;
+      const pb = pinnedIds.has(b.id) ? 1 : 0;
+      if (pa !== pb) return pb - pa;
       switch (sortKey) {
         case 'updated-desc': return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
         case 'created-desc': return (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
@@ -1959,7 +2025,7 @@ export function DocumentStorePage() {
       }
     };
     return [...filtered].sort(cmp);
-  }, [rawList, isStoreTab, search, sortKey, tagFilter]);
+  }, [rawList, isStoreTab, search, sortKey, tagFilter, pinnedIds]);
 
   // 所有可用标签 + 各自的库数量（基于未筛选原始列表，避免筛选后标签消失抖动）
   const tagStats = useMemo(() => {
@@ -2395,6 +2461,9 @@ export function DocumentStorePage() {
               const ci = Math.abs([...s.id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)) % ICON_PALETTE.length;
               const [c1, c2] = ICON_PALETTE[ci];
               const category = s.tags?.[0];
+              const CatIcon = iconForStore(s as DocumentStoreWithPreview);
+              const isPinned = pinnedIds.has(s.id);
+              const cardMenuOpen = openCardMenuId === s.id;
               // 头像文件名字段名因来源而异：我的/团队列表是 ownerAvatarFileName，收藏/点赞列表是 ownerAvatar
               const ownerAvatarFileName = (s as DocumentStoreWithPreview).ownerAvatarFileName
                 ?? (s as InteractionStoreCard).ownerAvatar;
@@ -2412,85 +2481,89 @@ export function DocumentStorePage() {
                     }
                   }}>
                   <div className="p-4 pb-2 flex-1 flex flex-col">
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <div className="w-10 h-10 rounded-[11px] flex items-center justify-center flex-shrink-0"
-                          style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, boxShadow: `0 4px 12px -4px ${c1}99` }}>
-                          <Library size={18} style={{ color: '#fff' }} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
-                            <h3 className="min-w-0 truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                              {s.name}
-                            </h3>
-                            <div className="flex min-w-0 flex-shrink-0 items-center gap-1">
-                              {s.hasActiveShare && (
-                                <span
-                                  className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
-                                  style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', borderColor: 'rgba(234,179,8,0.32)' }}
-                                  title="该知识库已对外分享"
-                                  aria-label="已分享">
-                                  <Share2 size={11} />
-                                </span>
-                              )}
-                              <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
-                            </div>
-                          </div>
-                          {/* 副标题行：分类(首个标签) · N 篇文章 —— 复刻设计稿图1 */}
-                          <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                    <div className="flex items-start gap-2.5 mb-2">
+                      {/* 类别图标：按模板/标签反映知识库类别（验收→清单、周报→报纸、教程→学士帽…） */}
+                      <div className="w-10 h-10 rounded-[11px] flex items-center justify-center flex-shrink-0"
+                        style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, boxShadow: `0 4px 12px -4px ${c1}99` }}>
+                        <CatIcon size={18} style={{ color: '#fff' }} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="min-w-0 truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {s.name}
+                        </h3>
+                        {/* 副标题：分类 · N 篇文章 + 分享/同步状态小徽标（状态归到这一行，不与标题/操作争位） */}
+                        <div className="flex items-center gap-1.5 min-w-0 mt-0.5">
+                          <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
                             {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
-                          </p>
+                          </span>
+                          {s.hasActiveShare && (
+                            <span className="inline-flex h-[18px] items-center gap-1 flex-shrink-0 rounded-full px-1.5 text-[10px] font-medium"
+                              style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.32)' }}
+                              title="该知识库已对外分享" aria-label="已分享">
+                              <Share2 size={9} /> 已分享
+                            </span>
+                          )}
+                          <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
                         </div>
                       </div>
-                      {canManage && (
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <button
-                            className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="分享到团队空间"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
-                            }}
-                            style={{ color: 'rgba(59,130,246,0.7)' }}>
-                            <Users size={11} />
-                          </button>
-                          <button
-                            className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="编辑名称与标签"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditTarget({ id: s.id, name: s.name, tags: s.tags ?? [] });
-                            }}
-                            style={{ color: 'rgba(59,130,246,0.7)' }}>
-                            <Pencil size={11} />
-                          </button>
-                          <button
-                            className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="删除知识库"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              const entryCount = s.documentCount ?? 0;
-                              const confirmed = await systemDialog.confirm({
-                                title: '确认删除知识库',
-                                message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
-                                tone: 'danger',
-                                confirmText: '永久删除',
-                                cancelText: '取消',
-                              });
-                              if (!confirmed) return;
-                              const res = await deleteDocumentStore(s.id);
-                              if (res.success) {
-                                setStores(prev => prev.filter(x => x.id !== s.id));
-                                toast.success('知识库已删除', '关联数据已全部清理');
-                              } else {
-                                toast.error('删除失败', res.error?.message);
-                              }
-                            }}
-                            style={{ color: 'rgba(239,68,68,0.6)' }}>
-                            <Trash2 size={11} />
-                          </button>
-                        </div>
-                      )}
+                      {/* 右上角操作：置顶（人人可点，右侧不再空）+ 更多菜单（仅管理者）。常驻可见、尺寸放大，更醒目 */}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer transition-colors"
+                          title={isPinned ? '取消置顶' : '置顶到最前'}
+                          aria-label={isPinned ? '取消置顶' : '置顶'}
+                          onClick={(e) => { e.stopPropagation(); handleTogglePin(s.id); }}
+                          style={isPinned
+                            ? { background: 'rgba(234,179,8,0.16)', color: 'rgba(234,179,8,0.98)', border: '1px solid rgba(234,179,8,0.4)' }
+                            : { color: 'var(--text-muted)', border: '1px solid transparent' }}>
+                          <Pin size={14} style={{ fill: isPinned ? 'rgba(234,179,8,0.95)' : 'none' }} />
+                        </button>
+                        {canManage && (
+                          <div className="relative">
+                            <button
+                              className="surface-row h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer transition-colors"
+                              title="更多操作"
+                              onClick={(e) => { e.stopPropagation(); setOpenCardMenuId(cardMenuOpen ? null : s.id); }}
+                              style={{ color: 'var(--text-muted)' }}>
+                              <MoreHorizontal size={15} />
+                            </button>
+                            {cardMenuOpen && (
+                              <div
+                                className="absolute right-0 top-[32px] z-[120] min-w-[148px] rounded-[10px] py-1 shadow-lg"
+                                style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}
+                                onClick={(e) => e.stopPropagation()}>
+                                <MoreItem icon={<Users size={14} />} label="分享到团队" onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
+                                }} />
+                                <MoreItem icon={<Pencil size={14} />} label="编辑名称与标签" onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  setEditTarget({ id: s.id, name: s.name, tags: s.tags ?? [] });
+                                }} />
+                                <MoreItem icon={<Trash2 size={14} />} label="删除知识库" onClick={async () => {
+                                  setOpenCardMenuId(null);
+                                  const entryCount = s.documentCount ?? 0;
+                                  const confirmed = await systemDialog.confirm({
+                                    title: '确认删除知识库',
+                                    message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+                                    tone: 'danger',
+                                    confirmText: '永久删除',
+                                    cancelText: '取消',
+                                  });
+                                  if (!confirmed) return;
+                                  const res = await deleteDocumentStore(s.id);
+                                  if (res.success) {
+                                    setStores(prev => prev.filter(x => x.id !== s.id));
+                                    toast.success('知识库已删除', '关联数据已全部清理');
+                                  } else {
+                                    toast.error('删除失败', res.error?.message);
+                                  }
+                                }} />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     {/* 描述（整卡宽，复刻设计稿图1） */}
