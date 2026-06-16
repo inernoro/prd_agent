@@ -37,6 +37,9 @@ export interface HttpLogRecord {
 
 export type HttpRequestKind = 'user-traffic' | 'control-plane' | 'deploy' | 'container-op' | 'polling' | 'sse';
 
+export const HTTP_LOG_LAYERS = ['master', 'master-proxy', 'forwarder'] as const satisfies readonly HttpLogRecord['layer'][];
+export const HTTP_REQUEST_KINDS = ['user-traffic', 'control-plane', 'deploy', 'container-op', 'polling', 'sse'] as const satisfies readonly HttpRequestKind[];
+
 export interface ActiveHttpRequestRecord {
   id: string;
   startedAt: Date;
@@ -117,6 +120,20 @@ const MAX_BODY_PREVIEW_BYTES = 8 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
 const MAX_REDACT_DEPTH = 8;
 const OMITTED_BINARY_BODY_PREVIEW = '[cds http log omitted binary body]';
+const API_BRANCH_DEPLOY_PATH = /^(?:\/_cds)?\/api\/branches\/[^/]+\/deploy(?:\/[^/]+)?$/;
+const API_BRANCH_CONTAINER_OP_PATH = /^(?:\/_cds)?\/api\/branches\/[^/]+\/(stop|restart|pull|container-logs|container-exec|container-env|logs)$/;
+
+export function parseHttpLogLayer(value: unknown): HttpLogRecord['layer'] | undefined {
+  return typeof value === 'string' && (HTTP_LOG_LAYERS as readonly string[]).includes(value)
+    ? value as HttpLogRecord['layer']
+    : undefined;
+}
+
+export function parseHttpRequestKindValue(value: unknown): HttpRequestKind | undefined {
+  return typeof value === 'string' && (HTTP_REQUEST_KINDS as readonly string[]).includes(value)
+    ? value as HttpRequestKind
+    : undefined;
+}
 
 export function classifyHttpRequestKind(input: {
   layer?: HttpLogRecord['layer'];
@@ -130,9 +147,9 @@ export function classifyHttpRequestKind(input: {
   const accept = String((headers as Record<string, unknown>).accept || '').toLowerCase();
 
   if (String((headers as Record<string, unknown>)['x-cds-poll'] || '').toLowerCase() === 'true') return 'polling';
-  if (/^\/api\/branches\/[^/]+\/deploy(?:\/[^/]+)?$/.test(pathValue)) return 'deploy';
+  if (API_BRANCH_DEPLOY_PATH.test(pathValue)) return 'deploy';
+  if (API_BRANCH_CONTAINER_OP_PATH.test(pathValue)) return 'container-op';
   if (accept.includes('text/event-stream') || pathValue.endsWith('/stream') || pathValue.includes('/stream/')) return 'sse';
-  if (/^\/api\/branches\/[^/]+\/(stop|restart|pull|container-logs|container-exec|container-env|logs)$/.test(pathValue)) return 'container-op';
   if (pathValue.startsWith('/api/')
     || pathValue.startsWith('/_cds/api/')
     || pathValue.startsWith('/api/branches/')

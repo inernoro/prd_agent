@@ -32,7 +32,12 @@ import { ProxyHandler } from './forwarder/proxy-handler.js';
 import { resolveRoute } from './forwarder/route-resolver.js';
 import type { RouteRecord } from './forwarder/types.js';
 import { buildForwarderWaitingPageHtml } from './forwarder/waiting-page.js';
-import { httpLogStoreFromEnv, type HttpActiveRequestFilter, type HttpLogRecord, type HttpRequestKind } from './services/http-log-store.js';
+import {
+  httpLogStoreFromEnv,
+  parseHttpLogLayer,
+  parseHttpRequestKindValue,
+  type HttpActiveRequestFilter,
+} from './services/http-log-store.js';
 
 const FORWARDER_PORT = Number.parseInt(
   process.env.CDS_FORWARDER_PORT ?? '9090',
@@ -143,21 +148,6 @@ function watchRoutesJson(): void {
   }
 }
 
-function parseDiagnosticLayer(value: string | null): HttpLogRecord['layer'] | undefined {
-  return value === 'master' || value === 'master-proxy' || value === 'forwarder' ? value : undefined;
-}
-
-function parseDiagnosticRequestKind(value: string | null): HttpRequestKind | undefined {
-  return value === 'user-traffic'
-    || value === 'control-plane'
-    || value === 'deploy'
-    || value === 'container-op'
-    || value === 'polling'
-    || value === 'sse'
-    ? value
-    : undefined;
-}
-
 function nonEmptyQuery(value: string | null): string | undefined {
   return value && value.trim() ? value : undefined;
 }
@@ -169,12 +159,12 @@ function parseDiagnosticActiveFilter(searchParams: URLSearchParams): HttpActiveR
     limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
     requestId: nonEmptyQuery(searchParams.get('requestId')),
     host: nonEmptyQuery(searchParams.get('host')),
-    layer: parseDiagnosticLayer(searchParams.get('layer')),
+    layer: parseHttpLogLayer(searchParams.get('layer')),
     method: nonEmptyQuery(searchParams.get('method')),
     pathContains: nonEmptyQuery(searchParams.get('pathContains')) || nonEmptyQuery(searchParams.get('path')),
     branchId: nonEmptyQuery(searchParams.get('branchId')),
     profileId: nonEmptyQuery(searchParams.get('profileId')),
-    requestKind: parseDiagnosticRequestKind(searchParams.get('requestKind')),
+    requestKind: parseHttpRequestKindValue(searchParams.get('requestKind')),
     minAgeMs: Number.isFinite(minAgeRaw) ? minAgeRaw : undefined,
     sort: searchParams.get('sort') === 'started' ? 'started' : 'age',
   };

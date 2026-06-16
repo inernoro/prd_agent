@@ -128,6 +128,16 @@ describe('http log body redaction', () => {
       path: '/api/branches/prd-agent-main/deploy/api',
       headers: { accept: 'text/event-stream' },
     })).toBe('deploy');
+    expect(classifyHttpRequestKind({
+      method: 'POST',
+      path: '/_cds/api/branches/prd-agent-main/deploy/api',
+      headers: { accept: 'text/event-stream' },
+    })).toBe('deploy');
+    expect(classifyHttpRequestKind({
+      method: 'POST',
+      path: '/_cds/api/branches/prd-agent-main/restart',
+      headers: { accept: 'text/event-stream' },
+    })).toBe('container-op');
     expect(classifyHttpRequestKind({ method: 'GET', path: '/api/projects/a/instances', headers: { 'x-cds-poll': 'true' } })).toBe('polling');
     expect(classifyHttpRequestKind({ method: 'GET', path: '/api/branches/stream', headers: { accept: 'text/event-stream' } })).toBe('sse');
     expect(classifyHttpRequestKind({ method: 'GET', path: '/' })).toBe('user-traffic');

@@ -1760,11 +1760,26 @@ ${shouldAutoRefresh ? `;(function(){
       },
     });
     let activeCompleted = false;
+    let activeCleanupTimer: ReturnType<typeof setTimeout> | null = null;
     const completeActiveRequest = () => {
       if (activeCompleted || !activeRequestId) return;
       activeCompleted = true;
+      if (activeCleanupTimer) {
+        clearTimeout(activeCleanupTimer);
+        activeCleanupTimer = null;
+      }
       this.httpLogStore?.completeActive?.(activeRequestId);
     };
+    const scheduleActiveCleanup = () => {
+      if (activeCompleted || !activeRequestId || activeCleanupTimer) return;
+      activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
+      activeCleanupTimer.unref?.();
+    };
+    if (typeof clientRes.once === 'function') {
+      clientRes.once('close', scheduleActiveCleanup);
+    } else if (typeof clientRes.on === 'function') {
+      clientRes.on('close', scheduleActiveCleanup);
+    }
     const logHttp = (
       status: number,
       response: { bodyPreview?: string; bodyBytes?: number } = {},

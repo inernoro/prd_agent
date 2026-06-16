@@ -17,7 +17,11 @@ import type { Request } from 'express';
 import type { ProxyHandler } from './proxy-handler.js';
 import type { RouteWatcher } from './route-watcher.js';
 import type { RouteResolverFn } from './index.js';
-import type { HttpActiveRequestFilter, HttpLogRecord, HttpRequestKind } from '../services/http-log-store.js';
+import {
+  parseHttpLogLayer,
+  parseHttpRequestKindValue,
+  type HttpActiveRequestFilter,
+} from '../services/http-log-store.js';
 
 export interface DiagnosticRouterOptions {
   watcher: RouteWatcher;
@@ -38,21 +42,6 @@ function defaultIsLoopback(req: Request): boolean {
   return LOOPBACK_RE.test(ip);
 }
 
-function parseLayer(value: unknown): HttpLogRecord['layer'] | undefined {
-  return value === 'master' || value === 'master-proxy' || value === 'forwarder' ? value : undefined;
-}
-
-function parseRequestKind(value: unknown): HttpRequestKind | undefined {
-  return value === 'user-traffic'
-    || value === 'control-plane'
-    || value === 'deploy'
-    || value === 'container-op'
-    || value === 'polling'
-    || value === 'sse'
-    ? value
-    : undefined;
-}
-
 function stringQuery(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
@@ -64,12 +53,12 @@ function parseActiveFilter(query: Request['query']): HttpActiveRequestFilter {
     limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
     requestId: stringQuery(query.requestId),
     host: stringQuery(query.host),
-    layer: parseLayer(query.layer),
+    layer: parseHttpLogLayer(query.layer),
     method: stringQuery(query.method),
     pathContains: stringQuery(query.pathContains) || stringQuery(query.path),
     branchId: stringQuery(query.branchId),
     profileId: stringQuery(query.profileId),
-    requestKind: parseRequestKind(query.requestKind),
+    requestKind: parseHttpRequestKindValue(query.requestKind),
     minAgeMs: Number.isFinite(minAgeRaw) ? minAgeRaw : undefined,
     sort: query.sort === 'started' ? 'started' : 'age',
   };

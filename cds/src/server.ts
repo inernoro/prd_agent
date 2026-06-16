@@ -56,6 +56,8 @@ import {
   createBodyCapture,
   createRequestId,
   filterActiveHttpRequests,
+  parseHttpLogLayer,
+  parseHttpRequestKindValue,
   redactHeaders,
   type ActiveHttpRequestRecord,
   type HttpActiveRequestFilter,
@@ -134,17 +136,6 @@ function percentile(sortedAsc: number[], p: number): number {
   if (sortedAsc.length === 0) return 0;
   const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.ceil((p / 100) * sortedAsc.length) - 1));
   return sortedAsc[idx];
-}
-
-function parseHttpRequestKind(value: unknown): HttpRequestKind | undefined {
-  return value === 'user-traffic'
-    || value === 'control-plane'
-    || value === 'deploy'
-    || value === 'container-op'
-    || value === 'polling'
-    || value === 'sse'
-    ? value
-    : undefined;
 }
 
 function isNoiseHttpLog(log: HttpLogRecord): boolean {
@@ -305,10 +296,6 @@ function summarizeActiveHttpRequests(active: ActiveHttpRequestRecord[]): {
   };
 }
 
-function parseActiveLayer(value: unknown): HttpLogRecord['layer'] | undefined {
-  return value === 'master' || value === 'master-proxy' || value === 'forwarder' ? value : undefined;
-}
-
 function activeQueryString(filter: HttpActiveRequestFilter): string {
   const params = new URLSearchParams();
   const entries: Array<[string, string | number | undefined]> = [
@@ -382,6 +369,7 @@ async function findForwarderActiveRequests(filter: HttpActiveRequestFilter): Pro
 async function collectActiveHttpRequests(
   store: HttpLogSink | null | undefined,
   filter: HttpActiveRequestFilter,
+  options: { excludeRequestId?: string } = {},
 ): Promise<ActiveHttpRequestRecord[]> {
   const local = store?.findActive?.(filter) || [];
   const forwarder = await findForwarderActiveRequests({
@@ -390,7 +378,10 @@ async function collectActiveHttpRequests(
     // cap, otherwise a busy data-plane process can hide older master requests.
     limit: Math.max(filter.limit ?? 200, 5000),
   });
-  return filterActiveHttpRequests([...local, ...forwarder], filter);
+  const combined = options.excludeRequestId
+    ? [...local, ...forwarder].filter((request) => request.requestId !== options.excludeRequestId)
+    : [...local, ...forwarder];
+  return filterActiveHttpRequests(combined, filter);
 }
 
 export interface ServerDeps {
@@ -2629,7 +2620,7 @@ export function createServer(deps: ServerDeps): express.Express {
       : (typeof req.query.path === 'string' ? req.query.path : undefined);
     const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
     const profileId = typeof req.query.profileId === 'string' ? req.query.profileId : undefined;
-    const requestKind = parseHttpRequestKind(req.query.requestKind);
+    const requestKind = parseHttpRequestKindValue(req.query.requestKind);
     const since = typeof req.query.since === 'string' ? req.query.since : undefined;
     const until = typeof req.query.until === 'string' ? req.query.until : undefined;
     const minDurationRaw = typeof req.query.minDurationMs === 'string' ? Number.parseInt(req.query.minDurationMs, 10) : undefined;
@@ -2679,18 +2670,20 @@ export function createServer(deps: ServerDeps): express.Express {
       limit,
       requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
       host: typeof req.query.host === 'string' ? req.query.host : undefined,
-      layer: parseActiveLayer(req.query.layer),
+      layer: parseHttpLogLayer(req.query.layer),
       method: typeof req.query.method === 'string' ? req.query.method : undefined,
       pathContains: typeof req.query.pathContains === 'string'
         ? req.query.pathContains
         : (typeof req.query.path === 'string' ? req.query.path : undefined),
       branchId: typeof req.query.branchId === 'string' ? req.query.branchId : undefined,
       profileId: typeof req.query.profileId === 'string' ? req.query.profileId : undefined,
-      requestKind: parseHttpRequestKind(req.query.requestKind),
+      requestKind: parseHttpRequestKindValue(req.query.requestKind),
       minAgeMs,
       sort: sortRaw === 'started' ? 'started' : 'age',
     };
-    const active = await collectActiveHttpRequests(deps.httpLogStore, filter);
+    const active = await collectActiveHttpRequests(deps.httpLogStore, filter, {
+      excludeRequestId: String(res.locals.cdsRequestId || ''),
+    });
     res.json({
       ok: true,
       disabled: false,
@@ -2743,7 +2736,7 @@ export function createServer(deps: ServerDeps): express.Express {
       method: typeof req.query.method === 'string' ? req.query.method : undefined,
       minStatus: typeof req.query.minStatus === 'string' ? Number.parseInt(req.query.minStatus, 10) || undefined : undefined,
       minDurationMs,
-      requestKind: parseHttpRequestKind(req.query.requestKind),
+      requestKind: parseHttpRequestKindValue(req.query.requestKind),
       pathContains: typeof req.query.pathContains === 'string'
         ? req.query.pathContains
         : (typeof req.query.path === 'string' ? req.query.path : undefined),
@@ -2784,7 +2777,9 @@ export function createServer(deps: ServerDeps): express.Express {
     const top = Math.max(1, Math.min(topRaw, 50));
     const recentLogs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'recent' });
     const durationLogs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'duration' });
-    const active = await collectActiveHttpRequests(deps.httpLogStore, { limit: 200, sort: 'age' });
+    const active = await collectActiveHttpRequests(deps.httpLogStore, { limit: 200, sort: 'age' }, {
+      excludeRequestId: String(res.locals.cdsRequestId || ''),
+    });
     const logs = recentLogs;
     const normalLogs = logs.filter((log) => !isNoiseHttpLog(log));
     const noiseLogs = logs.filter(isNoiseHttpLog);

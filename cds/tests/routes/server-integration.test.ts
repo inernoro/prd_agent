@@ -61,11 +61,15 @@ interface HttpResponse {
   headers: http.IncomingHttpHeaders;
 }
 
-async function request(server: http.Server, urlPath: string): Promise<HttpResponse> {
+async function request(
+  server: http.Server,
+  urlPath: string,
+  headers: http.OutgoingHttpHeaders = {},
+): Promise<HttpResponse> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
     const req = http.request(
-      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method: 'GET' },
+      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method: 'GET', headers },
       (res) => {
         let raw = '';
         res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
@@ -477,6 +481,51 @@ describe('Server route ordering (regression)', () => {
       requestId: 'active-deploy',
       ageMs: 45_000,
     });
+  });
+
+  it('real createServer excludes the current observer request from active performance overview', async () => {
+    const active: ActiveHttpRequestRecord[] = [
+      {
+        id: 'observer-active',
+        startedAt: new Date('2026-06-16T08:00:00.000Z'),
+        ageMs: 5_000,
+        layer: 'master',
+        requestKind: 'polling',
+        requestId: 'observer-active',
+        method: 'GET',
+        host: '127.0.0.1:9900',
+        path: '/api/perf/overview',
+        request: {},
+      },
+      {
+        id: 'real-active-deploy',
+        startedAt: new Date('2026-06-16T08:00:10.000Z'),
+        ageMs: 45_000,
+        layer: 'master',
+        requestKind: 'deploy',
+        requestId: 'real-active-deploy',
+        method: 'POST',
+        host: '127.0.0.1:9900',
+        path: '/api/branches/prd-agent-main/deploy/api',
+        branchId: 'prd-agent-main',
+        profileId: 'api',
+        request: {},
+      },
+    ];
+    const app = buildRealServerWithHttpLogs([], active);
+    server = await startServer(app);
+
+    const res = await request(server, '/api/perf/overview', {
+      'x-cds-request-id': 'observer-active',
+      'x-cds-poll': 'true',
+    });
+
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.activeSummary.total).toBe(1);
+    expect(body.activeSummary.byKind.polling).toBe(0);
+    expect(body.activeSummary.byKind.deploy).toBe(1);
+    expect(body.activeRequests.map((request: ActiveHttpRequestRecord) => request.requestId)).toEqual(['real-active-deploy']);
   });
 
   it('real createServer merges active HTTP requests from the forwarder diagnostic endpoint', async () => {
