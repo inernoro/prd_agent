@@ -74,8 +74,7 @@ if (activeHttpLogStore) {
     await activeHttpLogStore.init();
     console.log('[forwarder] persistent HTTP request logging enabled (collection=cds_http_logs)');
   } catch (err) {
-    activeHttpLogStore = null;
-    console.warn(`[forwarder] HTTP request logging disabled: ${(err as Error).message}`);
+    console.warn(`[forwarder] persistent HTTP request logging disabled; active tracking remains in memory: ${(err as Error).message}`);
   }
 }
 

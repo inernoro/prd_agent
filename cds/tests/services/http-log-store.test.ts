@@ -179,4 +179,33 @@ describe('http log body redaction', () => {
     store.completeActive(deployId);
     expect(store.findActive({ requestKind: 'deploy' })).toHaveLength(0);
   });
+
+  it('keeps active tracking available without a Mongo connection', () => {
+    const store = new HttpLogStore({ uri: 'mongodb://unused' });
+    store.record({
+      layer: 'forwarder',
+      requestId: 'no-mongo-record',
+      method: 'POST',
+      path: '/login',
+      status: 200,
+      durationMs: 30,
+      outcome: 'ok',
+      request: {},
+      response: {},
+    });
+    const activeId = store.beginActive({
+      layer: 'forwarder',
+      requestKind: 'user-traffic',
+      requestId: 'no-mongo-active',
+      method: 'POST',
+      path: '/login',
+      startedAt: new Date(Date.now() - 1000),
+      request: {},
+    });
+
+    expect(store.findActive({ requestKind: 'user-traffic' })).toHaveLength(1);
+
+    store.completeActive(activeId);
+    expect(store.findActive()).toHaveLength(0);
+  });
 });
