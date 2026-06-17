@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, FileText, Table, Play, Save, Trash2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { GlassCard } from '@/components/design/GlassCard';
 import { Select } from '@/components/design/Select';
+import { Surface } from '@/components/design/Surface';
 import { useAuthStore } from '@/stores/authStore';
 import {
   parseSourceFile,
@@ -34,6 +36,8 @@ export default function FileConvertPage() {
   const [rules, setRules] = useState<FileConvertRule[]>([]);
   const [savingRule, setSavingRule] = useState(false);
   const [saveRuleName, setSaveRuleName] = useState('');
+  const [saveRuleDescription, setSaveRuleDescription] = useState('');
+  const [saveRuleError, setSaveRuleError] = useState<string | null>(null);
   const [saveRuleWithTemplate, setSaveRuleWithTemplate] = useState(true);
   const [showSaveRuleForm, setShowSaveRuleForm] = useState(false);
   const [rulesExpanded, setRulesExpanded] = useState(false);
@@ -135,20 +139,68 @@ export default function FileConvertPage() {
     [sourceResult]
   );
 
+  const getValidMappings = useCallback(
+    (items: FieldMapping[]) =>
+      items.filter(
+        m =>
+          m.templatePlaceholder.trim() &&
+          m.sourceColumn &&
+          m.sourceColumn !== '__skip__'
+      ),
+    []
+  );
+
   const handleSaveRule = useCallback(async () => {
-    if (!saveRuleName.trim()) return;
+    setSaveRuleError(null);
+    if (!saveRuleName.trim()) {
+      setSaveRuleError('请填写规则名称');
+      return;
+    }
+    const validMappings = getValidMappings(mappings);
+    if (validMappings.length === 0) {
+      setSaveRuleError('请至少配置一条有效字段映射（模板占位符 + 源文件列）');
+      return;
+    }
     setSavingRule(true);
     const res = await saveRule({
       name: saveRuleName.trim(),
-      fieldMappings: mappings,
+      description: saveRuleDescription.trim() || undefined,
+      fieldMappings: validMappings,
       lastSourceFileName: sourceResult?.fileName,
       ...(saveRuleWithTemplate && templateResult
         ? { tempTemplateFileKey: templateResult.fileKey, templateFileName: templateResult.fileName }
         : {}),
     });
     setSavingRule(false);
-    if (res.success) { setShowSaveRuleForm(false); setSaveRuleName(''); loadRules(); }
-  }, [saveRuleName, mappings, sourceResult, templateResult, saveRuleWithTemplate, loadRules]);
+    if (res.success) {
+      setShowSaveRuleForm(false);
+      setSaveRuleName('');
+      setSaveRuleDescription('');
+      setSaveRuleError(null);
+      loadRules();
+      return;
+    }
+    setSaveRuleError(String(res.error?.message ?? '保存规则失败'));
+  }, [
+    saveRuleName,
+    saveRuleDescription,
+    mappings,
+    sourceResult,
+    templateResult,
+    saveRuleWithTemplate,
+    loadRules,
+    getValidMappings,
+  ]);
+
+  const addMappingRow = useCallback(() => {
+    setMappings(prev => [
+      ...prev,
+      {
+        templatePlaceholder: '',
+        sourceColumn: sourceResult?.columns[0] ?? '',
+      },
+    ]);
+  }, [sourceResult]);
 
   const handleDeleteRule = useCallback(async (ruleId: string) => {
     await deleteRule(ruleId);
@@ -157,7 +209,7 @@ export default function FileConvertPage() {
 
   const startTask = useCallback(async () => {
     if (!sourceResult || !templateResult) return;
-    const validMappings = mappings.filter(m => m.sourceColumn && m.sourceColumn !== '__skip__' && m.templatePlaceholder);
+    const validMappings = getValidMappings(mappings);
     if (validMappings.length === 0) return;
 
     setStep('running');
@@ -231,7 +283,7 @@ export default function FileConvertPage() {
         }
       })
       .catch(() => { /* aborted or closed */ });
-  }, [sourceResult, templateResult, mappings, loadTasks]);
+  }, [sourceResult, templateResult, mappings, loadTasks, getValidMappings]);
 
   useEffect(() => { return () => abortRef.current?.abort(); }, []);
 
@@ -277,25 +329,29 @@ export default function FileConvertPage() {
             {uploadError && <p className="text-sm text-red-500 mt-2">{uploadError}</p>}
 
             {sourceResult && (
-              <div className="mt-3 p-3 rounded-lg border bg-muted/30">
-                <p className="text-xs font-medium text-muted-foreground mb-1">列名预览</p>
-                <div className="flex flex-wrap gap-1">
+              <Surface variant="inset" className="mt-3 p-3">
+                <p className="text-xs font-medium text-muted-foreground mb-2">列名预览</p>
+                <div className="flex flex-wrap gap-1.5">
                   {sourceResult.columns.map(c => (
-                    <span key={c} className="text-xs px-2 py-0.5 rounded bg-secondary text-secondary-foreground">{c}</span>
+                    <span key={c} className="text-xs px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground">{c}</span>
                   ))}
                 </div>
-              </div>
+              </Surface>
             )}
 
             {templateResult && (
-              <div className="mt-2 p-3 rounded-lg border bg-muted/30">
-                <p className="text-xs font-medium text-muted-foreground mb-1">模板占位符</p>
-                <div className="flex flex-wrap gap-1">
-                  {templateResult.placeholders.map(p => (
-                    <span key={p} className="text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-mono">{`{{${p}}}`}</span>
-                  ))}
-                </div>
-              </div>
+              <Surface variant="inset" className="mt-3 p-3">
+                <p className="text-xs font-medium text-muted-foreground mb-2">模板占位符</p>
+                {templateResult.placeholders.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {templateResult.placeholders.map(p => (
+                      <span key={p} className="text-xs px-2 py-0.5 rounded-md bg-primary/10 text-primary font-mono border border-primary/20">{`{{${p}}}`}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">未识别到占位符，进入第二步后可手动添加映射行</p>
+                )}
+              </Surface>
             )}
 
             {/* 历史规则入口 - 在 Step 1 展示，方便直接加载规则 */}
@@ -349,75 +405,156 @@ export default function FileConvertPage() {
               done={step === 'running'}
               forceOpen={step === 'mapping'}
             >
+              <p className="text-sm text-muted-foreground mb-4">
+                为每个模板占位符选择对应的源文件列。模板中需使用 <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs">{`{{字段名}}`}</code> 格式。
+              </p>
 
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-4 text-xs font-medium text-muted-foreground pb-1 border-b">
-                  <span>模板占位符</span>
-                  <span>对应源文件列</span>
-                </div>
-                {mappings.map((m, idx) => (
-                  <div key={m.templatePlaceholder} className="grid grid-cols-2 gap-4 items-center">
-                    <span className="text-xs font-mono px-2 py-1 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
-                      {`{{${m.templatePlaceholder}}}`}
-                    </span>
-                    <Select
-                      value={m.sourceColumn}
-                      onValueChange={(v: string) => {
-                        const next = [...mappings];
-                        next[idx] = { ...m, sourceColumn: v };
-                        setMappings(next);
-                      }}
-                      uiSize="sm"
-                    >
-                      {sourceResult?.columns.map(c => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                      <option value="__skip__">（不映射）</option>
-                    </Select>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 flex flex-col gap-2">
-                {!showSaveRuleForm ? (
-                  <Button variant="secondary" size="sm" onClick={() => setShowSaveRuleForm(true)}>
-                    <Save className="w-3.5 h-3.5 mr-1.5" />
-                    保存为规则
+              {mappings.length === 0 ? (
+                <Surface variant="inset" className="p-5 text-center space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    未在模板中识别到占位符。请确认模板含有 <code className="font-mono text-xs">{`{{字段名}}`}</code>，或手动添加映射行。
+                  </p>
+                  <Button size="sm" variant="secondary" onClick={addMappingRow}>
+                    手动添加映射行
                   </Button>
-                ) : (
-                  <div className="flex flex-col gap-2 p-3 rounded-lg border bg-muted/20">
-                    <div className="flex items-center gap-2">
+                </Surface>
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] gap-3 px-1 text-xs font-medium text-muted-foreground">
+                    <span>模板占位符</span>
+                    <span />
+                    <span>对应源文件列</span>
+                  </div>
+                  {mappings.map((m, idx) => (
+                    <Surface key={`${m.templatePlaceholder}-${idx}`} variant="row" className="grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] gap-3 items-center px-3 py-2.5">
+                      {templateResult?.placeholders.includes(m.templatePlaceholder) && m.templatePlaceholder ? (
+                        <span className="text-sm font-mono px-2.5 py-1.5 rounded-md bg-primary/10 text-primary border border-primary/20">
+                          {`{{${m.templatePlaceholder}}}`}
+                        </span>
+                      ) : (
+                        <input
+                          className="h-9 px-3 text-sm font-mono rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                          placeholder="占位符名，如 code_value"
+                          value={m.templatePlaceholder}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                            const next = [...mappings];
+                            next[idx] = { ...m, templatePlaceholder: e.target.value.trim() };
+                            setMappings(next);
+                          }}
+                        />
+                      )}
+                      <span className="text-center text-muted-foreground text-xs">→</span>
+                      <Select
+                        value={m.sourceColumn}
+                        placeholder="选择源文件列"
+                        onValueChange={(v: string) => {
+                          const next = [...mappings];
+                          next[idx] = { ...m, sourceColumn: v };
+                          setMappings(next);
+                        }}
+                        uiSize="sm"
+                      >
+                        {(sourceResult?.columns ?? []).map(c => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                        <option value="__skip__">（不映射）</option>
+                      </Select>
+                    </Surface>
+                  ))}
+                  <Button size="sm" variant="ghost" className="mt-1" onClick={addMappingRow}>
+                    + 添加映射行
+                  </Button>
+                </div>
+              )}
+
+              <GlassCard className="mt-5 p-4 space-y-3" padding="none" variant="subtle">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">保存为复用规则</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      保存字段映射和模板，下次只需上传源文件即可复用
+                    </p>
+                  </div>
+                  {!showSaveRuleForm && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setShowSaveRuleForm(true);
+                        setSaveRuleError(null);
+                      }}
+                    >
+                      <Save className="w-3.5 h-3.5 mr-1.5" />
+                      保存规则
+                    </Button>
+                  )}
+                </div>
+
+                {showSaveRuleForm && (
+                  <div className="space-y-3 pt-3 border-t border-border/60">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">规则名称（必填）</label>
                       <input
-                        className="flex-1 h-8 px-3 text-sm rounded border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder="规则名称"
+                        className="w-full h-9 px-3 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="例如：码值切割填入 code_value"
                         value={saveRuleName}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleName(e.target.value)}
                         onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleSaveRule()}
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">规则说明（选填）</label>
+                      <input
+                        className="w-full h-9 px-3 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="例如：将码按 / 切割，最后一段填入 code_value"
+                        value={saveRuleDescription}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleDescription(e.target.value)}
+                      />
+                    </div>
                     {templateResult && (
-                      <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                      <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
                         <input
                           type="checkbox"
                           checked={saveRuleWithTemplate}
                           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleWithTemplate(e.target.checked)}
-                          className="w-4 h-4 rounded accent-primary"
+                          className="mt-0.5 w-4 h-4 rounded accent-primary"
                         />
-                        <span>同时保存模板文件（下次加载规则后无需重新上传模板）</span>
-                        <span className="text-xs text-muted-foreground">— {templateResult.fileName}</span>
+                        <span>
+                          同时保存模板文件
+                          <span className="block text-xs text-muted-foreground mt-0.5">
+                            下次加载规则后无需重新上传模板 · {templateResult.fileName}
+                          </span>
+                        </span>
                       </label>
+                    )}
+                    {saveRuleError && (
+                      <p className="text-sm text-red-500">{saveRuleError}</p>
                     )}
                     <div className="flex gap-2">
                       <Button size="sm" variant="primary" onClick={handleSaveRule} disabled={savingRule || !saveRuleName.trim()}>
                         {savingRule ? '保存中...' : '确认保存'}
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setShowSaveRuleForm(false)}>取消</Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setShowSaveRuleForm(false);
+                          setSaveRuleError(null);
+                        }}
+                      >
+                        取消
+                      </Button>
                     </div>
                   </div>
                 )}
-              </div>
+              </GlassCard>
 
-              <Button className="mt-4 w-full" variant="primary" onClick={startTask}>
+              <Button
+                className="mt-5 w-full"
+                variant="primary"
+                onClick={startTask}
+                disabled={getValidMappings(mappings).length === 0}
+              >
                 <Play className="w-4 h-4 mr-2" />
                 开始批量生成
               </Button>
@@ -499,23 +636,23 @@ function CollapsibleSection({
   useEffect(() => { if (forceOpen) setOpen(true); }, [forceOpen]);
 
   return (
-    <div className="rounded-xl border bg-card">
+    <GlassCard className="overflow-hidden" padding="none" variant="subtle">
       <button
-        className="w-full flex items-center justify-between px-5 py-3.5 text-left"
+        className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-muted/20 transition-colors"
         onClick={() => setOpen(v => !v)}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <span className="font-medium">{title}</span>
           {done && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
               完成
             </span>
           )}
         </div>
         {open ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
       </button>
-      {open && <div className="px-5 pb-5">{children}</div>}
-    </div>
+      {open && <div className="px-5 pb-5 border-t border-border/50">{children}</div>}
+    </GlassCard>
   );
 }
 
@@ -533,9 +670,10 @@ function DropZone({
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div>
-      <p className="text-sm font-medium mb-1.5">{label}</p>
-      <div
-        className="border-2 border-dashed rounded-lg p-5 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/20 transition-colors"
+      <p className="text-sm font-medium mb-2">{label}</p>
+      <Surface
+        variant="interactive"
+        className="border-2 border-dashed p-5 text-center cursor-pointer transition-colors hover:border-primary/40"
         onDragOver={(e: React.DragEvent<HTMLDivElement>) => e.preventDefault()}
         onDrop={onDrop}
         onClick={() => inputRef.current?.click()}
@@ -566,7 +704,7 @@ function DropZone({
             <p className="text-xs text-muted-foreground/60 mt-0.5">{hint}</p>
           </div>
         )}
-      </div>
+      </Surface>
     </div>
   );
 }

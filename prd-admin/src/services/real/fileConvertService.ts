@@ -145,7 +145,20 @@ export async function saveRule(payload: {
   tempTemplateFileKey?: string;
   templateFileName?: string;
 }): Promise<ApiResponse<{ ruleId: string }>> {
-  return apiRequest('/api/file-convert/rules', { method: 'POST', body: payload });
+  const token = useAuthStore.getState().token ?? '';
+  const res = await fetch('/api/file-convert/rules', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'X-Client': 'admin',
+    },
+    body: JSON.stringify(payload),
+  });
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) return fail('UNKNOWN', extractErrorMessage(data, '保存规则失败'));
+  return ok((data ?? {}) as { ruleId: string });
 }
 
 export async function updateRule(
