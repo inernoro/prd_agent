@@ -42,7 +42,7 @@ public class FileConvertController : ControllerBase
 
     // ───────────────────────── 文件上传与解析 ─────────────────────────
 
-    /// <summary>上传源文件并解析列名</summary>
+    /// <summary>上传源文件并解析列名（临时存储，任务执行后自动清理）</summary>
     [HttpPost("parse-source")]
     [RequestSizeLimit(MaxUploadBytes)]
     public async Task<IActionResult> ParseSource(IFormFile file)
@@ -55,13 +55,15 @@ public class FileConvertController : ControllerBase
         if (!string.IsNullOrEmpty(result.Error))
             return BadRequest(new { error = result.Error });
 
-        // 存储文件供后续生成任务使用
-        var stored = await _storage.SaveAsync(bytes, file.ContentType ?? "application/octet-stream",
-            CancellationToken.None, domain: "file-convert", type: "source", fileName: file.FileName);
+        // 用 UploadToKeyAsync 存临时文件，key 可被 Worker 精确删除
+        var ext = Path.GetExtension(file.FileName).TrimStart('.').ToLowerInvariant();
+        var fileKey = $"file-convert/tmp/{Guid.NewGuid():N}/source.{ext}";
+        var mime = file.ContentType ?? "application/octet-stream";
+        await _storage.UploadToKeyAsync(fileKey, bytes, mime, CancellationToken.None);
 
         return Ok(new
         {
-            fileUrl = stored.Url,
+            fileKey,
             fileName = file.FileName,
             columns = result.Columns,
             previewRows = result.Rows.Take(3).ToList(),
@@ -69,7 +71,7 @@ public class FileConvertController : ControllerBase
         });
     }
 
-    /// <summary>上传模板文件并解析占位符</summary>
+    /// <summary>上传模板文件并解析占位符（临时存储，任务执行后自动清理）</summary>
     [HttpPost("parse-template")]
     [RequestSizeLimit(MaxUploadBytes)]
     public async Task<IActionResult> ParseTemplate(IFormFile file)
@@ -82,12 +84,14 @@ public class FileConvertController : ControllerBase
         if (!string.IsNullOrEmpty(result.Error))
             return BadRequest(new { error = result.Error });
 
-        var stored = await _storage.SaveAsync(bytes, file.ContentType ?? "application/octet-stream",
-            CancellationToken.None, domain: "file-convert", type: "template", fileName: file.FileName);
+        var ext = Path.GetExtension(file.FileName).TrimStart('.').ToLowerInvariant();
+        var fileKey = $"file-convert/tmp/{Guid.NewGuid():N}/template.{ext}";
+        var mime = file.ContentType ?? "application/octet-stream";
+        await _storage.UploadToKeyAsync(fileKey, bytes, mime, CancellationToken.None);
 
         return Ok(new
         {
-            fileUrl = stored.Url,
+            fileKey,
             fileName = file.FileName,
             placeholders = result.Placeholders
         });
@@ -96,9 +100,9 @@ public class FileConvertController : ControllerBase
     // ───────────────────────── 任务管理 ─────────────────────────
 
     public record CreateTaskRequest(
-        string SourceFileUrl,
+        string SourceFileKey,
         string SourceFileName,
-        string TemplateFileUrl,
+        string TemplateFileKey,
         string TemplateFileName,
         List<FileConvertFieldMapping> FieldMappings,
         string? RuleId);
@@ -114,9 +118,9 @@ public class FileConvertController : ControllerBase
         var task = new FileConvertTask
         {
             UserId = userId,
-            SourceFileUrl = req.SourceFileUrl,
+            SourceFileKey = req.SourceFileKey,
             SourceFileName = req.SourceFileName,
-            TemplateFileUrl = req.TemplateFileUrl,
+            TemplateFileKey = req.TemplateFileKey,
             TemplateFileName = req.TemplateFileName,
             FieldMappings = req.FieldMappings,
             RuleId = req.RuleId,
@@ -183,7 +187,7 @@ public class FileConvertController : ControllerBase
                     await SendEventAsync("done", new
                     {
                         status = task.Status,
-                        resultZipUrl = task.ResultZipUrl,
+                        hasResult = !string.IsNullOrEmpty(task.ResultZipKey),
                         errorMessage = task.ErrorMessage
                     });
                     break;
@@ -219,7 +223,7 @@ public class FileConvertController : ControllerBase
                 t.TemplateFileName,
                 t.TotalRows,
                 t.ProcessedRows,
-                t.ResultZipUrl,
+                hasResult = t.ResultZipKey != null && t.ResultZipKey != "",
                 t.ErrorMessage,
                 t.CreatedAt,
                 t.UpdatedAt
@@ -229,7 +233,7 @@ public class FileConvertController : ControllerBase
         return Ok(tasks);
     }
 
-    /// <summary>代理下载 ZIP（通过后端中转，避免跨域问题）</summary>
+    /// <summary>代理下载 ZIP，下载后删除存储文件（一次性下载）</summary>
     [HttpGet("tasks/{taskId}/download")]
     public async Task<IActionResult> DownloadResult(string taskId)
     {
@@ -239,13 +243,28 @@ public class FileConvertController : ControllerBase
             .FirstOrDefaultAsync(CancellationToken.None);
 
         if (task == null) return NotFound(new { error = "任务不存在" });
-        if (task.Status != FileConvertTaskStatus.Done || string.IsNullOrEmpty(task.ResultZipUrl))
+        if (task.Status != FileConvertTaskStatus.Done || string.IsNullOrEmpty(task.ResultZipKey))
             return BadRequest(new { error = "任务尚未完成或结果不存在" });
 
-        var bytes = await _storage.TryDownloadBytesAsync(task.ResultZipUrl, CancellationToken.None);
+        var bytes = await _storage.TryDownloadBytesAsync(task.ResultZipKey, CancellationToken.None);
         if (bytes == null) return NotFound(new { error = "ZIP 文件已过期，请重新生成" });
 
-        var zipName = $"result_{task.SourceFileName}_{task.CreatedAt:yyyyMMddHHmm}.zip";
+        // 下载后异步清理 ZIP（不阻塞响应）
+        _ = Task.Run(async () =>
+        {
+            try { await _storage.DeleteByKeyAsync(task.ResultZipKey, CancellationToken.None); }
+            catch (Exception ex) { _logger.LogWarning(ex, "[FileConvert] 清理 ZIP 失败 key={Key}", task.ResultZipKey); }
+
+            // 同步更新任务状态，防止重复下载尝试误提示
+            var filter = Builders<FileConvertTask>.Filter.Eq(t => t.Id, task.Id);
+            var update = Builders<FileConvertTask>.Update
+                .Unset(t => t.ResultZipKey)
+                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+            try { await _db.FileConvertTasks.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None); }
+            catch { /* ignore */ }
+        });
+
+        var zipName = $"result_{Path.GetFileNameWithoutExtension(task.SourceFileName)}_{task.CreatedAt:yyyyMMddHHmm}.zip";
         return File(bytes, "application/zip", zipName);
     }
 

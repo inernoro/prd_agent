@@ -11,14 +11,14 @@ public class FileConvertTask
     /// <summary>任务状态：queued / running / done / error</summary>
     public string Status { get; set; } = FileConvertTaskStatus.Queued;
 
-    /// <summary>源文件 URL（已上传到存储）</summary>
-    public string SourceFileUrl { get; set; } = string.Empty;
+    /// <summary>源文件存储 Key（用于 TryDownloadBytesAsync / DeleteByKeyAsync）</summary>
+    public string SourceFileKey { get; set; } = string.Empty;
 
     /// <summary>源文件原始文件名</summary>
     public string SourceFileName { get; set; } = string.Empty;
 
-    /// <summary>模板文件 URL</summary>
-    public string TemplateFileUrl { get; set; } = string.Empty;
+    /// <summary>模板文件存储 Key</summary>
+    public string TemplateFileKey { get; set; } = string.Empty;
 
     /// <summary>模板文件原始文件名</summary>
     public string TemplateFileName { get; set; } = string.Empty;
@@ -29,8 +29,8 @@ public class FileConvertTask
     /// <summary>复用的规则 ID（可选）</summary>
     public string? RuleId { get; set; }
 
-    /// <summary>生成的 ZIP 下载 URL</summary>
-    public string? ResultZipUrl { get; set; }
+    /// <summary>生成的 ZIP 存储 Key（用于下载和删除）</summary>
+    public string? ResultZipKey { get; set; }
 
     /// <summary>总行数（不含表头）</summary>
     public int TotalRows { get; set; }
