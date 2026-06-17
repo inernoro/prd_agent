@@ -88,8 +88,14 @@ public class FileConvertRule
     /// <summary>上次成功使用的源文件名（仅供参考展示）</summary>
     public string? LastSourceFileName { get; set; }
 
-    /// <summary>上次成功使用的模板文件名（仅供参考展示）</summary>
-    public string? LastTemplateFileName { get; set; }
+    /// <summary>
+    /// 保存的模板文件存储 Key（永久存储，前缀 file-convert/rules/）。
+    /// null 表示规则不附带模板，用户下次需自行上传。
+    /// </summary>
+    public string? TemplateFileKey { get; set; }
+
+    /// <summary>保存的模板文件原始文件名（用于展示）</summary>
+    public string? TemplateFileName { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

@@ -39,7 +39,9 @@ export interface FileConvertRule {
   description: string | null;
   fieldMappings: FieldMapping[];
   lastSourceFileName: string | null;
-  lastTemplateFileName: string | null;
+  /** 若有值，表示规则附带了永久保存的模板，加载规则后无需重新上传模板 */
+  templateFileKey: string | null;
+  templateFileName: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -138,7 +140,9 @@ export async function saveRule(payload: {
   description?: string;
   fieldMappings: FieldMapping[];
   lastSourceFileName?: string;
-  lastTemplateFileName?: string;
+  /** 若传入，后端将把临时模板提升为永久存储并绑定到规则 */
+  tempTemplateFileKey?: string;
+  templateFileName?: string;
 }): Promise<ApiResponse<{ ruleId: string }>> {
   return apiRequest('/api/file-convert/rules', { method: 'POST', body: payload });
 }

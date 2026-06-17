@@ -166,6 +166,8 @@ public class FileConvertWorker : BackgroundService
     private async Task DeleteTempFileAsync(string? key, string label)
     {
         if (string.IsNullOrWhiteSpace(key)) return;
+        // 只删临时文件（file-convert/tmp/...），规则附带的永久模板不删
+        if (!key.StartsWith("file-convert/tmp/", StringComparison.OrdinalIgnoreCase)) return;
         try
         {
             await _storage.DeleteByKeyAsync(key, CancellationToken.None);
