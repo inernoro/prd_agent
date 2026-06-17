@@ -309,8 +309,12 @@ public class FileConvertController : ControllerBase
             {
                 var ext = Path.GetExtension(req.TemplateFileName ?? "template.docx").TrimStart('.').ToLowerInvariant();
                 var permanentKey = $"file-convert/rules/{rule.Id}/template.{ext}";
-                var mime = ext == "xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                var mime = ext switch
+                {
+                    "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "csv" => "text/csv",
+                    _ => "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                };
                 await _storage.UploadToKeyAsync(permanentKey, bytes, mime, CancellationToken.None);
                 rule.TemplateFileKey = permanentKey;
 
