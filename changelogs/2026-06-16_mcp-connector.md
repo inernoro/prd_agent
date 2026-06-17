@@ -7,3 +7,5 @@
 | test | prd-api | 新增 MCP 网关纯逻辑单测 McpGatewayLogicTests（工具目录/scope写隐含读/动态工具名唯一/路径占位替换/请求拼装/inputSchema 推断），不依赖 live 密钥即可断言行为 |
 | feat | prd-api | AgentApiKeysController 增加 AiAccessKey 自助通道(全局超级密钥+X-AI-Impersonate 代用户签发 scoped sk-ak;归属校验+scope 白名单兜底),供 AI 无人值守自测开放接口 |
 | fix | prd-api | MCP 回环转发 X-Client-Base-Url/X-Forwarded-Host/X-Forwarded-Proto,使下游 ResolveServerUrl 构造公网 URL 而非 localhost(影响海鲜市场 official skills 下载链接) |
+| fix | prd-api | MCP 回环 client 禁用系统代理(UseProxy=false),防配了 HTTP_PROXY 的部署把携带 sk-ak 的回环请求发给代理 |
+| docs | doc | 新增 guide.mcp-connector 接入教程(Claude/Codex 接入 + 5 工具 + 共享其他 Agent + 自助签发自测 + 排障) |

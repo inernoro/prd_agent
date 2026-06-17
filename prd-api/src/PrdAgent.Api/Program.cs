@@ -349,6 +349,9 @@ builder.Services.AddHttpClient("McpLoopback", c =>
     // 不跟随重定向：回环只该打到自身后端，若目标返回跨主机重定向，跟过去会把转发的
     // sk-ak / X-AI-Access-Key 凭据带到外部主机（凭据外泄）。让重定向以非 2xx 原样返回。
     AllowAutoRedirect = false,
+    // 禁用系统代理：回环只调 127.0.0.1，避免配了 HTTP_PROXY 且未豁免 loopback 的部署
+    // 把携带 sk-ak / X-AI-Access-Key 的回环请求发到代理（失败或泄露密钥）。
+    UseProxy = false,
     SslOptions = new System.Net.Security.SslClientAuthenticationOptions
     {
         RemoteCertificateValidationCallback = (_, _, _, _) => true,

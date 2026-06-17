@@ -390,6 +390,8 @@
 
 - [海鲜市场（配置市场）使用教程](guide.marketplace) `guide.marketplace`
   > 配置浏览、筛选、Fork 与发布的完整流程
+- [MAP MCP 连接器接入指南](guide.mcp-connector) `guide.mcp-connector`
+  > 把 MAP 当 MCP 连接器接入 Claude/Codex：/api/mcp 端点 + sk-ak + 5 内置工具 + 共享其他 Agent + AI 自助签发自测
 
 - [视觉验收技能跨仓库使用教程](guide.visual-acceptance-skill) `guide.visual-acceptance-skill`
   > 用个人 AgentApiKey + 海鲜市场安装、更新 `create-visual-test-to-kb`，避免借用个人 accesskey

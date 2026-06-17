@@ -155,6 +155,7 @@ docs:
   guide.workflow-agent: 工作流引擎使用教程
   guide.shortcuts-agent: 快捷指令使用教程
   guide.marketplace: 海鲜市场（配置市场）使用教程
+  guide.mcp-connector: MAP MCP 连接器接入指南（Claude/Codex 接入 + 共享其他 Agent + 自助签发自测）
   guide.visual-acceptance-skill: 视觉验收技能跨仓库使用教程
   guide.workflow-canvas: 工作流画布操作手册
   guide.weekly-report: 周报功能完整操作指南
