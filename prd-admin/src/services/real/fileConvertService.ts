@@ -7,7 +7,7 @@ export interface FieldMapping {
 }
 
 export interface ParseSourceResult {
-  fileUrl: string;
+  fileKey: string;
   fileName: string;
   columns: string[];
   previewRows: Record<string, string>[];
@@ -15,7 +15,7 @@ export interface ParseSourceResult {
 }
 
 export interface ParseTemplateResult {
-  fileUrl: string;
+  fileKey: string;
   fileName: string;
   placeholders: string[];
 }
@@ -27,7 +27,7 @@ export interface FileConvertTask {
   templateFileName: string;
   totalRows: number;
   processedRows: number;
-  resultZipUrl: string | null;
+  hasResult: boolean;
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
@@ -79,9 +79,9 @@ export async function parseTemplateFile(file: File): Promise<ApiResponse<ParseTe
 }
 
 export async function createTask(payload: {
-  sourceFileUrl: string;
+  sourceFileKey: string;
   sourceFileName: string;
-  templateFileUrl: string;
+  templateFileKey: string;
   templateFileName: string;
   fieldMappings: FieldMapping[];
   ruleId?: string | null;

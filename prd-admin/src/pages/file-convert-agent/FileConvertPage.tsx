@@ -40,21 +40,21 @@ export default function FileConvertPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [processedRows, setProcessedRows] = useState(0);
   const [totalRows, setTotalRows] = useState(0);
-  const [resultZipTaskId, setResultZipTaskId] = useState<string | null>(null);
+  const [taskDoneId, setTaskDoneId] = useState<string | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<FileConvertTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    loadRules();
-  }, [loadRules]);
-
   const loadRules = useCallback(async () => {
     const res = await listRules();
     if (res.success) setRules(res.data);
   }, []);
+
+  useEffect(() => {
+    loadRules();
+  }, [loadRules]);
 
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
@@ -144,14 +144,14 @@ export default function FileConvertPage() {
     setLogs([]);
     setProcessedRows(0);
     setTotalRows(0);
-    setResultZipTaskId(null);
+    setTaskDoneId(null);
     setTaskError(null);
     setTaskStatus('queued');
 
     const res = await createTask({
-      sourceFileUrl: sourceResult.fileUrl,
+      sourceFileKey: sourceResult.fileKey,
       sourceFileName: sourceResult.fileName,
-      templateFileUrl: templateResult.fileUrl,
+      templateFileKey: templateResult.fileKey,
       templateFileName: templateResult.fileName,
       fieldMappings: validMappings,
     });
@@ -195,8 +195,9 @@ export default function FileConvertPage() {
                 setTotalRows(Number(parsed.totalRows) || 0);
                 setProcessedRows(Number(parsed.processedRows) || 0);
               } else if (eventType === 'done') {
-                setTaskStatus(String(parsed.status ?? ''));
-                if (parsed.status === 'done') setResultZipTaskId(taskId);
+                const doneStatus = String(parsed.status ?? '');
+                setTaskStatus(doneStatus);
+                if (doneStatus === 'done' && parsed.hasResult) setTaskDoneId(taskId);
                 setTaskError(parsed.errorMessage ? String(parsed.errorMessage) : null);
                 loadTasks();
               }
@@ -410,8 +411,8 @@ export default function FileConvertPage() {
                 </div>
               )}
 
-              {taskStatus === 'done' && resultZipTaskId && (
-                <Button className="mt-4 w-full" variant="primary" onClick={() => downloadResult(resultZipTaskId)}>
+              {taskStatus === 'done' && taskDoneId && (
+                <Button className="mt-4 w-full" variant="primary" onClick={() => downloadResult(taskDoneId)}>
                   下载 ZIP 包
                 </Button>
               )}
@@ -584,13 +585,16 @@ function TaskRow({ task }: { task: FileConvertTask }) {
         {task.totalRows > 0 ? `${task.processedRows}/${task.totalRows} 行 · ` : ''}
         {new Date(task.createdAt).toLocaleDateString('zh-CN')}
       </div>
-      {task.status === 'done' && (
+      {task.status === 'done' && task.hasResult && (
         <button
           className="mt-1 text-[11px] text-primary hover:underline"
           onClick={() => downloadResult(task.id)}
         >
           下载 ZIP
         </button>
+      )}
+      {task.status === 'done' && !task.hasResult && (
+        <span className="mt-1 text-[11px] text-muted-foreground">文件已清理</span>
       )}
       {task.status === 'error' && task.errorMessage && (
         <div className="mt-1 text-[11px] text-red-500 truncate" title={task.errorMessage}>
