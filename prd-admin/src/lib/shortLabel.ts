@@ -45,6 +45,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'tech-doc-format-agent': '技分',
   'front-end-agent': '前端',
   'tapd-bug-agent': '提缺陷',
+  'file-convert-agent': '批量转换',
 
   // ── 基础设施 ──────────────────────────
   'marketplace': '市场',

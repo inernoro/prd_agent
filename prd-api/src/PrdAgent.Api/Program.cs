@@ -317,6 +317,12 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.VideoToDocRunWorker>();
 // 竞技场 Run 后台执行器（多模型并行 + afterSeq 断线重连）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 
+// File Convert Agent 批量文件转换智能体
+builder.Services.AddSingleton<PrdAgent.Api.Services.FileConvertAgent.FileParserService>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.FileConvertAgent.TemplateParserService>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.FileConvertAgent.TemplateRendererService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.FileConvertAgent.FileConvertWorker>();
+
 // 转录 Agent 后台执行器（ASR 转写 + 模板转文案）
 builder.Services.AddHostedService<PrdAgent.Api.Services.TranscriptRunWorker>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.DoubaoStreamAsrService>();
