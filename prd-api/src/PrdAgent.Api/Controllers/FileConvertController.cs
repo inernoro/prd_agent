@@ -276,9 +276,11 @@ public class FileConvertController : ControllerBase
         string? Description,
         List<FileConvertFieldMapping> FieldMappings,
         string? LastSourceFileName,
-        string? LastTemplateFileName);
+        /// <summary>可选：将此临时模板 key 提升为永久存储并绑定到规则</summary>
+        string? TempTemplateFileKey,
+        string? TemplateFileName);
 
-    /// <summary>保存规则</summary>
+    /// <summary>保存规则（可选同时保存模板文件供下次复用）</summary>
     [HttpPost("rules")]
     public async Task<IActionResult> SaveRule([FromBody] SaveRuleRequest req)
     {
@@ -295,8 +297,28 @@ public class FileConvertController : ControllerBase
             Description = req.Description?.Trim(),
             FieldMappings = req.FieldMappings,
             LastSourceFileName = req.LastSourceFileName,
-            LastTemplateFileName = req.LastTemplateFileName,
+            TemplateFileName = req.TemplateFileName,
         };
+
+        // 若用户选择保存模板，将临时 Key 提升为规则永久 Key
+        if (!string.IsNullOrWhiteSpace(req.TempTemplateFileKey) &&
+            req.TempTemplateFileKey.StartsWith("file-convert/tmp/", StringComparison.OrdinalIgnoreCase))
+        {
+            var bytes = await _storage.TryDownloadBytesAsync(req.TempTemplateFileKey, CancellationToken.None);
+            if (bytes != null)
+            {
+                var ext = Path.GetExtension(req.TemplateFileName ?? "template.docx").TrimStart('.').ToLowerInvariant();
+                var permanentKey = $"file-convert/rules/{rule.Id}/template.{ext}";
+                var mime = ext == "xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                await _storage.UploadToKeyAsync(permanentKey, bytes, mime, CancellationToken.None);
+                rule.TemplateFileKey = permanentKey;
+
+                // 删除临时文件（已转移）
+                try { await _storage.DeleteByKeyAsync(req.TempTemplateFileKey, CancellationToken.None); }
+                catch (Exception ex) { _logger.LogWarning(ex, "[FileConvert] 清理提升后临时模板失败"); }
+            }
+        }
 
         await _db.FileConvertRules.InsertOneAsync(rule, cancellationToken: CancellationToken.None);
         return Ok(new { ruleId = rule.Id });
@@ -317,7 +339,8 @@ public class FileConvertController : ControllerBase
                 r.Description,
                 r.FieldMappings,
                 r.LastSourceFileName,
-                r.LastTemplateFileName,
+                r.TemplateFileKey,
+                r.TemplateFileName,
                 r.CreatedAt,
                 r.UpdatedAt
             })
@@ -347,7 +370,7 @@ public class FileConvertController : ControllerBase
         return Ok(new { ok = true });
     }
 
-    /// <summary>删除规则</summary>
+    /// <summary>删除规则（同时清理附带的永久模板文件）</summary>
     [HttpDelete("rules/{ruleId}")]
     public async Task<IActionResult> DeleteRule(string ruleId)
     {
@@ -356,8 +379,17 @@ public class FileConvertController : ControllerBase
             Builders<FileConvertRule>.Filter.Eq(r => r.Id, ruleId),
             Builders<FileConvertRule>.Filter.Eq(r => r.UserId, userId));
 
-        var result = await _db.FileConvertRules.DeleteOneAsync(filter, CancellationToken.None);
-        if (result.DeletedCount == 0) return NotFound(new { error = "规则不存在" });
+        var rule = await _db.FileConvertRules.Find(filter).FirstOrDefaultAsync(CancellationToken.None);
+        if (rule == null) return NotFound(new { error = "规则不存在" });
+
+        await _db.FileConvertRules.DeleteOneAsync(filter, CancellationToken.None);
+
+        // 清理规则附带的永久模板文件
+        if (!string.IsNullOrWhiteSpace(rule.TemplateFileKey))
+        {
+            try { await _storage.DeleteByKeyAsync(rule.TemplateFileKey, CancellationToken.None); }
+            catch (Exception ex) { _logger.LogWarning(ex, "[FileConvert] 清理规则模板失败 key={Key}", rule.TemplateFileKey); }
+        }
 
         return Ok(new { ok = true });
     }

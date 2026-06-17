@@ -33,6 +33,7 @@ export default function FileConvertPage() {
   const [rules, setRules] = useState<FileConvertRule[]>([]);
   const [savingRule, setSavingRule] = useState(false);
   const [saveRuleName, setSaveRuleName] = useState('');
+  const [saveRuleWithTemplate, setSaveRuleWithTemplate] = useState(true);
   const [showSaveRuleForm, setShowSaveRuleForm] = useState(false);
   const [rulesExpanded, setRulesExpanded] = useState(false);
 
@@ -119,6 +120,16 @@ export default function FileConvertPage() {
           sourceResult?.columns.find(c => c === m.sourceColumn) ?? m.sourceColumn,
       }));
       setMappings(applied);
+
+      // 若规则附带了永久模板，自动填充 templateResult，跳过手动上传
+      if (rule.templateFileKey && rule.templateFileName) {
+        const placeholders = [...new Set(rule.fieldMappings.map(m => m.templatePlaceholder))];
+        setTemplateResult({
+          fileKey: rule.templateFileKey,
+          fileName: rule.templateFileName,
+          placeholders,
+        });
+      }
     },
     [sourceResult]
   );
@@ -130,11 +141,13 @@ export default function FileConvertPage() {
       name: saveRuleName.trim(),
       fieldMappings: mappings,
       lastSourceFileName: sourceResult?.fileName,
-      lastTemplateFileName: templateResult?.fileName,
+      ...(saveRuleWithTemplate && templateResult
+        ? { tempTemplateFileKey: templateResult.fileKey, templateFileName: templateResult.fileName }
+        : {}),
     });
     setSavingRule(false);
     if (res.success) { setShowSaveRuleForm(false); setSaveRuleName(''); loadRules(); }
-  }, [saveRuleName, mappings, sourceResult, templateResult, loadRules]);
+  }, [saveRuleName, mappings, sourceResult, templateResult, saveRuleWithTemplate, loadRules]);
 
   const handleDeleteRule = useCallback(async (ruleId: string) => {
     await deleteRule(ruleId);
@@ -252,8 +265,8 @@ export default function FileConvertPage() {
               <DropZone
                 label="目标模板文件"
                 accept=".docx,.xlsx"
-                hint="支持 Word (.docx) / Excel (.xlsx)"
-                result={templateResult ? `${templateResult.fileName}（${templateResult.placeholders.length} 个占位符）` : null}
+                hint={templateResult?.fileKey?.startsWith('file-convert/rules/') ? '由规则提供，可重新上传覆盖' : '支持 Word (.docx) / Excel (.xlsx)'}
+                result={templateResult ? `${templateResult.fileName}（${templateResult.placeholders.length} 个占位符）${templateResult.fileKey?.startsWith('file-convert/rules/') ? ' · 来自规则' : ''}` : null}
                 loading={templateLoading}
                 onFile={handleTemplateUpload}
                 onDrop={(e) => handleFileDrop('template', e)}
@@ -284,6 +297,43 @@ export default function FileConvertPage() {
               </div>
             )}
 
+            {/* 历史规则入口 - 在 Step 1 展示，方便直接加载规则 */}
+            {rules.length > 0 && (
+              <div className="mt-3">
+                <button
+                  className="flex items-center gap-1 text-sm font-medium text-primary hover:text-primary/80 transition-colors"
+                  onClick={() => setRulesExpanded(v => !v)}
+                >
+                  {rulesExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  加载历史规则（{rules.length} 条）
+                  <span className="text-xs text-muted-foreground ml-1">— 含模板的规则只需上传源文件</span>
+                </button>
+                {rulesExpanded && (
+                  <div className="mt-2 space-y-1">
+                    {rules.map(r => (
+                      <div key={r.id} className="flex items-center justify-between p-2 rounded border hover:bg-muted/40 transition-colors">
+                        <div>
+                          <span className="text-sm font-medium">{r.name}</span>
+                          {r.templateFileName && (
+                            <span className="text-xs text-blue-500 ml-2">含模板 · {r.templateFileName}</span>
+                          )}
+                          {r.lastSourceFileName && (
+                            <span className="text-xs text-muted-foreground ml-1">({r.lastSourceFileName})</span>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="secondary" onClick={() => applyRule(r)}>加载</Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleDeleteRule(r.id)}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {sourceResult && templateResult && (
               <Button className="mt-4" variant="primary" onClick={toMappingStep}>
                 下一步：配置字段映射
@@ -298,37 +348,6 @@ export default function FileConvertPage() {
               done={step === 'running'}
               forceOpen={step === 'mapping'}
             >
-              {rules.length > 0 && (
-                <div className="mb-4">
-                  <button
-                    className="flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                    onClick={() => setRulesExpanded(v => !v)}
-                  >
-                    {rulesExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                    历史规则（{rules.length} 条）
-                  </button>
-                  {rulesExpanded && (
-                    <div className="mt-2 space-y-1">
-                      {rules.map(r => (
-                        <div key={r.id} className="flex items-center justify-between p-2 rounded border hover:bg-muted/40 transition-colors">
-                          <div>
-                            <span className="text-sm font-medium">{r.name}</span>
-                            {r.lastSourceFileName && (
-                              <span className="text-xs text-muted-foreground ml-2">{r.lastSourceFileName}</span>
-                            )}
-                          </div>
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="secondary" onClick={() => applyRule(r)}>加载</Button>
-                            <Button size="sm" variant="ghost" onClick={() => handleDeleteRule(r.id)}>
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
 
               <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-4 text-xs font-medium text-muted-foreground pb-1 border-b">
@@ -358,25 +377,41 @@ export default function FileConvertPage() {
                 ))}
               </div>
 
-              <div className="mt-4 flex items-center gap-2">
+              <div className="mt-4 flex flex-col gap-2">
                 {!showSaveRuleForm ? (
                   <Button variant="secondary" size="sm" onClick={() => setShowSaveRuleForm(true)}>
                     <Save className="w-3.5 h-3.5 mr-1.5" />
                     保存为规则
                   </Button>
                 ) : (
-                  <div className="flex items-center gap-2 flex-1">
-                    <input
-                      className="flex-1 h-8 px-3 text-sm rounded border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                      placeholder="规则名称"
-                      value={saveRuleName}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleName(e.target.value)}
-                      onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleSaveRule()}
-                    />
-                    <Button size="sm" variant="primary" onClick={handleSaveRule} disabled={savingRule || !saveRuleName.trim()}>
-                      {savingRule ? '保存中...' : '确认保存'}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setShowSaveRuleForm(false)}>取消</Button>
+                  <div className="flex flex-col gap-2 p-3 rounded-lg border bg-muted/20">
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="flex-1 h-8 px-3 text-sm rounded border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="规则名称"
+                        value={saveRuleName}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleName(e.target.value)}
+                        onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleSaveRule()}
+                      />
+                    </div>
+                    {templateResult && (
+                      <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={saveRuleWithTemplate}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleWithTemplate(e.target.checked)}
+                          className="w-4 h-4 rounded accent-primary"
+                        />
+                        <span>同时保存模板文件（下次加载规则后无需重新上传模板）</span>
+                        <span className="text-xs text-muted-foreground">— {templateResult.fileName}</span>
+                      </label>
+                    )}
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="primary" onClick={handleSaveRule} disabled={savingRule || !saveRuleName.trim()}>
+                        {savingRule ? '保存中...' : '确认保存'}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setShowSaveRuleForm(false)}>取消</Button>
+                    </div>
                   </div>
                 )}
               </div>
