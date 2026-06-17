@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import { ok, fail, type ApiResponse } from '@/types/api';
+import { useAuthStore } from '@/stores/authStore';
 
 export interface FieldMapping {
   sourceColumn: string;
@@ -65,7 +66,7 @@ function extractErrorMessage(data: unknown, fallback = '上传失败'): string {
 export async function parseSourceFile(file: File): Promise<ApiResponse<ParseSourceResult>> {
   const form = new FormData();
   form.append('file', file);
-  const token = sessionStorage.getItem('authToken') || '';
+  const token = useAuthStore.getState().token ?? '';
   const res = await fetch('/api/file-convert/parse-source', {
     method: 'POST',
     headers: {
@@ -82,7 +83,7 @@ export async function parseSourceFile(file: File): Promise<ApiResponse<ParseSour
 export async function parseTemplateFile(file: File): Promise<ApiResponse<ParseTemplateResult>> {
   const form = new FormData();
   form.append('file', file);
-  const token = sessionStorage.getItem('authToken') || '';
+  const token = useAuthStore.getState().token ?? '';
   const res = await fetch('/api/file-convert/parse-template', {
     method: 'POST',
     headers: {
@@ -112,7 +113,7 @@ export async function listTasks(): Promise<ApiResponse<FileConvertTask[]>> {
 }
 
 export async function downloadResult(taskId: string): Promise<void> {
-  const token = sessionStorage.getItem('authToken') || '';
+  const token = useAuthStore.getState().token ?? '';
   const res = await fetch(`/api/file-convert/tasks/${taskId}/download`, {
     headers: { Authorization: `Bearer ${token}`, 'X-Client': 'admin' },
   });
