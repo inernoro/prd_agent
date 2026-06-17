@@ -265,8 +265,8 @@ export default function FileConvertPage() {
               />
               <DropZone
                 label="目标模板文件"
-                accept=".docx,.xlsx"
-                hint={templateResult?.fileKey?.startsWith('file-convert/rules/') ? '由规则提供，可重新上传覆盖' : '支持 Word (.docx) / Excel (.xlsx)'}
+                accept=".docx,.xlsx,.csv"
+                hint={templateResult?.fileKey?.startsWith('file-convert/rules/') ? '由规则提供，可重新上传覆盖' : '支持 Word (.docx) / Excel (.xlsx) / CSV (.csv)'}
                 result={templateResult ? `${templateResult.fileName}（${templateResult.placeholders.length} 个占位符）${templateResult.fileKey?.startsWith('file-convert/rules/') ? ' · 来自规则' : ''}` : null}
                 loading={templateLoading}
                 onFile={handleTemplateUpload}

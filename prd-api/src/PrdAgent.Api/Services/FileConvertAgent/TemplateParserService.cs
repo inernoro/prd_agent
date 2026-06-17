@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml.Packaging;
@@ -21,7 +22,8 @@ public class TemplateParserService
         {
             ".docx" => Task.FromResult(ParseDocx(bytes)),
             ".xlsx" => Task.FromResult(ParseXlsx(bytes)),
-            _ => Task.FromResult(new ParseResult([], $"不支持的模板格式：{ext}，仅支持 .docx / .xlsx"))
+            ".csv" => Task.FromResult(ParseCsv(bytes)),
+            _ => Task.FromResult(new ParseResult([], $"不支持的模板格式：{ext}，仅支持 .docx / .xlsx / .csv"))
         };
     }
 
@@ -46,6 +48,24 @@ public class TemplateParserService
         catch (Exception ex)
         {
             return new ParseResult([], $"Word 模板解析失败：{ex.Message}");
+        }
+    }
+
+    private static ParseResult ParseCsv(byte[] bytes)
+    {
+        try
+        {
+            var text = Encoding.UTF8.GetString(bytes);
+            var placeholders = PlaceholderRegex.Matches(text)
+                .Select(m => m.Groups[1].Value.Trim())
+                .Distinct()
+                .ToList();
+
+            return new ParseResult(placeholders);
+        }
+        catch (Exception ex)
+        {
+            return new ParseResult([], $"CSV 模板解析失败：{ex.Message}");
         }
     }
 

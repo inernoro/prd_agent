@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text;
 using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml.Packaging;
@@ -26,8 +27,8 @@ public class TemplateRendererService
         IProgress<int>? progress = null)
     {
         var ext = Path.GetExtension(templateFileName).ToLowerInvariant();
-        if (ext != ".docx" && ext != ".xlsx")
-            return new RenderResult(null, $"不支持的模板格式：{ext}，仅支持 .docx / .xlsx");
+        if (ext is not (".docx" or ".xlsx" or ".csv"))
+            return new RenderResult(null, $"不支持的模板格式：{ext}，仅支持 .docx / .xlsx / .csv");
 
         try
         {
@@ -37,9 +38,13 @@ public class TemplateRendererService
                 for (var i = 0; i < rows.Count; i++)
                 {
                     var values = BuildValues(rows[i], mappings);
-                    var outputBytes = ext == ".docx"
-                        ? RenderDocx(templateBytes, values)
-                        : RenderXlsx(templateBytes, values);
+                    var outputBytes = ext switch
+                    {
+                        ".docx" => RenderDocx(templateBytes, values),
+                        ".xlsx" => RenderXlsx(templateBytes, values),
+                        ".csv" => RenderCsv(templateBytes, values),
+                        _ => throw new InvalidOperationException($"未处理的模板格式：{ext}")
+                    };
 
                     var entryName = $"{Path.GetFileNameWithoutExtension(templateFileName)}_{i + 1:D4}{ext}";
                     var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
@@ -116,6 +121,17 @@ public class TemplateRendererService
         doc.MainDocumentPart!.Document.Save();
         ms.Position = 0;
         return ms.ToArray();
+    }
+
+    private static byte[] RenderCsv(byte[] templateBytes, Dictionary<string, string> values)
+    {
+        var text = Encoding.UTF8.GetString(templateBytes);
+        var replaced = PlaceholderRegex.Replace(text, m =>
+        {
+            var key = m.Groups[1].Value.Trim();
+            return values.TryGetValue(key, out var v) ? v : m.Value;
+        });
+        return Encoding.UTF8.GetBytes(replaced);
     }
 
     private static byte[] RenderXlsx(byte[] templateBytes, Dictionary<string, string> values)
