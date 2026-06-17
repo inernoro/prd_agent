@@ -49,7 +49,7 @@ export default function FileConvertPage() {
 
   const loadRules = useCallback(async () => {
     const res = await listRules();
-    if (res.success) setRules(res.data);
+    if (res.success && Array.isArray(res.data)) setRules(res.data);
   }, []);
 
   useEffect(() => {
@@ -59,7 +59,7 @@ export default function FileConvertPage() {
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
     const res = await listTasks();
-    if (res.success) setTasks(res.data);
+    if (res.success && Array.isArray(res.data)) setTasks(res.data);
     setTasksLoading(false);
   }, []);
 
@@ -68,7 +68,10 @@ export default function FileConvertPage() {
     setUploadError(null);
     const res = await parseSourceFile(file);
     setSourceLoading(false);
-    if (!res.success) { setUploadError(res.error?.message ?? '解析失败'); return; }
+    if (!res.success) {
+      setUploadError(String(res.error?.message ?? '源文件解析失败'));
+      return;
+    }
     setSourceResult(res.data);
   }, []);
 
@@ -77,7 +80,10 @@ export default function FileConvertPage() {
     setUploadError(null);
     const res = await parseTemplateFile(file);
     setTemplateLoading(false);
-    if (!res.success) { setUploadError(res.error?.message ?? '解析失败'); return; }
+    if (!res.success) {
+      setUploadError(String(res.error?.message ?? '模板文件解析失败'));
+      return;
+    }
     setTemplateResult(res.data);
   }, []);
 
@@ -156,7 +162,7 @@ export default function FileConvertPage() {
       fieldMappings: validMappings,
     });
 
-    if (!res.success) { setTaskError(res.error?.message ?? '创建任务失败'); return; }
+    if (!res.success) { setTaskError(String(res.error?.message ?? '创建任务失败')); return; }
 
     const taskId = res.data.taskId;
 

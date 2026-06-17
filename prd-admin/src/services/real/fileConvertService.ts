@@ -44,6 +44,22 @@ export interface FileConvertRule {
   updatedAt: string;
 }
 
+/** 从后端原始 JSON（任意格式）中提取可读错误字符串，永远返回 string */
+function extractErrorMessage(data: unknown, fallback = '上传失败'): string {
+  if (!data || typeof data !== 'object') return fallback;
+  const d = data as Record<string, unknown>;
+  // 优先: {"error": "string"}
+  if (typeof d.error === 'string' && d.error) return d.error;
+  // 次选: {"error": {"message": "string"}} — 全局异常处理器格式
+  if (d.error && typeof d.error === 'object') {
+    const e = d.error as Record<string, unknown>;
+    if (typeof e.message === 'string' && e.message) return e.message;
+  }
+  // 兜底: {"message": "string"}
+  if (typeof d.message === 'string' && d.message) return d.message;
+  return fallback;
+}
+
 export async function parseSourceFile(file: File): Promise<ApiResponse<ParseSourceResult>> {
   const form = new FormData();
   form.append('file', file);
@@ -56,8 +72,8 @@ export async function parseSourceFile(file: File): Promise<ApiResponse<ParseSour
     },
     body: form,
   });
-  const data = await res.json() as { error?: string } & ParseSourceResult;
-  if (!res.ok) return fail('UNKNOWN', data?.error ?? '上传失败');
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) return fail('UNKNOWN', extractErrorMessage(data, '源文件解析失败'));
   return ok(data as ParseSourceResult);
 }
 
@@ -73,8 +89,8 @@ export async function parseTemplateFile(file: File): Promise<ApiResponse<ParseTe
     },
     body: form,
   });
-  const data = await res.json() as { error?: string } & ParseTemplateResult;
-  if (!res.ok) return fail('UNKNOWN', data?.error ?? '上传失败');
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) return fail('UNKNOWN', extractErrorMessage(data, '模板文件解析失败'));
   return ok(data as ParseTemplateResult);
 }
 
