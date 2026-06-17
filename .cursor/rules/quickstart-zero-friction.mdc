@@ -4,7 +4,7 @@ description: 编写 init/quickstart/setup 脚本或 Dockerfile 时阅读
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/quickstart-zero-friction.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-06-30T02:16:48Z -->
 
 # 快速启动零摩擦原则（Quickstart Zero-Friction）
 
@@ -230,7 +230,7 @@ check_docker || exit 1   # 再来一次发现缺 docker
 
 - 任何新增的可独立启动的子系统
 - 任何对现有启动脚本的重构
-- 任何 `README.md` 或 `doc/guide.quickstart.md` 的编写
+- 任何 `README.md` 或 `doc/guide.platform.quickstart.md` 的编写
 
 **不适用于**：
 - 内部工具脚本（开发者专用）

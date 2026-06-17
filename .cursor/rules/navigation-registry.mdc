@@ -5,7 +5,7 @@ description: 新 Agent 默认注册百宝箱 + 带 wip:true + 交付必须声明
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/navigation-registry.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-06-30T02:16:48Z -->
 
 # 导航注册规则（新 Agent / 新路由必须自动出现在所有入口）
 

@@ -30,6 +30,7 @@ globs: ["prd-api/src/**/*.cs"]
 | `channel-trace-agent` | 商品溯源智能体（防窜物流业务知识 + 线上问题案例排查 + 业务/代码差异对比） |
 | `tech-doc-format-agent` | 技术分析文档格式校验 Agent |
 | `front-end-agent` | 前端搭档智能体 |
+| `file-convert-agent` | 文件批量转换智能体 |
 
 ## 水印配置
 

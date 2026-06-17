@@ -50,6 +50,7 @@ const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ def
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
 const FrontEndAgentPage = lazy(() => import('@/pages/front-end-agent').then(m => ({ default: m.FrontEndAgentPage })));
+const FileConvertPage = lazy(() => import('@/pages/file-convert-agent').then(m => ({ default: m.FileConvertPage })));
 const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
 const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
 const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
@@ -434,6 +435,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'front-end-agent',
       wip: true,
       tags: ['前端', 'API', '组件', '报错', 'CSS', '智能体'],
+    },
+  },
+  {
+    path: '/file-convert-agent',
+    element: <FileConvertPage />,
+    nav: {
+      label: '文件批量转换',
+      shortLabel: '批量转换',
+      description: '上传源数据文件和模板，配置字段映射后批量生成目标文件并下载 ZIP',
+      icon: 'FileOutput',
+      section: 'toolbox',
+      appKey: 'file-convert-agent',
+      wip: true,
+      tags: ['批量', '文件转换', 'Excel', 'Word', 'CSV', '模板'],
     },
   },
   {

@@ -320,6 +320,10 @@ public class MongoDbContext
     /// </summary>
     public IMongoCollection<Mention> Mentions => _database.GetCollection<Mention>("mentions");
 
+    // File Convert Agent 批量文件转换智能体
+    public IMongoCollection<FileConvertTask> FileConvertTasks => _database.GetCollection<FileConvertTask>("file_convert_tasks");
+    public IMongoCollection<FileConvertRule> FileConvertRules => _database.GetCollection<FileConvertRule>("file_convert_rules");
+
     // 系统级跨节点互传（Peer Sync）
     public IMongoCollection<PeerNode> PeerNodes => _database.GetCollection<PeerNode>("peer_nodes");
     public IMongoCollection<PeerPairingCode> PeerPairingCodes => _database.GetCollection<PeerPairingCode>("peer_pairing_codes");

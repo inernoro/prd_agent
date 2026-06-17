@@ -638,6 +638,21 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     createdByName: '官方',
     wip: true,
   },
+  {
+    id: 'builtin-file-convert-agent',
+    name: '文件批量转换',
+    description: '上传源数据文件和目标模板，配置字段映射后批量生成目标文件并下载 ZIP',
+    icon: 'FileOutput',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'agent',
+    agentKey: 'file-convert-agent',
+    routePath: '/file-convert-agent',
+    tags: ['批量', '文件转换', 'Excel', 'Word', 'CSV', '模板', '数据填充'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    wip: true,
+  },
   // ========== 普通版工具（统一对话界面，无独立存储与生命周期）==========
   {
     id: 'builtin-code-reviewer',

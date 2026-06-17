@@ -5,7 +5,7 @@ description: 应用身份隔离 —— Controller 硬编码 appKey，8 个应用
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/app-identity.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-06-30T02:16:48Z -->
 
 
 # 应用身份隔离原则
@@ -36,6 +36,7 @@ description: 应用身份隔离 —— Controller 硬编码 appKey，8 个应用
 | `channel-trace-agent` | 商品溯源智能体（防窜物流业务知识 + 线上问题案例排查 + 业务/代码差异对比） |
 | `tech-doc-format-agent` | 技术分析文档格式校验 Agent |
 | `front-end-agent` | 前端搭档智能体 |
+| `file-convert-agent` | 文件批量转换智能体 |
 
 ## 水印配置
 
