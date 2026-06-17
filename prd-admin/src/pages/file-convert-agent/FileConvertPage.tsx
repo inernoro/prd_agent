@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, FileText, Table, Play, Save, Trash2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { Select } from '@/components/design/Select';
+import { useAuthStore } from '@/stores/authStore';
 import {
   parseSourceFile,
   parseTemplateFile,
@@ -182,7 +183,7 @@ export default function FileConvertPage() {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    const token = sessionStorage.getItem('authToken') || '';
+    const token = useAuthStore.getState().token ?? '';
 
     fetch(`/api/file-convert/tasks/${taskId}/progress`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream', 'X-Client': 'admin' },
