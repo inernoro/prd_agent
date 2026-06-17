@@ -317,8 +317,11 @@ public class McpGatewayController : ControllerBase
 
         try
         {
-            using var resp = await client.SendAsync(req, ct);
-            var text = await resp.Content.ReadAsStringAsync(ct);
+            // server-authority.md：下游可能是长任务（如周报 / agent 生成），不得因 MCP 客户端瞬断或
+            // 超时而取消服务端工作（MCP Streamable HTTP 把断开视为非取消）。用 CancellationToken.None，
+            // 由 McpLoopback 的 120s 超时兜底，避免无界悬挂。
+            using var resp = await client.SendAsync(req, CancellationToken.None);
+            var text = await resp.Content.ReadAsStringAsync(CancellationToken.None);
             return ((int)resp.StatusCode, text);
         }
         catch (Exception ex)
