@@ -4,3 +4,4 @@
 | fix | prd-admin | 视觉创作上传压缩移入串行锁内，避免并发上传同时解码多张大图触发内存峰值 |
 | fix | prd-admin | 视觉创作批量上传改串行逐张压缩，避免单批 20 张并发解码爆内存 |
 | fix | prd-admin | 视觉创作上传压缩放行 SVG（与 GIF 一致），避免矢量图被栅格化丢失语义 |
+| fix | prd-admin | 视觉创作上传压缩按 EXIF 方向解码（createImageBitmap），避免手机照片压缩后旋转/镜像 |

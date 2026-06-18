@@ -44,6 +44,43 @@ async function loadImage(file: File): Promise<HTMLImageElement> {
   });
 }
 
+type DrawableSource = {
+  width: number;
+  height: number;
+  draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
+  close: () => void;
+};
+
+/**
+ * 解码图片用于 canvas 重绘，并按 EXIF 方向摆正。
+ * 关键：`<img>` 渲染会自动应用 EXIF orientation，但 `ctx.drawImage` 不会——直接画
+ * HTMLImageElement 会丢掉手机照片的方向信息，导致压缩后在画布上旋转/镜像。
+ * 优先用 `createImageBitmap(file, { imageOrientation: 'from-image' })`（按 EXIF 解码），
+ * 不支持时退回 HTMLImageElement（多数现代浏览器对 `<img>` 也已默认摆正，退路可接受）。
+ */
+async function loadOrientedSource(file: File): Promise<DrawableSource> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      return {
+        width: bitmap.width,
+        height: bitmap.height,
+        draw: (ctx, w, h) => ctx.drawImage(bitmap, 0, 0, w, h),
+        close: () => bitmap.close(),
+      };
+    } catch {
+      // 退回 HTMLImageElement
+    }
+  }
+  const img = await loadImage(file);
+  return {
+    width: img.width,
+    height: img.height,
+    draw: (ctx, w, h) => ctx.drawImage(img, 0, 0, w, h),
+    close: () => {},
+  };
+}
+
 function buildOutputFile(blob: Blob, originFile: File): File {
   const mimeType = blob.type || 'image/jpeg';
   const ext = inferExtFromMime(mimeType);
@@ -77,59 +114,64 @@ export async function compressImageForCanvas(
   // SVG 本身是文本、解码后按显示尺寸栅格化，不会像位图那样吃大块解码内存，无需也不应压缩。
   if (file.type === 'image/gif' || file.type === 'image/svg+xml') return { file, compressed: false };
 
-  let image: HTMLImageElement;
+  let source: DrawableSource;
   try {
-    image = await loadImage(file);
+    source = await loadOrientedSource(file);
   } catch {
     // 解码失败不阻断上传，放行原图由后端兜底
     return { file, compressed: false };
   }
 
-  const maxEdge = Math.max(image.width, image.height);
-  const webFriendly = file.type === 'image/jpeg' || file.type === 'image/webp' || file.type === 'image/png';
-  // 尺寸和体积都达标且格式友好：无需重新编码
-  if (maxEdge <= maxDimension && file.size <= maxBytes && webFriendly) {
-    return { file, compressed: false };
-  }
+  // ImageBitmap 持有解码像素，所有返回路径都必须 close 释放，故包一层 try/finally。
+  try {
+    const maxEdge = Math.max(source.width, source.height);
+    const webFriendly = file.type === 'image/jpeg' || file.type === 'image/webp' || file.type === 'image/png';
+    // 尺寸和体积都达标且格式友好：无需重新编码
+    if (maxEdge <= maxDimension && file.size <= maxBytes && webFriendly) {
+      return { file, compressed: false };
+    }
 
-  const baseScale = maxEdge > 0 ? Math.min(1, maxDimension / maxEdge) : 1;
-  // 原图是 jpeg 就保持 jpeg；否则优先 webp（保留透明通道），兜底 jpeg
-  const outputMimeTypes = file.type === 'image/jpeg' ? ['image/jpeg'] : ['image/webp', 'image/jpeg'];
+    const baseScale = maxEdge > 0 ? Math.min(1, maxDimension / maxEdge) : 1;
+    // 原图是 jpeg 就保持 jpeg；否则优先 webp（保留透明通道），兜底 jpeg
+    const outputMimeTypes = file.type === 'image/jpeg' ? ['image/jpeg'] : ['image/webp', 'image/jpeg'];
 
-  let bestBlob: Blob | null = null;
-  for (let scale = baseScale; scale >= baseScale * MIN_COMPRESS_SCALE; scale *= SCALE_REDUCE_FACTOR) {
-    const width = Math.max(1, Math.floor(image.width * scale));
-    const height = Math.max(1, Math.floor(image.height * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return { file, compressed: false };
+    let bestBlob: Blob | null = null;
+    for (let scale = baseScale; scale >= baseScale * MIN_COMPRESS_SCALE; scale *= SCALE_REDUCE_FACTOR) {
+      const width = Math.max(1, Math.floor(source.width * scale));
+      const height = Math.max(1, Math.floor(source.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return { file, compressed: false };
 
-    ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(image, 0, 0, width, height);
+      ctx.clearRect(0, 0, width, height);
+      source.draw(ctx, width, height);
 
-    for (const mimeType of outputMimeTypes) {
-      for (let quality = 0.92; quality >= MIN_COMPRESS_QUALITY; quality -= QUALITY_REDUCE_STEP) {
-        const blob = await toBlob(canvas, mimeType, quality);
-        if (!blob) continue;
-        if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
-        if (blob.size <= maxBytes) {
-          return { file: buildOutputFile(blob, file), compressed: true };
+      for (const mimeType of outputMimeTypes) {
+        for (let quality = 0.92; quality >= MIN_COMPRESS_QUALITY; quality -= QUALITY_REDUCE_STEP) {
+          const blob = await toBlob(canvas, mimeType, quality);
+          if (!blob) continue;
+          if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+          if (blob.size <= maxBytes) {
+            return { file: buildOutputFile(blob, file), compressed: true };
+          }
         }
       }
     }
-  }
 
-  // 收尾兜底：缩到下限仍超 maxBytes。
-  // 关键：只要尺寸被缩过（baseScale < 1，即原图最长边超过 maxDimension），bestBlob 的像素尺寸
-  // 必 ≤ maxDimension（循环内所有 scale ≤ baseScale）。此时即使字节比原图还大也必须返回——
-  // 画布卡顿由解码后的位图像素尺寸决定，封顶尺寸才是目的；返回原图会让大尺寸图漏过封顶继续卡。
-  const dimensionWasReduced = baseScale < 1;
-  if (bestBlob && (dimensionWasReduced || bestBlob.size < file.size)) {
-    return { file: buildOutputFile(bestBlob, file), compressed: true };
+    // 收尾兜底：缩到下限仍超 maxBytes。
+    // 关键：只要尺寸被缩过（baseScale < 1，即原图最长边超过 maxDimension），bestBlob 的像素尺寸
+    // 必 ≤ maxDimension（循环内所有 scale ≤ baseScale）。此时即使字节比原图还大也必须返回——
+    // 画布卡顿由解码后的位图像素尺寸决定，封顶尺寸才是目的；返回原图会让大尺寸图漏过封顶继续卡。
+    const dimensionWasReduced = baseScale < 1;
+    if (bestBlob && (dimensionWasReduced || bestBlob.size < file.size)) {
+      return { file: buildOutputFile(bestBlob, file), compressed: true };
+    }
+    return { file, compressed: false };
+  } finally {
+    source.close();
   }
-  return { file, compressed: false };
 }
 
 export async function compressImageToLimit(file: File, maxBytes: number): Promise<{ file: File; compressed: boolean }> {
