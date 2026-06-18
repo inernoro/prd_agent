@@ -626,9 +626,9 @@ export default function AppShell() {
 
   return (
     <div
-      className="w-full relative overflow-hidden"
+      className="w-full relative overflow-hidden app-aurora"
       style={{
-        background: 'var(--bg-base)',
+        // 背景走 .app-aurora 类（极淡彩色光晕 + var(--bg-base) 底），给液态玻璃可折射的深度
         // 移动端：用 dvh 跟随视口（修 iOS Safari 地址栏收缩导致的高度抖动 / 黑带）
         // 桌面端：保持 h:100% 依赖 #root，避免破坏现有侧栏/浮层布局
         minHeight: '100dvh',

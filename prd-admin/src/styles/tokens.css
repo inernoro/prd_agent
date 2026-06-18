@@ -250,3 +250,27 @@ html, body {
   height: 100%;
   width: 100%;
 }
+
+/*
+ * App 背景深度（2026-06-16）：在 AppShell 根容器叠一层极淡的彩色光晕。
+ * 此前全站背景是接近纯黑的平底，液态玻璃背后没东西可折射 = 玻璃看着像没做。
+ * 这层光晕很克制（角落 0.07~0.12 透明度，中心仍暗），不伤正文对比度，
+ * 但给玻璃"有活干"——透明页面/留白处的玻璃能折射出这层颜色，产生深度。
+ * 因为 AppShell <main> 是 transparent，这层光晕能穿透到页面内容与玻璃卡背后。
+ */
+.app-aurora {
+  background:
+    radial-gradient(70% 60% at 12% 8%, rgba(99, 102, 241, 0.12) 0%, transparent 60%),
+    radial-gradient(60% 55% at 88% 14%, rgba(34, 211, 238, 0.10) 0%, transparent 60%),
+    radial-gradient(65% 60% at 82% 92%, rgba(168, 85, 247, 0.10) 0%, transparent 62%),
+    radial-gradient(55% 50% at 18% 88%, rgba(244, 114, 182, 0.07) 0%, transparent 60%),
+    var(--bg-base);
+}
+[data-theme="light"] .app-aurora {
+  background:
+    radial-gradient(70% 60% at 12% 8%, rgba(99, 102, 241, 0.07) 0%, transparent 60%),
+    radial-gradient(60% 55% at 88% 14%, rgba(34, 211, 238, 0.06) 0%, transparent 60%),
+    radial-gradient(65% 60% at 82% 92%, rgba(168, 85, 247, 0.06) 0%, transparent 62%),
+    radial-gradient(55% 50% at 18% 88%, rgba(244, 114, 182, 0.05) 0%, transparent 60%),
+    var(--bg-base);
+}
