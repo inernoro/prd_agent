@@ -31,7 +31,7 @@ public class DefectAgentController : ControllerBase
 
     private const string AppKey = "defect-agent";
     private const string DefectResolveSkillName = "ai-defect-resolve";
-    private const string DefectResolveSkillMinVersion = "1.2.0";
+    private const string DefectResolveSkillMinVersion = "1.3.0";
     private const string CommitInfoStructuredKey = "提交信息";
     private const string SuggestedAutomationKeyName = "缺陷处理 Agent 授权";
     private const string DefectAcceptanceStoreName = "缺陷修复验收报告";
@@ -43,6 +43,7 @@ public class DefectAgentController : ControllerBase
     private readonly DefectWebhookService _webhookService;
     private readonly IOpenPlatformService _openPlatformService;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IAgentApiKeyService _agentApiKeyService;
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PrdAgent.Api.Services.DefectAgent.DefectPolishService _polishService;
@@ -57,6 +58,7 @@ public class DefectAgentController : ControllerBase
         DefectWebhookService webhookService,
         IOpenPlatformService openPlatformService,
         ILLMRequestContextAccessor llmRequestContext,
+        IAgentApiKeyService agentApiKeyService,
         IConfiguration config,
         IHttpClientFactory httpClientFactory,
         PrdAgent.Api.Services.DefectAgent.DefectPolishService polishService)
@@ -69,6 +71,7 @@ public class DefectAgentController : ControllerBase
         _webhookService = webhookService;
         _openPlatformService = openPlatformService;
         _llmRequestContext = llmRequestContext;
+        _agentApiKeyService = agentApiKeyService;
         _config = config;
         _httpClientFactory = httpClientFactory;
         _polishService = polishService;
@@ -2629,6 +2632,7 @@ public class DefectAgentController : ControllerBase
                         canReuse = currentKey.IsActive && (currentKey.Scopes ?? new List<string>()).Contains(AgentFixScope),
                     },
                 createEndpoint = "/api/agent-api-keys",
+                ensureEndpoint = "/api/defect-agent/agent/authorization/ensure",
                 createBody = new
                 {
                     name = SuggestedAutomationKeyName,
@@ -2661,6 +2665,57 @@ public class DefectAgentController : ControllerBase
             },
             agentLaunch = BuildAutomationAgentLaunchPayload(projectId, teamId, status),
         };
+    }
+
+    /// <summary>
+    /// [自动化] 确保当前登录用户有长期缺陷处理 Agent 授权。已有可用 Key 时复用；没有时新建并仅本次返回明文 K。
+    /// </summary>
+    [Authorize]
+    [HttpPost("agent/authorization/ensure")]
+    public async Task<IActionResult> EnsureAutomationAuthorization([FromBody] EnsureDefectAutomationAuthorizationRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var ttlDays = request.TtlDays is > 0 and <= 1095 ? request.TtlDays.Value : 1095;
+        var now = DateTime.UtcNow;
+
+        var existing = await _db.AgentApiKeys
+            .Find(x => x.OwnerUserId == userId
+                       && x.Name == SuggestedAutomationKeyName
+                       && x.IsActive
+                       && x.RevokedAt == null
+                       && x.Scopes.Contains(AgentFixScope)
+                       && (x.ExpiresAt == null || x.ExpiresAt > now))
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (existing != null && !request.ForceNew)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                created = false,
+                item = BuildAutomationKeyDto(existing),
+                apiKey = (string?)null,
+                warning = "已存在可复用的缺陷处理 Agent 授权。后端不保存明文 K；如果本地没有保存明文，请设置 forceNew=true 重新签发。",
+                connector = await BuildSourceConnectorPayloadAsync(request.ProjectId, request.TeamId, request.Status, ct),
+            }));
+        }
+
+        var (key, plaintext) = await _agentApiKeyService.CreateAsync(
+            userId,
+            SuggestedAutomationKeyName,
+            "缺陷自动化日常任务长期授权",
+            new[] { AgentFixScope },
+            ttlDays,
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            created = true,
+            item = BuildAutomationKeyDto(key),
+            apiKey = plaintext,
+            warning = "这是 Key 唯一一次明文显示，请保存到定时任务的 K 配置中。",
+            connector = await BuildSourceConnectorPayloadAsync(request.ProjectId, request.TeamId, request.Status, ct),
+        }));
     }
 
     /// <summary>
@@ -2957,6 +3012,9 @@ public class DefectAgentController : ControllerBase
 
         var builder = Builders<DefectReport>.Filter;
         var filter = builder.Eq(x => x.IsDeleted, false) & builder.In(x => x.Status, statuses);
+        var excludedDefectIds = BuildRunExcludedDefectIds(run);
+        if (excludedDefectIds.Count > 0)
+            filter &= builder.Nin(x => x.Id, excludedDefectIds);
         if (!string.IsNullOrWhiteSpace(projectId))
             filter &= builder.Eq(x => x.ProjectId, projectId.Trim());
         if (!string.IsNullOrWhiteSpace(teamId))
@@ -3358,6 +3416,34 @@ public class DefectAgentController : ControllerBase
         };
         run.Items.Add(item);
         return item;
+    }
+
+    private static object BuildAutomationKeyDto(AgentApiKey key)
+        => new
+        {
+            key.Id,
+            key.Name,
+            key.Description,
+            key.KeyPrefix,
+            key.Scopes,
+            key.IsActive,
+            key.CreatedAt,
+            key.ExpiresAt,
+            key.LastUsedAt,
+            key.TotalRequests,
+        };
+
+    internal static IReadOnlyCollection<string> BuildRunExcludedDefectIds(DefectAutomationRun? run)
+    {
+        if (run == null || run.Items.Count == 0)
+            return Array.Empty<string>();
+
+        return run.Items
+            .Where(x => x.Status is DefectAutomationRunItemStatus.Fixed or DefectAutomationRunItemStatus.Failed)
+            .Select(x => x.DefectId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
 
     private static void RecomputeRunCounters(DefectAutomationRun run)
@@ -5253,6 +5339,15 @@ public class AutomationFixStatusRequest
 public class StartDefectAutomationRunRequest
 {
     public string? TriggerType { get; set; }
+    public string? ProjectId { get; set; }
+    public string? TeamId { get; set; }
+    public string? Status { get; set; }
+}
+
+public class EnsureDefectAutomationAuthorizationRequest
+{
+    public bool ForceNew { get; set; }
+    public int? TtlDays { get; set; }
     public string? ProjectId { get; set; }
     public string? TeamId { get; set; }
     public string? Status { get; set; }

@@ -82,6 +82,28 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void BuildRunExcludedDefectIds_ReturnsOnlyTerminalItems()
+    {
+        var run = new DefectAutomationRun
+        {
+            Items =
+            [
+                new DefectAutomationRunItem { DefectId = "fixed", Status = DefectAutomationRunItemStatus.Fixed },
+                new DefectAutomationRunItem { DefectId = "failed", Status = DefectAutomationRunItemStatus.Failed },
+                new DefectAutomationRunItem { DefectId = "commented", Status = DefectAutomationRunItemStatus.Commented },
+                new DefectAutomationRunItem { DefectId = "commit", Status = DefectAutomationRunItemStatus.CommitWritten },
+            ],
+        };
+
+        var excluded = DefectAgentController.BuildRunExcludedDefectIds(run);
+
+        Assert.Contains("fixed", excluded);
+        Assert.Contains("failed", excluded);
+        Assert.DoesNotContain("commented", excluded);
+        Assert.DoesNotContain("commit", excluded);
+    }
+
+    [Fact]
     public void MergeAutomationCommitStructuredData_WritesCommitInfoKeys()
     {
         var structured = DefectAgentController.MergeAutomationCommitStructuredData(
