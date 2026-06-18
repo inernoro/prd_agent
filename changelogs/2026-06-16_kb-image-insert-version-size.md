@@ -27,3 +27,7 @@
 | fix | prd-api | 知识库大小统计按 MIME 判定图片（上传附件 Type 统一为 Document），修复上传图片统计为 0 图 —— Codex P2 |
 | fix | prd-admin | DocBrowser loadEntryContent 加 fetchId 防过期响应 + commitLocalSave 作废在途加载，保护「保存不刷新」不被慢请求回滚 —— Bugbot |
 | fix | prd-admin | 历史版本弹窗切换 entry 时先清空 versions/selectedId，避免残留上一篇版本列表 —— Bugbot |
+| fix | prd-api | 版本基线快照不再回退截断的 ContentIndex（2000字上限）：DocumentId 在但 ParsedPrd 丢失时宁可不快照，避免长文档留下截断的改动前版本 —— Bugbot |
+| fix | prd-admin | commitLocalSave 记录刚保存内容；onSaveContent 返回 void 时 loadEntryContent 凭快照直接采纳新 key 跳过重拉，保存不刷新对所有调用方生效 —— Bugbot |
+| fix | prd-admin | commitLocalSave 作废在途加载时同步清 contentLoading，避免内容区卡在 loading 占位 —— Codex P2 |
+| fix | prd-admin | 历史版本首条徽章「当前」改为「最新」，个别写入路径（替换文件）不产生版本时不误导为当前在线正文 —— Codex P2 |

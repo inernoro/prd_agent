@@ -1231,7 +1231,9 @@ public class DocumentStoreController : ControllerBase
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var oldDoc = await _documentService.GetByIdAsync(entry.DocumentId);
-            oldContent = oldDoc?.RawContent ?? entry.ContentIndex;
+            // 不回退 ContentIndex：它截断到 2000 字，长文档会留下被截断的「改动前」版本无法完整恢复。
+            // ParsedPrd 行确已丢失时旧全文本就不可得，宁可不快照（null）也不存截断版本（Bugbot）。
+            oldContent = oldDoc?.RawContent;
             parsed.Title = oldDoc?.Title ?? entry.Title;
             if (parsed.Id != entry.DocumentId)
             {

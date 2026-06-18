@@ -171,7 +171,8 @@ public class ContentReprocessApplyService
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var existing = await _documentService.GetByIdAsync(entry.DocumentId);
-            oldContent = existing?.RawContent ?? entry.ContentIndex;
+            // 不回退截断的 ContentIndex（2000 字上限），长文档基线会被截断无法完整恢复（Bugbot）
+            oldContent = existing?.RawContent;
             parsed.Title = existing?.Title ?? entry.Title;
             // 内容寻址 + 共享保护：旧 ParsedPrd 被别的 entry 共享（相同内容上传等）时不得就地覆盖，
             // 否则会改到别的 entry 正文；改为按新内容 hash 落库 + 只重指向本 entry（Codex P1）。

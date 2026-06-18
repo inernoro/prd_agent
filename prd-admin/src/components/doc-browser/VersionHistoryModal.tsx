@@ -172,7 +172,9 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
                     <div className="flex items-center gap-2">
                       <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>版本 #{v.versionNumber}</span>
                       {idx === 0 && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>当前</span>
+                        // 标「最新」而非「当前」：个别写入路径（如替换文件）不产生版本，最新快照未必等于
+                        // 当前在线正文；只声称它是最新的一条快照（恒为真），不误导成「当前内容」（Codex P2）。
+                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }} title="最新的一条历史快照（个别写入路径不产生版本，未必等于当前在线正文）">最新</span>
                       )}
                       <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>{SOURCE_LABEL[v.source] ?? v.source}</span>
                     </div>

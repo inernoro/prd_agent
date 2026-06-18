@@ -1596,6 +1596,10 @@ export function DocBrowser({
   // 内容加载序号：防过期响应。每次 loadEntryContent / commitLocalSave 自增，落后的 loadContent
   // 回来时若序号已变就丢弃，避免旧请求覆盖刚保存的 preview/loadedContentKey（闪烁回顶）。
   const contentFetchIdRef = useRef(0);
+  // 刚本地保存的内容快照：当 onSaveContent 不返回 updatedAt（部分调用方返回 void）时，loadedContentKey
+  // 无法推进，但 preview 已是权威内容。此时若 effect 因 entries.updatedAt 变化要重拉，凭这份快照直接
+  // 采纳新 key、跳过 setPreview(null)+重拉，避免保存后闪烁回顶（Bugbot）。
+  const lastSavedContentRef = useRef<{ entryId: string; text: string } | null>(null);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -2010,8 +2014,12 @@ export function DocBrowser({
     } catch {
       return false; // toast 由页面层 onSaveContent 内部抛出
     }
-    // 让任何在途的 loadEntryContent 作废：避免它晚一步回来用旧正文覆盖刚保存的 preview/key（闪烁回顶）
+    // 让任何在途的 loadEntryContent 作废：避免它晚一步回来用旧正文覆盖刚保存的 preview/key（闪烁回顶）。
+    // 同时清掉 contentLoading：被作废的旧加载会走过期分支、跳过它自己的 setContentLoading(false)，
+    // 不清的话内容区会卡在 loading 占位（Codex P2）。preview 此刻已是权威内容，本就不该 loading。
     contentFetchIdRef.current++;
+    setContentLoading(false);
+    lastSavedContentRef.current = { entryId, text: content };
     setPreview(prev => (prev ? { ...prev, text: content } : prev));
     const ua = result && typeof result === 'object' ? result.updatedAt : undefined;
     if (ua) setLoadedContentKey(`${entryId}:${ua}`);
@@ -2484,6 +2492,13 @@ export function DocBrowser({
   // 缓存键随之变化，命中失败 → 重新拉取新正文（修复"替换后预览不刷新"）
   const loadEntryContent = useCallback(async (entryId: string, contentKey: string) => {
     if (contentKey === loadedContentKey) return;
+    // 刚本地保存过且 preview 已是该内容（onSaveContent 没回 updatedAt 时走这里）：直接采纳新 key，
+    // 不 setPreview(null) 不重拉，避免保存后闪烁回顶（Bugbot）。
+    const saved = lastSavedContentRef.current;
+    if (saved && saved.entryId === entryId && preview?.text === saved.text) {
+      setLoadedContentKey(contentKey);
+      return;
+    }
     const fid = ++contentFetchIdRef.current;
     setContentLoading(true);
     setPreview(null);
@@ -2496,7 +2511,7 @@ export function DocBrowser({
       if (fid === contentFetchIdRef.current) setPreview(null);
     }
     if (fid === contentFetchIdRef.current) setContentLoading(false);
-  }, [loadContent, loadedContentKey]);
+  }, [loadContent, loadedContentKey, preview]);
 
   useEffect(() => {
     if (selectedEntryId) {
