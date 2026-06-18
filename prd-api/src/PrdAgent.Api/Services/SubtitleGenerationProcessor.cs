@@ -230,7 +230,10 @@ public class SubtitleGenerationProcessor
             _logger.LogInformation(
                 "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
                 resolution.ActualModel, resolution.ActualPlatformName);
-            return await TranscribeViaChatAudioAsync(run, bytes, resolution.ToGatewayResolution());
+            // chat-audio 端点对 input_audio.format 严格校验：统一转成 wav。视频上面已 ffmpeg 抽成 wav；
+            // 上传的 audio/m4a、audio/mp3 此处补转，否则把非 wav 字节标成 "wav" 发给严格端点会失败/乱码（Bugbot Medium）。
+            var chatAudioWav = isVideo ? bytes : await ExtractAudioWithFfmpegAsync(bytes);
+            return await TranscribeViaChatAudioAsync(run, chatAudioWav, resolution.ToGatewayResolution());
         }
 
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
@@ -486,10 +489,17 @@ public class SubtitleGenerationProcessor
         }
 
         var text = ExtractChatCompletionContent(rawResp.Content);
-        var segments = new List<SubtitleSegment>();
-        if (!string.IsNullOrWhiteSpace(text))
-            segments.Add(new SubtitleSegment(0, 0, text.Trim()));
-        return segments;
+        // HTTP 成功但没解析出文字（模型拒答 / 响应结构异常 / 空内容）：必须当失败抛出，
+        // 否则字幕生成会拿空文本生成一个"无内容"占位文档，把失败伪装成成功（Bugbot Medium）。
+        if (string.IsNullOrWhiteSpace(text))
+            throw new SubtitleAsrException(
+                "多模态 chat 音频转写返回为空（模型可能拒答或响应格式异常）",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                {
+                    ["model"] = gwResolution.ActualModel ?? "",
+                    ["reason"] = "empty-content",
+                }));
+        return new List<SubtitleSegment> { new(0, 0, text.Trim()) };
     }
 
     private static string ExtractChatCompletionContent(string json)
