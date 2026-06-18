@@ -136,8 +136,10 @@ services:
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/"
-      # dev 模式 Vite 秒起；static 冷构建见 x-cds-deploy-modes.admin.static（readiness 1200s）
-      cds.readiness-timeout: "300"
+      # dev 模式 Vite 秒起；static 冷构建（pnpm install + vite build）实测约 320s，
+      # 超过原 300s 就绪超时会被误判 error（容器其实已 Accepting connections）。
+      # 按 base label 取两模式上限：static 冷构建留足余量，dev 秒起也不受影响。
+      cds.readiness-timeout: "1200"
       cds.readiness-interval: "3"
 
   # ── Infrastructure Services (无相对路径 mount) ──
