@@ -21,3 +21,4 @@
 | fix | prd-api | UpdateEntryContent：DocumentId 指向 ParsedPrd 丢失时也 upsert 落库正文（原只在 doc!=null 时保存→重载空白）；无 DocumentId 短文档用 ContentIndex 做基线快照 —— Bugbot High/Medium |
 | fix | prd-admin | 历史版本列表加载加 fetchId 防过期响应守卫（切换文档后慢响应不覆盖当前列表）—— Bugbot |
 | fix | prd-api | 版本恢复 ApplyContentToEntryAsync 对无 DocumentId 短文档也用 ContentIndex 做基线快照，与 UpdateEntryContent 一致 —— Bugbot |
+| fix | prd-admin | 历史版本切换时先清空 detail + 加载中禁用恢复 + handleRestore 校验 detail.id==selectedId，避免拿上一条快照误恢复 —— Bugbot |

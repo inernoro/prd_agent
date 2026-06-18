@@ -82,6 +82,7 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
   useEffect(() => {
     if (!selectedId) { setDetail(null); return; }
     let alive = true;
+    setDetail(null);          // 切换版本时先清空旧 detail：加载期间恢复按钮禁用、不会拿上一条快照去恢复（Bugbot）
     setDetailLoading(true);
     void api.get(entryId, selectedId).then(res => {
       if (!alive) return;
@@ -98,7 +99,8 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
   }, [onClose]);
 
   const handleRestore = useCallback(async () => {
-    if (!detail) return;
+    // detail 必须是当前选中版本：切换行后 detail 仍是上一条、或正在加载时，禁止用旧快照恢复（Bugbot）
+    if (!detail || detailLoading || detail.id !== selectedId) return;
     setRestoring(true);
     try {
       const res = await api.restore(entryId, detail.id);
@@ -112,7 +114,7 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
     } finally {
       setRestoring(false);
     }
-  }, [api, detail, entryId, onRestored, onClose]);
+  }, [api, detail, detailLoading, selectedId, entryId, onRestored, onClose]);
 
   const modal = (
     <div
@@ -203,7 +205,7 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
                 // 不再因「是最新快照」就禁用恢复：部分写入路径（如 AI 改写/续写、reprocess apply）
                 // 不产生版本，此时 versions[0] 未必等于当前正文，禁用会让用户无法用历史撤销那次写入（Codex P2）。
                 // 恢复是幂等的（内容相同则 SnapshotAsync 去重、不产生噪音版本），始终允许最安全。
-                disabled={!detail || restoring}
+                disabled={!detail || restoring || detailLoading}
                 className="h-8 px-3 rounded-lg text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', color: 'rgba(147,197,253,0.95)' }}
                 title="把该版本内容写回当前文档（当前内容会自动保留为新版本）">
