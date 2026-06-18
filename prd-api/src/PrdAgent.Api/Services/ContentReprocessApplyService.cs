@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
 
 namespace PrdAgent.Api.Services;
 
@@ -17,11 +18,16 @@ namespace PrdAgent.Api.Services;
 public class ContentReprocessApplyService
 {
     private readonly IDocumentService _documentService;
+    private readonly DocStoreServices.DocumentVersionService _versions;
     private readonly ILogger<ContentReprocessApplyService> _logger;
 
-    public ContentReprocessApplyService(IDocumentService documentService, ILogger<ContentReprocessApplyService> logger)
+    public ContentReprocessApplyService(
+        IDocumentService documentService,
+        DocStoreServices.DocumentVersionService versions,
+        ILogger<ContentReprocessApplyService> logger)
     {
         _documentService = documentService;
+        _versions = versions;
         _logger = logger;
     }
 
@@ -160,20 +166,38 @@ public class ContentReprocessApplyService
 
     private async Task SaveContentToEntryAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
     {
-        ParsedPrd parsed;
+        var parsed = await _documentService.ParseAsync(content); // parsed.Id = 内容 hash
+        string? oldContent;
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var existing = await _documentService.GetByIdAsync(entry.DocumentId);
-            parsed = await _documentService.ParseAsync(content);
-            parsed.Id = entry.DocumentId;
+            // 不回退截断的 ContentIndex（2000 字上限），长文档基线会被截断无法完整恢复（Bugbot）
+            oldContent = existing?.RawContent;
             parsed.Title = existing?.Title ?? entry.Title;
+            // 内容寻址 + 共享保护：旧 ParsedPrd 被别的 entry 共享（相同内容上传等）时不得就地覆盖，
+            // 否则会改到别的 entry 正文；改为按新内容 hash 落库 + 只重指向本 entry（Codex P1）。
+            if (parsed.Id != entry.DocumentId)
+            {
+                var sharedByOthers = await db.DocumentEntries.CountDocumentsAsync(
+                    e => e.DocumentId == entry.DocumentId && e.Id != entry.Id) > 0;
+                if (!sharedByOthers)
+                    parsed.Id = entry.DocumentId; // 独占 → 复用旧 id 就地更新，不产生孤儿
+            }
         }
         else
         {
-            parsed = await _documentService.ParseAsync(content);
+            // 无 DocumentId 的短文档，ContentIndex 即完整正文（见 AppendAsync 约定），
+            // 也要快照成改动前基线，否则这类条目 AI 改写后无法从历史撤销（Bugbot）。
+            oldContent = entry.ContentIndex;
             parsed.Title = entry.Title;
         }
         await _documentService.SaveAsync(parsed);
+
+        // 版本快照：AI 再加工（replace/append）也走版本控制，否则历史里缺这次写入、
+        // 用户无法用「历史版本」撤销 AI 改写（Codex P2）。先存改动前基线，再存新内容（去重）。
+        if (oldContent != null)
+            await _versions.SnapshotAsync(entry.Id, entry.StoreId, oldContent, DocumentVersionSource.Edit, actorId, null);
+        await _versions.SnapshotAsync(entry.Id, entry.StoreId, content, DocumentVersionSource.Edit, actorId, null);
 
         // 与 UpdateEntryContent 保持一致：把"最近编辑者"更新到当前 actor，
         // 否则团队场景下 audit/活动流会错误归属（Codex P2 十轮）
