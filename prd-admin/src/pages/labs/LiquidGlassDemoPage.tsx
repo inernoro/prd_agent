@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { Sun, Moon, RotateCcw } from 'lucide-react';
 import { PageHeader } from '@/components/design/PageHeader';
 import { Button } from '@/components/design/Button';
@@ -33,11 +33,24 @@ const CARDS: CardMeta[] = [
   { key: 'refract', className: 'lgd-refract', label: 'A · SVG 真折射', desc: 'feDisplacementMap' },
 ];
 
+const CARD_W = 280;
+const CARD_H = 160;
+
 const INITIAL_POS: Record<CardKey, { x: number; y: number }> = {
   current: { x: 40, y: 120 },
   clarity: { x: 360, y: 200 },
   refract: { x: 680, y: 110 },
 };
+
+/** 按舞台实测宽度铺开三张卡，避免窄屏下被 overflow:hidden 裁出舞台(Codex P2)。 */
+function computeInitialPos(width: number): Record<CardKey, { x: number; y: number }> {
+  const usable = Math.max(0, width - CARD_W);
+  return {
+    current: { x: Math.round(usable * 0.04), y: 120 },
+    clarity: { x: Math.round(usable * 0.5), y: 200 },
+    refract: { x: Math.round(usable * 0.96), y: 110 },
+  };
+}
 
 function GlassCardSample({ meta }: { meta: CardMeta }) {
   return (
@@ -77,6 +90,26 @@ export default function LiquidGlassDemoPage() {
   const sceneRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ key: CardKey; dx: number; dy: number } | null>(null);
 
+  // 初始按舞台宽度铺开；舞台尺寸变化时把卡片夹回可视范围(窄屏/缩放不丢卡)。
+  useLayoutEffect(() => {
+    const el = sceneRef.current;
+    if (!el) return;
+    setPos(computeInitialPos(el.clientWidth));
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      setPos((prev) => {
+        const clamp = (p: { x: number; y: number }) => ({
+          x: Math.max(0, Math.min(w - CARD_W, p.x)),
+          y: Math.max(0, Math.min(h - CARD_H, p.y)),
+        });
+        return { current: clamp(prev.current), clarity: clamp(prev.clarity), refract: clamp(prev.refract) };
+      });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const onPointerDown = useCallback(
     (key: CardKey) => (e: React.PointerEvent<HTMLDivElement>) => {
       const rect = sceneRef.current?.getBoundingClientRect();
@@ -101,8 +134,8 @@ export default function LiquidGlassDemoPage() {
     const drag = dragRef.current;
     const rect = sceneRef.current?.getBoundingClientRect();
     if (!drag || !rect) return;
-    const x = Math.max(0, Math.min(rect.width - 280, e.clientX - rect.left - drag.dx));
-    const y = Math.max(0, Math.min(rect.height - 160, e.clientY - rect.top - drag.dy));
+    const x = Math.max(0, Math.min(rect.width - CARD_W, e.clientX - rect.left - drag.dx));
+    const y = Math.max(0, Math.min(rect.height - CARD_H, e.clientY - rect.top - drag.dy));
     setPos((p) => ({ ...p, [drag.key]: { x, y } }));
   }, []);
 
@@ -116,7 +149,7 @@ export default function LiquidGlassDemoPage() {
   }, []);
 
   const reset = () => {
-    setPos(INITIAL_POS);
+    setPos(computeInitialPos(sceneRef.current?.clientWidth ?? 1000));
     setBlur(7);
     setScale(60);
   };
