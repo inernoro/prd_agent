@@ -160,6 +160,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (!response.IsSuccessStatusCode)
             {
                 var errorMsg = TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}";
+                if (IsQuotaExceeded((int)response.StatusCode, errorMsg))
+                {
+                    var (qCode, qMsg) = HandleQuotaExceeded(resolution.ActualPlatformName, errorMsg);
+                    return GatewayResponse.Fail(qCode, qMsg, (int)response.StatusCode);
+                }
                 return GatewayResponse.Fail("LLM_ERROR", errorMsg, (int)response.StatusCode);
             }
 
@@ -821,26 +826,28 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var response = await httpClient.SendAsync(httpRequest, ct);
 
             // 检测响应类型：二进制（音频 / 视频 / 图片等）还是文本（JSON）。
-            // request.ExpectBinaryResponse 强制按字节读取：用于下游 Content-Type 标注不可靠的端点
-            // （OpenRouter 视频下载实际回 mp4 却标 application/json，按字符串读会损坏字节）。
+            // 先无损读出全部字节，再决定按二进制还是文本处理——避免下游把二进制 Content-Type 标错
+            // （OpenRouter 视频下载实际回 mp4 却标 application/json）时用 ReadAsString 损坏字节。
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
+            var rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
             var isBinaryResponse = request.ExpectBinaryResponse ||
                                    contentType.StartsWith("audio/") ||
                                    contentType.StartsWith("video/") ||
                                    contentType.StartsWith("image/") ||
-                                   contentType == "application/octet-stream";
+                                   contentType == "application/octet-stream" ||
+                                   LooksBinary(rawBytes, contentType);
 
-            string? responseBody = null;
+            string? responseBody;
             byte[]? binaryContent = null;
 
             if (isBinaryResponse && response.IsSuccessStatusCode)
             {
-                binaryContent = await response.Content.ReadAsByteArrayAsync(ct);
-                responseBody = $"[binary:{contentType}, {binaryContent.Length} bytes]";
+                binaryContent = rawBytes;
+                responseBody = $"[binary:{contentType}, {rawBytes.Length} bytes]";
             }
             else
             {
-                responseBody = await response.Content.ReadAsStringAsync(ct);
+                responseBody = System.Text.Encoding.UTF8.GetString(rawBytes);
             }
 
             // 6.5 Exchange 异步轮询（submit+query 模式）
@@ -1009,14 +1016,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (!response.IsSuccessStatusCode)
             {
                 var errorMsg = TryExtractErrorMessage(responseBody!) ?? $"HTTP {(int)response.StatusCode}";
+                var (rawCode, rawMsg) = IsQuotaExceeded((int)response.StatusCode, errorMsg)
+                    ? HandleQuotaExceeded(resolution.ActualPlatformName, errorMsg)
+                    : ("LLM_ERROR", errorMsg);
                 return new GatewayRawResponse
                 {
                     Success = false,
                     StatusCode = (int)response.StatusCode,
                     Content = responseBody,
                     ResponseHeaders = responseHeaders,
-                    ErrorCode = "LLM_ERROR",
-                    ErrorMessage = errorMsg,
+                    ErrorCode = rawCode,
+                    ErrorMessage = rawMsg,
                     Resolution = gatewayResolution,
                     DurationMs = durationMs,
                     LogId = logId
@@ -1146,6 +1156,63 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpRequestException http => ($"网络请求失败：{http.Message}", 502),
             _ => ($"传输层异常：{ex.Message}", 500)
         };
+    }
+
+    /// <summary>
+    /// 按文件魔数判断响应体是否为二进制——兜底「下游把二进制 Content-Type 标成 application/json/text」
+    /// 的情况（OpenRouter 视频下载即此坑）。覆盖 mp4/mov、png、jpeg、gif、webp 及「标称文本却以 NUL 开头」。
+    /// </summary>
+    private static bool LooksBinary(byte[] data, string contentType)
+    {
+        if (data == null || data.Length < 4) return false;
+        // mp4 / mov：ftyp box 在偏移 4
+        if (data.Length >= 12 && data[4] == (byte)'f' && data[5] == (byte)'t' && data[6] == (byte)'y' && data[7] == (byte)'p') return true;
+        // png
+        if (data.Length >= 8 && data[0] == 0x89 && data[1] == (byte)'P' && data[2] == (byte)'N' && data[3] == (byte)'G') return true;
+        // jpeg
+        if (data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) return true;
+        // gif
+        if (data.Length >= 4 && data[0] == (byte)'G' && data[1] == (byte)'I' && data[2] == (byte)'F' && data[3] == (byte)'8') return true;
+        // webp (RIFF....WEBP)
+        if (data.Length >= 12 && data[0] == (byte)'R' && data[1] == (byte)'I' && data[2] == (byte)'F' && data[3] == (byte)'F'
+            && data[8] == (byte)'W' && data[9] == (byte)'E' && data[10] == (byte)'B' && data[11] == (byte)'P') return true;
+        // 标称为文本/JSON 却以 NUL 字节开头 = 实为二进制（JSON/文本绝不会以 \0 起始）
+        if ((contentType.Contains("json", StringComparison.OrdinalIgnoreCase) || contentType.Contains("text", StringComparison.OrdinalIgnoreCase))
+            && data[0] == 0x00) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// 判断上游错误是否为「额度用尽 / key 限额」类（OpenRouter "Key limit exceeded"、402 Payment Required、
+    /// "insufficient credits/quota exceeded/billing" 等）。命中后走专门错误码 + 主动站内告警，便于及时提醒。
+    /// </summary>
+    private static bool IsQuotaExceeded(int statusCode, string? rawMessage)
+    {
+        if (statusCode == 402) return true; // Payment Required
+        var m = (rawMessage ?? string.Empty).ToLowerInvariant();
+        if (m.Length == 0) return false;
+        return m.Contains("limit exceeded")
+            || m.Contains("key limit")
+            || m.Contains("quota") && (m.Contains("exceed") || m.Contains("insufficient"))
+            || m.Contains("insufficient") && (m.Contains("credit") || m.Contains("balance"))
+            || m.Contains("exceeded your current")
+            || m.Contains("billing") && m.Contains("limit");
+    }
+
+    /// <summary>
+    /// 命中额度用尽时：发专门错误码 + 触发主动站内告警（去重，复用 IPoolFailoverNotifier）。fire-and-forget，不阻断热路径。
+    /// </summary>
+    private (string Code, string Message) HandleQuotaExceeded(string? platformName, string rawMessage)
+    {
+        var raw = rawMessage.Length > 220 ? rawMessage.Substring(0, 220) + "…" : rawMessage;
+        var friendly = $"大模型平台额度已用尽或被限额，请充值或更换 API Key。上游信息：{raw}";
+        try
+        {
+            _ = _failoverNotifier?.NotifyQuotaExceededAsync(platformName ?? "未知平台", friendly, CancellationToken.None);
+        }
+        catch { /* 告警失败不影响主流程 */ }
+        _logger.LogWarning("[LlmGateway] 检测到额度用尽/限额: platform={Platform} msg={Msg}", platformName, raw);
+        return ("LLM_QUOTA_EXCEEDED", friendly);
     }
 
     /// <summary>

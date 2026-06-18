@@ -210,10 +210,12 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         if (!rawResp.Success || rawResp.BinaryContent == null || rawResp.BinaryContent.Length == 0)
         {
+            // 诊断信息进 error（随 run 落库，跨副本可读）：标称类型 + 二进制/文本长度，便于定位下载落空原因
+            var diag = $"ct={rawResp.ContentType}, binLen={rawResp.BinaryContent?.Length ?? 0}, textLen={rawResp.Content?.Length ?? 0}";
             return new OpenRouterVideoDownload
             {
                 Success = false,
-                ErrorMessage = rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}",
+                ErrorMessage = $"{rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}"} ({diag})",
             };
         }
 
