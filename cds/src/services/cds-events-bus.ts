@@ -45,6 +45,8 @@ export type CdsEventType =
   | 'project.config.changed'
   // 2026-05-28:infra flap 熔断告警(watchdog 自动停掉烂配置容器)
   | 'infra.flap.circuit-breaker'
+  // 2026-06-18:真实预览入口探测告警(区别于控制台 /healthz)
+  | 'preview.canary.alert'
   // 2026-06-11:Agent 请求观测台 — 会话级活动事件(创建/状态翻转/收发节点),
   // text_delta 不逐 token 发(防总线洪水),只发结构性节点
   | 'agent-session.activity'
