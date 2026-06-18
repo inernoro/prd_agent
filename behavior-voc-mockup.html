@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>团队动态 · 用户体验之声 VOC（痛点雷达 + 闭环）</title>
+<style>
+  :root {
+    --bg-primary:#0e0f10; --bg-card:#1a1b1d; --bg-card-2:#202123; --bg-elevated:#26282b;
+    --border:rgba(255,255,255,0.07); --border-strong:rgba(255,255,255,0.13);
+    --text-1:#ececef; --text-2:rgba(236,236,239,0.62); --text-3:rgba(236,236,239,0.40);
+    --teal:#2dd4bf; --red:#f8717a; --amber:#fbbf24; --green:#34d399; --violet:#a78bfa; --blue:#60a5fa;
+    --shadow:0 8px 30px rgba(0,0,0,0.4);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:radial-gradient(1200px 600px at 80% -10%,rgba(167,139,250,0.06),transparent 60%),
+      radial-gradient(900px 500px at -5% 10%,rgba(45,212,191,0.05),transparent 55%),var(--bg-primary);
+    color:var(--text-1); padding:24px 30px 60px; min-height:100vh; -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:1320px; margin:0 auto; }
+  .page-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .page-head .titles { display:flex; flex-direction:column; gap:4px; }
+  .page-head h1 { font-size:19px; font-weight:650; }
+  .page-head .sub { font-size:12.5px; color:var(--text-3); }
+  .range-pills { display:inline-flex; gap:6px; }
+  .range-pills button { border:1px solid var(--border); background:var(--bg-card); color:var(--text-2); font-size:12px; padding:6px 13px; border-radius:8px; cursor:pointer; }
+  .range-pills button.active { background:rgba(167,139,250,0.13); border-color:rgba(167,139,250,0.4); color:var(--violet); }
+
+  /* KPI strip */
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }
+  .kpi { background:linear-gradient(180deg,var(--bg-card),var(--bg-card-2)); border:1px solid var(--border); border-radius:14px; padding:15px 17px; position:relative; overflow:hidden; }
+  .kpi .l { font-size:11.5px; color:var(--text-3); display:flex; align-items:center; gap:7px; }
+  .kpi .v { font-size:30px; font-weight:780; margin-top:6px; font-variant-numeric:tabular-nums; line-height:1; }
+  .kpi .d { font-size:11.5px; margin-top:7px; }
+  .kpi .d.up { color:var(--red); } .kpi .d.down { color:var(--green); }
+  .kpi .spark { position:absolute; right:12px; bottom:12px; width:70px; height:26px; opacity:.8; }
+
+  /* filter chips */
+  .filters { display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .filters .grp { display:inline-flex; gap:6px; align-items:center; }
+  .filters .gl { font-size:11px; color:var(--text-3); margin-right:2px; }
+  .chip { border:1px solid var(--border); background:var(--bg-card); color:var(--text-2); font-size:12px; padding:6px 12px; border-radius:8px; cursor:pointer; transition:all .15s; display:inline-flex; align-items:center; gap:6px; }
+  .chip:hover { border-color:var(--border-strong); color:var(--text-1); }
+  .chip.active { background:rgba(45,212,191,0.13); border-color:rgba(45,212,191,0.4); color:var(--teal); }
+  .filters .sep { width:1px; height:20px; background:var(--border); margin:0 4px; }
+
+  /* pain list */
+  .section-h { display:flex; align-items:center; gap:10px; margin:6px 2px 12px; }
+  .section-h .t { font-size:14px; font-weight:650; }
+  .section-h .ln { flex:1; height:1px; background:var(--border); }
+  .section-h .crumb { font-size:12px; color:var(--text-3); }
+
+  .pain { display:grid; grid-template-columns:74px 1fr 120px auto; gap:16px; align-items:center;
+    background:var(--bg-card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin-bottom:9px; transition:border-color .15s, transform .15s; }
+  .pain:hover { border-color:var(--border-strong); transform:translateX(2px); }
+  .pain.hot { border-left:3px solid var(--red); }
+  .pain.warm { border-left:3px solid var(--amber); }
+  .pain.corro { box-shadow:0 0 0 1px rgba(167,139,250,0.25) inset; }
+
+  .score { text-align:center; }
+  .score .sv { font-size:26px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums; }
+  .score .sl { font-size:9.5px; color:var(--text-3); margin-top:3px; letter-spacing:.5px; }
+
+  .pmain { min-width:0; }
+  .prow1 { display:flex; align-items:center; gap:8px; margin-bottom:5px; flex-wrap:wrap; }
+  .ptitle { font-size:13.5px; font-weight:600; }
+  .badge { font-size:10.5px; padding:2px 7px; border-radius:5px; font-weight:600; white-space:nowrap; display:inline-flex; align-items:center; gap:4px; }
+  .b-behavior { background:rgba(96,165,250,0.13); color:var(--blue); }
+  .b-user { background:rgba(167,139,250,0.14); color:var(--violet); }
+  .b-err { background:rgba(248,113,122,0.13); color:var(--red); }
+  .b-slow { background:rgba(251,191,36,0.13); color:var(--amber); }
+  .b-churn { background:rgba(248,113,122,0.13); color:var(--red); }
+  .b-fb { background:rgba(167,139,250,0.13); color:var(--violet); }
+  .b-corro { background:linear-gradient(90deg,rgba(96,165,250,0.18),rgba(167,139,250,0.18)); color:#cbb6ff; border:1px solid rgba(167,139,250,0.4); }
+  .psub { font-size:12px; color:var(--text-2); line-height:1.4; }
+  .psub .code { font-family:ui-monospace,Menlo,monospace; font-size:11.5px; color:var(--text-3); }
+  .pmeta { font-size:11.5px; color:var(--text-3); margin-top:4px; }
+  .pmeta b { color:var(--text-1); }
+
+  .ptrend { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .ptrend .sparkmini { width:96px; height:30px; }
+  .ptrend .tl { font-size:10.5px; }
+  .ptrend .tl.up { color:var(--red); } .ptrend .tl.down { color:var(--green); } .ptrend .tl.flat { color:var(--text-3); }
+
+  .pright { display:flex; flex-direction:column; align-items:flex-end; gap:8px; min-width:160px; }
+  .status { font-size:11.5px; padding:4px 10px; border-radius:7px; font-weight:600; white-space:nowrap; }
+  .s-todo { background:rgba(248,113,122,0.13); color:var(--red); }
+  .s-defect { background:rgba(167,139,250,0.13); color:var(--violet); }
+  .s-fixing { background:rgba(96,165,250,0.13); color:var(--blue); }
+  .s-fixed { background:rgba(52,211,153,0.13); color:var(--green); }
+  .acts { display:flex; gap:6px; }
+  .acts button { font-size:11px; padding:4px 9px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--bg-card-2); color:var(--text-2); transition:all .15s; }
+  .acts button.primary { background:rgba(251,191,36,0.13); border-color:rgba(251,191,36,0.35); color:var(--amber); }
+  .acts button:hover { color:var(--text-1); border-color:var(--border-strong); }
+
+  /* closed loop */
+  .loop { background:linear-gradient(180deg,var(--bg-card),var(--bg-card-2)); border:1px solid var(--border); border-radius:14px; padding:14px 16px; }
+  .loop-item { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; padding:11px 4px; }
+  .loop-item + .loop-item { border-top:1px solid var(--border); }
+  .loop-item .li-main .lt { font-size:12.5px; font-weight:600; }
+  .loop-item .li-main .ls { font-size:11.5px; color:var(--text-3); margin-top:3px; }
+  .ba { display:flex; align-items:center; gap:10px; }
+  .ba .b-before { font-size:13px; color:var(--red); font-weight:700; text-decoration:line-through; opacity:.7; }
+  .ba .arrow { color:var(--text-3); }
+  .ba .b-after { font-size:15px; color:var(--green); font-weight:800; }
+  .ba .drop { font-size:11px; color:var(--green); background:rgba(52,211,153,0.13); padding:2px 7px; border-radius:5px; margin-left:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="page-head">
+    <div class="titles">
+      <h1>用户体验之声 · VOC</h1>
+      <span class="sub">用户没说出口的痛，系统替他喊出来——并盯着你修完。行为之声 + 用户之声 双声道汇总。</span>
+    </div>
+    <div class="range-pills">
+      <button>今天</button><button>本周</button><button class="active">本月</button><button>季度</button>
+    </div>
+  </div>
+
+  <!-- KPI -->
+  <div class="kpis" id="kpis"></div>
+
+  <!-- filters -->
+  <div class="filters" id="filters">
+    <div class="grp">
+      <span class="gl">声道</span>
+      <button class="chip active" data-f="src" data-v="all">全部</button>
+      <button class="chip" data-f="src" data-v="behavior">行为之声</button>
+      <button class="chip" data-f="src" data-v="user">用户之声</button>
+    </div>
+    <span class="sep"></span>
+    <div class="grp">
+      <span class="gl">维度</span>
+      <button class="chip active" data-f="dim" data-v="all">全部</button>
+      <button class="chip" data-f="dim" data-v="ai">AI</button>
+      <button class="chip" data-f="dim" data-v="api">接口</button>
+      <button class="chip" data-f="dim" data-v="user">用户行为</button>
+    </div>
+    <span class="sep"></span>
+    <div class="grp">
+      <span class="gl">状态</span>
+      <button class="chip active" data-f="st" data-v="open">待解决</button>
+      <button class="chip" data-f="st" data-v="all">含已闭环</button>
+    </div>
+  </div>
+
+  <div class="section-h">
+    <span class="t">痛点优先级榜</span>
+    <span class="ln"></span>
+    <span class="crumb">影响分 = 影响人数 × 严重度 × 频次 × 趋势 · <span id="cnt"></span></span>
+  </div>
+  <div id="painList"></div>
+
+  <div class="section-h" style="margin-top:24px">
+    <span class="t">本月已闭环（修复证据）</span>
+    <span class="ln"></span>
+    <span class="crumb">痛点修复后的真实回落</span>
+  </div>
+  <div class="loop" id="loop"></div>
+
+</div>
+
+<script>
+(function(){
+  const C={ red:'#f8717a', amber:'#fbbf24', green:'#34d399', violet:'#a78bfa', blue:'#60a5fa', teal:'#2dd4bf' };
+  // mini sparkline polyline builder
+  function spark(pts,color,w=96,h=30){
+    const max=Math.max(...pts), min=Math.min(...pts), rng=(max-min)||1;
+    const step=w/(pts.length-1);
+    const d=pts.map((p,i)=>`${(i*step).toFixed(1)},${(h-4-((p-min)/rng)*(h-8)).toFixed(1)}`).join(' ');
+    return `<svg class="sparkmini" viewBox="0 0 ${w} ${h}"><polyline points="${d}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
+
+  // ---------- unified pain board (dual-channel) ----------
+  const PAINS=[
+    { id:'p1', score:980, sev:'hot', corro:true, src:'behavior', src2:'user', channel:'churn', dim:'ai',
+      title:'批量生图 卡顿 / 经常生成失败', sub:'视觉创作 · <span class="code">visual-agent.image-gen.batch-generate::generation</span>',
+      meta:'行为：报错率 9.1% + 提交→成功流失 31% · 用户：9 人反馈"卡住不动"',
+      people:31, trend:'up', spark:[8,10,12,18,24,33], status:'todo' },
+    { id:'p2', score:910, sev:'hot', src:'behavior', channel:'err', dim:'api',
+      title:'周报「标记已读」频繁 403', sub:'<span class="code">POST /api/weekly-posters/:id/mark-seen</span> · PERMISSION_DENIED',
+      meta:'28 人撞到 · 316 次 · 疑似权限校验过严', people:28, trend:'up', spark:[5,9,14,16,22,28], status:'defect', statusInfo:'已转缺陷 #412' },
+    { id:'p3', score:640, sev:'hot', src:'behavior', channel:'err', dim:'api',
+      title:'视觉创作 文章标记接口报错', sub:'<span class="code">PATCH /api/visual-agent/.../markers/:id</span> · INVALID_FORMAT',
+      meta:'7 人遇到 · 507 次 · 建议格式校验前移到前端', people:7, trend:'flat', spark:[40,42,41,43,40,42], status:'todo' },
+    { id:'p4', score:560, sev:'warm', src:'user', channel:'feedback', dim:'user',
+      title:'知识库搜索结果不准', sub:'用户主动反馈 · 缺陷管理 3 条同类',
+      meta:'3 人提过 · "搜不到想要的文档"', people:3, trend:'up', spark:[1,1,2,2,3,3], status:'todo' },
+    { id:'p5', score:480, sev:'warm', src:'behavior', channel:'slow', dim:'api',
+      title:'更新中心拉取 GitHub 日志慢', sub:'<span class="code">GET /api/changelog/github-logs</span> · 均值 36.1s',
+      meta:'10 人等待过 · 已在改后台同步入库', people:10, trend:'down', spark:[20,22,18,14,9,6], status:'fixing', statusInfo:'修复中' },
+    { id:'p6', score:430, sev:'warm', src:'behavior', channel:'err', dim:'ai',
+      title:'缺陷分析「选 A 给 B」+ 报错偏高', sub:'<span class="code">defect-agent.review.analyze::chat</span> · ExpectedModel ≠ Model',
+      meta:'声明 deepseek-r1 实际命中 fallback · 报错率 14.2%', people:5, trend:'up', spark:[6,8,9,11,13,14], status:'todo' },
+    { id:'p7', score:360, sev:'warm', src:'behavior', channel:'slow', dim:'api',
+      title:'AI 资讯加载等待过久', sub:'<span class="code">GET /api/ai-news/latest</span> · 均值 63.6s',
+      meta:'根因在背后视频生成调用 · 建议异步 + 流式', people:8, trend:'flat', spark:[60,62,61,64,63,64], status:'todo' },
+    { id:'p8', score:300, sev:'warm', src:'user', channel:'feedback', dim:'user',
+      title:'周报海报导出后水印位置错乱', sub:'用户主动反馈 · 缺陷管理',
+      meta:'5 人提过 · 已建缺陷跟进', people:5, trend:'flat', spark:[2,3,2,2,3,2], status:'defect', statusInfo:'已转缺陷 #408' },
+  ];
+
+  const CLOSED=[
+    { title:'会话列表偶发报错', detail:'分页优化上线 · 影响 14 人', before:'报错 220 次', after:'报错 12 次', drop:'-95%' },
+    { title:'桌面端更新提示不弹', detail:'版本检测修复 · 影响 30+ 人', before:'0 次触达', after:'按版本一次', drop:'已修复' },
+    { title:'文档预览偶尔白屏', detail:'UTF-16 BOM 兼容 · 影响 6 人', before:'白屏 38 次', after:'0 次', drop:'-100%' },
+  ];
+
+  const SEVW={ err:3, churn:2.6, feedback:2.2, slow:2 };
+  const CH_LABEL={ err:'报错', slow:'等待', churn:'流失', feedback:'吐槽' };
+  const CH_CLASS={ err:'b-err', slow:'b-slow', churn:'b-churn', feedback:'b-fb' };
+
+  // filter state
+  const F={ src:'all', dim:'all', st:'open' };
+
+  function kpiSpark(pts,c){ return spark(pts,c,70,26); }
+  function renderKpis(){
+    const open=PAINS.filter(p=>p.status!=='fixed').length;
+    const affected=[...new Set(PAINS.flatMap(p=>Array(p.people).fill(p.id)))].length; // demo
+    const totalAffected=PAINS.reduce((s,p)=>s+p.people,0);
+    document.getElementById('kpis').innerHTML=`
+      <div class="kpi"><div class="l">体验痛点指数</div><div class="v" style="color:${C.amber}">72</div><div class="d down">↓ 9% 本月修复见效</div>${kpiSpark([88,90,85,80,76,72],C.green)}</div>
+      <div class="kpi"><div class="l">待解决痛点</div><div class="v">${open}</div><div class="d up">↑ 2 新增</div></div>
+      <div class="kpi"><div class="l">本月已闭环</div><div class="v" style="color:${C.green}">${CLOSED.length}</div><div class="d down">修复后痛点回落</div></div>
+      <div class="kpi"><div class="l">受影响用户</div><div class="v">${totalAffected}</div><div class="d">含沉默未反馈用户</div></div>`;
+  }
+
+  function statusEl(p){
+    if(p.status==='todo') return `<span class="status s-todo">待处理</span>`;
+    if(p.status==='defect') return `<span class="status s-defect">${p.statusInfo}</span>`;
+    if(p.status==='fixing') return `<span class="status s-fixing">${p.statusInfo||'修复中'}</span>`;
+    return `<span class="status s-fixed">已修复</span>`;
+  }
+  function actsEl(p){
+    if(p.status==='todo') return `<div class="acts"><button class="primary">转为缺陷</button><button>指派</button><button>忽略</button></div>`;
+    if(p.status==='defect'||p.status==='fixing') return `<div class="acts"><button>查看缺陷</button><button>标记修复</button></div>`;
+    return `<div class="acts"><button>查看回落</button></div>`;
+  }
+
+  function renderList(){
+    let list=PAINS.filter(p=>{
+      if(F.src!=='all' && p.src!==F.src && p.src2!==F.src) return false;
+      if(F.dim!=='all' && p.dim!==F.dim) return false;
+      if(F.st==='open' && p.status==='fixed') return false;
+      return true;
+    }).sort((a,b)=>b.score-a.score);
+    document.getElementById('cnt').textContent=`共 ${list.length} 条`;
+    const trendCol={ up:C.red, down:C.green, flat:C.text3||'#888' };
+    const trendTxt={ up:'仍在上涨', down:'已回落', flat:'持平' };
+    document.getElementById('painList').innerHTML=list.map((p,i)=>`
+      <div class="pain ${p.sev}${p.corro?' corro':''}">
+        <div class="score"><div class="sv" style="color:${p.sev==='hot'?C.red:C.amber}">${p.score}</div><div class="sl">影响分</div></div>
+        <div class="pmain">
+          <div class="prow1">
+            <span class="ptitle">${p.title}</span>
+            ${p.corro?`<span class="badge b-corro">说做互证</span>`:''}
+            <span class="badge ${p.src==='user'?'b-user':'b-behavior'}">${p.src==='user'?'用户之声':'行为之声'}</span>
+            <span class="badge ${CH_CLASS[p.channel]}">${CH_LABEL[p.channel]}</span>
+          </div>
+          <div class="psub">${p.sub}</div>
+          <div class="pmeta">${p.meta} · <b>${p.people}</b> 人受影响</div>
+        </div>
+        <div class="ptrend">
+          ${spark(p.spark, p.trend==='up'?C.red:p.trend==='down'?C.green:'#7a7a82')}
+          <span class="tl ${p.trend}">${p.trend==='up'?'▲':p.trend==='down'?'▼':'—'} ${trendTxt[p.trend]}</span>
+        </div>
+        <div class="pright">${statusEl(p)}${actsEl(p)}</div>
+      </div>`).join('');
+  }
+
+  function renderLoop(){
+    document.getElementById('loop').innerHTML=CLOSED.map(c=>`
+      <div class="loop-item">
+        <div class="li-main"><div class="lt">${c.title}</div><div class="ls">${c.detail}</div></div>
+        <div class="ba"><span class="b-before">${c.before}</span><span class="arrow">→</span><span class="b-after">${c.after}</span><span class="drop">${c.drop}</span></div>
+      </div>`).join('');
+  }
+
+  // filter clicks
+  document.getElementById('filters').addEventListener('click',e=>{
+    const c=e.target.closest('.chip'); if(!c) return;
+    const f=c.dataset.f, v=c.dataset.v;
+    F[f]=v;
+    document.querySelectorAll(`.chip[data-f="${f}"]`).forEach(x=>x.classList.toggle('active',x===c));
+    renderList();
+  });
+
+  renderKpis(); renderList(); renderLoop();
+})();
+</script>
+</body>
+</html>
