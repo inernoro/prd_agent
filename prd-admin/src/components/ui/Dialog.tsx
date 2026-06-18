@@ -5,6 +5,7 @@ import { glassPanel } from '@/lib/glassStyles';
 import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
 import { useThemeStore } from '@/stores/themeStore';
 import { shouldReduceEffects } from '@/lib/themeApplier';
+import { useReducedMotion } from '@/lib/useReducedMotion';
 
 export function Dialog({
   open,
@@ -40,8 +41,11 @@ export function Dialog({
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
   // 玻璃关闭(backdrop-filter 被全局清除)时半透遮罩会失焦，故回退近实底深色。
-  // shouldReduceEffects 已同时覆盖「性能模式」与「prefers-reduced-motion」两条路径。
-  const glassReduced = shouldReduceEffects(useThemeStore((s) => s.config));
+  // useReducedMotion 让本组件在 OS 偏好变化时即时重渲染(遮罩 inline 不再滞后)，
+  // shouldReduceEffects 同时覆盖「性能模式」与「prefers-reduced-motion」两条路径。
+  const reducedMotion = useReducedMotion();
+  const themeConfigForGlass = useThemeStore((s) => s.config);
+  const glassReduced = reducedMotion || shouldReduceEffects(themeConfigForGlass);
 
   // 浅色下走纯白卡片(不依赖 glassPanel,因为 themeComputed.ts 在性能模式下
   // 会用暗色 bgElevated 重置 --glass-bg-start/end,不区分主题)
