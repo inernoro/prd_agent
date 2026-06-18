@@ -6764,9 +6764,10 @@ function safeChart(canvasId, config) {
         if (string.IsNullOrWhiteSpace(model)) return false;
         var m = model.ToLowerInvariant();
         if (m.Contains("whisper")) return false;       // Whisper 走 /v1/audio/transcriptions
-        return m.Contains("audio")                      // gpt-audio / gpt-4o-audio-preview / qwen-audio ...
-            || m.Contains("gemini")                     // gemini 原生支持音频输入
-            || m.Contains("gpt-4o");                    // 4o 系支持音频
+        // 只认确实支持音频输入的模型：含 audio（gpt-audio / gpt-4o-audio-preview / qwen-audio）
+        // 或 gemini。不能用裸 gpt-4o——gpt-4o / gpt-4o-mini 不接受 input_audio（Bugbot Medium）。
+        return m.Contains("audio")
+            || m.Contains("gemini");
     }
 
     /// <summary>

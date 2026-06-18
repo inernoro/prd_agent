@@ -2243,14 +2243,23 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError, mode }: {
 }
 
 // ── 短视频卡片块：粘贴链接后用仿真短视频卡片展示封面+视频，取代文字块 ──
-function ShortVideoCardBlock({ run }: { run: import('@/services').ShortVideoMaterialRun }) {
+function ShortVideoCardBlock({ run, phase, content }: {
+  run: import('@/services').ShortVideoMaterialRun;
+  phase?: 'thinking' | 'streaming' | 'done' | 'error';
+  content?: string;
+}) {
   const card = run.card;
   const page = useMemo(() => (card ? shortVideoCardToPosterPage(card) : undefined), [card]);
   if (!page) return null;
-  const status = shortVideoCompactStatus(run);
-  const toneColor = status.tone === 'error'
+  // 前端轮询超时/失败时 phase==='error'（run.status 可能仍是 running），此时必须显示错误，
+  // 不能因为有 stage 在 running 就还显示"忙碌中"的状态行（Bugbot Medium）。
+  const isError = phase === 'error';
+  const base = shortVideoCompactStatus(run);
+  const tone = isError ? 'error' : base.tone;
+  const text = isError ? (base.tone === 'error' ? base.text : '处理中断或超时') : base.text;
+  const toneColor = tone === 'error'
     ? 'rgba(248,113,113,0.95)'
-    : status.tone === 'done'
+    : tone === 'done'
       ? 'rgba(110,231,158,0.9)'
       : 'rgba(96,165,250,0.9)';
   return (
@@ -2259,9 +2268,15 @@ function ShortVideoCardBlock({ run }: { run: import('@/services').ShortVideoMate
         <PosterFeedCardView page={page} />
       </div>
       <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px]" style={{ color: toneColor }}>
-        {status.tone === 'busy' && <MapSpinner size={9} />}
-        {status.text}
+        {tone === 'busy' && <MapSpinner size={9} />}
+        {text}
       </div>
+      {/* 出错/超时时把详细文字（含失败原因、超时提示）显示出来，卡片不能把错误吞掉（Bugbot Medium） */}
+      {isError && content ? (
+        <div className="mt-1.5 text-[11px] text-token-muted whitespace-pre-wrap" style={{ opacity: 0.85 }}>
+          {content}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2350,7 +2365,7 @@ function MessageBubble({
           )}
         </div>
         {msg.shortVideoRun?.card ? (
-          <ShortVideoCardBlock run={msg.shortVideoRun} />
+          <ShortVideoCardBlock run={msg.shortVideoRun} phase={msg.phase} content={msg.content} />
         ) : msg.streaming && msg.content ? (
           <StreamingText text={msg.content} streaming mode="blur" />
         ) : msg.content ? (

@@ -427,7 +427,10 @@ public class SubtitleGenerationProcessor
         if (string.IsNullOrWhiteSpace(model)) return false;
         var m = model.ToLowerInvariant();
         if (m.Contains("whisper")) return false;
-        return m.Contains("audio") || m.Contains("gemini") || m.Contains("gpt-4o");
+        // 只认确实支持音频输入的多模态模型：名字含 audio（gpt-audio / gpt-4o-audio-preview /
+        // qwen*-audio 等）或 gemini（原生支持音频）。不能用裸 gpt-4o 匹配——gpt-4o / gpt-4o-mini
+        // 是文本+视觉模型，不接受 input_audio，会把这类 ASR 池绑定打挂（Bugbot Medium）。
+        return m.Contains("audio") || m.Contains("gemini");
     }
 
     private async Task<List<SubtitleSegment>> TranscribeViaChatAudioAsync(
