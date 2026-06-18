@@ -2798,7 +2798,26 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
         var existing = await _db.DocumentStoreAgentRuns.Find(existingFilter).FirstOrDefaultAsync();
         if (existing != null)
+        {
+            // 复用到历史无主（OwnerInstanceId 空）的 queued run 时，先把归属盖成本实例再返回：
+            // 否则该 run 仍是无主 queued，任意分支的 Worker（filter 都接受无主）都能抢走它，
+            // 可能由 main/别的分支处理，而非刚返回 runId 的本实例（Codex P2）。Running 不动——
+            // 已被某 Worker 领走在跑，客户端靠 SSE/轮询观测即可，观测不受 owner 限制。
+            if (existing.Status == DocumentStoreRunStatus.Queued
+                && string.IsNullOrEmpty(existing.OwnerInstanceId))
+            {
+                await _db.DocumentStoreAgentRuns.UpdateOneAsync(
+                    Builders<DocumentStoreAgentRun>.Filter.And(
+                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, existing.Id),
+                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
+                        Builders<DocumentStoreAgentRun>.Filter.Or(
+                            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
+                    Builders<DocumentStoreAgentRun>.Update.Set(r => r.OwnerInstanceId, selfInstanceId),
+                    cancellationToken: CancellationToken.None);
+            }
             return Ok(ApiResponse<object>.Ok(new { runId = existing.Id, status = existing.Status, reused = true }));
+        }
 
         var userId = GetUserId();
         var run = new DocumentStoreAgentRun
