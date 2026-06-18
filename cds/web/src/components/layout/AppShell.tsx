@@ -301,7 +301,7 @@ function FloatingThemeToggle(): JSX.Element {
 
   return (
     <div
-      className="fixed bottom-3 right-3 z-[60]"
+      className="cds-theme-toggle fixed bottom-3 right-3 z-[60]"
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}

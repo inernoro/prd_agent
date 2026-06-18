@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bodyPreviewFromUnknown,
+  classifyHttpRequestKind,
   createBodyCapture,
   HttpLogStore,
   isBinaryContentType,
@@ -117,5 +118,94 @@ describe('http log body redaction', () => {
 
     expect((docs[0] as any).request.bodyBytes).toBe(1048576);
     expect((docs[0] as any).request.bodyPreview).toBe('[cds http log omitted binary body]');
+  });
+
+  it('classifies deploy, polling, sse, and user traffic requests', () => {
+    expect(classifyHttpRequestKind({ method: 'POST', path: '/api/branches/prd-agent-main/deploy' })).toBe('deploy');
+    expect(classifyHttpRequestKind({ method: 'POST', path: '/api/branches/prd-agent-main/deploy/api' })).toBe('deploy');
+    expect(classifyHttpRequestKind({
+      method: 'POST',
+      path: '/api/branches/prd-agent-main/deploy/api',
+      headers: { accept: 'text/event-stream' },
+    })).toBe('deploy');
+    expect(classifyHttpRequestKind({
+      method: 'POST',
+      path: '/_cds/api/branches/prd-agent-main/deploy/api',
+      headers: { accept: 'text/event-stream' },
+    })).toBe('deploy');
+    expect(classifyHttpRequestKind({
+      method: 'POST',
+      path: '/_cds/api/branches/prd-agent-main/restart',
+      headers: { accept: 'text/event-stream' },
+    })).toBe('container-op');
+    expect(classifyHttpRequestKind({ method: 'GET', path: '/api/projects/a/instances', headers: { 'x-cds-poll': 'true' } })).toBe('polling');
+    expect(classifyHttpRequestKind({ method: 'GET', path: '/api/branches/stream', headers: { accept: 'text/event-stream' } })).toBe('sse');
+    expect(classifyHttpRequestKind({ method: 'GET', path: '/' })).toBe('user-traffic');
+    expect(classifyHttpRequestKind({ layer: 'forwarder', method: 'POST', path: '/login' })).toBe('user-traffic');
+    expect(classifyHttpRequestKind({ layer: 'master-proxy', method: 'POST', path: '/graphql' })).toBe('user-traffic');
+    expect(classifyHttpRequestKind({ layer: 'master', method: 'POST', path: '/internal-maintenance' })).toBe('control-plane');
+  });
+
+  it('tracks active requests by age and removes them on completion', () => {
+    const store = new HttpLogStore({ uri: 'mongodb://unused' });
+    const deployId = store.beginActive({
+      layer: 'master',
+      requestKind: 'deploy',
+      requestId: 'deploy-active',
+      method: 'POST',
+      host: '127.0.0.1:9900',
+      path: '/api/branches/prd-agent-main/deploy',
+      startedAt: new Date(Date.now() - 45_000),
+      branchId: 'prd-agent-main',
+      request: {},
+    });
+    store.beginActive({
+      layer: 'master',
+      requestKind: 'polling',
+      requestId: 'poll-active',
+      method: 'GET',
+      host: 'cds.test',
+      path: '/api/projects/prd-agent/instances',
+      startedAt: new Date(Date.now() - 2_000),
+      request: {},
+    });
+
+    const slowDeploys = store.findActive({ requestKind: 'deploy', minAgeMs: 30_000 });
+
+    expect(slowDeploys).toHaveLength(1);
+    expect(slowDeploys[0].requestId).toBe('deploy-active');
+    expect(slowDeploys[0].ageMs).toBeGreaterThanOrEqual(30_000);
+
+    store.completeActive(deployId);
+    expect(store.findActive({ requestKind: 'deploy' })).toHaveLength(0);
+  });
+
+  it('keeps active tracking available without a Mongo connection', () => {
+    const store = new HttpLogStore({ uri: 'mongodb://unused' });
+    store.record({
+      layer: 'forwarder',
+      requestId: 'no-mongo-record',
+      method: 'POST',
+      path: '/login',
+      status: 200,
+      durationMs: 30,
+      outcome: 'ok',
+      request: {},
+      response: {},
+    });
+    const activeId = store.beginActive({
+      layer: 'forwarder',
+      requestKind: 'user-traffic',
+      requestId: 'no-mongo-active',
+      method: 'POST',
+      path: '/login',
+      startedAt: new Date(Date.now() - 1000),
+      request: {},
+    });
+
+    expect(store.findActive({ requestKind: 'user-traffic' })).toHaveLength(1);
+
+    store.completeActive(activeId);
+    expect(store.findActive()).toHaveLength(0);
   });
 });

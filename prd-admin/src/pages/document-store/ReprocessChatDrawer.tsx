@@ -13,6 +13,10 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming';
 import { ChatMarkdown } from '@/pages/pa-agent/ChatMarkdown';
 import { VisualCreationMiniPanel } from '@/components/visual-creation/VisualCreationMiniPanel';
+import { PosterFeedCardView } from '@/components/weekly-poster/WeeklyPosterModal';
+import type { WeeklyPosterPage } from '@/services/real/weeklyPoster';
+import type { ShortVideoCard } from '@/services/real/shortVideoMaterials';
+import { useShortVideoRunStore, type ShortVideoRunStatus } from '@/stores/shortVideoRunStore';
 import {
   listReprocessAgents,
   createReprocessAgent,
@@ -150,6 +154,8 @@ type ChatMessage = {
   phase?: 'thinking' | 'streaming' | 'done' | 'error';
   applied?: 'replace' | 'append' | 'new';
   quickActions?: ChatQuickAction[];
+  /** 短视频解析运行：用于把粘贴链接的回复渲染成仿真短视频卡片（而非文字块） */
+  shortVideoRun?: import('@/services').ShortVideoMaterialRun;
 };
 
 type ChatQuickAction = {
@@ -265,7 +271,7 @@ function shortVideoRunStorageKey(storeId: string) {
   return `${SHORT_VIDEO_ACTIVE_RUN_KEY}:${storeId}`;
 }
 
-function saveActiveShortVideoRun(storeId: string, runId: string) {
+export function saveActiveShortVideoRun(storeId: string, runId: string) {
   try { sessionStorage.setItem(shortVideoRunStorageKey(storeId), runId); } catch { /* ignore */ }
 }
 
@@ -289,6 +295,58 @@ function shortVideoResultFromRun(run: import('@/services').ShortVideoMaterialRun
   };
 }
 
+/**
+ * 把后端短视频 run 同步进 shortVideoRunStore（右上角「运行中的智能体」入口 + 刷新恢复的 SSOT）。
+ * 创建/轮询/续查的每个节点都调一次，关抽屉/刷新后入口仍可见、状态仍准。
+ */
+function syncShortVideoRunToStore(run: import('@/services').ShortVideoMaterialRun, fallbackStoreId: string) {
+  const store = useShortVideoRunStore.getState();
+  const status: ShortVideoRunStatus = run.status === 'done' ? 'done' : run.status === 'failed' ? 'failed' : 'running';
+  const title = run.title || run.videoUrl || '短视频素材';
+  const phase = shortVideoCompactStatus(run).text;
+  const patch = {
+    status,
+    phase,
+    title,
+    hasTranscript: !!run.transcriptEntryId,
+    errorMessage: run.errorMessage || undefined,
+  };
+  if (store.runs[run.id]) {
+    store.patchRun(run.id, patch);
+  } else {
+    store.startRun({ runId: run.id, storeId: run.storeId || fallbackStoreId, title, phase });
+    store.patchRun(run.id, patch);
+  }
+}
+
+/** 把后端抽取的短视频卡片映射成海报 feed-card 组件所需的 WeeklyPosterPage（直接复用，不改组件）。 */
+function shortVideoCardToPosterPage(card: ShortVideoCard): WeeklyPosterPage {
+  const playable = card.videoUrl || undefined;        // 优先 COS 永久地址；入库前为空，仅显示封面
+  const cover = card.coverUrl || undefined;
+  return {
+    order: 0,
+    title: card.title || '短视频',
+    body: '',
+    imagePrompt: '',
+    imageUrl: playable ?? cover ?? null,               // 有视频则播放视频，否则展示封面
+    secondaryImageUrl: cover ?? null,                  // <video poster> 封面
+    accentColor: null,
+    authorName: card.authorName ?? null,
+    authorAvatarUrl: card.authorAvatarUrl ?? null,
+    platform: card.platform ?? null,
+    durationSec: card.durationSec ?? null,
+    hashtags: card.hashtags ?? null,
+    stats: {
+      likes: card.likeCount ?? null,
+      comments: card.commentCount ?? null,
+      shares: card.shareCount ?? null,
+      collects: card.collectCount ?? null,
+      plays: card.playCount ?? null,
+    },
+    transcriptCues: null,
+  };
+}
+
 const SHORT_VIDEO_STAGE_LABELS: Record<string, string> = {
   parse: '解析链接',
   source: '保存原始视频',
@@ -296,6 +354,20 @@ const SHORT_VIDEO_STAGE_LABELS: Record<string, string> = {
   timeline: '整理时间线',
   ready: '准备继续加工',
 };
+
+/** 卡片下方的一行状态（取代大段进度文字块；解析细节等卡片之后才轮到）。 */
+export function shortVideoCompactStatus(run: import('@/services').ShortVideoMaterialRun): { text: string; tone: 'busy' | 'done' | 'error' } {
+  if (run.status === 'failed') return { text: '解析失败，可重试', tone: 'error' };
+  const stages = run.stages ?? [];
+  const running = stages.find((s) => s.status === 'running');
+  if (running) return { text: `${SHORT_VIDEO_STAGE_LABELS[running.key] || running.label}…`, tone: 'busy' };
+  if (run.status === 'done') {
+    const transcript = stages.find((s) => s.key === 'transcript');
+    if (transcript?.status === 'failed') return { text: '视频已入库（转写稍后可单独执行）', tone: 'done' };
+    return { text: '已入库，可继续加工', tone: 'done' };
+  }
+  return { text: '正在处理…', tone: 'busy' };
+}
 
 function getShortVideoStageLabel(stage: import('@/services').ShortVideoMaterialStage): string {
   return SHORT_VIDEO_STAGE_LABELS[stage.key] || stage.label;
@@ -1051,11 +1123,14 @@ export function ReprocessChatDrawer({
       }
 
       const run = res.data;
+      // 同步右上角「运行中的智能体」入口 + 刷新恢复状态（每轮都同步，关抽屉后入口仍准）
+      syncShortVideoRunToStore(run, storeId);
       if (run.status === 'done') {
         const result = shortVideoResultFromRun(run);
         if (!result) {
+          // 同步终态 run，否则卡片仍渲染上一轮轮询的旧 run，状态行/卡片与终态 API 不一致（Bugbot Low）
           setMessages((prev) => prev.map((m) => m.id === messageId
-            ? { ...m, streaming: false, phase: 'error', content: '（后台任务已完成，但服务端未返回完整入库产物）' }
+            ? { ...m, streaming: false, phase: 'error', shortVideoRun: run, content: '（后台任务已完成，但服务端未返回完整入库产物）' }
             : m));
           setStreamingId(null);
           return;
@@ -1065,6 +1140,7 @@ export function ReprocessChatDrawer({
               ...m,
               streaming: false,
               phase: 'done',
+              shortVideoRun: run,
               content: buildShortVideoResultMessage(result),
               quickActions: buildShortVideoQuickActions(result),
             }
@@ -1081,7 +1157,7 @@ export function ReprocessChatDrawer({
       if (run.status === 'failed') {
         const message = run.errorMessage || '短视频解析失败';
         setMessages((prev) => prev.map((m) => m.id === messageId
-          ? { ...m, streaming: false, phase: 'error', content: `${formatShortVideoProgress(run)}\n\n（解析失败：${message}）` }
+          ? { ...m, streaming: false, phase: 'error', shortVideoRun: run, content: `${formatShortVideoProgress(run)}\n\n（解析失败：${message}）` }
           : m));
         setStreamingId(null);
         sendLockRef.current = false;
@@ -1093,6 +1169,7 @@ export function ReprocessChatDrawer({
             ...m,
             streaming: true,
             phase: 'streaming',
+            shortVideoRun: run,
             content: formatShortVideoProgress(run),
           }
         : m));
@@ -1100,13 +1177,16 @@ export function ReprocessChatDrawer({
     }
 
     if (isShortVideoPollActive(ownerKey, pollToken)) {
+      // 抽屉内轮询达上限只是「前台不再盯」，任务仍在后端继续、由右上角「运行中的智能体」
+      // 常驻 Host 续查到终态。所以这里不能标 phase:'error'（会与后台最终 done 矛盾，Bugbot Medium），
+      // 只给一句中性提示，phase 维持非错误，卡片仍展示最近一次已知进度。
       setMessages((prev) => prev.map((m) => m.id === messageId
-        ? { ...m, streaming: false, phase: 'error', content: `${m.content}\n\n（后台任务等待超时，请稍后重新打开查看服务端状态）` }
+        ? { ...m, streaming: false, content: `${m.content}\n\n（前台已停止盯进度；任务仍在后台继续，可从右上角「运行中的智能体」查看最终结果）` }
         : m));
       setStreamingId(null);
       sendLockRef.current = false;
     }
-  }, [isShortVideoPollActive, onStoreChanged]);
+  }, [isShortVideoPollActive, onStoreChanged, storeId]);
 
   useEffect(() => {
     if (!isShortVideoMode) return;
@@ -1192,6 +1272,8 @@ export function ReprocessChatDrawer({
       }
       const result = res.data;
       saveActiveShortVideoRun(storeId, result.run.id);
+      // 立刻登记到 store：否则首次 poll GET 完成前关掉抽屉会丢失"运行中"入口、Host 也不轮询（Bugbot Medium）
+      syncShortVideoRunToStore(result.run, storeId);
       restoredShortVideoRunRef.current = result.run.id;
       setMessages((prev) => prev.map((m) => m.id === asstMsgId
         ? {
@@ -2193,6 +2275,54 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError, mode }: {
   );
 }
 
+// ── 短视频卡片块：粘贴链接后用仿真短视频卡片展示封面+视频，取代文字块 ──
+function ShortVideoCardBlock({ run, phase, content }: {
+  run: import('@/services').ShortVideoMaterialRun;
+  phase?: 'thinking' | 'streaming' | 'done' | 'error';
+  content?: string;
+}) {
+  const card = run.card;
+  const page = useMemo(() => (card ? shortVideoCardToPosterPage(card) : undefined), [card]);
+  if (!page) return null;
+  // 前端轮询超时/失败时 phase==='error'（run.status 可能仍是 running），此时必须显示错误，
+  // 不能因为有 stage 在 running 就还显示"忙碌中"的状态行（Bugbot Medium）。
+  const isError = phase === 'error';
+  const base = shortVideoCompactStatus(run);
+  const tone = isError ? 'error' : base.tone;
+  const text = isError ? (base.tone === 'error' ? base.text : '处理中断或超时') : base.text;
+  // 部分失败：视频已入库（run.status==='done'）但转写 stage 失败 → phase 不是 'error'，
+  // 仅靠上面那行 compact 状态看不出"为什么没有文字"。把转写失败原因显式补一行（Codex P2）。
+  const transcriptStage = (run.stages ?? []).find((s) => s.key === 'transcript');
+  const transcriptFailed = run.status === 'done' && transcriptStage?.status === 'failed';
+  const toneColor = tone === 'error'
+    ? 'rgba(248,113,113,0.95)'
+    : tone === 'done'
+      ? 'rgba(110,231,158,0.9)'
+      : 'rgba(96,165,250,0.9)';
+  return (
+    <div>
+      <div style={{ width: '100%', maxWidth: 300, aspectRatio: '9 / 16', margin: '0 auto' }}>
+        <PosterFeedCardView page={page} compactFooter />
+      </div>
+      <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px]" style={{ color: toneColor }}>
+        {tone === 'busy' && <MapSpinner size={9} />}
+        {text}
+      </div>
+      {/* 出错/超时时把详细文字（含失败原因、超时提示）显示出来，卡片不能把错误吞掉（Bugbot Medium） */}
+      {isError && content ? (
+        <div className="mt-1.5 text-[11px] text-token-muted whitespace-pre-wrap" style={{ opacity: 0.85 }}>
+          {content}
+        </div>
+      ) : transcriptFailed ? (
+        // 视频入库成功但转写失败：补一行说明，告诉用户"为什么没有文字、怎么补救"（Codex P2）。
+        <div className="mt-1.5 text-[11px] whitespace-pre-wrap" style={{ color: 'rgba(248,113,113,0.9)' }}>
+          视频转文字失败{transcriptStage?.message?.trim() ? `：${transcriptStage.message.trim()}` : ''}。视频已入库，可稍后单独重试转写。
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ── 消息气泡 ──
 function MessageBubble({
   msg, applying, onApply, onApplyArtifact, onOutbound, onQuickAction, allowApply,
@@ -2276,7 +2406,9 @@ function MessageBubble({
             </span>
           )}
         </div>
-        {msg.streaming && msg.content ? (
+        {msg.shortVideoRun?.card ? (
+          <ShortVideoCardBlock run={msg.shortVideoRun} phase={msg.phase} content={msg.content} />
+        ) : msg.streaming && msg.content ? (
           <StreamingText text={msg.content} streaming mode="blur" />
         ) : msg.content ? (
           <ChatMarkdown content={msg.content} />
