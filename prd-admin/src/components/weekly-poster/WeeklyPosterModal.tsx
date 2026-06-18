@@ -887,9 +887,12 @@ export function PosterRichTextPageView({
  *   - 互动数字大于 1k 简写为 1.2k / 5.9k
  *   - 没有头像时用渐变色圆形带首字母
  */
-export function PosterFeedCardView({ page, onMediaAspectDetected }: {
+export function PosterFeedCardView({ page, onMediaAspectDetected, compactFooter = false }: {
   page: WeeklyPosterPage | undefined;
   onMediaAspectDetected?: (aspect: number) => void;
+  // 底部信息区留白：默认 px-7 pb-20，给轮播叠加的分页/CTA 控件（bottom-7/bottom-9，z-30）让位，
+  // 避免标题/标签被控件盖住。短视频抽屉里没有这些叠加控件，传 true 用紧凑的 px-4 pb-4（Codex P2）。
+  compactFooter?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasPlayed, setHasPlayed] = useState(false);
@@ -1173,7 +1176,7 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
 
       {/* 底部信息：标题 hook + 标签 chip + 渐变背景 */}
       <div
-        className="absolute inset-x-0 bottom-0 z-20 px-4 pb-4 pt-8 pointer-events-none transition-opacity duration-300"
+        className={`absolute inset-x-0 bottom-0 z-20 pt-8 pointer-events-none transition-opacity duration-300 ${compactFooter ? 'px-4 pb-4' : 'px-7 pb-20'}`}
         style={{
           background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 35%, rgba(0,0,0,0.92) 100%)',
           opacity: hasPlayed ? 0 : 1,

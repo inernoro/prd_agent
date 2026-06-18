@@ -2265,7 +2265,7 @@ function ShortVideoCardBlock({ run, phase, content }: {
   return (
     <div>
       <div style={{ width: '100%', maxWidth: 300, aspectRatio: '9 / 16', margin: '0 auto' }}>
-        <PosterFeedCardView page={page} />
+        <PosterFeedCardView page={page} compactFooter />
       </div>
       <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px]" style={{ color: toneColor }}>
         {tone === 'busy' && <MapSpinner size={9} />}
