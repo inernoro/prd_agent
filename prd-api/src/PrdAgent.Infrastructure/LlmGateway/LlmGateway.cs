@@ -820,9 +820,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var response = await httpClient.SendAsync(httpRequest, ct);
 
-            // 检测响应类型：二进制（音频 / 视频 / 图片等）还是文本（JSON）
+            // 检测响应类型：二进制（音频 / 视频 / 图片等）还是文本（JSON）。
+            // request.ExpectBinaryResponse 强制按字节读取：用于下游 Content-Type 标注不可靠的端点
+            // （OpenRouter 视频下载实际回 mp4 却标 application/json，按字符串读会损坏字节）。
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
-            var isBinaryResponse = contentType.StartsWith("audio/") ||
+            var isBinaryResponse = request.ExpectBinaryResponse ||
+                                   contentType.StartsWith("audio/") ||
                                    contentType.StartsWith("video/") ||
                                    contentType.StartsWith("image/") ||
                                    contentType == "application/octet-stream";

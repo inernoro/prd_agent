@@ -203,6 +203,9 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}/content?index={urlIndex}",
             HttpMethod = "GET",
             TimeoutSeconds = 120, // 视频文件可能较大
+            // OpenRouter 此端点回 mp4 字节，却把 Content-Type 标成 application/json，
+            // 不强制二进制会被按字符串读取损坏 → binaryContent 为空 → 误判「HTTP 200 下载失败」。
+            ExpectBinaryResponse = true,
         }, resolution, ct);
 
         if (!rawResp.Success || rawResp.BinaryContent == null || rawResp.BinaryContent.Length == 0)
