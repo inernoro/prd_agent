@@ -2783,12 +2783,20 @@ public class DocumentStoreController : ControllerBase
         if (!ct.StartsWith("audio/") && !ct.StartsWith("video/") && !ct.StartsWith("image/"))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频 / 图片生成字幕"));
 
-        // 去重：同一 entry 已有 queued 或 running 的 subtitle run → 直接返回
-        var existing = await _db.DocumentStoreAgentRuns.Find(r =>
-            r.SourceEntryId == entryId &&
-            r.Kind == DocumentStoreAgentRunKind.Subtitle &&
-            (r.Status == DocumentStoreRunStatus.Queued || r.Status == DocumentStoreRunStatus.Running)
-        ).FirstOrDefaultAsync();
+        // 去重：同一 entry 已有 queued 或 running 的 subtitle run → 直接返回。
+        // 定向消费：只复用【本实例（或历史无主）】的在途 run。共享 Mongo 下，若复用别的分支/主干
+        // 拥有的 queued run，本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
+        // 故 owner 不匹配时不复用，落到下面新建一条归属本实例的 run（Codex P2）。
+        var selfInstanceId = InstanceIdentity.Get(_config);
+        var existingFilter = Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
+            Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
+            Builders<DocumentStoreAgentRun>.Filter.Or(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+        var existing = await _db.DocumentStoreAgentRuns.Find(existingFilter).FirstOrDefaultAsync();
         if (existing != null)
             return Ok(ApiResponse<object>.Ok(new { runId = existing.Id, status = existing.Status, reused = true }));
 
@@ -2951,6 +2959,10 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Update
                     .Push(r => r.Messages, userMsg)
                     .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                    // 重新排队时把归属改成当前实例：这条 Done 的 run 可能由 main 或别的分支创建，
+                    // 共享 Mongo 下若不改主，本实例（定向消费）会因 owner 不匹配而忽略它，
+                    // 任务只能被原 owner（可能跑旧代码或已下线）处理或永远卡在 queued（Codex P2）。
+                    .Set(r => r.OwnerInstanceId, InstanceIdentity.Get(_config))
                     .Set(r => r.Phase, "排队中")
                     .Set(r => r.Progress, 0)
                     .Set(r => r.GeneratedText, null)

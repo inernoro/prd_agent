@@ -57,10 +57,20 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-            // 只回收【本实例】残留的 running，别误杀别的分支/主干正在处理的任务（定向消费）。
+            // 回收范围 = 本实例 running + 历史无主 running（OwnerInstanceId 空）。
+            // 无主 running 只可能由「定向消费上线前的旧代码」产生：旧代码不打 owner，
+            // 容器退出后永远没人回收、永卡 running。一并回收是一次性过渡兜底（上线后新 run
+            // 认领即打主，不再产生无主 running）。代价：若另一实例此刻在跑某个无主 running 会被
+            // 误判失败——但无主 = 旧代码遗留，归属本不可分辨，过渡期代价可接受（Bugbot Medium）。
             var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var recoverFilter = Builders<ShortVideoMaterialRun>.Filter.And(
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
+                Builders<ShortVideoMaterialRun>.Filter.Or(
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
-                r => r.Status == "running" && r.OwnerInstanceId == instanceId,
+                recoverFilter,
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
