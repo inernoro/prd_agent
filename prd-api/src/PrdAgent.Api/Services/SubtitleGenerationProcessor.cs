@@ -695,12 +695,16 @@ public class SubtitleGenerationProcessor
             };
             using var process = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("ffmpeg 启动失败");
+            // 必须在 WaitForExitAsync 之前并发开始读 stderr/stdout：ffmpeg 写 stderr 量大，
+            // 长输入会把管道缓冲（约 64KB）写满后阻塞，而我们若先等退出再读就会与之死锁，
+            // 任务卡在 running 永不返回（Codex P2，与 CapsuleExecutor ffmpeg 同模式）。
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
             await process.WaitForExitAsync();
+            var err = await stderrTask;
+            await stdoutTask;
             if (process.ExitCode != 0)
-            {
-                var err = await process.StandardError.ReadToEndAsync();
                 throw new InvalidOperationException($"ffmpeg 抽音频失败 (exit={process.ExitCode}): {err}");
-            }
             return await File.ReadAllBytesAsync(tmpOut);
         }
         finally
