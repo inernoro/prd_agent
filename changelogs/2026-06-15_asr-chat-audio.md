@@ -1,3 +1,3 @@
 | feat | prd-api | 视频转文字/字幕生成支持「多模态 chat + input_audio」转写路径：模型名含 audio/gemini/gpt-4o（非 whisper）时把音频发到 /v1/chat/completions 让多模态模型逐字转写，支持 OpenRouter 等无 Whisper 端点的平台（短视频转写 CapsuleExecutor 与知识库字幕 SubtitleGenerationProcessor 两条链路均覆盖） |
-| fix | prd-api | 多模态 chat 音频转写仅对 OpenAI 兼容平台启用：按平台类型排除原生 google/anthropic/claude，避免把 OpenAI input_audio 形态请求发到原生 Gemini（v1beta generateContent）等端点导致转写失败（Codex P2，SubtitleGenerationProcessor + CapsuleExecutor 两处同步） |
+| fix | prd-api | 多模态 chat 音频转写仅对 OpenAI 兼容平台启用：按平台类型排除原生 google/gemini/anthropic/claude（google 与 gemini 都是原生 Google 平台，走 v1beta generateContent），避免把 OpenAI input_audio 形态请求发到原生端点导致转写失败（Codex P2，SubtitleGenerationProcessor + CapsuleExecutor 两处同步） |
 | fix | prd-api | 字幕 ffmpeg 抽音频在 WaitForExit 前并发读 stderr/stdout，避免长输入写满管道缓冲死锁、任务卡在 running（Codex P2） |

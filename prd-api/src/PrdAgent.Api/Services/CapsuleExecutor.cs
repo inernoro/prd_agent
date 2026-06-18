@@ -6766,8 +6766,10 @@ function safeChart(canvasId, config) {
         // 不能走：claude/anthropic 走 ClaudeGatewayAdapter；google 原生 Gemini 用
         // v1beta/models/{model}:generateContent，端点与请求体都和 OpenAI 不同，发过去直接失败
         // 而非转写。仅 OpenAI 兼容平台（OpenRouter 等注册为 openai）可走（Codex P2）。
+        // google 与 gemini 两种 platformType 都是原生 Google 平台（见 ImageGenPlatformAdapterFactory），
+        // 走 v1beta generateContent，与 OpenAI input_audio 形态不兼容，必须一并排除。
         var pt = (platformType ?? "").ToLowerInvariant();
-        if (pt is "google" or "anthropic" or "claude") return false;
+        if (pt is "google" or "gemini" or "anthropic" or "claude") return false;
         var m = model.ToLowerInvariant();
         if (m.Contains("whisper")) return false;       // Whisper 走 /v1/audio/transcriptions
         // 只认确实支持音频输入的模型：含 audio（gpt-audio / gpt-4o-audio-preview / qwen-audio）

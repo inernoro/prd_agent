@@ -428,8 +428,10 @@ public class SubtitleGenerationProcessor
         // v1beta/models/{model}:generateContent，端点与请求体都和 OpenAI 完全不同。把 OpenAI 形态
         // 请求发到这些原生端点会直接失败而非转写，所以仅 OpenAI 兼容平台可走（Codex P2）。
         // OpenRouter 等 OpenAI 兼容平台注册为 openai，照常生效。
+        // 注意排除 google 与 gemini 两种 platformType——本仓库二者都指原生 Google 平台
+        // （见 ImageGenPlatformAdapterFactory），走 v1beta generateContent，与 OpenAI 形态不兼容。
         var pt = (platformType ?? "").ToLowerInvariant();
-        if (pt is "google" or "anthropic" or "claude") return false;
+        if (pt is "google" or "gemini" or "anthropic" or "claude") return false;
         var m = model.ToLowerInvariant();
         if (m.Contains("whisper")) return false;
         // 只认确实支持音频输入的多模态模型：名字含 audio（gpt-audio / gpt-4o-audio-preview /
