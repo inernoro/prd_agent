@@ -405,6 +405,13 @@ export class ProxyHandler {
           const contentType = String(upstreamRes.headers['content-type'] || '');
           // 改写后续要透传给客户端的 headers
           const respHeaders: Record<string, string | string[] | undefined> = { ...upstreamRes.headers };
+          // Upstream 4xx/5xx may not carry the forwarder request id. Keep the
+          // edge-visible trace id stable so an empty/short error response is
+          // still attributable to the forwarder request path.
+          respHeaders['x-cds-request-id'] = String(upstreamRes.headers['x-cds-request-id'] || requestId);
+          respHeaders['x-cds-upstream'] = `${upstreamHost}:${upstreamPort}`;
+          if (route.branchId) respHeaders['x-cds-branch'] = route.branchId;
+          if (route._id) respHeaders['x-cds-route-id'] = route._id;
           // Cookie cache control:cookie 含 cds_branch 时禁缓存(对齐 master proxy.ts:971-973)。
           // 防止浏览器在 cookie 路由场景下混用不同分支的 disk cache。
           if (req.headers.cookie?.includes('cds_branch')) {

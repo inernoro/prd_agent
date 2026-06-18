@@ -58,6 +58,11 @@ export interface ForwarderRoutePublisherOptions {
   rootDomains: string[];
   /** 周期性发布间隔（ms），默认 2000 */
   intervalMs?: number;
+  /**
+   * 连续看到同一份变更 N 次后才写盘。默认 1(测试/手动 publishNow 保持即时);
+   * 生产可设 2,把部署过程中的中间态 route 表合并掉,减少 forwarder reload 抖动。
+   */
+  stableSamplesRequired?: number;
   /** 注入 logger，便于 daemon 集成 activity 流 */
   logger?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };
 }
@@ -65,6 +70,8 @@ export interface ForwarderRoutePublisherOptions {
 export class ForwarderRoutePublisher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastPublishedJson: string = '';
+  private pendingJson: string = '';
+  private pendingStableSamples: number = 0;
   private publishCount: number = 0;
 
   constructor(private opts: ForwarderRoutePublisherOptions) {
@@ -95,9 +102,30 @@ export class ForwarderRoutePublisher {
       // Codex P1 (PR #541):原本用 `${records.length}:${json.length}` 做 hash,
       // port 41000 → 41001 同 length 会被误判 unchanged → forwarder 保留 stale
       // 路由,流量打错容器。改用真 string 比对(json 几 KB,O(n) 很快)。
-      if (json === this.lastPublishedJson) return false;
+      if (json === this.lastPublishedJson) {
+        this.pendingJson = '';
+        this.pendingStableSamples = 0;
+        return false;
+      }
+      const stableSamplesRequired = Math.max(1, this.opts.stableSamplesRequired ?? 1);
+      if (this.lastPublishedJson && stableSamplesRequired > 1) {
+        if (json === this.pendingJson) {
+          this.pendingStableSamples += 1;
+        } else {
+          this.pendingJson = json;
+          this.pendingStableSamples = 1;
+        }
+        if (this.pendingStableSamples < stableSamplesRequired) {
+          this.opts.logger?.info?.(
+            `[forwarder-publisher] route change pending ${this.pendingStableSamples}/${stableSamplesRequired} (${records.length} routes)`,
+          );
+          return false;
+        }
+      }
       this.writeAtomic(this.opts.outputPath, json);
       this.lastPublishedJson = json;
+      this.pendingJson = '';
+      this.pendingStableSamples = 0;
       this.publishCount += 1;
       this.opts.logger?.info?.(
         `[forwarder-publisher] wrote ${records.length} routes to ${this.opts.outputPath} (publishCount=${this.publishCount})`,
