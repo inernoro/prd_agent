@@ -58,6 +58,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { shouldReduceEffects } from '@/lib/themeApplier';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore, NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { getLauncherCatalog } from '@/lib/launcherCatalog';
@@ -488,10 +489,11 @@ export default function AppShell() {
 
   // 读取主题配置中的侧边栏玻璃效果设置
   const sidebarGlass = useThemeStore((s) => s.config.sidebarGlass);
-  // 液态玻璃一键开关（头像菜单内）：performance=关，其余=开
-  const perfMode = useThemeStore((s) => s.config.performanceMode);
+  // 液态玻璃一键开关（头像菜单内）：用 shouldReduceEffects 判断「实际」是否开玻璃，
+  // 覆盖 auto 在 Windows 上自动降级的情况，避免徽章显示与真实渲染不一致。
+  const themeConfig = useThemeStore((s) => s.config);
   const setThemeConfig = useThemeStore((s) => s.setConfig);
-  const glassOn = perfMode !== 'performance';
+  const glassOn = !shouldReduceEffects(themeConfig);
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 

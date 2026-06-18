@@ -105,6 +105,13 @@ html[data-perf-mode="performance"] .blur-text span {
   box-shadow: 0 24px 48px rgba(89, 65, 50, 0.12), 0 8px 16px rgba(89, 65, 50, 0.06) !important;
 }
 
+/* 性能模式(玻璃关闭):globals.css 用 !important 清掉所有 backdrop-filter,
+   半透玻璃底失去模糊后会"透而不糊"导致失焦/对比不足。此时把暗色弹窗恢复成
+   近实底背景,保证可读性。:not([data-theme="light"]) 确保不影响浅色纯白卡。 */
+html[data-perf-mode="performance"]:not([data-theme="light"]) .prd-dialog-content {
+  background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
+}
+
 .prd-dialog-overlay {
   animation: fadeIn 150ms ease-out;
   /* B 玻璃：遮罩对底下繁忙页面做模糊，让弹窗玻璃能"映照"出页面的颜色与形状 */

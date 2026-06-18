@@ -3,6 +3,8 @@ import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { glassPanel } from '@/lib/glassStyles';
 import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
+import { useThemeStore } from '@/stores/themeStore';
+import { shouldReduceEffects } from '@/lib/themeApplier';
 
 export function Dialog({
   open,
@@ -37,6 +39,9 @@ export function Dialog({
 }) {
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
+  // 性能模式(玻璃关)下 backdrop-filter 被全局清除，半透遮罩会失焦，
+  // 故玻璃关时遮罩回退为近实底深色（配合 legacy.css 把弹窗面板也恢复实底）。
+  const glassReduced = shouldReduceEffects(useThemeStore((s) => s.config));
 
   // 浅色下走纯白卡片(不依赖 glassPanel,因为 themeComputed.ts 在性能模式下
   // 会用暗色 bgElevated 重置 --glass-bg-start/end,不区分主题)
@@ -50,7 +55,12 @@ export function Dialog({
 
   // B 玻璃：暗色遮罩降透明度(0.72→0.40)，配合 .prd-dialog-overlay 的 backdrop 模糊，
   // 让底下繁忙页面"变暗+模糊"地透出来，弹窗玻璃才有内容可映照。
-  const overlayBg = isLight ? 'var(--modal-overlay)' : 'rgba(8,8,14,0.40)';
+  // 但玻璃关闭时没有模糊，需用近实底遮罩保证对比与聚焦。
+  const overlayBg = isLight
+    ? 'var(--modal-overlay)'
+    : glassReduced
+      ? 'rgba(0,0,0,0.72)'
+      : 'rgba(8,8,14,0.40)';
 
   const closeHoverCls = isLight
     ? 'hover:bg-[rgba(15,23,42,0.05)]'
