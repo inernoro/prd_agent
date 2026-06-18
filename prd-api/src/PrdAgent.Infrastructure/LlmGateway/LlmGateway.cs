@@ -830,13 +830,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                                    contentType.StartsWith("image/") ||
                                    contentType == "application/octet-stream";
 
-            if ((request.EndpointPath ?? string.Empty).Contains("/content", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogWarning(
-                    "[LlmGateway.BinaryProbe] endpoint={Endpoint} expectBinary={Expect} contentType={Ct} isBinary={IsBin} status={Status}",
-                    request.EndpointPath, request.ExpectBinaryResponse, contentType, isBinaryResponse, (int)response.StatusCode);
-            }
-
             string? responseBody = null;
             byte[]? binaryContent = null;
 
