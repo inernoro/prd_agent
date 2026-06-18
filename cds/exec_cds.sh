@@ -1259,7 +1259,12 @@ NGINX_BASE
     else
       echo "upstream cds_master { server 127.0.0.1:${master}; keepalive 8; }"
     fi
-    echo "upstream cds_worker { server 127.0.0.1:${worker}; keepalive 16; }"
+    # Preview traffic can hit the independent forwarder (9090). Nginx upstream
+    # keepalive has caused stale pooled sockets to surface as intermittent empty
+    # 400 responses, while direct forwarder traffic stays healthy. Keep this
+    # upstream connection-per-request; preview stability is more important than
+    # the tiny local loopback reuse win.
+    echo "upstream cds_worker { server 127.0.0.1:${worker}; }"
     echo ""
 
     local raw d
