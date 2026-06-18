@@ -19,15 +19,23 @@ export function ShortVideoRunIndicator({
   storeId,
   onOpenRun,
   onRunCompleted,
+  hidden = false,
 }: {
   storeId: string;
   onOpenRun: (run: ShortVideoRunRecord) => void;
   /** 后台 run（抽屉关着/刷新后）跑完时回调，让页面重新拉取知识库条目，否则新入库的视频/文字不出现 */
   onRunCompleted?: () => void;
+  /** 仅隐藏右上角浮层（抽屉打开时避免遮挡），但 Host 轮询照常运行——否则开抽屉就停更（Bugbot Medium） */
+  hidden?: boolean;
 }) {
   const runsMap = useShortVideoRunStore((s) => s.runs);
   const patchRun = useShortVideoRunStore((s) => s.patchRun);
   const dismissRun = useShortVideoRunStore((s) => s.dismissRun);
+
+  // onRunCompleted 每次父级渲染都是新内联函数；用 ref 存最新值，避免它进 effect 依赖导致
+  // 每次渲染都拆/建轮询 interval、并 cancel 掉进行中的 GET，使完成检测/列表刷新变得不稳定（Bugbot Medium）。
+  const onRunCompletedRef = useRef(onRunCompleted);
+  useEffect(() => { onRunCompletedRef.current = onRunCompleted; });
 
   // 仅展示本知识库的 run，按发起时间倒序（新的在上）
   const runs = useMemo(
@@ -71,7 +79,7 @@ export function ShortVideoRunIndicator({
               hasTranscript: !!run.transcriptEntryId,
               errorMessage: run.errorMessage || undefined,
             });
-            if (status === 'done' && prevStatus && prevStatus !== 'done') onRunCompleted?.();
+            if (status === 'done' && prevStatus && prevStatus !== 'done') onRunCompletedRef.current?.();
           }
         }
       } catch {
@@ -86,7 +94,7 @@ export function ShortVideoRunIndicator({
       cancelled = true;
       window.clearInterval(iv);
     };
-  }, [runningIds, patchRun, onRunCompleted]);
+  }, [runningIds, patchRun]);
 
   // 完成/失败的入口在 30s 后自动淡出（避免堆积），running 的常驻。
   useEffect(() => {
@@ -101,7 +109,8 @@ export function ShortVideoRunIndicator({
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [runs, dismissRun]);
 
-  if (runs.length === 0) return null;
+  // 所有 hook 都在此之前执行，所以即便隐藏浮层（抽屉打开时），上面的 Host 轮询仍持续运行。
+  if (hidden || runs.length === 0) return null;
 
   return (
     <div className="fixed top-20 right-5 z-40 flex flex-col gap-2" style={{ maxWidth: 300 }}>
