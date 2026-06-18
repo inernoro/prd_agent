@@ -135,6 +135,46 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void CanAutomationAccessRun_AllowsOwnerManageOrAiAccessOnly()
+    {
+        var run = new DefectAutomationRun { CreatedBy = "owner" };
+
+        Assert.True(DefectAgentController.CanAutomationAccessRun(run, "owner", false, false));
+        Assert.True(DefectAgentController.CanAutomationAccessRun(run, "other", true, false));
+        Assert.True(DefectAgentController.CanAutomationAccessRun(run, "other", false, true));
+        Assert.False(DefectAgentController.CanAutomationAccessRun(run, "other", false, false));
+        Assert.False(DefectAgentController.CanAutomationAccessRun(null, "owner", true, true));
+    }
+
+    [Fact]
+    public void CanAutomationAccessDefect_LimitsScopedKeysToAssignedOrUnassignedDefects()
+    {
+        var assigned = new DefectReport { AssigneeId = "owner" };
+        var unassigned = new DefectReport { AssigneeId = "" };
+        var other = new DefectReport { AssigneeId = "other" };
+        var deleted = new DefectReport { AssigneeId = "owner", IsDeleted = true };
+
+        Assert.True(DefectAgentController.CanAutomationAccessDefect(assigned, "owner", false, false));
+        Assert.True(DefectAgentController.CanAutomationAccessDefect(unassigned, "owner", false, false));
+        Assert.True(DefectAgentController.CanAutomationAccessDefect(other, "owner", true, false));
+        Assert.True(DefectAgentController.CanAutomationAccessDefect(other, "owner", false, true));
+        Assert.False(DefectAgentController.CanAutomationAccessDefect(other, "owner", false, false));
+        Assert.False(DefectAgentController.CanAutomationAccessDefect(deleted, "owner", true, true));
+    }
+
+    [Fact]
+    public void CanAutomationAccessTrace_LimitsValidationReportToOwningKey()
+    {
+        var trace = new DefectResolutionTrace { AgentIdentifier = "key-1" };
+
+        Assert.True(DefectAgentController.CanAutomationAccessTrace(trace, "key-1", false, false));
+        Assert.True(DefectAgentController.CanAutomationAccessTrace(trace, "key-2", true, false));
+        Assert.True(DefectAgentController.CanAutomationAccessTrace(trace, "key-2", false, true));
+        Assert.False(DefectAgentController.CanAutomationAccessTrace(trace, "key-2", false, false));
+        Assert.False(DefectAgentController.CanAutomationAccessTrace(null, "key-1", true, true));
+    }
+
+    [Fact]
     public void MergeAutomationCommitStructuredData_WritesCommitInfoKeys()
     {
         var structured = DefectAgentController.MergeAutomationCommitStructuredData(
