@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
 
 namespace PrdAgent.Api.Services;
 
@@ -38,6 +39,20 @@ public class GitHubDirectorySyncService
     public async Task<GitHubDirectoryDiff> SyncDirectoryAsync(
         MongoDbContext db,
         IDocumentService documentService,
+        DocumentEntry parentEntry,
+        CancellationToken ct)
+    {
+        return await SyncDirectoryAsync(db, documentService, null, parentEntry, ct);
+    }
+
+    /// <summary>
+    /// 同步 GitHub 目录。<paramref name="versions"/> 非空时，在覆盖已存在文档前把旧正文快照成版本，
+    /// 使「订阅文档被远端同步覆盖」也不会丢失用户在本地的改动（可从历史版本恢复）。
+    /// </summary>
+    public async Task<GitHubDirectoryDiff> SyncDirectoryAsync(
+        MongoDbContext db,
+        IDocumentService documentService,
+        DocStoreServices.DocumentVersionService? versions,
         DocumentEntry parentEntry,
         CancellationToken ct)
     {
@@ -124,7 +139,7 @@ public class GitHubDirectorySyncService
                 }
 
                 // SHA 变了 → 重新拉取内容并更新
-                await SyncSingleFileAsync(db, documentService, existing, file, owner, repo, branch, ct);
+                await SyncSingleFileAsync(db, documentService, versions, existing, file, owner, repo, branch, ct);
                 diff.UpdatedCount++;
                 diff.FileChanges.Add(new DocumentSyncFileChange
                 {
@@ -155,7 +170,7 @@ public class GitHubDirectorySyncService
                     },
                 };
 
-                await SyncSingleFileAsync(db, documentService, entry, file, owner, repo, branch, ct, isNew: true);
+                await SyncSingleFileAsync(db, documentService, versions, entry, file, owner, repo, branch, ct, isNew: true);
                 diff.AddedCount++;
                 diff.FileChanges.Add(new DocumentSyncFileChange
                 {
@@ -200,6 +215,7 @@ public class GitHubDirectorySyncService
     private async Task SyncSingleFileAsync(
         MongoDbContext db,
         IDocumentService documentService,
+        DocStoreServices.DocumentVersionService? versions,
         DocumentEntry entry,
         GitHubFile file,
         string owner,
@@ -283,6 +299,16 @@ public class GitHubDirectorySyncService
                 return;
             }
 
+            // 覆盖已存在文档前，把旧正文快照成版本：订阅文档被远端同步覆盖时，
+            // 用户本地的改动（如插入的配图）不会丢失，可从历史版本恢复。去重保证无变化不产生噪音。
+            if (versions != null && !isNew && !string.IsNullOrEmpty(entry.DocumentId))
+            {
+                var oldDoc = await documentService.GetByIdAsync(entry.DocumentId);
+                if (oldDoc != null && !string.IsNullOrWhiteSpace(oldDoc.RawContent))
+                    await versions.SnapshotAsync(entry.Id, entry.StoreId, oldDoc.RawContent,
+                        DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
+            }
+
             // 解析为 ParsedPrd
             var parsed = await documentService.ParseAsync(content);
             parsed.Title = Path.GetFileNameWithoutExtension(file.Name);
@@ -316,6 +342,11 @@ public class GitHubDirectorySyncService
                 await db.DocumentEntries.ReplaceOneAsync(
                     e => e.Id == entry.Id, entry, cancellationToken: CancellationToken.None);
             }
+
+            // 同步后的新正文也快照成版本，保证「最新版本 == 当前正文」（去重避免重复落库）
+            if (versions != null)
+                await versions.SnapshotAsync(entry.Id, entry.StoreId, content,
+                    DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
         }
         catch (Exception ex)
         {
