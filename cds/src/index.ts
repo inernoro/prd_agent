@@ -1060,7 +1060,39 @@ if (config.mode !== 'executor') {
     minFailuresToAlert: Math.max(1, Number.parseInt(process.env.CDS_PREVIEW_CANARY_MIN_FAILURES || '', 10) || 1),
     logger: {
       warn: (m) => console.warn(m),
+      info: (m) => console.log(m),
       error: (m) => console.error(m),
+    },
+    onAlert: (payload) => {
+      const first = payload.results.find((r) => !r.ok);
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: 'warn',
+        source: 'preview-canary',
+        action: 'preview.canary.alert',
+        message: `${payload.failures}/${payload.total} preview probe(s) failed`,
+        branchId: first?.headers?.cdsBranch || first?.label || null,
+        requestId: first?.requestId || first?.probeId,
+        upstream: first?.headers?.cdsUpstream || null,
+        status: first ? String(first.status) : null,
+        error: first?.error ? { message: first.error } : undefined,
+        details: payload as unknown as Record<string, unknown>,
+      });
+    },
+    onRecovery: (payload) => {
+      const first = payload.recovered[0];
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: 'info',
+        source: 'preview-canary',
+        action: 'preview.canary.recovered',
+        message: `${payload.recovered.length} preview probe(s) recovered`,
+        branchId: first?.headers?.cdsBranch || first?.label || null,
+        requestId: first?.requestId || first?.probeId,
+        upstream: first?.headers?.cdsUpstream || null,
+        status: first ? String(first.status) : null,
+        details: payload as unknown as Record<string, unknown>,
+      });
     },
   });
   previewCanaryService.start();
