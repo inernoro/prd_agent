@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>团队动态 · 问题热度曲线（涌现稿 v3）</title>
+<style>
+  :root {
+    --bg-primary:#0e0f10; --bg-card:#1a1b1d; --bg-card-2:#202123; --bg-elevated:#26282b;
+    --border:rgba(255,255,255,0.07); --border-strong:rgba(255,255,255,0.13);
+    --text-1:#ececef; --text-2:rgba(236,236,239,0.62); --text-3:rgba(236,236,239,0.40);
+    --teal:#2dd4bf; --red:#f8717a; --amber:#fbbf24; --green:#34d399; --violet:#a78bfa;
+    --shadow:0 8px 30px rgba(0,0,0,0.4);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body {
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:radial-gradient(1200px 600px at 80% -10%,rgba(167,139,250,0.06),transparent 60%),
+      radial-gradient(900px 500px at -5% 10%,rgba(45,212,191,0.05),transparent 55%),var(--bg-primary);
+    color:var(--text-1); padding:26px 30px 50px; min-height:100%; -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:1320px; margin:0 auto; }
+  .page-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
+  .page-head .titles { display:flex; align-items:baseline; gap:14px; }
+  .page-head h1 { font-size:19px; font-weight:650; }
+  .page-head .sub { font-size:12.5px; color:var(--text-3); }
+  .range-pills { display:inline-flex; gap:6px; }
+  .range-pills button { border:1px solid var(--border); background:var(--bg-card); color:var(--text-2);
+    font-size:12px; padding:6px 13px; border-radius:8px; cursor:pointer; transition:all .15s; }
+  .range-pills button.active { background:rgba(167,139,250,0.13); border-color:rgba(167,139,250,0.4); color:var(--violet); }
+
+  .top { display:grid; grid-template-columns:300px 1fr; gap:16px; }
+  .card { background:linear-gradient(180deg,var(--bg-card),#161718); border:1px solid var(--border);
+    border-radius:18px; box-shadow:var(--shadow); position:relative; overflow:hidden; }
+
+  /* heat index card */
+  .heat { padding:20px 22px; display:flex; flex-direction:column; gap:6px; justify-content:center; }
+  .heat .lbl { font-size:12.5px; color:var(--text-2); display:flex; align-items:center; gap:8px; }
+  .heat .flame { display:inline-flex; gap:2px; align-items:flex-end; height:16px; }
+  .heat .flame i { width:3px; background:var(--red); border-radius:2px; animation:flick 1.1s ease-in-out infinite; }
+  .heat .flame i:nth-child(2){ animation-delay:.18s } .heat .flame i:nth-child(3){ animation-delay:.36s }
+  .heat .flame i:nth-child(4){ animation-delay:.1s } .heat .flame i:nth-child(5){ animation-delay:.5s }
+  @keyframes flick { 0%,100%{ height:6px; opacity:.7 } 50%{ height:16px; opacity:1 } }
+  .heat .big { display:flex; align-items:baseline; gap:10px; margin-top:4px; }
+  .heat .num { font-size:60px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums;
+    transition:filter .8s ease, color .8s ease; }
+  .heat .delta { font-size:14px; font-weight:700; padding:4px 10px; border-radius:8px; display:inline-flex; align-items:center; gap:4px; }
+  .heat .delta.up { color:var(--red); background:rgba(248,113,122,0.13); }
+  .heat .delta.down { color:var(--green); background:rgba(52,211,153,0.13); }
+  .heat .note { font-size:12px; color:var(--text-3); margin-top:8px; line-height:1.5; }
+  .mini-legend { display:flex; gap:14px; margin-top:12px; }
+  .mini-legend span { font-size:11.5px; color:var(--text-2); display:inline-flex; align-items:center; gap:6px; }
+  .mini-legend i { width:9px; height:9px; border-radius:3px; }
+
+  /* stream card */
+  .stream-card { padding:16px 8px 8px 8px; }
+  .stream-head { display:flex; align-items:center; justify-content:space-between; padding:0 14px 6px; }
+  .stream-head .t { font-size:13px; font-weight:600; color:var(--text-2); display:flex; align-items:center; gap:8px; }
+  .stream-head .live { font-size:11px; color:var(--teal); display:inline-flex; align-items:center; gap:6px; }
+  .stream-head .live .blip { width:7px; height:7px; border-radius:50%; background:var(--teal); animation:blip 1.3s ease-in-out infinite; }
+  @keyframes blip { 0%,100%{opacity:.3;transform:scale(.8)} 50%{opacity:1;transform:scale(1.3)} }
+  .stream-svg { width:100%; height:auto; display:block; }
+  .grid line { stroke:rgba(255,255,255,0.045); }
+  .axis-lbl { fill:var(--text-3); font-size:10.5px; }
+  .flag-line { stroke:rgba(255,255,255,0.18); stroke-dasharray:3 3; }
+  .flag-box { fill:var(--bg-elevated); stroke:var(--border-strong); }
+  .flag-txt { fill:var(--text-1); font-size:11px; font-weight:600; }
+  .flag-sub { fill:var(--red); font-size:10px; font-weight:700; }
+  @keyframes headPulse { 0%{ r:5; opacity:1 } 100%{ r:18; opacity:0 } }
+
+  /* ticker */
+  .ticker { margin-top:16px; background:var(--bg-card); border:1px solid var(--border);
+    border-radius:12px; overflow:hidden; display:flex; align-items:stretch; height:46px; }
+  .ticker .tag { flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:0 16px;
+    background:rgba(248,113,122,0.10); color:var(--red); font-size:12px; font-weight:700; border-right:1px solid var(--border); white-space:nowrap; }
+  .ticker .tag .pulse { width:8px; height:8px; border-radius:50%; background:var(--red); animation:blip 1s ease-in-out infinite; }
+  .ticker .track-wrap { flex:1; overflow:hidden; position:relative; }
+  .ticker .track { display:flex; align-items:center; gap:38px; position:absolute; white-space:nowrap;
+    height:100%; animation:scroll 32s linear infinite; padding-left:30px; }
+  .ticker .track:hover { animation-play-state:paused; }
+  @keyframes scroll { from{ transform:translateX(0) } to{ transform:translateX(-50%) } }
+  .ti { display:inline-flex; align-items:center; gap:9px; font-size:12.5px; color:var(--text-2); }
+  .ti .up { color:var(--red); font-weight:700; }
+  .ti .dn { color:var(--green); font-weight:700; }
+  .ti .ep { font-family:ui-monospace,Menlo,monospace; color:var(--text-1); font-size:12px; }
+  .ti .sep { width:5px; height:5px; border-radius:50%; background:var(--text-3); opacity:.5; }
+
+  @media (max-width:920px){ .top { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="page-head">
+    <div class="titles">
+      <h1>团队动态</h1>
+      <span class="sub">问题热度曲线 · 涨了鼓起来，降了瘪回去</span>
+    </div>
+    <div class="range-pills">
+      <button>今天</button>
+      <button>本周</button>
+      <button class="active">本月</button>
+      <button>季度</button>
+    </div>
+  </div>
+
+  <div class="top">
+    <!-- heat index -->
+    <div class="card heat">
+      <span class="lbl">
+        <span class="flame"><i></i><i></i><i></i><i></i><i></i></span>
+        系统问题热度指数
+      </span>
+      <div class="big">
+        <span class="num" id="heatNum">0</span>
+        <span class="delta up" id="heatDelta">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 15l6-6 6 6"/></svg>
+          +18%
+        </span>
+      </div>
+      <div class="note" id="heatNote">较上周升温，主要由<b style="color:var(--red)">视觉创作标记接口</b>突增拉动。</div>
+      <div class="mini-legend">
+        <span><i style="background:var(--red)"></i>报错声量</span>
+        <span><i style="background:var(--amber)"></i>等待声量</span>
+      </div>
+    </div>
+
+    <!-- stream graph -->
+    <div class="card stream-card">
+      <div class="stream-head">
+        <span class="t">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12c3 0 3-6 6-6s3 12 6 12 3-6 6-6"/></svg>
+          问题声量趋势（近 30 天）
+        </span>
+        <span class="live"><span class="blip"></span>实时采集</span>
+      </div>
+      <svg class="stream-svg" id="stream" viewBox="0 0 980 300" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </div>
+
+  <!-- ticker -->
+  <div class="ticker">
+    <span class="tag"><span class="pulse"></span>实时爆点</span>
+    <div class="track-wrap"><div class="track" id="track"></div></div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const NS='http://www.w3.org/2000/svg';
+  const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const RED=css('--red'), AMBER=css('--amber');
+
+  // ---------- generate 30-day series ----------
+  const N=30;
+  // baseline + two bursts (error burst day~12, wait burst day~20) + rising tail
+  const errors=[], waits=[];
+  for(let i=0;i<N;i++){
+    let e = 6 + 4*Math.sin(i*0.5) + Math.random()*4;
+    let w = 5 + 3*Math.cos(i*0.4) + Math.random()*3;
+    // error burst around 11-14 (visual-agent markers)
+    e += 40*Math.exp(-Math.pow(i-12,2)/6);
+    // secondary error burst around 23-26 (weekly mark-seen)
+    e += 22*Math.exp(-Math.pow(i-24,2)/5);
+    // wait burst around 18-21 (ai-news / changelog)
+    w += 26*Math.exp(-Math.pow(i-20,2)/7);
+    // rising recent tail
+    if(i>26){ e += (i-26)*3; w += (i-26)*2; }
+    errors.push(Math.max(2,e)); waits.push(Math.max(2,w));
+  }
+  const total=errors.map((e,i)=>e+waits[i]);
+  const maxTotal=Math.max(...total);
+
+  // ---------- layout ----------
+  const VW=980, VH=300, padL=18, padR=18, padT=20, padB=44;
+  const plotW=VW-padL-padR, plotH=VH-padT-padB;
+  const midY=padT+plotH/2;
+  const S=(plotH*0.86)/maxTotal; // scale so max burst nearly fills height
+  const xAt=i=>padL+(i/(N-1))*plotW;
+
+  // boundaries (ThemeRiver: symmetric around center)
+  const topPts=[], midPts=[], botPts=[];
+  for(let i=0;i<N;i++){
+    const tot=total[i]*S;
+    const top=midY-tot/2;
+    topPts.push({x:xAt(i),y:top});
+    midPts.push({x:xAt(i),y:top+errors[i]*S});
+    botPts.push({x:xAt(i),y:top+tot});
+  }
+
+  function smooth(pts){
+    if(pts.length<2) return '';
+    let d=`M${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    for(let i=0;i<pts.length-1;i++){
+      const p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||p2;
+      const c1x=p1.x+(p2.x-p0.x)/6, c1y=p1.y+(p2.y-p0.y)/6;
+      const c2x=p2.x-(p3.x-p1.x)/6, c2y=p2.y-(p3.y-p1.y)/6;
+      d+=` C${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    }
+    return d;
+  }
+  function area(topA,botA){
+    return smooth(topA)+' '+smooth([...botA].reverse()).replace(/^M/,'L')+' Z';
+  }
+
+  const svg=document.getElementById('stream');
+
+  // defs gradients + reveal clip
+  const defs=document.createElementNS(NS,'defs');
+  defs.innerHTML=`
+    <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${RED}" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="${RED}" stop-opacity="0.35"/>
+    </linearGradient>
+    <linearGradient id="gAmber" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${AMBER}" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="${AMBER}" stop-opacity="0.80"/>
+    </linearGradient>
+    <clipPath id="reveal"><rect id="revealRect" x="0" y="0" width="0" height="${VH}">
+      <animate attributeName="width" from="0" to="${VW}" dur="1.4s" begin="0.1s" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1"/>
+    </rect></clipPath>`;
+  svg.appendChild(defs);
+
+  // grid
+  const grid=document.createElementNS(NS,'g'); grid.setAttribute('class','grid');
+  [0,0.25,0.5,0.75,1].forEach(f=>{
+    const y=padT+f*plotH;
+    const l=document.createElementNS(NS,'line');
+    l.setAttribute('x1',padL); l.setAttribute('x2',VW-padR);
+    l.setAttribute('y1',y); l.setAttribute('y2',y);
+    grid.appendChild(l);
+  });
+  svg.appendChild(grid);
+
+  // bands (clipped reveal)
+  const bandG=document.createElementNS(NS,'g');
+  bandG.setAttribute('clip-path','url(#reveal)');
+  const errBand=document.createElementNS(NS,'path');
+  errBand.setAttribute('d',area(topPts,midPts));
+  errBand.setAttribute('fill','url(#gRed)');
+  const waitBand=document.createElementNS(NS,'path');
+  waitBand.setAttribute('d',area(midPts,botPts));
+  waitBand.setAttribute('fill','url(#gAmber)');
+  // crisp center line
+  const midLine=document.createElementNS(NS,'path');
+  midLine.setAttribute('d',smooth(midPts));
+  midLine.setAttribute('fill','none');
+  midLine.setAttribute('stroke','rgba(255,255,255,0.25)');
+  midLine.setAttribute('stroke-width','1');
+  bandG.appendChild(waitBand); bandG.appendChild(errBand); bandG.appendChild(midLine);
+  svg.appendChild(bandG);
+
+  // x labels
+  const xg=document.createElementNS(NS,'g');
+  [0,6,12,18,24,29].forEach(i=>{
+    const t=document.createElementNS(NS,'text');
+    t.setAttribute('class','axis-lbl'); t.setAttribute('x',xAt(i)); t.setAttribute('y',VH-22);
+    t.setAttribute('text-anchor','middle');
+    const day=i+1; t.textContent='6/'+(day<10?day:day);
+    xg.appendChild(t);
+  });
+  svg.appendChild(xg);
+
+  // burst flags
+  const bursts=[
+    {i:12, title:'视觉创作 标记接口', sub:'+312 报错', side:'up'},
+    {i:20, title:'AI资讯/更新中心 变慢', sub:'+146 等待', side:'down'},
+    {i:24, title:'周报 mark-seen 403', sub:'+316 报错', side:'up'},
+  ];
+  setTimeout(()=>{
+    bursts.forEach((b,k)=>{
+      const x=xAt(b.i);
+      const line=document.createElementNS(NS,'line');
+      line.setAttribute('class','flag-line');
+      line.setAttribute('x1',x); line.setAttribute('x2',x);
+      line.setAttribute('y1',padT); line.setAttribute('y2',padT+plotH);
+      line.style.opacity=0; line.style.transition='opacity .4s'; svg.appendChild(line);
+      const fy=b.side==='up'?padT+8:padT+plotH-44;
+      const fw=148, fx=Math.min(Math.max(x-fw/2,padL),VW-padR-fw);
+      const g=document.createElementNS(NS,'g'); g.style.opacity=0; g.style.transition='opacity .5s';
+      const r=document.createElementNS(NS,'rect');
+      r.setAttribute('class','flag-box'); r.setAttribute('x',fx); r.setAttribute('y',fy);
+      r.setAttribute('width',fw); r.setAttribute('height',36); r.setAttribute('rx',8);
+      g.appendChild(r);
+      const t1=document.createElementNS(NS,'text'); t1.setAttribute('class','flag-txt');
+      t1.setAttribute('x',fx+10); t1.setAttribute('y',fy+15); t1.textContent=b.title; g.appendChild(t1);
+      const t2=document.createElementNS(NS,'text'); t2.setAttribute('class','flag-sub');
+      t2.setAttribute('x',fx+10); t2.setAttribute('y',fy+29);
+      t2.setAttribute('fill', b.sub.includes('等待')?AMBER:RED); t2.textContent=b.sub; g.appendChild(t2);
+      // dot on the stream at burst
+      const dot=document.createElementNS(NS,'circle');
+      dot.setAttribute('cx',x); dot.setAttribute('cy', topPts[b.i].y); dot.setAttribute('r',3.5);
+      dot.setAttribute('fill','#fff'); g.appendChild(dot);
+      svg.appendChild(g);
+      setTimeout(()=>{ line.style.opacity=1; g.style.opacity=1; }, 1500+k*220);
+    });
+  },0);
+
+  // live head at latest point (pulsing)
+  const hx=xAt(N-1), hyTop=topPts[N-1].y, hyBot=botPts[N-1].y;
+  const headG=document.createElementNS(NS,'g'); headG.style.opacity=0; headG.style.transition='opacity .4s';
+  const ring=document.createElementNS(NS,'circle');
+  ring.setAttribute('cx',hx); ring.setAttribute('cy',(hyTop+hyBot)/2);
+  ring.setAttribute('fill','none'); ring.setAttribute('stroke',RED); ring.setAttribute('stroke-width',2);
+  ring.style.transformOrigin=`${hx}px ${(hyTop+hyBot)/2}px`;
+  ring.style.animation='headPulse 1.8s ease-out infinite';
+  headG.appendChild(ring);
+  const hc=document.createElementNS(NS,'circle');
+  hc.setAttribute('cx',hx); hc.setAttribute('cy',(hyTop+hyBot)/2); hc.setAttribute('r',5);
+  hc.setAttribute('fill','#fff'); headG.appendChild(hc);
+  svg.appendChild(headG);
+  setTimeout(()=>headG.style.opacity=1,1500);
+
+  // ---------- heat index count-up ----------
+  function easeOut(t){ return 1-Math.pow(1-t,3); }
+  const heatNum=document.getElementById('heatNum');
+  const target=86, col=RED;
+  const start=performance.now();
+  (function tick(now){
+    const p=Math.min(1,(now-start)/1300);
+    const v=Math.round(easeOut(p)*target);
+    heatNum.textContent=v;
+    // color shifts from amber→red as it climbs
+    heatNum.style.color = v<40?AMBER:(v<70?'#fb923c':RED);
+    if(p<1) requestAnimationFrame(tick);
+    else heatNum.style.filter='drop-shadow(0 0 18px rgba(248,113,122,0.5))';
+  })(start);
+
+  // ---------- ticker ----------
+  const events=[
+    {d:'up', n:'+312', ep:'visual-agent/markers', txt:'标记接口 INVALID_FORMAT 突增'},
+    {d:'up', n:'+316', ep:'weekly-posters/mark-seen', txt:'403 权限拒绝，影响 28 人'},
+    {d:'up', n:'+146', ep:'ai-news/latest', txt:'平均等待升至 63.6s'},
+    {d:'dn', n:'-22%', ep:'changelog/github-logs', txt:'缓存上线后等待回落'},
+    {d:'up', n:'+99', ep:'changelog/github-logs', txt:'GitHub 日志拉取阻塞'},
+    {d:'dn', n:'-40%', ep:'sessions/list', txt:'分页优化后报错下降'},
+  ];
+  const track=document.getElementById('track');
+  const html=events.map(e=>`
+    <span class="ti">
+      <span class="${e.d}">${e.d==='up'?'▲':'▼'} ${e.n}</span>
+      <span class="ep">${e.ep}</span>
+      <span style="color:var(--text-3)">${e.txt}</span>
+      <span class="sep"></span>
+    </span>`).join('');
+  track.innerHTML=html+html; // duplicate for seamless loop
+})();
+</script>
+</body>
+</html>
