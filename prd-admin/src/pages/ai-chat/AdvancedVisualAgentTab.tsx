@@ -4811,18 +4811,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const run = async () => {
     // 上传前压缩：超大图（最长边 > 2560px 或 体积 > 8MB）会把画布拖卡，先在源头缩到阈值内。
     // 已达标的图原样放行（幂等，不重复劣化）；解码失败放行原图由后端兜底。详见 lib/imageCompress.ts。
+    // 串行（非 Promise.all）逐张压缩：并发解码 + canvas 重编码多达 20 张大图会瞬时爆内存，
+    // 同一时刻只解码一张，峰值内存恒定。
     let anyCompressed = false;
-    const list = await Promise.all(
-      rawList.map(async (f) => {
-        try {
-          const { file, compressed } = await compressImageForCanvas(f);
-          if (compressed) anyCompressed = true;
-          return file;
-        } catch {
-          return f;
-        }
-      })
-    );
+    const list: File[] = [];
+    for (const f of rawList) {
+      try {
+        const { file, compressed } = await compressImageForCanvas(f);
+        if (compressed) anyCompressed = true;
+        list.push(file);
+      } catch {
+        list.push(f);
+      }
+    }
     if (anyCompressed) showUploadToast('已自动压缩大图以提升画布流畅度');
     // 选中单张“图片”时：上传单图默认“替换”而非叠加（保留 x/y/w/h）
     const mode = opts?.mode ?? 'auto';

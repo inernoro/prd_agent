@@ -73,8 +73,9 @@ export async function compressImageForCanvas(
   const maxDimension = opts?.maxDimension ?? CANVAS_UPLOAD_MAX_DIMENSION;
   const maxBytes = opts?.maxBytes ?? CANVAS_UPLOAD_MAX_BYTES;
 
-  // 动图保持原样：canvas 重绘会把多帧拍扁成单帧
-  if (file.type === 'image/gif') return { file, compressed: false };
+  // 动图 / 矢量图保持原样：canvas 重绘会把动图多帧拍扁成单帧、把 SVG 栅格化丢掉矢量语义。
+  // SVG 本身是文本、解码后按显示尺寸栅格化，不会像位图那样吃大块解码内存，无需也不应压缩。
+  if (file.type === 'image/gif' || file.type === 'image/svg+xml') return { file, compressed: false };
 
   let image: HTMLImageElement;
   try {
