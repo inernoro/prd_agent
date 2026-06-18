@@ -74,6 +74,7 @@ const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
 const ShareLinkTesterPage = lazy(() => import('@/pages/labs/ShareLinkTesterPage'));
+const LiquidGlassDemoPage = lazy(() => import('@/pages/labs/LiquidGlassDemoPage'));
 const MySharesPage = lazy(() => import('@/pages/labs/MySharesPage'));
 const SkillShareViewPage = lazy(() => import('@/pages/SkillShareViewPage'));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
@@ -353,6 +354,7 @@ export default function App() {
         {/* 后端 menuCatalog 注册的路由（admin / 特殊权限页，前端不进 launcher） */}
         <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="labs/share-link-tester" element={<ShareLinkTesterPage />} />
+        <Route path="labs/liquid-glass" element={<LiquidGlassDemoPage />} />
         <Route path="my/shares" element={<MySharesPage />} />
         {/* open-platform 已移入 NAV_REGISTRY（SSOT），路由由其自动生成 */}
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />

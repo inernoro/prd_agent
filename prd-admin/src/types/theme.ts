@@ -44,7 +44,9 @@ export const DEFAULT_THEME_CONFIG: ThemeConfig = {
   opacity: 'default',
   enableGlow: true,
   sidebarGlass: 'always',
-  performanceMode: 'performance',
+  // 默认开液态玻璃（2026-06-16，用户定）：此前默认 'performance' 导致 GlassCard 全站走实底降级，
+  // 液态玻璃从不渲染。改 'quality' 后未显式设置过性能模式的用户都将看到（已调优的 B 方案）玻璃。
+  performanceMode: 'quality',
 };
 
 /**
