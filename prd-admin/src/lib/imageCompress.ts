@@ -120,8 +120,12 @@ export async function compressImageForCanvas(
     }
   }
 
-  // 缩到下限仍超 maxBytes：用目前最小的那版（仍远小于原图，已经能显著缓解卡顿）
-  if (bestBlob && bestBlob.size < file.size) {
+  // 收尾兜底：缩到下限仍超 maxBytes。
+  // 关键：只要尺寸被缩过（baseScale < 1，即原图最长边超过 maxDimension），bestBlob 的像素尺寸
+  // 必 ≤ maxDimension（循环内所有 scale ≤ baseScale）。此时即使字节比原图还大也必须返回——
+  // 画布卡顿由解码后的位图像素尺寸决定，封顶尺寸才是目的；返回原图会让大尺寸图漏过封顶继续卡。
+  const dimensionWasReduced = baseScale < 1;
+  if (bestBlob && (dimensionWasReduced || bestBlob.size < file.size)) {
     return { file: buildOutputFile(bestBlob, file), compressed: true };
   }
   return { file, compressed: false };

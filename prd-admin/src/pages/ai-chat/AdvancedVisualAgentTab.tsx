@@ -4805,6 +4805,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       .slice(0, 20);
     if (rawList.length === 0) return;
 
+    // 关键：上传/放置必须串行化，否则两次快速上传会并发读文件，导致“空位算法看不到对方”=> 100% 覆盖
+    // 压缩（解码 + canvas 重编码）也必须放在锁内：否则并发上传会同时解码多张大图，
+    // 重新引发 20 张封顶本想避免的内存峰值 / 标签页冻结。
+    const run = async () => {
     // 上传前压缩：超大图（最长边 > 2560px 或 体积 > 8MB）会把画布拖卡，先在源头缩到阈值内。
     // 已达标的图原样放行（幂等，不重复劣化）；解码失败放行原图由后端兜底。详见 lib/imageCompress.ts。
     let anyCompressed = false;
@@ -4820,9 +4824,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       })
     );
     if (anyCompressed) showUploadToast('已自动压缩大图以提升画布流畅度');
-
-    // 关键：上传/放置必须串行化，否则两次快速上传会并发读文件，导致“空位算法看不到对方”=> 100% 覆盖
-    const run = async () => {
     // 选中单张“图片”时：上传单图默认“替换”而非叠加（保留 x/y/w/h）
     const mode = opts?.mode ?? 'auto';
     if (mode === 'auto' && list.length === 1 && selectedKeys.length === 1) {
