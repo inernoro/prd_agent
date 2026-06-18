@@ -700,10 +700,14 @@ public sealed class ShortVideoMaterialProcessor
             var cover = GetJsonString(root, "coverUrl", "cover_url", "cover", "origin_cover");
             if (!string.IsNullOrWhiteSpace(cover)) card.CoverUrl = cover;
 
-            // 时长：解析器以毫秒字符串透传
+            // 时长：不同平台透传的单位不一致——有的是毫秒，有的已是秒。用 >=1000 阈值区分：
+            // 短视频秒数通常 < 1000（约 16 分钟），毫秒数 >=1000（1s=1000ms）。否则把 45（秒）
+            // 当毫秒会算成 0、把已是秒的值再除 1000 显示过短（Bugbot Medium）。
             var durationRaw = GetJsonString(root, "duration", "video_duration");
-            if (long.TryParse(durationRaw, out var durMs) && durMs > 0)
-                card.DurationSec = (int)Math.Round(durMs / 1000.0);
+            if (long.TryParse(durationRaw, out var durVal) && durVal > 0)
+                card.DurationSec = durVal >= 1000
+                    ? (int)Math.Round(durVal / 1000.0)  // 毫秒 → 秒
+                    : (int)durVal;                       // 已是秒
 
             // author 可能是昵称字符串，也可能是被透传成字符串的嵌套对象
             var authorEl = ResolveMaybeNestedJson(root, "author");
