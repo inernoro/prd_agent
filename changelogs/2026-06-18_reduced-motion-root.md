@@ -1,1 +1,0 @@
-| fix | prd-admin | reduced-motion 治本:shouldReduceEffects 纳入 prefers-reduced-motion,使其与性能模式一样由 themeApplier 把 --glass-bg 整体切实底(卡片/弹窗/所有玻璃面统一退实底)并打 data-perf-mode,根除 reduced-motion 下半透表面叠在 aurora 上失焦的整类问题 |

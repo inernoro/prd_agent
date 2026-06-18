@@ -1,1 +1,0 @@
-| fix | prd-admin | 修复 prefers-reduced-motion 下弹窗失焦:reduced-motion 同样被 * { backdrop-filter:none } 清掉模糊,但 glassReduced 原只看性能模式。Dialog 遮罩判定纳入 matchMedia('prefers-reduced-motion'),并新增 reduced-motion 媒体查询把暗色弹窗面板恢复近实底 |
