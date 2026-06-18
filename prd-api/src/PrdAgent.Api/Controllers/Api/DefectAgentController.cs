@@ -29,6 +29,9 @@ public class DefectAgentController : ControllerBase
 {
     public const string AgentFixScope = "defect-agent:use";
 
+    internal const int AutomationMaxDiffLines = 200;
+    internal const int AutomationMaxMinutesPerDefect = 10;
+
     private const string AppKey = "defect-agent";
     private const string DefectResolveSkillName = "ai-defect-resolve";
     private const string DefectResolveSkillMinVersion = "1.3.0";
@@ -2663,6 +2666,7 @@ public class DefectAgentController : ControllerBase
                 storeName = DefectAcceptanceStoreName,
                 note = "正式发布后才运行视觉验收。验收技能归档时复制 acceptance.config.json 到临时目录，并把 report.storeName 改为“缺陷修复验收报告”。"
             },
+            policy = BuildAutomationPolicyPayload(),
             agentLaunch = BuildAutomationAgentLaunchPayload(projectId, teamId, status),
         };
     }
@@ -3432,6 +3436,57 @@ public class DefectAgentController : ControllerBase
             key.LastUsedAt,
             key.TotalRequests,
         };
+
+    private static object BuildAutomationPolicyPayload()
+        => new
+        {
+            batch = new
+            {
+                mode = "single-defect",
+                fetchNextAfter = "commit-info-and-fix-status",
+                skipTerminalItemsInSameRun = true,
+                heavyDefectDefaultAction = "fail-current-and-stop-for-human",
+            },
+            lightweight = new
+            {
+                maxDiffLines = AutomationMaxDiffLines,
+                maxMinutesPerDefect = AutomationMaxMinutesPerDefect,
+                requiredCriteria = BuildAutomationLightweightCriteria(),
+                forbiddenScopes = new[]
+                {
+                    "破坏性删除",
+                    "数据库迁移",
+                    "权限模型重写",
+                    "跨服务协议改造",
+                    "无法自测的用户关键路径",
+                },
+            },
+            callback = new
+            {
+                commitInfoRequired = true,
+                commitShaPreferred = "full-sha",
+                shortShaAccepted = true,
+                updateCenterRelation = "defect_resolution_traces",
+            },
+            publishAcceptance = new
+            {
+                runOnlyAfterPublish = true,
+                pendingEndpoint = "/api/defect-agent/agent/published-pending",
+                reportEndpoint = "/api/defect-agent/agent/resolution-traces/{traceId}/validation-report",
+                storeName = DefectAcceptanceStoreName,
+                notifyReporterAfterValidation = true,
+            },
+        };
+
+    internal static IReadOnlyList<string> BuildAutomationLightweightCriteria()
+        =>
+        [
+            $"预计改动不超过 {AutomationMaxDiffLines} 行",
+            $"单个缺陷预计 {AutomationMaxMinutesPerDefect} 分钟内能定位并完成主要修复",
+            "根因清晰，行为可验证",
+            "不涉及破坏性删除、数据库迁移、权限模型重写、跨服务协议改造",
+            "能跑通本地测试、集成测试、CDS 预览或浏览器验收中的至少一条",
+        ];
 
     internal static IReadOnlyCollection<string> BuildRunExcludedDefectIds(DefectAutomationRun? run)
     {

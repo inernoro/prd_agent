@@ -104,6 +104,17 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void BuildAutomationLightweightCriteria_ExposesIssueAutofixThresholds()
+    {
+        var criteria = DefectAgentController.BuildAutomationLightweightCriteria();
+
+        Assert.Contains(criteria, x => x.Contains("200 行", StringComparison.Ordinal));
+        Assert.Contains(criteria, x => x.Contains("10 分钟", StringComparison.Ordinal));
+        Assert.Contains(criteria, x => x.Contains("数据库迁移", StringComparison.Ordinal));
+        Assert.Contains(criteria, x => x.Contains("浏览器验收", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void MergeAutomationCommitStructuredData_WritesCommitInfoKeys()
     {
         var structured = DefectAgentController.MergeAutomationCommitStructuredData(
