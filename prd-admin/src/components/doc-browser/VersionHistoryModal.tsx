@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { History, RotateCcw, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -63,8 +63,11 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
   const [detailLoading, setDetailLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
+  const listFetchId = useRef(0);
   const loadList = useCallback(async () => {
+    const fid = ++listFetchId.current; // 防过期响应：切换 entry 后慢响应回来不得覆盖当前列表（Bugbot）
     const res = await api.list(entryId, 1, 100);
+    if (fid !== listFetchId.current) return;
     if (res.success && res.data) {
       setVersions(res.data.items);
       if (res.data.items.length > 0) setSelectedId(res.data.items[0].id);

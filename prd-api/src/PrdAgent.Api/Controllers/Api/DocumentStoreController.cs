@@ -1064,19 +1064,19 @@ public class DocumentStoreController : ControllerBase
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            if (doc != null)
-            {
-                oldContent = doc.RawContent;
-                // 重新解析并保存
-                var parsed = await _documentService.ParseAsync(content);
-                parsed.Id = doc.Id;
-                parsed.Title = doc.Title;
-                await _documentService.SaveAsync(parsed);
-            }
+            oldContent = doc?.RawContent;
+            // 即便 DocumentId 指向的 ParsedPrd 行丢失，也以同 id upsert 落库正文，
+            // 否则只更新元数据 + 版本、正文没写 → 重载后 GetEntryContent 空白（Bugbot High）。
+            var parsed = await _documentService.ParseAsync(content);
+            parsed.Id = entry.DocumentId;
+            parsed.Title = doc?.Title ?? entry.Title;
+            await _documentService.SaveAsync(parsed);
         }
         else
         {
-            // 无关联文档时创建新的 ParsedPrd
+            // 无关联文档时创建新的 ParsedPrd；无 DocumentId 的短文档 ContentIndex 即完整正文，
+            // 也快照成改动前基线，与 AI 再加工路径一致，保证可撤销（Bugbot）。
+            oldContent = entry.ContentIndex;
             var parsed = await _documentService.ParseAsync(content);
             parsed.Title = entry.Title;
             await _documentService.SaveAsync(parsed);
