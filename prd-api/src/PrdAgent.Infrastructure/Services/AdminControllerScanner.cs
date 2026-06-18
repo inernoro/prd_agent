@@ -37,6 +37,8 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         // 项目简报匿名分享页（token 即凭证，Controller 端点 [AllowAnonymous] + token 查库校验；
         // 不豁免会被本中间件在认证前拦成 401「未授权」）
         "/api/pm/briefings/shared/",
+        // 营销问策报告匿名分享页（同上：token 即凭证，ViewSharedConsult [AllowAnonymous] + 查库校验）
+        "/api/product/consult/shared/",
         // 知识库（document-store）的 stores/entries 业务路由：普通用户功能（私人知识库/项目知识库/产品知识库），
         // 每个端点都有业务层鉴权（LoadWritable/ReadableStoreAsync、OwnerId 过滤、CanRead/CanWriteStoreAsync），
         // 不应再叠加 document-store.read/write 管理权限位 —— 否则普通用户上传/编辑被中间件拦成 403「无权限」

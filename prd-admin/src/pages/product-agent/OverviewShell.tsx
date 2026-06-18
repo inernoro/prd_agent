@@ -7,7 +7,6 @@
  * 数据按可访问范围（admin 看全部），后端 /api/product/overview/*。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
 import {
@@ -20,23 +19,16 @@ import {
   BookOpen,
   Share2,
   Settings,
-  GitBranch,
   Upload,
   ArrowLeft,
   Search,
-  Plus,
-  Pencil,
-  Trash2,
-  X,
 } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
-import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { toast } from '@/lib/toast';
-import { systemDialog } from '@/lib/systemDialog';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { ProductsSection } from './ProductsSection';
-import { SettingsSection } from './SettingsSection';
-import { WorkflowTemplateSection } from './WorkflowTemplateSection';
+import { CustomerModule } from './CustomerModule';
+import { ProductSettingsHub } from './ProductSettingsHub';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
@@ -54,15 +46,11 @@ import {
   type OverviewReleaseRow,
   type OverviewInitiationRow,
   getOverviewDefects,
-  listCustomers,
-  createCustomer,
-  updateCustomer,
-  deleteCustomer,
   type OverviewStats,
   type OverviewRequirementRow,
   type OverviewDefectRow,
 } from '@/services/real/productAgent';
-import type { Customer, Product } from './types';
+import type { Product } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectSeverityTierLabel, defectStatusLabel, readDefectPriorityGrade, readDefectSeverityLevel } from './types';
 import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
@@ -72,9 +60,9 @@ import { formatInitiationReviewScore } from './initiationWorkflowUtils';
 import { formatVersionBasicBool, formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { filterByTracked } from './productRecordTrackStorage';
 
-type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'workflow' | 'settings';
+type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
-const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'workflow', 'settings']);
+const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'settings']);
 
 function parseOverviewSection(value: string | null): Section {
   if (value && SECTION_KEYS.has(value as Section)) return value as Section;
@@ -127,8 +115,7 @@ export function OverviewShell() {
     { key: 'customers', label: '客户', icon: Users },
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
-    { key: 'workflow', label: '应用', icon: GitBranch, hidden: !isAdmin, dividerBefore: true },
-    { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin },
+    { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin, dividerBefore: true },
   ];
 
   return (
@@ -184,8 +171,8 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'customers' && (
-        <SectionShell title="客户" desc="产品管理全局客户库，需求可关联客户（增/改任意使用者，删除限管理员）">
-          <CustomersSection isAdmin={isAdmin} />
+        <SectionShell title="客户" desc="客户管理（列表 + 详情：基本信息 / 动态跟进）与营销问策两个子模块；需求可关联客户">
+          <CustomerModule isAdmin={isAdmin} />
         </SectionShell>
       )}
       {active === 'knowledge' && (
@@ -204,16 +191,7 @@ export function OverviewShell() {
           </div>
         </div>
       )}
-      {active === 'workflow' && (
-        <SectionShell title="应用配置" desc="需求、功能、缺陷的状态及流转规则（全局默认，可按产品覆盖）；产品管理员一览见同名标签">
-          <WorkflowTemplateSection />
-        </SectionShell>
-      )}
-      {active === 'settings' && (
-        <SectionShell title="全局设置" desc="表单/描述模板、产品类型、需求类型与应用管理员（历史导入权限）">
-          <SettingsSection />
-        </SectionShell>
-      )}
+      {active === 'settings' && <ProductSettingsHub />}
     </ProductAgentLayout>
   );
 }
@@ -972,160 +950,6 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
 function KnowledgeSection() {
   // 跨产品聚合知识列表（与单产品知识列表同构，多「所属产品」列；治理操作落到具体产品库）
   return <OverviewKnowledgeList />;
-}
-
-// ════════════════════════ 全局客户 ════════════════════════
-
-function CustomersSection({ isAdmin }: { isAdmin: boolean }) {
-  const [rows, setRows] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
-  const [editing, setEditing] = useState<Customer | 'new' | null>(null);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const res = await listCustomers({ keyword: keyword.trim() || undefined });
-    if (res.success) setRows(res.data.items);
-    setLoading(false);
-  }, [keyword]);
-  useEffect(() => { void reload(); }, [reload]);
-
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
-    filename: 'customers.csv',
-    headers: ['名称', '公司', '联系方式', '标签'],
-    mapRow: (c) => [c.name, c.company ?? '', c.contact ?? '', (c.tags ?? []).join(' / ')],
-  });
-
-  const onDelete = async (c: Customer) => {
-    const ok = await systemDialog.confirm({ title: '删除客户', message: `删除客户「${c.name}」？已关联的需求不受影响（仅解除显示）。`, tone: 'danger', confirmText: '删除', cancelText: '取消' });
-    if (!ok) return;
-    const res = await deleteCustomer(c.id);
-    if (res.success) { toast.success('已删除'); void reload(); }
-    else toast.error('删除失败', res.error?.message);
-  };
-
-  return (
-    <div>
-      <TableToolbar
-        keyword={keyword}
-        setKeyword={setKeyword}
-        extra={
-          <button onClick={() => setEditing('new')} className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25">
-            <Plus size={13} /> 新增客户
-          </button>
-        }
-      />
-      {isAdmin ? (
-        <SelectionActionBar mode="entity" entityType="customer" selection={selection} onDone={reload} onExport={exportSelected} />
-      ) : (
-        <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      )}
-      {loading ? (
-        <MapSectionLoader text="正在加载客户…" />
-      ) : rows.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">还没有客户。点击右上角「新增客户」录入，需求里即可关联。</div>
-      ) : (
-        <OverviewDataTable
-          tableKey="customers"
-          rows={rows}
-          selection={tableSelection}
-          columns={[
-            { key: 'name', header: '名称', defaultWidth: 160, render: (c) => <TruncateCell text={c.name} className="text-white/90" /> },
-            { key: 'company', header: '公司', defaultWidth: 160, render: (c) => <TruncateCell text={c.company || '-'} maxChars={20} className="text-white/55 text-xs" /> },
-            { key: 'contact', header: '联系方式', defaultWidth: 140, render: (c) => <TruncateCell text={c.contact || '-'} maxChars={18} className="text-white/55 text-xs" /> },
-            { key: 'tags', header: '标签', defaultWidth: 160, render: (c) => <TruncateCell text={(c.tags ?? []).join(' / ') || '-'} maxChars={24} className="text-white/45 text-xs" /> },
-            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (c) => <span className="text-white/35 text-xs">{relTime(c.updatedAt)}</span> },
-            {
-              key: 'actions',
-              header: '操作',
-              defaultWidth: 88,
-              resizable: false,
-              className: 'w-24',
-              render: (c) => (
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => setEditing(c)} className="text-white/40 hover:text-cyan-300" title="编辑"><Pencil size={13} /></button>
-                  {isAdmin && <button onClick={() => onDelete(c)} className="text-white/40 hover:text-red-300" title="删除"><Trash2 size={13} /></button>}
-                </div>
-              ),
-            },
-          ]}
-        />
-      )}
-      {editing && (
-        <CustomerEditDialog
-          customer={editing === 'new' ? null : editing}
-          onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); void reload(); }}
-        />
-      )}
-    </div>
-  );
-}
-
-function CustomerEditDialog({ customer, onClose, onSaved }: { customer: Customer | null; onClose: () => void; onSaved: () => void }) {
-  const [name, setName] = useState(customer?.name ?? '');
-  const [company, setCompany] = useState(customer?.company ?? '');
-  const [contact, setContact] = useState(customer?.contact ?? '');
-  const [description, setDescription] = useState(customer?.description ?? '');
-  const [tagsText, setTagsText] = useState((customer?.tags ?? []).join(', '));
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    if (!name.trim()) return;
-    setSaving(true);
-    const body = {
-      name: name.trim(),
-      company: company.trim() || null,
-      contact: contact.trim() || null,
-      description: description.trim() || null,
-      tags: tagsText.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
-    };
-    const res = customer ? await updateCustomer(customer.id, body) : await createCustomer(body);
-    setSaving(false);
-    if (res.success) { toast.success(customer ? '已保存' : '已创建'); onSaved(); }
-    else toast.error('保存失败', res.error?.message);
-  };
-
-  const inputCls = 'bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25';
-  return createPortal(
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="rounded-xl border border-white/10 bg-[#16181d] flex flex-col" style={{ width: 460, maxWidth: '92vw' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
-          <h2 className="text-sm font-semibold text-white">{customer ? '编辑客户' : '新增客户'}</h2>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
-        </div>
-        <div className="p-4 flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-white/55">名称 *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="客户名称" className={inputCls} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-white/55">公司</label>
-            <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="所属公司 / 组织" className={inputCls} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-white/55">联系方式</label>
-            <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="电话 / 邮箱 / 微信" className={inputCls} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-white/55">标签</label>
-            <input value={tagsText} onChange={(e) => setTagsText(e.target.value)} placeholder="逗号分隔，如：核心, 金融, 华南" className={inputCls} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-white/55">备注</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 resize-none placeholder:text-white/25" placeholder="客户描述 / 备注" />
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">取消</button>
-          <button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40">
-            {saving ? <MapSpinner size={14} /> : null} 保存
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
 }
 
 // ── 工具 ──

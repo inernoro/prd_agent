@@ -57,6 +57,30 @@ public class DefectFixReportItem
     /// <summary>修复建议</summary>
     public string? FixSuggestion { get; set; }
 
+    /// <summary>修复 commit sha</summary>
+    public string? CommitSha { get; set; }
+
+    /// <summary>短 commit sha</summary>
+    public string? ShortSha { get; set; }
+
+    /// <summary>commit message 快照</summary>
+    public string? CommitMessage { get; set; }
+
+    /// <summary>commit 详情链接</summary>
+    public string? CommitUrl { get; set; }
+
+    /// <summary>修复所在仓库</summary>
+    public string? Repository { get; set; }
+
+    /// <summary>修复所在分支</summary>
+    public string? Branch { get; set; }
+
+    /// <summary>CDS 预览地址</summary>
+    public string? PreviewUrl { get; set; }
+
+    /// <summary>视觉验收报告链接</summary>
+    public string? VisualReportUrl { get; set; }
+
     /// <summary>验收状态：pending | accepted | rejected</summary>
     public string AcceptStatus { get; set; } = DefectFixAcceptStatus.Pending;
 

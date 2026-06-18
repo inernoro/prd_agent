@@ -97,6 +97,8 @@
   > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
 - [知识库智能体架构设计](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
   > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
+- [MAP MCP 连接器设计](design.map-mcp-connector) `design.map-mcp-connector`
+  > 把 AgentOpenEndpoint 登记表翻译成 MCP 工具，远程 /mcp 端点（Streamable HTTP）复用 sk-ak + scope，可被 Claude/Codex 当连接器接入
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 - [团队动态设计](design.team-activity) `design.team-activity`
@@ -113,6 +115,9 @@
 
 - [工作流引擎设计方案](design.workflow-engine) `design.workflow-engine`
   > 可视化工作流引擎的整体架构设计
+
+- [工作流自动配置设计](design.workflow-auto-config) `design.workflow-auto-config`
+  > AI 生成校验自愈闭环 + 降低工作流配置门槛（让用户只描述、自动配）
 
 - [工作流引擎 v2 流程控制舱与 SSE 实时推送设计](design.workflow-control-flow-sse) `design.workflow-control-flow-sse`
   > 工作流引擎 v2 的控制流与 SSE 实时推送
@@ -385,6 +390,8 @@
 
 - [海鲜市场（配置市场）使用教程](guide.marketplace) `guide.marketplace`
   > 配置浏览、筛选、Fork 与发布的完整流程
+- [MAP MCP 连接器接入指南](guide.mcp-connector) `guide.mcp-connector`
+  > 把 MAP 当 MCP 连接器接入 Claude/Codex：/api/mcp 端点 + sk-ak + 5 内置工具 + 共享其他 Agent + AI 自助签发自测
 
 - [视觉验收技能跨仓库使用教程](guide.visual-acceptance-skill) `guide.visual-acceptance-skill`
   > 用个人 AgentApiKey + 海鲜市场安装、更新 `create-visual-test-to-kb`，避免借用个人 accesskey
@@ -710,6 +717,8 @@
   > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
   > Phase 1 MVP 仅交付执行层；治理层（干系人/NPSS/奖金/盘点）待 Phase 2-3；Leader 职级强校验待 User 加字段
+- [快捷指令 Agent · 债务台账](debt.shortcuts-agent) `debt.shortcuts-agent`
+  > 3 条 open：一键安装依赖管理员配 iCloud 模板/macOS 签名（前端无法替代）、Agent 绑定仍是 Phase2 占位、签名直出 409 会露原始 JSON
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`
   > 4 条 open：OpenRouter CDN 7 天过期、混合渲染 ffmpeg normalize、直出心跳文案分级、成本预估 tooltip
 - [知识库划词评论（批注栏/内联 + 就地输入 + 回读闭环）· 债务台账](debt.kb-inline-comment) `debt.kb-inline-comment`
@@ -847,6 +856,9 @@
 - [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
 
+- [周报 2026-W24 (06-08 ~ 06-14)](report.2026-W24) `report.2026-W24`
+  > 2026 年第 24 周工作总结（566 commits / 56 PRs，6 周以来最忙的一周：PM Agent Phase 2 全屏改版+AI 工作台+跨项目报表+P3 里程碑详情+AI 项目简报、Product Agent 立项 v1+TAPD 数字编号统一、MD 转 PPT 锚定 deck 模式+流式逐页大纲+模型池直选、知识库双链 v2+反向链接+Obsidian 风宇宙图+划词 AI 局部编辑、CDS 资源工作台协议+数据库工作台闭环+SSH 发布作战台+Agent 请求观测台、跨项目密钥隔离穿透事故复盘+平台密钥自检自愈、三个新智能体上线 TAPD 缺陷提报/商品溯源/识途、团队动态+行为洞察、网页托管团队空间 P0~P2、教程系统 v3 我已学会退出口+飞回动画半速+轻微提醒更新子类）
+
 - [周报 2026-W23 (06-01 ~ 06-07)](report.2026-W23) `report.2026-W23`
   > 2026 年第 23 周工作总结（215 commits / 18 PRs，PM Agent Phase 1 完整体系、智能体宇宙能力契约 + 统一调用信封、多页面教程系统从悬浮图标迁移到页头常驻 pill、CDS 基础设施单一 SSOT + 一键部署闭环、知识库列表两次反复改造、网页托管 5 个边界 bug 收口）
 
@@ -959,6 +971,7 @@
 | 2026-05-07 | 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
 | 2026-05-07 | 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
 | 2026-05-07 | 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |
+| 2026-06-14 | 新增 | `report.2026-W24` | 周报 2026-W24 (06-08 ~ 06-14) |
 | 2026-06-07 | 新增 | `report.2026-W23` | 周报 2026-W23 (06-01 ~ 06-07) |
 | 2026-06-07 | 新增 | `report.2026-W22` | 周报 2026-W22 (05-25 ~ 05-31) |
 | 2026-05-24 | 新增 | `report.2026-W21` | 周报 2026-W21 (05-18 ~ 05-24) |

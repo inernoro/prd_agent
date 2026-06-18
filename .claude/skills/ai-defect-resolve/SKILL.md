@@ -1,188 +1,281 @@
 ---
 name: ai-defect-resolve
-version: 1.1.0
-description: AI 辅助缺陷修复技能。通过缺陷分享链接获取缺陷数据，按标准工作流（列清单→评论→修复→验收）自动化解决缺陷。强调安全协作：破坏性操作需人类确认、全程通过评论沟通、标记完成时提供验收方式。触发词："修复缺陷"、"ai fix defects"、"解决缺陷"、"辅助修复"。
+description: AI 辅助缺陷修复技能。用于缺陷自动化日常任务：通过 MAP/PrdAgent domain 和长期 AgentApiKey 拉取下一条缺陷，按单个缺陷逐个评论、轻量修复、提交 commit、回写提交信息，并在必要时兼容缺陷分享 agentLaunch。触发词："修复缺陷"、"解决缺陷"、"缺陷自动修复"、"ai-defect-resolve"。
 ---
 
 # AI 辅助缺陷修复
 
-通过缺陷分享链接，按标准工作流自动化分析和修复缺陷。
+本技能的主目标是自动化闭环，不是让人在发布中心手动关联缺陷。
 
 ## 版本与优先级
 
-- 当前版本：`1.1.0`
-- 如果分享包里的 `skill.minVersion` 高于当前版本，停止执行并提示升级技能。
-- **项目内置优先**：当前仓库内置的 `.claude/skills/ai-defect-resolve/SKILL.md` 优先级最高；不得用托管技能、市场技能或官方下载兜底包覆盖本项目内置技能。
-- 技能来源优先级：`repo-builtin > user-installed > official-download > hosted-marketplace`。
+- 当前版本：`1.2.0`
+- 如果 `agentLaunch.skill.minVersion` 高于当前版本，停止执行并提示升级技能。
+- 项目内置优先：当前仓库内置的 `.claude/skills/ai-defect-resolve/SKILL.md` 优先级最高；不得用托管技能、市场技能或官方下载兜底包覆盖本项目内置技能。
 
-## 精简分享包输入
+## 主输入
 
-新版缺陷分享只需要三个核心参数：
+日常任务优先使用 `domain + K`：
 
-1. `domain`：MAP/PrdAgent 域名。
-2. `auth`：验证方式和 key。优先使用分享包或用户明确提供的 `Authorization: Bearer <临时 key>`；兼容明确提供的 `X-AI-Access-Key`。
-3. `scope`：覆盖哪些缺陷。优先使用 `scope.shareUrl` 读取；`defectIds` 可为空，表示按分享范围处理。
+1. `domain`：缺陷系统访问域名，例如 `https://map.example.com`。
+2. `K`：长期 AgentApiKey，推荐名称为“缺陷处理 Agent 授权”。
+3. `scope`：K 必须包含 `defect-agent:use`。
 
-如果用户提供的是 `agentLaunch` JSON，直接按其中的 `domain/auth/scope` 执行，不要要求用户再粘贴缺陷正文。
+缺少 domain 或 K 时停止，不要猜测环境变量、历史密钥或默认主站。
 
-如果 `auth` 没有携带明确可用的 key，停止读取或修复，不要猜测本机环境变量、历史 key 或默认主站。下一步只能二选一：
+兼容输入：
 
-1. 询问用户：“你的 MAP/PrdAgent 主站是什么？”
-2. 如果已有分享链接，提示用户打开该链接，在分享页一键创建临时密钥并复制新的 Agent 启动参数。
+- 如果用户提供 `agentLaunch` 且 `scope.type == daily-next`，按其中的 `domain/auth/scope.nextUrl` 执行。
+- 如果用户提供旧分享包且仅有 `scope.shareUrl`，走“分享兼容流程”，但不要把它当成日常任务主路径。
 
-## 触发词
+## 自动化主流程
 
-- "修复缺陷"、"解决缺陷"、"辅助修复"
-- "ai fix defects"、"ai resolve"
-- 用户提供缺陷分享的提示词内容时
+每一轮只处理一个缺陷：
 
-## 认证配置
+1. 读取连接器协议。
+2. 创建运行记录，拿到 `runId`。
+3. 带 `runId` 拉取下一条缺陷。
+4. 发表评论说明计划。
+5. 判断是否轻量修复。
+6. 轻量修复则改代码、验证、commit；非轻量则评论阻塞原因并写入 run 失败项。
+7. 回写 commit 信息到缺陷系统。
+8. 评论验收方式。
+9. 标记缺陷已修复。
+10. 再拉下一条，重复以上步骤。
 
-所有写接口请求必须使用分享包或用户明确提供的认证 Header。推荐格式：
+### 1. 读取连接器协议
 
-```
-Authorization: Bearer <临时 key>
-```
-
-兼容格式：
-
-```
-X-AI-Access-Key: <明确提供的 key>
-```
-
-> 不要把本机环境变量当作默认认证来源。缺少 key 时，先询问主站或让用户打开分享链接一键签发。
-
-## 标准工作流（6 阶段）
-
-### 阶段 1：获取缺陷数据
-
-```
-GET {viewUrl}
+```http
+GET {domain}/api/defect-agent/agent/connector
+Authorization: Bearer {K}
 ```
 
-读取响应中的缺陷列表、附件截图、AI 评分、API 端点说明。
+响应会返回：
 
-### 阶段 2：制定修复计划（必须）
+- 当前连接器类型：`map-defect-agent`
+- 当前 K 的 `keyId/name/expiresAt`，如果请求来自 AgentApiKey。
+- 长期授权创建建议：`/api/agent-api-keys`，名称“缺陷处理 Agent 授权”，scope `defect-agent:use`。
+- 自动化端点清单。
 
-**在动手之前，必须先列出完整的修复清单**：
+后端不保存明文 K。没有可用 K 时，必须让用户通过 AgentApiKeys 创建并保存明文。
 
-1. 逐条分析每个缺陷
-2. 标记安全修复 vs 有风险的修复
-3. **有争议或破坏性的修改必须先和人类确认，不要自行决定**
+### 2. 创建运行记录
 
-输出格式示例：
-```markdown
-## 修复清单
-
-| # | 缺陷编号 | 标题 | 修复方案 | 风险等级 |
-|---|---------|------|---------|---------|
-| 1 | DEF-2026-0017 | 暂无可用生图模型 | 修复模型池查询逻辑 | 安全 |
-| 2 | DEF-2026-0039 | 缺陷追踪优化 | 重构状态流转 | ⚠️ 需确认 |
-```
-
-### 阶段 3：通过评论沟通（全程）
-
-```
-POST {viewUrl}/comments
+```http
+POST {domain}/api/defect-agent/agent/runs
+Authorization: Bearer {K}
 Content-Type: application/json
 
 {
-  "agentName": "你的名称",
-  "items": [
-    { "defectId": "...", "content": "评论内容（Markdown）" }
-  ]
+  "triggerType": "schedule",
+  "projectId": "可选",
+  "teamId": "可选",
+  "status": "submitted,assigned,processing"
 }
 ```
 
-**必须发表评论的时机**：
-- 开始修复前：发表修复计划
-- 遇到阻碍时：说明问题和需要人类确认的事项
-- 修复完成后：**详细说明验收方式**
+保存返回的 `data.run.id`，后续每个请求都带上 `runId`。运行记录用于恢复：
 
-### 阶段 4：提交分析报告（可选）
+- 当前处理到哪个缺陷
+- 单缺陷状态
+- commit 信息
+- 失败原因
+- 本轮成功/失败数量
 
+### 3. 拉取下一条缺陷
+
+```http
+GET {domain}/api/defect-agent/agent/next?runId={runId}
+Authorization: Bearer {K}
 ```
-POST {viewUrl}/report
+
+可选 query：
+
+- `projectId`
+- `teamId`
+- `status=submitted,assigned,processing`
+
+当响应 `data.defect == null` 时，本轮结束。
+
+### 4. 发表评论
+
+```http
+POST {domain}/api/defect-agent/agent/defects/{defectId}/comments
+Authorization: Bearer {K}
 Content-Type: application/json
 
 {
-  "agentName": "你的名称",
-  "items": [
-    {
-      "defectId": "...",
-      "confidenceScore": 85,
-      "analysis": "根因分析",
-      "fixSuggestion": "修复方案"
-    }
-  ]
+  "runId": "{runId}",
+  "agentName": "Codex",
+  "content": "修复计划..."
 }
 ```
 
-### 阶段 5：执行修复
+评论至少出现三次：
 
-根据计划修改代码。注意：
-- 遵循代码库的现有规范和架构模式
-- 不做超出缺陷范围的修改
+- 开始修复前：说明理解、计划、风险。
+- 遇到阻塞时：说明阻塞点和需要人类确认的事项。
+- 修复完成后：说明 commit、预览地址、验收步骤。
 
-### 阶段 6：标记修复完成
+### 5. 轻量修复判定
 
-**先在评论中说明验收方式，然后调用**：
+参考 `issues-autofix` 的轻量标准：
 
-```
-POST {viewUrl}/fix-status
+- 预计改动不超过 200 行。
+- 单个缺陷预计 10 分钟内能定位并完成主要修复。
+- 根因清晰，行为可验证。
+- 不涉及破坏性删除、数据库迁移、权限模型重写、跨服务协议改造。
+- 能跑通本地测试、集成测试、CDS 预览或浏览器验收中的至少一条。
+
+不满足轻量标准时：
+
+1. 不提交半成品。
+2. 评论说明原因、风险、建议拆分方式。
+3. 停止当前缺陷，等待用户确认或后续任务接管。
+
+### 6. 修复与提交
+
+修复代码后按仓库规则执行校验并提交 commit。commit message 使用中文。
+
+提交完成后必须取得：
+
+- `commitSha`
+- `shortSha`
+- `commitMessage`
+- `repository`
+- `branch`
+- `commitUrl`，如果可用
+- `previewUrl`，如果已部署预览
+- `visualReportUrl`，如果已完成视觉验收
+
+### 7. 回写提交信息
+
+```http
+POST {domain}/api/defect-agent/agent/defects/{defectId}/commit-info
+Authorization: Bearer {K}
 Content-Type: application/json
 
 {
-  "items": [
-    {
-      "defectId": "...",
-      "agentName": "你的名称",
-      "resolution": "修复说明（含验收方式）"
-    }
-  ]
+  "runId": "{runId}",
+  "agentName": "Codex",
+  "commitSha": "完整 commit id",
+  "shortSha": "短 commit id",
+  "commitMessage": "中文提交标题",
+  "repository": "owner/repo 或仓库名",
+  "branch": "当前分支",
+  "commitUrl": "commit 地址",
+  "previewUrl": "预览地址",
+  "visualReportUrl": "视觉验收报告地址",
+  "resolution": "修复说明"
 }
 ```
 
-> 会自动标记为「AI 自动解决」并通知缺陷提交者。
+该接口会同时写入：
 
-## 安全协作规则
+- 缺陷结构化字段 `提交信息`
+- 缺陷结构化字段 `修复提交`
+- 更新中心关联用的 `defect_resolution_traces`
 
-1. **先列清单再动手** — 修复前必须列出所有修复方案
-2. **有争议的找人确认** — 以下情况必须暂停并询问人类：
-   - 删除代码或文件
-   - 修改 API 接口签名
-   - 架构层面的变更
-   - 影响其他模块的修改
-   - 不确定根因的缺陷
-3. **全程发评论** — 通过评论接口保持信息透明
-4. **说明验收方式** — 标记完成时必须告诉提交者如何验证
+因此发布中心不需要人工点“关联缺陷”。它只需要读取 commit id 关联结果。
 
-## 评论模板
+### 8. 标记修复
 
-### 修复计划评论
-```markdown
-## 🔧 修复计划
+```http
+POST {domain}/api/defect-agent/agent/defects/{defectId}/fix-status
+Authorization: Bearer {K}
+Content-Type: application/json
 
-我已分析完所有缺陷，以下是修复方案：
-
-| 缺陷 | 方案 | 风险 |
-|------|------|------|
-| DEF-xxx | ... | 安全 |
-
-如有疑问请回复，否则我将按此计划执行。
+{
+  "runId": "{runId}",
+  "agentName": "Codex",
+  "resolution": "修复说明和验收方式"
+}
 ```
 
-### 修复完成评论
-```markdown
-## ✅ 修复完成
+正式发布后的用户通知不要在这里提前发送；发布到正式环境并完成视觉验收后，再由发布验收链路通知提交人。
 
-### 修复内容
-- DEF-xxx: 修复了 xxx
+### 9. 记录失败
 
-### 验收方式
-1. 打开 xxx 页面
-2. 执行 xxx 操作
-3. 预期结果：xxx
+无法轻量修复、验证失败、提交失败或回写失败时，调用：
 
-如验收不通过，请重新打开缺陷并说明问题。
+```http
+POST {domain}/api/defect-agent/agent/runs/{runId}/fail
+Authorization: Bearer {K}
+Content-Type: application/json
+
+{
+  "defectId": "{defectId}",
+  "failurePhase": "analysis|fix|test|commit|callback",
+  "failureReason": "失败原因和下一步建议"
+}
 ```
+
+写入失败后再决定是否继续下一条。重量级缺陷默认停止，让用户确认。
+
+## 正式发布后的验收通知
+
+修复 commit 被正式发布后，更新中心会把对应 `defect_resolution_traces` 标记为 `published` 且 `notifyStatus=pending`。这时再做验收和通知。
+
+### 1. 拉取待验收通知项
+
+```http
+GET {domain}/api/defect-agent/agent/published-pending?limit=20
+Authorization: Bearer {K}
+```
+
+对每个 item：
+
+1. 使用 `create-visual-test-to-kb` 跑正式环境验收。目标优先取 `item.acceptance.target`，commit 取 `item.acceptance.commitSha`，预览地址取 `item.acceptance.previewUrl`。
+2. 复制 `.claude/skills/create-visual-test-to-kb/acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本里把 `report.storeName` 改成“缺陷修复验收报告”。
+3. 用验收技能归档报告；如果知识库不存在，归档脚本按 find-or-create 逻辑创建。
+4. 归档后必须用验收技能的 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
+5. 回写验收报告并通知提交人。验收失败时不要发送“已修复”，要发送“需要继续改进”。
+
+建议归档参数：
+
+- `--target`：`item.acceptance.target`
+- `--module`：`缺陷管理`
+- `--feature`：缺陷标题或缺陷编号
+- `--type`：`修复`
+- `--verdict`：`pass`、`conditional` 或 `fail`
+
+### 2. 回写报告并通知提交人
+
+```http
+POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report
+Authorization: Bearer {K}
+Content-Type: application/json
+
+{
+  "visualReportId": "视觉验收报告 ID",
+  "visualReportUrl": "视觉验收报告地址",
+  "knowledgeBaseName": "缺陷修复验收报告",
+  "knowledgeBaseDocId": "知识库文档 ID",
+  "knowledgeBaseUrl": "知识库文档地址",
+  "verdict": "pass",
+  "message": "你的问题已修复，请查看验收报告。"
+}
+```
+
+该接口会更新 trace 的验收状态、验收报告字段和通知状态，并给缺陷提交人发送通知。正式发布前不要调用。
+
+`knowledgeBaseUrl` 必须填写为验收报告知识库可打开地址；缺少该地址时后端会拒绝发送通知，避免用户收到无法查收的消息。
+
+## 分享兼容流程
+
+旧分享包仍可用：
+
+1. `GET {domain}{scope.shareUrl}` 读取缺陷。
+2. `POST {scope.shareUrl}/comments` 评论计划。
+3. `POST {scope.shareUrl}/report` 提交分析和 commit 信息。
+4. `POST {scope.shareUrl}/fix-status` 标记修复。
+
+优先使用 `agentLaunch` 提供的端点，不要自行拼错路径。
+
+## 安全规则
+
+1. 不泄露 K：不要把密钥写入日志、commit、评论、报告或截图。
+2. 一次只修一个缺陷：提交并回写 commit 后再继续下一条。
+3. 不确定就停：破坏性、重量级、跨系统变更必须评论并等待确认。
+4. 不跳过回写：只 commit 不回写 `commit-info` 不算闭环完成。
+5. 不提前通知用户：正式发布前只在缺陷内更新进度，不给提交人发“已修复”通知。

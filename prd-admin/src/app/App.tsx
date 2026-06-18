@@ -5,6 +5,7 @@ import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
 import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
 import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
+import { SkillShareDialog } from '@/components/marketplace/SkillShareDialog';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
@@ -387,6 +388,8 @@ export default function App() {
           <SpotlightOverlay />
         </>
       )}
+      {/* 技能分享弹窗（全局单例，渲染走 createPortal；无目标时返回 null） */}
+      <SkillShareDialog />
     </AgentSwitcherProvider>
   );
 }

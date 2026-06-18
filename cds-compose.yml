@@ -141,8 +141,8 @@ services:
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/"
-      # dev 模式 Vite 秒起；static 冷构建见 x-cds-deploy-modes.admin.static（readiness 1200s）
-      cds.readiness-timeout: "300"
+      # dev 模式 Vite 秒起；static 冷构建约 5 分钟，serve 启动还会有额外延迟。
+      cds.readiness-timeout: "900"
       cds.readiness-interval: "3"
 
   # ── Infrastructure Services (无相对路径 mount) ──
