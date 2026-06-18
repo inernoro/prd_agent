@@ -2784,40 +2784,40 @@ public class DocumentStoreController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频 / 图片生成字幕"));
 
         // 去重：同一 entry 已有 queued 或 running 的 subtitle run → 直接返回。
-        // 定向消费：只复用【本实例（或历史无主）】的在途 run。共享 Mongo 下，若复用别的分支/主干
-        // 拥有的 queued run，本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
-        // 故 owner 不匹配时不复用，落到下面新建一条归属本实例的 run（Codex P2）。
+        // 定向消费：只复用【本实例】的在途 run。共享 Mongo 下复用别的分支/主干拥有的 run，
+        // 本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
         var selfInstanceId = InstanceIdentity.Get(_config);
-        var existingFilter = Builders<DocumentStoreAgentRun>.Filter.And(
-            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
-            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
-            Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
-            Builders<DocumentStoreAgentRun>.Filter.Or(
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
-        var existing = await _db.DocumentStoreAgentRuns.Find(existingFilter).FirstOrDefaultAsync();
-        if (existing != null)
-        {
-            // 复用到历史无主（OwnerInstanceId 空）的 queued run 时，先把归属盖成本实例再返回：
-            // 否则该 run 仍是无主 queued，任意分支的 Worker（filter 都接受无主）都能抢走它，
-            // 可能由 main/别的分支处理，而非刚返回 runId 的本实例（Codex P2）。Running 不动——
-            // 已被某 Worker 领走在跑，客户端靠 SSE/轮询观测即可，观测不受 owner 限制。
-            if (existing.Status == DocumentStoreRunStatus.Queued
-                && string.IsNullOrEmpty(existing.OwnerInstanceId))
-            {
-                await _db.DocumentStoreAgentRuns.UpdateOneAsync(
-                    Builders<DocumentStoreAgentRun>.Filter.And(
-                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, existing.Id),
-                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
-                        Builders<DocumentStoreAgentRun>.Filter.Or(
-                            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
-                    Builders<DocumentStoreAgentRun>.Update.Set(r => r.OwnerInstanceId, selfInstanceId),
-                    cancellationToken: CancellationToken.None);
-            }
-            return Ok(ApiResponse<object>.Ok(new { runId = existing.Id, status = existing.Status, reused = true }));
-        }
+
+        // (1) 优先「原子认领」一个历史无主（OwnerInstanceId 空）的 queued run：把归属一次性钉给
+        // 本实例。用 FindOneAndUpdate 杜绝 TOCTOU——若先 Find 再 UpdateOne，期间别的实例
+        // 可能抢走它（owner/status 已变），UpdateOne ModifiedCount=0 却仍被当作复用返回，
+        // 调用方就拿到一个其实跑在别处的 run（Codex P2）。认领成功才返回。
+        var claimed = await _db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
+                Builders<DocumentStoreAgentRun>.Filter.Or(
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
+            Builders<DocumentStoreAgentRun>.Update.Set(r => r.OwnerInstanceId, selfInstanceId),
+            new FindOneAndUpdateOptions<DocumentStoreAgentRun> { ReturnDocument = ReturnDocument.After },
+            cancellationToken: CancellationToken.None);
+        if (claimed != null)
+            return Ok(ApiResponse<object>.Ok(new { runId = claimed.Id, status = claimed.Status, reused = true }));
+
+        // (2) 复用本实例已有的在途 run（queued/running，owner==self）——确属本实例，安全返回。
+        // 历史无主的 running 不复用（可能正被别的分支以旧代码处理，复用会让调用方观测到不一致），
+        // 落到下面新建一条归属本实例的 run。
+        var selfRun = await _db.DocumentStoreAgentRuns.Find(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
+        ).FirstOrDefaultAsync();
+        if (selfRun != null)
+            return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));
 
         var userId = GetUserId();
         var run = new DocumentStoreAgentRun
