@@ -1773,7 +1773,9 @@ export default function AppShell() {
         <main
           className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
           style={{
-            background: 'var(--bg-base)',
+            // 透明 → 让外层 .app-aurora 的彩色光晕透到内容区(否则不透明 base 会盖住 aurora,
+            // 半透卡片/玻璃只能折射到平底色)。aurora 自身以 var(--bg-base) 收底,floor 色不变。
+            background: 'transparent',
             paddingLeft: mainPadLeft,
             // 移动端留出顶部 header 和底部 tab 栏空间
             paddingTop: isMobile ? 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))' : undefined,
