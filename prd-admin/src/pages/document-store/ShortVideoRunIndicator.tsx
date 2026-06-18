@@ -18,9 +18,12 @@ import {
 export function ShortVideoRunIndicator({
   storeId,
   onOpenRun,
+  onRunCompleted,
 }: {
   storeId: string;
   onOpenRun: (run: ShortVideoRunRecord) => void;
+  /** 后台 run（抽屉关着/刷新后）跑完时回调，让页面重新拉取知识库条目，否则新入库的视频/文字不出现 */
+  onRunCompleted?: () => void;
 }) {
   const runsMap = useShortVideoRunStore((s) => s.runs);
   const patchRun = useShortVideoRunStore((s) => s.patchRun);
@@ -57,6 +60,9 @@ export function ShortVideoRunIndicator({
           if (res.success && res.data) {
             const run = res.data;
             const status = run.status === 'done' ? 'done' : run.status === 'failed' ? 'failed' : 'running';
+            // running → done 跃迁时回调页面 reload：抽屉关着/刷新后本 Host 是唯一轮询者，
+            // 不通知页面的话新入库的源视频/转写条目不会出现在知识库列表（Codex P2）。
+            const prevStatus = useShortVideoRunStore.getState().runs[id]?.status;
             // 同步 phase（阶段推进）+ title，否则抽屉关着时副标题会停在初始文案（Bugbot Medium）
             patchRun(id, {
               status,
@@ -65,6 +71,7 @@ export function ShortVideoRunIndicator({
               hasTranscript: !!run.transcriptEntryId,
               errorMessage: run.errorMessage || undefined,
             });
+            if (status === 'done' && prevStatus && prevStatus !== 'done') onRunCompleted?.();
           }
         }
       } catch {
@@ -79,7 +86,7 @@ export function ShortVideoRunIndicator({
       cancelled = true;
       window.clearInterval(iv);
     };
-  }, [runningIds, patchRun]);
+  }, [runningIds, patchRun, onRunCompleted]);
 
   // 完成/失败的入口在 30s 后自动淡出（避免堆积），running 的常驻。
   useEffect(() => {

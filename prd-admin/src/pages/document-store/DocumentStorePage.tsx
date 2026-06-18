@@ -1374,6 +1374,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
             saveActiveShortVideoRun(r.storeId, r.runId);
             setReprocessTarget({ mode: 'short-video', title: '短视频解析' });
           }}
+          onRunCompleted={() => {
+            // 后台 run 跑完（抽屉关着/刷新后）→ 刷新知识库列表，让新入库的视频/文字条目出现
+            void loadEntries();
+            setTimeout(() => { void loadEntries(); }, 1500);
+          }}
         />
       )}
 
