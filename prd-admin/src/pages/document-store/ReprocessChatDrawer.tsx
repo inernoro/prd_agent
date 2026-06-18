@@ -1101,8 +1101,9 @@ export function ReprocessChatDrawer({
       if (run.status === 'done') {
         const result = shortVideoResultFromRun(run);
         if (!result) {
+          // 同步终态 run，否则卡片仍渲染上一轮轮询的旧 run，状态行/卡片与终态 API 不一致（Bugbot Low）
           setMessages((prev) => prev.map((m) => m.id === messageId
-            ? { ...m, streaming: false, phase: 'error', content: '（后台任务已完成，但服务端未返回完整入库产物）' }
+            ? { ...m, streaming: false, phase: 'error', shortVideoRun: run, content: '（后台任务已完成，但服务端未返回完整入库产物）' }
             : m));
           setStreamingId(null);
           return;
