@@ -2022,7 +2022,12 @@ export function DocBrowser({
     lastSavedContentRef.current = { entryId, text: content };
     setPreview(prev => (prev ? { ...prev, text: content } : prev));
     const ua = result && typeof result === 'object' ? result.updatedAt : undefined;
-    if (ua) setLoadedContentKey(`${entryId}:${ua}`);
+    if (ua) {
+      setLoadedContentKey(`${entryId}:${ua}`);
+      // 同步内部 searchResults 的 updatedAt：搜索命中的条目走 searchResults 兜底（父级只更新 entries），
+      // 不同步会让 selectedEntryData.updatedAt 停在旧值 → contentKey 与刚推进的 key 不一致，之后被迫整页重拉闪烁（Bugbot）。
+      setSearchResults(prev => prev ? prev.map(e => e.id === entryId ? { ...e, updatedAt: ua } : e) : prev);
+    }
     return true;
   }, [onSaveContent]);
 
