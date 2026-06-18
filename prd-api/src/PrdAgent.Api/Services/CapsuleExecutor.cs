@@ -6194,13 +6194,20 @@ function safeChart(canvasId, config) {
             response.EnsureSuccessStatusCode();
             videoBytes = await response.Content.ReadAsByteArrayAsync(CancellationToken.None);
             var rawType = response.Content.Headers.ContentType?.MediaType;
-            // 很多短视频 CDN 回 application/octet-stream 这类通用类型。这里是"视频下载器",产物
-            // 必然是视频:非 video/* 一律归一成 video/mp4,否则 AssetStorage 会落成 .bin COS URL,
-            // 前端 PosterFeedCardView 仅凭 URL 后缀判定是否渲染 <video>,.bin 会被当图片显示成
-            // 破损媒体而非可播放视频(Codex P2)。
-            contentType = !string.IsNullOrWhiteSpace(rawType) && rawType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)
-                ? rawType
-                : "video/mp4";
+            // MIME 归一:
+            // - video/* → 原样保留
+            // - 缺失 / application/octet-stream(很多短视频 CDN 回这种通用类型)→ 归一成 video/mp4,
+            //   否则 AssetStorage 落成 .bin COS URL,前端 PosterFeedCardView 仅凭后缀判定会把可播放
+            //   视频当图片显示成破损媒体(Codex P2)。
+            // - 显式的非视频类型(text/html 分享/登录/防盗链页、image/* 等)→ 直接拒绝,不能改写成
+            //   mp4 把非视频字节存成 .mp4,否则 source 阶段"假成功"、卡片播放与后续 ASR 都会以误导
+            //   性的症状失败(Codex P2 二轮)。
+            if (string.IsNullOrWhiteSpace(rawType) || rawType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase))
+                contentType = "video/mp4";
+            else if (rawType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+                contentType = rawType;
+            else
+                throw new InvalidOperationException($"视频下载地址返回了非视频内容（{rawType}），可能是分享页/登录页/防盗链拦截，已中止保存");
             sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType} (raw={rawType ?? "null"})");
         }
         catch (Exception ex)
