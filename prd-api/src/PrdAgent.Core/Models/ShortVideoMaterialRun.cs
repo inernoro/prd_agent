@@ -47,8 +47,9 @@ public class ShortVideoMaterialRun
     /// <summary>解析过程说明</summary>
     public string? ParserMessage { get; set; }
 
-    /// <summary>状态：running / done / failed</summary>
-    public string Status { get; set; } = "running";
+    /// <summary>状态：queued / running / done / failed。默认 queued——绝不能默认 running，
+    /// 否则任何缺省/反序列化出的 run 会被当成"处理中"却永远没人 claim/recover，变成僵尸卡死。</summary>
+    public string Status { get; set; } = "queued";
 
     /// <summary>阶段记录</summary>
     public List<ShortVideoMaterialStage> Stages { get; set; } = new();

@@ -30,6 +30,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         _logger.LogInformation("[short-video-material] Worker started");
         await RecoverRunningRunsAsync();
 
+        var loopCount = 0;
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -37,6 +38,11 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 try
                 {
                     await ProcessNextRunAsync();
+                    // 每约 60s 扫一次"卡死的 running"——RecoverRunningRunsAsync 只在启动时跑一次，
+                    // 不重启就永远不回收。没有这道周期性兜底，任何因竞态/中途部署/默认值落进 running
+                    // 却没人处理的 run 会永远卡在"处理中"，用户侧表现为"加了链接半天没反应"。
+                    if (loopCount % 30 == 0) await RecoverStaleRunningRunsAsync();
+                    loopCount++;
                 }
                 catch (Exception ex)
                 {
@@ -82,6 +88,45 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "[short-video-material] 启动兜底回收失败");
+        }
+    }
+
+    /// <summary>
+    /// 周期性兜底：把"卡死的 running"标记为失败，让前端自愈成"解析失败，可重试"。
+    /// 判定 = status==running 且 updatedAt 超过阈值未推进（每个 stage 推进都会刷新 updatedAt，
+    /// 正常处理不会触发；阈值取 15 分钟，长于 ASR 600s 超时 + 下载余量，避免误杀在跑的任务），
+    /// 且不是本实例当前正在处理的那个，归属本实例（或历史无主）。根治"加了链接半天没反应"。
+    /// </summary>
+    private async Task RecoverStaleRunningRunsAsync()
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
+            var current = _currentRunId ?? "";
+            var filter = Builders<ShortVideoMaterialRun>.Filter.And(
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
+                Builders<ShortVideoMaterialRun>.Filter.Lt(r => r.UpdatedAt, cutoff),
+                Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
+                Builders<ShortVideoMaterialRun>.Filter.Or(
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+            var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
+                filter,
+                Builders<ShortVideoMaterialRun>.Update
+                    .Set(r => r.Status, "failed")
+                    .Set(r => r.ErrorMessage, "处理超时或中断，请重试")
+                    .Set(r => r.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+            if (res.ModifiedCount > 0)
+                _logger.LogWarning("[short-video-material] 周期兜底：{Count} 个卡死 running run 标记为失败", res.ModifiedCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[short-video-material] 周期兜底回收失败");
         }
     }
 
@@ -185,6 +230,11 @@ public sealed class ShortVideoMaterialProcessor
         var user = await _db.Users.Find(u => u.UserId == run.UserId).FirstOrDefaultAsync(CancellationToken.None);
         var userName = string.IsNullOrWhiteSpace(user?.DisplayName) ? user?.Username ?? run.UserId : user.DisplayName!;
         var now = DateTime.UtcNow;
+
+        // 进入解析就把 parse 标成 running 并落库：一是让前端立刻看到"正在解析"而不是僵在 pending
+        // （否则用户感觉"一点反应都没有"），二是刷新 updatedAt 作为心跳，配合周期兜底判活。
+        MarkStage(run, "parse", "running", "正在解析短视频链接…");
+        await SaveRunAsync(run);
 
         var parsed = await ResolveParsedSourceAsync(run.VideoUrl, run.Platform, run.InputSourceText, run.RequestedTitle);
         var title = CleanTitle(run.RequestedTitle) ?? CleanTitle(parsed.Title) ?? run.Title;
