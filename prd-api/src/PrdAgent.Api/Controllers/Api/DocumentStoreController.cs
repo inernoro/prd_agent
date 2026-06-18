@@ -1253,6 +1253,9 @@ public class DocumentStoreController : ControllerBase
         }
         else
         {
+            // 无 DocumentId 短文档 ContentIndex 即完整正文，恢复前也快照成基线，
+            // 与 UpdateEntryContent 一致，避免恢复覆盖掉未版本化的当前短正文（Bugbot）。
+            oldContent = entry.ContentIndex;
             var parsed = await _documentService.ParseAsync(content);
             parsed.Title = entry.Title;
             await _documentService.SaveAsync(parsed);
