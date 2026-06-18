@@ -54,6 +54,7 @@ import { streamImageGenRunWithRetry } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS, getSizeForTier } from '@/lib/imageAspectOptions';
+import { compressImageForCanvas } from '@/lib/imageCompress';
 import {
   cleanDisplayTitle,
   computeRequestedSizeByRefRatio,
@@ -4797,8 +4798,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
   const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
-    const list = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
-    if (list.length === 0) return;
+    const rawList = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
+    if (rawList.length === 0) return;
+
+    // 上传前压缩：超大图（最长边 > 2560px 或 体积 > 8MB）会把画布拖卡，先在源头缩到阈值内。
+    // 已达标的图原样放行（幂等，不重复劣化）；解码失败放行原图由后端兜底。详见 lib/imageCompress.ts。
+    let anyCompressed = false;
+    const list = await Promise.all(
+      rawList.map(async (f) => {
+        try {
+          const { file, compressed } = await compressImageForCanvas(f);
+          if (compressed) anyCompressed = true;
+          return file;
+        } catch {
+          return f;
+        }
+      })
+    );
+    if (anyCompressed) showUploadToast('已自动压缩大图以提升画布流畅度');
 
     // 关键：上传/放置必须串行化，否则两次快速上传会并发读文件，导致“空位算法看不到对方”=> 100% 覆盖
     const run = async () => {

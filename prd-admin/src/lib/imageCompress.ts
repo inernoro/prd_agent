@@ -52,6 +52,81 @@ function buildOutputFile(blob: Blob, originFile: File): File {
   return new File([blob], `${baseName}.${ext}`, { type: mimeType, lastModified: Date.now() });
 }
 
+/**
+ * 视觉创作画布上传专用压缩参数。
+ * 画布卡顿的真凶是「像素尺寸」而非「文件体积」——一张 4000x4000 的图哪怕只有 3MB，
+ * 解码进浏览器位图缓存也要 ~64MB。所以这里按最长边封顶来缩，而不是只看 byte。
+ */
+export const CANVAS_UPLOAD_MAX_DIMENSION = 2560;
+export const CANVAS_UPLOAD_MAX_BYTES = 8 * 1024 * 1024; // 留足后端 15MB 上限的余量
+
+/**
+ * 上传到视觉创作画布前的图片压缩：把最长边缩到 maxDimension 以内，体积控制在 maxBytes 以内。
+ * - 已在尺寸/体积阈值内且是浏览器友好格式的图片：原样返回，不重新编码。
+ * - GIF：跳过（动图，canvas 重绘会丢动画）。
+ * - 解码失败 / 浏览器不支持 canvas：放行原图，交由后端兜底，不阻断上传。
+ */
+export async function compressImageForCanvas(
+  file: File,
+  opts?: { maxDimension?: number; maxBytes?: number },
+): Promise<{ file: File; compressed: boolean }> {
+  const maxDimension = opts?.maxDimension ?? CANVAS_UPLOAD_MAX_DIMENSION;
+  const maxBytes = opts?.maxBytes ?? CANVAS_UPLOAD_MAX_BYTES;
+
+  // 动图保持原样：canvas 重绘会把多帧拍扁成单帧
+  if (file.type === 'image/gif') return { file, compressed: false };
+
+  let image: HTMLImageElement;
+  try {
+    image = await loadImage(file);
+  } catch {
+    // 解码失败不阻断上传，放行原图由后端兜底
+    return { file, compressed: false };
+  }
+
+  const maxEdge = Math.max(image.width, image.height);
+  const webFriendly = file.type === 'image/jpeg' || file.type === 'image/webp' || file.type === 'image/png';
+  // 尺寸和体积都达标且格式友好：无需重新编码
+  if (maxEdge <= maxDimension && file.size <= maxBytes && webFriendly) {
+    return { file, compressed: false };
+  }
+
+  const baseScale = maxEdge > 0 ? Math.min(1, maxDimension / maxEdge) : 1;
+  // 原图是 jpeg 就保持 jpeg；否则优先 webp（保留透明通道），兜底 jpeg
+  const outputMimeTypes = file.type === 'image/jpeg' ? ['image/jpeg'] : ['image/webp', 'image/jpeg'];
+
+  let bestBlob: Blob | null = null;
+  for (let scale = baseScale; scale >= baseScale * MIN_COMPRESS_SCALE; scale *= SCALE_REDUCE_FACTOR) {
+    const width = Math.max(1, Math.floor(image.width * scale));
+    const height = Math.max(1, Math.floor(image.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { file, compressed: false };
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(image, 0, 0, width, height);
+
+    for (const mimeType of outputMimeTypes) {
+      for (let quality = 0.92; quality >= MIN_COMPRESS_QUALITY; quality -= QUALITY_REDUCE_STEP) {
+        const blob = await toBlob(canvas, mimeType, quality);
+        if (!blob) continue;
+        if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+        if (blob.size <= maxBytes) {
+          return { file: buildOutputFile(blob, file), compressed: true };
+        }
+      }
+    }
+  }
+
+  // 缩到下限仍超 maxBytes：用目前最小的那版（仍远小于原图，已经能显著缓解卡顿）
+  if (bestBlob && bestBlob.size < file.size) {
+    return { file: buildOutputFile(bestBlob, file), compressed: true };
+  }
+  return { file, compressed: false };
+}
+
 export async function compressImageToLimit(file: File, maxBytes: number): Promise<{ file: File; compressed: boolean }> {
   if (file.size <= maxBytes) return { file, compressed: false };
 
