@@ -48,7 +48,9 @@ export function Dialog({
       }
     : glassPanel;
 
-  const overlayBg = isLight ? 'var(--modal-overlay)' : 'rgba(0,0,0,0.72)';
+  // B 玻璃：暗色遮罩降透明度(0.72→0.40)，配合 .prd-dialog-overlay 的 backdrop 模糊，
+  // 让底下繁忙页面"变暗+模糊"地透出来，弹窗玻璃才有内容可映照。
+  const overlayBg = isLight ? 'var(--modal-overlay)' : 'rgba(8,8,14,0.40)';
 
   const closeHoverCls = isLight
     ? 'hover:bg-[rgba(15,23,42,0.05)]'

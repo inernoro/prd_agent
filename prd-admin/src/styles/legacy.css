@@ -78,12 +78,20 @@ html[data-perf-mode="performance"] .blur-text span {
 /*
  * ── Dialog 文字清晰度修复 ──
  * 1. 居中改用 inset:0 + margin:auto，移除 translate(-50%,-50%) 避免亚像素模糊
- * 2. 移除 blur()，用高不透明度实底背景保证文字清晰
+ * 2. B 液态玻璃（2026-06-16，用户定）：弹窗压在繁忙页面上，做成真玻璃——
+ *    半透明磨砂底（0.55~0.62 暗色，文字仍清晰）+ blur(24) + 边缘棱光，
+ *    配合 .prd-dialog-overlay 的 backdrop 模糊，让底下页面"映照"出来产生深度。
  */
 .prd-dialog-content {
-  backdrop-filter: saturate(150%) brightness(1.05) !important;
-  -webkit-backdrop-filter: saturate(150%) brightness(1.05) !important;
-  background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
+  backdrop-filter: blur(24px) saturate(185%) brightness(1.08) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(185%) brightness(1.08) !important;
+  background: linear-gradient(150deg, rgba(34, 34, 46, 0.55) 0%, rgba(20, 20, 28, 0.62) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  box-shadow:
+    0 28px 64px -12px rgba(0, 0, 0, 0.6),
+    inset 0 1px 1px rgba(255, 255, 255, 0.55),
+    inset 1px 0 0 rgba(255, 255, 255, 0.14),
+    inset 0 -14px 28px -18px rgba(255, 255, 255, 0.20) !important;
 }
 
 /* 浅色下覆盖暗色 !important 背景:走纯白卡片 + 暖咖啡羽化阴影 + 发丝实描边。
@@ -99,6 +107,9 @@ html[data-perf-mode="performance"] .blur-text span {
 
 .prd-dialog-overlay {
   animation: fadeIn 150ms ease-out;
+  /* B 玻璃：遮罩对底下繁忙页面做模糊，让弹窗玻璃能"映照"出页面的颜色与形状 */
+  backdrop-filter: blur(10px) saturate(125%);
+  -webkit-backdrop-filter: blur(10px) saturate(125%);
 }
 
 /* 移动端 hover 替代: 触控设备上始终显示原本 hover 才可见的操作按钮 */
