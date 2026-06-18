@@ -2632,7 +2632,7 @@ public class DefectAgentController : ControllerBase
                         currentKey.Id,
                         currentKey.Name,
                         currentKey.ExpiresAt,
-                        canReuse = currentKey.IsActive && (currentKey.Scopes ?? new List<string>()).Contains(AgentFixScope),
+                        canReuse = CanReuseAutomationKey(currentKey, DateTime.UtcNow),
                     },
                 createEndpoint = "/api/agent-api-keys",
                 ensureEndpoint = "/api/defect-agent/agent/authorization/ensure",
@@ -2678,6 +2678,7 @@ public class DefectAgentController : ControllerBase
     [HttpPost("agent/authorization/ensure")]
     public async Task<IActionResult> EnsureAutomationAuthorization([FromBody] EnsureDefectAutomationAuthorizationRequest request, CancellationToken ct)
     {
+        request ??= new EnsureDefectAutomationAuthorizationRequest();
         var userId = GetUserId();
         var ttlDays = request.TtlDays is > 0 and <= 1095 ? request.TtlDays.Value : 1095;
         var now = DateTime.UtcNow;
@@ -3436,6 +3437,15 @@ public class DefectAgentController : ControllerBase
             key.LastUsedAt,
             key.TotalRequests,
         };
+
+    internal static bool CanReuseAutomationKey(AgentApiKey? key, DateTime now)
+    {
+        if (key == null || !key.IsActive || key.RevokedAt.HasValue)
+            return false;
+        if (!(key.Scopes ?? new List<string>()).Contains(AgentFixScope))
+            return false;
+        return key.ExpiresAt == null || key.ExpiresAt > now;
+    }
 
     private static object BuildAutomationPolicyPayload()
         => new

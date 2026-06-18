@@ -115,6 +115,26 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void CanReuseAutomationKey_RequiresActiveScopedAndUnexpiredKey()
+    {
+        var now = new DateTime(2026, 6, 18, 0, 0, 0, DateTimeKind.Utc);
+        var reusable = new AgentApiKey
+        {
+            IsActive = true,
+            Scopes = [DefectAgentController.AgentFixScope],
+            ExpiresAt = now.AddDays(1),
+        };
+        var missingScope = new AgentApiKey { IsActive = true, Scopes = ["open-api:call"], ExpiresAt = now.AddDays(1) };
+        var expired = new AgentApiKey { IsActive = true, Scopes = [DefectAgentController.AgentFixScope], ExpiresAt = now.AddSeconds(-1) };
+        var revoked = new AgentApiKey { IsActive = true, Scopes = [DefectAgentController.AgentFixScope], RevokedAt = now };
+
+        Assert.True(DefectAgentController.CanReuseAutomationKey(reusable, now));
+        Assert.False(DefectAgentController.CanReuseAutomationKey(missingScope, now));
+        Assert.False(DefectAgentController.CanReuseAutomationKey(expired, now));
+        Assert.False(DefectAgentController.CanReuseAutomationKey(revoked, now));
+    }
+
+    [Fact]
     public void MergeAutomationCommitStructuredData_WritesCommitInfoKeys()
     {
         var structured = DefectAgentController.MergeAutomationCommitStructuredData(
