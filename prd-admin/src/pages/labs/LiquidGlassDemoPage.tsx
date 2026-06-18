@@ -89,15 +89,27 @@ export default function LiquidGlassDemoPage() {
   const [pos, setPos] = useState(INITIAL_POS);
   const sceneRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ key: CardKey; dx: number; dy: number } | null>(null);
+  // 是否已按「正宽度」铺开过初始位置(防止首次测得宽度为 0 时三张卡堆在原点后不再展开)
+  const spreadDoneRef = useRef(false);
 
   // 初始按舞台宽度铺开；舞台尺寸变化时把卡片夹回可视范围(窄屏/缩放不丢卡)。
   useLayoutEffect(() => {
     const el = sceneRef.current;
     if (!el) return;
-    setPos(computeInitialPos(el.clientWidth));
+    if (el.clientWidth > 0) {
+      setPos(computeInitialPos(el.clientWidth));
+      spreadDoneRef.current = true;
+    }
     const ro = new ResizeObserver(() => {
       const w = el.clientWidth;
       const h = el.clientHeight;
+      if (w <= 0) return;
+      // 首次拿到正宽度时补做铺开(初次测量为 0 的兜底)
+      if (!spreadDoneRef.current) {
+        setPos(computeInitialPos(w));
+        spreadDoneRef.current = true;
+        return;
+      }
       setPos((prev) => {
         const clamp = (p: { x: number; y: number }) => ({
           x: Math.max(0, Math.min(w - CARD_W, p.x)),

@@ -10,3 +10,4 @@
 | fix | prd-admin | 液态玻璃性能模式/reduced-motion 边界统一退实底:shouldReduceEffects 纳入 prefers-reduced-motion,与性能模式同路径由 themeApplier 把 --glass-bg 整体切实底并打 data-perf-mode(卡片/弹窗/所有玻璃面统一退实底);头像菜单徽章用 shouldReduceEffects 判定(auto 在 Windows 降级时显示「已关闭」);弹窗面板在两路径下恢复近实底背景 + 遮罩回退 rgba(0,0,0,0.72),避免半透失焦 |
 | fix | prd-admin | reduced-motion 反应性闭合:initializeTheme 监听 prefers-reduced-motion 变化重跑 applyThemeToDOM(含老 Safari addListener 回退);新增 useReducedMotion 钩子(useSyncExternalStore),Dialog 遮罩与头像玻璃徽章随 OS 偏好运行中变化即时重渲染,消除滞后 |
 | fix | prd-admin | 液态玻璃评估页(labs)对照卡响应式:初始位置按舞台实测宽度铺开,并用 ResizeObserver 在窄屏/缩放时把三张卡夹回可视范围,避免被 overflow:hidden 裁出舞台 |
+| fix | prd-admin | 玻璃评估页(labs)对照卡:舞台首次测得宽度为 0 时补做铺开(spreadDoneRef 标志),避免三张卡堆在原点后不再展开 |
