@@ -180,11 +180,11 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         _logger.LogWarning("[svm-diag] claimed run={RunId} owner={Owner}", run.Id, run.OwnerInstanceId);
         try
         {
-            // 硬性单任务超时:即便某步意外挂死(连接池耗尽/未设超时的外部调用),也在 16 分钟后
-            // 抛出让本 run 失败并释放 worker,绝不让单个任务永久占住单线程 worker 饿死后续任务。
-            // 16min 略高于各步超时之和(resolve 30s + 下载 180s + ASR 600s ≈ 13.5min),不误杀正常长任务。
-            using var procCts = new CancellationTokenSource(TimeSpan.FromMinutes(16));
-            await processor.ProcessAsync(run.Id).WaitAsync(procCts.Token);
+            // 不用 WaitAsync 套超时:那只会让 await 提前返回、原 ProcessAsync 仍在后台跑(无 ct
+            // 不可取消),可能稍后又把 run 写成 done 与"超时失败"冲突(Bugbot High),也违反
+            // server-authority"不中途取消服务端任务"。改为依赖各外部调用自身超时(resolve 30s/
+            // 下载 180s/ASR 600s 已有界)+ 周期兜底(RecoverStaleRunningRunsAsync 15min)托底。
+            await processor.ProcessAsync(run.Id);
             _logger.LogWarning("[svm-diag] ProcessAsync returned run={RunId}", run.Id);
         }
         catch (Exception ex)
