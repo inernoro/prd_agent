@@ -6202,7 +6202,7 @@ function safeChart(canvasId, config) {
             // - 显式的非视频类型(text/html 分享/登录/防盗链页、image/* 等)→ 直接拒绝,不能改写成
             //   mp4 把非视频字节存成 .mp4,否则 source 阶段"假成功"、卡片播放与后续 ASR 都会以误导
             //   性的症状失败(Codex P2 二轮)。
-            if (string.IsNullOrWhiteSpace(rawType) || rawType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(rawType) || rawType.EndsWith("/octet-stream", StringComparison.OrdinalIgnoreCase))
                 contentType = "video/mp4";
             else if (rawType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
                 contentType = rawType;
@@ -6586,7 +6586,11 @@ function safeChart(canvasId, config) {
                     else
                     {
                         var gwRes = resolution.ToGatewayResolution();
-                        var gatewayResult = IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
+                        // chat-audio(OpenAI input_audio→/v1/chat/completions)只用于非 Exchange 的 OpenAI 兼容平台。
+                        // Exchange 走自己的 transformer(doubao-asr 已在上游单独分流;gemini-native 的
+                        // GeminiNativeTransformer 只转 text/image_url、会丢掉音频部分),其 PlatformType=exchange
+                        // 不在 google/gemini 排除内,若误走 chat-audio 会把音频丢失导致 ASR 失败(Codex P2)。
+                        var gatewayResult = !gwRes.IsExchange && IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
                             ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
                             : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
                         transcript = gatewayResult.Transcript;

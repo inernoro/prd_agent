@@ -102,7 +102,8 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
-import { ReprocessChatDrawer } from './ReprocessChatDrawer';
+import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
+import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
@@ -1362,6 +1363,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
             );
           })}
         </div>
+      )}
+
+      {/* 右上角「运行中的智能体」入口：关掉抽屉/刷新后仍可见，点击重开抽屉恢复短视频任务进度 */}
+      {!reprocessTarget && (
+        <ShortVideoRunIndicator
+          storeId={storeId}
+          onOpenRun={(r) => {
+            // 把被点击的 run 设为当前活跃 run，抽屉以 short-video 模式打开后会据此恢复轮询
+            saveActiveShortVideoRun(r.storeId, r.runId);
+            setReprocessTarget({ mode: 'short-video', title: '短视频解析' });
+          }}
+        />
       )}
 
       {/* 文档再加工对话抽屉 */}

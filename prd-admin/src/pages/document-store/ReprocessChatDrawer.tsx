@@ -16,6 +16,7 @@ import { VisualCreationMiniPanel } from '@/components/visual-creation/VisualCrea
 import { PosterFeedCardView } from '@/components/weekly-poster/WeeklyPosterModal';
 import type { WeeklyPosterPage } from '@/services/real/weeklyPoster';
 import type { ShortVideoCard } from '@/services/real/shortVideoMaterials';
+import { useShortVideoRunStore, type ShortVideoRunStatus } from '@/stores/shortVideoRunStore';
 import {
   listReprocessAgents,
   createReprocessAgent,
@@ -270,7 +271,7 @@ function shortVideoRunStorageKey(storeId: string) {
   return `${SHORT_VIDEO_ACTIVE_RUN_KEY}:${storeId}`;
 }
 
-function saveActiveShortVideoRun(storeId: string, runId: string) {
+export function saveActiveShortVideoRun(storeId: string, runId: string) {
   try { sessionStorage.setItem(shortVideoRunStorageKey(storeId), runId); } catch { /* ignore */ }
 }
 
@@ -292,6 +293,30 @@ function shortVideoResultFromRun(run: import('@/services').ShortVideoMaterialRun
     transcriptEntryId: run.transcriptEntryId || undefined,
     timelineEntryId: run.timelineEntryId || undefined,
   };
+}
+
+/**
+ * 把后端短视频 run 同步进 shortVideoRunStore（右上角「运行中的智能体」入口 + 刷新恢复的 SSOT）。
+ * 创建/轮询/续查的每个节点都调一次，关抽屉/刷新后入口仍可见、状态仍准。
+ */
+function syncShortVideoRunToStore(run: import('@/services').ShortVideoMaterialRun, fallbackStoreId: string) {
+  const store = useShortVideoRunStore.getState();
+  const status: ShortVideoRunStatus = run.status === 'done' ? 'done' : run.status === 'failed' ? 'failed' : 'running';
+  const title = run.title || run.videoUrl || '短视频素材';
+  const phase = shortVideoCompactStatus(run).text;
+  const patch = {
+    status,
+    phase,
+    title,
+    hasTranscript: !!run.transcriptEntryId,
+    errorMessage: run.errorMessage || undefined,
+  };
+  if (store.runs[run.id]) {
+    store.patchRun(run.id, patch);
+  } else {
+    store.startRun({ runId: run.id, storeId: run.storeId || fallbackStoreId, title, phase });
+    store.patchRun(run.id, patch);
+  }
 }
 
 /** 把后端抽取的短视频卡片映射成海报 feed-card 组件所需的 WeeklyPosterPage（直接复用，不改组件）。 */
@@ -1098,6 +1123,8 @@ export function ReprocessChatDrawer({
       }
 
       const run = res.data;
+      // 同步右上角「运行中的智能体」入口 + 刷新恢复状态（每轮都同步，关抽屉后入口仍准）
+      syncShortVideoRunToStore(run, storeId);
       if (run.status === 'done') {
         const result = shortVideoResultFromRun(run);
         if (!result) {
@@ -1156,7 +1183,7 @@ export function ReprocessChatDrawer({
       setStreamingId(null);
       sendLockRef.current = false;
     }
-  }, [isShortVideoPollActive, onStoreChanged]);
+  }, [isShortVideoPollActive, onStoreChanged, storeId]);
 
   useEffect(() => {
     if (!isShortVideoMode) return;
