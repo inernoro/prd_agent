@@ -343,7 +343,10 @@ builder.Services.AddHttpClient("DocStoreAgent");
 // 该 client 只用于回环调用自身，故放行证书校验，兼容仅配置 https 监听时对 127.0.0.1 的 TLS 主机名不匹配。
 builder.Services.AddHttpClient("McpLoopback", c =>
 {
-    c.Timeout = TimeSpan.FromSeconds(120);
+    // 放宽到 10 分钟：动态工具可能回环到长任务 Agent 动作（周报 / LLM 生成）。
+    // 配合 SendAsync 用 CancellationToken.None（客户端断开不取消），由下游服务端自身限制控制完成；
+    // 仍保留一个有界上限，避免连接无限悬挂。
+    c.Timeout = TimeSpan.FromSeconds(600);
 }).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
 {
     // 不跟随重定向：回环只该打到自身后端，若目标返回跨主机重定向，跟过去会把转发的

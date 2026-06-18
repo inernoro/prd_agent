@@ -81,26 +81,12 @@ POST /api/admin/agent-open-endpoints
 > **关键约束**：被登记的目标接口必须对 sk-ak 友好——`[Authorize(AuthenticationSchemes="ApiKey")] + [RequireScope("agent.{key}:{action}")] + 读 boundUserId`。
 > 不要登记走 `GetRequiredUserId()`（只读 sub）且在 `PublicRoutes` 豁免的接口（如 document-store 的 stores/entries 业务路由），那样 sk-ak 回环会 401（参见知识库为何另建 `/api/open/document-store`）。
 
-## AI / 自动化无人值守自测（自助签发通道）
+## AI / 自动化无人值守签发（规划中）
 
-带 `AiAccessKey` 全局超级密钥的自动化，可代用户签发 scoped sk-ak 来端到端验证开放接口，无需人工进 UI：
+理想情况下，带 `AiAccessKey` 全局超级密钥的自动化应能代用户签发 scoped sk-ak、端到端验证开放接口，无需人工进 UI。
 
-```bash
-# 1) 签发（X-AI-Access-Key=全局密钥，X-AI-Impersonate=目标用户名）
-curl -s -X POST "https://<域名>/api/agent-api-keys" \
-  -H "X-AI-Access-Key: $AI_ACCESS_KEY" -H "X-AI-Impersonate: <用户名>" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"mcp-selftest","scopes":["marketplace.skills:read","document-store:read"],"ttlDays":1}'
-# → 响应 data.apiKey 即 sk-ak
-
-# 2) 用该 sk-ak 跑 /api/mcp 的 tools/list / tools/call
-
-# 3) 测完撤销（同通道）
-curl -s -X POST "https://<域名>/api/agent-api-keys/<keyId>/revoke" \
-  -H "X-AI-Access-Key: $AI_ACCESS_KEY" -H "X-AI-Impersonate: <用户名>"
-```
-
-安全边界：该通道只能动**被模拟用户自己的** key（归属校验），签出的 key 受 scope 白名单限制，入口是部署级 secret（全局密钥）。
+> **当前状态**：曾试过在 `AgentApiKeysController` 同时挂 `Bearer,AiAccessKey` 双方案，但「同请求同时带 JWT + 全局 key」时 `FindFirst(sub)` 会选错用户（Bugbot Medium）。已撤回。
+> **正确做法**（见 `debt.map-mcp-connector.md`）：单独建一个**只接受 `AiAccessKey` 方案**的专用签发端点（单身份、无歧义），而不是给用户自助管理端点叠加全局密钥。`AiAccessKey` 鉴权器本身（`X-AI-Access-Key` + `X-AI-Impersonate`）是既有设计，不动。
 
 ## 排障
 

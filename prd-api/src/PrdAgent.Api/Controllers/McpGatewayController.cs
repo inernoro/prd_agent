@@ -191,12 +191,39 @@ public class McpGatewayController : ControllerBase
     private static JsonObject DynamicToolToJson(AgentOpenEndpoint e)
     {
         var desc = string.IsNullOrWhiteSpace(e.Description) ? e.Title : $"{e.Title} — {e.Description}";
+        var schema = InferSchema(e.RequestExampleJson);
+        AddPathParamsAsRequired(schema, e.Path);
         return new JsonObject
         {
             ["name"] = DynamicToolName(e),
             ["description"] = desc,
-            ["inputSchema"] = InferSchema(e.RequestExampleJson),
+            ["inputSchema"] = schema,
         };
+    }
+
+    /// <summary>把 Path 里的 {param} 占位补进 inputSchema 的 properties + required；
+    /// 否则 MCP 客户端不知道要传该值，路径替换后残留 {param} 致下游 404。</summary>
+    private static void AddPathParamsAsRequired(JsonObject schema, string path)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        if (schema["properties"] is not JsonObject props)
+        {
+            props = new JsonObject();
+            schema["properties"] = props;
+        }
+        if (schema["required"] is not JsonArray required)
+        {
+            required = new JsonArray();
+            schema["required"] = required;
+        }
+        foreach (Match m in Regex.Matches(path, @"\{([^}/]+)\}"))
+        {
+            var name = m.Groups[1].Value;
+            if (!props.ContainsKey(name))
+                props[name] = new JsonObject { ["type"] = "string", ["description"] = $"路径参数 {name}" };
+            if (!required.Any(x => x is not null && x.GetValue<string>() == name))
+                required.Add(name);
+        }
     }
 
     // ======================================================================

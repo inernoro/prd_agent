@@ -11,3 +11,5 @@
 | docs | doc | 新增 guide.mcp-connector 接入教程(Claude/Codex 接入 + 5 工具 + 共享其他 Agent + 自助签发自测 + 排障) |
 | fix | prd-api | MCP 回环 SendAsync 改用 CancellationToken.None(对齐 server-authority:客户端瞬断不取消下游长任务,120s 超时兜底) |
 | fix | prd-api | MCP 网关非抛出式读取 method/name(畸形如 "method":1 返回 -32600 而非 500),加 AsString 单测 |
+| revert | prd-api | 撤回 AgentApiKeysController 的 AiAccessKey 自助通道(改回纯 [Authorize])——双凭据时 FindFirst(sub) 选错用户(Bugbot Medium);AiAccessKey 鉴权器原设计未动;AI 自助签发改为未来专用端点 |
+| fix | prd-api | 动态工具 inputSchema 把 Path 的 {param} 占位补为 required 字符串属性(否则客户端不传致下游 404);回环超时 120s→600s(动态长任务 Agent 动作),配合 None 取消由下游服务端限制控制 |
