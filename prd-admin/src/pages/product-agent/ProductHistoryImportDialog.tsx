@@ -17,7 +17,7 @@ import {
 import type { Product } from './types';
 import { parseDefectImportFile } from './defectImportParse';
 import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
-import { rowHasProductRouteHint } from './requirementImportRouting';
+import { applyFallbackProductToRows, rowHasExplicitProductRouteField } from './requirementImportRouting';
 
 export type HistoryImportType = 'requirement' | 'feature' | 'defect' | 'version';
 
@@ -171,9 +171,14 @@ export function ProductHistoryImportDialog({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const selectedProduct = useMemo(() => products.find((product) => product.id === productId), [productId, products]);
+  const shouldShowFallbackProductPicker = isCrossProduct
+    && rows.length > 0
+    && rows.every((row) => !rowHasExplicitProductRouteField(row as ImportRequirementRow));
 
   const readFiles = async (files: File[]) => {
     setFileNames(files.map((file) => file.name));
+    setRows([]);
+    setMessage('');
     const rtf = files.filter((file) => file.name.toLowerCase().endsWith('.rtf'));
     if (rtf.length > 0) {
       if (type === 'requirement') {
@@ -220,11 +225,13 @@ export function ProductHistoryImportDialog({
 
   const commit = async () => {
     if (rows.length === 0) return;
-    if (needsProductPicker && !productId) return;
+    if ((needsProductPicker || shouldShowFallbackProductPicker) && !productId) return;
     const baseRows = rows as ImportRequirementRow[];
-    const rowsToImport = baseRows;
-    if (isCrossProduct && rowsToImport.every((row) => !rowHasProductRouteHint(row))) {
-      setMessage('无法路由：请为文件增加「应用」或「产品/所属产品」列，或在标题前加【产品名】。');
+    const rowsToImport = shouldShowFallbackProductPicker
+      ? applyFallbackProductToRows(baseRows, selectedProduct?.name)
+      : baseRows;
+    if (isCrossProduct && rowsToImport.every((row) => !rowHasExplicitProductRouteField(row))) {
+      setMessage('无法路由：请为文件增加「应用」或「产品/所属产品」列，或在下方选择默认归属产品。');
       return;
     }
     setBusy(true);
@@ -286,7 +293,7 @@ export function ProductHistoryImportDialog({
             <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
             <div className="mt-1 text-xs text-white/45">
               {isCrossProduct
-                ? '按文件「应用」或「产品/所属产品」列匹配系统产品；未匹配行跳过，不手动选归属产品。'
+                ? '优先按文件「应用」或「产品/所属产品」列匹配系统产品；没有产品列时可选择默认归属产品。'
                 : '可重复导入；有外部 ID 时更新原记录，无 ID 时系统自动分配纯数字编号。'}
             </div>
           </div>
@@ -299,6 +306,15 @@ export function ProductHistoryImportDialog({
               <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none">
                 {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
               </select>
+            </label>
+          )}
+          {shouldShowFallbackProductPicker && (
+            <label className="mb-4 block rounded-lg border border-amber-400/20 bg-amber-400/5 p-3">
+              <span className="mb-1.5 block text-xs font-medium text-amber-100/80">文件未包含「应用/产品」列，请选择默认归属产品</span>
+              <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#171a20] px-3 py-2 text-sm text-white outline-none">
+                {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+              </select>
+              <span className="mt-1.5 block text-[11px] text-white/40">标题里的【客户/场景】不会再当作产品名，提交时会把这里选择的产品写入所有未带产品列的行。</span>
             </label>
           )}
           <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025]">
@@ -325,7 +341,7 @@ export function ProductHistoryImportDialog({
                     || row.sourceFields?.['产品']
                     || row.sourceFields?.['产品名称']
                     || row.sourceFields?.['产品线']
-                    || (row.title?.match(/^【([^】]+)】/)?.[1] ?? '');
+                    || (shouldShowFallbackProductPicker ? selectedProduct?.name : '');
                   return (
                     <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5">
                       <td className="px-3 py-2 text-white/75">{row.title}</td>

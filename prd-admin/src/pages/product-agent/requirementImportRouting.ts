@@ -2,10 +2,15 @@ import type { ImportRequirementRow } from '@/services/real/productAgent';
 
 const PRODUCT_FIELD_KEYS = ['应用', '产品', '所属产品', '产品名称', '产品线'] as const;
 
-/** 行是否自带可路由到系统产品的标签（应用列或标题【前缀】） */
-export function rowHasProductRouteHint(row: Pick<ImportRequirementRow, 'title' | 'sourceFields'>): boolean {
+/** 行是否自带可路由到系统产品的明确字段（应用 / 产品 / 所属产品列）。 */
+export function rowHasExplicitProductRouteField(row: Pick<ImportRequirementRow, 'sourceFields'>): boolean {
   const fields = row.sourceFields ?? {};
-  if (PRODUCT_FIELD_KEYS.some((key) => fields[key]?.trim())) return true;
+  return PRODUCT_FIELD_KEYS.some((key) => fields[key]?.trim());
+}
+
+/** 行是否自带可路由到系统产品的标签（明确产品列或标题【前缀】）。 */
+export function rowHasProductRouteHint(row: Pick<ImportRequirementRow, 'title' | 'sourceFields'>): boolean {
+  if (rowHasExplicitProductRouteField(row)) return true;
   return /^【[^】]+】/.test(row.title?.trim() ?? '');
 }
 
@@ -17,7 +22,7 @@ export function applyFallbackProductToRows(
   const name = productName?.trim();
   if (!name) return rows;
   return rows.map((row) => {
-    if (rowHasProductRouteHint(row)) return row;
+    if (rowHasExplicitProductRouteField(row)) return row;
     return { ...row, sourceFields: { ...row.sourceFields, 应用: name } };
   });
 }
