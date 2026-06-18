@@ -6829,6 +6829,10 @@ function safeChart(canvasId, config) {
         }
 
         var text = ExtractChatCompletionContent(rawResp.Content);
+        // HTTP 成功但没解析出文字（模型拒答 / 响应结构异常 / 空内容）→ 当失败抛出，
+        // 不要返回空转写让上层误判成"转写成功但没字"（与 SubtitleGenerationProcessor 一致，Bugbot Medium）。
+        if (string.IsNullOrWhiteSpace(text))
+            throw new InvalidOperationException("Gateway 语音转写(chat)返回为空（模型可能拒答或响应格式异常）");
         return new GatewayAsrTranscript(text.Trim(), new JsonArray());
     }
 
