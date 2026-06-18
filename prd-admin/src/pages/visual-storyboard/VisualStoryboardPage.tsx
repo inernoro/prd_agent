@@ -62,6 +62,7 @@ export default function VisualStoryboardPage() {
 
   const [pools, setPools] = useState<ModelGroupForApp[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
 
   const [phase, setPhase] = useState<'idle' | 'scripting' | 'rendering'>('idle');
   const [title, setTitle] = useState('');
@@ -72,16 +73,25 @@ export default function VisualStoryboardPage() {
 
   const aspectInfo = useMemo(() => ASPECTS.find((a) => a.key === aspect) ?? ASPECTS[0], [aspect]);
 
-  const activeModel = useMemo(() => {
-    for (const pool of pools) {
+  // 每个有模型的池 = 一个可选关键帧模型（取池内最高优先级模型）。
+  // 不再硬绑 pool[0]：单个 OpenRouter 模型（如 gpt-5.4-image-2）偶发 404 时，
+  // 用户可在下拉里换到其他可用出图模型，关键帧/图生视频不被单一模型拖垮。
+  const modelOptions = useMemo(() => {
+    const opts: { key: string; poolName: string; modelName: string; platformId: string }[] = [];
+    pools.forEach((pool, idx) => {
       if (pool.models && pool.models.length > 0) {
         const sorted = [...pool.models].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
         const m = sorted[0];
-        return { name: pool.name, modelName: m.modelId, platformId: m.platformId };
+        opts.push({ key: `${idx}:${pool.name}`, poolName: pool.name, modelName: m.modelId, platformId: m.platformId });
       }
-    }
-    return null;
+    });
+    return opts;
   }, [pools]);
+
+  const activeModel = useMemo(() => {
+    const opt = modelOptions.find((o) => o.key === selectedModelKey) ?? modelOptions[0];
+    return opt ? { name: opt.poolName, modelName: opt.modelName, platformId: opt.platformId } : null;
+  }, [modelOptions, selectedModelKey]);
 
   useEffect(() => {
     setModelsLoading(true);
@@ -358,12 +368,37 @@ export default function VisualStoryboardPage() {
           </Button>
         </div>
 
-        <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-          {modelsLoading
-            ? '加载生图模型中…'
-            : activeModel
-              ? `关键帧模型：${activeModel.name || activeModel.modelName}`
-              : '暂无生图模型池 —— 请先在「模型池管理」创建一个「视频生成 / 文生图」模型池'}
+        <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+          {modelsLoading ? (
+            '加载生图模型中…'
+          ) : modelOptions.length === 0 ? (
+            '暂无生图模型池 —— 请先在「模型池管理」创建一个「视频生成 / 文生图」模型池'
+          ) : (
+            <>
+              <span className="shrink-0">关键帧模型</span>
+              {modelOptions.length > 1 ? (
+                <select
+                  value={selectedModelKey ?? modelOptions[0]?.key ?? ''}
+                  onChange={(e) => setSelectedModelKey(e.target.value)}
+                  disabled={busy}
+                  className="h-7 rounded-md px-2 text-xs"
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--text-secondary)',
+                    border: '1px solid var(--border, rgba(255,255,255,0.14))',
+                  }}
+                >
+                  {modelOptions.map((o) => (
+                    <option key={o.key} value={o.key}>
+                      {o.poolName}（{o.modelName}）
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span style={{ color: 'var(--text-secondary)' }}>：{activeModel?.name || activeModel?.modelName}</span>
+              )}
+            </>
+          )}
         </div>
       </GlassCard>
 
