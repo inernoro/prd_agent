@@ -132,8 +132,10 @@ export async function compressImageForCanvas(
     }
 
     const baseScale = maxEdge > 0 ? Math.min(1, maxDimension / maxEdge) : 1;
-    // 原图是 jpeg 就保持 jpeg；否则优先 webp（保留透明通道），兜底 jpeg
-    const outputMimeTypes = file.type === 'image/jpeg' ? ['image/jpeg'] : ['image/webp', 'image/jpeg'];
+    // 输出格式：JPEG 输入本就无透明通道，保持 jpeg；其余（PNG/WebP/BMP/HEIC… 可能含透明）一律 webp。
+    // 禁止给可能透明的输入兜底 jpeg——canvas 导出 jpeg 会丢 alpha，把透明 logo/贴纸糊成黑底（Codex P2）。
+    // webp 既保留 alpha 又压缩好；万一浏览器不支持 webp（toBlob 返回 null），下方循环会跳过、最终放行原图。
+    const outputMimeTypes = file.type === 'image/jpeg' ? ['image/jpeg'] : ['image/webp'];
 
     let bestBlob: Blob | null = null;
     for (let scale = baseScale; scale >= baseScale * MIN_COMPRESS_SCALE; scale *= SCALE_REDUCE_FACTOR) {
