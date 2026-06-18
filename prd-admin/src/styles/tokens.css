@@ -287,3 +287,9 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .app-aurora { animation: none; }
 }
+/* 性能模式(玻璃关闭):停掉 aurora 动画并回退实底,避免全屏大渐变持续重绘。
+   玻璃关时本就没有可折射底色的需求,去掉这层视觉负载与性能模式语义一致。 */
+html[data-perf-mode="performance"] .app-aurora {
+  animation: none !important;
+  background: var(--bg-base) !important;
+}
