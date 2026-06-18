@@ -251,6 +251,32 @@ describe('ForwarderRoutePublisher', () => {
     expect(stat2.mtimeMs).toBe(stat1.mtimeMs);
   });
 
+  it('stableSamplesRequired=2 时变更需连续出现两次才写盘,减少中间态 route reload', () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000 });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+      stableSamplesRequired: 2,
+    });
+    expect(publisher.publishNow()).toBe(true);
+    const data1 = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(data1[0].upstreamPort).toBe(41000);
+
+    state.removeBranch('demo-main');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41001 });
+
+    expect(publisher.publishNow()).toBe(false);
+    const pendingData = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(pendingData[0].upstreamPort).toBe(41000);
+
+    expect(publisher.publishNow()).toBe(true);
+    const data2 = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(data2[0].upstreamPort).toBe(41001);
+  });
+
   it('多个根域名 → 每个分支为每个根都生成一条路由', () => {
     ensureProject('demo', 'demo');
     addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000 });
