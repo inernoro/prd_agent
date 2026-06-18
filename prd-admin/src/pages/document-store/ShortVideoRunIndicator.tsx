@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { CheckCircle2, AlertCircle, X, Video } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getShortVideoMaterialRun } from '@/services';
+import { shortVideoCompactStatus } from './ReprocessChatDrawer';
 import {
   useShortVideoRunStore,
   type ShortVideoRunRecord,
@@ -56,8 +57,11 @@ export function ShortVideoRunIndicator({
           if (res.success && res.data) {
             const run = res.data;
             const status = run.status === 'done' ? 'done' : run.status === 'failed' ? 'failed' : 'running';
+            // 同步 phase（阶段推进）+ title，否则抽屉关着时副标题会停在初始文案（Bugbot Medium）
             patchRun(id, {
               status,
+              phase: shortVideoCompactStatus(run).text,
+              ...(run.title ? { title: run.title } : {}),
               hasTranscript: !!run.transcriptEntryId,
               errorMessage: run.errorMessage || undefined,
             });

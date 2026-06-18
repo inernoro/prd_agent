@@ -356,7 +356,7 @@ const SHORT_VIDEO_STAGE_LABELS: Record<string, string> = {
 };
 
 /** 卡片下方的一行状态（取代大段进度文字块；解析细节等卡片之后才轮到）。 */
-function shortVideoCompactStatus(run: import('@/services').ShortVideoMaterialRun): { text: string; tone: 'busy' | 'done' | 'error' } {
+export function shortVideoCompactStatus(run: import('@/services').ShortVideoMaterialRun): { text: string; tone: 'busy' | 'done' | 'error' } {
   if (run.status === 'failed') return { text: '解析失败，可重试', tone: 'error' };
   const stages = run.stages ?? [];
   const running = stages.find((s) => s.status === 'running');
@@ -1269,6 +1269,8 @@ export function ReprocessChatDrawer({
       }
       const result = res.data;
       saveActiveShortVideoRun(storeId, result.run.id);
+      // 立刻登记到 store：否则首次 poll GET 完成前关掉抽屉会丢失"运行中"入口、Host 也不轮询（Bugbot Medium）
+      syncShortVideoRunToStore(result.run, storeId);
       restoredShortVideoRunRef.current = result.run.id;
       setMessages((prev) => prev.map((m) => m.id === asstMsgId
         ? {
