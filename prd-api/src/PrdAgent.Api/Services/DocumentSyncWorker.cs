@@ -70,6 +70,7 @@ public class DocumentSyncWorker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var documentService = scope.ServiceProvider.GetRequiredService<IDocumentService>();
+        var versions = scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();
 
         var now = DateTime.UtcNow;
 
@@ -106,15 +107,16 @@ public class DocumentSyncWorker : BackgroundService
         foreach (var entry in dueEntries)
         {
             if (entry.SourceType == DocumentSourceType.GithubDirectory)
-                await SyncGitHubDirectoryAsync(db, documentService, entry, ct);
+                await SyncGitHubDirectoryAsync(db, documentService, versions, entry, ct);
             else
-                await SyncSingleEntryAsync(db, documentService, entry, ct);
+                await SyncSingleEntryAsync(db, documentService, versions, entry, ct);
         }
     }
 
     private async Task SyncGitHubDirectoryAsync(
         MongoDbContext db,
         IDocumentService documentService,
+        PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService versions,
         DocumentEntry entry,
         CancellationToken ct)
     {
@@ -129,7 +131,7 @@ public class DocumentSyncWorker : BackgroundService
                 _scopeFactory.CreateScope().ServiceProvider
                     .GetRequiredService<ILogger<GitHubDirectorySyncService>>());
 
-            var diff = await githubSyncService.SyncDirectoryAsync(db, documentService, entry, ct);
+            var diff = await githubSyncService.SyncDirectoryAsync(db, documentService, versions, entry, ct);
 
             // 标记同步完成
             var update = Builders<DocumentEntry>.Update
@@ -185,6 +187,7 @@ public class DocumentSyncWorker : BackgroundService
     private async Task SyncSingleEntryAsync(
         MongoDbContext db,
         IDocumentService documentService,
+        PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService versions,
         DocumentEntry entry,
         CancellationToken ct)
     {
@@ -328,6 +331,16 @@ public class DocumentSyncWorker : BackgroundService
                 // fall through 到下面的"重新解析、保存、落日志"分支，把 Document 重建回来
             }
 
+            // 覆盖前快照旧正文：订阅文档被远端同步覆盖时，用户本地改动（如插入配图）不丢，可恢复。
+            // 自愈分支（内容未真变、仅重建空 Document）跳过，避免无意义版本。
+            if (!isSelfHeal && !string.IsNullOrEmpty(entry.DocumentId))
+            {
+                var oldDoc = await documentService.GetByIdAsync(entry.DocumentId);
+                if (oldDoc != null && !string.IsNullOrWhiteSpace(oldDoc.RawContent))
+                    await versions.SnapshotAsync(entry.Id, entry.StoreId, oldDoc.RawContent,
+                        DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
+            }
+
             // 真的有变化 → 解析、保存、落日志
             var parsed = await documentService.ParseAsync(content);
             parsed.Title = entry.Title;
@@ -358,6 +371,11 @@ public class DocumentSyncWorker : BackgroundService
                 e => e.Id == entry.Id,
                 entryUpdate,
                 cancellationToken: CancellationToken.None);
+
+            // 同步后的新正文快照成版本，保证「最新版本 == 当前正文」（自愈不算变化，跳过）
+            if (!isSelfHeal)
+                await versions.SnapshotAsync(entry.Id, entry.StoreId, content,
+                    DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
 
             sw.Stop();
 

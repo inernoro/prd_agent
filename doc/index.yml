@@ -276,6 +276,7 @@ docs:
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
   debt.agent-universe: 智能体宇宙 · 债务台账
   debt.knowledge-base-mention-network: 知识库引用网络 · MVP 已知边界与遗留事项
+  debt.knowledge-base-versioning: 知识库版本控制/图片插入/大小统计 · 已知边界
   debt.onboarding-tips: 页面教程(小技巧)系统 · 债务台账
   debt.pm-agent: 项目管理智能体 · 债务台账
   debt.product-agent: 产品管理智能体 · 债务台账
