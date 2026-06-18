@@ -887,9 +887,12 @@ export function PosterRichTextPageView({
  *   - 互动数字大于 1k 简写为 1.2k / 5.9k
  *   - 没有头像时用渐变色圆形带首字母
  */
-export function PosterFeedCardView({ page, onMediaAspectDetected }: {
+export function PosterFeedCardView({ page, onMediaAspectDetected, compactFooter = false }: {
   page: WeeklyPosterPage | undefined;
   onMediaAspectDetected?: (aspect: number) => void;
+  // 底部信息区留白：默认 px-7 pb-20，给轮播叠加的分页/CTA 控件（bottom-7/bottom-9，z-30）让位，
+  // 避免标题/标签被控件盖住。短视频抽屉里没有这些叠加控件，传 true 用紧凑的 px-4 pb-4（Codex P2）。
+  compactFooter?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasPlayed, setHasPlayed] = useState(false);
@@ -939,6 +942,15 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
   const author = page.authorName || '';
   const platform = page.platform || '';
   const stats = page.stats;
+  // 右栏是否真的有可见指标 chip（stats 对象可能存在但所有计数都是 0/null —— 此时右栏无内容，
+  // 底部标题就不该再为它让出右侧 padding）（Bugbot Low）。
+  const hasVisibleStats = !!stats && (
+    (typeof stats.likes === 'number' && stats.likes > 0)
+    || (typeof stats.comments === 'number' && stats.comments > 0)
+    || (typeof stats.collects === 'number' && stats.collects > 0)
+    || (typeof stats.shares === 'number' && stats.shares > 0)
+    || (typeof stats.plays === 'number' && stats.plays > 0)
+  );
   const tags = (page.hashtags || []).slice(0, 3);
   const tagOverflow = (page.hashtags?.length || 0) - tags.length;
 
@@ -975,6 +987,7 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
                 alt=""
                 className="absolute inset-0 w-full h-full object-cover"
                 draggable={false}
+                referrerPolicy="no-referrer"
                 onLoad={(e) => {
                   const t = e.currentTarget;
                   if (t.naturalWidth > 0 && t.naturalHeight > 0)
@@ -991,6 +1004,7 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
                 alt=""
                 className="absolute inset-0 w-full h-full object-cover"
                 draggable={false}
+                referrerPolicy="no-referrer"
                 onLoad={(e) => {
                   const t = e.currentTarget;
                   if (t.naturalWidth > 0 && t.naturalHeight > 0)
@@ -1101,6 +1115,7 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
                 alt=""
                 className="w-full h-full object-cover"
                 draggable={false}
+                referrerPolicy="no-referrer"
                 onError={() => setAvatarErrored(true)}
               />
             ) : (
@@ -1161,10 +1176,13 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
 
       {/* 底部信息：标题 hook + 标签 chip + 渐变背景 */}
       <div
-        className="absolute inset-x-0 bottom-0 z-20 px-4 pb-20 pt-8 pointer-events-none transition-opacity duration-300"
+        className={`absolute inset-x-0 bottom-0 z-20 pt-8 pointer-events-none transition-opacity duration-300 ${compactFooter ? 'px-4 pb-4' : 'px-7 pb-20'}`}
         style={{
           background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 35%, rgba(0,0,0,0.92) 100%)',
           opacity: hasPlayed ? 0 : 1,
+          // 标题/标签让出右侧互动指标栏的宽度，避免窄卡片下文字压到点赞数上（元素重叠）。
+          // 仅在右栏真的有 chip 时才让位，全空时不留多余 padding（Bugbot Low）。
+          paddingRight: hasVisibleStats ? 60 : undefined,
         }}
       >
         <h2

@@ -97,6 +97,8 @@
   > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
 - [知识库智能体架构设计](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
   > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
+- [MAP MCP 连接器设计](design.map-mcp-connector) `design.map-mcp-connector`
+  > 把 AgentOpenEndpoint 登记表翻译成 MCP 工具，远程 /mcp 端点（Streamable HTTP）复用 sk-ak + scope，可被 Claude/Codex 当连接器接入
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 - [团队动态设计](design.team-activity) `design.team-activity`
@@ -388,6 +390,8 @@
 
 - [海鲜市场（配置市场）使用教程](guide.marketplace) `guide.marketplace`
   > 配置浏览、筛选、Fork 与发布的完整流程
+- [MAP MCP 连接器接入指南](guide.mcp-connector) `guide.mcp-connector`
+  > 把 MAP 当 MCP 连接器接入 Claude/Codex：/api/mcp 端点 + sk-ak + 5 内置工具 + 共享其他 Agent + AI 自助签发自测
 
 - [视觉验收技能跨仓库使用教程](guide.visual-acceptance-skill) `guide.visual-acceptance-skill`
   > 用个人 AgentApiKey + 海鲜市场安装、更新 `create-visual-test-to-kb`，避免借用个人 accesskey

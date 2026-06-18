@@ -340,6 +340,27 @@ builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWa
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
+// MCP 连接器网关：回环转发当前 sk-ak Bearer 到自身真实接口（McpGatewayController）。
+// 该 client 只用于回环调用自身，故放行证书校验，兼容仅配置 https 监听时对 127.0.0.1 的 TLS 主机名不匹配。
+builder.Services.AddHttpClient("McpLoopback", c =>
+{
+    // 放宽到 10 分钟：动态工具可能回环到长任务 Agent 动作（周报 / LLM 生成）。
+    // 配合 SendAsync 用 CancellationToken.None（客户端断开不取消），由下游服务端自身限制控制完成；
+    // 仍保留一个有界上限，避免连接无限悬挂。
+    c.Timeout = TimeSpan.FromSeconds(600);
+}).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
+{
+    // 不跟随重定向：回环只该打到自身后端，若目标返回跨主机重定向，跟过去会把转发的
+    // sk-ak / X-AI-Access-Key 凭据带到外部主机（凭据外泄）。让重定向以非 2xx 原样返回。
+    AllowAutoRedirect = false,
+    // 禁用系统代理：回环只调 127.0.0.1，避免配了 HTTP_PROXY 且未豁免 loopback 的部署
+    // 把携带 sk-ak / X-AI-Access-Key 的回环请求发到代理（失败或泄露密钥）。
+    UseProxy = false,
+    SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = (_, _, _, _) => true,
+    },
+});
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();

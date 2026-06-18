@@ -15,6 +15,10 @@ namespace PrdAgent.Api.Controllers.Api;
 ///
 /// 鉴权：管理接口走用户 JWT。调用这些 API 的是"接入 AI" Dialog，不是 AI 本身。
 /// 明文 Key 只在 create / regenerate 接口返回一次；后续只存哈希。
+///
+/// 注：AI 无人值守自助签发曾试过在此挂 AiAccessKey 双方案，但「同请求同时带 JWT + 全局 key」
+/// 时 FindFirst(sub) 会选错用户（Bugbot Medium）。已撤回。若需 AI 自助签发，应单独建只接受
+/// AiAccessKey 的专用端点（无双身份歧义），见 debt.map-mcp-connector.md。
 /// </summary>
 [ApiController]
 [Route("api/agent-api-keys")]

@@ -1466,6 +1466,7 @@ export type {
   ChangelogDay,
   ChangelogRelease,
   ReleasesView,
+  GitHubLinkedDefect,
   GitHubLogEntry,
   GitHubLogsView,
   ChangelogAiSummarySubtab,
