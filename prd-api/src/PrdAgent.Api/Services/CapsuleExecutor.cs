@@ -6193,8 +6193,15 @@ function safeChart(canvasId, config) {
                 CancellationToken.None);
             response.EnsureSuccessStatusCode();
             videoBytes = await response.Content.ReadAsByteArrayAsync(CancellationToken.None);
-            contentType = response.Content.Headers.ContentType?.MediaType ?? "video/mp4";
-            sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType}");
+            var rawType = response.Content.Headers.ContentType?.MediaType;
+            // 很多短视频 CDN 回 application/octet-stream 这类通用类型。这里是"视频下载器",产物
+            // 必然是视频:非 video/* 一律归一成 video/mp4,否则 AssetStorage 会落成 .bin COS URL,
+            // 前端 PosterFeedCardView 仅凭 URL 后缀判定是否渲染 <video>,.bin 会被当图片显示成
+            // 破损媒体而非可播放视频(Codex P2)。
+            contentType = !string.IsNullOrWhiteSpace(rawType) && rawType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)
+                ? rawType
+                : "video/mp4";
+            sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType} (raw={rawType ?? "null"})");
         }
         catch (Exception ex)
         {
