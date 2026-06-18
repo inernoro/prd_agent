@@ -45,6 +45,7 @@ import {
   Home,
   BarChart3,
   GraduationCap,
+  Droplets,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -487,6 +488,10 @@ export default function AppShell() {
 
   // 读取主题配置中的侧边栏玻璃效果设置
   const sidebarGlass = useThemeStore((s) => s.config.sidebarGlass);
+  // 液态玻璃一键开关（头像菜单内）：performance=关，其余=开
+  const perfMode = useThemeStore((s) => s.config.performanceMode);
+  const setThemeConfig = useThemeStore((s) => s.setConfig);
+  const glassOn = perfMode !== 'performance';
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
@@ -1484,6 +1489,29 @@ export default function AppShell() {
                     style={{ color: 'var(--text-muted)' }}
                   >
                     皮肤 / 导航 / 账户
+                  </span>
+                </DropdownMenu.Item>
+
+                {/* 液态玻璃一键开关：点击不关菜单（preventDefault），让用户当场看到整个界面玻璃开/关的变化 */}
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setThemeConfig({ performanceMode: glassOn ? 'performance' : 'quality' });
+                  }}
+                >
+                  <Droplets size={16} className="shrink-0" />
+                  <span className="text-[13px]">液态玻璃</span>
+                  <span
+                    className="ml-auto inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors"
+                    style={
+                      glassOn
+                        ? { background: 'rgba(99, 102, 241, 0.22)', color: 'var(--accent-gold)' }
+                        : { background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-muted)' }
+                    }
+                  >
+                    {glassOn ? '已开启' : '已关闭'}
                   </span>
                 </DropdownMenu.Item>
 
