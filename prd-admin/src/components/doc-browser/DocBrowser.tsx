@@ -1590,6 +1590,10 @@ export function DocBrowser({
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [preview, setPreview] = useState<EntryPreview | null>(null);
+  // preview 的 ref 镜像：loadEntryContent 的「刚保存豁免」要读当前 preview.text，但不能把 preview 放进
+  // 它的 deps —— 否则 setPreview(null)（切文档）会改变回调标识，触发下方 effect 二次 loadContent，大文档被下载两次（Codex P2）。
+  const previewRef = useRef<EntryPreview | null>(null);
+  useEffect(() => { previewRef.current = preview; }, [preview]);
   const [contentLoading, setContentLoading] = useState(false);
   // 内容加载缓存键：以 entryId + updatedAt 组合作内容版本，替换文件后 updatedAt 变化即触发重载
   const [loadedContentKey, setLoadedContentKey] = useState<string | null>(null);
@@ -2502,7 +2506,7 @@ export function DocBrowser({
     // 一次性：用完即清。只豁免「保存紧接着的那一次」重拉；之后订阅同步等再 bump updatedAt 时，
     // ref 已空 → 正常重拉，不会一直拿本地旧文盖掉服务端已被同步覆盖的新内容（Bugbot）。
     const saved = lastSavedContentRef.current;
-    if (saved && saved.entryId === entryId && preview?.text === saved.text) {
+    if (saved && saved.entryId === entryId && previewRef.current?.text === saved.text) {
       lastSavedContentRef.current = null;
       setLoadedContentKey(contentKey);
       return;
@@ -2519,7 +2523,7 @@ export function DocBrowser({
       if (fid === contentFetchIdRef.current) setPreview(null);
     }
     if (fid === contentFetchIdRef.current) setContentLoading(false);
-  }, [loadContent, loadedContentKey, preview]);
+  }, [loadContent, loadedContentKey]);
 
   useEffect(() => {
     if (selectedEntryId) {
