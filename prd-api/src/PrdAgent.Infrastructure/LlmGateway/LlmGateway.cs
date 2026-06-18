@@ -820,9 +820,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var response = await httpClient.SendAsync(httpRequest, ct);
 
-            // 检测响应类型：二进制（音频等）还是文本（JSON）
+            // 检测响应类型：二进制（音频 / 视频 / 图片等）还是文本（JSON）
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
             var isBinaryResponse = contentType.StartsWith("audio/") ||
+                                   contentType.StartsWith("video/") ||
+                                   contentType.StartsWith("image/") ||
                                    contentType == "application/octet-stream";
 
             string? responseBody = null;
