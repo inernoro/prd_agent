@@ -3839,12 +3839,19 @@ export function DocBrowser({
           entryId={selectedEntryData.id}
           entryTitle={selectedEntryData.title}
           api={versionApi}
-          onRestored={(content, updatedAt) => {
-            // 恢复后就地更新 preview + 推进 loadedContentKey，避免整页重拉闪烁
-            setPreview(prev => (prev ? { ...prev, text: content } : prev));
-            setLoadedContentKey(`${selectedEntryData.id}:${updatedAt}`);
-            if (editMode) { setEditMode(false); setEditContent(''); }
-            onEntryContentRestored?.(selectedEntryData.id, updatedAt);
+          onRestored={(content, updatedAt, restoredEntryId) => {
+            // 仅当恢复的就是当前选中条目时才就地刷新当前页（在途切换条目则不画到当前页，避免画错文档，Bugbot）
+            if (restoredEntryId === selectedEntryId) {
+              contentFetchIdRef.current++;        // 作废在途加载，防慢响应覆盖恢复结果（Bugbot）
+              setContentLoading(false);
+              lastSavedContentRef.current = { entryId: restoredEntryId, text: content };
+              // preview 为 null（内容仍在加载）时也要写出恢复内容，否则配合下面推进的 key 会让正文页空白（Bugbot High）
+              setPreview(prev => (prev ? { ...prev, text: content } : { text: content, fileUrl: null, contentType: 'text/markdown' }));
+              setLoadedContentKey(`${restoredEntryId}:${updatedAt}`);
+              if (editMode) { setEditMode(false); setEditContent(''); }
+            }
+            // 无论当前是否还选中该条目，都更新对应行的 updatedAt（用于列表/大小徽章刷新）
+            onEntryContentRestored?.(restoredEntryId, updatedAt);
           }}
           onClose={() => setVersionHistoryOpen(false)}
         />

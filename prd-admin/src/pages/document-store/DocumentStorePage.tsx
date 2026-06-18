@@ -1095,7 +1095,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
             <span className="text-[11px] text-token-muted tabular-nums">
               <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
             </span>
-            <StoreSizeBadge storeId={store.id} refreshKey={entries.length} />
+            {/* refreshKey 含各 entry 的 updatedAt：编辑/恢复/替换会 bump updatedAt 但条目数不变，
+                只用 length 会让大小数字停留在旧值；带上 updatedAt 串内容变化即刷新（Codex P2）。 */}
+            <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />
           </div>
         }
         actions={

@@ -47,8 +47,9 @@ type Props = {
   entryId: string;
   entryTitle: string;
   api: VersionApi;
-  /** 恢复成功后回调：把恢复后的正文 + 服务端新 updatedAt 交给 DocBrowser 就地更新 preview。 */
-  onRestored: (content: string, updatedAt: string) => void;
+  /** 恢复成功后回调：把恢复后的正文 + 服务端新 updatedAt + 被恢复的 entryId 交给 DocBrowser；
+   *  带 entryId 让上层校验「恢复的是不是当前选中条目」，避免在途切换条目时画错文档。 */
+  onRestored: (content: string, updatedAt: string, entryId: string) => void;
   onClose: () => void;
 };
 
@@ -108,7 +109,7 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
       const res = await api.restore(entryId, detail.id);
       if (res.success && res.data) {
         toast.success('已恢复到该版本', `版本 #${detail.versionNumber} 的内容已写回当前文档`);
-        onRestored(detail.content, res.data.updatedAt);
+        onRestored(detail.content, res.data.updatedAt, entryId);
         onClose();
       } else {
         toast.error('恢复失败', res.error?.message);

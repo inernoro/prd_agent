@@ -32,3 +32,5 @@
 | fix | prd-admin | commitLocalSave 作废在途加载时同步清 contentLoading，避免内容区卡在 loading 占位 —— Codex P2 |
 | fix | prd-admin | 历史版本首条徽章「当前」改为「最新」，个别写入路径（替换文件）不产生版本时不误导为当前在线正文 —— Codex P2 |
 | fix | prd-admin | 保存豁免重拉改为一次性（用完即清 lastSavedContentRef），只豁免保存紧接的那次重拉；之后订阅同步 bump updatedAt 仍正常重拉，不会一直拿本地旧文盖掉服务端已同步的新内容 —— Bugbot |
+| fix | prd-admin | 知识库大小徽章 refreshKey 改为含各 entry updatedAt（原仅条目数）：编辑/恢复/替换改变体积但条目数不变时也刷新 —— Codex P2 |
+| fix | prd-admin | 版本恢复回调硬化：preview 为 null 时也写出恢复正文（防空白）+ 校验恢复的是当前选中条目（防画错文档）+ 作废在途加载（防慢响应覆盖）—— Bugbot High/Medium |
