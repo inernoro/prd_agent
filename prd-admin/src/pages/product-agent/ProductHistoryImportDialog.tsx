@@ -17,7 +17,7 @@ import {
 import type { Product } from './types';
 import { parseDefectImportFile } from './defectImportParse';
 import { RequirementRtfImportDialog } from './RequirementRtfImportDialog';
-import { applyFallbackProductToRows, rowHasExplicitProductRouteField } from './requirementImportRouting';
+import { applyFallbackProductToRows, promoteRequirementCategoryToProductField, rowHasExplicitProductRouteField } from './requirementImportRouting';
 
 export type HistoryImportType = 'requirement' | 'feature' | 'defect' | 'version';
 
@@ -114,19 +114,21 @@ function parseProductHistoryMatrix(matrix: unknown[][], options?: { entityType?:
     const rawGrade = gradeIndex >= 0 ? values[gradeIndex]?.trim() : undefined;
     const appName = appIndex >= 0 ? values[appIndex]?.trim() : undefined;
     const productName = productIndex >= 0 ? values[productIndex]?.trim() : undefined;
-    const routeLabel = appName || productName;
     const sourceFields: Record<string, string> = {};
-    if (routeLabel) sourceFields.应用 = routeLabel;
+    if (appName || productName) sourceFields.应用 = appName || productName || '';
     [
       [sourceIndex, '需求来源'],
       [typeIndex, '需求类型'],
-      [categoryIndex, '需求类别'],
+      [categoryIndex, headers[categoryIndex] === '分类' ? '分类' : '需求类别'],
       [moduleIndex, '模块'],
       [featureIndex, '功能'],
     ].forEach(([index, key]) => {
       if (typeof index === 'number' && index >= 0 && values[index]?.trim()) sourceFields[String(key)] = values[index].trim();
     });
     const isRequirement = options?.entityType === 'requirement';
+    const routedSourceFields = isRequirement
+      ? promoteRequirementCategoryToProductField(sourceFields)
+      : (Object.keys(sourceFields).length > 0 ? sourceFields : undefined);
     return {
       title: values[effectiveTitleIndex]?.trim() ?? '',
       description: descriptionIndex >= 0 ? values[descriptionIndex]?.trim() : undefined,
@@ -136,7 +138,7 @@ function parseProductHistoryMatrix(matrix: unknown[][], options?: { entityType?:
       externalId: externalIdIndex >= 0 ? (values[externalIdIndex]?.trim() || undefined) : undefined,
       plannedAt: plannedIndex >= 0 ? values[plannedIndex]?.trim() : undefined,
       completedAt: completedIndex >= 0 ? values[completedIndex]?.trim() : undefined,
-      sourceFields: Object.keys(sourceFields).length > 0 ? sourceFields : undefined,
+      sourceFields: routedSourceFields,
       ...(isRequirement ? {
         sourceStatus: statusIndex >= 0 ? values[statusIndex]?.trim() : undefined,
         sourcePriority: priorityIndex >= 0 ? values[priorityIndex]?.trim() : undefined,
@@ -295,7 +297,7 @@ export function ProductHistoryImportDialog({
             <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
             <div className="mt-1 text-xs text-white/45">
               {isCrossProduct
-                ? '优先按文件「应用」或「产品/所属产品」列匹配系统产品；没有产品列时可选择默认归属产品。'
+                ? '优先按文件「应用 / 产品 / 所属产品 / 分类」列匹配系统产品；都没有时才选择默认归属产品。'
                 : '可重复导入；有外部 ID 时更新原记录，无 ID 时系统自动分配纯数字编号。'}
             </div>
           </div>
@@ -312,7 +314,7 @@ export function ProductHistoryImportDialog({
           )}
           {shouldShowFallbackProductPicker && (
             <label className="mb-4 block rounded-lg border border-amber-400/20 bg-amber-400/5 p-3">
-              <span className="mb-1.5 block text-xs font-medium text-amber-100/80">文件未包含「应用/产品」列，请选择默认归属产品</span>
+              <span className="mb-1.5 block text-xs font-medium text-amber-100/80">文件未包含「应用/产品/分类」列，请选择默认归属产品</span>
               <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#171a20] px-3 py-2 text-sm text-white outline-none">
                 {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
               </select>

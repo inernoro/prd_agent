@@ -55,8 +55,8 @@ describe('parseProductHistoryCsv', () => {
 
   it('maps requirement export columns to backend import fields', () => {
     const rows = parseProductHistoryCsv([
-      'ID,标题,状态,优先级,需求来源,需求类型,需求类别,详细描述,处理人',
-      '1007159,【智能营销】领奖记录导出新增券码字段,待评审,High,客户反馈,功能优化,需求,补充券码字段,张三；李四',
+      'ID,标题,状态,优先级,需求来源,需求类型,分类,详细描述,处理人',
+      '1007159,【智能营销】领奖记录导出新增券码字段,待评审,High,客户反馈,功能优化,智能营销,补充券码字段,张三；李四',
     ].join('\n'), { entityType: 'requirement' });
 
     expect(rows[0]).toMatchObject({
@@ -67,9 +67,10 @@ describe('parseProductHistoryCsv', () => {
       sourcePriority: 'High',
       handlerNames: ['张三', '李四'],
       sourceFields: {
+        应用: '智能营销',
         需求来源: '客户反馈',
         需求类型: '功能优化',
-        需求类别: '需求',
+        分类: '智能营销',
       },
     });
   });

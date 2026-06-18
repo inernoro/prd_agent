@@ -14,7 +14,7 @@ import {
   type RtfImportRequirement,
 } from './requirementRtfImport';
 import { REQUIREMENT_SOURCE_RTF } from './requirementSource';
-import { applyFallbackProductToRows, rowHasExplicitProductRouteField } from './requirementImportRouting';
+import { applyFallbackProductToRows, promoteRequirementCategoryToProductField, rowHasExplicitProductRouteField } from './requirementImportRouting';
 import type { Product } from './types';
 
 interface ParsedRequirementItem {
@@ -64,7 +64,9 @@ export function RequirementRtfImportDialog({
   );
   const shouldShowFallbackProductPicker = crossProductRoute
     && totalRequirementCount > 0
-    && validItems.every((item) => !rowHasExplicitProductRouteField({ sourceFields: item.requirement.fields }));
+    && validItems.every((item) => !rowHasExplicitProductRouteField({
+      sourceFields: promoteRequirementCategoryToProductField(item.requirement.fields),
+    }));
 
   useEffect(() => {
     let active = true;
@@ -187,7 +189,7 @@ export function RequirementRtfImportDialog({
         externalId: requirement.externalId,
         sourceStatus: requirement.sourceStatus,
         sourcePriority: requirement.sourcePriority,
-        sourceFields: requirement.fields,
+        sourceFields: promoteRequirementCategoryToProductField(requirement.fields),
         handlerNames: requirement.handlerNames,
         developerNames: requirement.developerNames,
         creatorNames: requirement.creatorNames,
@@ -208,7 +210,7 @@ export function RequirementRtfImportDialog({
 
     if (crossProductRoute && rowsToImport.every((row) => !rowHasExplicitProductRouteField(row))) {
       setImporting(false);
-      setProgress('无法导入：文件没有「应用/产品/所属产品」字段，请选择默认归属产品后再导入。');
+      setProgress('无法导入：文件没有「应用/产品/所属产品/分类」字段，请选择默认归属产品后再导入。');
       return;
     }
 
@@ -275,7 +277,7 @@ export function RequirementRtfImportDialog({
               )}
               {shouldShowFallbackProductPicker && (
                 <label className="rounded-lg border border-amber-400/20 bg-amber-400/5 p-3">
-                  <span className="mb-1.5 block text-xs font-medium text-amber-100/80">RTF 未包含「应用/产品」字段，请选择默认归属产品</span>
+                  <span className="mb-1.5 block text-xs font-medium text-amber-100/80">RTF 未包含「应用/产品/分类」字段，请选择默认归属产品</span>
                   <select value={fallbackProductId} onChange={(event) => setFallbackProductId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#171a20] px-3 py-2 text-sm text-white outline-none">
                     {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
                   </select>
@@ -335,7 +337,7 @@ export function RequirementRtfImportDialog({
           )}
           {result && result.created + result.updated === 0 && (
             <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
-              没有写入任何需求。{result.skipped > 0 ? '原因：所有记录都未匹配到系统产品。请确认默认归属产品或文件中的「应用/产品」字段。' : '请检查 RTF 是否为 TAPD 需求导出格式。'}
+              没有写入任何需求。{result.skipped > 0 ? '原因：所有记录都未匹配到系统产品。请确认文件中的「分类」值能匹配系统产品，或选择默认归属产品。' : '请检查 RTF 是否为 TAPD 需求导出格式。'}
             </div>
           )}
           {imageWarnings.length > 0 && (
