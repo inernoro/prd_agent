@@ -34,6 +34,26 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void ResolvePublishStatus_UsesResolvedCommitShaWhenTraceStoresShortSha()
+    {
+        var fullSha = "abcdef1234567890abcdef1234567890abcdef12";
+        var shaIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["deployed"] = 0,
+            [fullSha] = 1,
+        };
+
+        Assert.Equal(
+            DefectResolutionPublishStatus.Published,
+            ChangelogController.ResolvePublishStatus(
+                new DefectResolutionTrace { CommitSha = "abcdef1" },
+                fullSha,
+                "deployed",
+                0,
+                shaIndex));
+    }
+
+    [Fact]
     public void ResolvePublishStatus_KeepsPersistedPublishedStatus()
     {
         var status = ChangelogController.ResolvePublishStatus(
@@ -47,6 +67,18 @@ public class ChangelogLinkedDefectsTests
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase));
 
         Assert.Equal(DefectResolutionPublishStatus.Published, status);
+    }
+
+    [Fact]
+    public void BuildCommitShaAliases_IncludesFullAndShortShaForms()
+    {
+        var aliases = ChangelogController.BuildCommitShaAliases(
+            "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+            "abcdeff");
+
+        Assert.Contains("abcdef1234567890abcdef1234567890abcdef12", aliases);
+        Assert.Contains("abcdef1", aliases);
+        Assert.Contains("abcdeff", aliases);
     }
 
     [Fact]
