@@ -2257,6 +2257,10 @@ function ShortVideoCardBlock({ run, phase, content }: {
   const base = shortVideoCompactStatus(run);
   const tone = isError ? 'error' : base.tone;
   const text = isError ? (base.tone === 'error' ? base.text : '处理中断或超时') : base.text;
+  // 部分失败：视频已入库（run.status==='done'）但转写 stage 失败 → phase 不是 'error'，
+  // 仅靠上面那行 compact 状态看不出"为什么没有文字"。把转写失败原因显式补一行（Codex P2）。
+  const transcriptStage = (run.stages ?? []).find((s) => s.key === 'transcript');
+  const transcriptFailed = run.status === 'done' && transcriptStage?.status === 'failed';
   const toneColor = tone === 'error'
     ? 'rgba(248,113,113,0.95)'
     : tone === 'done'
@@ -2275,6 +2279,11 @@ function ShortVideoCardBlock({ run, phase, content }: {
       {isError && content ? (
         <div className="mt-1.5 text-[11px] text-token-muted whitespace-pre-wrap" style={{ opacity: 0.85 }}>
           {content}
+        </div>
+      ) : transcriptFailed ? (
+        // 视频入库成功但转写失败：补一行说明，告诉用户"为什么没有文字、怎么补救"（Codex P2）。
+        <div className="mt-1.5 text-[11px] whitespace-pre-wrap" style={{ color: 'rgba(248,113,113,0.9)' }}>
+          视频转文字失败{transcriptStage?.message?.trim() ? `：${transcriptStage.message.trim()}` : ''}。视频已入库，可稍后单独重试转写。
         </div>
       ) : null}
     </div>
