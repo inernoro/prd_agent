@@ -114,11 +114,18 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
   const modal = (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.55)' }}
+      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}
       onClick={onClose}>
       <div
         className="rounded-xl flex flex-col"
-        style={{ width: 'min(960px, 92vw)', height: '80vh', maxHeight: '80vh', background: 'var(--bg-card)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))' }}
+        style={{
+          width: 'min(960px, 92vw)', height: '80vh', maxHeight: '80vh',
+          // 必须用不透明的 elevated 面色：--bg-card 在暗色主题是 rgba(255,255,255,0.08)（半透明卡片色），
+          // 直接当弹窗底会透出背景正文造成重叠（用户实测）。浮层走 --bg-elevated（两主题均不透明）。
+          background: 'var(--bg-elevated, #1e1e24)',
+          border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+        }}
         onClick={(e) => e.stopPropagation()}>
         {/* 头部 */}
         <div className="shrink-0 flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
