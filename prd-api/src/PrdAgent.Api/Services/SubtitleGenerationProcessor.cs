@@ -220,7 +220,7 @@ public class SubtitleGenerationProcessor
 
         // 多模态 chat 音频模型（OpenRouter openai/gpt-audio、gemini 等）→ 没有 Whisper /v1/audio/transcriptions
         // 端点，只能把音频以 input_audio 发到 /v1/chat/completions 让多模态模型逐字转写。
-        if (IsChatAudioModel(resolution.ActualModel))
+        if (IsChatAudioModel(resolution.ActualModel, resolution.PlatformType))
         {
             _logger.LogInformation(
                 "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
@@ -420,9 +420,16 @@ public class SubtitleGenerationProcessor
     // 无逐句时间戳 → 返回单段（StartSec=EndSec=0）。
     // ──────────────────────────────────────────────────────
 
-    private static bool IsChatAudioModel(string? model)
+    private static bool IsChatAudioModel(string? model, string? platformType)
     {
         if (string.IsNullOrWhiteSpace(model)) return false;
+        // 本路径发的是 OpenAI 形态请求（/v1/chat/completions + input_audio）。原生非 OpenAI 形态的
+        // 平台不能走：claude/anthropic 走 ClaudeGatewayAdapter，请求体不同；google 原生 Gemini 用
+        // v1beta/models/{model}:generateContent，端点与请求体都和 OpenAI 完全不同。把 OpenAI 形态
+        // 请求发到这些原生端点会直接失败而非转写，所以仅 OpenAI 兼容平台可走（Codex P2）。
+        // OpenRouter 等 OpenAI 兼容平台注册为 openai，照常生效。
+        var pt = (platformType ?? "").ToLowerInvariant();
+        if (pt is "google" or "anthropic" or "claude") return false;
         var m = model.ToLowerInvariant();
         if (m.Contains("whisper")) return false;
         // 只认确实支持音频输入的多模态模型：名字含 audio（gpt-audio / gpt-4o-audio-preview /

@@ -6572,7 +6572,7 @@ function safeChart(canvasId, config) {
                     else
                     {
                         var gwRes = resolution.ToGatewayResolution();
-                        var gatewayResult = IsChatAudioModel(gwRes.ActualModel)
+                        var gatewayResult = IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
                             ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
                             : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
                         transcript = gatewayResult.Transcript;
@@ -6759,9 +6759,15 @@ function safeChart(canvasId, config) {
     /// gemini 系等）。这些平台没有 Whisper 的 /v1/audio/transcriptions 端点，只能把音频当作
     /// chat 消息里的 input_audio 发给多模态模型，让它逐字转写。whisper 仍走 multipart。
     /// </summary>
-    private static bool IsChatAudioModel(string? model)
+    private static bool IsChatAudioModel(string? model, string? platformType)
     {
         if (string.IsNullOrWhiteSpace(model)) return false;
+        // 本路径发 OpenAI 形态请求（/v1/chat/completions + input_audio）。原生非 OpenAI 形态平台
+        // 不能走：claude/anthropic 走 ClaudeGatewayAdapter；google 原生 Gemini 用
+        // v1beta/models/{model}:generateContent，端点与请求体都和 OpenAI 不同，发过去直接失败
+        // 而非转写。仅 OpenAI 兼容平台（OpenRouter 等注册为 openai）可走（Codex P2）。
+        var pt = (platformType ?? "").ToLowerInvariant();
+        if (pt is "google" or "anthropic" or "claude") return false;
         var m = model.ToLowerInvariant();
         if (m.Contains("whisper")) return false;       // Whisper 走 /v1/audio/transcriptions
         // 只认确实支持音频输入的模型：含 audio（gpt-audio / gpt-4o-audio-preview / qwen-audio）
