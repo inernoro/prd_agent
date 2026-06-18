@@ -110,6 +110,8 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                     Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
             Builders<ShortVideoMaterialRun>.Update
                 .Set(r => r.Status, "running")
+                // 认领时盖上本实例归属（领取历史无主任务后必须打主，否则崩溃重启兜底匹配不到、永卡 running，Bugbot Medium）
+                .Set(r => r.OwnerInstanceId, instanceId)
                 .Set(r => r.UpdatedAt, DateTime.UtcNow),
             new FindOneAndUpdateOptions<ShortVideoMaterialRun>
             {

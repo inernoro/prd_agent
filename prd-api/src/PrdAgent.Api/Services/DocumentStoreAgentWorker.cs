@@ -118,6 +118,9 @@ public class DocumentStoreAgentWorker : BackgroundService
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
         var update = Builders<DocumentStoreAgentRun>.Update
             .Set(r => r.Status, DocumentStoreRunStatus.Running)
+            // 认领时盖上本实例归属：领取历史无主任务后必须打主，否则本实例崩溃重启时
+            // "只回收本实例 Running"的兜底匹配不到它，会让该任务永远卡在 running（Bugbot Medium）。
+            .Set(r => r.OwnerInstanceId, instanceId)
             .Set(r => r.StartedAt, DateTime.UtcNow);
         var run = await db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
             filter, update,
