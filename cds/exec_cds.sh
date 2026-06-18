@@ -12,6 +12,14 @@
 #   ./exec_cds.sh logs          跟随 CDS 日志 (Ctrl+C 退出)
 #   ./exec_cds.sh cert          签发/续签 Let's Encrypt 证书
 #
+# 依赖清单 (init 会自动检查并尝试安装):
+#   - Node.js >= 20     [自动: nvm latest LTS]
+#   - pnpm              [自动: npm install -g pnpm]
+#   - Docker            [自动: Linux root/sudo; 其他环境给平台命令]
+#   - openssl           [自动: apt/yum/dnf/apk/brew]
+#   - curl              [自动: apt/yum/dnf/apk/brew]
+#   - python3           [自动: apt/yum/dnf/apk/brew]
+#
 # 唯一用户配置入口: cds/.cds.env (所有变量 CDS_ 前缀)
 #   CDS_USERNAME        Dashboard 登录用户名
 #   CDS_PASSWORD        Dashboard 登录密码
@@ -322,11 +330,14 @@ read_env_value() {
 # 原则: "快启动必须大包大揽，假设使用者是小白"
 #
 # check_deps() 不再是"缺失就退出"——它会:
-#   1. 检测每个必需/可选工具，给出 ✅/❌ + 用途说明
-#   2. 对能自动装的 (pnpm/python3/curl/openssl) → 交互询问 [Y/n] → 自动装
-#   3. 对不能自动装的 (docker/node) → 给对应发行版的复制粘贴命令
+#   1. 检测每个必需/可选工具，给出状态 + 用途说明
+#   2. 对能自动装的依赖 → 交互询问 [Y/n] → 自动装
+#   3. 对当前环境不能自动装的依赖 → 给对应发行版的复制粘贴命令
 #   4. 跑两次能继续 (幂等)
 #   5. 成功的静默，失败的详细
+
+NVM_INSTALL_VERSION="${NVM_INSTALL_VERSION:-v0.40.5}"
+AUTO_INSTALL_APPROVED=""
 
 # Ask a yes/no question on tty. Returns 0 for yes, 1 for no.
 # Default is Y (enter = yes). Non-interactive (no tty) returns yes.
@@ -342,6 +353,21 @@ confirm() {
     [Yy]|[Yy][Ee][Ss]|'') return 0 ;;
     *) return 1 ;;
   esac
+}
+
+confirm_auto_install() {
+  if [ "$AUTO_INSTALL_APPROVED" = "yes" ]; then
+    return 0
+  fi
+  if [ "$AUTO_INSTALL_APPROVED" = "no" ]; then
+    return 1
+  fi
+  if confirm "检测到缺失依赖时是否允许脚本自动安装? 将安装 Node.js LTS、pnpm、Docker、curl 等 CDS 必需组件"; then
+    AUTO_INSTALL_APPROVED="yes"
+    return 0
+  fi
+  AUTO_INSTALL_APPROVED="no"
+  return 1
 }
 
 # Detect Linux distribution family for auto-install command selection.
@@ -379,79 +405,187 @@ detect_os() {
 
 # Return the package-install command prefix for the detected OS.
 # Usage: $(pkg_install_cmd) <package-name>
+sudo_prefix() {
+  if [ "$(id -u)" = "0" ]; then
+    printf ''
+    return
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    printf 'sudo '
+    return
+  fi
+  printf ''
+}
+
+has_root_or_sudo() {
+  [ "$(id -u)" = "0" ] && return 0
+  command -v sudo >/dev/null 2>&1
+}
+
 pkg_install_cmd() {
+  local s
+  s="$(sudo_prefix)"
   case "$(detect_os)" in
-    ubuntu|debian) printf 'sudo apt-get install -y' ;;
-    centos|rhel)   printf 'sudo yum install -y' ;;
-    fedora)        printf 'sudo dnf install -y' ;;
-    arch)          printf 'sudo pacman -S --noconfirm' ;;
-    alpine)        printf 'sudo apk add' ;;
+    ubuntu|debian) printf '%sapt-get install -y' "$s" ;;
+    centos|rhel)   printf '%syum install -y' "$s" ;;
+    fedora)        printf '%sdnf install -y' "$s" ;;
+    arch)          printf '%spacman -S --noconfirm' "$s" ;;
+    alpine)        printf '%sapk add' "$s" ;;
     macos)         printf 'brew install' ;;
+    *)             printf '' ;;
+  esac
+}
+
+pkg_update_cmd() {
+  local s
+  s="$(sudo_prefix)"
+  case "$(detect_os)" in
+    ubuntu|debian) printf '%sapt-get update' "$s" ;;
     *)             printf '' ;;
   esac
 }
 
 # Try to install a package via the detected package manager. Returns 0 on success.
 try_pkg_install() {
-  local pkg="$1" cmd
+  local pkg="$1" cmd update_cmd
+  if ! has_root_or_sudo && [ "$(detect_os)" != "macos" ]; then
+    warn "当前用户不是 root 且未找到 sudo，无法自动安装 $pkg"
+    return 1
+  fi
   cmd="$(pkg_install_cmd)"
   if [ -z "$cmd" ]; then
     warn "未知的发行版，无法自动安装 $pkg"
     return 1
   fi
+  update_cmd="$(pkg_update_cmd)"
+  if [ -n "$update_cmd" ]; then
+    info "更新包索引: $update_cmd"
+    # shellcheck disable=SC2086
+    if ! $update_cmd 2>&1 | tail -5; then
+      warn "包索引更新失败，继续尝试直接安装 $pkg"
+    fi
+  fi
   info "执行: $cmd $pkg"
   # shellcheck disable=SC2086
-  $cmd "$pkg" 2>&1 | tail -5
+  if ! $cmd "$pkg" 2>&1 | tail -5; then
+    return 1
+  fi
   command -v "$pkg" >/dev/null 2>&1
 }
 
 # ── Dependency checks: each function returns 0 if OK, 1 if missing ──
 
+load_nvm() {
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  # shellcheck disable=SC1091
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+}
+
+manual_node_commands() {
+  case "$(detect_os)" in
+    ubuntu|debian)
+      echo  "       curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_INSTALL_VERSION}/install.sh | bash"
+      echo  "       . \"\$HOME/.nvm/nvm.sh\""
+      echo  "       nvm install --lts && nvm alias default 'lts/*'"
+      ;;
+    centos|rhel|fedora|arch|alpine)
+      echo  "       curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_INSTALL_VERSION}/install.sh | bash"
+      echo  "       . \"\$HOME/.nvm/nvm.sh\""
+      echo  "       nvm install --lts && nvm alias default 'lts/*'"
+      ;;
+    macos)
+      echo  "       curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_INSTALL_VERSION}/install.sh | bash"
+      echo  "       . \"\$HOME/.nvm/nvm.sh\""
+      echo  "       nvm install --lts && nvm alias default 'lts/*'"
+      ;;
+    *)
+      echo  "       访问 https://nodejs.org/ 下载 Node.js 20+ 或使用 nvm 安装"
+      ;;
+  esac
+}
+
+install_node_with_nvm() {
+  if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ] || [ ! -w "$HOME" ]; then
+    warn "HOME 不可写，无法用 nvm 自动安装 Node.js: ${HOME:-未设置}"
+    return 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "安装 nvm 需要 curl，先尝试自动安装 curl"
+    check_curl || return 1
+  fi
+  if ! confirm_auto_install; then
+    warn "跳过 Node.js 自动安装"
+    return 1
+  fi
+
+  load_nvm
+  if ! command -v nvm >/dev/null 2>&1; then
+    info "安装 nvm ${NVM_INSTALL_VERSION} ..."
+    if ! curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_INSTALL_VERSION}/install.sh" | bash; then
+      err "nvm 自动安装失败"
+      return 1
+    fi
+    load_nvm
+  fi
+  if ! command -v nvm >/dev/null 2>&1; then
+    err "nvm 已安装但当前 shell 未能加载 $NVM_DIR/nvm.sh"
+    return 1
+  fi
+
+  info "通过 nvm 安装最新 Node.js LTS ..."
+  if ! nvm install --lts; then
+    err "Node.js LTS 自动安装失败"
+    return 1
+  fi
+  if ! nvm use --lts; then
+    err "Node.js LTS 安装完成但当前 shell 切换失败"
+    return 1
+  fi
+  nvm alias default 'lts/*' >/dev/null
+  hash -r 2>/dev/null || true
+  if command -v node >/dev/null 2>&1; then
+    ok "Node.js 安装完成: $(node -v)"
+    return 0
+  fi
+  err "Node.js 安装后仍未出现在 PATH"
+  return 1
+}
+
 check_node() {
+  load_nvm || true
   if ! command -v node >/dev/null 2>&1; then
-    printf "  ❌ [依赖] %sNode.js%s 未安装\n" "$B" "$N"
+    printf "  [缺失] %sNode.js%s 未安装\n" "$B" "$N"
     echo  "     用途: 运行 CDS 核心进程 (Express + TypeScript)"
     echo  "     缺失后果: CDS 完全无法启动"
-    echo  "     推荐安装 (Node.js 20 LTS):"
-    case "$(detect_os)" in
-      ubuntu|debian)
-        echo  "       curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
-        echo  "       sudo apt-get install -y nodejs"
-        ;;
-      centos|rhel|fedora)
-        echo  "       curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -"
-        echo  "       sudo yum install -y nodejs"
-        ;;
-      macos)
-        echo  "       brew install node@20"
-        ;;
-      *)
-        echo  "       访问 https://nodejs.org/ 下载 v20 LTS 安装包"
-        ;;
-    esac
-    echo  "     (Node.js 需要发行版级别安装，不能由本脚本自动完成)"
+    echo  "     自动安装方式: nvm ${NVM_INSTALL_VERSION} + 最新 Node.js LTS"
+    install_node_with_nvm && return 0
+    echo  "     手动安装命令:"
+    manual_node_commands
     return 1
   fi
   local v; v="$(node -v | sed 's/^v//' | cut -d. -f1)"
   if ! [ "$v" -ge 20 ] 2>/dev/null; then
-    printf "  ❌ [依赖] Node.js 版本过低 (当前 v%s，需要 >= 20)\n" "$v"
-    echo  "     请升级到 Node.js 20 LTS 或更高版本"
+    printf "  [缺失] Node.js 版本过低 (当前 v%s，需要 >= 20)\n" "$v"
+    echo  "     自动升级方式: nvm ${NVM_INSTALL_VERSION} + 最新 Node.js LTS"
+    install_node_with_nvm && return 0
+    echo  "     手动安装命令:"
+    manual_node_commands
     return 1
   fi
-  printf "  ✅ Node.js %s\n" "$(node -v)"
+  printf "  [OK] Node.js %s\n" "$(node -v)"
   return 0
 }
 
 check_pnpm() {
   if command -v pnpm >/dev/null 2>&1; then
-    printf "  ✅ pnpm %s\n" "$(pnpm -v 2>/dev/null || echo '(version unknown)')"
+    printf "  [OK] pnpm %s\n" "$(pnpm -v 2>/dev/null || echo '(version unknown)')"
     return 0
   fi
-  printf "  ❌ [依赖] %spnpm%s 未安装\n" "$B" "$N"
+  printf "  [缺失] %spnpm%s 未安装\n" "$B" "$N"
   echo  "     用途: 前端包管理器 (代替 npm, 本项目强制使用)"
   echo  "     缺失后果: CDS Dashboard 无法编译"
   if command -v npm >/dev/null 2>&1; then
-    if confirm "是否用 'npm install -g pnpm' 自动安装?"; then
+    if confirm_auto_install; then
       info "执行: npm install -g pnpm"
       if npm install -g pnpm 2>&1 | tail -3; then
         command -v pnpm >/dev/null 2>&1 && {
@@ -469,33 +603,45 @@ check_pnpm() {
   return 1
 }
 
-check_docker() {
-  if command -v docker >/dev/null 2>&1; then
-    if docker ps >/dev/null 2>&1; then
-      printf "  ✅ Docker %s\n" "$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
-      return 0
-    fi
-    printf "  ⚠️  Docker 已安装但无权限访问 daemon\n"
-    echo  "     快速修复:"
-    echo  "       sudo usermod -aG docker \$USER"
-    echo  "       newgrp docker   # 或重新登录 shell"
-    echo  "     临时测试: sudo docker ps"
-    return 1
+start_docker_daemon() {
+  if docker ps >/dev/null 2>&1; then
+    return 0
   fi
-  printf "  ❌ [依赖] %sDocker%s 未安装\n" "$B" "$N"
-  echo  "     用途: 运行分支预览容器 (CDS 核心能力)"
-  echo  "     缺失后果: 无法创建任何分支预览"
-  echo  "     推荐安装:"
+  info "尝试启动 Docker daemon ..."
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    if [ "$(id -u)" = "0" ]; then
+      systemctl enable --now docker 2>&1 | tail -5 || true
+    else
+      sudo systemctl enable --now docker 2>&1 | tail -5 || true
+    fi
+  elif command -v service >/dev/null 2>&1; then
+    if [ "$(id -u)" = "0" ]; then
+      service docker start 2>&1 | tail -5 || true
+    else
+      sudo service docker start 2>&1 | tail -5 || true
+    fi
+  elif command -v rc-service >/dev/null 2>&1; then
+    if [ "$(id -u)" = "0" ]; then
+      rc-service docker start 2>&1 | tail -5 || true
+    else
+      sudo rc-service docker start 2>&1 | tail -5 || true
+    fi
+  fi
+  docker ps >/dev/null 2>&1
+}
+
+manual_docker_commands() {
   case "$(detect_os)" in
     ubuntu|debian)
       echo  "       curl -fsSL https://get.docker.com | sh"
-      echo  "       sudo usermod -aG docker \$USER"
+      echo  "       systemctl enable --now docker"
+      echo  "       usermod -aG docker \$USER"
       echo  "       newgrp docker"
       ;;
     centos|rhel|fedora)
-      echo  "       sudo yum install -y docker"
-      echo  "       sudo systemctl enable --now docker"
-      echo  "       sudo usermod -aG docker \$USER"
+      echo  "       curl -fsSL https://get.docker.com | sh"
+      echo  "       systemctl enable --now docker"
+      echo  "       usermod -aG docker \$USER"
       echo  "       newgrp docker"
       ;;
     macos)
@@ -503,15 +649,92 @@ check_docker() {
       echo  "       然后启动 Docker Desktop 应用"
       ;;
     alpine)
-      echo  "       sudo apk add docker"
-      echo  "       sudo rc-update add docker boot"
-      echo  "       sudo service docker start"
+      echo  "       apk add docker"
+      echo  "       rc-update add docker boot"
+      echo  "       service docker start"
       ;;
     *)
       echo  "       访问 https://docs.docker.com/engine/install/ 查找对应发行版"
       ;;
   esac
-  echo  "     (Docker 涉及 systemd + 用户组, 不能由本脚本自动完成)"
+}
+
+install_docker_engine() {
+  case "$(detect_os)" in
+    ubuntu|debian|centos|rhel|fedora|arch|alpine) ;;
+    macos|unknown)
+      warn "当前平台不适合脚本内自动安装 Docker"
+      return 1
+      ;;
+  esac
+  if ! has_root_or_sudo; then
+    warn "当前用户不是 root 且未找到 sudo，无法自动安装 Docker"
+    return 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "安装 Docker 需要 curl，先尝试自动安装 curl"
+    check_curl || return 1
+  fi
+  if ! confirm_auto_install; then
+    warn "跳过 Docker 自动安装"
+    return 1
+  fi
+
+  info "执行 Docker 官方安装脚本 ..."
+  if [ "$(id -u)" = "0" ]; then
+    if ! curl -fsSL https://get.docker.com | sh; then
+      err "Docker 自动安装失败"
+      return 1
+    fi
+  else
+    if ! curl -fsSL https://get.docker.com | sudo sh; then
+      err "Docker 自动安装失败"
+      return 1
+    fi
+  fi
+
+  start_docker_daemon || true
+
+  if [ "$(id -u)" != "0" ] && [ -n "${USER:-}" ]; then
+    if [ "$(id -u)" = "0" ]; then
+      usermod -aG docker "$USER" 2>/dev/null || true
+    else
+      sudo usermod -aG docker "$USER" 2>/dev/null || true
+    fi
+    warn "已把 $USER 加入 docker 组；当前 shell 可能需要执行 newgrp docker 或重新登录后才生效"
+  fi
+
+  if docker ps >/dev/null 2>&1; then
+    ok "Docker 安装完成: $(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
+    return 0
+  fi
+  err "Docker 已安装但当前 shell 仍无法访问 daemon"
+  return 1
+}
+
+check_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    if docker ps >/dev/null 2>&1; then
+      printf "  [OK] Docker %s\n" "$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
+      return 0
+    fi
+    if start_docker_daemon; then
+      printf "  [OK] Docker %s\n" "$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
+      return 0
+    fi
+    printf "  [WARN] Docker 已安装但无权限访问 daemon\n"
+    echo  "     快速修复:"
+    echo  "       usermod -aG docker \$USER"
+    echo  "       newgrp docker   # 或重新登录 shell"
+    echo  "     临时测试: docker ps"
+    return 1
+  fi
+  printf "  [缺失] %sDocker%s 未安装\n" "$B" "$N"
+  echo  "     用途: 运行分支预览容器 (CDS 核心能力)"
+  echo  "     缺失后果: 无法创建任何分支预览"
+  install_docker_engine && return 0
+  echo  "     手动安装命令:"
+  manual_docker_commands
   return 1
 }
 
@@ -519,8 +742,8 @@ check_openssl() {
   if command -v openssl >/dev/null 2>&1; then
     return 0  # silent success — openssl 几乎所有系统都预装
   fi
-  printf "  ❌ [依赖] openssl 未安装 (用于生成 JWT 密钥和 bootstrap token)\n"
-  if confirm "是否自动安装 openssl?"; then
+  printf "  [缺失] [依赖] openssl 未安装 (用于生成 JWT 密钥和 bootstrap token)\n"
+  if confirm_auto_install; then
     try_pkg_install openssl && { ok "openssl 安装完成"; return 0; }
     warn "openssl 安装失败。备用方案: 脚本会使用 /dev/urandom 降级生成随机值"
     return 1
@@ -533,10 +756,10 @@ check_curl() {
   if command -v curl >/dev/null 2>&1; then
     return 0
   fi
-  printf "  ❌ [依赖] %scurl%s 未安装\n" "$B" "$N"
+  printf "  [缺失] %scurl%s 未安装\n" "$B" "$N"
   echo  "     用途: connect / cluster / cert 命令依赖 curl 调 HTTP"
   echo  "     缺失后果: 集群命令和证书签发完全不工作"
-  if confirm "是否自动安装 curl?"; then
+  if confirm_auto_install; then
     try_pkg_install curl && { ok "curl 安装完成"; return 0; }
     err "curl 自动安装失败，请手动安装后重试"
     return 1
@@ -549,10 +772,10 @@ check_python3() {
   if command -v python3 >/dev/null 2>&1; then
     return 0
   fi
-  printf "  ⚠️  [可选] python3 未安装\n"
+  printf "  [WARN] [可选] python3 未安装\n"
   echo  "     用途: ./exec_cds.sh cluster 命令的 JSON 美化输出"
   echo  "     缺失后果: cluster 命令仍能工作, 但输出是原始 JSON"
-  if confirm "是否自动安装 python3?"; then
+  if confirm_auto_install; then
     try_pkg_install python3 && { ok "python3 安装完成"; return 0; }
     warn "python3 安装失败, 不影响核心功能"
     return 0
@@ -572,10 +795,10 @@ check_deps() {
   local required_failed=0
 
   # Required deps — scripts cannot run without these
+  check_curl    || required_failed=$((required_failed + 1))
   check_node    || required_failed=$((required_failed + 1))
   check_pnpm    || required_failed=$((required_failed + 1))
   check_docker  || required_failed=$((required_failed + 1))
-  check_curl    || required_failed=$((required_failed + 1))
 
   # Optional deps — graceful degradation
   check_openssl
@@ -2721,12 +2944,12 @@ help_cmd() {
   都通过它完成。配置文件唯一来源是 cds/.cds.env。
 
 ──────────────────────────────────────────────────────────────────
-  📦 基础生命周期 (单机使用就够了)
+  基础生命周期 (单机使用就够了)
 ──────────────────────────────────────────────────────────────────
 
   ./exec_cds.sh init                第一次使用必跑！它会自动帮你:
                                       1) 检查依赖 (Node/pnpm/Docker/curl/...)
-                                         缺什么就问你是否自动安装 [Y/n]
+                                         缺依赖时只需一次确认 [Y/n]，之后自动安装
                                       2) 交互式问 4 个配置:
                                          - Dashboard 用户名 (默认 admin)
                                          - Dashboard 密码
@@ -2777,7 +3000,7 @@ help_cmd() {
                                       → 第一次会自动安装 acme.sh
 
 ──────────────────────────────────────────────────────────────────
-  🌐 集群命令 (一台机器装不下时再用)
+  集群命令 (一台机器装不下时再用)
 ──────────────────────────────────────────────────────────────────
 
   CDS 支持把多台 Linux 机器组成集群，总容量 (CPU/内存/分支槽) 自动汇总。
@@ -2815,7 +3038,7 @@ help_cmd() {
                                       → 主节点不应该 disconnect (它没"主"可断)
 
 ──────────────────────────────────────────────────────────────────
-  🛡 防护命令 (P4 Part 18 hardening)
+  防护命令 (P4 Part 18 hardening)
 ──────────────────────────────────────────────────────────────────
 
   ./exec_cds.sh install-systemd     高级命令:只安装/刷新 master systemd 服务
@@ -2832,14 +3055,14 @@ help_cmd() {
                                       → master 重启/自更新时业务流量继续由
                                         forwarder 承接
 
-  ⚠️ 集群扩容前的检查清单:
+  集群扩容前的检查清单:
      □ 两台机器都已经 init + start 通过
      □ 新机器能 curl 通老机器的 https://xxx/healthz
      □ 两台机器时间差 < 1 分钟 (token 校验有 60 秒容忍)
      □ 你能 SSH 到两台机器
      □ 主节点 URL 必须是 https:// (拒绝明文 HTTP 防 token 泄露)
 
-  🔒 安全提示:
+  安全提示:
      • bootstrap token 通过命令行参数传递，会出现在 ps aux 输出里。
        同机器上的其他用户可以看到。如果你的服务器是多用户共享的，
        请在 connect 完成后立即在主节点重新 issue-token (会让旧 token 失效)。
@@ -2849,7 +3072,7 @@ help_cmd() {
   详细操作手册见 doc/guide.cds-cluster-setup.md (含 5 种常见错误排查)
 
 ──────────────────────────────────────────────────────────────────
-  📂 配置文件 (cds/.cds.env)
+  配置文件 (cds/.cds.env)
 ──────────────────────────────────────────────────────────────────
 
   这是 CDS 唯一的用户配置文件。所有变量必须 CDS_ 开头。
@@ -2868,7 +3091,7 @@ help_cmd() {
     CDS_EXECUTOR_TOKEN       永久 executor 认证 token
 
 ──────────────────────────────────────────────────────────────────
-  🌍 多域名路由
+  多域名路由
 ──────────────────────────────────────────────────────────────────
 
   CDS_ROOT_DOMAINS 支持逗号分隔多个根域名。每个根域名 D 自动生成:
@@ -2882,7 +3105,7 @@ help_cmd() {
               mycds.net, cds.mycds.net, *.mycds.net
 
 ──────────────────────────────────────────────────────────────────
-  📚 学习路径 (新手强烈推荐看)
+  学习路径 (新手强烈推荐看)
 ──────────────────────────────────────────────────────────────────
 
   1. 第一次安装             → doc/guide.quickstart.md
@@ -2893,7 +3116,7 @@ help_cmd() {
   6. 集群引导握手协议设计   → doc/design.cds-cluster-bootstrap.md
 
 ──────────────────────────────────────────────────────────────────
-  💡 常见问题
+  常见问题
 ──────────────────────────────────────────────────────────────────
 
   Q: 我直接跑 start 报错，什么都没动过
@@ -3060,7 +3283,7 @@ case "$CMD" in
     load_env
     cd "$SCRIPT_DIR" || { err "无法 cd 到 $SCRIPT_DIR"; exit 1; }
     info "[master-run] pnpm install --frozen-lockfile --prefer-offline"
-    # ⚠ Bugbot 982b38ca (Medium):必须显式 fail-fast。pnpm install 失败可能由
+    # Bugbot 982b38ca (Medium):必须显式 fail-fast。pnpm install 失败可能由
     # lockfile 与 package.json 漂移、pnpm store 损坏、磁盘满 等原因触发,
     # 静默继续会让 node 启动时遭遇 stale / 不完整 node_modules,运行时崩溃。
     # systemd Restart=always 会无限重启,污染日志且永远起不来。
