@@ -45,8 +45,13 @@ x-cds-deploy-modes:
         dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
     static:
       label: "静态部署 (publish)"
+      # 每次部署前清掉 bin/obj，强制干净编译：dotnet 增量构建在 CDS 共享 worktree 下偶发
+      # "撒谎"（源码改了却复用旧 DLL），清空后从零编译可彻底避免发布出不含最新改动的二进制。
       command: >-
         cd prd-api &&
+        rm -rf src/PrdAgent.Api/bin src/PrdAgent.Api/obj
+        src/PrdAgent.Core/bin src/PrdAgent.Core/obj
+        src/PrdAgent.Infrastructure/bin src/PrdAgent.Infrastructure/obj &&
         dotnet restore &&
         dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
         dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5000
@@ -136,8 +141,10 @@ services:
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/"
-      # dev 模式 Vite 秒起；static 冷构建见 x-cds-deploy-modes.admin.static（readiness 1200s）
-      cds.readiness-timeout: "300"
+      # dev 模式 Vite 秒起；static 冷构建（pnpm install + vite build）实测约 320s，
+      # 超过原 300s 就绪超时会被误判 error（容器其实已 Accepting connections）。
+      # 按 base label 取两模式上限：static 冷构建留足余量，dev 秒起也不受影响。
+      cds.readiness-timeout: "1200"
       cds.readiness-interval: "3"
 
   # ── Infrastructure Services (无相对路径 mount) ──

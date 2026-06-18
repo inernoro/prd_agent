@@ -774,12 +774,34 @@ public class ShortcutsController : ControllerBase
     }
 
     /// <summary>
+    /// 校验 scs- token 是否仍可用于收藏（密钥有效 + 未禁用 + 未过期），不写任何数据。
+    /// 安装页「连接自检」用，校验口径与 Collect 的前置门完全一致，避免「自检通过但收藏被拒」。
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("verify")]
+    public async Task<IActionResult> VerifyToken(CancellationToken ct)
+    {
+        var shortcut = await ValidateShortcutTokenAsync(ct);
+        if (shortcut == null)
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "无效的 token"));
+
+        if (!shortcut.IsActive)
+            return Unauthorized(ApiResponse<object>.Fail("DISABLED", "快捷指令已禁用"));
+
+        if (IsShortcutExpired(shortcut))
+            return Unauthorized(ApiResponse<object>.Fail("EXPIRED", "快捷指令授权已过期"));
+
+        return Ok(ApiResponse<object>.Ok(new { ok = true, shortcut.Name }));
+    }
+
+    /// <summary>
     /// 查询我的收藏（分页，支持 JWT 或 scs- token）
     /// </summary>
     [AllowAnonymous]
     [HttpGet("collections")]
     public async Task<IActionResult> GetCollections(
         [FromQuery] string? keyword,
+        [FromQuery] string? shortcutId,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
@@ -803,6 +825,12 @@ public class ShortcutsController : ControllerBase
         {
             filterBuilder.Eq(x => x.UserId, userId)
         };
+
+        // 按某个快捷指令收窄（安装页「连接自检」用，确认正是这条指令产生了收藏）
+        if (!string.IsNullOrWhiteSpace(shortcutId))
+        {
+            filters.Add(filterBuilder.Eq(x => x.ShortcutId, shortcutId));
+        }
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {

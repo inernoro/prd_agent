@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -29,6 +30,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         _logger.LogInformation("[short-video-material] Worker started");
         await RecoverRunningRunsAsync();
 
+        var loopCount = 0;
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -36,6 +38,11 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 try
                 {
                     await ProcessNextRunAsync();
+                    // 每约 60s 扫一次"卡死的 running"——RecoverRunningRunsAsync 只在启动时跑一次，
+                    // 不重启就永远不回收。没有这道周期性兜底，任何因竞态/中途部署/默认值落进 running
+                    // 却没人处理的 run 会永远卡在"处理中"，用户侧表现为"加了链接半天没反应"。
+                    if (loopCount % 30 == 0) await RecoverStaleRunningRunsAsync();
+                    loopCount++;
                 }
                 catch (Exception ex)
                 {
@@ -56,8 +63,20 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            // 回收范围 = 本实例 running + 历史无主 running（OwnerInstanceId 空）。
+            // 无主 running 只可能由「定向消费上线前的旧代码」产生：旧代码不打 owner，
+            // 容器退出后永远没人回收、永卡 running。一并回收是一次性过渡兜底（上线后新 run
+            // 认领即打主，不再产生无主 running）。代价：若另一实例此刻在跑某个无主 running 会被
+            // 误判失败——但无主 = 旧代码遗留，归属本不可分辨，过渡期代价可接受（Bugbot Medium）。
+            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var recoverFilter = Builders<ShortVideoMaterialRun>.Filter.And(
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
+                Builders<ShortVideoMaterialRun>.Filter.Or(
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
-                r => r.Status == "running",
+                recoverFilter,
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
@@ -69,6 +88,45 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "[short-video-material] 启动兜底回收失败");
+        }
+    }
+
+    /// <summary>
+    /// 周期性兜底：把"卡死的 running"标记为失败，让前端自愈成"解析失败，可重试"。
+    /// 判定 = status==running 且 updatedAt 超过阈值未推进（每个 stage 推进都会刷新 updatedAt，
+    /// 正常处理不会触发；阈值取 15 分钟，长于 ASR 600s 超时 + 下载余量，避免误杀在跑的任务），
+    /// 且不是本实例当前正在处理的那个，归属本实例（或历史无主）。根治"加了链接半天没反应"。
+    /// </summary>
+    private async Task RecoverStaleRunningRunsAsync()
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
+            var current = _currentRunId ?? "";
+            var filter = Builders<ShortVideoMaterialRun>.Filter.And(
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
+                Builders<ShortVideoMaterialRun>.Filter.Lt(r => r.UpdatedAt, cutoff),
+                Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
+                Builders<ShortVideoMaterialRun>.Filter.Or(
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+            var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
+                filter,
+                Builders<ShortVideoMaterialRun>.Update
+                    .Set(r => r.Status, "failed")
+                    .Set(r => r.ErrorMessage, "处理超时或中断，请重试")
+                    .Set(r => r.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+            if (res.ModifiedCount > 0)
+                _logger.LogWarning("[short-video-material] 周期兜底：{Count} 个卡死 running run 标记为失败", res.ModifiedCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[short-video-material] 周期兜底回收失败");
         }
     }
 
@@ -96,10 +154,19 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var processor = scope.ServiceProvider.GetRequiredService<ShortVideoMaterialProcessor>();
 
+        // 定向消费：只领取属于本实例（或历史无主）的 queued 任务，避免共享 Mongo 下多容器互抢。
+        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
-            Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
+            Builders<ShortVideoMaterialRun>.Filter.And(
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
+                Builders<ShortVideoMaterialRun>.Filter.Or(
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
             Builders<ShortVideoMaterialRun>.Update
                 .Set(r => r.Status, "running")
+                // 认领时盖上本实例归属（领取历史无主任务后必须打主，否则崩溃重启兜底匹配不到、永卡 running，Bugbot Medium）
+                .Set(r => r.OwnerInstanceId, instanceId)
                 .Set(r => r.UpdatedAt, DateTime.UtcNow),
             new FindOneAndUpdateOptions<ShortVideoMaterialRun>
             {
@@ -112,6 +179,10 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         _currentRunId = run.Id;
         try
         {
+            // 不用 WaitAsync 套超时:那只会让 await 提前返回、原 ProcessAsync 仍在后台跑(无 ct
+            // 不可取消),可能稍后又把 run 写成 done 与"超时失败"冲突(Bugbot High),也违反
+            // server-authority"不中途取消服务端任务"。改为依赖各外部调用自身超时(resolve 30s/
+            // 下载 180s/ASR 600s 已有界)+ 周期兜底(RecoverStaleRunningRunsAsync 15min)托底。
             await processor.ProcessAsync(run.Id);
         }
         catch (Exception ex)
@@ -164,12 +235,18 @@ public sealed class ShortVideoMaterialProcessor
         var userName = string.IsNullOrWhiteSpace(user?.DisplayName) ? user?.Username ?? run.UserId : user.DisplayName!;
         var now = DateTime.UtcNow;
 
+        // 进入解析就把 parse 标成 running 并落库：一是让前端立刻看到"正在解析"而不是僵在 pending
+        // （否则用户感觉"一点反应都没有"），二是刷新 updatedAt 作为心跳，配合周期兜底判活。
+        MarkStage(run, "parse", "running", "正在解析短视频链接…");
+        await SaveRunAsync(run);
+
         var parsed = await ResolveParsedSourceAsync(run.VideoUrl, run.Platform, run.InputSourceText, run.RequestedTitle);
         var title = CleanTitle(run.RequestedTitle) ?? CleanTitle(parsed.Title) ?? run.Title;
         run.Title = title;
         run.SourceMode = parsed.SourceMode;
         run.ParsedMetadataJson = parsed.MetadataJson;
         run.ParserMessage = parsed.Message;
+        run.Card = BuildShortVideoCard(parsed.MetadataJson, title, run.Platform, parsed.CoverUrl);
         MarkStage(run, "parse", "done", parsed.Message);
         await SaveRunAsync(run);
 
@@ -191,6 +268,9 @@ public sealed class ShortVideoMaterialProcessor
             run.Id,
             now);
         run.SourceEntryId = sourceEntry.Id;
+        run.SourceVideoUrl = videoMaterial.Url;
+        if (run.Card != null)
+            run.Card.VideoUrl = videoMaterial.Url; // 入库后改用 COS 永久地址播放
         MarkStage(run, "source", "done", "原始视频已作为知识库文件入库");
         await SaveRunAsync(run);
 
@@ -651,6 +731,137 @@ public sealed class ShortVideoMaterialProcessor
             ?? _config["TikHub:ApiBaseUrl"]
             ?? Environment.GetEnvironmentVariable("TIKHUB_API_BASE_URL")
             ?? "https://api.tikhub.dev").TrimEnd('/');
+
+    /// <summary>
+    /// 从短视频解析器返回的原始元数据中抽取一张干净的展示卡片。
+    /// 解析器把 author/statistics/hashtags 透传成了嵌套 JSON 字符串，这里集中解开，
+    /// 让前端直接渲染（遵循「业务数据描述由后端维护」原则）。
+    /// </summary>
+    private static ShortVideoCard BuildShortVideoCard(string? metadataJson, string title, string platform, string? coverUrlFallback)
+    {
+        var card = new ShortVideoCard
+        {
+            Title = title,
+            Platform = platform,
+            CoverUrl = coverUrlFallback,
+        };
+        if (string.IsNullOrWhiteSpace(metadataJson)) return card;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            var root = doc.RootElement;
+
+            var cover = GetJsonString(root, "coverUrl", "cover_url", "cover", "origin_cover");
+            if (!string.IsNullOrWhiteSpace(cover)) card.CoverUrl = cover;
+
+            // 时长：不同平台透传的单位不一致——有的是毫秒，有的已是秒。用 >=1000 阈值区分：
+            // 短视频秒数通常 < 1000（约 16 分钟），毫秒数 >=1000（1s=1000ms）。否则把 45（秒）
+            // 当毫秒会算成 0、把已是秒的值再除 1000 显示过短（Bugbot Medium）。
+            var durationRaw = GetJsonString(root, "duration", "video_duration");
+            if (long.TryParse(durationRaw, out var durVal) && durVal > 0)
+                card.DurationSec = durVal >= 1000
+                    ? (int)Math.Round(durVal / 1000.0)  // 毫秒 → 秒
+                    : (int)durVal;                       // 已是秒
+
+            // author 可能是昵称字符串，也可能是被透传成字符串的嵌套对象
+            var authorEl = ResolveMaybeNestedJson(root, "author");
+            if (authorEl is { ValueKind: JsonValueKind.Object } ao)
+            {
+                card.AuthorName = GetJsonString(ao, "nickname", "name", "unique_id");
+                card.AuthorAvatarUrl = ExtractFirstUrl(ao, "avatar_thumb", "avatar_medium", "avatar_larger", "avatar_168x168", "avatar_300x300");
+            }
+            else
+            {
+                var authorName = GetJsonString(root, "author", "author_name", "nickname");
+                if (!string.IsNullOrWhiteSpace(authorName) && !authorName.TrimStart().StartsWith("{"))
+                    card.AuthorName = authorName;
+            }
+
+            // statistics 同理
+            var statsEl = ResolveMaybeNestedJson(root, "statistics", "stats");
+            if (statsEl is { ValueKind: JsonValueKind.Object } so)
+            {
+                card.LikeCount = GetJsonLong(so, "digg_count", "like_count", "likes");
+                card.CommentCount = GetJsonLong(so, "comment_count", "comments");
+                card.ShareCount = GetJsonLong(so, "share_count", "shares");
+                card.CollectCount = GetJsonLong(so, "collect_count", "favourite_count", "collects");
+                card.PlayCount = GetJsonLong(so, "play_count", "view_count", "plays");
+            }
+
+            // hashtags：数组，每项含 hashtag_name
+            var tagsEl = ResolveMaybeNestedJson(root, "hashtags", "text_extra");
+            if (tagsEl is { ValueKind: JsonValueKind.Array } ta)
+            {
+                foreach (var t in ta.EnumerateArray())
+                {
+                    var name = t.ValueKind == JsonValueKind.String
+                        ? t.GetString()
+                        : GetJsonString(t, "hashtag_name", "name", "caption");
+                    name = name?.TrimStart('#').Trim();
+                    if (!string.IsNullOrWhiteSpace(name) && !card.Hashtags.Contains(name))
+                        card.Hashtags.Add(name);
+                    if (card.Hashtags.Count >= 8) break;
+                }
+            }
+        }
+        catch
+        {
+            // 抽取失败不影响主流程，卡片至少有封面 + 标题
+        }
+        return card;
+    }
+
+    /// <summary>读取某字段；若它被透传成了 JSON 字符串则二次 Parse 还原为对象/数组。</summary>
+    private static JsonElement? ResolveMaybeNestedJson(JsonElement root, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!root.TryGetProperty(name, out var el)) continue;
+            if (el.ValueKind is JsonValueKind.Object or JsonValueKind.Array) return el;
+            if (el.ValueKind == JsonValueKind.String)
+            {
+                var s = el.GetString();
+                if (!string.IsNullOrWhiteSpace(s) && (s.TrimStart().StartsWith("{") || s.TrimStart().StartsWith("[")))
+                {
+                    try
+                    {
+                        using var nested = JsonDocument.Parse(s);
+                        return nested.RootElement.Clone();
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static string? ExtractFirstUrl(JsonElement obj, params string[] imageFieldNames)
+    {
+        foreach (var f in imageFieldNames)
+        {
+            if (!obj.TryGetProperty(f, out var img) || img.ValueKind != JsonValueKind.Object) continue;
+            if (img.TryGetProperty("url_list", out var ul) && ul.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var u in ul.EnumerateArray())
+                {
+                    var s = u.GetString();
+                    if (!string.IsNullOrWhiteSpace(s)) return s;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static long? GetJsonLong(JsonElement obj, params string[] names)
+    {
+        foreach (var n in names)
+        {
+            if (!obj.TryGetProperty(n, out var el)) continue;
+            if (el.ValueKind == JsonValueKind.Number && el.TryGetInt64(out var v)) return v;
+            if (el.ValueKind == JsonValueKind.String && long.TryParse(el.GetString(), out var sv)) return sv;
+        }
+        return null;
+    }
 
     private static ParsedVideoMetadata ExtractParsedMetadata(string? json)
     {

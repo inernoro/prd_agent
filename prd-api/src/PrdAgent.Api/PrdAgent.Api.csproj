@@ -44,6 +44,11 @@
     <Content Update="Resources/mdppt/**/*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- 营销问策知识库种子（全域粉销/4FM），随程序部署，首次 find-or-create 知识库时灌入。
+         .md 不被 Web SDK 默认收集，需显式 Content Include + CopyToOutputDirectory。 -->
+    <Content Include="SeedData/marketing-consult/**/*.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
