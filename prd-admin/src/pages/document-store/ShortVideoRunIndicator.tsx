@@ -79,7 +79,10 @@ export function ShortVideoRunIndicator({
               hasTranscript: !!run.transcriptEntryId,
               errorMessage: run.errorMessage || undefined,
             });
-            if (status === 'done' && prevStatus && prevStatus !== 'done') onRunCompletedRef.current?.();
+            // 终态（done 或 failed）跃迁都刷新列表：失败也可能已部分入库（如视频已保存），
+            // 不刷新会让这些条目直到手动刷新才出现（Bugbot Medium）。
+            const terminal = status === 'done' || status === 'failed';
+            if (terminal && prevStatus && prevStatus !== status) onRunCompletedRef.current?.();
           }
         }
       } catch {

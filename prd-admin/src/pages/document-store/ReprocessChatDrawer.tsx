@@ -1177,8 +1177,11 @@ export function ReprocessChatDrawer({
     }
 
     if (isShortVideoPollActive(ownerKey, pollToken)) {
+      // 抽屉内轮询达上限只是「前台不再盯」，任务仍在后端继续、由右上角「运行中的智能体」
+      // 常驻 Host 续查到终态。所以这里不能标 phase:'error'（会与后台最终 done 矛盾，Bugbot Medium），
+      // 只给一句中性提示，phase 维持非错误，卡片仍展示最近一次已知进度。
       setMessages((prev) => prev.map((m) => m.id === messageId
-        ? { ...m, streaming: false, phase: 'error', content: `${m.content}\n\n（后台任务等待超时，请稍后重新打开查看服务端状态）` }
+        ? { ...m, streaming: false, content: `${m.content}\n\n（前台已停止盯进度；任务仍在后台继续，可从右上角「运行中的智能体」查看最终结果）` }
         : m));
       setStreamingId(null);
       sendLockRef.current = false;
