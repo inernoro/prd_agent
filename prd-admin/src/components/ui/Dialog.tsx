@@ -40,14 +40,8 @@ export function Dialog({
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
   // 玻璃关闭(backdrop-filter 被全局清除)时半透遮罩会失焦，故回退近实底深色。
-  // 两条触发路径都要算：① 性能模式 shouldReduceEffects；
-  // ② prefers-reduced-motion(legacy.css 的 * { backdrop-filter:none } 同样清掉模糊)。
-  const themeConfig = useThemeStore((s) => s.config);
-  const prefersReducedMotion =
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      : false;
-  const glassReduced = shouldReduceEffects(themeConfig) || prefersReducedMotion;
+  // shouldReduceEffects 已同时覆盖「性能模式」与「prefers-reduced-motion」两条路径。
+  const glassReduced = shouldReduceEffects(useThemeStore((s) => s.config));
 
   // 浅色下走纯白卡片(不依赖 glassPanel,因为 themeComputed.ts 在性能模式下
   // 会用暗色 bgElevated 重置 --glass-bg-start/end,不区分主题)
