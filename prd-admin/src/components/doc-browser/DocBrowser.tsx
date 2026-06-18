@@ -1593,6 +1593,9 @@ export function DocBrowser({
   const [contentLoading, setContentLoading] = useState(false);
   // 内容加载缓存键：以 entryId + updatedAt 组合作内容版本，替换文件后 updatedAt 变化即触发重载
   const [loadedContentKey, setLoadedContentKey] = useState<string | null>(null);
+  // 内容加载序号：防过期响应。每次 loadEntryContent / commitLocalSave 自增，落后的 loadContent
+  // 回来时若序号已变就丢弃，避免旧请求覆盖刚保存的 preview/loadedContentKey（闪烁回顶）。
+  const contentFetchIdRef = useRef(0);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -2007,6 +2010,8 @@ export function DocBrowser({
     } catch {
       return false; // toast 由页面层 onSaveContent 内部抛出
     }
+    // 让任何在途的 loadEntryContent 作废：避免它晚一步回来用旧正文覆盖刚保存的 preview/key（闪烁回顶）
+    contentFetchIdRef.current++;
     setPreview(prev => (prev ? { ...prev, text: content } : prev));
     const ua = result && typeof result === 'object' ? result.updatedAt : undefined;
     if (ua) setLoadedContentKey(`${entryId}:${ua}`);
@@ -2479,16 +2484,18 @@ export function DocBrowser({
   // 缓存键随之变化，命中失败 → 重新拉取新正文（修复"替换后预览不刷新"）
   const loadEntryContent = useCallback(async (entryId: string, contentKey: string) => {
     if (contentKey === loadedContentKey) return;
+    const fid = ++contentFetchIdRef.current;
     setContentLoading(true);
     setPreview(null);
     try {
       const data = await loadContent(entryId);
+      if (fid !== contentFetchIdRef.current) return; // 过期：更晚的加载/本地保存已发生，丢弃本次结果
       setPreview(data);
       setLoadedContentKey(contentKey);
     } catch {
-      setPreview(null);
+      if (fid === contentFetchIdRef.current) setPreview(null);
     }
-    setContentLoading(false);
+    if (fid === contentFetchIdRef.current) setContentLoading(false);
   }, [loadContent, loadedContentKey]);
 
   useEffect(() => {

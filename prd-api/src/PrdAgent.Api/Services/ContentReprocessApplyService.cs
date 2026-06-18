@@ -166,22 +166,28 @@ public class ContentReprocessApplyService
 
     private async Task SaveContentToEntryAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
     {
-        ParsedPrd parsed;
-        string? oldContent = null;
+        var parsed = await _documentService.ParseAsync(content); // parsed.Id = 内容 hash
+        string? oldContent;
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var existing = await _documentService.GetByIdAsync(entry.DocumentId);
-            oldContent = existing?.RawContent;
-            parsed = await _documentService.ParseAsync(content);
-            parsed.Id = entry.DocumentId;
+            oldContent = existing?.RawContent ?? entry.ContentIndex;
             parsed.Title = existing?.Title ?? entry.Title;
+            // 内容寻址 + 共享保护：旧 ParsedPrd 被别的 entry 共享（相同内容上传等）时不得就地覆盖，
+            // 否则会改到别的 entry 正文；改为按新内容 hash 落库 + 只重指向本 entry（Codex P1）。
+            if (parsed.Id != entry.DocumentId)
+            {
+                var sharedByOthers = await db.DocumentEntries.CountDocumentsAsync(
+                    e => e.DocumentId == entry.DocumentId && e.Id != entry.Id) > 0;
+                if (!sharedByOthers)
+                    parsed.Id = entry.DocumentId; // 独占 → 复用旧 id 就地更新，不产生孤儿
+            }
         }
         else
         {
             // 无 DocumentId 的短文档，ContentIndex 即完整正文（见 AppendAsync 约定），
             // 也要快照成改动前基线，否则这类条目 AI 改写后无法从历史撤销（Bugbot）。
             oldContent = entry.ContentIndex;
-            parsed = await _documentService.ParseAsync(content);
             parsed.Title = entry.Title;
         }
         await _documentService.SaveAsync(parsed);

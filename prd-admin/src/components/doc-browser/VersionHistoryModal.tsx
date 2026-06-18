@@ -66,6 +66,8 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
   const listFetchId = useRef(0);
   const loadList = useCallback(async () => {
     const fid = ++listFetchId.current; // 防过期响应：切换 entry 后慢响应回来不得覆盖当前列表（Bugbot）
+    setVersions(null);    // 先清空：entryId 变了（弹窗常驻不卸载）时不残留上一篇的版本列表（Bugbot）
+    setSelectedId(null);
     const res = await api.list(entryId, 1, 100);
     if (fid !== listFetchId.current) return;
     if (res.success && res.data) {

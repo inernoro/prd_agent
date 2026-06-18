@@ -1059,29 +1059,9 @@ public class DocumentStoreController : ControllerBase
             contentCompliant = sectionProblems.Count == 0 && metaProblems.Count == 0;
         }
 
-        // 更新或创建 ParsedPrd
-        string? oldContent = null; // 改动前正文：用于把基线快照进版本历史，使首次编辑也能恢复到原始内容
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            oldContent = doc?.RawContent;
-            // 即便 DocumentId 指向的 ParsedPrd 行丢失，也以同 id upsert 落库正文，
-            // 否则只更新元数据 + 版本、正文没写 → 重载后 GetEntryContent 空白（Bugbot High）。
-            var parsed = await _documentService.ParseAsync(content);
-            parsed.Id = entry.DocumentId;
-            parsed.Title = doc?.Title ?? entry.Title;
-            await _documentService.SaveAsync(parsed);
-        }
-        else
-        {
-            // 无关联文档时创建新的 ParsedPrd；无 DocumentId 的短文档 ContentIndex 即完整正文，
-            // 也快照成改动前基线，与 AI 再加工路径一致，保证可撤销（Bugbot）。
-            oldContent = entry.ContentIndex;
-            var parsed = await _documentService.ParseAsync(content);
-            parsed.Title = entry.Title;
-            await _documentService.SaveAsync(parsed);
-            entry.DocumentId = parsed.Id;
-        }
+        // 更新或创建 ParsedPrd（内容寻址 + 共享保护，详见 WriteEntryContentDocAsync）
+        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content);
+        entry.DocumentId = newDocId;
 
         // 更新 DocumentEntry 的摘要和内容索引
         var summary = content.Length > 200 ? content[..200] : content;
@@ -1143,7 +1123,8 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> ListEntryVersions(string entryId, [FromQuery] int page = 1, [FromQuery] int pageSize = 30)
     {
         var userId = GetUserId();
-        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        // 版本历史属编辑能力：要求写权限，否则公开库的只读访客也能拉到历史版本（含作者已删除的旧正文）—— Codex P1
+        var (entry, _, error) = await LoadWritableEntryAsync(entryId, userId);
         if (error != null) return error;
         if (entry is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
@@ -1174,7 +1155,8 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> GetEntryVersion(string entryId, string versionId)
     {
         var userId = GetUserId();
-        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        // 返回完整历史正文：必须写权限，避免公开库只读访客取回作者已删除的旧内容 —— Codex P1
+        var (entry, _, error) = await LoadWritableEntryAsync(entryId, userId);
         if (error != null) return error;
         if (entry is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
@@ -1234,33 +1216,49 @@ public class DocumentStoreController : ControllerBase
     /// 把一段正文写入条目（解析存 ParsedPrd + 更新摘要/索引 + 重锚评论 + 重算双链 + 版本快照）。
     /// 供版本恢复复用，与 UpdateEntryContent 的核心写入路径保持一致。
     /// </summary>
+    /// <summary>
+    /// 把正文写入 entry 对应的 ParsedPrd，返回 (最终 DocumentId, 改动前正文)。
+    /// ParsedPrd 内容寻址（id=内容 hash），相同内容会被多个 entry 共享（相同上传等）。
+    /// 若旧 DocumentId 被别的 entry 共享，<b>不得就地覆盖</b>（会改到别的 entry 的正文）——
+    /// 按新内容 hash 落库 + 只把本 entry 重指向新文档；旧文档为本 entry 独占时沿用旧 id 就地更新，
+    /// 避免产生孤儿文档（Codex P1）。即便旧 ParsedPrd 行已丢失也照样落库（Bugbot High）。
+    /// 改动前正文取旧 RawContent，缺失则回退 ContentIndex（无 DocumentId 短文档 ContentIndex 即完整正文）。
+    /// </summary>
+    private async Task<(string documentId, string? oldContent)> WriteEntryContentDocAsync(DocumentEntry entry, string content)
+    {
+        var parsed = await _documentService.ParseAsync(content); // parsed.Id = 内容 hash
+        string? oldContent;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var oldDoc = await _documentService.GetByIdAsync(entry.DocumentId);
+            oldContent = oldDoc?.RawContent ?? entry.ContentIndex;
+            parsed.Title = oldDoc?.Title ?? entry.Title;
+            if (parsed.Id != entry.DocumentId)
+            {
+                var sharedByOthers = await _db.DocumentEntries.CountDocumentsAsync(
+                    e => e.DocumentId == entry.DocumentId && e.Id != entry.Id) > 0;
+                if (!sharedByOthers)
+                    parsed.Id = entry.DocumentId; // 独占 → 复用旧 id 就地更新，不产生孤儿
+                // 共享 → 保留新内容 hash id，仅把本 entry 重指向，旧共享文档保持不变
+            }
+        }
+        else
+        {
+            oldContent = entry.ContentIndex;
+            parsed.Title = entry.Title;
+        }
+        await _documentService.SaveAsync(parsed);
+        return (parsed.Id, oldContent);
+    }
+
     private async Task<DateTime> ApplyContentToEntryAsync(
         DocumentEntry entry, DocumentStore store, string content,
         string userId, string? userName, string source, string? restoredFromVersionId)
     {
         content ??= string.Empty;
-        string? oldContent = null;
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            oldContent = doc?.RawContent;
-            // 即便 DocumentId 指向的 ParsedPrd 行已丢失（自愈场景），也必须把恢复内容落库（upsert 复用同 id），
-            // 否则只更新了 entry 元数据与版本、正文没写 → 重载后 GetEntryContent 空白（Bugbot High）。
-            var parsed = await _documentService.ParseAsync(content);
-            parsed.Id = entry.DocumentId;
-            parsed.Title = doc?.Title ?? entry.Title;
-            await _documentService.SaveAsync(parsed);
-        }
-        else
-        {
-            // 无 DocumentId 短文档 ContentIndex 即完整正文，恢复前也快照成基线，
-            // 与 UpdateEntryContent 一致，避免恢复覆盖掉未版本化的当前短正文（Bugbot）。
-            oldContent = entry.ContentIndex;
-            var parsed = await _documentService.ParseAsync(content);
-            parsed.Title = entry.Title;
-            await _documentService.SaveAsync(parsed);
-            entry.DocumentId = parsed.Id;
-        }
+        // 内容寻址 + 共享保护（详见 WriteEntryContentDocAsync）：恢复也不得覆盖被别的 entry 共享的 ParsedPrd
+        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content);
+        entry.DocumentId = newDocId;
 
         var now = DateTime.UtcNow;
         var summary = content.Length > 200 ? content[..200] : content;
@@ -1338,7 +1336,11 @@ public class DocumentStoreController : ControllerBase
             foreach (var a in atts)
             {
                 attachmentBytes += a.Size;
-                if (a.Type == AttachmentType.Image)
+                // 知识库上传/替换的附件 Type 统一记为 Document（即便是图片），故按 MIME 判定图片，
+                // 否则上传到知识库的图片永远统计为 0 图 —— Codex P2
+                var isImage = a.Type == AttachmentType.Image
+                    || (!string.IsNullOrEmpty(a.MimeType) && a.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase));
+                if (isImage)
                 {
                     imageBytes += a.Size;
                     imageCount++;

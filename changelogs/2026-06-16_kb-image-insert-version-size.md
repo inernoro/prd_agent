@@ -22,3 +22,8 @@
 | fix | prd-admin | 历史版本列表加载加 fetchId 防过期响应守卫（切换文档后慢响应不覆盖当前列表）—— Bugbot |
 | fix | prd-api | 版本恢复 ApplyContentToEntryAsync 对无 DocumentId 短文档也用 ContentIndex 做基线快照，与 UpdateEntryContent 一致 —— Bugbot |
 | fix | prd-admin | 历史版本切换时先清空 detail + 加载中禁用恢复 + handleRestore 校验 detail.id==selectedId，避免拿上一条快照误恢复 —— Bugbot |
+| fix | prd-api | 编辑/恢复/AI再加工写入正文改为内容寻址+共享保护：旧 ParsedPrd 被别的 entry 共享时不就地覆盖（避免改到他人正文），独占时复用旧 id 不产生孤儿 —— Codex P1 |
+| fix | prd-api | 历史版本 列出/查看 端点改为要求写权限，避免公开库只读访客取回作者已删除的旧版本正文 —— Codex P1 |
+| fix | prd-api | 知识库大小统计按 MIME 判定图片（上传附件 Type 统一为 Document），修复上传图片统计为 0 图 —— Codex P2 |
+| fix | prd-admin | DocBrowser loadEntryContent 加 fetchId 防过期响应 + commitLocalSave 作废在途加载，保护「保存不刷新」不被慢请求回滚 —— Bugbot |
+| fix | prd-admin | 历史版本弹窗切换 entry 时先清空 versions/selectedId，避免残留上一篇版本列表 —— Bugbot |
