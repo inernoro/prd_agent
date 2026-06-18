@@ -177,7 +177,6 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         if (run == null) return;
 
         _currentRunId = run.Id;
-        _logger.LogWarning("[svm-diag] claimed run={RunId} owner={Owner}", run.Id, run.OwnerInstanceId);
         try
         {
             // 不用 WaitAsync 套超时:那只会让 await 提前返回、原 ProcessAsync 仍在后台跑(无 ct
@@ -185,7 +184,6 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             // server-authority"不中途取消服务端任务"。改为依赖各外部调用自身超时(resolve 30s/
             // 下载 180s/ASR 600s 已有界)+ 周期兜底(RecoverStaleRunningRunsAsync 15min)托底。
             await processor.ProcessAsync(run.Id);
-            _logger.LogWarning("[svm-diag] ProcessAsync returned run={RunId}", run.Id);
         }
         catch (Exception ex)
         {
@@ -231,23 +229,18 @@ public sealed class ShortVideoMaterialProcessor
 
     public async Task ProcessAsync(string runId)
     {
-        _logger.LogWarning("[svm-diag] ProcessAsync enter run={RunId}", runId);
         var run = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(CancellationToken.None)
                   ?? throw new InvalidOperationException("短视频解析运行记录不存在");
-        _logger.LogWarning("[svm-diag] loaded run run={RunId}", runId);
         var user = await _db.Users.Find(u => u.UserId == run.UserId).FirstOrDefaultAsync(CancellationToken.None);
         var userName = string.IsNullOrWhiteSpace(user?.DisplayName) ? user?.Username ?? run.UserId : user.DisplayName!;
         var now = DateTime.UtcNow;
-        _logger.LogWarning("[svm-diag] loaded user, marking parse running run={RunId}", runId);
 
         // 进入解析就把 parse 标成 running 并落库：一是让前端立刻看到"正在解析"而不是僵在 pending
         // （否则用户感觉"一点反应都没有"），二是刷新 updatedAt 作为心跳，配合周期兜底判活。
         MarkStage(run, "parse", "running", "正在解析短视频链接…");
         await SaveRunAsync(run);
-        _logger.LogWarning("[svm-diag] parse heartbeat saved, resolving run={RunId}", runId);
 
         var parsed = await ResolveParsedSourceAsync(run.VideoUrl, run.Platform, run.InputSourceText, run.RequestedTitle);
-        _logger.LogWarning("[svm-diag] resolve done mode={Mode} run={RunId}", parsed.SourceMode, runId);
         var title = CleanTitle(run.RequestedTitle) ?? CleanTitle(parsed.Title) ?? run.Title;
         run.Title = title;
         run.SourceMode = parsed.SourceMode;
