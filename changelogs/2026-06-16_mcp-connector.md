@@ -10,3 +10,4 @@
 | fix | prd-api | MCP 回环 client 禁用系统代理(UseProxy=false),防配了 HTTP_PROXY 的部署把携带 sk-ak 的回环请求发给代理 |
 | docs | doc | 新增 guide.mcp-connector 接入教程(Claude/Codex 接入 + 5 工具 + 共享其他 Agent + 自助签发自测 + 排障) |
 | fix | prd-api | MCP 回环 SendAsync 改用 CancellationToken.None(对齐 server-authority:客户端瞬断不取消下游长任务,120s 超时兜底) |
+| fix | prd-api | MCP 网关非抛出式读取 method/name(畸形如 "method":1 返回 -32600 而非 500),加 AsString 单测 |

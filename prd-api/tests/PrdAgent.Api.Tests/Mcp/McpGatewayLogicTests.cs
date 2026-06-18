@@ -197,4 +197,17 @@ public class McpGatewayLogicTests
         schema["type"]!.GetValue<string>().ShouldBe("object");
         schema["additionalProperties"]!.GetValue<bool>().ShouldBeTrue();
     }
+
+    // ── 畸形 JSON-RPC 字段非抛出读取（公开端点 robustness）──
+
+    [Fact]
+    public void AsString_NonStringOrMissing_ReturnsNull_DoesNotThrow()
+    {
+        // 畸形："method": 1 / true / null / 缺失 —— 一律返回 null，不抛异常（否则公开端点 500）
+        McpGatewayController.AsString(JsonValue.Create(1)).ShouldBeNull();
+        McpGatewayController.AsString(JsonValue.Create(true)).ShouldBeNull();
+        McpGatewayController.AsString(null).ShouldBeNull();
+        // 合法字符串正常读出
+        McpGatewayController.AsString(JsonValue.Create("tools/list")).ShouldBe("tools/list");
+    }
 }

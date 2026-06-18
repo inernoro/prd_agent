@@ -92,13 +92,17 @@ public class McpGatewayController : ControllerBase
         if (msg is not JsonObject obj)
             return RpcError(null, -32600, "Invalid Request");
 
-        var method = obj["method"]?.GetValue<string>();
+        // 非抛出式读取 method（客户端可能发 "method": 1 等畸形值，GetValue<string> 会抛 → 500）。
+        var method = AsString(obj["method"]);
 
         // JSON-RPC 2.0：通知 = "id" 成员【缺失】（不是 id:null）。只有缺失才不回响应；
         // 显式 "id": null 仍是请求，须回带 null id 的响应（否则该客户端会一直等）。
         var hasId = obj.TryGetPropertyValue("id", out var idNode);
         if (!hasId) return null;
         var id = idNode;
+
+        if (string.IsNullOrEmpty(method))
+            return RpcError(id, -32600, "Invalid Request: method 必须是非空字符串");
 
         switch (method)
         {
@@ -201,7 +205,7 @@ public class McpGatewayController : ControllerBase
 
     private async Task<JsonObject> HandleToolsCallAsync(JsonNode? id, JsonObject? prms, CancellationToken ct)
     {
-        var name = prms?["name"]?.GetValue<string>();
+        var name = AsString(prms?["name"]);
         var args = prms?["arguments"] as JsonObject ?? new JsonObject();
         if (string.IsNullOrWhiteSpace(name))
             return RpcError(id, -32602, "Missing tool name");
@@ -365,6 +369,10 @@ public class McpGatewayController : ControllerBase
 
     private HashSet<string> OwnedScopes() =>
         User.FindAll("scope").Select(c => c.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>非抛出式把 JsonNode 读成 string；非字符串 / 缺失返回 null（防畸形 JSON-RPC 字段抛 500）。</summary>
+    internal static string? AsString(JsonNode? n) =>
+        n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     /// <summary>
     /// scope 满足判断。镜像 AdminPermissionMiddleware.HasScopeGrant：document-store:write 隐含 read，
