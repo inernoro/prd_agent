@@ -149,6 +149,20 @@ export function initializeTheme(): void {
   // 立即应用本地缓存的配置
   applyThemeToDOM(state.config);
 
+  // 监听系统「减少动态效果」偏好的变化：变化时重算主题（shouldReduceEffects 会据此把
+  // --glass-bg 切实底并设/清 data-perf-mode）。否则 mid-session 切换 OS 偏好后全局 CSS
+  // 已即时清掉 backdrop-filter，但玻璃变量滞后，导致半透表面无模糊地叠在 aurora 上失焦。
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => applyThemeToDOM(useThemeStore.getState().config);
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', onChange);
+    } else if (typeof (mq as MediaQueryList & { addListener?: (cb: () => void) => void }).addListener === 'function') {
+      // 老旧 Safari 回退
+      (mq as MediaQueryList & { addListener: (cb: () => void) => void }).addListener(onChange);
+    }
+  }
+
   // 后台加载后端配置（如果有差异会自动更新）
   state.loadFromServer();
 }
