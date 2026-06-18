@@ -46,6 +46,7 @@ describe('versionWorkflowImportParse', () => {
     expect(rows[0].planName).toBe('互动营销V3.5.2（大转盘升级）');
     expect(rows[0].projectType).toBe('custom');
     expect(rows[0].legacyData?.['合同签订方']).toBe('消时乐');
+    expect(rows[0].date).toBeTruthy();
     expect(rows[1].code).toBeUndefined();
     expect(rows[1].planName).toBe('临时优化小报');
     expect(rows[1].projectType).toBe('standard');
@@ -58,5 +59,18 @@ describe('versionWorkflowImportParse', () => {
     ].join('\n');
     const rows = parseVersionWorkflowImportCsv(csv, 'initiation');
     expect(rows[0].projectType).toBe('standard');
+  });
+
+  it('parses yuque initiation date header with line break', () => {
+    const csv = [
+      '系统,应用,项目类别,立项号,版本类别,产品立项方案名称,项目需求描述,所属部门,产品负责人,第一稿会议时间,第二稿会议时间,第三稿会议时间,立项时间（三稿通过）,是否需要UI设计,方案地址,开发状态',
+      '大数据引擎系统,互动营销,非定制项目,T3.6.1,小版本,互动营销T3.6.1（红包）,发放企业付款红包,品牌域产品部,何丹铃,2021-09-01,2021-09-02,2021-09-03,2021-09-03,是,,已上线',
+    ].join('\n');
+    const rows = parseVersionWorkflowImportCsv(csv, 'initiation');
+    expect(rows[0].code).toBe('T3.6.1');
+    expect(rows[0].appName).toBe('互动营销');
+    expect(rows[0].ownerId).toBe('何丹铃');
+    expect(rows[0].projectAt).toBeTruthy();
+    expect(rows[0].needUiDesign).toBe(true);
   });
 });
