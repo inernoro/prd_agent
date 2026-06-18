@@ -739,11 +739,27 @@ describe('Branch Routes', () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
       const res = await request(server, 'POST', '/api/branches/feature-test/stop');
       expect(res.status).toBe(200);
+      expect(stateService.getBranch('feature-test')?.lastStopSource).toBe('user');
+      expect(stateService.getBranch('feature-test')?.lastStopReason).toBe('用户手动停止');
       const operationActions = operationEvents
         .filter((event) => event.branchId === 'feature-test')
         .map((event) => event.action);
       expect(operationActions).toContain('branch.operation.started');
       expect(operationActions).toContain('branch.operation.completed');
+    });
+
+    it('attributes webhook-triggered stops to webhook instead of user', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/webhook-stop' });
+      const res = await request(
+        server,
+        'POST',
+        '/api/branches/feature-webhook-stop/stop',
+        undefined,
+        { 'X-CDS-Trigger': 'webhook' },
+      );
+      expect(res.status).toBe(200);
+      expect(stateService.getBranch('feature-webhook-stop')?.lastStopSource).toBe('webhook');
+      expect(stateService.getBranch('feature-webhook-stop')?.lastStopReason).toBe('GitHub webhook 触发停止');
     });
   });
 
