@@ -32,6 +32,7 @@ import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import { createGracefulShutdownController } from './services/graceful-shutdown.js';
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
+import { PreviewCanaryService, type PreviewCanaryTarget } from './services/preview-canary.js';
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
@@ -999,6 +1000,7 @@ const bridgeService = new BridgeService();
 // 让独立的 cds-forwarder 进程消费。CDS_USE_FORWARDER=1 时启用;否则跳过
 // 不浪费 IO。详见 cds/src/services/forwarder-route-publisher.ts。
 let forwarderRoutePublisher: ForwarderRoutePublisher | null = null;
+let previewCanaryService: PreviewCanaryService | null = null;
 if (process.env.CDS_USE_FORWARDER === '1') {
   const rootDomainsForPublisher = (config.rootDomains && config.rootDomains.length)
     ? config.rootDomains
@@ -1015,6 +1017,10 @@ if (process.env.CDS_USE_FORWARDER === '1') {
       state: stateService,
       outputPath,
       rootDomains: rootDomainsForPublisher,
+      stableSamplesRequired: Math.max(
+        1,
+        Number.parseInt(process.env.CDS_FORWARDER_ROUTE_STABLE_SAMPLES || '', 10) || 2,
+      ),
       logger: {
         info: (m) => console.log(m),
         warn: (m) => console.warn(m),
@@ -1026,6 +1032,71 @@ if (process.env.CDS_USE_FORWARDER === '1') {
       `  [forwarder-publisher] enabled, writing routes to ${outputPath} every 2s`,
     );
   }
+}
+
+if (config.mode !== 'executor') {
+  const explicitCanaryUrls = parseCsv(process.env.CDS_PREVIEW_CANARY_URLS || '') ?? [];
+  previewCanaryService = new PreviewCanaryService({
+    getTargets: (): PreviewCanaryTarget[] => {
+      if (explicitCanaryUrls.length) {
+        return explicitCanaryUrls.map((url) => ({ url, label: url }));
+      }
+      const previewHost = config.previewDomain || config.rootDomains?.[0];
+      if (!previewHost) return [];
+      const targets: PreviewCanaryTarget[] = [];
+      for (const branch of stateService.getAllBranches()) {
+        if (branch.status !== 'running' || !branch.branch) continue;
+        const project = stateService.getProject(branch.projectId);
+        const built = buildPreviewUrlForProject(previewHost, branch.branch, project, branch.projectId);
+        if (!built.url) continue;
+        targets.push({ url: built.url, label: branch.id });
+      }
+      return targets;
+    },
+    intervalMs: Math.max(10_000, Number.parseInt(process.env.CDS_PREVIEW_CANARY_INTERVAL_MS || '', 10) || 30_000),
+    timeoutMs: Math.max(2_000, Number.parseInt(process.env.CDS_PREVIEW_CANARY_TIMEOUT_MS || '', 10) || 8_000),
+    sampleLimit: Math.max(1, Number.parseInt(process.env.CDS_PREVIEW_CANARY_SAMPLE_LIMIT || '', 10) || 3),
+    maxFailureRatio: Number.parseFloat(process.env.CDS_PREVIEW_CANARY_MAX_FAILURE_RATIO || '') || 0,
+    minFailuresToAlert: Math.max(1, Number.parseInt(process.env.CDS_PREVIEW_CANARY_MIN_FAILURES || '', 10) || 1),
+    logger: {
+      warn: (m) => console.warn(m),
+      info: (m) => console.log(m),
+      error: (m) => console.error(m),
+    },
+    onAlert: (payload) => {
+      const first = payload.results.find((r) => !r.ok);
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: 'warn',
+        source: 'preview-canary',
+        action: 'preview.canary.alert',
+        message: `${payload.failures}/${payload.total} preview probe(s) failed`,
+        branchId: first?.headers?.cdsBranch || first?.label || null,
+        requestId: first?.requestId || first?.probeId,
+        upstream: first?.headers?.cdsUpstream || null,
+        status: first ? String(first.status) : null,
+        error: first?.error ? { message: first.error } : undefined,
+        details: payload as unknown as Record<string, unknown>,
+      });
+    },
+    onRecovery: (payload) => {
+      const first = payload.recovered[0];
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: 'info',
+        source: 'preview-canary',
+        action: 'preview.canary.recovered',
+        message: `${payload.recovered.length} preview probe(s) recovered`,
+        branchId: first?.headers?.cdsBranch || first?.label || null,
+        requestId: first?.requestId || first?.probeId,
+        upstream: first?.headers?.cdsUpstream || null,
+        status: first ? String(first.status) : null,
+        details: payload as unknown as Record<string, unknown>,
+      });
+    },
+  });
+  previewCanaryService.start();
+  console.log('  [preview-canary] enabled for running preview URLs');
 }
 
 // ── Graceful shutdown controller ──
@@ -2197,6 +2268,8 @@ janitorService.setRemoveFn(async (slug: string) => {
     autoLifecycleService.stop();
     stopAutoRestartLoop();
     infraFlapWatchdog.stop();
+    forwarderRoutePublisher?.stop();
+    previewCanaryService?.stop();
   }
 
   startBackgroundServices();
@@ -2235,6 +2308,8 @@ async function shutdown(signal: string): Promise<void> {
   systemLogMonitor.stop();
   schedulerService.stop();
   janitorService.stop();
+  forwarderRoutePublisher?.stop();
+  previewCanaryService?.stop();
   // 2026-05-14 Cursor Bugbot Medium 修复：shutdown() 直接逐个 stop，
   // 漏了 autoLifecycleService.stop()（stopBackgroundServices 里有，但
   // 信号处理走的是本函数）。否则 graceful shutdown 期间 auto-lifecycle

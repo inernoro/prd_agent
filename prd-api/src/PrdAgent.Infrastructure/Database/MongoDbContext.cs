@@ -135,6 +135,8 @@ public class MongoDbContext
     public IMongoCollection<DefectWebhookConfig> DefectWebhookConfigs => _database.GetCollection<DefectWebhookConfig>("defect_webhook_configs");
     public IMongoCollection<DefectShareLink> DefectShareLinks => _database.GetCollection<DefectShareLink>("defect_share_links");
     public IMongoCollection<DefectFixReport> DefectFixReports => _database.GetCollection<DefectFixReport>("defect_fix_reports");
+    public IMongoCollection<DefectResolutionTrace> DefectResolutionTraces => _database.GetCollection<DefectResolutionTrace>("defect_resolution_traces");
+    public IMongoCollection<DefectAutomationRun> DefectAutomationRuns => _database.GetCollection<DefectAutomationRun>("defect_automation_runs");
 
     // Project Route Agent 项目路由智能体（用户方案 → 仓库 routemap 项目路径）
     public IMongoCollection<ProjectRouteSiteSpec> ProjectRouteSiteSpecs => _database.GetCollection<ProjectRouteSiteSpec>("project_route_site_specs");
@@ -378,9 +380,15 @@ public class MongoDbContext
     public IMongoCollection<Requirement> Requirements => _database.GetCollection<Requirement>("requirements");
     public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
     public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");
+    public IMongoCollection<ProductStructureNode> ProductStructureNodes => _database.GetCollection<ProductStructureNode>("product_structure_nodes");
+    public IMongoCollection<ProductRule> ProductRules => _database.GetCollection<ProductRule>("product_rules");
+    public IMongoCollection<ProductTerm> ProductTerms => _database.GetCollection<ProductTerm>("product_terms");
     public IMongoCollection<Customer> Customers => _database.GetCollection<Customer>("customers");
+    public IMongoCollection<CustomerFollowUp> CustomerFollowUps => _database.GetCollection<CustomerFollowUp>("customer_follow_ups");
+    public IMongoCollection<MarketingConsultReport> MarketingConsultReports => _database.GetCollection<MarketingConsultReport>("marketing_consult_reports");
     public IMongoCollection<ProductCategory> ProductCategories => _database.GetCollection<ProductCategory>("product_categories");
     public IMongoCollection<RequirementType> RequirementTypes => _database.GetCollection<RequirementType>("requirement_types");
+    public IMongoCollection<ProductGradeOption> ProductGradeOptions => _database.GetCollection<ProductGradeOption>("product_grade_options");
     public IMongoCollection<ProductDescTemplate> ProductDescTemplates => _database.GetCollection<ProductDescTemplate>("product_desc_templates");
     public IMongoCollection<ProductItemActivity> ProductItemActivities => _database.GetCollection<ProductItemActivity>("product_item_activities");
     public IMongoCollection<ProductItemSummary> ProductItemSummaries => _database.GetCollection<ProductItemSummary>("product_item_summaries");
@@ -1104,6 +1112,25 @@ public class MongoDbContext
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
             Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareToken),
             new CreateIndexOptions { Name = "idx_defect_fix_reports_token" }));
+
+        // DefectResolutionTraces：按 commit 反查缺陷、按 defect 反查修复链路。
+        DefectResolutionTraces.Indexes.CreateOne(new CreateIndexModel<DefectResolutionTrace>(
+            Builders<DefectResolutionTrace>.IndexKeys.Ascending(x => x.CommitSha).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_resolution_traces_commit" }));
+        DefectResolutionTraces.Indexes.CreateOne(new CreateIndexModel<DefectResolutionTrace>(
+            Builders<DefectResolutionTrace>.IndexKeys.Ascending(x => x.DefectId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_resolution_traces_defect" }));
+
+        // DefectAutomationRuns：定时任务按状态恢复、按当前缺陷/授权排查。
+        DefectAutomationRuns.Indexes.CreateOne(new CreateIndexModel<DefectAutomationRun>(
+            Builders<DefectAutomationRun>.IndexKeys.Ascending(x => x.Status).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_automation_runs_status" }));
+        DefectAutomationRuns.Indexes.CreateOne(new CreateIndexModel<DefectAutomationRun>(
+            Builders<DefectAutomationRun>.IndexKeys.Ascending(x => x.CurrentDefectId).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_defect_automation_runs_current_defect" }));
+        DefectAutomationRuns.Indexes.CreateOne(new CreateIndexModel<DefectAutomationRun>(
+            Builders<DefectAutomationRun>.IndexKeys.Ascending(x => x.AgentApiKeyId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_defect_automation_runs_key" }));
 
         // PR Review V2（pr-review）：按 UserId 查询，同一用户同仓库同 PR 去重
         // 索引由 DBA 手动创建（遵循 no-auto-index 规则），这里仅作定义参考：

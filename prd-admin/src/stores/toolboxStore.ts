@@ -299,7 +299,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
   },
   {
     id: 'builtin-pm-agent',
-    name: '项目管理智能体',
+    name: '项目管理',
     description: '项目立项、任务看板、甘特图，AI 自动拆解需求为任务（对齐 PMO 方法论）',
     icon: 'FolderKanban',
     category: 'builtin',
@@ -315,9 +315,9 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
   },
   {
     id: 'builtin-product-agent',
-    name: '产品管理智能体',
+    name: '产品管理',
     description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱（参考 TAPD）',
-    icon: 'Boxes',
+    icon: 'Blocks',
     category: 'builtin',
     type: 'builtin',
     kind: 'agent',
