@@ -16,3 +16,5 @@
 | fix | prd-api | 版本恢复 ApplyContentToEntryAsync：DocumentId 指向的 ParsedPrd 行丢失时也 upsert 落库正文，避免恢复后重载空白 —— Bugbot High |
 | fix | prd-api | DeleteStore 级联删除 document_entry_versions，避免删库后版本全文残留泄漏 —— Bugbot |
 | fix | prd-api | GitHub 同步删除远端已不存在的子条目时级联删除其历史版本，与手动删除一致 —— Bugbot |
+| fix | prd-api | AI 再加工写回对无 DocumentId 短文档也快照改动前基线（ContentIndex 即完整正文），保证可撤销 —— Bugbot |
+| fix | prd-api | 版本恢复前的基线快照来源由 sync 改为 edit，避免历史里把手动编辑误显示为「外部同步」—— Bugbot |

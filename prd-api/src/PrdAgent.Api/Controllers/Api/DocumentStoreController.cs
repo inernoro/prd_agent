@@ -1273,9 +1273,11 @@ public class DocumentStoreController : ControllerBase
         await RebindInlineCommentsAsync(entry.Id, content);
         await _mentions.ResyncDocumentMentionsAsync(store.Id, entry.Id, content);
 
-        // 先保留改动前正文（去重；外部同步覆盖过的内容借此也能找回），再记本次新内容
+        // 先保留改动前正文（去重；未版本化的写入借此也能找回），再记本次新内容。
+        // 基线用 Edit 而非 Sync：这是用户当前的工作内容（多为手动编辑），标 Sync 会在历史里
+        // 把手动编辑误显示成「外部同步」（Bugbot）。真·同步覆盖路径自己另记 source=sync。
         if (oldContent != null)
-            await _versions.SnapshotAsync(entry.Id, store.Id, oldContent, DocumentVersionSource.Sync, userId, userName);
+            await _versions.SnapshotAsync(entry.Id, store.Id, oldContent, DocumentVersionSource.Edit, userId, userName);
         await _versions.SnapshotAsync(entry.Id, store.Id, content, source, userId, userName, restoredFromVersionId);
         return now;
     }

@@ -178,6 +178,9 @@ public class ContentReprocessApplyService
         }
         else
         {
+            // 无 DocumentId 的短文档，ContentIndex 即完整正文（见 AppendAsync 约定），
+            // 也要快照成改动前基线，否则这类条目 AI 改写后无法从历史撤销（Bugbot）。
+            oldContent = entry.ContentIndex;
             parsed = await _documentService.ParseAsync(content);
             parsed.Title = entry.Title;
         }
