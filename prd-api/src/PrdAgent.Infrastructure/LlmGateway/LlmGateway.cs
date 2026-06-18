@@ -848,7 +848,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             foreach (var h in response.Headers)
                 submitResponseHeaders[h.Key] = string.Join(", ", h.Value);
 
-            if (isExchange && _transformerRegistry.Get(resolution.ExchangeTransformerType) is IAsyncExchangeTransformer asyncTransformer)
+            // 二进制响应（视频/图片下载）是终态读取，绝不是 async-submit 任务，
+            // 必须跳过 Exchange 轮询，否则下载到的 mp4 字节会被当成"任务未完成"误进轮询。
+            if (isExchange && !isBinaryResponse && _transformerRegistry.Get(resolution.ExchangeTransformerType) is IAsyncExchangeTransformer asyncTransformer)
             {
                 // 检查 submit 响应状态
                 if (asyncTransformer.IsTaskFailed((int)response.StatusCode, submitResponseHeaders, responseBody, out var submitError))
