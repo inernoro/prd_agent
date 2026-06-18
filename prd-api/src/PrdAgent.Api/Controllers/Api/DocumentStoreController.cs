@@ -1084,6 +1084,9 @@ public class DocumentStoreController : ControllerBase
         // 更新 DocumentEntry 的摘要和内容索引
         var summary = content.Length > 200 ? content[..200] : content;
         var contentIndex = content.Length > 2000 ? content[..2000] : content;
+        // 单一时间戳：DB 写入与响应必须用同一个 now，否则前端用响应 updatedAt 推进 loadedContentKey 后，
+        // 服务端列表重载返回的是 DB 里那个（差几毫秒的）UpdatedAt → 缓存键不一致 → 多余重拉 + 回顶（Bugbot）。
+        var now = DateTime.UtcNow;
 
         var contentUpdate = Builders<DocumentEntry>.Update
             .Set(e => e.DocumentId, entry.DocumentId)
@@ -1091,7 +1094,7 @@ public class DocumentStoreController : ControllerBase
             .Set(e => e.ContentIndex, contentIndex.Trim())
             .Set(e => e.UpdatedBy, userId)
             .Set(e => e.UpdatedByName, userName)
-            .Set(e => e.UpdatedAt, DateTime.UtcNow);
+            .Set(e => e.UpdatedAt, now);
         if (!string.IsNullOrWhiteSpace(request.ContentType))
             contentUpdate = contentUpdate.Set(e => e.ContentType, request.ContentType);
 
@@ -1122,7 +1125,7 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             updated = true,
-            updatedAt = DateTime.UtcNow,
+            updatedAt = now,
             updatedBy = userId,
             updatedByName = userName,
             inlineCommentsRebound = rebindStats.rebound,

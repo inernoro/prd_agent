@@ -8,3 +8,8 @@
 | fix | prd-admin | 历史版本弹窗面板改用不透明 --bg-elevated（原 --bg-card 暗色为 rgba(255,255,255,0.08) 半透明，背景正文透出造成重叠）+ 阴影/轻背板模糊 |
 | feat | prd-admin | 编辑订阅/GitHub 每日同步文档时顶部显示警示横幅：手动修改（含插入配图）可能被下次同步覆盖，改动已留存历史版本可恢复 |
 | feat | prd-admin | 知识库列表卡片副标题新增体量徽章（懒加载，滚动进视口才取 size），库外即可纵览每个知识库多大 |
+| fix | prd-api | UpdateEntryContent 用单一时间戳写库与返回（原两次 DateTime.UtcNow 差几毫秒，前端缓存键与列表重载不一致会触发多余重拉回顶）—— Bugbot |
+| fix | prd-admin | 历史版本列表 RelativeTime 加 refreshIntervalMs=0（列表场景禁用每实例刷新定时器，最多 100 行）—— Bugbot |
+| fix | prd-api | GitHub 同步 SHA 缓存复用分支补齐覆盖前后版本快照（原仅 live-fetch 分支快照，缓存分支会静默覆盖本地改动无法恢复）—— Codex |
+| fix | prd-api | AI 再加工写回（reprocess apply replace/append）接入版本快照，历史可撤销 AI 改写 —— Codex |
+| fix | prd-admin | 历史版本「恢复」按钮不再因「是最新快照」禁用（存在不产生版本的写入路径时会挡住撤销）—— Codex |

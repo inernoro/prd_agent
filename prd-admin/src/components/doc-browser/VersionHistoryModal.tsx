@@ -170,7 +170,8 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
                       <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>{SOURCE_LABEL[v.source] ?? v.source}</span>
                     </div>
                     <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      <RelativeTime value={v.createdAt} /> · {v.charCount} 字 · {formatBytes(v.sizeBytes)}
+                      {/* 列表场景禁用每实例刷新定时器（最多 100 行各开一个 interval）—— 项目规则 / Bugbot */}
+                      <RelativeTime value={v.createdAt} refreshIntervalMs={0} /> · {v.charCount} 字 · {formatBytes(v.sizeBytes)}
                     </div>
                     {v.createdByName && (
                       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{v.createdByName}</div>
@@ -196,10 +197,13 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
             <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
               <button
                 onClick={handleRestore}
-                disabled={!detail || restoring || (versions != null && versions[0]?.id === detail?.id)}
+                // 不再因「是最新快照」就禁用恢复：部分写入路径（如 AI 改写/续写、reprocess apply）
+                // 不产生版本，此时 versions[0] 未必等于当前正文，禁用会让用户无法用历史撤销那次写入（Codex P2）。
+                // 恢复是幂等的（内容相同则 SnapshotAsync 去重、不产生噪音版本），始终允许最安全。
+                disabled={!detail || restoring}
                 className="h-8 px-3 rounded-lg text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', color: 'rgba(147,197,253,0.95)' }}
-                title={versions != null && versions[0]?.id === detail?.id ? '这已经是当前版本' : '把该版本内容写回当前文档（当前内容会自动保留为新版本）'}>
+                title="把该版本内容写回当前文档（当前内容会自动保留为新版本）">
                 {restoring ? <MapSpinner size={12} /> : <RotateCcw size={12} />}
                 恢复此版本
               </button>

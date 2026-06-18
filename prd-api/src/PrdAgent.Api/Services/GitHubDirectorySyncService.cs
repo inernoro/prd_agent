@@ -259,6 +259,16 @@ public class GitHubDirectorySyncService
 
                     await documentService.SaveAsync(newDoc);
 
+                    // 覆盖前快照旧正文：SHA 命中缓存复用分支同样会覆盖本地正文，必须和 live-fetch 分支
+                    // 一样先留存旧内容，否则用户本地插入的配图等改动在此路径会被静默覆盖、无法恢复（Codex P2）。
+                    if (versions != null && !isNew && !string.IsNullOrEmpty(entry.DocumentId))
+                    {
+                        var oldCachedDoc = await documentService.GetByIdAsync(entry.DocumentId);
+                        if (oldCachedDoc != null && !string.IsNullOrWhiteSpace(oldCachedDoc.RawContent))
+                            await versions.SnapshotAsync(entry.Id, entry.StoreId, oldCachedDoc.RawContent,
+                                DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
+                    }
+
                     entry.DocumentId = newDoc.Id;
                     entry.ContentType = cachedEntry.ContentType;
                     entry.FileSize = cachedEntry.FileSize;
@@ -286,6 +296,11 @@ public class GitHubDirectorySyncService
                         await db.DocumentEntries.ReplaceOneAsync(
                             e => e.Id == entry.Id, entry, cancellationToken: CancellationToken.None);
                     }
+
+                    // 同步后的新正文也快照（与 live-fetch 分支一致，保持「最新版本==当前正文」；去重避免噪音）
+                    if (versions != null && !string.IsNullOrWhiteSpace(newDoc.RawContent))
+                        await versions.SnapshotAsync(entry.Id, entry.StoreId, newDoc.RawContent,
+                            DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
                     return; // 跳过后续的外网拉取
                 }
             }

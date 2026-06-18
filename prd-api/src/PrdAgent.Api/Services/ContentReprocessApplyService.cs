@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
 
 namespace PrdAgent.Api.Services;
 
@@ -17,11 +18,16 @@ namespace PrdAgent.Api.Services;
 public class ContentReprocessApplyService
 {
     private readonly IDocumentService _documentService;
+    private readonly DocStoreServices.DocumentVersionService _versions;
     private readonly ILogger<ContentReprocessApplyService> _logger;
 
-    public ContentReprocessApplyService(IDocumentService documentService, ILogger<ContentReprocessApplyService> logger)
+    public ContentReprocessApplyService(
+        IDocumentService documentService,
+        DocStoreServices.DocumentVersionService versions,
+        ILogger<ContentReprocessApplyService> logger)
     {
         _documentService = documentService;
+        _versions = versions;
         _logger = logger;
     }
 
@@ -161,9 +167,11 @@ public class ContentReprocessApplyService
     private async Task SaveContentToEntryAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
     {
         ParsedPrd parsed;
+        string? oldContent = null;
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var existing = await _documentService.GetByIdAsync(entry.DocumentId);
+            oldContent = existing?.RawContent;
             parsed = await _documentService.ParseAsync(content);
             parsed.Id = entry.DocumentId;
             parsed.Title = existing?.Title ?? entry.Title;
@@ -174,6 +182,12 @@ public class ContentReprocessApplyService
             parsed.Title = entry.Title;
         }
         await _documentService.SaveAsync(parsed);
+
+        // 版本快照：AI 再加工（replace/append）也走版本控制，否则历史里缺这次写入、
+        // 用户无法用「历史版本」撤销 AI 改写（Codex P2）。先存改动前基线，再存新内容（去重）。
+        if (oldContent != null)
+            await _versions.SnapshotAsync(entry.Id, entry.StoreId, oldContent, DocumentVersionSource.Edit, actorId, null);
+        await _versions.SnapshotAsync(entry.Id, entry.StoreId, content, DocumentVersionSource.Edit, actorId, null);
 
         // 与 UpdateEntryContent 保持一致：把"最近编辑者"更新到当前 actor，
         // 否则团队场景下 audit/活动流会错误归属（Codex P2 十轮）
