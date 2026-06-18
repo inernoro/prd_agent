@@ -2819,6 +2819,11 @@ public class DocumentStoreController : ControllerBase
         if (selfRun != null)
             return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));
 
+        // 走到这里说明本实例没有可复用/可认领的在途 run。注意：若该条目已有【别的部署实例】
+        // 拥有的在途 run，这里【有意】不复用、而是新建一条归属本实例的 run —— 这是定向消费的
+        // 刻意取舍（用户 2026-06-18 确认「各自处理」）：宁可两个部署各转一次（共享 Mongo 下
+        // 偶发重复，真实部署处理端基本单实例，重复罕见），也不让本实例的用户卡等一个可能跑旧
+        // 代码/已下线实例的 run（那正是定向消费要根治的「被别人消费」原 bug 的反向版本）。
         var userId = GetUserId();
         var run = new DocumentStoreAgentRun
         {
