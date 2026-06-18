@@ -186,6 +186,8 @@ public class GitHubDirectorySyncService
             if (!processedUrls.Contains(url))
             {
                 await db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, cancellationToken: CancellationToken.None);
+                // 级联清理该条目历史版本，和手动 DeleteEntry 一致，避免远端删文件后版本快照残留（Bugbot）
+                await db.DocumentEntryVersions.DeleteManyAsync(v => v.EntryId == entry.Id, CancellationToken.None);
                 diff.DeletedCount++;
                 diff.FileChanges.Add(new DocumentSyncFileChange
                 {

@@ -521,6 +521,8 @@ public class DocumentStoreController : ControllerBase
         var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.StoreId == storeId);
         var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => c.StoreId == storeId);
         var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => r.StoreId == storeId);
+        // 级联清理历史版本，避免删库后 document_entry_versions 残留全文快照（存储泄漏，与条目级删除一致）—— Bugbot
+        var versionsResult = await _db.DocumentEntryVersions.DeleteManyAsync(v => v.StoreId == storeId);
         // 同步配对清理：本库作为本地侧(LocalStoreId)的记录无条件删。
         // RemoteStoreId 匹配仅限【本地同环境配对】(LinkType=Local)——跨环境配对的 RemoteStoreId 是对端环境的库 Id，
         // 本环境若恰好(克隆/导入后)有同 Id 的库，不能因为删它就误删那些本地侧仍在的跨环境配对（Codex P2）。
@@ -1241,14 +1243,13 @@ public class DocumentStoreController : ControllerBase
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            if (doc != null)
-            {
-                oldContent = doc.RawContent;
-                var parsed = await _documentService.ParseAsync(content);
-                parsed.Id = doc.Id;
-                parsed.Title = doc.Title;
-                await _documentService.SaveAsync(parsed);
-            }
+            oldContent = doc?.RawContent;
+            // 即便 DocumentId 指向的 ParsedPrd 行已丢失（自愈场景），也必须把恢复内容落库（upsert 复用同 id），
+            // 否则只更新了 entry 元数据与版本、正文没写 → 重载后 GetEntryContent 空白（Bugbot High）。
+            var parsed = await _documentService.ParseAsync(content);
+            parsed.Id = entry.DocumentId;
+            parsed.Title = doc?.Title ?? entry.Title;
+            await _documentService.SaveAsync(parsed);
         }
         else
         {
