@@ -6193,8 +6193,22 @@ function safeChart(canvasId, config) {
                 CancellationToken.None);
             response.EnsureSuccessStatusCode();
             videoBytes = await response.Content.ReadAsByteArrayAsync(CancellationToken.None);
-            contentType = response.Content.Headers.ContentType?.MediaType ?? "video/mp4";
-            sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType}");
+            var rawType = response.Content.Headers.ContentType?.MediaType;
+            // MIME 归一:
+            // - video/* → 原样保留
+            // - 缺失 / application/octet-stream(很多短视频 CDN 回这种通用类型)→ 归一成 video/mp4,
+            //   否则 AssetStorage 落成 .bin COS URL,前端 PosterFeedCardView 仅凭后缀判定会把可播放
+            //   视频当图片显示成破损媒体(Codex P2)。
+            // - 显式的非视频类型(text/html 分享/登录/防盗链页、image/* 等)→ 直接拒绝,不能改写成
+            //   mp4 把非视频字节存成 .mp4,否则 source 阶段"假成功"、卡片播放与后续 ASR 都会以误导
+            //   性的症状失败(Codex P2 二轮)。
+            if (string.IsNullOrWhiteSpace(rawType) || rawType.EndsWith("/octet-stream", StringComparison.OrdinalIgnoreCase))
+                contentType = "video/mp4";
+            else if (rawType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+                contentType = rawType;
+            else
+                throw new InvalidOperationException($"视频下载地址返回了非视频内容（{rawType}），可能是分享页/登录页/防盗链拦截，已中止保存");
+            sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType} (raw={rawType ?? "null"})");
         }
         catch (Exception ex)
         {
@@ -6571,7 +6585,14 @@ function safeChart(canvasId, config) {
                     }
                     else
                     {
-                        var gatewayResult = await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, resolution.ToGatewayResolution());
+                        var gwRes = resolution.ToGatewayResolution();
+                        // chat-audio(OpenAI input_audio→/v1/chat/completions)只用于非 Exchange 的 OpenAI 兼容平台。
+                        // Exchange 走自己的 transformer(doubao-asr 已在上游单独分流;gemini-native 的
+                        // GeminiNativeTransformer 只转 text/image_url、会丢掉音频部分),其 PlatformType=exchange
+                        // 不在 google/gemini 排除内,若误走 chat-audio 会把音频丢失导致 ASR 失败(Codex P2)。
+                        var gatewayResult = !gwRes.IsExchange && IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
+                            ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
+                            : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
                         transcript = gatewayResult.Transcript;
                         if (gatewayResult.Cues.Count > 0)
                         {
@@ -6580,7 +6601,7 @@ function safeChart(canvasId, config) {
                         }
                         else
                         {
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成，转写 {transcript.Length} 字");
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成（model={gwRes.ActualModel}），转写 {transcript.Length} 字");
                         }
                     }
                 }
@@ -6749,6 +6770,127 @@ function safeChart(canvasId, config) {
         }
 
         return ParseGatewayAsrTranscript(rawResp.Content);
+    }
+
+    /// <summary>
+    /// 判断该模型是否走「多模态 chat + 音频输入」路径做转写（如 OpenRouter 的 openai/gpt-audio、
+    /// gemini 系等）。这些平台没有 Whisper 的 /v1/audio/transcriptions 端点，只能把音频当作
+    /// chat 消息里的 input_audio 发给多模态模型，让它逐字转写。whisper 仍走 multipart。
+    /// </summary>
+    private static bool IsChatAudioModel(string? model, string? platformType)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return false;
+        // 本路径发 OpenAI 形态请求（/v1/chat/completions + input_audio）。原生非 OpenAI 形态平台
+        // 不能走：claude/anthropic 走 ClaudeGatewayAdapter；google 原生 Gemini 用
+        // v1beta/models/{model}:generateContent，端点与请求体都和 OpenAI 不同，发过去直接失败
+        // 而非转写。仅 OpenAI 兼容平台（OpenRouter 等注册为 openai）可走（Codex P2）。
+        // google 与 gemini 两种 platformType 都是原生 Google 平台（见 ImageGenPlatformAdapterFactory），
+        // 走 v1beta generateContent，与 OpenAI input_audio 形态不兼容，必须一并排除。
+        var pt = (platformType ?? "").ToLowerInvariant();
+        if (pt is "google" or "gemini" or "anthropic" or "claude") return false;
+        var m = model.ToLowerInvariant();
+        if (m.Contains("whisper")) return false;       // Whisper 走 /v1/audio/transcriptions
+        // 只认确实支持音频输入的模型：含 audio（gpt-audio / gpt-4o-audio-preview / qwen-audio）
+        // 或 gemini。不能用裸 gpt-4o——gpt-4o / gpt-4o-mini 不接受 input_audio（Bugbot Medium）。
+        return m.Contains("audio")
+            || m.Contains("gemini");
+    }
+
+    /// <summary>
+    /// 通过多模态 chat completions（input_audio）做转写。用于 OpenRouter / Gemini 等没有
+    /// Whisper 端点、但模型本身能听音频的平台。返回纯转写文本（无时间戳 cue）。
+    /// </summary>
+    private static async Task<GatewayAsrTranscript> TranscribeAudioViaChatAsync(
+        ILlmGateway gateway,
+        string appCallerCode,
+        byte[] audioBytes,
+        GatewayModelResolution resolution)
+    {
+        var base64 = Convert.ToBase64String(audioBytes);
+        var body = new JsonObject
+        {
+            ["model"] = resolution.ActualModel,
+            ["modalities"] = new JsonArray("text"),
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["type"] = "text",
+                            ["text"] = "请把这段音频逐字转写成中文/原语言文字，尽量一字不差保留原话。只输出转写出的文字内容本身，不要任何解释、说明、引号或额外前后缀。",
+                        },
+                        new JsonObject
+                        {
+                            ["type"] = "input_audio",
+                            ["input_audio"] = new JsonObject
+                            {
+                                ["data"] = base64,
+                                ["format"] = "wav",
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/chat/completions",
+            IsMultipart = false,
+            RequestBody = body,
+            TimeoutSeconds = 600,
+        };
+
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new InvalidOperationException($"Gateway 语音转写(chat)调用失败: {detail}");
+        }
+
+        var text = ExtractChatCompletionContent(rawResp.Content);
+        // HTTP 成功但没解析出文字（模型拒答 / 响应结构异常 / 空内容）→ 当失败抛出，
+        // 不要返回空转写让上层误判成"转写成功但没字"（与 SubtitleGenerationProcessor 一致，Bugbot Medium）。
+        if (string.IsNullOrWhiteSpace(text))
+            throw new InvalidOperationException("Gateway 语音转写(chat)返回为空（模型可能拒答或响应格式异常）");
+        return new GatewayAsrTranscript(text.Trim(), new JsonArray());
+    }
+
+    /// <summary>从 chat completions 响应里取 choices[0].message.content（兼容字符串与多模态数组）。</summary>
+    private static string ExtractChatCompletionContent(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("choices", out var choices)
+                && choices.ValueKind == JsonValueKind.Array
+                && choices.GetArrayLength() > 0
+                && choices[0].TryGetProperty("message", out var msg)
+                && msg.TryGetProperty("content", out var content))
+            {
+                if (content.ValueKind == JsonValueKind.String)
+                    return content.GetString() ?? "";
+                if (content.ValueKind == JsonValueKind.Array)
+                {
+                    var parts = new StringBuilder();
+                    foreach (var part in content.EnumerateArray())
+                    {
+                        if (part.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                            parts.Append(t.GetString());
+                    }
+                    return parts.ToString();
+                }
+            }
+        }
+        catch { /* 解析失败返回空，由上层判失败 */ }
+        return "";
     }
 
     private static GatewayAsrTranscript ParseGatewayAsrTranscript(string json)
