@@ -939,6 +939,15 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
   const author = page.authorName || '';
   const platform = page.platform || '';
   const stats = page.stats;
+  // 右栏是否真的有可见指标 chip（stats 对象可能存在但所有计数都是 0/null —— 此时右栏无内容，
+  // 底部标题就不该再为它让出右侧 padding）（Bugbot Low）。
+  const hasVisibleStats = !!stats && (
+    (typeof stats.likes === 'number' && stats.likes > 0)
+    || (typeof stats.comments === 'number' && stats.comments > 0)
+    || (typeof stats.collects === 'number' && stats.collects > 0)
+    || (typeof stats.shares === 'number' && stats.shares > 0)
+    || (typeof stats.plays === 'number' && stats.plays > 0)
+  );
   const tags = (page.hashtags || []).slice(0, 3);
   const tagOverflow = (page.hashtags?.length || 0) - tags.length;
 
@@ -1168,8 +1177,9 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
         style={{
           background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 35%, rgba(0,0,0,0.92) 100%)',
           opacity: hasPlayed ? 0 : 1,
-          // 标题/标签让出右侧互动指标栏的宽度，避免窄卡片下文字压到点赞数上（元素重叠）
-          paddingRight: stats ? 60 : undefined,
+          // 标题/标签让出右侧互动指标栏的宽度，避免窄卡片下文字压到点赞数上（元素重叠）。
+          // 仅在右栏真的有 chip 时才让位，全空时不留多余 padding（Bugbot Low）。
+          paddingRight: hasVisibleStats ? 60 : undefined,
         }}
       >
         <h2

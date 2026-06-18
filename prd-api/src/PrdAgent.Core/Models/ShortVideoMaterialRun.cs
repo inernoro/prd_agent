@@ -11,6 +11,12 @@ public class ShortVideoMaterialRun
     /// <summary>发起用户 ID</summary>
     public string UserId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 归属实例（创建该 run 的部署实例 = git 分支，见 InstanceIdentity）。
+    /// 后台 Worker 只领取属于自己实例（或历史无主 null/空）的 run，避免共享 Mongo 下多容器互抢。
+    /// </summary>
+    public string? OwnerInstanceId { get; set; }
+
     /// <summary>原始短视频链接</summary>
     public string VideoUrl { get; set; } = string.Empty;
 

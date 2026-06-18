@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -56,8 +57,10 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            // 只回收【本实例】残留的 running，别误杀别的分支/主干正在处理的任务（定向消费）。
+            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
-                r => r.Status == "running",
+                r => r.Status == "running" && r.OwnerInstanceId == instanceId,
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
@@ -96,8 +99,15 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var processor = scope.ServiceProvider.GetRequiredService<ShortVideoMaterialProcessor>();
 
+        // 定向消费：只领取属于本实例（或历史无主）的 queued 任务，避免共享 Mongo 下多容器互抢。
+        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
-            Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
+            Builders<ShortVideoMaterialRun>.Filter.And(
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
+                Builders<ShortVideoMaterialRun>.Filter.Or(
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
             Builders<ShortVideoMaterialRun>.Update
                 .Set(r => r.Status, "running")
                 .Set(r => r.UpdatedAt, DateTime.UtcNow),

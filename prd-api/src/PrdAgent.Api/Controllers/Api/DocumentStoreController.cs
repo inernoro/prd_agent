@@ -66,6 +66,7 @@ public class DocumentStoreController : ControllerBase
         DocStoreServices.MentionService mentions,
         IAdminPermissionService adminPermissions,
         ILlmGateway gateway,
+        IConfiguration config,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -79,8 +80,11 @@ public class DocumentStoreController : ControllerBase
         _mentions = mentions;
         _adminPermissions = adminPermissions;
         _gateway = gateway;
+        _config = config;
         _logger = logger;
     }
+
+    private readonly IConfiguration _config;
 
     private readonly IAdminPermissionService _adminPermissions;
 
@@ -2795,6 +2799,7 @@ public class DocumentStoreController : ControllerBase
             SourceEntryId = entryId,
             StoreId = store!.Id,
             UserId = userId,
+            OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
         };
@@ -2904,6 +2909,7 @@ public class DocumentStoreController : ControllerBase
                 SourceEntryId = entryId,
                 StoreId = store!.Id,
                 UserId = userId,
+                OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
                 TemplateKey = templateKey,
                 CustomPrompt = templateKey == "custom" ? content : null,
                 Status = DocumentStoreRunStatus.Queued,

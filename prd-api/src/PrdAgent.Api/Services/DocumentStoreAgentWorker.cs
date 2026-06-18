@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -43,8 +44,11 @@ public class DocumentStoreAgentWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            // 只回收【本实例】残留的 Running——共享 Mongo 下，不能把别的分支/主干正在处理的
+            // Running 任务误判成"崩溃残留"标记失败（定向消费，见 InstanceIdentity）。
+            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
             var recovered = await db.DocumentStoreAgentRuns.UpdateManyAsync(
-                r => r.Status == DocumentStoreRunStatus.Running,
+                r => r.Status == DocumentStoreRunStatus.Running && r.OwnerInstanceId == instanceId,
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                     .Set(r => r.ErrorMessage, "服务重启，任务被中断")
@@ -103,8 +107,15 @@ public class DocumentStoreAgentWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var runStore = scope.ServiceProvider.GetRequiredService<IRunEventStore>();
 
-        // 原子拾取一个 queued 任务（按创建时间）
-        var filter = Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued);
+        // 原子拾取一个 queued 任务（按创建时间）——定向消费：只领取属于本实例的任务，
+        // 外加历史无主（OwnerInstanceId 空）的任务做兼容，避免共享 Mongo 下多容器互抢（见 InstanceIdentity）。
+        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+        var filter = Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
+            Builders<DocumentStoreAgentRun>.Filter.Or(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
         var update = Builders<DocumentStoreAgentRun>.Update
             .Set(r => r.Status, DocumentStoreRunStatus.Running)
             .Set(r => r.StartedAt, DateTime.UtcNow);
