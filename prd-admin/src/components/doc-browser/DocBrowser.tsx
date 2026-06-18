@@ -319,7 +319,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
-import { Workflow, History } from 'lucide-react';
+import { Workflow, History, AlertTriangle } from 'lucide-react';
 import { listInlineComments, createInlineComment, deleteInlineComment } from '@/services';
 import { toast } from '@/lib/toast';
 import { DocToc } from './DocToc';
@@ -3441,6 +3441,29 @@ export function DocBrowser({
               {!editMode && !contentLoading && (
                 <ReadingProgressBar key={selectedEntryId} scrollRef={contentAreaRef} />
               )}
+              {/* 订阅/同步文档警示：该文档由外部源定期自动拉取，手动修改可能被下次同步覆盖。
+                  改动会留存到历史版本可恢复，但仍提前提醒用户，避免「插入配图后被同步覆盖」的困惑。 */}
+              {selectedEntryData && !selectedEntryData.isFolder && onSaveContent && (() => {
+                // GitHub 目录同步的子文档 sourceType=subscription，但 metadata 带 github_* 标识；
+                // 纯 RSS/URL 订阅只有 sourceType=subscription。父级配置才是 github_directory。
+                const st = selectedEntryData.sourceType;
+                const meta = selectedEntryData.metadata ?? {};
+                const isGithub = st === 'github_directory' || Object.keys(meta).some(k => k.startsWith('github_'));
+                const isSub = isGithub || st === 'subscription' || !!selectedEntryData.syncStatus;
+                if (!isSub) return null;
+                const src = isGithub ? '每日从 GitHub 仓库自动同步' : '定期从订阅源自动拉取更新';
+                return (
+                  <div
+                    className="shrink-0 flex items-start gap-2 mx-6 mt-3 px-3 py-2 rounded-[8px] text-[11.5px] leading-relaxed"
+                    style={{ background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.28)', color: 'rgba(234,179,8,0.95)' }}>
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <span>
+                      此文档{src}，<b>手动修改（含插入配图）可能在下次同步时被远端内容覆盖</b>。
+                      你的每次改动都会留存到「历史版本」，被覆盖后可一键恢复。
+                    </span>
+                  </div>
+                );
+              })()}
               <div
                 ref={contentAreaRef}
                 className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}

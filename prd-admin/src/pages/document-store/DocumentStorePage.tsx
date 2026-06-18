@@ -2335,9 +2335,11 @@ export function DocumentStorePage() {
                               <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
                             </div>
                           </div>
-                          {/* 副标题行：分类(首个标签) · N 篇文章 —— 复刻设计稿图1 */}
-                          <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                            {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
+                          {/* 副标题行：分类(首个标签) · N 篇文章 · 体量 —— 列表外层即可看到每个库多大 */}
+                          <p className="text-[11px] truncate mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                            <span className="truncate">{category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章</span>
+                            <span aria-hidden>·</span>
+                            <StoreSizeBadge storeId={s.id} variant="compact" />
                           </p>
                         </div>
                       </div>

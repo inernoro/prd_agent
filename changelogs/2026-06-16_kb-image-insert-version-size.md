@@ -6,3 +6,5 @@
 | test | prd-api | 新增 DocumentVersionLogicTests（版本去重/递增/UTF-8 字节/图片外链文本快照安全性）6 例 |
 | feat | prd-api | 订阅源/GitHub 同步覆盖文档正文前先把旧正文快照成版本（source=sync，去重）：订阅文档被远端同步覆盖时，用户本地插入的配图等改动不丢，可从历史版本恢复 |
 | fix | prd-admin | 历史版本弹窗面板改用不透明 --bg-elevated（原 --bg-card 暗色为 rgba(255,255,255,0.08) 半透明，背景正文透出造成重叠）+ 阴影/轻背板模糊 |
+| feat | prd-admin | 编辑订阅/GitHub 每日同步文档时顶部显示警示横幅：手动修改（含插入配图）可能被下次同步覆盖，改动已留存历史版本可恢复 |
+| feat | prd-admin | 知识库列表卡片副标题新增体量徽章（懒加载，滚动进视口才取 size），库外即可纵览每个知识库多大 |
