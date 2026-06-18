@@ -4798,7 +4798,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
   const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
-    const rawList = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
+    // 先按「新增路径」的上限（下方 list.slice(0, 20)）截断，再压缩——否则一次拖入 50 张时
+    // 会把 30 张注定被丢弃的图也解码 + 画到 canvas，反而在上传前先卡死/爆内存。
+    const rawList = (files ?? [])
+      .filter((f) => f && f.type && f.type.startsWith('image/'))
+      .slice(0, 20);
     if (rawList.length === 0) return;
 
     // 上传前压缩：超大图（最长边 > 2560px 或 体积 > 8MB）会把画布拖卡，先在源头缩到阈值内。
