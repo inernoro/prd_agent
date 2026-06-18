@@ -31,3 +31,4 @@
 | fix | prd-admin | commitLocalSave 记录刚保存内容；onSaveContent 返回 void 时 loadEntryContent 凭快照直接采纳新 key 跳过重拉，保存不刷新对所有调用方生效 —— Bugbot |
 | fix | prd-admin | commitLocalSave 作废在途加载时同步清 contentLoading，避免内容区卡在 loading 占位 —— Codex P2 |
 | fix | prd-admin | 历史版本首条徽章「当前」改为「最新」，个别写入路径（替换文件）不产生版本时不误导为当前在线正文 —— Codex P2 |
+| fix | prd-admin | 保存豁免重拉改为一次性（用完即清 lastSavedContentRef），只豁免保存紧接的那次重拉；之后订阅同步 bump updatedAt 仍正常重拉，不会一直拿本地旧文盖掉服务端已同步的新内容 —— Bugbot |

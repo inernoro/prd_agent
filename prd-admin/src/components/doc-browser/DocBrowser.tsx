@@ -2494,8 +2494,11 @@ export function DocBrowser({
     if (contentKey === loadedContentKey) return;
     // 刚本地保存过且 preview 已是该内容（onSaveContent 没回 updatedAt 时走这里）：直接采纳新 key，
     // 不 setPreview(null) 不重拉，避免保存后闪烁回顶（Bugbot）。
+    // 一次性：用完即清。只豁免「保存紧接着的那一次」重拉；之后订阅同步等再 bump updatedAt 时，
+    // ref 已空 → 正常重拉，不会一直拿本地旧文盖掉服务端已被同步覆盖的新内容（Bugbot）。
     const saved = lastSavedContentRef.current;
     if (saved && saved.entryId === entryId && preview?.text === saved.text) {
+      lastSavedContentRef.current = null;
       setLoadedContentKey(contentKey);
       return;
     }
