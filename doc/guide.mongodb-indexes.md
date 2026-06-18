@@ -581,6 +581,44 @@ db.defect_fix_reports.createIndex(
 )
 ```
 
+### defect_resolution_traces
+
+```js
+// 按 commit 反查关联缺陷
+db.defect_resolution_traces.createIndex(
+  { "CommitSha": 1, "CreatedAt": -1 },
+  { name: "idx_defect_resolution_traces_commit" }
+)
+
+// 按缺陷反查修复链路
+db.defect_resolution_traces.createIndex(
+  { "DefectId": 1, "CreatedAt": -1 },
+  { name: "idx_defect_resolution_traces_defect" }
+)
+```
+
+### defect_automation_runs
+
+```js
+// 定时任务恢复：优先查 running / failed / completed
+db.defect_automation_runs.createIndex(
+  { "Status": 1, "CreatedAt": -1 },
+  { name: "idx_defect_automation_runs_status" }
+)
+
+// 排查当前卡在哪个缺陷
+db.defect_automation_runs.createIndex(
+  { "CurrentDefectId": 1, "UpdatedAt": -1 },
+  { name: "idx_defect_automation_runs_current_defect" }
+)
+
+// 按长期授权 Key 追踪运行历史
+db.defect_automation_runs.createIndex(
+  { "AgentApiKeyId": 1, "CreatedAt": -1 },
+  { name: "idx_defect_automation_runs_key" }
+)
+```
+
 ### channel_whitelist
 
 ```js
