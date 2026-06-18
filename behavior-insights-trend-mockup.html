@@ -174,7 +174,7 @@
   const maxTotal=Math.max(...total);
 
   // ---------- layout ----------
-  const VW=980, VH=300, padL=18, padR=18, padT=20, padB=44;
+  const VW=980, VH=300, padL=18, padR=86, padT=20, padB=44;
   const plotW=VW-padL-padR, plotH=VH-padT-padB;
   const midY=padT+plotH/2;
   const S=(plotH*0.86)/maxTotal; // scale so max burst nearly fills height
@@ -310,6 +310,20 @@
   const hc=document.createElementNS(NS,'circle');
   hc.setAttribute('cx',hx); hc.setAttribute('cy',(hyTop+hyBot)/2); hc.setAttribute('r',5);
   hc.setAttribute('fill','#fff'); headG.appendChild(hc);
+  // latest value label, to the right of head (now there's room)
+  const cy=(hyTop+hyBot)/2;
+  const lblBg=document.createElementNS(NS,'rect');
+  lblBg.setAttribute('x',hx+12); lblBg.setAttribute('y',cy-15); lblBg.setAttribute('width',64); lblBg.setAttribute('height',30);
+  lblBg.setAttribute('rx',8); lblBg.setAttribute('fill','rgba(248,113,122,0.13)'); lblBg.setAttribute('stroke',RED); lblBg.setAttribute('stroke-width',1);
+  headG.appendChild(lblBg);
+  const lblT=document.createElementNS(NS,'text');
+  lblT.setAttribute('x',hx+44); lblT.setAttribute('y',cy-1); lblT.setAttribute('text-anchor','middle');
+  lblT.setAttribute('fill',RED); lblT.setAttribute('font-size','13'); lblT.setAttribute('font-weight','700');
+  lblT.textContent=Math.round(total[N-1]); headG.appendChild(lblT);
+  const lblS=document.createElementNS(NS,'text');
+  lblS.setAttribute('x',hx+44); lblS.setAttribute('y',cy+11); lblS.setAttribute('text-anchor','middle');
+  lblS.setAttribute('fill','rgba(236,236,239,0.6)'); lblS.setAttribute('font-size','9'); lblS.textContent='今日声量';
+  headG.appendChild(lblS);
   svg.appendChild(headG);
   setTimeout(()=>headG.style.opacity=1,1500);
 
