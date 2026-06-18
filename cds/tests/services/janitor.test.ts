@@ -130,6 +130,17 @@ describe('JanitorService', () => {
       expect(removed).toEqual([]);
     });
 
+    it('uses the newest lifecycle timestamp instead of an older access timestamp', async () => {
+      stateService.addBranch(makeBranch('recently-stopped', 30, {
+        lastStoppedAt: new Date('2026-04-09T12:00:00Z').toISOString(),
+      }));
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches).toEqual([]);
+      expect(removed).toEqual([]);
+    });
+
     it('skips pinnedByUser branches even if stale', async () => {
       stateService.addBranch(makeBranch('pinned', 100, { pinnedByUser: true }));
 

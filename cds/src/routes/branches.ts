@@ -9542,6 +9542,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const stopAttribution = stopAttributionFromRequest(req);
 
     // `lastAccessedAt` is the branch card's "last deploy attempt" clock.
     // Stamp it before dispatching so failures and remote rejections update the
@@ -10827,6 +10828,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const stopAttribution = stopAttributionFromRequest(req);
 
     // ── Cluster-aware stop ──
     //
@@ -10874,8 +10876,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const svc of Object.values(entry.services)) svc.status = 'stopped';
         entry.status = 'idle';
         entry.lastStoppedAt = new Date().toISOString();
-        entry.lastStopReason = `远端执行器 ${remoteExecutor.id} 停止`;
-        entry.lastStopSource = 'executor';
+        entry.lastStopReason = `${stopAttribution.reason}，远端执行器 ${remoteExecutor.id} 已停止`;
+        entry.lastStopSource = stopAttribution.source === 'user' ? 'executor' : stopAttribution.source;
         // 2026-05-14 Cursor Bugbot Medium 修复：远端执行器停止路径与本地
         // 手动停止 / scheduler coolFn / AutoLifecycle 一致，也要 +1 stopCount
         // 并写活动日志，否则 UI「停止次数」对远端停止漏计、活动时间线缺这条。
@@ -10885,6 +10887,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           branchId: id,
           branchName: entry.branch,
           actor: resolveActorForActivity(req),
+          note: entry.lastStopReason,
         });
         stateService.save();
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
@@ -10898,7 +10901,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     try {
-      const stopAttribution = stopAttributionFromRequest(req);
       // Set stopping state immediately so frontend can show animation
       assertBranchOperationCurrent(branchOperationLease, 'before-local-stop');
       entry.status = 'stopping';

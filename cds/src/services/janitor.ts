@@ -111,12 +111,13 @@ function branchExpiryAnchorMs(branch: BranchEntry): number {
     branch.lastDeployAt,
     branch.createdAt,
   ];
+  let latest = 0;
   for (const value of candidates) {
     if (!value) continue;
     const ts = Date.parse(value);
-    if (Number.isFinite(ts) && ts > 0) return ts;
+    if (Number.isFinite(ts) && ts > latest) latest = ts;
   }
-  return 0;
+  return latest;
 }
 
 export class JanitorService {

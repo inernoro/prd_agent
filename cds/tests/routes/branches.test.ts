@@ -761,6 +761,66 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('feature-webhook-stop')?.lastStopSource).toBe('webhook');
       expect(stateService.getBranch('feature-webhook-stop')?.lastStopReason).toBe('GitHub webhook 触发停止');
     });
+
+    it('preserves webhook attribution when stopping a remote executor branch', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'remote-webhook-stop',
+        projectId: 'default',
+        branch: 'feature/remote-webhook-stop',
+        worktreePath: path.join(tmpDir, 'worktrees', 'remote-webhook-stop'),
+        status: 'running',
+        createdAt: now,
+        executorId: 'exec-1',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-remote-webhook-stop-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+      });
+      registryNodes.push({
+        id: 'exec-1',
+        host: '127.0.0.1',
+        port: 9101,
+        status: 'online',
+        role: 'remote',
+        labels: [],
+        branches: ['remote-webhook-stop'],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 },
+        registeredAt: now,
+        lastHeartbeat: now,
+      });
+      const fetchCalls: Array<{ url: string; body: any }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const res = await request(
+          server,
+          'POST',
+          '/api/branches/remote-webhook-stop/stop',
+          undefined,
+          { 'X-CDS-Trigger': 'webhook' },
+        );
+
+        expect(res.status).toBe(200);
+        expect(fetchCalls[0]?.body?.trigger).toBe('webhook');
+        expect(stateService.getBranch('remote-webhook-stop')?.lastStopSource).toBe('webhook');
+        expect(stateService.getBranch('remote-webhook-stop')?.lastStopReason).toContain('GitHub webhook 触发停止');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe('POST /api/branches/cleanup-damaged-containers', () => {
