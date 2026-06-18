@@ -260,11 +260,11 @@ html, body {
  */
 .app-aurora {
   background:
-    radial-gradient(58% 52% at 14% 12%, rgba(99, 102, 241, 0.30) 0%, transparent 56%),
-    radial-gradient(54% 48% at 86% 16%, rgba(34, 211, 238, 0.24) 0%, transparent 56%),
-    radial-gradient(60% 54% at 82% 88%, rgba(168, 85, 247, 0.26) 0%, transparent 58%),
-    radial-gradient(50% 46% at 18% 86%, rgba(236, 72, 153, 0.22) 0%, transparent 56%),
-    radial-gradient(80% 70% at 50% 50%, rgba(56, 189, 248, 0.10) 0%, transparent 72%),
+    radial-gradient(62% 56% at 14% 12%, rgba(99, 102, 241, 0.42) 0%, transparent 60%),
+    radial-gradient(58% 52% at 86% 16%, rgba(34, 211, 238, 0.34) 0%, transparent 60%),
+    radial-gradient(64% 58% at 82% 88%, rgba(168, 85, 247, 0.36) 0%, transparent 62%),
+    radial-gradient(54% 50% at 18% 86%, rgba(236, 72, 153, 0.30) 0%, transparent 60%),
+    radial-gradient(85% 74% at 50% 50%, rgba(56, 189, 248, 0.14) 0%, transparent 74%),
     var(--bg-base);
   background-size: 180% 180%;
   background-position: 0% 0%;
