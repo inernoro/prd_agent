@@ -361,3 +361,16 @@ public string[] GetCopyableFields() => new[] { nameof(Name), nameof(Nodes), name
 | `prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentConfigController.cs` | 风格图市场 API |
 | `prd-api/src/PrdAgent.Api/Controllers/WatermarkController.cs` | 水印市场 API |
 | `prd-api/src/PrdAgent.Api/Controllers/Api/AiToolboxController.cs` | 工具箱市场 API |
+
+---
+
+## 最近更新（来自 changelog 片段）
+
+### 2026-06-14 技能分享与预览增强
+
+- **技能预览修复**：代码块内 Prism markdown 表格 token 类名 `table` 与 Tailwind v4 `.table{display:table}` 撞名，强制代码块 token 回退 inline
+- **技能分享弹窗**：改为弹窗式，支持选择有效期（永久/7/30/90 天），全局单例 SkillShareDialog 由卡片与详情弹窗共用
+- **技能分享竞态修复**：生成链接期间忽略别处 open()，避免不同技能对应不同弹窗状态
+- **公开页下载**：技能分享公开页新增「下载技能压缩包」按钮，免登录直下
+- **我的分享**：聚合新增技能分享（marketplace_skill），跨 5 类统一管理；前端新增「技能」分类标签与筛选
+- **官方技能排序**：取消「官方推荐」独立置顶区，按热门/最新与社区技能混排，身份仍由卡片徽章标识

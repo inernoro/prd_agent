@@ -707,6 +707,9 @@
 - [CDS PR #684 审查修复计划](plan.cds-pr684-review-remediation) `plan.cds-pr684-review-remediation`
   > CDS PR #684 代码审查发现问题的分阶段修复计划与进度追踪
 
+- [MD 转 PPT 下一波（大纲右侧编辑器 + 状态机 + 澄清问卷）](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
+  > MD 转 PPT 下一波迭代：大纲右侧编辑器、状态机重构、澄清问卷，源自用户 2026-06-10 11 条反馈
+
 ### 六、技术债务台账
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
@@ -804,6 +807,9 @@
 
 - [网页托管评论 · 债务台账](debt.web-hosting-comments) `debt.web-hosting-comments`
   > 网页托管评论功能的已知边界与待补实现
+
+- [MAP MCP 连接器 · 债务台账](debt.map-mcp-connector) `debt.map-mcp-connector`
+  > MAP MCP 连接器核心链路已上线，债务台账记录 PR #836 后显式延后的硬化项（共 4 条，open 3）
 
 ### 七、周报
 

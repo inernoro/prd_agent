@@ -451,3 +451,14 @@ Gateway 需要新增 WebSocket Exchange 调度路径，大致方案：
 ---
 
 > 关联文档: `doc/design.transcript-agent.md` | 关联代码: `prd-api/src/PrdAgent.Api/Services/DoubaoStreamAsrService.cs`
+
+---
+
+## 最近更新（来自 changelog 片段）
+
+### 2026-06-15 多模态 chat + input_audio 转写路径
+
+- **多模态 chat 路径**：模型名含 `audio/gemini/gpt-4o`（非 whisper）时把音频发到 `/v1/chat/completions`，支持 OpenRouter 等无 Whisper 端点的平台
+- **覆盖范围**：短视频转写 CapsuleExecutor 与知识库字幕 SubtitleGenerationProcessor 两条链路均覆盖
+- **原生平台排除**：多模态 chat 音频转写仅对 OpenAI 兼容平台启用，排除原生 google/gemini/anthropic/claude，避免把 OpenAI input_audio 形态请求发到原生端点
+- **ffmpeg 死锁修复**：字幕 ffmpeg 抽音频在 WaitForExit 前并发读 stderr/stdout，避免长输入写满管道缓冲死锁，任务不再卡在 running
