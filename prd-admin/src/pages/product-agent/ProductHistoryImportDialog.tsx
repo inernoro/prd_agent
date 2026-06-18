@@ -178,6 +178,7 @@ export function ProductHistoryImportDialog({
   const readFiles = async (files: File[]) => {
     setFileNames(files.map((file) => file.name));
     setRows([]);
+    setRtfFiles([]);
     setMessage('');
     const rtf = files.filter((file) => file.name.toLowerCase().endsWith('.rtf'));
     if (rtf.length > 0) {
@@ -277,6 +278,7 @@ export function ProductHistoryImportDialog({
     return (
       <RequirementRtfImportDialog
         productId={productId || products[0]?.id || ''}
+        products={products}
         crossProductRoute={crossProductRoute}
         files={rtfFiles}
         onClose={onClose}
