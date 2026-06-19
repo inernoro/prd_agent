@@ -217,7 +217,7 @@ export function ExperienceMap({
                   style={{ cursor: clickable ? 'pointer' : 'default', filter: isPain ? `drop-shadow(0 0 5px ${fill})` : undefined }}
                   onClick={clickable ? () => onSelectTarget!(c.leaf.target) : undefined}
                 >
-                  <title>{`${c.group.label} · ${c.leaf.label}\n${c.leaf.metric}`}</title>
+                  <title>{`${c.group.label} · ${c.leaf.label}\n${c.leaf.target}\n${c.leaf.metric}`}</title>
                   <rect
                     x={r.x + 0.5}
                     y={r.y + 0.5}

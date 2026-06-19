@@ -250,13 +250,62 @@ public class TeamActivityController : ControllerBase
         ["sessions"] = "会话", ["groups"] = "项目", ["pr-review"] = "PR 审查",
         ["emergence"] = "涌现探索", ["workflow"] = "工作流", ["open-platform"] = "开放平台",
         ["marketplace"] = "海鲜市场", ["llm"] = "LLM 网关", ["models"] = "模型",
-        ["model-groups"] = "模型组", ["auth"] = "认证", ["users"] = "用户",
+        ["model-groups"] = "模型组", ["auth"] = "认证", ["authz"] = "权限鉴权", ["users"] = "用户",
         ["attachments"] = "附件", ["hosted-sites"] = "网页托管", ["video"] = "视频",
         ["watermark"] = "水印", ["admin"] = "后台管理", ["review"] = "产品评审",
-        ["mentions"] = "引用网络", ["toolbox"] = "百宝箱",
+        ["submissions"] = "产品评审", ["mentions"] = "引用网络", ["toolbox"] = "百宝箱",
+        ["ai-toolbox"] = "AI 百宝箱", ["daily-tips"] = "每日教程", ["dashboard"] = "仪表盘",
+        ["shortcuts"] = "快捷入口", ["pm"] = "产品经理", ["v1"] = "开放接口",
+        ["homepage"] = "首页", ["peer-sync"] = "节点同步", ["product"] = "产品管理",
+        ["library"] = "智识殿堂", ["showcase"] = "作品广场", ["learning-center"] = "学习中心",
+        ["notifications"] = "通知", ["preferences"] = "偏好", ["share"] = "分享",
+        ["skills"] = "技能", ["prompts"] = "提示词", ["behavior"] = "行为采集",
+        ["channel"] = "渠道", ["tapd"] = "TAPD", ["video-agent"] = "视频生成",
     };
 
     private static string ModuleLabel(string key) => ModuleLabels.TryGetValue(key, out var l) ? l : key;
+
+    /// <summary>端点路径段 → 中文示意名（让非技术同事看得懂每块代表什么）；未登记的回落原始段</summary>
+    private static readonly Dictionary<string, string> SegmentLabels = new()
+    {
+        ["entries"] = "条目", ["entry"] = "条目", ["view"] = "浏览", ["views"] = "浏览量",
+        ["visible"] = "可见项", ["progress"] = "进度", ["track"] = "行为埋点", ["content"] = "内容",
+        ["upload"] = "上传", ["leave"] = "离开", ["stores"] = "空间", ["store"] = "空间",
+        ["inline-comments"] = "行内评论", ["inline-comment"] = "行内评论", ["with-preview"] = "带预览",
+        ["preview"] = "预览", ["public"] = "公开列表", ["creators"] = "创作者", ["current-week"] = "本周",
+        ["current"] = "当前", ["latest"] = "最新", ["attachments"] = "附件", ["login"] = "登录",
+        ["refresh"] = "刷新令牌", ["logout"] = "登出", ["user-preferences"] = "偏好设置",
+        ["version-check"] = "版本检查", ["requirements"] = "需求", ["products"] = "产品",
+        ["features"] = "功能", ["releases"] = "发布", ["versions"] = "版本",
+        ["workflow-definitions"] = "工作流定义", ["stats"] = "统计", ["defects"] = "缺陷",
+        ["form-templates"] = "表单模板", ["me"] = "当前用户", ["menu-catalog"] = "菜单目录",
+        ["items"] = "条目", ["marketplace"] = "市场", ["search-users"] = "搜索用户",
+        ["assets"] = "静态资源", ["transfer"] = "数据传输", ["mark-seen"] = "标记已读",
+        ["generate"] = "生成", ["list"] = "列表", ["likes"] = "点赞", ["favorites"] = "收藏",
+        ["comments"] = "评论", ["summary"] = "汇总", ["brief"] = "简报", ["state"] = "状态",
+        ["sync"] = "同步", ["logs"] = "日志", ["stream"] = "流式", ["export"] = "导出",
+        ["import"] = "导入", ["publish"] = "发布", ["clone"] = "复制", ["fork"] = "克隆",
+        ["run"] = "运行", ["runs"] = "运行记录", ["events"] = "事件", ["detail"] = "详情",
+        ["settings"] = "设置", ["modules"] = "模块", ["insights"] = "洞察", ["members"] = "成员",
+        ["customer"] = "客户", ["customers"] = "客户", ["dashboard"] = "仪表盘",
+        ["session"] = "会话", ["messages"] = "消息", ["comment"] = "评论", ["share"] = "分享",
+        ["download"] = "下载", ["status"] = "状态", ["health"] = "健康检查", ["test"] = "测试",
+    };
+
+    /// <summary>把归一化端点路径压成一个中文示意名：取末尾有意义的资源/动作段翻译，:id 段跳过</summary>
+    private static string LeafLabel(string method, string normalizedPath)
+    {
+        var seg = normalizedPath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Where(s => s != "api" && s != ":id")
+            .ToList();
+        if (seg.Count == 0) return "根";
+        // 只有模块段（如 /api/sessions）→ 用模块中文名
+        if (seg.Count == 1) return ModuleLabel(seg[0]);
+        var token = seg[^1];
+        return SegmentLabels.TryGetValue(token, out var zh) ? zh : token;
+    }
+
 
     /// <summary>体验全景热力图的叶子累加器（按 module|method|归一化路径 聚类）</summary>
     private sealed class LeafAcc
@@ -364,7 +413,7 @@ public class TeamActivityController : ControllerBase
                             : status == "slow"
                                 ? $"{a.SlowCount} 次慢请求 · 均 {avgSlowSec:F1}s"
                                 : $"{a.Count} 次调用";
-                        var label = a.Path.Split('/').LastOrDefault(s => !string.IsNullOrEmpty(s) && s != ":id" && s != "api") ?? a.Path;
+                        var label = LeafLabel(a.Method, a.Path);
                         return new
                         {
                             target = $"{a.Method} {a.Path}",
@@ -391,7 +440,7 @@ public class TeamActivityController : ControllerBase
             })
             .Where(g => g.leaves.Count > 0)
             .OrderByDescending(g => g.value)
-            .Take(16)
+            .Take(24)
             .ToList();
 
         return Ok(ApiResponse<object>.Ok(new
