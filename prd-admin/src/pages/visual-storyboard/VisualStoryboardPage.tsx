@@ -27,6 +27,8 @@ type SceneVM = {
   kfUrl?: string | null;
   /** 关键帧公开 HTTPS URL（COS），用于图生视频的首帧 */
   kfPublicUrl?: string | null;
+  /** 渲染该关键帧时所用画幅——图生视频须沿用它，避免用户改画幅后用旧帧出错比例 */
+  kfAspect?: Aspect;
   kfError?: string | null;
   editing?: boolean;
   /** image-to-video「动起来」状态 */
@@ -130,6 +132,7 @@ export default function VisualStoryboardPage() {
     // 该镜是否仍归本次运行所有（未被新一轮全量生成或后发单镜重绘顶替）
     const owns = (idx: number) => genRef.current === myGen && sceneKfGen.current.get(idx) === myTokens.get(idx);
     const size = aspectInfo.size;
+    const myAspect = aspect; // 记录本批关键帧的画幅，绑定到镜头，供图生视频沿用
 
     // 标记这批镜头为 running，并清掉旧的图生视频状态——重绘/重生关键帧后，
     // 卡片渲染优先看 vidUrl，若不清会继续显示上一版视频、看不到新关键帧。
@@ -199,7 +202,7 @@ export default function VisualStoryboardPage() {
           // 图生视频首帧需要公开 HTTPS 链接（base64 不可用）：优先原图 COS URL
           const publicUrl = /^https?:/.test(String(originalUrl)) ? originalUrl : /^https?:/.test(String(url)) ? url : null;
           setScenes((prev) =>
-            prev.map((s) => (s.index === tgt.sceneIndex ? { ...s, kfStatus: 'done', kfUrl: src, kfPublicUrl: publicUrl } : s)),
+            prev.map((s) => (s.index === tgt.sceneIndex ? { ...s, kfStatus: 'done', kfUrl: src, kfPublicUrl: publicUrl, kfAspect: myAspect } : s)),
           );
         } else if (t === 'imageError') {
           const itemIndex = Number(o.itemIndex ?? -1);
@@ -296,7 +299,7 @@ export default function VisualStoryboardPage() {
       mode: 'direct',
       directPrompt,
       directFirstFrameUrl: s.kfPublicUrl,
-      directAspectRatio: aspect,
+      directAspectRatio: s.kfAspect ?? aspect, // 沿用关键帧出图时的画幅，避免用户改画幅后首帧比例错配
       directResolution: '720p',
       directDuration: duration,
       articleTitle: `分镜 ${sceneIndex + 1}：${s.topic}`,

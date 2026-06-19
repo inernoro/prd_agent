@@ -9,3 +9,4 @@
 | fix | prd-admin | 该镜正在转视频时禁用「重绘」并在 regenerateScene 早退：单镜重绘不 bump genRef，旧 animateScene 轮询会用上一帧成片覆盖刚重绘的新关键帧，故视频生成中不允许重绘（Codex review） |
 | fix | prd-admin | 视觉分镜台关键帧放大预览改用 createPortal 挂到 document.body，遵循 frontend-modal.md（避免 overflow/transform 祖先裁剪 position:fixed 浮层）（Codex review） |
 | fix | prd-admin | 关键帧批次与单镜重绘并发隔离：新增 per-scene 运行 token（sceneKfGen），后发重绘顶替该镜所有权，使先前批次对该镜的 SSE 回填/流结束兜底变 no-op，避免「批次仍在跑、其中一镜被重绘」时批次兜底把正在重绘的镜误判失败（Bugbot review） |
+| fix | prd-admin | 图生视频沿用关键帧出图画幅：SceneVM 记录 kfAspect，animateScene 用 s.kfAspect 而非全局 aspect，避免用户改画幅后用旧帧出错比例（Codex review） |
