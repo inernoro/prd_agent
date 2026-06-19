@@ -48,6 +48,7 @@ import type { ContainerService } from './services/container.js';
 import type { ProxyService } from './services/proxy.js';
 import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
+import type { JanitorService } from './services/janitor.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
 import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 import {
@@ -407,6 +408,7 @@ export interface ServerDeps {
   config: CdsConfig;
   /** Optional warm-pool scheduler (v3.1). */
   schedulerService?: SchedulerService;
+  janitorService?: JanitorService;
   /**
    * Cluster executor registry. Passed through to createBranchRouter so the
    * deploy handler can dispatch to remote executors when present. Absent in
@@ -3296,6 +3298,7 @@ export function createServer(deps: ServerDeps): express.Express {
     shell: deps.shell,
     config: deps.config,
     schedulerService: deps.schedulerService,
+    janitorService: deps.janitorService,
     registry: deps.registry,
     getClusterStrategy: deps.getClusterStrategy,
     githubApp: githubAppClient,

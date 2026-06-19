@@ -1243,17 +1243,39 @@ schedulerService.setCoolFn(async (slug: string) => {
 proxyService.setScheduler(schedulerService);
 
 // ── Janitor (Phase 2 resilience) ──
-// Disabled by default. Opt-in via cds.config.json { "janitor": { "enabled": true, ... } }.
-// Sweeps stale worktrees (> worktreeTTLDays idle) and warns on disk usage.
+// Enabled by default. Sweeps stale local containers/worktrees after a global
+// expiry window. The retention window is capped at 7 days by product policy.
 // See doc/design.cds-resilience.md Phase 2.
-const janitorService = new JanitorService(
-  stateService,
-  config.janitor || {
-    enabled: false,
-    worktreeTTLDays: 30,
+{
+  const defaultJanitor = {
+    enabled: true,
+    worktreeTTLDays: 7,
     diskWarnPercent: 80,
     sweepIntervalSeconds: 3600,
-  },
+  };
+  if (!config.janitor) {
+    config.janitor = { ...defaultJanitor };
+  } else {
+    config.janitor = {
+      ...defaultJanitor,
+      ...config.janitor,
+      worktreeTTLDays: Math.min(Math.max(Number(config.janitor.worktreeTTLDays) || 7, 1), 7),
+    };
+  }
+  const janitorEnabledOverride = stateService.getJanitorEnabledOverride();
+  if (janitorEnabledOverride !== undefined) {
+    config.janitor.enabled = janitorEnabledOverride;
+    console.log(`  [janitor] applying UI override: enabled=${janitorEnabledOverride}`);
+  }
+  const janitorTTLOverride = stateService.getJanitorWorktreeTTLOverride();
+  if (janitorTTLOverride !== undefined) {
+    config.janitor.worktreeTTLDays = Math.min(Math.max(janitorTTLOverride, 1), 7);
+    console.log(`  [janitor] applying UI override: worktreeTTLDays=${config.janitor.worktreeTTLDays}`);
+  }
+}
+const janitorService = new JanitorService(
+  stateService,
+  config.janitor,
   config.worktreeBase,
 );
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
@@ -2241,7 +2263,11 @@ janitorService.setRemoveFn(async (slug: string) => {
       stateService.save();
       schedulerService.start();
     }
-    janitorService.start();
+    if (config.mode !== 'executor') {
+      janitorService.start();
+    } else {
+      console.log('[janitor] skipped on executor node (cleanup decisions are coordinator-only)');
+    }
     // 2026-05-14 Codex review P1 修复：auto-lifecycle 只能在协调者角色
     // （standalone / scheduler）跑。executor 是 worker 节点，集群共享 state
     // 时若每个 executor 都扫全部项目跑 auto-stop/publish，会把别的 executor
@@ -2948,6 +2974,7 @@ const app = createServer({
   shell,
   config,
   schedulerService,
+  janitorService,
   registry,
   getClusterStrategy: () => clusterStrategy,
   storageModeContext,

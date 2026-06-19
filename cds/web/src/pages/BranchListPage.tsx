@@ -128,6 +128,9 @@ interface BranchSummary {
   lastAccessedAt?: string;
   lastPullAt?: string;
   lastDeployAt?: string;
+  lastStoppedAt?: string;
+  lastStopReason?: string;
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   errorMessage?: string;
   commitSha?: string;
   subject?: string;
@@ -4751,6 +4754,20 @@ function BranchCard({
       danger: 'cds-actor-name-glow cds-actor-name-glow--danger',
     }[actorNameGlowTone]
     : 'text-foreground/70';
+  const stopSourceLabel = branch.lastStopSource === 'user' ? '用户'
+    : branch.lastStopSource === 'scheduler' ? '调度器'
+      : branch.lastStopSource === 'executor' ? '执行器'
+        : branch.lastStopSource === 'cds' ? 'CDS'
+          : branch.lastStopSource === 'webhook' ? 'Webhook'
+            : branch.lastStopSource === 'ai' ? 'AI'
+              : branch.lastStopSource === 'oom' ? 'OOM'
+                : branch.lastStopSource === 'external' ? '外部'
+                  : branch.lastStopSource === 'crash' ? '崩溃'
+                    : branch.lastStopSource === 'system' ? '系统'
+                      : '无记录';
+  const shouldShowStopReason = !isRunning && !isInterim;
+  const stopReasonText = branch.lastStopReason || '无停止记录';
+  const stopTimeText = branch.lastStoppedAt ? formatRelativeTime(branch.lastStoppedAt) : '时间未知';
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -5177,6 +5194,22 @@ function BranchCard({
           {timeBadge.label} {timeBadge.text}
         </span>
       </div>
+
+      {shouldShowStopReason ? (
+        <div
+          className="mx-5 mt-2 flex min-w-0 items-start gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground"
+          title={`${stopSourceLabel} · ${branch.lastStoppedAt || '时间未知'}\n${stopReasonText}`}
+        >
+          <PowerOff className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 font-medium text-foreground/75">{stopSourceLabel}</span>
+              <span className="shrink-0 text-muted-foreground/70">{stopTimeText}</span>
+            </div>
+            <div className="truncate text-muted-foreground/85">{stopReasonText}</div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 标签 chips 行(还原 legacy app.js:3868-3881):
           - 卡片内 tag chip 只展示；点击 chip/行空白处走卡片整体 onClick 打开详情

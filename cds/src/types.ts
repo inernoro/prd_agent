@@ -590,9 +590,11 @@ export interface BranchEntry {
    *   - 'oom'       Docker / kernel 明确报告 OOMKilled
    *   - 'external'  未匹配到 CDS 意图的 docker kill / SIGKILL
    *   - 'cds'       CDS 生命周期操作（删除 / 重部署替换 / 清理旧容器）
+   *   - 'webhook'   GitHub webhook / 外部事件触发
+   *   - 'ai'        AI Agent 通过 API 触发
    *   - 'system'    其他系统侧（垃圾回收 / janitor 等）
    */
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -655,6 +657,9 @@ export interface ContainerLogArchiveEntry {
     | 'container-logs-stream'
     | 'pre-deploy-recreate'
     | 'manual-stop'
+    | 'webhook-stop'
+    | 'ai-stop'
+    | 'system-stop'
     | 'scheduler-stop'
     | 'auto-lifecycle-stop'
     | 'crash-detected'
@@ -875,6 +880,17 @@ export interface CdsState {
    * `schedulerEnabledOverride`. `undefined` = no override. `0` = unlimited.
    */
   schedulerMaxHotOverride?: number;
+  /**
+   * UI-controlled override for the global janitor enable flag. When defined,
+   * it supersedes `config.janitor.enabled` at runtime and is re-applied on boot.
+   */
+  janitorEnabledOverride?: boolean;
+  /**
+   * UI-controlled override for branch/container expiry in days.
+   * Range is intentionally capped at 7 days so stale local containers cannot
+   * accumulate indefinitely.
+   */
+  janitorWorktreeTTLOverride?: number;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
   /** Per-branch/per-resource external access policies. Keyed by projectId:branchId:resourceId. */
@@ -2420,9 +2436,9 @@ export interface ClusterCapacity {
  * See `doc/design.cds-resilience.md` Phase 2.
  */
 export interface JanitorConfig {
-  /** Enable the janitor. Default: false (backward compatible). */
+  /** Enable the janitor. Default: true. */
   enabled: boolean;
-  /** Remove worktrees not accessed in this many days. Default: 30. */
+  /** Remove worktrees and local containers not touched in this many days. Default: 7, max: 7. */
   worktreeTTLDays: number;
   /** Emit warning when disk usage exceeds this percent. Default: 80. */
   diskWarnPercent: number;
