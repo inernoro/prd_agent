@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>团队动态 · 用户体验之声 VOC（痛点雷达）</title>
+<title>团队动态 · 用户体验之声 VOC（体验全景热力图）</title>
 <style>
   :root {
     --bg-primary:#0e0f10; --bg-card:#1a1b1d; --bg-card-2:#202123; --bg-elevated:#26282b;
@@ -28,46 +28,46 @@
   .range-pills button { border:1px solid var(--border); background:var(--bg-card); color:var(--text-2); font-size:12px; padding:6px 13px; border-radius:8px; cursor:pointer; }
   .range-pills button.active { background:rgba(167,139,250,0.13); border-color:rgba(167,139,250,0.4); color:var(--violet); }
 
-  /* hero */
-  .hero { display:grid; grid-template-columns:1fr 380px; gap:16px; margin-bottom:18px; }
+  .hero { display:grid; grid-template-columns:1fr 360px; gap:16px; margin-bottom:18px; }
   .card { background:linear-gradient(180deg,var(--bg-card),#161718); border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow); position:relative; overflow:hidden; }
-  .card-h { display:flex; align-items:center; justify-content:space-between; padding:15px 18px 4px; }
-  .card-h .t { font-size:13px; font-weight:650; color:var(--text-1); display:flex; align-items:center; gap:8px; }
+  .card-h { display:flex; align-items:center; justify-content:space-between; padding:15px 18px 10px; }
+  .card-h .t { font-size:13px; font-weight:650; display:flex; align-items:center; gap:8px; }
   .card-h .t .live { font-size:11px; color:var(--teal); display:inline-flex; align-items:center; gap:6px; font-weight:500; }
   .card-h .t .live .blip { width:7px; height:7px; border-radius:50%; background:var(--teal); animation:blink 1.3s ease-in-out infinite; }
   @keyframes blink { 0%,100%{opacity:.3;transform:scale(.8)} 50%{opacity:1;transform:scale(1.3)} }
   .card-h .legend { display:flex; gap:13px; }
   .card-h .legend span { font-size:11px; color:var(--text-2); display:inline-flex; align-items:center; gap:6px; }
-  .card-h .legend i { width:8px; height:8px; border-radius:50%; }
+  .card-h .legend i { width:9px; height:9px; border-radius:3px; }
 
-  /* radar */
-  .radar-wrap { display:flex; align-items:center; justify-content:center; padding:6px 10px 16px; }
-  .radar { width:100%; max-width:520px; height:auto; }
-  .ring { fill:none; stroke:rgba(255,255,255,0.06); }
-  .ring.core { stroke:rgba(248,113,122,0.18); }
-  .spoke { stroke:rgba(255,255,255,0.04); }
-  .zone-lbl { fill:var(--text-3); font-size:9px; }
-  .quad-lbl { font-size:10.5px; font-weight:600; }
-  @keyframes sweepRot { to { transform:rotate(360deg); } }
-  @keyframes blipIn { from { opacity:0; transform:scale(0); } to { opacity:1; transform:scale(1); } }
-  @keyframes pulseR { 0%{ opacity:.5; } 100%{ transform:scale(2.4); opacity:0; } }
-  .blip-g { cursor:pointer; }
-  .blip-g:hover .blip-core { filter:brightness(1.3); }
-  .blip-lbl { font-size:9.5px; fill:var(--text-2); pointer-events:none; }
+  .tm-wrap { padding:0 12px 12px; }
+  .tm-svg { width:100%; height:auto; display:block; }
+  .tm-cell { cursor:pointer; transition:filter .12s; }
+  .tm-cell:hover rect.fill { filter:brightness(1.25); }
+  .grp-rect { fill:none; stroke:rgba(255,255,255,0.10); stroke-width:1; }
+  .grp-lbl { fill:rgba(236,236,239,0.55); font-size:10px; font-weight:600; pointer-events:none; }
+  .cell-lbl { fill:#fff; font-size:9.5px; font-weight:600; pointer-events:none; }
+  .cell-sub { fill:rgba(255,255,255,0.7); font-size:8.5px; pointer-events:none; }
+  @keyframes cellGlow { 0%,100%{ stroke-opacity:.35; } 50%{ stroke-opacity:1; } }
 
   /* right column */
   .rcol { display:flex; flex-direction:column; gap:16px; }
-  .gauge-card { padding:16px 18px 18px; display:flex; flex-direction:column; align-items:center; }
+  .gauge-card { padding:14px 18px 16px; display:flex; flex-direction:column; align-items:center; }
   .gauge-card .gt { font-size:12.5px; color:var(--text-2); align-self:flex-start; font-weight:600; }
-  .gauge-svg { width:240px; height:150px; margin-top:4px; }
-  .gauge-num { font-size:46px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; transition:color .8s; }
-  .gauge-sub { font-size:11.5px; color:var(--green); margin-top:2px; }
-  .mini-kpis { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; width:100%; margin-top:14px; }
-  .mk { background:var(--bg-card-2); border:1px solid var(--border); border-radius:10px; padding:10px; text-align:center; }
-  .mk .v { font-size:20px; font-weight:750; font-variant-numeric:tabular-nums; }
+  .gauge-svg { width:220px; height:138px; }
+  .gauge-num { font-size:42px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
+  .gauge-sub { font-size:11.5px; color:var(--green); margin-top:0; }
+  .mini-kpis { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; width:100%; margin-top:12px; }
+  .mk { background:var(--bg-card-2); border:1px solid var(--border); border-radius:10px; padding:9px; text-align:center; }
+  .mk .v { font-size:19px; font-weight:750; font-variant-numeric:tabular-nums; }
   .mk .l { font-size:10px; color:var(--text-3); margin-top:3px; }
+  .chan-card { padding:14px 18px 16px; }
+  .chan-card .gt { font-size:12.5px; color:var(--text-2); font-weight:600; margin-bottom:12px; }
+  .chan { margin-bottom:11px; }
+  .chan .cr { display:flex; justify-content:space-between; font-size:11.5px; margin-bottom:5px; }
+  .chan .cr .cv { color:var(--text-3); }
+  .chan .cbar { height:7px; border-radius:4px; background:rgba(255,255,255,0.06); overflow:hidden; }
+  .chan .cbar > i { display:block; height:100%; border-radius:4px; }
 
-  /* filters */
   .filters { display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
   .filters .grp { display:inline-flex; gap:6px; align-items:center; }
   .filters .gl { font-size:11px; color:var(--text-3); margin-right:2px; }
@@ -81,7 +81,6 @@
   .section-h .ln { flex:1; height:1px; background:var(--border); }
   .section-h .crumb { font-size:12px; color:var(--text-3); }
 
-  /* pain cards */
   .pain { display:grid; grid-template-columns:60px 1fr 108px auto; gap:16px; align-items:center;
     background:var(--bg-card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin-bottom:9px; transition:border-color .15s, transform .15s, box-shadow .3s; }
   .pain:hover { border-color:var(--border-strong); transform:translateX(2px); }
@@ -118,7 +117,6 @@
   .acts button.primary { background:rgba(251,191,36,0.13); border-color:rgba(251,191,36,0.35); color:var(--amber); }
   .acts button:hover { color:var(--text-1); border-color:var(--border-strong); }
 
-  /* closed loop */
   .loop { background:linear-gradient(180deg,var(--bg-card),var(--bg-card-2)); border:1px solid var(--border); border-radius:14px; padding:6px 16px; }
   .loop-item { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; padding:13px 4px; }
   .loop-item + .loop-item { border-top:1px solid var(--border); }
@@ -137,45 +135,45 @@
   <div class="page-head">
     <div class="titles">
       <h1>用户体验之声 · VOC</h1>
-      <span class="sub">用户没说出口的痛，雷达替他扫出来——并盯着你修完。行为之声 + 用户之声 双声道。</span>
+      <span class="sub">体验全景热力图：每块=一个功能，面积=访问量，颜色=健康。痛点从平静里自己跳出来。</span>
     </div>
     <div class="range-pills">
       <button>今天</button><button>本周</button><button class="active">本月</button><button>季度</button>
     </div>
   </div>
 
-  <!-- HERO -->
   <div class="hero">
     <div class="card">
       <div class="card-h">
-        <span class="t">痛点雷达<span class="live"><span class="blip"></span>实时扫描</span></span>
+        <span class="t">体验全景热力图<span class="live"><span class="blip"></span>实时扫描</span></span>
         <div class="legend">
-          <span><i style="background:var(--red)"></i>报错</span>
+          <span><i style="background:var(--red)"></i>报错/流失</span>
           <span><i style="background:var(--amber)"></i>等待</span>
-          <span><i style="background:var(--red)"></i>流失</span>
-          <span><i style="background:var(--violet)"></i>吐槽</span>
+          <span><i style="background:var(--violet)"></i>用户吐槽</span>
+          <span><i style="background:#3a5a55"></i>健康</span>
         </div>
       </div>
-      <div class="radar-wrap">
-        <svg class="radar" id="radar" viewBox="0 0 400 400"></svg>
-      </div>
+      <div class="tm-wrap"><svg class="tm-svg" id="tm" viewBox="0 0 1000 470" preserveAspectRatio="xMidYMid meet"></svg></div>
     </div>
 
     <div class="rcol">
       <div class="card gauge-card">
         <span class="gt">体验痛点指数</span>
-        <svg class="gauge-svg" id="gauge" viewBox="0 0 240 150"></svg>
-        <div class="gauge-sub" id="gaugeSub">↓ 9% · 本月修复见效，痛点在回落</div>
+        <svg class="gauge-svg" id="gauge" viewBox="0 0 220 138"></svg>
+        <div class="gauge-sub">↓ 9% · 本月修复见效，痛点在回落</div>
         <div class="mini-kpis">
           <div class="mk"><div class="v" style="color:var(--red)" id="mkOpen">0</div><div class="l">待解决</div></div>
           <div class="mk"><div class="v" style="color:var(--green)" id="mkClosed">0</div><div class="l">已闭环</div></div>
           <div class="mk"><div class="v" id="mkUsers">0</div><div class="l">受影响人</div></div>
         </div>
       </div>
+      <div class="card chan-card">
+        <div class="gt">痛点声道占比</div>
+        <div id="chans"></div>
+      </div>
     </div>
   </div>
 
-  <!-- filters -->
   <div class="filters" id="filters">
     <div class="grp"><span class="gl">声道</span>
       <button class="chip active" data-f="src" data-v="all">全部</button>
@@ -209,7 +207,6 @@
 (function(){
   const NS='http://www.w3.org/2000/svg';
   const C={ red:'#f8717a', amber:'#fbbf24', green:'#34d399', violet:'#a78bfa', blue:'#60a5fa', teal:'#2dd4bf' };
-  const CHCOL={ err:C.red, slow:C.amber, churn:C.red, feedback:C.violet };
   const CH_LABEL={ err:'报错', slow:'等待', churn:'流失', feedback:'吐槽' };
   const CH_CLASS={ err:'b-err', slow:'b-slow', churn:'b-churn', feedback:'b-fb' };
 
@@ -222,8 +219,7 @@
   const PAINS=[
     { id:'p1', score:980, sev:'hot', corro:true, src:'behavior', src2:'user', channel:'churn', dim:'ai',
       title:'批量生图 卡顿 / 经常生成失败', sub:'视觉创作 · <span class="code">visual-agent.image-gen.batch-generate::generation</span>',
-      meta:'行为：报错率 9.1% + 提交→成功流失 31% · 用户：9 人反馈"卡住不动"',
-      people:31, trend:'up', spark:[8,10,12,18,24,33], status:'todo' },
+      meta:'行为：报错率 9.1% + 提交→成功流失 31% · 用户：9 人反馈"卡住不动"', people:31, trend:'up', spark:[8,10,12,18,24,33], status:'todo' },
     { id:'p2', score:910, sev:'hot', src:'behavior', channel:'err', dim:'api',
       title:'周报「标记已读」频繁 403', sub:'<span class="code">POST /api/weekly-posters/:id/mark-seen</span> · PERMISSION_DENIED',
       meta:'28 人撞到 · 316 次 · 疑似权限校验过严', people:28, trend:'up', spark:[5,9,14,16,22,28], status:'defect', statusInfo:'已转缺陷 #412' },
@@ -231,20 +227,15 @@
       title:'视觉创作 文章标记接口报错', sub:'<span class="code">PATCH /api/visual-agent/.../markers/:id</span> · INVALID_FORMAT',
       meta:'7 人遇到 · 507 次 · 建议格式校验前移到前端', people:7, trend:'flat', spark:[40,42,41,43,40,42], status:'todo' },
     { id:'p4', score:560, sev:'warm', src:'user', channel:'feedback', dim:'user',
-      title:'知识库搜索结果不准', sub:'用户主动反馈 · 缺陷管理 3 条同类',
-      meta:'3 人提过 · "搜不到想要的文档"', people:3, trend:'up', spark:[1,1,2,2,3,3], status:'todo' },
+      title:'知识库搜索结果不准', sub:'用户主动反馈 · 缺陷管理 3 条同类', meta:'3 人提过 · "搜不到想要的文档"', people:3, trend:'up', spark:[1,1,2,2,3,3], status:'todo' },
     { id:'p5', score:480, sev:'warm', src:'behavior', channel:'slow', dim:'api',
-      title:'更新中心拉取 GitHub 日志慢', sub:'<span class="code">GET /api/changelog/github-logs</span> · 均值 36.1s',
-      meta:'10 人等待过 · 已在改后台同步入库', people:10, trend:'down', spark:[20,22,18,14,9,6], status:'fixing', statusInfo:'修复中' },
+      title:'更新中心拉取 GitHub 日志慢', sub:'<span class="code">GET /api/changelog/github-logs</span> · 均值 36.1s', meta:'10 人等待过 · 已在改后台同步入库', people:10, trend:'down', spark:[20,22,18,14,9,6], status:'fixing', statusInfo:'修复中' },
     { id:'p6', score:430, sev:'warm', src:'behavior', channel:'err', dim:'ai',
-      title:'缺陷分析「选 A 给 B」+ 报错偏高', sub:'<span class="code">defect-agent.review.analyze::chat</span> · ExpectedModel ≠ Model',
-      meta:'声明 deepseek-r1 实际命中 fallback · 报错率 14.2%', people:5, trend:'up', spark:[6,8,9,11,13,14], status:'todo' },
+      title:'缺陷分析「选 A 给 B」+ 报错偏高', sub:'<span class="code">defect-agent.review.analyze::chat</span> · ExpectedModel ≠ Model', meta:'声明 deepseek-r1 实际命中 fallback · 报错率 14.2%', people:5, trend:'up', spark:[6,8,9,11,13,14], status:'todo' },
     { id:'p7', score:360, sev:'warm', src:'behavior', channel:'slow', dim:'api',
-      title:'AI 资讯加载等待过久', sub:'<span class="code">GET /api/ai-news/latest</span> · 均值 63.6s',
-      meta:'根因在背后视频生成调用 · 建议异步 + 流式', people:8, trend:'flat', spark:[60,62,61,64,63,64], status:'todo' },
+      title:'AI 资讯加载等待过久', sub:'<span class="code">GET /api/ai-news/latest</span> · 均值 63.6s', meta:'根因在背后视频生成调用 · 建议异步 + 流式', people:8, trend:'flat', spark:[60,62,61,64,63,64], status:'todo' },
     { id:'p8', score:300, sev:'warm', src:'user', channel:'feedback', dim:'user',
-      title:'周报海报导出后水印位置错乱', sub:'用户主动反馈 · 缺陷管理',
-      meta:'5 人提过 · 已建缺陷跟进', people:5, trend:'flat', spark:[2,3,2,2,3,2], status:'defect', statusInfo:'已转缺陷 #408' },
+      title:'周报海报导出后水印位置错乱', sub:'用户主动反馈 · 缺陷管理', meta:'5 人提过 · 已建缺陷跟进', people:5, trend:'flat', spark:[2,3,2,2,3,2], status:'defect', statusInfo:'已转缺陷 #408' },
   ];
   const CLOSED=[
     { title:'会话列表偶发报错', detail:'分页优化上线 · 影响 14 人', before:'报错 220 次', after:'12 次', drop:'-95%' },
@@ -252,222 +243,207 @@
     { title:'文档预览偶尔白屏', detail:'UTF-16 BOM 兼容 · 影响 6 人', before:'白屏 38 次', after:'0 次', drop:'-100%' },
   ];
 
-  // ---------- RADAR ----------
-  const radar=document.getElementById('radar');
-  const cx=200, cy=200, maxR=170;
-  // quadrant base angle (deg, 0=right, clockwise positive in screen coords)
-  const QUAD={ err:-50, slow:50, churn:130, feedback:-130 };
-  function buildRadar(){
-    radar.innerHTML='';
-    // rings
-    [0.28,0.52,0.76,1].forEach((f,i)=>{
-      const r=document.createElementNS(NS,'circle');
-      r.setAttribute('cx',cx); r.setAttribute('cy',cy); r.setAttribute('r',maxR*f);
-      r.setAttribute('class','ring'+(i===0?' core':''));
-      radar.appendChild(r);
-    });
-    // spokes
-    [45,135,225,315].forEach(a=>{
-      const rad=a*Math.PI/180;
-      const l=document.createElementNS(NS,'line');
-      l.setAttribute('x1',cx); l.setAttribute('y1',cy);
-      l.setAttribute('x2',cx+Math.cos(rad)*maxR); l.setAttribute('y2',cy+Math.sin(rad)*maxR);
-      l.setAttribute('class','spoke'); radar.appendChild(l);
-    });
-    // zone label
-    const zl=document.createElementNS(NS,'text');
-    zl.setAttribute('class','zone-lbl'); zl.setAttribute('x',cx+4); zl.setAttribute('y',cy-4); zl.textContent='最紧急';
-    radar.appendChild(zl);
-    // quadrant labels
-    const qlabels=[['报错',-50,C.red],['等待',50,C.amber],['流失',130,C.red],['吐槽',-130,C.violet]];
-    qlabels.forEach(([txt,ang,col])=>{
-      const rad=ang*Math.PI/180;
-      const t=document.createElementNS(NS,'text');
-      t.setAttribute('class','quad-lbl'); t.setAttribute('fill',col);
-      t.setAttribute('x',cx+Math.cos(rad)*(maxR+2)); t.setAttribute('y',cy+Math.sin(rad)*(maxR+2));
-      t.setAttribute('text-anchor', Math.cos(rad)<-0.3?'end':Math.cos(rad)>0.3?'start':'middle');
-      t.textContent=txt; radar.appendChild(t);
-    });
+  // ---------- TREEMAP (squarified) ----------
+  // seeded rng for deterministic fillers
+  let _s=20260619; const rnd=()=>{ _s=(_s*1103515245+12345)&0x7fffffff; return _s/0x7fffffff; };
+  // healthy muted palette (cool, rich but calm)
+  const HUES=[172,196,210,232,258,150,38,16];
+  function healthyFill(){ const h=HUES[Math.floor(rnd()*HUES.length)]; const s=22+rnd()*16; const l=20+rnd()*12; return `hsl(${h} ${s|0}% ${l|0}%)`; }
+  const PAINFILL={ err:C.red, churn:C.red, slow:C.amber, feedback:C.violet };
+  function painFill(p){ if(p.status==='fixing') return C.blue; return PAINFILL[p.channel]; }
 
-    // sweep (rotating wedge + leading line)
-    const sweep=document.createElementNS(NS,'g');
-    sweep.style.transformOrigin=`${cx}px ${cy}px`;
-    sweep.style.animation='sweepRot 5s linear infinite';
-    const grad=document.createElementNS(NS,'defs');
-    grad.innerHTML=`<linearGradient id="sw" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${C.teal}" stop-opacity="0.0"/><stop offset="1" stop-color="${C.teal}" stop-opacity="0.16"/></linearGradient>`;
-    radar.appendChild(grad);
-    const a0=0, a1=-58;
-    const p0={x:cx+Math.cos(a0*Math.PI/180)*maxR, y:cy+Math.sin(a0*Math.PI/180)*maxR};
-    const p1={x:cx+Math.cos(a1*Math.PI/180)*maxR, y:cy+Math.sin(a1*Math.PI/180)*maxR};
-    const wedge=document.createElementNS(NS,'path');
-    wedge.setAttribute('d',`M${cx} ${cy} L${p0.x} ${p0.y} A${maxR} ${maxR} 0 0 0 ${p1.x} ${p1.y} Z`);
-    wedge.setAttribute('fill','url(#sw)');
-    sweep.appendChild(wedge);
-    const lead=document.createElementNS(NS,'line');
-    lead.setAttribute('x1',cx); lead.setAttribute('y1',cy);
-    lead.setAttribute('x2',p0.x); lead.setAttribute('y2',p0.y);
-    lead.setAttribute('stroke',C.teal); lead.setAttribute('stroke-width','1.5'); lead.setAttribute('stroke-opacity','0.5');
-    sweep.appendChild(lead);
-    radar.appendChild(sweep);
+  // groups with explicit pain leaves + generated fillers
+  function leaf(name,v,opts={}){ return { name, value:v, ...opts }; }
+  function fillers(n,minV,maxV){ const a=[]; for(let i=0;i<n;i++) a.push(leaf('', minV+rnd()*(maxV-minV))); return a; }
+  const GROUPS=[
+    { name:'视觉创作', leaves:[
+      leaf('批量生图',2400,{painId:'p1',ch:'churn',label:'批量生图',sub:'9.1% 报错'}),
+      leaf('图片理解',1700), leaf('分镜编排',1300),
+      leaf('视频生成',1100,{ch:'slow',amberSoft:true}),
+      leaf('文章标记',900,{painId:'p3',ch:'err',label:'文章标记',sub:'507 报错'}),
+      ...fillers(12,120,500) ]},
+    { name:'周报管理', leaves:[
+      leaf('标记已读',1400,{painId:'p2',ch:'err',label:'标记已读',sub:'403×316'}),
+      leaf('海报生成',1000), leaf('周报汇总',1300),
+      leaf('海报导出',700,{painId:'p8',ch:'feedback',label:'海报导出',sub:'水印错乱'}),
+      ...fillers(8,120,420) ]},
+    { name:'产品管理', leaves:[ leaf('文档对齐',2400), leaf('缺失检测',1700), ...fillers(9,150,520) ]},
+    { name:'缺陷管理', leaves:[
+      leaf('缺陷分析',1500,{painId:'p6',ch:'err',label:'缺陷分析',sub:'选A给B'}),
+      leaf('要素抽取',1100), ...fillers(8,120,400) ]},
+    { name:'知识库', leaves:[
+      leaf('文档搜索',900,{painId:'p4',ch:'feedback',label:'搜索不准'}),
+      leaf('上传解析',1100), leaf('引用网络',800), ...fillers(7,120,360) ]},
+    { name:'文学创作', leaves:[ leaf('正文创作',1900), leaf('配图生成',1400), ...fillers(8,120,420) ]},
+    { name:'更新/资讯', leaves:[
+      leaf('GitHub日志',900,{painId:'p5',ch:'slow',label:'更新中心',sub:'36s 慢',fixing:true}),
+      leaf('AI资讯',700,{painId:'p7',ch:'slow',label:'AI资讯',sub:'63.6s'}),
+      leaf('更新总结',800), ...fillers(6,120,340) ]},
+    { name:'核心服务', leaves:[ leaf('LLM Gateway',3000), leaf('会话 Worker',2000), leaf('模型池',1500), leaf('权限 RBAC',1300), ...fillers(10,150,600) ]},
+    { name:'基础设施', leaves:[ leaf('MongoDB',4000), leaf('Redis',2500), leaf('CDS',900), ...fillers(8,150,700) ]},
+  ];
+  GROUPS.forEach(g=> g.value=g.leaves.reduce((s,l)=>s+l.value,0));
 
-    // blips: radius inverse to score (higher score → closer to center)
-    const minS=300,maxS=980;
-    PAINS.forEach((p,i)=>{
-      const norm=(p.score-minS)/(maxS-minS); // 0..1
-      const rr=maxR*(0.92-norm*0.66); // near center when score high
-      const jitter=((i*53)%70)-35;
-      const ang=(QUAD[p.channel]+jitter)*Math.PI/180;
-      const x=cx+Math.cos(ang)*rr, y=cy+Math.sin(ang)*rr;
-      const size=6+Math.sqrt(p.people)*1.7;
-      const col=CHCOL[p.channel];
-      const g=document.createElementNS(NS,'g');
-      g.setAttribute('class','blip-g'); g.dataset.id=p.id;
-      g.style.opacity=0;
-      g.style.animation=`blipIn .5s ease ${0.3+i*0.18}s forwards`;
+  // squarified treemap
+  function worstRatio(row, side, scale){
+    const areas=row.map(r=>r.value*scale); const sum=areas.reduce((a,b)=>a+b,0);
+    const mx=Math.max(...areas), mn=Math.min(...areas);
+    return Math.max((side*side*mx)/(sum*sum),(sum*sum)/(side*side*mn));
+  }
+  function squarify(items, rect){
+    items=items.slice().sort((a,b)=>b.value-a.value);
+    let free={x:rect.x,y:rect.y,w:rect.w,h:rect.h};
+    let freeTotal=items.reduce((s,i)=>s+i.value,0);
+    let i=0;
+    while(i<items.length && freeTotal>0 && free.w>0.5 && free.h>0.5){
+      const scale=(free.w*free.h)/freeTotal;
+      const side=Math.min(free.w,free.h);
+      const row=[items[i]]; let last=worstRatio(row,side,scale); let j=i+1;
+      while(j<items.length){ row.push(items[j]); const w=worstRatio(row,side,scale); if(w>last){ row.pop(); break; } last=w; j++; }
+      const rowVal=row.reduce((s,r)=>s+r.value,0); const rowArea=rowVal*scale;
+      if(free.w>=free.h){ const colW=rowArea/free.h; let yy=free.y; row.forEach(r=>{ const rh=(r.value*scale)/colW; r.rect={x:free.x,y:yy,w:colW,h:rh}; yy+=rh; }); free.x+=colW; free.w-=colW; }
+      else { const rowH=rowArea/free.w; let xx=free.x; row.forEach(r=>{ const rw=(r.value*scale)/rowH; r.rect={x:xx,y:free.y,w:rw,h:rowH}; xx+=rw; }); free.y+=rowH; free.h-=rowH; }
+      freeTotal-=rowVal; i=j;
+    }
+  }
 
-      if(p.score>=640){ // pulse hottest
-        const ring=document.createElementNS(NS,'circle');
-        ring.setAttribute('cx',x); ring.setAttribute('cy',y); ring.setAttribute('r',size);
-        ring.setAttribute('fill','none'); ring.setAttribute('stroke',col); ring.setAttribute('stroke-width',1.5);
-        ring.style.transformOrigin=`${x}px ${y}px`;
-        ring.style.animation=`pulseR 2.4s ease-out ${i*0.3}s infinite`;
-        g.appendChild(ring);
+  function buildTreemap(){
+    const tm=document.getElementById('tm'); tm.innerHTML='';
+    const W=1000,H=470, pad=3;
+    squarify(GROUPS,{x:pad,y:pad,w:W-pad*2,h:H-pad*2});
+    GROUPS.forEach((g,gi)=>{
+      const gr=g.rect; const hdr=14;
+      // group border
+      const gb=document.createElementNS(NS,'rect');
+      gb.setAttribute('class','grp-rect'); gb.setAttribute('x',gr.x); gb.setAttribute('y',gr.y);
+      gb.setAttribute('width',gr.w); gb.setAttribute('height',gr.h); gb.setAttribute('rx',4);
+      tm.appendChild(gb);
+      // group label
+      if(gr.w>70 && gr.h>30){
+        const gl=document.createElementNS(NS,'text'); gl.setAttribute('class','grp-lbl');
+        gl.setAttribute('x',gr.x+5); gl.setAttribute('y',gr.y+11); gl.textContent=g.name;
+        tm.appendChild(gl);
       }
-      if(p.corro){ // 说做互证: double glow ring blue+violet
-        const cr=document.createElementNS(NS,'circle');
-        cr.setAttribute('cx',x); cr.setAttribute('cy',y); cr.setAttribute('r',size+5);
-        cr.setAttribute('fill','none'); cr.setAttribute('stroke',C.violet); cr.setAttribute('stroke-width',1.6); cr.setAttribute('stroke-opacity',.8);
-        g.appendChild(cr);
-      }
-      const halo=document.createElementNS(NS,'circle');
-      halo.setAttribute('cx',x); halo.setAttribute('cy',y); halo.setAttribute('r',size);
-      halo.setAttribute('fill',col); halo.setAttribute('fill-opacity','0.22');
-      g.appendChild(halo);
-      const core=document.createElementNS(NS,'circle');
-      core.setAttribute('class','blip-core');
-      core.setAttribute('cx',x); core.setAttribute('cy',y); core.setAttribute('r',size*0.42);
-      core.setAttribute('fill',col);
-      g.appendChild(core);
-
-      g.addEventListener('click',()=>{
-        const row=document.querySelector(`.pain[data-id="${p.id}"]`);
-        if(row){ row.scrollIntoView({behavior:'smooth',block:'center'}); row.classList.add('flash'); setTimeout(()=>row.classList.remove('flash'),1400); }
+      // leaves inside (reserve header)
+      const inner={x:gr.x+2,y:gr.y+hdr,w:gr.w-4,h:gr.h-hdr-2};
+      if(inner.w<4||inner.h<4) return;
+      squarify(g.leaves, inner);
+      g.leaves.forEach((lf,li)=>{
+        const r=lf.rect; if(!r||r.w<1||r.h<1) return;
+        const isPain=!!lf.painId;
+        const pain=isPain?PAINS.find(p=>p.id===lf.painId):null;
+        const cell=document.createElementNS(NS,'g'); cell.setAttribute('class','tm-cell');
+        if(pain) cell.dataset.id=lf.painId;
+        const rect=document.createElementNS(NS,'rect');
+        rect.setAttribute('class','fill');
+        rect.setAttribute('x',r.x+0.5); rect.setAttribute('y',r.y+0.5);
+        rect.setAttribute('width',Math.max(0,r.w-1)); rect.setAttribute('height',Math.max(0,r.h-1));
+        rect.setAttribute('rx',2);
+        let fill = isPain?painFill(pain):(lf.amberSoft?'hsl(40 40% 26%)':healthyFill());
+        rect.setAttribute('fill',fill);
+        rect.setAttribute('stroke','rgba(0,0,0,0.45)'); rect.setAttribute('stroke-width','1');
+        cell.appendChild(rect);
+        // pain: glowing pulse border + label
+        if(isPain){
+          const glow=document.createElementNS(NS,'rect');
+          glow.setAttribute('x',r.x+1); glow.setAttribute('y',r.y+1);
+          glow.setAttribute('width',Math.max(0,r.w-2)); glow.setAttribute('height',Math.max(0,r.h-2));
+          glow.setAttribute('rx',2); glow.setAttribute('fill','none');
+          glow.setAttribute('stroke', pain.corro?C.violet:'#fff'); glow.setAttribute('stroke-width', pain.corro?2:1.4);
+          glow.style.animation=`cellGlow ${2+li*0.2}s ease-in-out infinite`;
+          cell.appendChild(glow);
+        }
+        // labels for pain cells or large healthy cells
+        if(r.w>46 && r.h>20){
+          const t=document.createElementNS(NS,'text'); t.setAttribute('class','cell-lbl');
+          t.setAttribute('x',r.x+5); t.setAttribute('y',r.y+14);
+          t.textContent=lf.label||lf.name||''; if(t.textContent) cell.appendChild(t);
+          if(isPain && lf.sub && r.h>32){
+            const s=document.createElementNS(NS,'text'); s.setAttribute('class','cell-sub');
+            s.setAttribute('x',r.x+5); s.setAttribute('y',r.y+26); s.textContent=lf.sub; cell.appendChild(s);
+          }
+        }
+        if(pain) cell.addEventListener('click',()=>{
+          const row=document.querySelector(`.pain[data-id="${pain.id}"]`);
+          if(row){ row.scrollIntoView({behavior:'smooth',block:'center'}); row.classList.add('flash'); setTimeout(()=>row.classList.remove('flash'),1400); }
+        });
+        tm.appendChild(cell);
       });
-      radar.appendChild(g);
     });
-    // center dot
-    const cd=document.createElementNS(NS,'circle');
-    cd.setAttribute('cx',cx); cd.setAttribute('cy',cy); cd.setAttribute('r',3); cd.setAttribute('fill',C.teal);
-    radar.appendChild(cd);
   }
 
   // ---------- GAUGE ----------
   function buildGauge(){
-    const g=document.getElementById('gauge');
-    const gcx=120, gcy=130, R=100;
-    const start=Math.PI, end=0; // semicircle
-    function pt(ang){ return {x:gcx+Math.cos(ang)*R, y:gcy+Math.sin(ang)*R}; }
-    const p0=pt(start), p1=pt(end);
+    const g=document.getElementById('gauge'); g.innerHTML='';
+    const gcx=110, gcy=120, R=92, start=Math.PI, end=0;
+    const pt=a=>({x:gcx+Math.cos(a)*R,y:gcy+Math.sin(a)*R});
+    const p0=pt(start),p1=pt(end);
     const bg=document.createElementNS(NS,'path');
     bg.setAttribute('d',`M${p0.x} ${p0.y} A${R} ${R} 0 0 1 ${p1.x} ${p1.y}`);
-    bg.setAttribute('fill','none'); bg.setAttribute('stroke','rgba(255,255,255,0.08)'); bg.setAttribute('stroke-width','14'); bg.setAttribute('stroke-linecap','round');
-    g.appendChild(bg);
+    bg.setAttribute('fill','none'); bg.setAttribute('stroke','rgba(255,255,255,0.08)'); bg.setAttribute('stroke-width','14'); bg.setAttribute('stroke-linecap','round'); g.appendChild(bg);
     const defs=document.createElementNS(NS,'defs');
-    defs.innerHTML=`<linearGradient id="gg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${C.green}"/><stop offset="0.5" stop-color="${C.amber}"/><stop offset="1" stop-color="${C.red}"/></linearGradient>`;
-    g.appendChild(defs);
+    defs.innerHTML=`<linearGradient id="gg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${C.green}"/><stop offset="0.5" stop-color="${C.amber}"/><stop offset="1" stop-color="${C.red}"/></linearGradient>`; g.appendChild(defs);
     const val=document.createElementNS(NS,'path');
     val.setAttribute('d',`M${p0.x} ${p0.y} A${R} ${R} 0 0 1 ${p1.x} ${p1.y}`);
     val.setAttribute('fill','none'); val.setAttribute('stroke','url(#gg)'); val.setAttribute('stroke-width','14'); val.setAttribute('stroke-linecap','round');
-    const len=Math.PI*R;
-    val.style.strokeDasharray=len; val.style.strokeDashoffset=len;
-    val.style.transition='stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1) .2s';
-    g.appendChild(val);
-    // number text (foreignObject for styled div)
-    const fo=document.createElementNS(NS,'foreignObject');
-    fo.setAttribute('x',0); fo.setAttribute('y',58); fo.setAttribute('width',240); fo.setAttribute('height',70);
-    fo.innerHTML=`<div xmlns="http://www.w3.org/1999/xhtml" style="text-align:center"><div class="gauge-num" id="gnum" style="color:${C.amber}">0</div><div style="font-size:11px;color:rgba(236,236,239,0.4);margin-top:2px">满分 100 · 越低越健康</div></div>`;
-    g.appendChild(fo);
-    // animate
-    const target=72;
-    requestAnimationFrame(()=>{ val.style.strokeDashoffset=len*(1-target/100); });
-    const gnum=document.getElementById('gnum');
-    const t0=performance.now();
-    (function tick(now){
-      const pr=Math.min(1,(now-t0)/1400);
-      const v=Math.round((1-Math.pow(1-pr,3))*target);
-      gnum.textContent=v;
-      gnum.style.color = v<40?C.green:v<70?'#fb923c':C.red;
-      if(pr<1) requestAnimationFrame(tick);
-    })(t0);
+    const len=Math.PI*R; val.style.strokeDasharray=len; val.style.strokeDashoffset=len; val.style.transition='stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1) .2s'; g.appendChild(val);
+    const fo=document.createElementNS(NS,'foreignObject'); fo.setAttribute('x',0); fo.setAttribute('y',54); fo.setAttribute('width',220); fo.setAttribute('height',66);
+    fo.innerHTML=`<div xmlns="http://www.w3.org/1999/xhtml" style="text-align:center"><div class="gauge-num" id="gnum" style="color:${C.amber}">0</div><div style="font-size:11px;color:rgba(236,236,239,0.4);margin-top:2px">满分 100 · 越低越健康</div></div>`; g.appendChild(fo);
+    const target=72; requestAnimationFrame(()=>{ val.style.strokeDashoffset=len*(1-target/100); });
+    const gnum=document.getElementById('gnum'); const t0=performance.now();
+    (function tick(now){ const pr=Math.min(1,(now-t0)/1400); const v=Math.round((1-Math.pow(1-pr,3))*target); gnum.textContent=v; gnum.style.color=v<40?C.green:v<70?'#fb923c':C.red; if(pr<1) requestAnimationFrame(tick); })(t0);
+  }
+
+  // ---------- channel breakdown ----------
+  function buildChans(){
+    const open=PAINS.filter(p=>p.status!=='fixed');
+    const agg={}; open.forEach(p=>{ agg[p.channel]=(agg[p.channel]||0)+p.score; });
+    const total=Object.values(agg).reduce((a,b)=>a+b,0);
+    const COL={ err:C.red, churn:C.red, slow:C.amber, feedback:C.violet };
+    const order=['err','churn','slow','feedback'];
+    document.getElementById('chans').innerHTML=order.filter(k=>agg[k]).map(k=>{
+      const pct=Math.round(agg[k]/total*100);
+      return `<div class="chan"><div class="cr"><span>${CH_LABEL[k]}</span><span class="cv">${pct}%</span></div>
+        <div class="cbar"><i style="width:${pct}%;background:${COL[k]}"></i></div></div>`;
+    }).join('');
   }
 
   // ---------- list ----------
   const F={ src:'all', dim:'all' };
-  function scoreRing(score,col){
-    const R=22, len=2*Math.PI*R, pct=Math.min(1,score/1000);
+  function scoreRing(score,col){ const R=22,len=2*Math.PI*R,pct=Math.min(1,score/1000);
     return `<div class="score-ring"><svg width="52" height="52" viewBox="0 0 52 52">
       <circle cx="26" cy="26" r="${R}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="4"/>
-      <circle cx="26" cy="26" r="${R}" fill="none" stroke="${col}" stroke-width="4" stroke-linecap="round"
-        stroke-dasharray="${len}" stroke-dashoffset="${len*(1-pct)}"/></svg>
-      <div class="sn" style="color:${col}">${score}</div></div>`;
-  }
-  function statusEl(p){
-    if(p.status==='todo') return `<span class="status s-todo">待处理</span>`;
-    if(p.status==='defect') return `<span class="status s-defect">${p.statusInfo}</span>`;
-    if(p.status==='fixing') return `<span class="status s-fixing">${p.statusInfo||'修复中'}</span>`;
-    return `<span class="status s-fixed">已修复</span>`;
-  }
-  function actsEl(p){
-    if(p.status==='todo') return `<div class="acts"><button class="primary">转为缺陷</button><button>指派</button><button>忽略</button></div>`;
-    return `<div class="acts"><button>查看缺陷</button><button>标记修复</button></div>`;
-  }
+      <circle cx="26" cy="26" r="${R}" fill="none" stroke="${col}" stroke-width="4" stroke-linecap="round" stroke-dasharray="${len}" stroke-dashoffset="${len*(1-pct)}"/></svg>
+      <div class="sn" style="color:${col}">${score}</div></div>`; }
+  function statusEl(p){ if(p.status==='todo') return `<span class="status s-todo">待处理</span>`; if(p.status==='defect') return `<span class="status s-defect">${p.statusInfo}</span>`; if(p.status==='fixing') return `<span class="status s-fixing">${p.statusInfo||'修复中'}</span>`; return `<span class="status">已修复</span>`; }
+  function actsEl(p){ if(p.status==='todo') return `<div class="acts"><button class="primary">转为缺陷</button><button>指派</button><button>忽略</button></div>`; return `<div class="acts"><button>查看缺陷</button><button>标记修复</button></div>`; }
   const trendTxt={ up:'仍在上涨', down:'已回落', flat:'持平' };
   function renderList(){
-    let list=PAINS.filter(p=>{
-      if(F.src!=='all' && p.src!==F.src && p.src2!==F.src) return false;
-      if(F.dim!=='all' && p.dim!==F.dim) return false;
-      return true;
-    }).sort((a,b)=>b.score-a.score);
+    let list=PAINS.filter(p=>{ if(F.src!=='all'&&p.src!==F.src&&p.src2!==F.src) return false; if(F.dim!=='all'&&p.dim!==F.dim) return false; return true; }).sort((a,b)=>b.score-a.score);
     document.getElementById('cnt').textContent=`共 ${list.length} 条`;
     document.getElementById('painList').innerHTML=list.map(p=>`
       <div class="pain ${p.sev}${p.corro?' corro':''}" data-id="${p.id}">
         ${scoreRing(p.score, p.sev==='hot'?C.red:C.amber)}
         <div class="pmain">
-          <div class="prow1">
-            <span class="ptitle">${p.title}</span>
+          <div class="prow1"><span class="ptitle">${p.title}</span>
             ${p.corro?`<span class="badge b-corro">说做互证</span>`:''}
             <span class="badge ${p.src==='user'?'b-user':'b-behavior'}">${p.src==='user'?'用户之声':'行为之声'}</span>
-            <span class="badge ${CH_CLASS[p.channel]}">${CH_LABEL[p.channel]}</span>
-          </div>
+            <span class="badge ${CH_CLASS[p.channel]}">${CH_LABEL[p.channel]}</span></div>
           <div class="psub">${p.sub}</div>
-          <div class="pmeta">${p.meta} · <b>${p.people}</b> 人受影响</div>
-        </div>
+          <div class="pmeta">${p.meta} · <b>${p.people}</b> 人受影响</div></div>
         <div class="ptrend">${spark(p.spark, p.trend==='up'?C.red:p.trend==='down'?C.green:'#7a7a82')}
           <span class="tl ${p.trend}">${p.trend==='up'?'▲':p.trend==='down'?'▼':'—'} ${trendTxt[p.trend]}</span></div>
         <div class="pright">${statusEl(p)}${actsEl(p)}</div>
       </div>`).join('');
   }
-  function renderLoop(){
-    document.getElementById('loop').innerHTML=CLOSED.map(c=>`
-      <div class="loop-item">
-        <div><div class="lt">${c.title}</div><div class="ls">${c.detail}</div></div>
-        <div class="ba"><span class="b-before">${c.before}</span><span class="arrow">→</span><span class="b-after">${c.after}</span><span class="drop">${c.drop}</span></div>
-      </div>`).join('');
-  }
-  function renderKpis(){
-    document.getElementById('mkOpen').textContent=PAINS.filter(p=>p.status==='todo').length;
-    document.getElementById('mkClosed').textContent=CLOSED.length;
-    document.getElementById('mkUsers').textContent=PAINS.reduce((s,p)=>s+p.people,0);
-  }
+  function renderLoop(){ document.getElementById('loop').innerHTML=CLOSED.map(c=>`
+      <div class="loop-item"><div><div class="lt">${c.title}</div><div class="ls">${c.detail}</div></div>
+        <div class="ba"><span class="b-before">${c.before}</span><span class="arrow">→</span><span class="b-after">${c.after}</span><span class="drop">${c.drop}</span></div></div>`).join(''); }
+  function renderKpis(){ document.getElementById('mkOpen').textContent=PAINS.filter(p=>p.status==='todo').length; document.getElementById('mkClosed').textContent=CLOSED.length; document.getElementById('mkUsers').textContent=PAINS.reduce((s,p)=>s+p.people,0); }
 
-  document.getElementById('filters').addEventListener('click',e=>{
-    const c=e.target.closest('.chip'); if(!c) return;
-    F[c.dataset.f]=c.dataset.v;
-    document.querySelectorAll(`.chip[data-f="${c.dataset.f}"]`).forEach(x=>x.classList.toggle('active',x===c));
-    renderList();
-  });
+  document.getElementById('filters').addEventListener('click',e=>{ const c=e.target.closest('.chip'); if(!c) return; F[c.dataset.f]=c.dataset.v; document.querySelectorAll(`.chip[data-f="${c.dataset.f}"]`).forEach(x=>x.classList.toggle('active',x===c)); renderList(); });
 
-  buildRadar(); buildGauge(); renderKpis(); renderList(); renderLoop();
+  buildTreemap(); buildGauge(); buildChans(); renderKpis(); renderList(); renderLoop();
 })();
 </script>
 </body>
