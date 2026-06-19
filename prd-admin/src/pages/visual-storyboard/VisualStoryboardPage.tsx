@@ -211,6 +211,13 @@ export default function VisualStoryboardPage() {
           const url = (o.url as string | null | undefined) ?? null;
           const originalUrl = (o.originalUrl as string | null | undefined) ?? null;
           const src = url || (b64 ? (b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`) : null);
+          // imageDone 但 url/base64 都缺：无图可渲染，标 error 而非 done，否则卡片永远停在 shimmer（Bugbot review，同 AdvancedVisualAgentTab）
+          if (!src) {
+            setScenes((prev) =>
+              prev.map((s) => (s.index === tgt.sceneIndex ? { ...s, kfStatus: 'error', kfError: '关键帧生成未返回图片，请重绘' } : s)),
+            );
+            return;
+          }
           // 图生视频首帧需要公开 HTTPS 链接（base64 不可用）：优先原图 COS URL
           const publicUrl = /^https?:/.test(String(originalUrl)) ? originalUrl : /^https?:/.test(String(url)) ? url : null;
           setScenes((prev) =>
