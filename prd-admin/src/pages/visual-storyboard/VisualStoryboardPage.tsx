@@ -80,6 +80,9 @@ export default function VisualStoryboardPage() {
   // 使先前批次（或上一次重绘）对该镜的 SSE 回填与流结束兜底变成 no-op——
   // 避免「批次仍在跑、其中一镜被单独重绘」时批次兜底把正在重绘的镜误判为失败。
   const sceneKfGen = useRef<Map<number, number>>(new Map());
+  // 正在「动起来」(图生视频)的镜头集合：vidStatus='running' 是异步 state，两次快速点击会在它落地前都通过守卫，
+  // 用同步 ref 集合去重，避免同镜重复提交后端视频 run + 叠加轮询。
+  const animatingRef = useRef<Set<number>>(new Set());
 
   const aspectInfo = useMemo(() => ASPECTS.find((a) => a.key === aspect) ?? ASPECTS[0], [aspect]);
 
@@ -104,13 +107,17 @@ export default function VisualStoryboardPage() {
   }, [modelOptions, selectedModelKey]);
 
   useEffect(() => {
+    let alive = true; // 卸载/重挂后丢弃过期模型响应，避免在已卸载组件上 setState
     setModelsLoading(true);
     getVisualAgentImageGenModels()
       .then((res) => {
-        if (res.success) setPools(res.data ?? []);
+        if (alive && res.success) setPools(res.data ?? []);
       })
-      .finally(() => setModelsLoading(false));
+      .finally(() => {
+        if (alive) setModelsLoading(false);
+      });
     return () => {
+      alive = false;
       controllersRef.current.forEach((c) => c.abort());
       controllersRef.current = [];
       genRef.current += 1; // 卸载时作废所有在途 SSE + 图生视频轮询，避免卸载后还 setScenes
@@ -287,58 +294,64 @@ export default function VisualStoryboardPage() {
     const s = scenes.find((x) => x.index === sceneIndex);
     if (!s || s.kfStatus !== 'done') return;
     if (s.vidStatus === 'running') return; // 同镜正在转视频，避免重复触发
+    if (animatingRef.current.has(sceneIndex)) return; // 同步去重：vidStatus 落地前的连点也拦住，防重复提交后端 run
     if (!s.kfPublicUrl) {
       toast.warning('该关键帧暂无公开链接，无法转视频，请先重绘这一镜');
       return;
     }
-    const myGen = genRef.current; // 本轮代次；若期间重新生成分镜则停止本次轮询回填
-    setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'running', vidError: null, vidPhase: '提交中' } : x)));
+    animatingRef.current.add(sceneIndex);
+    try {
+      const myGen = genRef.current; // 本轮代次；若期间重新生成分镜则停止本次轮询回填
+      setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'running', vidError: null, vidPhase: '提交中' } : x)));
 
-    // Wan 2.6 仅支持 5/10s：分镜时长就近取 5
-    const duration = (s.duration || 5) >= 8 ? 10 : 5;
-    const directPrompt = `${s.keyframePrompt}. Camera & motion: ${s.motionPrompt || 'subtle natural motion, cinematic'}`;
+      // Wan 2.6 仅支持 5/10s：分镜时长就近取 5
+      const duration = (s.duration || 5) >= 8 ? 10 : 5;
+      const directPrompt = `${s.keyframePrompt}. Camera & motion: ${s.motionPrompt || 'subtle natural motion, cinematic'}`;
 
-    const created = await createVisualVideoRunReal({
-      mode: 'direct',
-      directPrompt,
-      directFirstFrameUrl: s.kfPublicUrl,
-      directAspectRatio: s.kfAspect ?? aspect, // 沿用关键帧出图时的画幅，避免用户改画幅后首帧比例错配
-      directResolution: '720p',
-      directDuration: duration,
-      articleTitle: `分镜 ${sceneIndex + 1}：${s.topic}`,
-    });
-    if (genRef.current !== myGen) return; // 提交期间被新一轮作废，不回填旧板
-    if (!created.success || !created.data?.runId) {
-      setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: created.error?.message || '提交失败' } : x)));
-      return;
-    }
-    const runId = created.data.runId;
-
-    // 轮询直出结果（服务器权威：后台 worker 提交 → 轮询 OpenRouter → 下载 COS）。
-    // 客户端窗口须 >= 后端 worker 的 10 分钟终态期，否则 6-10 分钟才完成的视频会被误判「生成超时」。
-    const deadline = Date.now() + 11 * 60 * 1000;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 5000));
-      if (genRef.current !== myGen) return; // 已被新一轮生成作废，停止轮询与回填
-      const res = await getVisualVideoRunReal(runId);
-      if (genRef.current !== myGen) return; // fetch 期间被作废，丢弃结果不回填
-      if (!res.success || !res.data) continue;
-      const run = res.data;
-      const st = String(run.status || '');
-      if (st === 'Completed' && run.videoAssetUrl) {
-        setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'done', vidUrl: run.videoAssetUrl, vidPhase: null } : x)));
+      const created = await createVisualVideoRunReal({
+        mode: 'direct',
+        directPrompt,
+        directFirstFrameUrl: s.kfPublicUrl,
+        directAspectRatio: s.kfAspect ?? aspect, // 沿用关键帧出图时的画幅，避免用户改画幅后首帧比例错配
+        directResolution: '720p',
+        directDuration: duration,
+        articleTitle: `分镜 ${sceneIndex + 1}：${s.topic}`,
+      });
+      if (genRef.current !== myGen) return; // 提交期间被新一轮作废，不回填旧板
+      if (!created.success || !created.data?.runId) {
+        setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: created.error?.message || '提交失败' } : x)));
         return;
       }
-      if (st === 'Failed' || st === 'Cancelled') {
-        setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: run.errorMessage || '视频生成失败' } : x)));
-        return;
+      const runId = created.data.runId;
+
+      // 轮询直出结果（服务器权威：后台 worker 提交 → 轮询 OpenRouter → 下载 COS）。
+      // 客户端窗口须 >= 后端 worker 的 10 分钟终态期，否则 6-10 分钟才完成的视频会被误判「生成超时」。
+      const deadline = Date.now() + 11 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5000));
+        if (genRef.current !== myGen) return; // 已被新一轮生成作废，停止轮询与回填
+        const res = await getVisualVideoRunReal(runId);
+        if (genRef.current !== myGen) return; // fetch 期间被作废，丢弃结果不回填
+        if (!res.success || !res.data) continue;
+        const run = res.data;
+        const st = String(run.status || '');
+        if (st === 'Completed' && run.videoAssetUrl) {
+          setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'done', vidUrl: run.videoAssetUrl, vidPhase: null } : x)));
+          return;
+        }
+        if (st === 'Failed' || st === 'Cancelled') {
+          setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: run.errorMessage || '视频生成失败' } : x)));
+          return;
+        }
+        // 进度文案（拉取 → 生成 → 下载）
+        const phaseLabel = run.currentPhase === 'downloading' ? '下载中' : run.currentPhase === 'videogen-polling' ? '生成中' : '生成中';
+        setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidPhase: phaseLabel } : x)));
       }
-      // 进度文案（拉取 → 生成 → 下载）
-      const phaseLabel = run.currentPhase === 'downloading' ? '下载中' : run.currentPhase === 'videogen-polling' ? '生成中' : '生成中';
-      setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidPhase: phaseLabel } : x)));
+      if (genRef.current !== myGen) return; // 超时落地前若已被新一轮作废，不回填旧板
+      setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: '生成超时，请重试' } : x)));
+    } finally {
+      animatingRef.current.delete(sceneIndex); // 终态/作废/超时任一退出都释放，使重生成可再次提交
     }
-    if (genRef.current !== myGen) return; // 超时落地前若已被新一轮作废，不回填旧板
-    setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: '生成超时，请重试' } : x)));
   };
 
   const fillExample = () => {

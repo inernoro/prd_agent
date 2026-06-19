@@ -16,3 +16,5 @@
 | fix | prd-admin | handleGenerate 补 stale 守卫：拆分镜 await 返回后校验 genRef，卸载/新一轮已作废时丢弃过期脚本响应，不再 setTitle/setScenes/启动 renderKeyframes |
 | fix | prd-api | 拆分镜接口转发 gateway 中文报错：原先失败统一回 `分镜生成失败：{ErrorCode}` 丢掉 ErrorMessage，额度等错误的 LLM_QUOTA_EXCEEDED 中文文案被吞成泛化提示，现转发 ErrorMessage + 透传 gateway ErrorCode（Bugbot review） |
 | fix | prd-api | LlmGateway.StreamAsync 非 2xx 分支补额度检测：原先只有非流式 SendAsync/Raw 路径调 IsQuotaExceeded/HandleQuotaExceeded，导致 toolbox/defect/literary/polish 等主聊天(走 StreamAsync)遇 OpenRouter 402 / Key limit exceeded 不触发 admin 额度告警、不透传额度文案，现对齐（Codex review） |
+| fix | prd-admin | 分镜台「动起来」补同步去重：vidStatus='running' 是异步 state，两次快速点击会在落地前都通过守卫、重复提交后端视频 run + 叠加轮询，改用 animatingRef Set 同步拦截（Bugbot review） |
+| fix | prd-admin | 分镜台挂载拉取生图模型补 alive 守卫：卸载/重挂后丢弃过期响应，不在已卸载组件上 setPools/setModelsLoading（Bugbot review） |
