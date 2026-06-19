@@ -213,7 +213,20 @@ export default function VisualStoryboardPage() {
           // 图生视频首帧需要公开 HTTPS 链接（base64 不可用）：优先原图 COS URL
           const publicUrl = /^https?:/.test(String(originalUrl)) ? originalUrl : /^https?:/.test(String(url)) ? url : null;
           setScenes((prev) =>
-            prev.map((s) => (s.index === tgt.sceneIndex ? { ...s, kfStatus: 'done', kfUrl: src, kfPublicUrl: publicUrl, kfAspect: myAspect, kfDirty: false } : s)),
+            prev.map((s) =>
+              s.index === tgt.sceneIndex
+                ? {
+                    ...s,
+                    kfStatus: 'done',
+                    kfUrl: src,
+                    kfPublicUrl: publicUrl,
+                    kfAspect: myAspect,
+                    // 仅当当前提示词仍等于本次渲染所用提示词时才清脏；若渲染途中被改过(当前词≠已出图的词)，
+                    // 保持 dirty，避免「旧帧 + 新词」被当成干净帧拿去转视频（Codex review）
+                    kfDirty: s.keyframePrompt !== tgt.prompt,
+                  }
+                : s,
+            ),
           );
         } else if (t === 'imageError') {
           const itemIndex = Number(o.itemIndex ?? -1);
