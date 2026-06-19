@@ -889,14 +889,18 @@ public class OpenAIImageClient
                     }
                 }
 
-                if (images.Count == 0)
+                if (images.Count == 0 && isOpenRouter)
                 {
                     _logger.LogWarning("[OpenRouter] chat/completions 图片响应中未找到图片数据。Body length={Len}", body.Length);
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "OpenRouter 生图响应中未包含图片数据");
                 }
             }
-            else
+
+            // 启发式可能把标准 images/generations 响应误判为 OpenRouter 形态(body 恰含 choices/image_url/images 子串)，
+            // 上面没解析到图就回退标准 data[] 解析再判定，避免有效响应被误报「未包含图片数据」（Bugbot review）
+            if (images.Count == 0)
             {
+                if (looksOpenRouterImage && !isOpenRouter)
+                    _logger.LogWarning("[OpenRouter] 启发式命中但未解析到图，回退标准 data[] 解析。Body length={Len}", body.Length);
                 using var doc = JsonDocument.Parse(body);
                 var root = doc.RootElement;
                 var data = root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array
@@ -947,6 +951,10 @@ public class OpenAIImageClient
                     });
                 }
             }
+
+            // OpenRouter 与标准 data[] 两条解析都没拿到图：统一在此判失败（替代原 OpenRouter 分支的早退，Bugbot review）
+            if (images.Count == 0)
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "生图响应中未包含图片数据");
 
             // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
             // 强约束：不把 base64 写入 Mongo；输出统一 re-host 到 COS（返回稳定 URL）

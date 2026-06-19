@@ -232,7 +232,9 @@ public class ImageGenController : ControllerBase
         }
 
         var text = ExtractChatText(resp.Content);
-        var parsed = ParseStoryboard(text);
+        // 用户指定 sceneCount(>0) 时按其截断（system prompt 要求恰好 N 个，模型超产强制裁到 N）；否则用全局上限（Bugbot review）
+        var sceneCap = sceneCount > 0 ? Math.Min(sceneCount, MaxStoryboardScenes) : MaxStoryboardScenes;
+        var parsed = ParseStoryboard(text, sceneCap);
         if (parsed == null || parsed.Scenes.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "分镜解析失败，请重试或调整描述"));
 
@@ -308,7 +310,7 @@ public class ImageGenController : ControllerBase
     // 分镜上限：请求侧 sceneCount 钳制与解析侧截断共用，避免漂移；上限 < 图生图 run 的条目上限
     private const int MaxStoryboardScenes = 12;
 
-    private static StoryboardScriptResponse? ParseStoryboard(string text)
+    private static StoryboardScriptResponse? ParseStoryboard(string text, int maxScenes)
     {
         var json = ExtractFirstJsonObject(text);
         if (json == null) return null;
@@ -327,8 +329,9 @@ public class ImageGenController : ControllerBase
 
             for (var i = 0; i < arr.Count; i++)
             {
-                // 上限与请求侧 sceneCount 钳制(0-12)一致：模型对长文可能超产，全量下发会撞图生图 run 的条目上限、导致整板无关键帧（Codex review）
-                if (res.Scenes.Count >= MaxStoryboardScenes) break;
+                // 截断到请求的镜头数（用户指定 sceneCount 则为 N，否则全局上限）：模型超产时不再全量下发，
+                // 既兑现「恰好 N 个」也避免撞图生图 run 的条目上限导致整板无关键帧（Codex + Bugbot review）
+                if (res.Scenes.Count >= maxScenes) break;
                 var it = arr[i]?.AsObject();
                 if (it == null) continue;
                 var kf = StripEmoji(it["keyframePrompt"]?.GetValue<string>()?.Trim());
