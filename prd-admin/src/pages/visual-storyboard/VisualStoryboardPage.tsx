@@ -340,14 +340,23 @@ export default function VisualStoryboardPage() {
       }
       const runId = created.data.runId;
 
+      // 轮询期间任一 stale 退出都必须取消后端 run，否则新板/卸载后 worker 仍在烧视频额度（Bugbot review）。
+      const bailIfStale = () => {
+        if (genRef.current !== myGen) {
+          void cancelVisualVideoRunReal(runId).catch(() => {});
+          return true;
+        }
+        return false;
+      };
+
       // 轮询直出结果（服务器权威：后台 worker 提交 → 轮询 OpenRouter → 下载 COS）。
       // 客户端窗口须 >= 后端 worker 的 10 分钟终态期，否则 6-10 分钟才完成的视频会被误判「生成超时」。
       const deadline = Date.now() + 11 * 60 * 1000;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 5000));
-        if (genRef.current !== myGen) return; // 已被新一轮生成作废，停止轮询与回填
+        if (bailIfStale()) return; // 已被新一轮生成/卸载作废，停止轮询并取消后端 run
         const res = await getVisualVideoRunReal(runId);
-        if (genRef.current !== myGen) return; // fetch 期间被作废，丢弃结果不回填
+        if (bailIfStale()) return; // fetch 期间被作废，丢弃结果并取消后端 run
         if (!res.success || !res.data) continue;
         const run = res.data;
         const st = String(run.status || '');
@@ -363,7 +372,7 @@ export default function VisualStoryboardPage() {
         const phaseLabel = run.currentPhase === 'downloading' ? '下载中' : run.currentPhase === 'videogen-polling' ? '生成中' : '生成中';
         setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidPhase: phaseLabel } : x)));
       }
-      if (genRef.current !== myGen) return; // 超时落地前若已被新一轮作废，不回填旧板
+      if (bailIfStale()) return; // 超时落地前若已被新一轮作废，取消后端 run 不回填旧板
       setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: '生成超时，请重试' } : x)));
     } finally {
       // 仅本代次所有者才释放：避免旧板轮询退出时清掉新板（已重新生成分镜）刚取得的同镜锁

@@ -24,3 +24,4 @@
 | fix | prd-api | IsQuotaExceeded 去掉「429 一律 false」短路：部分供应商(如 OpenAI insufficient_quota)用 429 返回额度耗尽，原短路使其漏掉额度告警走泛化 LLM_ERROR，改为只按速率文本排除限流，额度文本(quota/credit/balance)继续判定（Codex review） |
 | fix | prd-api | 分镜 title/topic/keyframePrompt/motionPrompt 落库前剥 emoji + system prompt 加无 emoji 约束：LLM 返回的标题会直接渲染进页头，违反 CLAUDE.md §0 禁 emoji（Codex review） |
 | fix | prd-admin | 分镜台「动起来」提交后若被新一轮生成/卸载作废，取消刚创建的视频 run（新增 cancelVisualVideoRunReal 走 visual-agent cancel 端点），避免后台继续烧视频额度且结果已无法回到 UI（Codex review） |
+| fix | prd-admin | 分镜台视频轮询期间作废也取消后端 run：上一轮只在轮询开始前取消，轮询中的 genRef 守卫直接 return 不取消，worker 仍烧额度。抽 bailIfStale 统一在所有 stale 退出点取消（Bugbot review） |
