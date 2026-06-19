@@ -241,15 +241,52 @@ public class ImageGenController : ControllerBase
         catch { return apiResponseJson; }
     }
 
-    private static StoryboardScriptResponse? ParseStoryboard(string text)
+    /// <summary>
+    /// 从文本中提取第一个完整 JSON 对象：从首个 '{' 起按括号深度匹配（字符串内花括号不计、正确处理转义）。
+    /// 比「首 { 到末 }」鲁棒：模型在 JSON 后夹带说明文字、或值里含 '}' 都不会截错。
+    /// </summary>
+    private static string? ExtractFirstJsonObject(string text)
     {
         var t = (text ?? string.Empty).Trim();
-        var s = t.IndexOf('{');
-        var e = t.LastIndexOf('}');
-        if (s < 0 || e <= s) return null;
+        // 去掉 markdown ```json 围栏
+        if (t.StartsWith("```"))
+        {
+            var nl = t.IndexOf('\n');
+            if (nl >= 0) t = t[(nl + 1)..];
+            if (t.EndsWith("```")) t = t[..^3];
+            t = t.Trim();
+        }
+        var start = t.IndexOf('{');
+        if (start < 0) return null;
+        int depth = 0;
+        bool inStr = false, esc = false;
+        for (var i = start; i < t.Length; i++)
+        {
+            var c = t[i];
+            if (inStr)
+            {
+                if (esc) esc = false;
+                else if (c == '\\') esc = true;
+                else if (c == '"') inStr = false;
+            }
+            else if (c == '"') inStr = true;
+            else if (c == '{') depth++;
+            else if (c == '}')
+            {
+                depth--;
+                if (depth == 0) return t[start..(i + 1)];
+            }
+        }
+        return null; // 未闭合
+    }
+
+    private static StoryboardScriptResponse? ParseStoryboard(string text)
+    {
+        var json = ExtractFirstJsonObject(text);
+        if (json == null) return null;
         try
         {
-            var obj = System.Text.Json.Nodes.JsonNode.Parse(t[s..(e + 1)])?.AsObject();
+            var obj = System.Text.Json.Nodes.JsonNode.Parse(json)?.AsObject();
             var arr = obj?["scenes"]?.AsArray();
             if (obj == null || arr == null) return null;
 
