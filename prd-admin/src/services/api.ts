@@ -390,6 +390,8 @@ export const api = {
       sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
       /** 获取所有生图场景的模型池（合并去重） */
       models: () => '/api/visual-agent/image-gen/models',
+      /** 仅文生图(text2img)可用的模型池——分镜台关键帧等纯文生图场景用，避免选到 img2img/vision-only 池 */
+      modelsText2Img: () => '/api/visual-agent/image-gen/models/text2img',
       /** 视觉分镜台：把想法/文章拆成镜头（含每镜关键帧图 prompt + 运动 prompt） */
       storyboardScript: () => '/api/visual-agent/image-gen/storyboard-script',
       /** 根据平台侧模型ID获取适配信息（尺寸选项等） */

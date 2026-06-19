@@ -8,7 +8,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
   createImageGenRun,
-  getVisualAgentImageGenModels,
+  getVisualAgentText2ImgModels,
   scriptStoryboard,
   streamImageGenRunWithRetry,
 } from '@/services';
@@ -112,7 +112,8 @@ export default function VisualStoryboardPage() {
   useEffect(() => {
     let alive = true; // 卸载/重挂后丢弃过期模型响应，避免在已卸载组件上 setState
     setModelsLoading(true);
-    getVisualAgentImageGenModels()
+    // 关键帧是纯文生图：只取 text2img 池，避免选到 img2img/vision-only 池后每帧都失败
+    getVisualAgentText2ImgModels()
       .then((res) => {
         if (alive && res.success) setPools(res.data ?? []);
       })

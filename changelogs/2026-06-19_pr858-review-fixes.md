@@ -26,3 +26,4 @@
 | fix | prd-admin | 分镜台「动起来」提交后若被新一轮生成/卸载作废，取消刚创建的视频 run（新增 cancelVisualVideoRunReal 走 visual-agent cancel 端点），避免后台继续烧视频额度且结果已无法回到 UI（Codex review） |
 | fix | prd-admin | 分镜台视频轮询期间作废也取消后端 run：上一轮只在轮询开始前取消，轮询中的 genRef 守卫直接 return 不取消，worker 仍烧额度。抽 bailIfStale 统一在所有 stale 退出点取消（Bugbot review） |
 | fix | prd-admin | 关键帧 dirty 判定改按提示词比对：渲染途中改词后，旧提示词的图到达时不再无条件清脏，仅当当前词仍等于已出图的词才清，避免旧帧配新词被当干净帧（Codex review） |
+| fix | prd-admin | 分镜台关键帧模型选择改用 text2img 专属池端点（/models/text2img），不再用合并了 img2img/vision 的列表，避免选到只配了 img2img/vision 的池导致每帧失败（Codex review） |

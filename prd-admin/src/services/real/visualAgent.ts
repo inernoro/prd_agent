@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
+import type { ApiResponse } from '@/types/api';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 import type {
   AddVisualAgentMessageContract,
@@ -419,14 +420,9 @@ export async function getVisualAgentAdapterInfoReal(modelId: string) {
   return await apiRequest<import('../contracts/models').ModelAdapterInfo>(api.visualAgent.imageGen.adapterInfo(modelId));
 }
 
-/**
- * 获取视觉创作所有生图场景的模型池列表（后端合并去重）
- * 调用 /api/visual-agent/image-gen/models
- */
-export async function getVisualAgentImageGenModelsReal() {
-  const res = await apiRequest<ModelGroupForApp[]>(api.visualAgent.imageGen.models());
+// 补齐 ModelGroup 基类中的可选/默认字段，与 modelGroups.ts 的 mapGroupFromApi 保持一致
+function normalizeImageGenPools(res: ApiResponse<ModelGroupForApp[]>): ApiResponse<ModelGroupForApp[]> {
   if (res.success && res.data) {
-    // 补齐 ModelGroup 基类中的可选/默认字段，与 modelGroups.ts 的 mapGroupFromApi 保持一致
     res.data = res.data.map((g: any) => ({
       ...g,
       modelType: String(g?.modelType ?? '').trim(),
@@ -442,6 +438,23 @@ export async function getVisualAgentImageGenModelsReal() {
     })) as ModelGroupForApp[];
   }
   return res;
+}
+
+/**
+ * 获取视觉创作所有生图场景的模型池列表（后端合并去重 text2img + img2img + vision）
+ * 调用 /api/visual-agent/image-gen/models
+ */
+export async function getVisualAgentImageGenModelsReal() {
+  return normalizeImageGenPools(await apiRequest<ModelGroupForApp[]>(api.visualAgent.imageGen.models()));
+}
+
+/**
+ * 仅文生图(text2img)可用的模型池——分镜台关键帧等纯文生图场景用，
+ * 避免合并列表里的 img2img/vision-only 池被选中后让每帧都失败。
+ * 调用 /api/visual-agent/image-gen/models/text2img
+ */
+export async function getVisualAgentText2ImgModelsReal() {
+  return normalizeImageGenPools(await apiRequest<ModelGroupForApp[]>(api.visualAgent.imageGen.modelsText2Img()));
 }
 
 // ========== Visual Agent 域内日志查询（避免跨权限调用 /api/logs/llm）==========

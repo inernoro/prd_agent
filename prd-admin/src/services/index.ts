@@ -398,6 +398,7 @@ import {
   updateArticleMarkerReal,
   generateVisualAgentWorkspaceTitleReal,
   getVisualAgentImageGenModelsReal,
+  getVisualAgentText2ImgModelsReal,
   getVisualAgentAdapterInfoReal,
 } from '@/services/real/visualAgent';
 import {
@@ -1003,6 +1004,7 @@ export const extractArticleMarkers = extractArticleMarkersReal;
 export const exportArticle = exportArticleReal;
 export const updateArticleMarker = updateArticleMarkerReal;
 export const getVisualAgentImageGenModels = getVisualAgentImageGenModelsReal;
+export const getVisualAgentText2ImgModels = getVisualAgentText2ImgModelsReal;
 export const getVisualAgentAdapterInfo = getVisualAgentAdapterInfoReal;
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
