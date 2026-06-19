@@ -123,7 +123,7 @@ export function DefectAutomationPanel({
                 </Button>
                 <Button variant="secondary" size="sm" onClick={onOpenShareManager}>
                   <Share2 size={12} />
-                  历史分享
+                  分享管理
                 </Button>
                 <Button variant="primary" size="sm" onClick={handleCreateAndCopy} disabled={creating}>
                   {creating ? <MapSpinner size={12} /> : <KeyRound size={12} />}
