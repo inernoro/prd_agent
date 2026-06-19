@@ -28,6 +28,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class DefectAgentController : ControllerBase
 {
     public const string AgentFixScope = "defect-agent:use";
+    public const string AgentShareScope = "defect-agent:share";
 
     internal const int AutomationMaxDiffLines = 200;
     internal const int AutomationMaxMinutesPerDefect = 10;
@@ -2529,7 +2530,7 @@ public class DefectAgentController : ControllerBase
                 env = "PRD_AGENT_API_KEY",
                 fallbackHeader = "X-AI-Access-Key",
                 obtainUrl = shareUrl,
-                requiredScope = AgentFixScope,
+                requiredScope = AgentShareScope,
                 note = "如果没有明确传入 key，不要猜测环境变量；请打开分享链接或询问用户主站域名后，让用户一键签发临时 key。"
             },
             scope = new

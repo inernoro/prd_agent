@@ -209,7 +209,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
       const keyRes = await createAgentApiKey({
         name: `缺陷修复临时密钥 ${new Date().toLocaleString('zh-CN')}`,
         description: `缺陷批量修复临时授权，共 ${selected.length} 个缺陷`,
-        scopes: ['defect-agent:use'],
+        scopes: ['defect-agent:share'],
         ttlDays: 1,
       });
       if (!keyRes.success || !keyRes.data?.apiKey) {
