@@ -615,6 +615,12 @@ export const api = {
       scores: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores`,
       scoresStream: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores/stream`,
     },
+    automation: {
+      console: () => '/api/defect-agent/agent/automation-console',
+      ensureAuthorization: () => '/api/defect-agent/agent/authorization/ensure',
+      runs: () => '/api/defect-agent/agent/runs',
+      next: () => '/api/defect-agent/agent/next',
+    },
   },
 
   // ============ TAPD Bug Agent 缺陷自动提报 ============

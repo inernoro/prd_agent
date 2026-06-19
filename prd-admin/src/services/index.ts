@@ -243,6 +243,8 @@ import type {
   RejectDefectFixItemContract,
   CreateBatchShareContract,
   GetShareScoresContract,
+  GetDefectAutomationConsoleContract,
+  EnsureDefectAutomationAuthorizationContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IAutomationsService } from '@/services/contracts/automations';
@@ -545,6 +547,8 @@ import {
   createBatchShareReal,
   getShareScoresReal,
   rejectDefectFixItemReal,
+  getDefectAutomationConsoleReal,
+  ensureDefectAutomationAuthorizationReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { AutomationsService } from '@/services/real/automations';
@@ -1115,6 +1119,8 @@ export const acceptDefectFixItem: AcceptDefectFixItemContract = withAuth(acceptD
 export const rejectDefectFixItem: RejectDefectFixItemContract = withAuth(rejectDefectFixItemReal);
 export const createBatchShare: CreateBatchShareContract = withAuth(createBatchShareReal);
 export const getShareScores: GetShareScoresContract = withAuth(getShareScoresReal);
+export const getDefectAutomationConsole: GetDefectAutomationConsoleContract = withAuth(getDefectAutomationConsoleReal);
+export const ensureDefectAutomationAuthorization: EnsureDefectAutomationAuthorizationContract = withAuth(ensureDefectAutomationAuthorizationReal);
 
 // ─── Mobile Dashboard ───
 export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);

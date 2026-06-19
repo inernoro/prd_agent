@@ -127,8 +127,10 @@ public class ChangelogLinkedDefectsTests
         var missingScope = new AgentApiKey { IsActive = true, Scopes = ["open-api:call"], ExpiresAt = now.AddDays(1) };
         var expired = new AgentApiKey { IsActive = true, Scopes = [DefectAgentController.AgentFixScope], ExpiresAt = now.AddSeconds(-1) };
         var revoked = new AgentApiKey { IsActive = true, Scopes = [DefectAgentController.AgentFixScope], RevokedAt = now };
+        var neverExpires = new AgentApiKey { IsActive = true, Scopes = [DefectAgentController.AgentFixScope], ExpiresAt = null };
 
         Assert.True(DefectAgentController.CanReuseAutomationKey(reusable, now));
+        Assert.True(DefectAgentController.CanReuseAutomationKey(neverExpires, now));
         Assert.False(DefectAgentController.CanReuseAutomationKey(missingScope, now));
         Assert.False(DefectAgentController.CanReuseAutomationKey(expired, now));
         Assert.False(DefectAgentController.CanReuseAutomationKey(revoked, now));

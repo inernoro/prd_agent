@@ -28,13 +28,14 @@ namespace PrdAgent.Api.Controllers.Api;
 public class DefectAgentController : ControllerBase
 {
     public const string AgentFixScope = "defect-agent:use";
+    public const string AgentShareScope = "defect-agent:share";
 
     internal const int AutomationMaxDiffLines = 200;
     internal const int AutomationMaxMinutesPerDefect = 10;
 
     private const string AppKey = "defect-agent";
     private const string DefectResolveSkillName = "ai-defect-resolve";
-    private const string DefectResolveSkillMinVersion = "1.3.0";
+    private const string DefectResolveSkillMinVersion = "1.4.0";
     private const string CommitInfoStructuredKey = "提交信息";
     private const string SuggestedAutomationKeyName = "缺陷处理 Agent 授权";
     private const string DefectAcceptanceStoreName = "缺陷修复验收报告";
@@ -2529,7 +2530,7 @@ public class DefectAgentController : ControllerBase
                 env = "PRD_AGENT_API_KEY",
                 fallbackHeader = "X-AI-Access-Key",
                 obtainUrl = shareUrl,
-                requiredScope = AgentFixScope,
+                requiredScope = AgentShareScope,
                 note = "如果没有明确传入 key，不要猜测环境变量；请打开分享链接或询问用户主站域名后，让用户一键签发临时 key。"
             },
             scope = new
@@ -2578,7 +2579,7 @@ public class DefectAgentController : ControllerBase
                 env = "PRD_AGENT_API_KEY",
                 requiredScope = AgentFixScope,
                 suggestedKeyName = "缺陷处理 Agent 授权",
-                note = "长期任务必须使用带 defect-agent:use scope 的 AgentApiKey。没有可复用 Key 时，新建名为“缺陷处理 Agent 授权”的长期 Key。"
+                note = "长期任务必须使用带 defect-agent:use scope 的 AgentApiKey。没有可复用 Key 时，在缺陷页面点击“缺陷自动化”生成名为“缺陷处理 Agent 授权”的长期 Key。"
             },
             scope = new
             {
@@ -2641,7 +2642,7 @@ public class DefectAgentController : ControllerBase
                     name = SuggestedAutomationKeyName,
                     description = "缺陷自动化日常任务长期授权",
                     scopes = new[] { AgentFixScope },
-                    ttlDays = 1095,
+                    ttlDays = 0,
                 },
                 note = "后端不保存明文 K。已创建的 Key 只能复用请求方当前携带的 K；没有 K 时由用户在 AgentApiKeys 创建并保存明文。"
             },
@@ -2672,6 +2673,94 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
+    /// [自动化] 缺陷自动化控制台数据。用于缺陷页面一键查看长期授权、运行历史和每日任务配置。
+    /// </summary>
+    [Authorize]
+    [HttpGet("agent/automation-console")]
+    public async Task<IActionResult> GetAutomationConsole(
+        [FromQuery] string? projectId,
+        [FromQuery] string? teamId,
+        [FromQuery] string? status,
+        CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var now = DateTime.UtcNow;
+        var statusFilter = string.IsNullOrWhiteSpace(status)
+            ? $"{DefectStatus.Submitted},{DefectStatus.Assigned},{DefectStatus.Processing}"
+            : status.Trim();
+
+        var keyFilter = Builders<AgentApiKey>.Filter.Eq(x => x.OwnerUserId, userId)
+                        & Builders<AgentApiKey>.Filter.AnyEq(x => x.Scopes, AgentFixScope);
+        var keys = await _db.AgentApiKeys
+            .Find(keyFilter)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(20)
+            .ToListAsync(ct);
+
+        var runFilter = Builders<DefectAutomationRun>.Filter.Eq(x => x.CreatedBy, userId);
+        var recentRuns = await _db.DefectAutomationRuns
+            .Find(runFilter)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(20)
+            .ToListAsync(ct);
+        var allRuns = await _db.DefectAutomationRuns
+            .Find(runFilter)
+            .Project(x => new DefectAutomationRun
+            {
+                Id = x.Id,
+                Status = x.Status,
+                TotalFetched = x.TotalFetched,
+                TotalFixed = x.TotalFixed,
+                TotalFailed = x.TotalFailed,
+                CreatedAt = x.CreatedAt,
+                UpdatedAt = x.UpdatedAt,
+            })
+            .ToListAsync(ct);
+
+        var statuses = statusFilter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var defectFilter = Builders<DefectReport>.Filter.Eq(x => x.IsDeleted, false)
+                           & Builders<DefectReport>.Filter.In(x => x.Status, statuses)
+                           & Builders<DefectReport>.Filter.Or(
+                               Builders<DefectReport>.Filter.Eq(x => x.AssigneeId, userId),
+                               Builders<DefectReport>.Filter.Eq(x => x.AssigneeId, null),
+                               Builders<DefectReport>.Filter.Eq(x => x.AssigneeId, string.Empty));
+        if (!string.IsNullOrWhiteSpace(projectId))
+            defectFilter &= Builders<DefectReport>.Filter.Eq(x => x.ProjectId, projectId.Trim());
+        if (!string.IsNullOrWhiteSpace(teamId))
+            defectFilter &= Builders<DefectReport>.Filter.Eq(x => x.TeamId, teamId.Trim());
+        var pendingDefectCount = await _db.DefectReports.CountDocumentsAsync(defectFilter, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            domain = ResolveBaseUrl(),
+            suggestedKeyName = SuggestedAutomationKeyName,
+            requiredScope = AgentFixScope,
+            statusFilter,
+            projectId,
+            teamId,
+            authorizations = keys.Select(k => BuildAutomationAuthorizationDto(k, now)).ToList(),
+            activeAuthorization = keys.FirstOrDefault(k => CanReuseAutomationKey(k, now)) is { } active
+                ? BuildAutomationAuthorizationDto(active, now)
+                : null,
+            copyTemplate = BuildAutomationCopyTemplate(null, projectId, teamId, statusFilter),
+            connector = await BuildSourceConnectorPayloadAsync(projectId, teamId, statusFilter, ct),
+            stats = new
+            {
+                totalRuns = allRuns.Count,
+                runningRuns = allRuns.Count(x => x.Status == DefectAutomationRunStatus.Running),
+                completedRuns = allRuns.Count(x => x.Status == DefectAutomationRunStatus.Completed),
+                totalFetched = allRuns.Sum(x => x.TotalFetched),
+                totalFixed = allRuns.Sum(x => x.TotalFixed),
+                totalFailed = allRuns.Sum(x => x.TotalFailed),
+                pendingDefectCount,
+                lastRunAt = allRuns.OrderByDescending(x => x.CreatedAt).FirstOrDefault()?.CreatedAt,
+            },
+            recentRuns = recentRuns.Select(BuildAutomationRunDto).ToList(),
+            dailyPlan = BuildAutomationDailyPlanText(ResolveBaseUrl(), "{K}", projectId, teamId, statusFilter),
+        }));
+    }
+
+    /// <summary>
     /// [自动化] 确保当前登录用户有长期缺陷处理 Agent 授权。已有可用 Key 时复用；没有时新建并仅本次返回明文 K。
     /// </summary>
     [Authorize]
@@ -2680,7 +2769,7 @@ public class DefectAgentController : ControllerBase
     {
         request ??= new EnsureDefectAutomationAuthorizationRequest();
         var userId = GetUserId();
-        var ttlDays = request.TtlDays is > 0 and <= 1095 ? request.TtlDays.Value : 1095;
+        var ttlDays = request.TtlDays is > 0 and <= 1095 ? request.TtlDays.Value : 0;
         var now = DateTime.UtcNow;
 
         var existing = await _db.AgentApiKeys
@@ -2698,7 +2787,7 @@ public class DefectAgentController : ControllerBase
             return Ok(ApiResponse<object>.Ok(new
             {
                 created = false,
-                item = BuildAutomationKeyDto(existing),
+                item = BuildAutomationAuthorizationDto(existing, now),
                 apiKey = (string?)null,
                 warning = "已存在可复用的缺陷处理 Agent 授权。后端不保存明文 K；如果本地没有保存明文，请设置 forceNew=true 重新签发。",
                 connector = await BuildSourceConnectorPayloadAsync(request.ProjectId, request.TeamId, request.Status, ct),
@@ -2716,9 +2805,11 @@ public class DefectAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             created = true,
-            item = BuildAutomationKeyDto(key),
+            item = BuildAutomationAuthorizationDto(key, now),
             apiKey = plaintext,
-            warning = "这是 Key 唯一一次明文显示，请保存到定时任务的 K 配置中。",
+            copyTemplate = BuildAutomationCopyTemplate(plaintext, request.ProjectId, request.TeamId, request.Status),
+            dailyPlan = BuildAutomationDailyPlanText(ResolveBaseUrl(), plaintext, request.ProjectId, request.TeamId, request.Status),
+            warning = "这是 Key 唯一一次明文显示，已按缺陷自动化日常任务生成长期授权；请保存到定时任务的 K 配置中。",
             connector = await BuildSourceConnectorPayloadAsync(request.ProjectId, request.TeamId, request.Status, ct),
         }));
     }
@@ -3499,6 +3590,125 @@ public class DefectAgentController : ControllerBase
             key.LastUsedAt,
             key.TotalRequests,
         };
+
+    private static object BuildAutomationAuthorizationDto(AgentApiKey key, DateTime now)
+        => new
+        {
+            key.Id,
+            key.Name,
+            key.Description,
+            key.KeyPrefix,
+            key.Scopes,
+            key.IsActive,
+            key.CreatedAt,
+            key.ExpiresAt,
+            neverExpires = key.ExpiresAt == null,
+            key.LastUsedAt,
+            key.TotalRequests,
+            key.RevokedAt,
+            canUse = CanReuseAutomationKey(key, now),
+            status = key.RevokedAt.HasValue || !key.IsActive
+                ? "revoked"
+                : key.ExpiresAt.HasValue && key.ExpiresAt <= now
+                    ? "expired"
+                    : CanReuseAutomationKey(key, now)
+                        ? "active"
+                        : "invalid",
+        };
+
+    private static object BuildAutomationRunDto(DefectAutomationRun run)
+        => new
+        {
+            run.Id,
+            run.Domain,
+            run.AgentApiKeyId,
+            run.AgentApiKeyName,
+            run.RequiredScope,
+            run.TriggerType,
+            run.ProjectId,
+            run.TeamId,
+            run.StatusFilter,
+            run.Status,
+            run.CurrentDefectId,
+            run.CurrentDefectNo,
+            run.CurrentDefectTitle,
+            run.TotalFetched,
+            run.TotalFixed,
+            run.TotalFailed,
+            run.LastFailureReason,
+            run.LastFailurePhase,
+            run.StartedAt,
+            run.CompletedAt,
+            run.CreatedAt,
+            run.UpdatedAt,
+            items = run.Items
+                .OrderByDescending(x => x.UpdatedAt)
+                .Take(10)
+                .Select(x => new
+                {
+                    x.DefectId,
+                    x.DefectNo,
+                    x.DefectTitle,
+                    x.Status,
+                    x.Attempts,
+                    x.CommitSha,
+                    x.ShortSha,
+                    x.CommitMessage,
+                    x.Branch,
+                    x.PreviewUrl,
+                    x.VisualReportUrl,
+                    x.FailureReason,
+                    x.FailurePhase,
+                    x.StartedAt,
+                    x.CompletedAt,
+                    x.UpdatedAt,
+                })
+                .ToList(),
+        };
+
+    private object BuildAutomationCopyTemplate(string? plaintextKey, string? projectId, string? teamId, string? status)
+    {
+        var domain = ResolveBaseUrl();
+        var statusFilter = string.IsNullOrWhiteSpace(status)
+            ? $"{DefectStatus.Submitted},{DefectStatus.Assigned},{DefectStatus.Processing}"
+            : status.Trim();
+        return new
+        {
+            domain,
+            key = string.IsNullOrWhiteSpace(plaintextKey) ? "{K}" : plaintextKey,
+            requiredScope = AgentFixScope,
+            suggestedKeyName = SuggestedAutomationKeyName,
+            expires = "never",
+            projectId,
+            teamId,
+            status = statusFilter,
+            skill = DefectResolveSkillName,
+            command = $"/{DefectResolveSkillName} domain={domain} K={(string.IsNullOrWhiteSpace(plaintextKey) ? "{K}" : plaintextKey)} status={statusFilter}",
+            dailyPlan = BuildAutomationDailyPlanText(domain, string.IsNullOrWhiteSpace(plaintextKey) ? "{K}" : plaintextKey, projectId, teamId, statusFilter),
+        };
+    }
+
+    private static string BuildAutomationDailyPlanText(string domain, string key, string? projectId, string? teamId, string? status)
+    {
+        var statusFilter = string.IsNullOrWhiteSpace(status)
+            ? $"{DefectStatus.Submitted},{DefectStatus.Assigned},{DefectStatus.Processing}"
+            : status.Trim();
+        var lines = new List<string>
+        {
+            "每日缺陷自动修复计划",
+            "",
+            $"domain: {domain}",
+            $"K: {key}",
+            $"scope: {AgentFixScope}",
+            $"status: {statusFilter}",
+        };
+        if (!string.IsNullOrWhiteSpace(projectId)) lines.Add($"projectId: {projectId.Trim()}");
+        if (!string.IsNullOrWhiteSpace(teamId)) lines.Add($"teamId: {teamId.Trim()}");
+        lines.Add("");
+        lines.Add("执行要求：使用 ai-defect-resolve 技能，每次只拉取并处理一个缺陷；轻量缺陷自动评论、修复、验证、提交 commit、回写 commit-info、标记已修复，然后继续下一条；重量级或无法自测的缺陷评论阻塞原因并停止当前缺陷。正式发布后再执行视觉验收并通知提交人。");
+        lines.Add("每日更新要求：日报中列出本轮拉取缺陷、修复 commit、预览地址、阻塞项和待验收项。");
+        return string.Join("\n", lines);
+    }
 
     internal static bool CanReuseAutomationKey(AgentApiKey? key, DateTime now)
     {
