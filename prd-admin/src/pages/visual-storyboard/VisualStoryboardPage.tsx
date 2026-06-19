@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Clapperboard, Film, Maximize2, Play, RefreshCw, Sparkles, Wand2, X } from 'lucide-react';
 import { PageHeader } from '@/components/design/PageHeader';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -674,7 +675,7 @@ export default function VisualStoryboardPage() {
         </div>
       </GlassCard>
 
-      {preview.open ? (
+      {preview.open ? createPortal(
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center p-6"
           style={{ background: 'rgba(0,0,0,0.7)' }}
@@ -696,7 +697,8 @@ export default function VisualStoryboardPage() {
             style={{ objectFit: 'contain' }}
             onClick={(e) => e.stopPropagation()}
           />
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );
