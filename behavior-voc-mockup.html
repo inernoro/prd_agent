@@ -44,9 +44,9 @@
   .tm-cell { cursor:pointer; transition:filter .12s; }
   .tm-cell:hover rect.fill { filter:brightness(1.25); }
   .grp-rect { fill:none; stroke:rgba(255,255,255,0.10); stroke-width:1; }
-  .grp-lbl { fill:rgba(236,236,239,0.55); font-size:10px; font-weight:600; pointer-events:none; }
-  .cell-lbl { fill:#fff; font-size:9.5px; font-weight:600; pointer-events:none; }
-  .cell-sub { fill:rgba(255,255,255,0.7); font-size:8.5px; pointer-events:none; }
+  .grp-lbl { fill:rgba(236,236,239,0.82); font-size:10.5px; font-weight:700; pointer-events:none; paint-order:stroke; stroke:rgba(0,0,0,0.6); stroke-width:2.5px; letter-spacing:.3px; }
+  .cell-lbl { fill:#fff; font-size:10px; font-weight:600; pointer-events:none; paint-order:stroke; stroke:rgba(0,0,0,0.55); stroke-width:2.5px; }
+  .cell-sub { fill:rgba(255,255,255,0.9); font-size:9px; pointer-events:none; paint-order:stroke; stroke:rgba(0,0,0,0.55); stroke-width:2px; }
   @keyframes cellGlow { 0%,100%{ stroke-opacity:.35; } 50%{ stroke-opacity:1; } }
 
   /* right column */
@@ -246,9 +246,8 @@
   // ---------- TREEMAP (squarified) ----------
   // seeded rng for deterministic fillers
   let _s=20260619; const rnd=()=>{ _s=(_s*1103515245+12345)&0x7fffffff; return _s/0x7fffffff; };
-  // healthy muted palette (cool, rich but calm)
-  const HUES=[172,196,210,232,258,150,38,16];
-  function healthyFill(){ const h=HUES[Math.floor(rnd()*HUES.length)]; const s=22+rnd()*16; const l=20+rnd()*12; return `hsl(${h} ${s|0}% ${l|0}%)`; }
+  // healthy "cool calm sea": each group one hue, cells = lighter shades of it (Tableau/treemap 标准做法)
+  function healthyFill(hue,li){ const s=33+rnd()*9; const l=28+(li%5)*3.5+rnd()*4; return `hsl(${hue} ${s|0}% ${l.toFixed(0)}%)`; }
   const PAINFILL={ err:C.red, churn:C.red, slow:C.amber, feedback:C.violet };
   function painFill(p){ if(p.status==='fixing') return C.blue; return PAINFILL[p.channel]; }
 
@@ -256,31 +255,31 @@
   function leaf(name,v,opts={}){ return { name, value:v, ...opts }; }
   function fillers(n,minV,maxV){ const a=[]; for(let i=0;i<n;i++) a.push(leaf('', minV+rnd()*(maxV-minV))); return a; }
   const GROUPS=[
-    { name:'视觉创作', leaves:[
+    { name:'视觉创作', hue:186, leaves:[
       leaf('批量生图',2400,{painId:'p1',ch:'churn',label:'批量生图',sub:'9.1% 报错'}),
       leaf('图片理解',1700), leaf('分镜编排',1300),
-      leaf('视频生成',1100,{ch:'slow',amberSoft:true}),
+      leaf('视频生成',1100),
       leaf('文章标记',900,{painId:'p3',ch:'err',label:'文章标记',sub:'507 报错'}),
       ...fillers(12,120,500) ]},
-    { name:'周报管理', leaves:[
+    { name:'周报管理', hue:150, leaves:[
       leaf('标记已读',1400,{painId:'p2',ch:'err',label:'标记已读',sub:'403×316'}),
       leaf('海报生成',1000), leaf('周报汇总',1300),
       leaf('海报导出',700,{painId:'p8',ch:'feedback',label:'海报导出',sub:'水印错乱'}),
       ...fillers(8,120,420) ]},
-    { name:'产品管理', leaves:[ leaf('文档对齐',2400), leaf('缺失检测',1700), ...fillers(9,150,520) ]},
-    { name:'缺陷管理', leaves:[
+    { name:'产品管理', hue:214, leaves:[ leaf('文档对齐',2400), leaf('缺失检测',1700), ...fillers(9,150,520) ]},
+    { name:'缺陷管理', hue:234, leaves:[
       leaf('缺陷分析',1500,{painId:'p6',ch:'err',label:'缺陷分析',sub:'选A给B'}),
       leaf('要素抽取',1100), ...fillers(8,120,400) ]},
-    { name:'知识库', leaves:[
+    { name:'知识库', hue:132, leaves:[
       leaf('文档搜索',900,{painId:'p4',ch:'feedback',label:'搜索不准'}),
       leaf('上传解析',1100), leaf('引用网络',800), ...fillers(7,120,360) ]},
-    { name:'文学创作', leaves:[ leaf('正文创作',1900), leaf('配图生成',1400), ...fillers(8,120,420) ]},
-    { name:'更新/资讯', leaves:[
+    { name:'文学创作', hue:252, leaves:[ leaf('正文创作',1900), leaf('配图生成',1400), ...fillers(8,120,420) ]},
+    { name:'更新/资讯', hue:170, leaves:[
       leaf('GitHub日志',900,{painId:'p5',ch:'slow',label:'更新中心',sub:'36s 慢',fixing:true}),
       leaf('AI资讯',700,{painId:'p7',ch:'slow',label:'AI资讯',sub:'63.6s'}),
       leaf('更新总结',800), ...fillers(6,120,340) ]},
-    { name:'核心服务', leaves:[ leaf('LLM Gateway',3000), leaf('会话 Worker',2000), leaf('模型池',1500), leaf('权限 RBAC',1300), ...fillers(10,150,600) ]},
-    { name:'基础设施', leaves:[ leaf('MongoDB',4000), leaf('Redis',2500), leaf('CDS',900), ...fillers(8,150,700) ]},
+    { name:'核心服务', hue:222, leaves:[ leaf('LLM Gateway',3000), leaf('会话 Worker',2000), leaf('模型池',1500), leaf('权限 RBAC',1300), ...fillers(10,150,600) ]},
+    { name:'基础设施', hue:200, leaves:[ leaf('MongoDB',4000), leaf('Redis',2500), leaf('CDS',900), ...fillers(8,150,700) ]},
   ];
   GROUPS.forEach(g=> g.value=g.leaves.reduce((s,l)=>s+l.value,0));
 
@@ -339,9 +338,9 @@
         rect.setAttribute('x',r.x+0.5); rect.setAttribute('y',r.y+0.5);
         rect.setAttribute('width',Math.max(0,r.w-1)); rect.setAttribute('height',Math.max(0,r.h-1));
         rect.setAttribute('rx',2);
-        let fill = isPain?painFill(pain):(lf.amberSoft?'hsl(40 40% 26%)':healthyFill());
+        let fill = isPain?painFill(pain):healthyFill(g.hue, li);
         rect.setAttribute('fill',fill);
-        rect.setAttribute('stroke','rgba(0,0,0,0.45)'); rect.setAttribute('stroke-width','1');
+        rect.setAttribute('stroke','rgba(255,255,255,0.07)'); rect.setAttribute('stroke-width','1');
         cell.appendChild(rect);
         // pain: glowing pulse border + label
         if(isPain){
@@ -352,6 +351,7 @@
           glow.setAttribute('stroke', pain.corro?C.violet:'#fff'); glow.setAttribute('stroke-width', pain.corro?2:1.4);
           glow.style.animation=`cellGlow ${2+li*0.2}s ease-in-out infinite`;
           cell.appendChild(glow);
+          cell.style.filter=`drop-shadow(0 0 5px ${fill})`;
         }
         // labels for pain cells or large healthy cells
         if(r.w>46 && r.h>20){
