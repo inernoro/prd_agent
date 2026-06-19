@@ -8,3 +8,4 @@
 | feat | prd-api | 缺陷来源连接器返回单缺陷和轻量修复机读策略 |
 | docs | prd-api | 更新 ai-defect-resolve 技能到 1.3.0 |
 | fix | cds | API 预览服务补充就绪超时配置，避免冷启动被误判为 503 |
+| fix | cds | Admin 静态预览改用锁定的 serve 依赖启动，避免 npx 动态安装后端口未监听 |

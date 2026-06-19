@@ -74,7 +74,7 @@ x-cds-deploy-modes:
         pnpm config set store-dir /pnpm/store &&
         pnpm install --frozen-lockfile &&
         sh scripts/cds-vite-build.sh &&
-        npx -y serve -s dist -l tcp://0.0.0.0:8000
+        pnpm exec serve -s dist -l tcp://0.0.0.0:8000
 services:
   # ── App Services (有相对路径 volume mount) ──
 
