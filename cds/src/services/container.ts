@@ -480,13 +480,6 @@ export class ContainerService {
     }
     if (!mergedEnv['Jwt__Issuer']) mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
-    if (entry.branch) {
-      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
-    }
-    if (entry.githubCommitSha) {
-      mergedEnv['VITE_BUILD_ID'] = entry.githubCommitSha.slice(0, 12);
-    }
-
     const isNodeContainer = /\bnode:/.test(profile.dockerImage);
     if (isNodeContainer) {
       mergedEnv['PNPM_HOME'] = mergedEnv['PNPM_HOME'] || '/pnpm';
@@ -499,6 +492,24 @@ export class ContainerService {
 
     if (profile.env) {
       Object.assign(mergedEnv, profile.env);
+    }
+
+    const deployCommit = entry.pinnedCommit || entry.githubCommitSha || entry.lastDeployDispatchCommitSha;
+    if (entry.branch) {
+      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
+    }
+    if (deployCommit) {
+      // 平台版本元数据必须覆盖项目 env，供发布中心和 /api/version 判断当前部署 commit。
+      mergedEnv['GIT_COMMIT'] = deployCommit;
+      mergedEnv['COMMIT_SHA'] = deployCommit;
+      mergedEnv['GITHUB_SHA'] = deployCommit;
+      mergedEnv['SOURCE_VERSION'] = deployCommit;
+      mergedEnv['CDS_COMMIT_SHA'] = deployCommit;
+      mergedEnv['VITE_BUILD_ID'] = deployCommit.slice(0, 12);
+    }
+    const deployTime = entry.lastDeployDispatchAt || entry.lastPushAt || entry.createdAt;
+    if (deployTime) {
+      mergedEnv['CDS_BUILD_TIME'] = deployTime;
     }
 
     const isolatedEnv = applyPerBranchDbIsolation(mergedEnv, profile.dbScope, entry.branch);

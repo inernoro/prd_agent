@@ -74,6 +74,7 @@ describe('ContainerService', () => {
       await service.runService({
         ...makeEntry(),
         githubCommitSha: '47c74c1f5aabbccddeeff0011223344556677889',
+        lastDeployDispatchAt: '2026-06-20T00:00:00.000Z',
       }, makeProfile(), makeService(), undefined, { JWT_SECRET: 'project-jwt-secret' });
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'));
@@ -98,6 +99,39 @@ describe('ContainerService', () => {
       expect(envFileContent).toContain('Jwt__Issuer=prdagent');
       expect(envFileContent).toContain('VITE_GIT_BRANCH=feature/a');
       expect(envFileContent).toContain('VITE_BUILD_ID=47c74c1f5aab');
+      expect(envFileContent).toContain('GIT_COMMIT=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('COMMIT_SHA=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('GITHUB_SHA=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('SOURCE_VERSION=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('CDS_COMMIT_SHA=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('CDS_BUILD_TIME=2026-06-20T00:00:00.000Z');
+
+      writeSpy.mockRestore();
+    });
+
+    it('uses platform commit metadata instead of project env overrides', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid-meta', stderr: '', exitCode: 0 }));
+      const writeSpy = vi.spyOn(fs, 'writeFileSync');
+
+      await service.runService({
+        ...makeEntry(),
+        githubCommitSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      }, makeProfile({
+        env: {
+          GIT_COMMIT: 'project-stale',
+          CDS_COMMIT_SHA: 'project-stale',
+          VITE_BUILD_ID: 'project-stale',
+        },
+      }), makeService());
+
+      const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(envFileContent).toContain('GIT_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      expect(envFileContent).toContain('CDS_COMMIT_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      expect(envFileContent).toContain('VITE_BUILD_ID=aaaaaaaaaaaa');
+      expect(envFileContent).not.toContain('GIT_COMMIT=project-stale');
+      expect(envFileContent).not.toContain('CDS_COMMIT_SHA=project-stale');
 
       writeSpy.mockRestore();
     });
