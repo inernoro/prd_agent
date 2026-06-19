@@ -42,6 +42,7 @@ const INCLUDE = new Set([
   'find-skills',             // 通用技能发现
   'code-hygiene',            // 通用代码卫生方法论
   'conflict-resolution',     // 通用 git 冲突解决
+  'acceptance-scenario-orchestrator', // 通用验收场景编排
   'acceptance-checklist',    // 通用 UAT 清单
   'create-visual-test-to-kb',// 通用视觉验收取证 + 报告归档
   'task-handoff-checklist',  // 通用交接清单
@@ -51,6 +52,7 @@ const INCLUDE = new Set([
 // 卡片标题展示这个，像 findmapskills 那样「英文 · 中文一句话」。
 const DISPLAY_NAME = {
   'acceptance-checklist': 'acceptance-checklist · 真人验收清单',
+  'acceptance-scenario-orchestrator': 'acceptance-scenario-orchestrator · 验收场景编排',
   'code-hygiene': 'code-hygiene · 代码卫生体检',
   'conflict-resolution': 'conflict-resolution · Git 冲突解决',
   'create-skill-file': 'create-skill-file · 技能文件生成',
@@ -85,6 +87,7 @@ const TAG_RULES = [
 const TAG_OVERRIDE = {
   laowang: ['精英'],
   findmapskills: ['技能', '精英'],
+  'acceptance-scenario-orchestrator': ['分析'],
   'feature-emerge': ['创意'],
   'release-version': ['部署'],
   bridge: ['工具'],
