@@ -255,6 +255,9 @@ export default function VisualStoryboardPage() {
   const regenerateScene = async (sceneIndex: number) => {
     const s = scenes.find((x) => x.index === sceneIndex);
     if (!s || !activeModel) return;
+    // 该镜正在转视频时不允许重绘：单镜重绘不会 bump genRef，旧 animateScene 轮询会用上一帧的成片
+    // 覆盖刚重绘的新关键帧（Codex review）。等视频结束（done/error）后再重绘。
+    if (s.vidStatus === 'running') return;
     await renderKeyframes([{ sceneIndex, prompt: s.keyframePrompt }]);
   };
 
@@ -638,8 +641,8 @@ export default function VisualStoryboardPage() {
                             <button
                               type="button"
                               onClick={() => regenerateScene(s.index)}
-                              disabled={s.kfStatus === 'running'}
-                              className="inline-flex items-center gap-1 text-[11px] rounded-[9px] px-2 h-7"
+                              disabled={s.kfStatus === 'running' || s.vidStatus === 'running'}
+                              className="inline-flex items-center gap-1 text-[11px] rounded-[9px] px-2 h-7 disabled:opacity-50"
                               style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
                             >
                               <RefreshCw size={11} /> 重绘
