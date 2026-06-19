@@ -30,6 +30,8 @@ type SceneVM = {
   /** 渲染该关键帧时所用画幅——图生视频须沿用它，避免用户改画幅后用旧帧出错比例 */
   kfAspect?: Aspect;
   kfError?: string | null;
+  /** 关键帧提示词在出图后被编辑过、当前帧已与提示词不一致：转视频前必须重绘，否则会用旧帧 + 新词出错配视频 */
+  kfDirty?: boolean;
   editing?: boolean;
   /** image-to-video「动起来」状态 */
   vidStatus?: 'idle' | 'running' | 'done' | 'error';
@@ -147,7 +149,7 @@ export default function VisualStoryboardPage() {
     setScenes((prev) =>
       prev.map((s) =>
         targets.some((t) => t.sceneIndex === s.index)
-          ? { ...s, kfStatus: 'running', kfError: null, vidStatus: 'idle', vidUrl: null, vidError: null, vidPhase: null }
+          ? { ...s, kfStatus: 'running', kfError: null, kfDirty: false, vidStatus: 'idle', vidUrl: null, vidError: null, vidPhase: null }
           : s,
       ),
     );
@@ -210,7 +212,7 @@ export default function VisualStoryboardPage() {
           // 图生视频首帧需要公开 HTTPS 链接（base64 不可用）：优先原图 COS URL
           const publicUrl = /^https?:/.test(String(originalUrl)) ? originalUrl : /^https?:/.test(String(url)) ? url : null;
           setScenes((prev) =>
-            prev.map((s) => (s.index === tgt.sceneIndex ? { ...s, kfStatus: 'done', kfUrl: src, kfPublicUrl: publicUrl, kfAspect: myAspect } : s)),
+            prev.map((s) => (s.index === tgt.sceneIndex ? { ...s, kfStatus: 'done', kfUrl: src, kfPublicUrl: publicUrl, kfAspect: myAspect, kfDirty: false } : s)),
           );
         } else if (t === 'imageError') {
           const itemIndex = Number(o.itemIndex ?? -1);
@@ -293,6 +295,10 @@ export default function VisualStoryboardPage() {
   const animateScene = async (sceneIndex: number) => {
     const s = scenes.find((x) => x.index === sceneIndex);
     if (!s || s.kfStatus !== 'done') return;
+    if (s.kfDirty) {
+      toast.warning('关键帧提示词已修改，请先「重绘」这一镜，再转视频（否则会用旧帧配新词）');
+      return;
+    }
     if (s.vidStatus === 'running') return; // 同镜正在转视频，避免重复触发
     if (animatingRef.current.has(sceneIndex)) return; // 同步去重：vidStatus 落地前的连点也拦住，防重复提交后端 run
     if (!s.kfPublicUrl) {
@@ -650,7 +656,18 @@ export default function VisualStoryboardPage() {
                             <textarea
                               value={s.keyframePrompt}
                               onChange={(e) =>
-                                setScenes((prev) => prev.map((x) => (x.index === s.index ? { ...x, keyframePrompt: e.target.value } : x)))
+                                setScenes((prev) =>
+                                  prev.map((x) =>
+                                    x.index === s.index
+                                      ? {
+                                          ...x,
+                                          keyframePrompt: e.target.value,
+                                          // 已出图/出图中时改词 → 标记 dirty，转视频前强制重绘，避免旧帧配新词
+                                          kfDirty: x.kfStatus === 'done' || x.kfStatus === 'running' ? true : x.kfDirty,
+                                        }
+                                      : x,
+                                  ),
+                                )
                               }
                               className="w-full min-h-[64px] rounded-[10px] px-2 py-1.5 text-xs outline-none resize-y"
                               style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}

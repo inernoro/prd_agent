@@ -18,3 +18,5 @@
 | fix | prd-api | LlmGateway.StreamAsync 非 2xx 分支补额度检测：原先只有非流式 SendAsync/Raw 路径调 IsQuotaExceeded/HandleQuotaExceeded，导致 toolbox/defect/literary/polish 等主聊天(走 StreamAsync)遇 OpenRouter 402 / Key limit exceeded 不触发 admin 额度告警、不透传额度文案，现对齐（Codex review） |
 | fix | prd-admin | 分镜台「动起来」补同步去重：vidStatus='running' 是异步 state，两次快速点击会在落地前都通过守卫、重复提交后端视频 run + 叠加轮询，改用 animatingRef Set 同步拦截（Bugbot review） |
 | fix | prd-admin | 分镜台挂载拉取生图模型补 alive 守卫：卸载/重挂后丢弃过期响应，不在已卸载组件上 setPools/setModelsLoading（Bugbot review） |
+| fix | prd-api | 额度告警改 await 写入：IPoolFailoverNotifier 为 Scoped、持 scoped MongoDbContext，原 fire-and-forget 在 request/stream scope 释放后 upsert 会被取消/off-thread 失败，恰在 402/额度用尽时丢告警，现 await 确保 scope 存活期内写完（Codex review） |
+| fix | prd-admin | 分镜台关键帧提示词改后标 kfDirty：出图后编辑提示词不再静默沿用旧帧，转视频前强制重绘，避免「旧首帧 + 新提示词」出错配视频（Codex review） |

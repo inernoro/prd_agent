@@ -162,7 +162,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var errorMsg = TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}";
                 if (IsQuotaExceeded((int)response.StatusCode, errorMsg))
                 {
-                    var (qCode, qMsg) = HandleQuotaExceeded(resolution.ActualPlatformName, errorMsg);
+                    var (qCode, qMsg) = await HandleQuotaExceededAsync(resolution.ActualPlatformName, errorMsg);
                     return GatewayResponse.Fail(qCode, qMsg, (int)response.StatusCode);
                 }
                 return GatewayResponse.Fail("LLM_ERROR", errorMsg, (int)response.StatusCode);
@@ -327,7 +327,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // 同样需要触发 admin 额度通知，不能只在非流式路径生效（Codex review）。
                 if (IsQuotaExceeded((int)response.StatusCode, errorMsg))
                 {
-                    var (_, qMsg) = HandleQuotaExceeded(resolution.ActualPlatformName, errorMsg);
+                    var (_, qMsg) = await HandleQuotaExceededAsync(resolution.ActualPlatformName, errorMsg);
                     yield return GatewayStreamChunk.Fail(qMsg);
                     yield break;
                 }
@@ -1028,7 +1028,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 var errorMsg = TryExtractErrorMessage(responseBody!) ?? $"HTTP {(int)response.StatusCode}";
                 var (rawCode, rawMsg) = IsQuotaExceeded((int)response.StatusCode, errorMsg)
-                    ? HandleQuotaExceeded(resolution.ActualPlatformName, errorMsg)
+                    ? await HandleQuotaExceededAsync(resolution.ActualPlatformName, errorMsg)
                     : ("LLM_ERROR", errorMsg);
                 return new GatewayRawResponse
                 {
@@ -1223,17 +1223,21 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <summary>
-    /// 命中额度用尽时：发专门错误码 + 触发主动站内告警（去重，复用 IPoolFailoverNotifier）。fire-and-forget，不阻断热路径。
+    /// 命中额度用尽时：发专门错误码 + 触发主动站内告警（去重，复用 IPoolFailoverNotifier）。
+    /// 必须 await——IPoolFailoverNotifier 是 Scoped、持有 scoped MongoDbContext，fire-and-forget 在
+    /// request/stream scope 释放后 upsert 会被取消或 off-thread 失败，恰在 402/额度用尽时丢告警（Codex review）。
+    /// 用 CancellationToken.None 确保 scope 存活期内写完，告警失败不阻断主流程。
     /// </summary>
-    private (string Code, string Message) HandleQuotaExceeded(string? platformName, string rawMessage)
+    private async Task<(string Code, string Message)> HandleQuotaExceededAsync(string? platformName, string rawMessage)
     {
         var raw = rawMessage.Length > 220 ? rawMessage.Substring(0, 220) + "…" : rawMessage;
         var friendly = $"大模型平台额度已用尽或被限额，请充值或更换 API Key。上游信息：{raw}";
         try
         {
-            _ = _failoverNotifier?.NotifyQuotaExceededAsync(platformName ?? "未知平台", friendly, CancellationToken.None);
+            if (_failoverNotifier != null)
+                await _failoverNotifier.NotifyQuotaExceededAsync(platformName ?? "未知平台", friendly, CancellationToken.None);
         }
-        catch { /* 告警失败不影响主流程 */ }
+        catch (Exception ex) { _logger.LogWarning(ex, "[LlmGateway] 额度告警写入失败（不阻断主流程）"); }
         _logger.LogWarning("[LlmGateway] 检测到额度用尽/限额: platform={Platform} msg={Msg}", platformName, raw);
         return ("LLM_QUOTA_EXCEEDED", friendly);
     }
