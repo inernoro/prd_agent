@@ -1201,9 +1201,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         var m = (rawMessage ?? string.Empty).ToLowerInvariant();
 
-        // 限流(429 / "Rate limit exceeded" / 每分钟请求数)是节流，不是额度用尽——先排除，
-        // 否则 "Rate limit exceeded" 含 "limit exceeded" 子串会被误判为额度、错误触发额度告警。
-        if (statusCode == 429) return false;
+        // 限流（节流）排除：只把「文本明确指向速率/每分钟请求数」的失败排除掉，不能用「429 一律 false」短路——
+        // 部分供应商（如 OpenAI insufficient_quota）也用 429 返回额度耗尽，需让后面的 quota/credit/balance 文本判定
+        // 继续生效，否则这些额度失败会走泛化 LLM_ERROR、漏掉额度告警（Codex review）。
+        // "Rate limit exceeded" 含 "limit exceeded" 子串，由下面的 rate-limit 文本判定先行排除，不会误判为额度。
         if (m.Contains("rate limit") || m.Contains("rate-limit")
             || m.Contains("requests per") || m.Contains("per minute")
             || m.Contains("too many requests"))

@@ -195,6 +195,7 @@ public class ImageGenController : ControllerBase
             + "- motionPrompt：英文运动 prompt，描述这张图动起来时的镜头运动与主体动作（10-25 词），预留给后续 image-to-video\n"
             + "- duration：该镜头建议时长秒数（整数 3-8）\n\n"
             + "整组镜头视觉风格必须高度统一" + styleLine + "。每个 keyframePrompt 里都要体现这个统一风格，保证人物/色调/质感连贯。\n\n"
+            + "禁止使用任何 emoji 字符（title / topic / keyframePrompt / motionPrompt 全部不得包含 emoji）。\n\n"
             + "只输出 JSON，不要解释、不要 markdown 代码块：\n"
             + "{\"title\":\"整组分镜中文标题(不超过14字)\",\"style\":\"英文统一风格描述\",\"scenes\":[{\"topic\":\"..\",\"keyframePrompt\":\"..\",\"motionPrompt\":\"..\",\"duration\":5}]}";
 
@@ -299,8 +300,8 @@ public class ImageGenController : ControllerBase
 
             var res = new StoryboardScriptResponse
             {
-                Title = obj["title"]?.GetValue<string>()?.Trim() ?? "未命名分镜",
-                Style = obj["style"]?.GetValue<string>()?.Trim() ?? string.Empty,
+                Title = StripEmoji(obj["title"]?.GetValue<string>()?.Trim()) is { Length: > 0 } t ? t : "未命名分镜",
+                Style = StripEmoji(obj["style"]?.GetValue<string>()?.Trim()),
                 Scenes = new List<StoryboardSceneDto>()
             };
 
@@ -308,7 +309,7 @@ public class ImageGenController : ControllerBase
             {
                 var it = arr[i]?.AsObject();
                 if (it == null) continue;
-                var kf = it["keyframePrompt"]?.GetValue<string>()?.Trim() ?? string.Empty;
+                var kf = StripEmoji(it["keyframePrompt"]?.GetValue<string>()?.Trim());
                 if (string.IsNullOrWhiteSpace(kf)) continue;
 
                 var dur = 5;
@@ -331,9 +332,9 @@ public class ImageGenController : ControllerBase
                 res.Scenes.Add(new StoryboardSceneDto
                 {
                     Index = res.Scenes.Count,
-                    Topic = it["topic"]?.GetValue<string>()?.Trim() ?? $"镜头 {res.Scenes.Count + 1}",
+                    Topic = StripEmoji(it["topic"]?.GetValue<string>()?.Trim()) is { Length: > 0 } tp ? tp : $"镜头 {res.Scenes.Count + 1}",
                     KeyframePrompt = kf,
-                    MotionPrompt = it["motionPrompt"]?.GetValue<string>()?.Trim() ?? string.Empty,
+                    MotionPrompt = StripEmoji(it["motionPrompt"]?.GetValue<string>()?.Trim()),
                     Duration = dur
                 });
             }
@@ -341,6 +342,19 @@ public class ImageGenController : ControllerBase
             return res.Scenes.Count > 0 ? res : null;
         }
         catch { return null; }
+    }
+
+    // 防御性去除 emoji：CLAUDE.md/AGENTS.md §0 禁止 UI 渲染输出含 emoji，分镜 title/topic/prompt 由 LLM 生成，
+    // 即便已在 system prompt 里要求无 emoji 也不赌模型自觉，落库/返回前再剥一层（Codex review）。
+    // 覆盖：星平面字符(代理对，绝大多数 emoji)、杂项符号/dingbats/箭头/几何符号块、变体选择符、keycap 组合符。
+    private static readonly System.Text.RegularExpressions.Regex EmojiRegex = new(
+        @"[\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2190-\u21FF\u2300-\u27BF\u2B00-\u2BFF\uFE0F\u20E3]",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string StripEmoji(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return string.Empty;
+        return EmojiRegex.Replace(s, string.Empty).Trim();
     }
 
     /// <summary>

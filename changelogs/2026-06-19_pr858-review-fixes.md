@@ -21,3 +21,5 @@
 | fix | prd-api | 额度告警改 await 写入：IPoolFailoverNotifier 为 Scoped、持 scoped MongoDbContext，原 fire-and-forget 在 request/stream scope 释放后 upsert 会被取消/off-thread 失败，恰在 402/额度用尽时丢告警，现 await 确保 scope 存活期内写完（Codex review） |
 | fix | prd-admin | 分镜台关键帧提示词改后标 kfDirty：出图后编辑提示词不再静默沿用旧帧，转视频前强制重绘，避免「旧首帧 + 新提示词」出错配视频（Codex review） |
 | fix | prd-admin | 分镜台「动起来」锁改为按 genRef 代次记账：重新生成分镜后旧板未结束的视频轮询不再占用相同 sceneIndex 导致新板动起来静默无响应；旧轮询 finally 仅在仍持本代次锁时释放，不会清掉新板锁（Bugbot review） |
+| fix | prd-api | IsQuotaExceeded 去掉「429 一律 false」短路：部分供应商(如 OpenAI insufficient_quota)用 429 返回额度耗尽，原短路使其漏掉额度告警走泛化 LLM_ERROR，改为只按速率文本排除限流，额度文本(quota/credit/balance)继续判定（Codex review） |
+| fix | prd-api | 分镜 title/topic/keyframePrompt/motionPrompt 落库前剥 emoji + system prompt 加无 emoji 约束：LLM 返回的标题会直接渲染进页头，违反 CLAUDE.md §0 禁 emoji（Codex review） |
