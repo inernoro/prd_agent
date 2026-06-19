@@ -82,9 +82,10 @@ export default function VisualStoryboardPage() {
   // 使先前批次（或上一次重绘）对该镜的 SSE 回填与流结束兜底变成 no-op——
   // 避免「批次仍在跑、其中一镜被单独重绘」时批次兜底把正在重绘的镜误判为失败。
   const sceneKfGen = useRef<Map<number, number>>(new Map());
-  // 正在「动起来」(图生视频)的镜头集合：vidStatus='running' 是异步 state，两次快速点击会在它落地前都通过守卫，
-  // 用同步 ref 集合去重，避免同镜重复提交后端视频 run + 叠加轮询。
-  const animatingRef = useRef<Set<number>>(new Set());
+  // 正在「动起来」(图生视频)的镜头锁：sceneIndex -> 持锁的 genRef 代次。vidStatus='running' 是异步 state，
+  // 两次快速点击会在它落地前都通过守卫，用同步 ref 去重防重复提交。按代次记锁，使「重新生成分镜」后新板能
+  // 立即动起来（旧代次残留锁被顶替），且旧轮询的 finally 只在仍持本代次锁时才释放，不会清掉新板的锁。
+  const animatingRef = useRef<Map<number, number>>(new Map());
 
   const aspectInfo = useMemo(() => ASPECTS.find((a) => a.key === aspect) ?? ASPECTS[0], [aspect]);
 
@@ -300,14 +301,16 @@ export default function VisualStoryboardPage() {
       return;
     }
     if (s.vidStatus === 'running') return; // 同镜正在转视频，避免重复触发
-    if (animatingRef.current.has(sceneIndex)) return; // 同步去重：vidStatus 落地前的连点也拦住，防重复提交后端 run
+    const myGen = genRef.current; // 本轮代次：既作为轮询作废依据，也作为「动起来」锁的所有权标识
+    // 同步去重：仅当「同一代次」的同镜已在提交/轮询时拦住连点。旧代次（重新生成分镜前）残留的锁不算占用——
+    // 否则新板「动起来」会撞上旧板未结束的 11 分钟轮询所占的 sceneIndex，静默无响应（Bugbot review）。
+    if (animatingRef.current.get(sceneIndex) === myGen) return;
     if (!s.kfPublicUrl) {
       toast.warning('该关键帧暂无公开链接，无法转视频，请先重绘这一镜');
       return;
     }
-    animatingRef.current.add(sceneIndex);
+    animatingRef.current.set(sceneIndex, myGen); // 本代次取得该镜锁；旧代次残留值被顶替，新板可立即动起来
     try {
-      const myGen = genRef.current; // 本轮代次；若期间重新生成分镜则停止本次轮询回填
       setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'running', vidError: null, vidPhase: '提交中' } : x)));
 
       // Wan 2.6 仅支持 5/10s：分镜时长就近取 5
@@ -356,7 +359,8 @@ export default function VisualStoryboardPage() {
       if (genRef.current !== myGen) return; // 超时落地前若已被新一轮作废，不回填旧板
       setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: '生成超时，请重试' } : x)));
     } finally {
-      animatingRef.current.delete(sceneIndex); // 终态/作废/超时任一退出都释放，使重生成可再次提交
+      // 仅本代次所有者才释放：避免旧板轮询退出时清掉新板（已重新生成分镜）刚取得的同镜锁
+      if (animatingRef.current.get(sceneIndex) === myGen) animatingRef.current.delete(sceneIndex);
     }
   };
 
