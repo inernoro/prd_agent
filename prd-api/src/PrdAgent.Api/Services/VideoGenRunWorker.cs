@@ -153,6 +153,9 @@ public class VideoGenRunWorker : BackgroundService
     /// </summary>
     private async Task ProcessDirectVideoGenAsync(VideoGenRun run)
     {
+        // 领取前已请求取消（claim 仅过滤 Status==Queued、不看 CancelRequested）：直接置终态，不进入提交流程（Codex review）
+        if (run.CancelRequested) { await CancelRunAsync(run); return; }
+
         // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
         // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
         var appCallerCode = run.AppKey == "visual-agent"
@@ -188,6 +191,11 @@ public class VideoGenRunWorker : BackgroundService
             UserId = run.OwnerAdminId,
             RequestId = run.Id
         };
+
+        // 提交前最后一道闸：领取后、提交到 OpenRouter 之前若收到取消请求（用户重新生成分镜 / 离开页面），
+        // 置终态不提交，避免烧视频额度。覆盖「claim 与 submit 之间」的取消窗口（Codex review）。
+        var freshBeforeSubmit = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+        if (freshBeforeSubmit?.CancelRequested == true) { await CancelRunAsync(run); return; }
 
         var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
         if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
