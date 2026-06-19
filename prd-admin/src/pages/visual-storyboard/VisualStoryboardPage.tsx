@@ -117,11 +117,12 @@ export default function VisualStoryboardPage() {
     const myGen = genRef.current; // 捕获本轮代次；若期间用户重新生成分镜则本批回调全部失效
     const size = aspectInfo.size;
 
-    // 标记这批镜头为 running
+    // 标记这批镜头为 running，并清掉旧的图生视频状态——重绘/重生关键帧后，
+    // 卡片渲染优先看 vidUrl，若不清会继续显示上一版视频、看不到新关键帧。
     setScenes((prev) =>
       prev.map((s) =>
         targets.some((t) => t.sceneIndex === s.index)
-          ? { ...s, kfStatus: 'running', kfError: null }
+          ? { ...s, kfStatus: 'running', kfError: null, vidStatus: 'idle', vidUrl: null, vidError: null, vidPhase: null }
           : s,
       ),
     );
@@ -488,7 +489,7 @@ export default function VisualStoryboardPage() {
                         className="relative w-full"
                         style={{ aspectRatio: aspectInfo.ratio, background: 'rgba(0,0,0,0.22)' }}
                       >
-                        {!skeleton && s.vidUrl ? (
+                        {!skeleton && s.vidUrl && s.vidStatus !== 'running' && s.vidStatus !== 'error' ? (
                           <>
                             <video
                               src={s.vidUrl}

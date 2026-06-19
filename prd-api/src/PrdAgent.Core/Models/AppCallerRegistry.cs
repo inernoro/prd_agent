@@ -167,6 +167,17 @@ public static class VisualAgent
 {
     public const string AppName = "Visual Agent";
 
+    public static class VideoGen
+    {
+        [AppCallerMetadata(
+            "视觉分镜台-图生视频",
+            "视觉分镜台「动起来」：以关键帧为首帧直出视频（Wan 2.6 等），归属 visual-agent 应用配额与模型池",
+            ModelTypes = new[] { ModelTypes.VideoGen },
+            Category = "Video"
+        )]
+        public const string Generate = "visual-agent.videogen::video-gen";
+    }
+
     public static class Image
     {
         // 已移除通用的 Generation，请使用具体的 Text2Img / Img2Img / VisionGen

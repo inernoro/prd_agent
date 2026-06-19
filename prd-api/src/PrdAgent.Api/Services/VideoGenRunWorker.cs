@@ -153,7 +153,11 @@ public class VideoGenRunWorker : BackgroundService
     /// </summary>
     private async Task ProcessDirectVideoGenAsync(VideoGenRun run)
     {
-        const string appCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate;
+        // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
+        // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
+        var appCallerCode = run.AppKey == "visual-agent"
+            ? AppCallerRegistry.VisualAgent.VideoGen.Generate
+            : AppCallerRegistry.VideoAgent.VideoGen.Generate;
 
         _logger.LogInformation("VideoGen 直出开始: runId={RunId}, userModel={Model}, duration={Duration}s",
             run.Id, run.DirectVideoModel, run.DirectDuration);
@@ -609,7 +613,11 @@ public class VideoGenRunWorker : BackgroundService
         if (sceneIdx < 0) return;
         var scene = run.Scenes[sceneIdx];
 
-        const string appCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate;
+        // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
+        // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
+        var appCallerCode = run.AppKey == "visual-agent"
+            ? AppCallerRegistry.VisualAgent.VideoGen.Generate
+            : AppCallerRegistry.VideoAgent.VideoGen.Generate;
         _logger.LogInformation("VideoGen 单镜渲染开始: runId={RunId}, scene={Idx}, prompt={Len}字",
             run.Id, sceneIdx, scene.Prompt.Length);
         await PublishEventAsync(run.Id, "scene.render.start", new { sceneIndex = sceneIdx });
