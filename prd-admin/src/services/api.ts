@@ -338,6 +338,15 @@ export const api = {
 
   // ============ Visual Agent 视觉创作 ============
   visualAgent: {
+    // 视觉创作自有的图生视频端点（appKey=visual-agent，与 video-agent 隔离，遵循 app-identity 规则）
+    videoGen: {
+      runs: {
+        create: () => '/api/visual-agent/video-gen/runs',
+        byId: (runId: string) => `/api/visual-agent/video-gen/runs/${runId}`,
+        cancel: (runId: string) => `/api/visual-agent/video-gen/runs/${runId}/cancel`,
+        stream: (runId: string) => `/api/visual-agent/video-gen/runs/${runId}/stream`,
+      },
+    },
     imageMaster: {
       sessions: {
         list: () => '/api/visual-agent/image-master/sessions',

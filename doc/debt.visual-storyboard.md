@@ -25,3 +25,9 @@
 - CDS 部署（commit 423c2b5b）后 Playwright 真实登录直连预览域名验收。
 - 闭环证据：拆镜出 6 镜 → 关键帧逐张真实渲染（暖色电影感手冲咖啡，风格跨镜一致）→ 放大预览清晰。
 - 截图：分镜生长中（骨架）/ 关键帧已渲染 / 放大预览。非「生成中」充数，符合 closed-loop-acceptance。
+
+## 已知边界 / 待补（PR #858 review，2026-06-19）
+
+- **OpenRouter 出图未透传画幅（size/aspect）**（Codex + Bugbot 双标 P2/Medium）：分镜台选的 16:9 / 9:16 / 1:1 经 `createImageGenRun` 以 `size`（如 `1280x720`）下发，但 `OpenAIImageClient` 的 OpenRouter 分支（`chat/completions` + `modalities`）只发 `model/messages/modalities`，画幅没到 OpenRouter，关键帧可能按模型默认比例出图、与所选视频画幅不一致。
+  - 未处理原因：OpenRouter 经 `chat/completions` 出图的画幅控制字段（Codex 称 `image_config`）需对照 OpenRouter 文档核实确切 schema；贸然加未知字段可能被严格 API 直接 400，反而打断整条出图链路。且本分支后端处于「CDS 部署冻结」（见 `debt.cds-backend-deploy-freeze`），无法部署验证。
+  - 待办：确认 OpenRouter 图片生成画幅字段格式 → 在 OpenRouter 分支 `orBody` 注入（带容错，未知字段不应 400 整条链路）→ CDS 部署恢复后 direct i2v 脚本复验画幅是否匹配。

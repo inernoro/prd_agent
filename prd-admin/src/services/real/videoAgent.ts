@@ -36,6 +36,21 @@ export const getVideoGenRunReal: GetVideoGenRunContract = async (runId) => {
   });
 };
 
+// 视觉创作（视觉分镜台）专用：走 visual-agent 自有 video-gen 端点，
+// 用 visual-agent 的权限/配额/appKey，避免 visual-agent-only 账号撞 video-agent 403。
+export const createVisualVideoRunReal: CreateVideoGenRunContract = async (input) => {
+  return await apiRequest<{ runId: string }>(api.visualAgent.videoGen.runs.create(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const getVisualVideoRunReal: GetVideoGenRunContract = async (runId) => {
+  return await apiRequest<VideoGenRun>(api.visualAgent.videoGen.runs.byId(runId), {
+    method: 'GET',
+  });
+};
+
 export const cancelVideoGenRunReal: CancelVideoGenRunContract = async (runId) => {
   return await apiRequest<boolean>(api.videoAgent.runs.cancel(runId), {
     method: 'POST',
