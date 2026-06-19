@@ -246,20 +246,22 @@ public class ImageGenController : ControllerBase
             var doc = System.Text.Json.Nodes.JsonNode.Parse(apiResponseJson)?.AsObject();
             var content = doc?["choices"]?[0]?["message"]?["content"];
             if (content == null) return string.Empty;
-            // content 可能是纯字符串，也可能是「部件数组」[{type:"text",text:".."}]（部分 chat 兼容网关如此返回）。
-            // 只当字符串读会抛异常 → 退回整段响应 → ExtractFirstJsonObject 抓到外层 envelope 而非分镜 JSON（Bugbot review）。
+            // content 可能是纯字符串、单个对象部件 {type,text}、或部件数组 [{type,text},..]（不同 chat 兼容网关形态不一）。
+            // 任一形态当字符串读都会抛异常 → 退回整段响应 → ExtractFirstJsonObject 抓到外层 envelope 而非分镜 JSON（Bugbot review）。
             if (content is System.Text.Json.Nodes.JsonArray arr)
             {
                 var sb = new System.Text.StringBuilder();
-                foreach (var part in arr)
-                {
-                    if (part is System.Text.Json.Nodes.JsonValue pv) { sb.Append(pv.GetValue<string>() ?? string.Empty); continue; }
-                    var pt = part?["text"]?.GetValue<string>();
-                    if (!string.IsNullOrEmpty(pt)) sb.Append(pt);
-                }
+                foreach (var part in arr) sb.Append(PartText(part));
                 return sb.ToString();
             }
-            return content.GetValue<string>() ?? string.Empty;
+            return PartText(content); // 纯字符串或单对象部件
+
+            static string PartText(System.Text.Json.Nodes.JsonNode? node)
+            {
+                if (node is System.Text.Json.Nodes.JsonValue v) { try { return v.GetValue<string>() ?? string.Empty; } catch { return string.Empty; } }
+                if (node is System.Text.Json.Nodes.JsonObject o) return o["text"]?.GetValue<string>() ?? string.Empty;
+                return string.Empty;
+            }
         }
         catch { return apiResponseJson; }
     }
