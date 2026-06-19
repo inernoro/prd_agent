@@ -7,3 +7,4 @@
 | fix | prd-admin | 缺陷分享临时密钥申请 scope 改为 defect-agent:share |
 | feat | prd-api | 缺陷来源连接器返回单缺陷和轻量修复机读策略 |
 | docs | prd-api | 更新 ai-defect-resolve 技能到 1.3.0 |
+| fix | cds | API 预览服务补充就绪超时配置，避免冷启动被误判为 503 |
