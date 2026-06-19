@@ -38,7 +38,7 @@ export function ShareDefectDialog({ open, onClose, defectId, defectIds }: ShareD
     const res = await createAgentApiKey({
       name: `缺陷修复临时密钥 ${new Date().toLocaleString('zh-CN')}`,
       description: `缺陷分享临时访问：${url}`,
-      scopes: ['defect-agent:fix'],
+      scopes: ['defect-agent:use'],
       ttlDays: 1,
     });
     if (!res.success || !res.data?.apiKey) {
