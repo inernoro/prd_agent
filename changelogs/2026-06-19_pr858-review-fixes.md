@@ -35,3 +35,4 @@
 | polish | prd-admin | 分镜台拆分镜等待加预估耗时文案(10-40s)，补全 CLAUDE.md §6 兜底(动画加载+预估耗时)；完整 SSE 流式见 debt #4（Codex review） |
 | fix | prd-api | 图生视频 submit/status 失败转发 Gateway 额度文案：OpenRouterVideoClient 原先只从 Content/ErrorCode 构造错误，丢掉 SendRawWithResolutionAsync 已写入 ErrorMessage 的 LLM_QUOTA_EXCEEDED 中文提示。新增 QuotaOrUpstreamMessage：额度错误优先用友好文案、其余保留 /videos 上游解析，使「动起来」与拆分镜额度提示一致（Bugbot review） |
 | fix | prd-admin | 关键帧 imageDone 但 url/base64 均缺时标 error 而非 done：原先无图也置 done、kfUrl 为空，卡片永远停在 shimmer（卡片仅在 done && kfUrl 才显示图）。改为无图即 error 提示重绘（Bugbot review） |
+| fix | prd-api | 图生视频下载失败路径也走 QuotaOrUpstreamMessage：原先只用 ErrorCode/HTTP 状态+诊断，丢掉 Gateway 的 LLM_QUOTA_EXCEEDED 友好文案，与 submit/status 不一致（Bugbot review） |

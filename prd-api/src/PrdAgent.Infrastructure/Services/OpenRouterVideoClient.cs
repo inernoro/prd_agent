@@ -210,10 +210,11 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         {
             // 诊断信息进 error（随 run 落库，跨副本可读）：标称类型 + 二进制/文本长度，便于定位下载落空原因
             var diag = $"ct={rawResp.ContentType}, binLen={rawResp.BinaryContent?.Length ?? 0}, textLen={rawResp.Content?.Length ?? 0}";
+            // 与 submit/status 一致：额度耗尽时用 Gateway 友好文案(LLM_QUOTA_EXCEEDED)，其余保留 code/状态，再附诊断（Bugbot review）
             return new OpenRouterVideoDownload
             {
                 Success = false,
-                ErrorMessage = $"{rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}"} ({diag})",
+                ErrorMessage = $"{QuotaOrUpstreamMessage(rawResp)} ({diag})",
             };
         }
 
