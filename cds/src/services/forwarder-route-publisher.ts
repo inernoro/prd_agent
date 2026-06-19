@@ -12,15 +12,16 @@
  * 文件路径：`<cdsRoot>/.cds/forwarder-routes.json`，与 forwarder-main 默认值
  * 一致。两边都通过 CDS_FORWARDER_ROUTES_JSON 覆盖。
  *
- * 路由记录生成规则（每个 running 分支一条）：
+ * 路由记录生成规则（每个可路由分支一条）：
  *   - host = `${previewSlug}.${rootDomain}` （v3 公式，preview-slug.ts SSOT）
  *   - 别名（subdomainAliases）每个再插一条
  *   - upstreamHost = '127.0.0.1'
  *   - upstreamPort = primary running service.hostPort
  *   - branchId 反查用
  *
- * 不发布的分支：status !== 'running'（building / error / stopped 等不入表，
- * forwarder 找不到就走 ProxyHandler 内置的等候页 503）。
+ * 不发布的分支：没有可路由服务端口的分支。building / starting 分支如果
+ * 已有 hostPort，也必须保留 host route，避免 preview host 从 forwarder
+ * 路由表里消失后落到 unknown-host fallback。
  *
  * 原子写：tmp 文件 + rename，保证 forwarder fs.watch 永远读到完整 JSON。
  */
@@ -49,6 +50,8 @@ function pickDefaultProfile(profileIds: string[]): string {
   if (webProfile) return webProfile;
   return profileIds[0];
 }
+
+const ROUTABLE_SERVICE_STATUSES = new Set(['running', 'starting', 'building', 'restarting']);
 
 export interface ForwarderRoutePublisherOptions {
   state: StateService;
@@ -150,23 +153,28 @@ export class ForwarderRoutePublisher {
 
     const branches = this.opts.state.getAllBranches();
     for (const branch of branches) {
-      if (branch.status !== 'running') continue;
-
       const project = projectById.get(branch.projectId);
       const previewSlug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
       if (!previewSlug) continue;
 
-      // 收集所有 running profile + 它们的 hostPort
-      const runningServices: Array<{ profileId: string; hostPort: number }> = [];
+      // 收集所有可路由 profile + 它们的 hostPort。分支顶层状态可能因并发
+      // deploy / check-run 事件短暂回退到 building，但容器端口仍可用；
+      // 这时删除 host route 会让用户看到 unknown-host 503。
+      const routableServices: Array<{ profileId: string; hostPort: number; status: string }> = [];
       for (const [profileId, svc] of Object.entries(branch.services ?? {})) {
-        if (svc?.status === 'running') {
-          runningServices.push({ profileId, hostPort: svc.hostPort });
+        if (svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status))) {
+          routableServices.push({ profileId, hostPort: svc.hostPort, status: String(svc.status) });
         }
       }
-      if (runningServices.length === 0) continue;
+      if (routableServices.length === 0) continue;
 
-      const defaultProfile = pickDefaultProfile(runningServices.map((s) => s.profileId));
-      const defaultPort = runningServices.find((s) => s.profileId === defaultProfile)!.hostPort;
+      // 默认入口优先挑 running 服务。若全部仍在 building/starting，则保留
+      // 路由到候选端口，让 forwarder 给出等待页/上游错误，而不是 host 消失。
+      const defaultCandidates = routableServices.some((s) => s.status === 'running')
+        ? routableServices.filter((s) => s.status === 'running')
+        : routableServices;
+      const defaultProfile = pickDefaultProfile(defaultCandidates.map((s) => s.profileId));
+      const defaultPort = defaultCandidates.find((s) => s.profileId === defaultProfile)!.hostPort;
 
       const hosts: string[] = [];
       for (const root of this.opts.rootDomains) {
@@ -184,7 +192,7 @@ export class ForwarderRoutePublisher {
         const writtenPrefixes = new Set<string>();
 
         // 1) BuildProfile.pathPrefixes 配置驱动(显式覆盖,优先)
-        for (const svc of runningServices) {
+        for (const svc of routableServices) {
           const bp = profileById.get(svc.profileId);
           for (const prefix of bp?.pathPrefixes ?? []) {
             if (writtenPrefixes.has(prefix)) continue;
@@ -198,7 +206,7 @@ export class ForwarderRoutePublisher {
               branchId: branch.id,
               branchName: branch.branch,
               weight: 100,
-              healthState: 'running',
+              healthState: svc.status === 'running' ? 'running' : 'unknown',
               // 注意:不写 updatedAt(每次 buildRoutes 都生成新时间戳会让 dedup 永远失效,
               // 每 2s 重写盘 + 触发 forwarder fs.watch 风暴。Cursor Bugbot 抓到。
               // mongo change-stream 触发依据是 design 文档预留字段,JSON file 模式不用)。
@@ -208,7 +216,7 @@ export class ForwarderRoutePublisher {
         // 2) Convention:`/api/*` → 含 api/backend 的 profile(若 BuildProfile 没显式配)
         if (!writtenPrefixes.has('/api/')) {
           // Case-sensitive includes 与 master detectProfileFromRequest(proxy.ts:884)对齐
-          const apiSvc = runningServices.find(
+          const apiSvc = routableServices.find(
             (s) => s.profileId.includes('api') || s.profileId.includes('backend'),
           );
           // master detectProfileFromRequest(proxy.ts:884)无条件让 /api/* 走 api/backend
@@ -227,7 +235,7 @@ export class ForwarderRoutePublisher {
               branchId: branch.id,
               branchName: branch.branch,
               weight: 100,
-              healthState: 'running',
+              healthState: apiSvc.status === 'running' ? 'running' : 'unknown',
               // 注意:不写 updatedAt(每次 buildRoutes 都生成新时间戳会让 dedup 永远失效,
               // 每 2s 重写盘 + 触发 forwarder fs.watch 风暴。Cursor Bugbot 抓到。
               // mongo change-stream 触发依据是 design 文档预留字段,JSON file 模式不用)。
@@ -243,7 +251,7 @@ export class ForwarderRoutePublisher {
           branchId: branch.id,
           branchName: branch.branch, // widget injection 需要 branchName,默认 route 也得带,否则 / 页面 widget 消失
           weight: 100,
-          healthState: 'running',
+          healthState: defaultCandidates.find((s) => s.profileId === defaultProfile)?.status === 'running' ? 'running' : 'unknown',
           // 不写 updatedAt(理由同前两处:dedup 失效防御)
         });
       }
