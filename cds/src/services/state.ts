@@ -314,6 +314,10 @@ export class StateService {
       // legacy default project 不动（保留 undefined 走 config 兜底）,
       // 否则会让线上的所有 pre-P4 容器跟当前 docker network 失联。
       this.migrateProjectDockerNetworks();
+      // 2026-06-18: 旧版 /stop 路由把所有停止都硬编码成 user。
+      // 如果 activity log 已经能证明触发源是 webhook / AI / 系统，则修正
+      // lastStopSource，避免卡片统计继续把系统清理误报成用户操作。
+      this.migrateLegacyStopAttribution();
     } else {
       this.state = emptyState();
       // Fresh installs start with zero projects. The project-list empty
@@ -399,6 +403,49 @@ export class StateService {
     // No-op: TypeScript's optional fields handle missing deployModes gracefully.
     // This method exists as a migration hook in case future versions need to
     // transform deploy mode data (e.g., rename keys, merge formats).
+  }
+
+  private migrateLegacyStopAttribution(): void {
+    const branches = Object.values(this.state.branches || {});
+    if (branches.length === 0 || !this.state.activityLogs) return;
+    let changed = false;
+    for (const branch of branches) {
+      if (branch.lastStopSource !== 'user') continue;
+      if (branch.lastStopReason && branch.lastStopReason !== '用户手动停止') continue;
+      const projectId = branch.projectId || 'default';
+      const logs = this.state.activityLogs[projectId] || [];
+      const lastStoppedMs = branch.lastStoppedAt ? Date.parse(branch.lastStoppedAt) : Number.NaN;
+      const stopLog = [...logs]
+        .reverse()
+        .find((log) => {
+          if (log.type !== 'stop' || log.branchId !== branch.id) return false;
+          if (!Number.isFinite(lastStoppedMs)) return true;
+          const logMs = Date.parse(log.at);
+          return Number.isFinite(logMs) ? logMs <= lastStoppedMs + 5_000 : true;
+        });
+      if (!stopLog?.actor) continue;
+      const actor = stopLog.actor.toLowerCase();
+      if (actor === 'system:webhook') {
+        branch.lastStopSource = 'webhook';
+        branch.lastStopReason = 'GitHub webhook 触发停止';
+      } else if (actor === 'system:scheduler') {
+        branch.lastStopSource = 'scheduler';
+        branch.lastStopReason = '调度器触发停止';
+      } else if (actor === 'system:auto-lifecycle') {
+        branch.lastStopSource = 'cds';
+        branch.lastStopReason = 'CDS 生命周期策略触发停止';
+      } else if (actor === 'system:janitor' || actor === 'system:system') {
+        branch.lastStopSource = 'system';
+        branch.lastStopReason = actor === 'system:janitor' ? 'Janitor 过期清理触发停止' : '系统触发停止';
+      } else if (actor === 'ai' || actor.startsWith('ai:')) {
+        branch.lastStopSource = 'ai';
+        branch.lastStopReason = 'AI Agent 调用停止';
+      } else {
+        continue;
+      }
+      changed = true;
+    }
+    if (changed) this.save();
   }
 
   /**
@@ -1073,6 +1120,34 @@ export class StateService {
       delete this.state.schedulerMaxHotOverride;
     } else {
       this.state.schedulerMaxHotOverride = value;
+    }
+  }
+
+  // ── Janitor runtime override ──
+  //
+  // Mirrors scheduler override semantics: Dashboard writes these fields to
+  // state so global expiry settings survive CDS restarts.
+  getJanitorEnabledOverride(): boolean | undefined {
+    return this.state.janitorEnabledOverride;
+  }
+
+  setJanitorEnabledOverride(value: boolean | undefined): void {
+    if (value === undefined) {
+      delete this.state.janitorEnabledOverride;
+    } else {
+      this.state.janitorEnabledOverride = value;
+    }
+  }
+
+  getJanitorWorktreeTTLOverride(): number | undefined {
+    return this.state.janitorWorktreeTTLOverride;
+  }
+
+  setJanitorWorktreeTTLOverride(value: number | undefined): void {
+    if (value === undefined) {
+      delete this.state.janitorWorktreeTTLOverride;
+    } else {
+      this.state.janitorWorktreeTTLOverride = value;
     }
   }
 

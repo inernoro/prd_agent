@@ -707,12 +707,17 @@
 - [CDS PR #684 审查修复计划](plan.cds-pr684-review-remediation) `plan.cds-pr684-review-remediation`
   > CDS PR #684 代码审查发现问题的分阶段修复计划与进度追踪
 
+- [MD 转 PPT 下一波（大纲右侧编辑器 + 状态机 + 澄清问卷）](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
+  > MD 转 PPT 下一波迭代：大纲右侧编辑器、状态机重构、澄清问卷，源自用户 2026-06-10 11 条反馈
+
 ### 六、技术债务台账
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
 
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
+- [知识库版本控制/图片插入/大小统计 · 已知边界](debt.knowledge-base-versioning) `debt.knowledge-base-versioning`
+  > 图片插入不刷新已修；版本控制独立集合 + 恢复只写文本不删资产；遗留：github 日同步覆盖手动编辑、大小不含外链图片字节、版本留存上限100
 - [更新中心（终身存储 + SSE 推送）债务台账](debt.changelog-center) `debt.changelog-center`
   > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
@@ -802,6 +807,9 @@
 
 - [网页托管评论 · 债务台账](debt.web-hosting-comments) `debt.web-hosting-comments`
   > 网页托管评论功能的已知边界与待补实现
+
+- [MAP MCP 连接器 · 债务台账](debt.map-mcp-connector) `debt.map-mcp-connector`
+  > MAP MCP 连接器核心链路已上线，债务台账记录 PR #836 后显式延后的硬化项（共 4 条，open 3）
 
 ### 七、周报
 
