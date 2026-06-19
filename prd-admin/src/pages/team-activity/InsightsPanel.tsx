@@ -16,14 +16,16 @@ import {
   addDocumentEntry,
   createDefect,
   createDocumentStore,
+  getTeamActivityExperienceMap,
   getTeamActivityInsights,
   listDocumentEntries,
   listDocumentStores,
   setTeamActivityInsightState,
   updateDocumentContent,
 } from '@/services';
-import type { BehaviorInsight, TeamActivityInsightsData } from '@/services/contracts/teamActivity';
+import type { BehaviorInsight, TeamActivityExperienceMapData, TeamActivityInsightsData } from '@/services/contracts/teamActivity';
 import { getInsightKindMeta } from './insightKinds';
+import { ExperienceMap } from './ExperienceMap';
 
 function fmtDate(iso?: string | null): string {
   if (!iso) return '';
@@ -60,6 +62,7 @@ function buildDefectContent(item: BehaviorInsight, window: string): string {
 
 export function InsightsPanel({ from }: { from?: string }) {
   const [data, setData] = useState<TeamActivityInsightsData | null>(null);
+  const [mapData, setMapData] = useState<TeamActivityExperienceMapData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [includeIgnored, setIncludeIgnored] = useState(false);
@@ -163,7 +166,24 @@ export function InsightsPanel({ from }: { from?: string }) {
       }
       setLoading(false);
     });
+    // 体验全景热力图与痛点榜同源（apirequestlogs），并行拉取，互不阻塞
+    void getTeamActivityExperienceMap({ from }).then((res) => {
+      if (fetchIdRef.current !== fetchId) return;
+      if (res.success) setMapData(res.data);
+    });
   }, [from, includeIgnored]);
+
+  // 点击热力图痛点块 → 滚动并高亮下方痛点榜对应行
+  const handleSelectTarget = useCallback((target: string) => {
+    const el = document.querySelector(`[data-insight-target="${CSS.escape(target)}"]`) as HTMLElement | null;
+    if (!el) {
+      toast.info('该端点暂未进入痛点榜（信号未达阈值）');
+      return;
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('voc-row-flash');
+    window.setTimeout(() => el.classList.remove('voc-row-flash'), 1400);
+  }, []);
 
   useEffect(() => {
     reload();
@@ -228,6 +248,9 @@ export function InsightsPanel({ from }: { from?: string }) {
   return (
     <GlassCard className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
       <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+        <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }`}</style>
+        {/* 体验全景热力图：洞察 tab 的主视觉，点击痛点块下钻到下方痛点榜 */}
+        <ExperienceMap data={mapData} loading={loading} onSelectTarget={handleSelectTarget} />
         {/* 数据源状态行：诚实告知信号从哪来、采集到什么程度 */}
         {data ? (
           <div className="sticky top-0 z-10 flex items-center gap-3 flex-wrap px-5 py-2.5 text-[11px] text-white/40 border-b border-white/[0.05] backdrop-blur-md" style={{ background: 'rgba(16,17,19,0.72)' }}>
@@ -347,6 +370,7 @@ export function InsightsPanel({ from }: { from?: string }) {
               return (
                 <div
                   key={key}
+                  data-insight-target={item.target}
                   className="relative px-5 py-3.5 flex gap-3.5 transition-colors hover:bg-white/[0.02]"
                   style={{ opacity: status === 'ignored' ? 0.45 : 1 }}
                 >

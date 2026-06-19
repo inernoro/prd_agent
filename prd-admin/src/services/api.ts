@@ -195,6 +195,7 @@ export const api = {
     stats: () => '/api/team-activity/stats',
     insights: () => '/api/team-activity/insights',
     insightState: () => '/api/team-activity/insights/state',
+    experienceMap: () => '/api/team-activity/experience-map',
   },
 
   // ============ Skills 技能管理 ============

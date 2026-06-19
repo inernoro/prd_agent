@@ -240,6 +240,38 @@ public class TeamActivityController : ControllerBase
         return string.Join('/', segments);
     }
 
+    /// <summary>路径首段（/api/{module}/...）→ 中文模块名，用于体验全景热力图分区；未登记的回落原始段</summary>
+    private static readonly Dictionary<string, string> ModuleLabels = new()
+    {
+        ["visual-agent"] = "视觉创作", ["image-master"] = "视觉创作", ["literary-agent"] = "文学创作",
+        ["defect"] = "缺陷管理", ["defects"] = "缺陷管理", ["weekly-posters"] = "周报海报",
+        ["report-agent"] = "周报管理", ["ai-news"] = "AI 资讯", ["changelog"] = "更新中心",
+        ["ccas-agent"] = "渠道溯源", ["document-store"] = "知识库", ["documents"] = "文档",
+        ["sessions"] = "会话", ["groups"] = "项目", ["pr-review"] = "PR 审查",
+        ["emergence"] = "涌现探索", ["workflow"] = "工作流", ["open-platform"] = "开放平台",
+        ["marketplace"] = "海鲜市场", ["llm"] = "LLM 网关", ["models"] = "模型",
+        ["model-groups"] = "模型组", ["auth"] = "认证", ["users"] = "用户",
+        ["attachments"] = "附件", ["hosted-sites"] = "网页托管", ["video"] = "视频",
+        ["watermark"] = "水印", ["admin"] = "后台管理", ["review"] = "产品评审",
+        ["mentions"] = "引用网络", ["toolbox"] = "百宝箱",
+    };
+
+    private static string ModuleLabel(string key) => ModuleLabels.TryGetValue(key, out var l) ? l : key;
+
+    /// <summary>体验全景热力图的叶子累加器（按 module|method|归一化路径 聚类）</summary>
+    private sealed class LeafAcc
+    {
+        public string Module = string.Empty;
+        public string Method = string.Empty;
+        public string Path = string.Empty;
+        public int Count;
+        public int ErrorCount;
+        public int SlowCount;
+        public long SlowMsSum;
+        public readonly Dictionary<string, int> ErrorCodes = new();
+    }
+
+
     /// <summary>
     /// 行为洞察：从「沉默的行为信号」聚合出带证据的改进方向。
     /// 数据源两路：apirequestlogs（报错热点 / 等待过久，历史即有）+ behavior_events（停留过久 / 秒退 / 反复横跳，自采集上线起累积）。
@@ -256,6 +288,119 @@ public class TeamActivityController : ControllerBase
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
         var (insights, behaviorEventCount) = await ComputeInsightsAsync(fromUtc, endUtc);
         return await BuildInsightsResponseAsync(insights, behaviorEventCount, fromUtc, endUtc, includeIgnored);
+    }
+
+    /// <summary>
+    /// 体验全景热力图：把系统接口面铺成 treemap —— 按模块（/api/{module}）分区，
+    /// 叶子为归一化端点，面积=访问量，颜色=健康（报错率/慢请求率）。
+    /// 痛点（红=报错、琥珀=慢）从一片平静里跳出来；叶子 target 与 insights 同口径，便于前端点击下钻联动。
+    /// 单一数据源 apirequestlogs，与 insights 的报错/慢信号同源，避免口径漂移。
+    /// </summary>
+    [HttpGet("experience-map")]
+    public async Task<IActionResult> ExperienceMap([FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+    {
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+
+        var rb = Builders<ApiRequestLog>.Filter;
+        var logs = await _db.ApiRequestLogs.Find(rb.And(
+                rb.Gte(x => x.StartedAt, fromUtc),
+                rb.Lte(x => x.StartedAt, endUtc),
+                rb.Ne(x => x.Direction, "outbound")))
+            .SortByDescending(x => x.StartedAt)
+            .Limit(60000)
+            .Project(x => new { x.Path, x.Method, x.StatusCode, x.DurationMs, x.IsEventStream, x.ErrorCode })
+            .ToListAsync();
+
+        var leafAgg = new Dictionary<string, LeafAcc>();
+        foreach (var l in logs)
+        {
+            if (l.Path == null || !l.Path.StartsWith("/api")) continue;
+            // 自身 / 行为采集端点不计入（避免洞察页统计到自己造成噪音）
+            if (l.Path.StartsWith("/api/behavior") || l.Path.StartsWith("/api/team-activity")) continue;
+            var seg = l.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (seg.Length < 2) continue;
+            var module = seg[1];
+            var norm = NormalizePath(l.Path);
+            var method = string.IsNullOrEmpty(l.Method) ? "GET" : l.Method;
+            var key = $"{module}|{method}|{norm}";
+            if (!leafAgg.TryGetValue(key, out var acc))
+            {
+                acc = new LeafAcc { Module = module, Method = method, Path = norm };
+                leafAgg[key] = acc;
+            }
+            acc.Count++;
+            if (l.StatusCode >= 400 && l.StatusCode != 401)
+            {
+                acc.ErrorCount++;
+                if (!string.IsNullOrEmpty(l.ErrorCode))
+                    acc.ErrorCodes[l.ErrorCode!] = acc.ErrorCodes.GetValueOrDefault(l.ErrorCode!) + 1;
+            }
+            if (!l.IsEventStream && (l.DurationMs ?? 0) >= 3000)
+            {
+                acc.SlowCount++;
+                acc.SlowMsSum += l.DurationMs ?? 0;
+            }
+        }
+
+        var groups = leafAgg.Values
+            .GroupBy(a => a.Module)
+            .Select(g =>
+            {
+                var leaves = g.Where(a => a.Count >= 2)
+                    .OrderByDescending(a => a.Count)
+                    .Take(30)
+                    .Select(a =>
+                    {
+                        var errRate = a.Count > 0 ? (double)a.ErrorCount / a.Count : 0;
+                        var slowRate = a.Count > 0 ? (double)a.SlowCount / a.Count : 0;
+                        var status = a.Count >= 10 && errRate >= 0.05 ? "error"
+                            : a.Count >= 10 && slowRate >= 0.10 ? "slow"
+                            : "ok";
+                        var avgSlowSec = a.SlowCount > 0 ? a.SlowMsSum / (double)a.SlowCount / 1000.0 : 0;
+                        var topCode = a.ErrorCodes.OrderByDescending(c => c.Value).FirstOrDefault();
+                        var metric = status == "error"
+                            ? $"报错率 {errRate * 100:F0}%（{a.ErrorCount} 次）"
+                            : status == "slow"
+                                ? $"{a.SlowCount} 次慢请求 · 均 {avgSlowSec:F1}s"
+                                : $"{a.Count} 次调用";
+                        var label = a.Path.Split('/').LastOrDefault(s => !string.IsNullOrEmpty(s) && s != ":id" && s != "api") ?? a.Path;
+                        return new
+                        {
+                            target = $"{a.Method} {a.Path}",
+                            label,
+                            method = a.Method,
+                            value = a.Count,
+                            status,
+                            metric,
+                            errorRate = Math.Round(errRate, 3),
+                            slowRate = Math.Round(slowRate, 3),
+                            topErrorCode = string.IsNullOrEmpty(topCode.Key) ? null : topCode.Key,
+                        };
+                    })
+                    .ToList();
+                return new
+                {
+                    key = g.Key,
+                    label = ModuleLabel(g.Key),
+                    value = leaves.Sum(l => l.value),
+                    errorLeaves = leaves.Count(l => l.status == "error"),
+                    slowLeaves = leaves.Count(l => l.status == "slow"),
+                    leaves,
+                };
+            })
+            .Where(g => g.leaves.Count > 0)
+            .OrderByDescending(g => g.value)
+            .Take(16)
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            groups,
+            totalRequests = logs.Count,
+            windowFrom = fromUtc,
+            windowTo = endUtc,
+        }));
     }
 
     /// <summary>规则式信号聚类（供 insights 查询与 AI 简报共用）</summary>

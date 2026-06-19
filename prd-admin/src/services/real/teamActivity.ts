@@ -2,6 +2,8 @@ import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import type {
+  GetTeamActivityExperienceMapContract,
+  GetTeamActivityExperienceMapParams,
   GetTeamActivityInsightsContract,
   GetTeamActivityInsightsParams,
   GetTeamActivityLogsContract,
@@ -11,13 +13,20 @@ import type {
   GetTeamActivityStatsParams,
   SetInsightStateParams,
   SetTeamActivityInsightStateContract,
+  TeamActivityExperienceMapData,
   TeamActivityInsightsData,
   TeamActivityListData,
   TeamActivityModulesData,
   TeamActivityStatsData,
 } from '@/services/contracts/teamActivity';
 
-function toQuery(params?: GetTeamActivityParams | GetTeamActivityStatsParams | GetTeamActivityInsightsParams) {
+function toQuery(
+  params?:
+    | GetTeamActivityParams
+    | GetTeamActivityStatsParams
+    | GetTeamActivityInsightsParams
+    | GetTeamActivityExperienceMapParams
+) {
   const sp = new URLSearchParams();
   if (!params) return '';
   Object.entries(params).forEach(([k, v]) => {
@@ -63,4 +72,13 @@ export const setTeamActivityInsightStateReal: SetTeamActivityInsightStateContrac
     method: 'POST',
     body: params,
   });
+};
+
+export const getTeamActivityExperienceMapReal: GetTeamActivityExperienceMapContract = async (
+  params?: GetTeamActivityExperienceMapParams
+): Promise<ApiResponse<TeamActivityExperienceMapData>> => {
+  return await apiRequest<TeamActivityExperienceMapData>(
+    `${api.teamActivity.experienceMap()}${toQuery(params)}`,
+    { method: 'GET' }
+  );
 };

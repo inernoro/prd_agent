@@ -137,3 +137,43 @@ export type SetTeamActivityInsightStateContract = (
 export type GetTeamActivityInsightsContract = (
   params?: GetTeamActivityInsightsParams
 ) => Promise<ApiResponse<TeamActivityInsightsData>>;
+
+/** 体验全景热力图：一个端点叶子（面积=访问量，颜色=健康） */
+export type ExperienceMapLeaf = {
+  /** 与 BehaviorInsight.target 同口径（METHOD 归一化路径），用于点击下钻联动 */
+  target: string;
+  label: string;
+  method: string;
+  value: number;
+  status: 'ok' | 'slow' | 'error' | string;
+  metric: string;
+  errorRate: number;
+  slowRate: number;
+  topErrorCode?: string | null;
+};
+
+/** 体验全景热力图：一个模块分区 */
+export type ExperienceMapGroup = {
+  key: string;
+  label: string;
+  value: number;
+  errorLeaves: number;
+  slowLeaves: number;
+  leaves: ExperienceMapLeaf[];
+};
+
+export type TeamActivityExperienceMapData = {
+  groups: ExperienceMapGroup[];
+  totalRequests: number;
+  windowFrom: string;
+  windowTo: string;
+};
+
+export type GetTeamActivityExperienceMapParams = {
+  from?: string;
+  to?: string;
+};
+
+export type GetTeamActivityExperienceMapContract = (
+  params?: GetTeamActivityExperienceMapParams
+) => Promise<ApiResponse<TeamActivityExperienceMapData>>;
