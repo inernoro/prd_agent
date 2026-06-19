@@ -243,12 +243,14 @@ export default function VisualStoryboardPage() {
     controllersRef.current.forEach((c) => c.abort());
     controllersRef.current = [];
     genRef.current += 1;
+    const myGen = genRef.current; // 捕获本轮，拆分镜返回后据此判断是否已被卸载/新一轮作废
 
     setPhase('scripting');
     setScenes([]);
     setTitle('');
 
     const res = await scriptStoryboard({ brief: b, style: style.trim() || undefined });
+    if (genRef.current !== myGen) return; // 已被卸载/新一轮作废，丢弃过期脚本响应
     if (!res.success || !res.data) {
       setPhase('idle');
       toast.error(res.error?.message || '分镜生成失败，请重试');
@@ -268,7 +270,7 @@ export default function VisualStoryboardPage() {
     setPhase('rendering');
 
     await renderKeyframes(vms.map((s) => ({ sceneIndex: s.index, prompt: s.keyframePrompt })));
-    setPhase('idle');
+    if (genRef.current === myGen) setPhase('idle');
   };
 
   const regenerateScene = async (sceneIndex: number) => {

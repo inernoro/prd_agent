@@ -657,19 +657,16 @@ public class OpenAIImageClient
             gatewayResp = await SendViaGatewayAsync(ct);
 
             // OpenRouter 兜底：部分平台（OpenRouter 等）图片生成不走 /images/generations，而是 chat/completions+modalities。
-            // images/generations 失败（非尺寸类 400/413）时，自动改用 OpenRouter 协议重试一次。
-            // 不依赖 apiUrl 字符串匹配 / 不依赖具体 StatusCode 包装方式，对自定义域名 / 代理同样成立；
+            // 仅当该端点「不存在/不支持」（404 Not Found / 405 Method Not Allowed / 501 Not Implemented）时，
+            // 才改用 OpenRouter 协议重试一次——这才是端点形状不匹配。鉴权/额度/限流/超时/5xx 都是真实上游错误：
+            // 改协议重试既修不了，又会用 chat 端点的误导性错误覆盖原始错误、对非 OpenRouter 平台（如 Volces）的
+            // 瞬时 500/502 用错协议重打、徒增负载（Codex + Bugbot review，双标）。
             // 仅文生图触发（图生图 multipart 不同协议），forceOpenRouter 保证最多重试一次。
-            // 鉴权(401/403)、额度/账单(402)、限流(429)是真实上游错误，不是 images/generations 端点形状不匹配：
-            // 改用 OpenRouter chat/completions 协议重试既修不了，又会用 chat 端点的误导性错误覆盖原始错误、徒增流量，故排除（Codex review）。
-            var nonSizeFailure = !gatewayResp.Success
-                && gatewayResp.StatusCode != 400
-                && gatewayResp.StatusCode != 413
-                && gatewayResp.StatusCode != 401
-                && gatewayResp.StatusCode != 402
-                && gatewayResp.StatusCode != 403
-                && gatewayResp.StatusCode != 429;
-            if (nonSizeFailure && initImageBase64 == null && !isOpenRouter && !forceOpenRouter)
+            var endpointMissing = !gatewayResp.Success
+                && (gatewayResp.StatusCode == 404
+                    || gatewayResp.StatusCode == 405
+                    || gatewayResp.StatusCode == 501);
+            if (endpointMissing && initImageBase64 == null && !isOpenRouter && !forceOpenRouter)
             {
                 _logger.LogWarning(
                     "[OpenAIImageClient] images/generations 失败(status={Status})，改用 chat/completions+modalities 重试。apiUrl={ApiUrl}, model={Model}",
