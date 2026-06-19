@@ -35,3 +35,7 @@
 - **OpenRouter 出图模态写死 ["image","text"]，image-only 模型可能不支持**（Codex P2，2026-06-19）：`OpenAIImageClient` 的 OpenRouter 分支 orBody 写死 `modalities: ["image","text"]`。Sourceful/Flux 这类「只出图」模型不支持 text 输出模态，可能在出任何图前就失败。
   - 未处理原因：需按模型能力派生 modalities（image-only → `["image"]`），但 `OpenAIImageClient` 当前拿不到「该模型是否 image-only」的能力信息；与上一条 image_config 同属「OpenRouter 出图请求体需按模型能力定制」，且后端处于部署冻结无法验证。
   - 待办：引入模型能力标记（image-only / image+text）→ 据此派生 modalities 与 image_config → CDS 部署恢复后用不同模型复验。
+
+- **离开页面时未取消在途关键帧 ImageGenRun**（Codex P2，2026-06-19）：卸载/重生成只 abort 前端 SSE，后端 `renderKeyframes` 创建的 `ImageGenRun` worker 仍继续出图，消耗 API 调用（配额已全局放开，主要是上游花费），且无恢复入口。
+  - 暂缓原因：与 `server-authority.md`「客户端被动断开不得取消服务器任务、只有用户主动取消才中断」存在张力——runs 本就以 `ImageGenRun` 持久化、理论可恢复，问题是分镜台目前没有恢复 UI。补「主动取消端点 + 卸载时调用」还是「补恢复 UI 让 run 跑完可复用」是产品取舍，宜与 debt#2「分镜会话持久化」合并设计，不在本次 review 轮次内仓促加 auto-cancel（会与 server-authority 冲突）。
+  - 待办：随 debt#2 把 storyboard 提升为一等 run 实体时一并决策（恢复 vs 主动取消端点）。

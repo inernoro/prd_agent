@@ -321,6 +321,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     await _modelResolver.RecordFailureAsync(resolution, ct);
                 }
 
+                // 额度用尽/限额：与非流式 SendAsync/Raw 路径对齐——触发站内告警 + 透传友好额度文案。
+                // 流式 Fail chunk 无独立 code 字段，退而把 LLM_QUOTA_EXCEEDED 友好 message 作为 Error 透传；
+                // toolbox/defect/literary/polish 等主聊天走 StreamAsync，OpenRouter 402 / Key limit exceeded
+                // 同样需要触发 admin 额度通知，不能只在非流式路径生效（Codex review）。
+                if (IsQuotaExceeded((int)response.StatusCode, errorMsg))
+                {
+                    var (_, qMsg) = HandleQuotaExceeded(resolution.ActualPlatformName, errorMsg);
+                    yield return GatewayStreamChunk.Fail(qMsg);
+                    yield break;
+                }
+
                 yield return GatewayStreamChunk.Fail(errorMsg);
                 yield break;
             }
