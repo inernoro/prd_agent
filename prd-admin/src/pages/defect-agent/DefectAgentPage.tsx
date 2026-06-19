@@ -6,7 +6,7 @@ import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import { DefectStatus } from '@/services/contracts/defectAgent';
-import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List, Columns3, BarChart3, FolderKanban } from 'lucide-react';
+import { Bot, Bug, Plus, FileText, RefreshCw, LayoutGrid, List, Columns3, BarChart3, FolderKanban } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { DefectList } from './components/DefectList';
 import { DefectSubmitPanel } from './components/DefectSubmitPanel';
@@ -16,7 +16,7 @@ import { ProjectDialog } from './components/ProjectDialog';
 import { KanbanBoard } from './components/KanbanBoard';
 import { StatsPanel } from './components/StatsPanel';
 import { SharesListPanel } from './components/SharesListPanel';
-import { Share2 } from 'lucide-react';
+import { DefectAutomationPanel } from './components/DefectAutomationPanel';
 import { cn } from '@/lib/cn';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
@@ -49,6 +49,7 @@ export default function DefectAgentPage() {
   const userId = useAuthStore((s) => s.user?.userId);
   const [showProjectDialog, setShowProjectDialog] = useState(false);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
+  const [showAutomationPanel, setShowAutomationPanel] = useState(false);
   const notifiedRef = useRef(false);
 
   // 与 DefectList 一致的客户端过滤逻辑，计算当前可见的缺陷 ID
@@ -177,10 +178,10 @@ export default function DefectAgentPage() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => setShowSharesPanel(true)}
+              onClick={() => setShowAutomationPanel(true)}
             >
-              <Share2 size={14} />
-              分享管理
+              <Bot size={14} />
+              缺陷自动化
             </Button>
             <Button
               variant="secondary"
@@ -285,6 +286,19 @@ export default function DefectAgentPage() {
       {showProjectDialog && <ProjectDialog onClose={() => setShowProjectDialog(false)} />}
 
       {/* Shares Panel */}
+      {showAutomationPanel && (
+        <DefectAutomationPanel
+          open={showAutomationPanel}
+          onClose={() => setShowAutomationPanel(false)}
+          projectId={projectFilter || undefined}
+          teamId={teamFilter || undefined}
+          onOpenShareManager={() => {
+            setShowAutomationPanel(false);
+            setShowSharesPanel(true);
+          }}
+        />
+      )}
+
       {showSharesPanel && (
         <SharesListPanel
           open={showSharesPanel}
