@@ -282,6 +282,7 @@ docs:
   debt.product-agent: 产品管理智能体 · 债务台账
   debt.shortcuts-agent: 快捷指令 Agent · 债务台账（一键安装前置条件/Agent 绑定 Phase2/签名 409 降级）
   debt.video-agent: 视频生成 Agent · 债务台账
+  debt.visual-storyboard: 视觉分镜台 · 债务台账（OpenRouter 出图画幅/modalities 按能力派生 · 拆镜 SSE 流式 · 关键帧 ImageGenRun 取消）
   debt.workflow-agent: 工作流 Agent · 债务台账
   debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账
   debt.claude-sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
