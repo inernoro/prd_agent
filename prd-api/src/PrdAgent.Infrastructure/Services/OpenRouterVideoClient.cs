@@ -91,8 +91,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoSubmitResult
             {
                 Success = false,
-                ErrorMessage = ExtractErrorMessage(rawResp.Content ?? string.Empty)
-                    ?? rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}"
+                ErrorMessage = QuotaOrUpstreamMessage(rawResp)
             };
         }
 
@@ -151,8 +150,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoStatus
             {
                 Status = "failed",
-                ErrorMessage = ExtractErrorMessage(rawResp.Content ?? string.Empty)
-                    ?? rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}"
+                ErrorMessage = QuotaOrUpstreamMessage(rawResp)
             };
         }
 
@@ -254,6 +252,18 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         {
             return Truncate(body, 200);
         }
+    }
+
+    // 额度用尽时优先用 Gateway 已构造的中文友好文案(LLM_QUOTA_EXCEEDED)，让「动起来」等视频路径与拆分镜
+    // 走同一套额度提示 + admin 告警；其余错误保留 /videos 端点特定的上游 message 解析（Bugbot review）。
+    private static string QuotaOrUpstreamMessage(GatewayRawResponse rawResp)
+    {
+        if (rawResp.ErrorCode == "LLM_QUOTA_EXCEEDED" && !string.IsNullOrWhiteSpace(rawResp.ErrorMessage))
+            return rawResp.ErrorMessage!;
+        return ExtractErrorMessage(rawResp.Content ?? string.Empty)
+            ?? rawResp.ErrorMessage
+            ?? rawResp.ErrorCode
+            ?? $"HTTP {rawResp.StatusCode}";
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";

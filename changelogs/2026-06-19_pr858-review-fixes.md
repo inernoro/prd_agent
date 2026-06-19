@@ -33,3 +33,4 @@
 | fix | prd-api | 分镜解析截断至 MaxStoryboardScenes(12)，与请求侧 sceneCount 钳制共用常量：模型对长文超产时不再全量下发撞图生图 run 条目上限导致整板无关键帧（Codex review） |
 | docs | prd-agent | debt.cds-backend-deploy-freeze.md 移除 3 个裸 NUL 字节(改字面 \0)，使 git 不再把该 md 当二进制、diff 工具可正常处理（Codex review） |
 | polish | prd-admin | 分镜台拆分镜等待加预估耗时文案(10-40s)，补全 CLAUDE.md §6 兜底(动画加载+预估耗时)；完整 SSE 流式见 debt #4（Codex review） |
+| fix | prd-api | 图生视频 submit/status 失败转发 Gateway 额度文案：OpenRouterVideoClient 原先只从 Content/ErrorCode 构造错误，丢掉 SendRawWithResolutionAsync 已写入 ErrorMessage 的 LLM_QUOTA_EXCEEDED 中文提示。新增 QuotaOrUpstreamMessage：额度错误优先用友好文案、其余保留 /videos 上游解析，使「动起来」与拆分镜额度提示一致（Bugbot review） |
