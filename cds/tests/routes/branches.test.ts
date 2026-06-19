@@ -4,7 +4,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { clearRunningServiceErrorMessages, createBranchRouter } from '../../src/routes/branches.js';
+import {
+  clearRunningServiceErrorMessages,
+  createBranchRouter,
+  shouldSkipFencedDeployCleanupForNewerRuntime,
+} from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
@@ -58,6 +62,33 @@ describe('branch status helpers', () => {
 
     expect(entry.services.api.errorMessage).toBeUndefined();
     expect(entry.services.worker.errorMessage).toBe('启动失败');
+  });
+
+  it('skips fenced deploy cleanup when a newer runtime became ready', () => {
+    expect(shouldSkipFencedDeployCleanupForNewerRuntime(
+      {
+        lastReadyAt: '2026-06-19T20:11:35.631Z',
+        lastDeployAt: '2026-06-19T20:11:35.700Z',
+      },
+      '2026-06-19T19:45:39.295Z',
+    )).toBe(true);
+  });
+
+  it('does not skip fenced deploy cleanup without a newer ready runtime', () => {
+    expect(shouldSkipFencedDeployCleanupForNewerRuntime(
+      { lastReadyAt: '2026-06-19T19:40:00.000Z' },
+      '2026-06-19T19:45:39.295Z',
+    )).toBe(false);
+  });
+
+  it('does not skip fenced deploy cleanup after a later stop', () => {
+    expect(shouldSkipFencedDeployCleanupForNewerRuntime(
+      {
+        lastReadyAt: '2026-06-19T20:11:35.631Z',
+        lastStoppedAt: '2026-06-19T20:12:00.000Z',
+      },
+      '2026-06-19T19:45:39.295Z',
+    )).toBe(false);
   });
 });
 
