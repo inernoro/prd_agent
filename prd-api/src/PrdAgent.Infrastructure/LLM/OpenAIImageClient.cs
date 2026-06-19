@@ -873,10 +873,19 @@ public class OpenAIImageClient
 
                             string? b64 = null;
                             string? httpUrl = null;
+                            string? mime = null;
                             if (u.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                             {
                                 var comma = u.IndexOf(',');
-                                if (comma >= 0 && comma + 1 < u.Length) b64 = u[(comma + 1)..];
+                                if (comma >= 0 && comma + 1 < u.Length)
+                                {
+                                    b64 = u[(comma + 1)..];
+                                    // 头部形如 image/jpeg;base64：保留 MIME，落库时据此设 outMime，避免 JPEG/WebP 被当 png 存（Bugbot review）
+                                    var header = u[5..comma];
+                                    var semi = header.IndexOf(';');
+                                    var mt = (semi >= 0 ? header[..semi] : header).Trim();
+                                    if (mt.Contains('/')) mime = mt;
+                                }
                             }
                             else if (u.StartsWith("http", StringComparison.OrdinalIgnoreCase))
                             {
@@ -884,7 +893,7 @@ public class OpenAIImageClient
                             }
                             if (string.IsNullOrWhiteSpace(b64) && string.IsNullOrWhiteSpace(httpUrl)) continue;
 
-                            images.Add(new ImageGenImage { Index = orIdx++, Base64 = b64, Url = httpUrl });
+                            images.Add(new ImageGenImage { Index = orIdx++, Base64 = b64, Url = httpUrl, Mime = mime });
                         }
                     }
                 }
@@ -913,6 +922,7 @@ public class OpenAIImageClient
                     string? b64 = null;
                     string? url = null;
                     string? revised = null;
+                    string? dataUrlMime = null;
 
                     if (it.TryGetProperty("b64_json", out var b64El) && b64El.ValueKind == JsonValueKind.String)
                     {
@@ -935,10 +945,16 @@ public class OpenAIImageClient
                     // 兼容某些网关/代理把 b64_json 返回成 data URL（data:image/png;base64,...）
                     if (!string.IsNullOrWhiteSpace(b64) && b64.TrimStart().StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                     {
-                        var comma = b64.IndexOf(',');
-                        if (comma >= 0 && comma + 1 < b64.Length)
+                        var du = b64.TrimStart();
+                        var comma = du.IndexOf(',');
+                        if (comma >= 0 && comma + 1 < du.Length)
                         {
-                            b64 = b64[(comma + 1)..];
+                            // 保留 data URL 头里的 MIME（image/jpeg / image/webp 等），落库据此设 outMime（Bugbot review）
+                            var header = du[5..comma];
+                            var semi = header.IndexOf(';');
+                            var mt = (semi >= 0 ? header[..semi] : header).Trim();
+                            if (mt.Contains('/')) dataUrlMime = mt;
+                            b64 = du[(comma + 1)..];
                         }
                     }
 
@@ -947,6 +963,7 @@ public class OpenAIImageClient
                         Index = idx++,
                         Base64 = string.IsNullOrWhiteSpace(b64) ? null : b64,
                         Url = string.IsNullOrWhiteSpace(url) ? null : url,
+                        Mime = dataUrlMime,
                         RevisedPrompt = string.IsNullOrWhiteSpace(revised) ? null : revised
                     });
                 }
@@ -979,6 +996,8 @@ public class OpenAIImageClient
                     {
                         bytes = null;
                     }
+                    // data URL 头带的 MIME（image/jpeg / image/webp 等）优先于默认 png，避免 JPEG/WebP 字节存成 .png（Bugbot review）
+                    if (!string.IsNullOrWhiteSpace(images[i].Mime)) outMime = images[i].Mime!;
                 }
                 else if (!string.IsNullOrWhiteSpace(images[i].Url))
                 {
@@ -2700,6 +2719,8 @@ public class ImageGenImage
     public int Index { get; set; }
     public string? Base64 { get; set; }
     public string? Url { get; set; }
+    /// <summary>base64 图片的 MIME（如 image/jpeg / image/webp）。来源于 data URL 头，落库时据此设 outMime，避免 JPEG/WebP 被当 png 存（Bugbot review）。</summary>
+    public string? Mime { get; set; }
     public string? RevisedPrompt { get; set; }
     /// <summary>原图 URL（无水印）。用于作为参考图时避免水印叠加。</summary>
     public string? OriginalUrl { get; set; }

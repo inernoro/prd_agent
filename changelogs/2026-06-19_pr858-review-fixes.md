@@ -39,3 +39,5 @@
 | fix | prd-api | 分镜解析按请求 sceneCount 截断：ParseStoryboard 接收 maxScenes(用户指定 N 则裁到 N，否则全局上限 12)，兑现 system prompt「恰好 N 个」、控制下游关键帧批量与成本（Bugbot review） |
 | fix | prd-api | OpenRouter 生图解析回退兜底：启发式(body 含 choices/image_url/images 子串)命中但解析到 0 张图时，不再立即失败，回退标准 data[] 解析，避免有效 images/generations 响应被误报「未包含图片数据」（Bugbot review） |
 | ops | prd-api | cds-compose.yml 的 api 服务 build/run 显式统一 `-c Debug`：原先 build 与 dotnet run --no-build 都依赖默认配置，缺显式 -c 易漂移(build 出 Release 而 run 加载 Debug → 跑旧程序集，正是部署冻结症状)（Bugbot review） |
+| fix | prd-admin | 分镜「动起来」视频轮询超时改基于服务器状态：worker 串行处理，本镜排在长任务后会长时间 Queued，原按创建时间起算 11 分钟会在后端刚开始时误判超时。改为离开 Queued 才起算处理窗口(11min)，排队期单独按 20min 上限 + 「排队中」文案（Codex review） |
+| fix | prd-api | OpenRouter/标准 data URL 生图保留 MIME：data:image/jpeg|webp 原先只剥 base64、丢 MIME，落库用默认 image/png，导致 COS 存成 png 却是 JPEG/WebP 字节。ImageGenImage 加 Mime 字段，解析时取 data URL 头 MIME，上传时据此设 outMime（Bugbot review） |

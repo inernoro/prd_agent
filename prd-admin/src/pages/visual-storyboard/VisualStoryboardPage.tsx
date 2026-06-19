@@ -371,30 +371,43 @@ export default function VisualStoryboardPage() {
       };
 
       // 轮询直出结果（服务器权威：后台 worker 提交 → 轮询 OpenRouter → 下载 COS）。
-      // 客户端窗口须 >= 后端 worker 的 10 分钟终态期，否则 6-10 分钟才完成的视频会被误判「生成超时」。
-      const deadline = Date.now() + 11 * 60 * 1000;
-      while (Date.now() < deadline) {
+      // 超时基于「服务器开始处理的时刻」而非创建时刻：worker 串行处理，本镜可能排在长任务后面长时间 Queued，
+      // 若按创建时间起算 11 分钟，会在后端刚开始时就误判「生成超时」（Codex review）。
+      const QUEUE_CAP_MS = 20 * 60 * 1000; // 排队最长等待：前面压着长任务时的安全上限
+      const PROCESS_WINDOW_MS = 11 * 60 * 1000; // 进入处理后给后端 worker 的 10 分钟终态期 + 缓冲
+      const createdAt = Date.now();
+      let processingDeadline: number | null = null; // 一旦离开 Queued 就锁定，从那一刻起算处理窗口
+      for (;;) {
         await new Promise((r) => setTimeout(r, 5000));
         if (bailIfStale()) return; // 已被新一轮生成/卸载作废，停止轮询并取消后端 run
         const res = await getVisualVideoRunReal(runId);
         if (bailIfStale()) return; // fetch 期间被作废，丢弃结果并取消后端 run
-        if (!res.success || !res.data) continue;
-        const run = res.data;
-        const st = String(run.status || '');
-        if (st === 'Completed' && run.videoAssetUrl) {
-          setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'done', vidUrl: run.videoAssetUrl, vidPhase: null } : x)));
-          return;
+        if (res.success && res.data) {
+          const run = res.data;
+          const st = String(run.status || '');
+          if (st === 'Completed' && run.videoAssetUrl) {
+            setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'done', vidUrl: run.videoAssetUrl, vidPhase: null } : x)));
+            return;
+          }
+          if (st === 'Failed' || st === 'Cancelled') {
+            setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: run.errorMessage || '视频生成失败' } : x)));
+            return;
+          }
+          // 离开排队、进入处理 → 锁定处理窗口起点（仅一次）
+          if (processingDeadline === null && st !== '' && st !== 'Queued') {
+            processingDeadline = Date.now() + PROCESS_WINDOW_MS;
+          }
+          // 进度文案：排队中 / 下载中 / 生成中
+          const phaseLabel = st === 'Queued' ? '排队中' : run.currentPhase === 'downloading' ? '下载中' : '生成中';
+          setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidPhase: phaseLabel } : x)));
         }
-        if (st === 'Failed' || st === 'Cancelled') {
-          setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: run.errorMessage || '视频生成失败' } : x)));
-          return;
-        }
-        // 进度文案（拉取 → 生成 → 下载）
-        const phaseLabel = run.currentPhase === 'downloading' ? '下载中' : run.currentPhase === 'videogen-polling' ? '生成中' : '生成中';
-        setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidPhase: phaseLabel } : x)));
+        // 超时判定全基于服务器状态：进入处理后按处理窗口，仍在排队按排队上限——都不按创建时间一刀切
+        const timedOut = processingDeadline !== null ? Date.now() > processingDeadline : Date.now() - createdAt > QUEUE_CAP_MS;
+        if (timedOut) break;
       }
       if (bailIfStale()) return; // 超时落地前若已被新一轮作废，取消后端 run 不回填旧板
-      setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: '生成超时，请重试' } : x)));
+      const overdueMsg = processingDeadline !== null ? '生成超时，请重试' : '排队超时（前面任务过多），请稍后重试';
+      setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: overdueMsg } : x)));
     } finally {
       // 仅本代次所有者才释放：避免旧板轮询退出时清掉新板（已重新生成分镜）刚取得的同镜锁
       if (animatingRef.current.get(sceneIndex) === myGen) animatingRef.current.delete(sceneIndex);
