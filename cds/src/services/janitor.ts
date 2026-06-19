@@ -41,6 +41,8 @@ export interface JanitorSweepReport {
   removedBranches: string[];
   /** Branches that would have been removed but were pinned. */
   skippedPinned: string[];
+  /** Branches owned by remote executors. Coordinator cleanup must proxy these. */
+  skippedRemote: string[];
   /** Disk usage at sweep time. null = stat failed. */
   disk: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
   /** true when disk usage exceeded diskWarnPercent. */
@@ -190,6 +192,7 @@ export class JanitorService {
       timestamp: new Date(this.clock.now()).toISOString(),
       removedBranches: [],
       skippedPinned: [],
+      skippedRemote: [],
       disk: null,
       diskWarning: false,
       errors: [],
@@ -235,6 +238,10 @@ export class JanitorService {
 
       const idleMs = now - anchorMs;
       if (idleMs <= ttlMs) continue;
+      if (branch.executorId) {
+        report.skippedRemote.push(branch.id);
+        continue;
+      }
 
       // Found a stale branch. Delegate removal to the caller.
       try {
@@ -268,7 +275,7 @@ export class JanitorService {
       if (idleMs <= ttlMs) continue;
 
       const branchDefault = this.stateService.getDefaultBranchFor(branch.projectId);
-      if (isBranchProtected(branch, branchDefault, [])) {
+      if (branch.executorId || isBranchProtected(branch, branchDefault, [])) {
         wouldSkip.push(branch.id);
       } else {
         wouldRemove.push(branch.id);

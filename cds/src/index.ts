@@ -2263,7 +2263,11 @@ janitorService.setRemoveFn(async (slug: string) => {
       stateService.save();
       schedulerService.start();
     }
-    janitorService.start();
+    if (config.mode !== 'executor') {
+      janitorService.start();
+    } else {
+      console.log('[janitor] skipped on executor node (cleanup decisions are coordinator-only)');
+    }
     // 2026-05-14 Codex review P1 修复：auto-lifecycle 只能在协调者角色
     // （standalone / scheduler）跑。executor 是 worker 节点，集群共享 state
     // 时若每个 executor 都扫全部项目跑 auto-stop/publish，会把别的 executor

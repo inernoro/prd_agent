@@ -150,6 +150,16 @@ describe('JanitorService', () => {
       expect(report.skippedPinned).toEqual(['pinned']);
     });
 
+    it('skips stale branches owned by remote executors', async () => {
+      stateService.addBranch(makeBranch('remote-owned', 30, { executorId: 'exec-1' }));
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches).toEqual([]);
+      expect(report.skippedRemote).toEqual(['remote-owned']);
+      expect(removed).toEqual([]);
+    });
+
     it('skips defaultBranch even if stale', async () => {
       stateService.addBranch(makeBranch('main', 100));
       stateService.setDefaultBranch('main');
@@ -240,6 +250,15 @@ describe('JanitorService', () => {
       expect(result.wouldSkip).toEqual(['stale-pinned']);
       // No actual removal
       expect(removed).toEqual([]);
+    });
+
+    it('skips remote-owned branches instead of reporting them as removable', () => {
+      stateService.addBranch(makeBranch('stale-remote', 30, { executorId: 'exec-1' }));
+
+      const result = janitor.dryRun();
+
+      expect(result.wouldRemove).toEqual([]);
+      expect(result.wouldSkip).toEqual(['stale-remote']);
     });
   });
 
