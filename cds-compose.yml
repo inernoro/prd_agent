@@ -61,6 +61,7 @@ x-cds-deploy-modes:
     dev:
       label: "开发模式 (Vite HMR)"
       command: >-
+        cd prd-admin &&
         corepack enable &&
         corepack prepare pnpm@10.28.2 --activate &&
         pnpm config set store-dir /pnpm/store &&
@@ -69,6 +70,7 @@ x-cds-deploy-modes:
     static:
       label: "静态部署 (vite build+serve)"
       command: >-
+        cd prd-admin &&
         corepack enable &&
         corepack prepare pnpm@10.28.2 --activate &&
         pnpm config set store-dir /pnpm/store &&
@@ -125,18 +127,16 @@ services:
 
   admin:
     image: node:20-slim
-    working_dir: /app
+    working_dir: /repo
     volumes:
-      - ./prd-admin:/app
-      # public/thirdparty/ref 是符号链接指向仓库根 thirdparty/ref（22+ 个 HTML 素材）。
-      # 单挂 ./prd-admin 时 symlink 解析到 /thirdparty/ref 找不到目录，
-      # vite build (static 模式) 的 copyPublicDir 步骤会报 ENOENT。
-      - ./thirdparty:/thirdparty:ro
+      # 挂载仓库根目录，确保 prd-admin/public 内指向仓库级资源的符号链接可解析。
+      - .:/repo
       - admin-pnpm-store:/pnpm/store
     ports:
       - "8000"
     # 默认 dev：秒级就绪，避免 static 冷构建 OOM（exitCode=137）。需要 dist 时在 CDS 切 static 模式。
     command: >-
+      cd prd-admin &&
       corepack enable &&
       corepack prepare pnpm@10.28.2 --activate &&
       pnpm config set store-dir /pnpm/store &&
