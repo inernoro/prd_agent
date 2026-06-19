@@ -31,3 +31,7 @@
 - **OpenRouter 出图未透传画幅（size/aspect）**（Codex + Bugbot 双标 P2/Medium）：分镜台选的 16:9 / 9:16 / 1:1 经 `createImageGenRun` 以 `size`（如 `1280x720`）下发，但 `OpenAIImageClient` 的 OpenRouter 分支（`chat/completions` + `modalities`）只发 `model/messages/modalities`，画幅没到 OpenRouter，关键帧可能按模型默认比例出图、与所选视频画幅不一致。
   - 未处理原因：OpenRouter 经 `chat/completions` 出图的画幅控制字段（Codex 称 `image_config`）需对照 OpenRouter 文档核实确切 schema；贸然加未知字段可能被严格 API 直接 400，反而打断整条出图链路。且本分支后端处于「CDS 部署冻结」（见 `debt.cds-backend-deploy-freeze`），无法部署验证。
   - 待办：确认 OpenRouter 图片生成画幅字段格式 → 在 OpenRouter 分支 `orBody` 注入（带容错，未知字段不应 400 整条链路）→ CDS 部署恢复后 direct i2v 脚本复验画幅是否匹配。
+
+- **OpenRouter 出图模态写死 ["image","text"]，image-only 模型可能不支持**（Codex P2，2026-06-19）：`OpenAIImageClient` 的 OpenRouter 分支 orBody 写死 `modalities: ["image","text"]`。Sourceful/Flux 这类「只出图」模型不支持 text 输出模态，可能在出任何图前就失败。
+  - 未处理原因：需按模型能力派生 modalities（image-only → `["image"]`），但 `OpenAIImageClient` 当前拿不到「该模型是否 image-only」的能力信息；与上一条 image_config 同属「OpenRouter 出图请求体需按模型能力定制」，且后端处于部署冻结无法验证。
+  - 待办：引入模型能力标记（image-only / image+text）→ 据此派生 modalities 与 image_config → CDS 部署恢复后用不同模型复验。

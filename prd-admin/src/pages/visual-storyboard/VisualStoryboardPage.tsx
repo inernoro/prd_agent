@@ -113,6 +113,7 @@ export default function VisualStoryboardPage() {
     return () => {
       controllersRef.current.forEach((c) => c.abort());
       controllersRef.current = [];
+      genRef.current += 1; // 卸载时作废所有在途 SSE + 图生视频轮询，避免卸载后还 setScenes
     };
   }, []);
 
@@ -508,7 +509,11 @@ export default function VisualStoryboardPage() {
                       {/* 画面区 */}
                       <div
                         className="relative w-full"
-                        style={{ aspectRatio: aspectInfo.ratio, background: 'rgba(0,0,0,0.22)' }}
+                        style={{
+                          // 用该镜出图时的画幅渲染卡片，避免改全局画幅后旧镜被错误取景
+                          aspectRatio: (ASPECTS.find((a) => a.key === (s.kfAspect ?? aspect))?.ratio ?? aspectInfo.ratio),
+                          background: 'rgba(0,0,0,0.22)',
+                        }}
                       >
                         {!skeleton && s.vidUrl && s.vidStatus !== 'running' && s.vidStatus !== 'error' ? (
                           <>

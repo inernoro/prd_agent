@@ -10,3 +10,5 @@
 | fix | prd-admin | 视觉分镜台关键帧放大预览改用 createPortal 挂到 document.body，遵循 frontend-modal.md（避免 overflow/transform 祖先裁剪 position:fixed 浮层）（Codex review） |
 | fix | prd-admin | 关键帧批次与单镜重绘并发隔离：新增 per-scene 运行 token（sceneKfGen），后发重绘顶替该镜所有权，使先前批次对该镜的 SSE 回填/流结束兜底变 no-op，避免「批次仍在跑、其中一镜被重绘」时批次兜底把正在重绘的镜误判失败（Bugbot review） |
 | fix | prd-admin | 图生视频沿用关键帧出图画幅：SceneVM 记录 kfAspect，animateScene 用 s.kfAspect 而非全局 aspect，避免用户改画幅后用旧帧出错比例（Codex review） |
+| feat | prd-api | 放开视觉创作视频每日限额（DailyLimit 1→999，用户决定）：原 1/天「体验」限额会让多镜分镜每天只能动 1 镜，其余被配额 400 挡；放开后多镜分镜可逐镜出视频 |
+| fix | prd-admin | 分镜台卸载时 bump genRef 停止图生视频轮询（避免卸载后 setScenes）；分镜卡片按 s.kfAspect 取景（改全局画幅后旧镜不再被错误裁剪） |
