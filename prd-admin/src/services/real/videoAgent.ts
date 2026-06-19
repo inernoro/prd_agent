@@ -51,6 +51,14 @@ export const getVisualVideoRunReal: GetVideoGenRunContract = async (runId) => {
   });
 };
 
+// 视觉分镜台专用取消：走 visual-agent 自有 cancel 端点（同 appKey/权限），
+// 用于「离开分镜台/重新生成」时取消刚提交、已无法回到 UI 的视频 run，避免后台继续烧额度。
+export const cancelVisualVideoRunReal: CancelVideoGenRunContract = async (runId) => {
+  return await apiRequest<boolean>(api.visualAgent.videoGen.runs.cancel(runId), {
+    method: 'POST',
+  });
+};
+
 export const cancelVideoGenRunReal: CancelVideoGenRunContract = async (runId) => {
   return await apiRequest<boolean>(api.videoAgent.runs.cancel(runId), {
     method: 'POST',

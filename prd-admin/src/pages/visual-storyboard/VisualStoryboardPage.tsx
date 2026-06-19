@@ -12,7 +12,7 @@ import {
   scriptStoryboard,
   streamImageGenRunWithRetry,
 } from '@/services';
-import { createVisualVideoRunReal, getVisualVideoRunReal } from '@/services/real/videoAgent';
+import { createVisualVideoRunReal, getVisualVideoRunReal, cancelVisualVideoRunReal } from '@/services/real/videoAgent';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 
 type Aspect = '16:9' | '9:16' | '1:1';
@@ -326,7 +326,14 @@ export default function VisualStoryboardPage() {
         directDuration: duration,
         articleTitle: `分镜 ${sceneIndex + 1}：${s.topic}`,
       });
-      if (genRef.current !== myGen) return; // 提交期间被新一轮作废，不回填旧板
+      if (genRef.current !== myGen) {
+        // 提交期间被新一轮生成/卸载作废：run 已在后端创建但结果已无法回到 UI，
+        // 取消它避免 worker 继续烧视频额度（用户主动替换工作，非被动断开，不违反 server-authority）。
+        if (created.success && created.data?.runId) {
+          void cancelVisualVideoRunReal(created.data.runId).catch(() => {});
+        }
+        return;
+      }
       if (!created.success || !created.data?.runId) {
         setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: created.error?.message || '提交失败' } : x)));
         return;
