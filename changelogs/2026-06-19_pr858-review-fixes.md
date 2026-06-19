@@ -28,3 +28,4 @@
 | fix | prd-admin | 关键帧 dirty 判定改按提示词比对：渲染途中改词后，旧提示词的图到达时不再无条件清脏，仅当当前词仍等于已出图的词才清，避免旧帧配新词被当干净帧（Codex review） |
 | fix | prd-admin | 分镜台关键帧模型选择改用 text2img 专属池端点（/models/text2img），不再用合并了 img2img/vision 的列表，避免选到只配了 img2img/vision 的池导致每帧失败（Codex review） |
 | fix | prd-api | 图生视频直出 worker 提交前补取消闸：CancelRunAsync 仅设 CancelRequested，而 claim 只过滤 Status==Queued，取消的 run 仍可能在 worker 提交到 OpenRouter 后才被轮询取消、白烧额度。ProcessDirectVideoGenAsync 领取后 + 提交前两处检查 CancelRequested，命中即置终态不提交（Codex review） |
+| fix | prd-api | 分镜台 ExtractChatText 兼容数组型 content：部分 chat 网关把 message.content 返回为部件数组 [{type:text,text:..}]，原先只当字符串读会抛异常退回整段响应、导致 JSON 提取抓到外层 envelope 而非分镜对象、报通用解析失败。改为字符串/数组两种形态都正确拼接文本（Bugbot review） |

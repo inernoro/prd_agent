@@ -244,7 +244,22 @@ public class ImageGenController : ControllerBase
         try
         {
             var doc = System.Text.Json.Nodes.JsonNode.Parse(apiResponseJson)?.AsObject();
-            return doc?["choices"]?[0]?["message"]?["content"]?.GetValue<string>() ?? string.Empty;
+            var content = doc?["choices"]?[0]?["message"]?["content"];
+            if (content == null) return string.Empty;
+            // content 可能是纯字符串，也可能是「部件数组」[{type:"text",text:".."}]（部分 chat 兼容网关如此返回）。
+            // 只当字符串读会抛异常 → 退回整段响应 → ExtractFirstJsonObject 抓到外层 envelope 而非分镜 JSON（Bugbot review）。
+            if (content is System.Text.Json.Nodes.JsonArray arr)
+            {
+                var sb = new System.Text.StringBuilder();
+                foreach (var part in arr)
+                {
+                    if (part is System.Text.Json.Nodes.JsonValue pv) { sb.Append(pv.GetValue<string>() ?? string.Empty); continue; }
+                    var pt = part?["text"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(pt)) sb.Append(pt);
+                }
+                return sb.ToString();
+            }
+            return content.GetValue<string>() ?? string.Empty;
         }
         catch { return apiResponseJson; }
     }
