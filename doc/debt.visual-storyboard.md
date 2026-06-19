@@ -17,7 +17,7 @@
 | 1 | image-to-video（「动起来」） | 每镜/整片按钮已接线但**显式禁用**，tooltip 说明「需配置视频模型池」 | 配置「视频生成」模型池后：末帧 carry-forward 做参考帧 + 逐镜 image-to-video + ffmpeg 拼接成片 |
 | 2 | 分镜会话持久化 | 分镜组合（scenes 列表 + 关键帧映射）目前驻留前端，刷新后丢失；关键帧图本身经 image-gen 落 COS | V2：把 storyboard 作为一等 run 实体存库（参考 ImageGenRun），支持列表/恢复/分享（违反 frontend-architecture「前端无业务状态」，列为优先债） |
 | 3 | 关键帧并发与连贯性 | 当前每镜独立 text2img，风格靠 LLM 在每条 keyframePrompt 注入统一 style 描述维持 | 引入 style-lock（固定 seed / 参考首帧 img2img）强化人物/色调跨镜一致 |
-| 4 | 拆镜可视化 | 拆镜 LLM 调用期间用骨架卡过渡（~10-40s）；非流式 | 可改 SSE 流式逐镜吐出，进一步降低等待感 |
+| 4 | 拆镜可视化 | 拆镜 LLM 调用期间用骨架卡过渡（~10-40s）+ 预估耗时提示 + 旋转图标；非流式（Codex P2 提议改 SSE）| §6 兜底（动画加载+预估耗时）已满足；进一步可改 SSE 流式逐镜吐出降低等待感。后端处部署冻结，新增 SSE 端点需部署验证，暂缓 |
 | 5 | 上传入口 | 输入仅 textarea 贴文（零摩擦：示例一键填充 + 风格可选） | 补文档/文件上传入口（对齐 zero-friction-input：能上传不手输） |
 
 ## 验证记录（2026-06-14）

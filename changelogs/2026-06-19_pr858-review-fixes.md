@@ -30,3 +30,6 @@
 | fix | prd-api | 图生视频直出 worker 提交前补取消闸：CancelRunAsync 仅设 CancelRequested，而 claim 只过滤 Status==Queued，取消的 run 仍可能在 worker 提交到 OpenRouter 后才被轮询取消、白烧额度。ProcessDirectVideoGenAsync 领取后 + 提交前两处检查 CancelRequested，命中即置终态不提交（Codex review） |
 | fix | prd-api | 分镜台 ExtractChatText 兼容数组型 content：部分 chat 网关把 message.content 返回为部件数组 [{type:text,text:..}]，原先只当字符串读会抛异常退回整段响应、导致 JSON 提取抓到外层 envelope 而非分镜对象、报通用解析失败。改为字符串/数组两种形态都正确拼接文本（Bugbot review） |
 | fix | prd-api | ExtractChatText 再兼容单对象型 content：网关把 message.content 返回为单个 {type,text} 对象（非数组）时也能取文本，抽 PartText 助手统一处理 字符串/单对象/数组三形态（Bugbot review 续） |
+| fix | prd-api | 分镜解析截断至 MaxStoryboardScenes(12)，与请求侧 sceneCount 钳制共用常量：模型对长文超产时不再全量下发撞图生图 run 条目上限导致整板无关键帧（Codex review） |
+| docs | prd-agent | debt.cds-backend-deploy-freeze.md 移除 3 个裸 NUL 字节(改字面 \0)，使 git 不再把该 md 当二进制、diff 工具可正常处理（Codex review） |
+| polish | prd-admin | 分镜台拆分镜等待加预估耗时文案(10-40s)，补全 CLAUDE.md §6 兜底(动画加载+预估耗时)；完整 SSE 流式见 debt #4（Codex review） |

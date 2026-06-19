@@ -472,6 +472,13 @@ export default function VisualStoryboardPage() {
           </Button>
         </div>
 
+        {phase === 'scripting' ? (
+          // 拆分镜为非流式 LLM 调用：给动画骨架 + 预估耗时，避免空白等待（CLAUDE.md §6 兜底；流式逐镜见 debt.visual-storyboard #4）
+          <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+            正在把内容拆成分镜，长文约需 10-40 秒，下方会逐镜浮现…
+          </div>
+        ) : null}
+
         <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
           {modelsLoading ? (
             '加载生图模型中…'

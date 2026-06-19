@@ -163,7 +163,7 @@ public class ImageGenController : ControllerBase
         if (brief.Length > 20000) brief = brief[..20000];
 
         var style = (request?.Style ?? string.Empty).Trim();
-        var sceneCount = Math.Clamp(request?.SceneCount ?? 0, 0, 12);
+        var sceneCount = Math.Clamp(request?.SceneCount ?? 0, 0, MaxStoryboardScenes);
 
         const string appCallerCode = AppCallerRegistry.VisualAgent.Storyboard.Script;
 
@@ -305,6 +305,9 @@ public class ImageGenController : ControllerBase
         return null; // 未闭合
     }
 
+    // 分镜上限：请求侧 sceneCount 钳制与解析侧截断共用，避免漂移；上限 < 图生图 run 的条目上限
+    private const int MaxStoryboardScenes = 12;
+
     private static StoryboardScriptResponse? ParseStoryboard(string text)
     {
         var json = ExtractFirstJsonObject(text);
@@ -324,6 +327,8 @@ public class ImageGenController : ControllerBase
 
             for (var i = 0; i < arr.Count; i++)
             {
+                // 上限与请求侧 sceneCount 钳制(0-12)一致：模型对长文可能超产，全量下发会撞图生图 run 的条目上限、导致整板无关键帧（Codex review）
+                if (res.Scenes.Count >= MaxStoryboardScenes) break;
                 var it = arr[i]?.AsObject();
                 if (it == null) continue;
                 var kf = StripEmoji(it["keyframePrompt"]?.GetValue<string>()?.Trim());
