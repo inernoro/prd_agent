@@ -94,8 +94,8 @@ services:
       src/PrdAgent.Core/obj src/PrdAgent.Core/bin
       src/PrdAgent.Infrastructure/obj src/PrdAgent.Infrastructure/bin &&
       dotnet restore &&
-      dotnet build --no-restore --no-incremental &&
-      dotnet run --project src/PrdAgent.Api --no-build --urls http://0.0.0.0:5000
+      dotnet build --no-restore --no-incremental -c Debug &&
+      dotnet run --project src/PrdAgent.Api --no-build -c Debug --urls http://0.0.0.0:5000
     depends_on:
       mongodb: { condition: service_healthy }
       redis: { condition: service_healthy }

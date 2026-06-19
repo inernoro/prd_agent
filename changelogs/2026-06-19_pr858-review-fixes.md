@@ -38,3 +38,4 @@
 | fix | prd-api | 图生视频下载失败路径也走 QuotaOrUpstreamMessage：原先只用 ErrorCode/HTTP 状态+诊断，丢掉 Gateway 的 LLM_QUOTA_EXCEEDED 友好文案，与 submit/status 不一致（Bugbot review） |
 | fix | prd-api | 分镜解析按请求 sceneCount 截断：ParseStoryboard 接收 maxScenes(用户指定 N 则裁到 N，否则全局上限 12)，兑现 system prompt「恰好 N 个」、控制下游关键帧批量与成本（Bugbot review） |
 | fix | prd-api | OpenRouter 生图解析回退兜底：启发式(body 含 choices/image_url/images 子串)命中但解析到 0 张图时，不再立即失败，回退标准 data[] 解析，避免有效 images/generations 响应被误报「未包含图片数据」（Bugbot review） |
+| ops | prd-api | cds-compose.yml 的 api 服务 build/run 显式统一 `-c Debug`：原先 build 与 dotnet run --no-build 都依赖默认配置，缺显式 -c 易漂移(build 出 Release 而 run 加载 Debug → 跑旧程序集，正是部署冻结症状)（Bugbot review） |
