@@ -70,6 +70,9 @@ export default function VisualStoryboardPage() {
   const [preview, setPreview] = useState<{ open: boolean; src: string; topic: string }>({ open: false, src: '', topic: '' });
 
   const controllersRef = useRef<AbortController[]>([]);
+  // 每发起一轮「生成分镜」自增，作废上一轮在途的关键帧 SSE 回调 + 图生视频轮询，
+  // 避免旧任务把过期的关键帧/错误/视频状态画到新分镜板的同 sceneIndex 上（stale-response guard）。
+  const genRef = useRef(0);
 
   const aspectInfo = useMemo(() => ASPECTS.find((a) => a.key === aspect) ?? ASPECTS[0], [aspect]);
 
@@ -111,6 +114,7 @@ export default function VisualStoryboardPage() {
   /** 为一批镜头渲染关键帧（复用视觉创作生图引擎：创建 run → SSE 增量回填） */
   const renderKeyframes = async (targets: { sceneIndex: number; prompt: string }[]) => {
     if (!activeModel || targets.length === 0) return;
+    const myGen = genRef.current; // 捕获本轮代次；若期间用户重新生成分镜则本批回调全部失效
     const size = aspectInfo.size;
 
     // 标记这批镜头为 running
@@ -148,7 +152,15 @@ export default function VisualStoryboardPage() {
       return;
     }
     const runId = String(created.data?.runId || '').trim();
-    if (!runId) return;
+    if (!runId) {
+      // 创建成功却没返回 runId：把本批 running 的镜头复位为 error，避免 spinner 卡死
+      setScenes((prev) =>
+        prev.map((s) =>
+          targets.some((t) => t.sceneIndex === s.index) ? { ...s, kfStatus: 'error', kfError: '创建任务未返回 runId，请重试' } : s,
+        ),
+      );
+      return;
+    }
 
     await streamImageGenRunWithRetry({
       runId,
@@ -156,6 +168,7 @@ export default function VisualStoryboardPage() {
       maxAttempts: 20,
       signal: ac.signal,
       onEvent: (evt) => {
+        if (genRef.current !== myGen) return; // 已被新一轮生成作废，忽略过期回调
         if (!evt.data) return;
         const o = safeJsonParse(evt.data);
         if (!o) return;
@@ -183,7 +196,8 @@ export default function VisualStoryboardPage() {
       },
     });
 
-    // 流结束兜底：仍在 running 的标记为 error
+    // 流结束兜底：仍在 running 的标记为 error（已被新一轮作废则不动旧板）
+    if (genRef.current !== myGen) return;
     setScenes((prev) =>
       prev.map((s) =>
         targets.some((t) => t.sceneIndex === s.index) && s.kfStatus === 'running'
@@ -204,6 +218,11 @@ export default function VisualStoryboardPage() {
       return;
     }
     if (busy) return;
+
+    // 新一轮：作废上一轮所有在途 SSE / 视频轮询，旧回调（含上一板的关键帧/动起来）一律失效
+    controllersRef.current.forEach((c) => c.abort());
+    controllersRef.current = [];
+    genRef.current += 1;
 
     setPhase('scripting');
     setScenes([]);
@@ -242,10 +261,12 @@ export default function VisualStoryboardPage() {
   const animateScene = async (sceneIndex: number) => {
     const s = scenes.find((x) => x.index === sceneIndex);
     if (!s || s.kfStatus !== 'done') return;
+    if (s.vidStatus === 'running') return; // 同镜正在转视频，避免重复触发
     if (!s.kfPublicUrl) {
       toast.warning('该关键帧暂无公开链接，无法转视频，请先重绘这一镜');
       return;
     }
+    const myGen = genRef.current; // 本轮代次；若期间重新生成分镜则停止本次轮询回填
     setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'running', vidError: null, vidPhase: '提交中' } : x)));
 
     // Wan 2.6 仅支持 5/10s：分镜时长就近取 5
@@ -271,7 +292,9 @@ export default function VisualStoryboardPage() {
     const deadline = Date.now() + 6 * 60 * 1000;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 5000));
+      if (genRef.current !== myGen) return; // 已被新一轮生成作废，停止轮询与回填
       const res = await getVideoGenRunReal(runId);
+      if (genRef.current !== myGen) return; // fetch 期间被作废，丢弃结果不回填
       if (!res.success || !res.data) continue;
       const run = res.data;
       const st = String(run.status || '');

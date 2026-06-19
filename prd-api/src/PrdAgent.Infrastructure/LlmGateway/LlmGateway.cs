@@ -1188,15 +1188,27 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// </summary>
     private static bool IsQuotaExceeded(int statusCode, string? rawMessage)
     {
-        if (statusCode == 402) return true; // Payment Required
         var m = (rawMessage ?? string.Empty).ToLowerInvariant();
+
+        // 限流(429 / "Rate limit exceeded" / 每分钟请求数)是节流，不是额度用尽——先排除，
+        // 否则 "Rate limit exceeded" 含 "limit exceeded" 子串会被误判为额度、错误触发额度告警。
+        if (statusCode == 429) return false;
+        if (m.Contains("rate limit") || m.Contains("rate-limit")
+            || m.Contains("requests per") || m.Contains("per minute")
+            || m.Contains("too many requests"))
+            return false;
+
+        if (statusCode == 402) return true; // Payment Required = 额度/账单
         if (m.Length == 0) return false;
-        return m.Contains("limit exceeded")
-            || m.Contains("key limit")
-            || m.Contains("quota") && (m.Contains("exceed") || m.Contains("insufficient"))
-            || m.Contains("insufficient") && (m.Contains("credit") || m.Contains("balance"))
+
+        // 只认明确指向「额度/余额/账单/key 限额」的信号；裸 "limit exceeded" 不再单独判定为额度。
+        return m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
+            || m.Contains("credit limit")
+            || (m.Contains("limit exceeded") && (m.Contains("credit") || m.Contains("quota") || m.Contains("balance") || m.Contains("key")))
+            || (m.Contains("quota") && (m.Contains("exceed") || m.Contains("insufficient")))
+            || (m.Contains("insufficient") && (m.Contains("credit") || m.Contains("balance")))
             || m.Contains("exceeded your current")
-            || m.Contains("billing") && m.Contains("limit");
+            || (m.Contains("billing") && m.Contains("limit"));
     }
 
     /// <summary>
