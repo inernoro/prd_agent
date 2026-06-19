@@ -23,5 +23,9 @@ RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
 
 FROM base AS final
 WORKDIR /app
+ARG GIT_COMMIT=""
+ARG BUILD_TIME_UTC=""
+ENV GIT_COMMIT=$GIT_COMMIT
+ENV BUILD_TIME_UTC=$BUILD_TIME_UTC
 COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "PrdAgent.Api.dll"]
