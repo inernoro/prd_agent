@@ -74,6 +74,10 @@ export default function VisualStoryboardPage() {
   // 每发起一轮「生成分镜」自增，作废上一轮在途的关键帧 SSE 回调 + 图生视频轮询，
   // 避免旧任务把过期的关键帧/错误/视频状态画到新分镜板的同 sceneIndex 上（stale-response guard）。
   const genRef = useRef(0);
+  // 每个 sceneIndex 一个「关键帧运行 token」：后发的单镜重绘顶替该镜 token，
+  // 使先前批次（或上一次重绘）对该镜的 SSE 回填与流结束兜底变成 no-op——
+  // 避免「批次仍在跑、其中一镜被单独重绘」时批次兜底把正在重绘的镜误判为失败。
+  const sceneKfGen = useRef<Map<number, number>>(new Map());
 
   const aspectInfo = useMemo(() => ASPECTS.find((a) => a.key === aspect) ?? ASPECTS[0], [aspect]);
 
@@ -116,6 +120,15 @@ export default function VisualStoryboardPage() {
   const renderKeyframes = async (targets: { sceneIndex: number; prompt: string }[]) => {
     if (!activeModel || targets.length === 0) return;
     const myGen = genRef.current; // 捕获本轮代次；若期间用户重新生成分镜则本批回调全部失效
+    // 为本次运行的每个目标镜头占用一个 token；后发的重绘会再次自增、顶替所有权。
+    const myTokens = new Map<number, number>();
+    for (const t of targets) {
+      const next = (sceneKfGen.current.get(t.sceneIndex) ?? 0) + 1;
+      sceneKfGen.current.set(t.sceneIndex, next);
+      myTokens.set(t.sceneIndex, next);
+    }
+    // 该镜是否仍归本次运行所有（未被新一轮全量生成或后发单镜重绘顶替）
+    const owns = (idx: number) => genRef.current === myGen && sceneKfGen.current.get(idx) === myTokens.get(idx);
     const size = aspectInfo.size;
 
     // 标记这批镜头为 running，并清掉旧的图生视频状态——重绘/重生关键帧后，
@@ -148,7 +161,7 @@ export default function VisualStoryboardPage() {
       toast.error(created.error?.message || '创建关键帧任务失败');
       setScenes((prev) =>
         prev.map((s) =>
-          targets.some((t) => t.sceneIndex === s.index) ? { ...s, kfStatus: 'error', kfError: created.error?.message || '失败' } : s,
+          targets.some((t) => t.sceneIndex === s.index) && owns(s.index) ? { ...s, kfStatus: 'error', kfError: created.error?.message || '失败' } : s,
         ),
       );
       return;
@@ -158,7 +171,7 @@ export default function VisualStoryboardPage() {
       // 创建成功却没返回 runId：把本批 running 的镜头复位为 error，避免 spinner 卡死
       setScenes((prev) =>
         prev.map((s) =>
-          targets.some((t) => t.sceneIndex === s.index) ? { ...s, kfStatus: 'error', kfError: '创建任务未返回 runId，请重试' } : s,
+          targets.some((t) => t.sceneIndex === s.index) && owns(s.index) ? { ...s, kfStatus: 'error', kfError: '创建任务未返回 runId，请重试' } : s,
         ),
       );
       return;
@@ -178,7 +191,7 @@ export default function VisualStoryboardPage() {
         if (t === 'imageDone') {
           const itemIndex = Number(o.itemIndex ?? -1);
           const tgt = targets[itemIndex];
-          if (!tgt) return;
+          if (!tgt || !owns(tgt.sceneIndex)) return; // 该镜已被后发重绘顶替，忽略本批回填
           const b64 = (o.base64 as string | null | undefined) ?? null;
           const url = (o.url as string | null | undefined) ?? null;
           const originalUrl = (o.originalUrl as string | null | undefined) ?? null;
@@ -191,18 +204,19 @@ export default function VisualStoryboardPage() {
         } else if (t === 'imageError') {
           const itemIndex = Number(o.itemIndex ?? -1);
           const tgt = targets[itemIndex];
-          if (!tgt) return;
+          if (!tgt || !owns(tgt.sceneIndex)) return; // 该镜已被后发重绘顶替，忽略本批错误
           const msg = String((o.errorMessage as string | undefined) ?? '关键帧生成失败');
           setScenes((prev) => prev.map((s) => (s.index === tgt.sceneIndex ? { ...s, kfStatus: 'error', kfError: msg } : s)));
         }
       },
     });
 
-    // 流结束兜底：仍在 running 的标记为 error（已被新一轮作废则不动旧板）
+    // 流结束兜底：仍在 running 的标记为 error。仅处理本次运行仍拥有的镜头——
+    // 被后发重绘顶替的镜头（owns=false）由它自己的运行负责，不在此误判失败。
     if (genRef.current !== myGen) return;
     setScenes((prev) =>
       prev.map((s) =>
-        targets.some((t) => t.sceneIndex === s.index) && s.kfStatus === 'running'
+        targets.some((t) => t.sceneIndex === s.index) && s.kfStatus === 'running' && owns(s.index)
           ? { ...s, kfStatus: 'error', kfError: '生成超时或连接中断，请重试' }
           : s,
       ),
