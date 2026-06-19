@@ -177,6 +177,14 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void ResolveAutomationAgentIdentifier_PrefersAgentApiKeyId()
+    {
+        Assert.Equal("agent-key-1", DefectAgentController.ResolveAutomationAgentIdentifier(" agent-key-1 ", "app-1"));
+        Assert.Equal("app-1", DefectAgentController.ResolveAutomationAgentIdentifier(null, " app-1 "));
+        Assert.Null(DefectAgentController.ResolveAutomationAgentIdentifier("", " "));
+    }
+
+    [Fact]
     public void MergeAutomationCommitStructuredData_WritesCommitInfoKeys()
     {
         var structured = DefectAgentController.MergeAutomationCommitStructuredData(

@@ -13,3 +13,4 @@
 | feat | prd-admin | 缺陷页面新增缺陷自动化控制台，支持一键生成并复制长期授权每日计划 |
 | docs | skills | ai-defect-resolve 改为优先使用缺陷页面自动化入口生成永不过期授权 |
 | ops | cds | Admin 预览容器改为从仓库根目录进入 prd-admin 启动，避免源码模式缺少 package.json |
+| fix | prd-api | 缺陷自动化 commit 回写优先使用长期 K 标识，确保发布后验收和通知可继续查询 |

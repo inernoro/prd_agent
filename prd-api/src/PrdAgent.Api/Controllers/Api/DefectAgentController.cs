@@ -128,6 +128,15 @@ public class DefectAgentController : ControllerBase
     private bool IsAiAccessRequest()
         => string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal);
 
+    internal static string? ResolveAutomationAgentIdentifier(string? agentApiKeyId, string? appId)
+    {
+        if (!string.IsNullOrWhiteSpace(agentApiKeyId))
+            return agentApiKeyId.Trim();
+        if (!string.IsNullOrWhiteSpace(appId))
+            return appId.Trim();
+        return null;
+    }
+
     private async Task<DefectReport?> FindDefectByIdOrNoAsync(string idOrNo, CancellationToken ct)
     {
         var key = idOrNo.Trim();
@@ -2926,7 +2935,9 @@ public class DefectAgentController : ControllerBase
         var take = Math.Clamp(limit, 1, 100);
         var filter = Builders<DefectResolutionTrace>.Filter.Eq(x => x.PublishStatus, DefectResolutionPublishStatus.Published)
                      & Builders<DefectResolutionTrace>.Filter.Eq(x => x.NotifyStatus, DefectResolutionNotifyStatus.Pending);
-        var agentKeyId = User.FindFirst("agentApiKeyId")?.Value ?? User.FindFirst("appId")?.Value;
+        var agentKeyId = ResolveAutomationAgentIdentifier(
+            User.FindFirst("agentApiKeyId")?.Value,
+            User.FindFirst("appId")?.Value);
         if (!HasManagePermission() && !IsAiAccessRequest())
         {
             if (string.IsNullOrWhiteSpace(agentKeyId))
@@ -2996,7 +3007,9 @@ public class DefectAgentController : ControllerBase
         var trace = await _db.DefectResolutionTraces.Find(x => x.Id == traceId).FirstOrDefaultAsync(ct);
         if (trace == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷修复追踪记录不存在"));
-        var agentKeyId = User.FindFirst("agentApiKeyId")?.Value ?? User.FindFirst("appId")?.Value;
+        var agentKeyId = ResolveAutomationAgentIdentifier(
+            User.FindFirst("agentApiKeyId")?.Value,
+            User.FindFirst("appId")?.Value);
         if (!CanAutomationAccessTrace(trace, agentKeyId, HasManagePermission(), IsAiAccessRequest()))
             return AutomationForbidden("无权回写该修复记录的验收报告");
         if (trace.PublishStatus != DefectResolutionPublishStatus.Published)
@@ -3314,7 +3327,9 @@ public class DefectAgentController : ControllerBase
             new AutomationCommitTraceInput
             {
                 AgentName = request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value,
-                AgentIdentifier = User.FindFirst("appId")?.Value,
+                AgentIdentifier = ResolveAutomationAgentIdentifier(
+                    User.FindFirst("agentApiKeyId")?.Value,
+                    User.FindFirst("appId")?.Value),
                 Repository = request.Repository?.Trim(),
                 Branch = request.Branch?.Trim(),
                 CommitSha = commitSha,
