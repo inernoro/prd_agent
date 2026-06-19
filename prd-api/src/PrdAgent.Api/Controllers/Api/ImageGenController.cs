@@ -221,7 +221,14 @@ public class ImageGenController : ControllerBase
         }, resolution, ct);
 
         if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, $"分镜生成失败：{resp.ErrorCode ?? "未知错误"}"));
+        {
+            // 转发 gateway 已构造的中文报错（如 LLM_QUOTA_EXCEEDED 的额度文案），别用 ErrorCode 覆盖成泛化提示（Bugbot review）
+            var detail = !string.IsNullOrWhiteSpace(resp.ErrorMessage)
+                ? resp.ErrorMessage
+                : (resp.ErrorCode ?? "未知错误");
+            var failCode = string.IsNullOrWhiteSpace(resp.ErrorCode) ? ErrorCodes.LLM_ERROR : resp.ErrorCode!;
+            return BadRequest(ApiResponse<object>.Fail(failCode, $"分镜生成失败：{detail}"));
+        }
 
         var text = ExtractChatText(resp.Content);
         var parsed = ParseStoryboard(text);
