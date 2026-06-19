@@ -127,7 +127,7 @@ export function DefectAutomationPanel({
                 </Button>
                 <Button variant="primary" size="sm" onClick={handleCreateAndCopy} disabled={creating}>
                   {creating ? <MapSpinner size={12} /> : <KeyRound size={12} />}
-                  生成并复制每日任务配置
+                  {activeAuth ? '重新生成并复制配置' : '生成并复制每日任务配置'}
                 </Button>
               </div>
             </div>
