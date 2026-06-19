@@ -12,14 +12,13 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.1.0";
-    public const string AiDefectResolveReleaseDate = "2026-05-21";
+    public const string AiDefectResolveVersion = "1.4.0";
+    public const string AiDefectResolveReleaseDate = "2026-06-19";
 
     public const string AiDefectResolveSkillMd = """
 ---
 name: ai-defect-resolve
-version: {{VERSION}}
-description: AI 辅助缺陷修复技能。读取 PrdAgent 缺陷分享 agentLaunch 包，按“读取缺陷→评论计划→提交分析报告→执行修复→评论验收方式→标记修复”闭环处理缺陷。
+description: AI 辅助缺陷修复技能。用于缺陷自动化日常任务：通过 MAP/PrdAgent domain 和长期 AgentApiKey 拉取下一条缺陷，按单个缺陷逐个评论、轻量修复、提交 commit、回写提交信息，并兼容缺陷分享 agentLaunch。
 ---
 
 # AI 辅助缺陷修复
@@ -28,30 +27,67 @@ description: AI 辅助缺陷修复技能。读取 PrdAgent 缺陷分享 agentLau
 > 来源：{{BASE_URL}} 官方下载兜底包。
 > 项目内置优先：如果当前仓库存在 `.claude/skills/ai-defect-resolve/SKILL.md` 或同等项目内置技能，必须使用项目内置版本；不得用托管/市场/官方下载版本覆盖项目内置技能。
 
-## 输入
+## 主输入
 
-优先读取分享响应中的 `agentLaunch`：
+日常任务优先使用缺陷页面“缺陷自动化”按钮复制出的 `domain + K`：
 
-- `domain`：PrdAgent / MAP 域名
-- `auth`：认证方式，优先 `Authorization: Bearer $PRD_AGENT_API_KEY`，也兼容 `X-AI-Access-Key: $AI_ACCESS_KEY`
-- `scope.shareUrl`：缺陷分享读取入口
-- `scope.defectIds`：覆盖的缺陷，可为空；为空时按分享范围处理
-- `skill.minVersion`：最低技能版本，当前版本低于该值时停止并提示升级
+- `domain`：MAP/PrdAgent 域名。
+- `K`：长期 AgentApiKey，推荐名称为“缺陷处理 Agent 授权”。
+- `scope`：K 必须包含 `defect-agent:use`。
 
-## 流程
+首次 setup 推荐在缺陷页面点击“缺陷自动化”按钮，再点击“生成并复制每日任务配置”。这会生成名为“缺陷处理 Agent 授权”的长期 K，并把每日计划内容复制到剪贴板。
 
-1. `GET {domain}{scope.shareUrl}` 读取缺陷、截图、日志和历史消息。
-2. 在动手前调用 `{scope.shareUrl}/comments` 评论修复计划。
-3. 可选调用 `{scope.shareUrl}/report` 提交根因分析和修复建议。
-4. 按仓库规范执行代码修复和验证。
-5. 修复后先评论验收方式，再调用 `{scope.shareUrl}/fix-status` 标记修复完成。
+接口 setup 可以只提供 domain，但必须由登录用户发起：
+
+```http
+POST {domain}/api/defect-agent/agent/authorization/ensure
+Content-Type: application/json
+
+{
+  "forceNew": false
+}
+```
+
+已有可用 Key 时复用并返回元信息；没有时新建永不过期 K 并仅本次返回明文 `apiKey`。后端不保存明文 K，日常任务必须保存这次返回的 K。明文丢失时，重新点击按钮生成新 K。
+
+兼容旧分享包：如果只有 `scope.shareUrl`，仍可按分享端点处理，但不要把分享链接当成日常任务主路径。
+
+## 自动化流程
+
+1. `GET {domain}/api/defect-agent/agent/connector` 确认连接器协议和长期授权。
+2. `POST {domain}/api/defect-agent/agent/runs` 创建运行记录，保存 `runId`。
+3. `GET {domain}/api/defect-agent/agent/next?runId={runId}` 拉取下一条缺陷。
+4. `POST {domain}/api/defect-agent/agent/defects/{defectId}/comments` 评论修复计划，body 带 `runId`。
+5. 按轻量标准判断能否自动修复；重量级问题调用 `POST /api/defect-agent/agent/runs/{runId}/fail` 写失败原因后停止。
+6. 轻量修复后执行代码校验并提交中文 commit。
+7. `POST {domain}/api/defect-agent/agent/defects/{defectId}/commit-info` 回写 `commitSha`、分支、预览和验收报告地址，body 带 `runId`。
+8. 评论验收方式。
+9. `POST {domain}/api/defect-agent/agent/defects/{defectId}/fix-status` 标记修复，body 带 `runId`。
+10. 再拉下一条，重复以上步骤。
+
+## 正式发布后的验收通知
+
+1. `GET {domain}/api/defect-agent/agent/published-pending?limit=20` 拉取已正式发布但未通知提交人的修复记录。
+2. 使用 `create-visual-test-to-kb` 跑正式环境验收，目标取 `item.acceptance.target`，正式地址取 `item.acceptance.previewUrl`。
+3. 复制验收技能的 `acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本把 `report.storeName` 改为“缺陷修复验收报告”。
+4. 归档后用 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
+5. `POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report` 回写 `knowledgeBaseName`、`knowledgeBaseUrl`、报告地址、`verdict` 并通知提交人。`knowledgeBaseUrl` 必填；`fail` 结论会发送“需要继续改进”，不要提前发送“已修复”。
+
+## 轻量标准
+
+- 预计改动不超过 200 行。
+- 单个缺陷预计 10 分钟内能定位并完成主要修复。
+- 根因清晰，行为可验证。
+- 不涉及破坏性删除、数据库迁移、权限模型重写、跨服务协议改造。
+- 能跑通本地测试、集成测试、CDS 预览或浏览器验收中的至少一条。
 
 ## 约束
 
 - 有争议、破坏性、跨模块、接口签名或数据结构变更必须先请求人类确认。
-- 不处理不在 `scope` 内的缺陷。
+- 一次只处理一个缺陷，提交并回写 commit 后再继续下一条。
 - 不把密钥写入日志、提交、报告或评论。
 - 评论和修复说明必须包含可验收步骤。
+- 只 commit 不回写 `commit-info` 不算闭环完成。
 """;
 
     public const string AiDefectResolveReadme = """
@@ -59,7 +95,7 @@ description: AI 辅助缺陷修复技能。读取 PrdAgent 缺陷分享 agentLau
 
 PrdAgent 缺陷修复官方兜底技能包。
 
-安装后把分享包中的 `agentLaunch` 作为输入即可。若项目仓库已内置同名技能，请使用项目内置版本。
+安装后优先用缺陷系统 domain 和长期 AgentApiKey 运行日常自动修复。若项目仓库已内置同名技能，请使用项目内置版本。
 
 最新版下载：
 

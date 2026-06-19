@@ -88,7 +88,7 @@ export function WorkflowTemplateSection() {
   );
 }
 
-function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityType; productId: string | null }) {
+export function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityType; productId: string | null }) {
   const [id, setId] = useState<string | undefined>(undefined);
   /** 仅用于保存时回写 DB 已有名称，不在 UI 展示 */
   const [persistedName, setPersistedName] = useState('');

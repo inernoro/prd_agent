@@ -407,6 +407,9 @@ export interface WorkflowChatMessage {
   role: 'user' | 'assistant';
   content: string;
   generated?: WorkflowChatGenerated;
+  validation?: WorkflowValidationResult;
+  /** 本条消息自动创建出的工作流 id（有值表示提案已落库，刷新后不再显示应用/补齐入口） */
+  generatedWorkflowId?: string;
   userId: string;
   createdAt: string;
   seq: number;
@@ -419,6 +422,30 @@ export interface WorkflowChatGenerated {
   edges?: WorkflowEdge[];
   variables?: WorkflowVariable[];
   isNew?: boolean;
+}
+
+/** AI 生成后仍需用户补齐才能跑的一项（必填配置或 secret 变量） */
+export interface WorkflowRequiredInput {
+  key: string;
+  label: string;
+  /** text | password | textarea | select | number 等 */
+  type: string;
+  required: boolean;
+  isSecret: boolean;
+  /** config = 节点配置字段 | variable = 工作流变量 */
+  scope: 'config' | 'variable';
+  nodeId?: string;
+  nodeName?: string;
+  helpTip?: string;
+  placeholder?: string;
+}
+
+/** 工作流校验/自动接线结果（SSE workflow_validation 事件） */
+export interface WorkflowValidationResult {
+  valid: boolean;
+  issues: { target: string; message: string }[];
+  wireNotes: string[];
+  requiredInputs: WorkflowRequiredInput[];
 }
 
 export type GetChatHistoryContract = (input: {

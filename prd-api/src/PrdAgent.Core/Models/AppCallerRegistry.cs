@@ -117,7 +117,7 @@ public static class Desktop
 /// </summary>
 public static class Product
 {
-    public const string AppName = "产品管理智能体";
+    public const string AppName = "产品管理";
 
     [AppCallerMetadata(
         "产品管理-图谱摘要",
@@ -150,6 +150,14 @@ public static class Product
         Category = "Analysis"
     )]
     public const string WorkAssistant = "product-agent.work-assistant::chat";
+
+    [AppCallerMetadata(
+        "产品管理-营销问策",
+        "客户详情「营销问策」：聚合客户全量信息 + 动态跟进 + 问策知识库（全域粉销/4FM），AI 产出专业营销评估报告，服务端渲染为自包含 HTML 多模版页，可分享/托管（SSE 流式）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string MarketingConsult = "product-agent.marketing-consult::chat";
 }
 
 /// <summary>
@@ -676,6 +684,17 @@ public static class WorkflowAgent
             Category = "Workflow"
         )]
         public const string Chat = "workflow-agent.error-analyzer::chat";
+    }
+
+    public static class ChatRepair
+    {
+        [AppCallerMetadata(
+            "工作流-配置自愈",
+            "AI 生成的工作流配置结构校验失败时自动修正（替换停用舱/删除悬空连线/消除环/补必填字段）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.chat-repair::chat";
     }
 
     public static class AiFill
@@ -1320,7 +1339,7 @@ public static class TapdBugAgent
 /// </summary>
 public static class ProjectManagement
 {
-    public const string AppName = "项目管理智能体";
+    public const string AppName = "项目管理";
 
     public static class Decompose
     {

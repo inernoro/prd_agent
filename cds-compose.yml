@@ -45,8 +45,13 @@ x-cds-deploy-modes:
         dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
     static:
       label: "静态部署 (publish)"
+      # 每次部署前清掉 bin/obj，强制干净编译：dotnet 增量构建在 CDS 共享 worktree 下偶发
+      # "撒谎"（源码改了却复用旧 DLL），清空后从零编译可彻底避免发布出不含最新改动的二进制。
       command: >-
         cd prd-api &&
+        rm -rf src/PrdAgent.Api/bin src/PrdAgent.Api/obj
+        src/PrdAgent.Core/bin src/PrdAgent.Core/obj
+        src/PrdAgent.Infrastructure/bin src/PrdAgent.Infrastructure/obj &&
         dotnet restore &&
         dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
         dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5000
@@ -56,6 +61,7 @@ x-cds-deploy-modes:
     dev:
       label: "开发模式 (Vite HMR)"
       command: >-
+        cd prd-admin &&
         corepack enable &&
         corepack prepare pnpm@10.28.2 --activate &&
         pnpm config set store-dir /pnpm/store &&
@@ -64,12 +70,13 @@ x-cds-deploy-modes:
     static:
       label: "静态部署 (vite build+serve)"
       command: >-
+        cd prd-admin &&
         corepack enable &&
         corepack prepare pnpm@10.28.2 --activate &&
         pnpm config set store-dir /pnpm/store &&
         pnpm install --frozen-lockfile &&
         sh scripts/cds-vite-build.sh &&
-        npx -y serve -s dist -l tcp://0.0.0.0:8000
+        pnpm exec serve -s dist -l tcp://0.0.0.0:8000
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -116,21 +123,23 @@ services:
     labels:
       cds.path-prefix: "/api/"
       cds.readiness-path: "/health"
+      # static 模式下 API 需要 restore + publish 后再启动；冷启动常超过 CDS 默认就绪窗口。
+      # 与 admin 的 1200s 保持一致，避免容器最终已监听但分支先被误判为 error。
+      cds.readiness-timeout: "1200"
+      cds.readiness-interval: "3"
 
   admin:
     image: node:20-slim
-    working_dir: /app
+    working_dir: /repo
     volumes:
-      - ./prd-admin:/app
-      # public/thirdparty/ref 是符号链接指向仓库根 thirdparty/ref（22+ 个 HTML 素材）。
-      # 单挂 ./prd-admin 时 symlink 解析到 /thirdparty/ref 找不到目录，
-      # vite build (static 模式) 的 copyPublicDir 步骤会报 ENOENT。
-      - ./thirdparty:/thirdparty:ro
+      # 挂载仓库根目录，确保 prd-admin/public 内指向仓库级资源的符号链接可解析。
+      - .:/repo
       - admin-pnpm-store:/pnpm/store
     ports:
       - "8000"
     # 默认 dev：秒级就绪，避免 static 冷构建 OOM（exitCode=137）。需要 dist 时在 CDS 切 static 模式。
     command: >-
+      cd prd-admin &&
       corepack enable &&
       corepack prepare pnpm@10.28.2 --activate &&
       pnpm config set store-dir /pnpm/store &&
@@ -139,8 +148,10 @@ services:
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/"
-      # dev 模式 Vite 秒起；static 冷构建见 x-cds-deploy-modes.admin.static（readiness 1200s）
-      cds.readiness-timeout: "300"
+      # dev 模式 Vite 秒起；static 冷构建（pnpm install + vite build）实测约 320s，
+      # 超过原 300s 就绪超时会被误判 error（容器其实已 Accepting connections）。
+      # 按 base label 取两模式上限：static 冷构建留足余量，dev 秒起也不受影响。
+      cds.readiness-timeout: "1200"
       cds.readiness-interval: "3"
 
   # ── Infrastructure Services (无相对路径 mount) ──

@@ -11,6 +11,8 @@ using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.CcasAgent;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -21,7 +23,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 赋码采集关联系统综合智能体（ccas-agent）
 /// 三大子能力：
 ///   1) PRD 文档生成（按米多 product-document-generator skill 模板，工程版 / 敏捷版双模板）
-///   2) 设备素材库（按预设风格生成 + 复用，供流程图节点引用）
+///   2) 设备素材库（按预设风格生成 / 本地上传 + 复用，供流程图节点引用）
 ///   3) 流程示意图绘制（LLM 解析输入 → 节点 + 边 JSON → 前端 ReactFlow 拼装素材图渲染）
 /// </summary>
 [ApiController]
@@ -284,9 +286,195 @@ public class CcasAgentController : ControllerBase
         }
     }
 
+    public class RevisePrdRequest
+    {
+        /// <summary>模板 key（与初稿生成一致，用于约束章节骨架）</summary>
+        public string TemplateKey { get; set; } = CcasPrdPrompts.TemplateKeys.EngineeringMain;
+
+        /// <summary>当前完整 Markdown（Part A + 可选 --- + Part B 合并稿）</summary>
+        public string CurrentMarkdown { get; set; } = string.Empty;
+
+        /// <summary>本轮改稿指令（必填）</summary>
+        public string Message { get; set; } = string.Empty;
+
+        /// <summary>多轮改稿历史：只传短气泡（用户原话 + 助手确认），禁止塞完整文档</summary>
+        public List<QaHistoryItem>? History { get; set; }
+
+        /// <summary>可选：初稿生成时的立项描述，作背景参考</summary>
+        public string? OriginalInput { get; set; }
+
+        /// <summary>可选：知识库单篇引用</summary>
+        public List<string>? ReferenceEntryIds { get; set; }
+
+        /// <summary>可选：知识库整库引用</summary>
+        public List<string>? ReferenceStoreIds { get; set; }
+
+        /// <summary>会话 ID（日志关联）</summary>
+        public string? SessionId { get; set; }
+    }
+
+    /// <summary>
+    /// PRD 多轮改稿 SSE 流：在已有 Markdown 基础上按用户指令修订，流式输出完整修订稿。
+    /// history 走短气泡；当前文档每轮注入 user message，避免 history 重复嵌 40k 文档。
+    /// </summary>
+    [HttpPost("prd/revise/stream")]
+    [Produces("text/event-stream")]
+    public async Task RevisePrdStream([FromBody] RevisePrdRequest req, CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = GetUserId();
+
+        if (req == null || string.IsNullOrWhiteSpace(req.CurrentMarkdown))
+        {
+            await WriteSseAsync("error", new { message = "请先生成或粘贴 PRD 文档后再改稿（currentMarkdown 不能为空）" });
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(req.Message))
+        {
+            await WriteSseAsync("error", new { message = "请填写改稿指令（message 不能为空）" });
+            return;
+        }
+
+        var templateKey = string.IsNullOrWhiteSpace(req.TemplateKey)
+            ? CcasPrdPrompts.TemplateKeys.EngineeringMain
+            : req.TemplateKey.Trim();
+        var currentMarkdown = req.CurrentMarkdown.Trim();
+        var instruction = req.Message.Trim();
+
+        var systemPrompt = CcasPrdRevisePrompts.BuildSystemPrompt(templateKey);
+
+        var referenceInfo = await BuildReferenceContextAsync(req.ReferenceEntryIds, req.ReferenceStoreIds, userId);
+        if (!string.IsNullOrEmpty(referenceInfo.AppendedContent))
+        {
+            systemPrompt += referenceInfo.AppendedContent;
+        }
+
+        var requestedEntryCount = req.ReferenceEntryIds?.Count ?? 0;
+        var requestedStoreCount = req.ReferenceStoreIds?.Count ?? 0;
+        if (requestedEntryCount + requestedStoreCount > 0)
+        {
+            await WriteSseAsync("reference", new
+            {
+                requested = requestedEntryCount + requestedStoreCount,
+                requestedEntries = requestedEntryCount,
+                requestedStores = requestedStoreCount,
+                included = referenceInfo.IncludedCount,
+                totalChars = referenceInfo.TotalChars,
+                budget = ReferenceTotalBudget,
+                skipped = referenceInfo.Skipped,
+            });
+        }
+
+        var historyTuples = (req.History ?? new List<QaHistoryItem>())
+            .Where(h => !string.IsNullOrWhiteSpace(h.Content))
+            .Select(h => ((h.Role ?? "user").Trim().ToLowerInvariant(), h.Content))
+            .ToList();
+
+        var userPrompt = CcasPrdRevisePrompts.BuildUserPrompt(
+            currentMarkdown,
+            instruction,
+            req.OriginalInput,
+            historyTuples);
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.CcasAgent.Prd.Chat,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            IncludeThinking = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                },
+                ["temperature"] = 0.25,
+                ["max_tokens"] = 8192,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+        };
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: req.SessionId,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: currentMarkdown.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: $"[CCAS_PRD_REVISE:{templateKey}]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.CcasAgent.Prd.Chat));
+
+        await WriteSseAsync("phase", new { phase = "preparing", message = "准备改稿…" });
+
+        var sentModelEvent = false;
+        var startedAt = DateTime.UtcNow;
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && !sentModelEvent && chunk.Resolution != null)
+                {
+                    sentModelEvent = true;
+                    await WriteSseAsync("model", new
+                    {
+                        model = chunk.Resolution.ActualModel,
+                        platform = chunk.Resolution.ActualPlatformName,
+                    });
+                    await WriteSseAsync("phase", new { phase = "revising", message = "AI 正在改稿…" });
+                }
+                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    try { await WriteSseAsync("thinking", new { text = chunk.Content }); }
+                    catch (ObjectDisposedException) { break; }
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    try { await WriteSseAsync("typing", new { text = chunk.Content }); }
+                    catch (ObjectDisposedException) { break; }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    var err = chunk.Error ?? chunk.Content ?? "网关返回未知错误";
+                    _logger.LogError("CcasAgent PRD 改稿网关错误 user={UserId}: {Error}", userId, err);
+                    try { await WriteSseAsync("error", new { message = $"LLM 网关错误: {err}" }); }
+                    catch { }
+                    return;
+                }
+            }
+
+            try
+            {
+                await WriteSseAsync("done", new
+                {
+                    elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+                });
+            }
+            catch (ObjectDisposedException) { }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CcasAgent PRD 改稿失败 user={UserId}", userId);
+            try { await WriteSseAsync("error", new { message = "PRD 改稿失败：" + ex.Message }); } catch { }
+        }
+    }
+
     // ──────────────────────────────────────────────
     // 子能力 2：设备素材库
     // ──────────────────────────────────────────────
+
+    private const long MaxEquipmentUploadBytes = 10 * 1024 * 1024;
+    private static readonly HashSet<string> AllowedEquipmentUploadMimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif",
+    };
 
     public class GenerateEquipmentRequest
     {
@@ -445,6 +633,91 @@ public class CcasAgentController : ControllerBase
             model = resolution.ActualModel,
             platform = resolution.ActualPlatformName,
         }));
+    }
+
+    /// <summary>
+    /// 上传本地设备图片并入库。风格固定为 user-upload，供流程图按设备名匹配。
+    /// </summary>
+    [HttpPost("equipment/upload")]
+    [RequestSizeLimit(MaxEquipmentUploadBytes)]
+    public async Task<IActionResult> UploadEquipment(
+        [FromForm] IFormFile file,
+        [FromForm] string equipmentType,
+        [FromForm] string? note,
+        CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var equipType = (equipmentType ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(equipType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "equipmentType 不能为空"));
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择图片文件"));
+        if (file.Length > MaxEquipmentUploadBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片大小不能超过 10MB"));
+
+        var mimeType = (file.ContentType ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(mimeType) || !AllowedEquipmentUploadMimeTypes.Contains(mimeType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"不支持的图片类型：{mimeType}"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        if (bytes.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片内容为空"));
+
+        StoredAsset stored;
+        try
+        {
+            stored = await _assetStorage.SaveAsync(
+                bytes,
+                mimeType,
+                CancellationToken.None,
+                domain: AppDomainPaths.DomainCcasAgent,
+                type: AppDomainPaths.TypeImg);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CcasAgent equipment 上传落盘失败 user={UserId}", userId);
+            return StatusCode(StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "图片上传失败，请稍后重试"));
+        }
+
+        var width = 0;
+        var height = 0;
+        try
+        {
+            using var image = Image.Load<Rgba32>(bytes);
+            width = image.Width;
+            height = image.Height;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "CcasAgent equipment 上传图片尺寸解析失败，继续入库");
+        }
+
+        var noteText = (note ?? string.Empty).Trim();
+        var asset = new CcasEquipmentAsset
+        {
+            OwnerUserId = userId,
+            EquipmentType = equipType,
+            StyleKey = "user-upload",
+            Prompt = "[用户上传]",
+            OriginalUserInput = string.IsNullOrWhiteSpace(noteText) ? null : noteText,
+            Url = stored.Url,
+            OriginalUrl = stored.Url,
+            Mime = mimeType,
+            Width = width,
+            Height = height,
+            SizeBytes = stored.SizeBytes,
+        };
+        await _db.CcasEquipmentAssets.InsertOneAsync(asset, cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { asset }));
     }
 
     /// <summary>

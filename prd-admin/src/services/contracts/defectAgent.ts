@@ -723,3 +723,129 @@ export type CreateBatchShareContract = (input: {
 export type GetShareScoresContract = (input: {
   shareId: string;
 }) => Promise<ApiResponse<{ aiScoreStatus: string; scores: DefectAiScoreItem[] }>>;
+
+// ========== 缺陷自动化控制台 ==========
+
+export interface DefectAutomationAuthorization {
+  id: string;
+  name: string;
+  description?: string;
+  keyPrefix?: string;
+  scopes: string[];
+  isActive: boolean;
+  createdAt: string;
+  expiresAt?: string | null;
+  neverExpires?: boolean;
+  lastUsedAt?: string | null;
+  totalRequests: number;
+  revokedAt?: string | null;
+  canUse: boolean;
+  status: 'active' | 'expired' | 'revoked' | 'invalid' | string;
+}
+
+export interface DefectAutomationRunItem {
+  defectId: string;
+  defectNo?: string;
+  defectTitle?: string;
+  status: string;
+  attempts: number;
+  commitSha?: string;
+  shortSha?: string;
+  commitMessage?: string;
+  branch?: string;
+  previewUrl?: string;
+  visualReportUrl?: string;
+  failureReason?: string;
+  failurePhase?: string;
+  startedAt: string;
+  completedAt?: string | null;
+  updatedAt: string;
+}
+
+export interface DefectAutomationRun {
+  id: string;
+  domain: string;
+  agentApiKeyId?: string;
+  agentApiKeyName?: string;
+  requiredScope: string;
+  triggerType: string;
+  projectId?: string;
+  teamId?: string;
+  statusFilter?: string;
+  status: string;
+  currentDefectId?: string;
+  currentDefectNo?: string;
+  currentDefectTitle?: string;
+  totalFetched: number;
+  totalFixed: number;
+  totalFailed: number;
+  lastFailureReason?: string;
+  lastFailurePhase?: string;
+  startedAt: string;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items: DefectAutomationRunItem[];
+}
+
+export interface DefectAutomationCopyTemplate {
+  domain: string;
+  key: string;
+  requiredScope: string;
+  suggestedKeyName: string;
+  expires: string;
+  projectId?: string;
+  teamId?: string;
+  status: string;
+  skill: string;
+  command: string;
+  dailyPlan: string;
+}
+
+export interface DefectAutomationStats {
+  totalRuns: number;
+  runningRuns: number;
+  completedRuns: number;
+  totalFetched: number;
+  totalFixed: number;
+  totalFailed: number;
+  pendingDefectCount: number;
+  lastRunAt?: string | null;
+}
+
+export interface DefectAutomationConsole {
+  domain: string;
+  suggestedKeyName: string;
+  requiredScope: string;
+  statusFilter: string;
+  projectId?: string;
+  teamId?: string;
+  authorizations: DefectAutomationAuthorization[];
+  activeAuthorization?: DefectAutomationAuthorization | null;
+  copyTemplate: DefectAutomationCopyTemplate;
+  connector: unknown;
+  stats: DefectAutomationStats;
+  recentRuns: DefectAutomationRun[];
+  dailyPlan: string;
+}
+
+export type GetDefectAutomationConsoleContract = (input?: {
+  projectId?: string;
+  teamId?: string;
+  status?: string;
+}) => Promise<ApiResponse<DefectAutomationConsole>>;
+
+export type EnsureDefectAutomationAuthorizationContract = (input?: {
+  forceNew?: boolean;
+  projectId?: string;
+  teamId?: string;
+  status?: string;
+}) => Promise<ApiResponse<{
+  created: boolean;
+  item: DefectAutomationAuthorization;
+  apiKey?: string | null;
+  copyTemplate?: DefectAutomationCopyTemplate;
+  dailyPlan?: string;
+  warning?: string;
+  connector?: unknown;
+}>>;

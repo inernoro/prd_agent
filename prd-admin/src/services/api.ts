@@ -626,6 +626,12 @@ export const api = {
       scores: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores`,
       scoresStream: (shareId: string) => `/api/defect-agent/shares/${shareId}/scores/stream`,
     },
+    automation: {
+      console: () => '/api/defect-agent/agent/automation-console',
+      ensureAuthorization: () => '/api/defect-agent/agent/authorization/ensure',
+      runs: () => '/api/defect-agent/agent/runs',
+      next: () => '/api/defect-agent/agent/next',
+    },
   },
 
   // ============ TAPD Bug Agent 缺陷自动提报 ============
@@ -1227,6 +1233,7 @@ export const api = {
       listWithPreview: () => '/api/document-store/stores/with-preview',
       create: () => '/api/document-store/stores',
       detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
+      size: (storeId: string) => `/api/document-store/stores/${storeId}/size`,
       setTeams: (storeId: string) => `/api/document-store/stores/${storeId}/teams`,
       primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
       pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
@@ -1266,6 +1273,10 @@ export const api = {
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
       content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      // 版本控制：历史版本列表 / 取某版本正文 / 恢复某版本
+      versions: (entryId: string) => `/api/document-store/entries/${entryId}/versions`,
+      versionDetail: (entryId: string, versionId: string) => `/api/document-store/entries/${entryId}/versions/${versionId}`,
+      versionRestore: (entryId: string, versionId: string) => `/api/document-store/entries/${entryId}/versions/${versionId}/restore`,
       move: (entryId: string) => `/api/document-store/entries/${entryId}/move`,
       primaryChild: (folderId: string) => `/api/document-store/entries/${folderId}/primary-child`,
       sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,

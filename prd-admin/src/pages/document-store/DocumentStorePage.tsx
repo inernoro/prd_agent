@@ -48,6 +48,7 @@ import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
+import { StoreSizeBadge } from './StoreSizeBadge';
 import {
   listDocumentStoresWithPreview,
   createDocumentStore,
@@ -66,6 +67,9 @@ import {
   deleteDocumentEntry,
   moveDocumentEntry,
   updateDocumentContent,
+  listEntryVersions,
+  getEntryVersion,
+  restoreEntryVersion,
   setFolderPrimaryChild,
   rebuildContentIndex,
   addDocumentEntry,
@@ -102,7 +106,8 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
-import { ReprocessChatDrawer } from './ReprocessChatDrawer';
+import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
+import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
@@ -973,11 +978,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           updatedByName: res.data.updatedByName ?? e.updatedByName,
         } : e));
       toast.success('已保存');
+      // 返回服务端最新 updatedAt：DocBrowser 用它推进 loadedContentKey，短路掉保存后的内容重拉
+      return { updatedAt: res.data.updatedAt };
     } else {
       toast.error('保存失败', res.error?.message);
       throw new Error(res.error?.message ?? '保存失败');
     }
   }, []);
+
+  // 版本控制接口：透传给 DocBrowser → VersionHistoryModal
+  const versionApi = useMemo(() => ({
+    list: (entryId: string, page: number, pageSize: number) => listEntryVersions(entryId, page, pageSize),
+    get: (entryId: string, versionId: string) => getEntryVersion(entryId, versionId),
+    restore: (entryId: string, versionId: string) => restoreEntryVersion(entryId, versionId),
+  }), []);
 
   const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     const res = await getDocumentContent(entryId);
@@ -1082,6 +1096,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
             <span className="text-[11px] text-token-muted tabular-nums">
               <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
             </span>
+            {/* refreshKey 含各 entry 的 updatedAt：编辑/恢复/替换会 bump updatedAt 但条目数不变，
+                只用 length 会让大小数字停留在旧值；带上 updatedAt 串内容变化即刷新（Codex P2）。 */}
+            <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />
           </div>
         }
         actions={
@@ -1210,6 +1227,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           onRenameEntry={handleRenameEntry}
           onMoveEntry={handleMoveEntry}
           onSaveContent={handleSaveContent}
+          versionApi={versionApi}
+          onEntryContentRestored={(entryId, updatedAt) => {
+            setEntries(prev => prev.map(e => e.id === entryId ? { ...e, updatedAt } : e));
+          }}
           enableSelectionAi
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
@@ -1363,6 +1384,23 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           })}
         </div>
       )}
+
+      {/* 右上角「运行中的智能体」入口：关掉抽屉/刷新后仍可见，点击重开抽屉恢复短视频任务进度。
+          始终挂载（Host 轮询不能因开抽屉而停），仅在抽屉打开时隐藏浮层避免遮挡。 */}
+      <ShortVideoRunIndicator
+        storeId={storeId}
+        hidden={!!reprocessTarget}
+        onOpenRun={(r) => {
+          // 把被点击的 run 设为当前活跃 run，抽屉以 short-video 模式打开后会据此恢复轮询
+          saveActiveShortVideoRun(r.storeId, r.runId);
+          setReprocessTarget({ mode: 'short-video', title: '短视频解析' });
+        }}
+        onRunCompleted={() => {
+          // 后台 run 跑完（抽屉关着/刷新后）→ 刷新知识库列表，让新入库的视频/文字条目出现
+          void loadEntries();
+          setTimeout(() => { void loadEntries(); }, 1500);
+        }}
+      />
 
       {/* 文档再加工对话抽屉 */}
       <AnimatePresence>
@@ -2317,9 +2355,11 @@ export function DocumentStorePage() {
                               <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
                             </div>
                           </div>
-                          {/* 副标题行：分类(首个标签) · N 篇文章 —— 复刻设计稿图1 */}
-                          <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                            {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
+                          {/* 副标题行：分类(首个标签) · N 篇文章 · 体量 —— 列表外层即可看到每个库多大 */}
+                          <p className="text-[11px] truncate mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                            <span className="truncate">{category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章</span>
+                            <span aria-hidden>·</span>
+                            <StoreSizeBadge storeId={s.id} variant="compact" />
                           </p>
                         </div>
                       </div>

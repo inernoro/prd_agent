@@ -244,6 +244,8 @@ import type {
   RejectDefectFixItemContract,
   CreateBatchShareContract,
   GetShareScoresContract,
+  GetDefectAutomationConsoleContract,
+  EnsureDefectAutomationAuthorizationContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IAutomationsService } from '@/services/contracts/automations';
@@ -547,6 +549,8 @@ import {
   createBatchShareReal,
   getShareScoresReal,
   rejectDefectFixItemReal,
+  getDefectAutomationConsoleReal,
+  ensureDefectAutomationAuthorizationReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { AutomationsService } from '@/services/real/automations';
@@ -1118,6 +1122,8 @@ export const acceptDefectFixItem: AcceptDefectFixItemContract = withAuth(acceptD
 export const rejectDefectFixItem: RejectDefectFixItemContract = withAuth(rejectDefectFixItemReal);
 export const createBatchShare: CreateBatchShareContract = withAuth(createBatchShareReal);
 export const getShareScores: GetShareScoresContract = withAuth(getShareScoresReal);
+export const getDefectAutomationConsole: GetDefectAutomationConsoleContract = withAuth(getDefectAutomationConsoleReal);
+export const ensureDefectAutomationAuthorization: EnsureDefectAutomationAuthorizationContract = withAuth(ensureDefectAutomationAuthorizationReal);
 
 // ─── Mobile Dashboard ───
 export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);
@@ -1469,6 +1475,7 @@ export type {
   ChangelogDay,
   ChangelogRelease,
   ReleasesView,
+  GitHubLinkedDefect,
   GitHubLogEntry,
   GitHubLogsView,
   ChangelogAiSummarySubtab,
@@ -1929,6 +1936,10 @@ export {
   getDocumentEntry,
   moveDocumentEntry,
   updateDocumentContent,
+  listEntryVersions,
+  getEntryVersion,
+  restoreEntryVersion,
+  getStoreSize,
   setFolderPrimaryChild,
   rebuildContentIndex,
   listPublicDocumentStores,
@@ -2167,6 +2178,7 @@ export type {
 export {
   getCcasMeta,
   generateCcasEquipment,
+  uploadCcasEquipment,
   listCcasEquipment,
   toggleCcasEquipmentFavorite,
   deleteCcasEquipment,
@@ -2178,6 +2190,7 @@ export {
   listKnowledgeEntries,
   getKnowledgeEntryContent,
   CCAS_PRD_STREAM_URL,
+  CCAS_PRD_REVISE_STREAM_URL,
   CCAS_FLOW_PARSE_STREAM_URL,
   CCAS_QA_STREAM_URL,
   CCAS_SQL_AI_STREAM_URL,

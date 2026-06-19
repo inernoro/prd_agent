@@ -307,6 +307,7 @@ function TagFilterDropdown({
   );
 }
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { VersionHistoryModal, type VersionApi } from './VersionHistoryModal';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { motion } from 'motion/react';
 import ShinyText from '@/components/reactbits/ShinyText';
@@ -318,7 +319,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
-import { Workflow } from 'lucide-react';
+import { Workflow, History, AlertTriangle } from 'lucide-react';
 import { listInlineComments, createInlineComment, deleteInlineComment } from '@/services';
 import { toast } from '@/lib/toast';
 import { DocToc } from './DocToc';
@@ -398,7 +399,19 @@ export type DocBrowserProps = {
   /** 重命名条目（修改 title）。提供时右键菜单会出现"重命名"项。 */
   onRenameEntry?: (entryId: string, newTitle: string) => Promise<void>;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
-  onSaveContent?: (entryId: string, content: string) => Promise<void>;
+  /**
+   * 写回正文。返回服务端最新 updatedAt（用于把 loadedContentKey 推进到同一版本，
+   * 短路掉因 entries.updatedAt 变化触发的内容重拉 —— 避免保存/插入图片后整页闪烁回顶）。
+   * 兼容旧返回 void。
+   */
+  onSaveContent?: (entryId: string, content: string) => Promise<{ updatedAt?: string } | void>;
+  /**
+   * 版本控制接口（私人/团队知识库可写场景注入）。提供时编辑器顶部显示「历史版本」按钮，
+   * 可查看历史、预览、恢复。恢复后由 DocBrowser 直接更新本地 preview，不触发整页重拉。
+   */
+  versionApi?: VersionApi;
+  /** 版本恢复成功后通知页面层同步 entries[].updatedAt（避免随后内容重拉） */
+  onEntryContentRestored?: (entryId: string, updatedAt: string) => void;
   /**
    * 划词 AI 局部编辑（改写选区 / 为选区配图）。仅在可写场景（如私人知识库）开启；
    * 需同时提供 onSaveContent（写回走同一条 PUT content 路径，服务端自动重锚定行内评论）。
@@ -1538,6 +1551,8 @@ export function DocBrowser({
   onRenameEntry,
   onMoveEntry,
   onSaveContent,
+  versionApi,
+  onEntryContentRestored,
   enableSelectionAi,
   loadContent,
   onCreateFolder,
@@ -1575,9 +1590,21 @@ export function DocBrowser({
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [preview, setPreview] = useState<EntryPreview | null>(null);
+  // preview 的 ref 镜像：loadEntryContent 的「刚保存豁免」要读当前 preview.text，但不能把 preview 放进
+  // 它的 deps —— 否则 setPreview(null)（切文档）会改变回调标识，触发下方 effect 二次 loadContent，大文档被下载两次（Codex P2）。
+  const previewRef = useRef<EntryPreview | null>(null);
+  useEffect(() => { previewRef.current = preview; }, [preview]);
   const [contentLoading, setContentLoading] = useState(false);
   // 内容加载缓存键：以 entryId + updatedAt 组合作内容版本，替换文件后 updatedAt 变化即触发重载
   const [loadedContentKey, setLoadedContentKey] = useState<string | null>(null);
+  // 内容加载序号：防过期响应。每次 loadEntryContent / commitLocalSave 自增，落后的 loadContent
+  // 回来时若序号已变就丢弃，避免旧请求覆盖刚保存的 preview/loadedContentKey（闪烁回顶）。
+  const contentFetchIdRef = useRef(0);
+  // 刚本地保存的内容快照：当 onSaveContent 不返回 updatedAt（部分调用方返回 void）时，loadedContentKey
+  // 无法推进，但 preview 已是权威内容。此时若 effect 因 entries.updatedAt 变化要重拉，凭这份快照直接
+  // 采纳新 key、跳过 setPreview(null)+重拉，避免保存后闪烁回顶（Bugbot）。
+  const lastSavedContentRef = useRef<{ entryId: string; text: string } | null>(null);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -1977,6 +2004,37 @@ export function DocBrowser({
     };
   }, [liveSelection, trackedEntryForComments]);
 
+  // 本地保存提交：写回正文后，立即把 preview 更新为刚保存的权威内容，并将 loadedContentKey
+  // 推进到服务端返回的新 updatedAt。这样后续因父级 entries[].updatedAt 变化触发的
+  // loadEntryContent(`${id}:${newUpdatedAt}`) 会命中缓存键短路（contentKey === loadedContentKey）,
+  // 不再 setPreview(null) 重新拉取 —— 根除"保存/划词配图后整页闪烁、滚动回到顶部、
+  // （github 订阅文档）插入的图片被服务端旧正文盖掉而消失"三连症状。
+  // 返回是否成功；失败时不动 preview/key，由调用方按既有逻辑处理。
+  const commitLocalSave = useCallback(async (entryId: string, content: string): Promise<boolean> => {
+    if (!onSaveContent) return false;
+    let result: { updatedAt?: string } | void;
+    try {
+      result = await onSaveContent(entryId, content);
+    } catch {
+      return false; // toast 由页面层 onSaveContent 内部抛出
+    }
+    // 让任何在途的 loadEntryContent 作废：避免它晚一步回来用旧正文覆盖刚保存的 preview/key（闪烁回顶）。
+    // 同时清掉 contentLoading：被作废的旧加载会走过期分支、跳过它自己的 setContentLoading(false)，
+    // 不清的话内容区会卡在 loading 占位（Codex P2）。preview 此刻已是权威内容，本就不该 loading。
+    contentFetchIdRef.current++;
+    setContentLoading(false);
+    lastSavedContentRef.current = { entryId, text: content };
+    setPreview(prev => (prev ? { ...prev, text: content } : prev));
+    const ua = result && typeof result === 'object' ? result.updatedAt : undefined;
+    if (ua) {
+      setLoadedContentKey(`${entryId}:${ua}`);
+      // 同步内部 searchResults 的 updatedAt：搜索命中的条目走 searchResults 兜底（父级只更新 entries），
+      // 不同步会让 selectedEntryData.updatedAt 停在旧值 → contentKey 与刚推进的 key 不一致，之后被迫整页重拉闪烁（Bugbot）。
+      setSearchResults(prev => prev ? prev.map(e => e.id === entryId ? { ...e, updatedAt: ua } : e) : prev);
+    }
+    return true;
+  }, [onSaveContent]);
+
   // AI 编辑写回：基于选区在正文 body 中重定位（offset 校验 → 唯一 indexOf → 上下文消歧），
   // 替换/插入后拼回 frontmatter 前缀，走既有 onSaveContent（PUT content，服务端自动
   // 重锚定行内评论 + 重算双链账本）。歧义无法消除时拒绝替换，宁缺毋错。
@@ -1985,7 +2043,7 @@ export function DocBrowser({
     mode: 'replace' | 'insert-after',
     newText: string,
   ): Promise<boolean> => {
-    if (!onSaveContent) return false;
+    if (!onSaveContent) return false; // commitLocalSave 内部亦校验，此处早退避免无谓重定位
     if (target.entryId !== selectedEntryId || !preview?.text || typeof selectionRawContent !== 'string') {
       toast.error('文档已切换', '请重新划选后再试');
       return false;
@@ -2010,16 +2068,12 @@ export function DocBrowser({
         : `${body.replace(/\n+$/, '')}\n\n${newText}\n`;
     }
     const newFull = frontmatterPrefixOf(raw, body) + newBody;
-    try {
-      await onSaveContent(target.entryId, newFull);
-    } catch {
-      return false; // 失败提示由 onSaveContent 调用方（页面层）toast
-    }
-    setPreview(prev => (prev ? { ...prev, text: newFull } : prev));
+    const ok = await commitLocalSave(target.entryId, newFull);
+    if (!ok) return false; // 失败提示由 onSaveContent 调用方（页面层）toast
     // 写回已触发服务端行内评论重锚定，重拉一次让本地高亮位置跟上
     void refreshComments();
     return true;
-  }, [onSaveContent, selectedEntryId, preview, selectionRawContent, refreshComments]);
+  }, [onSaveContent, commitLocalSave, selectedEntryId, preview, selectionRawContent, refreshComments]);
 
   // 划词配图：生成的图片以 markdown 形式插入选区所在段落之后
   const handleInsertSelectionImage = useCallback(async (url: string, name?: string) => {
@@ -2447,16 +2501,28 @@ export function DocBrowser({
   // 缓存键随之变化，命中失败 → 重新拉取新正文（修复"替换后预览不刷新"）
   const loadEntryContent = useCallback(async (entryId: string, contentKey: string) => {
     if (contentKey === loadedContentKey) return;
+    // 刚本地保存过且 preview 已是该内容（onSaveContent 没回 updatedAt 时走这里）：直接采纳新 key，
+    // 不 setPreview(null) 不重拉，避免保存后闪烁回顶（Bugbot）。
+    // 一次性：用完即清。只豁免「保存紧接着的那一次」重拉；之后订阅同步等再 bump updatedAt 时，
+    // ref 已空 → 正常重拉，不会一直拿本地旧文盖掉服务端已被同步覆盖的新内容（Bugbot）。
+    const saved = lastSavedContentRef.current;
+    if (saved && saved.entryId === entryId && previewRef.current?.text === saved.text) {
+      lastSavedContentRef.current = null;
+      setLoadedContentKey(contentKey);
+      return;
+    }
+    const fid = ++contentFetchIdRef.current;
     setContentLoading(true);
     setPreview(null);
     try {
       const data = await loadContent(entryId);
+      if (fid !== contentFetchIdRef.current) return; // 过期：更晚的加载/本地保存已发生，丢弃本次结果
       setPreview(data);
       setLoadedContentKey(contentKey);
     } catch {
-      setPreview(null);
+      if (fid === contentFetchIdRef.current) setPreview(null);
     }
-    setContentLoading(false);
+    if (fid === contentFetchIdRef.current) setContentLoading(false);
   }, [loadContent, loadedContentKey]);
 
   useEffect(() => {
@@ -3344,6 +3410,15 @@ export function DocBrowser({
                 if (!cfg.editable) return null;
                 return (
                   <div className="flex items-center gap-1.5">
+                    {versionApi && !editMode && (
+                      <button
+                        onClick={() => setVersionHistoryOpen(true)}
+                        className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
+                        title="查看并恢复历史版本">
+                        <History size={11} /> 历史版本
+                      </button>
+                    )}
                     {editMode ? (
                       <>
                         {/* Markdown：富文本（所见即所得）/ 源码（支持 [[ 自动补全）双模式 */}
@@ -3361,9 +3436,8 @@ export function DocBrowser({
                             if (!selectedEntryId) return;
                             setSaving(true);
                             try {
-                              await onSaveContent(selectedEntryId, editContent);
-                              setPreview(prev => prev ? { ...prev, text: editContent } : prev);
-                              setEditMode(false);
+                              const ok = await commitLocalSave(selectedEntryId, editContent);
+                              if (ok) setEditMode(false);
                             } finally {
                               setSaving(false);
                             }
@@ -3401,6 +3475,29 @@ export function DocBrowser({
               {!editMode && !contentLoading && (
                 <ReadingProgressBar key={selectedEntryId} scrollRef={contentAreaRef} />
               )}
+              {/* 订阅/同步文档警示：该文档由外部源定期自动拉取，手动修改可能被下次同步覆盖。
+                  改动会留存到历史版本可恢复，但仍提前提醒用户，避免「插入配图后被同步覆盖」的困惑。 */}
+              {selectedEntryData && !selectedEntryData.isFolder && onSaveContent && (() => {
+                // GitHub 目录同步的子文档 sourceType=subscription，但 metadata 带 github_* 标识；
+                // 纯 RSS/URL 订阅只有 sourceType=subscription。父级配置才是 github_directory。
+                const st = selectedEntryData.sourceType;
+                const meta = selectedEntryData.metadata ?? {};
+                const isGithub = st === 'github_directory' || Object.keys(meta).some(k => k.startsWith('github_'));
+                const isSub = isGithub || st === 'subscription' || !!selectedEntryData.syncStatus;
+                if (!isSub) return null;
+                const src = isGithub ? '每日从 GitHub 仓库自动同步' : '定期从订阅源自动拉取更新';
+                return (
+                  <div
+                    className="shrink-0 flex items-start gap-2 mx-6 mt-3 px-3 py-2 rounded-[8px] text-[11.5px] leading-relaxed"
+                    style={{ background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.28)', color: 'rgba(234,179,8,0.95)' }}>
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <span>
+                      此文档{src}，<b>手动修改（含插入配图）可能在下次同步时被远端内容覆盖</b>。
+                      你的每次改动都会留存到「历史版本」，被覆盖后可一键恢复。
+                    </span>
+                  </div>
+                );
+              })()}
               <div
                 ref={contentAreaRef}
                 className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}
@@ -3744,6 +3841,28 @@ export function DocBrowser({
             // 能评论、关掉后 margin/composer/overlay 仍按只读禁写，Bugbot Medium），并带 fetchIdRef 守卫。
             void refreshComments();
           }}
+        />
+      )}
+      {versionHistoryOpen && versionApi && selectedEntryData && !selectedEntryData.isFolder && (
+        <VersionHistoryModal
+          entryId={selectedEntryData.id}
+          entryTitle={selectedEntryData.title}
+          api={versionApi}
+          onRestored={(content, updatedAt, restoredEntryId) => {
+            // 仅当恢复的就是当前选中条目时才就地刷新当前页（在途切换条目则不画到当前页，避免画错文档，Bugbot）
+            if (restoredEntryId === selectedEntryId) {
+              contentFetchIdRef.current++;        // 作废在途加载，防慢响应覆盖恢复结果（Bugbot）
+              setContentLoading(false);
+              lastSavedContentRef.current = { entryId: restoredEntryId, text: content };
+              // preview 为 null（内容仍在加载）时也要写出恢复内容，否则配合下面推进的 key 会让正文页空白（Bugbot High）
+              setPreview(prev => (prev ? { ...prev, text: content } : { text: content, fileUrl: null, contentType: 'text/markdown' }));
+              setLoadedContentKey(`${restoredEntryId}:${updatedAt}`);
+              if (editMode) { setEditMode(false); setEditContent(''); }
+            }
+            // 无论当前是否还选中该条目，都更新对应行的 updatedAt（用于列表/大小徽章刷新）
+            onEntryContentRestored?.(restoredEntryId, updatedAt);
+          }}
+          onClose={() => setVersionHistoryOpen(false)}
         />
       )}
     </div>

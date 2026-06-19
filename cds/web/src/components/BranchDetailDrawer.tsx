@@ -70,7 +70,7 @@ interface BranchDetailData {
   /** 2026-05-14: 最近一次停止的时间戳与原因，drawer 顶部用它解释"分支变灰"。 */
   lastStoppedAt?: string;
   lastStopReason?: string;
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   deployCount?: number;
   pullCount?: number;
   stopCount?: number;
@@ -411,7 +411,7 @@ function DrawerTabButton({
   return (
     <button
       type="button"
-      className={`relative inline-flex h-11 shrink-0 items-center gap-2 px-3 text-sm transition-colors ${
+      className={`relative inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap px-3 text-sm transition-colors ${
         active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
       }`}
       onClick={onClick}
@@ -1650,6 +1650,14 @@ export function BranchDetailDrawer({
     });
   }, [openContainerLogs]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    document.body.dataset.cdsBranchDrawerOpen = 'true';
+    return () => {
+      delete document.body.dataset.cdsBranchDrawerOpen;
+    };
+  }, [open]);
+
   if (!open || !branchId) return null;
 
   return (
@@ -1661,20 +1669,20 @@ export function BranchDetailDrawer({
         aria-label="关闭分支详情"
       />
       <div
-        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[min(1240px,calc(100vw-32px))] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
+        className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[min(1240px,calc(100vw-32px))] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
         style={{ minHeight: 0 }}
       >
-        <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="text-sm font-semibold">分支详情</span>
+        <header className="cds-branch-detail-header flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="shrink-0 whitespace-nowrap text-sm font-semibold">分支详情</span>
             {branch ? (
               <>
                 <span className="text-muted-foreground/60">·</span>
-                <span className="min-w-0 truncate font-mono text-xs">{branch.branch}</span>
+                <span className="min-w-0 truncate whitespace-nowrap font-mono text-xs">{branch.branch}</span>
               </>
             ) : null}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="cds-branch-detail-header-actions flex shrink-0 items-center gap-1">
             {githubPrHref ? (
               <Button
                 asChild
@@ -1811,6 +1819,8 @@ export function BranchDetailDrawer({
                                   : branch.lastStopSource === 'scheduler' ? '调度器'
                                   : branch.lastStopSource === 'executor' ? '执行器'
                                   : branch.lastStopSource === 'cds' ? 'CDS'
+                                  : branch.lastStopSource === 'webhook' ? 'Webhook'
+                                  : branch.lastStopSource === 'ai' ? 'AI'
                                   : branch.lastStopSource === 'oom' ? 'OOM'
                                   : branch.lastStopSource === 'external' ? '外部'
                                   : branch.lastStopSource === 'crash' ? '崩溃'
@@ -1929,7 +1939,7 @@ export function BranchDetailDrawer({
                 ) : null}
               </section>
 
-              <nav className="sticky top-0 z-10 flex gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3">
+              <nav className="cds-branch-detail-tabs sticky top-0 z-10 flex gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3">
                 {drawerTabs.map((tab) => (
                   <DrawerTabButton key={tab.key} tab={tab} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} />
                 ))}
@@ -2268,11 +2278,11 @@ export function BranchDetailDrawer({
             一个孤零零的橙色大按钮,用户对着停止的分支找不到启动入口
             (2026-05-07 反馈)。 */}
         {branch && activeTab !== 'services' ? (
-          <footer className="flex items-center gap-2 border-t border-[hsl(var(--hairline))] px-4 py-3">
+          <footer className="cds-branch-detail-footer flex items-center gap-2 border-t border-[hsl(var(--hairline))] px-4 py-3">
             {(branch.status === 'idle' || branch.status === 'stopped' || branch.status === 'error') ? (
               <>
                 <Button
-                  className="flex-1"
+                  className="cds-branch-detail-footer-primary flex-1"
                   disabled={!!currentActionBusy}
                   title="只把已构建好的容器拉起来（docker restart），不重新拉代码 / 不重建镜像。没有代码变更时用这个，秒级。"
                   onClick={() => void runBranchAction('restart', '重新启动')}
@@ -2282,6 +2292,7 @@ export function BranchDetailDrawer({
                 </Button>
                 <Button
                   variant="outline"
+                  className="cds-branch-detail-footer-secondary"
                   disabled={!!currentActionBusy}
                   title="拉取最新代码 + 重新构建镜像 + 重启（有代码变更 / 重启失败时用这个，较慢）。"
                   onClick={() => void runBranchAction('deploy', '部署')}
@@ -2289,7 +2300,7 @@ export function BranchDetailDrawer({
                   {currentActionBusy === 'deploy' ? <Loader2 className="animate-spin" /> : <Play />}
                   {currentActionBusy === 'deploy' ? '正在部署…' : '重新部署'}
                 </Button>
-                <Button asChild variant="outline">
+                <Button asChild variant="outline" className="cds-branch-detail-footer-secondary">
                   <a href={fullPageHref}>
                     <ExternalLink />
                     详情页
@@ -2318,7 +2329,7 @@ export function BranchDetailDrawer({
                 <Button
                   type="button"
                   variant="outline"
-                  className="flex-[1_1_0]"
+                  className="cds-branch-detail-footer-secondary flex-[1_1_0]"
                   onClick={() => setActiveTab('settings')}
                 >
                   <Settings />
