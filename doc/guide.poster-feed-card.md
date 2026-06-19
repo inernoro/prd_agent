@@ -221,3 +221,13 @@ videoUrl,coverUrl,authorAvatarUrl
 - `doc/debt.workflow-agent.md`：本功能已知边界与未还债务（含 dotnet watch 卡进程根因）
 - `.claude/rules/marketplace.md`：把工作流模板分享到海鲜市场
 - `.claude/rules/server-authority.md`：Run/Worker 模式（cron 调度真订阅时必读）
+
+---
+
+## 最近更新（来自 changelog 片段）
+
+### 2026-06-14 短视频解析 Card 展示
+
+- **后端 Card 数据**：短视频解析新增 Card 展示卡片数据（封面/作者/头像/时长/话题/点赞评论等统计）+ COS 永久视频地址
+- **前端仿真卡片**：粘贴链接后改用仿真短视频卡片（复用 PosterFeedCardView）展示封面+可播放视频，取代原先的文字块
+- **渐进加载**：封面先出、入库后切 COS 永久地址播放；解析进度降为卡片下方一行状态

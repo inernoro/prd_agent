@@ -222,11 +222,14 @@ function buildGlassStyle(
   isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
+  // B 方案（液态玻璃评估选定，2026-06-16）：清晰度优先。
+  // 玻璃感来自「边缘棱光 + 镜面反光 + 饱和度提升」，不靠重模糊——blur 半径大幅下调，
+  // 背景透得清楚（评估页 labs/liquid-glass 实测 current blur(40px) 把背景糊成一坨）。
   const blurValues = {
-    default: 'blur(40px) saturate(180%) brightness(1.1)',
-    gold: 'blur(40px) saturate(200%) brightness(1.15)',
-    frost: 'blur(60px) saturate(220%) brightness(1.12)',
-    subtle: 'blur(24px) saturate(160%) brightness(1.05)',
+    default: 'blur(14px) saturate(180%) brightness(1.08)',
+    gold: 'blur(16px) saturate(200%) brightness(1.12)',
+    frost: 'blur(22px) saturate(220%) brightness(1.1)',
+    subtle: 'blur(10px) saturate(160%) brightness(1.04)',
   };
 
   const borderMultiplier = { default: 1, gold: 1.3, frost: 1.4, subtle: 0.7 };
@@ -254,9 +257,12 @@ function buildGlassStyle(
     `;
   }
 
+  // B 方案棱光：顶边镜面高光（光从上方打下来）+ 侧缘光 + 底部内反光，让低模糊也读作"玻璃"。
   const shadowLayers = [
     '0 16px 32px -8px rgba(10, 10, 14, 0.5)',
-    `inset 0 1px 1px rgba(255, 255, 255, ${0.15 * borderMult})`,
+    `inset 0 1px 1px rgba(255, 255, 255, ${0.5 * borderMult})`,
+    'inset 1px 0 0 rgba(255, 255, 255, 0.12)',
+    'inset 0 -10px 20px -16px rgba(255, 255, 255, 0.16)',
     'inset 0 -1px 1px rgba(0, 0, 0, 0.15)',
   ];
   if (variant === 'gold') {

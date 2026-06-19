@@ -45,6 +45,7 @@ import {
   Home,
   BarChart3,
   GraduationCap,
+  Droplets,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -57,6 +58,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { shouldReduceEffects } from '@/lib/themeApplier';
+import { useReducedMotion } from '@/lib/useReducedMotion';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore, NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { getLauncherCatalog } from '@/lib/launcherCatalog';
@@ -487,6 +490,13 @@ export default function AppShell() {
 
   // 读取主题配置中的侧边栏玻璃效果设置
   const sidebarGlass = useThemeStore((s) => s.config.sidebarGlass);
+  // 液态玻璃一键开关（头像菜单内）：用 shouldReduceEffects 判断「实际」是否开玻璃，
+  // 覆盖 auto 在 Windows 上自动降级的情况，避免徽章显示与真实渲染不一致。
+  // useReducedMotion 让徽章在 OS 偏好变化时即时刷新，不滞后。
+  const themeConfig = useThemeStore((s) => s.config);
+  const setThemeConfig = useThemeStore((s) => s.setConfig);
+  const reducedMotion = useReducedMotion();
+  const glassOn = !reducedMotion && !shouldReduceEffects(themeConfig);
   // 根据配置决定是否使用玻璃效果：always 始终启用，auto 仅实验室页面，never 禁用
   const useSidebarGlass = sidebarGlass === 'always' || (sidebarGlass === 'auto' && isLabPage);
 
@@ -626,9 +636,9 @@ export default function AppShell() {
 
   return (
     <div
-      className="w-full relative overflow-hidden"
+      className="w-full relative overflow-hidden app-aurora"
       style={{
-        background: 'var(--bg-base)',
+        // 背景走 .app-aurora 类（极淡彩色光晕 + var(--bg-base) 底），给液态玻璃可折射的深度
         // 移动端：用 dvh 跟随视口（修 iOS Safari 地址栏收缩导致的高度抖动 / 黑带）
         // 桌面端：保持 h:100% 依赖 #root，避免破坏现有侧栏/浮层布局
         minHeight: '100dvh',
@@ -1487,6 +1497,29 @@ export default function AppShell() {
                   </span>
                 </DropdownMenu.Item>
 
+                {/* 液态玻璃一键开关：点击不关菜单（preventDefault），让用户当场看到整个界面玻璃开/关的变化 */}
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setThemeConfig({ performanceMode: glassOn ? 'performance' : 'quality' });
+                  }}
+                >
+                  <Droplets size={16} className="shrink-0" />
+                  <span className="text-[13px]">液态玻璃</span>
+                  <span
+                    className="ml-auto inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors"
+                    style={
+                      glassOn
+                        ? { background: 'rgba(99, 102, 241, 0.22)', color: 'var(--accent-gold)' }
+                        : { background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-muted)' }
+                    }
+                  >
+                    {glassOn ? '已开启' : '已关闭'}
+                  </span>
+                </DropdownMenu.Item>
+
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
@@ -1743,7 +1776,9 @@ export default function AppShell() {
         <main
           className="relative h-full w-full overflow-auto flex flex-col transition-[padding-left] duration-220 ease-out"
           style={{
-            background: 'var(--bg-base)',
+            // 透明 → 让外层 .app-aurora 的彩色光晕透到内容区(否则不透明 base 会盖住 aurora,
+            // 半透卡片/玻璃只能折射到平底色)。aurora 自身以 var(--bg-base) 收底,floor 色不变。
+            background: 'transparent',
             paddingLeft: mainPadLeft,
             // 移动端留出顶部 header 和底部 tab 栏空间
             paddingTop: isMobile ? 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))' : undefined,
