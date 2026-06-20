@@ -42,6 +42,7 @@ public class DocumentStoreController : ControllerBase
     private readonly DocStoreServices.MentionService _mentions;
     private readonly DocStoreServices.DocumentVersionService _versions;
     private readonly ILlmGateway _gateway;
+    private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -69,6 +70,7 @@ public class DocumentStoreController : ControllerBase
         IAdminPermissionService adminPermissions,
         ILlmGateway gateway,
         IConfiguration config,
+        DocumentStoreAssetNormalizer assetNormalizer,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -84,6 +86,7 @@ public class DocumentStoreController : ControllerBase
         _adminPermissions = adminPermissions;
         _gateway = gateway;
         _config = config;
+        _assetNormalizer = assetNormalizer;
         _logger = logger;
     }
 
@@ -1047,7 +1050,18 @@ public class DocumentStoreController : ControllerBase
         if (entry.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持编辑"));
 
-        var content = request.Content ?? string.Empty;
+        var normalized = await _assetNormalizer.NormalizeAsync(
+            request.Content ?? string.Empty,
+            request.Assets?.Select(a => new DocumentStoreInlineAsset(
+                a.Name,
+                a.Caption,
+                a.Mime,
+                a.Base64,
+                a.FileName,
+                a.ExtensionHint)),
+            new DocumentStoreAssetNormalizationOptions(request.AssetDomain),
+            HttpContext.RequestAborted);
+        var content = normalized.Content;
 
         // 模板校验：store 命中模板时校验正文必备 section。
         // 机器归档（entry.metadata.kind=acceptance-report）缺 section 硬卡 422；人工手写软提醒放行。
@@ -1261,7 +1275,12 @@ public class DocumentStoreController : ControllerBase
         DocumentEntry entry, DocumentStore store, string content,
         string userId, string? userName, string source, string? restoredFromVersionId)
     {
-        content ??= string.Empty;
+        var normalized = await _assetNormalizer.NormalizeAsync(
+            content ?? string.Empty,
+            null,
+            null,
+            HttpContext.RequestAborted);
+        content = normalized.Content;
         // 内容寻址 + 共享保护（详见 WriteEntryContentDocAsync）：恢复也不得覆盖被别的 entry 共享的 ParsedPrd
         var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content);
         entry.DocumentId = newDocId;
@@ -5400,6 +5419,20 @@ public class UpdateEntryContentRequest
     public string Content { get; set; } = string.Empty;
     /// <summary>可选：同时更新条目的 contentType（如富文本编辑后置为 text/html）；null=不变</summary>
     public string? ContentType { get; set; }
+    /// <summary>一次性知识库传输资产：正文可用 {{IMG:name}} 引用；后端上传并重写为正式图链</summary>
+    public List<DocumentStoreInlineAssetRequest>? Assets { get; set; }
+    /// <summary>可选资产域；不传由知识库统一归到 assets/img</summary>
+    public string? AssetDomain { get; set; }
+}
+
+public class DocumentStoreInlineAssetRequest
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Caption { get; set; }
+    public string? Mime { get; set; }
+    public string? Base64 { get; set; }
+    public string? FileName { get; set; }
+    public string? ExtensionHint { get; set; }
 }
 
 public class CreateShareLinkRequest

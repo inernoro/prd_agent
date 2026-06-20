@@ -2,8 +2,9 @@
 """MAP 验收 · 报告归档（项目无关，配置驱动，双模式）。
 
 两种输出模式（由 acceptance.config.json 的 report.mode 决定）：
-  - doc-store：上传截图 → 删图条目(保URL) → 找/建报告库 → 建条目(正文以 # 标题
-    打头,根治目录 `---`) → 写正文 → 出分享短链。需要文档空间 API + AI 密钥。
+  - doc-store：找/建报告库 → 建条目(正文以 # 标题打头,根治目录 `---`)
+    → 一次性提交正文 + assets[]，由知识库后端资产化图片并重写图链 → 出分享短链。
+    需要文档空间 API + AI 密钥。
   - local：把报告写成本地 md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
     适合没有文档空间的仓库。
 
@@ -19,7 +20,7 @@
 依赖 env（仅 doc-store 模式）：见 config.auth.api（默认 AI_ACCESS_KEY + MAP_AI_USER）。
 local 模式不读任何 env、不发任何网络请求。
 """
-import argparse, json, os, subprocess, datetime, re, shutil, time
+import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile
 from pathlib import Path
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
@@ -38,6 +39,28 @@ def curl(args, retries=5):
             if i < retries - 1:
                 time.sleep(3 * (i + 1)); continue
     print("RAW(重试后仍失败):", (last or "")[:200]); raise RuntimeError("curl 返回非 JSON（多为预览环境 524/重启）")
+
+
+def curl_json(headers, method, url, payload, retries=5):
+    """通过临时文件发送 JSON，避免截图 base64 过大触发系统 argv 长度限制。"""
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as f:
+        json.dump(payload, f, ensure_ascii=False)
+        tmp = f.name
+    try:
+        return curl(headers + ["-H", "Content-Type: application/json", "-X", method, "--data-binary", f"@{tmp}", url], retries=retries)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def data_or_raise(resp, context):
+    if not isinstance(resp, dict) or not resp.get("success", True):
+        raise RuntimeError(f"{context} 失败：{json.dumps(resp, ensure_ascii=False)[:500]}")
+    if "data" not in resp or resp.get("data") is None:
+        raise RuntimeError(f"{context} 响应缺少 data：{json.dumps(resp, ensure_ascii=False)[:500]}")
+    return resp["data"]
 
 
 def preview_from_cmd(cmd):
@@ -136,13 +159,20 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     api = cfg["auth"]["api"]
     # 简便方式（推荐）：设 MAP_DOC_STORE_KEY=sk-ak-...（带 document-store:write scope 的最小权限长效 Key），
     # 走 Authorization: Bearer，无需 impersonate、无需 AI 超级密钥。
+    # 正式环境临时兜底可设 MAP_DOC_STORE_JWT=ey...（登录态 Bearer）。
     # 未设时回退 AI 超级密钥 + X-AI-Impersonate（向后兼容）。
     agent_key_env = api.get("agentKeyEnv", "MAP_DOC_STORE_KEY")
     agent_key = os.environ.get(agent_key_env, "").strip()
+    jwt_env = api.get("jwtEnv", "MAP_DOC_STORE_JWT")
+    jwt = os.environ.get(jwt_env, "").strip()
     if agent_key:
         H = ["-H", f"Authorization: Bearer {agent_key}"]
         imp = os.environ.get(api.get("impersonateEnv", ""), "") or "(scoped-key-owner)"
         print(f"  鉴权：AgentApiKey scope（{agent_key_env}，最小权限 document-store:write）")
+    elif jwt:
+        H = ["-H", f"Authorization: Bearer {jwt}"]
+        imp = os.environ.get(api.get("impersonateEnv", ""), "") or "(jwt-user)"
+        print(f"  鉴权：登录态 Bearer（{jwt_env}，正式环境临时兜底）")
     else:
         key = os.environ[api["keyEnv"]]
         imp = os.environ[api["impersonateEnv"]]
@@ -154,7 +184,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     store_name = cfg["report"]["storeName"]
     want_public = bool(cfg["report"].get("isPublic", False))
     want_template = cfg["report"].get("templateKey")
-    stores = curl(H + [f"{base}/stores?pageSize=100"])["data"]["items"]
+    stores = data_or_raise(curl(H + [f"{base}/stores?pageSize=100"]), "列出知识库")["items"]
     match = [s for s in stores if s["name"] == store_name]
     if match:
         rid = match[0]["id"]
@@ -171,26 +201,37 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
             curl(HJ + ["-X", "PUT", "-d", json.dumps({"templateKey": want_template}), f"{base}/stores/{rid}"])
             print(f"  复用库缺 templateKey，已补设为 {want_template}（让最新报告排最前）")
     else:
-        rid = curl(HJ + ["-X", "POST", "-d", json.dumps(
+        rid = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps(
             {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
              "isPublic": want_public,
              # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance-kb.md §5.B）。
              # 机器归档缺必填 metadata/正文 section 会被后端 422 拒收。
              "templateKey": want_template}
-        ), f"{base}/stores"])["data"]["id"]
+        ), f"{base}/stores"]), "创建知识库")["id"]
     print(f"  报告库 id={rid}")
 
-    url_map = {}
+    # 一次性知识库传输协议：
+    # - 正文仍用 {{IMG:name}} 或 {{EVIDENCE}} 表达结构。
+    # - 截图 bytes 随 PUT /content 的 assets[] 一次提交。
+    # - 后端负责上传正式资产、重写 Markdown 图片 URL、写 ParsedPrd 与刷新 document 缓存。
+    # 这样技能不再猜图片域名，也不会留下 data:image 破图或“上传临时图条目再删除”的中间状态。
+    evidence = "\n\n".join(f"**{m['caption']}**\n\n{{{{IMG:{m['name']}}}}}" for m in manifest)
+    assets = []
     for m in manifest:
-        d = curl(H + ["-F", f"file=@{m['path']}", f"{base}/stores/{rid}/upload"])["data"]
-        url_map[m["name"]] = d["fileUrl"]
-        curl(H + ["-X", "DELETE", f"{base}/entries/{d['entry']['id']}"])
-        print(f"  上传+清理 {m['name']} -> {d['fileUrl']}")
+        with open(m["path"], "rb") as f:
+            data = base64.b64encode(f.read()).decode("ascii")
+        assets.append({
+            "name": m["name"],
+            "caption": m["caption"],
+            "mime": "image/png",
+            "base64": data,
+            "fileName": f"{m['name']}.png",
+            "extensionHint": "png",
+        })
+        print(f"  准备一次性图片资产 {m['name']} ({os.path.getsize(m['path'])}B)")
 
-    evidence = "\n\n".join(f"**{m['caption']}**\n\n![{m['caption']}]({url_map[m['name']]})" for m in manifest)
-    img_md = {m["name"]: f"![{m['caption']}]({url_map[m['name']]})" for m in manifest}
     meta = build_meta(report_id, now, imp, a, preview)
-    content = assemble(title, body, evidence, meta, img_md)
+    content = assemble(title, body, evidence, meta)
 
     # metadata：结论可视(前端按 verdict 渲染绿/琥珀/红徽章) + 跨环境同步幂等(reportId 去重)。
     # kind=acceptance-report 让后端模板校验对本次写入"硬卡"(缺项 422 而非软放行)。
@@ -206,12 +247,12 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     # 配合库的 created-desc 排序，新报告永远在最顶。曾经按模块自动建子文件夹，
     # 反而把最新报告藏进文件夹、与"最新最前"打架，已撤销。
     # （原始诉求 Q5 问的是"验收报告是否独立成库"，是库级隔离，不是库内再分子文件夹。）
-    eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
+    eid = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
         "sourceType": "reference", "contentType": "text/markdown",
         "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
         "metadata": entry_meta,
-    }), f"{base}/stores/{rid}/entries"])["data"]["id"]
+    }), f"{base}/stores/{rid}/entries"]), "创建知识库条目")["id"]
     print(f"  报告条目 id={eid} title={title} tags={tags or []}")
     # 防「断头报告」：标题建了但 PUT 524 丢了正文 → 留下能看到标题、点开却空白的空壳条目。
     # PUT 本身可能 524 抛错（curl 重试耗尽），也可能返回了但正文没落库 → 两种都得兜住：
@@ -223,11 +264,19 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
             return False
     ok = False
     try:
-        w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
+        w = curl_json(H, "PUT", f"{base}/entries/{eid}/content", {
+            "content": content,
+            "assets": assets,
+            "assetDomain": cfg["report"].get("assetDomain"),
+        })
         print(f"  写正文 success={w.get('success')}")
         ok = _has_content()
         if not ok:  # 返回了但没落库 → 再写一次
-            curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
+            curl_json(H, "PUT", f"{base}/entries/{eid}/content", {
+                "content": content,
+                "assets": assets,
+                "assetDomain": cfg["report"].get("assetDomain"),
+            })
             ok = _has_content()
     except Exception as e:  # PUT 抛错（524 重试耗尽）；先确认是否其实写进去了
         print(f"  写正文异常：{str(e)[:120]}")
@@ -244,8 +293,8 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     owner_view = "登录后 知识库 → 「" + store_name + "」库 → 本篇（授权路径,正文+截图完整渲染,本人验收用）"
     share_url = None
     try:
-        tok = curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
-                         f"{base}/stores/{rid}/share-links"])["data"]["token"]
+        tok = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
+                         f"{base}/stores/{rid}/share-links"]), "创建分享链接")["token"]
         # 正确路由(实测 2026-05-27)：App.tsx 是 /s/lib/:token，旧 /library/share/ 会落到首页。
         # 带 ?entry={eid}(2026-05-28)：让分享对象一打开就高亮本次归档的新报告，不用在目录里翻找。
         # LibraryShareViewPage 读 useSearchParams('entry')，优先级最高(高于 view.entryId / primaryEntryId / 最新创建)。

@@ -12,7 +12,7 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.4.1";
+    public const string AiDefectResolveVersion = "1.4.2";
     public const string AiDefectResolveReleaseDate = "2026-06-20";
 
     public const string AiDefectResolveSkillMd = """
