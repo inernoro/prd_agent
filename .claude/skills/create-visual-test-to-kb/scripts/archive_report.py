@@ -2,8 +2,9 @@
 """MAP 验收 · 报告归档（项目无关，配置驱动，双模式）。
 
 两种输出模式（由 acceptance.config.json 的 report.mode 决定）：
-  - doc-store：上传截图 → 删图条目(保URL) → 找/建报告库 → 建条目(正文以 # 标题
-    打头,根治目录 `---`) → 写正文 → 出分享短链。需要文档空间 API + AI 密钥。
+  - doc-store：找/建报告库 → 建条目(正文以 # 标题打头,根治目录 `---`)
+    → 一次性提交正文 + assets[]，由知识库后端资产化图片并重写图链 → 出分享短链。
+    需要文档空间 API + AI 密钥。
   - local：把报告写成本地 md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
     适合没有文档空间的仓库。
 
@@ -19,7 +20,7 @@
 依赖 env（仅 doc-store 模式）：见 config.auth.api（默认 AI_ACCESS_KEY + MAP_AI_USER）。
 local 模式不读任何 env、不发任何网络请求。
 """
-import argparse, json, os, subprocess, datetime, re, shutil, time
+import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile
 from pathlib import Path
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
@@ -38,6 +39,20 @@ def curl(args, retries=5):
             if i < retries - 1:
                 time.sleep(3 * (i + 1)); continue
     print("RAW(重试后仍失败):", (last or "")[:200]); raise RuntimeError("curl 返回非 JSON（多为预览环境 524/重启）")
+
+
+def curl_json(headers, method, url, payload, retries=5):
+    """通过临时文件发送 JSON，避免截图 base64 过大触发系统 argv 长度限制。"""
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as f:
+        json.dump(payload, f, ensure_ascii=False)
+        tmp = f.name
+    try:
+        return curl(headers + ["-H", "Content-Type: application/json", "-X", method, "--data-binary", f"@{tmp}", url], retries=retries)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def preview_from_cmd(cmd):
@@ -180,17 +195,28 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
         ), f"{base}/stores"])["data"]["id"]
     print(f"  报告库 id={rid}")
 
-    url_map = {}
+    # 一次性知识库传输协议：
+    # - 正文仍用 {{IMG:name}} 或 {{EVIDENCE}} 表达结构。
+    # - 截图 bytes 随 PUT /content 的 assets[] 一次提交。
+    # - 后端负责上传正式资产、重写 Markdown 图片 URL、写 ParsedPrd 与刷新 document 缓存。
+    # 这样技能不再猜图片域名，也不会留下 data:image 破图或“上传临时图条目再删除”的中间状态。
+    evidence = "\n\n".join(f"**{m['caption']}**\n\n{{{{IMG:{m['name']}}}}}" for m in manifest)
+    assets = []
     for m in manifest:
-        d = curl(H + ["-F", f"file=@{m['path']}", f"{base}/stores/{rid}/upload"])["data"]
-        url_map[m["name"]] = d["fileUrl"]
-        curl(H + ["-X", "DELETE", f"{base}/entries/{d['entry']['id']}"])
-        print(f"  上传+清理 {m['name']} -> {d['fileUrl']}")
+        with open(m["path"], "rb") as f:
+            data = base64.b64encode(f.read()).decode("ascii")
+        assets.append({
+            "name": m["name"],
+            "caption": m["caption"],
+            "mime": "image/png",
+            "base64": data,
+            "fileName": f"{m['name']}.png",
+            "extensionHint": "png",
+        })
+        print(f"  准备一次性图片资产 {m['name']} ({os.path.getsize(m['path'])}B)")
 
-    evidence = "\n\n".join(f"**{m['caption']}**\n\n![{m['caption']}]({url_map[m['name']]})" for m in manifest)
-    img_md = {m["name"]: f"![{m['caption']}]({url_map[m['name']]})" for m in manifest}
     meta = build_meta(report_id, now, imp, a, preview)
-    content = assemble(title, body, evidence, meta, img_md)
+    content = assemble(title, body, evidence, meta)
 
     # metadata：结论可视(前端按 verdict 渲染绿/琥珀/红徽章) + 跨环境同步幂等(reportId 去重)。
     # kind=acceptance-report 让后端模板校验对本次写入"硬卡"(缺项 422 而非软放行)。
@@ -223,11 +249,19 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
             return False
     ok = False
     try:
-        w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
+        w = curl_json(H, "PUT", f"{base}/entries/{eid}/content", {
+            "content": content,
+            "assets": assets,
+            "assetDomain": cfg["report"].get("assetDomain"),
+        })
         print(f"  写正文 success={w.get('success')}")
         ok = _has_content()
         if not ok:  # 返回了但没落库 → 再写一次
-            curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
+            curl_json(H, "PUT", f"{base}/entries/{eid}/content", {
+                "content": content,
+                "assets": assets,
+                "assetDomain": cfg["report"].get("assetDomain"),
+            })
             ok = _has_content()
     except Exception as e:  # PUT 抛错（524 重试耗尽）；先确认是否其实写进去了
         print(f"  写正文异常：{str(e)[:120]}")

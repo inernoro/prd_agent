@@ -242,7 +242,7 @@ Authorization: Bearer {K}
 
 1. 使用 `create-visual-test-to-kb` 跑正式环境验收。目标优先取 `item.acceptance.target`，commit 取 `item.acceptance.commitSha`，预览地址取 `item.acceptance.previewUrl`。
 2. 复制 `.claude/skills/create-visual-test-to-kb/acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本里把 `report.storeName` 改成“缺陷修复验收报告”。
-3. 用验收技能归档报告；如果知识库不存在，归档脚本按 find-or-create 逻辑创建。
+3. 用验收技能归档报告；如果知识库不存在，归档脚本按 find-or-create 逻辑创建。归档必须走知识库传输共享协议：正文和截图 `assets[]` 一次性提交给知识库后端，由知识库决定正式图片域名和缓存刷新。禁止直接写 Mongo、禁止手动上传图片后拼 URL、禁止把 `data:image` 写进报告。
 4. 归档后必须用验收技能的 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
 5. 回写验收报告并通知提交人。验收失败时不要发送“已修复”，要发送“需要继续改进”。
 
