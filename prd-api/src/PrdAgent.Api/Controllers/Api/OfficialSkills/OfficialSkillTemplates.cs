@@ -12,13 +12,13 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.4.4";
+    public const string AiDefectResolveVersion = "1.5.0";
     public const string AiDefectResolveReleaseDate = "2026-06-21";
 
     public const string AiDefectResolveSkillMd = """
 ---
 name: ai-defect-resolve
-description: AI 辅助缺陷修复技能。用于缺陷自动化日常任务：通过 MAP/PrdAgent domain 和长期 AgentApiKey 拉取下一条缺陷，按单个缺陷逐个评论、轻量修复、提交 commit、回写提交信息，并兼容缺陷分享 agentLaunch。
+description: AI 辅助缺陷修复技能。用于缺陷自动化日常任务：通过 MAP/PrdAgent domain 和长期 AgentApiKey 使用缺陷工作流协议领取单个缺陷，完成轻量修复、提交 commit、回写提交信息，并兼容缺陷分享 agentLaunch。
 ---
 
 # AI 辅助缺陷修复
@@ -64,17 +64,16 @@ Content-Type: application/json
 每一轮只处理一个缺陷：
 
 1. `GET {domain}/api/defect-agent/agent/connector` 确认连接器协议和长期授权。响应会返回连接器类型、当前 K 元信息、授权创建建议和自动化端点清单。
-2. `POST {domain}/api/defect-agent/agent/runs` 创建运行记录，保存 `runId`。
-3. `GET {domain}/api/defect-agent/agent/next?runId={runId}` 拉取下一条缺陷。
-4. `POST {domain}/api/defect-agent/agent/defects/{defectId}/comments` 评论修复计划，body 带 `runId`。
-5. 按轻量标准判断能否自动修复；重量级问题调用 `POST /api/defect-agent/agent/runs/{runId}/fail` 写失败原因后停止。
-6. 轻量修复后执行代码校验并提交中文 commit。
-7. `POST {domain}/api/defect-agent/agent/defects/{defectId}/commit-info` 回写 `commitSha`、分支、预览和验收报告地址，body 带 `runId`。
-8. 评论验收方式。
-9. `POST {domain}/api/defect-agent/agent/defects/{defectId}/fix-status` 标记修复，body 带 `runId`。
-10. 再拉下一条，重复以上步骤。
+2. `POST {domain}/api/defect-agent/agent/workflow/start-next` 创建或复用运行记录，并领取下一条缺陷。响应必须包含 `protocol.version == defect-agent-workflow.v1`。
+3. `POST {domain}/api/defect-agent/agent/defects/{defectId}/comments` 评论修复计划，body 带 `runId`。
+4. 按轻量标准判断能否自动修复；重量级问题调用 `POST /api/defect-agent/agent/workflow/block` 写失败原因并默认停止。
+5. 轻量修复后执行代码校验并提交中文 commit。
+6. `POST {domain}/api/defect-agent/agent/workflow/complete` 一次性回写 `commitSha`、分支、预览和验收报告地址，写入 `defect_resolution_traces`，并标记缺陷已修复。
+7. `workflow/complete` 返回下一次 `workflow/start-next` 入参；再拉下一条，重复以上步骤。
 
-`commit-info` 会同时写入缺陷结构化字段和更新中心关联用的 `defect_resolution_traces`。发布中心只读取 commit id 关联结果并展示，不负责人工关联缺陷。
+旧端点 `runs`、`next`、`comments`、`commit-info`、`fix-status` 只用于兼容和排障；日常自动化优先使用 `defect-agent-workflow.v1`。
+
+`workflow/complete` 会同时写入缺陷结构化字段和更新中心关联用的 `defect_resolution_traces`。发布中心只读取 commit id 关联结果并展示，不负责人工关联缺陷。
 
 闭环验收不能只看接口：更新中心的 commit 记录 UI 必须出现可点击的“关联缺陷 N”或“我的缺陷 N”标志。点击后必须能看到缺陷编号、标题、发布状态、验收报告或知识库链接。提交者本人场景必须证明按钮显示“我的缺陷 N”或弹窗内出现“我提交的”。普通 changelog 文案行没有 commit id，不允许按日期批量贴缺陷标志。
 
@@ -101,7 +100,7 @@ Content-Type: application/json
 - 一次只处理一个缺陷，提交并回写 commit 后再继续下一条。
 - 不把密钥写入日志、提交、报告或评论。
 - 评论和修复说明必须包含可验收步骤。
-- 只 commit 不回写 `commit-info` 不算闭环完成。
+- 只 commit 不调用 `workflow/complete` 不算闭环完成；旧 `commit-info` 只用于兼容和排障。
 - 正式发布前只在缺陷内更新进度，不给提交人发“已修复”通知。
 """;
 
