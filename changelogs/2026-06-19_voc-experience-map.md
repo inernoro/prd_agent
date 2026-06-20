@@ -6,3 +6,4 @@
 | docs | doc | 新增 design.team-activity-voc 设计文档(VOC 设计思想/数据流/波次规划)，同步 index.yml 与 guide.list |
 | polish | prd-admin | 热力图入场动画重做为两遍「写字→点睛」：块随扫描笔尖经过(按x位置)依次写出全部→写完后痛点才点睛(扩散环ping+脉冲描边+辉光)；扫描笔与块写出严格同步且一次画完即隐(不空转)，绑定真实数据刷新重放 |
 | feat | prd-admin | 热力图换时间窗时块「生长」morph：几何尺寸/位置 CSS 过渡平滑补间(谁访问多谁长大可见)；入场写字+点睛用 isEntrance 闸门仅首屏放一次，之后只 morph 不重演 |
+| fix | prd-admin | 修复热力图左上角文字糊块：CSS x/y 几何属性对 <text> 无效导致所有标签掉回原点(0,0)堆叠，文字位置改回属性(rect 尺寸仍走 style 过渡做生长) |

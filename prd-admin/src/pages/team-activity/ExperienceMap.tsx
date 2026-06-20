@@ -23,7 +23,6 @@ const SLOW = '#fbbf24';
 const SWEEP_MS = 1300;
 // 换时间窗时块「生长」补间：几何尺寸/位置平滑过渡到新值，让用户看见谁在长大/缩小
 const MORPH = 'x .8s cubic-bezier(.45,0,.2,1), y .8s cubic-bezier(.45,0,.2,1), width .8s cubic-bezier(.45,0,.2,1), height .8s cubic-bezier(.45,0,.2,1)';
-const MORPH_XY = 'x .8s cubic-bezier(.45,0,.2,1), y .8s cubic-bezier(.45,0,.2,1)';
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Placed<T> = T & { rect: Rect };
@@ -194,10 +193,9 @@ export function ExperienceMap({
                 />
                 {g.rect.w > 70 && g.rect.h > 30 ? (
                   <text
+                    x={g.rect.x + 5}
+                    y={g.rect.y + 11}
                     style={{
-                      x: `${g.rect.x + 5}px`,
-                      y: `${g.rect.y + 11}px`,
-                      transition: MORPH_XY,
                       fill: 'rgba(236,236,239,0.82)',
                       fontSize: 10.5,
                       fontWeight: 700,
@@ -280,14 +278,18 @@ export function ExperienceMap({
                   ) : null}
                   {showLabel ? (
                     <text
-                      style={{ x: `${r.x + 5}px`, y: `${r.y + 14}px`, transition: MORPH_XY, fill: '#fff', fontSize: 10, fontWeight: 600, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2.5 }}
+                      x={r.x + 5}
+                      y={r.y + 14}
+                      style={{ fill: '#fff', fontSize: 10, fontWeight: 600, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2.5 }}
                     >
                       {c.leaf.label}
                     </text>
                   ) : null}
                   {isPain && showLabel && r.h > 32 ? (
                     <text
-                      style={{ x: `${r.x + 5}px`, y: `${r.y + 26}px`, transition: MORPH_XY, fill: 'rgba(255,255,255,0.9)', fontSize: 9, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2 }}
+                      x={r.x + 5}
+                      y={r.y + 26}
+                      style={{ fill: 'rgba(255,255,255,0.9)', fontSize: 9, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2 }}
                     >
                       {c.leaf.status === 'error' ? '报错' : '慢'}
                     </text>
