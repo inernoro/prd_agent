@@ -253,3 +253,32 @@ export type GetTeamActivityEndpointDetailParams = {
 export type GetTeamActivityEndpointDetailContract = (
   params: GetTeamActivityEndpointDetailParams
 ) => Promise<ApiResponse<TeamActivityEndpointDetailData>>;
+
+/** 趋势爆点：单个时间桶（报错/慢请求随时间的波动） */
+export type ExperienceTrendBucket = {
+  /** 桶起点（ISO，UTC） */
+  bucketStart: string;
+  /** 桶内总请求数 */
+  total: number;
+  /** 桶内报错数（status>=400 且 !=401） */
+  errors: number;
+  /** 桶内慢请求数（非流式且 >=3s） */
+  slow: number;
+};
+
+export type TeamActivityExperienceTrendData = {
+  buckets: ExperienceTrendBucket[];
+  windowFrom: string;
+  windowTo: string;
+  /** 桶粒度：hour=按小时桶（短窗），day=按天桶（长窗/全部） */
+  bucketUnit: 'hour' | 'day';
+};
+
+export type GetTeamActivityExperienceTrendParams = {
+  from?: string;
+  to?: string;
+};
+
+export type GetTeamActivityExperienceTrendContract = (
+  params?: GetTeamActivityExperienceTrendParams
+) => Promise<ApiResponse<TeamActivityExperienceTrendData>>;

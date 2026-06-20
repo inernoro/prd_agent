@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BarChart3, BookOpen, Bug, Check, CheckCircle2, ClipboardList, EyeOff as IgnoreIcon, Microscope, Radar, RotateCcw, ScrollText, Users, X } from 'lucide-react';
+import { BarChart3, BookOpen, Bug, Check, CheckCircle2, ClipboardList, EyeOff as IgnoreIcon, LayoutGrid, Megaphone, Microscope, Network, Radar, RotateCcw, ScrollText, TrendingUp, Users, X, type LucideIcon } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
@@ -31,6 +31,10 @@ import { ExperienceMap } from './ExperienceMap';
 import { ExperienceRibbon } from './ExperienceRibbon';
 import { ExperienceStats } from './ExperienceStats';
 import { ExperienceDrill } from './ExperienceDrill';
+import { ExperienceTrend } from './ExperienceTrend';
+import { ExperienceRadar } from './ExperienceRadar';
+import { ExperienceSiteMap } from './ExperienceSiteMap';
+import { ExperienceBoard } from './ExperienceBoard';
 
 function fmtDate(iso?: string | null): string {
   if (!iso) return '';
@@ -44,6 +48,16 @@ const STATUS_LABEL: Record<string, string> = {
   resolved: '已修复',
   ignored: '已忽略',
 };
+
+// Hero 多视角：同一份体验信号的不同可视化模式（不是页头的 动态流/行为洞察 tab）
+type HeroView = 'heatmap' | 'trend' | 'radar' | 'sitemap' | 'board';
+const HERO_VIEWS: { key: HeroView; label: string; icon: LucideIcon }[] = [
+  { key: 'heatmap', label: '热力图', icon: LayoutGrid },
+  { key: 'trend', label: '趋势爆点', icon: TrendingUp },
+  { key: 'radar', label: '痛点雷达', icon: Radar },
+  { key: 'sitemap', label: '站点地图', icon: Network },
+  { key: 'board', label: '声道看板', icon: Megaphone },
+];
 
 function buildDefectContent(item: BehaviorInsight, window: string): string {
   return [
@@ -72,6 +86,8 @@ export function InsightsPanel({ from }: { from?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [includeIgnored, setIncludeIgnored] = useState(false);
   const [statsOpen, setStatsOpen] = useState(true);
+  // Hero 可视化模式：默认体验全景热力图，可切到趋势/雷达/站点地图/看板
+  const [heroView, setHeroView] = useState<HeroView>('heatmap');
   // 全屏热力图浮层开关（createPortal 到 body）
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   // 下钻抽屉：从右侧滑入的浮层 drawer（createPortal 到 body），target 非空即展开
@@ -202,6 +218,9 @@ export function InsightsPanel({ from }: { from?: string }) {
     setDrillConverting(false);
     setDrillConvertingReq(false);
   }, []);
+
+  // 各 Hero 视图空数据引导的统一出口：一键切回体验全景热力图
+  const switchToHeatmap = useCallback(() => setHeroView('heatmap'), []);
 
   useEffect(() => {
     reload();
@@ -379,23 +398,67 @@ export function InsightsPanel({ from }: { from?: string }) {
     );
   }
 
-  // Hero 视图渲染槽：当前只渲染体验全景热力图一个视图。
-  // TODO Wave B: 多视角切换器挂这里 —— 在 renderHeroView 顶部加视图切换器（趋势曲线/痛点雷达/站点地图/声道看板），
-  // 按选中的视图条件渲染不同组件（ExperienceMap 只是其中一个视图，不要把它和 ribbon/榜单耦合死）。
+  // Hero 视图渲染槽：多视角可切换（Wave B）。顶部 segmented 切换器 + 按选中视图条件渲染。
+  // 热力图保留原样接线（下钻 + 全屏）；趋势图自取数据；雷达/站点地图/看板复用 mapData/insights 现算。
+  // 切视图时给一层轻过渡（淡入 + 微上移），符合「变化可感知」；切回热力图作为各视图空数据引导出口。
+  const renderHeroBody = () => {
+    switch (heroView) {
+      case 'trend':
+        return <ExperienceTrend from={from} onSwitchHeatmap={switchToHeatmap} />;
+      case 'radar':
+        return <ExperienceRadar items={data?.items ?? []} mapData={mapData} onSwitchHeatmap={switchToHeatmap} />;
+      case 'sitemap':
+        return <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} />;
+      case 'board':
+        return <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} />;
+      case 'heatmap':
+      default:
+        return (
+          <ExperienceMap
+            data={mapData}
+            loading={loading}
+            onSelectTarget={handleSelectTarget}
+            onRequestFullscreen={() => setFullscreenOpen(true)}
+          />
+        );
+    }
+  };
+
   const renderHeroView = () => (
-    <ExperienceMap
-      data={mapData}
-      loading={loading}
-      onSelectTarget={handleSelectTarget}
-      onRequestFullscreen={() => setFullscreenOpen(true)}
-    />
+    <div className="flex flex-col gap-2">
+      {/* 视图切换器（segmented）：体验信号的多种可视化模式，冷色海主题，与热力图内 全域/痛点 同款 */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+          {HERO_VIEWS.map((v) => {
+            const VIcon = v.icon;
+            const active = heroView === v.key;
+            return (
+              <button
+                key={v.key}
+                type="button"
+                onClick={() => setHeroView(v.key)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] transition-colors cursor-pointer ${active ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
+              >
+                <VIcon size={12} />
+                {v.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {/* key=heroView 触发重挂载 → 走入场过渡（淡入 + 微上移） */}
+      <div key={heroView} style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
+        {renderHeroBody()}
+      </div>
+    </div>
   );
 
   return (
     <GlassCard className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
       <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }
-          @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }`}</style>
+          @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+          @keyframes voc-hero-swap { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }`}</style>
         {/* 闭环 ribbon：监测 → 预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落，从热力图/洞察现算 */}
         <div className="px-5 pt-4">
           <ExperienceRibbon mapData={mapData} insights={data} />
@@ -403,7 +466,7 @@ export function InsightsPanel({ from }: { from?: string }) {
               旧内容保持可见，数据到达后 ExperienceMap 走 morph 几何补间平滑过渡。 */}
           <div className="relative">
             {renderHeroView()}
-            {loading && data ? (
+            {loading && data && heroView === 'heatmap' ? (
               <div
                 className="absolute inset-0 rounded-2xl overflow-hidden flex items-center justify-center"
                 style={{ background: 'rgba(16,17,19,0.35)', backdropFilter: 'blur(0.5px)' }}

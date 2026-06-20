@@ -1433,6 +1433,123 @@ public class TeamActivityController : ControllerBase
         }));
     }
 
+    // ────────────────────────── 趋势爆点曲线 ──────────────────────────
+
+    // 趋势曲线短 TTL 缓存：与体验全景热力图同源、同档反复切换不重复聚合（key 取整到分钟 + 桶粒度）
+    private static readonly ConcurrentDictionary<string, (DateTime At, object Payload)> _trendCache = new();
+    private const int TrendCacheSeconds = 30;
+
+    /// <summary>
+    /// 趋势爆点曲线：按时间桶聚合 apirequestlogs 的总量/报错/慢请求，回答「什么时候开始变差」。
+    /// 桶粒度自适应：窗口 ≤ 约 2 天 → 按小时桶；更长 / 全部 → 按天桶（「全部」与 insights 同口径取近 30 天）。
+    /// 走 MongoDB 聚合下推（$dateTrunc 按桶分组），口径与 ExperienceMapAggregateAsync 一致：
+    /// Direction != outbound + Path ^/api，排除 /api/behavior 与 /api/team-activity；
+    /// err=StatusCode>=400 且 !=401，slow=非流式且 DurationMs>=3000。失败兜底返回空桶数组（不致命）。
+    /// </summary>
+    [HttpGet("experience-trend")]
+    public async Task<IActionResult> ExperienceTrend([FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+    {
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+        // 窗口 ≤ 约 2 天用小时桶（看清一天内的波动），更长用天桶（避免桶过多）
+        var unit = (endUtc - fromUtc) <= TimeSpan.FromHours(50) ? "hour" : "day";
+
+        var cacheKey = $"{fromUtc:yyyyMMddHHmm}|{endUtc:yyyyMMddHHmm}|{unit}";
+        if (_trendCache.TryGetValue(cacheKey, out var hit) && (DateTime.UtcNow - hit.At).TotalSeconds < TrendCacheSeconds)
+        {
+            return Ok(ApiResponse<object>.Ok(hit.Payload));
+        }
+
+        object payload;
+        try
+        {
+            payload = await ExperienceTrendAggregateAsync(fromUtc, endUtc, unit);
+        }
+        catch
+        {
+            // 趋势是增强视图，聚合失败时返回空桶（前端走空数据引导态），不影响其他视图
+            payload = new { buckets = Array.Empty<object>(), windowFrom = fromUtc, windowTo = endUtc, bucketUnit = unit };
+        }
+
+        _trendCache[cacheKey] = (DateTime.UtcNow, payload);
+        if (_trendCache.Count > 64)
+        {
+            foreach (var k in _trendCache
+                         .Where(e => (DateTime.UtcNow - e.Value.At).TotalSeconds > TrendCacheSeconds)
+                         .Select(e => e.Key).ToList())
+            {
+                _trendCache.TryRemove(k, out _);
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    /// <summary>按时间桶下推聚合（$dateTrunc 按 hour/day 分组），回传按桶起点升序的 total/errors/slow。</summary>
+    private async Task<object> ExperienceTrendAggregateAsync(DateTime fromUtc, DateTime endUtc, string unit)
+    {
+        var slowCond = new BsonDocument("$and", new BsonArray
+        {
+            new BsonDocument("$eq", new BsonArray { "$IsEventStream", false }),
+            new BsonDocument("$gte", new BsonArray { "$DurationMs", 3000 }),
+        });
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(fromUtc) }, { "$lte", new BsonDateTime(endUtc) } } },
+                { "Direction", new BsonDocument("$ne", "outbound") },
+                { "Path", new BsonDocument("$regex", "^/api") },
+                // 排除行为采集与团队动态自身端点（与热力图同口径，避免自我观测污染趋势）
+                { "$nor", new BsonArray
+                    {
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/behavior")),
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/team-activity")),
+                    } },
+            }),
+            new BsonDocument("$set", new BsonDocument("_bucket", new BsonDocument("$dateTrunc", new BsonDocument
+            {
+                { "date", "$StartedAt" },
+                { "unit", unit },
+            }))),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", "$_bucket" },
+                { "total", new BsonDocument("$sum", 1) },
+                { "errors", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$and", new BsonArray
+                        {
+                            new BsonDocument("$gte", new BsonArray { "$StatusCode", 400 }),
+                            new BsonDocument("$ne", new BsonArray { "$StatusCode", 401 }),
+                        }),
+                        1, 0,
+                    })) },
+                { "slow", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { slowCond, 1, 0 })) },
+            }),
+            new BsonDocument("$sort", new BsonDocument("_id", 1)),
+            new BsonDocument("$limit", 1000),
+        };
+
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true });
+        var docs = await cursor.ToListAsync();
+        var buckets = new List<object>();
+        foreach (var d in docs)
+        {
+            var idVal = d.GetValue("_id", BsonNull.Value);
+            if (idVal.IsBsonNull) continue;
+            var bucketStart = idVal.ToUniversalTime();
+            buckets.Add(new
+            {
+                bucketStart,
+                total = d.GetValue("total", 0).ToInt32(),
+                errors = d.GetValue("errors", 0).ToInt32(),
+                slow = d.GetValue("slow", 0).ToInt32(),
+            });
+        }
+
+        return new { buckets, windowFrom = fromUtc, windowTo = endUtc, bucketUnit = unit };
+    }
+
     /// <summary>
     /// 端点 AI 根因诊断（SSE 流式）：聚合该端点的报错码分布 / 耗时 / 样本 / 按天计数，
     /// 交给 LLM 给出现象判断、聚集线索、疑似根因、建议动作。事件：phase / model / delta / done / error。

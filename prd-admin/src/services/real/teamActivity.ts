@@ -6,6 +6,8 @@ import type {
   GetTeamActivityEndpointDetailParams,
   GetTeamActivityExperienceMapContract,
   GetTeamActivityExperienceMapParams,
+  GetTeamActivityExperienceTrendContract,
+  GetTeamActivityExperienceTrendParams,
   GetTeamActivityInsightsContract,
   GetTeamActivityInsightsParams,
   GetTeamActivityLogsContract,
@@ -20,6 +22,7 @@ import type {
   SetTeamActivityInsightStateContract,
   TeamActivityEndpointDetailData,
   TeamActivityExperienceMapData,
+  TeamActivityExperienceTrendData,
   TeamActivityInsightsData,
   TeamActivityListData,
   TeamActivityModulesData,
@@ -32,6 +35,7 @@ function toQuery(
     | GetTeamActivityStatsParams
     | GetTeamActivityInsightsParams
     | GetTeamActivityExperienceMapParams
+    | GetTeamActivityExperienceTrendParams
     | GetTeamActivityEndpointDetailParams
 ) {
   const sp = new URLSearchParams();
@@ -95,6 +99,15 @@ export const getTeamActivityExperienceMapReal: GetTeamActivityExperienceMapContr
 ): Promise<ApiResponse<TeamActivityExperienceMapData>> => {
   return await apiRequest<TeamActivityExperienceMapData>(
     `${api.teamActivity.experienceMap()}${toQuery(params)}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamActivityExperienceTrendReal: GetTeamActivityExperienceTrendContract = async (
+  params?: GetTeamActivityExperienceTrendParams
+): Promise<ApiResponse<TeamActivityExperienceTrendData>> => {
+  return await apiRequest<TeamActivityExperienceTrendData>(
+    `${api.teamActivity.experienceTrend()}${toQuery(params)}`,
     { method: 'GET' }
   );
 };
