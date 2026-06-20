@@ -338,6 +338,15 @@ export const api = {
 
   // ============ Visual Agent 视觉创作 ============
   visualAgent: {
+    // 视觉创作自有的图生视频端点（appKey=visual-agent，与 video-agent 隔离，遵循 app-identity 规则）
+    videoGen: {
+      runs: {
+        create: () => '/api/visual-agent/video-gen/runs',
+        byId: (runId: string) => `/api/visual-agent/video-gen/runs/${runId}`,
+        cancel: (runId: string) => `/api/visual-agent/video-gen/runs/${runId}/cancel`,
+        stream: (runId: string) => `/api/visual-agent/video-gen/runs/${runId}/stream`,
+      },
+    },
     imageMaster: {
       sessions: {
         list: () => '/api/visual-agent/image-master/sessions',
@@ -381,6 +390,10 @@ export const api = {
       sizeCaps: () => '/api/visual-agent/image-gen/size-caps',
       /** 获取所有生图场景的模型池（合并去重） */
       models: () => '/api/visual-agent/image-gen/models',
+      /** 仅文生图(text2img)可用的模型池——分镜台关键帧等纯文生图场景用，避免选到 img2img/vision-only 池 */
+      modelsText2Img: () => '/api/visual-agent/image-gen/models/text2img',
+      /** 视觉分镜台：把想法/文章拆成镜头（含每镜关键帧图 prompt + 运动 prompt） */
+      storyboardScript: () => '/api/visual-agent/image-gen/storyboard-script',
       /** 根据平台侧模型ID获取适配信息（尺寸选项等） */
       adapterInfo: (modelId: string) => `/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       /** Visual Agent 域内日志查询（避免跨权限调用 /api/logs/llm） */
