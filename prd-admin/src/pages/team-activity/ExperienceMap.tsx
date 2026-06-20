@@ -257,7 +257,9 @@ export function ExperienceMap({
                 ) : null}
               </g>
             ))}
-            {/* 叶子 —— 第一遍：随扫描线经过(按 x 位置)依次写出全部 */}
+            {/* 叶子块体 —— 第一遍：随扫描线经过(按 x 位置)依次写出全部实心块与文字。
+                注意：痛点辉光/点睛/彗星不放这里——块体按文档序绘制会互相覆盖，辉光会被相邻块裁掉，
+                故所有「会溢出块边界」的光效统一移到下方顶层装饰层，保证永不被遮挡。 */}
             {layout.cells.map((c) => {
               const r = c.rect;
               if (r.w < 1 || r.h < 1) return null;
@@ -268,13 +270,10 @@ export function ExperienceMap({
               const clickable = isPain && !!onSelectTarget;
               const cellCx = r.x + r.w / 2;
               const revealDelay = Math.round((cellCx / VW) * SWEEP_MS); // 按 x → 跟随扫描线
-              const igniteDelay = SWEEP_MS + 140; // 第二遍：写完后再点睛
               const gStyle: CSSProperties = {
                 cursor: clickable ? 'pointer' : 'default',
                 transformBox: 'fill-box',
                 transformOrigin: 'center',
-                // 痛点辉光常驻（换时间窗 morph 时不丢）；入场写字仅首屏放一次
-                filter: isPain ? `drop-shadow(0 0 6px ${fill})` : undefined,
               };
               if (isEntrance) {
                 gStyle.animation = 'voc-cell-in 0.4s cubic-bezier(.34,1.56,.64,1) both';
@@ -296,28 +295,6 @@ export function ExperienceMap({
                       transition: `${MORPH}, fill .5s ease`,
                     }}
                   />
-                  {isPain ? (
-                    <>
-                      {/* 点睛①：一次性扩散环(写完后 ping 一下) */}
-                      <rect
-                        rx={2}
-                        fill="none"
-                        stroke={fill}
-                        strokeWidth={1.6}
-                        strokeOpacity={0}
-                        style={{ x: `${r.x + 1}px`, y: `${r.y + 1}px`, width: `${Math.max(0, r.w - 2)}px`, height: `${Math.max(0, r.h - 2)}px`, transformBox: 'fill-box', transformOrigin: 'center', transition: MORPH, ...(isEntrance ? { animation: 'voc-ignite 0.7s ease-out', animationDelay: `${igniteDelay}ms` } : {}) }}
-                      />
-                      {/* 点睛②：持续脉冲描边(写完后才开始亮) */}
-                      <rect
-                        rx={2}
-                        fill="none"
-                        stroke="#fff"
-                        strokeWidth={1.4}
-                        strokeOpacity={0}
-                        style={{ x: `${r.x + 1}px`, y: `${r.y + 1}px`, width: `${Math.max(0, r.w - 2)}px`, height: `${Math.max(0, r.h - 2)}px`, animation: `voc-cell-glow ${2 + (c.idxInGroup % 5) * 0.2}s ease-in-out infinite`, animationDelay: isEntrance ? `${igniteDelay}ms` : '0ms', transition: MORPH }}
-                      />
-                    </>
-                  ) : null}
                   {showLabel ? (
                     <text
                       x={r.x + 5}
@@ -340,25 +317,79 @@ export function ExperienceMap({
                           : '慢'}
                     </text>
                   ) : null}
-                  {/* 突增彗星：环比突增 >=50% 的痛点块，右下角一道斜飞的彗星（尾巴 + 白点头），常驻循环 */}
-                  {hasBurst && r.w > 48 && r.h > 30 ? (
-                    <g
-                      style={{
-                        transformBox: 'fill-box',
-                        transformOrigin: 'center',
-                        animation: `voc-comet ${2.2 + (c.idxInGroup % 4) * 0.25}s ease-out infinite`,
-                      }}
-                    >
+                </g>
+              );
+            })}
+            {/* 顶层痛点装饰层 —— 在所有块体之上绘制辉光描边/点睛/突增流星，pointer-events:none 让点击穿透到下方块体。
+                这样辉光溢出块边界的部分不会被相邻块覆盖（修复「边框光效被遮挡」）。 */}
+            <defs>
+              {/* 流星尾：尾端透明 → 头端高亮（objectBoundingBox，按每条线自身斜向 bbox 取向，无需逐块算坐标） */}
+              <linearGradient id="voc-comet-grad" gradientUnits="objectBoundingBox" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0" stopColor={SLOW} stopOpacity="0" />
+                <stop offset="0.7" stopColor={SLOW} stopOpacity="0.55" />
+                <stop offset="1" stopColor="#fff" stopOpacity="0.95" />
+              </linearGradient>
+            </defs>
+            {layout.cells.map((c) => {
+              const r = c.rect;
+              const isPain = c.leaf.status === 'error' || c.leaf.status === 'slow';
+              if (!isPain || r.w < 1 || r.h < 1) return null;
+              const fill = c.leaf.status === 'error' ? ERR : SLOW;
+              const hasBurst = c.leaf.burstPct != null && c.leaf.burstPct >= 50;
+              const igniteDelay = SWEEP_MS + 140; // 写完后再点睛
+              return (
+                <g key={`deco-${c.leaf.target}`} style={{ pointerEvents: 'none', transformBox: 'fill-box', transformOrigin: 'center' }}>
+                  {/* 辉光描边：顶层薄描边 + drop-shadow 外晕，永不被相邻块覆盖 */}
+                  <rect
+                    rx={2}
+                    fill="none"
+                    stroke={fill}
+                    strokeWidth={1.4}
+                    strokeOpacity={isEntrance ? undefined : 0.85}
+                    style={{
+                      x: `${r.x + 0.7}px`,
+                      y: `${r.y + 0.7}px`,
+                      width: `${Math.max(0, r.w - 1.4)}px`,
+                      height: `${Math.max(0, r.h - 1.4)}px`,
+                      filter: `drop-shadow(0 0 6px ${fill})`,
+                      transition: MORPH,
+                      ...(isEntrance ? { animation: 'voc-halo-in .5s ease both', animationDelay: `${igniteDelay}ms` } : {}),
+                    }}
+                  />
+                  {/* 点睛①：一次性扩散环(写完后 ping 一下) */}
+                  {isEntrance ? (
+                    <rect
+                      rx={2}
+                      fill="none"
+                      stroke={fill}
+                      strokeWidth={1.6}
+                      strokeOpacity={0}
+                      style={{ x: `${r.x + 1}px`, y: `${r.y + 1}px`, width: `${Math.max(0, r.w - 2)}px`, height: `${Math.max(0, r.h - 2)}px`, transformBox: 'fill-box', transformOrigin: 'center', transition: MORPH, animation: 'voc-ignite 0.7s ease-out', animationDelay: `${igniteDelay}ms` }}
+                    />
+                  ) : null}
+                  {/* 点睛②：持续脉冲白描边(写完后才开始亮) */}
+                  <rect
+                    rx={2}
+                    fill="none"
+                    stroke="#fff"
+                    strokeWidth={1.4}
+                    strokeOpacity={0}
+                    style={{ x: `${r.x + 1}px`, y: `${r.y + 1}px`, width: `${Math.max(0, r.w - 2)}px`, height: `${Math.max(0, r.h - 2)}px`, animation: `voc-cell-glow ${2 + (c.idxInGroup % 5) * 0.2}s ease-in-out infinite`, animationDelay: isEntrance ? `${igniteDelay}ms` : '0ms', transition: MORPH }}
+                  />
+                  {/* 突增流星：环比突增 >=50% 的痛点块，块内右上角一道斜向上飞的流星（尾→头渐隐），
+                      仅在飞行途中可见(静止帧透明)，永远落在块内——不再是停在角落的「棒棒糖」。 */}
+                  {hasBurst && r.w > 52 && r.h > 34 ? (
+                    <g style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: `voc-comet ${2.4 + (c.idxInGroup % 4) * 0.25}s ease-out infinite` }}>
                       <line
-                        x1={r.x + r.w - 12}
-                        y1={r.y + r.h - 12}
-                        x2={r.x + r.w - 27}
-                        y2={r.y + r.h + 3}
-                        stroke={SLOW}
-                        strokeWidth={2}
+                        x1={r.x + r.w - 25}
+                        y1={r.y + 23}
+                        x2={r.x + r.w - 10}
+                        y2={r.y + 9}
+                        stroke="url(#voc-comet-grad)"
+                        strokeWidth={1.6}
                         strokeLinecap="round"
                       />
-                      <circle cx={r.x + r.w - 12} cy={r.y + r.h - 12} r={3.5} fill="#fff" />
+                      <circle cx={r.x + r.w - 10} cy={r.y + 9} r={1.6} fill="#fff" />
                     </g>
                   ) : null}
                 </g>
@@ -393,7 +424,8 @@ export function ExperienceMap({
         @keyframes voc-grp-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes voc-ping { 75%,100% { transform: scale(2.2); opacity: 0; } }
         @keyframes voc-ignite { 0% { stroke-opacity: .9; transform: scale(1); } 100% { stroke-opacity: 0; transform: scale(1.18); } }
-        @keyframes voc-comet { 0% { transform: translate(0,0); opacity: 0; } 15% { opacity: 1; } 100% { transform: translate(42px,-42px); opacity: 0; } }
+        @keyframes voc-halo-in { from { stroke-opacity: 0; } to { stroke-opacity: .85; } }
+        @keyframes voc-comet { 0% { transform: translate(-7px,7px); opacity: 0; } 20% { opacity: 1; } 80% { opacity: .9; } 100% { transform: translate(6px,-6px); opacity: 0; } }
       `}</style>
     </>
   );
