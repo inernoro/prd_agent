@@ -519,8 +519,8 @@ public class TeamActivityController : ControllerBase
             totalRequests += count;
             var errRate = count > 0 ? (double)err / count : 0;
             var slowRate = count > 0 ? (double)slow / count : 0;
-            var status = count >= 10 && errRate >= 0.05 ? "error"
-                : count >= 10 && slowRate >= 0.10 ? "slow"
+            var status = count >= 10 && errRate >= 0.05 && err >= 5 ? "error"
+                : count >= 10 && slowRate >= 0.10 && slow >= 5 ? "slow"
                 : "ok";
             var avgSlowSec = slow > 0 ? slowMs / slow / 1000.0 : 0;
             var metric = status == "error"
@@ -586,8 +586,8 @@ public class TeamActivityController : ControllerBase
             if (a.Count < 2) continue;
             var errRate = a.Count > 0 ? (double)a.ErrorCount / a.Count : 0;
             var slowRate = a.Count > 0 ? (double)a.SlowCount / a.Count : 0;
-            var status = a.Count >= 10 && errRate >= 0.05 ? "error"
-                : a.Count >= 10 && slowRate >= 0.10 ? "slow"
+            var status = a.Count >= 10 && errRate >= 0.05 && a.ErrorCount >= 5 ? "error"
+                : a.Count >= 10 && slowRate >= 0.10 && a.SlowCount >= 5 ? "slow"
                 : "ok";
             var avgSlowSec = a.SlowCount > 0 ? a.SlowMsSum / (double)a.SlowCount / 1000.0 : 0;
             var metric = status == "error"

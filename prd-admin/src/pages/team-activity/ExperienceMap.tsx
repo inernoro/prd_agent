@@ -112,7 +112,7 @@ export function ExperienceMap({
 }: {
   data: TeamActivityExperienceMapData | null;
   loading: boolean;
-  onSelectTarget?: (target: string) => void;
+  onSelectTarget?: (target: string, fallback: { label: string; metric: string }) => void;
 }) {
   const layout = useMemo(() => {
     if (!data || data.groups.length === 0) return { cells: [] as LeafCell[], groupRects: [] as Placed<ExperienceMapGroup>[] };
@@ -239,7 +239,7 @@ export function ExperienceMap({
                 gStyle.animationDelay = `${revealDelay}ms`;
               }
               return (
-                <g key={c.leaf.target} style={gStyle} onClick={clickable ? () => onSelectTarget!(c.leaf.target) : undefined}>
+                <g key={c.leaf.target} style={gStyle} onClick={clickable ? () => onSelectTarget!(c.leaf.target, { label: `${c.group.label} · ${c.leaf.label}`, metric: c.leaf.metric }) : undefined}>
                   <title>{`${c.group.label} · ${c.leaf.label}\n${c.leaf.target}\n${c.leaf.metric}`}</title>
                   <rect
                     rx={2}

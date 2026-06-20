@@ -175,11 +175,12 @@ export function InsightsPanel({ from }: { from?: string }) {
     });
   }, [from, includeIgnored]);
 
-  // 点击热力图痛点块 → 滚动并高亮下方痛点榜对应行
-  const handleSelectTarget = useCallback((target: string) => {
+  // 点击热力图痛点块 → 滚动并高亮下方痛点榜对应行；未上榜则解释原因
+  const handleSelectTarget = useCallback((target: string, fallback?: { label: string; metric: string }) => {
     const el = document.querySelector(`[data-insight-target="${CSS.escape(target)}"]`) as HTMLElement | null;
     if (!el) {
-      toast.info('该端点暂未进入痛点榜（信号未达阈值）');
+      const head = fallback ? `${fallback.label}（${fallback.metric}）：` : '';
+      toast.info(`${head}信号偏弱，尚未进入痛点榜——同类报错/慢请求累计 ≥5 次才会上榜，可在更长时间范围查看`);
       return;
     }
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
