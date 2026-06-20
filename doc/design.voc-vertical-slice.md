@@ -94,7 +94,7 @@ POST /api/emergence/nodes/{id}/adopt  { productId }
 | 实体 | 新增字段 | 类型 | 说明 |
 |------|---------|------|------|
 | `Requirement` | `SourceEmergenceNodeId` | `string?` | 对照已有 `SourceDefectId`，记录来源涌现节点。**幂等键 + partial unique index 承重件**（见 7 节） |
-| `EmergenceNode` | `AdoptedRequirementId` | `string?` | 反范化便利指针（给 UI 显示"已流转" chip 用），可由 `Requirement.SourceEmergenceNodeId` 反查重建；**非权威**，不作幂等判定 |
+| `EmergenceNode` | `AdoptedRequirementId` | `string?` | 服务端内部缓存指针，可由 `Requirement.SourceEmergenceNodeId` 反查重建；**非权威**，不作幂等判定；**永不序列化给客户端**（节点响应走 DTO 投影掉它，否则公开树会泄漏私有需求 id，见 7 节前端段） |
 
 `Requirement.SourceSystem` 复用既有字段，emergence 流转时填 `"emergence"`。注意它当前并非跨流统一枚举（缺陷转需求未填，见 5.1）；若要作为统一来源依据，需按 5.1 的三步补丁 + 回填（已记 `debt.voc`）。
 
@@ -134,6 +134,7 @@ Body: { productId: string }
 
 **但这些派生字段必须按权限过滤，不能裸塞进节点响应（否则泄漏私有需求标识）**：`EmergenceController.GetTree`（`EmergenceController.cs:118`）允许 `t.OwnerId == userId || t.IsPublic` 公开读——任何人都能看公开涌现树的节点。若把 `requirementId/requirementNo` 无差别塞进节点 DTO，浏览公开树、但无 `ProductAgentUse` / 无该产品访问权的人就能看到私有产品的需求编号。规则：
 - `requirementId` / `requirementNo`（产品派生标识）**只对"能访问该需求所在产品"的调用方返回**（`ProductAgentUse` 权限闸 + `FindAccessibleProductAsync(requirement.ProductId, userId)` 都过），其余调用方 DTO 里**省略**这两个字段。
+- `AdoptedRequirementId`（节点上的缓存指针，本身就是一个需求 id）**绝不进任何节点响应**：它是服务端内部缓存、非权威、前端不用它判定（前端只用 `hasActiveRequirement` + 受控的 `requirementNo`）。`GetTree` 当前对公开树返回**裸 `nodes`（完整 EmergenceNode 模型）**，新增该字段后若不投影掉，等于把私有需求 id 直接发给公开树浏览者。硬要求：节点响应必须走**显式 DTO 投影**，`AdoptedRequirementId` 永不序列化给客户端（无论公开/私有读都不发）。
 - `hasActiveRequirement`（裸布尔，不含任何产品标识）可对所有可读该树的人返回——它只表达"这个节点已被流转过"，不泄漏产品/需求身份。
 - 前端：有权 → `hasActiveRequirement && requirementNo` 显示可点 chip 跳 product-agent；无权但 `hasActiveRequirement` → 显示不可点的"已流转"灰标（无链接、无编号）；`false` → 显示可点"流转需求池"按钮。
 
