@@ -26,6 +26,7 @@ import {
 import type { BehaviorInsight, TeamActivityExperienceMapData, TeamActivityInsightsData } from '@/services/contracts/teamActivity';
 import { getInsightKindMeta } from './insightKinds';
 import { ExperienceMap } from './ExperienceMap';
+import { ExperienceRibbon } from './ExperienceRibbon';
 import { ExperienceStats } from './ExperienceStats';
 import { ExperienceDrill } from './ExperienceDrill';
 
@@ -309,6 +310,8 @@ export function InsightsPanel({ from }: { from?: string }) {
         <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }`}</style>
         {/* 体验全景热力图（主视觉）+ 体验痛点指数（右侧可折叠）：点痛点块下钻到下方痛点榜 */}
         <div className="px-5 pt-4">
+          {/* 闭环 ribbon：监测 → 预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落，从热力图/洞察现算 */}
+          <ExperienceRibbon mapData={mapData} insights={data} />
           <div className="flex gap-3 items-start">
             <div className="flex-1 min-w-0">
               <ExperienceMap data={mapData} loading={loading} onSelectTarget={handleSelectTarget} />

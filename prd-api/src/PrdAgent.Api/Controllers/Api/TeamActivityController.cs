@@ -322,8 +322,8 @@ public class TeamActivityController : ControllerBase
         public readonly Dictionary<string, int> ErrorCodes = new();
     }
 
-    /// <summary>体验全景热力图的叶子输出（聚合主路径与旧路径共用，喂给 BuildExperienceMapPayload）</summary>
-    private sealed record LeafOut(string Target, string Label, string Method, int Value, double ErrRate, double SlowRate, string Status, string Metric);
+    /// <summary>体验全景热力图的叶子输出（聚合主路径与旧路径共用，喂给 BuildExperienceMapPayload）。BurstPct 为环比突增百分比，可空。</summary>
+    private sealed record LeafOut(string Target, string Label, string Method, int Value, double ErrRate, double SlowRate, string Status, string Metric, int? BurstPct = null);
 
     // 体验全景热力图短 TTL 缓存：来回切时间档不重复聚合（key 取整到分钟）
     private static readonly ConcurrentDictionary<string, (DateTime At, object Payload)> _expMapCache = new();
@@ -349,6 +349,7 @@ public class TeamActivityController : ControllerBase
                         errorRate = l.ErrRate,
                         slowRate = l.SlowRate,
                         topErrorCode = (string?)null,
+                        burstPct = l.BurstPct,
                     })
                     .ToList();
                 return new
@@ -500,6 +501,10 @@ public class TeamActivityController : ControllerBase
         var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true });
         var buckets = await cursor.ToListAsync();
 
+        // 环比突增：对「上一个等长窗口」做同样的轻量聚合，按 method+归一化路径 取坏请求(报错+慢)数 badPrev，
+        // 用于给本窗口痛点叶子算 burstPct。失败不致命（突增字段降级为 null）。
+        var prevBad = await ExperienceMapPrevWindowBadAsync(fromUtc, endUtc);
+
         long totalRequests = 0;
         var byModule = new Dictionary<string, List<LeafOut>>();
         foreach (var b in buckets)
@@ -528,11 +533,91 @@ public class TeamActivityController : ControllerBase
                 : status == "slow"
                     ? $"{slow} 次慢请求 · 均 {avgSlowSec:F1}s"
                     : $"{count} 次调用";
+            var target = $"{method} {path}";
+            var burstPct = ComputeBurstPct(status, err + slow, prevBad.GetValueOrDefault($"{method}|{path}", 0));
             if (!byModule.TryGetValue(module, out var list)) { list = new List<LeafOut>(); byModule[module] = list; }
-            list.Add(new LeafOut($"{method} {path}", LeafLabel(method, path), method, count, Math.Round(errRate, 3), Math.Round(slowRate, 3), status, metric));
+            list.Add(new LeafOut(target, LeafLabel(method, path), method, count, Math.Round(errRate, 3), Math.Round(slowRate, 3), status, metric, burstPct));
         }
 
         return BuildExperienceMapPayload(byModule, totalRequests, fromUtc, endUtc);
+    }
+
+    /// <summary>
+    /// 环比突增百分比：仅痛点(status!=ok)且本窗坏请求 badCur>=5 时才给值，避免噪音。
+    /// 有上一窗口基线 badPrev>0 → round((badCur-badPrev)/badPrev*100)；无基线则 null（新增由前端处理）。
+    /// </summary>
+    private static int? ComputeBurstPct(string status, int badCur, int badPrev)
+    {
+        if (status == "ok" || badCur < 5) return null;
+        if (badPrev <= 0) return null;
+        return (int)Math.Round((badCur - badPrev) / (double)badPrev * 100.0);
+    }
+
+    /// <summary>
+    /// 上一个等长窗口(fromUtc-span .. fromUtc, span=endUtc-fromUtc)的坏请求(报错+慢)聚合，
+    /// 按 method+归一化路径分组，键为 "{method}|{归一化路径}"，值为 badPrev=报错数+慢数（仅 bad>=1 的桶）。
+    /// 复用 PathNormalizeStages，下推到 MongoDB $group，只回小桶。
+    /// </summary>
+    private async Task<Dictionary<string, int>> ExperienceMapPrevWindowBadAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var result = new Dictionary<string, int>();
+        try
+        {
+            var span = endUtc - fromUtc;
+            if (span <= TimeSpan.Zero) return result;
+            var prevFrom = fromUtc - span;
+            var prevTo = fromUtc;
+
+            var slowCond = new BsonDocument("$and", new BsonArray
+            {
+                new BsonDocument("$eq", new BsonArray { "$IsEventStream", false }),
+                new BsonDocument("$gte", new BsonArray { "$DurationMs", 3000 }),
+            });
+            var pipeline = new List<BsonDocument>
+            {
+                new BsonDocument("$match", new BsonDocument
+                {
+                    { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(prevFrom) }, { "$lt", new BsonDateTime(prevTo) } } },
+                    { "Direction", new BsonDocument("$ne", "outbound") },
+                    { "Path", new BsonDocument("$regex", "^/api") },
+                }),
+            };
+            pipeline.AddRange(PathNormalizeStages());
+            pipeline.Add(new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "m", "$Method" }, { "p", "$_np" } } },
+                { "err", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$and", new BsonArray
+                        {
+                            new BsonDocument("$gte", new BsonArray { "$StatusCode", 400 }),
+                            new BsonDocument("$ne", new BsonArray { "$StatusCode", 401 }),
+                        }),
+                        1, 0,
+                    })) },
+                { "slow", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { slowCond, 1, 0 })) },
+            }));
+            pipeline.Add(new BsonDocument("$set", new BsonDocument("badcount", new BsonDocument("$add", new BsonArray { "$err", "$slow" }))));
+            pipeline.Add(new BsonDocument("$match", new BsonDocument("badcount", new BsonDocument("$gte", 1))));
+            pipeline.Add(new BsonDocument("$limit", 4000));
+
+            var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true });
+            var buckets = await cursor.ToListAsync();
+            foreach (var b in buckets)
+            {
+                var id = b["_id"].AsBsonDocument;
+                var method = id.GetValue("m", "GET").AsString;
+                var path = id.GetValue("p", "").AsString;
+                if (string.IsNullOrEmpty(path)) continue;
+                var bad = b.GetValue("badcount", 0).ToInt32();
+                result[$"{method}|{path}"] = bad;
+            }
+        }
+        catch
+        {
+            // 突增是增强项，前窗聚合失败时降级为「无基线」（burstPct 全部 null），不影响主热力图
+        }
+        return result;
     }
 
     /// <summary>兜底路径：拉取 + C# 分组（聚合管道不可用时使用，逻辑与原实现一致）</summary>

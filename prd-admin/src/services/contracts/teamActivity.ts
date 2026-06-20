@@ -150,6 +150,8 @@ export type ExperienceMapLeaf = {
   errorRate: number;
   slowRate: number;
   topErrorCode?: string | null;
+  /** 环比上一等长窗口的坏请求(报错+慢)突增百分比；仅痛点且坏请求达阈值时有值，否则 null */
+  burstPct?: number | null;
 };
 
 /** 体验全景热力图：一个模块分区 */

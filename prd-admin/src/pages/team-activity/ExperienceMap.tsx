@@ -262,6 +262,7 @@ export function ExperienceMap({
               const r = c.rect;
               if (r.w < 1 || r.h < 1) return null;
               const isPain = c.leaf.status === 'error' || c.leaf.status === 'slow';
+              const hasBurst = c.leaf.burstPct != null && c.leaf.burstPct >= 50;
               const fill = c.leaf.status === 'error' ? ERR : c.leaf.status === 'slow' ? SLOW : healthyFill(c.hue, c.idxInGroup);
               const showLabel = r.w > 46 && r.h > 20;
               const clickable = isPain && !!onSelectTarget;
@@ -332,8 +333,33 @@ export function ExperienceMap({
                       y={r.y + 26}
                       style={{ fill: 'rgba(255,255,255,0.9)', fontSize: 9, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2 }}
                     >
-                      {c.leaf.status === 'error' ? '报错' : '慢'}
+                      {hasBurst && r.h > 30
+                        ? `突增 +${c.leaf.burstPct}%`
+                        : c.leaf.status === 'error'
+                          ? '报错'
+                          : '慢'}
                     </text>
+                  ) : null}
+                  {/* 突增彗星：环比突增 >=50% 的痛点块，右下角一道斜飞的彗星（尾巴 + 白点头），常驻循环 */}
+                  {hasBurst && r.w > 48 && r.h > 30 ? (
+                    <g
+                      style={{
+                        transformBox: 'fill-box',
+                        transformOrigin: 'center',
+                        animation: `voc-comet ${2.2 + (c.idxInGroup % 4) * 0.25}s ease-out infinite`,
+                      }}
+                    >
+                      <line
+                        x1={r.x + r.w - 12}
+                        y1={r.y + r.h - 12}
+                        x2={r.x + r.w - 27}
+                        y2={r.y + r.h + 3}
+                        stroke={SLOW}
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                      />
+                      <circle cx={r.x + r.w - 12} cy={r.y + r.h - 12} r={3.5} fill="#fff" />
+                    </g>
                   ) : null}
                 </g>
               );
@@ -367,6 +393,7 @@ export function ExperienceMap({
         @keyframes voc-grp-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes voc-ping { 75%,100% { transform: scale(2.2); opacity: 0; } }
         @keyframes voc-ignite { 0% { stroke-opacity: .9; transform: scale(1); } 100% { stroke-opacity: 0; transform: scale(1.18); } }
+        @keyframes voc-comet { 0% { transform: translate(0,0); opacity: 0; } 15% { opacity: 1; } 100% { transform: translate(42px,-42px); opacity: 0; } }
       `}</style>
     </>
   );
