@@ -133,10 +133,10 @@ Body: { productId: string }
 **前端**：涌现节点卡片底部"流转需求池"按钮。**"已流转"状态必须取权威源 —— 由"是否存在 `SourceEmergenceNodeId == 节点id && !IsDeleted` 的需求"派生，不能用节点的 `AdoptedRequirementId` 判定**。原因：`AdoptedRequirementId` 是 best-effort 缓存（第 6 步回填可能失败、或软删后变陈旧），会两头出错——insert 成功但回填失败时活跃需求已存在、指针却为空，卡片错显可点按钮；既有需求软删后指针仍在、却已可重新 adopt，卡片错显 chip 禁用按钮。正解：后端在节点列表/详情响应里**直接附带由活跃查重算出的派生字段**（避免前端二次查询），`AdoptedRequirementId` 只作内部缓存、不进前端判定。
 
 **但这些派生字段必须按权限过滤，不能裸塞进节点响应（否则泄漏私有需求标识）**：`EmergenceController.GetTree`（`EmergenceController.cs:118`）允许 `t.OwnerId == userId || t.IsPublic` 公开读——任何人都能看公开涌现树的节点。若把 `requirementId/requirementNo` 无差别塞进节点 DTO，浏览公开树、但无 `ProductAgentUse` / 无该产品访问权的人就能看到私有产品的需求编号。规则：
-- `requirementId` / `requirementNo`（产品派生标识）**只对"能访问该需求所在产品"的调用方返回**（`ProductAgentUse` 权限闸 + `FindAccessibleProductAsync(requirement.ProductId, userId)` 都过），其余调用方 DTO 里**省略**这两个字段。
+- `productId` / `requirementId` / `requirementNo`（产品派生标识）**只对"能访问该需求所在产品"的调用方返回**（`ProductAgentUse` 权限闸 + `FindAccessibleProductAsync(requirement.ProductId, userId)` 都过），其余调用方 DTO 里**省略**这三个字段。`productId` 必须返回——深链格式是 `/product-agent/p/{productId}/requirement/{requirementId}`，缺它前端拼不出可跳转的 chip 链接。
 - `AdoptedRequirementId`（节点上的缓存指针，本身就是一个需求 id）**绝不进任何节点响应**：它是服务端内部缓存、非权威、前端不用它判定（前端只用 `hasActiveRequirement` + 受控的 `requirementNo`）。`GetTree` 当前对公开树返回**裸 `nodes`（完整 EmergenceNode 模型）**，新增该字段后若不投影掉，等于把私有需求 id 直接发给公开树浏览者。硬要求：节点响应必须走**显式 DTO 投影**，`AdoptedRequirementId` 永不序列化给客户端（无论公开/私有读都不发）。
 - `hasActiveRequirement`（裸布尔，不含任何产品标识）可对所有可读该树的人返回——它只表达"这个节点已被流转过"，不泄漏产品/需求身份。
-- 前端：有权 → `hasActiveRequirement && requirementNo` 显示可点 chip 跳 product-agent；无权但 `hasActiveRequirement` → 显示不可点的"已流转"灰标（无链接、无编号）；`false` → 显示可点"流转需求池"按钮。
+- 前端：有权 → 显示可点 chip（文案 `requirementNo`，链接 `/product-agent/p/{productId}/requirement/{requirementId}`）；无权但 `hasActiveRequirement` → 显示不可点的"已流转"灰标（无链接、无编号）；`false` → 显示可点"流转需求池"按钮。
 
 复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
 
