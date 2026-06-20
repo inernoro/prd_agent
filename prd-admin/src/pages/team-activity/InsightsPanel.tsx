@@ -35,6 +35,13 @@ import { ExperienceTrend } from './ExperienceTrend';
 import { ExperienceRadar } from './ExperienceRadar';
 import { ExperienceSiteMap } from './ExperienceSiteMap';
 import { ExperienceBoard } from './ExperienceBoard';
+import { DefectConvertModal, type DefectConvertDraft } from './DefectConvertModal';
+import { RequirementConvertModal, type RequirementConvertDraft } from './RequirementConvertModal';
+
+// 转缺陷弹窗上下文：除草稿外，还需要回写洞察状态用的 kind/target
+type DefectModalState = { kind: string; target: string; draft: DefectConvertDraft };
+// 转需求弹窗上下文：草稿 + 回写用的 kind/target
+type RequirementModalState = { kind: string; target: string; draft: RequirementConvertDraft };
 
 function fmtDate(iso?: string | null): string {
   if (!iso) return '';
@@ -92,9 +99,12 @@ export function InsightsPanel({ from }: { from?: string }) {
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   // 下钻抽屉：从右侧滑入的浮层 drawer（createPortal 到 body），target 非空即展开
   const [drillTarget, setDrillTarget] = useState<{ target: string; label: string } | null>(null);
-  const [drillConverting, setDrillConverting] = useState(false);
-  const [drillConvertingReq, setDrillConvertingReq] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  // 转缺陷 / 转需求弹窗：打开时持有预填草稿 + 回写上下文，确认时才真正创建
+  const [defectModal, setDefectModal] = useState<DefectModalState | null>(null);
+  const [defectSubmitting, setDefectSubmitting] = useState(false);
+  const [reqModal, setReqModal] = useState<RequirementModalState | null>(null);
+  const [reqSubmitting, setReqSubmitting] = useState(false);
   const [briefOpen, setBriefOpen] = useState(false);
   const [briefModel, setBriefModel] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
@@ -215,8 +225,6 @@ export function InsightsPanel({ from }: { from?: string }) {
 
   const closeDrill = useCallback(() => {
     setDrillTarget(null);
-    setDrillConverting(false);
-    setDrillConvertingReq(false);
   }, []);
 
   // 各 Hero 视图空数据引导的统一出口：一键切回体验全景热力图
@@ -258,126 +266,141 @@ export function InsightsPanel({ from }: { from?: string }) {
     [reload]
   );
 
-  const convertToDefect = useCallback(
-    async (item: BehaviorInsight) => {
-      const key = `${item.kind}|${item.target}`;
-      setBusyKey(key);
+  // 痛点榜「转为缺陷」：不再直接创建，改为按当前洞察生成预填草稿并打开弹窗，确认后才发送。
+  const openDefectModalForInsight = useCallback(
+    (item: BehaviorInsight) => {
       const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
-      const res = await createDefect({
-        title: `[行为洞察] ${item.kindLabel}：${item.target}`,
-        content: buildDefectContent(item, window),
+      setDefectModal({
+        kind: item.kind,
+        target: item.target,
+        draft: {
+          title: `[行为洞察] ${item.kindLabel}：${item.target}`,
+          content: buildDefectContent(item, window),
+          assigneeUserId: '',
+          severity: item.kind === 'api-error' ? 'major' : 'minor',
+        },
+      });
+    },
+    [data]
+  );
+
+  // 下钻抽屉「转为缺陷」：优先复用痛点榜上同 target 的富洞察（证据更全），未上榜则用下钻信息建最小草稿。
+  const openDefectModalForDrill = useCallback(() => {
+    if (!drillTarget) return;
+    const hit = data?.items.find((i) => i.target === drillTarget.target && i.kind === 'api-error')
+      ?? data?.items.find((i) => i.target === drillTarget.target);
+    if (hit) {
+      openDefectModalForInsight(hit);
+      return;
+    }
+    const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
+    setDefectModal({
+      kind: 'api-error',
+      target: drillTarget.target,
+      draft: {
+        title: `[体验下钻] ${drillTarget.label}：${drillTarget.target}`,
+        content: [
+          '## 体验下钻转报（自动生成）',
+          '',
+          `- 端点：${drillTarget.target}`,
+          `- 来源：团队动态 - 体验全景热力图下钻`,
+          `- 分析窗口：${window}`,
+          '',
+          '> 该端点尚未进入痛点榜（信号偏弱），但被手动下钻识别为需关注项，请结合「AI 根因诊断」与真实请求样本核查。',
+        ].join('\n'),
         assigneeUserId: '',
-        severity: item.kind === 'api-error' ? 'major' : 'minor',
+        severity: 'minor',
+      },
+    });
+  }, [drillTarget, data, openDefectModalForInsight]);
+
+  // 缺陷弹窗确认：用用户核对/编辑后的草稿真正创建缺陷 + 回写洞察状态（沿用原直接执行逻辑）。
+  const confirmDefect = useCallback(
+    async (draft: DefectConvertDraft) => {
+      if (!defectModal) return;
+      const { kind, target } = defectModal;
+      setDefectSubmitting(true);
+      const res = await createDefect({
+        title: draft.title,
+        content: draft.content,
+        assigneeUserId: draft.assigneeUserId,
+        severity: draft.severity,
       });
       if (!res.success) {
-        setBusyKey(null);
+        setDefectSubmitting(false);
         toast.error(res.error?.message ?? '创建缺陷失败');
         return;
       }
       const defect = res.data.defect;
       await setTeamActivityInsightState({
-        kind: item.kind,
-        target: item.target,
+        kind,
+        target,
         status: 'confirmed',
         defectId: defect.id,
         defectTitle: defect.title,
       });
-      setBusyKey(null);
+      setDefectSubmitting(false);
+      setDefectModal(null);
       toast.success(`已创建缺陷《${defect.title}》，可在缺陷管理中跟进`);
       reload();
     },
-    [data, reload]
+    [defectModal, reload]
   );
 
-  // 下钻抽屉里「转为缺陷」：优先复用痛点榜上同 target 的富洞察（证据更全），未上榜则建一条最小缺陷
-  const convertDrillToDefect = useCallback(async () => {
+  // 下钻抽屉「转需求」：不再就地展开直接发送，改为生成预填草稿并打开步骤向导弹窗。
+  // 优先复用同 target 的富洞察（指标/证据更全），未上榜则用下钻展示名兜底。
+  const openRequirementModalForDrill = useCallback(() => {
     if (!drillTarget) return;
     const hit = data?.items.find((i) => i.target === drillTarget.target && i.kind === 'api-error')
       ?? data?.items.find((i) => i.target === drillTarget.target);
-    if (hit) {
-      await convertToDefect(hit);
-      return;
-    }
-    setDrillConverting(true);
     const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
-    const res = await createDefect({
-      title: `[体验下钻] ${drillTarget.label}：${drillTarget.target}`,
-      content: [
-        '## 体验下钻转报（自动生成）',
-        '',
-        `- 端点：${drillTarget.target}`,
-        `- 来源：团队动态 - 体验全景热力图下钻`,
-        `- 分析窗口：${window}`,
-        '',
-        '> 该端点尚未进入痛点榜（信号偏弱），但被手动下钻识别为需关注项，请结合「AI 根因诊断」与真实请求样本核查。',
-      ].join('\n'),
-      assigneeUserId: '',
-      severity: 'minor',
-    });
-    if (!res.success) {
-      setDrillConverting(false);
-      toast.error(res.error?.message ?? '创建缺陷失败');
-      return;
-    }
-    const defect = res.data.defect;
-    await setTeamActivityInsightState({
-      kind: 'api-error',
-      target: drillTarget.target,
-      status: 'confirmed',
-      defectId: defect.id,
-      defectTitle: defect.title,
-    });
-    setDrillConverting(false);
-    toast.success(`已创建缺陷《${defect.title}》，可在缺陷管理中跟进`);
-    reload();
-  }, [drillTarget, data, convertToDefect, reload]);
+    const kind = hit?.kind ?? 'api-error';
+    const title = hit
+      ? `[用户体验之声] ${hit.kindLabel}：${hit.target}`
+      : `[用户体验之声] ${drillTarget.label}`;
+    const description = hit
+      ? [
+          '## 用户体验之声转需求（自动生成）',
+          '',
+          `- 信号类型：${hit.kindLabel}`,
+          `- 发生位置：${hit.target}`,
+          `- 量化指标：${hit.metric}`,
+          `- 影响范围：${hit.userCount} 人 / ${hit.eventCount} 次`,
+          `- 分析窗口：${window}`,
+          '',
+          '### 证据',
+          ...hit.evidence.map((e) => `- ${e}`),
+          '',
+          '### 改进建议',
+          hit.suggestion,
+          '',
+          '> 来源：团队动态 - 行为洞察（痛点流转需求池）',
+        ].join('\n')
+      : [
+          '## 用户体验之声转需求（自动生成）',
+          '',
+          `- 端点：${drillTarget.target}`,
+          `- 分析窗口：${window}`,
+          '',
+          '> 该端点尚未进入痛点榜（信号偏弱），但被手动下钻识别为需关注项。',
+          '> 来源：团队动态 - 体验全景热力图下钻',
+        ].join('\n');
+    setReqModal({ kind, target: drillTarget.target, draft: { title, description } });
+  }, [drillTarget, data]);
 
-  // 下钻抽屉里「转需求」：把痛点落进所选产品的需求池（VOC 闭环收口）。
-  // 优先复用同 target 的富洞察（指标/证据更全），未上榜则用下钻展示名兜底。
-  const convertDrillToRequirement = useCallback(
-    async (productId: string) => {
-      if (!drillTarget) return;
-      const hit = data?.items.find((i) => i.target === drillTarget.target && i.kind === 'api-error')
-        ?? data?.items.find((i) => i.target === drillTarget.target);
-      const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
-      const kind = hit?.kind ?? 'api-error';
-      const title = hit
-        ? `[用户体验之声] ${hit.kindLabel}：${hit.target}`
-        : `[用户体验之声] ${drillTarget.label}`;
-      const description = hit
-        ? [
-            '## 用户体验之声转需求（自动生成）',
-            '',
-            `- 信号类型：${hit.kindLabel}`,
-            `- 发生位置：${hit.target}`,
-            `- 量化指标：${hit.metric}`,
-            `- 影响范围：${hit.userCount} 人 / ${hit.eventCount} 次`,
-            `- 分析窗口：${window}`,
-            '',
-            '### 证据',
-            ...hit.evidence.map((e) => `- ${e}`),
-            '',
-            '### 改进建议',
-            hit.suggestion,
-            '',
-            '> 来源：团队动态 - 行为洞察（痛点流转需求池）',
-          ].join('\n')
-        : [
-            '## 用户体验之声转需求（自动生成）',
-            '',
-            `- 端点：${drillTarget.target}`,
-            `- 分析窗口：${window}`,
-            '',
-            '> 该端点尚未进入痛点榜（信号偏弱），但被手动下钻识别为需关注项。',
-            '> 来源：团队动态 - 体验全景热力图下钻',
-          ].join('\n');
-      setDrillConvertingReq(true);
-      const res = await insightToRequirement({ kind, target: drillTarget.target, title, description, productId });
-      setDrillConvertingReq(false);
+  // 需求弹窗确认：用所选产品 + 用户核对后的草稿流转需求（沿用原直接执行逻辑与 toast/reload）。
+  const confirmRequirement = useCallback(
+    async (productId: string, draft: RequirementConvertDraft) => {
+      if (!reqModal) return;
+      const { kind, target } = reqModal;
+      setReqSubmitting(true);
+      const res = await insightToRequirement({ kind, target, title: draft.title, description: draft.description, productId });
+      setReqSubmitting(false);
       if (!res.success) {
         toast.error(res.error?.message ?? '流转需求失败');
         return;
       }
+      setReqModal(null);
       toast.success(
         res.data.alreadyExists
           ? `该痛点已转为需求 #${res.data.requirementNo}`
@@ -385,7 +408,7 @@ export function InsightsPanel({ from }: { from?: string }) {
       );
       reload();
     },
-    [drillTarget, data, reload]
+    [reqModal, reload]
   );
 
   if (loading && !data) {
@@ -689,7 +712,7 @@ export function InsightsPanel({ from }: { from?: string }) {
                             />
                           ) : null}
                           {!item.defectId ? (
-                            <ActionButton onClick={() => void convertToDefect(item)} icon={Bug} label="转为缺陷" emphasis />
+                            <ActionButton onClick={() => openDefectModalForInsight(item)} icon={Bug} label="转为缺陷" emphasis />
                           ) : null}
                           {status !== 'confirmed' ? (
                             <ActionButton onClick={() => void setState(item, 'confirmed')} icon={Check} label="确认待改" />
@@ -727,11 +750,11 @@ export function InsightsPanel({ from }: { from?: string }) {
                     target={drillTarget.target}
                     label={drillTarget.label}
                     from={from}
-                    converting={drillConverting || busyKey === `api-error|${drillTarget.target}`}
-                    convertingRequirement={drillConvertingReq}
+                    converting={(defectSubmitting && defectModal?.target === drillTarget.target) || busyKey === `api-error|${drillTarget.target}`}
+                    convertingRequirement={reqSubmitting && reqModal?.target === drillTarget.target}
                     requirementNo={data?.items.find((i) => i.target === drillTarget.target && i.requirementNo)?.requirementNo ?? null}
-                    onConvertDefect={() => void convertDrillToDefect()}
-                    onConvertRequirement={(productId) => void convertDrillToRequirement(productId)}
+                    onRequestDefectModal={openDefectModalForDrill}
+                    onRequestRequirementModal={openRequirementModalForDrill}
                     onClose={closeDrill}
                   />
                 </div>
@@ -772,6 +795,30 @@ export function InsightsPanel({ from }: { from?: string }) {
             document.body
           )
         : null}
+
+      {/* 转为缺陷弹窗：预填可编辑标题/正文 + 指派人（发给谁）+ 严重度，确认后才创建并回写洞察状态 */}
+      {defectModal ? (
+        <DefectConvertModal
+          draft={defectModal.draft}
+          submitting={defectSubmitting}
+          onConfirm={(draft) => void confirmDefect(draft)}
+          onClose={() => {
+            if (!defectSubmitting) setDefectModal(null);
+          }}
+        />
+      ) : null}
+
+      {/* 转需求弹窗（3 步向导）：选产品 → 核对内容 → 确认流转，确认后才流转需求 */}
+      {reqModal ? (
+        <RequirementConvertModal
+          draft={reqModal.draft}
+          submitting={reqSubmitting}
+          onConfirm={(productId, draft) => void confirmRequirement(productId, draft)}
+          onClose={() => {
+            if (!reqSubmitting) setReqModal(null);
+          }}
+        />
+      ) : null}
     </GlassCard>
   );
 }
