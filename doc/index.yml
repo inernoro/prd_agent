@@ -136,6 +136,7 @@ docs:
   design.speech-agent: 演讲智能体技术设计（数据模型 / Controller / Service / SSE 协议）
   design.peer-sync: 系统级跨节点互传（Peer Sync）设计
   design.reprocess-chat-routing: 文档再加工 · 智能体调用路由设计
+  design.team-activity-voc: 团队动态·用户体验之声(VOC) 设计（体验全景热力图 treemap + 痛点指数 + 闭环 + 设计思想）
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南

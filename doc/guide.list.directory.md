@@ -1045,4 +1045,5 @@
 | 2026-06-10 | 新增 | `debt.cds-nginx-loading-pages` | CDS loading pages 债务台账 |
 | 2026-06-10 | 新增 | `design.cds-skill-version-update` | CDS 技能版本与更新架构 |
 | 2026-06-10 | 新增 | `plan.product-agent-version-workflow` | 产品管理智能体版本流程整改计划 |
+| 2026-06-20 | 新增 | `design.team-activity-voc` | 团队动态·用户体验之声(VOC) 设计（treemap + 痛点指数 + 闭环 + 设计思想） |
 | 2026-06-11 | 新增 | `report.version-20260610-1-summary` | version-20260610-1 分支改动说明 |

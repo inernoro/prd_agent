@@ -128,28 +128,33 @@ export function ExperienceMap({
 
   if (loading && !data) {
     return (
-      <div className="px-5 pt-4">
-        <GlassCard style={{ height: 320 }}>
-          <div className="h-full flex items-center justify-center">
-            <MapSectionLoader text="正在铺设体验全景热力图…" />
-          </div>
-        </GlassCard>
-      </div>
+      <GlassCard style={{ height: 320 }}>
+        <div className="h-full flex items-center justify-center">
+          <MapSectionLoader text="正在铺设体验全景热力图…" />
+        </div>
+      </GlassCard>
     );
   }
 
   if (!data || data.groups.length === 0) return null;
 
   return (
-    <div className="px-5 pt-4">
+    <>
       <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
         <div className="flex items-center justify-between px-4 pt-3 pb-2">
-          <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2">
+          <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5">
             体验全景热力图
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-cyan-300/80 font-normal">
-              <span className="w-[7px] h-[7px] rounded-full bg-cyan-400" style={{ animation: 'pulse 1.4s ease-in-out infinite' }} />
-              每块=端点 · 面积=访问量 · 颜色=健康
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium"
+              style={{ background: 'rgba(45,212,191,0.12)', color: '#5eead4', border: '1px solid rgba(45,212,191,0.32)' }}
+            >
+              <span className="relative inline-flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-cyan-400" style={{ opacity: 0.6, animation: 'voc-ping 1.5s cubic-bezier(0,0,.2,1) infinite' }} />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-400" />
+              </span>
+              实时扫描中
             </span>
+            <span className="text-[11px] text-white/35 font-normal">每块=端点 · 面积=访问量 · 颜色=健康</span>
           </span>
           <div className="flex items-center gap-3.5 text-[11px] text-white/55">
             <span className="inline-flex items-center gap-1.5">
@@ -167,7 +172,7 @@ export function ExperienceMap({
           <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', height: 'auto', display: 'block' }}>
             {/* 分区边框 + 标签 */}
             {layout.groupRects.map((g) => (
-              <g key={`grp-${g.key}`}>
+              <g key={`grp-${g.key}`} style={{ animation: 'voc-grp-in .4s ease both' }}>
                 <rect
                   x={g.rect.x}
                   y={g.rect.y}
@@ -204,7 +209,7 @@ export function ExperienceMap({
               </g>
             ))}
             {/* 叶子 */}
-            {layout.cells.map((c) => {
+            {layout.cells.map((c, ci) => {
               const r = c.rect;
               if (r.w < 1 || r.h < 1) return null;
               const isPain = c.leaf.status === 'error' || c.leaf.status === 'slow';
@@ -214,7 +219,14 @@ export function ExperienceMap({
               return (
                 <g
                   key={c.leaf.target}
-                  style={{ cursor: clickable ? 'pointer' : 'default', filter: isPain ? `drop-shadow(0 0 5px ${fill})` : undefined }}
+                  style={{
+                    cursor: clickable ? 'pointer' : 'default',
+                    filter: isPain ? `drop-shadow(0 0 5px ${fill})` : undefined,
+                    transformBox: 'fill-box',
+                    transformOrigin: 'center',
+                    animation: 'voc-cell-in 0.45s cubic-bezier(.34,1.56,.64,1) both',
+                    animationDelay: `${Math.min(ci, 90) * 9}ms`,
+                  }}
                   onClick={clickable ? () => onSelectTarget!(c.leaf.target) : undefined}
                 >
                   <title>{`${c.group.label} · ${c.leaf.label}\n${c.leaf.target}\n${c.leaf.metric}`}</title>
@@ -262,10 +274,29 @@ export function ExperienceMap({
                 </g>
               );
             })}
+            {/* 实时扫描光带：横向来回滑过，凸显「正在实时扫描」 */}
+            <defs>
+              <linearGradient id="voc-scan" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0" stopColor="#2dd4bf" stopOpacity="0" />
+                <stop offset="0.55" stopColor="#2dd4bf" stopOpacity="0.06" />
+                <stop offset="0.94" stopColor="#2dd4bf" stopOpacity="0.16" />
+                <stop offset="1" stopColor="#5eead4" stopOpacity="0.5" />
+              </linearGradient>
+            </defs>
+            <g style={{ pointerEvents: 'none' }}>
+              <rect y={0} width={88} height={VH} fill="url(#voc-scan)">
+                <animate attributeName="x" from={-88} to={VW} dur="4.5s" repeatCount="indefinite" />
+              </rect>
+            </g>
           </svg>
         </div>
       </GlassCard>
-      <style>{`@keyframes voc-cell-glow { 0%,100% { stroke-opacity: .35; } 50% { stroke-opacity: 1; } }`}</style>
-    </div>
+      <style>{`
+        @keyframes voc-cell-glow { 0%,100% { stroke-opacity: .35; } 50% { stroke-opacity: 1; } }
+        @keyframes voc-cell-in { from { opacity: 0; transform: scale(.45); } to { opacity: 1; transform: scale(1); } }
+        @keyframes voc-grp-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes voc-ping { 75%,100% { transform: scale(2.2); opacity: 0; } }
+      `}</style>
+    </>
   );
 }

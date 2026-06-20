@@ -2,3 +2,5 @@
 | feat | prd-admin | 行为洞察 tab 顶部新增体验全景热力图（squarified treemap）：每块=端点、面积=访问量、颜色=健康，痛点带发光描边，点击下钻联动到下方痛点榜对应行 |
 | fix | prd-admin | CDS 静态部署修复：serve 改为本地 devDependency + pnpm exec serve 启动，避免受限网络下运行时拉包失败(Command serve not found) |
 | polish | prd-api | 体验全景热力图模块/端点名改中文示意名(SegmentLabels+LeafLabel)，原始路径保留在悬浮提示，分区上限放宽到 24 |
+| feat | prd-admin | 体验全景热力图入场动画(react-bits 交错揭示)+ 实时扫描光带 + 醒目"实时扫描中"徽章；右侧新增可折叠"体验痛点指数"仪表盘 + 痛点声道占比(从痛点榜现算) |
+| docs | doc | 新增 design.team-activity-voc 设计文档(VOC 设计思想/数据流/波次规划)，同步 index.yml 与 guide.list |
