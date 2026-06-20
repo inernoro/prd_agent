@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -286,6 +286,7 @@ export class StateService {
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
       if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
       if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
+      if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
       if (!this.state.projects) this.state.projects = [];
       // Migrate: backfill cacheMounts for existing build profiles
@@ -3394,5 +3395,115 @@ export class StateService {
       result[hostKey] = dockerHost;
     }
     return result;
+  }
+
+  // ── Acceptance reports (CDS self-hosted, 2026-06-20) ──
+  //
+  // Report bodies (potentially large HTML) live on disk under
+  // `<dataDir>/reports/<id>.<ext>`. Only lightweight metadata is kept in
+  // state.json. `<dataDir>` is the project data dir — the parent of the
+  // cache base (`getCacheBase()` returns `<dataDir>/cache`), so reports sit
+  // alongside cache rather than inside it.
+
+  /** Host-side dir holding report content files. Created lazily on write. */
+  getReportsBase(): string {
+    return path.join(path.dirname(this.getCacheBase()), 'reports');
+  }
+
+  private reportFilePath(meta: Pick<AcceptanceReportMeta, 'id' | 'format'>): string {
+    const ext = meta.format === 'md' ? 'md' : 'html';
+    return path.join(this.getReportsBase(), `${meta.id}.${ext}`);
+  }
+
+  /** List report metadata, newest first, optionally filtered by project. */
+  listAcceptanceReports(projectId?: string | null): AcceptanceReportMeta[] {
+    const all = this.state.acceptanceReports || [];
+    const filtered = projectId ? all.filter((r) => (r.projectId || null) === projectId) : all;
+    return [...filtered].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+  }
+
+  getAcceptanceReport(id: string): AcceptanceReportMeta | undefined {
+    return (this.state.acceptanceReports || []).find((r) => r.id === id);
+  }
+
+  /** Read the raw content of a report from disk, or undefined if missing. */
+  readAcceptanceReportContent(id: string): string | undefined {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return undefined;
+    try {
+      return fs.readFileSync(this.reportFilePath(meta), 'utf-8');
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Create a report: write the content file to disk + persist metadata.
+   * `content` byte length is recorded; the metadata id is generated here so
+   * callers cannot collide. Returns the stored metadata.
+   */
+  createAcceptanceReport(input: {
+    title: string;
+    format: 'html' | 'md';
+    content: string;
+    projectId?: string | null;
+    branchId?: string | null;
+    createdBy?: string;
+  }): AcceptanceReportMeta {
+    if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
+    const now = new Date().toISOString();
+    const meta: AcceptanceReportMeta = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      title: input.title,
+      format: input.format,
+      projectId: input.projectId ?? null,
+      branchId: input.branchId ?? null,
+      sizeBytes: Buffer.byteLength(input.content, 'utf8'),
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+    fs.mkdirSync(this.getReportsBase(), { recursive: true });
+    fs.writeFileSync(this.reportFilePath(meta), input.content, 'utf-8');
+    this.state.acceptanceReports.push(meta);
+    this.save();
+    return meta;
+  }
+
+  /**
+   * Update a report's title and/or content. When `content` is provided the
+   * disk file is rewritten and sizeBytes recomputed. Returns the updated
+   * metadata, or null when the report does not exist.
+   */
+  updateAcceptanceReport(
+    id: string,
+    updates: { title?: string; content?: string },
+  ): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return null;
+    if (typeof updates.title === 'string') meta.title = updates.title;
+    if (typeof updates.content === 'string') {
+      fs.mkdirSync(this.getReportsBase(), { recursive: true });
+      fs.writeFileSync(this.reportFilePath(meta), updates.content, 'utf-8');
+      meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
+    }
+    meta.updatedAt = new Date().toISOString();
+    this.save();
+    return meta;
+  }
+
+  /** Delete a report's metadata + content file. Returns true when removed. */
+  deleteAcceptanceReport(id: string): boolean {
+    const all = this.state.acceptanceReports || [];
+    const meta = all.find((r) => r.id === id);
+    if (!meta) return false;
+    try {
+      fs.unlinkSync(this.reportFilePath(meta));
+    } catch {
+      // Content file may already be gone — metadata removal still proceeds.
+    }
+    this.state.acceptanceReports = all.filter((r) => r.id !== id);
+    this.save();
+    return true;
   }
 }

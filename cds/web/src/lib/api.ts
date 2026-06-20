@@ -172,6 +172,103 @@ function hasNoReadableError(parsed: unknown): boolean {
   });
 }
 
+// ── Acceptance reports (CDS self-hosted, 2026-06-20) ──
+
+export type ReportFormat = 'html' | 'md';
+
+export interface AcceptanceReport {
+  id: string;
+  title: string;
+  format: ReportFormat;
+  projectId?: string | null;
+  branchId?: string | null;
+  sizeBytes: number;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** List report metadata, newest first, optionally filtered by project. */
+export async function listReports(projectId?: string): Promise<AcceptanceReport[]> {
+  const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+  const res = await apiRequest<{ reports: AcceptanceReport[] }>(`/api/reports${qs}`);
+  return res.reports;
+}
+
+export async function getReport(id: string): Promise<AcceptanceReport> {
+  const res = await apiRequest<{ report: AcceptanceReport }>(`/api/reports/${encodeURIComponent(id)}`);
+  return res.report;
+}
+
+/** Create a report via the JSON paste path. */
+export async function createReportFromText(input: {
+  title: string;
+  format: ReportFormat;
+  content: string;
+  projectId?: string | null;
+  branchId?: string | null;
+}): Promise<AcceptanceReport> {
+  const res = await apiRequest<{ report: AcceptanceReport }>('/api/reports', {
+    method: 'POST',
+    body: input,
+  });
+  return res.report;
+}
+
+/**
+ * Create a report via the multipart file-upload path. Multipart must fetch
+ * directly (the apiRequest wrapper is JSON-only). Mirrors apiUrl()'s
+ * passthrough handling so dashboard calls reach the CDS master.
+ */
+export async function createReportFromFile(input: {
+  title: string;
+  format?: ReportFormat;
+  file: File;
+  projectId?: string | null;
+  branchId?: string | null;
+}): Promise<AcceptanceReport> {
+  const form = new FormData();
+  form.append('title', input.title);
+  if (input.format) form.append('format', input.format);
+  if (input.projectId) form.append('projectId', input.projectId);
+  if (input.branchId) form.append('branchId', input.branchId);
+  form.append('file', input.file, input.file.name);
+
+  const url = apiUrl('/api/reports');
+  const res = await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+    body: form,
+  });
+  const text = await res.text();
+  let parsed: unknown = text;
+  try { parsed = text ? JSON.parse(text) : undefined; } catch { /* keep text */ }
+  if (!res.ok) {
+    throwApiError('POST', url, res, parsed, res.headers.get('x-cds-request-id') || undefined);
+  }
+  return (parsed as { report: AcceptanceReport }).report;
+}
+
+export async function deleteReport(id: string): Promise<void> {
+  await apiRequest(`/api/reports/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** Fetch raw report content as text (for Markdown conversion or inspection). */
+export async function fetchReportRaw(id: string): Promise<string> {
+  const url = apiUrl(`/api/reports/${encodeURIComponent(id)}/raw`);
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) {
+    throwApiError('GET', url, res, undefined, res.headers.get('x-cds-request-id') || undefined);
+  }
+  return res.text();
+}
+
+/** Absolute URL for the raw report endpoint (used as iframe src for HTML). */
+export function reportRawUrl(id: string): string {
+  return apiUrl(`/api/reports/${encodeURIComponent(id)}/raw`);
+}
+
 function throwApiError(
   method: string,
   url: string,

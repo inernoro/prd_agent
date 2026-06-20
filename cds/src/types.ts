@@ -1155,6 +1155,44 @@ export interface CdsState {
    *     accept 端检查并返回 409 connection_duplicate
    */
   cdsConnections?: Record<string, CdsConnection>;
+  /**
+   * CDS 自托管验收报告元数据（2026-06-20）。系统级 —— 报告正文（可能是
+   * 很大的 HTML / Markdown）落在 `<dataDir>/reports/<id>.<ext>` 磁盘文件上，
+   * 不进 state.json；这里只存轻量元数据（标题/格式/大小/归属/时间）。
+   *
+   * 验收/视觉测试报告以往只能归档到外部知识库（需单独鉴权），CDS 自己托管
+   * 后挂在 CDS 登录态后面即可访问，无需额外权限配置。HTML 报告以沙箱
+   * iframe 渲染（不授予 same-origin），见 routes/reports.ts。
+   */
+  acceptanceReports?: AcceptanceReportMeta[];
+}
+
+/**
+ * CDS 自托管验收报告的元数据（2026-06-20）。
+ *
+ * 报告正文不入 state —— 存到 `<dataDir>/reports/<id>.<ext>` 磁盘文件。
+ * 这里只保留供列表/详情页展示的轻量字段。系统级（与具体 project 无关的
+ * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
+ */
+export interface AcceptanceReportMeta {
+  /** 稳定 ID（用于磁盘文件名 `<id>.<ext>` 与路由 `:id`）。 */
+  id: string;
+  /** 报告标题（用户填写，列表/详情展示）。 */
+  title: string;
+  /** 报告格式：'html' 原样渲染，'md' 转 HTML 后渲染。 */
+  format: 'html' | 'md';
+  /** 可选关联项目 ID（用于按项目过滤）；不关联时为 null。 */
+  projectId?: string | null;
+  /** 可选关联分支 ID；不关联时为 null。 */
+  branchId?: string | null;
+  /** 正文字节数（UTF-8）。 */
+  sizeBytes: number;
+  /** 创建人（resolveActorFromRequest 解析的 actor，如 'user' / 'ai'）。 */
+  createdBy?: string;
+  /** 创建时间 ISO 字符串。 */
+  createdAt: string;
+  /** 最近一次更新时间 ISO 字符串。 */
+  updatedAt: string;
 }
 
 /**

@@ -17,6 +17,7 @@ import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
+import { createReportsRouter } from './routes/reports.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
@@ -692,6 +693,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /import-config': '导入配置',
     'POST /build-profiles/bulk-set-modes': '批量设置部署命令',
     'GET /export-config': '导出配置',
+    'GET /reports': '列出验收报告',
+    'POST /reports': '创建验收报告',
     'GET /cache/status': '查看缓存状态',
     'POST /cache/repair': '修复缓存挂载',
     'GET /cache/export': '导出缓存包',
@@ -838,6 +841,10 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
+    [/^GET \/reports\/(.+)\/raw$/, '查看验收报告内容'],
+    [/^GET \/reports\/(.+)$/, '查看验收报告'],
+    [/^PATCH \/reports\/(.+)$/, '更新验收报告'],
+    [/^DELETE \/reports\/(.+)$/, '删除验收报告'],
     [/^GET \/config-snapshots\/(.+)$/, '查看配置快照详情'],
     [/^POST \/config-snapshots\/(.+)\/rollback$/, '回滚到配置快照'],
     [/^DELETE \/config-snapshots\/(.+)$/, '删除配置快照'],
@@ -3122,6 +3129,9 @@ export function createServer(deps: ServerDeps): express.Express {
   // Cache diagnostics / repair / cross-server migration.
   // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).
   app.use('/api', createCacheRouter({ stateService: deps.stateService, shell: deps.shell }));
+  // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，
+  // 所以 CDS 登录态即可访问，无需额外权限配置。详见 routes/reports.ts。
+  app.use('/api', createReportsRouter({ stateService: deps.stateService }));
   // ConfigSnapshot (导入/破坏性操作前自动备份) + DestructiveOperationLog (紧急撤销).
   // 见 routes/snapshots.ts 头部注释。
   app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));
