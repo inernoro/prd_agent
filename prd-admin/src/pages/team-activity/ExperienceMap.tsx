@@ -5,7 +5,7 @@
  * 配色遵循 ui-ux-pro-max 的 treemap 规范：父级不同色相、子级同色相浅色梯度；暖色只留给告警。
  * 数据源：GET /api/team-activity/experience-map（与 insights 同源 apirequestlogs，target 同口径）。
  */
-import { useMemo, type CSSProperties } from 'react';
+import { useMemo, useRef, type CSSProperties } from 'react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { ExperienceMapGroup, ExperienceMapLeaf, TeamActivityExperienceMapData } from '@/services/contracts/teamActivity';
@@ -21,6 +21,9 @@ const ERR = '#f8717a';
 const SLOW = '#fbbf24';
 // 第一遍「写字」时长：扫描线从左扫到右、把所有块写出来；写完后第二遍才给痛点点睛
 const SWEEP_MS = 1300;
+// 换时间窗时块「生长」补间：几何尺寸/位置平滑过渡到新值，让用户看见谁在长大/缩小
+const MORPH = 'x .8s cubic-bezier(.45,0,.2,1), y .8s cubic-bezier(.45,0,.2,1), width .8s cubic-bezier(.45,0,.2,1), height .8s cubic-bezier(.45,0,.2,1)';
+const MORPH_XY = 'x .8s cubic-bezier(.45,0,.2,1), y .8s cubic-bezier(.45,0,.2,1)';
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Placed<T> = T & { rect: Rect };
@@ -128,6 +131,9 @@ export function ExperienceMap({
     return { cells, groupRects };
   }, [data]);
 
+  // 入场闸门：只在首次渲染地图时为 true（生产单次渲染可靠；dev StrictMode 下可能跳过入场，无害）
+  const enteredRef = useRef(false);
+
   if (loading && !data) {
     return (
       <GlassCard style={{ height: 320 }}>
@@ -140,8 +146,9 @@ export function ExperienceMap({
 
   if (!data || data.groups.length === 0) return null;
 
-  // 数据窗口变化(切换时间范围/刷新)时重放「写字+点睛」动画——绑定真实动作，不是空转特效
-  const drawKey = `${data.windowFrom}-${data.totalRequests}`;
+  // 首屏入场只放一次：第一次拿到地图数据时走「写字 + 点睛」；之后换时间窗只做 morph 生长，不重演入场
+  const isEntrance = !enteredRef.current;
+  enteredRef.current = true;
 
   return (
     <>
@@ -175,25 +182,22 @@ export function ExperienceMap({
         </div>
         <div className="px-2 pb-2">
           <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', height: 'auto', display: 'block' }}>
-            <g key={drawKey}>
             {/* 分区边框 + 标签 */}
             {layout.groupRects.map((g) => (
               <g key={`grp-${g.key}`} style={{ animation: 'voc-grp-in .4s ease both' }}>
                 <rect
-                  x={g.rect.x}
-                  y={g.rect.y}
-                  width={g.rect.w}
-                  height={g.rect.h}
                   rx={4}
                   fill="none"
                   stroke="rgba(255,255,255,0.10)"
                   strokeWidth={1}
+                  style={{ x: `${g.rect.x}px`, y: `${g.rect.y}px`, width: `${g.rect.w}px`, height: `${g.rect.h}px`, transition: MORPH }}
                 />
                 {g.rect.w > 70 && g.rect.h > 30 ? (
                   <text
-                    x={g.rect.x + 5}
-                    y={g.rect.y + 11}
                     style={{
+                      x: `${g.rect.x + 5}px`,
+                      y: `${g.rect.y + 11}px`,
+                      transition: MORPH_XY,
                       fill: 'rgba(236,236,239,0.82)',
                       fontSize: 10.5,
                       fontWeight: 700,
@@ -229,69 +233,61 @@ export function ExperienceMap({
                 cursor: clickable ? 'pointer' : 'default',
                 transformBox: 'fill-box',
                 transformOrigin: 'center',
-                animation: isPain
-                  ? 'voc-cell-in 0.4s cubic-bezier(.34,1.56,.64,1) both, voc-pain-glow 0.55s ease-out both'
-                  : 'voc-cell-in 0.4s cubic-bezier(.34,1.56,.64,1) both',
-                animationDelay: isPain ? `${revealDelay}ms, ${igniteDelay}ms` : `${revealDelay}ms`,
+                // 痛点辉光常驻（换时间窗 morph 时不丢）；入场写字仅首屏放一次
+                filter: isPain ? `drop-shadow(0 0 6px ${fill})` : undefined,
               };
-              if (isPain) (gStyle as unknown as Record<string, string>)['--voc-glow'] = fill;
+              if (isEntrance) {
+                gStyle.animation = 'voc-cell-in 0.4s cubic-bezier(.34,1.56,.64,1) both';
+                gStyle.animationDelay = `${revealDelay}ms`;
+              }
               return (
                 <g key={c.leaf.target} style={gStyle} onClick={clickable ? () => onSelectTarget!(c.leaf.target) : undefined}>
                   <title>{`${c.group.label} · ${c.leaf.label}\n${c.leaf.target}\n${c.leaf.metric}`}</title>
                   <rect
-                    x={r.x + 0.5}
-                    y={r.y + 0.5}
-                    width={Math.max(0, r.w - 1)}
-                    height={Math.max(0, r.h - 1)}
                     rx={2}
-                    fill={fill}
                     stroke="rgba(255,255,255,0.07)"
                     strokeWidth={1}
+                    style={{
+                      x: `${r.x + 0.5}px`,
+                      y: `${r.y + 0.5}px`,
+                      width: `${Math.max(0, r.w - 1)}px`,
+                      height: `${Math.max(0, r.h - 1)}px`,
+                      fill,
+                      transition: `${MORPH}, fill .5s ease`,
+                    }}
                   />
                   {isPain ? (
                     <>
                       {/* 点睛①：一次性扩散环(写完后 ping 一下) */}
                       <rect
-                        x={r.x + 1}
-                        y={r.y + 1}
-                        width={Math.max(0, r.w - 2)}
-                        height={Math.max(0, r.h - 2)}
                         rx={2}
                         fill="none"
                         stroke={fill}
                         strokeWidth={1.6}
                         strokeOpacity={0}
-                        style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: 'voc-ignite 0.7s ease-out', animationDelay: `${igniteDelay}ms` }}
+                        style={{ x: `${r.x + 1}px`, y: `${r.y + 1}px`, width: `${Math.max(0, r.w - 2)}px`, height: `${Math.max(0, r.h - 2)}px`, transformBox: 'fill-box', transformOrigin: 'center', transition: MORPH, ...(isEntrance ? { animation: 'voc-ignite 0.7s ease-out', animationDelay: `${igniteDelay}ms` } : {}) }}
                       />
                       {/* 点睛②：持续脉冲描边(写完后才开始亮) */}
                       <rect
-                        x={r.x + 1}
-                        y={r.y + 1}
-                        width={Math.max(0, r.w - 2)}
-                        height={Math.max(0, r.h - 2)}
                         rx={2}
                         fill="none"
                         stroke="#fff"
                         strokeWidth={1.4}
                         strokeOpacity={0}
-                        style={{ animation: `voc-cell-glow ${2 + (c.idxInGroup % 5) * 0.2}s ease-in-out infinite`, animationDelay: `${igniteDelay}ms` }}
+                        style={{ x: `${r.x + 1}px`, y: `${r.y + 1}px`, width: `${Math.max(0, r.w - 2)}px`, height: `${Math.max(0, r.h - 2)}px`, animation: `voc-cell-glow ${2 + (c.idxInGroup % 5) * 0.2}s ease-in-out infinite`, animationDelay: isEntrance ? `${igniteDelay}ms` : '0ms', transition: MORPH }}
                       />
                     </>
                   ) : null}
                   {showLabel ? (
                     <text
-                      x={r.x + 5}
-                      y={r.y + 14}
-                      style={{ fill: '#fff', fontSize: 10, fontWeight: 600, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2.5 }}
+                      style={{ x: `${r.x + 5}px`, y: `${r.y + 14}px`, transition: MORPH_XY, fill: '#fff', fontSize: 10, fontWeight: 600, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2.5 }}
                     >
                       {c.leaf.label}
                     </text>
                   ) : null}
                   {isPain && showLabel && r.h > 32 ? (
                     <text
-                      x={r.x + 5}
-                      y={r.y + 26}
-                      style={{ fill: 'rgba(255,255,255,0.9)', fontSize: 9, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2 }}
+                      style={{ x: `${r.x + 5}px`, y: `${r.y + 26}px`, transition: MORPH_XY, fill: 'rgba(255,255,255,0.9)', fontSize: 9, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: 2 }}
                     >
                       {c.leaf.status === 'error' ? '报错' : '慢'}
                     </text>
@@ -299,22 +295,25 @@ export function ExperienceMap({
                 </g>
               );
             })}
-            {/* 扫描笔：和块的写出严格同步(块随笔尖经过而出现)，一次画完即淡出——不空转，绑定真实的「扫描这批数据」 */}
-            <defs>
-              <linearGradient id="voc-pen" x1="0" x2="1" y1="0" y2="0">
-                <stop offset="0" stopColor="#2dd4bf" stopOpacity="0" />
-                <stop offset="0.7" stopColor="#2dd4bf" stopOpacity="0.05" />
-                <stop offset="0.96" stopColor="#5eead4" stopOpacity="0.22" />
-                <stop offset="1" stopColor="#a5f3eb" stopOpacity="0.7" />
-              </linearGradient>
-            </defs>
-            <g style={{ pointerEvents: 'none' }}>
-              <rect x={-44} y={0} width={44} height={VH} fill="url(#voc-pen)">
-                <animate attributeName="x" from={-44} to={VW} dur="1.3s" repeatCount="1" fill="freeze" />
-                <animate attributeName="opacity" from="1" to="0" begin="1.2s" dur="0.35s" fill="freeze" />
-              </rect>
-            </g>
-            </g>
+            {/* 扫描笔：仅首屏入场画一次(块随笔尖经过而出现)，一次画完即淡出——不空转；换时间窗走 morph 不再扫 */}
+            {isEntrance ? (
+              <>
+                <defs>
+                  <linearGradient id="voc-pen" x1="0" x2="1" y1="0" y2="0">
+                    <stop offset="0" stopColor="#2dd4bf" stopOpacity="0" />
+                    <stop offset="0.7" stopColor="#2dd4bf" stopOpacity="0.05" />
+                    <stop offset="0.96" stopColor="#5eead4" stopOpacity="0.22" />
+                    <stop offset="1" stopColor="#a5f3eb" stopOpacity="0.7" />
+                  </linearGradient>
+                </defs>
+                <g style={{ pointerEvents: 'none' }}>
+                  <rect x={-44} y={0} width={44} height={VH} fill="url(#voc-pen)">
+                    <animate attributeName="x" from={-44} to={VW} dur="1.3s" repeatCount="1" fill="freeze" />
+                    <animate attributeName="opacity" from="1" to="0" begin="1.2s" dur="0.35s" fill="freeze" />
+                  </rect>
+                </g>
+              </>
+            ) : null}
           </svg>
         </div>
       </GlassCard>
@@ -323,7 +322,6 @@ export function ExperienceMap({
         @keyframes voc-cell-in { from { opacity: 0; transform: scale(.45); } to { opacity: 1; transform: scale(1); } }
         @keyframes voc-grp-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes voc-ping { 75%,100% { transform: scale(2.2); opacity: 0; } }
-        @keyframes voc-pain-glow { from { filter: drop-shadow(0 0 0 transparent); } to { filter: drop-shadow(0 0 7px var(--voc-glow, #f8717a)); } }
         @keyframes voc-ignite { 0% { stroke-opacity: .9; transform: scale(1); } 100% { stroke-opacity: 0; transform: scale(1.18); } }
       `}</style>
     </>
