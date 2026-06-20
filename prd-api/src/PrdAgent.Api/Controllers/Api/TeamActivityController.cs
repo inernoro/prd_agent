@@ -603,12 +603,140 @@ public class TeamActivityController : ControllerBase
         return BuildExperienceMapPayload(byModule, totalRequests, fromUtc, endUtc);
     }
 
-    /// <summary>规则式信号聚类（供 insights 查询与 AI 简报共用）</summary>
-    private async Task<(List<Insight> Insights, int BehaviorEventCount)> ComputeInsightsAsync(DateTime fromUtc, DateTime endUtc)
-    {
-        var insights = new List<Insight>();
+    /// <summary>BsonValue → string，BsonNull/缺失回退空串</summary>
+    private static string BsonToStr(BsonValue v) => v is null || v.IsBsonNull ? string.Empty : v.AsString;
 
-        // ── 信号 A：报错热点（apirequestlogs，排除鉴权噪音 401）──
+    /// <summary>路径归一化的聚合阶段（$split → $map 折叠 :id → $reduce 拼回 _np），供 insights 报错/慢聚合复用</summary>
+    private static BsonDocument[] PathNormalizeStages() => new[]
+    {
+        new BsonDocument("$set", new BsonDocument("_segs", new BsonDocument("$split", new BsonArray { "$Path", "/" }))),
+        new BsonDocument("$set", new BsonDocument("_norm", new BsonDocument("$map", new BsonDocument
+        {
+            { "input", "$_segs" },
+            { "as", "s" },
+            { "in", new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$or", new BsonArray
+                    {
+                        new BsonDocument("$regexMatch", new BsonDocument { { "input", "$$s" }, { "regex", "^[0-9]+$" } }),
+                        new BsonDocument("$regexMatch", new BsonDocument { { "input", "$$s" }, { "regex", "^[0-9a-fA-F-]{16,}$" } }),
+                    }),
+                    ":id",
+                    "$$s",
+                }) },
+        }))),
+        new BsonDocument("$set", new BsonDocument("_np", new BsonDocument("$reduce", new BsonDocument
+        {
+            { "input", "$_norm" },
+            { "initialValue", "" },
+            { "in", new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$eq", new BsonArray { "$$this", "" }),
+                    "$$value",
+                    new BsonDocument("$concat", new BsonArray { "$$value", "/", "$$this" }),
+                }) },
+        }))),
+    };
+
+    private async Task<List<Insight>> ErrorInsightsAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        try { return await ErrorInsightsAggregateAsync(fromUtc, endUtc); }
+        catch { return await ErrorInsightsLegacyAsync(fromUtc, endUtc); }
+    }
+
+    /// <summary>报错热点聚合（服务端归一化 + $facet：ep 算分组与去重人数、codes 算错误码计数）</summary>
+    private async Task<List<Insight>> ErrorInsightsAggregateAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var pipeline = new List<BsonDocument>
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(fromUtc) }, { "$lte", new BsonDateTime(endUtc) } } },
+                { "Direction", new BsonDocument("$ne", "outbound") },
+                { "StatusCode", new BsonDocument { { "$gte", 400 }, { "$ne", 401 } } },
+                { "Path", new BsonDocument("$regex", "^/api") },
+            }),
+        };
+        pipeline.AddRange(PathNormalizeStages());
+        pipeline.Add(new BsonDocument("$facet", new BsonDocument
+        {
+            { "ep", new BsonArray
+                {
+                    new BsonDocument("$group", new BsonDocument
+                    {
+                        { "_id", new BsonDocument { { "p", "$_np" }, { "m", "$Method" }, { "s", "$StatusCode" } } },
+                        { "count", new BsonDocument("$sum", 1) },
+                        { "users", new BsonDocument("$addToSet", "$UserId") },
+                    }),
+                    new BsonDocument("$match", new BsonDocument("count", new BsonDocument("$gte", 5))),
+                    new BsonDocument("$set", new BsonDocument("userCount", new BsonDocument("$size", "$users"))),
+                    new BsonDocument("$project", new BsonDocument("users", 0)),
+                    new BsonDocument("$sort", new BsonDocument("count", -1)),
+                    new BsonDocument("$limit", 1000),
+                } },
+            { "codes", new BsonArray
+                {
+                    new BsonDocument("$group", new BsonDocument
+                    {
+                        { "_id", new BsonDocument { { "p", "$_np" }, { "m", "$Method" }, { "s", "$StatusCode" }, { "ec", "$ErrorCode" } } },
+                        { "n", new BsonDocument("$sum", 1) },
+                    }),
+                } },
+        }));
+
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true });
+        var docs = await cursor.ToListAsync();
+        var result = new List<Insight>();
+        if (docs.Count == 0) return result;
+        var root = docs[0];
+
+        // 各 (path,method,status) 的最常见错误码
+        var topCode = new Dictionary<string, (string Code, int N)>();
+        foreach (var cv in root["codes"].AsBsonArray)
+        {
+            var c = cv.AsBsonDocument;
+            var cid = c["_id"].AsBsonDocument;
+            var ec = cid.Contains("ec") && !cid["ec"].IsBsonNull ? cid["ec"].AsString : string.Empty;
+            if (string.IsNullOrEmpty(ec)) continue;
+            var key = $"{cid.GetValue("p", "").AsString}|{BsonToStr(cid.GetValue("m", ""))}|{cid.GetValue("s", 0).ToInt32()}";
+            var n = c.GetValue("n", 0).ToInt32();
+            if (!topCode.TryGetValue(key, out var cur) || n > cur.N) topCode[key] = (ec, n);
+        }
+
+        foreach (var ev in root["ep"].AsBsonArray)
+        {
+            var e = ev.AsBsonDocument;
+            var eid = e["_id"].AsBsonDocument;
+            var p = eid.GetValue("p", "").AsString;
+            if (p.StartsWith("/api/behavior")) continue; // 排除行为采集端点（与旧逻辑一致）
+            var m = BsonToStr(eid.GetValue("m", ""));
+            var s = eid.GetValue("s", 0).ToInt32();
+            var count = e.GetValue("count", 0).ToInt32();
+            var users = e.GetValue("userCount", 0).ToInt32();
+            topCode.TryGetValue($"{p}|{m}|{s}", out var top);
+            result.Add(new Insight(
+                Kind: "api-error",
+                KindLabel: "频繁报错",
+                Target: $"{m} {p}",
+                UserCount: users,
+                EventCount: count,
+                Metric: $"HTTP {s} × {count}",
+                Suggestion: s >= 500
+                    ? "服务端错误高频出现，优先修复；用户遇到 5xx 通常会直接放弃当前操作"
+                    : "该接口在真实使用中高频失败，排查最常见错误码的触发条件；若属参数/状态校验，应把校验前移到前端并给出可行动的提示文案",
+                Evidence: new List<string>
+                {
+                    $"{count} 次失败，{users} 人遇到",
+                    top.Code != null ? $"最常见错误码 {top.Code}（{top.N} 次）" : "无业务错误码（多为框架层拒绝）",
+                },
+                Severity: count * (s >= 500 ? 3 : 1) + users * 2));
+        }
+        return result;
+    }
+
+    /// <summary>报错热点兜底：拉取 + C# 分组（聚合不可用时使用，逻辑与原实现一致）</summary>
+    private async Task<List<Insight>> ErrorInsightsLegacyAsync(DateTime fromUtc, DateTime endUtc)
+    {
         var rb = Builders<ApiRequestLog>.Filter;
         var errLogs = await _db.ApiRequestLogs.Find(rb.And(
                 rb.Gte(x => x.StartedAt, fromUtc),
@@ -621,6 +749,7 @@ public class TeamActivityController : ControllerBase
             .Project(x => new { x.Path, x.Method, x.StatusCode, x.ErrorCode, x.UserId })
             .ToListAsync();
 
+        var result = new List<Insight>();
         foreach (var g in errLogs
                      .Where(x => x.Path != null && x.Path.StartsWith("/api") && !x.Path.StartsWith("/api/behavior"))
                      .GroupBy(x => (Path: NormalizePath(x.Path!), x.Method, x.StatusCode))
@@ -628,9 +757,9 @@ public class TeamActivityController : ControllerBase
         {
             var count = g.Count();
             var users = g.Select(x => x.UserId).Distinct().Count();
-            var topCode = g.Where(x => !string.IsNullOrEmpty(x.ErrorCode))
+            var top = g.Where(x => !string.IsNullOrEmpty(x.ErrorCode))
                 .GroupBy(x => x.ErrorCode!).OrderByDescending(c => c.Count()).FirstOrDefault();
-            insights.Add(new Insight(
+            result.Add(new Insight(
                 Kind: "api-error",
                 KindLabel: "频繁报错",
                 Target: $"{g.Key.Method} {g.Key.Path}",
@@ -643,12 +772,81 @@ public class TeamActivityController : ControllerBase
                 Evidence: new List<string>
                 {
                     $"{count} 次失败，{users} 人遇到",
-                    topCode != null ? $"最常见错误码 {topCode.Key}（{topCode.Count()} 次）" : "无业务错误码（多为框架层拒绝）",
+                    top != null ? $"最常见错误码 {top.Key}（{top.Count()} 次）" : "无业务错误码（多为框架层拒绝）",
                 },
                 Severity: count * (g.Key.StatusCode >= 500 ? 3 : 1) + users * 2));
         }
+        return result;
+    }
 
-        // ── 信号 B：等待过久（apirequestlogs 中 ≥3s 的非流式慢请求）──
+    private async Task<List<Insight>> SlowInsightsAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        try { return await SlowInsightsAggregateAsync(fromUtc, endUtc); }
+        catch { return await SlowInsightsLegacyAsync(fromUtc, endUtc); }
+    }
+
+    /// <summary>等待过久聚合（服务端归一化 + 按 path,method 分组，userCount/durSum 服务端算好只回传小桶）</summary>
+    private async Task<List<Insight>> SlowInsightsAggregateAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var pipeline = new List<BsonDocument>
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(fromUtc) }, { "$lte", new BsonDateTime(endUtc) } } },
+                { "Direction", new BsonDocument("$ne", "outbound") },
+                { "IsEventStream", false },
+                { "DurationMs", new BsonDocument("$gte", 3000) },
+                { "Path", new BsonDocument("$regex", "^/api") },
+            }),
+        };
+        pipeline.AddRange(PathNormalizeStages());
+        pipeline.Add(new BsonDocument("$group", new BsonDocument
+        {
+            { "_id", new BsonDocument { { "p", "$_np" }, { "m", "$Method" } } },
+            { "count", new BsonDocument("$sum", 1) },
+            { "users", new BsonDocument("$addToSet", "$UserId") },
+            { "durSum", new BsonDocument("$sum", "$DurationMs") },
+        }));
+        pipeline.Add(new BsonDocument("$match", new BsonDocument("count", new BsonDocument("$gte", 5))));
+        pipeline.Add(new BsonDocument("$set", new BsonDocument("userCount", new BsonDocument("$size", "$users"))));
+        pipeline.Add(new BsonDocument("$project", new BsonDocument("users", 0)));
+        pipeline.Add(new BsonDocument("$sort", new BsonDocument("count", -1)));
+        pipeline.Add(new BsonDocument("$limit", 1000));
+
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true });
+        var docs = await cursor.ToListAsync();
+        var result = new List<Insight>();
+        foreach (var b in docs)
+        {
+            var id = b["_id"].AsBsonDocument;
+            var p = id.GetValue("p", "").AsString;
+            var m = BsonToStr(id.GetValue("m", ""));
+            var count = b.GetValue("count", 0).ToInt32();
+            var users = b.GetValue("userCount", 0).ToInt32();
+            var durSum = b.GetValue("durSum", 0).ToDouble();
+            var avgSec = count > 0 ? durSum / count / 1000.0 : 0;
+            result.Add(new Insight(
+                Kind: "slow-endpoint",
+                KindLabel: "等待过久",
+                Target: $"{m} {p}",
+                UserCount: users,
+                EventCount: count,
+                Metric: $"慢请求均值 {avgSec:F1}s",
+                Suggestion: "等待超过 3 秒且无流式反馈即为体验缺陷：优先做流式/分页/缓存/异步化，至少给阶段性进度提示",
+                Evidence: new List<string>
+                {
+                    $"{count} 次 ≥3s 的请求，{users} 人等待过",
+                    $"慢请求平均耗时 {avgSec:F1}s",
+                },
+                Severity: count + avgSec * 5 + users * 2));
+        }
+        return result;
+    }
+
+    /// <summary>等待过久兜底：拉取 + C# 分组（聚合不可用时使用，逻辑与原实现一致）</summary>
+    private async Task<List<Insight>> SlowInsightsLegacyAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var rb = Builders<ApiRequestLog>.Filter;
         var slowLogs = await _db.ApiRequestLogs.Find(rb.And(
                 rb.Gte(x => x.StartedAt, fromUtc),
                 rb.Lte(x => x.StartedAt, endUtc),
@@ -660,6 +858,7 @@ public class TeamActivityController : ControllerBase
             .Project(x => new { x.Path, x.Method, x.DurationMs, x.UserId })
             .ToListAsync();
 
+        var result = new List<Insight>();
         foreach (var g in slowLogs
                      .Where(x => x.Path != null && x.Path.StartsWith("/api"))
                      .GroupBy(x => (Path: NormalizePath(x.Path!), x.Method))
@@ -668,7 +867,7 @@ public class TeamActivityController : ControllerBase
             var count = g.Count();
             var users = g.Select(x => x.UserId).Distinct().Count();
             var avgSec = g.Average(x => (double)(x.DurationMs ?? 0)) / 1000.0;
-            insights.Add(new Insight(
+            result.Add(new Insight(
                 Kind: "slow-endpoint",
                 KindLabel: "等待过久",
                 Target: $"{g.Key.Method} {g.Key.Path}",
@@ -683,6 +882,17 @@ public class TeamActivityController : ControllerBase
                 },
                 Severity: count + avgSec * 5 + users * 2));
         }
+        return result;
+    }
+
+    /// <summary>规则式信号聚类（供 insights 查询与 AI 简报共用）</summary>
+    private async Task<(List<Insight> Insights, int BehaviorEventCount)> ComputeInsightsAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var insights = new List<Insight>();
+
+        // ── 信号 A/B：报错热点 + 等待过久（apirequestlogs）。分组下推到 MongoDB 聚合，失败回退 C# 扫描 ──
+        insights.AddRange(await ErrorInsightsAsync(fromUtc, endUtc));
+        insights.AddRange(await SlowInsightsAsync(fromUtc, endUtc));
 
         // ── 行为事件（采集自上线起）──
         var bb = Builders<BehaviorEvent>.Filter;

@@ -8,3 +8,4 @@
 | feat | prd-admin | 热力图换时间窗时块「生长」morph：几何尺寸/位置 CSS 过渡平滑补间(谁访问多谁长大可见)；入场写字+点睛用 isEntrance 闸门仅首屏放一次，之后只 morph 不重演 |
 | fix | prd-admin | 修复热力图左上角文字糊块：CSS x/y 几何属性对 <text> 无效导致所有标签掉回原点(0,0)堆叠，文字位置改回属性(rect 尺寸仍走 style 过渡做生长) |
 | perf | prd-api | 体验全景热力图端点性能优化：分组下推到 MongoDB 聚合(服务端归一化路径+$group，只回传分组桶，不再拉最多6万条文档)+ 30s TTL 缓存(来回切档秒回)+ 聚合失败回退旧路径兜底 |
+| perf | prd-api | insights 端点报错/慢两段也下推到 MongoDB 聚合(报错用 $facet 同时算分组去重人数与错误码计数、慢用单组，userCount/durSum 服务端算好只回传≤千桶，不再各扫2万文档)，聚合失败回退 C# 扫描兜底；行为事件量小保持原样 |
