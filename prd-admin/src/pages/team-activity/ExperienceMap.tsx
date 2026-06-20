@@ -5,7 +5,7 @@
  * 配色遵循 ui-ux-pro-max 的 treemap 规范：父级不同色相、子级同色相浅色梯度；暖色只留给告警。
  * 数据源：GET /api/team-activity/experience-map（与 insights 同源 apirequestlogs，target 同口径）。
  */
-import { useMemo, useRef, type CSSProperties } from 'react';
+import { useMemo, useRef, useState, type CSSProperties } from 'react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { ExperienceMapGroup, ExperienceMapLeaf, TeamActivityExperienceMapData } from '@/services/contracts/teamActivity';
@@ -114,9 +114,24 @@ export function ExperienceMap({
   loading: boolean;
   onSelectTarget?: (target: string, fallback: { label: string; metric: string }) => void;
 }) {
+  // 两个范围模式：all=全域(全部端点按访问量) / pain=痛点(只看病灶，按问题严重度放大)
+  const [mode, setMode] = useState<'all' | 'pain'>('all');
   const layout = useMemo(() => {
     if (!data || data.groups.length === 0) return { cells: [] as LeafCell[], groupRects: [] as Placed<ExperienceMapGroup>[] };
-    const groupRects = squarify(data.groups, { x: PAD, y: PAD, w: VW - PAD * 2, h: VH - PAD * 2 });
+    let srcGroups = data.groups;
+    if (mode === 'pain') {
+      // 痛点模式：只留病灶端点，面积改用「问题严重度」(访问量 × 报错/慢率 ≈ 坏请求数)，让病灶占满画布
+      srcGroups = data.groups
+        .map((g) => {
+          const leaves = g.leaves
+            .filter((l) => l.status === 'error' || l.status === 'slow')
+            .map((l) => ({ ...l, value: Math.max(1, Math.round(l.value * Math.max(l.errorRate, l.slowRate))) }));
+          return { ...g, leaves, value: leaves.reduce((s, l) => s + l.value, 0) };
+        })
+        .filter((g) => g.leaves.length > 0);
+    }
+    if (srcGroups.length === 0) return { cells: [] as LeafCell[], groupRects: [] as Placed<ExperienceMapGroup>[] };
+    const groupRects = squarify(srcGroups, { x: PAD, y: PAD, w: VW - PAD * 2, h: VH - PAD * 2 });
     const cells: LeafCell[] = [];
     groupRects.forEach((g, gi) => {
       const hue = GROUP_HUES[gi % GROUP_HUES.length];
@@ -128,7 +143,7 @@ export function ExperienceMap({
       });
     });
     return { cells, groupRects };
-  }, [data]);
+  }, [data, mode]);
 
   // 入场闸门：只在首次渲染地图时为 true（生产单次渲染可靠；dev StrictMode 下可能跳过入场，无害）
   const enteredRef = useRef(false);
@@ -165,9 +180,28 @@ export function ExperienceMap({
               </span>
               实时扫描中
             </span>
-            <span className="text-[11px] text-white/35 font-normal">每块=端点 · 面积=访问量 · 颜色=健康</span>
+            <span className="text-[11px] text-white/35 font-normal">
+              {mode === 'all' ? '每块=端点 · 面积=访问量 · 颜色=健康' : '只看病灶 · 面积=问题严重度 · 点击下钻'}
+            </span>
           </span>
           <div className="flex items-center gap-3.5 text-[11px] text-white/55">
+            <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+              <button
+                type="button"
+                onClick={() => setMode('all')}
+                className={`px-2.5 py-1 rounded-md text-[11px] transition-colors cursor-pointer ${mode === 'all' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
+              >
+                全域
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('pain')}
+                className={`px-2.5 py-1 rounded-md text-[11px] transition-colors cursor-pointer ${mode === 'pain' ? 'bg-rose-500/15 text-rose-200' : 'text-white/45 hover:text-white/75'}`}
+              >
+                痛点
+              </button>
+            </div>
+            <span className="w-px h-3.5 bg-white/10" />
             <span className="inline-flex items-center gap-1.5">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: ERR }} />报错
             </span>
@@ -180,6 +214,13 @@ export function ExperienceMap({
           </div>
         </div>
         <div className="px-2 pb-2">
+          {layout.groupRects.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 text-center" style={{ height: 300 }}>
+              <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
+              <span className="text-sm text-emerald-300/85">当前范围内没有痛点</span>
+              <span className="text-[12px] text-white/40">系统体验健康，切回「全域」看全部端点</span>
+            </div>
+          ) : (
           <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', height: 'auto', display: 'block' }}>
             {/* 分区边框 + 标签 */}
             {layout.groupRects.map((g) => (
@@ -317,6 +358,7 @@ export function ExperienceMap({
               </>
             ) : null}
           </svg>
+          )}
         </div>
       </GlassCard>
       <style>{`
