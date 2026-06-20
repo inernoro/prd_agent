@@ -55,6 +55,14 @@ def curl_json(headers, method, url, payload, retries=5):
             pass
 
 
+def data_or_raise(resp, context):
+    if not isinstance(resp, dict) or not resp.get("success", True):
+        raise RuntimeError(f"{context} 失败：{json.dumps(resp, ensure_ascii=False)[:500]}")
+    if "data" not in resp or resp.get("data") is None:
+        raise RuntimeError(f"{context} 响应缺少 data：{json.dumps(resp, ensure_ascii=False)[:500]}")
+    return resp["data"]
+
+
 def preview_from_cmd(cmd):
     """cdscli 可能在超时时往 stdout 打 [warn] 行 → 取最后一非空行作为 URL。"""
     out = subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout
@@ -151,13 +159,20 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     api = cfg["auth"]["api"]
     # 简便方式（推荐）：设 MAP_DOC_STORE_KEY=sk-ak-...（带 document-store:write scope 的最小权限长效 Key），
     # 走 Authorization: Bearer，无需 impersonate、无需 AI 超级密钥。
+    # 正式环境临时兜底可设 MAP_DOC_STORE_JWT=ey...（登录态 Bearer）。
     # 未设时回退 AI 超级密钥 + X-AI-Impersonate（向后兼容）。
     agent_key_env = api.get("agentKeyEnv", "MAP_DOC_STORE_KEY")
     agent_key = os.environ.get(agent_key_env, "").strip()
+    jwt_env = api.get("jwtEnv", "MAP_DOC_STORE_JWT")
+    jwt = os.environ.get(jwt_env, "").strip()
     if agent_key:
         H = ["-H", f"Authorization: Bearer {agent_key}"]
         imp = os.environ.get(api.get("impersonateEnv", ""), "") or "(scoped-key-owner)"
         print(f"  鉴权：AgentApiKey scope（{agent_key_env}，最小权限 document-store:write）")
+    elif jwt:
+        H = ["-H", f"Authorization: Bearer {jwt}"]
+        imp = os.environ.get(api.get("impersonateEnv", ""), "") or "(jwt-user)"
+        print(f"  鉴权：登录态 Bearer（{jwt_env}，正式环境临时兜底）")
     else:
         key = os.environ[api["keyEnv"]]
         imp = os.environ[api["impersonateEnv"]]
@@ -169,7 +184,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     store_name = cfg["report"]["storeName"]
     want_public = bool(cfg["report"].get("isPublic", False))
     want_template = cfg["report"].get("templateKey")
-    stores = curl(H + [f"{base}/stores?pageSize=100"])["data"]["items"]
+    stores = data_or_raise(curl(H + [f"{base}/stores?pageSize=100"]), "列出知识库")["items"]
     match = [s for s in stores if s["name"] == store_name]
     if match:
         rid = match[0]["id"]
@@ -186,13 +201,13 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
             curl(HJ + ["-X", "PUT", "-d", json.dumps({"templateKey": want_template}), f"{base}/stores/{rid}"])
             print(f"  复用库缺 templateKey，已补设为 {want_template}（让最新报告排最前）")
     else:
-        rid = curl(HJ + ["-X", "POST", "-d", json.dumps(
+        rid = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps(
             {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
              "isPublic": want_public,
              # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance-kb.md §5.B）。
              # 机器归档缺必填 metadata/正文 section 会被后端 422 拒收。
              "templateKey": want_template}
-        ), f"{base}/stores"])["data"]["id"]
+        ), f"{base}/stores"]), "创建知识库")["id"]
     print(f"  报告库 id={rid}")
 
     # 一次性知识库传输协议：
@@ -232,12 +247,12 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     # 配合库的 created-desc 排序，新报告永远在最顶。曾经按模块自动建子文件夹，
     # 反而把最新报告藏进文件夹、与"最新最前"打架，已撤销。
     # （原始诉求 Q5 问的是"验收报告是否独立成库"，是库级隔离，不是库内再分子文件夹。）
-    eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
+    eid = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
         "sourceType": "reference", "contentType": "text/markdown",
         "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
         "metadata": entry_meta,
-    }), f"{base}/stores/{rid}/entries"])["data"]["id"]
+    }), f"{base}/stores/{rid}/entries"]), "创建知识库条目")["id"]
     print(f"  报告条目 id={eid} title={title} tags={tags or []}")
     # 防「断头报告」：标题建了但 PUT 524 丢了正文 → 留下能看到标题、点开却空白的空壳条目。
     # PUT 本身可能 524 抛错（curl 重试耗尽），也可能返回了但正文没落库 → 两种都得兜住：
@@ -278,8 +293,8 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     owner_view = "登录后 知识库 → 「" + store_name + "」库 → 本篇（授权路径,正文+截图完整渲染,本人验收用）"
     share_url = None
     try:
-        tok = curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
-                         f"{base}/stores/{rid}/share-links"])["data"]["token"]
+        tok = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
+                         f"{base}/stores/{rid}/share-links"]), "创建分享链接")["token"]
         # 正确路由(实测 2026-05-27)：App.tsx 是 /s/lib/:token，旧 /library/share/ 会落到首页。
         # 带 ?entry={eid}(2026-05-28)：让分享对象一打开就高亮本次归档的新报告，不用在目录里翻找。
         # LibraryShareViewPage 读 useSearchParams('entry')，优先级最高(高于 view.entryId / primaryEntryId / 最新创建)。
