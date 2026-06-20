@@ -411,6 +411,9 @@ export default function VisualStoryboardPage() {
         if (timedOut) break;
       }
       if (bailIfStale()) return; // 超时落地前若已被新一轮作废，取消后端 run 不回填旧板
+      // 本地超时后取消后端 run：否则仍 Queued 的任务(排在多个长任务后)会被 worker 在更晚提交到 OpenRouter、
+      // 在 UI 已告知用户失败之后继续烧视频额度（Codex review）。
+      void cancelVisualVideoRunReal(runId).catch(() => {});
       const overdueMsg = processingDeadline !== null ? '生成超时，请重试' : '排队超时（前面任务过多），请稍后重试';
       setScenes((prev) => prev.map((x) => (x.index === sceneIndex ? { ...x, vidStatus: 'error', vidError: overdueMsg } : x)));
     } finally {

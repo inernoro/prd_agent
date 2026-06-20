@@ -36,6 +36,9 @@
   - 未处理原因：需按模型能力派生 modalities（image-only → `["image"]`），但 `OpenAIImageClient` 当前拿不到「该模型是否 image-only」的能力信息；与上一条 image_config 同属「OpenRouter 出图请求体需按模型能力定制」，且后端处于部署冻结无法验证。
   - 待办：引入模型能力标记（image-only / image+text）→ 据此派生 modalities 与 image_config → CDS 部署恢复后用不同模型复验。
 
+- **生图模型选择按 platformId 消歧未生效**（Codex P2，2026-06-20，暂缓）：分镜关键帧选模型时前端已存 `modelId`+`platformId` 并下发，run 也存了 PlatformId、worker 一路透传到 `OpenAIImageClient.GenerateAsync`，但 `GenerateAsync` 解析处（`ResolveModelAsync(appCallerCode, "generation", modelName, ct)`，约 L165）只按 modelName 解析、忽略 platformId。若两个 text2img 池在不同平台暴露同一 modelId，`ModelResolver` 会命中第一个匹配池 → 下拉里选的「另一个平台同名模型」不被尊重，关键帧可能跑到错误 provider/成本档。
+  - 暂缓原因：根治需给核心解析链 `IModelResolver.ResolveAsync` / `ILlmGateway.ResolveModelAsync` / `ModelResolver` 匹配逻辑加 `expectedPlatformId` 形参并在匹配时优先选该平台——这是全系统所有 LLM 调用都过的中枢路径，blast-radius 大，且后端处于部署冻结无法验证。贸然改中枢解析器风险高于该边缘 config 的收益。
+  - 待办（任一）：(a) 给 ResolveAsync 链加 expectedPlatformId 形参，GenerateAsync 把入参 platformId 传入解析；或 (b) 前端改送 pool code/configModelId，worker 走 ConfigModelId 路径锁定具体池。CDS 部署恢复后多平台同名模型复验。
 - **离开页面/重新生成时已取消在途「动起来」视频 run**（Codex P2，2026-06-19，已修）：animateScene 提交 createVisualVideoRunReal 后若 genRef 已变（新板/卸载），调 cancelVisualVideoRunReal 取消刚创建的 visual-agent 视频 run（后端 VisualAgentVideoController 已有 CancelRun 端点，按 owner+appKey 鉴权），避免 worker 继续烧视频额度。属用户主动替换工作、非被动断开，不违反 server-authority。
   - 后端已闭环（2026-06-19，Codex P2）：VideoGenRunWorker.ProcessDirectVideoGenAsync 在领取后与提交 OpenRouter 之前两道 CancelRequested 闸（claim 仅过滤 Status==Queued，不看取消标志），命中即置终态不提交，杜绝「前端已取消但 worker 仍提交烧额度」的窗口。
   - 仍未覆盖：关键帧 ImageGenRun（下条）——其走 SSE、无同步返回的 runId，取消成本更高，留待分镜持久化重构。
