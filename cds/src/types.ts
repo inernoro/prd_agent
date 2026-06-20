@@ -595,6 +595,23 @@ export interface BranchEntry {
    *   - 'system'    其他系统侧（垃圾回收 / janitor 等）
    */
   lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
+  /**
+   * 2026-06-20：自动发布（auto-publish）最近一次成功把分支从源码/热加载切到
+   * 发布版并重建的 ISO 时间戳。与 lastStopReason 是兄弟字段，但语义不同——
+   * 这是"成功切到发布版"而非"被停止"，redeploy 成功路径**不能**钉 lastStoppedAt
+   * （否则 UI 会在一个正在运行的分支上误报"已停止"）。
+   *
+   * 病根（任务 3）：原来 auto-publish 的 release 重建只写一条 activity log，
+   * 分支卡片上没有任何持久态标记说明"我现在是被自动发布过的 release 版"，
+   * 用户看到容器重建一次却不知道为什么——把"发布版 vs 热加载"切换变得隐形。
+   * 本字段让这次模式跃迁在分支态里可观测。
+   */
+  lastPublishAt?: string;
+  /**
+   * 自动发布的人类可读原因短语，UI 直接展示。例如：
+   *   - "项目设置：启动满 30 分钟，已自动切到发布版并重新部署（web=prod）"
+   */
+  lastPublishReason?: string;
 }
 
 /** State of a single service (one build profile instance) within a branch */

@@ -7,6 +7,7 @@ import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
+import { buildCacheMounts } from './cache-catalog.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
 import { isGenericPreviewProjectSlug, repoNameFromGitRef } from './preview-slug.js';
 import {
@@ -359,10 +360,6 @@ export class StateService {
    */
   private migrateCacheMounts(): void {
     const CACHE_BASE = this.getCacheBase();
-    const IMAGE_CACHE_MAP: Record<string, Array<{ hostPath: string; containerPath: string }>> = {
-      'dotnet': [{ hostPath: `${CACHE_BASE}/nuget`, containerPath: '/root/.nuget/packages' }],
-      'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/pnpm/store' }],
-    };
 
     let changed = false;
     for (const profile of this.state.buildProfiles) {
@@ -380,15 +377,15 @@ export class StateService {
         }
       }
 
+      // SSOT: services/cache-catalog.ts。按 dockerImage 推断应挂载的依赖缓存目录，
+      // 缺哪类补哪类（合并语义，不覆盖用户自定义挂载）。2026-06-20 起覆盖
+      // java(.m2+.gradle)/go/rust/python——固化 Java 依赖缓存避免重复冷下载（任务 3）。
       const image = profile.dockerImage || '';
-      for (const [key, mounts] of Object.entries(IMAGE_CACHE_MAP)) {
-        if (!image.includes(key)) continue;
-        for (const mount of mounts) {
-          const alreadyMounted = profile.cacheMounts.some(cm => cm.containerPath === mount.containerPath);
-          if (!alreadyMounted) {
-            profile.cacheMounts.push({ ...mount });
-            changed = true;
-          }
+      for (const mount of buildCacheMounts(image, CACHE_BASE)) {
+        const alreadyMounted = profile.cacheMounts.some(cm => cm.containerPath === mount.containerPath);
+        if (!alreadyMounted) {
+          profile.cacheMounts.push({ ...mount });
+          changed = true;
         }
       }
     }
