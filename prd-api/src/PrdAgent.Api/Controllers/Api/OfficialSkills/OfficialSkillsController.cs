@@ -21,6 +21,16 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 [Route("api/official-skills")]
 public class OfficialSkillsController : ControllerBase
 {
+    private static readonly IReadOnlyDictionary<string, string[]> BundledSkillDependencies =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["create-visual-test-to-kb"] =
+            [
+                "acceptance-test-design",
+                "acceptance-scenario-orchestrator",
+            ],
+        };
+
     private readonly IConfiguration _config;
     private readonly ILogger<OfficialSkillsController> _logger;
 
@@ -72,18 +82,39 @@ public class OfficialSkillsController : ControllerBase
         if (entry == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"未找到官方技能: {skillKey}"));
 
+        var entries = new List<OfficialSkillCatalog.SkillEntry> { entry };
+        if (BundledSkillDependencies.TryGetValue(entry.Key, out var dependencyKeys))
+        {
+            foreach (var dependencyKey in dependencyKeys)
+            {
+                var dependency = OfficialSkillCatalog.Find(dependencyKey);
+                if (dependency == null)
+                {
+                    return StatusCode(500, ApiResponse<object>.Fail(
+                        ErrorCodes.INTERNAL_ERROR,
+                        $"官方技能 {entry.Key} 缺少依赖技能: {dependencyKey}"));
+                }
+
+                entries.Add(dependency);
+            }
+        }
+
         using var ms2 = new MemoryStream();
         using (var zip = new ZipArchive(ms2, ZipArchiveMode.Create, leaveOpen: true))
         {
-            foreach (var f in entry.Files)
+            foreach (var packagedEntry in entries)
             {
-                // zip 内统一放在 {key}/ 目录下，解压即 ~/.claude/skills/{key}/
-                WriteEntry(zip, $"{entry.Key}/{f.Path}", f.Content);
+                foreach (var f in packagedEntry.Files)
+                {
+                    // zip 内统一放在 {key}/ 目录下，解压即 ~/.claude/skills/{key}/
+                    WriteEntry(zip, $"{packagedEntry.Key}/{f.Path}", f.Content);
+                }
             }
         }
         var bytes2 = ms2.ToArray();
         Response.Headers.Append("Cache-Control", "no-store");
-        _logger.LogInformation("[OfficialSkills] 下发 {SkillKey} 技能包 {Files} 文件 {Bytes} bytes", skillKey, entry.Files.Count, bytes2.Length);
+        var fileCount = entries.Sum(e => e.Files.Count);
+        _logger.LogInformation("[OfficialSkills] 下发 {SkillKey} 技能包 {Files} 文件 {Bytes} bytes", skillKey, fileCount, bytes2.Length);
         return File(bytes2, "application/zip", $"{entry.Key}.zip");
     }
 

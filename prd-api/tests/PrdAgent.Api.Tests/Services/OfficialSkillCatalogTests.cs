@@ -1,5 +1,8 @@
+using System.IO.Compression;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Api.Controllers.Api.OfficialSkills;
 using Xunit;
 
@@ -80,6 +83,34 @@ public class OfficialSkillCatalogTests
         var item = ReadObject(response!, "item");
         Assert.Equal("official-create-visual-test-to-kb", Read<string>(item, "Id"));
         Assert.Equal("1.0.0", Read<string>(item, "version"));
+    }
+
+    [Fact]
+    public void VisualAcceptanceOfficialDownload_IncludesPrerequisiteSkills()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("map.example.test");
+        var controller = new OfficialSkillsController(
+            new ConfigurationBuilder().Build(),
+            NullLogger<OfficialSkillsController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = context },
+        };
+
+        var result = controller.Download("create-visual-test-to-kb");
+        var file = Assert.IsType<FileContentResult>(result);
+
+        using var ms = new MemoryStream(file.FileContents);
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+        var names = zip.Entries.Select(e => e.FullName).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Contains("create-visual-test-to-kb/SKILL.md", names);
+        Assert.Contains("acceptance-test-design/SKILL.md", names);
+        Assert.Contains("acceptance-scenario-orchestrator/SKILL.md", names);
+        Assert.Contains("acceptance-test-design/references/proof-strength.md", names);
+        Assert.Contains("acceptance-scenario-orchestrator/references/evidence-contract.md", names);
+        Assert.DoesNotContain(names, n => n.Contains("/scripts/sv-", StringComparison.Ordinal));
     }
 
     private static HttpRequest BuildRequest(string origin)
