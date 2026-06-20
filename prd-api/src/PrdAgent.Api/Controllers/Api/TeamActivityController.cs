@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Api.Extensions;
@@ -320,6 +322,54 @@ public class TeamActivityController : ControllerBase
         public readonly Dictionary<string, int> ErrorCodes = new();
     }
 
+    /// <summary>体验全景热力图的叶子输出（聚合主路径与旧路径共用，喂给 BuildExperienceMapPayload）</summary>
+    private sealed record LeafOut(string Target, string Label, string Method, int Value, double ErrRate, double SlowRate, string Status, string Metric);
+
+    // 体验全景热力图短 TTL 缓存：来回切时间档不重复聚合（key 取整到分钟）
+    private static readonly ConcurrentDictionary<string, (DateTime At, object Payload)> _expMapCache = new();
+    private const int ExpMapCacheSeconds = 30;
+
+    /// <summary>把 module → 叶子列表 组装成 treemap 响应（分区 Take 24、每区叶子 Take 30）</summary>
+    private static object BuildExperienceMapPayload(Dictionary<string, List<LeafOut>> byModule, long totalRequests, DateTime fromUtc, DateTime endUtc)
+    {
+        var groups = byModule
+            .Select(kv =>
+            {
+                var leaves = kv.Value
+                    .OrderByDescending(l => l.Value)
+                    .Take(30)
+                    .Select(l => new
+                    {
+                        target = l.Target,
+                        label = l.Label,
+                        method = l.Method,
+                        value = l.Value,
+                        status = l.Status,
+                        metric = l.Metric,
+                        errorRate = l.ErrRate,
+                        slowRate = l.SlowRate,
+                        topErrorCode = (string?)null,
+                    })
+                    .ToList();
+                return new
+                {
+                    key = kv.Key,
+                    label = ModuleLabel(kv.Key),
+                    value = leaves.Sum(l => l.value),
+                    errorLeaves = leaves.Count(l => l.status == "error"),
+                    slowLeaves = leaves.Count(l => l.status == "slow"),
+                    leaves,
+                };
+            })
+            .Where(g => g.leaves.Count > 0)
+            .OrderByDescending(g => g.value)
+            .Take(24)
+            .ToList();
+
+        return new { groups, totalRequests, windowFrom = fromUtc, windowTo = endUtc };
+    }
+
+
 
     /// <summary>
     /// 行为洞察：从「沉默的行为信号」聚合出带证据的改进方向。
@@ -351,6 +401,143 @@ public class TeamActivityController : ControllerBase
         var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
 
+        // 短 TTL 缓存：同一时间窗反复点击（尤其来回切档）直接命中，不重复聚合
+        var cacheKey = $"{fromUtc:yyyyMMddHHmm}|{endUtc:yyyyMMddHHmm}";
+        if (_expMapCache.TryGetValue(cacheKey, out var hit) && (DateTime.UtcNow - hit.At).TotalSeconds < ExpMapCacheSeconds)
+        {
+            return Ok(ApiResponse<object>.Ok(hit.Payload));
+        }
+
+        object payload;
+        try
+        {
+            // 主路径：分组下推到 MongoDB 聚合，只回传分组桶，避免拉取数万条文档到内存
+            payload = await ExperienceMapAggregateAsync(fromUtc, endUtc);
+        }
+        catch
+        {
+            // 兜底：聚合不可用时回退到「拉取 + C# 分组」旧路径，保证功能不挂
+            payload = await ExperienceMapLegacyAsync(fromUtc, endUtc);
+        }
+
+        _expMapCache[cacheKey] = (DateTime.UtcNow, payload);
+        if (_expMapCache.Count > 64)
+        {
+            foreach (var k in _expMapCache
+                         .Where(e => (DateTime.UtcNow - e.Value.At).TotalSeconds > ExpMapCacheSeconds)
+                         .Select(e => e.Key).ToList())
+            {
+                _expMapCache.TryRemove(k, out _);
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    /// <summary>主路径：MongoDB 服务端聚合（归一化路径折叠 :id → 按 method+路径分组统计），只回传分组桶</summary>
+    private async Task<object> ExperienceMapAggregateAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var slowCond = new BsonDocument("$and", new BsonArray
+        {
+            new BsonDocument("$eq", new BsonArray { "$IsEventStream", false }),
+            new BsonDocument("$gte", new BsonArray { "$DurationMs", 3000 }),
+        });
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(fromUtc) }, { "$lte", new BsonDateTime(endUtc) } } },
+                { "Direction", new BsonDocument("$ne", "outbound") },
+                { "Path", new BsonDocument("$regex", "^/api") },
+            }),
+            new BsonDocument("$set", new BsonDocument("_segs", new BsonDocument("$split", new BsonArray { "$Path", "/" }))),
+            new BsonDocument("$set", new BsonDocument("_norm", new BsonDocument("$map", new BsonDocument
+            {
+                { "input", "$_segs" },
+                { "as", "s" },
+                { "in", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$or", new BsonArray
+                        {
+                            new BsonDocument("$regexMatch", new BsonDocument { { "input", "$$s" }, { "regex", "^[0-9]+$" } }),
+                            new BsonDocument("$regexMatch", new BsonDocument { { "input", "$$s" }, { "regex", "^[0-9a-fA-F-]{16,}$" } }),
+                        }),
+                        ":id",
+                        "$$s",
+                    }) },
+            }))),
+            new BsonDocument("$set", new BsonDocument("_np", new BsonDocument("$reduce", new BsonDocument
+            {
+                { "input", "$_norm" },
+                { "initialValue", "" },
+                { "in", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$$this", "" }),
+                        "$$value",
+                        new BsonDocument("$concat", new BsonArray { "$$value", "/", "$$this" }),
+                    }) },
+            }))),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "m", "$Method" }, { "p", "$_np" } } },
+                { "count", new BsonDocument("$sum", 1) },
+                { "err", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$and", new BsonArray
+                        {
+                            new BsonDocument("$gte", new BsonArray { "$StatusCode", 400 }),
+                            new BsonDocument("$ne", new BsonArray { "$StatusCode", 401 }),
+                        }),
+                        1, 0,
+                    })) },
+                { "slow", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { slowCond, 1, 0 })) },
+                { "slowMs", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { slowCond, "$DurationMs", 0 })) },
+            }),
+            new BsonDocument("$match", new BsonDocument("count", new BsonDocument("$gte", 2))),
+            new BsonDocument("$sort", new BsonDocument("count", -1)),
+            new BsonDocument("$limit", 4000),
+        };
+
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true });
+        var buckets = await cursor.ToListAsync();
+
+        long totalRequests = 0;
+        var byModule = new Dictionary<string, List<LeafOut>>();
+        foreach (var b in buckets)
+        {
+            var id = b["_id"].AsBsonDocument;
+            var method = id.GetValue("m", "GET").AsString;
+            var path = id.GetValue("p", "").AsString;
+            if (string.IsNullOrEmpty(path) || !path.StartsWith("/api")) continue;
+            if (path.StartsWith("/api/behavior") || path.StartsWith("/api/team-activity")) continue;
+            var seg = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (seg.Length < 2) continue;
+            var module = seg[1];
+            var count = b.GetValue("count", 0).ToInt32();
+            var err = b.GetValue("err", 0).ToInt32();
+            var slow = b.GetValue("slow", 0).ToInt32();
+            var slowMs = b.GetValue("slowMs", 0).ToDouble();
+            totalRequests += count;
+            var errRate = count > 0 ? (double)err / count : 0;
+            var slowRate = count > 0 ? (double)slow / count : 0;
+            var status = count >= 10 && errRate >= 0.05 ? "error"
+                : count >= 10 && slowRate >= 0.10 ? "slow"
+                : "ok";
+            var avgSlowSec = slow > 0 ? slowMs / slow / 1000.0 : 0;
+            var metric = status == "error"
+                ? $"报错率 {errRate * 100:F0}%（{err} 次）"
+                : status == "slow"
+                    ? $"{slow} 次慢请求 · 均 {avgSlowSec:F1}s"
+                    : $"{count} 次调用";
+            if (!byModule.TryGetValue(module, out var list)) { list = new List<LeafOut>(); byModule[module] = list; }
+            list.Add(new LeafOut($"{method} {path}", LeafLabel(method, path), method, count, Math.Round(errRate, 3), Math.Round(slowRate, 3), status, metric));
+        }
+
+        return BuildExperienceMapPayload(byModule, totalRequests, fromUtc, endUtc);
+    }
+
+    /// <summary>兜底路径：拉取 + C# 分组（聚合管道不可用时使用，逻辑与原实现一致）</summary>
+    private async Task<object> ExperienceMapLegacyAsync(DateTime fromUtc, DateTime endUtc)
+    {
         var rb = Builders<ApiRequestLog>.Filter;
         var logs = await _db.ApiRequestLogs.Find(rb.And(
                 rb.Gte(x => x.StartedAt, fromUtc),
@@ -392,64 +579,28 @@ public class TeamActivityController : ControllerBase
             }
         }
 
-        var groups = leafAgg.Values
-            .GroupBy(a => a.Module)
-            .Select(g =>
-            {
-                var leaves = g.Where(a => a.Count >= 2)
-                    .OrderByDescending(a => a.Count)
-                    .Take(30)
-                    .Select(a =>
-                    {
-                        var errRate = a.Count > 0 ? (double)a.ErrorCount / a.Count : 0;
-                        var slowRate = a.Count > 0 ? (double)a.SlowCount / a.Count : 0;
-                        var status = a.Count >= 10 && errRate >= 0.05 ? "error"
-                            : a.Count >= 10 && slowRate >= 0.10 ? "slow"
-                            : "ok";
-                        var avgSlowSec = a.SlowCount > 0 ? a.SlowMsSum / (double)a.SlowCount / 1000.0 : 0;
-                        var topCode = a.ErrorCodes.OrderByDescending(c => c.Value).FirstOrDefault();
-                        var metric = status == "error"
-                            ? $"报错率 {errRate * 100:F0}%（{a.ErrorCount} 次）"
-                            : status == "slow"
-                                ? $"{a.SlowCount} 次慢请求 · 均 {avgSlowSec:F1}s"
-                                : $"{a.Count} 次调用";
-                        var label = LeafLabel(a.Method, a.Path);
-                        return new
-                        {
-                            target = $"{a.Method} {a.Path}",
-                            label,
-                            method = a.Method,
-                            value = a.Count,
-                            status,
-                            metric,
-                            errorRate = Math.Round(errRate, 3),
-                            slowRate = Math.Round(slowRate, 3),
-                            topErrorCode = string.IsNullOrEmpty(topCode.Key) ? null : topCode.Key,
-                        };
-                    })
-                    .ToList();
-                return new
-                {
-                    key = g.Key,
-                    label = ModuleLabel(g.Key),
-                    value = leaves.Sum(l => l.value),
-                    errorLeaves = leaves.Count(l => l.status == "error"),
-                    slowLeaves = leaves.Count(l => l.status == "slow"),
-                    leaves,
-                };
-            })
-            .Where(g => g.leaves.Count > 0)
-            .OrderByDescending(g => g.value)
-            .Take(24)
-            .ToList();
-
-        return Ok(ApiResponse<object>.Ok(new
+        long totalRequests = 0;
+        var byModule = new Dictionary<string, List<LeafOut>>();
+        foreach (var a in leafAgg.Values)
         {
-            groups,
-            totalRequests = logs.Count,
-            windowFrom = fromUtc,
-            windowTo = endUtc,
-        }));
+            if (a.Count < 2) continue;
+            var errRate = a.Count > 0 ? (double)a.ErrorCount / a.Count : 0;
+            var slowRate = a.Count > 0 ? (double)a.SlowCount / a.Count : 0;
+            var status = a.Count >= 10 && errRate >= 0.05 ? "error"
+                : a.Count >= 10 && slowRate >= 0.10 ? "slow"
+                : "ok";
+            var avgSlowSec = a.SlowCount > 0 ? a.SlowMsSum / (double)a.SlowCount / 1000.0 : 0;
+            var metric = status == "error"
+                ? $"报错率 {errRate * 100:F0}%（{a.ErrorCount} 次）"
+                : status == "slow"
+                    ? $"{a.SlowCount} 次慢请求 · 均 {avgSlowSec:F1}s"
+                    : $"{a.Count} 次调用";
+            totalRequests += a.Count;
+            if (!byModule.TryGetValue(a.Module, out var list)) { list = new List<LeafOut>(); byModule[a.Module] = list; }
+            list.Add(new LeafOut($"{a.Method} {a.Path}", LeafLabel(a.Method, a.Path), a.Method, a.Count, Math.Round(errRate, 3), Math.Round(slowRate, 3), status, metric));
+        }
+
+        return BuildExperienceMapPayload(byModule, totalRequests, fromUtc, endUtc);
     }
 
     /// <summary>规则式信号聚类（供 insights 查询与 AI 简报共用）</summary>
