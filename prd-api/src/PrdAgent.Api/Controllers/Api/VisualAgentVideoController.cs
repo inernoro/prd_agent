@@ -25,7 +25,9 @@ public class VisualAgentVideoController : ControllerBase
     private readonly ILogger<VisualAgentVideoController> _logger;
 
     private const string AppKey = "visual-agent";
-    private const int DailyLimit = 1;
+    // 放开每日限额（用户 2026-06-19 决定）：原 =1 是「体验」限额，但分镜台多镜需逐镜出视频，
+    // 1/天会让 4-8 镜分镜每天只能动 1 镜。提到 999（实际上不再成为约束）。
+    private const int DailyLimit = 999;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public VisualAgentVideoController(

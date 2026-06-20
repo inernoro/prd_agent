@@ -49,6 +49,19 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             ["model"] = resolution.ActualModel,
             ["prompt"] = request.Prompt
         };
+        // 图生视频：把首帧图作为 first_frame 传给视频模型（OpenRouter /videos frame_images 协议）
+        if (!string.IsNullOrWhiteSpace(request.FirstFrameImageUrl))
+        {
+            body["frame_images"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["type"] = "image_url",
+                    ["image_url"] = new JsonObject { ["url"] = request.FirstFrameImageUrl },
+                    ["frame_type"] = "first_frame"
+                }
+            };
+        }
         if (!string.IsNullOrWhiteSpace(request.AspectRatio)) body["aspect_ratio"] = request.AspectRatio;
         if (!string.IsNullOrWhiteSpace(request.Resolution)) body["resolution"] = request.Resolution;
         if (request.DurationSeconds.HasValue) body["duration"] = request.DurationSeconds.Value;
@@ -78,8 +91,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoSubmitResult
             {
                 Success = false,
-                ErrorMessage = ExtractErrorMessage(rawResp.Content ?? string.Empty)
-                    ?? rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}"
+                ErrorMessage = QuotaOrUpstreamMessage(rawResp)
             };
         }
 
@@ -138,8 +150,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoStatus
             {
                 Status = "failed",
-                ErrorMessage = ExtractErrorMessage(rawResp.Content ?? string.Empty)
-                    ?? rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}"
+                ErrorMessage = QuotaOrUpstreamMessage(rawResp)
             };
         }
 
@@ -190,14 +201,20 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}/content?index={urlIndex}",
             HttpMethod = "GET",
             TimeoutSeconds = 120, // 视频文件可能较大
+            // OpenRouter 此端点回 mp4 字节，却把 Content-Type 标成 application/json，
+            // 不强制二进制会被按字符串读取损坏 → binaryContent 为空 → 误判「HTTP 200 下载失败」。
+            ExpectBinaryResponse = true,
         }, resolution, ct);
 
         if (!rawResp.Success || rawResp.BinaryContent == null || rawResp.BinaryContent.Length == 0)
         {
+            // 诊断信息进 error（随 run 落库，跨副本可读）：标称类型 + 二进制/文本长度，便于定位下载落空原因
+            var diag = $"ct={rawResp.ContentType}, binLen={rawResp.BinaryContent?.Length ?? 0}, textLen={rawResp.Content?.Length ?? 0}";
+            // 与 submit/status 一致：额度耗尽时用 Gateway 友好文案(LLM_QUOTA_EXCEEDED)，其余保留 code/状态，再附诊断（Bugbot review）
             return new OpenRouterVideoDownload
             {
                 Success = false,
-                ErrorMessage = rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}",
+                ErrorMessage = $"{QuotaOrUpstreamMessage(rawResp)} ({diag})",
             };
         }
 
@@ -236,6 +253,18 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         {
             return Truncate(body, 200);
         }
+    }
+
+    // 额度用尽时优先用 Gateway 已构造的中文友好文案(LLM_QUOTA_EXCEEDED)，让「动起来」等视频路径与拆分镜
+    // 走同一套额度提示 + admin 告警；其余错误保留 /videos 端点特定的上游 message 解析（Bugbot review）。
+    private static string QuotaOrUpstreamMessage(GatewayRawResponse rawResp)
+    {
+        if (rawResp.ErrorCode == "LLM_QUOTA_EXCEEDED" && !string.IsNullOrWhiteSpace(rawResp.ErrorMessage))
+            return rawResp.ErrorMessage!;
+        return ExtractErrorMessage(rawResp.Content ?? string.Empty)
+            ?? rawResp.ErrorMessage
+            ?? rawResp.ErrorCode
+            ?? $"HTTP {rawResp.StatusCode}";
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
