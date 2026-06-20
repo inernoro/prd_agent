@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>时光机 · 体验洞察时间选择（动效 demo B）</title>
+<style>
+  :root{
+    --bg:#0a0c10; --txt:#ecedf0; --mut:rgba(236,237,240,.5); --mut2:rgba(236,237,240,.3);
+    --cyan:#2dd4bf; --cyan2:#5eead4; --err:#f8717a; --slow:#fbbf24; --ok:#34d399; --vio:#a78bfa;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:#070809;color:var(--txt);font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
+  #stars{position:fixed;inset:0;z-index:0}
+  .scene{position:fixed;inset:0;z-index:1;display:flex;flex-direction:column}
+  .top{display:flex;align-items:center;justify-content:space-between;padding:20px 26px}
+  .top h1{font-size:16px;margin:0;font-weight:700;display:flex;align-items:center;gap:10px}
+  .top .sub{font-size:12px;color:var(--mut)}
+  .badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(45,212,191,.12);color:var(--cyan2);border:1px solid rgba(45,212,191,.3)}
+  .stagewrap{flex:1;position:relative;perspective:1600px;perspective-origin:50% 42%}
+  .deck{position:absolute;left:0;right:90px;top:0;bottom:0;transform-style:preserve-3d}
+  .card{
+    position:absolute;left:50%;top:50%;width:520px;height:300px;margin-left:-260px;margin-top:-150px;
+    border-radius:20px;border:1px solid rgba(255,255,255,.12);
+    background:linear-gradient(180deg,rgba(26,29,34,.96),rgba(14,16,20,.96));
+    box-shadow:0 40px 120px -40px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.06);
+    transition:transform .55s cubic-bezier(.2,.7,.2,1), opacity .55s, filter .55s;
+    padding:22px 24px;backface-visibility:hidden;
+  }
+  .card .when{font-size:13px;color:var(--cyan2);font-weight:700;letter-spacing:.4px}
+  .card .range{font-size:12px;color:var(--mut);margin-top:2px}
+  .card .big{display:flex;align-items:flex-end;gap:10px;margin-top:18px}
+  .card .big .n{font-size:46px;font-weight:800;line-height:1;letter-spacing:-1px}
+  .card .big .u{font-size:13px;color:var(--mut);padding-bottom:6px}
+  .card .stats{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+  .pill{font-size:11.5px;padding:5px 10px;border-radius:9px;border:1px solid var(--line,rgba(255,255,255,.1));background:rgba(255,255,255,.03);display:inline-flex;align-items:center;gap:6px}
+  .pill i{width:7px;height:7px;border-radius:999px;display:inline-block}
+  .card .barline{margin-top:18px;height:46px;display:flex;align-items:flex-end;gap:4px}
+  .card .barline span{flex:1;border-radius:3px 3px 0 0;background:linear-gradient(180deg,rgba(94,234,212,.7),rgba(45,212,191,.15))}
+  .hintwhere{position:absolute;left:36px;top:50%;transform:translateY(-50%);writing-mode:vertical-rl;font-size:12px;color:var(--mut2);letter-spacing:3px}
+  /* right vertical timeline */
+  .rail{position:absolute;right:34px;top:48px;bottom:48px;width:2px;background:rgba(255,255,255,.12);z-index:3}
+  .rail .fill{position:absolute;left:0;right:0;top:0;background:linear-gradient(180deg,var(--cyan2),rgba(45,212,191,.2));border-radius:999px}
+  .tick{position:absolute;right:-6px;transform:translateY(-50%);display:flex;align-items:center;gap:10px;cursor:pointer;flex-direction:row-reverse}
+  .tick .knob{width:10px;height:10px;border-radius:999px;background:#1a1d22;border:1.5px solid rgba(255,255,255,.35);transition:.25s}
+  .tick .lbl{font-size:11.5px;color:var(--mut2);white-space:nowrap;transition:.25s;text-align:right}
+  .tick.act .knob{background:var(--cyan2);border-color:var(--cyan2);box-shadow:0 0 14px var(--cyan);transform:scale(1.25)}
+  .tick.act .lbl{color:#fff;font-weight:700}
+  .handle{position:absolute;right:-9px;width:18px;height:18px;border-radius:999px;background:radial-gradient(circle,#fff,var(--cyan));box-shadow:0 0 18px var(--cyan);transform:translateY(-50%);cursor:grab;z-index:4;transition:top .35s cubic-bezier(.2,.7,.2,1)}
+  .handle:active{cursor:grabbing}
+  .bottom{display:flex;align-items:center;justify-content:center;gap:14px;padding:18px 0 26px}
+  .bottom .startbtn{cursor:pointer;border:1px solid rgba(45,212,191,.45);background:linear-gradient(180deg,rgba(45,212,191,.25),rgba(45,212,191,.1));color:#eafffb;font-size:13px;font-weight:600;padding:10px 22px;border-radius:11px;display:inline-flex;align-items:center;gap:8px}
+  .bottom .hint{font-size:12px;color:var(--mut2)}
+  .legend{position:fixed;left:26px;bottom:18px;z-index:3;font-size:12px;color:var(--mut2);max-width:420px;line-height:1.6}
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div class="scene">
+  <div class="top">
+    <div>
+      <h1>时光机 <span class="badge">从哪里挑选 · 又从哪里开始</span></h1>
+      <div class="sub">像苹果 Time Machine 一样往回飞：右侧时间轴挑一个时刻，前方快照就是那段窗口的体验状态</div>
+    </div>
+    <div class="sub" id="now">最近更新 刚刚</div>
+  </div>
+
+  <div class="stagewrap">
+    <div class="hintwhere">— 往里 = 更早 —</div>
+    <div class="deck" id="deck"></div>
+    <div class="rail" id="rail">
+      <div class="fill" id="fill"></div>
+      <div class="handle" id="handle"></div>
+    </div>
+  </div>
+
+  <div class="bottom">
+    <span class="hint">当前停在</span>
+    <button class="startbtn" id="start">从「<span id="selName">本周</span>」开始分析</button>
+    <span class="hint" id="selRange">6.15 – 6.21</span>
+  </div>
+</div>
+<div class="legend"><b>这版在演什么：</b>时间不再是角落里 4 个挤在一起的小按钮，而是一台时光机。右侧时间轴拖动手柄（也可滚轮 / 上下键 / 点刻度），前方快照卡叠着往时间深处退去，飞到哪一刻，那一刻的「信号数 / 痛点数 / 报错率」就在最前方亮起。挑好 → 从这一刻开始分析。</div>
+
+<script>
+(function(){
+  // snapshots: 今天 → 更早（index 0 在最前/最近）
+  var snaps=[
+    {n:'今天', r:'6.21 00:00 – 现在', sig:118, pain:3, err:4.2, accent:'#f8717a', bars:[3,5,4,8,12,9,7,11,6,4,8,14,10,7]},
+    {n:'昨天', r:'6.20 全天', sig:206, pain:2, err:2.1, accent:'#fbbf24', bars:[5,7,6,9,8,11,7,6,9,12,8,6,5,7]},
+    {n:'本周', r:'6.15 – 6.21', sig:289, pain:3, err:3.6, accent:'#fbbf24', bars:[6,9,8,12,10,7,9,14,11,8,10,9,7,12]},
+    {n:'上周', r:'6.08 – 6.14', sig:241, pain:1, err:1.4, accent:'#34d399', bars:[7,6,8,7,9,6,5,7,8,6,7,9,6,5]},
+    {n:'本月', r:'6.01 – 6.21', sig:642, pain:4, err:2.8, accent:'#fbbf24', bars:[10,12,9,14,11,13,10,9,12,15,11,10,13,12]},
+    {n:'上月', r:'5.01 – 5.31', sig:1180, pain:2, err:1.9, accent:'#34d399', bars:[11,10,12,9,11,10,13,12,10,11,9,12,10,11]},
+    {n:'更早', r:'5.01 之前 · 全部', sig:3240, pain:5, err:2.3, accent:'#a78bfa', bars:[12,11,13,12,14,11,12,13,11,12,13,12,11,13]}
+  ];
+  var deck=document.getElementById('deck'), rail=document.getElementById('rail'), handle=document.getElementById('handle'), fill=document.getElementById('fill');
+  var sel=2; // 默认本周
+
+  // build cards
+  var cards=snaps.map(function(s,i){
+    var el=document.createElement('div'); el.className='card';
+    el.innerHTML='<div class="when">'+s.n+'</div><div class="range">'+s.r+'</div>'+
+      '<div class="big"><div class="n">'+s.sig.toLocaleString()+'</div><div class="u">条行为信号</div></div>'+
+      '<div class="stats">'+
+        '<span class="pill"><i style="background:'+s.accent+'"></i>痛点 '+s.pain+' 处</span>'+
+        '<span class="pill"><i style="background:#f8717a"></i>报错率 '+s.err+'%</span>'+
+        '<span class="pill"><i style="background:#2dd4bf"></i>已采集</span>'+
+      '</div>'+
+      '<div class="barline">'+s.bars.map(function(b){return '<span style="height:'+(b/15*100)+'%"></span>'}).join('')+'</div>';
+    deck.appendChild(el); return el;
+  });
+
+  // build ticks on rail
+  var ticks=snaps.map(function(s,i){
+    var t=document.createElement('div'); t.className='tick'; t.style.top=(i/(snaps.length-1)*100)+'%';
+    t.innerHTML='<span class="knob"></span><span class="lbl">'+s.n+'</span>';
+    t.addEventListener('click',function(){ go(i); });
+    rail.appendChild(t); return t;
+  });
+
+  function render(){
+    cards.forEach(function(el,i){
+      var d=i-sel; // depth relative to selection
+      var z=-Math.abs(d)*230 - (d>0?0:0);
+      var ty=-d*46; var sc=Math.max(.5,1-Math.abs(d)*0.12); var op=Math.max(0,1-Math.abs(d)*0.26);
+      var blur=Math.min(5,Math.abs(d)*1.4);
+      el.style.transform='translate3d(0,'+ty+'px,'+z+'px) scale('+sc+')';
+      el.style.opacity=d<0? Math.max(0,op-0.2): op; // 已过去（更近）的也稍隐
+      el.style.filter='blur('+blur+'px)';
+      el.style.zIndex=String(100-Math.abs(d));
+      el.style.borderColor= i===sel? 'rgba(94,234,212,.55)':'rgba(255,255,255,.12)';
+      if(i===sel) el.style.boxShadow='0 40px 120px -36px rgba(0,0,0,.9), 0 0 0 1px rgba(94,234,212,.35), 0 0 60px -10px rgba(45,212,191,.4)';
+      else el.style.boxShadow='0 40px 120px -40px rgba(0,0,0,.9)';
+    });
+    ticks.forEach(function(t,i){ t.classList.toggle('act', i===sel); });
+    var pct=sel/(snaps.length-1)*100; handle.style.top=pct+'%'; fill.style.height=pct+'%';
+    document.getElementById('selName').textContent=snaps[sel].n;
+    document.getElementById('selRange').textContent=snaps[sel].r;
+  }
+  function go(i){ sel=Math.max(0,Math.min(snaps.length-1,i)); render(); }
+  render();
+
+  // drag handle along rail
+  function railPos(clientY){ var r=rail.getBoundingClientRect(); var p=(clientY-r.top)/r.height; return Math.round(p*(snaps.length-1)); }
+  var dragging=false;
+  function down(e){ dragging=true; handle.style.transition='none'; move(e); e.preventDefault(); }
+  function move(e){ if(!dragging) return; var y=(e.touches?e.touches[0].clientY:e.clientY); go(railPos(y)); }
+  function up(){ dragging=false; handle.style.transition='top .35s cubic-bezier(.2,.7,.2,1)'; render(); }
+  handle.addEventListener('mousedown',down); rail.addEventListener('mousedown',down);
+  window.addEventListener('mousemove',move); window.addEventListener('mouseup',up);
+  handle.addEventListener('touchstart',down,{passive:false}); window.addEventListener('touchmove',move,{passive:false}); window.addEventListener('touchend',up);
+  window.addEventListener('wheel',function(e){ go(sel + (e.deltaY>0?1:-1)); },{passive:true});
+  window.addEventListener('keydown',function(e){ if(e.key==='ArrowDown'){go(sel+1)} if(e.key==='ArrowUp'){go(sel-1)} });
+  document.getElementById('start').onclick=function(){ this.animate([{transform:'scale(1)'},{transform:'scale(.95)'},{transform:'scale(1)'}],{duration:240}); };
+
+  // starfield drifting toward viewer (time-travel ambiance)
+  var cv=document.getElementById('stars'), c=cv.getContext('2d'), W,H,dpr=Math.min(2,window.devicePixelRatio||1);
+  function rs(){ W=innerWidth;H=innerHeight; cv.width=W*dpr;cv.height=H*dpr; c.setTransform(dpr,0,0,dpr,0,0); } addEventListener('resize',rs); rs();
+  var stars=[]; for(var i=0;i<140;i++) stars.push({x:Math.random()*W,y:Math.random()*H,z:Math.random(),s:Math.random()*1.4+0.3});
+  (function loop(){ c.clearRect(0,0,W,H); c.fillStyle='#070809'; c.fillRect(0,0,W,H);
+    for(var i=0;i<stars.length;i++){ var st=stars[i]; st.z-=0.0015; if(st.z<=0){st.z=1;st.x=Math.random()*W;st.y=Math.random()*H;}
+      var px=(st.x-W/2)/st.z+W/2, py=(st.y-H*0.42)/st.z+H*0.42; var a=(1-st.z)*0.5;
+      c.beginPath(); c.arc(px,py,st.s*(1.2-st.z+0.3),0,7); c.fillStyle='rgba(150,220,215,'+a+')'; c.fill();
+    } requestAnimationFrame(loop); })();
+})();
+</script>
+</body>
+</html>

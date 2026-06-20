@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>我来时的路 · 体验问题是怎么被发现的（动效 demo A）</title>
+<style>
+  :root{
+    --bg:#0d0e10; --panel:#141518; --line:rgba(255,255,255,.08);
+    --txt:#ecedf0; --mut:rgba(236,237,240,.45); --mut2:rgba(236,237,240,.28);
+    --cyan:#2dd4bf; --cyan2:#5eead4; --err:#f8717a; --slow:#fbbf24; --ok:#34d399; --vio:#a78bfa;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(1200px 700px at 50% -10%,#16181c,#0d0e10 60%);
+    color:var(--txt); font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;
+    -webkit-font-smoothing:antialiased; padding:26px; min-height:100%;
+  }
+  .wrap{max-width:1240px;margin:0 auto}
+  .hd{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px;flex-wrap:wrap}
+  .hd h1{font-size:16px;font-weight:700;margin:0;display:flex;align-items:center;gap:10px}
+  .hd .sub{font-size:12px;color:var(--mut)}
+  .badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 9px;border-radius:999px;
+    background:rgba(45,212,191,.12);color:var(--cyan2);border:1px solid rgba(45,212,191,.3)}
+  .dot{width:7px;height:7px;border-radius:999px;background:var(--cyan);box-shadow:0 0 0 0 rgba(45,212,191,.6);animation:pp 1.6s infinite}
+  @keyframes pp{0%{box-shadow:0 0 0 0 rgba(45,212,191,.5)}70%{box-shadow:0 0 0 7px rgba(45,212,191,0)}100%{box-shadow:0 0 0 0 rgba(45,212,191,0)}}
+  .ctrls{display:flex;align-items:center;gap:8px}
+  button.btn{cursor:pointer;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);
+    font-size:12px;padding:6px 12px;border-radius:9px;display:inline-flex;align-items:center;gap:6px;transition:.15s}
+  button.btn:hover{border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.07)}
+  button.btn.primary{background:linear-gradient(180deg,rgba(45,212,191,.22),rgba(45,212,191,.1));border-color:rgba(45,212,191,.4);color:var(--cyan2)}
+  .stage-card{
+    position:relative;border:1px solid var(--line);border-radius:16px;overflow:hidden;
+    background:linear-gradient(180deg,#141518,#101113);box-shadow:0 18px 50px -24px rgba(0,0,0,.8);
+  }
+  .panelhd{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .panelhd .t{font-size:12.5px;font-weight:700;color:rgba(236,237,240,.85)}
+  .panelhd .meta{font-size:11px;color:var(--mut2)}
+  .journey{position:relative;height:330px}
+  canvas{position:absolute;inset:0;width:100%;height:100%}
+  .stages{position:absolute;inset:0;display:flex;align-items:stretch;pointer-events:none}
+  .st{flex:1;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:14px 8px}
+  .st .num{width:34px;height:34px;border-radius:999px;border:1.5px solid rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;
+    font-size:14px;font-weight:700;color:var(--mut);background:#15171b;transition:.45s; position:relative}
+  .st .nm{font-size:13px;font-weight:700;color:var(--mut);transition:.45s;text-align:center}
+  .st .ct{font-size:11px;color:var(--mut2);min-height:16px;text-align:center;transition:.45s}
+  .st .viz{height:42px;width:100%;max-width:140px;display:flex;align-items:center;justify-content:center}
+  /* active state */
+  .st.on .num{color:#06231f;border-color:var(--c);background:var(--c);box-shadow:0 0 22px -2px var(--c)}
+  .st.on .nm{color:#fff}
+  .st.on .ct{color:rgba(236,237,240,.7)}
+  .st .num::after{content:"";position:absolute;inset:-4px;border-radius:999px;border:1.5px solid var(--c);opacity:0;}
+  .st.ignite .num::after{animation:ring .7s ease-out}
+  @keyframes ring{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(1.7)}}
+  .spark{width:120px;height:38px}
+  .ring{width:40px;height:40px;transform:rotate(-90deg)}
+  .chip{font-size:10.5px;padding:2px 7px;border-radius:6px;border:1px solid;opacity:0;transform:translateY(4px);transition:.4s}
+  .st.on .chip{opacity:1;transform:none}
+  .foot{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--line);font-size:11px;color:var(--mut)}
+  .scrub{flex:1;margin:0 14px;-webkit-appearance:none;height:4px;border-radius:999px;background:rgba(255,255,255,.1);outline:none}
+  .scrub::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:999px;background:var(--cyan2);cursor:pointer;box-shadow:0 0 10px var(--cyan)}
+  .legend{margin-top:14px;font-size:12px;color:var(--mut);line-height:1.7}
+  .legend b{color:rgba(236,237,240,.8)}
+  .tip{margin-top:10px;font-size:12px;color:var(--mut2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd">
+    <div>
+      <h1>我来时的路 <span class="badge"><span class="dot"></span>回放中</span></h1>
+      <div class="sub">体验问题是怎么被「发现 → 归总 → 盯着修完」的 —— 顶部不再是点不动的死步骤条，而是一段会演的来路</div>
+    </div>
+    <div class="ctrls">
+      <button class="btn" id="speed">速度 1x</button>
+      <button class="btn primary" id="replay">重新回放</button>
+    </div>
+  </div>
+
+  <div class="stage-card">
+    <div class="panelhd">
+      <div class="t">VOC 体验之声 · 来路回放</div>
+      <div class="meta" id="phase">原始路由信号汇入中…</div>
+    </div>
+    <div class="journey">
+      <canvas id="cv"></canvas>
+      <div class="stages" id="stages">
+        <div class="st" data-c="#2dd4bf" data-target="289" data-suffix=" 条信号">
+          <div class="num">1</div><div class="nm">监测</div>
+          <div class="viz"><svg class="spark" viewBox="0 0 120 38" preserveAspectRatio="none"><polyline id="sp1" fill="none" stroke="#2dd4bf" stroke-width="2" points=""/></svg></div>
+          <div class="ct" data-pre="已采 ">—</div>
+        </div>
+        <div class="st" data-c="#fbbf24" data-target="62" data-suffix="%">
+          <div class="num">2</div><div class="nm">预警</div>
+          <div class="viz"><svg class="spark" viewBox="0 0 120 38" preserveAspectRatio="none"><polyline id="sp2" fill="none" stroke="#fbbf24" stroke-width="2" points=""/></svg></div>
+          <div class="ct"><span class="chip" style="border-color:rgba(251,191,36,.5);color:#fbbf24" id="c2">突增 +0%</span></div>
+        </div>
+        <div class="st" data-c="#a78bfa" data-target="3" data-suffix=" 处">
+          <div class="num">3</div><div class="nm">AI 根因</div>
+          <div class="viz" style="flex-direction:column;gap:3px;align-items:flex-start">
+            <div class="chip" style="border-color:rgba(167,139,250,.5);color:#c4b5fd" id="c3a">认证问题可忽略</div>
+            <div class="chip" style="border-color:rgba(167,139,250,.5);color:#c4b5fd" id="c3b">INTERNAL_ERROR 占主导</div>
+          </div>
+          <div class="ct" data-pre="诊断 ">—</div>
+        </div>
+        <div class="st" data-c="#5eead4" data-target="2" data-suffix=" 张工单">
+          <div class="num">4</div><div class="nm">转缺陷/需求</div>
+          <div class="viz"><div id="bucket" style="display:flex;gap:6px">
+            <span class="chip" style="border-color:rgba(248,113,122,.5);color:#f8717a">缺陷</span>
+            <span class="chip" style="border-color:rgba(94,234,212,.5);color:#5eead4">需求</span>
+          </div></div>
+          <div class="ct" data-pre="已流转 ">—</div>
+        </div>
+        <div class="st" data-c="#60a5fa" data-target="1" data-suffix=" 处在修">
+          <div class="num">5</div><div class="nm">修复追踪</div>
+          <div class="viz"><svg class="ring" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="4"/><circle id="ring5" cx="20" cy="20" r="16" fill="none" stroke="#60a5fa" stroke-width="4" stroke-linecap="round" stroke-dasharray="100" stroke-dashoffset="100"/></svg></div>
+          <div class="ct" data-pre="指派 ">—</div>
+        </div>
+        <div class="st" data-c="#34d399" data-target="48" data-suffix="%">
+          <div class="num">6</div><div class="nm">复测回落</div>
+          <div class="viz"><svg class="spark" viewBox="0 0 120 38" preserveAspectRatio="none"><polyline id="sp6" fill="none" stroke="#34d399" stroke-width="2" points=""/></svg></div>
+          <div class="ct"><span class="chip" style="border-color:rgba(52,211,153,.5);color:#34d399" id="c6">回落 -0%</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="foot">
+      <span id="ftl">从 289 条原始信号，到 3 个待办闭环</span>
+      <input class="scrub" id="scrub" type="range" min="0" max="1000" value="0" />
+      <span id="ftr" style="min-width:64px;text-align:right">0%</span>
+    </div>
+  </div>
+
+  <div class="legend">
+    <b>这版在演什么：</b>一颗光点沿着「监测 → 预警 → AI 根因 → 转缺陷/需求 → 修复追踪 → 复测回落」走一遍，
+    左侧原始信号像遥测雨一样汇入并被归总；走到预警时曲线<b>陡峭尖起</b>，走到复测回落时同一条曲线<b>跌回平静</b>——
+    用户一眼看懂「我们是怎么找到这些问题、又怎么把它盯到修完的」。可重播、可拖动进度条逐帧看。
+  </div>
+  <div class="tip">说明：本页为动效方向 demo（数据为示意），用于替换顶部点不动的死步骤条。确认方向后再接真实数据落地。</div>
+</div>
+
+<script>
+(function(){
+  var cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+  var stagesEl=document.getElementById('stages');
+  var sts=[].slice.call(stagesEl.querySelectorAll('.st'));
+  var scrub=document.getElementById('scrub'), ftr=document.getElementById('ftr'), phase=document.getElementById('phase');
+  var W=0,H=0,dpr=Math.min(2,window.devicePixelRatio||1);
+  function resize(){ var r=cv.getBoundingClientRect(); W=r.width;H=r.height; cv.width=W*dpr;cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); }
+  window.addEventListener('resize',resize); resize();
+
+  // node x centers (match flex stages)
+  function nodeX(i){ return W*(i+0.5)/sts.length; }
+  var midY=function(){ return H*0.42; };
+
+  // particles streaming in from left, converging toward stage1 then drifting along baseline
+  var parts=[];
+  function spawn(n){ for(var k=0;k<n;k++){ parts.push({x:-10-Math.random()*60, y:midY()+(Math.random()*120-60), v:0.6+Math.random()*1.4, a:0.5+Math.random()*0.5, r:0.7+Math.random()*1.4}); } }
+
+  var phases=["原始路由信号汇入中…","聚合成端点面，准备体检…","捕捉到访问突增，亮预警…","AI 拆解错误码，定位根因…","把痛点流转成缺陷 / 需求…","盯着修，复测确认回落…","闭环完成 · 这就是我来时的路"];
+
+  // spark builders
+  function setPoly(id, pts){ document.getElementById(id).setAttribute('points', pts.map(function(p){return p[0]+','+p[1]}).join(' ')); }
+  function riseSpark(prog){ // flat then sharp spike
+    var pts=[]; for(var x=0;x<=120;x+=6){ var t=x/120; var base=30-Math.sin(t*3)*1.5; var spike= t>0.6? (t-0.6)/0.4 : 0; var y=base - Math.pow(spike,2)*26*Math.min(1,prog*1.4); pts.push([x, Math.max(3,y)]); } return pts; }
+  function fallSpark(prog){ var pts=[]; for(var x=0;x<=120;x+=6){ var t=x/120; var high=8+t*2; var fall= t>0.45? (t-0.45)/0.55:0; var y=high + Math.pow(fall,1.4)*24*Math.min(1,prog*1.3); pts.push([x,Math.min(35,y)]); } return pts; }
+
+  function countText(st, val){
+    var ct=st.querySelector('.ct'); var pre=ct.getAttribute('data-pre')||'';
+    var suf=st.getAttribute('data-suffix')||''; ct.textContent=pre+val+suf;
+  }
+
+  var T0=null, DUR=9000, speed=1, playing=true, manual=false, P=0;
+  function reset(){ parts.length=0; T0=null; P=0; playing=true; manual=false; sts.forEach(function(s){s.classList.remove('on','ignite'); s.style.removeProperty('--c'); var ct=s.querySelector('.ct'); if(ct.getAttribute('data-pre')) ct.textContent='—'; }); document.getElementById('c2').textContent='突增 +0%'; document.getElementById('c6').textContent='回落 -0%'; document.getElementById('ring5').setAttribute('stroke-dashoffset','100'); }
+  var ign={};
+  function apply(p){
+    P=p; scrub.value=Math.round(p*1000); ftr.textContent=Math.round(p*100)+'%';
+    var orbX = W*0.04 + p*(W*0.92);
+    // stage activation by orb position
+    sts.forEach(function(st,i){
+      var x=nodeX(i); var c=st.getAttribute('data-c'); st.style.setProperty('--c',c);
+      var on = orbX >= x-4;
+      if(on && !st.classList.contains('on')){ st.classList.add('on','ignite'); ign[i]=1; setTimeout((function(s){return function(){s.classList.remove('ignite')}})(st),700); }
+      if(!on){ st.classList.remove('on'); }
+      if(on){
+        var target=parseFloat(st.getAttribute('data-target'));
+        var lp=Math.min(1,Math.max(0,(orbX-(x-4))/(W*0.10)));
+        if(st.querySelector('.ct').getAttribute('data-pre')) countText(st, Math.round(target*lp));
+        if(i===1){ setPoly('sp2', riseSpark(lp)); document.getElementById('c2').textContent='突增 +'+Math.round(62*lp)+'%'; }
+        if(i===4){ document.getElementById('ring5').setAttribute('stroke-dashoffset', String(100-100*lp)); }
+        if(i===5){ setPoly('sp6', fallSpark(lp)); document.getElementById('c6').textContent='回落 -'+Math.round(48*lp)+'%'; }
+      }
+    });
+    // stage1 baseline spark always gently alive
+    setPoly('sp1', (function(){var a=[];for(var x=0;x<=120;x+=6){a.push([x,28-Math.sin((x/120)*6+P*6)*4]);}return a;})());
+    // phase text
+    var pi=Math.min(phases.length-1, Math.floor(p* (phases.length-0.001)));
+    phase.textContent=phases[pi];
+  }
+
+  function frame(ts){
+    if(!manual){
+      if(T0==null) T0=ts;
+      var p=Math.min(1,(ts-T0)/(DUR/speed));
+      apply(p);
+      if(p>=1){ playing=false; }
+    }
+    // particle stream
+    if(parts.length<160 && P<0.85) spawn(3);
+    ctx.clearRect(0,0,W,H);
+    // faint path line through nodes
+    ctx.beginPath(); ctx.moveTo(W*0.04, midY());
+    for(var i=0;i<sts.length;i++){ ctx.lineTo(nodeX(i), midY()); }
+    ctx.lineTo(W*0.96, midY());
+    ctx.strokeStyle='rgba(255,255,255,.06)'; ctx.lineWidth=2; ctx.stroke();
+    // glow progress on path up to orb
+    var orbX=W*0.04+P*(W*0.92);
+    var grad=ctx.createLinearGradient(0,0,W,0); grad.addColorStop(0,'rgba(45,212,191,.0)'); grad.addColorStop(1,'rgba(45,212,191,.55)');
+    ctx.beginPath(); ctx.moveTo(W*0.04,midY()); ctx.lineTo(orbX,midY()); ctx.strokeStyle=grad; ctx.lineWidth=2.5; ctx.stroke();
+    // particles
+    for(var k=parts.length-1;k>=0;k--){ var pt=parts[k]; pt.x+=pt.v* (0.6+ (P<0.2?1.2:0.3)); pt.y += (midY()-pt.y)*0.02; pt.a*=0.992;
+      var d=Math.min(1,Math.max(0,(orbX-pt.x)/40)); var col= 'rgba(94,234,212,'+(pt.a*0.9)+')';
+      ctx.beginPath(); ctx.arc(pt.x,pt.y,pt.r,0,7); ctx.fillStyle=col; ctx.fill();
+      if(pt.x>W+10||pt.a<0.05) parts.splice(k,1);
+    }
+    // traveling orb
+    var og=ctx.createRadialGradient(orbX,midY(),0,orbX,midY(),18); og.addColorStop(0,'rgba(255,255,255,.95)'); og.addColorStop(.4,'rgba(94,234,212,.8)'); og.addColorStop(1,'rgba(45,212,191,0)');
+    ctx.beginPath(); ctx.arc(orbX,midY(),18,0,7); ctx.fillStyle=og; ctx.fill();
+    ctx.beginPath(); ctx.arc(orbX,midY(),3.2,0,7); ctx.fillStyle='#fff'; ctx.fill();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  document.getElementById('replay').onclick=function(){ reset(); };
+  document.getElementById('speed').onclick=function(){ speed = speed===1?2: speed===2?0.5:1; this.textContent='速度 '+speed+'x'; if(!manual){ T0=null; } };
+  scrub.addEventListener('input',function(){ manual=true; playing=false; apply(parseInt(scrub.value,10)/1000); });
+  scrub.addEventListener('change',function(){ /* stay manual until replay */ });
+})();
+</script>
+</body>
+</html>
