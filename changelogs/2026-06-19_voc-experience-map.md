@@ -4,3 +4,4 @@
 | polish | prd-api | 体验全景热力图模块/端点名改中文示意名(SegmentLabels+LeafLabel)，原始路径保留在悬浮提示，分区上限放宽到 24 |
 | feat | prd-admin | 体验全景热力图入场动画(react-bits 交错揭示)+ 实时扫描光带 + 醒目"实时扫描中"徽章；右侧新增可折叠"体验痛点指数"仪表盘 + 痛点声道占比(从痛点榜现算) |
 | docs | doc | 新增 design.team-activity-voc 设计文档(VOC 设计思想/数据流/波次规划)，同步 index.yml 与 guide.list |
+| polish | prd-admin | 热力图入场动画重做为两遍「写字→点睛」：块随扫描笔尖经过(按x位置)依次写出全部→写完后痛点才点睛(扩散环ping+脉冲描边+辉光)；扫描笔与块写出严格同步且一次画完即隐(不空转)，绑定真实数据刷新重放 |

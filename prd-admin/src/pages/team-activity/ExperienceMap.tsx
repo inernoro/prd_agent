@@ -5,7 +5,7 @@
  * 配色遵循 ui-ux-pro-max 的 treemap 规范：父级不同色相、子级同色相浅色梯度；暖色只留给告警。
  * 数据源：GET /api/team-activity/experience-map（与 insights 同源 apirequestlogs，target 同口径）。
  */
-import { useMemo } from 'react';
+import { useMemo, type CSSProperties } from 'react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { ExperienceMapGroup, ExperienceMapLeaf, TeamActivityExperienceMapData } from '@/services/contracts/teamActivity';
@@ -19,6 +19,8 @@ const HDR = 14;
 const GROUP_HUES = [222, 200, 186, 170, 150, 210, 234, 132, 196, 176, 160, 214, 140, 188, 206, 246];
 const ERR = '#f8717a';
 const SLOW = '#fbbf24';
+// 第一遍「写字」时长：扫描线从左扫到右、把所有块写出来；写完后第二遍才给痛点点睛
+const SWEEP_MS = 1300;
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Placed<T> = T & { rect: Rect };
@@ -138,6 +140,9 @@ export function ExperienceMap({
 
   if (!data || data.groups.length === 0) return null;
 
+  // 数据窗口变化(切换时间范围/刷新)时重放「写字+点睛」动画——绑定真实动作，不是空转特效
+  const drawKey = `${data.windowFrom}-${data.totalRequests}`;
+
   return (
     <>
       <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
@@ -170,6 +175,7 @@ export function ExperienceMap({
         </div>
         <div className="px-2 pb-2">
           <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', height: 'auto', display: 'block' }}>
+            <g key={drawKey}>
             {/* 分区边框 + 标签 */}
             {layout.groupRects.map((g) => (
               <g key={`grp-${g.key}`} style={{ animation: 'voc-grp-in .4s ease both' }}>
@@ -208,27 +214,29 @@ export function ExperienceMap({
                 ) : null}
               </g>
             ))}
-            {/* 叶子 */}
-            {layout.cells.map((c, ci) => {
+            {/* 叶子 —— 第一遍：随扫描线经过(按 x 位置)依次写出全部 */}
+            {layout.cells.map((c) => {
               const r = c.rect;
               if (r.w < 1 || r.h < 1) return null;
               const isPain = c.leaf.status === 'error' || c.leaf.status === 'slow';
               const fill = c.leaf.status === 'error' ? ERR : c.leaf.status === 'slow' ? SLOW : healthyFill(c.hue, c.idxInGroup);
               const showLabel = r.w > 46 && r.h > 20;
               const clickable = isPain && !!onSelectTarget;
+              const cellCx = r.x + r.w / 2;
+              const revealDelay = Math.round((cellCx / VW) * SWEEP_MS); // 按 x → 跟随扫描线
+              const igniteDelay = SWEEP_MS + 140; // 第二遍：写完后再点睛
+              const gStyle: CSSProperties = {
+                cursor: clickable ? 'pointer' : 'default',
+                transformBox: 'fill-box',
+                transformOrigin: 'center',
+                animation: isPain
+                  ? 'voc-cell-in 0.4s cubic-bezier(.34,1.56,.64,1) both, voc-pain-glow 0.55s ease-out both'
+                  : 'voc-cell-in 0.4s cubic-bezier(.34,1.56,.64,1) both',
+                animationDelay: isPain ? `${revealDelay}ms, ${igniteDelay}ms` : `${revealDelay}ms`,
+              };
+              if (isPain) (gStyle as unknown as Record<string, string>)['--voc-glow'] = fill;
               return (
-                <g
-                  key={c.leaf.target}
-                  style={{
-                    cursor: clickable ? 'pointer' : 'default',
-                    filter: isPain ? `drop-shadow(0 0 5px ${fill})` : undefined,
-                    transformBox: 'fill-box',
-                    transformOrigin: 'center',
-                    animation: 'voc-cell-in 0.45s cubic-bezier(.34,1.56,.64,1) both',
-                    animationDelay: `${Math.min(ci, 90) * 9}ms`,
-                  }}
-                  onClick={clickable ? () => onSelectTarget!(c.leaf.target) : undefined}
-                >
+                <g key={c.leaf.target} style={gStyle} onClick={clickable ? () => onSelectTarget!(c.leaf.target) : undefined}>
                   <title>{`${c.group.label} · ${c.leaf.label}\n${c.leaf.target}\n${c.leaf.metric}`}</title>
                   <rect
                     x={r.x + 0.5}
@@ -241,17 +249,34 @@ export function ExperienceMap({
                     strokeWidth={1}
                   />
                   {isPain ? (
-                    <rect
-                      x={r.x + 1}
-                      y={r.y + 1}
-                      width={Math.max(0, r.w - 2)}
-                      height={Math.max(0, r.h - 2)}
-                      rx={2}
-                      fill="none"
-                      stroke="#fff"
-                      strokeWidth={1.4}
-                      style={{ animation: `voc-cell-glow ${2 + (c.idxInGroup % 5) * 0.2}s ease-in-out infinite` }}
-                    />
+                    <>
+                      {/* 点睛①：一次性扩散环(写完后 ping 一下) */}
+                      <rect
+                        x={r.x + 1}
+                        y={r.y + 1}
+                        width={Math.max(0, r.w - 2)}
+                        height={Math.max(0, r.h - 2)}
+                        rx={2}
+                        fill="none"
+                        stroke={fill}
+                        strokeWidth={1.6}
+                        strokeOpacity={0}
+                        style={{ transformBox: 'fill-box', transformOrigin: 'center', animation: 'voc-ignite 0.7s ease-out', animationDelay: `${igniteDelay}ms` }}
+                      />
+                      {/* 点睛②：持续脉冲描边(写完后才开始亮) */}
+                      <rect
+                        x={r.x + 1}
+                        y={r.y + 1}
+                        width={Math.max(0, r.w - 2)}
+                        height={Math.max(0, r.h - 2)}
+                        rx={2}
+                        fill="none"
+                        stroke="#fff"
+                        strokeWidth={1.4}
+                        strokeOpacity={0}
+                        style={{ animation: `voc-cell-glow ${2 + (c.idxInGroup % 5) * 0.2}s ease-in-out infinite`, animationDelay: `${igniteDelay}ms` }}
+                      />
+                    </>
                   ) : null}
                   {showLabel ? (
                     <text
@@ -274,19 +299,21 @@ export function ExperienceMap({
                 </g>
               );
             })}
-            {/* 实时扫描光带：横向来回滑过，凸显「正在实时扫描」 */}
+            {/* 扫描笔：和块的写出严格同步(块随笔尖经过而出现)，一次画完即淡出——不空转，绑定真实的「扫描这批数据」 */}
             <defs>
-              <linearGradient id="voc-scan" x1="0" x2="1" y1="0" y2="0">
+              <linearGradient id="voc-pen" x1="0" x2="1" y1="0" y2="0">
                 <stop offset="0" stopColor="#2dd4bf" stopOpacity="0" />
-                <stop offset="0.55" stopColor="#2dd4bf" stopOpacity="0.06" />
-                <stop offset="0.94" stopColor="#2dd4bf" stopOpacity="0.16" />
-                <stop offset="1" stopColor="#5eead4" stopOpacity="0.5" />
+                <stop offset="0.7" stopColor="#2dd4bf" stopOpacity="0.05" />
+                <stop offset="0.96" stopColor="#5eead4" stopOpacity="0.22" />
+                <stop offset="1" stopColor="#a5f3eb" stopOpacity="0.7" />
               </linearGradient>
             </defs>
             <g style={{ pointerEvents: 'none' }}>
-              <rect y={0} width={88} height={VH} fill="url(#voc-scan)">
-                <animate attributeName="x" from={-88} to={VW} dur="4.5s" repeatCount="indefinite" />
+              <rect x={-44} y={0} width={44} height={VH} fill="url(#voc-pen)">
+                <animate attributeName="x" from={-44} to={VW} dur="1.3s" repeatCount="1" fill="freeze" />
+                <animate attributeName="opacity" from="1" to="0" begin="1.2s" dur="0.35s" fill="freeze" />
               </rect>
+            </g>
             </g>
           </svg>
         </div>
@@ -296,6 +323,8 @@ export function ExperienceMap({
         @keyframes voc-cell-in { from { opacity: 0; transform: scale(.45); } to { opacity: 1; transform: scale(1); } }
         @keyframes voc-grp-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes voc-ping { 75%,100% { transform: scale(2.2); opacity: 0; } }
+        @keyframes voc-pain-glow { from { filter: drop-shadow(0 0 0 transparent); } to { filter: drop-shadow(0 0 7px var(--voc-glow, #f8717a)); } }
+        @keyframes voc-ignite { 0% { stroke-opacity: .9; transform: scale(1); } 100% { stroke-opacity: 0; transform: scale(1.18); } }
       `}</style>
     </>
   );
