@@ -150,6 +150,239 @@ public class ImageGenController : ControllerBase
     }
 
     /// <summary>
+    /// 视觉分镜台：把一段想法/文章拆成若干"镜头"，每镜产出一个关键帧图 prompt（喂给生图引擎渲染）
+    /// + 一个运动 prompt（预留给后续 image-to-video）。纯 LLM 调用；前端拿到后用现有生图链路渲染关键帧。
+    /// </summary>
+    [HttpPost("storyboard-script")]
+    public async Task<IActionResult> StoryboardScript([FromBody] StoryboardScriptRequest request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var brief = (request?.Brief ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(brief))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先填写想法或文章内容"));
+        if (brief.Length > 20000) brief = brief[..20000];
+
+        var style = (request?.Style ?? string.Empty).Trim();
+        var sceneCount = Math.Clamp(request?.SceneCount ?? 0, 0, MaxStoryboardScenes);
+
+        const string appCallerCode = AppCallerRegistry.VisualAgent.Storyboard.Script;
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: adminId,
+            ViewRole: "ADMIN",
+            DocumentChars: brief.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: null,
+            RequestType: "chat",
+            AppCallerCode: appCallerCode));
+
+        var countHint = sceneCount > 0
+            ? $"必须恰好拆成 {sceneCount} 个镜头。"
+            : "拆成 4-8 个镜头（按内容繁简自定）。";
+        var styleLine = string.IsNullOrWhiteSpace(style)
+            ? "（你自定一种最适合内容的统一视觉风格）"
+            : $"：{style}";
+
+        var systemPrompt =
+            "你是一位电影分镜导演 + 概念美术。把用户给的想法/文章拆成一组\"镜头\"，每个镜头先以一张关键帧静态图存在（后续可让它动起来）。\n"
+            + countHint + "\n\n"
+            + "每个镜头输出：\n"
+            + "- topic：中文小标题（不超过 8 字）\n"
+            + "- keyframePrompt：英文关键帧图生成 prompt，描述画面主体、构图、镜头景别（wide/medium/close-up）、光影、色调、质感，电影级，细节充分（30-60 词）\n"
+            + "- motionPrompt：英文运动 prompt，描述这张图动起来时的镜头运动与主体动作（10-25 词），预留给后续 image-to-video\n"
+            + "- duration：该镜头建议时长秒数（整数 3-8）\n\n"
+            + "整组镜头视觉风格必须高度统一" + styleLine + "。每个 keyframePrompt 里都要体现这个统一风格，保证人物/色调/质感连贯。\n\n"
+            + "禁止使用任何 emoji 字符（title / topic / keyframePrompt / motionPrompt 全部不得包含 emoji）。\n\n"
+            + "只输出 JSON，不要解释、不要 markdown 代码块：\n"
+            + "{\"title\":\"整组分镜中文标题(不超过14字)\",\"style\":\"英文统一风格描述\",\"scenes\":[{\"topic\":\"..\",\"keyframePrompt\":\"..\",\"motionPrompt\":\"..\",\"duration\":5}]}";
+
+        var userMsg = string.IsNullOrWhiteSpace(style) ? brief : $"统一风格要求：{style}\n\n内容：\n{brief}";
+
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.Chat, null, ct);
+        if (!resolution.Success)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, $"模型调度失败：{resolution.ErrorMessage}"));
+
+        var resp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new System.Text.Json.Nodes.JsonObject
+            {
+                ["messages"] = new System.Text.Json.Nodes.JsonArray
+                {
+                    new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = userMsg },
+                },
+                ["temperature"] = 0.8,
+            },
+            TimeoutSeconds = 120,
+        }, resolution, ct);
+
+        if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
+        {
+            // 转发 gateway 已构造的中文报错（如 LLM_QUOTA_EXCEEDED 的额度文案），别用 ErrorCode 覆盖成泛化提示（Bugbot review）
+            var detail = !string.IsNullOrWhiteSpace(resp.ErrorMessage)
+                ? resp.ErrorMessage
+                : (resp.ErrorCode ?? "未知错误");
+            var failCode = string.IsNullOrWhiteSpace(resp.ErrorCode) ? ErrorCodes.LLM_ERROR : resp.ErrorCode!;
+            return BadRequest(ApiResponse<object>.Fail(failCode, $"分镜生成失败：{detail}"));
+        }
+
+        var text = ExtractChatText(resp.Content);
+        // 用户指定 sceneCount(>0) 时按其截断（system prompt 要求恰好 N 个，模型超产强制裁到 N）；否则用全局上限（Bugbot review）
+        var sceneCap = sceneCount > 0 ? Math.Min(sceneCount, MaxStoryboardScenes) : MaxStoryboardScenes;
+        var parsed = ParseStoryboard(text, sceneCap);
+        if (parsed == null || parsed.Scenes.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "分镜解析失败，请重试或调整描述"));
+
+        return Ok(ApiResponse<StoryboardScriptResponse>.Ok(parsed));
+    }
+
+    private static string ExtractChatText(string apiResponseJson)
+    {
+        try
+        {
+            var doc = System.Text.Json.Nodes.JsonNode.Parse(apiResponseJson)?.AsObject();
+            var content = doc?["choices"]?[0]?["message"]?["content"];
+            if (content == null) return string.Empty;
+            // content 可能是纯字符串、单个对象部件 {type,text}、或部件数组 [{type,text},..]（不同 chat 兼容网关形态不一）。
+            // 任一形态当字符串读都会抛异常 → 退回整段响应 → ExtractFirstJsonObject 抓到外层 envelope 而非分镜 JSON（Bugbot review）。
+            if (content is System.Text.Json.Nodes.JsonArray arr)
+            {
+                var sb = new System.Text.StringBuilder();
+                foreach (var part in arr) sb.Append(PartText(part));
+                return sb.ToString();
+            }
+            return PartText(content); // 纯字符串或单对象部件
+
+            static string PartText(System.Text.Json.Nodes.JsonNode? node)
+            {
+                if (node is System.Text.Json.Nodes.JsonValue v) { try { return v.GetValue<string>() ?? string.Empty; } catch { return string.Empty; } }
+                if (node is System.Text.Json.Nodes.JsonObject o) return o["text"]?.GetValue<string>() ?? string.Empty;
+                return string.Empty;
+            }
+        }
+        catch { return apiResponseJson; }
+    }
+
+    /// <summary>
+    /// 从文本中提取第一个完整 JSON 对象：从首个 '{' 起按括号深度匹配（字符串内花括号不计、正确处理转义）。
+    /// 比「首 { 到末 }」鲁棒：模型在 JSON 后夹带说明文字、或值里含 '}' 都不会截错。
+    /// </summary>
+    private static string? ExtractFirstJsonObject(string text)
+    {
+        var t = (text ?? string.Empty).Trim();
+        // 去掉 markdown ```json 围栏
+        if (t.StartsWith("```"))
+        {
+            var nl = t.IndexOf('\n');
+            if (nl >= 0) t = t[(nl + 1)..];
+            if (t.EndsWith("```")) t = t[..^3];
+            t = t.Trim();
+        }
+        var start = t.IndexOf('{');
+        if (start < 0) return null;
+        int depth = 0;
+        bool inStr = false, esc = false;
+        for (var i = start; i < t.Length; i++)
+        {
+            var c = t[i];
+            if (inStr)
+            {
+                if (esc) esc = false;
+                else if (c == '\\') esc = true;
+                else if (c == '"') inStr = false;
+            }
+            else if (c == '"') inStr = true;
+            else if (c == '{') depth++;
+            else if (c == '}')
+            {
+                depth--;
+                if (depth == 0) return t[start..(i + 1)];
+            }
+        }
+        return null; // 未闭合
+    }
+
+    // 分镜上限：请求侧 sceneCount 钳制与解析侧截断共用，避免漂移；上限 < 图生图 run 的条目上限
+    private const int MaxStoryboardScenes = 12;
+
+    private static StoryboardScriptResponse? ParseStoryboard(string text, int maxScenes)
+    {
+        var json = ExtractFirstJsonObject(text);
+        if (json == null) return null;
+        try
+        {
+            var obj = System.Text.Json.Nodes.JsonNode.Parse(json)?.AsObject();
+            var arr = obj?["scenes"]?.AsArray();
+            if (obj == null || arr == null) return null;
+
+            var res = new StoryboardScriptResponse
+            {
+                Title = StripEmoji(obj["title"]?.GetValue<string>()?.Trim()) is { Length: > 0 } t ? t : "未命名分镜",
+                Style = StripEmoji(obj["style"]?.GetValue<string>()?.Trim()),
+                Scenes = new List<StoryboardSceneDto>()
+            };
+
+            for (var i = 0; i < arr.Count; i++)
+            {
+                // 截断到请求的镜头数（用户指定 sceneCount 则为 N，否则全局上限）：模型超产时不再全量下发，
+                // 既兑现「恰好 N 个」也避免撞图生图 run 的条目上限导致整板无关键帧（Codex + Bugbot review）
+                if (res.Scenes.Count >= maxScenes) break;
+                var it = arr[i]?.AsObject();
+                if (it == null) continue;
+                var kf = StripEmoji(it["keyframePrompt"]?.GetValue<string>()?.Trim());
+                if (string.IsNullOrWhiteSpace(kf)) continue;
+
+                var dur = 5;
+                var dn = it["duration"];
+                if (dn != null)
+                {
+                    try { dur = dn.GetValue<int>(); }
+                    catch
+                    {
+                        try { dur = (int)Math.Round(dn.GetValue<double>()); }
+                        catch
+                        {
+                            try { int.TryParse(dn.GetValue<string>(), out dur); } catch { /* keep default */ }
+                        }
+                    }
+                }
+                if (dur < 3) dur = 3;
+                if (dur > 8) dur = 8;
+
+                res.Scenes.Add(new StoryboardSceneDto
+                {
+                    Index = res.Scenes.Count,
+                    Topic = StripEmoji(it["topic"]?.GetValue<string>()?.Trim()) is { Length: > 0 } tp ? tp : $"镜头 {res.Scenes.Count + 1}",
+                    KeyframePrompt = kf,
+                    MotionPrompt = StripEmoji(it["motionPrompt"]?.GetValue<string>()?.Trim()),
+                    Duration = dur
+                });
+            }
+
+            return res.Scenes.Count > 0 ? res : null;
+        }
+        catch { return null; }
+    }
+
+    // 防御性去除 emoji：CLAUDE.md/AGENTS.md §0 禁止 UI 渲染输出含 emoji，分镜 title/topic/prompt 由 LLM 生成，
+    // 即便已在 system prompt 里要求无 emoji 也不赌模型自觉，落库/返回前再剥一层（Codex review）。
+    // 覆盖：星平面字符(代理对，绝大多数 emoji)、杂项符号/dingbats/箭头/几何符号块、变体选择符、keycap 组合符。
+    private static readonly System.Text.RegularExpressions.Regex EmojiRegex = new(
+        @"[\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2190-\u21FF\u2300-\u27BF\u2B00-\u2BFF\uFE0F\u20E3]",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string StripEmoji(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return string.Empty;
+        return EmojiRegex.Replace(s, string.Empty).Trim();
+    }
+
+    /// <summary>
     /// 获取模型适配信息（尺寸选项、能力等，纯静态注册表查询，无需数据库）
     /// </summary>
     /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-4-turbo）</param>
@@ -1968,6 +2201,36 @@ public class ImageGenRunPlanItemInput
     public string Prompt { get; set; } = string.Empty;
     public int Count { get; set; } = 1;
     public string? Size { get; set; }
+}
+
+// ===== 视觉分镜台 storyboard-script =====
+
+public class StoryboardScriptRequest
+{
+    /// <summary>想法描述或整篇文章/PRD（必填）</summary>
+    public string? Brief { get; set; }
+
+    /// <summary>统一视觉风格（可选，留空让 AI 自定）</summary>
+    public string? Style { get; set; }
+
+    /// <summary>期望镜头数（可选，0 = 由 AI 自定 4-8 个）</summary>
+    public int? SceneCount { get; set; }
+}
+
+public class StoryboardScriptResponse
+{
+    public string Title { get; set; } = string.Empty;
+    public string Style { get; set; } = string.Empty;
+    public List<StoryboardSceneDto> Scenes { get; set; } = new();
+}
+
+public class StoryboardSceneDto
+{
+    public int Index { get; set; }
+    public string Topic { get; set; } = string.Empty;
+    public string KeyframePrompt { get; set; } = string.Empty;
+    public string MotionPrompt { get; set; } = string.Empty;
+    public int Duration { get; set; } = 5;
 }
 
 // ===== 多图组合生成 =====

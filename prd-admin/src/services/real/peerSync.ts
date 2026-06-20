@@ -37,6 +37,12 @@ export interface TransferItemResult {
   itemId: string;
   ok: boolean;
   message?: string;
+  created?: number;
+  updated?: number;
+  skipped?: number;
+  failed?: number;
+  assetsRewritten?: number;
+  assetRewriteFailed?: number;
 }
 
 // ─────────────────────────────────────────────
@@ -63,6 +69,8 @@ export async function transferToPeer(params: {
   itemIds: string[];
   direction: PeerTransferDirection;
   mode?: PeerApplyMode;
+  preserveTimestamps?: boolean;
+  rewriteAssetLinks?: boolean;
 }) {
   return await apiRequest<{ direction: string; results: TransferItemResult[]; anyFail: boolean }>(
     api.peerSync.transfer(),

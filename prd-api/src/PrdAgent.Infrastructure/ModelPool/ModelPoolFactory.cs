@@ -1,7 +1,9 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.ModelPool.Models;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.ModelPool;
 
@@ -25,11 +27,26 @@ public class ModelPoolFactory
     /// </summary>
     /// <param name="group">模型分组</param>
     /// <param name="platforms">平台配置列表（包含 API URL 和密钥）</param>
-    /// <param name="jwtSecret">解密 API Key 的密钥</param>
+    /// <param name="configuration">API key 加密钥匙环配置</param>
     /// <returns>模型池实例</returns>
-    public IModelPool Create(ModelGroup group, IReadOnlyList<LLMPlatform> platforms, string jwtSecret)
+    public IModelPool Create(ModelGroup group, IReadOnlyList<LLMPlatform> platforms, IConfiguration configuration)
     {
-        var endpoints = BuildEndpoints(group, platforms, jwtSecret);
+        var endpoints = BuildEndpoints(group, platforms, configuration);
+        var strategyType = (PoolStrategyType)group.StrategyType;
+
+        return ModelPoolDispatcher.Create(
+            poolId: group.Id,
+            poolName: group.Name,
+            endpoints: endpoints,
+            strategyType: strategyType,
+            httpDispatcher: _httpDispatcher,
+            healthTracker: BuildHealthTracker(group),
+            logger: _logger);
+    }
+
+    public IModelPool Create(ModelGroup group, IReadOnlyList<LLMPlatform> platforms, string apiKeySecret)
+    {
+        var endpoints = BuildEndpoints(group, platforms, apiKeySecret);
         var strategyType = (PoolStrategyType)group.StrategyType;
 
         return ModelPoolDispatcher.Create(
@@ -48,7 +65,39 @@ public class ModelPoolFactory
     public static List<PoolEndpoint> BuildEndpoints(
         ModelGroup group,
         IReadOnlyList<LLMPlatform> platforms,
-        string jwtSecret)
+        IConfiguration configuration)
+    {
+        var endpoints = new List<PoolEndpoint>();
+
+        foreach (var model in group.Models ?? new List<ModelGroupItem>())
+        {
+            var platform = platforms.FirstOrDefault(p => p.Id == model.PlatformId && p.Enabled);
+            if (platform == null) continue;
+
+            var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, configuration);
+
+            endpoints.Add(new PoolEndpoint
+            {
+                EndpointId = $"{model.PlatformId}:{model.ModelId}",
+                ModelId = model.ModelId,
+                PlatformId = model.PlatformId,
+                PlatformType = platform.PlatformType,
+                PlatformName = platform.Name,
+                ApiUrl = platform.ApiUrl,
+                ApiKey = apiKey,
+                Priority = model.Priority,
+                MaxTokens = model.MaxTokens,
+                EnablePromptCache = model.EnablePromptCache
+            });
+        }
+
+        return endpoints;
+    }
+
+    public static List<PoolEndpoint> BuildEndpoints(
+        ModelGroup group,
+        IReadOnlyList<LLMPlatform> platforms,
+        string apiKeySecret)
     {
         var endpoints = new List<PoolEndpoint>();
 
@@ -59,7 +108,7 @@ public class ModelPoolFactory
 
             var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted)
                 ? null
-                : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, apiKeySecret);
 
             endpoints.Add(new PoolEndpoint
             {

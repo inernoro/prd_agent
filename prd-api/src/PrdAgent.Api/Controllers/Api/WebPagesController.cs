@@ -39,15 +39,18 @@ public class WebPagesController : ControllerBase
 
     private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
     private readonly ITeamService _teams;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public WebPagesController(
         IHostedSiteService siteService,
         PrdAgent.Infrastructure.Database.MongoDbContext db,
-        ITeamService teams)
+        ITeamService teams,
+        IHttpClientFactory httpClientFactory)
     {
         _siteService = siteService;
         _db = db;
         _teams = teams;
+        _httpClientFactory = httpClientFactory;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -245,29 +248,94 @@ public class WebPagesController : ControllerBase
     {
         var safeTitle = HtmlEscape(title);
         var urlAsset = UrlEncodeFilename(assetName);
-        var sb = new StringBuilder();
-        sb.AppendLine("<!DOCTYPE html>");
-        sb.AppendLine("<html lang=\"zh-CN\">");
-        sb.AppendLine("<head>");
-        sb.AppendLine("  <meta charset=\"UTF-8\" />");
-        sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />");
-        sb.Append("  <title>").Append(safeTitle).AppendLine("</title>");
-        sb.AppendLine("  <style>");
-        sb.AppendLine("    html,body{margin:0;padding:0;height:100%;background:#1a1a1f;}");
-        sb.AppendLine("    iframe{display:block;width:100%;height:100vh;border:0;}");
-        sb.AppendLine("    .fallback{padding:24px;color:#e8e8ec;font-family:-apple-system,BlinkMacSystemFont,sans-serif;}");
-        sb.AppendLine("  </style>");
-        sb.AppendLine("</head>");
-        sb.AppendLine("<body>");
-        sb.Append("  <iframe src=\"").Append(urlAsset).Append("\" title=\"").Append(safeTitle).AppendLine("\"></iframe>");
-        sb.AppendLine("  <noscript>");
-        sb.AppendLine("    <div class=\"fallback\">");
-        sb.Append("      浏览器不支持内嵌 PDF，<a href=\"").Append(urlAsset).AppendLine("\">点此下载</a>。");
-        sb.AppendLine("    </div>");
-        sb.AppendLine("  </noscript>");
-        sb.AppendLine("</body>");
-        sb.AppendLine("</html>");
-        return sb.ToString();
+        // 用 PDF.js 把 PDF 渲染成 <canvas>，而不是 <iframe src="*.pdf"> 内嵌浏览器原生 PDF 阅读器。
+        // 移动端 Safari / 微信内置 WebView（iOS WKWebView、Android X5）都不支持在 iframe 里显示 PDF，
+        // 导致转发出去的链接在手机 / 微信里打开一片空白——这正是本次要修的问题。canvas 渲染全平台通用。
+        // 加载失败时降级为「点此下载 / 在浏览器打开」直链，绝不留白（呼应 CLAUDE.md §6 禁止空白等待）。
+        return $$$"""
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+          <title>{{{safeTitle}}}</title>
+          <style>
+            html,body{margin:0;padding:0;background:#1a1a1f;color:#e8e8ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;}
+            #bar{position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;background:rgba(20,20,26,0.95);border-bottom:1px solid rgba(255,255,255,0.08);font-size:13px;}
+            #bar .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff;}
+            #bar a{color:#7dd3fc;text-decoration:none;white-space:nowrap;flex-shrink:0;}
+            #status{padding:48px 24px;text-align:center;color:#9ca3af;font-size:14px;line-height:1.8;}
+            #pages{display:flex;flex-direction:column;align-items:center;gap:12px;padding:12px 8px 56px;}
+            #pages canvas{max-width:100%;height:auto;background:#fff;border-radius:4px;box-shadow:0 4px 24px rgba(0,0,0,0.5);}
+            .spin{display:inline-block;width:22px;height:22px;border:3px solid rgba(255,255,255,0.18);border-top-color:#7dd3fc;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:8px;}
+            @keyframes spin {
+              to { transform: rotate(360deg); }
+            }
+          </style>
+        </head>
+        <body>
+          <div id="bar">
+            <span class="t">{{{safeTitle}}}</span>
+            <a href="{{{urlAsset}}}" target="_blank" rel="noopener">下载 / 在浏览器打开</a>
+          </div>
+          <div id="status"><span class="spin"></span>正在加载 PDF…</div>
+          <div id="pages"></div>
+          <noscript><div id="status">浏览器未启用 JavaScript，<a href="{{{urlAsset}}}" style="color:#7dd3fc;">点此下载 PDF</a>。</div></noscript>
+          <script>
+          (function(){
+            var PDF_URL = "{{{urlAsset}}}";
+            var CDN = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/";
+            var statusEl = document.getElementById("status");
+            var pagesEl = document.getElementById("pages");
+            function fail(msg){
+              if(!statusEl){ return; }
+              statusEl.style.display = "block";
+              statusEl.innerHTML = msg + ' <a href="' + PDF_URL + '" target="_blank" rel="noopener" style="color:#7dd3fc;">点此下载或在浏览器打开</a>。';
+            }
+            function loadScript(src){
+              return new Promise(function(resolve, reject){
+                var s = document.createElement("script");
+                s.src = src; s.onload = resolve; s.onerror = reject;
+                document.head.appendChild(s);
+              });
+            }
+            loadScript(CDN + "pdf.min.js").then(function(){
+              var lib = window.pdfjsLib || window["pdfjs-dist/build/pdf"];
+              if(!lib){ throw new Error("pdfjs not loaded"); }
+              lib.GlobalWorkerOptions.workerSrc = CDN + "pdf.worker.min.js";
+              return lib.getDocument({ url: PDF_URL }).promise;
+            }).then(function(pdf){
+              if(statusEl){ statusEl.style.display = "none"; }
+              var dpr = Math.min(window.devicePixelRatio || 1, 2);
+              var renderOne = function(num){
+                return pdf.getPage(num).then(function(page){
+                  var base = page.getViewport({ scale: 1 });
+                  var cssWidth = Math.min((pagesEl.clientWidth || window.innerWidth) - 16, 1100);
+                  var cssScale = cssWidth / base.width;
+                  var vp = page.getViewport({ scale: cssScale * dpr });
+                  var canvas = document.createElement("canvas");
+                  var ctx = canvas.getContext("2d");
+                  canvas.width = Math.floor(vp.width);
+                  canvas.height = Math.floor(vp.height);
+                  canvas.style.width = cssWidth + "px";
+                  canvas.style.height = Math.floor(cssWidth * base.height / base.width) + "px";
+                  pagesEl.appendChild(canvas);
+                  return page.render({ canvasContext: ctx, viewport: vp }).promise;
+                });
+              };
+              var chain = Promise.resolve();
+              for(var i = 1; i <= pdf.numPages; i++){
+                (function(n){ chain = chain.then(function(){ return renderOne(n); }); })(i);
+              }
+              return chain;
+            }).catch(function(){
+              fail("PDF 在线预览加载失败。");
+            });
+          })();
+          </script>
+        </body>
+        </html>
+        """;
     }
 
     private static string BuildMarkdownWrapper(byte[] mdBytes, string title)
@@ -709,6 +777,42 @@ public class WebPagesController : ControllerBase
         var site = await _siteService.GetByIdAsync(id, GetUserId());
         if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
         return Ok(ApiResponse<object>.Ok(site));
+    }
+
+    /// <summary>读取站点入口 HTML 原文（owner / 共享团队成员可读）。
+    /// 服务端代理取回，绕开浏览器跨域限制；供「知识库从网页托管导入」等场景使用。
+    /// 仅适用 HTML 入口的站点；包装资产站（pdf/video/markdown）与超大文件拒绝。</summary>
+    [HttpGet("{id}/content")]
+    public async Task<IActionResult> GetSiteContent(string id)
+    {
+        var site = await _siteService.GetByIdAsync(id, GetUserId());
+        if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+        if (!string.IsNullOrEmpty(site.WrappedAssetType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频/Markdown 包装站，不支持以 HTML 导入"));
+        if (string.IsNullOrWhiteSpace(site.SiteUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
+
+        const long maxBytes = 2L * 1024 * 1024; // 知识库正文按文本存储，2MB 足够覆盖单文件 HTML
+        try
+        {
+            var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
+            var url = $"{site.SiteUrl}{(site.SiteUrl.Contains('?') ? "&" : "?")}v={version.Ticks}";
+            var http = _httpClientFactory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(20);
+            using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            if (!resp.IsSuccessStatusCode)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"站点内容读取失败（HTTP {(int)resp.StatusCode}）"));
+            if (resp.Content.Headers.ContentLength is > maxBytes)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持导入"));
+            var html = await resp.Content.ReadAsStringAsync();
+            if (html.Length > maxBytes)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持导入"));
+            return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, title = site.Title, contentType = "text/html", html }));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点内容读取超时或失败，请稍后重试"));
+        }
     }
 
     /// <summary>更新站点元信息</summary>

@@ -23,6 +23,16 @@ function safeQuery(sel: string | null | undefined): Element | null {
 }
 
 /**
+ * 飞回 + 接住的共享时序(SSOT)。两段动画必须挂在同一条「合成层时钟」上,且都用 delay 预约,
+ * 不靠「飞完 onfinish → setState → 重渲染」那条主线程链路触发 —— 否则页面卡顿时主线程被占满,
+ * 帽子(合成层)早落地、闪光(主线程二次渲染)还堵在队列里,出现「接触与闪烁差几秒」的脱钩(用户 2026-06-15 实测)。
+ * LAND_DELAY 略小于 FLY_DURATION,让挤压/辉光在帽子最后接触的那一刻引爆(留 ~120ms 重叠)。
+ */
+const FLY_DURATION = 1440;
+const LAND_OVERLAP = 120;
+const LAND_DELAY = FLY_DURATION - LAND_OVERLAP;
+
+/**
  * 「飞回教程入口」完成动画(诉求 6):教程走完后,一枚毕业帽徽章从最后高亮的光圈中心
  * 飞向右上角「本页教程」pill(data-tour-entry),提醒用户"以后从这里再看",避免学完即忘。
  * 用 Web Animations API 走任意两点曲线,结束后回调清理。
@@ -55,9 +65,9 @@ function FlyingToken({
         },
         { transform: `translate(-50%,-50%) translate(${dx}px, ${dy}px) scale(0.3)`, opacity: 0 },
       ],
-      // 半速(1440ms,原 720 的两倍):用户反馈关闭教程时飞回动画太快「看不见」,
+      // 半速(FLY_DURATION,原 720 的两倍):用户反馈关闭教程时飞回动画太快「看不见」,
       // 放慢一倍让毕业帽明显地飞回右上角入口,提醒以后从这里重看。
-      { duration: 1440, easing: 'cubic-bezier(.4,0,.2,1)' },
+      { duration: FLY_DURATION, easing: 'cubic-bezier(.4,0,.2,1)' },
     );
     anim.onfinish = onDone;
     return () => {
@@ -87,6 +97,161 @@ function FlyingToken({
     >
       <GraduationCap size={16} strokeWidth={2.4} />
     </div>
+  );
+}
+
+/**
+ * 把一条阻尼谐振子(弹簧)采样成 WAAPI 关键帧 —— 这是 iOS/SwiftUI `.spring(response,dampingFraction)`
+ * 的手感来源:位移带自然过冲再收敛,而非贝塞尔那种「编出来」的速度曲线。
+ * response=弹簧周期(越小越快),zeta=阻尼系数(1=不过冲,<1 越小越弹);sx0/sy0=撞击瞬间的初始挤压。
+ * v 在过冲段会 >1,自动得到反向挤压(secondary motion),正是「被撞扁又回弹」的实感。
+ */
+function springScaleFrames(response: number, zeta: number, sx0: number, sy0: number, n = 48): Keyframe[] {
+  const w0 = (2 * Math.PI) / response;
+  const settle = response * (zeta < 1 ? 2.4 : 1.7);
+  const frames: Keyframe[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = (settle * i) / n;
+    let v: number;
+    if (zeta < 1) {
+      const wd = w0 * Math.sqrt(1 - zeta * zeta);
+      v = 1 - Math.exp(-zeta * w0 * t) * (Math.cos(wd * t) + ((zeta * w0) / wd) * Math.sin(wd * t));
+    } else {
+      v = 1 - Math.exp(-w0 * t) * (1 + w0 * t);
+    }
+    const sx = sx0 + (1 - sx0) * v;
+    const sy = sy0 + (1 - sy0) * v;
+    frames.push({ transform: `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`, offset: i / n });
+  }
+  return frames;
+}
+
+/**
+ * 毕业帽飞回入口「落地」那一刻在 pill 位置引爆的「接住」效果:pill 弹簧挤压 + 环形辉光 + 涟漪。
+ *
+ * 关键:本组件在**飞行一开始**就和 FlyingToken 一起挂载,三段动画全部用 `delay: LAND_DELAY` 预约,
+ * 在合成层(GPU)上自行按点引爆 —— 不经过「飞完 onfinish → setState → 重渲染」那条主线程链路。
+ * 这样页面卡顿时帽子(合成层)与闪光(合成层)仍共享同一时钟、严丝合缝,根治「接触与闪烁差几秒」。
+ * delay 期间所有元素 opacity 0 / pill 维持原状,飞行途中不可见,落地瞬间才亮。
+ * 只动 opacity/transform(合成层,不动 box-shadow 扩散);环形 halo 中心镂空不遮挡 pill 文字。
+ */
+function EntryLandingFx({
+  rect,
+  onDone,
+}: {
+  rect: { x: number; y: number; w: number; h: number };
+  onDone: () => void;
+}) {
+  const glowRef = useRef<HTMLDivElement>(null);
+  const rippleRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const glow = glowRef.current;
+    const ripple = rippleRef.current;
+    const anims: Animation[] = [];
+    // pill 挤压跑在常驻的真实入口节点(data-tour-entry)上,单独跟踪:卸载时**只取消仍在 delay 预约期**
+    // 的那一份(见 cleanup),避免「新教程在接住延迟未引爆时启动 → 本 FX 卸载 → 预约动画却幽灵引爆并和
+    // 下一次接住重叠」(Bugbot Medium);已进入播放期的不取消,任其自然播完(fill:none 自动复位),
+    // 这样既不留幽灵、又不会把播放中的挤压 cancel 出突兀回弹。
+    const pillAnims: Animation[] = [];
+    // pill 本体弹簧挤压(非等比:撞击 X 宽 Y 扁 → 弹簧收敛回 1,过冲自然反挤压),与辉光同一 delay 引爆。
+    const entry = document.querySelector('[data-tour-entry]');
+    if (entry instanceof HTMLElement) {
+      try {
+        pillAnims.push(
+          entry.animate(springScaleFrames(0.42, 0.55, 1.16, 0.86), {
+            duration: 560,
+            delay: LAND_DELAY,
+            easing: 'linear',
+          }),
+        );
+        pillAnims.push(
+          entry.animate([{ borderColor: 'rgba(196,181,253,0.95)', color: '#fff', offset: 0 }, { offset: 1 }], {
+            duration: 700,
+            delay: LAND_DELAY,
+            easing: 'ease-out',
+          }),
+        );
+      } catch {
+        /* 老浏览器不支持 WAAPI 时静默降级,不影响教程功能本身 */
+      }
+    }
+    if (glow) {
+      const a = glow.animate(
+        [
+          { opacity: 0, transform: 'scale(0.55)' },
+          { opacity: 0.95, transform: 'scale(1.05)', offset: 0.12 },
+          { opacity: 0.3, transform: 'scale(1.25)', offset: 0.4 },
+          { opacity: 0, transform: 'scale(1.45)' },
+        ],
+        { duration: 620, delay: LAND_DELAY, easing: 'cubic-bezier(.2,.7,.3,1)' },
+      );
+      a.onfinish = onDone; // 落地播完后清理(纯卸载,即便因卡顿迟到也无副作用——视觉已在合成层准时播完)
+      anims.push(a);
+    } else {
+      onDone();
+    }
+    if (ripple) {
+      anims.push(
+        ripple.animate(
+          [
+            { opacity: 0.9, transform: 'scale(1)' },
+            { opacity: 0, transform: 'scale(1.9)' },
+          ],
+          { duration: 520, delay: LAND_DELAY, easing: 'cubic-bezier(.1,.6,.3,1)' },
+        ),
+      );
+    }
+    return () => {
+      anims.forEach((a) => {
+        a.onfinish = null;
+        a.cancel();
+      });
+      // pill 动画:仍在 delay 预约期(尚未视觉播放)的取消掉,防幽灵引爆;已开始播放的留它播完。
+      pillAnims.forEach((a) => {
+        const ct = typeof a.currentTime === 'number' ? a.currentTime : 0;
+        if (ct < LAND_DELAY) a.cancel();
+      });
+    };
+  }, [onDone]);
+  return createPortal(
+    <>
+      <div
+        ref={glowRef}
+        style={{
+          position: 'fixed',
+          left: rect.x - 16,
+          top: rect.y - 16,
+          width: rect.w + 32,
+          height: rect.h + 32,
+          borderRadius: 18,
+          zIndex: 10000,
+          pointerEvents: 'none',
+          opacity: 0,
+          transformOrigin: 'center',
+          // 中心镂空的环形辉光:不盖 pill 文字,只在边缘点亮一圈
+          background:
+            'radial-gradient(closest-side, rgba(167,139,250,0) 46%, rgba(167,139,250,0.55) 70%, rgba(167,139,250,0) 100%)',
+          filter: 'blur(2px)',
+        }}
+      />
+      <div
+        ref={rippleRef}
+        style={{
+          position: 'fixed',
+          left: rect.x,
+          top: rect.y,
+          width: rect.w,
+          height: rect.h,
+          borderRadius: 10,
+          zIndex: 10000,
+          pointerEvents: 'none',
+          opacity: 0,
+          transformOrigin: 'center',
+          border: '1.5px solid rgba(196,181,253,0.9)',
+        }}
+      />
+    </>,
+    document.body,
   );
 }
 
@@ -126,6 +291,11 @@ export function SpotlightOverlay() {
   /** 完成飞回动画的起止坐标(诉求 6),null=不播放 */
   const [flyBack, setFlyBack] = useState<{ from: { x: number; y: number }; to: { x: number; y: number } } | null>(null);
   const clearFlyBack = useCallback(() => setFlyBack(null), []);
+  /** 毕业帽落地后在 pill 位置播放的「接住」辉光/涟漪 rect(诉求:发个光、闪一闪),null=不播放 */
+  const [landFx, setLandFx] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  // 稳定引用:landFx 与 flyBack 同帧设、要等延迟动画播完(~1940ms)才清,期间父组件会因 clearFlyBack
+  // 等重渲染。若用内联 onDone,EntryLandingFx 的 effect 会随每次父渲染重跑、把落地动画中途重启 —— 必须稳。
+  const clearLandFx = useCallback(() => setLandFx(null), []);
 
   // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
   // 初次 mount 读一次;TipsRotator 写完 payload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
@@ -162,6 +332,11 @@ export function SpotlightOverlay() {
       }
 
       if (!initial) return;
+      // 新教程启动前,先清掉上一次关闭遗留的「飞回 + 接住」FX:否则 setDismissed(false) 会让 landFxNode
+      // 停止渲染、EntryLandingFx 卸载,而其挂在入口节点上的预约挤压动画若还没引爆就会变成幽灵(Bugbot)。
+      // 这里显式置空 → 触发 EntryLandingFx 卸载的 cleanup(取消预约期的 pill 动画),状态也不残留。
+      setFlyBack(null);
+      setLandFx(null);
       setRect(null);
       setPayload(initial);
       setStepIndex(0);
@@ -185,6 +360,13 @@ export function SpotlightOverlay() {
   // 历史:飞回动画原先只在「完成」末步触发,且 720ms 太快 —— 用户关闭/取消教程时
   // 「看不见」入口在哪。现在抽成公共函数,X / 点空白 / ESC / 我已学会 / 完成 全部复用,
   // 半速播放(见 FlyingToken),让用户每次关闭都看到毕业帽飞回入口。
+  // 全站「教程」入口是同一个组件 TipsEntryButton(都带 data-tour-entry),且本 Overlay 是 App 根
+  // 全局唯一挂载 —— 所以这套飞回 + 接住效果改这一处,任何页面、任何关闭路径(完成/我已学会/X/ESC)
+  // 只要帽子飞回来就一致触发。
+  //
+  // flyBack(帽子)与 landFx(接住光效)**同帧一起设**:两者在同一次渲染里挂载,共享同一条合成层时钟。
+  // 接住动画在 EntryLandingFx 内用 delay 预约(LAND_DELAY),不靠「飞完 onfinish → setState → 重渲染」
+  // 这条主线程链路触发 —— 根治页面卡顿时「帽子早落地、闪光迟几秒」的脱钩(用户 2026-06-15 实测)。
   const flyBackToEntry = useCallback(() => {
     const entry = document.querySelector('[data-tour-entry]');
     if (!entry) return;
@@ -197,6 +379,7 @@ export function SpotlightOverlay() {
       from: { x: sr.left + sr.width / 2, y: sr.top + sr.height / 2 },
       to: { x: er.left + er.width / 2, y: er.top + er.height / 2 },
     });
+    setLandFx({ x: er.left, y: er.top, w: er.width, h: er.height });
   }, [currentSelector]);
 
   // 统一关闭:先播飞回动画,再隐藏卡片。flyBack 与 dismissed 同帧设置,
@@ -459,8 +642,16 @@ export function SpotlightOverlay() {
   const flyBackNode = flyBack
     ? createPortal(<FlyingToken from={flyBack.from} to={flyBack.to} onDone={clearFlyBack} />, document.body)
     : null;
+  // 帽子落地后的「接住」辉光/涟漪 —— 与 flyBackNode 一样,dismissed 后仍需续播(落地发生在飞行结束、卡片已隐藏时)。
+  const landFxNode = landFx ? <EntryLandingFx rect={landFx} onDone={clearLandFx} /> : null;
 
-  if (dismissed || !payload) return flyBackNode;
+  if (dismissed || !payload)
+    return (
+      <>
+        {flyBackNode}
+        {landFxNode}
+      </>
+    );
 
   // 「等待中」阶段:payload 有但 rect 还没到 & 未超时 → 显示蓝色「正在定位…」小卡片
   // 避免用户点跳转后 6s 内啥都看不到,以为没反应

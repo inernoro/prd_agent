@@ -20,6 +20,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
 
   // ── 智能体（与 AGENT_DEFINITIONS / BUILTIN_TOOLS 对齐） ─────────
   'visual-agent': '视觉',
+  'visual-storyboard': '分镜',
   'literary-agent': '文学',
   'video-agent': '视频',
   'defect-agent': '缺陷',
@@ -42,7 +43,9 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'skill-agent': '技能助手',
   'workflow-agent': '工作流',
   'md-to-ppt-agent': 'PPT',
+  'tech-doc-format-agent': '技分',
   'front-end-agent': '前端',
+  'tapd-bug-agent': '提缺陷',
 
   // ── 基础设施 ──────────────────────────
   'marketplace': '市场',

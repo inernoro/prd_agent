@@ -29,6 +29,7 @@
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "@tailwindcss/vite": "^4.1.17",
+    "@uiw/react-md-editor": "^4.1.1",
     "@xyflow/react": "^12.10.0",
     "clsx": "^2.1.1",
     "dayjs": "^1.11.13",
@@ -57,6 +58,7 @@
     "tailwind-merge": "^2.6.0",
     "three": "^0.175.0",
     "wavesurfer.js": "^7.12.6",
+    "xlsx": "^0.18.5",
     "zustand": "^5.0.1"
   },
   "devDependencies": {
@@ -71,6 +73,7 @@
     "@vitejs/plugin-react": "^4.3.3",
     "eslint": "^9.15.0",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "serve": "^14.2.6",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.50.0",

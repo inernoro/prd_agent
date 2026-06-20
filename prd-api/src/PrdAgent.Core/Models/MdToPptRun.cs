@@ -19,7 +19,7 @@ public class MdToPptRun
 
     public string Theme { get; set; } = string.Empty;
 
-    /// <summary>convert | patch</summary>
+    /// <summary>convert | patch | outline</summary>
     public string Op { get; set; } = "convert";
 
     /// <summary>用于历史列表展示的标题（取自首个标题行或内容前缀）</summary>
@@ -28,8 +28,15 @@ public class MdToPptRun
     /// <summary>输入内容前缀（历史预览用，截断）</summary>
     public string ContentPreview { get; set; } = string.Empty;
 
-    /// <summary>生成完成的 HTML（done 时填充）</summary>
+    /// <summary>生成完成的 HTML（convert/patch done 时填充）</summary>
     public string Html { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 大纲结果 JSON（op=outline done 时填充）。服务器权威性：大纲生成不随
+    /// 客户端断开/刷新而消亡，刷新后前端按 runId 取回这里的结果继续。
+    /// 形如 {"totalPages":N,"summary":"...","clarify":[...],"outline":[{title,bullets,design}...]}
+    /// </summary>
+    public string? OutlineJson { get; set; }
 
     public string? Error { get; set; }
 

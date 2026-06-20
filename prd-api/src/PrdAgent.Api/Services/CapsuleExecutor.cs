@@ -10,6 +10,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Services;
 
@@ -21,6 +22,7 @@ public static class CapsuleExecutor
 {
     private const int CdsAgentEventPageSize = 500;
     private const int CdsAgentMaxEventPages = 20;
+    private const int SafeOutboundMaxRedirects = 5;
 
     public record CapsuleResult(List<ExecutionArtifact> Artifacts, string Logs);
 
@@ -611,7 +613,7 @@ public static class CapsuleExecutor
         if (estimatedTokens <= tokenBudget)
             return (text, estimatedTokens, false);
 
-        logs.AppendLine($"  ⚠️ 输入数据过大: 估算 {estimatedTokens} tokens，超出预算 {tokenBudget} tokens，将智能截断");
+        logs.AppendLine($"  [警告] 输入数据过大: 估算 {estimatedTokens} tokens，超出预算 {tokenBudget} tokens，将智能截断");
 
         // 尝试 JSON 数组截断：保留前 N 条 + 统计摘要
         var trimmed = text.TrimStart();
@@ -861,7 +863,7 @@ public static class CapsuleExecutor
         // 记录 Gateway 错误信息
         if (!string.IsNullOrWhiteSpace(errorCode) || !string.IsNullOrWhiteSpace(errorMessage))
         {
-            llmLogs.AppendLine($"  ❌ Gateway 错误: [{errorCode}] {errorMessage}");
+            llmLogs.AppendLine($"  [错误] Gateway 错误: [{errorCode}] {errorMessage}");
             if (httpStatus.HasValue) llmLogs.AppendLine($"  HTTP Status: {httpStatus}");
         }
 
@@ -873,13 +875,13 @@ public static class CapsuleExecutor
             var reason = !string.IsNullOrWhiteSpace(errorMessage)
                 ? $"Gateway 错误: {errorMessage}"
                 : "可能是模型调度失败或配额不足";
-            llmLogs.AppendLine($"  ⚠️ 警告: LLM 返回内容为空 ({reason})");
+            llmLogs.AppendLine($"  [警告] LLM 返回内容为空 ({reason})");
         }
 
         // 若 LLM 返回空内容，使用输入数据作为回退
         if (string.IsNullOrWhiteSpace(content) && inputArtifacts.Count > 0)
         {
-            llmLogs.AppendLine("  ⚠️ LLM 返回空内容，使用输入数据直通作为回退");
+            llmLogs.AppendLine("  [警告] LLM 返回空内容，使用输入数据直通作为回退");
             content = string.Join("\n---\n", inputArtifacts
                 .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
                 .Select(a => a.InlineContent!));
@@ -908,7 +910,7 @@ public static class CapsuleExecutor
 
         if (string.IsNullOrWhiteSpace(code))
         {
-            logs.AppendLine("  ⚠️ 代码为空，跳过执行");
+            logs.AppendLine("  [警告] 代码为空，跳过执行");
             var emptyArt = MakeTextArtifact(node, "script-out", "脚本输出",
                 JsonSerializer.Serialize(new { error = "代码为空" }), "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { emptyArt }, logs.ToString());
@@ -928,7 +930,7 @@ public static class CapsuleExecutor
                 else
                     allItems.Add(doc.RootElement.Clone());
             }
-            catch { logs.AppendLine($"  ⚠️ 跳过无法解析的输入 artifact: {art.Name}"); }
+            catch { logs.AppendLine($"  [警告] 跳过无法解析的输入 artifact: {art.Name}"); }
         }
 
         // 将输入转为 JSON 字符串，供 Jint 解析
@@ -969,7 +971,7 @@ public static class CapsuleExecutor
 
             if (resultValue == null || resultValue.IsNull() || resultValue.IsUndefined())
             {
-                logs.AppendLine("  ⚠️ result 变量为空，尝试使用脚本最终表达式值");
+                logs.AppendLine("  [警告] result 变量为空，尝试使用脚本最终表达式值");
                 if (lastExprValue != null && !lastExprValue.IsNull() && !lastExprValue.IsUndefined())
                 {
                     var raw = lastExprValue.ToObject();
@@ -1007,35 +1009,35 @@ public static class CapsuleExecutor
         }
         catch (TimeoutException)
         {
-            logs.AppendLine($"  ❌ 脚本执行超时（{timeoutSeconds}秒限制）");
+            logs.AppendLine($"  [错误] 脚本执行超时（{timeoutSeconds}秒限制）");
             var art = MakeTextArtifact(node, "script-out", "超时错误",
                 JsonSerializer.Serialize(new { error = $"脚本执行超时，已超过 {timeoutSeconds} 秒限制" }), "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
         }
         catch (MemoryLimitExceededException)
         {
-            logs.AppendLine("  ❌ 脚本内存超限（16MB）");
+            logs.AppendLine("  [错误] 脚本内存超限（16MB）");
             var art = MakeTextArtifact(node, "script-out", "内存超限",
                 JsonSerializer.Serialize(new { error = "脚本内存使用超过 16MB 限制" }), "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
         }
         catch (RecursionDepthOverflowException)
         {
-            logs.AppendLine("  ❌ 脚本递归深度超限（256层）");
+            logs.AppendLine("  [错误] 脚本递归深度超限（256层）");
             var art = MakeTextArtifact(node, "script-out", "递归超限",
                 JsonSerializer.Serialize(new { error = "脚本递归深度超过 256 层限制" }), "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
         }
         catch (JavaScriptException jsEx)
         {
-            logs.AppendLine($"  ❌ JavaScript 运行时错误: {jsEx.Message}");
+            logs.AppendLine($"  [错误] JavaScript 运行时错误: {jsEx.Message}");
             var art = MakeTextArtifact(node, "script-out", "脚本错误",
                 JsonSerializer.Serialize(new { error = jsEx.Message, stack = jsEx.JavaScriptStackTrace }), "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
         }
         catch (Exception ex)
         {
-            logs.AppendLine($"  ❌ 执行异常: {ex.Message}");
+            logs.AppendLine($"  [错误] 执行异常: {ex.Message}");
             var art = MakeTextArtifact(node, "script-out", "执行错误",
                 JsonSerializer.Serialize(new { error = ex.Message }), "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { art }, logs.ToString());
@@ -1452,7 +1454,7 @@ public static class CapsuleExecutor
                 return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
             }
             // 如果详情获取全部失败，回退到搜索列表数据
-            logs.AppendLine("⚠️ 详情获取失败，回退使用搜索列表数据");
+            logs.AppendLine("[警告] 详情获取失败，回退使用搜索列表数据");
         }
 
         var resultJsonFallback = allItems.ToJsonString(JsonCompact);
@@ -1979,11 +1981,11 @@ public static class CapsuleExecutor
                     var detailArtifact = MakeTextArtifact(node, "tapd-data", $"TAPD {dataType} 详情", detailJson, "application/json");
                     return new CapsuleResult(new List<ExecutionArtifact> { detailArtifact }, logs.ToString());
                 }
-                logs.AppendLine("⚠️ Phase 2 全部失败，回退使用搜索列表数据");
+                logs.AppendLine("[警告] Phase 2 全部失败，回退使用搜索列表数据");
             }
             else
             {
-                logs.AppendLine($"⚠️ Phase 2 skipped: cookie={(!string.IsNullOrWhiteSpace(cookieStr) ? "yes" : "no")}, workspaceId={(!string.IsNullOrWhiteSpace(wsId) ? wsId : "missing")}");
+                logs.AppendLine($"[警告] Phase 2 skipped: cookie={(!string.IsNullOrWhiteSpace(cookieStr) ? "yes" : "no")}, workspaceId={(!string.IsNullOrWhiteSpace(wsId) ? wsId : "missing")}");
             }
         }
 
@@ -2393,7 +2395,7 @@ public static class CapsuleExecutor
                     allItems.Add(doc.RootElement.Clone());
                 }
             }
-            catch { logs.AppendLine($"  ⚠️ 跳过无法解析的输入: {art.Name}"); }
+            catch { logs.AppendLine($"  [警告] 跳过无法解析的输入: {art.Name}"); }
         }
 
         logs.AppendLine($"  总记录数: {allItems.Count}");
@@ -2575,7 +2577,7 @@ public static class CapsuleExecutor
                     allItems.Add(JsonElementToDict(doc.RootElement));
                 }
             }
-            catch { logs.AppendLine($"  ⚠️ 跳过无法解析的输入: {art.Name}"); }
+            catch { logs.AppendLine($"  [警告] 跳过无法解析的输入: {art.Name}"); }
         }
 
         logs.AppendLine($"  总记录数: {allItems.Count}");
@@ -2716,7 +2718,7 @@ public static class CapsuleExecutor
         var levelValid = levelSum == techBugs.Count;
         dimensions.Add(Dim(16, "技术缺陷等级统计总和验证", levelSum, new List<string>(),
             $"P0+P1+P2+P3+P4+未判断={levelSum}，技术缺陷总数={techBugs.Count}",
-            levelValid ? "✅ 一致" : $"❌ 差异={techBugs.Count - levelSum}"));
+            levelValid ? "一致" : $"差异={techBugs.Count - levelSum}"));
 
         // 17-19. P2 及以下逾期状态
         var p2Overdue = p2Below.Where(i => Get(i, "是否逾期") == "是").ToList();
@@ -2736,7 +2738,7 @@ public static class CapsuleExecutor
         var overdueValid = overdueSum == p2Below.Count;
         dimensions.Add(Dim(20, "P2及以下技术缺陷逾期统计验证", overdueSum, new List<string>(),
             $"逾期+未逾期+空={overdueSum}，P2及以下总数={p2Below.Count}",
-            overdueValid ? "✅ 一致" : $"❌ 差异={p2Below.Count - overdueSum}"));
+            overdueValid ? "一致" : $"差异={p2Below.Count - overdueSum}"));
 
         // 21-23. P2 及以下及时处理
         var p2Timely = p2Below.Where(i => Get(i, "及时处理") == "是").ToList();
@@ -2760,7 +2762,7 @@ public static class CapsuleExecutor
         var timelyValid = timelySum == p2Below.Count;
         dimensions.Add(Dim(24, "P2及以下技术缺陷及时处理统计验证", timelySum, new List<string>(),
             $"及时+未及时+无法判断={timelySum}，P2及以下总数={p2Below.Count}",
-            timelyValid ? "✅ 一致" : $"❌ 差异={p2Below.Count - timelySum}"));
+            timelyValid ? "一致" : $"差异={p2Below.Count - timelySum}"));
 
         // 25. 已修复数量
         var closedStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -3470,7 +3472,7 @@ public static class CapsuleExecutor
 
         if (!string.IsNullOrWhiteSpace(errorCode) || !string.IsNullOrWhiteSpace(errorMessage))
         {
-            reportLogs.AppendLine($"  ❌ Gateway 错误: [{errorCode}] {errorMessage}");
+            reportLogs.AppendLine($"  [错误] Gateway 错误: [{errorCode}] {errorMessage}");
         }
 
         // HTML 格式时提取完整 HTML 文档，去除 LLM 多余输出
@@ -3491,7 +3493,7 @@ public static class CapsuleExecutor
             var reason = !string.IsNullOrWhiteSpace(errorMessage)
                 ? $"Gateway 错误: {errorMessage}"
                 : "可能是 LLM 调度失败";
-            reportLogs.AppendLine($"  ⚠️ 警告: 报告内容为空 ({reason})");
+            reportLogs.AppendLine($"  [警告] 报告内容为空 ({reason})");
         }
 
         var mimeType = format == "html" ? "text/html" : "text/markdown";
@@ -3731,12 +3733,12 @@ function safeChart(canvasId, config) {
 ## 专业 UI 设计规范 (ui-ux-pro-max)
 
 ### 图标与视觉元素
-- **禁止使用 emoji 作为 UI 图标**（如 🎨 🚀 ⚙️）。用内联 SVG 图标替代，推荐 Heroicons/Lucide 风格：
+- **禁止使用 emoji 作为 UI 图标**。用内联 SVG 图标替代，推荐 Heroicons/Lucide 风格：
   ```html
   <!-- 正确：内联 SVG 图标 -->
   <svg viewBox=""0 0 24 24"" width=""20"" height=""20"" fill=""none"" stroke=""currentColor"" stroke-width=""2""><path d=""M13 7l5 5m0 0l-5 5m5-5H6""/></svg>
   <!-- 错误：emoji 图标 -->
-  <span>📈</span>
+  <span>[chart]</span>
   ```
 - 所有图标统一尺寸：KPI 卡片图标 32×32，正文图标 20×20，导航图标 16×16
 
@@ -3996,7 +3998,7 @@ function safeChart(canvasId, config) {
         if (content.Length > 0)
             exportLogs.AppendLine($"  Preview: {(content.Length > 200 ? content[..200] + "..." : content)}");
         else
-            exportLogs.AppendLine("  ⚠️ 警告: 导出内容为空");
+            exportLogs.AppendLine("  [警告] 导出内容为空");
 
         var artifact = new ExecutionArtifact
         {
@@ -4620,12 +4622,12 @@ function safeChart(canvasId, config) {
 
         if (success)
         {
-            sb.AppendLine("[邮件] ✅ 发送成功");
+            sb.AppendLine("[邮件] 发送成功");
             logger.LogInformation("EmailSender: Email sent successfully to {ToEmail}", toEmail);
         }
         else
         {
-            sb.AppendLine("[邮件] ❌ 发送失败（请检查系统 SMTP 配置）");
+            sb.AppendLine("[邮件] 发送失败（请检查系统 SMTP 配置）");
             logger.LogWarning("EmailSender: Failed to send email to {ToEmail}", toEmail);
         }
 
@@ -5062,7 +5064,7 @@ function safeChart(canvasId, config) {
         }
         catch (Exception ex) when (ex is not InvalidOperationException)
         {
-            sb.AppendLine($"[CLI Agent] ❌ 执行异常: {ex.Message}");
+            sb.AppendLine($"[CLI Agent] 执行异常: {ex.Message}");
             logger.LogError(ex, "CliAgent executor {Type} failed", executorType);
             var errHtml = $"<!DOCTYPE html><html><body><h1>CLI Agent 执行失败</h1><p>执行器: {executorType}</p><pre>{System.Net.WebUtility.HtmlEncode(ex.Message)}</pre></body></html>";
             return new CapsuleResult(new List<ExecutionArtifact>
@@ -5095,7 +5097,7 @@ function safeChart(canvasId, config) {
         if (!string.IsNullOrWhiteSpace(envJson))
         {
             try { envVars = JsonSerializer.Deserialize<Dictionary<string, string>>(envJson) ?? new(); }
-            catch (Exception ex) { sb.AppendLine($"  ⚠️ envVars 解析失败: {ex.Message}"); }
+            catch (Exception ex) { sb.AppendLine($"  [警告] envVars 解析失败: {ex.Message}"); }
         }
 
         return new CliAgentContext
@@ -5176,7 +5178,7 @@ function safeChart(canvasId, config) {
         if (string.IsNullOrWhiteSpace(content))
         {
             content = "<!DOCTYPE html><html><body><h1>LLM 未返回内容</h1></body></html>";
-            sb.AppendLine("  ⚠️ LLM 返回空内容");
+            sb.AppendLine("  [警告] LLM 返回空内容");
         }
 
         if (emitEvent != null)
@@ -5327,7 +5329,7 @@ function safeChart(canvasId, config) {
         if (!proc.WaitForExit(ctx.TimeoutSeconds * 1000))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            sb.AppendLine($"[docker] ⚠️ 超时 {ctx.TimeoutSeconds}s");
+            sb.AppendLine($"[docker] 超时 {ctx.TimeoutSeconds}s");
         }
         stdOut = await outTask;
         stdErr = await errTask;
@@ -5916,7 +5918,7 @@ function safeChart(canvasId, config) {
         List<ExecutionArtifact> inputArtifacts)
     {
         var sb = new StringBuilder();
-        var apiBaseUrl = ReplaceVariables(GetConfigString(node, "apiBaseUrl") ?? "https://tikhub.io/api/douyin", variables).TrimEnd('/');
+        var apiBaseUrl = ReplaceVariables(GetConfigString(node, "apiBaseUrl") ?? "https://api.tikhub.dev", variables).TrimEnd('/');
         var apiKey = ReplaceVariables(GetConfigString(node, "apiKey") ?? "", variables).Trim();
 
         // 从配置或上游获取视频链接
@@ -5977,8 +5979,8 @@ function safeChart(canvasId, config) {
         else
             client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
 
-        // 调用 TikHub 解析接口
-        var requestUrl = $"{apiBaseUrl}/video_data?video_url={Uri.EscapeDataString(videoUrl)}";
+        // 调用 TikHub 解析接口。旧版曾使用 /video_data，新版 OpenAPI 为 /api/v1/douyin/web/fetch_one_video_by_share_url。
+        var requestUrl = $"{apiBaseUrl}/api/v1/douyin/web/fetch_one_video_by_share_url?share_url={Uri.EscapeDataString(videoUrl)}";
         sb.AppendLine($"[DouyinParser] 请求: GET {requestUrl}");
 
         var response = await client.GetAsync(requestUrl, CancellationToken.None);
@@ -5996,16 +5998,18 @@ function safeChart(canvasId, config) {
         using var respDoc = JsonDocument.Parse(responseBody);
         var root = respDoc.RootElement;
 
-        // TikHub API 响应结构可能嵌套在 data 里
+        // TikHub API 响应结构可能嵌套在 data 或 data.aweme_detail 里
         var dataElem = root.TryGetProperty("data", out var d) ? d : root;
+        if (dataElem.TryGetProperty("aweme_detail", out var awemeDetail))
+            dataElem = awemeDetail;
 
         var outputObj = new
         {
             platform,
             originalUrl = videoUrl,
-            videoUrl = TryGetJsonString(dataElem, "video_url", "video", "play_addr", "nwm_video_url"),
-            coverUrl = TryGetJsonString(dataElem, "cover_url", "cover", "origin_cover"),
-            title = TryGetJsonString(dataElem, "title", "desc", "description"),
+            videoUrl = ExtractDouyinPlayableVideoUrl(dataElem),
+            coverUrl = ExtractDouyinCoverUrl(dataElem),
+            title = TryGetJsonString(dataElem, "title", "desc", "description", "caption"),
             author = TryGetJsonString(dataElem, "author", "author_name", "nickname"),
             authorId = TryGetJsonString(dataElem, "author_id", "author_uid", "uid"),
             duration = TryGetJsonString(dataElem, "duration", "video_duration"),
@@ -6017,12 +6021,120 @@ function safeChart(canvasId, config) {
 
         sb.AppendLine($"[DouyinParser] 标题: {outputObj.title}");
         sb.AppendLine($"[DouyinParser] 作者: {outputObj.author}");
-        sb.AppendLine($"[DouyinParser] 视频地址已提取: {(string.IsNullOrWhiteSpace(outputObj.videoUrl) ? "❌ 未找到" : "✅")}");
+        sb.AppendLine($"[DouyinParser] 视频地址已提取: {(string.IsNullOrWhiteSpace(outputObj.videoUrl) ? "未找到" : "已找到")}");
 
         var outputJson = JsonSerializer.Serialize(outputObj, JsonPretty);
         var artifact = MakeTextArtifact(node, "dp-out", "视频信息", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
     }
+
+    private static string ExtractDouyinPlayableVideoUrl(JsonElement dataElem)
+    {
+        var direct = TryGetUsableUrl(dataElem, "video_url", "nwm_video_url", "play_url", "url");
+        if (!string.IsNullOrWhiteSpace(direct)) return direct;
+
+        if (dataElem.TryGetProperty("video", out var video) && video.ValueKind == JsonValueKind.Object)
+        {
+            var fromVideo = ExtractVideoAddressFromObject(video);
+            if (!string.IsNullOrWhiteSpace(fromVideo)) return fromVideo;
+        }
+
+        return ExtractVideoAddressFromObject(dataElem);
+    }
+
+    private static string ExtractVideoAddressFromObject(JsonElement element)
+    {
+        foreach (var key in new[] { "play_addr_h264", "play_addr", "download_addr", "play_addr_265" })
+        {
+            if (element.TryGetProperty(key, out var address))
+            {
+                var url = ExtractUrlFromAddressObject(address);
+                if (!string.IsNullOrWhiteSpace(url)) return url;
+            }
+        }
+
+        if (element.TryGetProperty("bit_rate", out var bitRates) && bitRates.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in bitRates.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                var url = ExtractVideoAddressFromObject(item);
+                if (!string.IsNullOrWhiteSpace(url)) return url;
+            }
+        }
+
+        return "";
+    }
+
+    private static string ExtractDouyinCoverUrl(JsonElement dataElem)
+    {
+        var direct = TryGetUsableUrl(dataElem, "cover_url", "coverUrl", "thumb");
+        if (!string.IsNullOrWhiteSpace(direct)) return direct;
+
+        if (dataElem.TryGetProperty("video", out var video) && video.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var key in new[] { "cover", "origin_cover", "dynamic_cover" })
+            {
+                if (video.TryGetProperty(key, out var cover))
+                {
+                    var url = ExtractUrlFromAddressObject(cover);
+                    if (!string.IsNullOrWhiteSpace(url)) return url;
+                }
+            }
+        }
+
+        foreach (var key in new[] { "cover", "origin_cover", "dynamic_cover" })
+        {
+            if (dataElem.TryGetProperty(key, out var cover))
+            {
+                var url = ExtractUrlFromAddressObject(cover);
+                if (!string.IsNullOrWhiteSpace(url)) return url;
+            }
+        }
+
+        return "";
+    }
+
+    private static string ExtractUrlFromAddressObject(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            var value = element.GetString() ?? "";
+            return IsUsableHttpUrl(value) ? value : "";
+        }
+        if (element.ValueKind != JsonValueKind.Object) return "";
+
+        var direct = TryGetUsableUrl(element, "url", "play_url", "download_url", "main_url");
+        if (!string.IsNullOrWhiteSpace(direct)) return direct;
+
+        if (element.TryGetProperty("url_list", out var urls) && urls.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in urls.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) continue;
+                var value = item.GetString() ?? "";
+                if (IsUsableHttpUrl(value)) return value;
+            }
+        }
+
+        return "";
+    }
+
+    private static string TryGetUsableUrl(JsonElement element, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!element.TryGetProperty(key, out var value)) continue;
+            if (value.ValueKind != JsonValueKind.String) continue;
+            var text = value.GetString() ?? "";
+            if (IsUsableHttpUrl(text)) return text;
+        }
+        return "";
+    }
+
+    private static bool IsUsableHttpUrl(string value)
+        => value.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+           || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 视频下载到 COS：将视频 URL 下载并上传到对象存储，返回 COS 地址。
@@ -6063,7 +6175,8 @@ function safeChart(canvasId, config) {
         sb.AppendLine($"[VideoDownloader] 下载: {videoUrl}");
 
         var factory = sp.GetRequiredService<IHttpClientFactory>();
-        using var client = factory.CreateClient();
+        var urlValidator = sp.GetRequiredService<ISafeOutboundUrlValidator>();
+        using var client = factory.CreateClient("SafeOutbound");
         client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
         // 下载视频
@@ -6071,11 +6184,31 @@ function safeChart(canvasId, config) {
         string? contentType;
         try
         {
-            var response = await client.GetAsync(videoUrl, CancellationToken.None);
+            using var response = await GetSafeOutboundAsync(
+                client,
+                urlValidator,
+                videoUrl,
+                "视频下载地址",
+                System.Net.Http.HttpCompletionOption.ResponseContentRead,
+                CancellationToken.None);
             response.EnsureSuccessStatusCode();
             videoBytes = await response.Content.ReadAsByteArrayAsync(CancellationToken.None);
-            contentType = response.Content.Headers.ContentType?.MediaType ?? "video/mp4";
-            sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType}");
+            var rawType = response.Content.Headers.ContentType?.MediaType;
+            // MIME 归一:
+            // - video/* → 原样保留
+            // - 缺失 / application/octet-stream(很多短视频 CDN 回这种通用类型)→ 归一成 video/mp4,
+            //   否则 AssetStorage 落成 .bin COS URL,前端 PosterFeedCardView 仅凭后缀判定会把可播放
+            //   视频当图片显示成破损媒体(Codex P2)。
+            // - 显式的非视频类型(text/html 分享/登录/防盗链页、image/* 等)→ 直接拒绝,不能改写成
+            //   mp4 把非视频字节存成 .mp4,否则 source 阶段"假成功"、卡片播放与后续 ASR 都会以误导
+            //   性的症状失败(Codex P2 二轮)。
+            if (string.IsNullOrWhiteSpace(rawType) || rawType.EndsWith("/octet-stream", StringComparison.OrdinalIgnoreCase))
+                contentType = "video/mp4";
+            else if (rawType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+                contentType = rawType;
+            else
+                throw new InvalidOperationException($"视频下载地址返回了非视频内容（{rawType}），可能是分享页/登录页/防盗链拦截，已中止保存");
+            sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType} (raw={rawType ?? "null"})");
         }
         catch (Exception ex)
         {
@@ -6084,9 +6217,9 @@ function safeChart(canvasId, config) {
 
         // 上传到 COS
         var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
-        var stored = await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", CancellationToken.None, domain: "workflow", type: "video-download");
+        var stored = await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", CancellationToken.None, domain: "workflow-agent", type: "doc");
 
-        sb.AppendLine($"[VideoDownloader] ✅ COS 上传成功: {stored.Url}");
+        sb.AppendLine($"[VideoDownloader] COS 上传成功: {stored.Url}");
         sb.AppendLine($"[VideoDownloader] SHA256: {stored.Sha256}, 大小: {stored.SizeBytes} bytes");
 
         var output = JsonSerializer.Serialize(new
@@ -6271,9 +6404,11 @@ function safeChart(canvasId, config) {
         var streamAsr = sp.GetRequiredService<DoubaoStreamAsrService>();
         var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
         var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var urlValidator = sp.GetRequiredService<ISafeOutboundUrlValidator>();
 
-        // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle，
-        // 任何一个有 doubao-asr-stream 都行，不强迫用户为本胶囊单独绑模型池）
+        // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle）。
+        // 优先使用 doubao-asr-stream；如果线上模型池只绑定普通 Whisper/OpenAI 兼容 ASR，
+        // 则走 Gateway multipart /v1/audio/transcriptions，避免要求用户额外改模型池。
         var asrCallerChain = new[]
         {
             AppCallerRegistry.VideoAgent.VideoToText.Asr,
@@ -6281,11 +6416,18 @@ function safeChart(canvasId, config) {
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
         };
         PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult? resolution = null;
+        PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult? firstSuccessfulResolution = null;
+        string? firstSuccessfulCaller = null;
         string? resolvedCaller = null;
         var resolutionErrors = new List<string>();
         foreach (var caller in asrCallerChain)
         {
             var r = await modelResolver.ResolveAsync(caller, ModelTypes.Asr);
+            if (r.Success && firstSuccessfulResolution == null)
+            {
+                firstSuccessfulResolution = r;
+                firstSuccessfulCaller = caller;
+            }
             if (r.Success && r.IsExchange && r.ExchangeTransformerType == "doubao-asr-stream")
             {
                 resolution = r;
@@ -6294,13 +6436,19 @@ function safeChart(canvasId, config) {
             }
             resolutionErrors.Add($"{caller}: {(r.Success ? $"transformer={r.ExchangeTransformerType ?? "(non-exchange)"}" : r.ErrorMessage)}");
         }
-        if (resolution == null)
+        if (resolution == null && firstSuccessfulResolution != null)
+        {
+            resolution = firstSuccessfulResolution;
+            resolvedCaller = firstSuccessfulCaller;
+        }
+        if (resolution == null || string.IsNullOrWhiteSpace(resolvedCaller))
         {
             throw new InvalidOperationException(
-                "ASR 模型调度失败：尝试了 video-agent.video-to-text::asr / video-agent.v2d.transcribe::asr / document-store.subtitle::asr 三个 caller，无一绑定可用的 doubao-asr-stream 模型。请去管理后台「模型池」给其中任一 caller 绑定。诊断："
+                "ASR 模型调度失败：尝试了 video-agent.video-to-text::asr / video-agent.v2d.transcribe::asr / document-store.subtitle::asr 三个 caller，无一可用。诊断："
                 + string.Join(" | ", resolutionErrors));
         }
-        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller}");
+        var useDoubaoStream = resolution.IsExchange && resolution.ExchangeTransformerType == "doubao-asr-stream";
+        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller} mode={(useDoubaoStream ? "doubao-stream" : "gateway-multipart")}");
 
         var apiKeyRaw = resolution.ApiKey ?? "";
         string appKey = "", accessKey = apiKeyRaw;
@@ -6322,7 +6470,7 @@ function safeChart(canvasId, config) {
         // ffmpeg 启动前探测，防止错误被误读为 ASR/网络问题
         await EnsureFfmpegAvailableAsync();
 
-        var http = httpFactory.CreateClient("WorkflowAgent");
+        var http = httpFactory.CreateClient("SafeOutbound");
         http.Timeout = TimeSpan.FromMinutes(8);
 
         var enrichedItems = new List<JsonObject>();
@@ -6373,64 +6521,88 @@ function safeChart(canvasId, config) {
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 流式下载视频");
                     // 流式直写 temp file，避免把整个视频读到 byte[] 内存（视频可能 50MB+，
                     // maxItems 上限 20 → 1GB 内存压力。同 media-rehost 的修复路径）
-                    tmpVideoPath = await DownloadToTempFileAsync(http, videoUrl);
+                    tmpVideoPath = await DownloadToTempFileAsync(http, urlValidator, videoUrl);
                     var videoSize = new System.IO.FileInfo(tmpVideoPath).Length;
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 视频 {videoSize} 字节落盘，开始抽音");
 
                     var audioBytes = await ExtractAudioWithFfmpegFromFileAsync(tmpVideoPath);
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 音频 {audioBytes.Length} 字节，提交 ASR");
 
-                    var asrResult = await streamAsr.TranscribeWithCallbackAsync(
-                        wsUrl, appKey, accessKey, audioBytes, asrConfig,
-                        onStage: (_, _) => Task.CompletedTask,
-                        onProgress: (_, _) => Task.CompletedTask,
-                        onFrame: (_, _, _) => Task.CompletedTask,
-                        ct: CancellationToken.None);
-
-                    if (asrResult.Success)
+                    if (useDoubaoStream)
                     {
-                        transcript = asrResult.FullText ?? "";
-                        sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 完成，转写 {transcript.Length} 字");
+                        var asrResult = await streamAsr.TranscribeWithCallbackAsync(
+                            wsUrl, appKey, accessKey, audioBytes, asrConfig,
+                            onStage: (_, _) => Task.CompletedTask,
+                            onProgress: (_, _) => Task.CompletedTask,
+                            onFrame: (_, _, _) => Task.CompletedTask,
+                            ct: CancellationToken.None);
 
-                        // 从最后一帧 raw response 抽取 utterances 时间戳（豆包 ASR 返回毫秒）→ TranscriptCue 数组
-                        try
+                        if (asrResult.Success)
                         {
-                            var cuesArr = new JsonArray();
-                            var lastResp = asrResult.Responses.LastOrDefault(r => r.PayloadMsg != null);
-                            if (lastResp?.PayloadMsg != null)
+                            transcript = asrResult.FullText ?? "";
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 完成，转写 {transcript.Length} 字");
+
+                            // 从最后一帧 raw response 抽取 utterances 时间戳（豆包 ASR 返回毫秒）→ TranscriptCue 数组
+                            try
                             {
-                                var payload = lastResp.PayloadMsg.Value;
-                                if (payload.TryGetProperty("result", out var res) && res.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
+                                var cuesArr = new JsonArray();
+                                var lastResp = asrResult.Responses.LastOrDefault(r => r.PayloadMsg != null);
+                                if (lastResp?.PayloadMsg != null)
                                 {
-                                    foreach (var utt in utts.EnumerateArray())
+                                    var payload = lastResp.PayloadMsg.Value;
+                                    if (payload.TryGetProperty("result", out var res) && res.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
                                     {
-                                        var cueText = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                                        if (string.IsNullOrWhiteSpace(cueText)) continue;
-                                        double startMs = utt.TryGetProperty("start_time", out var stEl) && stEl.ValueKind == JsonValueKind.Number ? stEl.GetDouble() : 0;
-                                        double endMs = utt.TryGetProperty("end_time", out var etEl) && etEl.ValueKind == JsonValueKind.Number ? etEl.GetDouble() : 0;
-                                        cuesArr.Add(new JsonObject
+                                        foreach (var utt in utts.EnumerateArray())
                                         {
-                                            ["startSec"] = startMs / 1000.0,
-                                            ["endSec"] = endMs / 1000.0,
-                                            ["text"] = cueText.Trim(),
-                                        });
+                                            var cueText = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                                            if (string.IsNullOrWhiteSpace(cueText)) continue;
+                                            double startMs = utt.TryGetProperty("start_time", out var stEl) && stEl.ValueKind == JsonValueKind.Number ? stEl.GetDouble() : 0;
+                                            double endMs = utt.TryGetProperty("end_time", out var etEl) && etEl.ValueKind == JsonValueKind.Number ? etEl.GetDouble() : 0;
+                                            cuesArr.Add(new JsonObject
+                                            {
+                                                ["startSec"] = startMs / 1000.0,
+                                                ["endSec"] = endMs / 1000.0,
+                                                ["text"] = cueText.Trim(),
+                                            });
+                                        }
                                     }
                                 }
+                                if (cuesArr.Count > 0)
+                                {
+                                    enriched["transcriptCues"] = cuesArr;
+                                    sb.AppendLine($"[VideoToText:asr] item#{idx} 提取 {cuesArr.Count} 条带时间戳字幕");
+                                }
                             }
-                            if (cuesArr.Count > 0)
+                            catch (Exception cueEx)
                             {
-                                enriched["transcriptCues"] = cuesArr;
-                                sb.AppendLine($"[VideoToText:asr] item#{idx} 提取 {cuesArr.Count} 条带时间戳字幕");
+                                sb.AppendLine($"[VideoToText:asr] item#{idx} cue 抽取异常（不影响 transcript）: {cueEx.Message}");
                             }
                         }
-                        catch (Exception cueEx)
+                        else
                         {
-                            sb.AppendLine($"[VideoToText:asr] item#{idx} cue 抽取异常（不影响 transcript）: {cueEx.Message}");
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 失败: {asrResult.Error}");
                         }
                     }
                     else
                     {
-                        sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 失败: {asrResult.Error}");
+                        var gwRes = resolution.ToGatewayResolution();
+                        // chat-audio(OpenAI input_audio→/v1/chat/completions)只用于非 Exchange 的 OpenAI 兼容平台。
+                        // Exchange 走自己的 transformer(doubao-asr 已在上游单独分流;gemini-native 的
+                        // GeminiNativeTransformer 只转 text/image_url、会丢掉音频部分),其 PlatformType=exchange
+                        // 不在 google/gemini 排除内,若误走 chat-audio 会把音频丢失导致 ASR 失败(Codex P2)。
+                        var gatewayResult = !gwRes.IsExchange && IsChatAudioModel(gwRes.ActualModel, gwRes.PlatformType)
+                            ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
+                            : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
+                        transcript = gatewayResult.Transcript;
+                        if (gatewayResult.Cues.Count > 0)
+                        {
+                            enriched["transcriptCues"] = gatewayResult.Cues;
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成，转写 {transcript.Length} 字，时间戳 {gatewayResult.Cues.Count} 条");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成（model={gwRes.ActualModel}），转写 {transcript.Length} 字");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -6563,6 +6735,196 @@ function safeChart(canvasId, config) {
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
     }
 
+    private sealed record GatewayAsrTranscript(string Transcript, JsonArray Cues);
+
+    private static async Task<GatewayAsrTranscript> TranscribeAudioViaGatewayAsync(
+        ILlmGateway gateway,
+        string appCallerCode,
+        byte[] audioBytes,
+        GatewayModelResolution resolution)
+    {
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/audio/transcriptions",
+            IsMultipart = true,
+            MultipartFields = new Dictionary<string, object>
+            {
+                ["model"] = resolution.ActualModel ?? "whisper-1",
+                ["response_format"] = "verbose_json",
+                ["timestamp_granularities[]"] = "segment",
+            },
+            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+            {
+                ["file"] = ("audio.wav", audioBytes, "audio/wav"),
+            },
+            TimeoutSeconds = 600,
+        };
+
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new InvalidOperationException($"Gateway ASR 调用失败: {detail}");
+        }
+
+        return ParseGatewayAsrTranscript(rawResp.Content);
+    }
+
+    /// <summary>
+    /// 判断该模型是否走「多模态 chat + 音频输入」路径做转写（如 OpenRouter 的 openai/gpt-audio、
+    /// gemini 系等）。这些平台没有 Whisper 的 /v1/audio/transcriptions 端点，只能把音频当作
+    /// chat 消息里的 input_audio 发给多模态模型，让它逐字转写。whisper 仍走 multipart。
+    /// </summary>
+    private static bool IsChatAudioModel(string? model, string? platformType)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return false;
+        // 本路径发 OpenAI 形态请求（/v1/chat/completions + input_audio）。原生非 OpenAI 形态平台
+        // 不能走：claude/anthropic 走 ClaudeGatewayAdapter；google 原生 Gemini 用
+        // v1beta/models/{model}:generateContent，端点与请求体都和 OpenAI 不同，发过去直接失败
+        // 而非转写。仅 OpenAI 兼容平台（OpenRouter 等注册为 openai）可走（Codex P2）。
+        // google 与 gemini 两种 platformType 都是原生 Google 平台（见 ImageGenPlatformAdapterFactory），
+        // 走 v1beta generateContent，与 OpenAI input_audio 形态不兼容，必须一并排除。
+        var pt = (platformType ?? "").ToLowerInvariant();
+        if (pt is "google" or "gemini" or "anthropic" or "claude") return false;
+        var m = model.ToLowerInvariant();
+        if (m.Contains("whisper")) return false;       // Whisper 走 /v1/audio/transcriptions
+        // 只认确实支持音频输入的模型：含 audio（gpt-audio / gpt-4o-audio-preview / qwen-audio）
+        // 或 gemini。不能用裸 gpt-4o——gpt-4o / gpt-4o-mini 不接受 input_audio（Bugbot Medium）。
+        return m.Contains("audio")
+            || m.Contains("gemini");
+    }
+
+    /// <summary>
+    /// 通过多模态 chat completions（input_audio）做转写。用于 OpenRouter / Gemini 等没有
+    /// Whisper 端点、但模型本身能听音频的平台。返回纯转写文本（无时间戳 cue）。
+    /// </summary>
+    private static async Task<GatewayAsrTranscript> TranscribeAudioViaChatAsync(
+        ILlmGateway gateway,
+        string appCallerCode,
+        byte[] audioBytes,
+        GatewayModelResolution resolution)
+    {
+        var base64 = Convert.ToBase64String(audioBytes);
+        var body = new JsonObject
+        {
+            ["model"] = resolution.ActualModel,
+            ["modalities"] = new JsonArray("text"),
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["type"] = "text",
+                            ["text"] = "请把这段音频逐字转写成中文/原语言文字，尽量一字不差保留原话。只输出转写出的文字内容本身，不要任何解释、说明、引号或额外前后缀。",
+                        },
+                        new JsonObject
+                        {
+                            ["type"] = "input_audio",
+                            ["input_audio"] = new JsonObject
+                            {
+                                ["data"] = base64,
+                                ["format"] = "wav",
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/chat/completions",
+            IsMultipart = false,
+            RequestBody = body,
+            TimeoutSeconds = 600,
+        };
+
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new InvalidOperationException($"Gateway 语音转写(chat)调用失败: {detail}");
+        }
+
+        var text = ExtractChatCompletionContent(rawResp.Content);
+        // HTTP 成功但没解析出文字（模型拒答 / 响应结构异常 / 空内容）→ 当失败抛出，
+        // 不要返回空转写让上层误判成"转写成功但没字"（与 SubtitleGenerationProcessor 一致，Bugbot Medium）。
+        if (string.IsNullOrWhiteSpace(text))
+            throw new InvalidOperationException("Gateway 语音转写(chat)返回为空（模型可能拒答或响应格式异常）");
+        return new GatewayAsrTranscript(text.Trim(), new JsonArray());
+    }
+
+    /// <summary>从 chat completions 响应里取 choices[0].message.content（兼容字符串与多模态数组）。</summary>
+    private static string ExtractChatCompletionContent(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("choices", out var choices)
+                && choices.ValueKind == JsonValueKind.Array
+                && choices.GetArrayLength() > 0
+                && choices[0].TryGetProperty("message", out var msg)
+                && msg.TryGetProperty("content", out var content))
+            {
+                if (content.ValueKind == JsonValueKind.String)
+                    return content.GetString() ?? "";
+                if (content.ValueKind == JsonValueKind.Array)
+                {
+                    var parts = new StringBuilder();
+                    foreach (var part in content.EnumerateArray())
+                    {
+                        if (part.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                            parts.Append(t.GetString());
+                    }
+                    return parts.ToString();
+                }
+            }
+        }
+        catch { /* 解析失败返回空，由上层判失败 */ }
+        return "";
+    }
+
+    private static GatewayAsrTranscript ParseGatewayAsrTranscript(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var cues = new JsonArray();
+        var parts = new List<string>();
+
+        if (root.TryGetProperty("segments", out var segments) && segments.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var seg in segments.EnumerateArray())
+            {
+                var text = seg.TryGetProperty("text", out var textEl) ? textEl.GetString() ?? "" : "";
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                parts.Add(text.Trim());
+                var start = seg.TryGetProperty("start", out var startEl) && startEl.ValueKind == JsonValueKind.Number ? startEl.GetDouble() : 0;
+                var end = seg.TryGetProperty("end", out var endEl) && endEl.ValueKind == JsonValueKind.Number ? endEl.GetDouble() : 0;
+                cues.Add(new JsonObject
+                {
+                    ["startSec"] = start,
+                    ["endSec"] = end,
+                    ["text"] = text.Trim(),
+                });
+            }
+        }
+
+        var transcript = parts.Count > 0
+            ? string.Join("\n", parts)
+            : TryGetJsonString(root, "text", "transcript");
+
+        return new GatewayAsrTranscript(transcript.Trim(), cues);
+    }
+
     /// <summary>
     /// 从 LLM 返回字符串里抽取 JSON 对象（去掉 ```json 围栏 + 容忍前后噪声）。
     /// </summary>
@@ -6631,16 +6993,55 @@ function safeChart(canvasId, config) {
     /// 流式下载到 temp 文件，返回路径。避免把整个 body 读到 byte[] 内存。
     /// 调用方负责 finally 删除 temp 文件。
     /// </summary>
-    private static async Task<string> DownloadToTempFileAsync(System.Net.Http.HttpClient http, string url)
+    private static async Task<string> DownloadToTempFileAsync(System.Net.Http.HttpClient http, ISafeOutboundUrlValidator urlValidator, string url)
     {
         var tmpPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-dl-{Guid.NewGuid():N}");
-        using var resp = await http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
+        using var resp = await GetSafeOutboundAsync(
+            http,
+            urlValidator,
+            url,
+            "视频转文字下载地址",
+            System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
+            CancellationToken.None);
         resp.EnsureSuccessStatusCode();
         await using var srcStream = await resp.Content.ReadAsStreamAsync(CancellationToken.None);
         await using var dstStream = System.IO.File.Create(tmpPath);
         await srcStream.CopyToAsync(dstStream, 64 * 1024, CancellationToken.None);
         return tmpPath;
     }
+
+    private static async Task<System.Net.Http.HttpResponseMessage> GetSafeOutboundAsync(
+        System.Net.Http.HttpClient http,
+        ISafeOutboundUrlValidator urlValidator,
+        string url,
+        string purpose,
+        System.Net.Http.HttpCompletionOption completionOption,
+        CancellationToken ct)
+    {
+        var current = await urlValidator.EnsureSafeHttpUrlAsync(url, purpose, ct);
+        for (var redirects = 0; redirects <= SafeOutboundMaxRedirects; redirects++)
+        {
+            var response = await http.GetAsync(current, completionOption, ct);
+            if (!IsRedirectStatusCode(response.StatusCode))
+                return response;
+
+            var location = response.Headers.Location;
+            if (location == null)
+                return response;
+
+            response.Dispose();
+            if (redirects == SafeOutboundMaxRedirects)
+                throw new InvalidOperationException($"{purpose} 重定向次数过多");
+
+            var next = location.IsAbsoluteUri ? location : new Uri(current, location);
+            current = await urlValidator.EnsureSafeHttpUrlAsync(next.ToString(), $"{purpose} 重定向地址", ct);
+        }
+
+        throw new InvalidOperationException($"{purpose} 重定向次数过多");
+    }
+
+    private static bool IsRedirectStatusCode(System.Net.HttpStatusCode statusCode)
+        => (int)statusCode is >= 300 and <= 399;
 
     /// <summary>
     /// 直接从 input 文件路径让 ffmpeg 抽音 → 输出 16kHz mono wav byte[]。
@@ -6787,7 +7188,7 @@ function safeChart(canvasId, config) {
         var llmResponse = await gateway.SendAsync(request, CancellationToken.None);
         var resultContent = llmResponse.Content ?? "";
 
-        sb.AppendLine($"[TextToCopywriting] ✅ 文案生成完成，长度: {resultContent.Length}");
+        sb.AppendLine($"[TextToCopywriting] 文案生成完成，长度: {resultContent.Length}");
 
         var artifact = MakeTextArtifact(node, "tc-out", "文案", resultContent, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
@@ -8081,7 +8482,7 @@ function safeChart(canvasId, config) {
         var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
         await assetStorage.UploadToKeyAsync(objectKey, mediaBytes, mime, CancellationToken.None);
         var url = assetStorage.BuildUrlForKey(objectKey);
-        sb.AppendLine($"[HomepagePublisher] ✅ COS 上传成功: {url}");
+        sb.AppendLine($"[HomepagePublisher] COS 上传成功: {url}");
 
         // upsert HomepageAsset
         var dbContext = sp.GetRequiredService<PrdAgent.Infrastructure.Database.MongoDbContext>();

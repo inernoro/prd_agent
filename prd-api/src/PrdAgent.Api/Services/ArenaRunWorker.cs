@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.Security;
 using MongoDB.Driver;
 
 namespace PrdAgent.Api.Services;
@@ -186,7 +187,6 @@ public sealed class ArenaRunWorker : BackgroundService
         var logWriter = scope.ServiceProvider.GetRequiredService<ILlmRequestLogWriter>();
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
         var claudeLogger = scope.ServiceProvider.GetRequiredService<ILogger<ClaudeClient>>();
-        var jwtSecret = _config["Jwt:Secret"] ?? "";
 
         // Check for cancel
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -280,7 +280,7 @@ public sealed class ArenaRunWorker : BackgroundService
                 await sem.WaitAsync(CancellationToken.None);
                 try
                 {
-                    await RunOneSlotAsync(runId, slot, input.Prompt, input.UserId, llmAttachments, db, httpClientFactory, logWriter, ctxAccessor, claudeLogger, jwtSecret, slotTexts, cts.Token);
+                    await RunOneSlotAsync(runId, slot, input.Prompt, input.UserId, llmAttachments, db, httpClientFactory, logWriter, ctxAccessor, claudeLogger, slotTexts, cts.Token);
                 }
                 catch (OperationCanceledException) { /* expected on cancel */ }
                 catch (Exception ex)
@@ -383,7 +383,6 @@ public sealed class ArenaRunWorker : BackgroundService
         ILlmRequestLogWriter logWriter,
         ILLMRequestContextAccessor ctxAccessor,
         ILogger<ClaudeClient> claudeLogger,
-        string jwtSecret,
         Dictionary<string, StringBuilder> slotTexts,
         CancellationToken ct)
     {
@@ -401,7 +400,7 @@ public sealed class ArenaRunWorker : BackgroundService
         }
 
         var apiUrl = platform.ApiUrl;
-        var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted) ? null : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
         var platformType = platform.PlatformType?.ToLowerInvariant();
 
         // Check if model exists in llm_models for override config
@@ -410,7 +409,7 @@ public sealed class ArenaRunWorker : BackgroundService
         {
             if (!string.IsNullOrEmpty(model.ApiUrl)) apiUrl = model.ApiUrl;
             if (!string.IsNullOrEmpty(model.ApiKeyEncrypted))
-                apiKey = ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, jwtSecret);
+                apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _config);
         }
 
         if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))

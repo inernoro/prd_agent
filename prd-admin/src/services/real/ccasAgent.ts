@@ -1,4 +1,5 @@
 import { apiRequest } from './apiClient';
+import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 
 // ──────────────────────────────────────────────
@@ -91,6 +92,37 @@ export async function generateCcasEquipment(body: {
   });
 }
 
+/** 上传本地设备图片：FormData 必须走原生 fetch（apiRequest 会 JSON 序列化） */
+export async function uploadCcasEquipment(
+  file: File,
+  body: { equipmentType: string; note?: string }
+): Promise<ApiResponse<{ asset: CcasEquipmentAsset }>> {
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('equipmentType', body.equipmentType);
+  if (body.note?.trim()) fd.append('note', body.note.trim());
+
+  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const path = '/api/ccas-agent/equipment/upload';
+  const url = rawBase ? `${rawBase}${path}` : path;
+
+  const res = await fetch(url, { method: 'POST', headers, body: fd, credentials: 'include' });
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as ApiResponse<{ asset: CcasEquipmentAsset }>;
+  } catch {
+    return {
+      success: false,
+      data: null,
+      error: { code: 'INVALID_FORMAT', message: `响应解析失败（HTTP ${res.status}）` },
+    };
+  }
+}
+
 export async function listCcasEquipment(params: {
   equipmentType?: string;
   styleKey?: string;
@@ -164,6 +196,7 @@ export async function deleteCcasFlowDiagram(id: string): Promise<ApiResponse<{ d
 // ──────────────────────────────────────────────
 
 export const CCAS_PRD_STREAM_URL = '/api/ccas-agent/prd/stream';
+export const CCAS_PRD_REVISE_STREAM_URL = '/api/ccas-agent/prd/revise/stream';
 export const CCAS_FLOW_PARSE_STREAM_URL = '/api/ccas-agent/flow/parse-stream';
 export const CCAS_QA_STREAM_URL = '/api/ccas-agent/qa/stream';
 export const CCAS_SQL_AI_STREAM_URL = '/api/ccas-agent/sql-ai/stream';

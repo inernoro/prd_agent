@@ -15,7 +15,7 @@ namespace PrdAgent.Api.Controllers.Api;
 ///   "分享的地方很多，方便进行分类。我一共分享了什么，我得知道，
 ///    或者管理员也知道所有人分享了什么，这样更方便进行管理。分享总管理是很重要的事情。"
 ///
-/// 设计：跨 4 类 ShareLink 集合（web_page / report / document_store / workflow）按
+/// 设计：跨 5 类 ShareLink 集合（web_page / report / document_store / workflow / marketplace_skill）按
 /// CreatedBy == 当前用户聚合，关联 ShortLink 全局索引拿到数字 Seq，
 /// 输出统一形态 + 4 种 URL 形态供前端展示。
 ///
@@ -38,7 +38,7 @@ public class MySharesController : ControllerBase
     }
 
     /// <summary>
-    /// 列出当前用户的所有分享（跨 4 类聚合）。
+    /// 列出当前用户的所有分享（跨 5 类聚合）。
     /// 默认按创建时间倒序。targetType 可选过滤。
     /// </summary>
     [HttpGet]
@@ -159,7 +159,33 @@ public class MySharesController : ControllerBase
             }
         }
 
-        // ── 5. 一次 In 查询 ShortLink 索引，补齐每条 share 的 Seq（用于"超短链"形态） ──
+        // ── 5. 海鲜市场技能分享 ──
+        if (wantType(ShortLinkTargetTypes.MarketplaceSkill))
+        {
+            var f = Builders<MarketplaceSkillShareLink>.Filter.Eq(x => x.CreatedBy, userId);
+            var list = await _db.MarketplaceSkillShareLinks.Find(f).ToListAsync(ct);
+            foreach (var s in list)
+            {
+                if (!includeRevoked && s.IsRevoked) continue;
+                rows.Add(new MyShareItem
+                {
+                    TargetType = ShortLinkTargetTypes.MarketplaceSkill,
+                    Token = s.Token,
+                    Title = string.IsNullOrEmpty(s.SkillTitle) ? "（未命名技能分享）" : s.SkillTitle,
+                    Subtitle = "技能 · 免登录可浏览并下载",
+                    AccessLevel = "public",
+                    ViewCount = s.ViewCount,
+                    IsRevoked = s.IsRevoked,
+                    ExpiresAt = s.ExpiresAt,
+                    CreatedAt = s.CreatedAt,
+                    // 公开分享页 /s/skill/{token}（SkillShareViewPage 渲染，顶部可下载 zip）
+                    PrimaryPath = $"/s/skill/{s.Token}",
+                    Viewable = true,
+                });
+            }
+        }
+
+        // ── 6. 一次 In 查询 ShortLink 索引，补齐每条 share 的 Seq（用于"超短链"形态） ──
         var allTokens = rows.Select(r => r.Token).Distinct().ToList();
         if (allTokens.Count > 0)
         {
@@ -173,7 +199,7 @@ public class MySharesController : ControllerBase
             }
         }
 
-        // ── 6. 倒序 + 返回 ──
+        // ── 7. 倒序 + 返回 ──
         // byType 基于全量 allSorted（chip 计数恒为全量）；items 才按 targetType 过滤。
         var allSorted = rows.OrderByDescending(r => r.CreatedAt).ToList();
         var byType = allSorted.GroupBy(r => r.TargetType)
@@ -191,7 +217,7 @@ public class MySharesController : ControllerBase
     }
 }
 
-/// <summary>个人视角的分享统一记录（跨 4 类聚合后的形态）。</summary>
+/// <summary>个人视角的分享统一记录（跨 5 类聚合后的形态）。</summary>
 public class MyShareItem
 {
     public string TargetType { get; set; } = string.Empty;

@@ -15,8 +15,9 @@ import { resolveEffectiveProfile } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
+import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -57,7 +58,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
-import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutMs } from '../services/restart-drain.js';
+import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 2026-05-28 重构:状态权威源迁移到 services/self-status-cache.ts。
@@ -1650,6 +1651,8 @@ export interface RouterDeps {
   config: CdsConfig;
   /** Optional warm-pool scheduler (v3.1). When absent, scheduler API returns disabled. */
   schedulerService?: SchedulerService;
+  /** Optional global expiry janitor. */
+  janitorService?: JanitorService;
   /**
    * Cluster executor registry (scheduler/standalone mode). When absent or
    * containing only an embedded master, deploys run locally. When a remote
@@ -1676,6 +1679,25 @@ export interface RouterDeps {
   branchOperationCoordinator?: BranchOperationCoordinator;
 }
 
+export function shouldSkipFencedDeployCleanupForNewerRuntime(
+  entry: Pick<BranchEntry, 'lastReadyAt' | 'lastDeployAt' | 'lastStoppedAt'>,
+  operationStartedAt?: string | null,
+): boolean {
+  const operationMs = operationStartedAt ? Date.parse(operationStartedAt) : NaN;
+  if (!Number.isFinite(operationMs)) return false;
+
+  const readyMs = entry.lastReadyAt ? Date.parse(entry.lastReadyAt) : NaN;
+  const deployMs = entry.lastDeployAt ? Date.parse(entry.lastDeployAt) : NaN;
+  const latestRuntimeMs = Math.max(
+    Number.isFinite(readyMs) ? readyMs : 0,
+    Number.isFinite(deployMs) ? deployMs : 0,
+  );
+  if (latestRuntimeMs <= operationMs) return false;
+
+  const stoppedMs = entry.lastStoppedAt ? Date.parse(entry.lastStoppedAt) : NaN;
+  return !Number.isFinite(stoppedMs) || stoppedMs < latestRuntimeMs;
+}
+
 export function createBranchRouter(deps: RouterDeps): Router {
   const {
     stateService,
@@ -1684,6 +1706,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     shell,
     config,
     schedulerService,
+    janitorService,
     registry,
     getClusterStrategy,
     githubApp,
@@ -1758,6 +1781,62 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (raw === 'janitor') return 'janitor';
     if (raw === 'system') return 'system';
     return 'manual';
+  }
+
+  function stopAttributionFromRequest(req: Request): {
+    reason: string;
+    source: NonNullable<BranchEntry['lastStopSource']>;
+    archiveSource: ContainerLogArchiveEntry['source'];
+    archiveMessage: string;
+  } {
+    const trigger = triggerFromRequest(req);
+    const actor = resolveActorFromRequest(req);
+    if (trigger === 'webhook') {
+      return {
+        reason: 'GitHub webhook 触发停止',
+        source: 'webhook',
+        archiveSource: 'webhook-stop',
+        archiveMessage: 'captured after webhook stop preserved containers',
+      };
+    }
+    if (actor === 'ai' || actor.startsWith('ai:')) {
+      return {
+        reason: 'AI Agent 调用停止',
+        source: 'ai',
+        archiveSource: 'ai-stop',
+        archiveMessage: 'captured after ai stop preserved containers',
+      };
+    }
+    if (trigger === 'scheduler') {
+      return {
+        reason: '调度器触发停止',
+        source: 'scheduler',
+        archiveSource: 'scheduler-stop',
+        archiveMessage: 'captured after scheduler stop preserved containers',
+      };
+    }
+    if (trigger === 'auto-lifecycle') {
+      return {
+        reason: 'CDS 生命周期策略触发停止',
+        source: 'cds',
+        archiveSource: 'auto-lifecycle-stop',
+        archiveMessage: 'captured after auto lifecycle stop preserved containers',
+      };
+    }
+    if (trigger === 'janitor' || trigger === 'system') {
+      return {
+        reason: trigger === 'janitor' ? 'Janitor 过期清理触发停止' : '系统触发停止',
+        source: 'system',
+        archiveSource: 'system-stop',
+        archiveMessage: 'captured after system stop preserved containers',
+      };
+    }
+    return {
+      reason: '用户手动停止',
+      source: 'user',
+      archiveSource: 'manual-stop',
+      archiveMessage: 'captured after user stop preserved containers',
+    };
   }
 
   function beginBranchOperation(
@@ -2005,10 +2084,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   async function waitForRestartSafeBranchOperationsForRoute(
     source: string,
-    // Cursor Bugbot(PR #684, High):默认走 deploy-safe SSOT(180s + env 覆盖),
-    // 不再硬编码 5s —— 否则 self-update / self-force-sync 几乎必然在 deploy 中途
-    // process.exit 强制重启,留下不一致状态。见 restart-drain.ts 注释。
-    timeoutMs = resolveRestartDrainTimeoutMs(),
+    // 默认 timeout=0: self-update 不再为 in-flight branch operation 等 180s。
+    // 需要强一致排空时由请求显式传 drain=true 或 drainTimeoutMs。
+    timeoutMs: number,
     intervalMs = 1000,
   ) {
     return waitForRestartSafeBranchOperations({
@@ -2077,6 +2155,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     requestId: string | undefined,
     reason: string,
     operationId?: string | null,
+    operationStartedAt?: string | null,
   ): Promise<void> {
     const terminalCleanupKinds = new Set<BranchOperationKind>([
       'delete',
@@ -2088,6 +2167,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
       'janitor-remove',
     ]);
     const branchStillExists = Boolean(stateService.getBranch(entry.id));
+    const hasNewerReadyRuntime = shouldSkipFencedDeployCleanupForNewerRuntime(entry, operationStartedAt);
+    if (hasNewerReadyRuntime && branchStillExists) {
+      for (const profileId of profileIds) {
+        const svc = entry.services?.[profileId];
+        if (!svc?.containerName) continue;
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'info',
+          source: 'deploy-fenced-cleanup',
+          action: 'container.remove.after-fenced-deploy.skipped',
+          message: `skipped fenced deploy cleanup because a newer runtime is already ready: ${svc.containerName}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId,
+          containerName: svc.containerName,
+          requestId: requestId || null,
+          operationId: operationId || null,
+          details: {
+            reason,
+            skipReason: 'newer-runtime-ready',
+            operationStartedAt: operationStartedAt || null,
+            lastReadyAt: entry.lastReadyAt || null,
+            lastDeployAt: entry.lastDeployAt || null,
+            lastStoppedAt: entry.lastStoppedAt || null,
+          },
+        });
+      }
+      return;
+    }
     const cleanupOwner = branchOperationCoordinator
       ?.getActiveOperations(entry.id)
       .find((active) => active.operationId !== operationId && terminalCleanupKinds.has(active.request.kind));
@@ -4657,7 +4765,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!['select', 'show', 'describe', 'desc', 'explain'].includes(head)) {
       throw new Error('第一阶段 SQL Console 只允许 SELECT / SHOW / DESCRIBE / EXPLAIN');
     }
-    if (head === 'select' && /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|set|use|load|outfile|dumpfile|lock|unlock)\b/i.test(withoutTrailing)) {
+    // 危险关键字检查必须覆盖全部放行语句头，不只 select：PostgreSQL 的
+    // EXPLAIN ANALYZE UPDATE ... 会真实执行底层 UPDATE，仅查 select 头会被
+    // 绕过 /data/query-write 的 data-write 权限与确认门（PR #799 Codex P1）
+    if (/\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|set|use|load|outfile|dumpfile|lock|unlock)\b/i.test(withoutTrailing)) {
       throw new Error('检测到写入或高风险关键字，已拒绝执行');
     }
     return withoutTrailing;
@@ -4937,7 +5048,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (withoutTrailing.includes(';')) {
       throw new Error('MongoDB Console 一次只允许执行一条命令');
     }
-    if (/\b(insert|insertOne|insertMany|update|updateOne|updateMany|delete|deleteOne|deleteMany|drop|dropDatabase|dropCollection|create|createCollection|aggregate|mapReduce|eval|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer)\b/i.test(withoutTrailing) || /\$where\b/i.test(withoutTrailing)) {
+    if (/\b(insert|insertOne|insertMany|update|updateOne|updateMany|delete|deleteOne|deleteMany|drop|dropDatabase|dropCollection|create|createCollection|aggregate|mapReduce|eval|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer)\b/i.test(withoutTrailing) || /\$where/i.test(withoutTrailing)) {
       throw new Error('MongoDB Console 当前只允许只读 find 查询');
     }
 
@@ -9480,6 +9591,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const stopAttribution = stopAttributionFromRequest(req);
 
     // `lastAccessedAt` is the branch card's "last deploy attempt" clock.
     // Stamp it before dispatching so failures and remote rejections update the
@@ -10267,6 +10379,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           requestId,
           `部署操作被更高优先级操作取代: ${errMsg}`,
           branchOperationLease?.operationId || null,
+          branchOperationLease?.startedAt || null,
         );
         logEvent({
           step: 'deploy-fenced',
@@ -10582,6 +10695,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined,
           `单服务部署被更高优先级操作取代: ${errMsg}`,
           branchOperationLease?.operationId || null,
+          branchOperationLease?.startedAt || null,
         );
         logEvent({
           step: 'deploy-fenced',
@@ -10765,6 +10879,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const stopAttribution = stopAttributionFromRequest(req);
 
     // ── Cluster-aware stop ──
     //
@@ -10812,8 +10927,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const svc of Object.values(entry.services)) svc.status = 'stopped';
         entry.status = 'idle';
         entry.lastStoppedAt = new Date().toISOString();
-        entry.lastStopReason = `远端执行器 ${remoteExecutor.id} 停止`;
-        entry.lastStopSource = 'executor';
+        entry.lastStopReason = `${stopAttribution.reason}，远端执行器 ${remoteExecutor.id} 已停止`;
+        entry.lastStopSource = stopAttribution.source === 'user' ? 'executor' : stopAttribution.source;
         // 2026-05-14 Cursor Bugbot Medium 修复：远端执行器停止路径与本地
         // 手动停止 / scheduler coolFn / AutoLifecycle 一致，也要 +1 stopCount
         // 并写活动日志，否则 UI「停止次数」对远端停止漏计、活动时间线缺这条。
@@ -10823,6 +10938,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           branchId: id,
           branchName: entry.branch,
           actor: resolveActorForActivity(req),
+          note: entry.lastStopReason,
         });
         stateService.save();
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
@@ -10849,7 +10965,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Actually stop containers
       for (const svc of Object.values(entry.services)) {
         try {
-          await containerService.stop(svc.containerName, '用户手动停止', {
+          await containerService.stop(svc.containerName, stopAttribution.reason, {
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: svc.profileId,
@@ -10867,9 +10983,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService,
         containerService,
         branch: entry,
-        source: 'manual-stop',
+        source: stopAttribution.archiveSource,
         serverEventLogStore,
-        message: 'captured after user stop preserved containers',
+        message: stopAttribution.archiveMessage,
         requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
         operationId: branchOperationLease?.operationId || null,
         actor: resolveActorFromRequest(req),
@@ -10878,8 +10994,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.status = 'idle';
       // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
       entry.lastStoppedAt = new Date().toISOString();
-      entry.lastStopReason = '用户手动停止';
-      entry.lastStopSource = 'user';
+      entry.lastStopReason = stopAttribution.reason;
+      entry.lastStopSource = stopAttribution.source;
       cleanupPreviewServer(id);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'stopCount');
@@ -10888,6 +11004,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchId: id,
         branchName: entry.branch,
         actor: resolveActorForActivity(req),
+        note: stopAttribution.reason,
       });
       stateService.save();
       res.json({ message: '所有服务已停止' });
@@ -16990,6 +17107,7 @@ cdscli project list --human
     // fast-path,让"重复测试同一版本更新"成为可能。详见 self-force-sync 上方注释。
     let { branch, force } = req.body as { branch?: string; force?: boolean };
     const forceMode = force === true;
+    const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
 
     initSSE(res);
     // 2026-05-07 actor 真名修复(用户反馈"七八轮还是 actor: unknown"):
@@ -17549,23 +17667,23 @@ cdscli project list --human
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
-      // 2026-05-28 用户反馈"为什么一定要等?":砍掉等待+deferred 路径。
-      // 5s 优雅窗口给即将完成的 op,但即便等不到也直接 restart——docker
-      // 容器归 daemon 管,cds-master 重启后已存在的容器继续跑;断掉的 SSE
-      // 由 webhook/UI auto-reconnect 兜底;重启后 reconcile 用 docker ps 核对。
-      // 仍保留 server-event-log 审计("self-update.restart.deferred" 这条
-      // event 在 restart-drain.ts 里仍会写),但不再阻塞 restart。
-      // 2026-06-03(Bugbot #716):排空等待前把 step 切到 'drain',让进行中 UI
-      // 高亮"排空+重启"段,而不是停在 web-build 干等(可达 180s)。'drain' 不在
-      // SELF_UPDATE_TIMING_KEYS 表里,计时仅走下面的显式 merge,避免与 restartMs 双计。
-      send('drain', 'running', '等待 in-flight 分支操作排空(最多 180s)…');
+      // 2026-06-14:默认不等排空。master work / branch operation coordinator
+      // 已负责 interruptAll + 重启后 reconcile。只有请求显式 drain=true 或
+      // drainTimeoutMs>0 时才等待,避免日常更新被旧 180s 窗口拖成数分钟。
       const drainStartedAt = Date.now();
-      const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-update');
+      const restartDrain = restartDrainTimeoutMs > 0
+        ? await (async () => {
+            send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
+            return waitForRestartSafeBranchOperationsForRoute('api.self-update', restartDrainTimeoutMs);
+          })()
+        : { ok: true, active: [] };
       // 把排空等待计入 timings(可达 180s)。此前不记导致进度条各 step 之和远小于
       // totalMs,UI 大片留白且"总计"对不上。
       const drainMs = Date.now() - drainStartedAt;
       timingRecorder.merge({ drainMs });
-      if (!restartDrain.ok) {
+      if (restartDrainTimeoutMs <= 0) {
+        send('drain', 'done', '已跳过排空等待(默认策略,立即重启)');
+      } else if (!restartDrain.ok) {
         send(
           'drain',
           'warning',
@@ -17756,6 +17874,7 @@ cdscli project list --human
     // 可以反复点同一 commit 看更新链路。"强制更新"按钮应当传 force:true。
     const { branch, force } = (req.body || {}) as { branch?: string; force?: boolean };
     const forceMode = force === true;
+    const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
 
     initSSE(res);
     // 2026-05-07 同 /api/self-update:actor 真名 + 落盘 SSOT。
@@ -18368,15 +18487,19 @@ cdscli project list --human
       // helper 保证两端口行为一致。
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
-      // 同 self-update:5s 优雅窗口 + 不阻塞 restart。详见上一处注释。
-      // 2026-06-03(Bugbot #716):同 self-update,排空等待前把 step 切到 'drain'
-      // 让 UI 高亮排空段;'drain' 不在 timing key 表,计时仅走显式 merge。
-      send('drain', 'running', '等待 in-flight 分支操作排空(最多 180s)…');
+      // 同 self-update:默认不等排空;显式 drain=true 或 drainTimeoutMs>0 才等待。
       const drainStartedAt = Date.now();
-      const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-force-sync');
+      const restartDrain = restartDrainTimeoutMs > 0
+        ? await (async () => {
+            send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
+            return waitForRestartSafeBranchOperationsForRoute('api.self-force-sync', restartDrainTimeoutMs);
+          })()
+        : { ok: true, active: [] };
       const drainMs = Date.now() - drainStartedAt;
       timingRecorder.merge({ drainMs });
-      if (!restartDrain.ok) {
+      if (restartDrainTimeoutMs <= 0) {
+        send('drain', 'done', '已跳过排空等待(默认策略,立即重启)');
+      } else if (!restartDrain.ok) {
         send(
           'drain',
           'warning',
@@ -18621,6 +18744,58 @@ cdscli project list --human
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── Global expiry janitor API ──
+  //
+  // The janitor deletes branch-local containers/worktrees after the global
+  // expiry window. The window is intentionally capped at 7 days.
+  router.get('/janitor/state', (_req, res) => {
+    if (!janitorService) {
+      res.json({
+        enabled: false,
+        config: null,
+        dryRun: { wouldRemove: [], wouldSkip: [] },
+        disk: null,
+      });
+      return;
+    }
+    res.json(janitorService.getSnapshot());
+  });
+
+  router.put('/janitor/config', (req, res) => {
+    if (!janitorService) {
+      res.status(503).json({ error: 'Janitor service not wired in' });
+      return;
+    }
+    const body = (req.body || {}) as {
+      enabled?: unknown;
+      worktreeTTLDays?: unknown;
+    };
+
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是 boolean' });
+      return;
+    }
+    if (body.worktreeTTLDays !== undefined) {
+      const v = body.worktreeTTLDays;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 7) {
+        res.status(400).json({ error: 'worktreeTTLDays 必须是 1 到 7 之间的整数（天）' });
+        return;
+      }
+    }
+
+    if (typeof body.enabled === 'boolean') {
+      stateService.setJanitorEnabledOverride(body.enabled);
+      janitorService.setEnabled(body.enabled);
+    }
+    if (typeof body.worktreeTTLDays === 'number') {
+      stateService.setJanitorWorktreeTTLOverride(body.worktreeTTLDays);
+      janitorService.setWorktreeTTLDays(body.worktreeTTLDays);
+    }
+    stateService.save();
+
+    res.json({ ...janitorService.getSnapshot(), source: 'ui-override' });
   });
 
   // P4 Part 18 (G10): POST /api/detect-stack — auto-detect stack.

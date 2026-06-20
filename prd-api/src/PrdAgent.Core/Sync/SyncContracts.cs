@@ -98,6 +98,15 @@ public sealed class SyncBundleItem
     /// <summary>归属作者邮箱（用户名未命中时按邮箱对齐）。</summary>
     public string? OwnerEmail { get; set; }
 
+    /// <summary>源条目的创建时间。接收方勾选“保存原时间”时用于避免全部变成同步时刻。</summary>
+    public DateTime? CreatedAt { get; set; }
+
+    /// <summary>源条目的更新时间。接收方勾选“保存原时间”时用于避免全部变成同步时刻。</summary>
+    public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>知识库模板键等资源级展示策略。旧节点缺省为 null。</summary>
+    public string? TemplateKey { get; set; }
+
     /// <summary>未知 / 扩展字段（向下兼容：接收方不认识就原样保留）。</summary>
     public Dictionary<string, JsonElement> Extras { get; set; } = new();
 }
@@ -123,6 +132,15 @@ public sealed class SyncRecord
     /// <summary>结构化元信息（如知识库 metadata）。</summary>
     public Dictionary<string, string>? Metadata { get; set; }
 
+    /// <summary>源记录创建时间。接收方勾选“保存原时间”时使用。</summary>
+    public DateTime? CreatedAt { get; set; }
+
+    /// <summary>源记录更新时间。接收方勾选“保存原时间”时使用。</summary>
+    public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>源记录最近内容变化时间。接收方勾选“保存原时间”时使用。</summary>
+    public DateTime? LastChangedAt { get; set; }
+
     /// <summary>未知 / 扩展字段（向下兼容）。</summary>
     public Dictionary<string, JsonElement> Extras { get; set; } = new();
 }
@@ -143,4 +161,13 @@ public sealed class SyncApplyOutcome
 
     /// <summary>人类可读摘要。</summary>
     public string? Message { get; set; }
+
+    /// <summary>接收侧实际落库的条目 ID。创建新目标时供调用方写同步标识。</summary>
+    public string? TargetItemId { get; set; }
+
+    /// <summary>正文中图片 / 资源链接成功重传并重写的数量。</summary>
+    public int AssetsRewritten { get; set; }
+
+    /// <summary>正文中图片 / 资源链接重传或检测失败的数量。</summary>
+    public int AssetRewriteFailed { get; set; }
 }

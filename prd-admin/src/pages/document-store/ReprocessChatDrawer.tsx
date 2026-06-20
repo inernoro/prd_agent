@@ -13,6 +13,10 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming';
 import { ChatMarkdown } from '@/pages/pa-agent/ChatMarkdown';
 import { VisualCreationMiniPanel } from '@/components/visual-creation/VisualCreationMiniPanel';
+import { PosterFeedCardView } from '@/components/weekly-poster/WeeklyPosterModal';
+import type { WeeklyPosterPage } from '@/services/real/weeklyPoster';
+import type { ShortVideoCard } from '@/services/real/shortVideoMaterials';
+import { useShortVideoRunStore, type ShortVideoRunStatus } from '@/stores/shortVideoRunStore';
 import {
   listReprocessAgents,
   createReprocessAgent,
@@ -24,6 +28,8 @@ import {
   getReprocessConversation,
   saveReprocessConversation,
   clearReprocessConversation,
+  createShortVideoMaterialRun,
+  getShortVideoMaterialRun,
 } from '@/services';
 import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
@@ -36,11 +42,15 @@ import type { ApplyMode, FolderNode } from './docApplyPreview';
 import { toast } from '@/lib/toast';
 
 export type ReprocessChatDrawerProps = {
-  entryId: string;
-  entryTitle: string;
+  entryId?: string;
+  entryTitle?: string;
   storeId: string;
+  initialMode?: 'document' | 'short-video';
+  initialInput?: string;
   onClose: () => void;
   onApplied?: (mode: 'replace' | 'append' | 'new', entryId: string) => void;
+  onStoreChanged?: () => void;
+  onOpenEntry?: (target: { id: string; title: string; initialInput?: string }) => void;
 };
 
 // 简易图标 map（lucide name → component）覆盖 BUILTIN_TOOLS 用到的图标
@@ -106,7 +116,7 @@ const CHAT_HISTORY_STORAGE_KEY = 'reprocess-chat-drawer:history';
 const MAX_PERSISTED_ENTRIES = 30;
 type PersistedChatState = {
   messages: ChatMessage[];
-  activeRef?: { kind: 'toolbox'; itemId: string } | { kind: 'kbAgent'; key: string };
+  activeRef?: { kind: 'toolbox'; itemId: string } | { kind: 'kbAgent'; key: string } | { kind: 'shortVideoTool' };
 };
 function loadPersistedChat(entryId: string): PersistedChatState | null {
   try {
@@ -143,6 +153,20 @@ type ChatMessage = {
   /** 流式阶段：thinking / streaming / done */
   phase?: 'thinking' | 'streaming' | 'done' | 'error';
   applied?: 'replace' | 'append' | 'new';
+  quickActions?: ChatQuickAction[];
+  /** 短视频解析运行：用于把粘贴链接的回复渲染成仿真短视频卡片（而非文字块） */
+  shortVideoRun?: import('@/services').ShortVideoMaterialRun;
+};
+
+type ChatQuickAction = {
+  key: string;
+  label: string;
+  entryId: string;
+  title: string;
+  initialInput?: string;
+  icon?: 'video' | 'text' | 'timeline' | 'agent';
+  group?: 'assets' | 'processing';
+  description?: string;
 };
 
 /**
@@ -203,6 +227,7 @@ export function mergeChatSnapshots(
 type ActiveAgent =
   | { kind: 'toolbox'; item: ToolboxItem }
   | { kind: 'kbAgent'; agent: ReprocessAgent }
+  | { kind: 'shortVideoTool' }
   | null;
 
 const FOCUSED_TOOLBOX_IDS = [
@@ -214,17 +239,266 @@ const FOCUSED_TOOLBOX_IDS = [
   'builtin-task-tree',
 ];
 
+const SHORT_VIDEO_TOOLBOX_ITEM: ToolboxItem = {
+  id: 'builtin-short-video-parser',
+  name: '短视频解析',
+  description: '粘贴短视频链接后，先保存原始视频到知识库，再基于视频转写继续加工',
+  icon: 'Video',
+  category: 'builtin',
+  type: 'builtin',
+  kind: 'tool',
+  agentKey: 'short-video-parser',
+  routePath: '/document-store',
+  permission: 'document-store.write',
+  tags: ['短视频', '抖音', 'TikTok', '解析', '视频', '转写', '知识库'],
+  usageCount: 0,
+  createdAt: new Date().toISOString(),
+  createdByName: '官方',
+};
+
+const SHORT_VIDEO_SESSION_PREFIX = 'short-video-tool:';
+const SHORT_VIDEO_ACTIVE_RUN_KEY = 'short-video-material:active-run';
+
+type ShortVideoResultLike = {
+  run: import('@/services').ShortVideoMaterialRun;
+  storeId: string;
+  sourceEntryId: string;
+  transcriptEntryId?: string;
+  timelineEntryId?: string;
+};
+
+function shortVideoRunStorageKey(storeId: string) {
+  return `${SHORT_VIDEO_ACTIVE_RUN_KEY}:${storeId}`;
+}
+
+export function saveActiveShortVideoRun(storeId: string, runId: string) {
+  try { sessionStorage.setItem(shortVideoRunStorageKey(storeId), runId); } catch { /* ignore */ }
+}
+
+function loadActiveShortVideoRun(storeId: string): string | null {
+  try { return sessionStorage.getItem(shortVideoRunStorageKey(storeId)); } catch { return null; }
+}
+
+function extractUrl(text: string): string | null {
+  const hit = text.match(/https?:\/\/[^\s"'<>]+/i);
+  return hit?.[0] ?? null;
+}
+
+function shortVideoResultFromRun(run: import('@/services').ShortVideoMaterialRun): ShortVideoResultLike | null {
+  if (!run.storeId || !run.sourceEntryId) return null;
+  return {
+    run,
+    storeId: run.storeId,
+    sourceEntryId: run.sourceEntryId,
+    transcriptEntryId: run.transcriptEntryId || undefined,
+    timelineEntryId: run.timelineEntryId || undefined,
+  };
+}
+
+/**
+ * 把后端短视频 run 同步进 shortVideoRunStore（右上角「运行中的智能体」入口 + 刷新恢复的 SSOT）。
+ * 创建/轮询/续查的每个节点都调一次，关抽屉/刷新后入口仍可见、状态仍准。
+ */
+function syncShortVideoRunToStore(run: import('@/services').ShortVideoMaterialRun, fallbackStoreId: string) {
+  const store = useShortVideoRunStore.getState();
+  const status: ShortVideoRunStatus = run.status === 'done' ? 'done' : run.status === 'failed' ? 'failed' : 'running';
+  const title = run.title || run.videoUrl || '短视频素材';
+  const phase = shortVideoCompactStatus(run).text;
+  const patch = {
+    status,
+    phase,
+    title,
+    hasTranscript: !!run.transcriptEntryId,
+    errorMessage: run.errorMessage || undefined,
+  };
+  if (store.runs[run.id]) {
+    store.patchRun(run.id, patch);
+  } else {
+    store.startRun({ runId: run.id, storeId: run.storeId || fallbackStoreId, title, phase });
+    store.patchRun(run.id, patch);
+  }
+}
+
+/** 把后端抽取的短视频卡片映射成海报 feed-card 组件所需的 WeeklyPosterPage（直接复用，不改组件）。 */
+function shortVideoCardToPosterPage(card: ShortVideoCard): WeeklyPosterPage {
+  const playable = card.videoUrl || undefined;        // 优先 COS 永久地址；入库前为空，仅显示封面
+  const cover = card.coverUrl || undefined;
+  return {
+    order: 0,
+    title: card.title || '短视频',
+    body: '',
+    imagePrompt: '',
+    imageUrl: playable ?? cover ?? null,               // 有视频则播放视频，否则展示封面
+    secondaryImageUrl: cover ?? null,                  // <video poster> 封面
+    accentColor: null,
+    authorName: card.authorName ?? null,
+    authorAvatarUrl: card.authorAvatarUrl ?? null,
+    platform: card.platform ?? null,
+    durationSec: card.durationSec ?? null,
+    hashtags: card.hashtags ?? null,
+    stats: {
+      likes: card.likeCount ?? null,
+      comments: card.commentCount ?? null,
+      shares: card.shareCount ?? null,
+      collects: card.collectCount ?? null,
+      plays: card.playCount ?? null,
+    },
+    transcriptCues: null,
+  };
+}
+
+const SHORT_VIDEO_STAGE_LABELS: Record<string, string> = {
+  parse: '解析链接',
+  source: '保存原始视频',
+  transcript: '视频转文字',
+  timeline: '整理时间线',
+  ready: '准备继续加工',
+};
+
+/** 卡片下方的一行状态（取代大段进度文字块；解析细节等卡片之后才轮到）。 */
+export function shortVideoCompactStatus(run: import('@/services').ShortVideoMaterialRun): { text: string; tone: 'busy' | 'done' | 'error' } {
+  if (run.status === 'failed') return { text: '解析失败，可重试', tone: 'error' };
+  const stages = run.stages ?? [];
+  const running = stages.find((s) => s.status === 'running');
+  if (running) return { text: `${SHORT_VIDEO_STAGE_LABELS[running.key] || running.label}…`, tone: 'busy' };
+  if (run.status === 'done') {
+    const transcript = stages.find((s) => s.key === 'transcript');
+    if (transcript?.status === 'failed') return { text: '视频已入库（转写稍后可单独执行）', tone: 'done' };
+    return { text: '已入库，可继续加工', tone: 'done' };
+  }
+  return { text: '正在处理…', tone: 'busy' };
+}
+
+function getShortVideoStageLabel(stage: import('@/services').ShortVideoMaterialStage): string {
+  return SHORT_VIDEO_STAGE_LABELS[stage.key] || stage.label;
+}
+
+function formatShortVideoStageLine(stage: import('@/services').ShortVideoMaterialStage): string {
+  const label = getShortVideoStageLabel(stage);
+  const message = stage.message?.trim();
+  if (stage.status === 'done') return `- ${label}：已完成${message ? `。${message}` : ''}`;
+  if (stage.status === 'running') return `- ${label}：正在处理${message ? `。${message}` : ''}`;
+  if (stage.status === 'failed') return `- ${label}：处理失败${message ? `。${message}` : ''}`;
+  return `- ${label}：等待中${message && message !== '等待提交' ? `。${message}` : ''}`;
+}
+
+function formatShortVideoRunStatus(status: import('@/services').ShortVideoMaterialRun['status']): string {
+  if (status === 'queued') return '等待后台开始';
+  if (status === 'running') return '后台正在处理';
+  if (status === 'done') return '已完成';
+  if (status === 'failed') return '处理失败';
+  return '已取消';
+}
+
+function formatShortVideoProgress(run: import('@/services').ShortVideoMaterialRun): string {
+  const lines = [
+    `后台任务：${formatShortVideoRunStatus(run.status)}`,
+    '',
+    '处理进度（来自服务器，刷新后仍会保留）：',
+    ...((run.stages ?? []).map(formatShortVideoStageLine)),
+  ];
+  return lines.join('\n');
+}
+
+function buildShortVideoResultMessage(result: ShortVideoResultLike): string {
+  const title = result.run.title || '短视频素材';
+  const parserMessage = result.run.parserMessage?.trim();
+  const hasTranscript = Boolean(result.transcriptEntryId);
+  return [
+    `已保存视频到知识库：「${title}」。`,
+    parserMessage ? `解析说明：${parserMessage}` : null,
+    hasTranscript
+      ? '已从视频生成原始文字并保存到知识库；文案、润色和时间线属于后续加工，不会默认生成。'
+      : '当前只保存了原始视频；没有生成文字条目，也不会把平台标题或描述当成字幕。',
+    '',
+    '处理进度（来自服务器，刷新后仍会保留）：',
+    ...((result.run.stages ?? []).map(formatShortVideoStageLine)),
+    '',
+    '已入库产物：',
+    `- 原始视频：${title}.mp4`,
+    hasTranscript ? `- 原始文字：${title} · 原始转写文字` : null,
+    '',
+    '你可以先停在这里，也可以选择下方动作继续加工。',
+  ].filter((line): line is string => line !== null).join('\n');
+}
+
+function buildShortVideoQuickActions(result: ShortVideoResultLike): ChatQuickAction[] {
+  const title = result.run.title || '短视频素材';
+  const actions: ChatQuickAction[] = [
+    {
+      key: 'open-source',
+      label: '原始视频',
+      entryId: result.sourceEntryId,
+      title: `${title}.mp4`,
+      icon: 'video',
+      group: 'assets',
+      description: '打开已保存到知识库的原始视频',
+    },
+  ];
+
+  if (!result.transcriptEntryId) return actions;
+
+  actions.push(
+    {
+      key: 'open-transcript',
+      label: '原始文字',
+      entryId: result.transcriptEntryId,
+      title: `${title} · 原始转写文字.md`,
+      icon: 'text',
+      group: 'assets',
+      description: '打开从视频转写出的原始文字',
+    },
+    {
+      key: 'literal-copy',
+      label: '一字不变',
+      entryId: result.transcriptEntryId,
+      title: `${title} · 原始转写文字.md`,
+      initialInput: '请基于这份原始转写文字整理成可阅读文案，尽量一字不变保留原话，只处理段落、标点和标题层级。',
+      icon: 'agent',
+      group: 'processing',
+      description: '基于原始文字整理成尽量保留原话的文案',
+    },
+    {
+      key: 'enhance-copy',
+      label: '补充润色',
+      entryId: result.transcriptEntryId,
+      title: `${title} · 原始转写文字.md`,
+      initialInput: '请基于这份原始转写文字整理成教程文案，可以补充必要背景、步骤解释和小标题，但不要改变原视频的核心意思。',
+      icon: 'agent',
+      group: 'processing',
+      description: '基于原始文字补充背景并整理成教程文案',
+    },
+    {
+      key: 'timeline-copy',
+      label: '转时间线',
+      entryId: result.transcriptEntryId,
+      title: `${title} · 原始转写文字.md`,
+      initialInput: '请把这份原始转写文字整理成清晰的时间线，每一步包含时间段、动作、材料和检查点。',
+      icon: 'timeline',
+      group: 'processing',
+      description: '把原始文字整理为时间线或步骤化教程',
+    },
+  );
+  return actions;
+}
+
 // 哪些 builtin 智能体可在此处选用，现在由「智能体宇宙」能力契约决定（后端 SSOT）：
 // 只有在 AgentCapabilityRegistry 注册了能力的 agentKey 才会出现，且各自按 invokeMode
 // 走对应交互（视觉创作=文生图、文学/周报=聊天流、缺陷=结构化），不再喂通用 chat。
 
 export function ReprocessChatDrawer({
   entryId,
-  entryTitle,
+  entryTitle = '短视频素材解析',
   storeId,
+  initialMode = 'document',
+  initialInput,
   onClose,
   onApplied,
+  onStoreChanged,
+  onOpenEntry,
 }: ReprocessChatDrawerProps) {
+  const isShortVideoMode = initialMode === 'short-video';
+  const conversationKey = entryId ?? `${SHORT_VIDEO_SESSION_PREFIX}${storeId}`;
   const [toolboxItems, setToolboxItems] = useState<ToolboxItem[]>([]);
   const [kbAgents, setKbAgents] = useState<ReprocessAgent[]>([]);
   const [docContent, setDocContent] = useState<string>('');
@@ -271,7 +545,10 @@ export function ReprocessChatDrawer({
   const sendLockRef = useRef(false);
   // 当前 entry id 锁：异步任务（fetch / apply）返回时校验 entry 没变才能写 state
   // 否则 apply 在 doc A 上跑，返回时 doc 已切到 B，错把"成功"绑到 B（Bugbot #3 二轮 Medium）。
-  const entryIdRef = useRef(entryId);
+  const entryIdRef = useRef(conversationKey);
+  const initialInputAppliedRef = useRef(false);
+  const restoredShortVideoRunRef = useRef<string | null>(null);
+  const shortVideoPollTokenRef = useRef(0);
   // 同步 apply 锁：和 sendLockRef 同思路，state 异步 setApplying 之前快速双击会让
   // 两次 handleApply 都跑过 if(applying) 检查，跑两次写回（Codex P2 十轮）
   const applyLockRef = useRef(false);
@@ -292,9 +569,19 @@ export function ReprocessChatDrawer({
     });
   }, []);
 
+  const nextShortVideoPollToken = useCallback(() => {
+    shortVideoPollTokenRef.current += 1;
+    return shortVideoPollTokenRef.current;
+  }, []);
+
+  const isShortVideoPollActive = useCallback((ownerKey: string, pollToken: number) => (
+    entryIdRef.current === ownerKey && shortVideoPollTokenRef.current === pollToken
+  ), []);
+
   // 中止当前 stream 的统一入口：除了 abort fetch，还要清 streamingId 和 sendLockRef，
   // 否则 chip / 输入框会一直 disabled（Bugbot #2）
   const abortCurrentStream = useCallback(() => {
+    shortVideoPollTokenRef.current += 1;
     cancelStreamRef.current?.();
     cancelStreamRef.current = null;
     sendLockRef.current = false;
@@ -307,7 +594,8 @@ export function ReprocessChatDrawer({
   // 否则会出现"显示新文档但写回上一篇"的串数据（Bugbot #1，High）
   useEffect(() => {
     let cancelled = false;
-    entryIdRef.current = entryId;
+    entryIdRef.current = conversationKey;
+    initialInputAppliedRef.current = false;
     sendLockRef.current = false;
     applyLockRef.current = false;
     lastLoadedEntryRef.current = null; // 新 entryId 还没初始化完，持久化先停
@@ -320,7 +608,7 @@ export function ReprocessChatDrawer({
       backendSaveTimerRef.current = null;
     }
     setMessages([]);
-    setActive(null);
+    setActive(isShortVideoMode ? { kind: 'shortVideoTool' } : null);
     setError(null);
     setApplying(null);
     setInput('');
@@ -341,40 +629,50 @@ export function ReprocessChatDrawer({
     setLoadingDoc(true);
     setLoadingAgents(true);
 
-    (async () => {
-      try {
-        const docRes = await getDocumentContent(entryId);
-        if (cancelled || entryIdRef.current !== entryId) return;
-        if (docRes.success) {
-          const raw = docRes.data.content ?? '';
-          if (!raw || raw.trim().length === 0) {
-            // 文档本来就空（无 DocumentId 且无 ContentIndex）—— 这是合法状态
-            // 但禁止把"空文档"喂给 LLM，否则智能体回的内容跟当前文档无关，写回还会污染数据
-            setDocLoadError('文档没有可读正文，无法作为输入喂给智能体');
+    if (isShortVideoMode) {
+      setDocContent('');
+      setDocTruncated(false);
+      setDocLoadError(null);
+      setLoadingDoc(false);
+    } else if (!entryId) {
+      setDocLoadError('未选择文档，无法作为输入喂给智能体');
+      setLoadingDoc(false);
+    } else {
+      (async () => {
+        try {
+          const docRes = await getDocumentContent(entryId);
+          if (cancelled || entryIdRef.current !== conversationKey) return;
+          if (docRes.success) {
+            const raw = docRes.data.content ?? '';
+            if (!raw || raw.trim().length === 0) {
+              // 文档本来就空（无 DocumentId 且无 ContentIndex）—— 这是合法状态
+              // 但禁止把"空文档"喂给 LLM，否则智能体回的内容跟当前文档无关，写回还会污染数据
+              setDocLoadError('文档没有可读正文，无法作为输入喂给智能体');
+            }
+            setDocContent(raw);
+            setDocTruncated(raw.length > MAX_DOC_CHARS);
+            if (raw.length > MAX_DOC_CHARS) setDocContent(raw.slice(0, MAX_DOC_CHARS));
+          } else {
+            setDocLoadError(docRes.error?.message || '读取文档失败');
           }
-          setDocContent(raw);
-          setDocTruncated(raw.length > MAX_DOC_CHARS);
-          if (raw.length > MAX_DOC_CHARS) setDocContent(raw.slice(0, MAX_DOC_CHARS));
-        } else {
-          setDocLoadError(docRes.error?.message || '读取文档失败');
+        } catch (e) {
+          if (cancelled || entryIdRef.current !== conversationKey) return;
+          setDocLoadError(e instanceof Error ? e.message : '读取文档异常');
+        } finally {
+          if (!cancelled && entryIdRef.current === conversationKey) setLoadingDoc(false);
         }
-      } catch (e) {
-        if (cancelled || entryIdRef.current !== entryId) return;
-        setDocLoadError(e instanceof Error ? e.message : '读取文档异常');
-      } finally {
-        if (!cancelled && entryIdRef.current === entryId) setLoadingDoc(false);
-      }
-    })();
+      })();
+    }
 
     (async () => {
       const [agentRes, toolboxRes, activeRunRes, capRes, convoRes] = await Promise.all([
         listReprocessAgents(),
         listToolboxItems(),
-        getActiveReprocessRun(entryId),
+        entryId && !isShortVideoMode ? getActiveReprocessRun(entryId) : Promise.resolve({ success: true, data: null }),
         listAgentCapabilities(),
-        getReprocessConversation(entryId),
+        entryId && !isShortVideoMode ? getReprocessConversation(entryId) : Promise.resolve({ success: true, data: null }),
       ]);
-      if (cancelled || entryIdRef.current !== entryId) return;
+      if (cancelled || entryIdRef.current !== conversationKey) return;
 
       const caps = capRes.success ? capRes.data.capabilities : [];
       setCapabilities(caps);
@@ -394,7 +692,9 @@ export function ReprocessChatDrawer({
         if (ib < 0) return -1;
         return ia - ib;
       });
-      setToolboxItems([...ordered, ...userOwnedToolbox]);
+      setToolboxItems(isShortVideoMode
+        ? [SHORT_VIDEO_TOOLBOX_ITEM, ...ordered, ...userOwnedToolbox]
+        : [...ordered, ...userOwnedToolbox]);
 
       const loadedKbAgents = agentRes.success ? agentRes.data.items : [];
       if (agentRes.success) setKbAgents(loadedKbAgents);
@@ -410,7 +710,7 @@ export function ReprocessChatDrawer({
       if (backendConvo.pendingVisualUrl) setPendingVisualUrl(backendConvo.pendingVisualUrl);
       // 合并后端 + sessionStorage 两源，避免切档取消后端去抖保存后、重开只取到较旧后端快照
       // 而丢掉本地更新的消息（Cursor Medium F4）。
-      const persistedSnapshot = mergeChatSnapshots(backendConvo.snapshot, loadPersistedChat(entryId));
+      const persistedSnapshot = mergeChatSnapshots(backendConvo.snapshot, loadPersistedChat(conversationKey));
       const hasFreshPersisted = !!persistedSnapshot
         && (persistedSnapshot.messages.length > 0 || !!persistedSnapshot.activeRef);
 
@@ -485,16 +785,22 @@ export function ReprocessChatDrawer({
             const tb = ordered.find((t) => t.id === ref.itemId)
               ?? userOwnedToolbox.find((t) => t.id === ref.itemId);
             if (tb) setActive({ kind: 'toolbox', item: tb });
-          } else {
+          } else if (ref.kind === 'kbAgent') {
             const kb = loadedKbAgents.find((a) => a.key === ref.key);
             if (kb) setActive({ kind: 'kbAgent', agent: kb });
+          } else if (ref.kind === 'shortVideoTool') {
+            setActive({ kind: 'shortVideoTool' });
           }
         }
       }
 
+      if (isShortVideoMode) {
+        setActive((prev) => prev ?? { kind: 'shortVideoTool' });
+      }
+
       // 至此本 entryId 的初始化（doc 之外的部分）已全部 setState 完毕，标记 ready。
       // 持久化 effect 看到这个 ref 才会开始写 sessionStorage（Bugbot #2 十轮 High）
-      if (entryIdRef.current === entryId) lastLoadedEntryRef.current = entryId;
+      if (entryIdRef.current === conversationKey) lastLoadedEntryRef.current = conversationKey;
     })();
 
     return () => {
@@ -503,7 +809,7 @@ export function ReprocessChatDrawer({
     };
     // abortCurrentStream 是 stable useCallback，不会触发 effect 抖动
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entryId]);
+  }, [conversationKey, entryId, isShortVideoMode]);
 
   // 关闭浮层时也走统一 abort，确保 streamingId 被清掉
   useEffect(() => () => abortCurrentStream(), [abortCurrentStream]);
@@ -533,7 +839,7 @@ export function ReprocessChatDrawer({
   useEffect(() => {
     if (loadingDoc || loadingAgents) return;
     if (streamingId !== null) return;                      // 流式中不快照
-    if (lastLoadedEntryRef.current !== entryId) return;    // 初始化没完成不快照
+    if (lastLoadedEntryRef.current !== conversationKey) return;    // 初始化没完成不快照
     if (messages.length === 0 && !active) return;
     // 双保险：万一仍有 streaming/thinking 的气泡，过滤掉，避免落"未完成"成"完成"
     const sanitized = messages.filter((m) => !m.streaming && m.phase !== 'streaming' && m.phase !== 'thinking');
@@ -542,8 +848,11 @@ export function ReprocessChatDrawer({
       ? { kind: 'toolbox', itemId: active.item.id }
       : active?.kind === 'kbAgent'
         ? { kind: 'kbAgent', key: active.agent.key }
-        : undefined;
-    savePersistedChat(entryId, { messages: sanitized, activeRef });
+        : active?.kind === 'shortVideoTool'
+          ? { kind: 'shortVideoTool' }
+          : undefined;
+    savePersistedChat(conversationKey, { messages: sanitized, activeRef });
+    if (!entryId || isShortVideoMode) return;
     // 同步落后端（去抖 800ms）：这才是关浏览器标签页也不丢的持久化（sessionStorage 关页即焚）。
     // pendingVisualUrl 一并带上，让 mini 面板「已生成未插入」的图也恢复。
     if (backendSaveTimerRef.current) window.clearTimeout(backendSaveTimerRef.current);
@@ -553,7 +862,7 @@ export function ReprocessChatDrawer({
     backendSaveTimerRef.current = window.setTimeout(() => {
       void saveReprocessConversation(entryId, { messagesJson, pendingImagesJson, activeRefJson });
     }, 800);
-  }, [entryId, messages, active, loadingDoc, loadingAgents, streamingId, pendingVisualUrl]);
+  }, [conversationKey, entryId, isShortVideoMode, messages, active, loadingDoc, loadingAgents, streamingId, pendingVisualUrl]);
 
   // 点击外面关闭 picker
   useEffect(() => {
@@ -567,6 +876,14 @@ export function ReprocessChatDrawer({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [pickerOpen]);
+
+  useEffect(() => {
+    if (!initialInput || initialInputAppliedRef.current) return;
+    if (loadingDoc || loadingAgents) return;
+    initialInputAppliedRef.current = true;
+    setInput(initialInput);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [initialInput, loadingDoc, loadingAgents]);
 
   // agentKey → 能力契约。只有 builtin 智能体（带 agentKey）才有契约；
   // 自定义工具 / 我的快捷智能体没有契约，走传统 direct-chat 文本链路。
@@ -624,6 +941,10 @@ export function ReprocessChatDrawer({
     // ⚠ 用 ref 同步锁，杜绝 React state 还没提交时双击/快速回车跑两条流（Bugbot #2 二轮）
     if (sendLockRef.current) return;
     if (!userText.trim()) return;
+    if (!entryId) {
+      toast.warning('未选择文档', '普通智能体需要先打开一篇文档');
+      return;
+    }
     if (loadingDoc) {
       toast.warning('请稍候', '文档还在加载');
       return;
@@ -785,13 +1106,209 @@ export function ReprocessChatDrawer({
       onDone,
     });
     cancelStreamRef.current = stop;
-  }, [loadingDoc, docLoadError, messages, docContent, docTruncated, scrollToBottom, capabilityForAgent, entryId, selectedParams]);
+  }, [entryId, loadingDoc, docLoadError, messages, docContent, docTruncated, scrollToBottom, capabilityForAgent, selectedParams]);
+
+  const pollShortVideoRun = useCallback(async (runId: string, messageId: string, ownerKey: string, pollToken: number) => {
+    for (let i = 0; i < 240; i += 1) {
+      if (!isShortVideoPollActive(ownerKey, pollToken)) return;
+      const res = await getShortVideoMaterialRun(runId);
+      if (!isShortVideoPollActive(ownerKey, pollToken)) return;
+      if (!res.success || !res.data) {
+        const message = res.error?.message || '无法读取短视频后台任务';
+        setMessages((prev) => prev.map((m) => m.id === messageId
+          ? { ...m, streaming: false, phase: 'error', content: `（读取后台任务失败：${message}）` }
+          : m));
+        setStreamingId(null);
+        return;
+      }
+
+      const run = res.data;
+      // 同步右上角「运行中的智能体」入口 + 刷新恢复状态（每轮都同步，关抽屉后入口仍准）
+      syncShortVideoRunToStore(run, storeId);
+      if (run.status === 'done') {
+        const result = shortVideoResultFromRun(run);
+        if (!result) {
+          // 同步终态 run，否则卡片仍渲染上一轮轮询的旧 run，状态行/卡片与终态 API 不一致（Bugbot Low）
+          setMessages((prev) => prev.map((m) => m.id === messageId
+            ? { ...m, streaming: false, phase: 'error', shortVideoRun: run, content: '（后台任务已完成，但服务端未返回完整入库产物）' }
+            : m));
+          setStreamingId(null);
+          return;
+        }
+        setMessages((prev) => prev.map((m) => m.id === messageId
+          ? {
+              ...m,
+              streaming: false,
+              phase: 'done',
+              shortVideoRun: run,
+              content: buildShortVideoResultMessage(result),
+              quickActions: buildShortVideoQuickActions(result),
+            }
+          : m));
+        setStreamingId(null);
+        sendLockRef.current = false;
+        onStoreChanged?.();
+        window.setTimeout(() => {
+          if (isShortVideoPollActive(ownerKey, pollToken)) onStoreChanged?.();
+        }, 1200);
+        return;
+      }
+
+      if (run.status === 'failed') {
+        const message = run.errorMessage || '短视频解析失败';
+        setMessages((prev) => prev.map((m) => m.id === messageId
+          ? { ...m, streaming: false, phase: 'error', shortVideoRun: run, content: `${formatShortVideoProgress(run)}\n\n（解析失败：${message}）` }
+          : m));
+        setStreamingId(null);
+        sendLockRef.current = false;
+        return;
+      }
+
+      setMessages((prev) => prev.map((m) => m.id === messageId
+        ? {
+            ...m,
+            streaming: true,
+            phase: 'streaming',
+            shortVideoRun: run,
+            content: formatShortVideoProgress(run),
+          }
+        : m));
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+
+    if (isShortVideoPollActive(ownerKey, pollToken)) {
+      // 抽屉内轮询达上限只是「前台不再盯」，任务仍在后端继续、由右上角「运行中的智能体」
+      // 常驻 Host 续查到终态。所以这里不能标 phase:'error'（会与后台最终 done 矛盾，Bugbot Medium），
+      // 只给一句中性提示，phase 维持非错误，卡片仍展示最近一次已知进度。
+      setMessages((prev) => prev.map((m) => m.id === messageId
+        ? { ...m, streaming: false, content: `${m.content}\n\n（前台已停止盯进度；任务仍在后台继续，可从右上角「运行中的智能体」查看最终结果）` }
+        : m));
+      setStreamingId(null);
+      sendLockRef.current = false;
+    }
+  }, [isShortVideoPollActive, onStoreChanged, storeId]);
+
+  useEffect(() => {
+    if (!isShortVideoMode) return;
+    if (sendLockRef.current) return;
+    const runId = loadActiveShortVideoRun(storeId);
+    if (!runId || restoredShortVideoRunRef.current === runId) return;
+    restoredShortVideoRunRef.current = runId;
+    const ownerKey = conversationKey;
+    const messageId = `short-video-run-${runId}`;
+    setMessages((prev) => {
+      if (sendLockRef.current) return prev;
+      if (prev.some((m) => m.id === messageId)) return prev;
+      return [
+        ...prev,
+        {
+          id: messageId,
+          role: 'assistant',
+          invoker: {
+            kind: 'toolbox',
+            label: SHORT_VIDEO_TOOLBOX_ITEM.name,
+            ref: SHORT_VIDEO_TOOLBOX_ITEM.id,
+            icon: SHORT_VIDEO_TOOLBOX_ITEM.icon,
+          },
+          content: `正在恢复短视频后台任务：${runId}`,
+          streaming: true,
+          phase: 'streaming',
+        },
+      ];
+    });
+    setStreamingId(messageId);
+    const pollToken = nextShortVideoPollToken();
+    void pollShortVideoRun(runId, messageId, ownerKey, pollToken);
+    return () => {
+      if (shortVideoPollTokenRef.current === pollToken) shortVideoPollTokenRef.current += 1;
+    };
+  }, [conversationKey, isShortVideoMode, nextShortVideoPollToken, pollShortVideoRun, storeId]);
+
+  const runShortVideoTool = useCallback(async (userText: string) => {
+    if (sendLockRef.current) return;
+    const url = extractUrl(userText);
+    if (!url) {
+      toast.warning('没有识别到短视频链接', '请粘贴抖音、TikTok、快手或 B 站等短视频链接');
+      return;
+    }
+    sendLockRef.current = true;
+    const pollToken = nextShortVideoPollToken();
+    setError(null);
+
+    const userMsgId = 'u-' + Date.now();
+    const asstMsgId = 'a-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    const invoker: ChatMessage['invoker'] = {
+      kind: 'toolbox',
+      label: SHORT_VIDEO_TOOLBOX_ITEM.name,
+      ref: SHORT_VIDEO_TOOLBOX_ITEM.id,
+      icon: SHORT_VIDEO_TOOLBOX_ITEM.icon,
+    };
+    setMessages([
+      { id: userMsgId, role: 'user', content: userText.trim(), invoker },
+      {
+        id: asstMsgId,
+        role: 'assistant',
+        content: '正在解析短视频链接，并把原始视频保存到知识库。文字只会从视频真实转写生成，文案和时间线需要后续再加工。',
+        streaming: true,
+        phase: 'streaming',
+        invoker,
+      },
+    ]);
+    setStreamingId(asstMsgId);
+    setInput('');
+    scrollToBottom();
+
+    const ownerKey = conversationKey;
+    try {
+      const res = await createShortVideoMaterialRun({ videoUrl: url, storeId });
+      if (entryIdRef.current !== ownerKey) return;
+      if (!res.success || !res.data) {
+        const message = res.error?.message || '短视频解析失败';
+        setError(message);
+        setMessages((prev) => prev.map((m) => m.id === asstMsgId
+          ? { ...m, streaming: false, phase: 'error', content: `（解析失败：${message}）` }
+          : m));
+        return;
+      }
+      const result = res.data;
+      saveActiveShortVideoRun(storeId, result.run.id);
+      // 立刻登记到 store：否则首次 poll GET 完成前关掉抽屉会丢失"运行中"入口、Host 也不轮询（Bugbot Medium）
+      syncShortVideoRunToStore(result.run, storeId);
+      restoredShortVideoRunRef.current = result.run.id;
+      setMessages((prev) => prev.map((m) => m.id === asstMsgId
+        ? {
+            ...m,
+            streaming: true,
+            phase: 'streaming',
+            content: formatShortVideoProgress(result.run),
+          }
+        : m));
+      toast.success('短视频后台任务已创建', '可以刷新页面，进度会从服务端恢复');
+      await pollShortVideoRun(result.run.id, asstMsgId, ownerKey, pollToken);
+    } catch (e) {
+      if (entryIdRef.current !== ownerKey) return;
+      const message = e instanceof Error ? e.message : '网络异常';
+      setError(message);
+      setMessages((prev) => prev.map((m) => m.id === asstMsgId
+        ? { ...m, streaming: false, phase: 'error', content: `（解析失败：${message}）` }
+        : m));
+    } finally {
+      if (entryIdRef.current === ownerKey) {
+        setStreamingId(null);
+        sendLockRef.current = false;
+      }
+    }
+  }, [conversationKey, nextShortVideoPollToken, pollShortVideoRun, scrollToBottom, storeId]);
 
   const handleSendInput = useCallback(() => {
     if (!input.trim()) return;
     if (!active) {
       toast.warning('请先选择智能体', '点上方选择器挑一个');
       setPickerOpen(true);
+      return;
+    }
+    if (active.kind === 'shortVideoTool') {
+      void runShortVideoTool(input);
       return;
     }
     const isLiteraryToolbox =
@@ -820,7 +1337,7 @@ export function ReprocessChatDrawer({
         : { kind: 'kbAgent', label: active.agent.label, ref: active.agent.key };
     setLiteraryImageMode(false);
     void sendMessage(input, invoker, active);
-  }, [input, active, loadingDoc, docLoadError, entryTitle, docContent, sendMessage]);
+  }, [input, active, loadingDoc, docLoadError, entryTitle, docContent, sendMessage, runShortVideoTool]);
 
   // 开启全新对话：清空当前对话 + 清掉本文档的持久化（保留已选智能体，方便直接再问）
   const handleNewConversation = useCallback(() => {
@@ -838,15 +1355,25 @@ export function ReprocessChatDrawer({
     setPendingVisualUrl(null);
     setPendingApply(null);
     setStreamModel(null);
-    try { sessionStorage.removeItem(`${CHAT_HISTORY_STORAGE_KEY}:${entryId}`); } catch { /* 配额/隐私模式忽略 */ }
-    void clearReprocessConversation(entryId);  // 同步清后端，否则重开又把旧对话拉回来
+    try { sessionStorage.removeItem(`${CHAT_HISTORY_STORAGE_KEY}:${conversationKey}`); } catch { /* 配额/隐私模式忽略 */ }
+    if (entryId && !isShortVideoMode) {
+      void clearReprocessConversation(entryId);  // 同步清后端，否则重开又把旧对话拉回来
+    }
     requestAnimationFrame(() => inputRef.current?.focus());
-  }, [abortCurrentStream, entryId]);
+  }, [abortCurrentStream, conversationKey, entryId, isShortVideoMode]);
 
   // 选中智能体 = 只把它设为"当前智能体"并聚焦输入框，绝不自动发送。
   // 历史 bug：选完立即用默认指令跑一轮，导致"我选了智能体还没说话就发出去了"。
   // 现在用户必须先输入指令（生成型则输入画面描述）再点发送/回车才触发。
   const pickToolbox = useCallback((item: ToolboxItem) => {
+    if (item.id === SHORT_VIDEO_TOOLBOX_ITEM.id) {
+      setActive({ kind: 'shortVideoTool' });
+      setLiteraryImageMode(false);
+      setPickerOpen(false);
+      setError(null);
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
     setActive({ kind: 'toolbox', item });
     setLiteraryImageMode(false);
     setPickerOpen(false);
@@ -906,6 +1433,10 @@ export function ReprocessChatDrawer({
   const performApply = useCallback(async (
     msgId: string, mode: 'replace' | 'append' | 'new', title?: string, parentId?: string,
   ): Promise<boolean> => {
+    if (!entryId) {
+      toast.warning('未选择文档', '请先打开一篇文档再写回');
+      return false;
+    }
     const msg = messages.find((m) => m.id === msgId);
     if (!msg || msg.role !== 'assistant' || !msg.content) return false;
     // 已写回的 message 拒绝重入（防止"已写回"按钮被重复点击造成 append 第二次或
@@ -1008,6 +1539,10 @@ export function ReprocessChatDrawer({
 
   // 视觉创作 mini 面板：把生成的配图写回文档（追加到文末）
   const insertVisualToDoc = useCallback(async (markdown: string) => {
+    if (!entryId) {
+      toast.warning('未选择文档', '请先打开一篇文档再插入配图');
+      return;
+    }
     const requestedEntryId = entryId;
     let res;
     try {
@@ -1053,6 +1588,10 @@ export function ReprocessChatDrawer({
   const handleApplyArtifact = useCallback(async (
     art: AgentArtifact, mode: 'replace' | 'append' | 'new',
   ) => {
+    if (!entryId) {
+      toast.warning('未选择文档', '请先打开一篇文档再写回图片');
+      return;
+    }
     if (!art.url) return;
     if (applyLockRef.current || applying) return;
     applyLockRef.current = true;
@@ -1098,6 +1637,14 @@ export function ReprocessChatDrawer({
     if (active.kind === 'toolbox') {
       return { icon: active.item.icon, name: active.item.name, kind: 'toolbox' as const, sub: active.item.description };
     }
+    if (active.kind === 'shortVideoTool') {
+      return {
+        icon: SHORT_VIDEO_TOOLBOX_ITEM.icon,
+        name: SHORT_VIDEO_TOOLBOX_ITEM.name,
+        kind: 'toolbox' as const,
+        sub: SHORT_VIDEO_TOOLBOX_ITEM.description,
+      };
+    }
     return { icon: undefined, name: active.agent.label, kind: 'kbAgent' as const, sub: active.agent.description };
   }, [active]);
 
@@ -1125,9 +1672,11 @@ export function ReprocessChatDrawer({
               <Wand2 size={16} />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-[13px] font-semibold text-token-primary">AI 文档对话</p>
+              <p className="truncate text-[13px] font-semibold text-token-primary">
+                {isShortVideoMode ? '知识库智能体' : 'AI 文档对话'}
+              </p>
               <p className="truncate text-[10px] text-token-muted mt-0.5">
-                {entryTitle}
+                {isShortVideoMode ? '粘贴短视频链接，默认保存素材到知识库' : entryTitle}
                 {docTruncated && (
                   <span className="ml-2 text-[9.5px]" style={{ color: 'rgba(251,191,36,0.95)' }}>
                     · 已截取前 4 万字喂给 AI
@@ -1161,7 +1710,7 @@ export function ReprocessChatDrawer({
           <button
             ref={pickerBtnRef}
             onClick={() => setPickerOpen((v) => !v)}
-            disabled={loadingAgents || !!docLoadError}
+            disabled={loadingAgents || (!!docLoadError && !isShortVideoMode)}
             className="w-full flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 transition-all disabled:opacity-60"
             style={{
               background: active
@@ -1256,7 +1805,8 @@ export function ReprocessChatDrawer({
                         title={item.name}
                         subtitle={item.description}
                         badge={item.type !== 'builtin' ? '我的工具' : undefined}
-                        active={active?.kind === 'toolbox' && active.item.id === item.id}
+                        active={(active?.kind === 'toolbox' && active.item.id === item.id)
+                          || (active?.kind === 'shortVideoTool' && item.id === SHORT_VIDEO_TOOLBOX_ITEM.id)}
                         disabled={isBusy}
                         onClick={() => pickToolbox(item)}
                       />
@@ -1417,6 +1967,7 @@ export function ReprocessChatDrawer({
               entryTitle={entryTitle}
               hasAgent={!!active}
               docLoadError={docLoadError}
+              mode={isShortVideoMode ? 'short-video' : 'document'}
             />
           ) : (
             messages.map((m) => (
@@ -1427,6 +1978,12 @@ export function ReprocessChatDrawer({
                 onApply={handleApply}
                 onApplyArtifact={handleApplyArtifact}
                 onOutbound={handleOutbound}
+                onQuickAction={(action) => onOpenEntry?.({
+                  id: action.entryId,
+                  title: action.title,
+                  initialInput: action.initialInput,
+                })}
+                allowApply={!!entryId && !isShortVideoMode}
               />
             ))
           )}
@@ -1448,7 +2005,7 @@ export function ReprocessChatDrawer({
         {!isImagePanelActive && (
         <div className="surface-panel-footer px-5 py-3 shrink-0 border-t border-token-subtle">
           {/* 引用文档指示：让用户在输入时明确"这次会带上哪篇文章" */}
-          {!docLoadError && !isImagePanelActive && (
+          {!docLoadError && !isImagePanelActive && !isShortVideoMode && (
             <div className="flex items-center gap-1.5 mb-2 text-[10px] text-token-muted">
               <FileText size={11} className="shrink-0" style={{ color: 'rgba(96,165,250,0.85)' }} />
               <span className="truncate">引用：《{entryTitle}》{docTruncated ? ' · 已截取前 4 万字' : ''}</span>
@@ -1487,17 +2044,25 @@ export function ReprocessChatDrawer({
                 }
               }}
               placeholder={
-                docLoadError
+                isShortVideoMode
+                  ? '粘贴抖音、TikTok、快手或 B 站短视频链接'
+                  : docLoadError
                   ? '文档未加载，无法对话'
                   : isBusy
                     ? (isGenerationActive ? '正在生成…' : 'AI 正在回复，请稍候…')
                     : activeCapability
                       ? activeCapability.inputHint
                       : active
-                        ? `输入指令配合「${active.kind === 'toolbox' ? active.item.name : active.agent.label}」，Enter 发送`
+                        ? `输入指令配合「${
+                            active.kind === 'toolbox'
+                              ? active.item.name
+                              : active.kind === 'shortVideoTool'
+                                ? SHORT_VIDEO_TOOLBOX_ITEM.name
+                                : active.agent.label
+                          }」，Enter 发送`
                         : '先选个智能体，然后输入指令'
               }
-              disabled={isBusy || !!docLoadError}
+              disabled={isBusy || (!!docLoadError && !isShortVideoMode)}
               rows={2}
               className="prd-field flex-1 resize-none rounded-[10px] px-3 py-2 text-[12px] outline-none disabled:opacity-60"
             />
@@ -1505,19 +2070,23 @@ export function ReprocessChatDrawer({
               variant="primary"
               size="sm"
               className="!h-auto self-stretch px-4 shrink-0"
-              disabled={isBusy || !input.trim() || !!docLoadError}
+              disabled={isBusy || !input.trim() || (!!docLoadError && !isShortVideoMode)}
               onClick={handleSendInput}
             >
               {isBusy
                 ? <MapSpinner size={12} />
                 : isGenerationActive ? <ImagePlus size={12} /> : <Send size={12} />}
-              {activeCapability?.actionLabel ?? '发送'}
+              {isShortVideoMode ? '解析' : activeCapability?.actionLabel ?? '发送'}
             </Button>
           </div>
           <p className="mt-1.5 text-[10px] text-token-muted">
             {isBusy
-              ? (isGenerationActive ? '正在生成图片，请稍候…' : '正在调用智能体；文档已作为输入发送')
-              : isGenerationActive
+              ? (isShortVideoMode
+                  ? '正在调用服务器解析短视频，素材会以服务端结果为准'
+                  : isGenerationActive ? '正在生成图片，请稍候…' : '正在调用智能体；文档已作为输入发送')
+              : isShortVideoMode
+                ? '只粘贴链接时会默认解析并保存到知识库；完成后可继续选择文案、时间轴或视频转写加工'
+                : isGenerationActive
                 ? '视觉创作：输入画面描述生成图片，生成后可一键插入文档'
                 : active
                   ? '输入指令后回车 / 点按钮触发当前智能体（选中不会自动发送）'
@@ -1616,11 +2185,12 @@ function DropdownRow({
 }
 
 // ── 空状态（含加载分阶段反馈，满足 2 秒原则） ──
-function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError }: {
+function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError, mode }: {
   loadingDoc: boolean;
   entryTitle: string;
   hasAgent: boolean;
   docLoadError?: string | null;
+  mode?: 'document' | 'short-video';
 }) {
   if (loadingDoc) {
     return (
@@ -1662,6 +2232,26 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError }: {
       </div>
     );
   }
+  if (mode === 'short-video') {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-12">
+        <div className="surface-action-accent flex h-12 w-12 items-center justify-center rounded-[14px]">
+          <Video size={20} />
+        </div>
+        <div>
+          <p className="text-[13px] font-semibold text-token-primary mb-1">短视频解析</p>
+          <p className="text-[11px] text-token-muted max-w-[380px] leading-relaxed">
+            粘贴短视频链接后会先保存原始视频到当前知识库，再从视频转写原始文字并返回继续加工入口。
+          </p>
+        </div>
+        <ul className="mt-1 text-[10px] text-token-muted max-w-[380px] leading-relaxed text-left mx-auto space-y-1" style={{ listStyle: 'none', paddingLeft: 0 }}>
+          <li>· 默认操作：视频先入库，文字必须来自视频转写</li>
+          <li>· 后续动作：打开视频、打开原始文字、转文案、补充润色、整理时间线</li>
+          <li>· 解析能力由服务端执行，前端只展示过程和结果入口</li>
+        </ul>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-12">
       <div className="surface-action-accent flex h-12 w-12 items-center justify-center rounded-[14px]">
@@ -1685,15 +2275,65 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError }: {
   );
 }
 
+// ── 短视频卡片块：粘贴链接后用仿真短视频卡片展示封面+视频，取代文字块 ──
+function ShortVideoCardBlock({ run, phase, content }: {
+  run: import('@/services').ShortVideoMaterialRun;
+  phase?: 'thinking' | 'streaming' | 'done' | 'error';
+  content?: string;
+}) {
+  const card = run.card;
+  const page = useMemo(() => (card ? shortVideoCardToPosterPage(card) : undefined), [card]);
+  if (!page) return null;
+  // 前端轮询超时/失败时 phase==='error'（run.status 可能仍是 running），此时必须显示错误，
+  // 不能因为有 stage 在 running 就还显示"忙碌中"的状态行（Bugbot Medium）。
+  const isError = phase === 'error';
+  const base = shortVideoCompactStatus(run);
+  const tone = isError ? 'error' : base.tone;
+  const text = isError ? (base.tone === 'error' ? base.text : '处理中断或超时') : base.text;
+  // 部分失败：视频已入库（run.status==='done'）但转写 stage 失败 → phase 不是 'error'，
+  // 仅靠上面那行 compact 状态看不出"为什么没有文字"。把转写失败原因显式补一行（Codex P2）。
+  const transcriptStage = (run.stages ?? []).find((s) => s.key === 'transcript');
+  const transcriptFailed = run.status === 'done' && transcriptStage?.status === 'failed';
+  const toneColor = tone === 'error'
+    ? 'rgba(248,113,113,0.95)'
+    : tone === 'done'
+      ? 'rgba(110,231,158,0.9)'
+      : 'rgba(96,165,250,0.9)';
+  return (
+    <div>
+      <div style={{ width: '100%', maxWidth: 300, aspectRatio: '9 / 16', margin: '0 auto' }}>
+        <PosterFeedCardView page={page} compactFooter />
+      </div>
+      <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px]" style={{ color: toneColor }}>
+        {tone === 'busy' && <MapSpinner size={9} />}
+        {text}
+      </div>
+      {/* 出错/超时时把详细文字（含失败原因、超时提示）显示出来，卡片不能把错误吞掉（Bugbot Medium） */}
+      {isError && content ? (
+        <div className="mt-1.5 text-[11px] text-token-muted whitespace-pre-wrap" style={{ opacity: 0.85 }}>
+          {content}
+        </div>
+      ) : transcriptFailed ? (
+        // 视频入库成功但转写失败：补一行说明，告诉用户"为什么没有文字、怎么补救"（Codex P2）。
+        <div className="mt-1.5 text-[11px] whitespace-pre-wrap" style={{ color: 'rgba(248,113,113,0.9)' }}>
+          视频转文字失败{transcriptStage?.message?.trim() ? `：${transcriptStage.message.trim()}` : ''}。视频已入库，可稍后单独重试转写。
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ── 消息气泡 ──
 function MessageBubble({
-  msg, applying, onApply, onApplyArtifact, onOutbound,
+  msg, applying, onApply, onApplyArtifact, onOutbound, onQuickAction, allowApply,
 }: {
   msg: ChatMessage;
   applying: string | null;
   onApply: (msgId: string, mode: 'replace' | 'append' | 'new') => void;
   onApplyArtifact: (art: AgentArtifact, mode: 'replace' | 'append' | 'new') => void;
   onOutbound: (actionKey: string, content: string) => void;
+  onQuickAction: (action: ChatQuickAction) => void;
+  allowApply: boolean;
 }) {
   // 流式耗时计时：让用户分清"正在生成"还是"卡死"（hook 必须在任何 return 之前）
   const [elapsed, setElapsed] = useState(0);
@@ -1730,7 +2370,7 @@ function MessageBubble({
   }
 
   // 不允许把失败占位字符串（"（调用失败：...）"）写回文档（Bugbot #1 七轮 High）
-  const canApply = !msg.streaming && !!msg.content && msg.phase !== 'error';
+  const canApply = allowApply && !msg.streaming && !!msg.content && msg.phase !== 'error';
   const busyMode = applying && applying.startsWith(`${msg.id}:`)
     ? applying.split(':')[1]
     : null;
@@ -1766,7 +2406,9 @@ function MessageBubble({
             </span>
           )}
         </div>
-        {msg.streaming && msg.content ? (
+        {msg.shortVideoRun?.card ? (
+          <ShortVideoCardBlock run={msg.shortVideoRun} phase={msg.phase} content={msg.content} />
+        ) : msg.streaming && msg.content ? (
           <StreamingText text={msg.content} streaming mode="blur" />
         ) : msg.content ? (
           <ChatMarkdown content={msg.content} />
@@ -1808,6 +2450,14 @@ function MessageBubble({
           </div>
         )}
 
+        {!msg.streaming && msg.phase !== 'error' && msg.quickActions && msg.quickActions.length > 0 && (
+          <QuickActionGroups
+            actions={msg.quickActions}
+            applying={applying}
+            onQuickAction={onQuickAction}
+          />
+        )}
+
         {canApply && (
           <div className="flex flex-wrap gap-1.5 mt-3 pt-2.5 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
             <ApplyBtn icon={<Replace size={10} />} label="替换原文"
@@ -1842,6 +2492,53 @@ function MessageBubble({
   );
 }
 
+function QuickActionGroups({
+  actions, applying, onQuickAction,
+}: {
+  actions: ChatQuickAction[];
+  applying: string | null;
+  onQuickAction: (action: ChatQuickAction) => void;
+}) {
+  const assetActions = actions.filter((a) => (a.group ?? 'assets') === 'assets');
+  const processingActions = actions.filter((a) => a.group === 'processing');
+  const renderGroup = (label: string, items: ChatQuickAction[]) => {
+    if (items.length === 0) return null;
+    return (
+      <div className="space-y-1.5">
+        <div className="text-[10px] font-semibold text-token-muted">{label}</div>
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((action) => (
+            <ApplyBtn
+              key={action.key}
+              icon={<QuickActionIcon action={action} />}
+              label={action.label}
+              title={action.description}
+              busy={false}
+              applied={false}
+              disabled={!!applying}
+              accent={!!action.initialInput}
+              onClick={() => onQuickAction(action)}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div className="mt-3 pt-2.5 border-t space-y-2.5" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+      {renderGroup('已入库产物', assetActions)}
+      {renderGroup('继续加工', processingActions)}
+    </div>
+  );
+}
+
+function QuickActionIcon({ action }: { action: ChatQuickAction }) {
+  if (action.icon === 'video') return <Video size={10} />;
+  if (action.icon === 'timeline') return <Layers size={10} />;
+  if (action.icon === 'agent') return <Sparkles size={10} />;
+  return <FileText size={10} />;
+}
+
 function ThinkingDots() {
   return (
     <span className="inline-flex items-center gap-0.5">
@@ -1867,10 +2564,11 @@ function ThinkingDots() {
 }
 
 function ApplyBtn({
-  icon, label, busy, applied, disabled, onClick, accent,
+  icon, label, title, busy, applied, disabled, onClick, accent,
 }: {
   icon: React.ReactNode;
   label: string;
+  title?: string;
   busy: boolean;
   applied: boolean;
   disabled: boolean;
@@ -1891,7 +2589,8 @@ function ApplyBtn({
     <button
       onClick={onClick}
       disabled={disabled || busy}
-      className="inline-flex items-center gap-1 rounded-[7px] px-2.5 py-1.5 text-[10px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      title={title ?? label}
+      className="inline-flex items-center gap-1 rounded-[7px] px-2.5 py-1.5 text-[10px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
       style={{ background: bg, color, border }}
     >
       {busy ? <RotateCw size={10} className="animate-spin" /> : icon}

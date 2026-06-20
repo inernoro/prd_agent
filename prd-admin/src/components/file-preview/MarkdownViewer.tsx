@@ -116,7 +116,7 @@ function preprocessWikilinks(body: string): string {
   // 用 #wikilink/ 前缀 hash 锚（sanitize 永远放行 # 协议），下方 a 组件 renderer
   // 优先匹配此前缀。曾尝试自定义 wikilink: 协议，被 rehypeSanitize 协议白名单剥掉
   // 失败（即使把 wikilink 写进 protocols.href 仍然不稳）。hash 锚最简单可靠。
-  return body.replace(/\[\[([^\[\]\|\n]+?)(?:\|([^\[\]\n]+?))?\]\]/g, (_, title: string, alias?: string) => {
+  return body.replace(/\[\[([^\][|\n]+?)(?:\|([^\]\n]+?))?\]\]/g, (_, title: string, alias?: string) => {
     const display = (alias ?? title).trim();
     const target = title.trim();
     if (!target) return '';

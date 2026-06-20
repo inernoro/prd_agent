@@ -2,9 +2,10 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { getRoleMeta } from '@/lib/roleConfig';
 import { getUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
-import { Check, ChevronDown, Search, Users, X } from 'lucide-react';
+import { Check, ChevronDown, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { itemComboboxInputClass } from './itemSearchCombobox';
 
 export interface UserMultiSearchSelectProps {
   /** 当前选中的 userId 列表 */
@@ -15,8 +16,10 @@ export interface UserMultiSearchSelectProps {
   users?: AdminUser[];
   /** 需要排除的 userId 列表（如已有成员） */
   excludeUserIds?: string[];
-  /** 占位文本 */
+  /** 未选中时的占位文本 */
   placeholder?: string;
+  /** 展开后搜索框占位文本 */
+  searchPlaceholder?: string;
   /** 尺寸：sm 适合过滤栏，md 适合表单 */
   uiSize?: 'sm' | 'md';
   className?: string;
@@ -26,15 +29,15 @@ export interface UserMultiSearchSelectProps {
 /**
  * 可搜索多选用户选择器
  *
- * 基于 UserSearchSelect 模式，支持多选 + 搜索 + 已选用户 chips 展示。
- * 使用 Portal 渲染下拉面板，避免父级 stacking context 导致 z-index 问题。
+ * 触发区单一输入框负责搜索；下拉仅展示候选列表，避免重复渲染输入框。
  */
 export function UserMultiSearchSelect({
   value,
   onChange,
   users: externalUsers,
   excludeUserIds,
-  placeholder = '搜索并选择用户...',
+  placeholder = '请选择用户（可选，支持多选）',
+  searchPlaceholder = '搜索姓名或账号',
   uiSize = 'md',
   className,
   style,
@@ -45,7 +48,7 @@ export function UserMultiSearchSelect({
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
   const [internalUsers, setInternalUsers] = useState<AdminUser[]>([]);
   const [fetched, setFetched] = useState(false);
@@ -70,7 +73,7 @@ export function UserMultiSearchSelect({
   }, [externalUsers, fetched, open]);
 
   const selectedUsers = useMemo(
-    () => value.map((id) => allUsers.find((u) => (u.userId) === id)).filter(Boolean) as AdminUser[],
+    () => value.map((id) => allUsers.find((u) => u.userId === id)).filter(Boolean) as AdminUser[],
     [value, allUsers],
   );
 
@@ -104,13 +107,22 @@ export function UserMultiSearchSelect({
     [value, onChange],
   );
 
+  const closePanel = useCallback(() => {
+    setOpen(false);
+    setFilter('');
+  }, []);
+
   const updatePos = useCallback(() => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
+    const margin = 8;
+    const desired = 320;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
     setPos({
       top: rect.bottom + 4,
-      left: rect.left,
+      left: Math.max(margin, Math.min(rect.left, window.innerWidth - Math.max(rect.width, 300) - margin)),
       width: Math.max(rect.width, 300),
+      maxHeight: Math.max(160, Math.min(desired, spaceBelow)),
     });
   }, []);
 
@@ -135,13 +147,12 @@ export function UserMultiSearchSelect({
         panelRef.current &&
         !panelRef.current.contains(target)
       ) {
-        setOpen(false);
-        setFilter('');
+        closePanel();
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
+  }, [open, closePanel]);
 
   useEffect(() => {
     if (open) {
@@ -151,6 +162,8 @@ export function UserMultiSearchSelect({
   }, [open]);
 
   const isCompact = uiSize === 'sm';
+  const triggerMinHeight = isCompact ? 'min-h-9' : 'min-h-10';
+  const inputPlaceholder = value.length > 0 ? searchPlaceholder : placeholder;
 
   const dropdownPanel =
     open &&
@@ -164,7 +177,7 @@ export function UserMultiSearchSelect({
           top: pos.top,
           left: pos.left,
           width: pos.width,
-          maxHeight: '320px',
+          maxHeight: pos.maxHeight,
           zIndex: 9999,
           background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
           border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
@@ -173,33 +186,7 @@ export function UserMultiSearchSelect({
           WebkitBackdropFilter: 'blur(40px) saturate(180%)',
         }}
       >
-        {/* Search input */}
-        <div className="px-3 pt-2.5 pb-2 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-          <div className="relative">
-            <Search
-              size={14}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'var(--text-muted)' }}
-            />
-            <input
-              ref={inputRef}
-              type="text"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="w-full h-[32px] rounded-[8px] pl-8 pr-3 text-[13px] outline-none"
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: 'var(--text-primary)',
-              }}
-              placeholder={placeholder}
-              autoFocus
-            />
-          </div>
-        </div>
-
-        {/* User list */}
-        <div className="overflow-auto flex-1 py-1">
+        <div className="overflow-auto flex-1 py-1" style={{ minHeight: 0 }}>
           {filtered.length === 0 ? (
             <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
               {q ? `未找到匹配「${filter}」的用户` : '暂无可用用户'}
@@ -223,7 +210,6 @@ export function UserMultiSearchSelect({
                   style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
                   onClick={() => toggleUser(uid)}
                 >
-                  {/* Checkbox */}
                   <div
                     className="w-4 h-4 rounded shrink-0 flex items-center justify-center transition-colors"
                     style={{
@@ -257,7 +243,6 @@ export function UserMultiSearchSelect({
           )}
         </div>
 
-        {/* Footer count */}
         <div
           className="px-3 py-1.5 text-[10px] shrink-0 flex items-center justify-between"
           style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}
@@ -271,55 +256,67 @@ export function UserMultiSearchSelect({
 
   return (
     <div className={`relative ${className ?? ''}`}>
-      {/* Trigger */}
       <div
         ref={triggerRef}
-        className={`flex items-center gap-2 min-h-[${isCompact ? '36px' : '40px'}] w-full ${isCompact ? 'rounded-[12px]' : 'rounded-[10px]'} px-3 py-1.5 cursor-pointer transition-all duration-200 text-[13px] flex-wrap`}
+        className={`flex items-center gap-2 w-full ${triggerMinHeight} ${isCompact ? 'rounded-[12px]' : 'rounded-[10px]'} px-2.5 py-1.5 text-[13px] flex-wrap`}
         style={{
           background: 'var(--bg-input)',
           border: open ? '1px solid var(--accent-gold)' : '1px solid rgba(255,255,255,0.12)',
           color: 'var(--text-primary)',
           ...style,
         }}
-        onClick={() => {
-          setOpen(!open);
-          if (!open) setFilter('');
-        }}
       >
-        <Users size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-        {selectedUsers.length > 0 ? (
-          <>
-            {selectedUsers.map((u) => (
-              <span
-                key={u.userId}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium"
-                style={{
-                  background: 'rgba(255,255,255,0.08)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'var(--text-primary)',
-                }}
-              >
-                {u.displayName}
-                <X
-                  size={10}
-                  className="cursor-pointer opacity-60 hover:opacity-100"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeUser(u.userId);
-                  }}
-                />
-              </span>
-            ))}
-          </>
-        ) : (
-          <span className="flex-1" style={{ color: 'var(--text-muted)' }}>
-            {placeholder}
+        <Search size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+        {selectedUsers.map((u) => (
+          <span
+            key={u.userId}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium"
+            style={{
+              background: 'rgba(255,255,255,0.08)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              color: 'var(--text-primary)',
+            }}
+          >
+            {u.displayName}
+            <X
+              size={10}
+              className="cursor-pointer opacity-60 hover:opacity-100"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                event.stopPropagation();
+                removeUser(u.userId);
+              }}
+            />
           </span>
-        )}
+        ))}
+        <input
+          ref={inputRef}
+          type="text"
+          value={filter}
+          onChange={(event) => {
+            setFilter(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          placeholder={inputPlaceholder}
+          className={`${itemComboboxInputClass} min-w-[8rem] flex-1`}
+          style={{ color: 'var(--text-primary)', boxShadow: 'none' }}
+        />
         <ChevronDown
           size={14}
-          className="shrink-0 transition-transform duration-150 ml-auto"
+          className="shrink-0 transition-transform duration-150 cursor-pointer"
           style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : undefined }}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (open) {
+              closePanel();
+              inputRef.current?.blur();
+            } else {
+              setOpen(true);
+              setFilter('');
+              inputRef.current?.focus();
+            }
+          }}
         />
       </div>
 

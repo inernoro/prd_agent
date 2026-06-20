@@ -437,10 +437,15 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={handleGenerate}
-                className="fea-btn fea-btn-primary w-full h-10 rounded-xl border text-sm inline-flex items-center justify-center gap-2"
+                className="fea-btn fea-btn-primary fea-liquid-cta w-full h-11 rounded-xl border text-sm inline-flex items-center justify-center gap-2"
               >
-                <Sparkles className="w-4 h-4" />
-                生成前端方案
+                <span className="fea-liquid-cta-orb fea-liquid-cta-orb-a" aria-hidden />
+                <span className="fea-liquid-cta-orb fea-liquid-cta-orb-b" aria-hidden />
+                <span className="fea-liquid-cta-glint" aria-hidden />
+                <span className="fea-liquid-cta-content">
+                  <Sparkles className="w-4 h-4" />
+                  <span>生成前端方案</span>
+                </span>
               </button>
             )}
           </div>

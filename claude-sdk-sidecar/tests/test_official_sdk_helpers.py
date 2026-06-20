@@ -325,3 +325,58 @@ class WorkspaceHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeTextStreamEvent:
+    """include_partial_messages=True 时 SDK 产出的 StreamEvent（token 级正文增量）"""
+    event = {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "<sec"}}
+
+
+class FakeThinkingStreamEvent:
+    event = {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "先规划页数"}}
+
+
+class FakeOtherStreamEvent:
+    event = {"type": "message_start"}
+
+
+class PartialStreamingTests(unittest.TestCase):
+    """守护 2026-06-10「结尾爆发」修复：token 级增量必须逐条产出，
+    完整消息里的 text/thinking 块在增量已流出后不得重发（正文双倍）。"""
+
+    def test_text_delta_stream_events_emit_incrementally_and_accumulate(self) -> None:
+        state = SdkEventAccumulator()
+        events = handle_sdk_message(FakeTextStreamEvent(), FakeResultMessage, state, cancelled=False)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].type, "text_delta")
+        self.assertEqual(events[0].text, "<sec")
+        self.assertEqual(state.final_text, "<sec")
+        self.assertTrue(state.partial_streaming)
+
+    def test_thinking_delta_stream_events_map_to_thinking(self) -> None:
+        state = SdkEventAccumulator()
+        events = handle_sdk_message(FakeThinkingStreamEvent(), FakeResultMessage, state, cancelled=False)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].type, "thinking")
+        self.assertEqual(events[0].text, "先规划页数")
+        self.assertEqual(state.final_text, "")
+
+    def test_non_delta_stream_events_are_silent(self) -> None:
+        state = SdkEventAccumulator()
+        self.assertEqual(handle_sdk_message(FakeOtherStreamEvent(), FakeResultMessage, state, cancelled=False), [])
+        self.assertFalse(state.partial_streaming)
+
+    def test_complete_message_blocks_skipped_after_partial_streaming(self) -> None:
+        state = SdkEventAccumulator()
+        handle_sdk_message(FakeTextStreamEvent(), FakeResultMessage, state, cancelled=False)
+        # 完整 assistant 消息随后到达：text 块不得重发、final_text 不得双倍
+        events = handle_sdk_message(FakeAssistantMessage(), FakeResultMessage, state, cancelled=False)
+        self.assertEqual([e.type for e in events if e.type == "text_delta"], [])
+        self.assertEqual(state.final_text, "<sec")
+        # 工具块不受影响
+        self.assertIn("tool_use", [e.type for e in events])
+
+    def test_without_partial_streaming_complete_blocks_still_emit(self) -> None:
+        state = SdkEventAccumulator()
+        events = handle_sdk_message(FakeAssistantMessage(), FakeResultMessage, state, cancelled=False)
+        self.assertIn("text_delta", [e.type for e in events])

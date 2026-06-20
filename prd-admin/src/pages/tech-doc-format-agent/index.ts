@@ -1,0 +1,1 @@
+export { TechDocFormatAgentPage } from './TechDocFormatAgentPage';

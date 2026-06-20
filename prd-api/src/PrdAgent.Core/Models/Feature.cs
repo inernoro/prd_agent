@@ -5,6 +5,9 @@ namespace PrdAgent.Core.Models;
 ///
 /// 功能本身是长期实体；它在每个产品版本里的形态用 FeatureVersion 表达（功能版本化）。
 /// 功能可实现一个或多个需求(RequirementIds)，可被缺陷追溯。
+///
+/// 编号：单张 Features 表存储全产品功能；每个正式版本（OfficialReleaseId）一份功能清单，
+/// FeatureNo 在该清单内纯数字递增。未绑定正式版本时，按产品草稿清单（同 ProductId、OfficialReleaseId 为空）递增。
 /// </summary>
 public class Feature
 {
@@ -14,7 +17,7 @@ public class Feature
     /// <summary>所属产品 ID</summary>
     public string ProductId { get; set; } = string.Empty;
 
-    /// <summary>功能编号（如 FEA-2026-0001，自动生成）</summary>
+    /// <summary>功能编号（正式版本清单内纯数字递增，如 1、2、3；见 OfficialReleaseId）</summary>
     public string FeatureNo { get; set; } = string.Empty;
 
     /// <summary>功能名称</summary>
@@ -52,6 +55,9 @@ public class Feature
 
     /// <summary>父功能 ID（功能模块分解层级，可空）</summary>
     public string? ParentId { get; set; }
+
+    /// <summary>挂载到的产品结构节点 ID（功能模块/能力骨架树，见 ProductStructureNode；空=未归类）</summary>
+    public string? StructureNodeId { get; set; }
 
     /// <summary>实现的需求 ID 列表（功能落需求，N:N）</summary>
     public List<string> RequirementIds { get; set; } = new();
@@ -132,8 +138,10 @@ public static class FeatureChangeType
     public const string Added = "added";
     public const string Modified = "modified";
     public const string Deprecated = "deprecated";
+    /// <summary>从上版正式版本继承且未改动</summary>
+    public const string Unchanged = "unchanged";
 
-    public static readonly string[] All = { Added, Modified, Deprecated };
+    public static readonly string[] All = { Added, Modified, Deprecated, Unchanged };
 }
 
 /// <summary>功能按业务价值分类</summary>

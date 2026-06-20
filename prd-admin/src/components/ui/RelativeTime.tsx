@@ -23,6 +23,10 @@ function formatAbsolute(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
+export function formatCompactAbsolute(d: Date): string {
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
@@ -71,6 +75,8 @@ interface RelativeTimeProps {
   title?: string;
   /** 渲染包裹标签，默认 span */
   as?: 'span' | 'time' | 'div';
+  /** 显示模式：默认相对时间；compact 用于列表中稳定排序扫读 */
+  mode?: 'relative' | 'compact' | 'absolute';
 }
 
 /**
@@ -85,6 +91,7 @@ export const RelativeTime = memo(function RelativeTime({
   refreshIntervalMs = 60_000,
   title,
   as = 'span',
+  mode = 'relative',
 }: RelativeTimeProps) {
   const date = toDate(value);
   const dateMs = date ? date.getTime() : 0;
@@ -97,7 +104,11 @@ export const RelativeTime = memo(function RelativeTime({
   }, [dateMs, refreshIntervalMs]);
 
   if (!date) return <>{fallback}</>;
-  const text = formatRelative(date);
+  const text = mode === 'absolute'
+    ? formatAbsolute(date)
+    : mode === 'compact'
+      ? formatCompactAbsolute(date)
+      : formatRelative(date);
   const tip = title ?? formatAbsolute(date);
   const Tag = as;
   return (

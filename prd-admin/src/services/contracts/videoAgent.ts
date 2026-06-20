@@ -145,6 +145,8 @@ export type CreateVideoGenRunContract = (input: {
   directResolution?: '480p' | '720p' | '1080p';
   /** 时长（秒） */
   directDuration?: number;
+  /** 图生视频首帧图 URL（公开 HTTPS）。设置后 direct 模式走 image-to-video（视觉分镜台「动起来」用） */
+  directFirstFrameUrl?: string;
 }) => Promise<ApiResponse<{ runId: string }>>;
 
 /** 更新分镜（storyboard 模式编辑） */

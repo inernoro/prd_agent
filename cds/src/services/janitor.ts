@@ -11,7 +11,8 @@ import type { StateService } from './state.js';
  *   2. Stale docker layers (unused images eat disk)
  *
  * The janitor runs a periodic sweep that:
- *   - Identifies branches with `lastAccessedAt > worktreeTTLDays ago`
+ *   - Identifies branches whose latest lifecycle timestamp is older than
+ *     `worktreeTTLDays`
  *   - Skips any branch that is pinned (pinnedByUser / defaultBranch / isColorMarked)
  *   - Returns a report for the caller to act on (list → stop → delete)
  *   - Checks disk usage and emits a warning when > `diskWarnPercent`
@@ -40,12 +41,21 @@ export interface JanitorSweepReport {
   removedBranches: string[];
   /** Branches that would have been removed but were pinned. */
   skippedPinned: string[];
+  /** Branches owned by remote executors. Coordinator cleanup must proxy these. */
+  skippedRemote: string[];
   /** Disk usage at sweep time. null = stat failed. */
   disk: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
   /** true when disk usage exceeded diskWarnPercent. */
   diskWarning: boolean;
   /** Any errors encountered (non-fatal). */
   errors: string[];
+}
+
+export interface JanitorSnapshot {
+  enabled: boolean;
+  config: JanitorConfig;
+  dryRun: { wouldRemove: string[]; wouldSkip: string[] };
+  disk: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
 }
 
 /** Callback: remove a branch's worktree + docker state. */
@@ -95,6 +105,23 @@ export function isBranchProtected(branch: BranchEntry, defaultBranchId: string |
   return false;
 }
 
+function branchExpiryAnchorMs(branch: BranchEntry): number {
+  const candidates = [
+    branch.lastAccessedAt,
+    branch.lastStoppedAt,
+    branch.lastReadyAt,
+    branch.lastDeployAt,
+    branch.createdAt,
+  ];
+  let latest = 0;
+  for (const value of candidates) {
+    if (!value) continue;
+    const ts = Date.parse(value);
+    if (Number.isFinite(ts) && ts > latest) latest = ts;
+  }
+  return latest;
+}
+
 export class JanitorService {
   private sweepHandle: NodeJS.Timeout | null = null;
   private removeFn: RemoveBranchFn | null = null;
@@ -113,6 +140,24 @@ export class JanitorService {
 
   isEnabled(): boolean {
     return this.config.enabled === true;
+  }
+
+  setEnabled(enabled: boolean): void {
+    if (this.config.enabled === enabled) return;
+    this.config.enabled = enabled;
+    if (enabled) {
+      this.start();
+      console.log('[janitor] enabled at runtime');
+    } else {
+      this.stop();
+      console.log('[janitor] disabled at runtime');
+    }
+  }
+
+  setWorktreeTTLDays(days: number): void {
+    if (this.config.worktreeTTLDays === days) return;
+    this.config.worktreeTTLDays = days;
+    console.log(`[janitor] worktreeTTLDays set to ${days} at runtime`);
   }
 
   /** Start periodic sweeps. Safe to call multiple times. No-op when disabled. */
@@ -147,6 +192,7 @@ export class JanitorService {
       timestamp: new Date(this.clock.now()).toISOString(),
       removedBranches: [],
       skippedPinned: [],
+      skippedRemote: [],
       disk: null,
       diskWarning: false,
       errors: [],
@@ -187,12 +233,15 @@ export class JanitorService {
         continue;
       }
 
-      // Never delete a branch we've never observed being accessed —
-      // it might be a newly created worktree.
-      if (!branch.lastAccessedAt) continue;
+      const anchorMs = branchExpiryAnchorMs(branch);
+      if (anchorMs <= 0) continue;
 
-      const idleMs = now - Date.parse(branch.lastAccessedAt);
+      const idleMs = now - anchorMs;
       if (idleMs <= ttlMs) continue;
+      if (branch.executorId) {
+        report.skippedRemote.push(branch.id);
+        continue;
+      }
 
       // Found a stale branch. Delegate removal to the caller.
       try {
@@ -220,12 +269,13 @@ export class JanitorService {
     const ttlMs = this.config.worktreeTTLDays * 24 * 60 * 60 * 1000;
 
     for (const branch of this.stateService.getAllBranches()) {
-      if (!branch.lastAccessedAt) continue;
-      const idleMs = now - Date.parse(branch.lastAccessedAt);
+      const anchorMs = branchExpiryAnchorMs(branch);
+      if (anchorMs <= 0) continue;
+      const idleMs = now - anchorMs;
       if (idleMs <= ttlMs) continue;
 
       const branchDefault = this.stateService.getDefaultBranchFor(branch.projectId);
-      if (isBranchProtected(branch, branchDefault, [])) {
+      if (branch.executorId || isBranchProtected(branch, branchDefault, [])) {
         wouldSkip.push(branch.id);
       } else {
         wouldRemove.push(branch.id);
@@ -235,5 +285,23 @@ export class JanitorService {
     // extensions (e.g. per-project worktree root globbing).
     void path;
     return { wouldRemove, wouldSkip };
+  }
+
+  getSnapshot(): JanitorSnapshot {
+    let disk: JanitorSnapshot['disk'] = null;
+    const usage = this.diskUsage(this.worktreeBase);
+    if (usage) {
+      const usedBytes = usage.totalBytes - usage.freeBytes;
+      disk = {
+        ...usage,
+        usedPercent: Math.round((usedBytes / usage.totalBytes) * 100),
+      };
+    }
+    return {
+      enabled: this.isEnabled(),
+      config: this.config,
+      dryRun: this.dryRun(),
+      disk,
+    };
   }
 }

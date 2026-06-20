@@ -27,6 +27,7 @@ import {
   AlertCircle,
   Search,
   ArrowUpDown,
+  ArrowLeftRight,
   Check,
   Tag,
   FolderSync,
@@ -47,6 +48,7 @@ import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
+import { StoreSizeBadge } from './StoreSizeBadge';
 import {
   listDocumentStoresWithPreview,
   createDocumentStore,
@@ -65,6 +67,9 @@ import {
   deleteDocumentEntry,
   moveDocumentEntry,
   updateDocumentContent,
+  listEntryVersions,
+  getEntryVersion,
+  restoreEntryVersion,
   setFolderPrimaryChild,
   rebuildContentIndex,
   addDocumentEntry,
@@ -101,7 +106,8 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
-import { ReprocessChatDrawer } from './ReprocessChatDrawer';
+import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
+import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
@@ -160,6 +166,62 @@ function FadeIn({ children }: { children: React.ReactNode }) {
     return () => cancelAnimationFrame(r);
   }, []);
   return <span style={{ opacity: shown ? 1 : 0, transition: 'opacity 0.45s ease' }}>{children}</span>;
+}
+
+function getPeerSyncLabel(store: Pick<DocumentStore, 'peerSyncStatus' | 'peerSyncDirection'>) {
+  if (store.peerSyncStatus === 'syncing') return '正在跨系统同步';
+  if (store.peerSyncStatus === 'error') return '跨系统同步异常';
+  switch (store.peerSyncDirection) {
+    case 'both': return '双向同步';
+    case 'push': return '已发送到对端';
+    case 'pull': return '已从对端拉取';
+    case 'received': return '已接收对端同步';
+    default: return '已跨系统同步';
+  }
+}
+
+function PeerSyncBadge({ store, compact = false }: { store: DocumentStore | DocumentStoreWithPreview; compact?: boolean }) {
+  if (!store.peerSyncStatus) return null;
+  const isError = store.peerSyncStatus === 'error';
+  const isSyncing = store.peerSyncStatus === 'syncing';
+  const Icon = isError ? AlertCircle : isSyncing ? FolderSync : store.peerSyncDirection === 'both' ? ArrowLeftRight : Send;
+  const label = getPeerSyncLabel(store);
+  const title = [
+    label,
+    store.peerSyncNodeName ? `对端：${store.peerSyncNodeName}` : '',
+    store.peerSyncLastResult || '',
+  ].filter(Boolean).join('\n');
+  const color = isError ? 'rgba(252,165,165,0.96)' : 'rgba(252,211,77,0.96)';
+  const background = isError ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.12)';
+  const borderColor = isError ? 'rgba(239,68,68,0.30)' : 'rgba(245,158,11,0.35)';
+  if (compact) {
+    return (
+      <span
+        className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+        style={{ background, borderColor, color }}
+        title={title}
+        aria-label={label}
+      >
+        <Icon size={11} />
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex max-w-[160px] items-center gap-1 overflow-hidden rounded-full border font-semibold whitespace-nowrap"
+      style={{
+        padding: '5px 9px',
+        fontSize: 11,
+        background,
+        borderColor,
+        color,
+      }}
+      title={title}
+    >
+      <Icon size={12} className="flex-shrink-0" />
+      <span className="truncate">{label}</span>
+    </span>
+  );
 }
 
 // ── 创建空间对话框 ──
@@ -667,8 +729,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
-  /** 当前打开的再加工 Drawer 目标 entry（null = 未打开） */
-  const [reprocessTarget, setReprocessTarget] = useState<{ id: string; title: string } | null>(null);
+  /** 当前打开的智能体抽屉目标：可绑定文档，也可作为知识库工具会话打开。 */
+  const [reprocessTarget, setReprocessTarget] = useState<{
+    id?: string;
+    title: string;
+    mode?: 'document' | 'short-video';
+    initialInput?: string;
+  } | null>(null);
   /** 当前打开的「单篇文档分享」目标（null = 未打开） */
   const [docShareTarget, setDocShareTarget] = useState<{ id: string; title: string } | null>(null);
   /** 新建后需要自动进入编辑态的文档 id（用一次即清） */
@@ -911,11 +978,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           updatedByName: res.data.updatedByName ?? e.updatedByName,
         } : e));
       toast.success('已保存');
+      // 返回服务端最新 updatedAt：DocBrowser 用它推进 loadedContentKey，短路掉保存后的内容重拉
+      return { updatedAt: res.data.updatedAt };
     } else {
       toast.error('保存失败', res.error?.message);
       throw new Error(res.error?.message ?? '保存失败');
     }
   }, []);
+
+  // 版本控制接口：透传给 DocBrowser → VersionHistoryModal
+  const versionApi = useMemo(() => ({
+    list: (entryId: string, page: number, pageSize: number) => listEntryVersions(entryId, page, pageSize),
+    get: (entryId: string, versionId: string) => getEntryVersion(entryId, versionId),
+    restore: (entryId: string, versionId: string) => restoreEntryVersion(entryId, versionId),
+  }), []);
 
   const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     const res = await getDocumentContent(entryId);
@@ -955,6 +1031,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
       toast.error('创建失败', res.error?.message);
     }
   }, [storeId]);
+
+  const handleOpenVideoParser = useCallback(() => {
+    setReprocessTarget({
+      title: '短视频解析',
+      mode: 'short-video',
+    });
+  }, []);
 
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
     // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
@@ -1013,11 +1096,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
             <span className="text-[11px] text-token-muted tabular-nums">
               <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
             </span>
+            {/* refreshKey 含各 entry 的 updatedAt：编辑/恢复/替换会 bump updatedAt 但条目数不变，
+                只用 length 会让大小数字停留在旧值；带上 updatedAt 串内容变化即刷新（Codex P2）。 */}
+            <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />
           </div>
         }
         actions={
           <div className="flex items-center gap-2">
-            {/* 同步状态徽章：仅当本库已加入同步配对时显示（右上角） */}
+            <PeerSyncBadge store={store} />
+            {/* 旧版同步链接徽章：仅当本库已加入同步配对时显示（右上角） */}
             <StoreSyncBadge storeId={store.id} onManage={onManageSync} />
             {/* 发布到智识殿堂开关 */}
             {store.isPublic ? (
@@ -1140,10 +1227,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           onRenameEntry={handleRenameEntry}
           onMoveEntry={handleMoveEntry}
           onSaveContent={handleSaveContent}
+          versionApi={versionApi}
+          onEntryContentRestored={(entryId, updatedAt) => {
+            setEntries(prev => prev.map(e => e.id === entryId ? { ...e, updatedAt } : e));
+          }}
+          enableSelectionAi
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
           onCreateDocument={handleCreateDocument}
           onUploadFile={() => fileInputRef.current?.click()}
+          onOpenVideoParser={handleOpenVideoParser}
           onSearch={handleSearch}
           onOpenSubscription={(id) => setSubscriptionDetailId(id)}
           onGenerateSubtitle={(id) => {
@@ -1292,15 +1385,48 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         </div>
       )}
 
+      {/* 右上角「运行中的智能体」入口：关掉抽屉/刷新后仍可见，点击重开抽屉恢复短视频任务进度。
+          始终挂载（Host 轮询不能因开抽屉而停），仅在抽屉打开时隐藏浮层避免遮挡。 */}
+      <ShortVideoRunIndicator
+        storeId={storeId}
+        hidden={!!reprocessTarget}
+        onOpenRun={(r) => {
+          // 把被点击的 run 设为当前活跃 run，抽屉以 short-video 模式打开后会据此恢复轮询
+          saveActiveShortVideoRun(r.storeId, r.runId);
+          setReprocessTarget({ mode: 'short-video', title: '短视频解析' });
+        }}
+        onRunCompleted={() => {
+          // 后台 run 跑完（抽屉关着/刷新后）→ 刷新知识库列表，让新入库的视频/文字条目出现
+          void loadEntries();
+          setTimeout(() => { void loadEntries(); }, 1500);
+        }}
+      />
+
       {/* 文档再加工对话抽屉 */}
       <AnimatePresence>
         {reprocessTarget && (
           <ReprocessChatDrawer
+            key={`${reprocessTarget.mode ?? 'document'}:${reprocessTarget.id ?? 'tool'}:${reprocessTarget.initialInput ?? ''}`}
             entryId={reprocessTarget.id}
             entryTitle={reprocessTarget.title}
             storeId={storeId}
+            initialMode={reprocessTarget.mode ?? 'document'}
+            initialInput={reprocessTarget.initialInput}
             onClose={() => setReprocessTarget(null)}
             onApplied={handleReprocessApplied}
+            onStoreChanged={() => {
+              void loadEntries();
+              setTimeout(() => { void loadEntries(); }, 1500);
+            }}
+            onOpenEntry={(target) => {
+              setSelectedEntryId(target.id);
+              setReprocessTarget({
+                id: target.id,
+                title: target.title,
+                mode: 'document',
+                initialInput: target.initialInput,
+              });
+            }}
           />
         )}
       </AnimatePresence>
@@ -1315,6 +1441,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           onOpenDocument={(_sid, entryId) => { setShowViewers(false); setSelectedEntryId(entryId); }}
         />
       )}
+
     </div>
   );
 }
@@ -1538,8 +1665,14 @@ export function DocumentStorePage() {
       setSelectedStoreId(null);
       setTab(t as StoreTab);
       navigate(location.pathname, { replace: true });
+      return;
     }
-  }, [location.search, location.pathname, navigate]);
+    if (location.hash === '#guide-list') {
+      setSelectedStoreId(null);
+      setTab('mine');
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.search, location.hash, location.pathname, navigate]);
 
   // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
   const [search, setSearch] = useState<string>(() => sessionStorage.getItem('doc-store-search') ?? '');
@@ -2205,22 +2338,28 @@ export function DocumentStorePage() {
                           <Library size={18} style={{ color: '#fff' }} />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
+                            <h3 className="min-w-0 truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                               {s.name}
                             </h3>
-                            {s.hasActiveShare && (
-                              <span
-                                className="inline-flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
-                                style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.32)' }}
-                                title="该知识库已对外分享">
-                                <Share2 size={9} /> 已分享
-                              </span>
-                            )}
+                            <div className="flex min-w-0 flex-shrink-0 items-center gap-1">
+                              {s.hasActiveShare && (
+                                <span
+                                  className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded-full border"
+                                  style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', borderColor: 'rgba(234,179,8,0.32)' }}
+                                  title="该知识库已对外分享"
+                                  aria-label="已分享">
+                                  <Share2 size={11} />
+                                </span>
+                              )}
+                              <PeerSyncBadge store={s as DocumentStoreWithPreview} compact />
+                            </div>
                           </div>
-                          {/* 副标题行：分类(首个标签) · N 篇文章 —— 复刻设计稿图1 */}
-                          <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                            {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
+                          {/* 副标题行：分类(首个标签) · N 篇文章 · 体量 —— 列表外层即可看到每个库多大 */}
+                          <p className="text-[11px] truncate mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                            <span className="truncate">{category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章</span>
+                            <span aria-hidden>·</span>
+                            <StoreSizeBadge storeId={s.id} variant="compact" />
                           </p>
                         </div>
                       </div>

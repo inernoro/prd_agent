@@ -17,6 +17,7 @@ import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 
 // ── 页面组件（lazy 加载） ─────────────────────────────────
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
+const VisualStoryboardPage = lazy(() => import('@/pages/visual-storyboard/VisualStoryboardPage'));
 const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
 const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
@@ -33,6 +34,7 @@ const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => (
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
 const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.TaskDetailPage })));
+const PmMilestoneDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.MilestoneDetailPage })));
 const PmProjectDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.ProjectDetailPage })));
 const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
 const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
@@ -48,6 +50,8 @@ const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
 const FrontEndAgentPage = lazy(() => import('@/pages/front-end-agent').then(m => ({ default: m.FrontEndAgentPage })));
 const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
+const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
+const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
@@ -60,6 +64,7 @@ const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 const MdToPptAgentPage = lazy(() => import('@/pages/md-to-ppt-agent/MdToPptAgentPage').then(m => ({ default: m.MdToPptAgentPage })));
+const TechDocFormatAgentPage = lazy(() => import('@/pages/tech-doc-format-agent').then(m => ({ default: m.TechDocFormatAgentPage })));
 const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
 const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
@@ -300,6 +305,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/visual-storyboard',
+    permission: 'visual-agent.use',
+    element: shellGuarded('visual-agent.use', <VisualStoryboardPage />),
+    nav: {
+      label: '视觉分镜台',
+      shortLabel: '分镜',
+      description: '想法/文章拆成电影分镜，关键帧实时生长、逐镜精修，预留 image-to-video',
+      icon: 'Clapperboard',
+      section: 'toolbox',
+      appKey: 'visual-storyboard',
+      tags: ['视频', '分镜', '关键帧', '故事板', 'storyboard'],
+      wip: true,
+    },
+  },
+  {
     path: '/arena',
     permission: 'arena-agent.use',
     element: shellGuarded('arena-agent.use', <ArenaPage />),
@@ -408,11 +428,26 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       label: '前端搭档智能体',
       shortLabel: '前端',
       description: '给后端同事用的前端交付助手：接 API、写组件、修报错、看截图现象',
-      icon: 'Code2',
+      icon: 'FolderKanban',
       section: 'toolbox',
       appKey: 'front-end-agent',
       wip: true,
       tags: ['前端', 'API', '组件', '报错', 'CSS', '智能体'],
+    },
+  },
+  {
+    path: '/tapd-bug-agent',
+    permission: 'tapd-bug-agent.use',
+    element: shellGuarded('tapd-bug-agent.use', <TapdBugReportPage />),
+    nav: {
+      label: 'TAPD 缺陷自动提报',
+      shortLabel: '提缺陷',
+      description: '口语描述转标准四要素，确认后自动创建 TAPD 缺陷',
+      icon: 'Bug',
+      section: 'toolbox',
+      appKey: 'tapd-bug-agent',
+      wip: true,
+      tags: ['TAPD', '缺陷', '提单', '测试', '智能体'],
     },
   },
   {
@@ -421,6 +456,13 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     placement: 'fullscreen',
     permission: 'pm-agent.use',
     element: fullscreenGuarded('pm-agent.use', <PmTaskDetailPage />),
+  },
+  {
+    // 里程碑独立详情页（OKR + DoD + 任务 + 交付物管理；参数化子路由，不进导航）
+    path: '/pm-agent/p/:projectId/milestone/:milestoneId',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmMilestoneDetailPage />),
   },
   {
     // 项目层视图（进入某个具体项目：目标/里程碑/任务等 9 大模块），参数化子路由，全屏，不进导航
@@ -435,7 +477,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     permission: 'pm-agent.use',
     element: fullscreenGuarded('pm-agent.use', <PmAgentPage />),
     nav: {
-      label: '项目管理智能体',
+      label: '项目管理',
       shortLabel: '项目',
       description: '项目立项、任务看板、甘特图，AI 自动拆解需求为任务（对齐 PMO 方法论）',
       icon: 'FolderKanban',
@@ -446,6 +488,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    // 知识详情页（静态段 knowledge 优先于 :kind 通配），全屏，不进导航
+    path: '/product-agent/p/:productId/knowledge/:entryId',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
+  },
+  {
+    // 对象独立详情/新建页（需求/功能/缺陷/版本/立项/release，:id 为 new 时是新建），必须排在单产品路由之前
+    path: '/product-agent/p/:productId/:kind/:id',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
+  },
+  {
     // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
     path: '/product-agent/p/:productId',
     placement: 'fullscreen',
@@ -453,29 +509,15 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     element: fullscreenGuarded('product-agent.use', <SingleProductView />),
   },
   {
-    // 知识详情页（独立路由，静态段 knowledge 优先于下方 :kind 通配），全屏，不进导航
-    path: '/product-agent/p/:productId/knowledge/:entryId',
-    placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
-  },
-  {
-    // 对象独立详情/新建页（需求/功能/缺陷，:id 为 new 时是新建），参数化子路由，全屏，不进导航
-    path: '/product-agent/p/:productId/:kind/:id',
-    placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
-  },
-  {
     path: '/product-agent',
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <OverviewShell />),
     nav: {
-      label: '产品管理智能体',
+      label: '产品管理',
       shortLabel: '产品',
       description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱',
-      icon: 'Boxes',
+      icon: 'Blocks',
       section: 'toolbox',
       appKey: 'product-agent',
       wip: true,
@@ -495,6 +537,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'project-route-agent',
       wip: true,
       tags: ['路由', 'routemap', '项目定位', '仓库', '方案'],
+    },
+  },
+  {
+    path: '/channel-trace-agent',
+    permission: 'channel-trace-agent.use',
+    element: shellGuarded('channel-trace-agent.use', <ChannelTraceAgentPage />),
+    nav: {
+      label: '商品溯源智能体',
+      shortLabel: '溯源',
+      description: '防窜物流业务知识问答、线上问题案例排查、业务规则与代码实现差异对比',
+      icon: 'PackageSearch',
+      section: 'toolbox',
+      appKey: 'channel-trace-agent',
+      wip: true,
+      tags: ['防窜', '物流', '溯源', '商品', '知识库', '排查', '代码对比'],
     },
   },
   {
@@ -523,6 +580,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'md-to-ppt-agent',
       tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
+      wip: true,
+    },
+  },
+  {
+    path: '/tech-doc-format-agent',
+    permission: 'access',
+    element: shellGuarded('access', <TechDocFormatAgentPage />),
+    nav: {
+      label: '技术分析文档格式校验 Agent',
+      shortLabel: '技分',
+      description: '按 PM2502 模板生成技术分析文档，并检查上传文档的标题、表格和微格式',
+      icon: 'FileText',
+      section: 'toolbox',
+      appKey: 'tech-doc-format-agent',
+      tags: ['技术分析', '文档格式', 'PM2502', '模板校验'],
       wip: true,
     },
   },

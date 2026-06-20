@@ -35,7 +35,7 @@
   - `(platformId, modelId)` 作为业务唯一标识
 
 - **应用身份隔离** ✅ 新增：
-  - 每个应用通过 `appKey` 标识。当前 8 个 appKey：`prd-agent`、`visual-agent`、`literary-agent`、`defect-agent`、`video-agent`、`report-agent`、`review-agent`、`pr-review`
+  - 每个应用通过 `appKey` 标识。当前 appKey 清单维护在 `.claude/rules/app-identity.md`
   - Controller 层硬编码 appKey，不由前端传递
   - 权威清单维护在 `.claude/rules/app-identity.md`，新增 Agent 时须同步更新
 
@@ -1948,6 +1948,7 @@ sequenceDiagram
 | `visual-agent` | 视觉创作 Agent | 高级视觉创作工作区 |
 | `literary-agent` | 文学创作 Agent | 文章配图、文学创作场景 |
 | `defect-agent` | 缺陷管理 Agent | 缺陷提交与跟踪 |
+| `tapd-bug-agent` | TAPD 缺陷自动提报 Agent | 口语缺陷描述整理为标准四要素，确认后创建 TAPD 缺陷 |
 | `report-agent` | 周报管理 Agent | 周报创建、提交、审阅管理 |
 | `front-end-agent` | 前端搭档智能体 | API 接入、组件生成、前端报错诊断和视觉样式建议 |
 
@@ -2253,6 +2254,78 @@ sequenceDiagram
 **应用标识**：`front-end-agent`
 
 **设计文档**：`doc/spec.front-end-agent.md`
+
+### 4.26 TAPD 缺陷自动提报智能体（TAPD Bug Agent）
+
+#### 4.26.1 TAPD-BUG-001 缺陷草稿整理与确认提交
+
+| 属性 | 描述 |
+|------|------|
+| 需求编号 | TAPD-BUG-001 |
+| 需求名称 | TAPD 缺陷自动提报 |
+| 优先级 | **[应该]** |
+| 实现层 | Web 管理后台 + 后端 LLM Gateway + 页面直填 TAPD Cookie |
+
+**功能详述**：
+1. 用户从百宝箱进入 `/tapd-bug-agent` 页面。
+2. 用户在页面直接粘贴 TAPD 请求 Cookie，并填写工作空间 ID，无需先创建外部授权，也无需手动填写 TAPD 表单令牌。
+3. 用户输入口语化缺陷现象，后端通过 `ILlmGateway` 流式整理为 TAPD 标准草稿：标题、前置条件、复现步骤、实际结果、预期结果、严重程度、优先级、缺陷类型、处理人、所属版本。
+4. 后端通过 SSE 推送阶段、模型、思考过程、原始输出和最终草稿；前端展示缺失项，四要素不完整时禁止提交。
+5. 用户确认后调用 `POST /api/tapd-bug-agent/submit`，请求必须包含 `confirmed: true`。后端只创建 TAPD 缺陷，不提供修改或删除 TAPD 缺陷的接口。
+6. 提交成功后展示 TAPD 返回的缺陷 ID 与详情链接。
+
+**API 端点**：
+- `POST /api/tapd-bug-agent/preview/stream` — TAPD 缺陷草稿流式整理，SSE 事件包括 `stage` / `model` / `thinking` / `typing` / `draft` / `done` / `error`。
+- `POST /api/tapd-bug-agent/submit` — 用户确认后的 TAPD 创建缺陷接口，必须包含 `confirmed: true`。
+
+**权限定义**：`tapd-bug-agent.use`
+
+**应用标识**：`tapd-bug-agent`
+
+### 4.27 技术分析文档格式校验 Agent
+
+> 2026-06-09 新增，作为百宝箱工具入口发布，首期状态为 `wip: true`。
+
+#### 4.27.1 TECHDOC-001 PM2502 技术分析文档生成与校验
+
+| 属性 | 描述 |
+|------|------|
+| 需求编号 | TECHDOC-001 |
+| 需求名称 | 技术分析文档格式校验 Agent |
+| 优先级 | **[必须]** |
+| 实现层 | Web 管理后台 |
+
+**功能详述**：
+1. 用户可输入功能说明、项目链接、UI 设计图、showdoc 地址和测试用例信息，系统按 PM2502 模板生成技术分析文档底稿。
+2. 用户可上传需求文件（Markdown / 文本），文件内容作为生成上下文参与 PM2502 技术分析文档生成。
+3. 用户可通过 GitHub Device Flow 绑定自己的 GitHub 账号，选择有权访问的仓库和项目路径，生成时带入仓库名、默认分支、路径、目录摘要和关键项目文件内容。
+4. 用户可调用现有百宝箱 `direct-chat` SSE 生成完整技术分析文档，页面必须显示流式进度和模型信息，生成完成后自动执行 PM2502 格式校验。
+5. 生成完成后除格式校验外，还需执行内容质量校验：当输出大量“暂无/待定/xxx”、残留 PM2502 示例内容、未引用需求关键词或未体现所选仓库时，必须判定为待修复。
+6. 用户上传或粘贴已有技术分析文档时，系统按 PM2502 模板检查固定标题、章节顺序、表格表头、引用块、红字 HTML、代码围栏、补丁痕迹和微格式。
+7. 校验结果需区分“必须修复”和“建议修复”，并给出可执行修复建议。
+8. 校验模板默认且唯一来源为 PM2502；用户未显式指定其他模板时，不允许引入模板外顶层章节或第二套正文。
+
+**入口位置**：百宝箱 `/tech-doc-format-agent`
+
+**API 端点**：
+- `GET /api/tech-doc-format-agent/github/auth/status` — GitHub 连接状态
+- `POST /api/tech-doc-format-agent/github/auth/device/start` — 发起 Device Flow
+- `POST /api/tech-doc-format-agent/github/auth/device/poll` — 轮询 Device Flow
+- `GET /api/tech-doc-format-agent/github/repositories` — 当前用户可访问仓库列表
+- `GET /api/tech-doc-format-agent/github/tree` — 指定仓库路径目录浏览
+- `GET /api/tech-doc-format-agent/github/context` — 指定仓库路径关键项目文件读取
+
+**权限定义**：`access`
+
+**验收标准**：
+- [ ] 百宝箱卡片可进入技术分析文档格式校验 Agent 页面
+- [ ] PM2502 模板真源可查看、复制、下载
+- [ ] 可上传需求文件，并把文件内容带入生成提示词
+- [ ] 可连接 GitHub 账号，选择仓库和项目路径，并读取关键项目文件内容
+- [ ] 本地底稿生成后可通过 PM2502 校验
+- [ ] 对只输出模板占位的生成结果必须判定为待修复
+- [ ] 上传错误格式文档时能报告具体缺失标题、错误顺序或表格问题
+- [ ] AI 流式生成过程中持续显示阶段提示，完成后自动执行格式校验
 
 ---
 

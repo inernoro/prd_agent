@@ -10,6 +10,7 @@ using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -37,6 +38,7 @@ public class PlatformsController : ControllerBase
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly ILlmRequestLogWriter _logWriter;
     private readonly IIdGenerator _idGenerator;
+    private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
 
     // v2：不再返回预设(demo)模型列表；同时通过升级 key 前缀避免旧缓存继续生效
     private const string ModelsCacheKeyPrefix = "platform:models:v2:";
@@ -55,7 +57,8 @@ public class PlatformsController : ControllerBase
         ILlmGateway gateway,
         ILLMRequestContextAccessor ctxAccessor,
         ILlmRequestLogWriter logWriter,
-        IIdGenerator idGenerator)
+        IIdGenerator idGenerator,
+        IInfraAgentRuntimeProfileService runtimeProfiles)
     {
         _db = db;
         _logger = logger;
@@ -67,6 +70,7 @@ public class PlatformsController : ControllerBase
         _ctxAccessor = ctxAccessor;
         _logWriter = logWriter;
         _idGenerator = idGenerator;
+        _runtimeProfiles = runtimeProfiles;
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
@@ -87,11 +91,9 @@ public class PlatformsController : ControllerBase
             .SortByDescending(e => e.CreatedAt)
             .ToListAsync();
 
-        var jwtSecret = GetJwtSecret();
-
         var realItems = platforms.Select(p =>
         {
-            var keyState = ResolveApiKeyState(p.ApiKeyEncrypted, jwtSecret);
+            var keyState = ResolveApiKeyState(p.ApiKeyEncrypted);
             return new PlatformListItem
             {
                 Id = p.Id,
@@ -116,7 +118,7 @@ public class PlatformsController : ControllerBase
         // 其 Id 直接作为 PlatformId（新模型池写入会用此 Id，而不是 "__exchange__"）
         var exchangeItems = exchanges.Select(e =>
         {
-            var keyState = ResolveApiKeyState(e.TargetApiKeyEncrypted, jwtSecret);
+            var keyState = ResolveApiKeyState(e.TargetApiKeyEncrypted);
             return new PlatformListItem
             {
                 Id = e.Id,
@@ -171,16 +173,16 @@ public class PlatformsController : ControllerBase
 
     private sealed record ApiKeyState(bool HasApiKey, string Status, string? Masked);
 
-    private static ApiKeyState ResolveApiKeyState(string? encryptedKey, string jwtSecret)
+    private ApiKeyState ResolveApiKeyState(string? encryptedKey)
     {
         if (string.IsNullOrWhiteSpace(encryptedKey))
             return new ApiKeyState(false, "missing", null);
 
-        var plain = ApiKeyCrypto.Decrypt(encryptedKey, jwtSecret);
-        if (string.IsNullOrWhiteSpace(plain))
+        var result = ApiKeyCryptoKeyRing.Decrypt(encryptedKey, _config);
+        if (!result.Success)
             return new ApiKeyState(false, "unreadable", null);
 
-        return new ApiKeyState(true, "configured", ApiKeyCrypto.Mask(plain));
+        return new ApiKeyState(true, result.UsedLegacySecret ? "legacy" : "configured", ApiKeyCrypto.Mask(result.PlainText));
     }
 
     /// <summary>
@@ -195,7 +197,7 @@ public class PlatformsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("PLATFORM_NOT_FOUND", "平台不存在"));
         }
 
-        var keyState = ResolveApiKeyState(platform.ApiKeyEncrypted, GetJwtSecret());
+        var keyState = ResolveApiKeyState(platform.ApiKeyEncrypted);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -235,7 +237,7 @@ public class PlatformsController : ControllerBase
             PlatformType = request.PlatformType,
             ProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim(),
             ApiUrl = request.ApiUrl,
-            ApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()),
+            ApiKeyEncrypted = ApiKeyCryptoKeyRing.Encrypt(request.ApiKey, _config),
             Enabled = request.Enabled,
             MaxConcurrency = request.MaxConcurrency,
             Remark = request.Remark
@@ -273,7 +275,7 @@ public class PlatformsController : ControllerBase
 
         if (!string.IsNullOrEmpty(request.ApiKey))
         {
-            update = update.Set(p => p.ApiKeyEncrypted, ApiKeyCrypto.Encrypt(request.ApiKey, GetJwtSecret()));
+            update = update.Set(p => p.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(request.ApiKey, _config));
         }
 
         var result = await _db.LLMPlatforms.UpdateOneAsync(p => p.Id == id, update);
@@ -284,6 +286,78 @@ public class PlatformsController : ControllerBase
 
         _logger.LogInformation("Platform updated: {Id}", id);
         return Ok(ApiResponse<object>.Ok(new { id }));
+    }
+
+    /// <summary>
+    /// 从运行配置恢复平台 API key（密钥环境不匹配事故的自愈通道）。
+    ///
+    /// 场景：部署环境的 Jwt:Secret 被轮换后，llmplatforms.ApiKeyEncrypted（AES，
+    /// 密钥=Jwt:Secret）全部解密为空；但「CDS Agent 运行配置」里物化过的同一把
+    /// 上游 key 走 ASP.NET DataProtection（密钥环独立持久化），仍然可解。
+    /// 本端点在服务端把 key 从运行配置解出、用当前 Jwt:Secret 重新加密写回平台
+    /// —— 明文全程不出进程、不进日志、不回显。
+    ///
+    /// 防错配守卫：运行配置的 BaseUrl 必须与平台 ApiUrl 同 host，拒绝把 A 平台
+    /// 的 key 写进 B 平台。
+    /// </summary>
+    [HttpPost("{id}/restore-key-from-profile")]
+    public async Task<IActionResult> RestoreKeyFromProfile(string id, [FromBody] RestoreKeyFromProfileRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ProfileId))
+        {
+            return BadRequest(ApiResponse<object>.Fail("PROFILE_ID_REQUIRED", "profileId 不能为空"));
+        }
+
+        var platform = await _db.LLMPlatforms.Find(p => p.Id == id).FirstOrDefaultAsync();
+        if (platform == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("PLATFORM_NOT_FOUND", "平台不存在"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        InfraAgentRuntimeProfileSecretView? secret;
+        try
+        {
+            secret = await _runtimeProfiles.ResolveAsync(request.ProfileId, userId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            return Conflict(ApiResponse<object>.Fail("PROFILE_KEY_UNREADABLE", ex.Message));
+        }
+        if (secret == null || secret.Id != request.ProfileId)
+        {
+            return NotFound(ApiResponse<object>.Fail("PROFILE_NOT_FOUND", "运行配置不存在或不可见"));
+        }
+        if (string.IsNullOrWhiteSpace(secret.ApiKey))
+        {
+            return Conflict(ApiResponse<object>.Fail("PROFILE_KEY_EMPTY", "运行配置中没有可用的 API key"));
+        }
+
+        // 同 host 守卫：防止把别家平台的 key 错写进来
+        if (!Uri.TryCreate(platform.ApiUrl, UriKind.Absolute, out var platformUri)
+            || !Uri.TryCreate(secret.BaseUrl, UriKind.Absolute, out var profileUri)
+            || !string.Equals(platformUri.Host, profileUri.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                "HOST_MISMATCH",
+                $"运行配置指向 {secret.BaseUrl}，与平台 {platform.ApiUrl} 不同 host，拒绝恢复"));
+        }
+
+        var update = Builders<LLMPlatform>.Update
+            .Set(p => p.ApiKeyEncrypted, ApiKeyCryptoKeyRing.Encrypt(secret.ApiKey, _config))
+            .Set(p => p.UpdatedAt, DateTime.UtcNow);
+        await _db.LLMPlatforms.UpdateOneAsync(p => p.Id == id, update);
+
+        _logger.LogWarning(
+            "[PlatformKeyRestore] 平台「{Platform}」的 API key 已从运行配置「{Profile}」恢复（操作者 {UserId}）",
+            platform.Name, secret.Name, userId);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id,
+            platform = platform.Name,
+            fromProfile = secret.Name,
+            apiKeyMasked = ApiKeyCrypto.Mask(secret.ApiKey),
+        }));
     }
 
     /// <summary>
@@ -752,7 +826,7 @@ public class PlatformsController : ControllerBase
     private async Task<List<AvailableModelDto>> FetchModelsFromApi(LLMPlatform platform, string? requestPurpose)
     {
         var endpoint = GetModelsEndpoint(platform.ApiUrl);
-        var apiKey = ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret());
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config) ?? string.Empty;
         var providerId = (string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId!).Trim().ToLowerInvariant();
         var apiKeyEmpty = string.IsNullOrWhiteSpace(apiKey);
 
@@ -1021,7 +1095,7 @@ public class PlatformsController : ControllerBase
         m.Name,
         m.ModelName,
         m.ApiUrl,
-        apiKeyMasked = string.IsNullOrEmpty(m.ApiKeyEncrypted) ? null : ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(m.ApiKeyEncrypted, GetJwtSecret())),
+        apiKeyMasked = ApiKeyCryptoKeyRing.Mask(m.ApiKeyEncrypted, _config),
         m.PlatformId,
         m.Group,
         m.Timeout,
@@ -1041,7 +1115,6 @@ public class PlatformsController : ControllerBase
         m.UpdatedAt
     };
 
-    private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }
 
 public class ModelsApiResponse
@@ -1108,6 +1181,12 @@ public class UpdatePlatformRequest
     public bool Enabled { get; set; } = true;
     public int MaxConcurrency { get; set; } = 5;
     public string? Remark { get; set; }
+}
+
+public class RestoreKeyFromProfileRequest
+{
+    /// <summary>来源运行配置 ID（其 BaseUrl 必须与平台 ApiUrl 同 host）</summary>
+    public string ProfileId { get; set; } = string.Empty;
 }
 
 public class AvailableModelDto

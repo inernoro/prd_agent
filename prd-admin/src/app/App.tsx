@@ -5,6 +5,7 @@ import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
 import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
 import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
+import { SkillShareDialog } from '@/components/marketplace/SkillShareDialog';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
@@ -15,6 +16,23 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 import { NAV_REGISTRY } from '@/app/navRegistry';
+import { initBehaviorTracker, trackRouteChange } from '@/lib/behaviorTracker';
+
+/**
+ * BehaviorTrackerMount — 行为信号采集（行为洞察面板的数据来源）。
+ * 挂在 Router 内、Routes 外：记录全站路由停留/跳转，登录后才上报。
+ */
+function BehaviorTrackerMount() {
+  const location = useLocation();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  useEffect(() => {
+    initBehaviorTracker();
+  }, []);
+  useEffect(() => {
+    if (isAuthenticated) trackRouteChange(location.pathname);
+  }, [location.pathname, isAuthenticated]);
+  return null;
+}
 
 /**
  * NavigationBridge — Exposes React Router's navigate() to non-React code.
@@ -56,6 +74,7 @@ const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
 const ShareLinkTesterPage = lazy(() => import('@/pages/labs/ShareLinkTesterPage'));
+const LiquidGlassDemoPage = lazy(() => import('@/pages/labs/LiquidGlassDemoPage'));
 const MySharesPage = lazy(() => import('@/pages/labs/MySharesPage'));
 const SkillShareViewPage = lazy(() => import('@/pages/SkillShareViewPage'));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
@@ -186,6 +205,7 @@ export default function App() {
       <ToastContainer />
       <BranchBadge />
       <NavigationBridge />
+      <BehaviorTrackerMount />
       {/* 路由切换顶栏进度条：绕过 Suspense transition 语义，立刻给用户视觉反馈 */}
       <NavigationProgressBar />
       <Suspense fallback={<SuspenseVideoLoader />}>
@@ -334,6 +354,7 @@ export default function App() {
         {/* 后端 menuCatalog 注册的路由（admin / 特殊权限页，前端不进 launcher） */}
         <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="labs/share-link-tester" element={<ShareLinkTesterPage />} />
+        <Route path="labs/liquid-glass" element={<LiquidGlassDemoPage />} />
         <Route path="my/shares" element={<MySharesPage />} />
         {/* open-platform 已移入 NAV_REGISTRY（SSOT），路由由其自动生成 */}
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
@@ -369,6 +390,8 @@ export default function App() {
           <SpotlightOverlay />
         </>
       )}
+      {/* 技能分享弹窗（全局单例，渲染走 createPortal；无目标时返回 null） */}
+      <SkillShareDialog />
     </AgentSwitcherProvider>
   );
 }

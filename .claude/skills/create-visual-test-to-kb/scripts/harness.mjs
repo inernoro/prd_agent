@@ -124,6 +124,30 @@ export async function assertText(page, text) {
 // v2.2: 自动 waitForReady() 等页面真就绪，截后再 validate；不达标 retry 1 次后仍记录但打 warning。
 const shots = [];
 
+function repoRoot() {
+  try {
+    return require('child_process').execSync('git rev-parse --show-toplevel', {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function assertOutsideRepo(targetPath, label) {
+  if (process.env.ALLOW_REPO_ACCEPTANCE_ARTIFACTS === '1') return;
+  const pathMod = require('path');
+  const root = repoRoot();
+  if (!root) return;
+  const abs = pathMod.resolve(targetPath);
+  const rel = pathMod.relative(pathMod.resolve(root), abs);
+  if (rel === '' || (!rel.startsWith('..') && !pathMod.isAbsolute(rel))) {
+    throw new Error(`${label} 位于 git 仓库内：${abs}。验收截图、manifest、录屏必须写到 /tmp 或对象存储，避免污染代码库。`);
+  }
+}
+
 // ── v1.0：console / network / pageerror 自动捕获（issue #605 二.2，机器最该补的维度）──
 // 每条 finding: { kind, severity, message, url?, status?, ts, shotIndexAtCapture }
 // 自动判级（保守，避免误杀）：
@@ -421,6 +445,7 @@ async function validateShot(page, path, expectText) {
  */
 export async function shot(page, outDir, name, caption, opts = {}) {
   const { fullPage = false, expectText, skipReady = false, customLoaderSelectors = [], overview = false } = opts;
+  assertOutsideRepo(outDir, '截图输出目录');
   require('fs').mkdirSync(outDir, { recursive: true });
   const path = `${outDir}/${name}.png`;
 
@@ -474,6 +499,7 @@ export function manifest() { return shots; }
 // extra 可带 { verdict, target, themeSupport, timing, branch, commit }。
 export function writeManifest(outDir, extra = {}) {
   const fs = require('fs');
+  assertOutsideRepo(outDir, 'manifest 输出目录');
   // 闭合"晚到 P0"漏洞（Bugbot #1，2026-06-04）：drainFindingsForShot 只把 finding 折叠进"之后某次
   // shot() 调用"的 warnings。最后一张截图之后才抛的 ≥blockSeverity finding（典型：收尾时的未捕获
   // 异常 / 5xx）没有后续 shot 来 drain，会只躺在 result.json 里、不进 manifest.json，而 archive_report.py

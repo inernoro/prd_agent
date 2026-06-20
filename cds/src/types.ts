@@ -590,9 +590,11 @@ export interface BranchEntry {
    *   - 'oom'       Docker / kernel 明确报告 OOMKilled
    *   - 'external'  未匹配到 CDS 意图的 docker kill / SIGKILL
    *   - 'cds'       CDS 生命周期操作（删除 / 重部署替换 / 清理旧容器）
+   *   - 'webhook'   GitHub webhook / 外部事件触发
+   *   - 'ai'        AI Agent 通过 API 触发
    *   - 'system'    其他系统侧（垃圾回收 / janitor 等）
    */
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -655,6 +657,9 @@ export interface ContainerLogArchiveEntry {
     | 'container-logs-stream'
     | 'pre-deploy-recreate'
     | 'manual-stop'
+    | 'webhook-stop'
+    | 'ai-stop'
+    | 'system-stop'
     | 'scheduler-stop'
     | 'auto-lifecycle-stop'
     | 'crash-detected'
@@ -769,6 +774,7 @@ export interface ReleaseRun {
   seq: number;
   previousReleaseId?: string;
   rollbackOf?: string;
+  rollbackTargetReleaseId?: string;
   errorMessage?: string;
 }
 
@@ -874,6 +880,17 @@ export interface CdsState {
    * `schedulerEnabledOverride`. `undefined` = no override. `0` = unlimited.
    */
   schedulerMaxHotOverride?: number;
+  /**
+   * UI-controlled override for the global janitor enable flag. When defined,
+   * it supersedes `config.janitor.enabled` at runtime and is re-applied on boot.
+   */
+  janitorEnabledOverride?: boolean;
+  /**
+   * UI-controlled override for branch/container expiry in days.
+   * Range is intentionally capped at 7 days so stale local containers cannot
+   * accumulate indefinitely.
+   */
+  janitorWorktreeTTLOverride?: number;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
   /** Per-branch/per-resource external access policies. Keyed by projectId:branchId:resourceId. */
@@ -1014,6 +1031,12 @@ export interface CdsState {
    * Per-instance 全局,与项目无关 → 系统级字段(参考 scope-naming.md §5)。
    */
   selfUpdateHistory?: SelfUpdateRecord[];
+  /**
+   * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
+   * HTML 真是远程 agent 返回的」)。会话 done/fail/stop 时由 remote-hosts
+   * 落一条摘要(收发预览各截 2000 字),ring buffer 500 条;全量事件仍在内存随重启丢失。
+   */
+  agentRequestHistory?: AgentRequestRecord[];
   /**
    * Daemon 启动完成时间戳(ISO),由 index.ts 的 server.listen() 回调写入。
    * 2026-05-07 用户反馈"在左下角卡了 1 小时"导致的 timing 体系审视
@@ -1255,6 +1278,24 @@ export interface ActiveSelfUpdate {
   /** 启动时扫描发现 sidecar pid 已死 → 标 true。前端渲染"已中断"红色态。
    *  下次正常更新触发时清掉。 */
   interrupted?: boolean;
+}
+
+/** Agent 请求历史摘要（观测台持久层，重启可查） */
+export interface AgentRequestRecord {
+  sessionId: string;
+  projectId: string;
+  title: string | null;
+  clientUser: string | null;
+  clientApp: string | null;
+  runtime: string;
+  model: string | null;
+  status: string;
+  createdAt: string;
+  finishedAt: string;
+  durationMs: number;
+  eventCount: number;
+  requestPreview: string | null;
+  responsePreview: string | null;
 }
 
 export interface SelfUpdateRecord {
@@ -2395,9 +2436,9 @@ export interface ClusterCapacity {
  * See `doc/design.cds-resilience.md` Phase 2.
  */
 export interface JanitorConfig {
-  /** Enable the janitor. Default: false (backward compatible). */
+  /** Enable the janitor. Default: true. */
   enabled: boolean;
-  /** Remove worktrees not accessed in this many days. Default: 30. */
+  /** Remove worktrees and local containers not touched in this many days. Default: 7, max: 7. */
   worktreeTTLDays: number;
   /** Emit warning when disk usage exceeds this percent. Default: 80. */
   diskWarnPercent: number;

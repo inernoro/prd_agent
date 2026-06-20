@@ -458,14 +458,16 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           </div>
         </div>
         {/* Iframe
-            PDF 包装站走直链：后端把 PDF 包装成 index.html + .pdf 的双文件结构，
-            如果这里仍 iframe 到 siteUrl(index.html) + sandbox，壳子里的 <iframe src=".pdf">
-            会被 Chrome 屏蔽 PDF Viewer。直接指向 PDF URL、不加 sandbox，让浏览器原生 PDF Viewer 接管。 */}
+            所有站点（含 PDF 包装站）统一 iframe 到 siteUrl(壳子 index.html) + allow-scripts 沙箱。
+            PDF 壳子现在用 PDF.js 渲染成 canvas（见后端 BuildPdfWrapper），不再依赖浏览器原生 PDF Viewer，
+            因此手机浏览器 / 微信内置 WebView 也能正常显示——旧版直接 iframe *.pdf 在移动端一片空白。
+            canvas 渲染没有"壳子里再套 PDF Viewer 被 Chrome 屏蔽"的问题，allow-scripts + allow-same-origin
+            让壳子能同源 fetch 同目录的 .pdf 文件。 */}
         <iframe
-          src={site.pdfAssetUrl || site.siteUrl}
+          src={site.siteUrl}
           title={site.title}
           style={{ flex: 1, border: 'none', width: '100%' }}
-          sandbox={site.pdfAssetUrl ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen'}
+          sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen"
           allowFullScreen
         />
 

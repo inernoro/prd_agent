@@ -3,6 +3,7 @@
  * 后端：prd-api/src/PrdAgent.Core/Models/{Product,ProductVersion,Requirement,Feature,Customer,
  * ProductFormTemplate,ProductWorkflowDefinition}.cs
  */
+import { formatDefectSeverityLevel, readDefectSeverityLevel } from './defectSeverity';
 
 /** 产品管理对象类型 */
 export type ProductEntityType =
@@ -10,6 +11,7 @@ export type ProductEntityType =
   | 'version'
   | 'requirement'
   | 'feature'
+  | 'defect'
   | 'customer'
   | 'upgrade-request';
 
@@ -28,6 +30,69 @@ export interface ProductCategory {
   isBuiltin: boolean;
 }
 
+/** 需求类型（可增删改查；内置 5 项不可删除；AI 按 Definition 识别） */
+export interface RequirementType {
+  id: string;
+  name: string;
+  definition: string;
+  sortOrder: number;
+  isBuiltin: boolean;
+}
+
+/** 等级目录维度：优先级 / 严重程度 */
+export type GradeDimension = 'priority' | 'severity';
+
+/** 等级目录承载的对象类型（需求 / 功能 / 缺陷） */
+export type GradeEntityType = 'requirement' | 'feature' | 'defect';
+
+/** 通用等级目录项（优先级/严重程度可增删改查；内置项不可删除，AI 按 definition 识别） */
+export interface ProductGradeOption {
+  id: string;
+  dimension: GradeDimension;
+  entityType: GradeEntityType;
+  name: string;
+  color: string;
+  definition: string;
+  sortOrder: number;
+  isBuiltin: boolean;
+}
+
+/** 产品结构节点（功能模块/能力骨架树；扁平列表，靠 parentId 自建树） */
+export interface ProductStructureNode {
+  id: string;
+  productId: string;
+  parentId?: string | null;
+  name: string;
+  description?: string | null;
+  nodeType?: string | null;
+  sortOrder: number;
+}
+
+/** 产品规则状态 */
+export type ProductRuleStatus = 'draft' | 'active' | 'deprecated';
+
+/** 产品规则（单产品维度的全局核心规则；content 为 Markdown 正文） */
+export interface ProductRule {
+  id: string;
+  productId: string;
+  category?: string | null;
+  title: string;
+  content: string;
+  status: ProductRuleStatus;
+  sortOrder: number;
+}
+
+/** 产品字典/术语（单产品维度；definition 为 Markdown 定义） */
+export interface ProductTerm {
+  id: string;
+  productId: string;
+  term: string;
+  aliases: string[];
+  definition: string;
+  category?: string | null;
+  sortOrder: number;
+}
+
 /** 详情描述模板（按对象类型，富文本骨架，方便一键套用） */
 export interface DescTemplate {
   id: string;
@@ -41,8 +106,26 @@ export interface DescTemplate {
 export type VersionLifecycle = 'planning' | 'developing' | 'testing' | 'released' | 'deprecated';
 
 /** 功能版本变更类型 */
-export type FeatureChangeType = 'added' | 'modified' | 'deprecated';
+export type FeatureChangeType = 'added' | 'modified' | 'deprecated' | 'unchanged';
+
+export interface ReleaseFeatureItem {
+  featureId: string;
+  changeType: FeatureChangeType;
+  changeNote?: string | null;
+}
 export type FeatureBusinessType = 'basic' | 'core' | 'value_added';
+
+/** 功能类型标签（SSOT，避免各处重复定义；Phase B 起将由可配置「功能类型」目录覆盖） */
+export const FEATURE_TYPE_LABEL: Record<FeatureBusinessType, string> = {
+  basic: '基础功能',
+  core: '核心功能',
+  value_added: '增值功能',
+};
+export const FEATURE_TYPES: { value: FeatureBusinessType; label: string }[] = [
+  { value: 'basic', label: '基础功能' },
+  { value: 'core', label: '核心功能' },
+  { value: 'value_added', label: '增值功能' },
+];
 
 export interface Product {
   id: string;
@@ -57,6 +140,7 @@ export interface Product {
   formData: Record<string, string>;
   knowledgeStoreId?: string | null;
   ownerId: string;
+  ownerIds?: string[];
   ownerName?: string | null;
   memberIds: string[];
   adminIds: string[];
@@ -111,6 +195,7 @@ export type VersionScale = 'major' | 'medium' | 'minor';
 export interface ProductInitiation {
   id: string;
   productId: string;
+  linkedProductId?: string | null;
   tCode?: string | null;
   systemName?: string | null;
   appName?: string | null;
@@ -128,6 +213,9 @@ export interface ProductInitiation {
   reviewPassed?: boolean | null;
   reviewMeetingRequired?: boolean | null;
   expectedMeetingAt?: string | null;
+  meetingDraftCount?: number | null;
+  meetingDraftRounds?: InitiationMeetingDraftRound[];
+  reviewAttempts?: InitiationReviewAttempt[];
   firstDraftMeetingAt?: string | null;
   secondDraftMeetingAt?: string | null;
   thirdDraftMeetingAt?: string | null;
@@ -141,8 +229,27 @@ export interface ProductInitiation {
   approvalComment?: string | null;
   createdBy: string;
   sourceType: 'system' | 'import';
+  legacyData?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface InitiationReviewAttempt {
+  id: string;
+  attemptNo: number;
+  submissionId?: string | null;
+  planFileName?: string | null;
+  reviewScore?: number | null;
+  reviewPassed?: boolean | null;
+  startedAt: string;
+  completedAt?: string | null;
+}
+
+export interface InitiationMeetingDraftRound {
+  round: number;
+  heldAt?: string | null;
+  passed?: boolean | null;
+  notes?: string | null;
 }
 
 export interface ProductRelease {
@@ -166,9 +273,12 @@ export interface ProductRelease {
   plannedReleaseAt?: string | null;
   releasedAt?: string | null;
   announcementUrl?: string | null;
+  previousReleaseId?: string | null;
+  featureManifest?: ReleaseFeatureItem[];
   status: string;
   createdBy: string;
   sourceType: 'system' | 'import';
+  legacyData?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -238,6 +348,8 @@ export interface Feature {
   remark?: string | null;
   grade: ItemGrade;
   parentId?: string | null;
+  /** 挂载到的产品结构节点 ID（功能模块/能力骨架树；空=未归类） */
+  structureNodeId?: string | null;
   requirementIds: string[];
   currentState?: string | null;
   templateId?: string | null;
@@ -277,9 +389,110 @@ export interface Customer {
   tags: string[];
   templateId?: string | null;
   formData: Record<string, string>;
+  // ── 客户信息「基础模块」默认字段（商户名称复用 name）──
+  /** 商户编号 */
+  merchantNo?: string | null;
+  /** 商户简称 */
+  shortName?: string | null;
+  /** 商户状态（自由文本，如 正常 / 停用） */
+  status?: string | null;
+  /** 认证状态（未认证 / 已认证 / 认证失败） */
+  certStatus?: string | null;
+  /** 所在区域 */
+  region?: string | null;
+  /** 所属行业 */
+  industry?: string | null;
+  /** 开户时间（ISO 字符串） */
+  openedAt?: string | null;
+  /** 过期时间（ISO 字符串） */
+  expireAt?: string | null;
   ownerId: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 客户「动态跟进」时间线条目（对齐后端 CustomerFollowUp，按时间倒序） */
+export interface CustomerFollowUp {
+  id: string;
+  customerId: string;
+  /** 跟进内容（富文本 HTML） */
+  content: string;
+  createdByUserId: string;
+  createdByName?: string | null;
+  createdAt: string;
+}
+
+// ── 营销问策 MarketingConsult（客户详情 Tab，全链路对照项目简报）──
+
+/** 报告模版 key（对齐后端 MarketingReportRenderer.Templates，4 套专业模版） */
+export type MarketingTemplate = 'exec' | 'consulting' | 'dashboard' | 'magazine';
+
+/** 总体营销健康判定 */
+export type MarketingVerdict = 'healthy' | 'watch' | 'risk';
+
+/** 四力（4FM）单维评分 */
+export interface MarketingForceScore {
+  name: string;
+  score: number;
+  comment: string;
+}
+
+/** 营销问策风险条目 */
+export interface MarketingConsultRisk {
+  text: string;
+  level: 'high' | 'medium' | 'low';
+}
+
+/** AI 结构化评估内容（对齐后端 MarketingConsultAiContent） */
+export interface MarketingConsultAiContent {
+  summary: string;
+  verdict: MarketingVerdict;
+  verdictNote: string;
+  forces: MarketingForceScore[];
+  strengths: string[];
+  risks: MarketingConsultRisk[];
+  suggestions: string[];
+  nextActions: string[];
+}
+
+/** 问策报告列表项（精简，不含 html，对齐后端 ToConsultListItem） */
+export interface MarketingConsultListItem {
+  id: string;
+  customerId: string;
+  /** 客户名（自由问策为 null） */
+  customerName?: string | null;
+  title: string;
+  template: MarketingTemplate;
+  model?: string | null;
+  verdict?: MarketingVerdict | null;
+  canRestyle: boolean;
+  shared: boolean;
+  shareToken?: string | null;
+  hostedSiteId?: string | null;
+  hostedSiteUrl?: string | null;
+  createdByUserId: string;
+  createdByName?: string | null;
+  createdAt: string;
+}
+
+/** 问策报告详情（含 html，对齐后端 ToConsultDetail） */
+export interface MarketingConsultReport {
+  id: string;
+  customerId: string;
+  title: string;
+  template: MarketingTemplate;
+  model?: string | null;
+  html: string;
+  aiContent?: MarketingConsultAiContent | null;
+  inputText?: string;
+  canRestyle: boolean;
+  shared: boolean;
+  shareToken?: string | null;
+  hostedSiteId?: string | null;
+  hostedSiteUrl?: string | null;
+  createdByUserId: string;
+  createdByName?: string | null;
+  createdAt: string;
 }
 
 /** 表单字段类型 */
@@ -335,6 +548,8 @@ export interface FormTemplate {
 export interface WorkflowState {
   key: string;
   label: string;
+  /** 状态说明（流程模板配置页） */
+  description?: string | null;
   color?: string | null;
   isInitial: boolean;
   isFinal: boolean;
@@ -355,6 +570,10 @@ export interface WorkflowTransition {
   requireComment: boolean;
   /** 自动化：触发时把处理人自动指派给操作人本人 */
   autoAssignToActor?: boolean;
+  /** 流转前必须已填写的字段（title / assigneeId / grade / comment） */
+  requiredFieldKeys?: string[] | null;
+  /** 跨对象联动：requirement | defect */
+  linkEntityType?: string | null;
 }
 
 export interface WorkflowDefinition {
@@ -366,6 +585,9 @@ export interface WorkflowDefinition {
   transitions: WorkflowTransition[];
   isDefault: boolean;
   productId?: string | null;
+  /** 内置种子版本；用户保存流程模板后不再被种子覆盖 */
+  seedRevision?: number;
+  isUserCustomized?: boolean;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -379,8 +601,16 @@ export const ITEM_GRADE_LABEL: Record<ItemGrade, string> = {
   p3: 'P3 低',
 };
 
-/** 缺陷状态英文值 → 中文标签（与后端 DefectStatus 同口径，工作台/列表/图表统一展示用）。 */
+/** 缺陷状态 Key → 中文标签（产品缺陷工作流与需求对齐；含旧缺陷智能体状态兜底）。 */
 export const DEFECT_STATUS_LABEL: Record<string, string> = {
+  new: '待评审',
+  planning: '待规划',
+  status_2: '已立项',
+  developing: '开发中',
+  resolved: '已上线',
+  rejected: '已拒绝',
+  status_3: '已排期',
+  to_requirement: '非产品缺陷',
   draft: '草稿',
   reviewing: '评审中',
   awaiting: '待处理',
@@ -388,8 +618,6 @@ export const DEFECT_STATUS_LABEL: Record<string, string> = {
   assigned: '已分配',
   processing: '处理中',
   verifying: '待验收',
-  resolved: '已解决',
-  rejected: '已拒绝',
   closed: '已关闭',
 };
 
@@ -397,32 +625,25 @@ export const DEFECT_STATUS_LABEL: Record<string, string> = {
 export function defectStatusLabel(status?: string | null): string {
   const s = (status ?? '').trim();
   if (!s) return '—';
-  return DEFECT_STATUS_LABEL[s] ?? DEFECT_STATUS_LABEL[s.toLowerCase()] ?? s;
+  const lower = s.toLowerCase();
+  return DEFECT_STATUS_LABEL[s] ?? DEFECT_STATUS_LABEL[lower] ?? s;
 }
 
-/** 旧缺陷「严重度」→ 统一「等级」兜底映射（与后端 ProductAgentController.SeverityToGrade 同口径）。 */
-export function severityToItemGrade(severity?: string | null): ItemGrade {
-  switch (severity) {
-    case 'blocker':
-    case 'critical':
-      return 'p0';
-    case 'major':
-      return 'p1';
-    case 'minor':
-      return 'p2';
-    case 'trivial':
-    case 'suggestion':
-      return 'p3';
-    default:
-      return 'p2';
-  }
+/** 缺陷严重程度 V2.6 四档（只读 structuredData，无值返回 null） */
+export { readDefectSeverityLevel, formatDefectSeverityLevel } from './defectSeverity';
+
+export function defectSeverityLevelLabel(d: { structuredData?: Record<string, string> | null }): string {
+  return formatDefectSeverityLevel(readDefectSeverityLevel(d));
 }
 
-/** 取缺陷有效等级：优先 grade，旧数据为空时由 severity 兜底。 */
-export function effectiveDefectGrade(d: { grade?: string | null; severity?: string | null }): ItemGrade {
+/** @deprecated 使用 defectSeverityLevelLabel */
+export const defectSeverityTierLabel = defectSeverityLevelLabel;
+
+/** 缺陷处理优先级（只读 grade 字段，无值返回 null） */
+export function readDefectPriorityGrade(d: { grade?: string | null }): ItemGrade | null {
   const g = d.grade;
   if (g === 'p0' || g === 'p1' || g === 'p2' || g === 'p3') return g;
-  return severityToItemGrade(d.severity);
+  return null;
 }
 
 export const PRODUCT_GRADE_LABEL: Record<ProductGrade, string> = {

@@ -57,6 +57,7 @@ import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/co
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
+import { releaseCenterHref } from '@/lib/releaseCenter';
 import {
   buildBranchResources,
   ResourceIcon,
@@ -127,6 +128,9 @@ interface BranchSummary {
   lastAccessedAt?: string;
   lastPullAt?: string;
   lastDeployAt?: string;
+  lastStoppedAt?: string;
+  lastStopReason?: string;
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   errorMessage?: string;
   commitSha?: string;
   subject?: string;
@@ -297,6 +301,7 @@ interface ActivityEvent {
 interface SlowHttpEndpoint {
   endpoint: string;
   method: string;
+  requestKind?: HttpRequestKind;
   count: number;
   errorCount: number;
   errorRate: number;
@@ -315,16 +320,52 @@ interface SlowHttpEndpoint {
   };
 }
 
-interface SlowHttpResponse {
+type HttpRequestKind = 'user-traffic' | 'control-plane' | 'deploy' | 'container-op' | 'polling' | 'sse';
+
+interface ActiveHttpRequest {
+  id: string;
+  startedAt: string;
+  ageMs: number;
+  layer: 'master' | 'master-proxy' | 'forwarder';
+  requestKind: HttpRequestKind;
+  requestId: string;
+  method: string;
+  host?: string;
+  path: string;
+  branchId?: string | null;
+  profileId?: string | null;
+  upstream?: string | null;
+}
+
+interface PerfOverviewResponse {
   ok: boolean;
   disabled?: boolean;
   sampleSize: number;
-  total: number;
+  durationSampleSize?: number;
+  noiseCount?: number;
+  total?: number;
   window?: {
     newest?: string | null;
     oldest?: string | null;
   };
-  endpoints: SlowHttpEndpoint[];
+  endpoints?: SlowHttpEndpoint[];
+  slowEndpoints?: SlowHttpEndpoint[];
+  slowByKind?: {
+    userTraffic?: SlowHttpEndpoint[];
+    controlPlane?: SlowHttpEndpoint[];
+    deploy?: SlowHttpEndpoint[];
+    containerOp?: SlowHttpEndpoint[];
+    polling?: SlowHttpEndpoint[];
+    sse?: SlowHttpEndpoint[];
+  };
+  activeRequests?: ActiveHttpRequest[];
+  activeSummary?: {
+    total: number;
+    over10s: number;
+    over30s: number;
+    over60s: number;
+    byKind: Record<HttpRequestKind, number>;
+  };
   message?: string;
 }
 
@@ -441,7 +482,7 @@ type OpsStatusState =
 type SlowHttpState =
   | { status: 'idle' | 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; data: SlowHttpResponse };
+  | { status: 'ok'; data: PerfOverviewResponse };
 
 type BranchAction = {
   kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
@@ -552,6 +593,30 @@ function formatLatency(ms: number): string {
   if (!Number.isFinite(ms)) return '0ms';
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
   return formatDuration(ms);
+}
+
+function requestKindLabel(kind?: HttpRequestKind): string {
+  switch (kind) {
+    case 'user-traffic': return '用户访问';
+    case 'control-plane': return '控制面';
+    case 'deploy': return '部署';
+    case 'container-op': return '容器操作';
+    case 'polling': return '轮询';
+    case 'sse': return '长连接';
+    default: return '未分类';
+  }
+}
+
+function requestKindTone(kind?: HttpRequestKind): string {
+  switch (kind) {
+    case 'user-traffic': return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700';
+    case 'deploy': return 'border-amber-500/30 bg-amber-500/10 text-amber-700';
+    case 'container-op': return 'border-orange-500/30 bg-orange-500/10 text-orange-700';
+    case 'control-plane': return 'border-sky-500/30 bg-sky-500/10 text-sky-700';
+    case 'polling': return 'border-muted-foreground/20 bg-muted/30 text-muted-foreground';
+    case 'sse': return 'border-violet-500/30 bg-violet-500/10 text-violet-700';
+    default: return 'border-border bg-muted/30 text-muted-foreground';
+  }
 }
 
 function formatShortTime(value: string): string {
@@ -1606,7 +1671,7 @@ export function BranchListPage(): JSX.Element {
   const refreshSlowHttp = useCallback(async () => {
     setSlowHttpState((current) => current.status === 'ok' ? current : { status: 'loading' });
     try {
-      const data = await apiRequest<SlowHttpResponse>('/api/http-logs/slow?sample=1000&top=10', {
+      const data = await apiRequest<PerfOverviewResponse>('/api/perf/overview?sample=1000&top=8', {
         headers: { 'X-CDS-Poll': 'true' },
       });
       setSlowHttpState({ status: 'ok', data });
@@ -2841,6 +2906,13 @@ export function BranchListPage(): JSX.Element {
   const executorFreePercent = typeof executorCapacity?.freePercent === 'number' ? Math.round(executorCapacity.freePercent) : 0;
   const clusterMode = opsStatus.status === 'ok' ? opsStatus.cluster.mode : 'unknown';
   const slowHttpData = slowHttpState.status === 'ok' ? slowHttpState.data : null;
+  const activeHttpRequests = slowHttpData?.activeRequests || [];
+  const slowHttpSections = [
+    { key: 'userTraffic', title: '用户访问慢榜', items: slowHttpData?.slowByKind?.userTraffic || [] },
+    { key: 'controlPlane', title: '控制面慢榜', items: slowHttpData?.slowByKind?.controlPlane || [] },
+    { key: 'deploy', title: '部署慢榜', items: slowHttpData?.slowByKind?.deploy || [] },
+    { key: 'containerOp', title: '容器操作慢榜', items: slowHttpData?.slowByKind?.containerOp || [] },
+  ];
 
   /*
    * Render — Week 4.6 visual rebuild.
@@ -3300,11 +3372,11 @@ export function BranchListPage(): JSX.Element {
               <div className="p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-sm font-semibold">慢接口排行</h2>
-                    <div className="mt-1 text-xs text-muted-foreground">最近 1000 次 HTTP 请求按 p95 排序</div>
+                    <h2 className="text-sm font-semibold">请求观测</h2>
+                    <div className="mt-1 text-xs text-muted-foreground">正在运行请求和已完成慢榜分开统计</div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button type="button" variant="ghost" size="icon" onClick={() => void refreshSlowHttp()} title="刷新慢接口排行">
+                    <Button type="button" variant="ghost" size="icon" onClick={() => void refreshSlowHttp()} title="刷新请求观测">
                       <RefreshCw className="h-4 w-4" />
                     </Button>
                     <Gauge className="h-4 w-4 text-muted-foreground" />
@@ -3320,7 +3392,7 @@ export function BranchListPage(): JSX.Element {
                   <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
                     {slowHttpData.message || 'HTTP 持久化日志未启用'}
                   </div>
-                ) : !slowHttpData || slowHttpData.endpoints.length === 0 ? (
+                ) : !slowHttpData ? (
                   <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
                     暂无 HTTP 耗时样本。
                   </div>
@@ -3328,27 +3400,64 @@ export function BranchListPage(): JSX.Element {
                   <div className="space-y-2">
                     <div className="grid grid-cols-3 gap-2">
                       <MetricTile label="样本" value={`${slowHttpData.sampleSize}`} />
-                      <MetricTile label="端点" value={`${slowHttpData.total}`} />
-                      <MetricTile label="窗口" value={slowHttpData.window?.oldest ? formatShortTime(slowHttpData.window.oldest) : '--:--'} />
+                      <MetricTile label="耗时样本" value={`${slowHttpData.durationSampleSize ?? slowHttpData.sampleSize}`} />
+                      <MetricTile label="运行中" value={`${slowHttpData.activeSummary?.total ?? activeHttpRequests.length}`} />
                     </div>
-                    <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
-                      {slowHttpData.endpoints.slice(0, 10).map((item, index) => (
-                        <div key={`${item.method}:${item.endpoint}`} className="rounded-md border border-border bg-muted/20 px-2.5 py-2 text-xs">
-                          <div className="flex items-center gap-2">
-                            <span className="w-5 text-right font-mono text-muted-foreground">#{index + 1}</span>
-                            <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
-                            <code className="min-w-0 flex-1 truncate font-mono" title={`${item.method} ${item.endpoint}`}>
-                              {item.endpoint}
-                            </code>
-                            <span className="font-mono text-amber-600">{formatLatency(item.p95Ms)}</span>
+                    <div className="rounded-md border border-border bg-muted/15 px-2.5 py-2 text-xs">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="font-medium">正在运行长请求</span>
+                        <span className="text-muted-foreground">
+                          10s+ {slowHttpData.activeSummary?.over10s ?? 0} / 30s+ {slowHttpData.activeSummary?.over30s ?? 0} / 60s+ {slowHttpData.activeSummary?.over60s ?? 0}
+                        </span>
+                      </div>
+                      {activeHttpRequests.length === 0 ? (
+                        <div className="rounded border border-dashed border-border px-2 py-2 text-muted-foreground">当前没有运行中的 HTTP 请求。</div>
+                      ) : (
+                        <div className="max-h-32 space-y-1 overflow-y-auto pr-1">
+                          {activeHttpRequests.slice(0, 8).map((item) => (
+                            <div key={item.id} className="flex items-center gap-2 rounded border border-border bg-background/60 px-2 py-1.5">
+                              <span className={`rounded border px-1.5 py-0.5 ${requestKindTone(item.requestKind)}`}>{requestKindLabel(item.requestKind)}</span>
+                              <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
+                              <code className="min-w-0 flex-1 truncate font-mono" title={`${item.host || ''}${item.path}`}>{item.path}</code>
+                              <span className="font-mono text-amber-600">{formatLatency(item.ageMs)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {slowHttpSections.map((section) => (
+                        <div key={section.key} className="rounded-md border border-border bg-muted/10 px-2.5 py-2 text-xs">
+                          <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <span className="font-medium">{section.title}</span>
+                            <span className="text-muted-foreground">{section.items.length} 个端点</span>
                           </div>
-                          <div className="mt-1 flex flex-wrap gap-2 text-muted-foreground">
-                            <span>count {item.count}</span>
-                            <span>avg {formatLatency(item.avgMs)}</span>
-                            <span>max {formatLatency(item.maxMs)}</span>
-                            {item.errorCount > 0 ? <span className="text-destructive">error {item.errorCount}</span> : null}
-                            <span className="ml-auto font-mono">requestId {item.slowest.requestId}</span>
-                          </div>
+                          {section.items.length === 0 ? (
+                            <div className="rounded border border-dashed border-border px-2 py-2 text-muted-foreground">暂无样本。</div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {section.items.slice(0, 5).map((item, index) => (
+                                <div key={`${section.key}:${item.method}:${item.endpoint}`} className="rounded border border-border bg-background/60 px-2 py-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-5 text-right font-mono text-muted-foreground">#{index + 1}</span>
+                                    <span className={`rounded border px-1.5 py-0.5 ${requestKindTone(item.requestKind)}`}>{requestKindLabel(item.requestKind)}</span>
+                                    <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
+                                    <code className="min-w-0 flex-1 truncate font-mono" title={`${item.method} ${item.endpoint}`}>
+                                      {item.endpoint}
+                                    </code>
+                                    <span className="font-mono text-amber-600">{formatLatency(item.p95Ms)}</span>
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap gap-2 text-muted-foreground">
+                                    <span>count {item.count}</span>
+                                    <span>avg {formatLatency(item.avgMs)}</span>
+                                    <span>max {formatLatency(item.maxMs)}</span>
+                                    {item.errorCount > 0 ? <span className="text-destructive">error {item.errorCount}</span> : null}
+                                    <span className="ml-auto font-mono">requestId {item.slowest.requestId}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -4245,7 +4354,7 @@ function ReleaseBranchDialog({
                 开始发布
               </Button>
               <Button asChild variant="outline">
-                <Link to={`/release-center?project=${encodeURIComponent(branch.projectId)}`}>发布中心</Link>
+                <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
               </Button>
             </div>
 
@@ -4401,33 +4510,37 @@ function releaseStepsForRun(
   const failed = run.status === 'failed' || run.status === 'rollback_failed';
   const success = run.status === 'success' || run.status === 'rollback_success';
   const failurePhase = [...logs].reverse().find((log) => log.level === 'error')?.phase;
-  const sshSeen = phases.has('ssh');
+  const prepareSeen = phases.has('prepare');
   const healthSeen = phases.has('healthcheck');
   const scriptOne = scripts[0] || './fast.sh';
   const scriptTwo = scripts[1] || './exec_dep.sh';
+  const scriptOnePhase = releaseScriptPhase(scriptOne);
+  const scriptTwoPhase = releaseScriptPhase(scriptTwo);
+  const scriptOneSeen = phases.has(scriptOnePhase);
+  const scriptTwoSeen = phases.has(scriptTwoPhase);
 
   return [
     {
       id: 'connect',
       label: '连接服务器',
-      state: failurePhase === 'connect' ? 'failed' : phases.has('connect') || sshSeen || healthSeen || success ? 'done' : 'running',
+      state: failurePhase === 'connect' ? 'failed' : phases.has('connect') || prepareSeen || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : 'running',
     },
     {
       id: 'directory',
       label: '进入站点目录',
-      state: failurePhase === 'connect' ? 'pending' : sshSeen || healthSeen || success ? 'done' : phases.has('connect') ? 'running' : 'pending',
+      state: failurePhase === 'connect' ? 'pending' : prepareSeen || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : phases.has('connect') ? 'running' : 'pending',
     },
     {
       id: 'script-one',
       label: `执行 ${scriptOne.replace(/^\.\//, '')}`,
       detail: scriptOne,
-      state: failurePhase === 'ssh' && failed ? 'failed' : healthSeen || success ? 'done' : sshSeen ? 'running' : 'pending',
+      state: failurePhase === scriptOnePhase && failed ? 'failed' : scriptTwoSeen || healthSeen || success ? 'done' : scriptOneSeen ? 'running' : 'pending',
     },
     {
       id: 'script-two',
       label: `执行 ${scriptTwo.replace(/^\.\//, '')}`,
       detail: scriptTwo,
-      state: failurePhase === 'ssh' && failed ? 'failed' : healthSeen || success ? 'done' : sshSeen ? 'running' : 'pending',
+      state: failurePhase === scriptTwoPhase && failed ? 'failed' : healthSeen || success ? 'done' : scriptTwoSeen ? 'running' : 'pending',
     },
     {
       id: 'health',
@@ -4440,6 +4553,10 @@ function releaseStepsForRun(
       state: success ? 'done' : failed ? 'failed' : 'pending',
     },
   ];
+}
+
+function releaseScriptPhase(script: string): string {
+  return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
 }
 
 function releaseStatusLabel(status: string): string {
@@ -4637,6 +4754,20 @@ function BranchCard({
       danger: 'cds-actor-name-glow cds-actor-name-glow--danger',
     }[actorNameGlowTone]
     : 'text-foreground/70';
+  const stopSourceLabel = branch.lastStopSource === 'user' ? '用户'
+    : branch.lastStopSource === 'scheduler' ? '调度器'
+      : branch.lastStopSource === 'executor' ? '执行器'
+        : branch.lastStopSource === 'cds' ? 'CDS'
+          : branch.lastStopSource === 'webhook' ? 'Webhook'
+            : branch.lastStopSource === 'ai' ? 'AI'
+              : branch.lastStopSource === 'oom' ? 'OOM'
+                : branch.lastStopSource === 'external' ? '外部'
+                  : branch.lastStopSource === 'crash' ? '崩溃'
+                    : branch.lastStopSource === 'system' ? '系统'
+                      : '无记录';
+  const shouldShowStopReason = !isRunning && !isInterim;
+  const stopReasonText = branch.lastStopReason || '无停止记录';
+  const stopTimeText = branch.lastStoppedAt ? formatRelativeTime(branch.lastStoppedAt) : '时间未知';
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -5063,6 +5194,22 @@ function BranchCard({
           {timeBadge.label} {timeBadge.text}
         </span>
       </div>
+
+      {shouldShowStopReason ? (
+        <div
+          className="mx-5 mt-2 flex min-w-0 items-start gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground"
+          title={`${stopSourceLabel} · ${branch.lastStoppedAt || '时间未知'}\n${stopReasonText}`}
+        >
+          <PowerOff className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 font-medium text-foreground/75">{stopSourceLabel}</span>
+              <span className="shrink-0 text-muted-foreground/70">{stopTimeText}</span>
+            </div>
+            <div className="truncate text-muted-foreground/85">{stopReasonText}</div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 标签 chips 行(还原 legacy app.js:3868-3881):
           - 卡片内 tag chip 只展示；点击 chip/行空白处走卡片整体 onClick 打开详情

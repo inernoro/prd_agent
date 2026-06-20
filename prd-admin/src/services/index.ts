@@ -40,7 +40,7 @@ import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContra
 import type { ClearImageGenModelContract, ClearIntentModelContract, ClearVisionModelContract, CreateModelContract, DeleteModelContract, GetModelsContract, SetImageGenModelContract, SetIntentModelContract, SetMainModelContract, SetVisionModelContract, TestModelContract, UpdateModelContract, UpdateModelPrioritiesContract, GetModelAdapterInfoContract, GetModelsAdapterInfoBatchContract, GetAdapterInfoByModelNameContract } from '@/services/contracts/models';
 import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfigContract, GetLLMConfigsContract, UpdateLLMConfigContract } from '@/services/contracts/llmConfigs';
 import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract } from '@/services/contracts/llmLogs';
-import type { GetTeamActivityLogsContract, GetTeamActivityModulesContract } from '@/services/contracts/teamActivity';
+import type { GetTeamActivityInsightsContract, GetTeamActivityLogsContract, GetTeamActivityModulesContract, GetTeamActivityStatsContract, SetTeamActivityInsightStateContract } from '@/services/contracts/teamActivity';
 import type { GetAdminDocumentContentContract } from '@/services/contracts/adminDocuments';
 import type { ListUploadArtifactsContract } from '@/services/contracts/uploadArtifacts';
 import type { AdminImpersonateContract } from '@/services/contracts/lab';
@@ -64,6 +64,7 @@ import type {
   PlanImageGenContract,
   RunImageGenBatchStreamContract,
   RunImageGenRunStreamContract,
+  ScriptStoryboardContract,
   StreamImageGenRunWithRetryContract,
 } from '@/services/contracts/imageGen';
 import type { DeleteModelLabGroupContract, ListModelLabGroupsContract, UpsertModelLabGroupContract } from '@/services/contracts/modelLabGroups';
@@ -243,6 +244,8 @@ import type {
   RejectDefectFixItemContract,
   CreateBatchShareContract,
   GetShareScoresContract,
+  GetDefectAutomationConsoleContract,
+  EnsureDefectAutomationAuthorizationContract,
 } from '@/services/contracts/defectAgent';
 import type { IOpenPlatformService } from '@/services/contracts/openPlatform';
 import type { IAutomationsService } from '@/services/contracts/automations';
@@ -316,7 +319,7 @@ import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatfor
 import { clearImageGenModelReal, clearIntentModelReal, clearVisionModelReal, createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal, updateModelPrioritiesReal, getModelAdapterInfoReal, getModelsAdapterInfoBatchReal, getAdapterInfoByModelNameReal } from '@/services/real/models';
 import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
 import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal } from '@/services/real/llmLogs';
-import { getTeamActivityLogsReal, getTeamActivityModulesReal } from '@/services/real/teamActivity';
+import { getTeamActivityInsightsReal, getTeamActivityLogsReal, getTeamActivityModulesReal, getTeamActivityStatsReal, setTeamActivityInsightStateReal } from '@/services/real/teamActivity';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
 import { listUploadArtifactsReal } from '@/services/real/uploadArtifacts';
 import {
@@ -357,6 +360,7 @@ import {
   getImageGenRunReal,
   getImageGenSizeCapsReal,
   planImageGenReal,
+  scriptStoryboardReal,
   runImageGenBatchStreamReal,
   runImageGenRunStreamReal,
   streamImageGenRunWithRetryReal,
@@ -394,6 +398,7 @@ import {
   updateArticleMarkerReal,
   generateVisualAgentWorkspaceTitleReal,
   getVisualAgentImageGenModelsReal,
+  getVisualAgentText2ImgModelsReal,
   getVisualAgentAdapterInfoReal,
 } from '@/services/real/visualAgent';
 import {
@@ -545,6 +550,8 @@ import {
   createBatchShareReal,
   getShareScoresReal,
   rejectDefectFixItemReal,
+  getDefectAutomationConsoleReal,
+  ensureDefectAutomationAuthorizationReal,
 } from '@/services/real/defectAgent';
 import { OpenPlatformService } from '@/services/real/openPlatform';
 import { AutomationsService } from '@/services/real/automations';
@@ -884,6 +891,9 @@ export const activateLLMConfig: ActivateLLMConfigContract = withAuth(activateLLM
 
 export const getTeamActivityLogs: GetTeamActivityLogsContract = withAuth(getTeamActivityLogsReal);
 export const getTeamActivityModules: GetTeamActivityModulesContract = withAuth(getTeamActivityModulesReal);
+export const getTeamActivityStats: GetTeamActivityStatsContract = withAuth(getTeamActivityStatsReal);
+export const getTeamActivityInsights: GetTeamActivityInsightsContract = withAuth(getTeamActivityInsightsReal);
+export const setTeamActivityInsightState: SetTeamActivityInsightStateContract = withAuth(setTeamActivityInsightStateReal);
 
 export const getLlmLogs: GetLlmLogsContract = withAuth(getLlmLogsReal);
 export const getLlmLogDetail: GetLlmLogDetailContract = withAuth(getLlmLogDetailReal);
@@ -918,6 +928,7 @@ export const upsertModelLabModelSet: UpsertModelLabModelSetContract = withAuth(u
 export const runModelLabStream: RunModelLabStreamContract = withAuth(runModelLabStreamReal);
 
 export const planImageGen: PlanImageGenContract = withAuth(planImageGenReal);
+export const scriptStoryboard: ScriptStoryboardContract = withAuth(scriptStoryboardReal);
 export const clarifyImageGenPrompt: ClarifyImageGenPromptContract = withAuth(clarifyImageGenPromptReal);
 export const generateImageGen: GenerateImageGenContract = withAuth(generateImageGenReal);
 export const runImageGenBatchStream: RunImageGenBatchStreamContract = withAuth(runImageGenBatchStreamReal);
@@ -993,6 +1004,7 @@ export const extractArticleMarkers = extractArticleMarkersReal;
 export const exportArticle = exportArticleReal;
 export const updateArticleMarker = updateArticleMarkerReal;
 export const getVisualAgentImageGenModels = getVisualAgentImageGenModelsReal;
+export const getVisualAgentText2ImgModels = getVisualAgentText2ImgModelsReal;
 export const getVisualAgentAdapterInfo = getVisualAgentAdapterInfoReal;
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
@@ -1112,6 +1124,8 @@ export const acceptDefectFixItem: AcceptDefectFixItemContract = withAuth(acceptD
 export const rejectDefectFixItem: RejectDefectFixItemContract = withAuth(rejectDefectFixItemReal);
 export const createBatchShare: CreateBatchShareContract = withAuth(createBatchShareReal);
 export const getShareScores: GetShareScoresContract = withAuth(getShareScoresReal);
+export const getDefectAutomationConsole: GetDefectAutomationConsoleContract = withAuth(getDefectAutomationConsoleReal);
+export const ensureDefectAutomationAuthorization: EnsureDefectAutomationAuthorizationContract = withAuth(ensureDefectAutomationAuthorizationReal);
 
 // ─── Mobile Dashboard ───
 export const getMobileFeed: GetMobileFeedContract = withAuth(getMobileFeedReal);
@@ -1463,6 +1477,7 @@ export type {
   ChangelogDay,
   ChangelogRelease,
   ReleasesView,
+  GitHubLinkedDefect,
   GitHubLogEntry,
   GitHubLogsView,
   ChangelogAiSummarySubtab,
@@ -1691,6 +1706,7 @@ export {
   reuploadSite,
   createFromContent,
   listSites,
+  getSiteContent,
   getSite,
   updateSite,
   deleteSite,
@@ -1716,6 +1732,19 @@ export {
   copySiteToTeam,
 } from '@/services/real/webPages';
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, WebPageGroup, WebPageGroupAccessRule, WebPageGroupVisibility, WebPageGroupSubjectType, WebPageGroupRole, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry, ShareAnalyticsVisitorSummary, ShareAnalyticsTrendPoint, ShareAnalyticsHourlyPoint, ShareAnalyticsVisitorStats, ShareAnalyticsCommentEntry } from '@/services/real/webPages';
+
+// ── Short Video Materials 短视频素材解析 ──
+export {
+  createShortVideoMaterialRun,
+  getShortVideoMaterialRun,
+} from '@/services/real/shortVideoMaterials';
+export type {
+  CreateShortVideoMaterialInput,
+  ShortVideoMaterialRun,
+  ShortVideoMaterialRunResponse,
+  ShortVideoMaterialStage,
+  ShortVideoMaterialStageStatus,
+} from '@/services/real/shortVideoMaterials';
 
 // ── Team 团队（跨应用协作） ──
 export {
@@ -1909,6 +1938,10 @@ export {
   getDocumentEntry,
   moveDocumentEntry,
   updateDocumentContent,
+  listEntryVersions,
+  getEntryVersion,
+  restoreEntryVersion,
+  getStoreSize,
   setFolderPrimaryChild,
   rebuildContentIndex,
   listPublicDocumentStores,
@@ -2007,6 +2040,9 @@ export {
   submitPmScoreReal as submitPmScore,
   finalizePmEvaluationReal as finalizePmEvaluation,
   getPmDashboardReal as getPmDashboard,
+  getPmKnowledgeOverviewReal as getPmKnowledgeOverview,
+  listPmKnowledgeEntriesReal as listPmKnowledgeEntries,
+  getPmKnowledgeEntryContentReal as getPmKnowledgeEntryContent,
   getPmRewardConfigReal as getPmRewardConfig,
   updatePmRewardConfigReal as updatePmRewardConfig,
   togglePmExcellenceReal as togglePmExcellence,
@@ -2064,10 +2100,20 @@ export {
   updatePmRiskReal as updatePmRisk,
   deletePmRiskReal as deletePmRisk,
   getPmBurndownReal as getPmBurndown,
+  listPmBriefingsReal as listPmBriefings,
+  getPmBriefingReal as getPmBriefing,
+  deletePmBriefingReal as deletePmBriefing,
+  toggleBriefingShareReal as toggleBriefingShare,
+  saveBriefingToHostingReal as saveBriefingToHosting,
+  listBriefingStylesReal as listBriefingStyles,
+  restylePmBriefingReal as restylePmBriefing,
+  renamePmBriefingReal as renamePmBriefing,
   getPmMyTodosReal as getPmMyTodos,
   getPmAgentPreferencesReal as getPmAgentPreferences,
   updatePmQuickActionsReal as updatePmQuickActions,
   getPmReportSummaryReal as getPmReportSummary,
+  getPmGlobalProjectsReal as getPmGlobalProjects,
+  getPmGlobalSummaryReal as getPmGlobalSummary,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -2092,6 +2138,8 @@ export type {
   PmMilestoneStatus,
   PmMilestoneHealth,
   SavePmMilestoneInput,
+  PmBriefing,
+  PmBriefingStyle,
   PmTask,
   PmTaskDraft,
   PmTaskWorkLog,
@@ -2132,6 +2180,7 @@ export type {
 export {
   getCcasMeta,
   generateCcasEquipment,
+  uploadCcasEquipment,
   listCcasEquipment,
   toggleCcasEquipmentFavorite,
   deleteCcasEquipment,
@@ -2143,6 +2192,7 @@ export {
   listKnowledgeEntries,
   getKnowledgeEntryContent,
   CCAS_PRD_STREAM_URL,
+  CCAS_PRD_REVISE_STREAM_URL,
   CCAS_FLOW_PARSE_STREAM_URL,
   CCAS_QA_STREAM_URL,
   CCAS_SQL_AI_STREAM_URL,

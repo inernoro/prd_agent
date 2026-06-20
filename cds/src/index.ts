@@ -32,6 +32,7 @@ import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import { createGracefulShutdownController } from './services/graceful-shutdown.js';
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
+import { PreviewCanaryService, type PreviewCanaryTarget } from './services/preview-canary.js';
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
@@ -39,6 +40,7 @@ import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } fr
 import { shouldRetryInterruptedWebhookDispatch } from './services/deploy-dispatch-retry.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
+import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -364,6 +366,7 @@ if (!['json', 'mongo', 'mongo-split', 'auto'].includes(rawStorageMode)) {
     `Unknown CDS_STORAGE_MODE '${rawStorageMode}'. Valid values: 'json' | 'mongo' | 'mongo-split' | 'auto'.`,
   );
 }
+const stateBootstrapMode = resolveStateBootstrapMode(process.env.CDS_STATE_BOOTSTRAP_MODE);
 /**
  * P4 Part 18 (D.2): storage-mode resolution.
  *
@@ -446,14 +449,20 @@ async function initStateService(): Promise<void> {
       try { await splitHandle.close(); } catch { /* best effort */ }
       throw err;
     }
-    // Seed: 全空 mongo + 有 state.json → 把 JSON 一次性导入 split collections
-    if (splitStore.load() === null) {
-      const jsonStore = new JsonStateBackingStore(stateFile);
-      const existing = jsonStore.load();
-      if (existing) {
-        console.log('  [storage] mongo-split 全空但 state.json 存在 — seed 数据中');
-        await splitStore.seedIfEmpty(existing);
-      }
+    // Seed: 全空 mongo + 有 state.json → 仅在显式 migrate 模式下导入。
+    // 新安装默认 fresh，避免旧 repoRoot 里的 .cds/state.json 污染新 CDS。
+    const splitSeedResult = await seedStateFromJsonIfAllowed(
+      stateBootstrapMode,
+      splitStore,
+      new JsonStateBackingStore(stateFile),
+    );
+    if (splitSeedResult === 'seeded') {
+      console.log('  [storage] mongo-split 全空且 CDS_STATE_BOOTSTRAP_MODE=migrate — 从 state.json seed 数据');
+    } else if (splitSeedResult === 'skipped') {
+      console.warn(
+        '  [storage] mongo-split 全空但 state.json 存在 — 默认 fresh 启动，已跳过旧数据导入。'
+        + ' 如需迁移旧数据，设置 CDS_STATE_BOOTSTRAP_MODE=migrate 后重启。',
+      );
     }
     stateService = new StateService(stateFile, config.repoRoot, splitStore);
     stateService.load();
@@ -490,16 +499,21 @@ async function initStateService(): Promise<void> {
 
   // Mongo init succeeded. If the collection is fresh (load() returned
   // null from the init-time query) AND a state.json exists on disk,
-  // import the file snapshot once so existing deployments can
-  // opt-in to mongo without losing data. After the seed, mongo owns
-  // the canonical state.
-  if (mongoStore.load() === null) {
-    const jsonStore = new JsonStateBackingStore(stateFile);
-    const existing = jsonStore.load();
-    if (existing) {
-      console.log('  [storage] mongo is empty but state.json exists — seeding mongo from file');
-      await mongoStore.seedIfEmpty(existing);
-    }
+  // import the file snapshot only when operators explicitly opt in.
+  // Default fresh startup must not silently carry old default data into
+  // a new CDS instance.
+  const mongoSeedResult = await seedStateFromJsonIfAllowed(
+    stateBootstrapMode,
+    mongoStore,
+    new JsonStateBackingStore(stateFile),
+  );
+  if (mongoSeedResult === 'seeded') {
+    console.log('  [storage] mongo is empty and CDS_STATE_BOOTSTRAP_MODE=migrate — seeding mongo from file');
+  } else if (mongoSeedResult === 'skipped') {
+    console.warn(
+      '  [storage] mongo is empty but state.json exists — default fresh startup skipped file seed. '
+      + 'Set CDS_STATE_BOOTSTRAP_MODE=migrate to import legacy state.',
+    );
   }
 
   stateService = new StateService(stateFile, config.repoRoot, mongoStore);
@@ -986,6 +1000,7 @@ const bridgeService = new BridgeService();
 // 让独立的 cds-forwarder 进程消费。CDS_USE_FORWARDER=1 时启用;否则跳过
 // 不浪费 IO。详见 cds/src/services/forwarder-route-publisher.ts。
 let forwarderRoutePublisher: ForwarderRoutePublisher | null = null;
+let previewCanaryService: PreviewCanaryService | null = null;
 if (process.env.CDS_USE_FORWARDER === '1') {
   const rootDomainsForPublisher = (config.rootDomains && config.rootDomains.length)
     ? config.rootDomains
@@ -1002,6 +1017,10 @@ if (process.env.CDS_USE_FORWARDER === '1') {
       state: stateService,
       outputPath,
       rootDomains: rootDomainsForPublisher,
+      stableSamplesRequired: Math.max(
+        1,
+        Number.parseInt(process.env.CDS_FORWARDER_ROUTE_STABLE_SAMPLES || '', 10) || 2,
+      ),
       logger: {
         info: (m) => console.log(m),
         warn: (m) => console.warn(m),
@@ -1013,6 +1032,71 @@ if (process.env.CDS_USE_FORWARDER === '1') {
       `  [forwarder-publisher] enabled, writing routes to ${outputPath} every 2s`,
     );
   }
+}
+
+if (config.mode !== 'executor') {
+  const explicitCanaryUrls = parseCsv(process.env.CDS_PREVIEW_CANARY_URLS || '') ?? [];
+  previewCanaryService = new PreviewCanaryService({
+    getTargets: (): PreviewCanaryTarget[] => {
+      if (explicitCanaryUrls.length) {
+        return explicitCanaryUrls.map((url) => ({ url, label: url }));
+      }
+      const previewHost = config.previewDomain || config.rootDomains?.[0];
+      if (!previewHost) return [];
+      const targets: PreviewCanaryTarget[] = [];
+      for (const branch of stateService.getAllBranches()) {
+        if (branch.status !== 'running' || !branch.branch) continue;
+        const project = stateService.getProject(branch.projectId);
+        const built = buildPreviewUrlForProject(previewHost, branch.branch, project, branch.projectId);
+        if (!built.url) continue;
+        targets.push({ url: built.url, label: branch.id });
+      }
+      return targets;
+    },
+    intervalMs: Math.max(10_000, Number.parseInt(process.env.CDS_PREVIEW_CANARY_INTERVAL_MS || '', 10) || 30_000),
+    timeoutMs: Math.max(2_000, Number.parseInt(process.env.CDS_PREVIEW_CANARY_TIMEOUT_MS || '', 10) || 8_000),
+    sampleLimit: Math.max(1, Number.parseInt(process.env.CDS_PREVIEW_CANARY_SAMPLE_LIMIT || '', 10) || 3),
+    maxFailureRatio: Number.parseFloat(process.env.CDS_PREVIEW_CANARY_MAX_FAILURE_RATIO || '') || 0,
+    minFailuresToAlert: Math.max(1, Number.parseInt(process.env.CDS_PREVIEW_CANARY_MIN_FAILURES || '', 10) || 1),
+    logger: {
+      warn: (m) => console.warn(m),
+      info: (m) => console.log(m),
+      error: (m) => console.error(m),
+    },
+    onAlert: (payload) => {
+      const first = payload.results.find((r) => !r.ok);
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: 'warn',
+        source: 'preview-canary',
+        action: 'preview.canary.alert',
+        message: `${payload.failures}/${payload.total} preview probe(s) failed`,
+        branchId: first?.headers?.cdsBranch || first?.label || null,
+        requestId: first?.requestId || first?.probeId,
+        upstream: first?.headers?.cdsUpstream || null,
+        status: first ? String(first.status) : null,
+        error: first?.error ? { message: first.error } : undefined,
+        details: payload as unknown as Record<string, unknown>,
+      });
+    },
+    onRecovery: (payload) => {
+      const first = payload.recovered[0];
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: 'info',
+        source: 'preview-canary',
+        action: 'preview.canary.recovered',
+        message: `${payload.recovered.length} preview probe(s) recovered`,
+        branchId: first?.headers?.cdsBranch || first?.label || null,
+        requestId: first?.requestId || first?.probeId,
+        upstream: first?.headers?.cdsUpstream || null,
+        status: first ? String(first.status) : null,
+        details: payload as unknown as Record<string, unknown>,
+      });
+    },
+  });
+  previewCanaryService.start();
+  console.log('  [preview-canary] enabled for running preview URLs');
 }
 
 // ── Graceful shutdown controller ──
@@ -1159,17 +1243,39 @@ schedulerService.setCoolFn(async (slug: string) => {
 proxyService.setScheduler(schedulerService);
 
 // ── Janitor (Phase 2 resilience) ──
-// Disabled by default. Opt-in via cds.config.json { "janitor": { "enabled": true, ... } }.
-// Sweeps stale worktrees (> worktreeTTLDays idle) and warns on disk usage.
+// Enabled by default. Sweeps stale local containers/worktrees after a global
+// expiry window. The retention window is capped at 7 days by product policy.
 // See doc/design.cds-resilience.md Phase 2.
-const janitorService = new JanitorService(
-  stateService,
-  config.janitor || {
-    enabled: false,
-    worktreeTTLDays: 30,
+{
+  const defaultJanitor = {
+    enabled: true,
+    worktreeTTLDays: 7,
     diskWarnPercent: 80,
     sweepIntervalSeconds: 3600,
-  },
+  };
+  if (!config.janitor) {
+    config.janitor = { ...defaultJanitor };
+  } else {
+    config.janitor = {
+      ...defaultJanitor,
+      ...config.janitor,
+      worktreeTTLDays: Math.min(Math.max(Number(config.janitor.worktreeTTLDays) || 7, 1), 7),
+    };
+  }
+  const janitorEnabledOverride = stateService.getJanitorEnabledOverride();
+  if (janitorEnabledOverride !== undefined) {
+    config.janitor.enabled = janitorEnabledOverride;
+    console.log(`  [janitor] applying UI override: enabled=${janitorEnabledOverride}`);
+  }
+  const janitorTTLOverride = stateService.getJanitorWorktreeTTLOverride();
+  if (janitorTTLOverride !== undefined) {
+    config.janitor.worktreeTTLDays = Math.min(Math.max(janitorTTLOverride, 1), 7);
+    console.log(`  [janitor] applying UI override: worktreeTTLDays=${config.janitor.worktreeTTLDays}`);
+  }
+}
+const janitorService = new JanitorService(
+  stateService,
+  config.janitor,
   config.worktreeBase,
 );
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
@@ -2157,7 +2263,11 @@ janitorService.setRemoveFn(async (slug: string) => {
       stateService.save();
       schedulerService.start();
     }
-    janitorService.start();
+    if (config.mode !== 'executor') {
+      janitorService.start();
+    } else {
+      console.log('[janitor] skipped on executor node (cleanup decisions are coordinator-only)');
+    }
     // 2026-05-14 Codex review P1 修复：auto-lifecycle 只能在协调者角色
     // （standalone / scheduler）跑。executor 是 worker 节点，集群共享 state
     // 时若每个 executor 都扫全部项目跑 auto-stop/publish，会把别的 executor
@@ -2184,6 +2294,8 @@ janitorService.setRemoveFn(async (slug: string) => {
     autoLifecycleService.stop();
     stopAutoRestartLoop();
     infraFlapWatchdog.stop();
+    forwarderRoutePublisher?.stop();
+    previewCanaryService?.stop();
   }
 
   startBackgroundServices();
@@ -2222,6 +2334,8 @@ async function shutdown(signal: string): Promise<void> {
   systemLogMonitor.stop();
   schedulerService.stop();
   janitorService.stop();
+  forwarderRoutePublisher?.stop();
+  previewCanaryService?.stop();
   // 2026-05-14 Cursor Bugbot Medium 修复：shutdown() 直接逐个 stop，
   // 漏了 autoLifecycleService.stop()（stopBackgroundServices 里有，但
   // 信号处理走的是本函数）。否则 graceful shutdown 期间 auto-lifecycle
@@ -2860,6 +2974,7 @@ const app = createServer({
   shell,
   config,
   schedulerService,
+  janitorService,
   registry,
   getClusterStrategy: () => clusterStrategy,
   storageModeContext,

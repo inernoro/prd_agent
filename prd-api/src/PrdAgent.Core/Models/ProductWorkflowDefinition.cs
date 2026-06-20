@@ -1,7 +1,7 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 产品管理智能体 — 通用状态机 / 流程流转定义（参考 TAPD）。
+/// 产品管理智能体 — 通用状态机 / 流程流转定义。
 ///
 /// 设计目标：替代 defect-agent 那种"状态流转硬编码在 Controller switch"的反模式。
 /// 每类对象（需求 / 功能 / 缺陷 / 版本 / 升级申请）绑定一个 WorkflowDefinition，
@@ -41,6 +41,15 @@ public class ProductWorkflowDefinition
     /// <summary>软删除标记</summary>
     public bool IsDeleted { get; set; }
 
+    /// <summary>
+    /// 内置种子版本（来自 RequirementWorkflowCatalog / ProductWorkflowDefaults）。
+    /// 仅当未用户自定义且 SeedRevision 低于代码版本时，EnsureDefaultWorkflowsSeededAsync 会覆盖状态与流转。
+    /// </summary>
+    public int SeedRevision { get; set; }
+
+    /// <summary>管理员在「设置 → 流程模板」保存后为 true，禁止种子逻辑再覆盖。</summary>
+    public bool IsUserCustomized { get; set; }
+
     /// <summary>取初始状态 Key（IsInitial 优先，否则取第一个）。</summary>
     public string? GetInitialStateKey()
         => States.FirstOrDefault(s => s.IsInitial)?.Key ?? States.FirstOrDefault()?.Key;
@@ -54,6 +63,9 @@ public class ProductWorkflowState
 
     /// <summary>状态显示名（如 "待评审"）</summary>
     public string Label { get; set; } = string.Empty;
+
+    /// <summary>状态说明（配置页展示，帮助团队理解该状态含义）</summary>
+    public string? Description { get; set; }
 
     /// <summary>状态颜色（CSS 颜色，用于标签 / 看板列着色）</summary>
     public string? Color { get; set; }
@@ -103,4 +115,17 @@ public class ProductWorkflowTransition
 
     /// <summary>自动化：触发该流转时把处理人自动指派给操作人本人（claim）。</summary>
     public bool AutoAssignToActor { get; set; }
+
+    /// <summary>
+    /// 流转前必须已填写的字段 Key（如 title / assigneeId / grade / comment）。
+    /// comment 与 RequireComment 等价；为空表示除 RequireComment 外无额外字段要求。
+    /// </summary>
+    public List<string>? RequiredFieldKeys { get; set; }
+
+    /// <summary>
+    /// 跨对象联动：流转成功后额外触发关联对象操作。
+    /// requirement = 缺陷转需求；defect = 需求转缺陷并标记产品缺陷。
+    /// 见 ProductEntityType.Requirement / ProductEntityType.Defect。
+    /// </summary>
+    public string? LinkEntityType { get; set; }
 }

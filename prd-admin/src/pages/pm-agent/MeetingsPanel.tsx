@@ -6,7 +6,7 @@ import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
 import {
-  listPmMeetings, createPmMeeting, updatePmMeeting, deletePmMeeting, getUsers,
+  listPmMeetings, createPmMeeting, updatePmMeeting, deletePmMeeting, getPmMembers,
 } from '@/services';
 import type { PmMeeting } from '@/services/contracts/pmAgent';
 import type { AdminUser } from '@/types/admin';
@@ -32,7 +32,8 @@ function toLocalInput(s?: string | null) {
  */
 export function MeetingsPanel({ projectId }: Props) {
   const [meetings, setMeetings] = useState<PmMeeting[]>([]);
-  const [users, setUsers] = useState<AdminUser[]>([]);
+  // userId → 显示名（项目成员 + 选择时记录），不再预取管理员用户列表（普通用户无 users.read 权限）
+  const [nameMap, setNameMap] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<'list' | 'detail'>('list');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -59,10 +60,17 @@ export function MeetingsPanel({ projectId }: Props) {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    void getUsers({ page: 1, pageSize: 200 }).then((res) => { if (res.success) setUsers(res.data.items.filter((u) => u.status === 'Active')); });
-  }, []);
+    void getPmMembers(projectId).then((res) => {
+      if (!res.success) return;
+      setNameMap((prev) => {
+        const next = new Map(prev);
+        for (const m of [...res.data.members, ...res.data.observers]) next.set(m.userId, m.displayName || m.userId);
+        return next;
+      });
+    });
+  }, [projectId]);
 
-  const nameOf = (uid: string) => users.find((u) => u.userId === uid)?.displayName || uid;
+  const nameOf = (uid: string) => nameMap.get(uid) || uid;
   const selected = meetings.find((m) => m.id === selectedId) || null;
 
   const attendees = useMemo(() => {
@@ -105,7 +113,11 @@ export function MeetingsPanel({ projectId }: Props) {
   const openDetail = (id: string) => { setEditing(null); setSelectedId(id); setMode('detail'); };
   const backToList = () => { setEditing(null); setMode('list'); };
 
-  const addAttendee = (uid: string) => { setPickId(''); if (uid && !dAttendees.includes(uid)) setDAttendees((p) => [...p, uid]); };
+  const addAttendee = (u: AdminUser) => {
+    setPickId('');
+    setNameMap((prev) => new Map(prev).set(u.userId, u.displayName || u.username || u.userId));
+    if (u.userId && !dAttendees.includes(u.userId)) setDAttendees((p) => [...p, u.userId]);
+  };
   const removeAttendee = (uid: string) => setDAttendees((p) => p.filter((x) => x !== uid));
 
   const saveDraft = async () => {
@@ -155,7 +167,7 @@ export function MeetingsPanel({ projectId }: Props) {
           <input value={dLoc} onChange={(e) => setDLoc(e.target.value)} placeholder="会议地点 / 线上链接"
             className="text-[12px] rounded-md px-2 py-1 outline-none border" style={{ width: 220, background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
           <Users size={13} style={{ color: 'var(--text-muted)' }} />
-          <div style={{ width: 200 }}><UserSearchSelect value={pickId} onChange={addAttendee} users={users} placeholder="添加参会人…" uiSize="sm" /></div>
+          <div style={{ width: 200 }}><UserSearchSelect value={pickId} onChange={() => {}} onSelectUser={addAttendee} placeholder="添加参会人…" uiSize="sm" /></div>
           <div className="flex items-center gap-1 flex-wrap">
             {dAttendees.map((uid) => (
               <span key={uid} className="text-[11px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{ background: 'var(--bg-base)', color: 'var(--text-secondary)' }}>

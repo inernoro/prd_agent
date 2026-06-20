@@ -183,23 +183,23 @@ export function LibraryShareViewPage() {
             {isSingleDoc ? <><FileText size={11} /> 单篇</> : <><BookOpen size={11} /> 知识库</>}
           </span>
         </div>
-        {/* 登录用户：分享页右上角一键回到自己的知识库（对齐用户诉求；匿名访客不显示，避免点了去登录页） */}
-        {isAuthenticated && (
-          <button
-            onClick={() => navigate('/document-store')}
-            style={{
-              marginLeft: 'auto', flexShrink: 0,
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '6px 12px', borderRadius: 8,
-              border: '1px solid rgba(255,255,255,0.12)',
-              background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)',
-              fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
-            }}
-            title="回到我的知识库"
-          >
-            <BookOpen size={14} /> 返回我的知识库
-          </button>
-        )}
+        {/* 分享页右上角一键回到知识库：常驻显示（2026-06-12 用户反馈"找不到回知识库的入口"——
+            旧逻辑只在登录态渲染，未登录标签页里按钮整个消失，用户以为功能没了）。
+            匿名点击会被路由守卫带去登录，文案如实说明，不藏入口。 */}
+        <button
+          onClick={() => navigate('/document-store')}
+          style={{
+            marginLeft: 'auto', flexShrink: 0,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '6px 12px', borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.12)',
+            background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)',
+            fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
+          }}
+          title={isAuthenticated ? '回到我的知识库' : '登录后进入我的知识库'}
+        >
+          <BookOpen size={14} /> {isAuthenticated ? '返回我的知识库' : '登录进入知识库'}
+        </button>
       </div>
 
       {/* 简介条：低饱和度 */}

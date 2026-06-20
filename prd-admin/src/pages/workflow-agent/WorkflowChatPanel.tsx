@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
-import { Send, X, Code, CheckCircle2, Wand2, AlertTriangle } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent, type CSSProperties } from 'react';
+import { Send, X, Code, CheckCircle2, Wand2, AlertTriangle, GitBranch, KeyRound, ListChecks } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useSseStream } from '@/lib/useSseStream';
@@ -7,7 +7,7 @@ import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { StreamingText } from '@/components/streaming';
 import { getChatHistory } from '@/services';
 import { api } from '@/services/api';
-import type { WorkflowChatGenerated } from '@/services/contracts/workflowAgent';
+import type { WorkflowChatGenerated, WorkflowValidationResult, WorkflowRequiredInput } from '@/services/contracts/workflowAgent';
 
 function getApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
@@ -19,6 +19,12 @@ function joinUrl(base: string, path: string) {
   const p = path.replace(/^\/+/, '');
   if (!b) return `/${p}`;
   return `${b}/${p}`;
+}
+
+/** 从 workflow_created/generated 事件 payload 兜底构造校验快照（仅当权威 workflow_validation 缺失时用）。 */
+function validationFromPayload(obj: { valid?: boolean; requiredInputs?: WorkflowRequiredInput[] }): WorkflowValidationResult | undefined {
+  if (obj.valid === undefined && obj.requiredInputs === undefined) return undefined;
+  return { valid: obj.valid ?? false, issues: [], wireNotes: [], requiredInputs: obj.requiredInputs ?? [] };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -33,6 +39,8 @@ interface Props {
   initialInput?: string;
   /** initialInput 被消费后通知外部清空，避免重复填入 */
   onInitialInputConsumed?: () => void;
+  /** 为 true 时 initialInput 注入后自动发送一次（用于"列表页一句话起步"） */
+  autoSend?: boolean;
 }
 
 interface UiMessage {
@@ -41,11 +49,12 @@ interface UiMessage {
   content: string;
   generated?: WorkflowChatGenerated;
   generatedWorkflowId?: string;
+  validation?: WorkflowValidationResult;
   isStreaming?: boolean;
   timestamp: string;
 }
 
-export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initialInput, onInitialInputConsumed }: Props) {
+export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initialInput, onInitialInputConsumed, autoSend }: Props) {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [codeSnippet, setCodeSnippet] = useState('');
@@ -56,6 +65,8 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
   const inputRef = useRef<HTMLTextAreaElement>(null);
   /** 当前正在流式输出的 assistant 消息 ID */
   const assistantMsgIdRef = useRef<string>('');
+  /** 已自动发送过初始输入（防重复 + 防历史加载覆盖 auto-send 的消息） */
+  const autoSentRef = useRef(false);
   /** 缓存 onApplyWorkflow 最新引用 */
   const onApplyRef = useRef(onApplyWorkflow);
   onApplyRef.current = onApplyWorkflow;
@@ -79,25 +90,36 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
     },
     onEvent: {
       workflow_created: (data: unknown) => {
-        const obj = data as { workflow: WorkflowChatGenerated; workflowId: string };
+        const obj = data as { workflow: WorkflowChatGenerated; workflowId: string; valid?: boolean; requiredInputs?: WorkflowRequiredInput[] };
         const id = assistantMsgIdRef.current;
         if (!id) return;
         setMessages((prev) =>
           prev.map((m) =>
             m.id === id
-              ? { ...m, generated: obj.workflow, generatedWorkflowId: obj.workflowId }
+              ? { ...m, generated: obj.workflow, generatedWorkflowId: obj.workflowId, validation: m.validation ?? validationFromPayload(obj) }
               : m,
           ),
         );
         onApplyRef.current(obj.workflow, obj.workflowId);
       },
       workflow_generated: (data: unknown) => {
-        const obj = data as { generated: WorkflowChatGenerated };
+        const obj = data as { generated: WorkflowChatGenerated; valid?: boolean; requiredInputs?: WorkflowRequiredInput[] };
+        const id = assistantMsgIdRef.current;
+        if (!id) return;
+        // 用 workflow_validation 事件为权威；若它丢了/晚到，用本事件 payload 的 valid+requiredInputs 兜底门禁
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id ? { ...m, generated: obj.generated, validation: m.validation ?? validationFromPayload(obj) } : m,
+          ),
+        );
+      },
+      workflow_validation: (data: unknown) => {
+        const obj = data as WorkflowValidationResult;
         const id = assistantMsgIdRef.current;
         if (!id) return;
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === id ? { ...m, generated: obj.generated } : m,
+            m.id === id ? { ...m, validation: obj } : m,
           ),
         );
       },
@@ -131,13 +153,17 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
     setLoadingHistory(true);
     getChatHistory({ workflowId })
       .then((res) => {
-        if (res.success && res.data) {
+        // 「一句话起步」会在 mount 时 auto-send，若历史晚于 doSend 返回会覆盖刚追加的消息
+        // （新建工作流历史为空 → 直接清空流式消息）。auto-send 已发起则跳过历史回填。
+        if (res.success && res.data && !autoSentRef.current) {
           setMessages(
             res.data.messages.map((m) => ({
               id: m.id,
               role: m.role,
               content: m.content,
               generated: m.generated ?? undefined,
+              generatedWorkflowId: m.generatedWorkflowId ?? undefined,
+              validation: m.validation ?? undefined,
               timestamp: m.createdAt,
             }))
           );
@@ -145,16 +171,6 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
       })
       .finally(() => setLoadingHistory(false));
   }, [workflowId]);
-
-  // 外部注入初始输入（如"AI 填写"预填）
-  useEffect(() => {
-    if (initialInput) {
-      setInput(initialInput);
-      onInitialInputConsumed?.();
-      // 延迟聚焦，等 DOM 渲染完
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-  }, [initialInput, onInitialInputConsumed]);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -178,14 +194,14 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
     }
   }, [phase]);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  const doSend = useCallback(async (rawText: string, code: string) => {
+    const text = rawText.trim();
     if (!text || isStreaming) return;
 
     const userMsg: UiMessage = {
       id: `u-${Date.now()}`,
       role: 'user',
-      content: text + (codeSnippet ? `\n\n\`\`\`\n${codeSnippet}\n\`\`\`` : ''),
+      content: text + (code ? `\n\n\`\`\`\n${code}\n\`\`\`` : ''),
       timestamp: new Date().toISOString(),
     };
 
@@ -207,10 +223,27 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
       body: {
         workflowId: workflowId || undefined,
         instruction: text,
-        codeSnippet: codeSnippet || undefined,
+        codeSnippet: code || undefined,
       },
     });
-  }, [input, codeSnippet, workflowId, isStreaming, start]);
+  }, [workflowId, isStreaming, start]);
+
+  const handleSend = useCallback(() => doSend(input, codeSnippet), [doSend, input, codeSnippet]);
+
+  // 外部注入初始输入（如"AI 填写"预填 / 列表页一句话起步）
+  useEffect(() => {
+    if (!initialInput) return;
+    onInitialInputConsumed?.();
+    // 只有「确实能发出去」才置 autoSent 并发送，否则退回预填——避免空文本/正在流式时
+    // 既没发消息又把历史加载挡掉，留下空面板无可重试
+    if (autoSend && !autoSentRef.current && initialInput.trim() && !isStreaming) {
+      autoSentRef.current = true;
+      void doSend(initialInput, '');
+    } else {
+      setInput(initialInput);
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, [initialInput, autoSend, isStreaming, onInitialInputConsumed, doSend]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -316,7 +349,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
             message={msg}
             onApply={
               msg.generated && !msg.generatedWorkflowId
-                ? () => onApplyWorkflow(msg.generated!, workflowId)
+                ? (override?: WorkflowChatGenerated) => onApplyWorkflow(override ?? msg.generated!, workflowId)
                 : undefined
             }
           />
@@ -439,7 +472,7 @@ function ChatMessage({
   onApply,
 }: {
   message: UiMessage;
-  onApply?: () => void;
+  onApply?: (override?: WorkflowChatGenerated) => void;
 }) {
   const isUser = message.role === 'user';
 
@@ -510,10 +543,13 @@ function ChatMessage({
               <div>{message.generated.variables!.length} 个变量</div>
             )}
           </div>
-          {onApply && (
+          {/* 仅在「校验通过且无缺项」时显示直接应用；有缺项走下方补齐卡，结构无效则不允许应用 */}
+          {onApply
+            && (!message.validation || (message.validation.valid && message.validation.requiredInputs.length === 0))
+            && (
             <Button
               size="sm"
-              onClick={onApply}
+              onClick={() => onApply()}
               style={{
                 background: 'rgba(34,197,94,0.2)',
                 border: '1px solid rgba(34,197,94,0.3)',
@@ -525,6 +561,215 @@ function ChatMessage({
           )}
         </div>
       )}
+
+      {/* 自动校验 / 接线 / 待补项（可就地补齐） */}
+      {message.validation && (
+        <ValidationCard
+          validation={message.validation}
+          generated={message.generated}
+          onApply={onApply}
+        />
+      )}
     </div>
   );
 }
+
+// ─── 自动校验结果卡片 ───────────────────────────────────────
+
+function reqKey(inp: WorkflowRequiredInput) {
+  return `${inp.scope}:${inp.nodeId ?? ''}:${inp.key}`;
+}
+
+/** 把用户填的值烘焙进生成的工作流（config 字段 / 变量默认值），返回新对象。 */
+function bakeFilledValues(
+  generated: WorkflowChatGenerated,
+  requiredInputs: WorkflowRequiredInput[],
+  values: Record<string, string>,
+): WorkflowChatGenerated {
+  const g: WorkflowChatGenerated = structuredClone(generated);
+  for (const inp of requiredInputs) {
+    const v = values[reqKey(inp)];
+    if (!v || !v.trim()) continue;
+    if (inp.scope === 'config' && inp.nodeId) {
+      const node = g.nodes?.find((n) => n.nodeId === inp.nodeId);
+      if (node) node.config = { ...node.config, [inp.key]: v };
+    } else if (inp.scope === 'variable') {
+      g.variables = g.variables ?? [];
+      const variable = g.variables.find((x) => x.key === inp.key);
+      if (variable) variable.defaultValue = v;
+      else
+        g.variables.push({
+          key: inp.key,
+          label: inp.label || inp.key,
+          type: inp.isSecret ? 'string' : inp.type || 'string',
+          required: true,
+          isSecret: inp.isSecret,
+          defaultValue: v,
+        });
+    }
+  }
+  return g;
+}
+
+function ValidationCard({
+  validation,
+  generated,
+  onApply,
+}: {
+  validation: WorkflowValidationResult;
+  generated?: WorkflowChatGenerated;
+  onApply?: (override?: WorkflowChatGenerated) => void;
+}) {
+  const { valid, issues, wireNotes, requiredInputs } = validation;
+  const hasNotes = wireNotes.length > 0;
+  const hasMissing = requiredInputs.length > 0;
+  // 仅在「待应用的提案 + 有缺项」时支持就地补齐
+  const canFill = hasMissing && !!generated && !!onApply;
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [applied, setApplied] = useState(false);
+  const allFilled = requiredInputs.every((inp) => (values[reqKey(inp)] ?? '').trim() !== '');
+  const canApply = allFilled && valid; // 结构无效（环/重复/停用舱补不掉）时不允许应用
+
+  function handleFillApply() {
+    if (!generated || !onApply || !canApply) return;
+    onApply(bakeFilledValues(generated, requiredInputs, values));
+    setApplied(true);
+  }
+
+  return (
+    <div
+      style={{
+        background: valid ? 'rgba(59,130,246,0.06)' : 'rgba(234,179,8,0.08)',
+        border: `1px solid ${valid ? 'rgba(59,130,246,0.18)' : 'rgba(234,179,8,0.25)'}`,
+        borderRadius: 10,
+        padding: '10px 12px',
+        fontSize: 12,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+      }}
+    >
+      {/* 校验状态 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {valid ? (
+          <CheckCircle2 size={14} style={{ color: 'rgba(59,130,246,0.9)' }} />
+        ) : (
+          <AlertTriangle size={14} style={{ color: 'rgba(234,179,8,0.95)' }} />
+        )}
+        <span style={{ fontWeight: 600, color: 'rgba(255,255,255,0.9)' }}>
+          {valid ? '已自动校验 · 结构可执行' : '已自动校验 · 仍有需修正项'}
+        </span>
+      </div>
+
+      {/* 残留结构问题 */}
+      {issues.length > 0 && (
+        <ul style={{ margin: 0, paddingLeft: 18, color: 'rgba(234,179,8,0.95)', lineHeight: 1.6 }}>
+          {issues.map((it, i) => (
+            <li key={i}>{it.message}</li>
+          ))}
+        </ul>
+      )}
+
+      {/* 自动接线说明 */}
+      {hasNotes && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.55)', marginBottom: 3 }}>
+            <GitBranch size={12} />
+            <span>自动接线</span>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
+            {wireNotes.map((n, i) => (
+              <li key={i}>{n}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 待补齐项（可就地填写 → 一键应用） */}
+      {hasMissing && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.7)', marginBottom: 5 }}>
+            <ListChecks size={12} />
+            <span style={{ fontWeight: 600 }}>补齐这 {requiredInputs.length} 项即可运行</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {requiredInputs.map((inp) => {
+              const k = reqKey(inp);
+              return (
+                <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {inp.isSecret && <KeyRound size={11} style={{ color: 'rgba(234,179,8,0.9)', flexShrink: 0 }} />}
+                    <span style={{ color: 'rgba(255,255,255,0.85)' }}>{inp.label}</span>
+                    {inp.nodeName && (
+                      <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>· {inp.nodeName}</span>
+                    )}
+                    {inp.scope === 'variable' && (
+                      <span style={{ color: 'rgba(139,92,246,0.8)', fontSize: 11 }}>变量</span>
+                    )}
+                  </div>
+                  {canFill ? (
+                    inp.type === 'textarea' ? (
+                      <textarea
+                        value={values[k] ?? ''}
+                        onChange={(e) => { setValues((p) => ({ ...p, [k]: e.target.value })); setApplied(false); }}
+                        placeholder={inp.placeholder || inp.helpTip || `请输入${inp.label}`}
+                        rows={2}
+                        style={fillFieldStyle}
+                      />
+                    ) : (
+                      <input
+                        type={inp.isSecret || inp.type === 'password' ? 'password' : 'text'}
+                        value={values[k] ?? ''}
+                        onChange={(e) => { setValues((p) => ({ ...p, [k]: e.target.value })); setApplied(false); }}
+                        placeholder={inp.placeholder || inp.helpTip || `请输入${inp.label}`}
+                        style={fillFieldStyle}
+                      />
+                    )
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+
+          {canFill ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <Button
+                size="sm"
+                onClick={handleFillApply}
+                disabled={!canApply}
+                style={{
+                  background: canApply ? 'rgba(139,92,246,0.25)' : 'rgba(255,255,255,0.06)',
+                  border: `1px solid ${canApply ? 'rgba(139,92,246,0.35)' : 'rgba(255,255,255,0.12)'}`,
+                  color: canApply ? 'rgba(196,181,253,0.95)' : 'rgba(255,255,255,0.4)',
+                }}
+              >
+                {applied ? '已补齐并应用' : !valid ? '请先解决上方结构问题' : allFilled ? '补齐并应用到编辑器' : `请先填写全部 ${requiredInputs.length} 项`}
+              </Button>
+              {applied && (
+                <span style={{ color: 'rgba(34,197,94,0.85)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <CheckCircle2 size={12} /> 记得点右上「保存」
+                </span>
+              )}
+            </div>
+          ) : (
+            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 4 }}>
+              打开对应节点配置填写；密钥项请填到工作流变量。
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const fillFieldStyle: CSSProperties = {
+  width: '100%',
+  background: 'rgba(0,0,0,0.25)',
+  border: '1px solid rgba(255,255,255,0.12)',
+  borderRadius: 6,
+  padding: '6px 8px',
+  fontSize: 12,
+  color: 'rgba(255,255,255,0.9)',
+  outline: 'none',
+  resize: 'vertical',
+};

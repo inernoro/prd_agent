@@ -74,7 +74,8 @@ describe('ContainerService', () => {
       await service.runService({
         ...makeEntry(),
         githubCommitSha: '47c74c1f5aabbccddeeff0011223344556677889',
-      }, makeProfile(), makeService());
+        lastDeployDispatchAt: '2026-06-20T00:00:00.000Z',
+      }, makeProfile(), makeService(), undefined, { JWT_SECRET: 'project-jwt-secret' });
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'));
       expect(runCmd).toBeDefined();
@@ -93,10 +94,81 @@ describe('ContainerService', () => {
 
       // Verify env file contents
       const envFileContent = writeSpy.mock.calls[0][1] as string;
-      expect(envFileContent).toContain('Jwt__Secret=test-secret');
+      expect(envFileContent).toContain('JWT_SECRET=project-jwt-secret');
+      expect(envFileContent).toContain('Jwt__Secret=project-jwt-secret');
       expect(envFileContent).toContain('Jwt__Issuer=prdagent');
       expect(envFileContent).toContain('VITE_GIT_BRANCH=feature/a');
       expect(envFileContent).toContain('VITE_BUILD_ID=47c74c1f5aab');
+      expect(envFileContent).toContain('GIT_COMMIT=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('COMMIT_SHA=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('GITHUB_SHA=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('SOURCE_VERSION=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('CDS_COMMIT_SHA=47c74c1f5aabbccddeeff0011223344556677889');
+      expect(envFileContent).toContain('CDS_BUILD_TIME=2026-06-20T00:00:00.000Z');
+
+      writeSpy.mockRestore();
+    });
+
+    it('uses platform commit metadata instead of project env overrides', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid-meta', stderr: '', exitCode: 0 }));
+      const writeSpy = vi.spyOn(fs, 'writeFileSync');
+
+      await service.runService({
+        ...makeEntry(),
+        githubCommitSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      }, makeProfile({
+        env: {
+          GIT_COMMIT: 'project-stale',
+          CDS_COMMIT_SHA: 'project-stale',
+          VITE_BUILD_ID: 'project-stale',
+        },
+      }), makeService());
+
+      const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(envFileContent).toContain('GIT_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      expect(envFileContent).toContain('CDS_COMMIT_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      expect(envFileContent).toContain('VITE_BUILD_ID=aaaaaaaaaaaa');
+      expect(envFileContent).not.toContain('GIT_COMMIT=project-stale');
+      expect(envFileContent).not.toContain('CDS_COMMIT_SHA=project-stale');
+
+      writeSpy.mockRestore();
+    });
+
+    it('does not inject CDS jwt secret into project containers when project secret is absent', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid789', stderr: '', exitCode: 0 }));
+      const writeSpy = vi.spyOn(fs, 'writeFileSync');
+
+      await service.runService(makeEntry(), makeProfile(), makeService());
+
+      const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(envFileContent).not.toContain('Jwt__Secret=test-secret');
+      expect(envFileContent).not.toContain('Jwt__Secret=');
+      expect(envFileContent).toContain('Jwt__Issuer=prdagent');
+
+      writeSpy.mockRestore();
+    });
+
+    it('project customEnv Jwt__Secret takes precedence over CDS global secret', async () => {
+      // 跨项目穿透回归（2026-06-12）：换 CDS_JWT_SECRET 不得再覆盖
+      // 显式配置了 Jwt__Secret 的项目容器
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid456', stderr: '', exitCode: 0 }));
+      const writeSpy = vi.spyOn(fs, 'writeFileSync');
+
+      await service.runService(
+        makeEntry(), makeProfile(), makeService(),
+        undefined, { Jwt__Secret: 'project-pinned-secret', OTHER: 'x' });
+
+      const envFileContent = writeSpy.mock.calls[0][1] as string;
+      expect(envFileContent).toContain('Jwt__Secret=project-pinned-secret');
+      expect(envFileContent).not.toContain('Jwt__Secret=test-secret');
+      // 未显式配置 Issuer 仍走全局兜底
+      expect(envFileContent).toContain('Jwt__Issuer=prdagent');
 
       writeSpy.mockRestore();
     });
@@ -427,7 +499,7 @@ describe('ContainerService', () => {
 
       const envFileContent = writeSpy.mock.calls[0][1] as string;
       expect(envFileContent).toContain('DATABASE_URL=postgres://user:pass@postgres:5432/app');
-      expect(envFileContent).toContain('Jwt__Secret=test-secret');
+      expect(envFileContent).not.toContain('Jwt__Secret=test-secret');
       writeSpy.mockRestore();
     });
   });

@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Trash2, Save, X, Star } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
-import { setPmStakeholders, getUsers } from '@/services';
-import type { AdminUser } from '@/types/admin';
+import { setPmStakeholders } from '@/services';
 import type { PmStakeholder, PmStakeholderRole, PmStakeholderAxis } from '@/services/contracts/pmAgent';
 import { STAKEHOLDER_ROLE_REGISTRY, POWER_INTEREST_MATRIX } from './pmConstants';
 
@@ -31,14 +30,11 @@ export function StakeholderPanel({ projectId, stakeholders, onSaved }: Props) {
   const [list, setList] = useState<PmStakeholder[]>(stakeholders);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [users, setUsers] = useState<AdminUser[]>([]);
-
   // 保持与最新数据一致：父级 reload 后同步
   useEffect(() => { setList(stakeholders); setEditingId(null); }, [stakeholders]);
-  useEffect(() => { void getUsers({ page: 1, pageSize: 200 }).then((res) => { if (res.success) setUsers(res.data.items); }); }, []);
-  const userName = useMemo(() => new Map(users.map((u) => [u.userId, u.displayName || u.username])), [users]);
 
-  const nameOf = (s: PmStakeholder) => (s.userId ? (userName.get(s.userId) || s.name || '未选用户') : '未选用户');
+  // 姓名来自 stakeholder 自身快照（选择时由 onSelectUser 写入），不再预取管理员用户列表（普通用户无 users.read 权限）
+  const nameOf = (s: PmStakeholder) => (s.userId ? (s.name || '未选用户') : '未选用户');
   const editing = list.find((s) => s.id === editingId) || null;
   const update = (id: string, patch: Partial<PmStakeholder>) => setList((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   const remove = (id: string) => { setList((prev) => prev.filter((s) => s.id !== id)); if (editingId === id) setEditingId(null); };
@@ -125,7 +121,8 @@ export function StakeholderPanel({ projectId, stakeholders, onSaved }: Props) {
           <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
             <div>
               <label className="text-[11px] block mb-1" style={{ color: 'var(--text-secondary)' }}>系统用户（必选）</label>
-              <UserSearchSelect value={editing.userId || ''} onChange={(uid) => update(editing.id, { userId: uid, name: userName.get(uid) || '' })} users={users} placeholder="搜索 MAP 用户…" uiSize="sm" />
+              <UserSearchSelect value={editing.userId || ''} onChange={(uid) => update(editing.id, { userId: uid })}
+                onSelectUser={(u) => update(editing.id, { userId: u.userId, name: u.displayName || u.username })} placeholder="搜索 MAP 用户…" uiSize="sm" />
             </div>
             <div>
               <label className="text-[11px] block mb-1" style={{ color: 'var(--text-secondary)' }}>角色（权重）</label>

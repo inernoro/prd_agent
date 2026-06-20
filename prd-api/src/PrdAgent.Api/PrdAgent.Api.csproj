@@ -36,6 +36,19 @@
     <Content Include="Assets/Fonts/**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- MD->PPT 锚定 deck 模板资产（open-design / zhangzara，MIT，LICENSE 随附）。
+         Web SDK 默认已把 **/*.json 收进 Content，json 用 Update 防重复。 -->
+    <Content Include="Resources/mdppt/**" Exclude="Resources/mdppt/**/*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Update="Resources/mdppt/**/*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- 营销问策知识库种子（全域粉销/4FM），随程序部署，首次 find-or-create 知识库时灌入。
+         .md 不被 Web SDK 默认收集，需显式 Content Include + CopyToOutputDirectory。 -->
+    <Content Include="SeedData/marketing-consult/**/*.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

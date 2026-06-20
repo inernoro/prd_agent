@@ -11,6 +11,7 @@ using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 
@@ -336,8 +337,12 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             || string.IsNullOrWhiteSpace(model.ModelName))
         {
             throw new InfraAgentRuntimeProfileException(
-                InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
-                $"系统模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
+                resolved.KeyUnreadable
+                    ? InfraAgentRuntimeProfileErrorCodes.ApiKeyUnreadable
+                    : InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
+                resolved.KeyUnreadable
+                    ? $"系统模型「{model.Name}」的平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请在 模型平台 重新保存该平台的 key 后重试"
+                    : $"系统模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
                 StatusCodes.Status409Conflict);
         }
 
@@ -395,6 +400,82 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             return ToView(existing, userId);
         }
 
+        await _db.InfraAgentRuntimeProfiles.InsertOneAsync(profile, cancellationToken: ct);
+        return ToView(profile, userId);
+    }
+
+    /// <summary>
+    /// 从系统模型池任选一个模型物化为运行配置（2026-06-11 用户提案：模型池配过的
+    /// baseUrl/key 不应再让人手抄一遍）。幂等：同 用户+model+baseUrl 已存在则刷新复用。
+    /// 不抢默认位（IsDefault=false），由调用方在弹层里即选即用。
+    /// </summary>
+    public async Task<InfraAgentRuntimeProfileView> ImportFromPoolAsync(string userId, string modelId, CancellationToken ct)
+    {
+        var model = await _db.LLMModels
+            .Find(x => x.Id == modelId && x.Enabled)
+            .FirstOrDefaultAsync(ct);
+        if (model == null)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ModelNotConfigured,
+                "模型池中没有该模型或已停用",
+                StatusCodes.Status404NotFound);
+        }
+
+        var resolved = await ResolveModelApiConfigAsync(model, ct);
+        if (string.IsNullOrWhiteSpace(resolved.ApiUrl)
+            || string.IsNullOrWhiteSpace(resolved.ApiKey)
+            || string.IsNullOrWhiteSpace(model.ModelName))
+        {
+            throw new InfraAgentRuntimeProfileException(
+                resolved.KeyUnreadable
+                    ? InfraAgentRuntimeProfileErrorCodes.ApiKeyUnreadable
+                    : InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
+                resolved.KeyUnreadable
+                    ? $"模型「{model.Name}」的平台 API key 无法解密（部署环境加密密钥与存量配置不匹配），请在 模型平台 重新保存该平台的 key 后重试"
+                    : $"模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
+                StatusCodes.Status409Conflict);
+        }
+
+        var now = DateTime.UtcNow;
+        var protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl);
+        var baseUrl = NormalizeModelBaseUrl(resolved.ApiUrl);
+        var runtime = InferRuntime(protocol, model.ModelName);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolved.ApiKey);
+
+        var trimmedModel = model.ModelName.Trim();
+        var existing = await _db.InfraAgentRuntimeProfiles
+            .Find(x => x.CreatedByUserId == userId && x.Model == trimmedModel && x.BaseUrl == baseUrl)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            existing.Runtime = runtime;
+            existing.Protocol = protocol;
+            existing.ApiKeyEncrypted = _protector.Protect(resolved.ApiKey);
+            existing.UpdatedAt = now;
+            await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(ProfileIdOwnerFilter(existing.Id, userId), existing, cancellationToken: ct);
+            return ToView(existing, userId);
+        }
+
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Name = $"池 · {model.Name}",
+            Runtime = runtime,
+            Protocol = protocol,
+            BaseUrl = baseUrl,
+            Model = trimmedModel,
+            ApiKeyEncrypted = _protector.Protect(resolved.ApiKey),
+            ResourceCpuCores = 2,
+            ResourceMemoryMb = 4096,
+            TimeoutSeconds = 900,
+            NetworkPolicy = InfraAgentRuntimeNetworkPolicies.Restricted,
+            AutoCleanupMinutes = 30,
+            IsDefault = false,
+            CreatedByUserId = userId,
+            SharedTeamIds = new List<string>(),
+            CreatedAt = now,
+            UpdatedAt = now
+        };
         await _db.InfraAgentRuntimeProfiles.InsertOneAsync(profile, cancellationToken: ct);
         return ToView(profile, userId);
     }
@@ -769,12 +850,16 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return $"模型上游返回 HTTP {statusCode}: {trimmed}";
     }
 
-    private async Task<(string? ApiUrl, string? ApiKey, string? PlatformType)> ResolveModelApiConfigAsync(LLMModel model, CancellationToken ct)
+    private async Task<(string? ApiUrl, string? ApiKey, string? PlatformType, bool KeyUnreadable)> ResolveModelApiConfigAsync(LLMModel model, CancellationToken ct)
     {
         var apiUrl = NormalizeOptional(model.ApiUrl);
-        var apiKey = string.IsNullOrWhiteSpace(model.ApiKeyEncrypted)
-            ? null
-            : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, GetJwtSecret());
+        var keyUnreadable = false;
+        string? apiKey = null;
+        if (!string.IsNullOrWhiteSpace(model.ApiKeyEncrypted))
+        {
+            apiKey = NormalizeOptional(ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _configuration));
+            keyUnreadable |= apiKey == null; // 密文存在但解不出 = 加密密钥不匹配
+        }
         string? platformType = null;
 
         if (!string.IsNullOrWhiteSpace(model.PlatformId))
@@ -783,12 +868,16 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             if (platform != null)
             {
                 apiUrl ??= NormalizeOptional(platform.ApiUrl);
-                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret());
+                if (apiKey == null && !string.IsNullOrWhiteSpace(platform.ApiKeyEncrypted))
+                {
+                    apiKey = NormalizeOptional(ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _configuration));
+                    keyUnreadable |= apiKey == null;
+                }
                 platformType = NormalizeOptional(platform.PlatformType);
             }
         }
 
-        return (apiUrl, apiKey, platformType);
+        return (apiUrl, apiKey, platformType, apiKey == null && keyUnreadable);
     }
 
     private static string InferProtocol(string? platformType, string apiUrl)
@@ -835,5 +924,4 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return NormalizeBaseUrl(value);
     }
 
-    private string GetJwtSecret() => _configuration["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }

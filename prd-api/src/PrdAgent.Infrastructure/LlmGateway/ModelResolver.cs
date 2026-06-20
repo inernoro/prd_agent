@@ -1,9 +1,9 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
-using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -39,8 +39,6 @@ public class ModelResolver : IModelResolver
             ModelType = modelType,
             ExpectedModel = expectedModel
         };
-
-        var jwtSecret = _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 
         // ========== 第一步：查找 AppCaller 配置（必须已注册） ==========
         var appCaller = await _db.LLMAppCallers
@@ -132,9 +130,7 @@ public class ModelResolver : IModelResolver
 
                 if (platform != null)
                 {
-                    var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted)
-                        ? null
-                        : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                    var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
 
                     _logger.LogInformation(
                         "[ModelResolver] 使用传统配置模型: ModelType={Type}, Model={Model}, Platform={Platform}",
@@ -212,9 +208,7 @@ public class ModelResolver : IModelResolver
                             .FirstOrDefaultAsync(ct);
                         if (platform != null)
                         {
-                            var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted)
-                                ? null
-                                : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                            var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
                             _logger.LogInformation(
                                 "[ModelResolver] 命中 expectedModel（LLMModels 直连）: {Expected} → platform={Platform}",
                                 expectedModel, platform.Name);
@@ -268,9 +262,7 @@ public class ModelResolver : IModelResolver
 
             if (exchange != null)
             {
-                var exchangeApiKey = string.IsNullOrEmpty(exchange.TargetApiKeyEncrypted)
-                    ? null
-                    : ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, jwtSecret);
+                var exchangeApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config);
 
                 _logger.LogInformation(
                     "[ModelResolver] Exchange 中继调度完成\n" +
@@ -317,9 +309,7 @@ public class ModelResolver : IModelResolver
                 continue;
             }
 
-            var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted)
-                ? null
-                : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+            var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
 
             _logger.LogInformation(
                 "[ModelResolver] 调度完成\n" +
@@ -352,7 +342,7 @@ public class ModelResolver : IModelResolver
 
         _logger.LogWarning(
             "[ModelResolver] ╔══════════════════════════════════════════════════════════╗\n" +
-            "[ModelResolver] ║  ⚠️  模型池降级回退                                       ║\n" +
+            "[ModelResolver] ║  模型池降级回退                                           ║\n" +
             "[ModelResolver] ╠══════════════════════════════════════════════════════════╣\n" +
             "[ModelResolver] ║  AppCallerCode: {AppCallerCode,-38} ║\n" +
             "[ModelResolver] ║  ModelType: {ModelType,-42} ║\n" +
@@ -376,12 +366,10 @@ public class ModelResolver : IModelResolver
 
             if (fallbackPlatform != null)
             {
-                var apiKey = string.IsNullOrEmpty(fallbackPlatform.ApiKeyEncrypted)
-                    ? null
-                    : ApiKeyCrypto.Decrypt(fallbackPlatform.ApiKeyEncrypted, jwtSecret);
+                var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(fallbackPlatform.ApiKeyEncrypted, _config);
 
                 _logger.LogWarning(
-                    "[ModelResolver] ║  ✅ 降级成功: 使用直连模型 {Model} @ {Platform,-24} ║",
+                    "[ModelResolver] ║  降级成功: 使用直连模型 {Model} @ {Platform,-24} ║",
                     fallbackLegacyModel.ModelName, fallbackPlatform.Name);
 
                 // 返回带降级信息的结果

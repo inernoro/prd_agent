@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -7,6 +8,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -38,6 +40,8 @@ public class DocumentStoreController : ControllerBase
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
     private readonly DocStoreServices.MentionService _mentions;
+    private readonly DocStoreServices.DocumentVersionService _versions;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -61,6 +65,10 @@ public class DocumentStoreController : ControllerBase
         ITeamService teams,
         ITeamActivityService teamActivity,
         DocStoreServices.MentionService mentions,
+        DocStoreServices.DocumentVersionService versions,
+        IAdminPermissionService adminPermissions,
+        ILlmGateway gateway,
+        IConfiguration config,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -72,10 +80,33 @@ public class DocumentStoreController : ControllerBase
         _teams = teams;
         _teamActivity = teamActivity;
         _mentions = mentions;
+        _versions = versions;
+        _adminPermissions = adminPermissions;
+        _gateway = gateway;
+        _config = config;
         _logger = logger;
     }
 
+    private readonly IConfiguration _config;
+
+    private readonly IAdminPermissionService _adminPermissions;
+
+    /// <summary>本次请求的有效管理权限缓存（见 GetEffectivePermissionsAsync）</summary>
+    private List<string>? _effectivePerms;
+
     private string GetUserId() => this.GetRequiredUserId();
+
+    /// <summary>有效管理权限：优先读 AdminPermissionMiddleware 注入的 claims；
+    /// stores/entries 业务路由已从该中间件豁免（豁免路由不注入 claims），此时回查权限服务。</summary>
+    private async Task<List<string>> GetEffectivePermissionsAsync()
+    {
+        if (_effectivePerms != null) return _effectivePerms;
+        var fromClaims = User.FindAll("permissions").Select(c => c.Value).ToList();
+        if (fromClaims.Count > 0) return _effectivePerms = fromClaims;
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var perms = await _adminPermissions.GetEffectivePermissionsAsync(GetUserId(), isRoot);
+        return _effectivePerms = perms.ToList();
+    }
 
     private async Task<User?> FindUserByAnyIdAsync(string userId)
     {
@@ -91,27 +122,27 @@ public class DocumentStoreController : ControllerBase
     private async Task<bool> CanWriteStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
         => s.OwnerId == userId || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: true)
            || await IsProductKnowledgeMemberAsync(s, userId)
-           || IsShituKnowledgeWritable(s);
+           || await IsShituKnowledgeWritableAsync(s);
 
     /// <summary>可读：拥有者 或 公开 或 团队成员；项目库走项目成员判定（含观察者/干系人）；产品库走产品成员判定</summary>
     private async Task<bool> CanReadStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
         => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: false)
            || await IsProductKnowledgeMemberAsync(s, userId)
-           || IsShituKnowledgeReadable(s);
+           || await IsShituKnowledgeReadableAsync(s);
 
-    private bool IsShituKnowledgeReadable(DocumentStore s)
+    private async Task<bool> IsShituKnowledgeReadableAsync(DocumentStore s)
     {
         if (string.IsNullOrEmpty(s.ShituCategoryRef)) return false;
-        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        var permissions = await GetEffectivePermissionsAsync();
         return permissions.Contains(AdminPermissionCatalog.Super)
                || permissions.Contains(AdminPermissionCatalog.ShituAgentUse)
                || permissions.Contains(AdminPermissionCatalog.ShituAgentManage);
     }
 
-    private bool IsShituKnowledgeWritable(DocumentStore s)
+    private async Task<bool> IsShituKnowledgeWritableAsync(DocumentStore s)
     {
         if (string.IsNullOrEmpty(s.ShituCategoryRef)) return false;
-        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        var permissions = await GetEffectivePermissionsAsync();
         return permissions.Contains(AdminPermissionCatalog.Super)
                || permissions.Contains(AdminPermissionCatalog.ShituAgentManage);
     }
@@ -126,7 +157,7 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrEmpty(s.ProductKnowledgeRef)) return false;
         // 与 ProductAgentController.CanManage() 对齐：全局产品管理权限可读写所有产品知识库。
         // 否则管理员能通过 find-or-create 拿到 storeId，却在本控制器被拒（"文档空间不存在"）。
-        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        var permissions = await GetEffectivePermissionsAsync();
         if (permissions.Contains(AdminPermissionCatalog.Super)
             || permissions.Contains(AdminPermissionCatalog.ProductAgentAdmin)
             || permissions.Contains(AdminPermissionCatalog.ProductAgentManage))
@@ -494,6 +525,8 @@ public class DocumentStoreController : ControllerBase
         var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.StoreId == storeId);
         var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => c.StoreId == storeId);
         var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => r.StoreId == storeId);
+        // 级联清理历史版本，避免删库后 document_entry_versions 残留全文快照（存储泄漏，与条目级删除一致）—— Bugbot
+        var versionsResult = await _db.DocumentEntryVersions.DeleteManyAsync(v => v.StoreId == storeId);
         // 同步配对清理：本库作为本地侧(LocalStoreId)的记录无条件删。
         // RemoteStoreId 匹配仅限【本地同环境配对】(LinkType=Local)——跨环境配对的 RemoteStoreId 是对端环境的库 Id，
         // 本环境若恰好(克隆/导入后)有同 Id 的库，不能因为删它就误删那些本地侧仍在的跨环境配对（Codex P2）。
@@ -910,6 +943,8 @@ public class DocumentStoreController : ControllerBase
         var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.EntryId != null && idsToDelete.Contains(v.EntryId));
         var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => idsToDelete.Contains(c.EntryId));
         var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => idsToDelete.Contains(r.SourceEntryId));
+        // 历史版本：级联清理这些条目的全部版本快照
+        var versionsDeleted = await _db.DocumentEntryVersions.DeleteManyAsync(v => idsToDelete.Contains(v.EntryId));
         // 双链账本：清掉以这些 entry 为 from 或 to 的所有引用
         var mentionsDeleted = await _mentions.CascadeDeleteAsync(MentionEntityType.Document, idsToDelete);
 
@@ -949,10 +984,10 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.UpdatedAt, DateTime.UtcNow));
 
         _logger.LogInformation(
-            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs} mentions={Mentions}",
+            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs} versions={Versions} mentions={Mentions}",
             entryId, entry.StoreId, userId,
             entriesResult.DeletedCount, syncLogsResult.DeletedCount, documentsDeleted, attachmentsDeleted,
-            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount, mentionsDeleted);
+            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount, versionsDeleted.DeletedCount, mentionsDeleted);
 
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryDeleted, "entry", entryId, entryTitle);
 
@@ -1028,31 +1063,16 @@ public class DocumentStoreController : ControllerBase
             contentCompliant = sectionProblems.Count == 0 && metaProblems.Count == 0;
         }
 
-        // 更新或创建 ParsedPrd
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            if (doc != null)
-            {
-                // 重新解析并保存
-                var parsed = await _documentService.ParseAsync(content);
-                parsed.Id = doc.Id;
-                parsed.Title = doc.Title;
-                await _documentService.SaveAsync(parsed);
-            }
-        }
-        else
-        {
-            // 无关联文档时创建新的 ParsedPrd
-            var parsed = await _documentService.ParseAsync(content);
-            parsed.Title = entry.Title;
-            await _documentService.SaveAsync(parsed);
-            entry.DocumentId = parsed.Id;
-        }
+        // 更新或创建 ParsedPrd（内容寻址 + 共享保护，详见 WriteEntryContentDocAsync）
+        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content);
+        entry.DocumentId = newDocId;
 
         // 更新 DocumentEntry 的摘要和内容索引
         var summary = content.Length > 200 ? content[..200] : content;
         var contentIndex = content.Length > 2000 ? content[..2000] : content;
+        // 单一时间戳：DB 写入与响应必须用同一个 now，否则前端用响应 updatedAt 推进 loadedContentKey 后，
+        // 服务端列表重载返回的是 DB 里那个（差几毫秒的）UpdatedAt → 缓存键不一致 → 多余重拉 + 回顶（Bugbot）。
+        var now = DateTime.UtcNow;
 
         var contentUpdate = Builders<DocumentEntry>.Update
             .Set(e => e.DocumentId, entry.DocumentId)
@@ -1060,7 +1080,7 @@ public class DocumentStoreController : ControllerBase
             .Set(e => e.ContentIndex, contentIndex.Trim())
             .Set(e => e.UpdatedBy, userId)
             .Set(e => e.UpdatedByName, userName)
-            .Set(e => e.UpdatedAt, DateTime.UtcNow);
+            .Set(e => e.UpdatedAt, now);
         if (!string.IsNullOrWhiteSpace(request.ContentType))
             contentUpdate = contentUpdate.Set(e => e.ContentType, request.ContentType);
 
@@ -1080,17 +1100,276 @@ public class DocumentStoreController : ControllerBase
         // 重算双链账本：解析正文里的 [[xxx]]，写入 mentions 集合
         var mentionsWritten = await _mentions.ResyncDocumentMentionsAsync(store.Id, entryId, content);
 
+        // 版本快照（知识库版本控制）：先把改动前基线落库（去重，仅首次/外部覆盖时真正写入），
+        // 再把本次保存的新正文落库。最新版本恒等于当前正文。快照只存文本、不碰任何图片资产。
+        if (oldContent != null)
+            await _versions.SnapshotAsync(entryId, store.Id, oldContent, DocumentVersionSource.Edit, userId, userName);
+        await _versions.SnapshotAsync(entryId, store.Id, content, DocumentVersionSource.Edit, userId, userName);
+
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryUpdated, "entry", entryId, entry.Title);
 
         return Ok(ApiResponse<object>.Ok(new
         {
             updated = true,
-            updatedAt = DateTime.UtcNow,
+            updatedAt = now,
             updatedBy = userId,
             updatedByName = userName,
             inlineCommentsRebound = rebindStats.rebound,
             inlineCommentsOrphaned = rebindStats.orphaned,
             mentionsWritten,
+        }));
+    }
+
+    // ───────────────────────── 知识库版本控制 ─────────────────────────
+
+    /// <summary>列出某条文档的历史版本（按版本号倒序，不含正文）。</summary>
+    [HttpGet("entries/{entryId}/versions")]
+    public async Task<IActionResult> ListEntryVersions(string entryId, [FromQuery] int page = 1, [FromQuery] int pageSize = 30)
+    {
+        var userId = GetUserId();
+        // 版本历史属编辑能力：要求写权限，否则公开库的只读访客也能拉到历史版本（含作者已删除的旧正文）—— Codex P1
+        var (entry, _, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var (items, total) = await _versions.ListAsync(entryId, page, pageSize);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = items.Select(v => new
+            {
+                id = v.Id,
+                versionNumber = v.VersionNumber,
+                charCount = v.CharCount,
+                sizeBytes = v.SizeBytes,
+                source = v.Source,
+                restoredFromVersionId = v.RestoredFromVersionId,
+                createdBy = v.CreatedBy,
+                createdByName = v.CreatedByName,
+                createdAt = v.CreatedAt,
+            }),
+            total,
+            page,
+            pageSize,
+        }));
+    }
+
+    /// <summary>取某个历史版本的完整正文（用于预览 / diff）。</summary>
+    [HttpGet("entries/{entryId}/versions/{versionId}")]
+    public async Task<IActionResult> GetEntryVersion(string entryId, string versionId)
+    {
+        var userId = GetUserId();
+        // 返回完整历史正文：必须写权限，避免公开库只读访客取回作者已删除的旧内容 —— Codex P1
+        var (entry, _, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var version = await _versions.GetAsync(versionId);
+        if (version == null || version.EntryId != entryId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id = version.Id,
+            versionNumber = version.VersionNumber,
+            content = version.Content,
+            charCount = version.CharCount,
+            sizeBytes = version.SizeBytes,
+            source = version.Source,
+            restoredFromVersionId = version.RestoredFromVersionId,
+            createdBy = version.CreatedBy,
+            createdByName = version.CreatedByName,
+            createdAt = version.CreatedAt,
+        }));
+    }
+
+    /// <summary>
+    /// 恢复某个历史版本：把该版本正文写回当前正文。
+    /// 恢复前会先把「当前正文」快照保留（去重，外部同步覆盖过的内容也能找回），
+    /// 再写入目标版本内容并记一条 source=restore 的新版本。<b>全程只写文本，不删除任何图片资产。</b>
+    /// </summary>
+    [HttpPost("entries/{entryId}/versions/{versionId}/restore")]
+    public async Task<IActionResult> RestoreEntryVersion(string entryId, string versionId)
+    {
+        var (userId, userName) = await GetActorInfoAsync();
+        var (entry, store, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null || store is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        if (entry.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持版本恢复"));
+
+        var version = await _versions.GetAsync(versionId);
+        if (version == null || version.EntryId != entryId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在"));
+
+        var updatedAt = await ApplyContentToEntryAsync(
+            entry, store, version.Content, userId, userName, DocumentVersionSource.Restore, versionId);
+        await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryUpdated, "entry", entryId, entry.Title);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            restored = true,
+            fromVersionNumber = version.VersionNumber,
+            updatedAt,
+        }));
+    }
+
+    /// <summary>
+    /// 把一段正文写入条目（解析存 ParsedPrd + 更新摘要/索引 + 重锚评论 + 重算双链 + 版本快照）。
+    /// 供版本恢复复用，与 UpdateEntryContent 的核心写入路径保持一致。
+    /// </summary>
+    /// <summary>
+    /// 把正文写入 entry 对应的 ParsedPrd，返回 (最终 DocumentId, 改动前正文)。
+    /// ParsedPrd 内容寻址（id=内容 hash），相同内容会被多个 entry 共享（相同上传等）。
+    /// 若旧 DocumentId 被别的 entry 共享，<b>不得就地覆盖</b>（会改到别的 entry 的正文）——
+    /// 按新内容 hash 落库 + 只把本 entry 重指向新文档；旧文档为本 entry 独占时沿用旧 id 就地更新，
+    /// 避免产生孤儿文档（Codex P1）。即便旧 ParsedPrd 行已丢失也照样落库（Bugbot High）。
+    /// 改动前正文取旧 RawContent，缺失则回退 ContentIndex（无 DocumentId 短文档 ContentIndex 即完整正文）。
+    /// </summary>
+    private async Task<(string documentId, string? oldContent)> WriteEntryContentDocAsync(DocumentEntry entry, string content)
+    {
+        var parsed = await _documentService.ParseAsync(content); // parsed.Id = 内容 hash
+        string? oldContent;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var oldDoc = await _documentService.GetByIdAsync(entry.DocumentId);
+            // 不回退 ContentIndex：它截断到 2000 字，长文档会留下被截断的「改动前」版本无法完整恢复。
+            // ParsedPrd 行确已丢失时旧全文本就不可得，宁可不快照（null）也不存截断版本（Bugbot）。
+            oldContent = oldDoc?.RawContent;
+            parsed.Title = oldDoc?.Title ?? entry.Title;
+            if (parsed.Id != entry.DocumentId)
+            {
+                var sharedByOthers = await _db.DocumentEntries.CountDocumentsAsync(
+                    e => e.DocumentId == entry.DocumentId && e.Id != entry.Id) > 0;
+                if (!sharedByOthers)
+                    parsed.Id = entry.DocumentId; // 独占 → 复用旧 id 就地更新，不产生孤儿
+                // 共享 → 保留新内容 hash id，仅把本 entry 重指向，旧共享文档保持不变
+            }
+        }
+        else
+        {
+            oldContent = entry.ContentIndex;
+            parsed.Title = entry.Title;
+        }
+        await _documentService.SaveAsync(parsed);
+        return (parsed.Id, oldContent);
+    }
+
+    private async Task<DateTime> ApplyContentToEntryAsync(
+        DocumentEntry entry, DocumentStore store, string content,
+        string userId, string? userName, string source, string? restoredFromVersionId)
+    {
+        content ??= string.Empty;
+        // 内容寻址 + 共享保护（详见 WriteEntryContentDocAsync）：恢复也不得覆盖被别的 entry 共享的 ParsedPrd
+        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content);
+        entry.DocumentId = newDocId;
+
+        var now = DateTime.UtcNow;
+        var summary = content.Length > 200 ? content[..200] : content;
+        var contentIndex = content.Length > 2000 ? content[..2000] : content;
+        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entry.Id, Builders<DocumentEntry>.Update
+            .Set(e => e.DocumentId, entry.DocumentId)
+            .Set(e => e.Summary, summary.Trim())
+            .Set(e => e.ContentIndex, contentIndex.Trim())
+            .Set(e => e.UpdatedBy, userId)
+            .Set(e => e.UpdatedByName, userName)
+            .Set(e => e.UpdatedAt, now));
+
+        await RebindInlineCommentsAsync(entry.Id, content);
+        await _mentions.ResyncDocumentMentionsAsync(store.Id, entry.Id, content);
+
+        // 先保留改动前正文（去重；未版本化的写入借此也能找回），再记本次新内容。
+        // 基线用 Edit 而非 Sync：这是用户当前的工作内容（多为手动编辑），标 Sync 会在历史里
+        // 把手动编辑误显示成「外部同步」（Bugbot）。真·同步覆盖路径自己另记 source=sync。
+        if (oldContent != null)
+            await _versions.SnapshotAsync(entry.Id, store.Id, oldContent, DocumentVersionSource.Edit, userId, userName);
+        await _versions.SnapshotAsync(entry.Id, store.Id, content, source, userId, userName, restoredFromVersionId);
+        return now;
+    }
+
+    /// <summary>
+    /// 知识库大小统计：聚合正文字节、附件字节、图片附件字节/数量、历史版本占用，
+    /// 供前端在库卡片/详情展示「这个知识库有多大」。
+    /// </summary>
+    [HttpGet("stores/{storeId}/size")]
+    public async Task<IActionResult> GetStoreSize(string storeId)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        var entries = await _db.DocumentEntries
+            .Find(e => e.StoreId == storeId)
+            .ToListAsync();
+
+        int docCount = 0, folderCount = 0;
+        long documentBytes = 0, attachmentBytes = 0, imageBytes = 0;
+        int imageCount = 0;
+
+        // 收集文本文档 id 与附件 id，批量查后聚合，避免 N 次单查
+        var documentIds = entries.Where(e => !e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
+            .Select(e => e.DocumentId!).Distinct().ToList();
+        var attachmentIds = entries.Where(e => !string.IsNullOrEmpty(e.AttachmentId))
+            .Select(e => e.AttachmentId!).Distinct().ToList();
+
+        foreach (var e in entries)
+        {
+            if (e.IsFolder) folderCount++;
+            else docCount++;
+        }
+
+        if (documentIds.Count > 0)
+        {
+            var docs = await _db.Documents
+                .Find(d => documentIds.Contains(d.Id))
+                .Project<ParsedPrd>(Builders<ParsedPrd>.Projection.Include(d => d.RawContent))
+                .ToListAsync();
+            foreach (var d in docs)
+                documentBytes += System.Text.Encoding.UTF8.GetByteCount(d.RawContent ?? string.Empty);
+        }
+
+        if (attachmentIds.Count > 0)
+        {
+            var atts = await _db.Attachments
+                .Find(a => attachmentIds.Contains(a.AttachmentId))
+                .ToListAsync();
+            foreach (var a in atts)
+            {
+                attachmentBytes += a.Size;
+                // 知识库上传/替换的附件 Type 统一记为 Document（即便是图片），故按 MIME 判定图片，
+                // 否则上传到知识库的图片永远统计为 0 图 —— Codex P2
+                var isImage = a.Type == AttachmentType.Image
+                    || (!string.IsNullOrEmpty(a.MimeType) && a.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase));
+                if (isImage)
+                {
+                    imageBytes += a.Size;
+                    imageCount++;
+                }
+            }
+        }
+
+        var (versionBytes, versionCount) = await _versions.StoreVersionStatsAsync(storeId);
+
+        var totalBytes = documentBytes + attachmentBytes;
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            storeId,
+            entryCount = docCount,
+            folderCount,
+            documentBytes,
+            attachmentBytes,
+            imageBytes,
+            imageCount,
+            versionBytes,
+            versionCount,
+            // totalBytes 为「当前内容」体量（正文 + 附件，图片含在附件里），不含历史版本占用
+            totalBytes,
         }));
     }
 
@@ -2154,6 +2433,13 @@ public class DocumentStoreController : ControllerBase
                 s.LikeCount,
                 s.ViewCount,
                 s.FavoriteCount,
+                s.PeerSyncStatus,
+                s.PeerSyncDirection,
+                s.PeerSyncNodeId,
+                s.PeerSyncNodeName,
+                s.PeerSyncNodeBaseUrl,
+                s.PeerSyncLastAt,
+                s.PeerSyncLastResult,
                 s.CreatedAt,
                 s.UpdatedAt,
                 hasActiveShare = sharedStoreIds.Contains(s.Id),
@@ -2338,6 +2624,284 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    // ─────────────────────────────────────────────
+    // 知识库 Agent：划词局部改写（选区级 AI 编辑）
+    // ─────────────────────────────────────────────
+
+    /// <summary>列出划词改写的内置动作（后端 SSOT，前端只渲染）</summary>
+    [HttpGet("selection-rewrite/actions")]
+    public IActionResult ListSelectionRewriteActions()
+    {
+        var items = SelectionRewriteActionRegistry.Actions.Select(a => new
+        {
+            key = a.Key,
+            label = a.Label,
+            description = a.Description,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 划词局部改写（SSE 直流）。对用户划选的片段按动作/自定义指令做 AI 改写，
+    /// 服务端从原文中定位选区并截取上下文窗口一起喂给 LLM，输出可直接替换选区的 Markdown 片段。
+    /// 改写结果不在服务端落库——前端预览 diff、用户确认后走既有 PUT entries/{id}/content 写回
+    /// （写回会自动触发行内评论重锚定 + 双链账本重算）。
+    /// </summary>
+    [HttpPost("entries/{entryId}/selection-rewrite")]
+    [Produces("text/event-stream")]
+    public async Task SelectionRewrite(string entryId, [FromBody] SelectionRewriteRequest request)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        async Task EmitAsync(string eventName, object payload)
+        {
+            try
+            {
+                await WriteSseEventAsync(null, eventName,
+                    System.Text.Json.JsonSerializer.Serialize(payload, AgentRunJsonOptions), CancellationToken.None);
+            }
+            catch (OperationCanceledException) { /* 客户端断开，跳过写入 */ }
+            catch (ObjectDisposedException) { /* 连接已关闭 */ }
+        }
+
+        var selectedText = (request.SelectedText ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(selectedText))
+        {
+            await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = "selectedText 不能为空" });
+            return;
+        }
+        if (selectedText.Length > 12000)
+        {
+            await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = "选区过长（上限 12000 字符），请缩小选区" });
+            return;
+        }
+
+        // 指令解析：内置动作 or custom 自定义指令（后端 SSOT，拒绝未知 key）
+        string instruction;
+        var actionKey = (request.ActionKey ?? string.Empty).Trim();
+        if (actionKey == "custom")
+        {
+            instruction = (request.Instruction ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(instruction))
+            {
+                await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = "自定义改写需要填写指令" });
+                return;
+            }
+            if (instruction.Length > 2000) instruction = instruction[..2000];
+        }
+        else
+        {
+            var action = SelectionRewriteActionRegistry.FindByKey(actionKey);
+            if (action == null)
+            {
+                await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = $"未知改写动作: {actionKey}" });
+                return;
+            }
+            instruction = action.Instruction;
+        }
+
+        // 改写会被写回正文 → 按可写权限校验（同 UpdateEntryContent 口径）
+        var userId = GetUserId();
+        var (entry, _, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null || entry == null)
+        {
+            await EmitAsync("error", new { code = ErrorCodes.NOT_FOUND, message = "文档条目不存在或无编辑权限" });
+            return;
+        }
+        if (entry.IsFolder)
+        {
+            await EmitAsync("error", new { code = ErrorCodes.INVALID_FORMAT, message = "文件夹不支持划词改写" });
+            return;
+        }
+
+        // 服务端读取原文，定位选区并截取上下文窗口（不信任客户端截的 50 字短上下文）
+        var (docTitle, content) = await LoadEntryMarkdownAsync(entry);
+        var contextBefore = request.ContextBefore ?? string.Empty;
+        var contextAfter = request.ContextAfter ?? string.Empty;
+        if (!string.IsNullOrEmpty(content))
+        {
+            var (start, end) = LocateSelectionInContent(
+                content, selectedText, contextBefore, request.StartOffset,
+                request.OccurrenceIndex, request.OccurrenceTotal);
+            if (start >= 0)
+            {
+                const int window = 1200;
+                contextBefore = content[Math.Max(0, start - window)..start];
+                contextAfter = content[end..Math.Min(content.Length, end + window)];
+            }
+        }
+
+        var systemPrompt =
+            "你是知识库 Markdown 文档的局部改写引擎。用户在文档中划选了一个片段，你只负责改写这个片段。\n" +
+            "硬性要求：\n" +
+            "1. 只输出改写后的片段本身——不要任何解释、前后缀，不要用代码围栏包裹，不要重复选区前后文\n" +
+            "2. 输出必须是能直接替换原片段的合法 Markdown，与上下文的格式（标题层级、列表符号、表格结构）、术语、语气保持一致\n" +
+            "3. 除非指令明确要求，不得改变事实、数字、链接与代码\n" +
+            "4. 选区若以完整段落/列表项/标题开头结尾，输出保持同样的块级结构";
+
+        var userPrompt =
+            $"文档标题：{docTitle}\n\n" +
+            (string.IsNullOrWhiteSpace(contextBefore) ? "" : $"【选区前文（仅供参考，不要输出）】\n{contextBefore}\n\n") +
+            $"【选中片段（待改写）】\n{selectedText}\n\n" +
+            (string.IsNullOrWhiteSpace(contextAfter) ? "" : $"【选区后文（仅供参考，不要输出）】\n{contextAfter}\n\n") +
+            $"【改写指令】\n{instruction}";
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Selection.Rewrite,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            IncludeThinking = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                },
+                ["temperature"] = 0.4,
+                ["max_tokens"] = 6000,
+            },
+            Context = new GatewayRequestContext
+            {
+                UserId = userId,
+                QuestionText = $"[selection-rewrite:{(actionKey == "custom" ? "custom" : actionKey)}] {selectedText[..Math.Min(120, selectedText.Length)]}",
+            },
+        };
+
+        _logger.LogInformation(
+            "[doc-store-selection] rewrite start: entry={EntryId} action={Action} selLen={Len}",
+            entryId, actionKey, selectedText.Length);
+
+        try
+        {
+            GatewayTokenUsage? tokenUsage = null;
+            // 服务器权威：LLM 调用用 CancellationToken.None，客户端断开不中断生成（server-authority.md）
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start)
+                {
+                    // ai-model-visibility：start 事件携带实际调度到的模型，前端顶部展示
+                    await EmitAsync("start", new
+                    {
+                        model = chunk.Resolution?.ActualModel,
+                        platform = chunk.Resolution?.ActualPlatformName,
+                    });
+                }
+                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    await EmitAsync("thinking", new { content = chunk.Content });
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    await EmitAsync("text", new { content = chunk.Content });
+                }
+                else if (chunk.Type == GatewayChunkType.Done)
+                {
+                    tokenUsage = chunk.TokenUsage;
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    await EmitAsync("error", new { message = chunk.Error ?? "LLM 调用失败" });
+                    return;
+                }
+            }
+
+            await EmitAsync("done", new
+            {
+                promptTokens = tokenUsage?.InputTokens,
+                completionTokens = tokenUsage?.OutputTokens,
+                totalTokens = tokenUsage?.TotalTokens,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[doc-store-selection] rewrite failed: entry={EntryId}", entryId);
+            await EmitAsync("error", new { message = "服务处理异常，请稍后重试" });
+        }
+    }
+
+    /// <summary>读取条目的 Markdown 正文（同 GetEntryContent 口径：ParsedPrd 优先，Attachment.ExtractedText 兜底）</summary>
+    private async Task<(string title, string? content)> LoadEntryMarkdownAsync(DocumentEntry entry)
+    {
+        string? content = null;
+        string? title = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null)
+            {
+                content = doc.RawContent;
+                title = doc.Title;
+            }
+        }
+        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            if (att != null)
+            {
+                content = att.ExtractedText;
+                title ??= att.FileName;
+            }
+        }
+        return (title ?? entry.Title, content);
+    }
+
+    /// <summary>
+    /// 在原文中定位选区（仅用于截上下文窗口，不落库，定位失败可容忍）。
+    /// 唯一出现 → 直接命中；多处出现 → 优先用前端从真实 DOM Range 数出的出现序号
+    /// （offset/contextBefore 都源自 useContentSelection 的"首处 indexOf"，多处场景会指错位置，
+    /// Bugbot High 2026-06-12），序号不可用时退回 offset 验证 → contextBefore 消歧 → 首处。
+    /// </summary>
+    internal static (int start, int end) LocateSelectionInContent(
+        string content, string selectedText, string contextBefore, int startOffsetHint,
+        int occurrenceIndex = -1, int occurrenceTotal = -1)
+    {
+        if (string.IsNullOrEmpty(content) || string.IsNullOrEmpty(selectedText)) return (-1, -1);
+
+        // 非重叠收集全部出现位置（封顶 100，防超长重复文本拖慢）
+        var occurrences = new List<int>();
+        var idx = content.IndexOf(selectedText, StringComparison.Ordinal);
+        while (idx >= 0 && occurrences.Count < 100)
+        {
+            occurrences.Add(idx);
+            idx = content.IndexOf(selectedText, idx + selectedText.Length, StringComparison.Ordinal);
+        }
+        if (occurrences.Count == 0) return (-1, -1);
+        if (occurrences.Count == 1) return (occurrences[0], occurrences[0] + selectedText.Length);
+
+        // 多处出现：DOM 序号优先（要求 DOM 总数与正文总数一致，防 DOM 里混入同文副本）
+        if (occurrenceIndex >= 0 && occurrenceIndex < occurrences.Count
+            && (occurrenceTotal < 0 || occurrenceTotal == occurrences.Count))
+        {
+            var s = occurrences[occurrenceIndex];
+            return (s, s + selectedText.Length);
+        }
+
+        if (startOffsetHint >= 0
+            && startOffsetHint + selectedText.Length <= content.Length
+            && string.CompareOrdinal(content, startOffsetHint, selectedText, 0, selectedText.Length) == 0)
+        {
+            return (startOffsetHint, startOffsetHint + selectedText.Length);
+        }
+
+        // contextBefore 尾部片段消歧（最后兜底，仅影响上下文窗口质量）
+        var ctx = (contextBefore ?? string.Empty).TrimEnd();
+        if (ctx.Length > 0)
+        {
+            var probe = ctx.Length > 30 ? ctx[^30..] : ctx;
+            var anchor = content.IndexOf(probe + selectedText, StringComparison.Ordinal);
+            if (anchor >= 0)
+            {
+                var start = anchor + probe.Length;
+                return (start, start + selectedText.Length);
+            }
+        }
+        return (occurrences[0], occurrences[0] + selectedText.Length);
+    }
+
     /// <summary>
     /// 列出当前用户可调用的「再加工·智能体」：系统内置 + 自己创建的个人智能体。
     /// 不包含其他用户的 personal 智能体。
@@ -2470,15 +3034,47 @@ public class DocumentStoreController : ControllerBase
         if (!ct.StartsWith("audio/") && !ct.StartsWith("video/") && !ct.StartsWith("image/"))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频 / 图片生成字幕"));
 
-        // 去重：同一 entry 已有 queued 或 running 的 subtitle run → 直接返回
-        var existing = await _db.DocumentStoreAgentRuns.Find(r =>
-            r.SourceEntryId == entryId &&
-            r.Kind == DocumentStoreAgentRunKind.Subtitle &&
-            (r.Status == DocumentStoreRunStatus.Queued || r.Status == DocumentStoreRunStatus.Running)
-        ).FirstOrDefaultAsync();
-        if (existing != null)
-            return Ok(ApiResponse<object>.Ok(new { runId = existing.Id, status = existing.Status, reused = true }));
+        // 去重：同一 entry 已有 queued 或 running 的 subtitle run → 直接返回。
+        // 定向消费：只复用【本实例】的在途 run。共享 Mongo 下复用别的分支/主干拥有的 run，
+        // 本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
+        var selfInstanceId = InstanceIdentity.Get(_config);
 
+        // (1) 优先「原子认领」一个历史无主（OwnerInstanceId 空）的 queued run：把归属一次性钉给
+        // 本实例。用 FindOneAndUpdate 杜绝 TOCTOU——若先 Find 再 UpdateOne，期间别的实例
+        // 可能抢走它（owner/status 已变），UpdateOne ModifiedCount=0 却仍被当作复用返回，
+        // 调用方就拿到一个其实跑在别处的 run（Codex P2）。认领成功才返回。
+        var claimed = await _db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
+                Builders<DocumentStoreAgentRun>.Filter.Or(
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
+            Builders<DocumentStoreAgentRun>.Update.Set(r => r.OwnerInstanceId, selfInstanceId),
+            new FindOneAndUpdateOptions<DocumentStoreAgentRun> { ReturnDocument = ReturnDocument.After },
+            cancellationToken: CancellationToken.None);
+        if (claimed != null)
+            return Ok(ApiResponse<object>.Ok(new { runId = claimed.Id, status = claimed.Status, reused = true }));
+
+        // (2) 复用本实例已有的在途 run（queued/running，owner==self）——确属本实例，安全返回。
+        // 历史无主的 running 不复用（可能正被别的分支以旧代码处理，复用会让调用方观测到不一致），
+        // 落到下面新建一条归属本实例的 run。
+        var selfRun = await _db.DocumentStoreAgentRuns.Find(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.SourceEntryId, entryId),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.Subtitle),
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
+        ).FirstOrDefaultAsync();
+        if (selfRun != null)
+            return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));
+
+        // 走到这里说明本实例没有可复用/可认领的在途 run。注意：若该条目已有【别的部署实例】
+        // 拥有的在途 run，这里【有意】不复用、而是新建一条归属本实例的 run —— 这是定向消费的
+        // 刻意取舍（用户 2026-06-18 确认「各自处理」）：宁可两个部署各转一次（共享 Mongo 下
+        // 偶发重复，真实部署处理端基本单实例，重复罕见），也不让本实例的用户卡等一个可能跑旧
+        // 代码/已下线实例的 run（那正是定向消费要根治的「被别人消费」原 bug 的反向版本）。
         var userId = GetUserId();
         var run = new DocumentStoreAgentRun
         {
@@ -2486,6 +3082,7 @@ public class DocumentStoreController : ControllerBase
             SourceEntryId = entryId,
             StoreId = store!.Id,
             UserId = userId,
+            OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
         };
@@ -2595,6 +3192,7 @@ public class DocumentStoreController : ControllerBase
                 SourceEntryId = entryId,
                 StoreId = store!.Id,
                 UserId = userId,
+                OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
                 TemplateKey = templateKey,
                 CustomPrompt = templateKey == "custom" ? content : null,
                 Status = DocumentStoreRunStatus.Queued,
@@ -2636,6 +3234,10 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Update
                     .Push(r => r.Messages, userMsg)
                     .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                    // 重新排队时把归属改成当前实例：这条 Done 的 run 可能由 main 或别的分支创建，
+                    // 共享 Mongo 下若不改主，本实例（定向消费）会因 owner 不匹配而忽略它，
+                    // 任务只能被原 owner（可能跑旧代码或已下线）处理或永远卡在 queued（Codex P2）。
+                    .Set(r => r.OwnerInstanceId, InstanceIdentity.Get(_config))
                     .Set(r => r.Phase, "排队中")
                     .Set(r => r.Progress, 0)
                     .Set(r => r.GeneratedText, null)
@@ -4687,6 +5289,36 @@ public class ReprocessChatRequest
 
     /// <summary>若由模板 chip 触发，记录所选模板 key（仅首条消息生效，决定 system prompt）</summary>
     public string? TemplateKey { get; set; }
+}
+
+public class SelectionRewriteRequest
+{
+    /// <summary>用户划选的原文片段（非空，≤12000 字符）</summary>
+    public string SelectedText { get; set; } = string.Empty;
+
+    /// <summary>选区前文（前端 useContentSelection 截取的短上下文，服务端定位成功后会换成更宽的窗口）</summary>
+    public string? ContextBefore { get; set; }
+
+    /// <summary>选区后文（同上）</summary>
+    public string? ContextAfter { get; set; }
+
+    /// <summary>选区起点在正文中的字符偏移提示（-1 表示前端未能精确定位）</summary>
+    public int StartOffset { get; set; } = -1;
+
+    /// <summary>选区终点偏移提示</summary>
+    public int EndOffset { get; set; } = -1;
+
+    /// <summary>DOM 选区前同文出现次数（0-based 序号）。同文多处出现时 offset/context 恒指向第一处，只有它能指认用户真正选的是第几处；-1 表示未知</summary>
+    public int OccurrenceIndex { get; set; } = -1;
+
+    /// <summary>DOM 全文同文出现总数（与正文统计交叉校验用）；-1 表示未知</summary>
+    public int OccurrenceTotal { get; set; } = -1;
+
+    /// <summary>改写动作 key（polish/concise/expand/formal/fix 或 custom）</summary>
+    public string ActionKey { get; set; } = string.Empty;
+
+    /// <summary>actionKey=custom 时的自定义改写指令</summary>
+    public string? Instruction { get; set; }
 }
 
 /// <summary>覆盖式保存智能体抽屉对话。三个字段都是前端拥有形状的 JSON，后端不解析。</summary>

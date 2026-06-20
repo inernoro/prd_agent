@@ -86,7 +86,7 @@ export function resolveHotReloadCommand(profile: BuildProfile): string | null {
   switch (hr.mode) {
     case 'dotnet-run': {
       // 快路径：相信 MSBuild 增量 + dotnet run，文件变 → kill + 再跑。
-      // 不 clean，不 --no-incremental；如需破缓存走 🧹 清理按钮（force-rebuild）。
+      // 不 clean，不 --no-incremental；如需破缓存走清理按钮（force-rebuild）。
       const lines = [
         `set +e`,
         `STAMP=/tmp/cds-hr-${profile.id}-stamp`,
@@ -470,15 +470,15 @@ export class ContainerService {
       Object.assign(mergedEnv, customEnv);
     }
 
-    mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
-    mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
-
-    if (entry.branch) {
-      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
+    // JWT — CDS 自身鉴权密钥不得穿透进项目容器。
+    // 历史行为曾把 CDS_JWT_SECRET 兜底映射为项目 Jwt__Secret，导致 CDS
+    // 自身密钥轮换会破坏业务项目登录签名和 prd-agent 存量平台密文。
+    // 现在只允许项目 scope 自己提供 Jwt__Secret；兼容旧 compose 的
+    // JWT_SECRET 也必须来自项目 env，而不是 CDS 全局 config.jwt.secret。
+    if (!mergedEnv['Jwt__Secret'] && mergedEnv['JWT_SECRET']) {
+      mergedEnv['Jwt__Secret'] = mergedEnv['JWT_SECRET'];
     }
-    if (entry.githubCommitSha) {
-      mergedEnv['VITE_BUILD_ID'] = entry.githubCommitSha.slice(0, 12);
-    }
+    if (!mergedEnv['Jwt__Issuer']) mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
     const isNodeContainer = /\bnode:/.test(profile.dockerImage);
     if (isNodeContainer) {
@@ -492,6 +492,24 @@ export class ContainerService {
 
     if (profile.env) {
       Object.assign(mergedEnv, profile.env);
+    }
+
+    const deployCommit = entry.pinnedCommit || entry.githubCommitSha || entry.lastDeployDispatchCommitSha;
+    if (entry.branch) {
+      mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
+    }
+    if (deployCommit) {
+      // 平台版本元数据必须覆盖项目 env，供发布中心和 /api/version 判断当前部署 commit。
+      mergedEnv['GIT_COMMIT'] = deployCommit;
+      mergedEnv['COMMIT_SHA'] = deployCommit;
+      mergedEnv['GITHUB_SHA'] = deployCommit;
+      mergedEnv['SOURCE_VERSION'] = deployCommit;
+      mergedEnv['CDS_COMMIT_SHA'] = deployCommit;
+      mergedEnv['VITE_BUILD_ID'] = deployCommit.slice(0, 12);
+    }
+    const deployTime = entry.lastDeployDispatchAt || entry.lastPushAt || entry.createdAt;
+    if (deployTime) {
+      mergedEnv['CDS_BUILD_TIME'] = deployTime;
     }
 
     const isolatedEnv = applyPerBranchDbIsolation(mergedEnv, profile.dbScope, entry.branch);
@@ -574,10 +592,10 @@ export class ContainerService {
         onOutput?.(`── entrypoint 覆盖: (清空 image ENTRYPOINT) ──\n`);
       } else if (/\s/.test(ep)) {
         onOutput?.(
-          `── ⚠ cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
-          `── ⚠ 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
+          `── [警告] cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
+          `── [警告] 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
           `(CDS 已默认 sh -c 包装 command) ──\n` +
-          `── ⚠ 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
+          `── [警告] 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
         );
       } else {
         entrypointFlags.push(`--entrypoint ${JSON.stringify(ep)}`);
@@ -826,6 +844,7 @@ export class ContainerService {
       throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
     }
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
+
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const envFlag = `--env-file "${envFilePath}"`;
     const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount } =
@@ -833,7 +852,7 @@ export class ContainerService {
 
     try {
       onOutput?.(`── 运行: ${command} ──\n`);
-      // ⚠ Bugbot 2026-05-06 1f32c1da:之前 log 的条件是 isNodeContainer && !skipSrcMount,
+      // Bugbot 2026-05-06 1f32c1da:之前 log 的条件是 isNodeContainer && !skipSrcMount,
       // 比真正挂 volume 的条件(还要 /\bpnpm\b/.test(command))宽,npm/yarn 项目会
       // 看到"走 docker volume"的误导日志。改为与真实 mount 条件完全一致。
       if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
@@ -1130,7 +1149,7 @@ export class ContainerService {
           resolved = true;
           clearTimeout(timeout);
           child.kill();
-          onOutput?.(`── 检测到启动信号: "${signal}" ✓ ──\n`);
+          onOutput?.(`── 检测到启动信号: "${signal}" OK ──\n`);
           resolve(true);
         }
       };
@@ -1197,7 +1216,7 @@ export class ContainerService {
         const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs));
         onAttempt?.({ attempt, max: maxAttempts, stage: 'tcp', ok: tcp.ok, error: tcp.error });
         if (tcp.ok) {
-          onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 ✓ (noHttp)──\n`);
+          onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 OK (noHttp)──\n`);
           return true;
         }
         lastErr = tcp.error || 'tcp refused';
@@ -1222,13 +1241,13 @@ export class ContainerService {
           continue;
         }
         tcpOk = true;
-        onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 ✓ ──\n`);
+        onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 OK ──\n`);
       }
 
       const httpRes = await this.probeHttp(host, hostPort, probePath, Math.min(5000, intervalMs));
       onAttempt?.({ attempt, max: maxAttempts, stage: 'http', ok: httpRes.ok, error: httpRes.error });
       if (httpRes.ok) {
-        onOutput?.(`── 就绪探测: HTTP ${probePath} 返回 ${httpRes.status} ✓ ──\n`);
+        onOutput?.(`── 就绪探测: HTTP ${probePath} 返回 ${httpRes.status} OK ──\n`);
         return true;
       }
       lastError = httpRes.error || `http ${httpRes.status}`;
@@ -1759,7 +1778,7 @@ export class ContainerService {
     const network = this.getNetworkForProject(service.projectId);
     await this.ensureNetwork(network);
 
-    // ★ 幂等启动（2026-05-05 修 P0 bug）
+    // 幂等启动（2026-05-05 修 P0 bug）
     //
     // 历史行为：直接 `docker rm -f ${name}` 然后 `docker run` 重建。这条路径
     // 在 deploy 流程触发时会**杀掉用户正在共享使用的 mongo / redis 等
@@ -1776,7 +1795,7 @@ export class ContainerService {
     // 配合用户的设计意图："默认共享数据库"——deploy 跑到这里时，如果共享
     // mongo 已经在跑，本函数立刻返回，零副作用。
     //
-    // ⚠️ 关于配置漂移（Bugbot Review 2026-05-06 Medium 8cf58fe4 提出）
+    // 关于配置漂移（Bugbot Review 2026-05-06 Medium 8cf58fe4 提出）
     //
     // docker start 用的是容器**创建时**的 image / env / port / volume / health。
     // 如果运维通过 admin UI 改了 InfraService 定义（升级 image，改 env，
@@ -1793,7 +1812,7 @@ export class ContainerService {
     //   - 这里 inspect labels 比对 fingerprint，不一致 → rm + run；一致 → start
     //   - env 不进 fingerprint（频繁变 + 用户不期待杀连接）
     // 暂未实现 —— 当前共享 mongo/redis 实战中 image 几乎不变，drift 风险低。
-    // ⚠ Bugbot 2026-05-06 cd577195:service.containerName 直接拼进
+    // Bugbot 2026-05-06 cd577195:service.containerName 直接拼进
     // child_process.exec 会让 shell metacharacters 改变命令行为。
     // Docker 容器名规范是 [a-zA-Z0-9][a-zA-Z0-9_.-]+,完全 alnum/dot/dash,
     // 这里加 defense-in-depth 守门拒绝异常值。
@@ -1814,7 +1833,7 @@ export class ContainerService {
       const dockerStatus = inspect.stdout.trim();
       if (dockerStatus === 'running') {
         // 已经在跑 —— 共享复用，不动它
-        // ★ Bug C fix(2026-05-10):reused 路径必须确保 infra 连到当前 project
+        // Bug C fix(2026-05-10):reused 路径必须确保 infra 连到当前 project
         // network。场景:project network 被重建(deploy 流程 / project 重建)后,
         // 老 infra 容器仍连在老 network 上,profile 容器解析 nacos/redis 拿到
         // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。

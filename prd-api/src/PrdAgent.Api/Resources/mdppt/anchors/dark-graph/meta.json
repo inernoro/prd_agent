@@ -1,0 +1,64 @@
+{
+  "name": "dark-graph",
+  "upstream": "nexu-io/open-design (html-ppt-graphify-dark-graph)",
+  "license": "MIT",
+  "slideCount": 8,
+  "layouts": [
+    {
+      "file": "01-cover.html",
+      "layout": "cover",
+      "classAttr": "slide",
+      "chars": 2205,
+      "summary": "01 / 08 Tech Sharing · 纯干货 手把手用 Graphify 搭建个人知识图谱 一行命令 · 全多模态 · 诚实审计 —— 把任何文件夹变成可导航的知识网络。 "
+    },
+    {
+      "file": "02-section-divider.html",
+      "layout": "section-divider",
+      "classAttr": "slide",
+      "chars": 420,
+      "summary": "02 / 08 Part 01 Why Graph ? folder → tree → graph，人类认知的下一步"
+    },
+    {
+      "file": "03-content-plugin-grid.html",
+      "layout": "content-plugin-grid",
+      "classAttr": "slide",
+      "chars": 1358,
+      "summary": "03 / 08 Feature Map 一个工具， 四件事 📂 Folder Ingest 递归扫描任意路径，支持 md / pdf / 代码 / 图片 🧠 Entity Extr"
+    },
+    {
+      "file": "04-code.html",
+      "layout": "code",
+      "classAttr": "slide",
+      "chars": 1032,
+      "summary": "04 / 08 One command 从 0 到图谱， 大概 90 秒 $ graphify ~/notes --out ./graph # graphify.config.ya"
+    },
+    {
+      "file": "05-chart-race-diagram.html",
+      "layout": "chart-race-diagram",
+      "classAttr": "slide",
+      "chars": 1978,
+      "summary": "05 / 08 Efficiency Race 没有知识库 vs 有知识库 没有 知识库 🛵 反复喂信息…整理…又忘了… 有 知识库 🏎️ AI 自己找 → 确认 → 干活! 5×"
+    },
+    {
+      "file": "06-pipeline.html",
+      "layout": "pipeline",
+      "classAttr": "slide",
+      "chars": 1616,
+      "summary": "06 / 08 Pipeline 端到端 4 步走 📂 Scan 递归读文件 → 🔬 Extract LLM 抽实体 → 🕸️ Build 构图 + 去重 → 🎨 Render D"
+    },
+    {
+      "file": "07-cta.html",
+      "layout": "cta",
+      "classAttr": "slide",
+      "chars": 824,
+      "summary": "07 / 08 Try it tonight Graphify your folders $ npm i -g @lewis/graphify $ graphify ~/obsid"
+    },
+    {
+      "file": "08-thanks.html",
+      "layout": "thanks",
+      "classAttr": "slide",
+      "chars": 386,
+      "summary": "08 / 08 Thanks. github.com/lewis/graphify · 欢迎 star / issue / PR"
+    }
+  ]
+}
