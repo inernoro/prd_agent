@@ -13,7 +13,7 @@ import {
   streamImageGenRunWithRetry,
 } from '@/services';
 import { createVisualVideoRunReal, getVisualVideoRunReal, cancelVisualVideoRunReal } from '@/services/real/videoAgent';
-import type { ModelGroupForApp } from '@/types/modelGroup';
+import { ModelHealthStatus, type ModelGroupForApp } from '@/types/modelGroup';
 
 type Aspect = '16:9' | '9:16' | '1:1';
 
@@ -97,7 +97,12 @@ export default function VisualStoryboardPage() {
     pools.forEach((pool, idx) => {
       if (pool.models && pool.models.length > 0) {
         const sorted = [...pool.models].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
-        const m = sorted[0];
+        // 优先按优先级挑健康端点：先 Healthy，没有再挑非 Unavailable(Degraded)，全挂才回退 sorted[0]。
+        // 避免最高优先级模型不可用/降级时关键帧全失败，而无视池内仍可用的次优先级端点（Codex review）。
+        const m =
+          sorted.find((x) => x.healthStatus === ModelHealthStatus.Healthy) ??
+          sorted.find((x) => x.healthStatus !== ModelHealthStatus.Unavailable) ??
+          sorted[0];
         opts.push({ key: `${idx}:${pool.name}`, poolName: pool.name, modelName: m.modelId, platformId: m.platformId });
       }
     });
