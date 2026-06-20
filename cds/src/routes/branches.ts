@@ -387,6 +387,47 @@ function summarizeBranchDeployRuntime(
   };
 }
 
+/**
+ * 把一次成功部署的整体运行模式归类为 'release' | 'source'，用于耗时样本分桶。
+ *
+ * 复用 summarizeBranchDeployRuntime 的真相判定（看容器实际跑的 deployedMode，
+ * 而非配置意图）。kind='release'/'mixed' → 'release'（只要有一个服务以发布版
+ * 在跑，整体就按发布版耗时统计，避免被混合里的源码服务拉低）；否则 'source'。
+ */
+function classifyBranchDeployModeForDuration(
+  branch: BranchEntry,
+  profiles: BuildProfile[],
+): import('../types.js').DeployDurationMode {
+  const runtime = summarizeBranchDeployRuntime(branch, profiles);
+  return runtime.kind === 'release' || runtime.kind === 'mixed' ? 'release' : 'source';
+}
+
+/**
+ * 部署成功后记录一次耗时样本（毫秒）。
+ *   - "ready" 耗时 = runtimeStartedAt - startedAt（拿不到就 finishedAt - startedAt）。
+ *   - 仅成功（opLog.status==='completed'）时记录；失败不记（失败耗时无参考价值）。
+ *   - 上界保护取 buildTimeout*2（缺省 30 分钟，由 recordDeployDuration 兜底），
+ *     过滤掉超时/卡死的离谱样本。
+ */
+function recordDeployDurationSample(
+  stateService: StateService,
+  branch: BranchEntry,
+  profiles: BuildProfile[],
+  opLog: OperationLog,
+): void {
+  if (opLog.status !== 'completed') return;
+  const startMs = Date.parse(opLog.startedAt);
+  const endRaw = opLog.runtimeStartedAt || opLog.finishedAt;
+  const endMs = endRaw ? Date.parse(endRaw) : Number.NaN;
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return;
+  const elapsedMs = endMs - startMs;
+  const mode = classifyBranchDeployModeForDuration(branch, profiles);
+  // 上界：取参与本次部署的 profile 里最大的 buildTimeout * 2，兜底 30 分钟。
+  const maxTimeout = profiles.reduce((acc, p) => Math.max(acc, p.buildTimeout || 0), 0);
+  const maxReasonableMs = maxTimeout > 0 ? maxTimeout * 2 : 30 * 60 * 1000;
+  stateService.recordDeployDuration(branch.projectId || 'default', mode, elapsedMs, maxReasonableMs);
+}
+
 function applyProjectDefaultDeployModes(
   branch: BranchEntry,
   projectDefaultDeployModes: Record<string, string> | undefined,
@@ -3487,6 +3528,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           b,
           stateService.getBuildProfilesForProject(b.projectId || 'default'),
         );
+        // 2026-06-20：随分支下发两种模式的历史中位预计耗时，分支卡片在
+        // 构建中据此展示"预计 MM:SS（近 N 次中位值）"，无需额外请求。
+        const deployEstimate = stateService.getBranchDeployEstimate(b.projectId || 'default');
         if (!live) {
           const derivedAi = aiActivityByBranch.get(b.id);
           return {
@@ -3499,6 +3543,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             projectSlug,
             previewSlug,
             deployRuntime,
+            deployEstimate,
           };
         }
         try {
@@ -3519,6 +3564,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             projectSlug,
             previewSlug,
             deployRuntime,
+            deployEstimate,
           };
         } catch {
           const derivedAi = aiActivityByBranch.get(b.id);
@@ -3532,6 +3578,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             projectSlug,
             previewSlug,
             deployRuntime,
+            deployEstimate,
           };
         }
       }),
@@ -10254,6 +10301,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         hasError ? 'deploy-error' : 'deploy-finalize',
         activeProfileIds,
       );
+      // 2026-06-20：成功部署记一条耗时样本（区分发布版/源码），供分支卡片
+      // 在下次构建中展示"预计 MM:SS（近 N 次中位值）"。失败不记。
+      recordDeployDurationSample(stateService, entry, profiles, opLog);
       stateService.appendLog(id, opLog);
       stateService.save();
 
@@ -10673,6 +10723,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status === 'running' ? 'deploy-finalize' : 'deploy-error',
         new Set([profile.id]),
       );
+      // 2026-06-20：单 profile 部署成功也记一条耗时样本（仅基于本次部署的
+      // profile 判定发布版/源码），与多服务路径同一台账。失败不记。
+      recordDeployDurationSample(stateService, entry, [profile], opLog);
       stateService.appendLog(id, opLog);
       stateService.save();
 

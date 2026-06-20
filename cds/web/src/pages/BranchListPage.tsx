@@ -172,6 +172,17 @@ interface BranchSummary {
       hasDrift: boolean;
     };
   };
+  /**
+   * 2026-06-20：两种部署模式的历史中位预计耗时（毫秒）+ 样本数。
+   * 后端 getBranchDeployEstimate 计算，构建中卡片据此展示"预计 MM:SS（近 N 次中位值）"。
+   * median 为 null = 无历史样本，卡片只显示已耗时，不编造预计值。
+   */
+  deployEstimate?: {
+    releaseMedianMs: number | null;
+    releaseSamples: number;
+    sourceMedianMs: number | null;
+    sourceSamples: number;
+  };
 }
 
 interface BranchCommitSummary {
@@ -896,6 +907,46 @@ function formatElapsedFrom(since: string | undefined | null, now: number): strin
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+}
+
+/** 把毫秒格式化成 MM:SS（与 formatElapsedFrom 同口径，供"预计耗时"展示）。 */
+function formatDurationMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return '00:00';
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+}
+
+/**
+ * 根据分支当前运行模式（deployRuntime.kind）选对应的历史预计耗时。
+ *   - kind='release'/'mixed' → 发布版样本
+ *   - 其余 → 源码/热加载样本
+ * 无样本（median=null）时返回 null —— 卡片只显示已耗时，不编造预计值。
+ */
+function pickDeployEstimate(branch: BranchSummary): { mode: 'release' | 'source'; medianMs: number; samples: number } | null {
+  const est = branch.deployEstimate;
+  if (!est) return null;
+  const kind = branch.deployRuntime?.kind;
+  const isRelease = kind === 'release' || kind === 'mixed';
+  if (isRelease) {
+    if (est.releaseMedianMs != null && est.releaseSamples > 0) {
+      return { mode: 'release', medianMs: est.releaseMedianMs, samples: est.releaseSamples };
+    }
+    return null;
+  }
+  if (est.sourceMedianMs != null && est.sourceSamples > 0) {
+    return { mode: 'source', medianMs: est.sourceMedianMs, samples: est.sourceSamples };
+  }
+  return null;
+}
+
+/** 构建中卡片的模式标签：发布版 / 热加载（源码即热加载/dev 运行）。 */
+function deployModeLabel(branch: BranchSummary): string {
+  const kind = branch.deployRuntime?.kind;
+  if (kind === 'release') return '发布版';
+  if (kind === 'mixed') return '混合';
+  return '热加载';
 }
 
 function formatElapsedSecondsFrom(since: string | undefined | null, now: number): string {
@@ -5109,6 +5160,48 @@ function BranchCard({
             ) : null}
           </span>
         ) : null}
+        {/*
+          2026-06-20：构建中显示「模式 · 已耗时 · 历史中位预计耗时」。
+          - 模式标签区分 发布版 / 热加载（来自 deployRuntime.kind）。
+          - 已耗时实时累加（formatElapsedFrom 走 1s tick 的 now）。
+          - 预计耗时为静态历史中位（近 N 次），无样本则不显示预计（no-rootless-tree：
+            不编造数据）。下方细进度条对比已耗时 vs 预计，纯主题 token 着色，不喧宾夺主。
+        */}
+        {isInterim ? (() => {
+          const estimate = pickDeployEstimate(branch);
+          const elapsedMs = busySince ? Math.max(0, now - new Date(busySince).getTime()) : 0;
+          const ratio = estimate && estimate.medianMs > 0
+            ? Math.min(1, elapsedMs / estimate.medianMs)
+            : 0;
+          const overdue = estimate ? elapsedMs > estimate.medianMs : false;
+          return (
+            <span
+              className="inline-flex h-6 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+              title={estimate
+                ? `当前以「${deployModeLabel(branch)}」部署；已耗时 ${formatElapsedFrom(busySince, now)}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
+                : `当前以「${deployModeLabel(branch)}」部署；已耗时 ${formatElapsedFrom(busySince, now)}；暂无历史样本，完成后将累积预计耗时`}
+            >
+              <span className="font-medium text-foreground/85">{deployModeLabel(branch)}</span>
+              <span className="text-muted-foreground/80">耗时</span>
+              <span className="branch-deploy-timer-value font-mono text-foreground/85">{formatElapsedFrom(busySince, now)}</span>
+              {estimate ? (
+                <>
+                  <span className="text-muted-foreground/80">预计</span>
+                  <span className={`font-mono ${overdue ? 'text-amber-400' : 'text-foreground/70'}`}>{formatDurationMs(estimate.medianMs)}</span>
+                  <span
+                    className="h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--hairline))]"
+                    aria-hidden
+                  >
+                    <span
+                      className={`block h-full rounded-full transition-[width] duration-700 ease-out ${overdue ? 'bg-amber-400/70' : 'bg-primary/60'}`}
+                      style={{ width: `${Math.round(ratio * 100)}%` }}
+                    />
+                  </span>
+                </>
+              ) : null}
+            </span>
+          );
+        })() : null}
         {visibleResources.length > 0 ? visibleResources.map((resource) => {
           // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
           // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);

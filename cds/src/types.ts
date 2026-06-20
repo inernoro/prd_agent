@@ -812,6 +812,52 @@ export type CustomEnvStore = Record<string, Record<string, string>>;
 /** Reserved scope key for project-independent (global) variables. */
 export const GLOBAL_ENV_SCOPE = '_global';
 
+/**
+ * 部署耗时模式分类。与 deploy-runtime.ts 的 classifyDeployRuntime 输出对齐：
+ *   - 'release' ：发布版（生产/编译产物运行，prod/release/static…）
+ *   - 'source'  ：源码 / 热加载（dev watch / vite / 默认源码模式）
+ * 历史中位预计耗时按 (projectId, mode) 分桶，互不串味。
+ */
+export type DeployDurationMode = 'release' | 'source';
+
+/**
+ * 部署耗时样本桶（2026-06-20）。
+ *
+ * 病根：分支构建中卡片只显示"已耗时 NN s"，用户不知道"还要等多久"。
+ * 对应的历史样本不能用 OperationLog —— 那个 per-branch 上限 10 条、build/run
+ * 混在一起、删分支即没。这里另立一份持久化样本台账，keyed by projectId + mode，
+ * 每桶保留最近 N 条（毫秒，从 deploy 开始到 ready）。
+ *
+ * 系统级放 CdsState 顶层（与项目维度无关的存储位置选择，样本本身按 projectId
+ * 分桶）；随 save() 落盘，跟随 JSON ↔ Mongo 存储切换。
+ */
+export interface DeployDurationSamples {
+  /** key = `${projectId}::${mode}`，value = 最近若干条毫秒耗时（旧→新追加）。 */
+  buckets: Record<string, number[]>;
+}
+
+/**
+ * 单个 (project, mode) 桶的历史耗时估算结果。
+ * medianMs = p50；sampleCount = 参与计算的样本数。无样本时 medianMs = null。
+ */
+export interface DeployDurationEstimate {
+  medianMs: number | null;
+  sampleCount: number;
+}
+
+/**
+ * 分支卡片消费的部署预计耗时摘要（两种模式各一份），随 BranchSummary 下发，
+ * 卡片无需额外请求即可在构建中展示"预计 MM:SS（近 N 次中位值）"。
+ * 某模式无历史样本时 median 为 null —— 卡片只显示已耗时，不编造预计值
+ * （no-rootless-tree：不假定不存在的数据）。
+ */
+export interface BranchDeployEstimate {
+  releaseMedianMs: number | null;
+  releaseSamples: number;
+  sourceMedianMs: number | null;
+  sourceSamples: number;
+}
+
 export interface CdsState {
   /** Routing rules */
   routingRules: RoutingRule[];
@@ -1048,6 +1094,13 @@ export interface CdsState {
    * Per-instance 全局,与项目无关 → 系统级字段(参考 scope-naming.md §5)。
    */
   selfUpdateHistory?: SelfUpdateRecord[];
+  /**
+   * 部署耗时样本台账（2026-06-20）。keyed by `${projectId}::${mode}`，
+   * 每桶保留最近 N 条毫秒耗时（StateService.DEPLOY_DURATION_SAMPLES_MAX）。
+   * 仅在部署成功时由 recordDeployDuration() 追加；卡片"预计耗时"的中位值
+   * 数据源。系统级（与具体项目无关的存储位置，样本本身按 projectId 分桶）。
+   */
+  deployDurationSamples?: DeployDurationSamples;
   /**
    * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
    * HTML 真是远程 agent 返回的」)。会话 done/fail/stop 时由 remote-hosts

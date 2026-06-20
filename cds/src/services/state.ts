@@ -2831,6 +2831,86 @@ export class StateService {
     });
   }
 
+  // ── 2026-06-20 部署耗时样本台账 ── 分支构建中卡片展示"已耗时 + 历史
+  //   中位预计耗时"，区分发布版/热加载。每 (projectId, mode) 一个桶，保留
+  //   最近 N 条毫秒耗时；只在部署成功时追加。OperationLog 不能用作历史
+  //   （per-branch 10 条上限 + build/run 混合 + 删分支即丢），故另立此台账。
+
+  /** 每个 (project, mode) 桶最多保留的样本数。窗口取近 30 次。 */
+  static readonly DEPLOY_DURATION_SAMPLES_MAX = 30;
+
+  /** 中位预计耗时基于"近 N 次"，UI 文案显示这个窗口大小。 */
+  static readonly DEPLOY_DURATION_ESTIMATE_WINDOW = 20;
+
+  private deployDurationBucketKey(projectId: string, mode: import('../types.js').DeployDurationMode): string {
+    return `${projectId || 'default'}::${mode}`;
+  }
+
+  /**
+   * 记录一次成功部署的耗时样本（毫秒，从 deploy 开始到 ready）。
+   *   - 仅追加合法值（>0 且不离谱）；非法值静默忽略，不污染中位。
+   *   - 按 (projectId, mode) 分桶，ring buffer 上限 DEPLOY_DURATION_SAMPLES_MAX。
+   *   - 落盘失败不致命（顶多丢这条样本）。
+   *
+   * @param maxReasonableMs 上界保护（调用方传 buildTimeout*2，缺省 30 分钟）。
+   */
+  recordDeployDuration(
+    projectId: string,
+    mode: import('../types.js').DeployDurationMode,
+    ms: number,
+    maxReasonableMs = 30 * 60 * 1000,
+  ): void {
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    if (Number.isFinite(maxReasonableMs) && maxReasonableMs > 0 && ms > maxReasonableMs) return;
+    const store = this.state.deployDurationSamples || { buckets: {} };
+    if (!store.buckets) store.buckets = {};
+    const key = this.deployDurationBucketKey(projectId, mode);
+    const bucket = store.buckets[key] || [];
+    bucket.push(Math.round(ms));
+    while (bucket.length > StateService.DEPLOY_DURATION_SAMPLES_MAX) bucket.shift();
+    store.buckets[key] = bucket;
+    this.state.deployDurationSamples = store;
+    try {
+      this.save();
+    } catch (err) {
+      console.warn('[state] recordDeployDuration save failed:', (err as Error).message);
+    }
+  }
+
+  /**
+   * 返回某 (project, mode) 桶的历史中位预计耗时（p50，毫秒）+ 参与样本数。
+   * 只取最近 DEPLOY_DURATION_ESTIMATE_WINDOW 条计算，与 UI 文案"近 N 次"一致。
+   * 无样本时 medianMs=null —— 调用方据此决定是否展示预计值（不编造）。
+   */
+  getDeployEstimate(
+    projectId: string,
+    mode: import('../types.js').DeployDurationMode,
+  ): import('../types.js').DeployDurationEstimate {
+    const store = this.state.deployDurationSamples;
+    const key = this.deployDurationBucketKey(projectId, mode);
+    const all = store?.buckets?.[key] || [];
+    const window = all.slice(-StateService.DEPLOY_DURATION_ESTIMATE_WINDOW);
+    if (window.length === 0) return { medianMs: null, sampleCount: 0 };
+    const sorted = [...window].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const medianMs = sorted.length % 2 === 1
+      ? sorted[mid]
+      : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    return { medianMs, sampleCount: window.length };
+  }
+
+  /** 一次拿齐两种模式的预计耗时，供 BranchSummary 下发到分支卡片。 */
+  getBranchDeployEstimate(projectId: string): import('../types.js').BranchDeployEstimate {
+    const release = this.getDeployEstimate(projectId, 'release');
+    const source = this.getDeployEstimate(projectId, 'source');
+    return {
+      releaseMedianMs: release.medianMs,
+      releaseSamples: release.sampleCount,
+      sourceMedianMs: source.medianMs,
+      sourceSamples: source.sampleCount,
+    };
+  }
+
   // ── 2026-05-07 GitHub webhook 投递日志(ring buffer 200)── 用户反馈
   // "需要看到每次 hook 详情"。github-webhook.ts 路由处理完毕后(无论成功/失败)
   // 调 recordGithubWebhookDelivery 写入。前端 CDS 系统设置 → GitHub Webhook
