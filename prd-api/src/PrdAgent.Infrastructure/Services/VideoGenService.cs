@@ -37,7 +37,11 @@ public class VideoGenService : IVideoGenService
         var resolution = (request?.DirectResolution ?? "720p").Trim();
         if (resolution is not ("480p" or "720p" or "1080p" or "1K" or "2K" or "4K")) resolution = "720p";
 
-        var model = (request?.DirectVideoModel ?? "alibaba/wan-2.6").Trim();
+        // 不再硬编码 alibaba/wan-2.6 默认：未指定时留空，由 AppCaller 对应的视频池(visual-agent / video-agent)
+        // 解析各自的默认模型。否则会以 Wan 当 expectedModel 搜遍所有 VideoGen 池命中含 Wan 的池，
+        // 绕过 visual-agent 池配置（即便用的是 visual app caller）（Codex review）。
+        var modelRaw = (request?.DirectVideoModel ?? string.Empty).Trim();
+        var model = string.IsNullOrWhiteSpace(modelRaw) ? null : modelRaw;
 
         if (mode == VideoGenMode.Storyboard)
         {

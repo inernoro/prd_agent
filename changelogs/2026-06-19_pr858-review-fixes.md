@@ -44,3 +44,4 @@
 | fix | prd-admin | 分镜关键帧模型从池内挑健康端点：原先固定取最高优先级 sorted[0]，该端点不可用/降级时关键帧全失败而无视池内其他健康模型。改为优先 Healthy → 非 Unavailable → 回退 sorted[0]（Codex review） |
 | fix | prd-admin | 分镜「动起来」本地超时后取消后端视频 run：原先只标错误，仍 Queued 的任务会被 worker 更晚提交 OpenRouter、在 UI 已告知失败后继续烧额度（Codex review） |
 | fix | prd-api | OpenRouter 出图透传画幅 aspect_ratio：按官方 image-generation 文档，chat/completions 出图加 image_config.aspect_ratio（从请求 size 推最接近受支持比例），修复 16:9/9:16 关键帧被裁切/与图生视频画幅错配；推不出比例则不加避免未知字段（Codex review，待部署验证） |
+| fix | prd-api | 图生视频未指定模型时不再硬编码 alibaba/wan-2.6：留空交由 AppCaller 对应视频池(visual-agent/video-agent)解析各自默认模型，避免以 Wan 当 expectedModel 搜遍所有池绕过 visual-agent 池配置（Codex review） |
