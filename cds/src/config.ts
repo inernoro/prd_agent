@@ -116,11 +116,11 @@ const DEFAULT_CONFIG: CdsConfig = {
     tickIntervalSeconds: 60,
     pinnedBranches: [],
   },
-  // Janitor (Phase 2) — off by default, same opt-in philosophy as scheduler.
-  // Disk warnings still fire when enabled=true even if nothing to delete.
+  // Janitor — on by default. Branch-local containers/worktrees expire after
+  // at most 7 days so stale previews do not accumulate indefinitely.
   janitor: {
-    enabled: false,
-    worktreeTTLDays: 30,
+    enabled: true,
+    worktreeTTLDays: 7,
     diskWarnPercent: 80,
     sweepIntervalSeconds: 3600,
   },

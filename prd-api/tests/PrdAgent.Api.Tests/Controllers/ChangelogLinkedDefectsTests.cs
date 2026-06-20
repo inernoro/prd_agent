@@ -34,6 +34,26 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void ResolvePublishStatus_UsesResolvedCommitShaWhenTraceStoresShortSha()
+    {
+        var fullSha = "abcdef1234567890abcdef1234567890abcdef12";
+        var shaIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["deployed"] = 0,
+            [fullSha] = 1,
+        };
+
+        Assert.Equal(
+            DefectResolutionPublishStatus.Published,
+            ChangelogController.ResolvePublishStatus(
+                new DefectResolutionTrace { CommitSha = "abcdef1" },
+                fullSha,
+                "deployed",
+                0,
+                shaIndex));
+    }
+
+    [Fact]
     public void ResolvePublishStatus_KeepsPersistedPublishedStatus()
     {
         var status = ChangelogController.ResolvePublishStatus(
@@ -47,6 +67,121 @@ public class ChangelogLinkedDefectsTests
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase));
 
         Assert.Equal(DefectResolutionPublishStatus.Published, status);
+    }
+
+    [Fact]
+    public void BuildCommitShaAliases_IncludesFullAndShortShaForms()
+    {
+        var aliases = ChangelogController.BuildCommitShaAliases(
+            "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+            "abcdeff");
+
+        Assert.Contains("abcdef1234567890abcdef1234567890abcdef12", aliases);
+        Assert.Contains("abcdef1", aliases);
+        Assert.Contains("abcdeff", aliases);
+    }
+
+    [Fact]
+    public void BuildRunExcludedDefectIds_ReturnsOnlyTerminalItems()
+    {
+        var run = new DefectAutomationRun
+        {
+            Items =
+            [
+                new DefectAutomationRunItem { DefectId = "fixed", Status = DefectAutomationRunItemStatus.Fixed },
+                new DefectAutomationRunItem { DefectId = "failed", Status = DefectAutomationRunItemStatus.Failed },
+                new DefectAutomationRunItem { DefectId = "commented", Status = DefectAutomationRunItemStatus.Commented },
+                new DefectAutomationRunItem { DefectId = "commit", Status = DefectAutomationRunItemStatus.CommitWritten },
+            ],
+        };
+
+        var excluded = DefectAgentController.BuildRunExcludedDefectIds(run);
+
+        Assert.Contains("fixed", excluded);
+        Assert.Contains("failed", excluded);
+        Assert.DoesNotContain("commented", excluded);
+        Assert.DoesNotContain("commit", excluded);
+    }
+
+    [Fact]
+    public void BuildAutomationLightweightCriteria_ExposesIssueAutofixThresholds()
+    {
+        var criteria = DefectAgentController.BuildAutomationLightweightCriteria();
+
+        Assert.Contains(criteria, x => x.Contains("200 行", StringComparison.Ordinal));
+        Assert.Contains(criteria, x => x.Contains("10 分钟", StringComparison.Ordinal));
+        Assert.Contains(criteria, x => x.Contains("数据库迁移", StringComparison.Ordinal));
+        Assert.Contains(criteria, x => x.Contains("浏览器验收", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CanReuseAutomationKey_RequiresActiveScopedAndUnexpiredKey()
+    {
+        var now = new DateTime(2026, 6, 18, 0, 0, 0, DateTimeKind.Utc);
+        var reusable = new AgentApiKey
+        {
+            IsActive = true,
+            Scopes = [DefectAgentController.AgentFixScope],
+            ExpiresAt = now.AddDays(1),
+        };
+        var missingScope = new AgentApiKey { IsActive = true, Scopes = ["open-api:call"], ExpiresAt = now.AddDays(1) };
+        var expired = new AgentApiKey { IsActive = true, Scopes = [DefectAgentController.AgentFixScope], ExpiresAt = now.AddSeconds(-1) };
+        var revoked = new AgentApiKey { IsActive = true, Scopes = [DefectAgentController.AgentFixScope], RevokedAt = now };
+        var neverExpires = new AgentApiKey { IsActive = true, Scopes = [DefectAgentController.AgentFixScope], ExpiresAt = null };
+
+        Assert.True(DefectAgentController.CanReuseAutomationKey(reusable, now));
+        Assert.True(DefectAgentController.CanReuseAutomationKey(neverExpires, now));
+        Assert.False(DefectAgentController.CanReuseAutomationKey(missingScope, now));
+        Assert.False(DefectAgentController.CanReuseAutomationKey(expired, now));
+        Assert.False(DefectAgentController.CanReuseAutomationKey(revoked, now));
+    }
+
+    [Fact]
+    public void CanAutomationAccessRun_AllowsOwnerManageOrAiAccessOnly()
+    {
+        var run = new DefectAutomationRun { CreatedBy = "owner" };
+
+        Assert.True(DefectAgentController.CanAutomationAccessRun(run, "owner", false, false));
+        Assert.True(DefectAgentController.CanAutomationAccessRun(run, "other", true, false));
+        Assert.True(DefectAgentController.CanAutomationAccessRun(run, "other", false, true));
+        Assert.False(DefectAgentController.CanAutomationAccessRun(run, "other", false, false));
+        Assert.False(DefectAgentController.CanAutomationAccessRun(null, "owner", true, true));
+    }
+
+    [Fact]
+    public void CanAutomationAccessDefect_LimitsScopedKeysToAssignedOrUnassignedDefects()
+    {
+        var assigned = new DefectReport { AssigneeId = "owner" };
+        var unassigned = new DefectReport { AssigneeId = "" };
+        var other = new DefectReport { AssigneeId = "other" };
+        var deleted = new DefectReport { AssigneeId = "owner", IsDeleted = true };
+
+        Assert.True(DefectAgentController.CanAutomationAccessDefect(assigned, "owner", false, false));
+        Assert.True(DefectAgentController.CanAutomationAccessDefect(unassigned, "owner", false, false));
+        Assert.True(DefectAgentController.CanAutomationAccessDefect(other, "owner", true, false));
+        Assert.True(DefectAgentController.CanAutomationAccessDefect(other, "owner", false, true));
+        Assert.False(DefectAgentController.CanAutomationAccessDefect(other, "owner", false, false));
+        Assert.False(DefectAgentController.CanAutomationAccessDefect(deleted, "owner", true, true));
+    }
+
+    [Fact]
+    public void CanAutomationAccessTrace_LimitsValidationReportToOwningKey()
+    {
+        var trace = new DefectResolutionTrace { AgentIdentifier = "key-1" };
+
+        Assert.True(DefectAgentController.CanAutomationAccessTrace(trace, "key-1", false, false));
+        Assert.True(DefectAgentController.CanAutomationAccessTrace(trace, "key-2", true, false));
+        Assert.True(DefectAgentController.CanAutomationAccessTrace(trace, "key-2", false, true));
+        Assert.False(DefectAgentController.CanAutomationAccessTrace(trace, "key-2", false, false));
+        Assert.False(DefectAgentController.CanAutomationAccessTrace(null, "key-1", true, true));
+    }
+
+    [Fact]
+    public void ResolveAutomationAgentIdentifier_PrefersAgentApiKeyId()
+    {
+        Assert.Equal("agent-key-1", DefectAgentController.ResolveAutomationAgentIdentifier(" agent-key-1 ", "app-1"));
+        Assert.Equal("app-1", DefectAgentController.ResolveAutomationAgentIdentifier(null, " app-1 "));
+        Assert.Null(DefectAgentController.ResolveAutomationAgentIdentifier("", " "));
     }
 
     [Fact]

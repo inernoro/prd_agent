@@ -707,12 +707,17 @@
 - [CDS PR #684 审查修复计划](plan.cds-pr684-review-remediation) `plan.cds-pr684-review-remediation`
   > CDS PR #684 代码审查发现问题的分阶段修复计划与进度追踪
 
+- [MD 转 PPT 下一波（大纲右侧编辑器 + 状态机 + 澄清问卷）](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
+  > MD 转 PPT 下一波迭代：大纲右侧编辑器、状态机重构、澄清问卷，源自用户 2026-06-10 11 条反馈
+
 ### 六、技术债务台账
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
 
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
+- [知识库版本控制/图片插入/大小统计 · 已知边界](debt.knowledge-base-versioning) `debt.knowledge-base-versioning`
+  > 图片插入不刷新已修；版本控制独立集合 + 恢复只写文本不删资产；遗留：github 日同步覆盖手动编辑、大小不含外链图片字节、版本留存上限100
 - [更新中心（终身存储 + SSE 推送）债务台账](debt.changelog-center) `debt.changelog-center`
   > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
@@ -737,6 +742,10 @@
 
 - [CDS Agent 工作台 · 债务台账](debt.cds-agent) `debt.cds-agent`
   > 4 条 open：R1 商业级 provider 闭环 / Lite 只读模式能力边界 / CDS Agent 文档群熵减 / 无 profile 时 Lite 直跑
+- [CDS 后端部署冻结 · 分支 api 跑旧代码](debt.cds-backend-deploy-freeze) `debt.cds-backend-deploy-freeze`
+  > open（阻塞）：构建成功≠运行新代码，后端 .cs 改动进不到运行进程；图生视频下载鲁棒修复 + 额度用尽主动提醒已就绪待部署修好后复验
+- [视觉分镜台 · 债务台账](debt.visual-storyboard) `debt.visual-storyboard`
+  > open：OpenRouter 出图画幅(size/image_config)+modalities 需按模型能力派生 / 拆镜改 SSE 流式逐镜吐出 / 关键帧 ImageGenRun 离场取消（SSE 无同步 runId）
 
 - [MD 转网页 PPT · 债务台账](debt.md-to-ppt) `debt.md-to-ppt`
   > 2 条 open：预览 iframe same-origin 安全债（重构时从隔离源渲染）/ 知识库注入 CDS Agent 会话未实现（UI 已禁用占位）
@@ -802,6 +811,9 @@
 
 - [网页托管评论 · 债务台账](debt.web-hosting-comments) `debt.web-hosting-comments`
   > 网页托管评论功能的已知边界与待补实现
+
+- [MAP MCP 连接器 · 债务台账](debt.map-mcp-connector) `debt.map-mcp-connector`
+  > MAP MCP 连接器核心链路已上线，债务台账记录 PR #836 后显式延后的硬化项（共 4 条，open 3）
 
 ### 七、周报
 
@@ -958,6 +970,8 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-06-19 | 新增 | `debt.visual-storyboard` | 视觉分镜台债务台账：OpenRouter 出图画幅/modalities 按能力派生 + 拆镜 SSE 流式 + 关键帧 ImageGenRun 离场取消 |
+| 2026-06-19 | 新增 | `debt.cds-backend-deploy-freeze` | CDS 后端部署冻结台账：分支 api 跑旧代码（构建成功≠运行新代码）+ 图生视频下载修复/额度提醒待部署复验 |
 | 2026-06-04 | 新增 | `report.tutorial-coverage` `debt.onboarding-tips` | 页面教程系统统一升级:全量路由覆盖审计 + 债务台账(video-agent/薄教程加厚/编辑器/跨页待补) |
 | 2026-06-02 | 新增 | `design.agent-universe` `debt.agent-universe` | 智能体宇宙设计（能力契约 + 调用信封）与债务台账 |
 | 2026-06-02 | 新增 | `design.cds-visual-deploy` `guide.cds-one-click-deploy` `report.cds-visual-deploy` `debt.cds-visual-deploy` | CDS 绝对可视化一键部署收尾:设计(含架构图)+使用教程+完整报告+债务台账;`plan.cds-visual-deploy` 状态更新为核心收尾 |

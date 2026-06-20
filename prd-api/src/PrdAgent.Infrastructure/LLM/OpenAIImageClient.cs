@@ -194,6 +194,10 @@ public class OpenAIImageClient
         // 获取平台适配器（优先使用模型配置，fallback 到 URL 检测）
         var platformAdapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, effectiveModelName);
         var isVolces = platformAdapter.PlatformType == "volces"; // 保留兼容变量
+        // OpenRouter 图片生成不走 /images/generations，而是 /chat/completions + modalities:[image,text]，
+        // 图片在 choices[0].message.images[].image_url.url（base64 data URI）返回。详见 doc 与 LiteLLM 同款适配。
+        var isOpenRouter = apiUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(platformType, "openrouter", StringComparison.OrdinalIgnoreCase);
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
         if (!platformAdapter.SupportsImageToImage && initImageBase64 != null)
         {
@@ -364,6 +368,9 @@ public class OpenAIImageClient
         // 通过 Gateway 发送请求（Gateway 负责：模型调度、HTTP 请求、日志记录、健康管理）
         // 构建 GatewayRawRequest
         GatewayRawResponse gatewayResp;
+        // 若 images/generations 返回 404（OpenRouter 这类平台图片生成走 chat/completions+modalities），
+        // 置位后用 OpenRouter 协议重试一次。与 isOpenRouter 快速路径互补，且不依赖 apiUrl 字符串匹配。
+        var forceOpenRouter = false;
         try
         {
             // 定义发送函数（支持重试）
@@ -437,6 +444,70 @@ public class OpenAIImageClient
                         ExpectedModel = effectiveModelName,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
+                        IsMultipart = false,
+                        TimeoutSeconds = imageGenTimeoutSeconds,
+                        Context = new GatewayRequestContext
+                        {
+                            RequestId = requestId,
+                            SessionId = ctx?.SessionId,
+                            GroupId = ctx?.GroupId,
+                            UserId = ctx?.UserId,
+                            ViewRole = ctx?.ViewRole,
+                            QuestionText = prompt.Trim()
+                        }
+                    }, resolution, token);
+                }
+                // OpenRouter 图片生成：chat/completions + modalities（文生图 / 图生图统一走这条）
+                // isOpenRouter = apiUrl 命中；forceOpenRouter = images/generations 返回 404 后的兜底重试
+                else if (isOpenRouter || forceOpenRouter)
+                {
+                    JsonNode userContent;
+                    if (initImageBase64 != null)
+                    {
+                        var dataUri = initImageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                            ? initImageBase64
+                            : $"data:image/png;base64,{initImageBase64}";
+                        userContent = new JsonArray
+                        {
+                            new JsonObject { ["type"] = "text", ["text"] = prompt },
+                            new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = dataUri } },
+                        };
+                    }
+                    else
+                    {
+                        userContent = JsonValue.Create(prompt);
+                    }
+
+                    var orBody = new JsonObject
+                    {
+                        ["model"] = effectiveModelName,
+                        ["messages"] = new JsonArray
+                        {
+                            new JsonObject { ["role"] = "user", ["content"] = userContent },
+                        },
+                        ["modalities"] = new JsonArray { "image", "text" },
+                    };
+
+                    // 把所选画幅透传给 OpenRouter：其 chat/completions 出图用 image_config.aspect_ratio 控制形状，
+                    // 不传则回退模型默认(通常方形)，导致 16:9 / 9:16 关键帧被裁切、与后续图生视频画幅错配（Codex review）。
+                    // 仅在能从 size 推出受支持的比例时添加，推不出就不加(保持原行为，避免未知字段 400)。
+                    var orAspect = DeriveOpenRouterAspectRatio(size);
+                    if (orAspect != null)
+                    {
+                        orBody["image_config"] = new JsonObject { ["aspect_ratio"] = orAspect };
+                    }
+
+                    _logger.LogInformation(
+                        "[OpenAIImageClient] OpenRouter 图片请求(chat/completions + modalities): AppCallerCode={AppCallerCode}, HasImage={HasImage}, Model={Model}",
+                        appCallerCode, initImageBase64 != null, effectiveModelName);
+
+                    return await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+                    {
+                        AppCallerCode = appCallerCode,
+                        ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
+                        EndpointPath = "chat/completions",
+                        RequestBody = orBody,
                         IsMultipart = false,
                         TimeoutSeconds = imageGenTimeoutSeconds,
                         Context = new GatewayRequestContext
@@ -593,6 +664,25 @@ public class OpenAIImageClient
             }
 
             gatewayResp = await SendViaGatewayAsync(ct);
+
+            // OpenRouter 兜底：部分平台（OpenRouter 等）图片生成不走 /images/generations，而是 chat/completions+modalities。
+            // 仅当该端点「不存在/不支持」（404 Not Found / 405 Method Not Allowed / 501 Not Implemented）时，
+            // 才改用 OpenRouter 协议重试一次——这才是端点形状不匹配。鉴权/额度/限流/超时/5xx 都是真实上游错误：
+            // 改协议重试既修不了，又会用 chat 端点的误导性错误覆盖原始错误、对非 OpenRouter 平台（如 Volces）的
+            // 瞬时 500/502 用错协议重打、徒增负载（Codex + Bugbot review，双标）。
+            // 仅文生图触发（图生图 multipart 不同协议），forceOpenRouter 保证最多重试一次。
+            var endpointMissing = !gatewayResp.Success
+                && (gatewayResp.StatusCode == 404
+                    || gatewayResp.StatusCode == 405
+                    || gatewayResp.StatusCode == 501);
+            if (endpointMissing && initImageBase64 == null && !isOpenRouter && !forceOpenRouter)
+            {
+                _logger.LogWarning(
+                    "[OpenAIImageClient] images/generations 失败(status={Status})，改用 chat/completions+modalities 重试。apiUrl={ApiUrl}, model={Model}",
+                    gatewayResp.StatusCode, apiUrl, effectiveModelName);
+                forceOpenRouter = true;
+                gatewayResp = await SendViaGatewayAsync(ct);
+            }
 
             // 平台特定的尺寸错误处理：使用适配器自动修正
             // 自适应模型完全不发尺寸字段，跳过此分支以免 reqObj 不存在 size 属性时 NRE
@@ -764,62 +854,133 @@ public class OpenAIImageClient
                 });
             }
 
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            var data = root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array
-                ? dataEl.EnumerateArray().ToList()
-                : new List<JsonElement>();
-
             var images = new List<ImageGenImage>();
-            var idx = 0;
-            foreach (var it in data)
+
+            // OpenRouter 图片响应：choices[0].message.images[].image_url.url（base64 data URI）
+            // 双重检测：1) isOpenRouter 标记 2) 响应体特征（兼容 OpenAI 兼容网关代理 OpenRouter 的情况）
+            var looksOpenRouterImage = isOpenRouter
+                || (body.Contains("\"choices\"", StringComparison.Ordinal)
+                    && body.Contains("\"image_url\"", StringComparison.Ordinal)
+                    && body.Contains("\"images\"", StringComparison.Ordinal));
+            if (looksOpenRouterImage)
             {
-                string? b64 = null;
-                string? url = null;
-                string? revised = null;
-                string? sizeHint = null;
-
-                if (it.TryGetProperty("b64_json", out var b64El) && b64El.ValueKind == JsonValueKind.String)
+                using var orDoc = JsonDocument.Parse(body);
+                var orIdx = 0;
+                if (orDoc.RootElement.TryGetProperty("choices", out var choicesEl) && choicesEl.ValueKind == JsonValueKind.Array)
                 {
-                    b64 = b64El.GetString();
-                }
-                // 兼容部分平台字段命名差异
-                if (string.IsNullOrWhiteSpace(b64) && it.TryGetProperty("base64", out var b64El2) && b64El2.ValueKind == JsonValueKind.String)
-                {
-                    b64 = b64El2.GetString();
-                }
-                if (it.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String)
-                {
-                    url = urlEl.GetString();
-                }
-                // Volces 会返回 data[i].size 作为实际尺寸
-                if (it.TryGetProperty("size", out var sizeEl) && sizeEl.ValueKind == JsonValueKind.String)
-                {
-                    sizeHint = sizeEl.GetString();
-                }
-                if (it.TryGetProperty("revised_prompt", out var rpEl) && rpEl.ValueKind == JsonValueKind.String)
-                {
-                    revised = rpEl.GetString();
-                }
-
-                // 兼容某些网关/代理把 b64_json 返回成 data URL（data:image/png;base64,...）
-                if (!string.IsNullOrWhiteSpace(b64) && b64.TrimStart().StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-                {
-                    var comma = b64.IndexOf(',');
-                    if (comma >= 0 && comma + 1 < b64.Length)
+                    foreach (var ch in choicesEl.EnumerateArray())
                     {
-                        b64 = b64[(comma + 1)..];
+                        if (!ch.TryGetProperty("message", out var msgEl)) continue;
+                        if (!msgEl.TryGetProperty("images", out var imgsEl) || imgsEl.ValueKind != JsonValueKind.Array) continue;
+                        foreach (var im in imgsEl.EnumerateArray())
+                        {
+                            if (!im.TryGetProperty("image_url", out var iuEl)) continue;
+                            string? u = iuEl.ValueKind == JsonValueKind.Object && iuEl.TryGetProperty("url", out var uEl) && uEl.ValueKind == JsonValueKind.String
+                                ? uEl.GetString()
+                                : (iuEl.ValueKind == JsonValueKind.String ? iuEl.GetString() : null);
+                            if (string.IsNullOrWhiteSpace(u)) continue;
+
+                            string? b64 = null;
+                            string? httpUrl = null;
+                            string? mime = null;
+                            if (u.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var comma = u.IndexOf(',');
+                                if (comma >= 0 && comma + 1 < u.Length)
+                                {
+                                    b64 = u[(comma + 1)..];
+                                    // 头部形如 image/jpeg;base64：保留 MIME，落库时据此设 outMime，避免 JPEG/WebP 被当 png 存（Bugbot review）
+                                    var header = u[5..comma];
+                                    var semi = header.IndexOf(';');
+                                    var mt = (semi >= 0 ? header[..semi] : header).Trim();
+                                    if (mt.Contains('/')) mime = mt;
+                                }
+                            }
+                            else if (u.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                            {
+                                httpUrl = u;
+                            }
+                            if (string.IsNullOrWhiteSpace(b64) && string.IsNullOrWhiteSpace(httpUrl)) continue;
+
+                            images.Add(new ImageGenImage { Index = orIdx++, Base64 = b64, Url = httpUrl, Mime = mime });
+                        }
                     }
                 }
 
-                images.Add(new ImageGenImage
+                if (images.Count == 0 && isOpenRouter)
                 {
-                    Index = idx++,
-                    Base64 = string.IsNullOrWhiteSpace(b64) ? null : b64,
-                    Url = string.IsNullOrWhiteSpace(url) ? null : url,
-                    RevisedPrompt = string.IsNullOrWhiteSpace(revised) ? null : revised
-                });
+                    _logger.LogWarning("[OpenRouter] chat/completions 图片响应中未找到图片数据。Body length={Len}", body.Length);
+                }
             }
+
+            // 启发式可能把标准 images/generations 响应误判为 OpenRouter 形态(body 恰含 choices/image_url/images 子串)，
+            // 上面没解析到图就回退标准 data[] 解析再判定，避免有效响应被误报「未包含图片数据」（Bugbot review）
+            if (images.Count == 0)
+            {
+                if (looksOpenRouterImage && !isOpenRouter)
+                    _logger.LogWarning("[OpenRouter] 启发式命中但未解析到图，回退标准 data[] 解析。Body length={Len}", body.Length);
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                var data = root.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array
+                    ? dataEl.EnumerateArray().ToList()
+                    : new List<JsonElement>();
+
+                var idx = 0;
+                foreach (var it in data)
+                {
+                    string? b64 = null;
+                    string? url = null;
+                    string? revised = null;
+                    string? dataUrlMime = null;
+
+                    if (it.TryGetProperty("b64_json", out var b64El) && b64El.ValueKind == JsonValueKind.String)
+                    {
+                        b64 = b64El.GetString();
+                    }
+                    // 兼容部分平台字段命名差异
+                    if (string.IsNullOrWhiteSpace(b64) && it.TryGetProperty("base64", out var b64El2) && b64El2.ValueKind == JsonValueKind.String)
+                    {
+                        b64 = b64El2.GetString();
+                    }
+                    if (it.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String)
+                    {
+                        url = urlEl.GetString();
+                    }
+                    if (it.TryGetProperty("revised_prompt", out var rpEl) && rpEl.ValueKind == JsonValueKind.String)
+                    {
+                        revised = rpEl.GetString();
+                    }
+
+                    // 兼容某些网关/代理把 b64_json 返回成 data URL（data:image/png;base64,...）
+                    if (!string.IsNullOrWhiteSpace(b64) && b64.TrimStart().StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var du = b64.TrimStart();
+                        var comma = du.IndexOf(',');
+                        if (comma >= 0 && comma + 1 < du.Length)
+                        {
+                            // 保留 data URL 头里的 MIME（image/jpeg / image/webp 等），落库据此设 outMime（Bugbot review）
+                            var header = du[5..comma];
+                            var semi = header.IndexOf(';');
+                            var mt = (semi >= 0 ? header[..semi] : header).Trim();
+                            if (mt.Contains('/')) dataUrlMime = mt;
+                            b64 = du[(comma + 1)..];
+                        }
+                    }
+
+                    images.Add(new ImageGenImage
+                    {
+                        Index = idx++,
+                        Base64 = string.IsNullOrWhiteSpace(b64) ? null : b64,
+                        Url = string.IsNullOrWhiteSpace(url) ? null : url,
+                        Mime = dataUrlMime,
+                        RevisedPrompt = string.IsNullOrWhiteSpace(revised) ? null : revised
+                    });
+                }
+            }
+
+            // OpenRouter 与标准 data[] 两条解析都没拿到图：统一在此判失败（替代原 OpenRouter 分支的早退，Bugbot review）
+            if (images.Count == 0)
+                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "生图响应中未包含图片数据");
 
             // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
             // 强约束：不把 base64 写入 Mongo；输出统一 re-host 到 COS（返回稳定 URL）
@@ -844,6 +1005,8 @@ public class OpenAIImageClient
                     {
                         bytes = null;
                     }
+                    // data URL 头带的 MIME（image/jpeg / image/webp 等）优先于默认 png，避免 JPEG/WebP 字节存成 .png（Bugbot review）
+                    if (!string.IsNullOrWhiteSpace(images[i].Mime)) outMime = images[i].Mime!;
                 }
                 else if (!string.IsNullOrWhiteSpace(images[i].Url))
                 {
@@ -2306,11 +2469,34 @@ public class OpenAIImageClient
 
     private readonly record struct SizeCapsKey(string? ModelId, string? PlatformId, string? ModelNameLower);
 
+    // 从 "WxH" 像素尺寸推 OpenRouter image_config.aspect_ratio（受支持集合里取最接近的比例）。
+    // 推不出（空/格式错/无法解析）返回 null —— 调用方据此决定不加 image_config，保持原行为不引入未知字段（Codex review）。
+    private static string? DeriveOpenRouterAspectRatio(string? size)
+    {
+        if (string.IsNullOrWhiteSpace(size)) return null;
+        var parts = size.Trim().ToLowerInvariant().Split('x');
+        if (parts.Length != 2) return null;
+        if (!int.TryParse(parts[0], out var w) || !int.TryParse(parts[1], out var h) || w <= 0 || h <= 0) return null;
+        var target = (double)w / h;
+        var candidates = new (string Label, double Ratio)[]
+        {
+            ("1:1", 1.0), ("2:3", 2.0 / 3), ("3:2", 3.0 / 2), ("3:4", 3.0 / 4), ("4:3", 4.0 / 3),
+            ("4:5", 4.0 / 5), ("5:4", 5.0 / 4), ("9:16", 9.0 / 16), ("16:9", 16.0 / 9), ("21:9", 21.0 / 9),
+        };
+        var best = candidates[0];
+        var bestDiff = double.MaxValue;
+        foreach (var c in candidates)
+        {
+            var d = Math.Abs(c.Ratio - target);
+            if (d < bestDiff) { bestDiff = d; best = c; }
+        }
+        return best.Label;
+    }
+
     private static SizeCapsKey BuildCapsKey(string? modelId, string? platformId, string? modelName, string effectiveModelName)
     {
         var mid = string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
         if (!string.IsNullOrWhiteSpace(mid)) return new SizeCapsKey(mid, null, null);
-
         var pid = string.IsNullOrWhiteSpace(platformId) ? null : platformId.Trim();
         var name = string.IsNullOrWhiteSpace(modelName) ? null : modelName.Trim();
         name ??= string.IsNullOrWhiteSpace(effectiveModelName) ? null : effectiveModelName.Trim();
@@ -2565,6 +2751,8 @@ public class ImageGenImage
     public int Index { get; set; }
     public string? Base64 { get; set; }
     public string? Url { get; set; }
+    /// <summary>base64 图片的 MIME（如 image/jpeg / image/webp）。来源于 data URL 头，落库时据此设 outMime，避免 JPEG/WebP 被当 png 存（Bugbot review）。</summary>
+    public string? Mime { get; set; }
     public string? RevisedPrompt { get; set; }
     /// <summary>原图 URL（无水印）。用于作为参考图时避免水印叠加。</summary>
     public string? OriginalUrl { get; set; }

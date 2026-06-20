@@ -6,6 +6,7 @@ import type {
   ClarifyImageGenPromptContract,
   CreateImageGenRunContract,
   GenerateImageGenContract,
+  ScriptStoryboardContract,
   GetImageGenSizeCapsContract,
   GetImageGenRunContract,
   PlanImageGenContract,
@@ -26,6 +27,13 @@ export const clarifyImageGenPromptReal: ClarifyImageGenPromptContract = async (i
   return await apiRequest(api.visualAgent.imageGen.clarify(), {
     method: 'POST',
     body: { prompt: input.prompt, hasReferenceImage: input.hasReferenceImage ?? false },
+  });
+};
+
+export const scriptStoryboardReal: ScriptStoryboardContract = async (input) => {
+  return await apiRequest(api.visualAgent.imageGen.storyboardScript(), {
+    method: 'POST',
+    body: { brief: input.brief, style: input.style, sceneCount: input.sceneCount },
   });
 };
 

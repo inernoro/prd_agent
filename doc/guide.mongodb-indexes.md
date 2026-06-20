@@ -1370,3 +1370,20 @@ db.activity_logs.createIndex(
   { name: "idx_activity_logs_module_created" }
 )
 ```
+
+
+### document_entry_versions
+
+知识库文档的在线编辑历史版本 —— 每条文档（EntryId）下 VersionNumber 单调递增。
+`DocumentVersionService.CreateVersionAsync` 取「最新版本号 + 1」后插入，存在并发窗口：
+同一 EntryId 的两个写入若重叠，可能读到同一 latest 并算出相同 VersionNumber，破坏单调唯一。
+列表查询已加 `(VersionNumber desc, CreatedAt desc)` 次级排序保证顺序确定（不让「最新」徽章落到随机一条），
+但真正的单调唯一性需 `(EntryId, VersionNumber)` 唯一索引兜底（Codex P2）。
+
+```js
+// (EntryId, VersionNumber) 唯一 — 同一文档版本号不重复，并发重复分配被 unique 索引拦截
+db.document_entry_versions.createIndex(
+  { "EntryId": 1, "VersionNumber": -1 },
+  { name: "uniq_doc_entry_versions_entry_version", unique: true }
+)
+```

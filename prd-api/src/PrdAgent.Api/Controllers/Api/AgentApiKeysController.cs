@@ -31,6 +31,7 @@ public class AgentApiKeysController : ControllerBase
         MarketplaceSkillsOpenApiController.ScopeRead,
         MarketplaceSkillsOpenApiController.ScopeWrite,
         DefectAgentController.AgentFixScope,
+        DefectAgentController.AgentShareScope,
         DocumentStoreController.ScopeRead,
         DocumentStoreController.ScopeWrite,
         OpenApiController.ScopeCall,
