@@ -25,6 +25,11 @@ import type {
   CreateLocalUserInput,
   UserActivityRecord,
 } from '../../domain/auth.js';
+// 2026-06-20：本文件是 ESM 模块（package.json "type":"module"），运行时
+// 不存在 require()。原先三处 require('node:crypto') 在 vitest（CJS interop）
+// 下能跑，但真实运行（尤其 CDS_AUTH_BACKEND=memory）会抛 "require is not
+// defined"，导致 bootstrap/login/users/activity 全部 500。改为顶层 import。
+import { randomUUID, randomBytes } from 'node:crypto';
 
 /** The stable contract every AuthStore implementation must satisfy. */
 export interface AuthStore {
@@ -110,8 +115,6 @@ export interface AuthStore {
  * another dependency. Node 20+ ships crypto.randomUUID.
  */
 function genUuid(): string {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { randomUUID } = require('node:crypto') as typeof import('node:crypto');
   return randomUUID().replace(/-/g, '');
 }
 
@@ -287,8 +290,6 @@ export class MemoryAuthStore implements AuthStore {
     userAgent: string | null;
     ipAddress: string | null;
   }, now = new Date()): Promise<CdsSession> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { randomBytes } = require('node:crypto') as typeof import('node:crypto');
     const token = randomBytes(48).toString('base64url');
     const session: CdsSession = {
       token,
@@ -462,8 +463,6 @@ export class MemoryAuthStore implements AuthStore {
     invitedByUserId: string;
     ttlMs: number;
   }, now = new Date()): Promise<CdsWorkspaceInvite> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { randomBytes } = require('node:crypto') as typeof import('node:crypto');
     const token = randomBytes(32).toString('base64url');
     const invite: CdsWorkspaceInvite = {
       id: genUuid(),

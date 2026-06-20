@@ -1068,8 +1068,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * with no obvious path forward.
    */
   function composeFallbackDetection(repoPath: string): StackDetection | null {
-    const fs = require('node:fs') as typeof import('node:fs');
-    const path = require('node:path') as typeof import('node:path');
+    // 2026-06-20：ESM 模块运行时无 require()，原先 require('node:fs'/'node:path')
+    // 真实运行会抛 "require is not defined"。复用文件顶部已 import 的 nodeFs/nodePath。
+    const fs = nodeFs;
+    const path = nodePath;
     const composeNames = [
       'docker-compose.yml',
       'docker-compose.yaml',
