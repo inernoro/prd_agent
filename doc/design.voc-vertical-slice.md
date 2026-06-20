@@ -130,7 +130,14 @@ Body: { productId: string }
 
 唯一索引是承重件（非可选防御）。按 `no-auto-index.md`，索引由 DBA 手动建——已作为实现前置条件登记在 `doc/guide.mongodb-indexes.md`（`requirements` → `uniq_requirements_source_emergence_node`，上线 adopt 端点前必须先执行）。
 
-**前端**：涌现节点卡片底部"流转需求池"按钮。**"已流转"状态必须取权威源 —— 由"是否存在 `SourceEmergenceNodeId == 节点id && !IsDeleted` 的需求"派生，不能用节点的 `AdoptedRequirementId` 判定**。原因：`AdoptedRequirementId` 是 best-effort 缓存（第 6 步回填可能失败、或软删后变陈旧），会两头出错——insert 成功但回填失败时活跃需求已存在、指针却为空，卡片错显可点按钮；既有需求软删后指针仍在、却已可重新 adopt，卡片错显 chip 禁用按钮。正解：后端在节点列表/详情响应里**直接附带由活跃查重算出的 `hasActiveRequirement` + `requirementNo/requirementId`** 两个派生字段（避免前端二次查询），`AdoptedRequirementId` 只作内部缓存、不进前端判定。`hasActiveRequirement=true` → 显示需求编号 chip，点击跳 product-agent；`false` → 显示可点"流转需求池"按钮。复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
+**前端**：涌现节点卡片底部"流转需求池"按钮。**"已流转"状态必须取权威源 —— 由"是否存在 `SourceEmergenceNodeId == 节点id && !IsDeleted` 的需求"派生，不能用节点的 `AdoptedRequirementId` 判定**。原因：`AdoptedRequirementId` 是 best-effort 缓存（第 6 步回填可能失败、或软删后变陈旧），会两头出错——insert 成功但回填失败时活跃需求已存在、指针却为空，卡片错显可点按钮；既有需求软删后指针仍在、却已可重新 adopt，卡片错显 chip 禁用按钮。正解：后端在节点列表/详情响应里**直接附带由活跃查重算出的派生字段**（避免前端二次查询），`AdoptedRequirementId` 只作内部缓存、不进前端判定。
+
+**但这些派生字段必须按权限过滤，不能裸塞进节点响应（否则泄漏私有需求标识）**：`EmergenceController.GetTree`（`EmergenceController.cs:118`）允许 `t.OwnerId == userId || t.IsPublic` 公开读——任何人都能看公开涌现树的节点。若把 `requirementId/requirementNo` 无差别塞进节点 DTO，浏览公开树、但无 `ProductAgentUse` / 无该产品访问权的人就能看到私有产品的需求编号。规则：
+- `requirementId` / `requirementNo`（产品派生标识）**只对"能访问该需求所在产品"的调用方返回**（`ProductAgentUse` 权限闸 + `FindAccessibleProductAsync(requirement.ProductId, userId)` 都过），其余调用方 DTO 里**省略**这两个字段。
+- `hasActiveRequirement`（裸布尔，不含任何产品标识）可对所有可读该树的人返回——它只表达"这个节点已被流转过"，不泄漏产品/需求身份。
+- 前端：有权 → `hasActiveRequirement && requirementNo` 显示可点 chip 跳 product-agent；无权但 `hasActiveRequirement` → 显示不可点的"已流转"灰标（无链接、无编号）；`false` → 显示可点"流转需求池"按钮。
+
+复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
 
 ## 八、关联设计文档
 
@@ -149,3 +156,4 @@ Body: { productId: string }
 | 改善项目追踪字段不全 | 低 | DefectProject 当前仅容器，里程碑/进度/成本为演示态，后续按需补字段 |
 | 需求池来源多样导致口径混乱 | 低 | 统一 `SourceSystem` 枚举（defect/emergence/tapd/manual），前端按来源打标 |
 | adopt 跨权限域越权（IDOR） | 中 | 节点按树 `OwnerId == userId`；产品侧 = `ProductAgentUse` 权限闸 + `FindAccessibleProductAsync`（端点在 emergence 路由下，product 权限闸不自动生效，必须显式校验）；校验对象**按分支取**——insert 校入参 productId、命中校 `existing.ProductId`（命中分支忽略入参，只校入参则失权后可借他产品取回需求）。先于返回/insert（见 7 节） |
+| 公开树节点响应泄漏私有需求标识 | 中 | `GetTree` 允许公开树人人读；节点响应里 `requirementId/requirementNo` 必须按产品访问权过滤（无权则省略），仅 `hasActiveRequirement` 裸布尔对所有可读者开放（见 7 节前端段） |
