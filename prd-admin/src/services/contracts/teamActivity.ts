@@ -102,6 +102,13 @@ export type BehaviorInsight = {
   /** 转缺陷后的关联缺陷 */
   defectId?: string | null;
   defectTitle?: string | null;
+  /** 转产品需求后的关联需求（VOC 痛点流转需求池） */
+  requirementId?: string | null;
+  requirementNo?: string | null;
+  /** 标记 resolved 时的坏请求基线（报错+慢请求数快照）；仅报错/慢请求类有值 */
+  resolvedBadCount?: number | null;
+  /** 复测回落百分比：(当前坏请求-基线)/基线×100；负数=回落（好），正数=复发（坏）；null=无基线 */
+  reboundPct?: number | null;
 };
 
 export type TeamActivityInsightsData = {
@@ -128,11 +135,34 @@ export type SetInsightStateParams = {
   status: 'confirmed' | 'resolved' | 'ignored' | 'open';
   defectId?: string;
   defectTitle?: string;
+  /** 标记 resolved 时上报当前坏请求数（报错+慢请求），作为复测回落对比基线 */
+  badCount?: number;
 };
 
 export type SetTeamActivityInsightStateContract = (
   params: SetInsightStateParams
 ) => Promise<ApiResponse<{ fingerprint: string; status: string | null }>>;
+
+export type InsightToRequirementParams = {
+  kind: string;
+  target: string;
+  title?: string;
+  description?: string;
+  /** 落入哪个产品的需求池（必填） */
+  productId: string;
+};
+
+export type InsightToRequirementResult = {
+  fingerprint: string;
+  requirementId: string;
+  requirementNo: string;
+  productId: string;
+  alreadyExists: boolean;
+};
+
+export type InsightToRequirementContract = (
+  params: InsightToRequirementParams
+) => Promise<ApiResponse<InsightToRequirementResult>>;
 
 export type GetTeamActivityInsightsContract = (
   params?: GetTeamActivityInsightsParams

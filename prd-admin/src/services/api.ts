@@ -195,6 +195,7 @@ export const api = {
     stats: () => '/api/team-activity/stats',
     insights: () => '/api/team-activity/insights',
     insightState: () => '/api/team-activity/insights/state',
+    insightToRequirement: () => '/api/team-activity/insights/to-requirement',
     experienceMap: () => '/api/team-activity/experience-map',
     endpointDetail: () => '/api/team-activity/endpoint-detail',
   },

@@ -1108,6 +1108,18 @@ public class TeamActivityController : ControllerBase
             .Select(i =>
             {
                 states.TryGetValue($"{i.Kind}|{i.Target}", out var st);
+                // 复测回落：仅对「报错/慢请求」类（EventCount 即坏请求数）且已记录 resolved 基线时计算。
+                // reboundPct = (当前坏请求 - 基线) / 基线 × 100；负数=回落（好），正数=复发（坏）。
+                int? resolvedBadCount = null;
+                int? reboundPct = null;
+                if (st?.Status == "resolved"
+                    && st.ResolvedBadCount is int baseBad and > 0
+                    && (i.Kind == "api-error" || i.Kind == "slow-endpoint"))
+                {
+                    resolvedBadCount = baseBad;
+                    var cur = (int)i.EventCount;
+                    reboundPct = (int)Math.Round((cur - baseBad) / (double)baseBad * 100.0);
+                }
                 return new
                 {
                     kind = i.Kind,
@@ -1121,6 +1133,10 @@ public class TeamActivityController : ControllerBase
                     status = st?.Status,
                     defectId = st?.DefectId,
                     defectTitle = st?.DefectTitle,
+                    requirementId = st?.RequirementId,
+                    requirementNo = st?.RequirementNo,
+                    resolvedBadCount,
+                    reboundPct,
                 };
             })
             .ToList();
@@ -1651,7 +1667,7 @@ public class TeamActivityController : ControllerBase
         await Response.Body.FlushAsync(CancellationToken.None);
     }
 
-    public record SetInsightStateRequest(string Kind, string Target, string Status, string? DefectId, string? DefectTitle);
+    public record SetInsightStateRequest(string Kind, string Target, string Status, string? DefectId, string? DefectTitle, int? BadCount = null);
 
     /// <summary>
     /// 设置洞察处理状态（洞察生命周期）。status: confirmed / resolved / ignored / open（open = 清除状态恢复待处理）。
@@ -1687,12 +1703,158 @@ public class TeamActivityController : ControllerBase
         {
             update = update.Set(x => x.DefectId, request.DefectId).Set(x => x.DefectTitle, request.DefectTitle);
         }
+        // 复测回落基线：标记 resolved 时快照当时的坏请求数（前端传当前 err+slow），改回非 resolved 时清空。
+        if (request.Status == "resolved")
+        {
+            update = update
+                .Set(x => x.ResolvedAt, DateTime.UtcNow)
+                .Set(x => x.ResolvedBadCount, request.BadCount);
+        }
+        else
+        {
+            update = update
+                .Set(x => x.ResolvedAt, (DateTime?)null)
+                .Set(x => x.ResolvedBadCount, (int?)null);
+        }
         await _db.BehaviorInsightStates.UpdateOneAsync(
             x => x.Fingerprint == fingerprint,
             update,
             new UpdateOptions { IsUpsert = true });
 
         return Ok(ApiResponse<object>.Ok(new { fingerprint, status = request.Status }));
+    }
+
+    public record ToRequirementRequest(string Kind, string Target, string? Title, string? Description, string? ProductId);
+
+    /// <summary>
+    /// 痛点洞察流转产品需求池（VOC 闭环收口）：把一个体验痛点一键转成产品管理智能体的需求记录（Requirement），
+    /// 落入指定产品的需求池，并把 RequirementId/RequirementNo 回写到 BehaviorInsightState、status 置 confirmed。
+    /// 幂等：同一指纹已转过需求（state.RequirementId 非空且需求仍存在）则直接返回已存在的，不重复创建。
+    /// 需求创建逻辑对照 ProductAgentController.ConvertDefectToRequirementInternalAsync（编号 + 流程默认 + 初始状态）。
+    /// </summary>
+    [HttpPost("insights/to-requirement")]
+    public async Task<IActionResult> ToRequirement([FromBody] ToRequirementRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Kind) || string.IsNullOrWhiteSpace(request.Target))
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "kind/target 不合法"));
+        if (string.IsNullOrWhiteSpace(request.ProductId))
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "请先选择落入哪个产品的需求池"));
+
+        var productId = request.ProductId!.Trim();
+        var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
+        if (product == null)
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "目标产品不存在或已删除，请重新选择"));
+
+        var userId = this.GetRequiredUserId();
+        var fingerprint = $"{request.Kind}|{request.Target}";
+
+        // 幂等：该指纹已转过需求且需求仍存在 → 返回已存在的，不重复创建
+        var existingState = await _db.BehaviorInsightStates
+            .Find(x => x.Fingerprint == fingerprint)
+            .SortByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync();
+        if (existingState != null && !string.IsNullOrWhiteSpace(existingState.RequirementId))
+        {
+            var already = await _db.Requirements
+                .Find(r => r.Id == existingState.RequirementId && !r.IsDeleted)
+                .FirstOrDefaultAsync();
+            if (already != null)
+            {
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    fingerprint,
+                    requirementId = already.Id,
+                    requirementNo = already.RequirementNo,
+                    productId = already.ProductId,
+                    alreadyExists = true,
+                }));
+            }
+        }
+
+        // 解析需求默认流程定义 + 初始状态（默认模板优先匹配本产品，回退全局默认）
+        var workflowDefId = await ResolveRequirementWorkflowDefIdAsync(productId);
+        var initialState = await ResolveRequirementInitialStateAsync(workflowDefId);
+
+        var title = string.IsNullOrWhiteSpace(request.Title)
+            ? $"[用户体验之声] {request.Kind}：{request.Target}"
+            : request.Title!.Trim();
+
+        var requirement = new Requirement
+        {
+            ProductId = productId,
+            RequirementNo = await GenerateNextRequirementNoAsync(),
+            Title = title,
+            Description = request.Description,
+            Grade = ProductItemGrade.P2,
+            WorkflowDefId = workflowDefId,
+            CurrentState = initialState,
+            OwnerId = userId,
+            SourceSystem = "voc-insight",
+            SourceUrl = request.Target,
+        };
+        await _db.Requirements.InsertOneAsync(requirement);
+
+        // 回写关联到洞察状态：RequirementId/RequirementNo + status=confirmed（确认待改）
+        var update = Builders<BehaviorInsightState>.Update
+            .Set(x => x.Kind, request.Kind)
+            .Set(x => x.Target, request.Target)
+            .Set(x => x.RequirementId, requirement.Id)
+            .Set(x => x.RequirementNo, requirement.RequirementNo)
+            .Set(x => x.UpdatedBy, userId)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow)
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(x => x.CreatedAt, DateTime.UtcNow);
+        // 尚未有状态（或处于待处理）时置 confirmed；不覆盖已 resolved/ignored 的人工决策
+        if (existingState == null || string.IsNullOrWhiteSpace(existingState.Status) || existingState.Status == "confirmed")
+        {
+            update = update.Set(x => x.Status, "confirmed");
+        }
+        await _db.BehaviorInsightStates.UpdateOneAsync(
+            x => x.Fingerprint == fingerprint,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            fingerprint,
+            requirementId = requirement.Id,
+            requirementNo = requirement.RequirementNo,
+            productId,
+            alreadyExists = false,
+        }));
+    }
+
+    /// <summary>下一需求编号：全库 Requirements 单表 TAPD 纯数字全局递增（对照 ProductAgentController.GenerateNextTapdStyleRequirementIdAsync）。</summary>
+    private async Task<string> GenerateNextRequirementNoAsync()
+    {
+        var items = await _db.Requirements
+            .Find(r => !r.IsDeleted)
+            .Project(r => new { r.RequirementNo, r.ExternalId })
+            .ToListAsync();
+        return PrdAgent.Core.Helpers.ProductEntityNumbering.NextTapdNumericId(
+            items.SelectMany(i => new[] { i.RequirementNo, i.ExternalId }));
+    }
+
+    /// <summary>解析需求的默认流程定义 Id（默认匹配本产品，回退全局默认；都缺失时用内置默认流程 Id）。</summary>
+    private async Task<string?> ResolveRequirementWorkflowDefIdAsync(string productId)
+    {
+        var wfFilter = Builders<ProductWorkflowDefinition>.Filter.And(
+            Builders<ProductWorkflowDefinition>.Filter.Eq(w => w.EntityType, ProductEntityType.Requirement),
+            Builders<ProductWorkflowDefinition>.Filter.Eq(w => w.IsDeleted, false),
+            Builders<ProductWorkflowDefinition>.Filter.Eq(w => w.IsDefault, true));
+        var workflows = await _db.ProductWorkflowDefinitions.Find(wfFilter).ToListAsync();
+        var wf = workflows.FirstOrDefault(w => w.ProductId == productId) ?? workflows.FirstOrDefault(w => w.ProductId == null);
+        return wf?.Id;
+    }
+
+    /// <summary>解析需求初始状态 Key（流程定义优先，缺失回退内置 New）。</summary>
+    private async Task<string> ResolveRequirementInitialStateAsync(string? workflowDefId)
+    {
+        if (string.IsNullOrWhiteSpace(workflowDefId))
+            return RequirementWorkflowCatalog.New;
+        var def = await _db.ProductWorkflowDefinitions.Find(w => w.Id == workflowDefId && !w.IsDeleted).FirstOrDefaultAsync();
+        var key = def?.GetInitialStateKey();
+        return string.IsNullOrWhiteSpace(key) ? RequirementWorkflowCatalog.New : key;
     }
 
     /// <summary>

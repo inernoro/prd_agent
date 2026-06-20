@@ -5,7 +5,7 @@
  * 数据源：apirequestlogs（报错/慢端点，历史即有）+ behavior_events（路由信号，自采集上线起累积）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BarChart3, BookOpen, Bug, Check, CheckCircle2, EyeOff as IgnoreIcon, Microscope, Radar, RotateCcw, ScrollText, Users, X } from 'lucide-react';
+import { BarChart3, BookOpen, Bug, Check, CheckCircle2, ClipboardList, EyeOff as IgnoreIcon, Microscope, Radar, RotateCcw, ScrollText, Users, X } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
@@ -18,6 +18,7 @@ import {
   createDocumentStore,
   getTeamActivityExperienceMap,
   getTeamActivityInsights,
+  insightToRequirement,
   listDocumentEntries,
   listDocumentStores,
   setTeamActivityInsightState,
@@ -74,6 +75,7 @@ export function InsightsPanel({ from }: { from?: string }) {
   const [rightMode, setRightMode] = useState<'stats' | 'drill'>('stats');
   const [drillTarget, setDrillTarget] = useState<{ target: string; label: string } | null>(null);
   const [drillConverting, setDrillConverting] = useState(false);
+  const [drillConvertingReq, setDrillConvertingReq] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [briefOpen, setBriefOpen] = useState(false);
   const [briefModel, setBriefModel] = useState<string | null>(null);
@@ -199,6 +201,7 @@ export function InsightsPanel({ from }: { from?: string }) {
     setRightMode('stats');
     setDrillTarget(null);
     setDrillConverting(false);
+    setDrillConvertingReq(false);
   }, []);
 
   useEffect(() => {
@@ -209,7 +212,12 @@ export function InsightsPanel({ from }: { from?: string }) {
     async (item: BehaviorInsight, status: 'confirmed' | 'resolved' | 'ignored' | 'open') => {
       const key = `${item.kind}|${item.target}`;
       setBusyKey(key);
-      const res = await setTeamActivityInsightState({ kind: item.kind, target: item.target, status });
+      // 标记 resolved 时上报当前坏请求数作为复测回落基线：报错/慢请求类的 eventCount 即坏请求数
+      const badCount =
+        status === 'resolved' && (item.kind === 'api-error' || item.kind === 'slow-endpoint')
+          ? item.eventCount
+          : undefined;
+      const res = await setTeamActivityInsightState({ kind: item.kind, target: item.target, status, badCount });
       setBusyKey(null);
       if (!res.success) {
         toast.error(res.error?.message ?? '操作失败');
@@ -294,6 +302,62 @@ export function InsightsPanel({ from }: { from?: string }) {
     reload();
   }, [drillTarget, data, convertToDefect, reload]);
 
+  // 下钻抽屉里「转需求」：把痛点落进所选产品的需求池（VOC 闭环收口）。
+  // 优先复用同 target 的富洞察（指标/证据更全），未上榜则用下钻展示名兜底。
+  const convertDrillToRequirement = useCallback(
+    async (productId: string) => {
+      if (!drillTarget) return;
+      const hit = data?.items.find((i) => i.target === drillTarget.target && i.kind === 'api-error')
+        ?? data?.items.find((i) => i.target === drillTarget.target);
+      const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
+      const kind = hit?.kind ?? 'api-error';
+      const title = hit
+        ? `[用户体验之声] ${hit.kindLabel}：${hit.target}`
+        : `[用户体验之声] ${drillTarget.label}`;
+      const description = hit
+        ? [
+            '## 用户体验之声转需求（自动生成）',
+            '',
+            `- 信号类型：${hit.kindLabel}`,
+            `- 发生位置：${hit.target}`,
+            `- 量化指标：${hit.metric}`,
+            `- 影响范围：${hit.userCount} 人 / ${hit.eventCount} 次`,
+            `- 分析窗口：${window}`,
+            '',
+            '### 证据',
+            ...hit.evidence.map((e) => `- ${e}`),
+            '',
+            '### 改进建议',
+            hit.suggestion,
+            '',
+            '> 来源：团队动态 - 行为洞察（痛点流转需求池）',
+          ].join('\n')
+        : [
+            '## 用户体验之声转需求（自动生成）',
+            '',
+            `- 端点：${drillTarget.target}`,
+            `- 分析窗口：${window}`,
+            '',
+            '> 该端点尚未进入痛点榜（信号偏弱），但被手动下钻识别为需关注项。',
+            '> 来源：团队动态 - 体验全景热力图下钻',
+          ].join('\n');
+      setDrillConvertingReq(true);
+      const res = await insightToRequirement({ kind, target: drillTarget.target, title, description, productId });
+      setDrillConvertingReq(false);
+      if (!res.success) {
+        toast.error(res.error?.message ?? '流转需求失败');
+        return;
+      }
+      toast.success(
+        res.data.alreadyExists
+          ? `该痛点已转为需求 #${res.data.requirementNo}`
+          : `已流转为产品需求 #${res.data.requirementNo}，可在产品管理需求池跟进`
+      );
+      reload();
+    },
+    [drillTarget, data, reload]
+  );
+
   if (loading && !data) {
     return (
       <GlassCard className="flex-1" style={{ minHeight: 0 }}>
@@ -323,7 +387,10 @@ export function InsightsPanel({ from }: { from?: string }) {
                   label={drillTarget.label}
                   from={from}
                   converting={drillConverting || busyKey === `api-error|${drillTarget.target}`}
+                  convertingRequirement={drillConvertingReq}
+                  requirementNo={data?.items.find((i) => i.target === drillTarget.target && i.requirementNo)?.requirementNo ?? null}
                   onConvertDefect={() => void convertDrillToDefect()}
+                  onConvertRequirement={(productId) => void convertDrillToRequirement(productId)}
                   onClose={closeDrill}
                 />
               </div>
@@ -495,6 +562,13 @@ export function InsightsPanel({ from }: { from?: string }) {
                           {item.defectTitle}
                         </span>
                       ) : null}
+                      {item.requirementNo ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-cyan-200/80">
+                          <ClipboardList size={11} />
+                          需求 #{item.requirementNo}
+                        </span>
+                      ) : null}
+                      {typeof item.reboundPct === 'number' ? <ReboundBadge pct={item.reboundPct} /> : null}
                       <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-white/35 font-mono tabular-nums shrink-0">
                         <Users size={11} />
                         {item.userCount} 人 · {item.eventCount} 次
@@ -542,6 +616,26 @@ export function InsightsPanel({ from }: { from?: string }) {
         )}
       </div>
     </GlassCard>
+  );
+}
+
+/**
+ * 复测回落徽章：修复后对比坏请求基线。
+ * pct<=-20 已回落（绿，好）/ pct>=20 复发（警告色，坏）/ 之间基本持平（中性）。
+ */
+function ReboundBadge({ pct }: { pct: number }) {
+  const isDown = pct <= -20;
+  const isUp = pct >= 20;
+  const style = isDown
+    ? { background: 'rgba(52,211,153,0.12)', color: '#34d399', border: '1px solid rgba(52,211,153,0.3)' }
+    : isUp
+      ? { background: 'rgba(248,113,122,0.12)', color: '#f8717a', border: '1px solid rgba(248,113,122,0.3)' }
+      : { background: 'rgba(255,255,255,0.05)', color: 'rgba(236,236,239,0.55)', border: '1px solid rgba(255,255,255,0.1)' };
+  const text = isDown ? `已回落 ${Math.abs(pct)}%` : isUp ? `复发 +${pct}%` : '基本持平';
+  return (
+    <span className="inline-flex items-center px-1.5 py-px rounded text-[10px] font-medium tabular-nums" style={style}>
+      {text}
+    </span>
   );
 }
 

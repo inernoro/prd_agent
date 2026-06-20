@@ -36,17 +36,38 @@ function buildSteps(mapData: TeamActivityExperienceMapData | null, insights: Tea
   // 处理状态分布（来自 insights 闭环操作）
   const confirmed = items.filter((i) => i.status === 'confirmed').length;
   const resolved = items.filter((i) => i.status === 'resolved').length;
+  // 转缺陷 + 转需求 都算「已流转」（VOC 闭环收口含需求池）
   const defectCount = items.filter((i) => !!i.defectId).length;
+  const requirementCount = items.filter((i) => !!i.requirementNo).length;
+  const routedCount = items.filter((i) => !!i.defectId || !!i.requirementNo).length;
   const open = items.filter((i) => i.status !== 'resolved' && i.status !== 'ignored').length;
+
+  // 复测回落：对比修复后坏请求基线，得出真回落 / 复发（仅有 reboundPct 的条目计入）
+  const reboundItems = items.filter((i) => typeof i.reboundPct === 'number');
+  const reboundDown = reboundItems.filter((i) => (i.reboundPct as number) <= -20).length;
+  const reboundUp = reboundItems.filter((i) => (i.reboundPct as number) >= 20).length;
+  const reboundSub = reboundItems.length > 0
+    ? `${reboundDown} 个已回落 / ${reboundUp} 个复发`
+    : resolved > 0
+      ? `已修复 ${resolved} 处`
+      : '—';
+
+  const routedSub = (() => {
+    if (routedCount === 0) return '待指派';
+    const parts: string[] = [];
+    if (defectCount > 0) parts.push(`缺陷 ${defectCount}`);
+    if (requirementCount > 0) parts.push(`需求 ${requirementCount}`);
+    return `已转 ${parts.join(' · ')}`;
+  })();
 
   return [
     { name: '监测', sub: monitorSub, state: 'done' },
     { name: '预警', sub: warnSub, state: hasBurst ? 'done' : '' },
     // AI 根因：当前焦点（待诊断的痛点数）
     { name: 'AI 根因', sub: open > 0 ? `待诊断 ${open} 处` : '暂无待诊断', state: 'cur' },
-    { name: '转缺陷', sub: defectCount > 0 ? `已转 ${defectCount} 条` : '待指派', state: defectCount > 0 ? 'done' : '' },
+    { name: '转缺陷/需求', sub: routedSub, state: routedCount > 0 ? 'done' : '' },
     { name: '修复追踪', sub: confirmed > 0 ? `修复中 ${confirmed} 处` : '—', state: confirmed > 0 ? 'done' : '' },
-    { name: '复测回落', sub: resolved > 0 ? `已修复 ${resolved} 处` : '—', state: resolved > 0 ? 'done' : '' },
+    { name: '复测回落', sub: reboundSub, state: resolved > 0 ? 'done' : '' },
   ];
 }
 

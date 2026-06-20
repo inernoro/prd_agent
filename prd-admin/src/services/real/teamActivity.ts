@@ -13,6 +13,9 @@ import type {
   GetTeamActivityParams,
   GetTeamActivityStatsContract,
   GetTeamActivityStatsParams,
+  InsightToRequirementContract,
+  InsightToRequirementParams,
+  InsightToRequirementResult,
   SetInsightStateParams,
   SetTeamActivityInsightStateContract,
   TeamActivityEndpointDetailData,
@@ -73,6 +76,15 @@ export const setTeamActivityInsightStateReal: SetTeamActivityInsightStateContrac
   params: SetInsightStateParams
 ) => {
   return await apiRequest<{ fingerprint: string; status: string | null }>(api.teamActivity.insightState(), {
+    method: 'POST',
+    body: params,
+  });
+};
+
+export const insightToRequirementReal: InsightToRequirementContract = async (
+  params: InsightToRequirementParams
+): Promise<ApiResponse<InsightToRequirementResult>> => {
+  return await apiRequest<InsightToRequirementResult>(api.teamActivity.insightToRequirement(), {
     method: 'POST',
     body: params,
   });

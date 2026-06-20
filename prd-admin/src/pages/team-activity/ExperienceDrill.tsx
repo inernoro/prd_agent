@@ -9,13 +9,15 @@
  * 数据源：GET /api/team-activity/endpoint-detail（明细）+ /api/team-activity/diagnose（SSE 诊断）。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Bug, ChevronRight, RotateCcw, X } from 'lucide-react';
+import { Bug, ChevronRight, ClipboardList, RotateCcw, X } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
 import { getTeamActivityEndpointDetail } from '@/services';
+import { listProducts } from '@/services/real/productAgent';
+import type { Product } from '@/pages/product-agent/types';
 import type { TeamActivityEndpointDetailData } from '@/services/contracts/teamActivity';
 
 const ERR = '#f8717a';
@@ -33,7 +35,10 @@ export function ExperienceDrill({
   label,
   from,
   converting,
+  convertingRequirement,
+  requirementNo,
   onConvertDefect,
+  onConvertRequirement,
   onClose,
 }: {
   target: string;
@@ -42,13 +47,47 @@ export function ExperienceDrill({
   from?: string;
   /** 父组件正在执行「转为缺陷」（复用 InsightsPanel 的 createDefect 逻辑） */
   converting?: boolean;
+  /** 父组件正在执行「转需求」 */
+  convertingRequirement?: boolean;
+  /** 该痛点已转产品需求时的需求编号（展示「已转需求 #No」chip） */
+  requirementNo?: string | null;
   onConvertDefect: () => void;
+  /** 转需求：选好落入产品后回调（父组件复用 insightToRequirement + reload） */
+  onConvertRequirement: (productId: string) => void;
   onClose: () => void;
 }) {
   const [detail, setDetail] = useState<TeamActivityEndpointDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [diagModel, setDiagModel] = useState<string | null>(null);
+  // 转需求：就地展开产品选择（不弹浮层），单产品自动选中，无产品给禁用提示
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [products, setProducts] = useState<Product[] | null>(null);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+
+  const loadProducts = useCallback(() => {
+    if (products !== null || productsLoading) return;
+    setProductsLoading(true);
+    void listProducts({ page: 1, pageSize: 100 }).then((res) => {
+      setProductsLoading(false);
+      if (res.success) {
+        const items = res.data.items ?? [];
+        setProducts(items);
+        if (items.length === 1) setSelectedProductId(items[0].id);
+      } else {
+        setProducts([]);
+      }
+    });
+  }, [products, productsLoading]);
+
+  const togglePicker = useCallback(() => {
+    setPickerOpen((v) => {
+      const next = !v;
+      if (next) loadProducts();
+      return next;
+    });
+  }, [loadProducts]);
 
   const diag = useSseStream({
     url: '/api/team-activity/diagnose',
@@ -75,6 +114,7 @@ export function ExperienceDrill({
     setLoading(true);
     setDetail(null);
     setDetailError(null);
+    setPickerOpen(false);
     void getTeamActivityEndpointDetail({ target, from }).then((res) => {
       if (!alive) return;
       if (res.success) {
@@ -250,8 +290,70 @@ export function ExperienceDrill({
         </div>
       </div>
 
+      {/* 转需求：产品选择就地展开（不弹浮层，避免遮挡） */}
+      {pickerOpen && !requirementNo ? (
+        <div className="px-4 pb-1 pt-2 border-t border-white/[0.05] flex flex-col gap-2">
+          <div className="text-[11px] text-white/55 font-medium">选择落入哪个产品的需求池</div>
+          {productsLoading ? (
+            <div className="py-1">
+              <MapSpinner size={12} />
+            </div>
+          ) : products && products.length > 0 ? (
+            <div className="flex flex-col gap-1 max-h-[140px]" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
+              {products.map((p) => {
+                const active = selectedProductId === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setSelectedProductId(p.id)}
+                    className={`flex items-center gap-2 px-2.5 h-[28px] rounded text-[11px] border text-left transition-colors cursor-pointer ${
+                      active
+                        ? 'bg-cyan-500/15 text-cyan-100 border-cyan-500/40'
+                        : 'bg-white/[0.03] text-white/65 border-white/10 hover:border-white/25'
+                    }`}
+                  >
+                    <span
+                      className="w-3 h-3 rounded-full shrink-0 border"
+                      style={{ borderColor: active ? '#22d3ee' : 'rgba(255,255,255,0.25)', background: active ? '#22d3ee' : 'transparent' }}
+                    />
+                    <span className="truncate flex-1">{p.name}</span>
+                    <span className="text-white/30 font-mono shrink-0">{p.productNo}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-[11px] text-amber-200/70 leading-relaxed">
+              还没有任何产品。请先在产品管理智能体创建产品，再回来流转需求。
+            </div>
+          )}
+          {products && products.length > 0 ? (
+            <div className="flex items-center gap-2 pb-1">
+              <button
+                type="button"
+                disabled={!selectedProductId || convertingRequirement}
+                style={!selectedProductId || convertingRequirement ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
+                onClick={() => selectedProductId && onConvertRequirement(selectedProductId)}
+                className="inline-flex items-center gap-1 px-2.5 h-[24px] rounded text-[11px] border bg-cyan-500/15 text-cyan-100 border-cyan-500/35 hover:bg-cyan-500/25 transition-colors cursor-pointer"
+              >
+                {convertingRequirement ? <MapSpinner size={11} /> : <ClipboardList size={11} />}
+                确认流转
+              </button>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(false)}
+                className="inline-flex items-center gap-1 px-2 h-[24px] rounded text-[11px] border bg-white/[0.03] text-white/45 border-white/10 hover:text-white/75 transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* 操作区 */}
-      <div className="flex items-center gap-2 px-4 py-3 border-t border-white/[0.05]">
+      <div className="flex items-center gap-2 px-4 py-3 border-t border-white/[0.05] flex-wrap">
         {converting ? (
           <MapSpinner size={13} />
         ) : (
@@ -262,6 +364,21 @@ export function ExperienceDrill({
           >
             <Bug size={12} />
             转为缺陷
+          </button>
+        )}
+        {requirementNo ? (
+          <span className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] bg-cyan-500/10 text-cyan-200/90 border border-cyan-500/25">
+            <ClipboardList size={12} />
+            已转需求 #{requirementNo}
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={togglePicker}
+            className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-cyan-500/10 text-cyan-200/90 border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer"
+          >
+            <ClipboardList size={12} />
+            转需求
           </button>
         )}
         <button
