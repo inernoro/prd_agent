@@ -42,6 +42,7 @@ const INCLUDE = new Set([
   'find-skills',             // 通用技能发现
   'code-hygiene',            // 通用代码卫生方法论
   'conflict-resolution',     // 通用 git 冲突解决
+  'acceptance-test-design',  // 通用验收测试设计
   'acceptance-scenario-orchestrator', // 通用验收场景编排
   'acceptance-checklist',    // 通用 UAT 清单
   'create-visual-test-to-kb',// 通用视觉验收取证 + 报告归档
@@ -53,6 +54,7 @@ const INCLUDE = new Set([
 const DISPLAY_NAME = {
   'acceptance-checklist': 'acceptance-checklist · 真人验收清单',
   'acceptance-scenario-orchestrator': 'acceptance-scenario-orchestrator · 验收场景编排',
+  'acceptance-test-design': 'acceptance-test-design · 验收测试设计',
   'code-hygiene': 'code-hygiene · 代码卫生体检',
   'conflict-resolution': 'conflict-resolution · Git 冲突解决',
   'create-skill-file': 'create-skill-file · 技能文件生成',
@@ -87,6 +89,7 @@ const TAG_RULES = [
 const TAG_OVERRIDE = {
   laowang: ['精英'],
   findmapskills: ['技能', '精英'],
+  'acceptance-test-design': ['分析'],
   'acceptance-scenario-orchestrator': ['分析'],
   'feature-emerge': ['创意'],
   'release-version': ['部署'],
@@ -95,14 +98,26 @@ const TAG_OVERRIDE = {
   'ui-ux-pro-max': ['创意'],
 };
 
+// 不可移植文件排除：官方包面向外部用户，不能夹带绑定本仓库数据/第三方 URL 的临时取证 driver。
+const EXCLUDE_FILES_BY_SKILL = {
+  'create-visual-test-to-kb': new Set([
+    'scripts/sv-card-view.mjs',
+    'scripts/sv-driver.mjs',
+    'scripts/sv-video-check.mjs',
+  ]),
+};
+
 // 递归收集技能目录下的全部文本文件（用于打包完整 zip，而非只 SKILL.md）
-function collectFiles(skillDir) {
+function collectFiles(skillDir, skillKey) {
   const out = [];
+  const excluded = EXCLUDE_FILES_BY_SKILL[skillKey] || new Set();
   const walk = (dir) => {
     for (const name of readdirSync(dir)) {
       const full = join(dir, name);
       const st = statSync(full);
       if (st.isDirectory()) { walk(full); continue; }
+      const rel = relative(skillDir, full).split('\\').join('/');
+      if (excluded.has(rel)) continue;
       const dot = name.lastIndexOf('.');
       const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
       // .gitignore 这种无扩展名特殊处理
@@ -114,7 +129,7 @@ function collectFiles(skillDir) {
         content = content.slice(0, MAX_FILE_BYTES) + '\n\n…(已截断，完整版见仓库)';
         truncated = true;
       }
-      out.push({ path: relative(skillDir, full).split('\\').join('/'), content, truncated });
+      out.push({ path: rel, content, truncated });
     }
   };
   walk(skillDir);
@@ -194,7 +209,7 @@ function main() {
   const skills = [];
   for (const key of dirs) {
     const skillDir = join(SKILLS_DIR, key);
-    const files = collectFiles(skillDir);
+    const files = collectFiles(skillDir, key);
     const md = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
     const { name, description, version } = parseFrontmatter(md);
     const title = DISPLAY_NAME[key] || name || key;

@@ -10,15 +10,27 @@ Required behavior:
 - Resolve the exact target date in Asia/Shanghai.
 - Collect PRs, commits, branches, and unpublished environments tied to that date.
 - Group work by feature module, not only by file path.
+- Extract a `change assertion` from each PR/commit before selecting evidence. The test target must be the changed behavior, not a nearby page in the same module.
+- For each assertion, choose the user-visible page or state first. If a change has no user-visible surface, classify it as `内部能力` and explain why internal evidence is acceptable.
+- Include a `改动断言到证据表` that lists changed files, asserted behavior, required proof, actual proof, and relevance verdict (`相关`, `弱相关`, `无关`, `未覆盖`).
+- Include `页面优先证据分层`: page evidence first, then interaction/API/log/state evidence. Internal data may explain a result, but it must not hide the missing user-facing proof.
+- Compute and report a depth budget before testing: commit count, PR count, module count, high-risk module count, planned evidence count, actual evidence count, and selected depth label (`广度冒烟`, `深度验收`, or `发布前阻断验收`).
 - Start the report with `昨日工作总结`.
 - Include `PR/commit 到结果映射` before page-by-page evidence.
 - Include items that cannot be visually tested, but label them as file, API, docs, rules, or environment evidence.
 - Mark missing coverage as a report defect.
+- For `深度验收`, plan at least 12 screenshots and at least two evidence points for each high-risk runtime module. Fewer screenshots may be valid only when the report explicitly says `广度冒烟`.
+- High-risk runtime modules include auth boundaries, async workers, upload/compression, external downloads, deploy/preview/canary, state transitions, and data restore/version rollback.
 
 Failure examples:
 - A commit changed a rule or backend endpoint but the report only shows UI screenshots.
 - A screenshot shows a page, but no row maps it back to the PR or commit that required the test.
 - A branch is reachable, but the feature itself was not exercised.
+- A report says `深度验收` for a day with many PRs/commits but only captures a handful of entry pages.
+- A high-risk module is marked passed without an action/result pair or negative-path/API proof.
+- A knowledge-base sync change is marked passed because the knowledge-base list page loaded.
+- An upload/compression change is marked passed because the visual workbench loaded, without uploading or inspecting the compressed result.
+- A report leads with API/log/database evidence for a user-facing change, leaving the reviewer unable to see where the issue appears on the product page.
 
 ## pull-request
 
@@ -28,6 +40,8 @@ Required behavior:
 - Read the PR diff and commit list.
 - Extract user-facing claims from code, PR title/body, and changed routes.
 - For each claim, produce one or more test units.
+- Reject evidence that is only module-adjacent. The proof must touch the changed path or its output state.
+- Prefer page-result evidence for user-facing PRs. API/log evidence should confirm the page result or diagnose a failure, not replace the page result.
 - If a claim cannot be tested in the current environment, mark it `未覆盖` with reason and next action.
 
 Pass condition:

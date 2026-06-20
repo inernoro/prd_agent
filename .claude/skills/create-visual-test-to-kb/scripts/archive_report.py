@@ -266,6 +266,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
 
 # ── 准入门槛（入口准则，见 standard-v2.md §3.5）：输入不达标直接拒收 ──
 TIER_MIN_SHOTS = {"L0": 1, "L1": 3, "L2": 5}
+DEEP_DAILY_MIN_SHOTS = 12
 JUNK_TARGETS = {"test", "测试", "xxx", "demo", "tmp", "临时", "aaa", "todo"}
 PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\}|IMG:)")
 
@@ -283,6 +284,16 @@ def validate_inputs(a, body, manifest, cfg=None):
     need = TIER_MIN_SHOTS.get(a.tier, 3)
     if len(manifest) < need:
         errs.append(f"[证据] 截图数 {len(manifest)} < {a.tier} 下限 {need}")
+    deep_daily_claim = (
+        re.search(r"(每日|昨日|昨天)", f"{a.target}\n{body}") and
+        re.search(r"(深度验收|深度复验|深入功能验收)", f"{a.target}\n{body}")
+    )
+    complex_acceptance_claim = re.search(r"(每日|昨日|昨天|PR\s*#|pull request|commit)", f"{a.target}\n{body}", re.I)
+    if deep_daily_claim and len(manifest) < DEEP_DAILY_MIN_SHOTS:
+        errs.append(
+            f"[深度门禁] 每日/昨日报告声称深度验收，但截图数 {len(manifest)} < "
+            f"{DEEP_DAILY_MIN_SHOTS}。少量入口图只能标为「广度冒烟」，不得冒充深度验收"
+        )
     errs.extend(artifact_path_errors(manifest, cfg))
     for m in manifest:
         p = m.get("path", "")
@@ -316,6 +327,20 @@ def validate_inputs(a, body, manifest, cfg=None):
     # v2.1 强制：需求一一对应表（避免"用户提了 10 条只对应 6 条"的茫然，详见 standard-v2.md §6.4）
     if "需求一一对应表" not in body:
         errs.append("[结构] 报告缺「需求一一对应表」标题（v2.1 强制，详见 standard-v2.md §6.4）")
+    if complex_acceptance_claim:
+        if "改动断言到证据表" not in body:
+            errs.append("[结构] 复杂验收缺「改动断言到证据表」标题：必须把 PR/commit 的改动断言连到真实操作/API/状态证据，不能用同模块邻近页面顶替")
+        for kw in ("改动断言", "必要证明", "实际证据", "关联性"):
+            if kw not in body:
+                errs.append(f"[结构] 复杂验收缺「{kw}」字段：无法判断提交信息与截图/接口证据是否相关")
+        if "页面优先证据分层" not in body:
+            errs.append("[结构] 复杂验收缺「页面优先证据分层」标题：用户可感知改动必须先说明页面反馈，再用 API/日志/状态作内部佐证")
+        for kw in ("用户可见页面", "页面证据", "内部佐证"):
+            if kw not in body:
+                errs.append(f"[结构] 复杂验收缺「{kw}」字段：无法判断报告是否把页面反馈放在内部数据之前")
+        for section in ("改动断言表", "影响面矩阵", "融合测试设计", "证明力矩阵", "覆盖缺口"):
+            if section not in body:
+                errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
     if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
         errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):
