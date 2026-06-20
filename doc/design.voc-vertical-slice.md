@@ -120,7 +120,7 @@ Body: { productId: string }
 1. **节点属主校验**（两分支共同前置）：读节点 → 取 `TreeId` → 校验 `EmergenceTree.OwnerId == userId`（与 `EmergenceController` 既有变更端点一致，按树属主）。不通过 → 404/403。先于一切查重/写入，禁止凭猜测的私有 node id 流转/探测他人节点。
 2. **查重**：`Requirements.Find(SourceEmergenceNodeId == nodeId && !IsDeleted)`。
 3. **命中分支**（查到活跃需求）：先校验**既有需求自身的 `existing.ProductId`** 可访问（`FindAccessibleProductAsync(existing.ProductId, userId)`），**不是**校验入参 productId——命中分支忽略入参 productId，若只校入参，用户对产品 A 失权后塞一个能访问的产品 B 仍能取回 A 的需求（IDOR）。通过 → 返回既有需求（忽略入参 productId），结束；不通过 → 403/conflict，不返回。
-4. **insert 分支**（未查到）：先校验**入参 `productId`** 可访问（`FindAccessibleProductAsync(productId, userId)`，需求要落进这个产品），不通过 → 404/403；通过才 insert 需求（`SourceEmergenceNodeId=nodeId`、`SourceSystem="emergence"`、`ProductId=productId`）。
+4. **insert 分支**（未查到）：先校验**入参 `productId`** 可访问（`FindAccessibleProductAsync(productId, userId)`，需求要落进这个产品），不通过 → 404/403；通过才创建需求。**创建必须复用 product-agent 的需求创建路径，不得裸 insert** —— `ProductAgentController.CreateRequirement` / `ConvertDefectToRequirementInternalAsync` 除了写字段还做三件事：生成 `RequirementNo`（编号）、绑定默认 `WorkflowDefId` + 初始 `CurrentState`、刷新 `Product.RequirementCount`。裸 insert 会造出空编号/空状态 + 产品计数失准的脏需求。落地做法：把缺陷转需求里那段创建逻辑抽成一个共享内部方法（如 `CreateRequirementInternalAsync(productId, title, description, source)`），adopt 与缺陷转需求都调它，仅 source 来源字段不同（adopt 填 `SourceEmergenceNodeId` + `SourceSystem="emergence"`，缺陷填 `SourceDefectId`）。
 5. **并发兜底**：`Requirement.SourceEmergenceNodeId` 上有 **partial unique index，过滤 = 非空 且 `IsDeleted: false`**（只对活跃且有来源节点的行唯一）。两请求同时过了第 2 步查重时，第二条 insert 被唯一约束拒绝（duplicate key）→ 捕获后回第 2 步查重、走命中分支返回，绝不产生两条。
 6. **best-effort 回填节点**：insert 成功后 `UpdateOne(node, { AdoptedRequirementId: reqId, Status: planned })`。失败也无害——需求已建成且经 `SourceEmergenceNodeId` 可反查，下次读节点或下次 adopt 时懒修复。任何步骤失败重试都收敛到同一条活跃需求，不卡死、不劈裂。
 
@@ -130,7 +130,7 @@ Body: { productId: string }
 
 唯一索引是承重件（非可选防御）。按 `no-auto-index.md`，索引由 DBA 手动建——已作为实现前置条件登记在 `doc/guide.mongodb-indexes.md`（`requirements` → `uniq_requirements_source_emergence_node`，上线 adopt 端点前必须先执行）。
 
-**前端**：涌现节点卡片底部"流转需求池"按钮。**"已流转"状态以"`AdoptedRequirementId` 指向一条仍活跃（`!IsDeleted`）的需求"为准**，不能只看 `AdoptedRequirementId` 非空——既有需求被软删后该指针仍在，但 API 允许重新 adopt，此时仍应显示可点按钮、不显示 chip（否则按钮被永久禁用、与后端能力不符）。后端在节点列表/详情响应里附带"该指针指向的需求是否活跃"标志供前端判定（避免前端二次查询）。已流转（活跃）→ 显示需求编号 chip，点击跳 product-agent 对应需求。复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
+**前端**：涌现节点卡片底部"流转需求池"按钮。**"已流转"状态必须取权威源 —— 由"是否存在 `SourceEmergenceNodeId == 节点id && !IsDeleted` 的需求"派生，不能用节点的 `AdoptedRequirementId` 判定**。原因：`AdoptedRequirementId` 是 best-effort 缓存（第 6 步回填可能失败、或软删后变陈旧），会两头出错——insert 成功但回填失败时活跃需求已存在、指针却为空，卡片错显可点按钮；既有需求软删后指针仍在、却已可重新 adopt，卡片错显 chip 禁用按钮。正解：后端在节点列表/详情响应里**直接附带由活跃查重算出的 `hasActiveRequirement` + `requirementNo/requirementId`** 两个派生字段（避免前端二次查询），`AdoptedRequirementId` 只作内部缓存、不进前端判定。`hasActiveRequirement=true` → 显示需求编号 chip，点击跳 product-agent；`false` → 显示可点"流转需求池"按钮。复用现有 `apiClient.apiRequest`（传原始对象，不二次 stringify）。
 
 ## 八、关联设计文档
 
