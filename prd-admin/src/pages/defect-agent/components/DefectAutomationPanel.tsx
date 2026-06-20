@@ -22,6 +22,10 @@ interface DefectAutomationPanelProps {
 
 const DEFAULT_STATUS = 'submitted,assigned,processing';
 
+export function getAutomationPrimaryActionLabel(hasActiveAuthorization: boolean) {
+  return hasActiveAuthorization ? '重新生成并复制配置' : '生成并复制每日任务配置';
+}
+
 export function DefectAutomationPanel({
   open,
   onClose,
@@ -123,11 +127,11 @@ export function DefectAutomationPanel({
                 </Button>
                 <Button variant="secondary" size="sm" onClick={onOpenShareManager}>
                   <Share2 size={12} />
-                  历史分享
+                  分享管理
                 </Button>
                 <Button variant="primary" size="sm" onClick={handleCreateAndCopy} disabled={creating}>
                   {creating ? <MapSpinner size={12} /> : <KeyRound size={12} />}
-                  生成并复制每日任务配置
+                  {getAutomationPrimaryActionLabel(Boolean(activeAuth))}
                 </Button>
               </div>
             </div>
