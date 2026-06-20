@@ -12,8 +12,8 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.4.2";
-    public const string AiDefectResolveReleaseDate = "2026-06-20";
+    public const string AiDefectResolveVersion = "1.4.4";
+    public const string AiDefectResolveReleaseDate = "2026-06-21";
 
     public const string AiDefectResolveSkillMd = """
 ---
@@ -76,13 +76,16 @@ Content-Type: application/json
 
 `commit-info` 会同时写入缺陷结构化字段和更新中心关联用的 `defect_resolution_traces`。发布中心只读取 commit id 关联结果并展示，不负责人工关联缺陷。
 
+闭环验收不能只看接口：更新中心的 commit 记录 UI 必须出现可点击的“关联缺陷 N”或“我的缺陷 N”标志。点击后必须能看到缺陷编号、标题、发布状态、验收报告或知识库链接。提交者本人场景必须证明按钮显示“我的缺陷 N”或弹窗内出现“我提交的”。普通 changelog 文案行没有 commit id，不允许按日期批量贴缺陷标志。
+
 ## 正式发布后的验收通知
 
 1. `GET {domain}/api/defect-agent/agent/published-pending?limit=20` 拉取已正式发布但未通知提交人的修复记录。
 2. 使用 `create-visual-test-to-kb` 跑正式环境验收，目标取 `item.acceptance.target`，正式地址取 `item.acceptance.previewUrl`。
 3. 复制验收技能的 `acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本把 `report.storeName` 改为“缺陷修复验收报告”。
-4. 归档后用 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
-5. `POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report` 回写 `knowledgeBaseName`、`knowledgeBaseUrl`、报告地址、`verdict` 并通知提交人。`knowledgeBaseUrl` 必填；`fail` 结论会发送“需要继续改进”，不要提前发送“已修复”。
+4. 视觉验收必须进入更新中心的 commit 记录列表，截取对应 commit 行上的“关联缺陷 N”或“我的缺陷 N”按钮；必须点击按钮并截取弹窗，证明缺陷编号、标题、发布状态、验收报告或知识库链接可见。普通 changelog 文案行不作为缺陷关联验收目标。
+5. 归档后用 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
+6. `POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report` 回写 `knowledgeBaseName`、`knowledgeBaseUrl`、报告地址、`verdict` 并通知提交人。`knowledgeBaseUrl` 必填；`fail` 结论会发送“需要继续改进”，不要提前发送“已修复”。
 
 ## 轻量标准
 

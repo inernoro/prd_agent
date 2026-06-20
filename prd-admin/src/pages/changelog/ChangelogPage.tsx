@@ -1855,8 +1855,165 @@ function resolveLinkedDefectStatus(defects: GitHubLinkedDefect[]): PublishStatus
   return getPublishStatusMeta('unknown');
 }
 
+function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
+  const [open, setOpen] = useState(false);
+  const status = resolveLinkedDefectStatus(defects);
+  if (defects.length === 0 || !status) return null;
+
+  const hasMine = defects.some((defect) => defect.isSubmittedByMe);
+  const buttonMeta = hasMine
+    ? {
+        label: '我的缺陷',
+        color: '#f0abfc',
+        bg: 'rgba(217, 70, 239, 0.13)',
+        border: 'rgba(217, 70, 239, 0.36)',
+        icon: UserCheck,
+      }
+    : {
+        label: '关联缺陷',
+        color: status.color,
+        bg: status.bg,
+        border: status.border,
+        icon: Bug,
+      };
+  const ButtonIcon = buttonMeta.icon;
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px] transition-colors"
+        style={{
+          color: buttonMeta.color,
+          background: buttonMeta.bg,
+          border: `1px solid ${buttonMeta.border}`,
+        }}
+        title={hasMine ? '查看我提交且关联此更新的缺陷' : '查看该更新关联的缺陷'}
+      >
+        <ButtonIcon size={11} />
+        {buttonMeta.label} {defects.length}
+        <span style={{ color: buttonMeta.color, opacity: 0.86 }}>{status.label}</span>
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-[32px] z-40 w-[420px] max-w-[calc(100vw-48px)] rounded-lg p-3 shadow-2xl"
+          style={{
+            background: 'rgba(30, 30, 40, 0.98)',
+            border: '1px solid rgba(255, 255, 255, 0.14)',
+            boxShadow: '0 18px 60px rgba(0, 0, 0, 0.36)',
+          }}
+        >
+          <div className="flex items-center justify-between gap-3 pb-2 border-b border-white/10">
+            <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {hasMine ? <UserCheck size={13} /> : <Bug size={13} />}
+              {hasMine ? '我的关联缺陷' : '关联缺陷'}
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="h-6 w-6 inline-flex items-center justify-center rounded-md hover:bg-white/10"
+              title="关闭"
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <div className="mt-2 space-y-2">
+            {defects.map((defect) => (
+              <div
+                key={defect.traceId}
+                className="rounded-md p-2"
+                style={{
+                  background: defect.isSubmittedByMe ? 'rgba(217, 70, 239, 0.055)' : 'rgba(255, 255, 255, 0.035)',
+                  border: `1px solid ${defect.isSubmittedByMe ? 'rgba(217, 70, 239, 0.24)' : 'rgba(255, 255, 255, 0.08)'}`,
+                }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <a
+                    href={`/defect-agent?defectId=${encodeURIComponent(defect.defectId)}`}
+                    className="text-[13px] font-medium hover:underline"
+                    style={{ color: '#bfdbfe' }}
+                  >
+                    {defect.defectNo ? `#${defect.defectNo}` : '缺陷'} {defect.defectTitle || '未命名缺陷'}
+                  </a>
+                  <div className="shrink-0 inline-flex items-center gap-1">
+                    {defect.isSubmittedByMe && (
+                      <span
+                        className="rounded px-1.5 py-0.5 text-[11px]"
+                        style={{
+                          color: '#f0abfc',
+                          background: 'rgba(217, 70, 239, 0.12)',
+                          border: '1px solid rgba(217, 70, 239, 0.28)',
+                        }}
+                      >
+                        我提交的
+                      </span>
+                    )}
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[11px]"
+                      style={{
+                        color: getPublishStatusMeta(defect.publishStatus).color,
+                        background: getPublishStatusMeta(defect.publishStatus).bg,
+                        border: `1px solid ${getPublishStatusMeta(defect.publishStatus).border}`,
+                      }}
+                    >
+                      {getPublishStatusMeta(defect.publishStatus).label}
+                    </span>
+                  </div>
+                </div>
+                {defect.reporterName && (
+                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    提交人：{defect.reporterName}
+                  </div>
+                )}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {defect.previewUrl && (
+                    <a
+                      href={defect.previewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <Eye size={11} />
+                      预览
+                    </a>
+                  )}
+                  {defect.visualReportUrl && (
+                    <a
+                      href={defect.visualReportUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <FileCheck2 size={11} />
+                      验收报告
+                    </a>
+                  )}
+                  {defect.knowledgeBaseUrl && (
+                    <a
+                      href={defect.knowledgeBaseUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <FileText size={11} />
+                      知识库
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: number; isLiveNew: boolean }) {
-  const [defectsOpen, setDefectsOpen] = useState(false);
   const commitDateTime = formatCommitDateTime(log.commitTimeUtc) ?? log.commitTimeUtc;
   const relativeTime = formatRelativeTime(log.commitTimeUtc);
   const avatarLetter = (log.authorName || '?').trim().charAt(0).toUpperCase() || '?';
@@ -1865,7 +2022,6 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
   const primaryAuthorLabel = log.matchedDisplayName ?? log.authorName;
   const coAuthors = log.coAuthors ?? [];
   const linkedDefects = log.linkedDefects ?? [];
-  const linkedDefectStatus = resolveLinkedDefectStatus(linkedDefects);
   const authorTooltip = [
     `GitHub 作者：${log.authorName}`,
     isMatched
@@ -1964,120 +2120,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       >
         {relativeTime || formatDisplayDate('', log.commitTimeUtc)}
       </div>
-      {linkedDefects.length > 0 && linkedDefectStatus && (
-        <div className="relative shrink-0">
-          <button
-            type="button"
-            onClick={() => setDefectsOpen((open) => !open)}
-            className="inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px] transition-colors"
-            style={{
-              color: linkedDefectStatus.color,
-              background: linkedDefectStatus.bg,
-              border: `1px solid ${linkedDefectStatus.border}`,
-            }}
-            title="查看该 commit 关联的缺陷"
-          >
-            <Bug size={11} />
-            关联缺陷 {linkedDefects.length}
-            <span style={{ color: linkedDefectStatus.color, opacity: 0.86 }}>{linkedDefectStatus.label}</span>
-          </button>
-          {defectsOpen && (
-            <div
-              className="absolute right-0 top-[32px] z-40 w-[420px] max-w-[calc(100vw-48px)] rounded-lg p-3 shadow-2xl"
-              style={{
-                background: 'rgba(30, 30, 40, 0.98)',
-                border: '1px solid rgba(255, 255, 255, 0.14)',
-                boxShadow: '0 18px 60px rgba(0, 0, 0, 0.36)',
-              }}
-            >
-              <div className="flex items-center justify-between gap-3 pb-2 border-b border-white/10">
-                <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  <Bug size={13} />
-                  关联缺陷
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setDefectsOpen(false)}
-                  className="h-6 w-6 inline-flex items-center justify-center rounded-md hover:bg-white/10"
-                  title="关闭"
-                >
-                  <X size={13} />
-                </button>
-              </div>
-              <div className="mt-2 space-y-2">
-                {linkedDefects.map((defect) => (
-                  <div
-                    key={defect.traceId}
-                    className="rounded-md p-2"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.035)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                    }}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <a
-                        href={`/defect-agent?defectId=${encodeURIComponent(defect.defectId)}`}
-                        className="text-[13px] font-medium hover:underline"
-                        style={{ color: '#bfdbfe' }}
-                      >
-                        {defect.defectNo ? `#${defect.defectNo}` : '缺陷'} {defect.defectTitle || '未命名缺陷'}
-                      </a>
-                      <span
-                        className="shrink-0 rounded px-1.5 py-0.5 text-[11px]"
-                        style={{
-                          color: getPublishStatusMeta(defect.publishStatus).color,
-                          background: getPublishStatusMeta(defect.publishStatus).bg,
-                          border: `1px solid ${getPublishStatusMeta(defect.publishStatus).border}`,
-                        }}
-                      >
-                        {getPublishStatusMeta(defect.publishStatus).label}
-                      </span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      {defect.previewUrl && (
-                        <a
-                          href={defect.previewUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[12px] hover:underline"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          <Eye size={11} />
-                          预览
-                        </a>
-                      )}
-                      {defect.visualReportUrl && (
-                        <a
-                          href={defect.visualReportUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[12px] hover:underline"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          <FileCheck2 size={11} />
-                          验收报告
-                        </a>
-                      )}
-                      {defect.knowledgeBaseUrl && (
-                        <a
-                          href={defect.knowledgeBaseUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[12px] hover:underline"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          <FileText size={11} />
-                          知识库
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      <LinkedDefectsPopover defects={linkedDefects} />
       <a href={log.htmlUrl} target="_blank" rel="noreferrer" className="shrink-0 inline-flex" title="查看 GitHub commit">
         <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
       </a>
