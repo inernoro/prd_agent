@@ -21,7 +21,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 | **Playwright + Chromium** | harness 跑无头浏览器取证 | `npm i -g playwright && npx playwright install chromium`;运行时设 `PWPATH=$(npm root -g)/playwright` |
 | **Python 3** | 跑 `archive_report.py` | 系统自带 |
 | **登录凭据 env** | harness 表单登录 | `MAP_AI_USER`(用户名)、`MAP_ACCEPT_PASS`(密码)。**禁止写进文件**,运行时 export |
-| **归档密钥 env**(仅 doc-store 模式) | 落库鉴权 | `AI_ACCESS_KEY`(AI 超级密钥)、`MAP_AI_USER`(impersonate 谁) |
+| **归档密钥 env**(仅 doc-store 模式) | 落库鉴权 | 推荐 `MAP_DOC_STORE_KEY=sk-ak-*`(document-store:write);正式环境兜底可用 `MAP_DOC_STORE_JWT` 登录态;最后才回退 `AI_ACCESS_KEY` + `MAP_AI_USER` |
 | **cdscli**(可选) | 自动取预览域名 | 仓库内 `.claude/skills/cds/cli/cdscli.py`;没有就在 config 填 `previewUrlOverride` |
 
 `report.mode=local` 时**只需 Playwright + Python**,不需要任何密钥/网络——报告写本机临时目录,默认 `/tmp/map-acceptance-local`。不得写入仓库内 `doc/acceptance/`。
@@ -112,6 +112,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
    - **问题标记必须可定位**:问题区域必须框到具体范围,标签写清严重级 + 现象,如 `P0: 正文区域空白`;禁止只写「有问题」「异常」「看这里」。通过标记也要写清通过了什么,如 `通过: CDS Agent 主体可见`;禁止只写「正常」。
    - **截图回读必须显式写进报告**:截图后不仅要自己看一眼,还要在报告里增加「截图回读检查」表,逐图记录是否截歪、是否加载完成、是否空白、问题是否入镜。发现缓慢加载/半截/空白但不是目标缺陷时,必须重拍;如果空白正是目标缺陷,要在图上框出空白区域并在回读表中说明。
 4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。
+   - **知识库传输共享协议（强制）**:归档脚本必须把报告正文和截图资产一次性提交给 `PUT /api/document-store/entries/{id}/content`。正文保留 `{{IMG:name}}`/`{{EVIDENCE}}` 结构，截图走 `assets[]`，由知识库后端统一上传正式资产、重写 Markdown 图片 URL、写 ParsedPrd、刷新 `document:{DocumentId}` 缓存。**禁止**脚本自行猜图片域名、禁止先上传截图条目再删除、禁止直接写 Mongo、禁止把 `data:image` 写进知识库正文。
    - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 tags 标记**(脚本自动写 `[verdict_cn, type, tier]`),不靠改名表达状态。
    - 正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。
    - **防断头报告**:建条目后强制校验正文真的落库(`GET /content` 的 `hasContent`);写不进(预览 524 等)会**自动删空壳条目 + 报错**,绝不留"有标题、点开空白"的半截条目。
@@ -164,7 +165,7 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
 | `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
-| `scripts/archive_report.py` | 配置驱动归档(上传/删图保URL/建条目/写正文校验/分享链/必给地址/可见性防漂移) | 归档时 |
+| `scripts/archive_report.py` | 配置驱动归档(一次性提交正文+assets[]，由知识库后端资产化图片/建条目/写正文校验/分享链/必给地址/可见性防漂移) | 归档时 |
 | `scripts/verify-open.mjs` | 归档后自查:headless 打开分享链断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
 | `scripts/read_comments.py` | 回读闭环:拉知识库最近批注(用户在验收文档上的划词/全文批注),按时间倒序,供复测 | 复测/收集反馈时 |
 | `acceptance.config.json` | 项目配置(预览域名/登录/文档空间API/库名/截图);跨仓库改这个 | 接新仓库时 |
@@ -194,4 +195,4 @@ python3 $SKILL/scripts/read_comments.py --config $SKILL/acceptance.config.json \
 
 ## 合规
 
-全中文;禁 emoji(CLAUDE §0);截图引用式(传 URL 内联,不塞 base64);报告不可变(重测出新 report_id);预览地址走 cdscli 禁手拼(规则 #11)。
+全中文;禁 emoji(CLAUDE §0);截图通过知识库传输共享协议一次性提交,最终正文只能保留正式 HTTPS 图链,不允许 `data:image`;报告不可变(重测出新 report_id);预览地址走 cdscli 禁手拼(规则 #11)。

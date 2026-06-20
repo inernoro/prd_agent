@@ -3710,8 +3710,11 @@ public class DefectAgentController : ControllerBase
             : status.Trim();
         var lines = new List<string>
         {
-            "每日缺陷自动修复计划",
+            "每日缺陷自动修复计划（Codex 自动化任务提示词）",
             "",
+            "请使用项目内置 ai-defect-resolve 技能执行缺陷自动修复闭环。",
+            "",
+            "连接配置：",
             $"domain: {domain}",
             $"K: {key}",
             $"scope: {AgentFixScope}",
@@ -3720,8 +3723,17 @@ public class DefectAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(projectId)) lines.Add($"projectId: {projectId.Trim()}");
         if (!string.IsNullOrWhiteSpace(teamId)) lines.Add($"teamId: {teamId.Trim()}");
         lines.Add("");
-        lines.Add("执行要求：使用 ai-defect-resolve 技能，每次只拉取并处理一个缺陷；轻量缺陷自动评论、修复、验证、提交 commit、回写 commit-info、标记已修复，然后继续下一条；重量级或无法自测的缺陷评论阻塞原因并停止当前缺陷。正式发布后再执行视觉验收并通知提交人。");
-        lines.Add("每日更新要求：日报中列出本轮拉取缺陷、修复 commit、预览地址、阻塞项和待验收项。");
+        lines.Add("执行顺序：");
+        lines.Add("1. 调用 GET /api/defect-agent/agent/connector 校验 domain 与 K。");
+        lines.Add("2. 调用 POST /api/defect-agent/agent/runs 创建运行记录。");
+        lines.Add("3. 每次只调用 GET /api/defect-agent/agent/next 拉取一个缺陷。");
+        lines.Add("4. 先评论修复计划，再按 issues-autofix 轻量标准判断是否可自动修复。");
+        lines.Add("5. 轻量缺陷自动修复、验证、提交中文 commit，并回写 commit-info。");
+        lines.Add("6. 回写成功后标记 fix-status，再继续拉取下一条缺陷。");
+        lines.Add("7. 重量级、无法自测、涉及破坏性变更或需要产品确认时，评论阻塞原因，调用 runs/{runId}/fail，并停止当前缺陷。");
+        lines.Add("8. 正式发布后再调用 published-pending，使用 create-visual-test-to-kb 归档到“缺陷修复验收报告”，回写 validation-report 并通知提交人。");
+        lines.Add("");
+        lines.Add("每日更新要求：列出本轮拉取缺陷、处理结果、修复 commit、预览地址、正式发布待验收项、已通知用户和阻塞项。");
         return string.Join("\n", lines);
     }
 

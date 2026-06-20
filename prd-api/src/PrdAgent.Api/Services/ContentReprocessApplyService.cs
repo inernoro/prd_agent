@@ -18,15 +18,18 @@ namespace PrdAgent.Api.Services;
 public class ContentReprocessApplyService
 {
     private readonly IDocumentService _documentService;
+    private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly DocStoreServices.DocumentVersionService _versions;
     private readonly ILogger<ContentReprocessApplyService> _logger;
 
     public ContentReprocessApplyService(
         IDocumentService documentService,
+        DocumentStoreAssetNormalizer assetNormalizer,
         DocStoreServices.DocumentVersionService versions,
         ILogger<ContentReprocessApplyService> logger)
     {
         _documentService = documentService;
+        _assetNormalizer = assetNormalizer;
         _versions = versions;
         _logger = logger;
     }
@@ -112,6 +115,8 @@ public class ContentReprocessApplyService
         DocumentEntry sourceEntry, string content, string? title, string userId, MongoDbContext db,
         string? targetParentId = null)
     {
+        var normalized = await _assetNormalizer.NormalizeAsync(content, null, null, CancellationToken.None);
+        content = normalized.Content;
         var parsed = await _documentService.ParseAsync(content);
         var finalTitle = string.IsNullOrWhiteSpace(title)
             ? BuildOutputTitle(sourceEntry.Title)
@@ -166,6 +171,8 @@ public class ContentReprocessApplyService
 
     private async Task SaveContentToEntryAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
     {
+        var normalized = await _assetNormalizer.NormalizeAsync(content, null, null, CancellationToken.None);
+        content = normalized.Content;
         var parsed = await _documentService.ParseAsync(content); // parsed.Id = 内容 hash
         string? oldContent;
         if (!string.IsNullOrEmpty(entry.DocumentId))
