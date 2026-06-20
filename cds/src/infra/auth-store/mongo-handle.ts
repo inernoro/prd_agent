@@ -9,7 +9,7 @@
  */
 
 import { MongoClient, type Db, type Collection } from 'mongodb';
-import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite } from '../../domain/auth.js';
+import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite, UserActivityRecord } from '../../domain/auth.js';
 
 // ── Collection interface ──────────────────────────────────────────────────────
 
@@ -20,7 +20,10 @@ import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspac
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export interface IAuthCollection<T = any> {
   findOne(filter: Record<string, unknown>): Promise<T | null>;
-  find(filter: Record<string, unknown>): Promise<T[]>;
+  find(
+    filter: Record<string, unknown>,
+    options?: { sort?: Record<string, 1 | -1>; limit?: number },
+  ): Promise<T[]>;
   insertOne(doc: T): Promise<void>;
   /**
    * Replace the first document matching filter with doc.
@@ -51,6 +54,8 @@ export interface IAuthMongoHandle {
   membersCollection(): IAuthCollection<CdsWorkspaceMember>;
   /** P5: workspace invite records. */
   invitesCollection(): IAuthCollection<CdsWorkspaceInvite>;
+  /** User activity / trace log records. */
+  activityCollection(): IAuthCollection<UserActivityRecord>;
   /** Graceful shutdown — waits for any pending ops. */
   close(): Promise<void>;
   /** Health probe used by the Settings panel. */
@@ -99,8 +104,11 @@ function adaptCollection<TEntity>(col: Collection<any>): IAuthCollection<TEntity
       return doc ? stripId(doc as Record<string, unknown>) : null;
     },
 
-    async find(filter) {
-      const docs = await col.find(filter).toArray();
+    async find(filter, options) {
+      let cursor = col.find(filter);
+      if (options?.sort) cursor = cursor.sort(options.sort);
+      if (typeof options?.limit === 'number') cursor = cursor.limit(options.limit);
+      const docs = await cursor.toArray();
       return docs.map((d) => stripId(d as Record<string, unknown>));
     },
 
@@ -198,6 +206,12 @@ export class RealAuthMongoHandle implements IAuthMongoHandle {
   invitesCollection(): IAuthCollection<CdsWorkspaceInvite> {
     return adaptCollection<CdsWorkspaceInvite>(
       this.requireDb().collection<Record<string, unknown>>('cds_workspace_invites'),
+    );
+  }
+
+  activityCollection(): IAuthCollection<UserActivityRecord> {
+    return adaptCollection<UserActivityRecord>(
+      this.requireDb().collection<Record<string, unknown>>('cds_user_activity'),
     );
   }
 

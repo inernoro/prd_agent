@@ -27,6 +27,11 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   '/login-gh.html',
   '/api/auth/github/login',
   '/api/auth/github/callback',
+  // Local username/password auth: login + first-run bootstrap must be reachable
+  // without a session, exactly like the OAuth start/callback above.
+  '/api/auth/login',
+  '/api/auth/bootstrap',
+  '/api/auth/bootstrap-status',
   '/api/cds-system/connections/authorize',
   '/api/cds-system/connections/token',
   '/api/cds-system/connections/accept',

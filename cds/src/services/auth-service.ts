@@ -18,12 +18,13 @@
  * doc/plan.cds-multi-project-phases.md P2.
  */
 
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type {
   AuthStore,
 } from '../infra/auth-store/memory-store.js';
 import { DEFAULT_SESSION_TTL_MS } from '../infra/auth-store/memory-store.js';
-import type { CdsSession, CdsUser, CdsWorkspace } from '../domain/auth.js';
+import type { CdsSession, CdsUser, CdsWorkspace, UserActivityRecord } from '../domain/auth.js';
+import { hashPassword, verifyPassword, MIN_PASSWORD_LENGTH } from './password.js';
 import type {
   GitHubOAuthClient,
   GitHubProfile,
@@ -54,6 +55,27 @@ export class AuthServiceError extends Error {
     this.name = 'AuthServiceError';
   }
 }
+
+/** Errors produced by the local-credential paths, carrying a stable code. */
+export class LocalAuthError extends Error {
+  constructor(
+    public readonly code:
+      | 'username_taken'
+      | 'username_invalid'
+      | 'password_too_short'
+      | 'invalid_credentials'
+      | 'user_not_found'
+      | 'not_local_account'
+      | 'disabled',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'LocalAuthError';
+  }
+}
+
+/** Username must be 3-32 chars: lowercase letters, digits, hyphen, underscore, dot. */
+const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 
 export interface AuthServiceConfig {
   /** Allowed GitHub org logins. Empty array means "allow any logged-in GitHub user". */
@@ -217,12 +239,210 @@ export class AuthService {
     // and we want to return the canonical state.
     const finalUser = (await this.store.findUserById(user.id)) || user;
 
+    await this.recordActivity({
+      userId: finalUser.id,
+      userLogin: finalUser.githubLogin,
+      action: 'login',
+      summary: `GitHub 登录${bootstrapped ? '（首次，已设为系统所有者）' : ''}`,
+      ip: params.ipAddress,
+    }, now);
+
     return {
       user: finalUser,
       session,
       bootstrapped,
       redirect: stateEntry.redirect,
     };
+  }
+
+  // ── Local username + password (coexists with GitHub OAuth) ──────────────
+
+  /**
+   * Whether any user exists at all. Used to gate the first-run bootstrap of
+   * the initial local system-owner account.
+   */
+  async hasAnyUser(): Promise<boolean> {
+    return (await this.store.countUsers()) > 0;
+  }
+
+  /**
+   * Provision a local username + password account. Hashes the password before
+   * it reaches the store. `isSystemOwner` is honored only by trusted callers
+   * (route layer enforces who may set it).
+   */
+  async createLocalUser(input: {
+    username: string;
+    password: string;
+    name?: string;
+    email?: string | null;
+    isSystemOwner?: boolean;
+  }): Promise<CdsUser> {
+    const username = String(input.username || '').trim().toLowerCase();
+    if (!USERNAME_RE.test(username)) {
+      throw new LocalAuthError('username_invalid', '用户名需为 3-32 位，仅含小写字母、数字、点、连字符或下划线');
+    }
+    if (typeof input.password !== 'string' || input.password.length < MIN_PASSWORD_LENGTH) {
+      throw new LocalAuthError('password_too_short', `密码长度至少 ${MIN_PASSWORD_LENGTH} 位`);
+    }
+    const existing = await this.store.findUserByUsername(username);
+    if (existing) {
+      throw new LocalAuthError('username_taken', `用户名 ${username} 已存在`);
+    }
+    const { hash, salt } = hashPassword(input.password);
+    return this.store.createLocalUser({
+      username,
+      passwordHash: hash,
+      passwordSalt: salt,
+      name: input.name,
+      email: input.email ?? null,
+      isSystemOwner: input.isSystemOwner ?? false,
+    });
+  }
+
+  /**
+   * First-run bootstrap: when there are zero users, create the first local
+   * account and mark it system owner + give it a personal workspace. Refuses
+   * to run once any user exists so this can't be used to mint a second owner.
+   */
+  async bootstrapFirstLocalUser(input: {
+    username: string;
+    password: string;
+    name?: string;
+  }): Promise<CdsUser> {
+    if (await this.hasAnyUser()) {
+      throw new LocalAuthError('username_taken', '系统已存在用户，首启引导不可用');
+    }
+    const user = await this.createLocalUser({ ...input, isSystemOwner: true });
+    await this.ensurePersonalWorkspace(user).catch(() => { /* non-fatal: workspace is best-effort */ });
+    return user;
+  }
+
+  /**
+   * Verify a local login. Constant-time on the password compare. Returns the
+   * user on success or null on any failure (unknown username, wrong password,
+   * not a local account, disabled). Callers must NOT distinguish the failure
+   * reasons to the client.
+   */
+  async verifyLocalLogin(username: string, password: string): Promise<CdsUser | null> {
+    const handle = String(username || '').trim().toLowerCase();
+    const user = await this.store.findUserByUsername(handle);
+    // Always run a hash even when the user is missing, to reduce timing signal
+    // on username existence.
+    const hash = user?.passwordHash ?? '0'.repeat(128);
+    const salt = user?.passwordSalt ?? '0'.repeat(32);
+    const ok = verifyPassword(password, { hash, salt });
+    if (!user || !ok) return null;
+    if (user.status !== 'active') return null;
+    if ((user.authProvider ?? 'github') !== 'local') return null;
+    return user;
+  }
+
+  /**
+   * Create a session for an already-verified user (local login path mirrors
+   * the OAuth callback's session creation + lastLogin touch).
+   */
+  async createSessionForUser(
+    userId: string,
+    meta: { userAgent: string | null; ipAddress: string | null },
+    now = new Date(),
+  ): Promise<CdsSession> {
+    await this.store.touchUserLastLogin(userId, now);
+    return this.store.createSession(
+      {
+        userId,
+        ttlMs: this.config.sessionTtlMs,
+        userAgent: meta.userAgent,
+        ipAddress: meta.ipAddress,
+      },
+      now,
+    );
+  }
+
+  /**
+   * Change a user's password. The old password is verified first. When
+   * `allowWithoutOld` is true (admin reset by a system owner), the old-password
+   * check is skipped — the route layer is responsible for authorizing that.
+   */
+  async changePassword(
+    userId: string,
+    oldPassword: string,
+    newPassword: string,
+    allowWithoutOld = false,
+  ): Promise<void> {
+    const user = await this.store.findUserById(userId);
+    if (!user) throw new LocalAuthError('user_not_found', '用户不存在');
+    if ((user.authProvider ?? 'github') !== 'local' || !user.passwordHash || !user.passwordSalt) {
+      throw new LocalAuthError('not_local_account', '该账号非本地账号，无法修改密码');
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
+      throw new LocalAuthError('password_too_short', `新密码长度至少 ${MIN_PASSWORD_LENGTH} 位`);
+    }
+    if (!allowWithoutOld) {
+      const ok = verifyPassword(oldPassword, { hash: user.passwordHash, salt: user.passwordSalt });
+      if (!ok) throw new LocalAuthError('invalid_credentials', '原密码不正确');
+    }
+    const { hash, salt } = hashPassword(newPassword);
+    await this.store.updateUserPassword(userId, hash, salt);
+    // Revoke all other sessions on password change to be safe.
+    await this.store.deleteSessionsForUser(userId);
+  }
+
+  /** List all users (system-owner management view). Callers must redact secrets. */
+  async listUsers(): Promise<CdsUser[]> {
+    return this.store.listUsers();
+  }
+
+  /** Look up a single user by CDS id. */
+  async findUserById(id: string): Promise<CdsUser | null> {
+    return this.store.findUserById(id);
+  }
+
+  /** Enable/disable an account; disabling also revokes its sessions. */
+  async setUserStatus(userId: string, status: CdsUser['status']): Promise<CdsUser | null> {
+    const user = await this.store.setUserStatus(userId, status);
+    if (user && status === 'disabled') {
+      await this.store.deleteSessionsForUser(userId);
+    }
+    return user;
+  }
+
+  // ── User activity / trace log ────────────────────────────────────────────
+
+  /**
+   * Record a single user-activity entry. Best-effort: failures are swallowed
+   * (logged) so a tracing write can never break the action it describes.
+   */
+  async recordActivity(input: {
+    userId: string;
+    userLogin: string;
+    action: string;
+    summary: string;
+    targetType?: string | null;
+    targetId?: string | null;
+    ip?: string | null;
+  }, now = new Date()): Promise<void> {
+    try {
+      const record: UserActivityRecord = {
+        id: randomUUID().replace(/-/g, ''),
+        userId: input.userId,
+        userLogin: input.userLogin,
+        action: input.action,
+        targetType: input.targetType ?? null,
+        targetId: input.targetId ?? null,
+        summary: input.summary,
+        ip: input.ip ?? null,
+        at: now.toISOString(),
+      };
+      await this.store.recordActivity(record);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[auth] recordActivity failed:', (err as Error).message);
+    }
+  }
+
+  /** Query activity, newest-first. Filter by user id when provided. */
+  async listActivity(opts?: { userId?: string; limit?: number }): Promise<UserActivityRecord[]> {
+    return this.store.listActivity(opts);
   }
 
   /**

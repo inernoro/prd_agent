@@ -39,7 +39,9 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import type { AuthStore } from './memory-store.js';
 import type {
   CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite, UpsertUserInput,
+  CreateLocalUserInput, UserActivityRecord,
 } from '../../domain/auth.js';
+import { ACTIVITY_RING_CAPACITY } from './memory-store.js';
 import type { IAuthMongoHandle } from './mongo-handle.js';
 
 export { IAuthMongoHandle };
@@ -117,6 +119,72 @@ export class MongoAuthStore implements AuthStore {
 
   async countUsers(): Promise<number> {
     return this.handle.usersCollection().countDocuments();
+  }
+
+  async listUsers(): Promise<CdsUser[]> {
+    return this.handle.usersCollection().find({});
+  }
+
+  // ── Local credential users ──────────────────────────────────────────────
+
+  async createLocalUser(input: CreateLocalUserInput, now = new Date()): Promise<CdsUser> {
+    const username = input.username.toLowerCase();
+    const users = this.handle.usersCollection();
+    const existing = await users.findOne({ username });
+    if (existing) {
+      throw new Error(`Local user with username '${username}' already exists`);
+    }
+    const user: CdsUser = {
+      id: randomUUID().replace(/-/g, ''),
+      githubId: 0,
+      githubLogin: username,
+      authProvider: 'local',
+      username,
+      passwordHash: input.passwordHash,
+      passwordSalt: input.passwordSalt,
+      email: input.email ?? null,
+      name: input.name?.trim() || input.username,
+      avatarUrl: null,
+      orgs: [],
+      orgsCheckedAt: now.toISOString(),
+      isSystemOwner: input.isSystemOwner ?? false,
+      status: 'active',
+      lastLoginAt: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    await users.insertOne(user);
+    return user;
+  }
+
+  async findUserByUsername(username: string): Promise<CdsUser | null> {
+    return this.handle.usersCollection().findOne({ username: username.toLowerCase() });
+  }
+
+  async updateUserPassword(id: string, passwordHash: string, passwordSalt: string, now = new Date()): Promise<CdsUser | null> {
+    const users = this.handle.usersCollection();
+    const user = await users.findOne({ id });
+    if (!user) return null;
+    const updated: CdsUser = {
+      ...user,
+      passwordHash,
+      passwordSalt,
+      updatedAt: now.toISOString(),
+    };
+    await users.replaceOne({ id }, updated);
+    return updated;
+  }
+
+  // ── User activity / trace log ────────────────────────────────────────────
+
+  async recordActivity(record: UserActivityRecord): Promise<void> {
+    await this.handle.activityCollection().insertOne(record);
+  }
+
+  async listActivity(opts?: { userId?: string; limit?: number }): Promise<UserActivityRecord[]> {
+    const limit = Math.max(1, Math.min(opts?.limit ?? 200, ACTIVITY_RING_CAPACITY));
+    const filter = opts?.userId ? { userId: opts.userId } : {};
+    return this.handle.activityCollection().find(filter, { sort: { at: -1 }, limit });
   }
 
   /**

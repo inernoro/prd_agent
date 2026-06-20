@@ -22,7 +22,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MongoAuthStore } from '../../../src/infra/auth-store/mongo-store.js';
 import type { IAuthMongoHandle, IAuthCollection } from '../../../src/infra/auth-store/mongo-handle.js';
-import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite } from '../../../src/domain/auth.js';
+import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite, UserActivityRecord } from '../../../src/domain/auth.js';
 import { DEFAULT_SESSION_TTL_MS } from '../../../src/infra/auth-store/memory-store.js';
 
 // ── Fake collection ───────────────────────────────────────────────────────────
@@ -46,8 +46,21 @@ class FakeAuthCollection<T extends Record<string, unknown>> implements IAuthColl
     return this.findFirst(filter) ?? null;
   }
 
-  async find(filter: Record<string, unknown>): Promise<T[]> {
-    return Array.from(this.docs.values()).filter((d) => this.matches(d, filter));
+  async find(
+    filter: Record<string, unknown>,
+    options?: { sort?: Record<string, 1 | -1>; limit?: number },
+  ): Promise<T[]> {
+    let rows = Array.from(this.docs.values()).filter((d) => this.matches(d, filter));
+    if (options?.sort) {
+      const [[field, dir]] = Object.entries(options.sort);
+      rows = rows.slice().sort((a, b) => {
+        const av = String((a as Record<string, unknown>)[field] ?? '');
+        const bv = String((b as Record<string, unknown>)[field] ?? '');
+        return av < bv ? -dir : av > bv ? dir : 0;
+      });
+    }
+    if (typeof options?.limit === 'number') rows = rows.slice(0, options.limit);
+    return rows;
   }
 
   async insertOne(doc: T): Promise<void> {
@@ -126,6 +139,7 @@ class FakeAuthMongoHandle implements IAuthMongoHandle {
   public readonly workspaces = new FakeAuthCollection<CdsWorkspace>();
   public readonly members = new FakeAuthCollection<CdsWorkspaceMember>();
   public readonly invites = new FakeAuthCollection<CdsWorkspaceInvite>();
+  public readonly activity = new FakeAuthCollection<UserActivityRecord>();
 
   async connect() { this.connected = true; }
   usersCollection() { return this.users; }
@@ -133,6 +147,7 @@ class FakeAuthMongoHandle implements IAuthMongoHandle {
   workspacesCollection() { return this.workspaces; }
   membersCollection() { return this.members; }
   invitesCollection() { return this.invites; }
+  activityCollection() { return this.activity; }
   async close() { this.closed = true; }
   async ping() { return this.pingResult; }
 }
@@ -425,5 +440,56 @@ describe('MongoAuthStore', () => {
     await store.createWorkspace({ slug: 'alice-ws', name: 'A', kind: 'personal', ownerId: alice.id });
     await store.createWorkspace({ slug: 'bob-ws', name: 'B', kind: 'personal', ownerId: bob.id });
     expect(await store.countWorkspaces()).toBe(2);
+  });
+
+  // ── Local credential users ──────────────────────────────────────────────
+
+  it('createLocalUser persists a local account and finds it by username', async () => {
+    const user = await store.createLocalUser({
+      username: 'Local1', passwordHash: 'deadbeef', passwordSalt: 'cafe', name: 'Local One',
+    });
+    expect(user.authProvider).toBe('local');
+    expect(user.username).toBe('local1');
+    expect(user.githubId).toBe(0);
+    const byUsername = await store.findUserByUsername('LOCAL1');
+    expect(byUsername?.id).toBe(user.id);
+  });
+
+  it('createLocalUser rejects duplicate usernames', async () => {
+    await store.createLocalUser({ username: 'dup', passwordHash: 'a', passwordSalt: 'b' });
+    await expect(store.createLocalUser({ username: 'dup', passwordHash: 'c', passwordSalt: 'd' }))
+      .rejects.toThrow();
+  });
+
+  it('updateUserPassword swaps hash + salt', async () => {
+    const user = await store.createLocalUser({ username: 'pw', passwordHash: 'old', passwordSalt: 's1' });
+    await store.updateUserPassword(user.id, 'new', 's2');
+    const fresh = await store.findUserById(user.id);
+    expect(fresh?.passwordHash).toBe('new');
+    expect(fresh?.passwordSalt).toBe('s2');
+  });
+
+  it('listUsers returns every user', async () => {
+    await store.upsertUser(sampleInput({ githubId: 7, githubLogin: 'gh7' }));
+    await store.createLocalUser({ username: 'loc', passwordHash: 'a', passwordSalt: 'b' });
+    expect(await store.listUsers()).toHaveLength(2);
+  });
+
+  // ── User activity / trace log ────────────────────────────────────────────
+
+  it('records activity and queries newest-first with per-user filter', async () => {
+    await store.recordActivity({ id: 'a1', userId: 'u1', userLogin: 'u1', action: 'login', summary: 'first', at: '2026-06-20T00:00:01.000Z' });
+    await store.recordActivity({ id: 'a2', userId: 'u1', userLogin: 'u1', action: 'logout', summary: 'second', at: '2026-06-20T00:00:02.000Z' });
+    await store.recordActivity({ id: 'a3', userId: 'u2', userLogin: 'u2', action: 'login', summary: 'other', at: '2026-06-20T00:00:03.000Z' });
+
+    const all = await store.listActivity();
+    expect(all[0].id).toBe('a3'); // newest first by `at`
+    const onlyU1 = await store.listActivity({ userId: 'u1' });
+    expect(onlyU1).toHaveLength(2);
+    expect(onlyU1.every((r) => r.userId === 'u1')).toBe(true);
+
+    const capped = await store.listActivity({ limit: 1 });
+    expect(capped).toHaveLength(1);
+    expect(capped[0].id).toBe('a3');
   });
 });

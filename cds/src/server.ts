@@ -35,6 +35,7 @@ import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { createAuthRouter } from './routes/auth.js';
+import { createAuthLocalRouter } from './routes/auth-local.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
 import type { AuthStore } from './infra/auth-store/memory-store.js';
@@ -751,6 +752,13 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /auth/github/callback': 'GitHub 登录回调',
     'POST /auth/logout': '退出登录',
     'GET /auth/status': '获取认证状态',
+    'POST /auth/login': '本地账号登录',
+    'GET /auth/bootstrap-status': '查询首启引导状态',
+    'POST /auth/bootstrap': '创建首个本地账号',
+    'POST /auth/change-password': '修改密码',
+    'GET /auth/users': '列出用户',
+    'POST /auth/users': '创建本地账号',
+    'GET /auth/activity': '查看用户操作痕迹',
     // 用户 / 系统基础信息
     'GET /me': '获取当前用户',
     'GET /status': '获取系统状态',
@@ -838,6 +846,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^PATCH \/auth\/users\/(.+)$/, '更新用户'],
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
@@ -1696,6 +1705,17 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use('/api/workspaces', createWorkspacesRouter({ workspaceService }));
 
     app.use(createGithubAuthMiddleware({ authService }));
+
+    // Local username + password routes. Public endpoints (login / bootstrap)
+    // are whitelisted in github-auth.ts PUBLIC_PATHS so they pass the gate;
+    // authed endpoints (change-password / users / activity) read req.cdsUser
+    // attached by the gate above — hence mounted AFTER the middleware.
+    app.use('/api', createAuthLocalRouter({ authService, cookieSecure }));
+
+    // Expose the authService so downstream routers can record user activity
+    // at high-value touchpoints (deploy / stop / publish / report) when a
+    // session user is in scope. Optional — readers must null-check.
+    app.locals.cdsAuthService = authService;
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,

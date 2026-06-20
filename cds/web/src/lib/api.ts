@@ -269,6 +269,104 @@ export function reportRawUrl(id: string): string {
   return apiUrl(`/api/reports/${encodeURIComponent(id)}/raw`);
 }
 
+// ── Local users + activity (auth-local, 2026-06-20) ──
+
+export type CdsAuthProvider = 'github' | 'local';
+
+export interface CdsPublicUser {
+  id: string;
+  username: string | null;
+  githubLogin: string;
+  name: string;
+  email: string | null;
+  avatarUrl: string | null;
+  authProvider: CdsAuthProvider;
+  isSystemOwner: boolean;
+  status: 'active' | 'disabled';
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+export interface CdsUserActivity {
+  id: string;
+  userId: string;
+  userLogin: string;
+  action: string;
+  targetType?: string | null;
+  targetId?: string | null;
+  summary: string;
+  ip?: string | null;
+  at: string;
+}
+
+/** Whether the system needs first-run bootstrap (zero users). Public. */
+export async function fetchBootstrapStatus(): Promise<{ needsBootstrap: boolean }> {
+  return apiRequest<{ needsBootstrap: boolean }>('/api/auth/bootstrap-status');
+}
+
+/** Create the first local system-owner account (only valid when zero users). */
+export async function bootstrapFirstUser(input: {
+  username: string;
+  password: string;
+  name?: string;
+}): Promise<{ user: CdsPublicUser }> {
+  return apiRequest('/api/auth/bootstrap', { method: 'POST', body: input });
+}
+
+/** Local username + password login. Sets the shared session cookie on success. */
+export async function localLogin(input: {
+  username: string;
+  password: string;
+}): Promise<{ user: CdsPublicUser }> {
+  return apiRequest('/api/auth/login', { method: 'POST', body: input });
+}
+
+/** Change the current user's own password. */
+export async function changeMyPassword(input: {
+  oldPassword: string;
+  newPassword: string;
+}): Promise<void> {
+  await apiRequest('/api/auth/change-password', { method: 'POST', body: input });
+}
+
+/** List all users (system-owner only). */
+export async function listUsers(): Promise<CdsPublicUser[]> {
+  const res = await apiRequest<{ users: CdsPublicUser[] }>('/api/auth/users');
+  return res.users;
+}
+
+/** Create a local user (system-owner only). */
+export async function createLocalUser(input: {
+  username: string;
+  password: string;
+  name?: string;
+}): Promise<CdsPublicUser> {
+  const res = await apiRequest<{ user: CdsPublicUser }>('/api/auth/users', { method: 'POST', body: input });
+  return res.user;
+}
+
+/** Enable/disable or admin-reset a user (system-owner only). */
+export async function updateUser(
+  id: string,
+  input: { status?: 'active' | 'disabled'; newPassword?: string },
+): Promise<CdsPublicUser | null> {
+  const res = await apiRequest<{ user: CdsPublicUser | null }>(
+    `/api/auth/users/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body: input },
+  );
+  return res.user;
+}
+
+/** Query user activity, newest-first. Owner may pass userId; others see only their own. */
+export async function listUserActivity(opts: { userId?: string; limit?: number } = {}): Promise<CdsUserActivity[]> {
+  const qs = new URLSearchParams();
+  if (opts.userId) qs.set('userId', opts.userId);
+  if (opts.limit) qs.set('limit', String(opts.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const res = await apiRequest<{ activity: CdsUserActivity[] }>(`/api/auth/activity${suffix}`);
+  return res.activity;
+}
+
 function throwApiError(
   method: string,
   url: string,

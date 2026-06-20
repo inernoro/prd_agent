@@ -22,6 +22,8 @@ import type {
   CdsWorkspaceMember,
   CdsWorkspaceInvite,
   UpsertUserInput,
+  CreateLocalUserInput,
+  UserActivityRecord,
 } from '../../domain/auth.js';
 
 /** The stable contract every AuthStore implementation must satisfy. */
@@ -33,6 +35,21 @@ export interface AuthStore {
   setUserStatus(id: string, status: CdsUser['status']): Promise<CdsUser | null>;
   touchUserLastLogin(id: string, now?: Date): Promise<void>;
   countUsers(): Promise<number>;
+  /** All users (system-owner management view). Password fields included — callers must redact. */
+  listUsers(): Promise<CdsUser[]>;
+
+  // — Local credential users —
+  /** Create a local username + password account. Throws on duplicate username. */
+  createLocalUser(input: CreateLocalUserInput, now?: Date): Promise<CdsUser>;
+  /** Case-insensitive lookup by local username. Returns null for OAuth-only users. */
+  findUserByUsername(username: string): Promise<CdsUser | null>;
+  /** Replace a user's password hash + salt (change-password / admin reset). */
+  updateUserPassword(id: string, passwordHash: string, passwordSalt: string, now?: Date): Promise<CdsUser | null>;
+
+  // — User activity / trace log —
+  recordActivity(record: UserActivityRecord): Promise<void>;
+  /** Query activity newest-first; filter by user when userId provided. */
+  listActivity(opts?: { userId?: string; limit?: number }): Promise<UserActivityRecord[]>;
 
   // — Sessions —
   createSession(input: {
@@ -101,9 +118,15 @@ function genUuid(): string {
 /** Default session TTL in milliseconds. 30 days. */
 export const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Max user-activity records kept in the in-memory ring buffer. */
+export const ACTIVITY_RING_CAPACITY = 1000;
+
 export class MemoryAuthStore implements AuthStore {
   private readonly usersById = new Map<string, CdsUser>();
   private readonly usersByGithubId = new Map<number, string>();
+  private readonly usersByUsername = new Map<string, string>();
+  /** Newest-last ring buffer of activity records, capped at ACTIVITY_RING_CAPACITY. */
+  private activity: UserActivityRecord[] = [];
   private readonly sessionsByToken = new Map<string, CdsSession>();
   private readonly workspacesById = new Map<string, CdsWorkspace>();
   private readonly workspaceIdBySlug = new Map<string, string>();
@@ -183,6 +206,79 @@ export class MemoryAuthStore implements AuthStore {
 
   async countUsers(): Promise<number> {
     return this.usersById.size;
+  }
+
+  async listUsers(): Promise<CdsUser[]> {
+    return Array.from(this.usersById.values());
+  }
+
+  // ── Local credential users ──────────────────────────────────────────────
+
+  async createLocalUser(input: CreateLocalUserInput, now = new Date()): Promise<CdsUser> {
+    const username = input.username.toLowerCase();
+    if (this.usersByUsername.has(username)) {
+      throw new Error(`Local user with username '${username}' already exists`);
+    }
+    const id = genUuid();
+    const user: CdsUser = {
+      id,
+      githubId: 0,
+      githubLogin: username,
+      authProvider: 'local',
+      username,
+      passwordHash: input.passwordHash,
+      passwordSalt: input.passwordSalt,
+      email: input.email ?? null,
+      name: input.name?.trim() || input.username,
+      avatarUrl: null,
+      orgs: [],
+      orgsCheckedAt: now.toISOString(),
+      isSystemOwner: input.isSystemOwner ?? false,
+      status: 'active',
+      lastLoginAt: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    this.usersById.set(id, user);
+    this.usersByUsername.set(username, id);
+    return user;
+  }
+
+  async findUserByUsername(username: string): Promise<CdsUser | null> {
+    const id = this.usersByUsername.get(username.toLowerCase());
+    return id ? this.usersById.get(id) || null : null;
+  }
+
+  async updateUserPassword(id: string, passwordHash: string, passwordSalt: string, now = new Date()): Promise<CdsUser | null> {
+    const user = this.usersById.get(id);
+    if (!user) return null;
+    const updated: CdsUser = {
+      ...user,
+      passwordHash,
+      passwordSalt,
+      updatedAt: now.toISOString(),
+    };
+    this.usersById.set(id, updated);
+    return updated;
+  }
+
+  // ── User activity / trace log ────────────────────────────────────────────
+
+  async recordActivity(record: UserActivityRecord): Promise<void> {
+    this.activity.push(record);
+    if (this.activity.length > ACTIVITY_RING_CAPACITY) {
+      this.activity = this.activity.slice(this.activity.length - ACTIVITY_RING_CAPACITY);
+    }
+  }
+
+  async listActivity(opts?: { userId?: string; limit?: number }): Promise<UserActivityRecord[]> {
+    const limit = Math.max(1, Math.min(opts?.limit ?? 200, ACTIVITY_RING_CAPACITY));
+    let rows = this.activity;
+    if (opts?.userId) {
+      rows = rows.filter((r) => r.userId === opts.userId);
+    }
+    // Newest first.
+    return rows.slice().reverse().slice(0, limit);
   }
 
   async createSession(input: {
