@@ -320,6 +320,101 @@ JUNK_TARGETS = {"test", "测试", "xxx", "demo", "tmp", "临时", "aaa", "todo"}
 PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\}|IMG:)")
 
 
+def _target_declares_daily_scope(target):
+    t = (target or "").strip()
+    if not t:
+        return False
+    if re.fullmatch(r"(每日|昨日|昨天)(?:的)?(?:全部|所有)?(?:内容|工作|变更|更新|改动)?(?:验收|复验|测试|报告)?", t):
+        return True
+    return bool(re.search(
+        r"(每日验收|昨日验收|昨天验收|每日复验|昨日复验|昨天复验|每日测试|昨日测试|昨天测试|"
+        r"每日报告|昨日报告|昨天报告|验收昨日|验收昨天|"
+        r"(昨日|昨天)(?:的)?(?:全部|所有)(?:内容|开发|工作|更新|改动|变更|做完的内容)|"
+        r"(昨日|昨天)(?:做完的内容|开发的全部内容|开发的所有内容))",
+        t,
+    ))
+
+
+def _scope_declaration_text(target, body):
+    """Only scan target and explicit report scope/scenario/depth lines."""
+    picked = [(target or "").strip()]
+    table_scope_section = False
+    scope_label = re.compile(
+        r"(目标日期|验收目标|验收范围|验收场景|主场景|修饰场景|scenario|scope|"
+        r"提交范围|PR\s*范围|commit\s*(?:range|sha)|验收深度|深度预算|改动规模与深度预算)",
+        re.I,
+    )
+    table_scope_token = re.compile(
+        r"(PR\s*#?\s*\d+|[0-9a-f]{7,40}|pull[- ]request|commit[- ]range|"
+        r"unpublished[- ]branch|defect[- ]retest|visual[- ]regression|release[- ]preflight)",
+        re.I,
+    )
+    for line in (body or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("#"):
+            table_scope_section = bool(re.search(r"(PR/commit|PR\s*到|commit|提交|改动断言|范围映射)", s, re.I))
+            picked.append(s)
+            continue
+        if scope_label.search(s):
+            picked.append(s)
+            continue
+        if table_scope_section and s.startswith("|") and table_scope_token.search(s):
+            picked.append(s)
+    return "\n".join(picked)
+
+
+def _declares_complex_acceptance(target, body):
+    """Return true only for explicit complex acceptance scenarios, not generic metadata columns."""
+    if _target_declares_daily_scope(target):
+        return True
+    text = _scope_declaration_text(target, body)
+    patterns = [
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)",
+        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)",
+        r"PR\s*#?\s*\d+",
+        r"\b[0-9a-f]{7,40}\b",
+        r"pull[- ]request",
+        r"(commit|提交)\s*(?:[- ]?range|范围|验收|复验|测试|报告|[=:：# ]*[0-9a-f]{7,40})",
+        r"(未发布分支|分支验收|缺陷复测|视觉回归|发布前验收|"
+        r"unpublished[- ]branch|defect[- ]retest|visual[- ]regression|release[- ]preflight)",
+    ]
+    return any(re.search(p, text, re.I) for p in patterns)
+
+
+def _declares_deep_daily_acceptance(target, body):
+    """Daily deep gate applies only to positive deep-acceptance declarations."""
+    scope_text = _scope_declaration_text(target, body)
+    daily_context = _target_declares_daily_scope(target) or bool(re.search(
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)",
+        scope_text,
+    )) or bool(re.search(
+        r"(每日|昨日|昨天).{0,12}(深度验收|深度复验|深入功能验收)|"
+        r"(深度验收|深度复验|深入功能验收).{0,12}(每日|昨日|昨天)",
+        target or "",
+    ))
+    if not daily_context:
+        return False
+    negated = re.compile(
+        r"(不是|非|不属于|未达到|不满足|禁止|不能|不得|只能叫|只能标为|降级为).{0,14}(深度验收|深度复验|深入功能验收)|"
+        r"(深度验收|深度复验|深入功能验收).{0,14}(不通过|不适用|不满足|不能|不得)"
+    )
+    positive = re.compile(
+        r"(验收深度|深度|档位)\s*[:：|= ]+\s*(深度验收|深度复验|深入功能验收)|"
+        r"(本次|本报告|目标|验收目标).{0,12}(深度验收|深度复验|深入功能验收)|"
+        r"(每日|昨日|昨天).{0,12}(深度验收|深度复验|深入功能验收)|"
+        r"(深度验收|深度复验|深入功能验收).{0,12}(每日|昨日|昨天)"
+    )
+    for line in [target or "", *((body or "").splitlines())]:
+        s = line.strip()
+        if not s or "深度" not in s or negated.search(s):
+            continue
+        if positive.search(s):
+            return True
+    return False
+
+
 def validate_inputs(a, body, manifest, cfg=None):
     """返回拒收原因列表（空 = 通过准入）。结构层校验，语义层(Verdict 一致性)由人/工具把关。"""
     errs = []
@@ -333,11 +428,8 @@ def validate_inputs(a, body, manifest, cfg=None):
     need = TIER_MIN_SHOTS.get(a.tier, 3)
     if len(manifest) < need:
         errs.append(f"[证据] 截图数 {len(manifest)} < {a.tier} 下限 {need}")
-    deep_daily_claim = (
-        re.search(r"(每日|昨日|昨天)", f"{a.target}\n{body}") and
-        re.search(r"(深度验收|深度复验|深入功能验收)", f"{a.target}\n{body}")
-    )
-    complex_acceptance_claim = re.search(r"(每日|昨日|昨天|PR\s*#|pull request|commit)", f"{a.target}\n{body}", re.I)
+    deep_daily_claim = _declares_deep_daily_acceptance(a.target, body)
+    complex_acceptance_claim = _declares_complex_acceptance(a.target, body)
     if deep_daily_claim and len(manifest) < DEEP_DAILY_MIN_SHOTS:
         errs.append(
             f"[深度门禁] 每日/昨日报告声称深度验收，但截图数 {len(manifest)} < "

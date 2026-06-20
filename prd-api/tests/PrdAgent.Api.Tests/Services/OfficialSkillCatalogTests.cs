@@ -88,15 +88,7 @@ public class OfficialSkillCatalogTests
     [Fact]
     public void VisualAcceptanceOfficialDownload_IncludesPrerequisiteSkills()
     {
-        var context = new DefaultHttpContext();
-        context.Request.Scheme = "https";
-        context.Request.Host = new HostString("map.example.test");
-        var controller = new OfficialSkillsController(
-            new ConfigurationBuilder().Build(),
-            NullLogger<OfficialSkillsController>.Instance)
-        {
-            ControllerContext = new ControllerContext { HttpContext = context },
-        };
+        var controller = BuildOfficialSkillsController();
 
         var result = controller.Download("create-visual-test-to-kb");
         var file = Assert.IsType<FileContentResult>(result);
@@ -113,6 +105,24 @@ public class OfficialSkillCatalogTests
         Assert.DoesNotContain(names, n => n.Contains("/scripts/sv-", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void ScenarioOrchestratorOfficialDownload_IncludesTestDesignDependency()
+    {
+        var controller = BuildOfficialSkillsController();
+
+        var result = controller.Download("acceptance-scenario-orchestrator");
+        var file = Assert.IsType<FileContentResult>(result);
+
+        using var ms = new MemoryStream(file.FileContents);
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+        var names = zip.Entries.Select(e => e.FullName).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Contains("acceptance-scenario-orchestrator/SKILL.md", names);
+        Assert.Contains("acceptance-scenario-orchestrator/references/evidence-contract.md", names);
+        Assert.Contains("acceptance-test-design/SKILL.md", names);
+        Assert.Contains("acceptance-test-design/references/proof-strength.md", names);
+    }
+
     private static HttpRequest BuildRequest(string origin)
     {
         var uri = new Uri(origin);
@@ -122,6 +132,19 @@ public class OfficialSkillCatalogTests
             ? new HostString(uri.Host)
             : new HostString(uri.Host, uri.Port);
         return ctx.Request;
+    }
+
+    private static OfficialSkillsController BuildOfficialSkillsController()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("map.example.test");
+        return new OfficialSkillsController(
+            new ConfigurationBuilder().Build(),
+            NullLogger<OfficialSkillsController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = context },
+        };
     }
 
     private static T Read<T>(object source, string property)

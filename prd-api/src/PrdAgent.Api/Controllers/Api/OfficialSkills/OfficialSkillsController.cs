@@ -29,6 +29,10 @@ public class OfficialSkillsController : ControllerBase
                 "acceptance-test-design",
                 "acceptance-scenario-orchestrator",
             ],
+            ["acceptance-scenario-orchestrator"] =
+            [
+                "acceptance-test-design",
+            ],
         };
 
     private readonly IConfiguration _config;

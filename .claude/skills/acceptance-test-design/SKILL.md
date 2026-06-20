@@ -25,7 +25,7 @@ If this chain is weak, stop and produce a design-risk report. Do not compensate 
 
 1. Freeze the target.
    - Resolve the exact date, branch, commit range, PRs, preview URL, and tested SHA.
-   - If the user says "yesterday", resolve it in the user's timezone and write the absolute date.
+   - If the user says "yesterday", resolve it as the exact Asia/Shanghai date and write the absolute date.
    - Collect commits and diffs before choosing pages.
 
 2. Extract behavior assertions.

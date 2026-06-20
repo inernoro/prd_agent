@@ -49,9 +49,10 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 
 执行和报告必须能反查测试设计稿与场景编排。任何 PR/commit 未出现在最终结果里,都视为覆盖缺口。
 
-官方下载包按技能隔离安装。若当前环境只有 `create-visual-test-to-kb`,先安装同一官方目录里的 `acceptance-test-design` 与 `acceptance-scenario-orchestrator`:
+官方 `create-visual-test-to-kb` 下载包已内置 `acceptance-test-design` 与 `acceptance-scenario-orchestrator`。只有在使用旧包或手工补装依赖时,才按下面命令安装;执行前必须把 `PRD_AGENT_BASE` 设为当前 PRD Agent API 根地址(例如 `https://your-host`),否则不要运行:
 
 ```bash
+test -n "${PRD_AGENT_BASE:-}" || { echo "请先 export PRD_AGENT_BASE=https://你的 PRD Agent 域名"; exit 1; }
 curl -sSLo /tmp/acceptance-test-design.zip "$PRD_AGENT_BASE/api/official-skills/acceptance-test-design/download" \
   && unzip -o /tmp/acceptance-test-design.zip -d "${CODEX_HOME:-$HOME/.codex}/skills/"
 curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/official-skills/acceptance-scenario-orchestrator/download" \
@@ -165,7 +166,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 `debt.visual-acceptance-skill.md`)。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
 3. **读图核对（全量,不许抽查)**:manifest 里**每一张**截图都用 Read 工具读回,肉眼级核对 caption 与图内容一致(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。图文不符 → 修 driver 重拍,**禁止改 caption 迁就错图**。pass 用例必须连图、图必须独立可证 claim(反例:声称"下拉含 8 选项"但图里下拉收起——先 `select.size=N` 展开再截)、关键词断言不得同义反复(排除自己输入的消息,锚定产物区域)。详见 standard §3.6 证据链连线,准入第 8 项机检兜底。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。
-   - **每日验收报告结构(2026-06-18 固化,2026-06-20 修订)**:每日/昨日验收类报告必须先给类似周报的「昨日工作总结」,说明昨天做了什么、按模块覆盖了哪些内容、哪些没覆盖;紧接「PR/commit 到结果映射」「改动断言到证据表」和「覆盖矩阵」,再按大章节逐页验收。正文**不放目录**,避免目录占位替代证据链。页面章节顺序建议:总结 → PR/commit 到结果映射 → 改动断言到证据表 → 覆盖矩阵 → 验收地址 → DoD/自测 → 需求一一对应 → 用例表 → 截图回读检查 → 页面验收章节 → 重试记录 → 缺陷清单 → 总结论。不得直接堆截图。
+   - **每日验收报告结构(2026-06-18 固化,2026-06-20 修订)**:每日/昨日验收类报告必须先给类似周报的「昨日工作总结」,说明昨天做了什么、按模块覆盖了哪些内容、哪些没覆盖;紧接「PR/commit 到结果映射」「改动断言到证据表」「改动断言表」「影响面矩阵」「融合测试设计」「证明力矩阵」「覆盖缺口」和「覆盖矩阵」,再按大章节逐页验收。正文**不放目录**,避免目录占位替代证据链。页面章节顺序建议:总结 → PR/commit 到结果映射 → 改动断言到证据表 → 改动断言表 → 影响面矩阵 → 融合测试设计 → 证明力矩阵 → 覆盖缺口 → 覆盖矩阵 → 验收地址 → DoD/自测 → 需求一一对应 → 用例表 → 截图回读检查 → 页面验收章节 → 重试记录 → 缺陷清单 → 总结论。不得直接堆截图。
    - **每日验收必须写明深度预算(2026-06-20 修订)**:每日/昨日验收类报告必须在「覆盖矩阵」前写「改动规模与深度预算」,包含 commit 数、PR 数、模块数、高风险模块、计划证据数、实际证据数。证据不足时顶部结论必须降级为 `广度冒烟` 或 `不通过`,不能把少量入口截图包装成深度验收。
    - **每日验收必须内置标记法则与验收标准**:每日/昨日验收报告必须有「标记法则与验收标准」章节,把颜色含义、严重级、测试规则、所用验收标准写清楚,让读者不用回看技能文档也知道图上的框是什么意思、为什么最终判通过/不通过。
    - **颜色标记统一**:红色=P0 阻断缺陷(空白/崩溃/核心不可用),橙色=P1/P2 中高风险或体验干扰(遮挡/错位/可用但不稳),蓝色=环境/路径/数据可达性说明(顶栏可见/路由可达/接口返回),绿色=通过证据(主体可见/关键区域正常)。同一张图里同时存在「可达」和「失败」时必须拆成不同颜色标记,不能全用一种颜色。
