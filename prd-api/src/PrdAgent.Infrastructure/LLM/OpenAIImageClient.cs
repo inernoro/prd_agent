@@ -488,6 +488,15 @@ public class OpenAIImageClient
                         ["modalities"] = new JsonArray { "image", "text" },
                     };
 
+                    // 把所选画幅透传给 OpenRouter：其 chat/completions 出图用 image_config.aspect_ratio 控制形状，
+                    // 不传则回退模型默认(通常方形)，导致 16:9 / 9:16 关键帧被裁切、与后续图生视频画幅错配（Codex review）。
+                    // 仅在能从 size 推出受支持的比例时添加，推不出就不加(保持原行为，避免未知字段 400)。
+                    var orAspect = DeriveOpenRouterAspectRatio(size);
+                    if (orAspect != null)
+                    {
+                        orBody["image_config"] = new JsonObject { ["aspect_ratio"] = orAspect };
+                    }
+
                     _logger.LogInformation(
                         "[OpenAIImageClient] OpenRouter 图片请求(chat/completions + modalities): AppCallerCode={AppCallerCode}, HasImage={HasImage}, Model={Model}",
                         appCallerCode, initImageBase64 != null, effectiveModelName);
@@ -2460,11 +2469,34 @@ public class OpenAIImageClient
 
     private readonly record struct SizeCapsKey(string? ModelId, string? PlatformId, string? ModelNameLower);
 
+    // 从 "WxH" 像素尺寸推 OpenRouter image_config.aspect_ratio（受支持集合里取最接近的比例）。
+    // 推不出（空/格式错/无法解析）返回 null —— 调用方据此决定不加 image_config，保持原行为不引入未知字段（Codex review）。
+    private static string? DeriveOpenRouterAspectRatio(string? size)
+    {
+        if (string.IsNullOrWhiteSpace(size)) return null;
+        var parts = size.Trim().ToLowerInvariant().Split('x');
+        if (parts.Length != 2) return null;
+        if (!int.TryParse(parts[0], out var w) || !int.TryParse(parts[1], out var h) || w <= 0 || h <= 0) return null;
+        var target = (double)w / h;
+        var candidates = new (string Label, double Ratio)[]
+        {
+            ("1:1", 1.0), ("2:3", 2.0 / 3), ("3:2", 3.0 / 2), ("3:4", 3.0 / 4), ("4:3", 4.0 / 3),
+            ("4:5", 4.0 / 5), ("5:4", 5.0 / 4), ("9:16", 9.0 / 16), ("16:9", 16.0 / 9), ("21:9", 21.0 / 9),
+        };
+        var best = candidates[0];
+        var bestDiff = double.MaxValue;
+        foreach (var c in candidates)
+        {
+            var d = Math.Abs(c.Ratio - target);
+            if (d < bestDiff) { bestDiff = d; best = c; }
+        }
+        return best.Label;
+    }
+
     private static SizeCapsKey BuildCapsKey(string? modelId, string? platformId, string? modelName, string effectiveModelName)
     {
         var mid = string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
         if (!string.IsNullOrWhiteSpace(mid)) return new SizeCapsKey(mid, null, null);
-
         var pid = string.IsNullOrWhiteSpace(platformId) ? null : platformId.Trim();
         var name = string.IsNullOrWhiteSpace(modelName) ? null : modelName.Trim();
         name ??= string.IsNullOrWhiteSpace(effectiveModelName) ? null : effectiveModelName.Trim();

@@ -43,3 +43,4 @@
 | fix | prd-api | OpenRouter/标准 data URL 生图保留 MIME：data:image/jpeg|webp 原先只剥 base64、丢 MIME，落库用默认 image/png，导致 COS 存成 png 却是 JPEG/WebP 字节。ImageGenImage 加 Mime 字段，解析时取 data URL 头 MIME，上传时据此设 outMime（Bugbot review） |
 | fix | prd-admin | 分镜关键帧模型从池内挑健康端点：原先固定取最高优先级 sorted[0]，该端点不可用/降级时关键帧全失败而无视池内其他健康模型。改为优先 Healthy → 非 Unavailable → 回退 sorted[0]（Codex review） |
 | fix | prd-admin | 分镜「动起来」本地超时后取消后端视频 run：原先只标错误，仍 Queued 的任务会被 worker 更晚提交 OpenRouter、在 UI 已告知失败后继续烧额度（Codex review） |
+| fix | prd-api | OpenRouter 出图透传画幅 aspect_ratio：按官方 image-generation 文档，chat/completions 出图加 image_config.aspect_ratio（从请求 size 推最接近受支持比例），修复 16:9/9:16 关键帧被裁切/与图生视频画幅错配；推不出比例则不加避免未知字段（Codex review，待部署验证） |

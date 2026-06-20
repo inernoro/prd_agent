@@ -28,7 +28,8 @@
 
 ## 已知边界 / 待补（PR #858 review，2026-06-19）
 
-- **OpenRouter 出图未透传画幅（size/aspect）**（Codex + Bugbot 双标 P2/Medium）：分镜台选的 16:9 / 9:16 / 1:1 经 `createImageGenRun` 以 `size`（如 `1280x720`）下发，但 `OpenAIImageClient` 的 OpenRouter 分支（`chat/completions` + `modalities`）只发 `model/messages/modalities`，画幅没到 OpenRouter，关键帧可能按模型默认比例出图、与所选视频画幅不一致。
+- **OpenRouter 出图画幅 aspect_ratio 已透传（Codex P2，2026-06-20，已实现待部署验证）**：按 OpenRouter 官方 image-generation 文档，chat/completions 出图用 `image_config.aspect_ratio`（受支持集 1:1/16:9/9:16/...）控制形状。`OpenAIImageClient` 的 OpenRouter 分支已据请求 `size` 用 `DeriveOpenRouterAspectRatio` 推出最接近比例并注入 `image_config.aspect_ratio`（推不出则不加，避免未知字段）。`image_size`（分辨率档 1K/2K）暂留默认，规避成本/可用性意外。CDS 部署恢复后用非方形画幅复验首帧比例与图生视频一致。
+- **OpenRouter 出图未透传画幅（size/aspect）·历史记录**（Codex + Bugbot 双标 P2/Medium）：分镜台选的 16:9 / 9:16 / 1:1 经 `createImageGenRun` 以 `size`（如 `1280x720`）下发，但 `OpenAIImageClient` 的 OpenRouter 分支（`chat/completions` + `modalities`）只发 `model/messages/modalities`，画幅没到 OpenRouter，关键帧可能按模型默认比例出图、与所选视频画幅不一致。
   - 未处理原因：OpenRouter 经 `chat/completions` 出图的画幅控制字段（Codex 称 `image_config`）需对照 OpenRouter 文档核实确切 schema；贸然加未知字段可能被严格 API 直接 400，反而打断整条出图链路。且本分支后端处于「CDS 部署冻结」（见 `debt.cds-backend-deploy-freeze`），无法部署验证。
   - 待办：确认 OpenRouter 图片生成画幅字段格式 → 在 OpenRouter 分支 `orBody` 注入（带容错，未知字段不应 400 整条链路）→ CDS 部署恢复后 direct i2v 脚本复验画幅是否匹配。
 
