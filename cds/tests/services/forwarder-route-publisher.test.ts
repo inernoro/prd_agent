@@ -4,7 +4,7 @@
  * 对应 doc/report.cds-forwarder-success.md
  * 验证:
  *   1. running 分支 → 路由记录(host = preview slug + 别名)
- *   2. 非 running 分支跳过
+ *   2. building / starting 分支有端口时仍保留 preview host 路由
  *   3. 同样输入再发布一次不重复写盘(节省 IO + 减少 fs.watch 风暴)
  *   4. 原子写:tmp + rename(读到永远是完整 JSON)
  */
@@ -209,7 +209,7 @@ describe('ForwarderRoutePublisher', () => {
     expect(data).toHaveLength(3);
   });
 
-  it('非 running 分支不发布(building/error/stopped 都跳过)', () => {
+  it('building / starting 分支有端口时仍发布路由，避免 preview host 消失', () => {
     ensureProject('demo', 'demo');
     state.addBranch({
       id: 'demo-feat',
@@ -230,7 +230,73 @@ describe('ForwarderRoutePublisher', () => {
     });
     publisher.publishNow();
     const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(data).toHaveLength(1);
+    expect(data[0].host).toBe(`${computePreviewSlug('feat', 'demo')}.miduo.org`);
+    expect(data[0].upstreamPort).toBe(41001);
+    expect(data[0].healthState).toBe('unknown');
+  });
+
+  it('error / stopped 分支没有可路由服务时仍跳过', () => {
+    ensureProject('demo', 'demo');
+    state.addBranch({
+      id: 'demo-error',
+      projectId: 'demo',
+      branch: 'error',
+      worktreePath: path.join(tmpDir, 'error'),
+      services: {
+        web: { profileId: 'web', containerName: 'c-error', hostPort: 41001, status: 'error' },
+      },
+      status: 'error',
+      createdAt: new Date().toISOString(),
+    } as Parameters<typeof state.addBranch>[0]);
+    state.addBranch({
+      id: 'demo-stopped',
+      projectId: 'demo',
+      branch: 'stopped',
+      worktreePath: path.join(tmpDir, 'stopped'),
+      services: {
+        web: { profileId: 'web', containerName: 'c-stopped', hostPort: 41002, status: 'stopped' },
+      },
+      status: 'idle',
+      createdAt: new Date().toISOString(),
+    } as Parameters<typeof state.addBranch>[0]);
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
     expect(data).toEqual([]);
+  });
+
+  it('默认路由优先选择 running 服务，避免被 building 服务抢走', () => {
+    ensureProject('demo', 'demo');
+    state.addBranch({
+      id: 'demo-mixed',
+      projectId: 'demo',
+      branch: 'mixed',
+      worktreePath: path.join(tmpDir, 'mixed'),
+      services: {
+        admin: { profileId: 'admin', containerName: 'c-mixed-admin', hostPort: 41001, status: 'building' },
+        web: { profileId: 'web', containerName: 'c-mixed-web', hostPort: 41002, status: 'running' },
+      },
+      status: 'building',
+      createdAt: new Date().toISOString(),
+    } as Parameters<typeof state.addBranch>[0]);
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
+    expect(defaultRoute).toBeDefined();
+    expect(defaultRoute.upstreamPort).toBe(41002);
+    expect(defaultRoute.healthState).toBe('running');
   });
 
   it('同样输入再发布不重复写盘(unchanged hash 短路)', () => {

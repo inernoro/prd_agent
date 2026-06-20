@@ -1679,6 +1679,25 @@ export interface RouterDeps {
   branchOperationCoordinator?: BranchOperationCoordinator;
 }
 
+export function shouldSkipFencedDeployCleanupForNewerRuntime(
+  entry: Pick<BranchEntry, 'lastReadyAt' | 'lastDeployAt' | 'lastStoppedAt'>,
+  operationStartedAt?: string | null,
+): boolean {
+  const operationMs = operationStartedAt ? Date.parse(operationStartedAt) : NaN;
+  if (!Number.isFinite(operationMs)) return false;
+
+  const readyMs = entry.lastReadyAt ? Date.parse(entry.lastReadyAt) : NaN;
+  const deployMs = entry.lastDeployAt ? Date.parse(entry.lastDeployAt) : NaN;
+  const latestRuntimeMs = Math.max(
+    Number.isFinite(readyMs) ? readyMs : 0,
+    Number.isFinite(deployMs) ? deployMs : 0,
+  );
+  if (latestRuntimeMs <= operationMs) return false;
+
+  const stoppedMs = entry.lastStoppedAt ? Date.parse(entry.lastStoppedAt) : NaN;
+  return !Number.isFinite(stoppedMs) || stoppedMs < latestRuntimeMs;
+}
+
 export function createBranchRouter(deps: RouterDeps): Router {
   const {
     stateService,
@@ -2136,6 +2155,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     requestId: string | undefined,
     reason: string,
     operationId?: string | null,
+    operationStartedAt?: string | null,
   ): Promise<void> {
     const terminalCleanupKinds = new Set<BranchOperationKind>([
       'delete',
@@ -2147,6 +2167,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
       'janitor-remove',
     ]);
     const branchStillExists = Boolean(stateService.getBranch(entry.id));
+    const hasNewerReadyRuntime = shouldSkipFencedDeployCleanupForNewerRuntime(entry, operationStartedAt);
+    if (hasNewerReadyRuntime && branchStillExists) {
+      for (const profileId of profileIds) {
+        const svc = entry.services?.[profileId];
+        if (!svc?.containerName) continue;
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'info',
+          source: 'deploy-fenced-cleanup',
+          action: 'container.remove.after-fenced-deploy.skipped',
+          message: `skipped fenced deploy cleanup because a newer runtime is already ready: ${svc.containerName}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId,
+          containerName: svc.containerName,
+          requestId: requestId || null,
+          operationId: operationId || null,
+          details: {
+            reason,
+            skipReason: 'newer-runtime-ready',
+            operationStartedAt: operationStartedAt || null,
+            lastReadyAt: entry.lastReadyAt || null,
+            lastDeployAt: entry.lastDeployAt || null,
+            lastStoppedAt: entry.lastStoppedAt || null,
+          },
+        });
+      }
+      return;
+    }
     const cleanupOwner = branchOperationCoordinator
       ?.getActiveOperations(entry.id)
       .find((active) => active.operationId !== operationId && terminalCleanupKinds.has(active.request.kind));
@@ -10330,6 +10379,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           requestId,
           `部署操作被更高优先级操作取代: ${errMsg}`,
           branchOperationLease?.operationId || null,
+          branchOperationLease?.startedAt || null,
         );
         logEvent({
           step: 'deploy-fenced',
@@ -10645,6 +10695,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined,
           `单服务部署被更高优先级操作取代: ${errMsg}`,
           branchOperationLease?.operationId || null,
+          branchOperationLease?.startedAt || null,
         );
         logEvent({
           step: 'deploy-fenced',
