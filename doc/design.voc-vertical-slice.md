@@ -74,11 +74,12 @@
 ### 5.3 数据流
 
 ```
-涌现节点(idea/explored)
+涌现节点（任意 Status：idea/planned/building/done）
    │ 用户点「流转需求池」，选目标 Product
+   │ 注：能否 adopt 不看节点 Status，只看"该节点是否已有活跃(!IsDeleted)需求"
    ▼
 POST /api/emergence/nodes/{id}/adopt  { productId }
-   │  查重：按 Requirement.SourceEmergenceNodeId == 节点id，命中即返回既有需求
+   │  查重：按 Requirement.SourceEmergenceNodeId == 节点id 的活跃行，命中即返回既有需求
    │  insert Requirement{ Title=节点标题, Description=节点描述+GroundingContent,
    │               SourceSystem="emergence", SourceEmergenceNodeId=节点id }（唯一索引兜底并发）
    │  best-effort 回填 EmergenceNode.AdoptedRequirementId = 需求id; Status → planned
@@ -111,6 +112,8 @@ Body: { productId: string }
 ```
 
 **核心不变量**：一个涌现节点**最多对应一条活跃（`!IsDeleted`）需求**。注意是"活跃"——既有活跃需求被软删后允许重新 adopt 生成新需求，所以不是"一个节点历史上只能流转一次"。锁放在需求的 `SourceEmergenceNodeId`（活跃唯一索引）上，不放在节点 `AdoptedRequirementId` 上：后者若先标记再 insert，insert 失败会留孤儿锁卡死；放在"真正被创建的活跃需求"上则无空窗。`AdoptedRequirementId` 仅是给 UI 的反范化指针，可懒修复，**非权威、不参与幂等判定**。
+
+**禁止用节点 `Status` 当 adopt 守卫**：`Status`（idea/planned/building/done，无 `explored` 这个值）与"能否流转"正交。adopt 成功会把节点置 `planned`，但软删需求后必须仍能重新 adopt——若实现按 `Status` 限制（如"仅 idea 可流转"），`planned` 节点会被错误挡住，与上面的重新 adopt 路径冲突。判定唯一依据是"该节点是否已有活跃需求"（即第 2 步查重），不是 `Status`。前端按钮可禁用态同理：以"是否有活跃需求"为准（见前端段）。
 
 **实现顺序（编号步骤为权威 SSOT，鉴权步骤已内联，照此实现即不留越权/脏写缺口）**：
 
