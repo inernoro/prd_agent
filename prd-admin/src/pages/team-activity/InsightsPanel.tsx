@@ -5,6 +5,7 @@
  * 数据源：apirequestlogs（报错/慢端点，历史即有）+ behavior_events（路由信号，自采集上线起累积）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { BarChart3, BookOpen, Bug, Check, CheckCircle2, ClipboardList, EyeOff as IgnoreIcon, Microscope, Radar, RotateCcw, ScrollText, Users, X } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -71,8 +72,9 @@ export function InsightsPanel({ from }: { from?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [includeIgnored, setIncludeIgnored] = useState(false);
   const [statsOpen, setStatsOpen] = useState(true);
-  // 右栏二态：stats=痛点指数面板 / drill=端点下钻诊断（点痛点块或痛点榜「AI 诊断」进入）
-  const [rightMode, setRightMode] = useState<'stats' | 'drill'>('stats');
+  // 全屏热力图浮层开关（createPortal 到 body）
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  // 下钻抽屉：从右侧滑入的浮层 drawer（createPortal 到 body），target 非空即展开
   const [drillTarget, setDrillTarget] = useState<{ target: string; label: string } | null>(null);
   const [drillConverting, setDrillConverting] = useState(false);
   const [drillConvertingReq, setDrillConvertingReq] = useState(false);
@@ -183,11 +185,9 @@ export function InsightsPanel({ from }: { from?: string }) {
     });
   }, [from, includeIgnored]);
 
-  // 点击热力图痛点块 / 痛点榜「AI 诊断」→ 右栏切到下钻抽屉（查真实明细 + AI 根因诊断，未上榜也能下钻）
+  // 点击热力图痛点块 / 痛点榜「AI 诊断」→ 打开右侧浮层下钻抽屉（查真实明细 + AI 根因诊断，未上榜也能下钻）
   const openDrill = useCallback((target: string, label: string) => {
     setDrillTarget({ target, label });
-    setRightMode('drill');
-    setStatsOpen(true); // 折叠态时点下钻自动展开右栏，否则抽屉无处可渲染
   }, []);
 
   const handleSelectTarget = useCallback(
@@ -198,7 +198,6 @@ export function InsightsPanel({ from }: { from?: string }) {
   );
 
   const closeDrill = useCallback(() => {
-    setRightMode('stats');
     setDrillTarget(null);
     setDrillConverting(false);
     setDrillConvertingReq(false);
@@ -207,6 +206,18 @@ export function InsightsPanel({ from }: { from?: string }) {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // 浮层 ESC 关闭：全屏优先于下钻抽屉（栈式关闭）
+  useEffect(() => {
+    if (!fullscreenOpen && !drillTarget) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (fullscreenOpen) setFullscreenOpen(false);
+      else closeDrill();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreenOpen, drillTarget, closeDrill]);
 
   const setState = useCallback(
     async (item: BehaviorInsight, status: 'confirmed' | 'resolved' | 'ignored' | 'open') => {
@@ -368,50 +379,67 @@ export function InsightsPanel({ from }: { from?: string }) {
     );
   }
 
+  // Hero 视图渲染槽：当前只渲染体验全景热力图一个视图。
+  // TODO Wave B: 多视角切换器挂这里 —— 在 renderHeroView 顶部加视图切换器（趋势曲线/痛点雷达/站点地图/声道看板），
+  // 按选中的视图条件渲染不同组件（ExperienceMap 只是其中一个视图，不要把它和 ribbon/榜单耦合死）。
+  const renderHeroView = () => (
+    <ExperienceMap
+      data={mapData}
+      loading={loading}
+      onSelectTarget={handleSelectTarget}
+      onRequestFullscreen={() => setFullscreenOpen(true)}
+    />
+  );
+
   return (
     <GlassCard className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
       <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-        <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }`}</style>
-        {/* 体验全景热力图（主视觉）+ 体验痛点指数（右侧可折叠）：点痛点块下钻到下方痛点榜 */}
+        <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }
+          @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }`}</style>
+        {/* 闭环 ribbon：监测 → 预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落，从热力图/洞察现算 */}
         <div className="px-5 pt-4">
-          {/* 闭环 ribbon：监测 → 预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落，从热力图/洞察现算 */}
           <ExperienceRibbon mapData={mapData} insights={data} />
-          <div className="flex gap-3 items-start">
-            <div className="flex-1 min-w-0">
-              <ExperienceMap data={mapData} loading={loading} onSelectTarget={handleSelectTarget} />
-            </div>
-            {statsOpen && rightMode === 'drill' && drillTarget ? (
-              <div className="w-[340px] shrink-0">
-                <ExperienceDrill
-                  target={drillTarget.target}
-                  label={drillTarget.label}
-                  from={from}
-                  converting={drillConverting || busyKey === `api-error|${drillTarget.target}`}
-                  convertingRequirement={drillConvertingReq}
-                  requirementNo={data?.items.find((i) => i.target === drillTarget.target && i.requirementNo)?.requirementNo ?? null}
-                  onConvertDefect={() => void convertDrillToDefect()}
-                  onConvertRequirement={(productId) => void convertDrillToRequirement(productId)}
-                  onClose={closeDrill}
-                />
+          {/* Hero：体验全景热力图占满整宽做主视觉。切换时间窗(loading && data)时叠一层「更新中」过渡态，
+              旧内容保持可见，数据到达后 ExperienceMap 走 morph 几何补间平滑过渡。 */}
+          <div className="relative">
+            {renderHeroView()}
+            {loading && data ? (
+              <div
+                className="absolute inset-0 rounded-2xl overflow-hidden flex items-center justify-center"
+                style={{ background: 'rgba(16,17,19,0.35)', backdropFilter: 'blur(0.5px)' }}
+              >
+                {/* 顶部细横条扫光：持续变化，告知正在重聚合而非卡死 */}
+                <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden">
+                  <div
+                    className="h-full w-1/3"
+                    style={{ background: 'linear-gradient(90deg,transparent,#5eead4,transparent)', animation: 'voc-shimmer-sweep 1.1s ease-in-out infinite' }}
+                  />
+                </div>
+                <span className="inline-flex items-center gap-2 px-3 h-[28px] rounded-full text-[12px] text-white/75 border border-white/10" style={{ background: 'rgba(16,17,19,0.8)' }}>
+                  <MapSpinner size={13} />
+                  正在重新聚合数据…
+                </span>
               </div>
-            ) : statsOpen && data ? (
-              <div className="w-[290px] shrink-0">
+            ) : null}
+          </div>
+          {/* 痛点指数：从右侧竖栏下放到热力图下方的一整块（可折叠） */}
+          {data ? (
+            statsOpen ? (
+              <div className="mt-3">
                 <ExperienceStats items={data.items} onCollapse={() => setStatsOpen(false)} />
               </div>
-            ) : !statsOpen ? (
+            ) : (
               <button
                 type="button"
                 onClick={() => setStatsOpen(true)}
                 title="展开痛点指数面板"
-                className="shrink-0 w-9 self-stretch flex flex-col items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] text-white/45 hover:text-white/80 hover:border-white/25 transition-colors cursor-pointer"
+                className="mt-3 w-full inline-flex items-center justify-center gap-2 h-9 rounded-xl border border-white/10 bg-white/[0.03] text-white/45 hover:text-white/80 hover:border-white/25 transition-colors cursor-pointer"
               >
                 <BarChart3 size={15} />
-                <span className="text-[11px]" style={{ writingMode: 'vertical-rl' }}>
-                  痛点指数
-                </span>
+                <span className="text-[11px]">展开痛点指数</span>
               </button>
-            ) : null}
-          </div>
+            )
+          ) : null}
         </div>
         {/* 数据源状态行：诚实告知信号从哪来、采集到什么程度 */}
         {data ? (
@@ -615,6 +643,72 @@ export function InsightsPanel({ from }: { from?: string }) {
           </div>
         )}
       </div>
+
+      {/* 下钻浮层抽屉：从右侧滑入，createPortal 到 body（遵守 frontend-modal.md：
+          createPortal + 布局尺寸走 inline style + 滚动区 min-h-0 + overscrollBehavior contain + z-[100]+ + ESC/遮罩关闭）。
+          复用 ExperienceDrill 全部 props/回调，不再挤占 Hero 宽度。 */}
+      {drillTarget
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[100] flex justify-end"
+              style={{ background: 'rgba(0,0,0,0.5)' }}
+              onClick={closeDrill}
+            >
+              <div
+                className="flex flex-col"
+                style={{ width: 'min(420px, 94vw)', height: '100vh', animation: 'voc-drawer-in .26s cubic-bezier(.22,1,.36,1)' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex-1 px-3 py-3" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                  <ExperienceDrill
+                    target={drillTarget.target}
+                    label={drillTarget.label}
+                    from={from}
+                    converting={drillConverting || busyKey === `api-error|${drillTarget.target}`}
+                    convertingRequirement={drillConvertingReq}
+                    requirementNo={data?.items.find((i) => i.target === drillTarget.target && i.requirementNo)?.requirementNo ?? null}
+                    onConvertDefect={() => void convertDrillToDefect()}
+                    onConvertRequirement={(productId) => void convertDrillToRequirement(productId)}
+                    onClose={closeDrill}
+                  />
+                </div>
+              </div>
+              <style>{`@keyframes voc-drawer-in { from { transform: translateX(36px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }`}</style>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {/* 全屏热力图浮层：createPortal 到 body，从中心放大入场（哇塞感），ESC/关闭退出。
+          全屏内复用同一个 ExperienceMap（fullscreen 放大视口 + 更多标签层级）。 */}
+      {fullscreenOpen
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[100] flex flex-col"
+              style={{ background: 'rgba(8,9,11,0.92)', backdropFilter: 'blur(3px)' }}
+              onClick={() => setFullscreenOpen(false)}
+            >
+              <div
+                className="flex-1 flex flex-col"
+                style={{ minHeight: 0, padding: '3vh 3vw', animation: 'voc-fs-in .34s cubic-bezier(.16,1,.3,1)', transformOrigin: 'center' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <ExperienceMap
+                  data={mapData}
+                  loading={loading}
+                  onSelectTarget={(t, fb) => {
+                    handleSelectTarget(t, fb);
+                    setFullscreenOpen(false);
+                  }}
+                  fullscreen
+                  onExitFullscreen={() => setFullscreenOpen(false)}
+                />
+              </div>
+              <style>{`@keyframes voc-fs-in { from { transform: scale(.86); opacity: 0; } to { transform: scale(1); opacity: 1; } }`}</style>
+            </div>,
+            document.body
+          )
+        : null}
     </GlassCard>
   );
 }

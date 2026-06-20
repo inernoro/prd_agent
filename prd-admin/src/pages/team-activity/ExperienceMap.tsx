@@ -6,6 +6,7 @@
  * 数据源：GET /api/team-activity/experience-map（与 insights 同源 apirequestlogs，target 同口径）。
  */
 import { useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Maximize2, Minimize2 } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { ExperienceMapGroup, ExperienceMapLeaf, TeamActivityExperienceMapData } from '@/services/contracts/teamActivity';
@@ -109,10 +110,19 @@ export function ExperienceMap({
   data,
   loading,
   onSelectTarget,
+  fullscreen = false,
+  onRequestFullscreen,
+  onExitFullscreen,
 }: {
   data: TeamActivityExperienceMapData | null;
   loading: boolean;
   onSelectTarget?: (target: string, fallback: { label: string; metric: string }) => void;
+  /** 全屏态：放大视口 + 显示更多标签层级（块更大、标签阈值放宽） */
+  fullscreen?: boolean;
+  /** 非全屏时点右上角「全屏」按钮触发（父组件挂全屏浮层） */
+  onRequestFullscreen?: () => void;
+  /** 全屏态点「退出全屏」按钮触发 */
+  onExitFullscreen?: () => void;
 }) {
   // 两个范围模式：all=全域(全部端点按访问量) / pain=痛点(只看病灶，按问题严重度放大)
   const [mode, setMode] = useState<'all' | 'pain'>('all');
@@ -164,10 +174,20 @@ export function ExperienceMap({
   const isEntrance = !enteredRef.current;
   enteredRef.current = true;
 
+  // 全屏态视口更大（同一 viewBox 撑满更大物理像素），放宽标签阈值让更多块显示标签层级
+  const labelMinW = fullscreen ? 34 : 46;
+  const labelMinH = fullscreen ? 15 : 20;
+  const subLabelMinH = fullscreen ? 26 : 32;
+  const grpMinW = fullscreen ? 54 : 70;
+  const grpMinH = fullscreen ? 24 : 30;
+
   return (
     <>
-      <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
-        <div className="flex items-center justify-between px-4 pt-3 pb-2">
+      <GlassCard
+        className="overflow-hidden"
+        style={fullscreen ? { padding: 0, height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 } : { padding: 0 }}
+      >
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
           <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5">
             体验全景热力图
             <span
@@ -211,17 +231,45 @@ export function ExperienceMap({
             <span className="inline-flex items-center gap-1.5">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: 'hsl(196 36% 36%)' }} />健康
             </span>
+            {fullscreen ? (
+              onExitFullscreen ? (
+                <button
+                  type="button"
+                  onClick={onExitFullscreen}
+                  title="退出全屏（ESC）"
+                  className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-white/10 bg-white/[0.03] text-white/55 hover:text-white/90 hover:border-white/25 transition-colors cursor-pointer"
+                >
+                  <Minimize2 size={14} />
+                </button>
+              ) : null
+            ) : onRequestFullscreen ? (
+              <button
+                type="button"
+                onClick={onRequestFullscreen}
+                title="全屏放大热力图"
+                className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-white/10 bg-white/[0.03] text-white/55 hover:text-white/90 hover:border-white/25 transition-colors cursor-pointer"
+              >
+                <Maximize2 size={14} />
+              </button>
+            ) : null}
           </div>
         </div>
-        <div className="px-2 pb-2">
+        <div
+          className="px-2 pb-2"
+          style={fullscreen ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : undefined}
+        >
           {layout.groupRects.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 text-center" style={{ height: 300 }}>
+            <div className="flex flex-col items-center justify-center gap-2 text-center" style={{ height: fullscreen ? '100%' : 300 }}>
               <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
               <span className="text-sm text-emerald-300/85">当前范围内没有痛点</span>
               <span className="text-[12px] text-white/40">系统体验健康，切回「全域」看全部端点</span>
             </div>
           ) : (
-          <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', height: 'auto', display: 'block' }}>
+          <svg
+            viewBox={`0 0 ${VW} ${VH}`}
+            preserveAspectRatio="xMidYMid meet"
+            style={fullscreen ? { width: '100%', flex: 1, minHeight: 0, height: '100%', display: 'block' } : { width: '100%', height: 'auto', display: 'block' }}
+          >
             {/* 分区边框 + 标签 */}
             {layout.groupRects.map((g) => (
               <g key={`grp-${g.key}`} style={{ animation: 'voc-grp-in .4s ease both' }}>
@@ -232,7 +280,7 @@ export function ExperienceMap({
                   strokeWidth={1}
                   style={{ x: `${g.rect.x}px`, y: `${g.rect.y}px`, width: `${g.rect.w}px`, height: `${g.rect.h}px`, transition: MORPH }}
                 />
-                {g.rect.w > 70 && g.rect.h > 30 ? (
+                {g.rect.w > grpMinW && g.rect.h > grpMinH ? (
                   <text
                     x={g.rect.x + 5}
                     y={g.rect.y + 11}
@@ -266,7 +314,7 @@ export function ExperienceMap({
               const isPain = c.leaf.status === 'error' || c.leaf.status === 'slow';
               const hasBurst = c.leaf.burstPct != null && c.leaf.burstPct >= 50;
               const fill = c.leaf.status === 'error' ? ERR : c.leaf.status === 'slow' ? SLOW : healthyFill(c.hue, c.idxInGroup);
-              const showLabel = r.w > 46 && r.h > 20;
+              const showLabel = r.w > labelMinW && r.h > labelMinH;
               const clickable = isPain && !!onSelectTarget;
               const cellCx = r.x + r.w / 2;
               const revealDelay = Math.round((cellCx / VW) * SWEEP_MS); // 按 x → 跟随扫描线
@@ -304,7 +352,7 @@ export function ExperienceMap({
                       {c.leaf.label}
                     </text>
                   ) : null}
-                  {isPain && showLabel && r.h > 32 ? (
+                  {isPain && showLabel && r.h > subLabelMinH ? (
                     <text
                       x={r.x + 5}
                       y={r.y + 26}

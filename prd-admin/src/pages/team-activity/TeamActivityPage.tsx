@@ -151,13 +151,15 @@ export default function TeamActivityPage() {
     [filterUserId, filterModule, filterRange]
   );
 
-  // 筛选条件变化时重置到第一页
+  // 筛选条件变化时重置到第一页（仅动态流视图拉取；行为洞察视图不拉 feed，避免白白加重切换卡顿）
   useEffect(() => {
+    if (view !== 'feed') return;
     void load(1, false);
-  }, [load]);
+  }, [load, view]);
 
-  // 脉搏聚合统计随同一组筛选条件刷新（统计不分页）
+  // 脉搏聚合统计随同一组筛选条件刷新（统计不分页；同样仅动态流视图拉取）
   useEffect(() => {
+    if (view !== 'feed') return;
     const fetchId = ++statsFetchIdRef.current;
     setStatsLoading(true);
     void getTeamActivityStats({
@@ -169,7 +171,7 @@ export default function TeamActivityPage() {
       if (res.success) setStats(res.data);
       setStatsLoading(false);
     });
-  }, [filterUserId, filterModule, filterRange]);
+  }, [filterUserId, filterModule, filterRange, view]);
 
   const togglePrivacy = useCallback(() => {
     setPrivacy((prev) => {
@@ -208,75 +210,58 @@ export default function TeamActivityPage() {
   return (
     // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡
     <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1840 }}>
-      <PageHeader title="团队动态" description="团队脉搏总览 + 动态时间线 + 行为洞察（按白名单动作与路由信号自动采集）" />
+      {/* 页头：视图切换走 tabs（动态流 / 行为洞察），时间范围 chips 走 actions 槽显眼可见 */}
+      <PageHeader
+        title="团队动态"
+        tabs={[
+          { key: 'feed', label: '动态流', icon: <Activity size={13} /> },
+          { key: 'insights', label: '行为洞察', icon: <Radar size={13} /> },
+        ]}
+        activeTab={view}
+        onTabChange={(key) => switchView(key === 'insights' ? 'insights' : 'feed')}
+        actions={
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {RANGE_OPTIONS.map((r) => (
+              <FilterChip key={r.key} active={filterRange === r.key} label={r.label} onClick={() => setFilterRange(r.key)} />
+            ))}
+          </div>
+        }
+      />
 
-      {/* 筛选栏：视图切换 / 人 / 模块 / 时间快捷段 / 隐私脱敏 */}
-      <div className="flex items-center gap-3 flex-wrap shrink-0">
-        {/* 视图切换：动态流（发生了什么）/ 行为洞察（哪里不好用） */}
-        <div className="flex items-center gap-1 p-0.5 rounded-md border border-white/10 bg-white/[0.02]">
+      {/* 下方筛选栏：仅动态流视图保留（成员 / 模块 / 隐私脱敏）。行为洞察视图时间已上移页头，无需此栏。 */}
+      {view === 'feed' ? (
+        <div className="flex items-center gap-3 flex-wrap shrink-0">
+          <div className="w-52">
+            <UserSearchSelect
+              value={filterUserId}
+              onChange={setFilterUserId}
+              showAllOption
+              allOptionLabel="全部成员"
+              placeholder="按成员筛选"
+              uiSize="sm"
+            />
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <FilterChip active={filterModule === ''} label="全部模块" onClick={() => setFilterModule('')} />
+            {modules.map((m) => (
+              <FilterChip key={m.key} active={filterModule === m.key} label={m.label} onClick={() => setFilterModule(m.key)} />
+            ))}
+          </div>
           <button
             type="button"
-            onClick={() => switchView('feed')}
-            className={`inline-flex items-center gap-1.5 px-2.5 h-[24px] rounded text-[12px] transition-colors ${
-              view === 'feed' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:text-white/75'
+            onClick={togglePrivacy}
+            title={privacy ? '匿名模式：隐藏成员姓名（文档标题保持明文），点击切换实名' : '实名模式：点击切换匿名（隐藏成员姓名）'}
+            className={`ml-auto inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
+              privacy
+                ? 'bg-violet-500/15 text-violet-200 border-violet-500/35'
+                : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
             }`}
           >
-            <Activity size={13} />
-            动态流
-          </button>
-          <button
-            type="button"
-            onClick={() => switchView('insights')}
-            className={`inline-flex items-center gap-1.5 px-2.5 h-[24px] rounded text-[12px] transition-colors ${
-              view === 'insights' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:text-white/75'
-            }`}
-          >
-            <Radar size={13} />
-            行为洞察
+            {privacy ? <EyeOff size={13} /> : <Eye size={13} />}
+            {privacy ? '匿名' : '实名'}
           </button>
         </div>
-
-        {view === 'feed' ? (
-          <>
-            <div className="w-52">
-              <UserSearchSelect
-                value={filterUserId}
-                onChange={setFilterUserId}
-                showAllOption
-                allOptionLabel="全部成员"
-                placeholder="按成员筛选"
-                uiSize="sm"
-              />
-            </div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <FilterChip active={filterModule === ''} label="全部模块" onClick={() => setFilterModule('')} />
-              {modules.map((m) => (
-                <FilterChip key={m.key} active={filterModule === m.key} label={m.label} onClick={() => setFilterModule(m.key)} />
-              ))}
-            </div>
-          </>
-        ) : null}
-        <div className="flex items-center gap-1.5 ml-auto">
-          {RANGE_OPTIONS.map((r) => (
-            <FilterChip key={r.key} active={filterRange === r.key} label={r.label} onClick={() => setFilterRange(r.key)} />
-          ))}
-          {view === 'feed' ? (
-            <button
-              type="button"
-              onClick={togglePrivacy}
-              title={privacy ? '匿名模式：隐藏成员姓名（文档标题保持明文），点击切换实名' : '实名模式：点击切换匿名（隐藏成员姓名）'}
-              className={`inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
-                privacy
-                  ? 'bg-violet-500/15 text-violet-200 border-violet-500/35'
-                  : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
-              }`}
-            >
-              {privacy ? <EyeOff size={13} /> : <Eye size={13} />}
-              {privacy ? '匿名' : '实名'}
-            </button>
-          ) : null}
-        </div>
-      </div>
+      ) : null}
 
       {view === 'insights' ? (
         <InsightsPanel from={rangeFrom(filterRange)} />
