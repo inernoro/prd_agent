@@ -49,6 +49,17 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 
 执行和报告必须能反查测试设计稿与场景编排。任何 PR/commit 未出现在最终结果里,都视为覆盖缺口。
 
+每日/昨日自动验收必须先跑机器盘点:
+
+```bash
+python3 .claude/skills/acceptance-test-design/scripts/daily_scope.py \
+  --date <YYYY-MM-DD> \
+  --json-out /tmp/daily-scope.json \
+  --md-out /tmp/daily-scope.md
+```
+
+后续测试设计必须以 `/tmp/daily-scope.json` 为范围输入,不得只凭 `git log` 摘几条或只看 main。若 JSON 中存在 open PR、未发布分支或高风险模块,报告必须在「未发布状态」和「改动规模与深度预算」中逐项交代覆盖/未覆盖结论。
+
 官方 `create-visual-test-to-kb` 下载包已内置 `acceptance-test-design` 与 `acceptance-scenario-orchestrator`。只有在使用旧包或手工补装依赖时,才按下面命令安装;执行前必须把 `PRD_AGENT_BASE` 设为当前 PRD Agent API 根地址(例如 `https://your-host`),否则不要运行:
 
 ```bash
@@ -167,7 +178,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
 3. **读图核对（全量,不许抽查)**:manifest 里**每一张**截图都用 Read 工具读回,肉眼级核对 caption 与图内容一致(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。图文不符 → 修 driver 重拍,**禁止改 caption 迁就错图**。pass 用例必须连图、图必须独立可证 claim(反例:声称"下拉含 8 选项"但图里下拉收起——先 `select.size=N` 展开再截)、关键词断言不得同义反复(排除自己输入的消息,锚定产物区域)。详见 standard §3.6 证据链连线,准入第 8 项机检兜底。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。
    - **每日验收报告结构(2026-06-18 固化,2026-06-20 修订)**:每日/昨日验收类报告必须先给类似周报的「昨日工作总结」,说明昨天做了什么、按模块覆盖了哪些内容、哪些没覆盖;紧接「PR/commit 到结果映射」「改动断言到证据表」「改动断言表」「影响面矩阵」「融合测试设计」「证明力矩阵」「覆盖缺口」和「覆盖矩阵」,再按大章节逐页验收。正文**不放目录**,避免目录占位替代证据链。页面章节顺序建议:总结 → PR/commit 到结果映射 → 改动断言到证据表 → 改动断言表 → 影响面矩阵 → 融合测试设计 → 证明力矩阵 → 覆盖缺口 → 覆盖矩阵 → 验收地址 → DoD/自测 → 需求一一对应 → 用例表 → 截图回读检查 → 页面验收章节 → 重试记录 → 缺陷清单 → 总结论。不得直接堆截图。
-   - **每日验收必须写明深度预算(2026-06-20 修订)**:每日/昨日验收类报告必须在「覆盖矩阵」前写「改动规模与深度预算」,包含 commit 数、PR 数、模块数、高风险模块、计划证据数、实际证据数。证据不足时顶部结论必须降级为 `广度冒烟` 或 `不通过`,不能把少量入口截图包装成深度验收。
+   - **每日验收必须写明深度预算(2026-06-20 修订)**:每日/昨日验收类报告必须在「覆盖矩阵」前写「改动规模与深度预算」,包含 commit 数、PR 数、模块数、高风险模块、计划证据数、实际证据数。数据来源优先用 `daily_scope.py` 的 JSON。证据不足时顶部结论必须降级为 `广度冒烟` 或 `不通过`,不能把少量入口截图包装成深度验收。
    - **每日验收必须内置标记法则与验收标准**:每日/昨日验收报告必须有「标记法则与验收标准」章节,把颜色含义、严重级、测试规则、所用验收标准写清楚,让读者不用回看技能文档也知道图上的框是什么意思、为什么最终判通过/不通过。
    - **颜色标记统一**:红色=P0 阻断缺陷(空白/崩溃/核心不可用),橙色=P1/P2 中高风险或体验干扰(遮挡/错位/可用但不稳),蓝色=环境/路径/数据可达性说明(顶栏可见/路由可达/接口返回),绿色=通过证据(主体可见/关键区域正常)。同一张图里同时存在「可达」和「失败」时必须拆成不同颜色标记,不能全用一种颜色。
    - **问题标记必须可定位**:问题区域必须框到具体范围,标签写清严重级 + 现象,如 `P0: 正文区域空白`;禁止只写「有问题」「异常」「看这里」。通过标记也要写清通过了什么,如 `通过: CDS Agent 主体可见`;禁止只写「正常」。
@@ -178,7 +189,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - 正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。
    - **防断头报告**:建条目后强制校验正文真的落库(`GET /content` 的 `hasContent`);写不进(预览 524 等)会**自动删空壳条目 + 报错**,绝不留"有标题、点开空白"的半截条目。
    - **必给地址**:收尾必打印「验收归档完成 · 必给地址」块(分享短链优先,拿不到则给 owner 登录路径)——每次归档都有一个可达地址交付,绝不静默。
-5. **归档后自查能否打开(强制,创建≠能看)**:拿到分享链后**必须**跑 `PWPATH=$(npm root -g)/playwright node scripts/verify-open.mjs <shareUrl> "<标题里必现的一段>" <最少图片数>`。它 headless 打开真页面断言报告渲染(标题 + 正文 + 截图);默认**最多尝试 2 次**(首试 + 1 次重试),用来吸收 CDS/Cloudflare/预览网关的偶发抖动。**重试不能抹掉首试失败**:若第 1 次失败、第 2 次通过,报告必须记录「第一次结果 / 重试动作 / 第二次结果 / 最终判定」,并把它标为链路风险;**exit 0 = 真能看**才算交付完成,**exit 2 = 空白/打不开/截图缺失 → 重新推送验收**(重跑第 4 步,生成新 report_id)。杜绝"建了条目但点开空白"流到用户手里。
+5. **归档后自查能否打开(强制,创建≠能看)**:拿到分享链后**必须**跑 `PWPATH=$(npm root -g)/playwright node scripts/verify-open.mjs <shareUrl> "<标题里必现的一段>" <最少图片数>`。它 headless 打开真页面断言报告渲染(标题 + 正文 + 截图);默认**最多尝试 3 次**(首试 + 2 次重试),用来吸收 CDS/Cloudflare/预览网关的偶发抖动和图片慢加载。**重试不能抹掉首试失败**:若第 1 次失败、第 2/3 次通过,报告必须记录「第一次结果 / 重试动作 / 最终通过次数 / 最终判定」,并把它标为链路风险;**exit 0 = 真能看**才算交付完成,**exit 2 = 空白/打不开/截图缺失 → 重新推送验收**(重跑第 4 步,生成新 report_id)。杜绝"建了条目但点开空白"流到用户手里。
 
 ## 端到端示例(照抄即可)
 
@@ -223,6 +234,7 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 |------|------|--------|
 | `reference/standard-v2.md` | 完整标准:命名/档位/浏览器操作/截图/报告结构/Verdict 规则/国际标准对照 | **必读**,动手前 |
 | `../acceptance-scenario-orchestrator/SKILL.md` | 每日/PR/commit/未发布分支等复杂场景的范围编排与证据契约 | 验收目标不只是单页单流程时 |
+| `../acceptance-test-design/scripts/daily_scope.py` | 每日范围盘点:目标日期 commit、模块、高风险标签、open PR、未发布分支;输出 JSON/Markdown | 每日/昨日自动验收第一步 |
 | `templates/zz-report.md` | **默认** ZZ 照做风骨架(全大标题 + 一句话一步 + `{{IMG:}}` 逐步配图) | 写报告时(首选) |
 | `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |

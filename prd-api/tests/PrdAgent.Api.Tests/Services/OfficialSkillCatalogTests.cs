@@ -53,6 +53,7 @@ public class OfficialSkillCatalogTests
         var orchestrator = OfficialSkillCatalog.Find("acceptance-scenario-orchestrator");
 
         Assert.NotNull(design);
+        Assert.Contains(design.Files, f => f.Path == "scripts/daily_scope.py");
         Assert.Contains(design.Files, f => f.Path == "references/proof-strength.md");
         Assert.Contains(design.Files, f => f.Path == "references/fusion-testing.md");
         Assert.Contains(design.Files, f => f.Path == "references/output-contract.md");
@@ -99,10 +100,32 @@ public class OfficialSkillCatalogTests
 
         Assert.Contains("create-visual-test-to-kb/SKILL.md", names);
         Assert.Contains("acceptance-test-design/SKILL.md", names);
+        Assert.Contains("acceptance-test-design/scripts/daily_scope.py", names);
         Assert.Contains("acceptance-scenario-orchestrator/SKILL.md", names);
         Assert.Contains("acceptance-test-design/references/proof-strength.md", names);
         Assert.Contains("acceptance-scenario-orchestrator/references/evidence-contract.md", names);
         Assert.DoesNotContain(names, n => n.Contains("/scripts/sv-", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void VisualAcceptanceOfficialDownload_ContainsDailyAutomationGuards()
+    {
+        var controller = BuildOfficialSkillsController();
+
+        var result = controller.Download("create-visual-test-to-kb");
+        var file = Assert.IsType<FileContentResult>(result);
+
+        using var ms = new MemoryStream(file.FileContents);
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+
+        var verifyOpen = ReadZipText(zip, "create-visual-test-to-kb/scripts/verify-open.mjs");
+        Assert.Contains("VERIFY_OPEN_MAX_ATTEMPTS || '3'", verifyOpen);
+        Assert.Contains("VERIFY_OPEN_SETTLE_TIMEOUT_MS", verifyOpen);
+
+        var archiveReport = ReadZipText(zip, "create-visual-test-to-kb/scripts/archive_report.py");
+        Assert.Contains("改动规模与深度预算", archiveReport);
+        Assert.Contains("标记法则与验收标准", archiveReport);
+        Assert.Contains("未发布状态", archiveReport);
     }
 
     [Fact]
@@ -158,5 +181,13 @@ public class OfficialSkillCatalogTests
         var value = source.GetType().GetProperty(property)?.GetValue(source);
         Assert.NotNull(value);
         return value;
+    }
+
+    private static string ReadZipText(ZipArchive zip, string name)
+    {
+        var entry = zip.GetEntry(name);
+        Assert.NotNull(entry);
+        using var reader = new StreamReader(entry!.Open());
+        return reader.ReadToEnd();
     }
 }

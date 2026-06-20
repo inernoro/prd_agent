@@ -65,6 +65,7 @@ Daily/yesterday reports must state their depth before execution:
 | `发布前阻断验收` | Release gate. Blocks on P0/P1, missing critical evidence, or environment drift. | Risk-based; must cover critical workflows and rollback/negative paths |
 
 Rules:
+- The depth budget must be computed from machine-collected scope when available: commit count, module count, high-risk module count, open PRs, unpublished branches, planned evidence count, and actual evidence count.
 - Do not upgrade `广度冒烟` to `深度验收` in the conclusion after seeing that pages are reachable.
 - If the evidence budget is not met, the top verdict must say `广度冒烟`, `有条件通过`, or `不通过`; it must not say deep acceptance passed.
 - High-risk modules require an action/result pair or a negative-path/API proof. A single entry-page screenshot is not enough.

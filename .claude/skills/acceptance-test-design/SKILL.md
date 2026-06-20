@@ -27,6 +27,7 @@ If this chain is weak, stop and produce a design-risk report. Do not compensate 
    - Resolve the exact date, branch, commit range, PRs, preview URL, and tested SHA.
    - If the user says "yesterday", resolve it as the exact Asia/Shanghai date and write the absolute date.
    - Collect commits and diffs before choosing pages.
+   - For daily/yesterday acceptance, run `scripts/daily_scope.py --date <YYYY-MM-DD> --json-out /tmp/daily-scope.json --md-out /tmp/daily-scope.md` first. Use its commit/module/high-risk/open-branch inventory as the starting scope; do not replace it with a hand-written summary.
 
 2. Extract behavior assertions.
    - Convert each commit/PR into the behavior it claims to change.
@@ -91,3 +92,4 @@ Use this skill again when a report shows any of these:
 - `references/proof-strength.md`: evidence hierarchy, proof score, and weak-proof traps.
 - `references/fusion-testing.md`: how to design scenarios that cover multiple assertions.
 - `references/output-contract.md`: required design-brief structure and tables.
+- `scripts/daily_scope.py`: deterministic daily scope inventory for yesterday/date-based runs; outputs JSON and Markdown for downstream orchestration.

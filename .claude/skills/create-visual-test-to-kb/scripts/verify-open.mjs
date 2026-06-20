@@ -3,7 +3,7 @@
 //       而不是"建了条目但点开空白"。空/打不开 → 退出码 2，调用方据此重新推送验收。
 // 用法：PWPATH=$(npm root -g)/playwright node verify-open.mjs <shareUrl> "<标题或正文里必现的一段文字>" [最少图片数=1]
 //   例：node verify-open.mjs https://x.miduo.org/s/lib/abc123 "SaaS空间模型" 4
-// 默认最多尝试 2 次（首试 + 1 次重试），并打印每次结果；用 VERIFY_OPEN_MAX_ATTEMPTS=1 可关闭重试。
+// 默认最多尝试 3 次（首试 + 2 次重试），并打印每次结果；用 VERIFY_OPEN_MAX_ATTEMPTS=1 可关闭重试。
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
@@ -14,8 +14,9 @@ const mustText = process.argv[3] || '';
 const minImg = parseInt(process.argv[4] || '1', 10);
 if (!url) { console.error('用法: node verify-open.mjs <shareUrl> "<必现文字>" [最少图片数]'); process.exit(64); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const maxAttempts = Math.max(1, parseInt(process.env.VERIFY_OPEN_MAX_ATTEMPTS || '2', 10) || 2);
+const maxAttempts = Math.max(1, parseInt(process.env.VERIFY_OPEN_MAX_ATTEMPTS || '3', 10) || 3);
 const retryDelayMs = Math.max(0, parseInt(process.env.VERIFY_OPEN_RETRY_DELAY_MS || '10000', 10) || 10000);
+const settleTimeoutMs = Math.max(5000, parseInt(process.env.VERIFY_OPEN_SETTLE_TIMEOUT_MS || '25000', 10) || 25000);
 
 const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ignoreHTTPSErrors: true });
@@ -24,12 +25,23 @@ const attempts = [];
 
 async function runAttempt(attempt) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-  await sleep(4000);
+  await sleep(1500);
   // 分享是库级目录页：若给了必现文字，点左侧目录里匹配的那篇打开
   if (mustText) {
     await page.getByText(new RegExp(mustText)).first().click({ timeout: 8000 }).catch(() => {});
-    await sleep(3500);
+    await page.getByText(new RegExp(mustText)).first().waitFor({ state: 'visible', timeout: settleTimeoutMs }).catch(() => {});
   }
+  await page.waitForFunction(
+    ({ text, minImg }) => {
+      const body = document.body && document.body.innerText || '';
+      const hasText = text ? body.includes(text) || new RegExp(text).test(body) : body.trim().length > 200;
+      const imgCount = document.querySelectorAll('img').length;
+      return hasText && imgCount >= minImg;
+    },
+    { text: mustText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), minImg },
+    { timeout: settleTimeoutMs, polling: 500 },
+  ).catch(() => {});
+  await sleep(1000);
   const txt = await page.locator('body').innerText();
   const imgCount = await page.locator('img').count();
   const hasText = mustText ? txt.includes(mustText.replace(/[.*+?^${}()|[\]\\]/g, '')) || new RegExp(mustText).test(txt) : txt.length > 200;
@@ -53,7 +65,7 @@ try {
       if (result.ok) {
         code = 0;
         if (attempt > 1) {
-          console.log(`  重试结果：第1次失败，第${attempt}次通过；按偶发抖动记录，调用方需在报告中保留首试失败与重试通过。`);
+          console.log(`  重试结果：前序尝试未通过，第${attempt}次通过；按偶发抖动记录，调用方需在报告中保留首试失败与重试通过。`);
         }
         break;
       }

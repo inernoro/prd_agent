@@ -383,6 +383,16 @@ def _declares_complex_acceptance(target, body):
     return any(re.search(p, text, re.I) for p in patterns)
 
 
+def _declares_daily_acceptance(target, body):
+    if _target_declares_daily_scope(target):
+        return True
+    text = _scope_declaration_text(target, body)
+    return bool(re.search(
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)",
+        text,
+    ))
+
+
 def _declares_deep_daily_acceptance(target, body):
     """Daily deep gate applies only to positive deep-acceptance declarations."""
     scope_text = _scope_declaration_text(target, body)
@@ -410,6 +420,10 @@ def _declares_deep_daily_acceptance(target, body):
         s = line.strip()
         if not s or "深度" not in s or negated.search(s):
             continue
+        if "验收深度" in s and re.search(r"(深度验收|深度复验|深入功能验收)", s):
+            return True
+        if s.startswith("|") and re.search(r"\|\s*(深度验收|深度复验|深入功能验收)\s*\|", s):
+            return True
         if positive.search(s):
             return True
     return False
@@ -428,6 +442,7 @@ def validate_inputs(a, body, manifest, cfg=None):
     need = TIER_MIN_SHOTS.get(a.tier, 3)
     if len(manifest) < need:
         errs.append(f"[证据] 截图数 {len(manifest)} < {a.tier} 下限 {need}")
+    daily_acceptance_claim = _declares_daily_acceptance(a.target, body)
     deep_daily_claim = _declares_deep_daily_acceptance(a.target, body)
     complex_acceptance_claim = _declares_complex_acceptance(a.target, body)
     if deep_daily_claim and len(manifest) < DEEP_DAILY_MIN_SHOTS:
@@ -482,6 +497,25 @@ def validate_inputs(a, body, manifest, cfg=None):
         for section in ("改动断言表", "影响面矩阵", "融合测试设计", "证明力矩阵", "覆盖缺口"):
             if section not in body:
                 errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
+    if daily_acceptance_claim:
+        for section in (
+            "昨日工作总结",
+            "改动规模与深度预算",
+            "标记法则与验收标准",
+            "PR/commit 到结果映射",
+            "覆盖矩阵",
+            "截图回读检查",
+            "重试记录",
+            "未发布状态",
+        ):
+            if section not in body:
+                errs.append(f"[结构] 每日/昨日报告缺「{section}」：每日自动验收必须能说明范围、标准、未发布状态、截图回读和重试事实")
+        if not re.search(r"(计划证据数|计划截图数|planned evidence|planned screenshots)", body, re.I):
+            errs.append("[结构] 每日/昨日报告缺计划证据数：无法判断深度预算是否覆盖变更规模")
+        if not re.search(r"(实际证据数|实际截图数|actual evidence|actual screenshots)", body, re.I):
+            errs.append("[结构] 每日/昨日报告缺实际证据数：无法判断报告是否按预算执行")
+        if re.search(r"(深度验收|深度复验|深入功能验收)", body) and not re.search(r"(负面|边界|失败路径|negative|boundary)", body, re.I):
+            errs.append("[深度门禁] 深度每日验收缺负面/边界路径说明：不能只用 happy path 声称深度通过")
     if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
         errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):

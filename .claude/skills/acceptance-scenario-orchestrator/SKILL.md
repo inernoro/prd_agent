@@ -22,6 +22,7 @@ For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `ac
 
 2. Build the acceptance scope.
    - If an `acceptance-test-design` brief exists, preserve its behavior assertions, impact model, fusion tests, proof strength scores, and coverage gaps. Do not flatten it into a page list.
+   - For daily/yesterday runs, require the upstream brief to include the `daily_scope.py` inventory or an equivalent machine-collected scope. If it is missing, stop and ask the upstream step to run the inventory before choosing pages.
    - Map PRs and commits to functional modules.
    - Extract one or more change assertions from each PR/commit before choosing pages. A change assertion is the behavior the diff claims to change, such as `knowledge-base sync retries failed pushes`, `image upload compresses large files`, or `MCP rejects non-AgentApiKey callers`.
    - For every assertion, first find the user-visible surface that should reveal the change: page, breadcrumb, visible state, toast, table row, detail panel, error text, empty state, progress state, or absence of a forbidden action. This page-level proof is the primary evidence whenever the change can be perceived by a user.
@@ -29,6 +30,7 @@ For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `ac
    - Treat API, log, database, and file evidence as secondary evidence unless the change is truly invisible to users. If no page-level evidence is possible, state why and name the internal evidence that replaces it.
    - For each module, identify the real user page location as a breadcrumb, such as `首页 -> 导航 -> 百宝箱 -> 文件转换`.
    - Include unpublished branches and preview environments when the user asks for "未发布状态", "昨天全部内容", or branch-specific acceptance.
+   - Allow preview-environment test data with a clear prefix such as `每日验收-YYYY-MM-DD-...` when the automation policy permits it. Never use production-destructive data paths.
    - Mark items as `runtime`, `visual`, `api`, `docs/rules`, or `environment-only`.
    - Compute a depth budget before testing: target date, commit count, PR count, module count, high-risk module count, planned evidence count, and whether the run is `广度冒烟`, `深度验收`, or `发布前阻断验收`.
    - For daily/yesterday runs, do not allow a small set of entry screenshots to stand in for deep functional acceptance. If the budget cannot cover real workflows, label the run `广度冒烟` or mark uncovered items explicitly.

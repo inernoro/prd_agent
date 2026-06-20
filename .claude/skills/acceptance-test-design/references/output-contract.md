@@ -2,6 +2,10 @@
 
 Produce this design brief before visual execution.
 
+For daily/yesterday runs, first attach or summarize the output from
+`scripts/daily_scope.py`. The brief must not silently omit commits, open PRs, or
+unpublished branches that appear in that scope inventory.
+
 ## 1. 昨日/范围总结
 
 Write a short summary:
@@ -12,6 +16,7 @@ Write a short summary:
 - major modules
 - high-risk modules
 - expected depth: `广度冒烟`, `深度验收`, or `发布前阻断验收`
+- scope source: path to `daily_scope.py` JSON/Markdown output when available
 
 ## 2. 改动断言表
 
