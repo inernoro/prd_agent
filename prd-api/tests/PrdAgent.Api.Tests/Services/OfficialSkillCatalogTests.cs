@@ -25,10 +25,27 @@ public class OfficialSkillCatalogTests
         Assert.Contains("scripts/verify-open.mjs", paths);
         Assert.Contains("templates/zz-report.md", paths);
         Assert.Contains("templates/report-template.md", paths);
+        Assert.DoesNotContain(paths, p => p.StartsWith("scripts/sv-", StringComparison.Ordinal));
 
         var skillMd = entry.Files.Single(f => f.Path == "SKILL.md").Content;
         Assert.Contains("name: create-visual-test-to-kb", skillMd);
         Assert.Contains("version: 1.0.0", skillMd);
+    }
+
+    [Fact]
+    public void AcceptancePrerequisiteSkills_AreBundledInOfficialCatalog()
+    {
+        var design = OfficialSkillCatalog.Find("acceptance-test-design");
+        var orchestrator = OfficialSkillCatalog.Find("acceptance-scenario-orchestrator");
+
+        Assert.NotNull(design);
+        Assert.Contains(design.Files, f => f.Path == "references/proof-strength.md");
+        Assert.Contains(design.Files, f => f.Path == "references/fusion-testing.md");
+        Assert.Contains(design.Files, f => f.Path == "references/output-contract.md");
+
+        Assert.NotNull(orchestrator);
+        Assert.Contains(orchestrator.Files, f => f.Path == "references/evidence-contract.md");
+        Assert.Contains(orchestrator.Files, f => f.Path == "references/scenario-matrix.md");
     }
 
     [Fact]
