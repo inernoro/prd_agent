@@ -1212,6 +1212,351 @@ public class TeamActivityController : ControllerBase
         }
     }
 
+    // ────────────────────────── 端点下钻 + AI 根因诊断 ──────────────────────────
+
+    /// <summary>把 target（"METHOD 归一化路径"）拆成 method + 归一化路径；空格分隔，路径里不含空格</summary>
+    private static (string Method, string NormPath) ParseTarget(string target)
+    {
+        var idx = (target ?? string.Empty).IndexOf(' ');
+        if (idx <= 0) return (string.Empty, target ?? string.Empty);
+        return (target!.Substring(0, idx).Trim(), target.Substring(idx + 1).Trim());
+    }
+
+    /// <summary>归一化路径里 :id 之前的静态前缀（用于 MongoDB StartsWith 预过滤，缩小内存精确匹配的扫描量）</summary>
+    private static string StaticPrefix(string normPath)
+    {
+        var idx = normPath.IndexOf("/:id", StringComparison.Ordinal);
+        return idx > 0 ? normPath.Substring(0, idx) : normPath;
+    }
+
+    /// <summary>
+    /// 端点下钻明细：取该端点（target = METHOD 归一化路径）在窗口内的真实 apirequestlogs，
+    /// 聚合错误码分布、慢/错计数，并取最近的代表性请求样本（curl / 请求体 / 状态码 / 耗时）。
+    /// 量不大，走 Find + 内存归一化精确匹配（StartsWith 静态前缀预过滤 + Limit 控量）。
+    /// </summary>
+    [HttpGet("endpoint-detail")]
+    public async Task<IActionResult> EndpointDetail(
+        [FromQuery] string target,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "target 不能为空"));
+
+        var (method, normPath) = ParseTarget(target);
+        if (string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(normPath))
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "target 格式应为「METHOD 路径」"));
+
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+        var prefix = StaticPrefix(normPath);
+
+        var rb = Builders<ApiRequestLog>.Filter;
+        var filters = new List<FilterDefinition<ApiRequestLog>>
+        {
+            rb.Gte(x => x.StartedAt, fromUtc),
+            rb.Lte(x => x.StartedAt, endUtc),
+            rb.Ne(x => x.Direction, "outbound"),
+            rb.Eq(x => x.Method, method),
+        };
+        // 静态前缀预过滤（:id 之前的部分）；前缀为空时退化为只按方法+时间，仍由内存归一化精确匹配
+        if (!string.IsNullOrEmpty(prefix))
+            filters.Add(rb.Regex(x => x.Path, new BsonRegularExpression("^" + System.Text.RegularExpressions.Regex.Escape(prefix))));
+
+        var logs = await _db.ApiRequestLogs.Find(rb.And(filters))
+            .SortByDescending(x => x.StartedAt)
+            .Limit(5000)
+            .Project(x => new
+            {
+                x.Path,
+                x.Method,
+                x.StatusCode,
+                x.DurationMs,
+                x.IsEventStream,
+                x.ErrorCode,
+                x.Curl,
+                x.RequestBody,
+                x.StartedAt,
+            })
+            .ToListAsync();
+
+        // 内存里归一化路径精确匹配（Path 含真实 id，NormalizePath 后才与 target 同口径）
+        var matched = logs
+            .Where(l => l.Path != null && NormalizePath(l.Path) == normPath)
+            .ToList();
+
+        var count = matched.Count;
+        var errorCount = matched.Count(l => l.StatusCode >= 400 && l.StatusCode != 401);
+        var slowCount = matched.Count(l => !l.IsEventStream && (l.DurationMs ?? 0) >= 3000);
+        var slowMsSum = matched.Where(l => !l.IsEventStream && (l.DurationMs ?? 0) >= 3000).Sum(l => l.DurationMs ?? 0);
+        var avgSlowSec = slowCount > 0 ? slowMsSum / (double)slowCount / 1000.0 : 0;
+
+        var codes = matched
+            .Where(l => !string.IsNullOrEmpty(l.ErrorCode))
+            .GroupBy(l => l.ErrorCode!)
+            .Select(g => new { code = g.Key, n = g.Count() })
+            .OrderByDescending(c => c.n)
+            .Take(8)
+            .ToList();
+
+        // 样本：优先报错 / 慢的，其次最近的；最多 5 条，curl 缺失时用 method + path 兜底
+        var samples = matched
+            .OrderByDescending(l => (l.StatusCode >= 400 && l.StatusCode != 401) || (!l.IsEventStream && (l.DurationMs ?? 0) >= 3000) ? 1 : 0)
+            .ThenByDescending(l => l.StartedAt)
+            .Take(5)
+            .Select(l => new
+            {
+                statusCode = l.StatusCode,
+                durationMs = l.DurationMs,
+                curl = string.IsNullOrWhiteSpace(l.Curl) ? $"{l.Method} {l.Path}" : l.Curl,
+                requestBody = l.RequestBody,
+                occurredAt = l.StartedAt,
+            })
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            target,
+            method,
+            path = normPath,
+            label = LeafLabel(method, normPath),
+            module = ModuleLabel(normPath.Split('/', StringSplitOptions.RemoveEmptyEntries).Skip(1).FirstOrDefault() ?? string.Empty),
+            count,
+            errorCount,
+            slowCount,
+            avgSlowSec = Math.Round(avgSlowSec, 1),
+            codes,
+            samples,
+            windowFrom = fromUtc,
+            windowTo = endUtc,
+        }));
+    }
+
+    /// <summary>
+    /// 端点 AI 根因诊断（SSE 流式）：聚合该端点的报错码分布 / 耗时 / 样本 / 按天计数，
+    /// 交给 LLM 给出现象判断、聚集线索、疑似根因、建议动作。事件：phase / model / delta / done / error。
+    /// 遵循 server-authority：LLM 调用用 CancellationToken.None，客户端断开只停写不停算，10s 心跳。
+    /// </summary>
+    [HttpGet("diagnose")]
+    public async Task EndpointDiagnoseStream(
+        [FromQuery] string target,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache, no-transform";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        var userId = this.GetRequiredUserId();
+
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            await WriteSseAsync("error", new { message = "target 不能为空" });
+            return;
+        }
+        var (method, normPath) = ParseTarget(target);
+        if (string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(normPath))
+        {
+            await WriteSseAsync("error", new { message = "target 格式应为「METHOD 路径」" });
+            return;
+        }
+
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+        var prefix = StaticPrefix(normPath);
+
+        await WriteSseAsync("phase", new { message = "正在拉取该端点的真实请求样本…" });
+
+        var rb = Builders<ApiRequestLog>.Filter;
+        var filters = new List<FilterDefinition<ApiRequestLog>>
+        {
+            rb.Gte(x => x.StartedAt, fromUtc),
+            rb.Lte(x => x.StartedAt, endUtc),
+            rb.Ne(x => x.Direction, "outbound"),
+            rb.Eq(x => x.Method, method),
+        };
+        if (!string.IsNullOrEmpty(prefix))
+            filters.Add(rb.Regex(x => x.Path, new BsonRegularExpression("^" + System.Text.RegularExpressions.Regex.Escape(prefix))));
+
+        var logs = await _db.ApiRequestLogs.Find(rb.And(filters))
+            .SortByDescending(x => x.StartedAt)
+            .Limit(5000)
+            .Project(x => new
+            {
+                x.Path,
+                x.StatusCode,
+                x.DurationMs,
+                x.IsEventStream,
+                x.ErrorCode,
+                x.RequestBody,
+                x.StartedAt,
+            })
+            .ToListAsync();
+
+        var matched = logs.Where(l => l.Path != null && NormalizePath(l.Path) == normPath).ToList();
+        if (matched.Count == 0)
+        {
+            await WriteSseAsync("error", new { message = "该端点在当前窗口没有可分析的请求记录" });
+            return;
+        }
+
+        var count = matched.Count;
+        var errorCount = matched.Count(l => l.StatusCode >= 400 && l.StatusCode != 401);
+        var slowCount = matched.Count(l => !l.IsEventStream && (l.DurationMs ?? 0) >= 3000);
+        var slowMsSum = matched.Where(l => !l.IsEventStream && (l.DurationMs ?? 0) >= 3000).Sum(l => l.DurationMs ?? 0);
+        var avgSlowSec = slowCount > 0 ? slowMsSum / (double)slowCount / 1000.0 : 0;
+        var avgAllSec = matched.Where(l => !l.IsEventStream).Select(l => (double)(l.DurationMs ?? 0)).DefaultIfEmpty(0).Average() / 1000.0;
+
+        var topCodes = matched
+            .Where(l => !string.IsNullOrEmpty(l.ErrorCode))
+            .GroupBy(l => l.ErrorCode!)
+            .Select(g => new { Code = g.Key, N = g.Count() })
+            .OrderByDescending(c => c.N)
+            .Take(6)
+            .ToList();
+
+        var byDay = matched
+            .GroupBy(l => l.StartedAt.ToUniversalTime().Date)
+            .OrderBy(g => g.Key)
+            .Select(g => $"{g.Key:MM-dd} 共 {g.Count()} 次、报错 {g.Count(x => x.StatusCode >= 400 && x.StatusCode != 401)} 次")
+            .TakeLast(10)
+            .ToList();
+
+        var sampleSummaries = matched
+            .OrderByDescending(l => (l.StatusCode >= 400 && l.StatusCode != 401) || (!l.IsEventStream && (l.DurationMs ?? 0) >= 3000) ? 1 : 0)
+            .ThenByDescending(l => l.StartedAt)
+            .Take(5)
+            .Select(l =>
+            {
+                var body = l.RequestBody;
+                if (!string.IsNullOrEmpty(body) && body!.Length > 240) body = body.Substring(0, 240) + "…";
+                return $"HTTP {l.StatusCode} · {(l.DurationMs ?? 0)}ms · 错误码 {(string.IsNullOrEmpty(l.ErrorCode) ? "无" : l.ErrorCode)} · 请求体 {(string.IsNullOrEmpty(body) ? "（无）" : body)}";
+            })
+            .ToList();
+
+        var facts = new StringBuilder();
+        facts.AppendLine($"端点：{method} {normPath}（{LeafLabel(method, normPath)}）");
+        facts.AppendLine($"分析窗口：{fromUtc:yyyy-MM-dd} ~ {endUtc:yyyy-MM-dd}");
+        facts.AppendLine($"总调用 {count} 次，报错 {errorCount} 次（报错率 {(count > 0 ? errorCount * 100.0 / count : 0):F0}%），慢请求(≥3s) {slowCount} 次，慢请求均值 {avgSlowSec:F1}s，整体均值 {avgAllSec:F1}s。");
+        facts.AppendLine("错误码分布：" + (topCodes.Count > 0 ? string.Join("；", topCodes.Select(c => $"{c.Code}×{c.N}")) : "无业务错误码（多为框架层拒绝或无报错）"));
+        facts.AppendLine("按天计数：" + (byDay.Count > 0 ? string.Join("；", byDay) : "无"));
+        facts.AppendLine("代表性请求样本：");
+        foreach (var s in sampleSummaries) facts.AppendLine($"- {s}");
+
+        var systemPrompt =
+            "你是接口体验诊断分析师。下面是某个 API 端点在真实使用中的报错码分布、耗时、按天计数与请求样本。" +
+            "请用中文输出一份根因诊断（Markdown，禁止使用 emoji，不要臆造数据，证据不足时明确说明）：" +
+            "① 一句话判断这个端点当前最主要的问题；" +
+            "② 时间聚集 / 错误聚类 / 参数线索（从错误码分布、按天计数、样本请求体里能看出什么规律，看不出就说看不出）；" +
+            "③ 疑似根因（可多因叠加，逐条给出，并标注依据的是哪条证据）；" +
+            "④ 建议动作（具体可执行，如校验前移到前端、长任务改 SSE 流式、放宽过严的权限校验、修复模型池健康/降级链等）。";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: facts.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[TeamActivity-EndpointDiagnose]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Admin.TeamActivity.EndpointDiagnose));
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.TeamActivity.EndpointDiagnose,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            TimeoutSeconds = 300,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = facts.ToString() },
+                },
+                ["temperature"] = 0.4,
+                ["max_tokens"] = 8192,
+            },
+        };
+
+        var clientGone = false;
+        var sentModel = false;
+        var writeLock = new SemaphoreSlim(1, 1);
+        using var heartbeatCts = new CancellationTokenSource();
+        var heartbeat = Task.Run(async () =>
+        {
+            try
+            {
+                while (!heartbeatCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(10), heartbeatCts.Token);
+                    if (clientGone) continue;
+                    await writeLock.WaitAsync(heartbeatCts.Token);
+                    try
+                    {
+                        await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
+                        await Response.Body.FlushAsync(CancellationToken.None);
+                    }
+                    catch (ObjectDisposedException) { clientGone = true; }
+                    finally { writeLock.Release(); }
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+
+        async Task SendAsync(string eventName, object? payload)
+        {
+            await writeLock.WaitAsync();
+            try { await WriteSseAsync(eventName, payload); }
+            finally { writeLock.Release(); }
+        }
+
+        try
+        {
+            if (!clientGone) { try { await SendAsync("phase", new { message = "正在诊断根因…" }); } catch (ObjectDisposedException) { clientGone = true; } }
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && !sentModel && chunk.Resolution != null)
+                {
+                    sentModel = true;
+                    if (!clientGone)
+                    {
+                        try { await SendAsync("model", new { model = chunk.Resolution.ActualModel, platform = chunk.Resolution.ActualPlatformName }); }
+                        catch (ObjectDisposedException) { clientGone = true; }
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    if (!clientGone)
+                    {
+                        try { await SendAsync("delta", new { text = chunk.Content }); }
+                        catch (ObjectDisposedException) { clientGone = true; }
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    if (!clientGone) { try { await SendAsync("error", new { message = chunk.Error ?? "LLM 网关返回未知错误" }); } catch { } }
+                    return;
+                }
+            }
+            if (!clientGone) { try { await SendAsync("done", new { complete = true }); } catch (ObjectDisposedException) { } }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex)
+        {
+            if (!clientGone) { try { await SendAsync("error", new { message = ex.Message }); } catch { } }
+        }
+        finally
+        {
+            heartbeatCts.Cancel();
+            try { await heartbeat; } catch { /* 心跳收尾异常不影响响应 */ }
+        }
+    }
+
     private async Task WriteSseAsync(string eventName, object? data)
     {
         var dataLine = data == null

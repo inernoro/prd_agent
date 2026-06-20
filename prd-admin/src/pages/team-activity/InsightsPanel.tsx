@@ -5,7 +5,7 @@
  * 数据源：apirequestlogs（报错/慢端点，历史即有）+ behavior_events（路由信号，自采集上线起累积）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BarChart3, BookOpen, Bug, Check, CheckCircle2, EyeOff as IgnoreIcon, Radar, RotateCcw, ScrollText, Users, X } from 'lucide-react';
+import { BarChart3, BookOpen, Bug, Check, CheckCircle2, EyeOff as IgnoreIcon, Microscope, Radar, RotateCcw, ScrollText, Users, X } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
@@ -27,6 +27,7 @@ import type { BehaviorInsight, TeamActivityExperienceMapData, TeamActivityInsigh
 import { getInsightKindMeta } from './insightKinds';
 import { ExperienceMap } from './ExperienceMap';
 import { ExperienceStats } from './ExperienceStats';
+import { ExperienceDrill } from './ExperienceDrill';
 
 function fmtDate(iso?: string | null): string {
   if (!iso) return '';
@@ -68,6 +69,10 @@ export function InsightsPanel({ from }: { from?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [includeIgnored, setIncludeIgnored] = useState(false);
   const [statsOpen, setStatsOpen] = useState(true);
+  // 右栏二态：stats=痛点指数面板 / drill=端点下钻诊断（点痛点块或痛点榜「AI 诊断」进入）
+  const [rightMode, setRightMode] = useState<'stats' | 'drill'>('stats');
+  const [drillTarget, setDrillTarget] = useState<{ target: string; label: string } | null>(null);
+  const [drillConverting, setDrillConverting] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [briefOpen, setBriefOpen] = useState(false);
   const [briefModel, setBriefModel] = useState<string | null>(null);
@@ -175,17 +180,24 @@ export function InsightsPanel({ from }: { from?: string }) {
     });
   }, [from, includeIgnored]);
 
-  // 点击热力图痛点块 → 滚动并高亮下方痛点榜对应行；未上榜则解释原因
-  const handleSelectTarget = useCallback((target: string, fallback?: { label: string; metric: string }) => {
-    const el = document.querySelector(`[data-insight-target="${CSS.escape(target)}"]`) as HTMLElement | null;
-    if (!el) {
-      const head = fallback ? `${fallback.label}（${fallback.metric}）：` : '';
-      toast.info(`${head}信号偏弱，尚未进入痛点榜——同类报错/慢请求累计 ≥5 次才会上榜，可在更长时间范围查看`);
-      return;
-    }
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.classList.add('voc-row-flash');
-    window.setTimeout(() => el.classList.remove('voc-row-flash'), 1400);
+  // 点击热力图痛点块 / 痛点榜「AI 诊断」→ 右栏切到下钻抽屉（查真实明细 + AI 根因诊断，未上榜也能下钻）
+  const openDrill = useCallback((target: string, label: string) => {
+    setDrillTarget({ target, label });
+    setRightMode('drill');
+    setStatsOpen(true); // 折叠态时点下钻自动展开右栏，否则抽屉无处可渲染
+  }, []);
+
+  const handleSelectTarget = useCallback(
+    (target: string, fallback?: { label: string; metric: string }) => {
+      openDrill(target, fallback?.label ?? target);
+    },
+    [openDrill]
+  );
+
+  const closeDrill = useCallback(() => {
+    setRightMode('stats');
+    setDrillTarget(null);
+    setDrillConverting(false);
   }, []);
 
   useEffect(() => {
@@ -238,6 +250,49 @@ export function InsightsPanel({ from }: { from?: string }) {
     [data, reload]
   );
 
+  // 下钻抽屉里「转为缺陷」：优先复用痛点榜上同 target 的富洞察（证据更全），未上榜则建一条最小缺陷
+  const convertDrillToDefect = useCallback(async () => {
+    if (!drillTarget) return;
+    const hit = data?.items.find((i) => i.target === drillTarget.target && i.kind === 'api-error')
+      ?? data?.items.find((i) => i.target === drillTarget.target);
+    if (hit) {
+      await convertToDefect(hit);
+      return;
+    }
+    setDrillConverting(true);
+    const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
+    const res = await createDefect({
+      title: `[体验下钻] ${drillTarget.label}：${drillTarget.target}`,
+      content: [
+        '## 体验下钻转报（自动生成）',
+        '',
+        `- 端点：${drillTarget.target}`,
+        `- 来源：团队动态 - 体验全景热力图下钻`,
+        `- 分析窗口：${window}`,
+        '',
+        '> 该端点尚未进入痛点榜（信号偏弱），但被手动下钻识别为需关注项，请结合「AI 根因诊断」与真实请求样本核查。',
+      ].join('\n'),
+      assigneeUserId: '',
+      severity: 'minor',
+    });
+    if (!res.success) {
+      setDrillConverting(false);
+      toast.error(res.error?.message ?? '创建缺陷失败');
+      return;
+    }
+    const defect = res.data.defect;
+    await setTeamActivityInsightState({
+      kind: 'api-error',
+      target: drillTarget.target,
+      status: 'confirmed',
+      defectId: defect.id,
+      defectTitle: defect.title,
+    });
+    setDrillConverting(false);
+    toast.success(`已创建缺陷《${defect.title}》，可在缺陷管理中跟进`);
+    reload();
+  }, [drillTarget, data, convertToDefect, reload]);
+
   if (loading && !data) {
     return (
       <GlassCard className="flex-1" style={{ minHeight: 0 }}>
@@ -258,7 +313,18 @@ export function InsightsPanel({ from }: { from?: string }) {
             <div className="flex-1 min-w-0">
               <ExperienceMap data={mapData} loading={loading} onSelectTarget={handleSelectTarget} />
             </div>
-            {statsOpen && data ? (
+            {statsOpen && rightMode === 'drill' && drillTarget ? (
+              <div className="w-[340px] shrink-0">
+                <ExperienceDrill
+                  target={drillTarget.target}
+                  label={drillTarget.label}
+                  from={from}
+                  converting={drillConverting || busyKey === `api-error|${drillTarget.target}`}
+                  onConvertDefect={() => void convertDrillToDefect()}
+                  onClose={closeDrill}
+                />
+              </div>
+            ) : statsOpen && data ? (
               <div className="w-[290px] shrink-0">
                 <ExperienceStats items={data.items} onCollapse={() => setStatsOpen(false)} />
               </div>
@@ -447,6 +513,13 @@ export function InsightsPanel({ from }: { from?: string }) {
                         <ActionButton onClick={() => void setState(item, 'open')} icon={RotateCcw} label="恢复待处理" />
                       ) : (
                         <>
+                          {item.kind === 'api-error' || item.kind === 'slow-endpoint' ? (
+                            <ActionButton
+                              onClick={() => openDrill(item.target, `${item.kindLabel} · ${item.target}`)}
+                              icon={Microscope}
+                              label="AI 诊断"
+                            />
+                          ) : null}
                           {!item.defectId ? (
                             <ActionButton onClick={() => void convertToDefect(item)} icon={Bug} label="转为缺陷" emphasis />
                           ) : null}

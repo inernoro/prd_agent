@@ -177,3 +177,47 @@ export type GetTeamActivityExperienceMapParams = {
 export type GetTeamActivityExperienceMapContract = (
   params?: GetTeamActivityExperienceMapParams
 ) => Promise<ApiResponse<TeamActivityExperienceMapData>>;
+
+/** 端点下钻：错误码分布的一项 */
+export type EndpointDetailCode = {
+  code: string;
+  n: number;
+};
+
+/** 端点下钻：一条真实请求样本 */
+export type EndpointDetailSample = {
+  statusCode: number;
+  durationMs?: number | null;
+  /** 复刻请求的 curl（不含密钥；body 已剔除提示词），缺失时为 METHOD + path */
+  curl: string;
+  requestBody?: string | null;
+  occurredAt: string;
+};
+
+export type TeamActivityEndpointDetailData = {
+  /** 与 BehaviorInsight.target 同口径（METHOD 归一化路径） */
+  target: string;
+  method: string;
+  /** 归一化路径（:id 折叠后） */
+  path: string;
+  label: string;
+  module: string;
+  count: number;
+  errorCount: number;
+  slowCount: number;
+  avgSlowSec: number;
+  codes: EndpointDetailCode[];
+  samples: EndpointDetailSample[];
+  windowFrom: string;
+  windowTo: string;
+};
+
+export type GetTeamActivityEndpointDetailParams = {
+  target: string;
+  from?: string;
+  to?: string;
+};
+
+export type GetTeamActivityEndpointDetailContract = (
+  params: GetTeamActivityEndpointDetailParams
+) => Promise<ApiResponse<TeamActivityEndpointDetailData>>;

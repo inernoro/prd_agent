@@ -2,6 +2,8 @@ import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import type {
+  GetTeamActivityEndpointDetailContract,
+  GetTeamActivityEndpointDetailParams,
   GetTeamActivityExperienceMapContract,
   GetTeamActivityExperienceMapParams,
   GetTeamActivityInsightsContract,
@@ -13,6 +15,7 @@ import type {
   GetTeamActivityStatsParams,
   SetInsightStateParams,
   SetTeamActivityInsightStateContract,
+  TeamActivityEndpointDetailData,
   TeamActivityExperienceMapData,
   TeamActivityInsightsData,
   TeamActivityListData,
@@ -26,6 +29,7 @@ function toQuery(
     | GetTeamActivityStatsParams
     | GetTeamActivityInsightsParams
     | GetTeamActivityExperienceMapParams
+    | GetTeamActivityEndpointDetailParams
 ) {
   const sp = new URLSearchParams();
   if (!params) return '';
@@ -79,6 +83,15 @@ export const getTeamActivityExperienceMapReal: GetTeamActivityExperienceMapContr
 ): Promise<ApiResponse<TeamActivityExperienceMapData>> => {
   return await apiRequest<TeamActivityExperienceMapData>(
     `${api.teamActivity.experienceMap()}${toQuery(params)}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamActivityEndpointDetailReal: GetTeamActivityEndpointDetailContract = async (
+  params: GetTeamActivityEndpointDetailParams
+): Promise<ApiResponse<TeamActivityEndpointDetailData>> => {
+  return await apiRequest<TeamActivityEndpointDetailData>(
+    `${api.teamActivity.endpointDetail()}${toQuery(params)}`,
     { method: 'GET' }
   );
 };
