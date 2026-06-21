@@ -80,7 +80,7 @@ def classify_risks(paths, subject):
 def parse_commits(root, start, end):
     fmt = "%H%x09%h%x09%aI%x09%s"
     out = run([
-        "git", "log", "--no-merges",
+        "git", "log", "--all", "--no-merges",
         f"--since={start.isoformat()}",
         f"--until={end.isoformat()}",
         f"--pretty=format:{fmt}",

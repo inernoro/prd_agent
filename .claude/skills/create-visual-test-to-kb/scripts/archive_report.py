@@ -380,6 +380,7 @@ def _declares_complex_acceptance(target, body):
         r"(commit|提交)\s*(?:[- ]?range|范围|验收|复验|测试|报告|[=:：# ]*[0-9a-f]{7,40})",
         r"(未发布分支|分支验收|缺陷复测|视觉回归|发布前验收|"
         r"unpublished[- ]branch|defect[- ]retest|visual[- ]regression|release[- ]preflight)",
+        r"\bdaily[-_ ]?yesterday\b",
     ]
     return any(re.search(p, text, re.I) for p in patterns)
 
@@ -389,8 +390,11 @@ def _declares_daily_acceptance(target, body):
         return True
     text = _scope_declaration_text(target, body)
     return bool(re.search(
-        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)",
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
+        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
+        r"\bdaily[-_ ]?yesterday\b",
         text,
+        re.I,
     ))
 
 
@@ -398,8 +402,11 @@ def _declares_deep_daily_acceptance(target, body):
     """Daily deep gate applies only to positive deep-acceptance declarations."""
     scope_text = _scope_declaration_text(target, body)
     daily_context = _target_declares_daily_scope(target) or bool(re.search(
-        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)",
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
+        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
+        r"\bdaily[-_ ]?yesterday\b",
         scope_text,
+        re.I,
     )) or bool(re.search(
         r"(每日|昨日|昨天).{0,12}(深度验收|深度复验|深入功能验收)|"
         r"(深度验收|深度复验|深入功能验收).{0,12}(每日|昨日|昨天)",
@@ -419,7 +426,7 @@ def _declares_deep_daily_acceptance(target, body):
     )
     for line in [target or "", *((body or "").splitlines())]:
         s = line.strip()
-        if not s or "深度" not in s or negated.search(s):
+        if not s or not re.search(r"(深度验收|深度复验|深入功能验收)", s) or negated.search(s):
             continue
         if "验收深度" in s and re.search(r"(深度验收|深度复验|深入功能验收)", s):
             return True
@@ -534,7 +541,7 @@ def validate_inputs(a, body, manifest, cfg=None):
             errs.append("[结构] 每日/昨日报告缺计划证据数：无法判断深度预算是否覆盖变更规模")
         if not re.search(r"(实际证据数|实际截图数|actual evidence|actual screenshots)", body, re.I):
             errs.append("[结构] 每日/昨日报告缺实际证据数：无法判断报告是否按预算执行")
-        if re.search(r"(深度验收|深度复验|深入功能验收)", body) and not re.search(r"(负面|边界|失败路径|negative|boundary)", body, re.I):
+        if deep_daily_claim and not re.search(r"(负面|边界|失败路径|negative|boundary)", body, re.I):
             errs.append("[深度门禁] 深度每日验收缺负面/边界路径说明：不能只用 happy path 声称深度通过")
         thin_hits = _thin_table_cells(body, (
             "PR/commit 到结果映射",
