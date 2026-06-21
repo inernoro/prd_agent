@@ -289,6 +289,7 @@ docs:
   debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账
   debt.claude-sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
   debt.cds-agent: CDS Agent 工作台 · 债务台账（R1 商业级 / Lite 边界 / 文档熵减）
+  debt.cds-branch-isolation: CDS 多分支跨分支隔离 · 债务台账（DNS 串台 / BullMQ 抢 job）
   debt.cds-state-json: CDS state.json 影子存储债务台账
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
   debt.cds-backend-deploy-freeze: CDS 后端部署冻结 · 分支 api 跑旧代码（构建成功≠运行新代码 / 图生视频下载修复 + 额度提醒待部署）
