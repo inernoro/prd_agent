@@ -1,8 +1,17 @@
 import { cn } from '@/lib/cn';
-import React, { useMemo, useRef, useEffect, useState } from 'react';
+import React, { createContext, useContext, useMemo, useRef, useEffect, useState } from 'react';
 import { shouldReduceEffects } from '@/lib/themeApplier';
 import { useThemeStore } from '@/stores/themeStore';
 import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
+import { useIsMobile } from '@/hooks/useBreakpoint';
+
+/**
+ * 卡片嵌套深度上下文（手机端去 chrome 用）。
+ * 顶层卡片 depth=0；任意 GlassCard 给子树提供 depth+1。
+ * 手机端 depth>0（卡套卡）时收紧内边距 + 缩小圆角 + 去重阴影，消除「卡中卡」框线浪费，
+ * 桌面端完全不受影响。见 .claude/rules/mobile-first-density.md。
+ */
+const GlassCardDepthContext = createContext(0);
 
 export type GlassCardVariant = 'default' | 'gold' | 'frost' | 'subtle';
 
@@ -78,6 +87,11 @@ export function GlassCard({
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
 
+  // 手机端密度：嵌套卡片去 chrome（仅移动端 + depth>0 生效，桌面端零影响）
+  const depth = useContext(GlassCardDepthContext);
+  const isMobile = useIsMobile();
+  const nestedMobile = isMobile && depth > 0;
+
   // ── 入场动画：IntersectionObserver + CSS transition ──
   const ref = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(!animated || isPerf);
@@ -118,31 +132,45 @@ export function GlassCard({
       }
     : cardStyle;
 
-  const paddingClass = { none: '', sm: 'p-3', md: 'p-4', lg: 'p-6' };
+  // 内边距：桌面保持原值；手机端整体收紧一档，嵌套卡片再收紧一档（寸土寸金）
+  const paddingClass = (
+    nestedMobile
+      ? { none: '', sm: 'p-2', md: 'p-2.5', lg: 'p-3' }
+      : isMobile
+        ? { none: '', sm: 'p-2.5', md: 'p-3', lg: 'p-4' }
+        : { none: '', sm: 'p-3', md: 'p-4', lg: 'p-6' }
+  )[padding];
   const overflowClass = { hidden: 'overflow-hidden', visible: 'overflow-visible', auto: 'overflow-auto' };
+  // 嵌套卡片手机端缩小圆角，弱化「卡中卡」框感
+  const radiusClass = nestedMobile ? 'rounded-[10px]' : 'rounded-[16px]';
+  // 嵌套卡片手机端去重阴影（去掉外投影 3D 框，只保留淡边界），父卡已提供表面
+  const finalStyle: React.CSSProperties = nestedMobile ? { ...animatedStyle, boxShadow: 'none' } : animatedStyle;
 
   return (
-    <div
-      ref={ref}
-      className={cn(
-        'rounded-[16px] relative no-focus-ring',
-        !isPerf && 'glass-blur-pseudo',
-        !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
-        overflowClass[overflow],
-        paddingClass[padding],
-        interactive && 'cursor-pointer glass-card-interactive',
-        className
-      )}
-      style={animatedStyle}
-      onClick={onClick}
-      tabIndex={interactive ? 0 : undefined}
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onPointerDown={onPointerDown}
-    >
-      {children}
-    </div>
+    <GlassCardDepthContext.Provider value={depth + 1}>
+      <div
+        ref={ref}
+        className={cn(
+          radiusClass,
+          'relative no-focus-ring',
+          !isPerf && 'glass-blur-pseudo',
+          !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
+          overflowClass[overflow],
+          paddingClass,
+          interactive && 'cursor-pointer glass-card-interactive',
+          className
+        )}
+        style={finalStyle}
+        onClick={onClick}
+        tabIndex={interactive ? 0 : undefined}
+        draggable={draggable}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onPointerDown={onPointerDown}
+      >
+        {children}
+      </div>
+    </GlassCardDepthContext.Provider>
   );
 }
 

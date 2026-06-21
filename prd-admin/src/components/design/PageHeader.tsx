@@ -80,7 +80,7 @@ export function PageHeader(props: PageHeaderProps) {
 
   return (
     <div
-      className="min-h-[46px] rounded-[14px] px-4 py-2 transition-all duration-200 relative overflow-hidden"
+      className="min-h-[46px] rounded-[14px] px-3 sm:px-4 py-2 transition-all duration-200 relative overflow-hidden"
       style={variant === 'gold' ? glassBarGold : glassBar}
     >
       <div className="h-full min-h-[30px] flex items-center justify-between gap-3 flex-wrap">

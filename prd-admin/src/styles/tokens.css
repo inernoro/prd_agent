@@ -82,9 +82,11 @@
      让全局所有 .font-mono 元素都渲染成 VT323 像素字体，小字号尤其会显得字距异常、字形拉伸。 */
   --font-terminal: 'VT323', 'Share Tech Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 
-  /* ── 移动端适配 Token ── */
-  --mobile-padding: 16px;
-  --mobile-padding-sm: 12px;
+  /* ── 移动端适配 Token ──
+     mobile-padding 是全局内容左右外边距(AppShell 主区)。手机寸土寸金，收紧到 10px 提升利用率；
+     见 .claude/rules/mobile-first-density.md。 */
+  --mobile-padding: 10px;
+  --mobile-padding-sm: 8px;
   --mobile-radius: 12px;
   --mobile-header-height: 48px;
   --mobile-tab-height: 56px;
@@ -128,7 +130,7 @@
 
 @media (max-width: 479px) {
   :root {
-    --mobile-padding: 12px;
+    --mobile-padding: 8px;
   }
 }
 
