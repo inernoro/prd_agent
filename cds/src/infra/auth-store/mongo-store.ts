@@ -191,7 +191,10 @@ export class MongoAuthStore implements AuthStore {
         const cutoff = await col.find({}, { sort: { at: -1 }, skip: ACTIVITY_RING_CAPACITY, limit: 1 });
         const cutoffAt = cutoff[0]?.at;
         if (cutoffAt) {
-          await col.deleteMany({ at: { $lte: cutoffAt } });
+          // 严格小于 cutoff：与 cutoff 同毫秒(at 相等)的较新记录保留，避免一批
+          // 同毫秒写入被连带删掉而跌破容量（修复 PR #865 Bugbot「裁剪过删」）。
+          // 代价是偶尔多留几条，无害。
+          await col.deleteMany({ at: { $lt: cutoffAt } });
         }
       } catch { /* best-effort trim; tolerate failure */ }
     }

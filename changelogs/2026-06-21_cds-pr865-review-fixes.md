@@ -3,3 +3,5 @@
 | fix | cds | basic 模式登录放行 /api/auth/login 等路由，保住单用户部署登录回退 |
 | fix | cds | 部署耗时仅在真正就绪(runtimeStartedAt)时采样，避免污染中位 ETA |
 | fix | cds | mongo 用户操作痕迹按容量裁剪，避免无界增长 |
+| security | cds | 验收报告路由对项目级 key 调用 assertProjectAccess，禁止跨项目列/读/改/删 |
+| fix | cds | mongo 活动裁剪用 $lt 严格小于，避免同毫秒新记录被连带删除 |
