@@ -90,9 +90,9 @@ export function ExperienceBoard({
 
   if (empty && !defectsErr) {
     return (
-      <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
+      <GlassCard className="overflow-hidden h-full flex flex-col" style={{ padding: 0, minHeight: 320 }}>
         <Header />
-        <div className="flex flex-col items-center justify-center gap-2.5 text-center" style={{ height: 300 }}>
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2.5 text-center">
           <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
           <span className="text-sm text-emerald-300/85">两个声道都很安静</span>
           <span className="text-[12px] text-white/40">既无遥测痛点也无用户提交的缺陷。可换时间范围，或</span>
@@ -111,9 +111,9 @@ export function ExperienceBoard({
   }
 
   return (
-    <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
+    <GlassCard className="overflow-hidden h-full flex flex-col" style={{ padding: 0, minHeight: 320 }}>
       <Header />
-      <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-3" style={{ maxHeight: 460, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+      <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1 min-h-0" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {/* 左声道：行为之声 = 遥测自动发现的痛点 */}
         <BehaviorChannel items={behaviorVoice} onSelectTarget={onSelectTarget} />
         {/* 右声道：用户之声 = 用户主动提交的真实缺陷 */}

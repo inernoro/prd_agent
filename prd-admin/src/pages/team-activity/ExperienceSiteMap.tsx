@@ -59,9 +59,9 @@ export function ExperienceSiteMap({
 
   if (tree.length === 0) {
     return (
-      <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
+      <GlassCard className="overflow-hidden h-full flex flex-col" style={{ padding: 0, minHeight: 320 }}>
         <Header headerExtra={headerExtra} />
-        <div className="flex flex-col items-center justify-center gap-2.5 text-center" style={{ height: 300 }}>
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2.5 text-center">
           <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
           <span className="text-sm text-emerald-300/85">当前窗口没有可铺设的站点路径</span>
           <span className="text-[12px] text-white/40">尚无足够请求构建路由树。可换时间范围，或</span>
@@ -81,9 +81,9 @@ export function ExperienceSiteMap({
 
   let nodeIdx = 0;
   return (
-    <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
+    <GlassCard className="overflow-hidden h-full flex flex-col" style={{ padding: 0, minHeight: 320 }}>
       <Header headerExtra={headerExtra} />
-      <div className="px-3 pb-3" style={{ maxHeight: 460, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+      <div className="px-3 pb-3 flex-1 min-h-0" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
         <div className="flex flex-col gap-3 pt-1">
           {tree.map((m) => {
             const moduleDelay = nodeIdx++ * 50;

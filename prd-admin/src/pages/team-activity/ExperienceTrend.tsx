@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { TrendingUp } from 'lucide-react';
+// 趋势曲线：报错/慢请求随时间的波动。数据不足（桶 < 2 或全 0）时无法成线 → 上报父级以便在四图仪表盘里隐藏本格。
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getTeamActivityExperienceTrend } from '@/services';
@@ -14,7 +15,10 @@ import type { ExperienceTrendBucket, TeamActivityExperienceTrendData } from '@/s
 const ERR = '#f8717a';
 const SLOW = '#fbbf24';
 const VW = 1000;
-const VH = 360;
+// 默认视图高度（aspect-aware：实际按容器真实宽高比算，让曲线撑满格子高度，消除底部空白）。
+const VH_FALLBACK = 360;
+const VH_MIN = 220;
+const VH_MAX = 900;
 const PAD_L = 8;
 const PAD_R = 8;
 const PAD_T = 18;
@@ -22,11 +26,11 @@ const PAD_B = 34;
 
 type Pt = { x: number; y: number; bucket: ExperienceTrendBucket; burst: boolean; burstPct: number };
 
-/** 把桶序列映射成报错/慢两条折线的屏幕坐标，并标出环比突增的「爆点」桶 */
-function buildSeries(buckets: ExperienceTrendBucket[]) {
+/** 把桶序列映射成报错/慢两条折线的屏幕坐标，并标出环比突增的「爆点」桶（vh = 当前动态视图高度） */
+function buildSeries(buckets: ExperienceTrendBucket[], vh: number) {
   const n = buckets.length;
   const innerW = VW - PAD_L - PAD_R;
-  const innerH = VH - PAD_T - PAD_B;
+  const innerH = vh - PAD_T - PAD_B;
   const maxBad = Math.max(1, ...buckets.map((b) => Math.max(b.errors, b.slow)));
   const xAt = (i: number) => PAD_L + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
   const yAt = (v: number) => PAD_T + innerH - (v / maxBad) * innerH;
@@ -50,9 +54,9 @@ function toPath(pts: Pt[]): string {
   return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
 }
 
-function toAreaPath(pts: Pt[]): string {
+function toAreaPath(pts: Pt[], vh: number): string {
   if (pts.length === 0) return '';
-  const base = VH - PAD_B;
+  const base = vh - PAD_B;
   const line = pts.map((p) => `L${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
   return `M${pts[0].x.toFixed(1)} ${base} ${line} L${pts[pts.length - 1].x.toFixed(1)} ${base} Z`;
 }
@@ -70,15 +74,28 @@ export function ExperienceTrend({
   from,
   to,
   onSwitchHeatmap,
+  onEmptyChange,
+  hideWhenEmpty = false,
 }: {
   from?: string;
   to?: string;
-  /** 空数据引导：一键切回热力图 */
+  /** 空数据引导：一键切回热力图（移动单图视图用，桌面四图仪表盘走 hideWhenEmpty 直接隐藏本格） */
   onSwitchHeatmap?: () => void;
+  /** 上报「是否有可绘制趋势」给父级（桌面四图仪表盘据此把本格移出布局，让其余格自适应铺满） */
+  onEmptyChange?: (empty: boolean) => void;
+  /** 为真时：数据不足直接返回 null（不渲染空壳），交由父级把本格从 grid 移除 */
+  hideWhenEmpty?: boolean;
 }) {
   const [data, setData] = useState<TeamActivityExperienceTrendData | null>(null);
   const [loading, setLoading] = useState(true);
   const fetchIdRef = useRef(0);
+  // aspect-aware：量出曲线容器真实宽高比，让曲线几何撑满格子高度（消除底部空白），ResizeObserver 量到前用回退值。
+  const svgBoxRef = useRef<HTMLDivElement | null>(null);
+  const [boxAspect, setBoxAspect] = useState<number | null>(null);
+  const VH = useMemo(() => {
+    const raw = boxAspect != null ? VW * boxAspect : VH_FALLBACK;
+    return Math.min(VH_MAX, Math.max(VH_MIN, Math.round(raw)));
+  }, [boxAspect]);
 
   useEffect(() => {
     const id = ++fetchIdRef.current;
@@ -90,13 +107,43 @@ export function ExperienceTrend({
     });
   }, [from, to]);
 
-  const series = useMemo(() => (data ? buildSeries(data.buckets) : null), [data]);
+  const series = useMemo(() => (data ? buildSeries(data.buckets, VH) : null), [data, VH]);
   const unit = data?.bucketUnit ?? 'day';
   const burstPts = useMemo(() => (series ? series.errPts.filter((p) => p.burst) : []), [series]);
 
+  // 「有可绘制趋势」判定：至少 2 个时间桶才能连成线，且报错/慢请求并非全 0（全 0 是平线，无趋势价值）。
+  const hasData = useMemo(() => {
+    if (!data || series == null) return false;
+    if (data.buckets.length < 2) return false;
+    return data.buckets.some((b) => b.errors > 0 || b.slow > 0);
+  }, [data, series]);
+
+  // ResizeObserver 挂到曲线容器：hasData 切换会让容器挂载/卸载，故依赖 hasData 重新观测。
+  useEffect(() => {
+    const el = svgBoxRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) setBoxAspect(r.height / r.width);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasData]);
+
+  // 数据到达后上报空/非空给父级（仅在数据加载完成后报，加载中不误判为空导致桌面格闪烁）
+  useEffect(() => {
+    if (loading && !data) return;
+    onEmptyChange?.(!hasData);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasData, loading, data]);
+
   if (loading && !data) {
+    // hideWhenEmpty（桌面四图仪表盘）下加载态也不占位，避免「短暂空壳格」；移动单图显示加载卡。
+    if (hideWhenEmpty) return null;
     return (
-      <GlassCard style={{ height: 320 }}>
+      <GlassCard className="h-full" style={{ minHeight: 320 }}>
         <div className="h-full flex items-center justify-center">
           <MapSectionLoader text="正在聚合趋势曲线…" />
         </div>
@@ -104,10 +151,11 @@ export function ExperienceTrend({
     );
   }
 
-  const hasData = !!data && data.buckets.length > 0 && series != null;
+  // 桌面四图仪表盘：无趋势直接退出布局（父级 grid 自适应铺满剩余格）；移动单图保留空状态引导。
+  if (hideWhenEmpty && !hasData) return null;
 
   return (
-    <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
+    <GlassCard className="overflow-hidden h-full flex flex-col" style={{ padding: 0, minHeight: 0 }}>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 pt-3 pb-2 shrink-0">
         <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
           <span className="whitespace-nowrap">趋势爆点曲线</span>
@@ -128,9 +176,9 @@ export function ExperienceTrend({
           </span>
         </div>
       </div>
-      <div className="px-2 pb-2">
-        {!hasData ? (
-          <div className="flex flex-col items-center justify-center gap-2.5 text-center" style={{ height: 300 }}>
+      <div ref={svgBoxRef} className="px-2 pb-2 flex-1 min-h-0 flex flex-col" style={{ minHeight: 280 }}>
+        {!hasData || !series ? (
+          <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2.5 text-center">
             <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
             <span className="text-sm text-emerald-300/85">当前窗口没有可绘制的趋势数据</span>
             <span className="text-[12px] text-white/40">报错与慢请求都很少——这是好消息。可换更长时间范围，或</span>
@@ -145,7 +193,7 @@ export function ExperienceTrend({
             ) : null}
           </div>
         ) : (
-          <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', height: 'auto', display: 'block' }}>
+          <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" style={{ width: '100%', flex: 1, minHeight: 0, height: '100%', display: 'block' }}>
             <defs>
               <linearGradient id="voc-trend-err" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0" stopColor={ERR} stopOpacity="0.32" />
@@ -162,8 +210,8 @@ export function ExperienceTrend({
               return <line key={f} x1={PAD_L} y1={y} x2={VW - PAD_R} y2={y} stroke="rgba(255,255,255,0.05)" strokeWidth={1} />;
             })}
             {/* 面积（先铺底，后画线） */}
-            <path d={toAreaPath(series.slowPts)} fill="url(#voc-trend-slow)" style={{ animation: 'voc-trend-fade .9s ease both', animationDelay: '0.6s' }} />
-            <path d={toAreaPath(series.errPts)} fill="url(#voc-trend-err)" style={{ animation: 'voc-trend-fade .9s ease both', animationDelay: '0.6s' }} />
+            <path d={toAreaPath(series.slowPts, VH)} fill="url(#voc-trend-slow)" style={{ animation: 'voc-trend-fade .9s ease both', animationDelay: '0.6s' }} />
+            <path d={toAreaPath(series.errPts, VH)} fill="url(#voc-trend-err)" style={{ animation: 'voc-trend-fade .9s ease both', animationDelay: '0.6s' }} />
             {/* 慢请求线：从左到右画出 */}
             <TrendLine d={toPath(series.slowPts)} color={SLOW} />
             {/* 报错线：从左到右画出 */}

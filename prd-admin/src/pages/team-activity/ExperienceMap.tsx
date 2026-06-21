@@ -5,14 +5,19 @@
  * 配色遵循 ui-ux-pro-max 的 treemap 规范：父级不同色相、子级同色相浅色梯度；暖色只留给告警。
  * 数据源：GET /api/team-activity/experience-map（与 insights 同源 apirequestlogs，target 同口径）。
  */
-import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { ExperienceMapGroup, ExperienceMapLeaf, TeamActivityExperienceMapData } from '@/services/contracts/teamActivity';
 
 const VW = 1000;
-const VH = 420;
+// 默认视图高度（SSR / ResizeObserver 量到尺寸前的回退）。布局实际高度按容器真实宽高比动态算（aspect-aware），
+// 这样 treemap 几何铺满容器真实形状，不再在全屏/方格里上下 letterbox 留白。
+const VH_FALLBACK = 560;
+// 把动态 VH 夹在合理区间：太扁(横长)文字挤、太高(竖长)块过窄，都不好认。
+const VH_MIN = 300;
+const VH_MAX = 1400;
 const PAD = 3;
 const HDR = 14;
 
@@ -129,6 +134,27 @@ export function ExperienceMap({
 }) {
   // 两个范围模式：all=全域(全部端点按访问量) / pain=痛点(只看病灶，按问题严重度放大)
   const [mode, setMode] = useState<'all' | 'pain'>('all');
+  // aspect-aware：量出 SVG 容器真实像素宽高比，让 treemap 布局高度跟容器同比例铺满，消除上下 letterbox 空白。
+  // ResizeObserver 量到前用回退值（避免 SSR/首帧白屏）。
+  const svgBoxRef = useRef<HTMLDivElement | null>(null);
+  const [boxAspect, setBoxAspect] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = svgBoxRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) setBoxAspect(r.height / r.width);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fullscreen]);
+  // 动态视图高度：容器有真实宽高比就按它（VW × aspect），否则回退；夹在合理区间避免极端拉伸。
+  const VH = useMemo(() => {
+    const raw = boxAspect != null ? VW * boxAspect : VH_FALLBACK;
+    return Math.min(VH_MAX, Math.max(VH_MIN, Math.round(raw)));
+  }, [boxAspect]);
   const layout = useMemo(() => {
     if (!data || data.groups.length === 0) return { cells: [] as LeafCell[], groupRects: [] as Placed<ExperienceMapGroup>[] };
     let srcGroups = data.groups;
@@ -156,14 +182,14 @@ export function ExperienceMap({
       });
     });
     return { cells, groupRects };
-  }, [data, mode]);
+  }, [data, mode, VH]);
 
   // 入场闸门：只在首次渲染地图时为 true（生产单次渲染可靠；dev StrictMode 下可能跳过入场，无害）
   const enteredRef = useRef(false);
 
   if (loading && !data) {
     return (
-      <GlassCard style={{ height: 320 }}>
+      <GlassCard className="h-full" style={{ minHeight: 320 }}>
         <div className="h-full flex items-center justify-center">
           <MapSectionLoader text="正在铺设体验全景热力图…" />
         </div>
@@ -187,8 +213,8 @@ export function ExperienceMap({
   return (
     <>
       <GlassCard
-        className="overflow-hidden"
-        style={fullscreen ? { padding: 0, height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 } : { padding: 0 }}
+        className="overflow-hidden h-full flex flex-col"
+        style={fullscreen ? { padding: 0, height: '100%', minHeight: 0 } : { padding: 0, minHeight: 0 }}
       >
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 pt-3 pb-2 shrink-0">
           <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
@@ -259,11 +285,11 @@ export function ExperienceMap({
           </div>
         </div>
         <div
-          className="px-2 pb-2"
-          style={fullscreen ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : undefined}
+          ref={svgBoxRef}
+          className={`px-2 pb-2 flex-1 min-h-0 flex flex-col${fullscreen ? '' : ' voc-map-body'}`}
         >
           {layout.groupRects.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 text-center" style={{ height: fullscreen ? '100%' : 300 }}>
+            <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2 text-center">
               <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
               <span className="text-sm text-emerald-300/85">当前范围内没有痛点</span>
               <span className="text-[12px] text-white/40">系统体验健康，切回「全域」看全部端点</span>
@@ -272,8 +298,7 @@ export function ExperienceMap({
           <svg
             viewBox={`0 0 ${VW} ${VH}`}
             preserveAspectRatio="xMidYMid meet"
-            className={fullscreen ? undefined : 'voc-map-svg'}
-            style={fullscreen ? { width: '100%', flex: 1, minHeight: 0, height: '100%', display: 'block' } : { width: '100%', height: 'auto', display: 'block' }}
+            style={{ width: '100%', flex: 1, minHeight: 0, height: '100%', display: 'block' }}
           >
             {/* 分区边框 + 标签 */}
             {layout.groupRects.map((g) => (
@@ -472,10 +497,13 @@ export function ExperienceMap({
         </div>
       </GlassCard>
       <style>{`
-        /* 窄屏：viewBox 2.4:1 在单列下被压成细条。让地图长满首屏主要高度（≈视口 66%），
-           吃掉卡片下方空白、块也看得清点得到（呼应 mobile-first-density 规则：内容占视口≥60%）。 */
+        /* 非全屏地图体：grid 格内靠 flex 拉满格子高度（等高仪表盘）。给一个 min-height 兜底，
+           确保移动单图（无 grid 撑高）/ 桌面格也不会塌成只剩头部。 */
+        .voc-map-body { min-height: 320px; }
+        /* 窄屏：让地图长满首屏主要高度（≈视口 66%），吃掉卡片下方空白、块也看得清点得到
+           （呼应 mobile-first-density 规则：内容占视口≥60%）。 */
         @media (max-width: 639px) {
-          .voc-map-svg { min-height: 340px; height: min(66vh, 600px) !important; }
+          .voc-map-body { min-height: 340px; height: min(66vh, 600px); }
         }
         @keyframes voc-cell-glow { 0%,100% { stroke-opacity: .35; } 50% { stroke-opacity: 1; } }
         @keyframes voc-cell-in { from { opacity: 0; transform: scale(.45); } to { opacity: 1; transform: scale(1); } }

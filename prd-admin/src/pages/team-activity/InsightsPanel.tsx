@@ -4,7 +4,7 @@
  * 操作：转为缺陷（接入 defect-agent 修复流水线）/ 标记已修复 / 忽略（指纹级持久化，不再打扰）。
  * 数据源：apirequestlogs（报错/慢端点，历史即有）+ behavior_events（路由信号，自采集上线起累积）。
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { BarChart3, BookOpen, Bug, Check, CheckCircle2, ClipboardList, EyeOff as IgnoreIcon, LayoutGrid, Megaphone, Microscope, Network, Radar, RotateCcw, ScrollText, TrendingUp, Users, X, type LucideIcon } from 'lucide-react';
 import { GlassCard } from '@/components/design';
@@ -91,6 +91,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const [heroView, setHeroView] = useState<HeroView>('heatmap');
   // 端点地图格子内子切换：热力图 ⇄ 站点地图（两者都是端点地图，共用一格，不单独占格）
   const [mapMode, setMapMode] = useState<'heatmap' | 'sitemap'>('heatmap');
+  // 趋势爆点是否无可绘制数据：桌面四图仪表盘据此把趋势格移出布局，其余格自适应铺满（自由融合）。
+  const [trendEmpty, setTrendEmpty] = useState(false);
   // 全屏热力图浮层开关（createPortal 到 body）
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   // 下钻抽屉：从右侧滑入的浮层 drawer（createPortal 到 body），target 非空即展开
@@ -441,22 +443,59 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
       <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mapModeSwitcher} />
     );
 
-  const renderTrendTile = () => <ExperienceTrend from={from} to={to} onSwitchHeatmap={switchToHeatmap} />;
+  // 趋势格：桌面四图仪表盘传 hideWhenEmpty（无数据直接 null，让 grid 自适应铺满剩余格 + 上报空态）；
+  // 移动单图不传 hideWhenEmpty，保留空状态引导（一键切回热力图）。
+  const renderTrendTile = (forDashboard: boolean) => (
+    <ExperienceTrend
+      from={from}
+      to={to}
+      onSwitchHeatmap={switchToHeatmap}
+      onEmptyChange={forDashboard ? setTrendEmpty : undefined}
+      hideWhenEmpty={forDashboard}
+    />
+  );
   const renderStatsTile = () => (data ? <ExperienceStats items={data.items} /> : null);
   const renderBoardTile = () => <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} />;
 
-  // 桌面端（lg+）四图仪表盘：2×2 四格 = 端点地图 / 趋势爆点 / 痛点指数 / 声道看板。
-  // 每格即一张自带标题的卡（ExperienceMap/Trend/Stats/Board 各自含 header），靠 grid 等宽分配。
-  const renderDesktopDashboard = () => (
-    <div className="hidden lg:grid grid-cols-2 gap-3 items-start">
-      <div key={mapMode} style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
-        {renderMapTile()}
+  // 桌面端（lg+）四图仪表盘：端点地图 / 趋势爆点 / 痛点指数 / 声道看板。
+  // 「自由融合」：无数据的格（当前仅趋势可整格隐藏）退出布局，剩余 N 格用响应式 grid 自动铺满不留洞。
+  // 每格即一张自带标题的卡（各自含 header），靠 grid 等宽 + auto-rows-fr 等高分配。
+  const renderDesktopDashboard = () => {
+    // 可见格：端点地图 + （趋势有数据时）趋势 + 痛点指数 + 声道看板。
+    // 趋势无数据 → 不进可见列，但下方仍以 display:none 持续挂载一个趋势实例（保持订阅 from/to、
+    // 数据回来能再上报 onEmptyChange(false) 让本格重新出现），避免「卸载后永久消失」。
+    const tiles: { key: string; node: ReactNode }[] = [
+      {
+        key: `map-${mapMode}`,
+        node: (
+          <div key={mapMode} className="h-full" style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
+            {renderMapTile()}
+          </div>
+        ),
+      },
+      ...(trendEmpty ? [] : [{ key: 'trend', node: renderTrendTile(true) }]),
+      { key: 'stats', node: renderStatsTile() },
+      { key: 'board', node: renderBoardTile() },
+    ].filter((t) => t.node != null);
+
+    // 列数随有效格数自适应，auto-rows-fr 等高、items-stretch 撑满。
+    // 防留洞：奇数格（如趋势隐藏后剩 3 格）时让最后一格横跨两列，铺满下半行不留空洞。
+    const cols = tiles.length <= 1 ? 'grid-cols-1' : 'grid-cols-2';
+    const oddTail = tiles.length > 1 && tiles.length % 2 === 1;
+    return (
+      <div className="hidden lg:block">
+        <div className={`grid ${cols} gap-3 items-stretch auto-rows-fr`}>
+          {tiles.map((t, i) => (
+            <div key={t.key} className={`min-h-0${oddTail && i === tiles.length - 1 ? ' col-span-2' : ''}`}>
+              {t.node}
+            </div>
+          ))}
+        </div>
+        {/* 趋势隐藏时的持续挂载点：不占布局，仅维持订阅 + 空态上报，使窗口切到有数据时本格能复现 */}
+        {trendEmpty ? <div style={{ display: 'none' }}>{renderTrendTile(true)}</div> : null}
       </div>
-      {renderTrendTile()}
-      {renderStatsTile()}
-      {renderBoardTile()}
-    </div>
-  );
+    );
+  };
 
   // 移动端：四图不适合小屏，改单图视图切换器 + 单图展示（满宽满铺，嵌套卡 GlassCard 自动去 chrome）。
   const renderMobileSingle = () => (
@@ -484,7 +523,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
         {heroView === 'heatmap'
           ? renderMapTile()
           : heroView === 'trend'
-            ? renderTrendTile()
+            ? renderTrendTile(false)
             : heroView === 'stats'
               ? renderStatsTile()
               : renderBoardTile()}

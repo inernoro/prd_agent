@@ -115,18 +115,19 @@ export function ExperienceStats({ items }: { items: BehaviorInsight[] }) {
   const open = items.filter((i) => i.status !== 'resolved' && i.status !== 'ignored').length;
 
   return (
-    <GlassCard className="flex flex-col" style={{ padding: 0 }}>
-      <div className="flex items-center justify-between px-4 pt-3 pb-2">
+    <GlassCard className="flex flex-col h-full" style={{ padding: 0, minHeight: 320 }}>
+      <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
         <span className="text-[13px] font-semibold text-white/85">体验痛点指数</span>
       </div>
-      <div className="px-4 pb-2">
+      {/* 仪表盘居中占据上半区，声道占比铺满下半区——两段一起把格子撑满，消除底部空白 */}
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-4 pb-2">
         <Gauge value={index} />
         <div className="text-center text-[11.5px] text-white/45 -mt-1">
           {index === 0 ? '当前窗口暂无未处理痛点' : `${open} 处待解决 · 修复后指数回落`}
         </div>
       </div>
       {channels.length > 0 ? (
-        <div className="px-4 pb-4 pt-1 border-t border-white/[0.05] mt-1">
+        <div className="px-4 pb-4 pt-1 border-t border-white/[0.05] shrink-0">
           <div className="text-[12px] text-white/55 font-medium mb-2.5 mt-2">痛点声道占比</div>
           <div className="flex flex-col gap-2.5">
             {channels.map((c) => (
