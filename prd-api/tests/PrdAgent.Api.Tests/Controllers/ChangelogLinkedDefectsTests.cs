@@ -149,6 +149,42 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void CanAutomationRunContinue_OnlyAllowsRunningRuns()
+    {
+        Assert.True(DefectAgentController.CanAutomationRunContinue(new DefectAutomationRun { Status = DefectAutomationRunStatus.Running }));
+        Assert.False(DefectAgentController.CanAutomationRunContinue(new DefectAutomationRun { Status = DefectAutomationRunStatus.Failed }));
+        Assert.False(DefectAgentController.CanAutomationRunContinue(new DefectAutomationRun { Status = DefectAutomationRunStatus.Completed }));
+        Assert.False(DefectAgentController.CanAutomationRunContinue(null));
+    }
+
+    [Fact]
+    public void IsAutomationRunClaimedDefect_RejectsUnclaimedAndTerminalItems()
+    {
+        var run = new DefectAutomationRun
+        {
+            Status = DefectAutomationRunStatus.Running,
+            CurrentDefectId = "current",
+            Items =
+            [
+                new DefectAutomationRunItem { DefectId = "fetched", Status = DefectAutomationRunItemStatus.Fetched },
+                new DefectAutomationRunItem { DefectId = "commented", Status = DefectAutomationRunItemStatus.Commented },
+                new DefectAutomationRunItem { DefectId = "commit", Status = DefectAutomationRunItemStatus.CommitWritten },
+                new DefectAutomationRunItem { DefectId = "fixed", Status = DefectAutomationRunItemStatus.Fixed },
+                new DefectAutomationRunItem { DefectId = "failed", Status = DefectAutomationRunItemStatus.Failed },
+            ],
+        };
+
+        Assert.True(DefectAgentController.IsAutomationRunClaimedDefect(run, "current"));
+        Assert.True(DefectAgentController.IsAutomationRunClaimedDefect(run, "fetched"));
+        Assert.True(DefectAgentController.IsAutomationRunClaimedDefect(run, "commented"));
+        Assert.True(DefectAgentController.IsAutomationRunClaimedDefect(run, "commit"));
+        Assert.False(DefectAgentController.IsAutomationRunClaimedDefect(run, "fixed"));
+        Assert.False(DefectAgentController.IsAutomationRunClaimedDefect(run, "failed"));
+        Assert.False(DefectAgentController.IsAutomationRunClaimedDefect(run, "other"));
+        Assert.False(DefectAgentController.IsAutomationRunClaimedDefect(new DefectAutomationRun { Status = DefectAutomationRunStatus.Failed, CurrentDefectId = "current" }, "current"));
+    }
+
+    [Fact]
     public void CanAutomationAccessDefect_LimitsScopedKeysToAssignedOrUnassignedDefects()
     {
         var assigned = new DefectReport { AssigneeId = "owner" };
@@ -196,6 +232,8 @@ public class ChangelogLinkedDefectsTests
                 CommitUrl = "https://example.com/commit/abcdef1",
                 Repository = "prd-agent",
                 Branch = "codex/defect-automation",
+                PullRequestNumber = 861,
+                PullRequestUrl = "https://github.com/inernoro/prd_agent/pull/861",
                 PreviewUrl = "https://preview.example.com/changelog",
                 VisualReportUrl = "https://report.example.com",
             });
@@ -208,6 +246,8 @@ public class ChangelogLinkedDefectsTests
         Assert.Equal("https://example.com/commit/abcdef1", structured["修复提交地址"]);
         Assert.Equal("prd-agent", structured["修复仓库"]);
         Assert.Equal("codex/defect-automation", structured["修复分支"]);
+        Assert.Equal("861", structured["修复PR编号"]);
+        Assert.Equal("https://github.com/inernoro/prd_agent/pull/861", structured["修复PR地址"]);
         Assert.Equal("https://preview.example.com/changelog", structured["预览地址"]);
         Assert.Equal("https://report.example.com", structured["视觉验收报告"]);
     }
@@ -218,6 +258,7 @@ public class ChangelogLinkedDefectsTests
     [InlineData("PASS", "pass")]
     [InlineData("conditional", "conditional")]
     [InlineData("fail", "fail")]
+    [InlineData("invalid", "invalid")]
     [InlineData("unknown", "pass")]
     public void NormalizeValidationVerdict_DefaultsToPass(string? input, string expected)
     {
@@ -235,5 +276,55 @@ public class ChangelogLinkedDefectsTests
 
         Assert.Contains("需要继续改进", DefectAgentController.BuildValidationNotificationMessage(defect, "fail"));
         Assert.Contains("已修复并发布", DefectAgentController.BuildValidationNotificationMessage(defect, "pass"));
+        Assert.Contains("陈述不成立", DefectAgentController.BuildValidationNotificationMessage(defect, "invalid"));
+    }
+
+    [Fact]
+    public void BuildCompletionEvidenceComment_RequiresPrCommitAndValidationReport()
+    {
+        var comment = DefectAgentController.BuildCompletionEvidenceComment(
+            new CompleteDefectAutomationWorkflowRequest
+            {
+                CommitSha = "abcdef1234567890",
+                CommitMessage = "fix(prd-api): 修复缺陷自动化证据链",
+                CommitUrl = "https://github.com/inernoro/prd_agent/commit/abcdef1",
+                PullRequestNumber = 861,
+                PullRequestUrl = "https://github.com/inernoro/prd_agent/pull/861",
+                PreviewUrl = "https://preview.example.com/changelog",
+            },
+            "abcdef1");
+
+        Assert.Contains("PR #861", comment);
+        Assert.Contains("abcdef1 fix(prd-api): 修复缺陷自动化证据链", comment);
+        Assert.Contains("正式环境发布后生成并回写", comment);
+        Assert.Contains("需要真人审核发布", comment);
+    }
+
+    [Fact]
+    public void BuildValidationEvidenceComment_CitesReportCommitAndPrForInvalidVerdict()
+    {
+        var comment = DefectAgentController.BuildValidationEvidenceComment(
+            new DefectResolutionTrace
+            {
+                ShortSha = "abcdef1",
+                CommitMessage = "fix(prd-api): 修复缺陷自动化证据链",
+                CommitUrl = "https://github.com/inernoro/prd_agent/commit/abcdef1",
+                PullRequestNumber = 861,
+                PullRequestUrl = "https://github.com/inernoro/prd_agent/pull/861",
+            },
+            new SubmitPublishedValidationReportRequest
+            {
+                Message = "报告显示正式环境无法复现该问题。",
+            },
+            "缺陷修复验收报告",
+            "https://map.ebcone.net/document-store/report",
+            "https://map.ebcone.net/report/visual",
+            "invalid");
+
+        Assert.Contains("缺陷陈述不成立", comment);
+        Assert.Contains("缺陷修复验收报告", comment);
+        Assert.Contains("PR #861", comment);
+        Assert.Contains("abcdef1 fix(prd-api): 修复缺陷自动化证据链", comment);
+        Assert.Contains("报告显示正式环境无法复现该问题", comment);
     }
 }

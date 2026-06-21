@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/design/Button';
 import { Surface } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
@@ -30,6 +31,7 @@ export default function DefectAgentPage() {
     filter,
     setFilter,
     selectedDefectId,
+    setSelectedDefectId,
     showSubmitPanel,
     setShowSubmitPanel,
     showTemplateDialog,
@@ -50,7 +52,9 @@ export default function DefectAgentPage() {
   const [showProjectDialog, setShowProjectDialog] = useState(false);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   const [showAutomationPanel, setShowAutomationPanel] = useState(false);
+  const [searchParams] = useSearchParams();
   const notifiedRef = useRef(false);
+  const queryDefectId = searchParams.get('defectId');
 
   // 与 DefectList 一致的客户端过滤逻辑，计算当前可见的缺陷 ID
   const visibleDefectIds = useMemo(() => {
@@ -70,8 +74,22 @@ export default function DefectAgentPage() {
   }, [defects, filter, userId, searchQuery]);
 
   useEffect(() => {
+    if (queryDefectId && filter !== 'all') {
+      setFilter('all');
+      return;
+    }
     void loadAll();
-  }, [loadAll]);
+  }, [filter, loadAll, queryDefectId, setFilter]);
+
+  useEffect(() => {
+    if (!queryDefectId || loading) return;
+    if (selectedDefectId === queryDefectId) return;
+    const target = defects.find((d) => d.id === queryDefectId || d.defectNo === queryDefectId);
+    if (target) {
+      setSelectedDefectId(target.id);
+      setViewMode('list');
+    }
+  }, [defects, loading, queryDefectId, selectedDefectId, setSelectedDefectId, setViewMode]);
 
   // 显示待处理缺陷的通知（每次会话显示一次）
   useEffect(() => {

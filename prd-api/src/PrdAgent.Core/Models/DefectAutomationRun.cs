@@ -71,6 +71,8 @@ public class DefectAutomationRunItem
     public string? ShortSha { get; set; }
     public string? CommitMessage { get; set; }
     public string? Branch { get; set; }
+    public int? PullRequestNumber { get; set; }
+    public string? PullRequestUrl { get; set; }
     public string? PreviewUrl { get; set; }
     public string? VisualReportUrl { get; set; }
 
