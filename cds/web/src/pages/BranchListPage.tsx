@@ -928,7 +928,9 @@ function pickDeployEstimate(branch: BranchSummary): { mode: 'release' | 'source'
   const est = branch.deployEstimate;
   if (!est) return null;
   const kind = branch.deployRuntime?.kind;
-  const isRelease = kind === 'release' || kind === 'mixed';
+  // pendingPublish=配置已切发布版但容器还没跟上(重建中)，此时 kind 仍报 source；
+  // 用户实际在等的是发布版重建，应取发布版样本桶（修复 PR #865 codex P2）。
+  const isRelease = kind === 'release' || kind === 'mixed' || branch.deployRuntime?.pendingPublish === true;
   if (isRelease) {
     if (est.releaseMedianMs != null && est.releaseSamples > 0) {
       return { mode: 'release', medianMs: est.releaseMedianMs, samples: est.releaseSamples };
@@ -946,6 +948,8 @@ function deployModeLabel(branch: BranchSummary): string {
   const kind = branch.deployRuntime?.kind;
   if (kind === 'release') return '发布版';
   if (kind === 'mixed') return '混合';
+  // 配置已切发布版、容器重建中：标签也跟着显示发布版，别误标热加载。
+  if (branch.deployRuntime?.pendingPublish === true) return '发布版';
   return '热加载';
 }
 

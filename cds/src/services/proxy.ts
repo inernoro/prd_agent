@@ -858,9 +858,29 @@ export class ProxyService {
   ): { mode: DeployDurationMode; estimate: { medianMs: number | null; samples: number } } {
     const svc = waitingProfileId ? branch.services?.[waitingProfileId] : undefined;
     const deployedMode = svc?.deployedMode;
+    // 优先用容器已戳的运行模式；服务还没就绪(pending release 重建中)时 deployedMode
+    // 未戳，退化用"配置的目标 deploy mode"（profileOverride > profile.activeDeployMode）
+    // 判定，避免把正在重建的发布版误判成热加载、用错样本桶（修复 PR #865 codex P2
+    // 「pending 发布用源码 ETA」）。拿不到目标模式才兜底 source。
+    let modeSource = deployedMode;
+    if (modeSource === undefined || modeSource === '') {
+      const profiles = this.stateService.getBuildProfiles();
+      const targetModeFor = (pid: string): string | undefined =>
+        branch.profileOverrides?.[pid]?.activeDeployMode
+        ?? profiles.find((p) => p.id === pid)?.activeDeployMode;
+      if (waitingProfileId) {
+        modeSource = targetModeFor(waitingProfileId);
+      } else {
+        // 整分支等待：任一 profile 目标是发布版 → 按发布版估。
+        const ids = Object.keys(branch.services || {});
+        const anyRelease = (ids.length ? ids : profiles.map((p) => p.id))
+          .some((pid) => { const m = targetModeFor(pid); return m ? classifyDeployRuntime(m) === 'release' : false; });
+        modeSource = anyRelease ? 'release' : undefined;
+      }
+    }
     const preferred: DeployDurationMode =
-      deployedMode !== undefined && deployedMode !== ''
-        ? classifyDeployRuntime(deployedMode)
+      modeSource !== undefined && modeSource !== ''
+        ? classifyDeployRuntime(modeSource)
         : 'source';
     const full = this.stateService.getBranchDeployEstimate(branch.projectId);
     const buckets: Record<DeployDurationMode, { medianMs: number | null; samples: number }> = {
