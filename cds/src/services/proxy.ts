@@ -6,6 +6,9 @@ import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
+import { classifyDeployRuntime } from './deploy-runtime.js';
+import { computeWaitTiming } from './wait-timing.js';
+import type { DeployDurationMode } from '../types.js';
 import {
   classifyHttpRequestKind,
   createBodyCapture,
@@ -802,6 +805,75 @@ export class ProxyService {
     return { percent, confidence, label, reason };
   }
 
+  /**
+   * 推断"本次 deploy/build 真正开始的时间"。
+   *
+   * 首选：当前正在跑（status==='running'）的 build/run/auto-build op-log 的 startedAt
+   *      —— 这是"这一轮构建从哪一刻开始"的最准确戳。
+   * 退而求其次：最新一条 op-log 的 startedAt（可能刚结束但页面还没切走）。
+   * 最终兜底：branch.createdAt（对 re-deploy 已过期，故仅在无 op-log 时用）。
+   */
+  private resolveDeployStartedAtMs(branch: BranchEntry): number | null {
+    let logs: import('../types.js').OperationLog[] = [];
+    try {
+      logs = this.stateService.getLogs?.(branch.id) || [];
+    } catch {
+      logs = [];
+    }
+    const parse = (s?: string): number | null => {
+      if (!s) return null;
+      const ms = Date.parse(s);
+      return Number.isFinite(ms) ? ms : null;
+    };
+    const deployTypes = new Set(['build', 'run', 'auto-build']);
+    // 1) 最新的"正在跑"的部署 op-log
+    let running: import('../types.js').OperationLog | null = null;
+    let newest: import('../types.js').OperationLog | null = null;
+    for (const log of logs) {
+      if (!deployTypes.has(log.type)) continue;
+      const startedMs = parse(log.startedAt);
+      if (startedMs == null) continue;
+      if (!newest || startedMs > (parse(newest.startedAt) ?? -Infinity)) newest = log;
+      if (log.status === 'running') {
+        if (!running || startedMs > (parse(running.startedAt) ?? -Infinity)) running = log;
+      }
+    }
+    const picked = running || newest;
+    if (picked) return parse(picked.startedAt);
+    // 2) 兜底：分支创建时间（re-deploy 时偏旧，但好过没有）
+    return parse(branch.createdAt);
+  }
+
+  /**
+   * 选择历史耗时桶的模式（release vs source）。
+   *
+   * 真相来源 = 正在跑/等待的服务实际钉的 deployedMode；构建中往往还没钉
+   * （undefined）→ 默认 source（热加载，预览最常见场景，与 classifyDeployRuntime
+   * 对空 modeId 的归类一致）。选中桶无样本但另一桶有样本时回退到另一桶，
+   * 并按回退后的桶标注 mode，保证有数可用又不张冠李戴。
+   */
+  private resolveWaitTimingMode(
+    branch: BranchEntry,
+    waitingProfileId?: string,
+  ): { mode: DeployDurationMode; estimate: { medianMs: number | null; samples: number } } {
+    const svc = waitingProfileId ? branch.services?.[waitingProfileId] : undefined;
+    const deployedMode = svc?.deployedMode;
+    const preferred: DeployDurationMode =
+      deployedMode !== undefined && deployedMode !== ''
+        ? classifyDeployRuntime(deployedMode)
+        : 'source';
+    const full = this.stateService.getBranchDeployEstimate(branch.projectId);
+    const buckets: Record<DeployDurationMode, { medianMs: number | null; samples: number }> = {
+      release: { medianMs: full.releaseMedianMs, samples: full.releaseSamples },
+      source: { medianMs: full.sourceMedianMs, samples: full.sourceSamples },
+    };
+    if (buckets[preferred].samples > 0) return { mode: preferred, estimate: buckets[preferred] };
+    const other: DeployDurationMode = preferred === 'release' ? 'source' : 'release';
+    if (buckets[other].samples > 0) return { mode: other, estimate: buckets[other] };
+    // 两桶都无样本 → 保留首选 mode，样本为 0（调用方据此显示"暂无预计"）
+    return { mode: preferred, estimate: buckets[preferred] };
+  }
+
   private serveWaitingStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
     const host = req.headers.host || '';
     const previewSlug = this.extractPreviewBranch(host) || '';
@@ -813,6 +885,18 @@ export class ProxyService {
     const ready = Boolean(branch && branch.status === 'running' && (!waitingProfileId || waitingService?.status === 'running'));
     const loading = Boolean(branch && (branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || waitingService?.status === 'building' || waitingService?.status === 'starting' || waitingService?.status === 'restarting'));
     const displayBranch = this.displayBranchName(previewSlug, branch);
+
+    let timing: (ReturnType<typeof computeWaitTiming> & { mode: DeployDurationMode }) | null = null;
+    if (branch) {
+      const { mode, estimate } = this.resolveWaitTimingMode(branch, waitingProfileId);
+      const computed = computeWaitTiming({
+        status: branch.status,
+        deployStartedAtMs: this.resolveDeployStartedAtMs(branch),
+        nowMs: Date.now(),
+        estimate,
+      });
+      timing = { ...computed, mode };
+    }
 
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
@@ -828,6 +912,7 @@ export class ProxyService {
       status: branch?.status || 'not-found',
       waitingProfileId: waitingProfileId || null,
       progress: this.estimateWaitingProgress(branch, waitingProfileId),
+      timing,
       services: services.map((svc) => ({
         profileId: svc.profileId,
         status: svc.status,
@@ -1180,6 +1265,9 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
 .estimate-top strong{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;color:#f8fafc}
 .estimate-track{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
 .estimate-bar{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#aeb4bd);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
+.estimate-time{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-top:12px}
+.estimate-time-main{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;font-weight:700;color:#f8fafc;letter-spacing:.01em}
+.estimate-time-sub{font-size:11px;color:rgba(245,242,255,.52)}
 .estimate-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:rgba(245,242,255,.52)}
 .estimate-meta span{display:inline-flex;align-items:center}
 .cds-tip{width:min(620px,100%);margin:-8px 0 28px;color:rgba(245,242,255,.54);font-size:12px;line-height:1.65}
@@ -1217,6 +1305,10 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
         <strong data-role="progress-percent">${progress.percent}%</strong>
       </div>
       <div class="estimate-track"><span class="estimate-bar" data-role="progress-bar" style="width:${progress.percent}%"></span></div>
+      <div class="estimate-time" data-role="wait-timing" hidden>
+        <span class="estimate-time-main" data-role="wait-timing-main"></span>
+        <span class="estimate-time-sub" data-role="wait-timing-sub"></span>
+      </div>
       <div class="estimate-meta">
         <span data-role="progress-confidence">置信度 ${safeProgressConfidence}</span>
         <span data-role="progress-reason">${safeProgressReason}</span>
@@ -1409,6 +1501,54 @@ ${shouldAutoRefresh ? `;(function(){
     if(confidence)confidence.textContent='置信度 '+confidenceText;
     if(reason)reason.textContent=progress.reason||'基于当前状态估算';
   }
+  // 时间渲染：服务端轮询给 elapsedMs/medianMs，本地 1s ticker 让"已等待"平滑跳秒。
+  var timingState=null; // { baseElapsedMs, medianMs, samples, overdue, syncedAt }
+  function clock(ms){
+    var sec=Math.max(0,Math.round((Number(ms)||0)/1000));
+    var h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;
+    function p(n){return n<10?'0'+n:''+n;}
+    return h>0?h+':'+p(m)+':'+p(s):p(m)+':'+p(s);
+  }
+  function renderTiming(){
+    var wrap=document.querySelector('[data-role="wait-timing"]');
+    if(!wrap)return;
+    if(!timingState){wrap.hidden=true;return;}
+    var main=document.querySelector('[data-role="wait-timing-main"]');
+    var sub=document.querySelector('[data-role="wait-timing-sub"]');
+    var elapsedMs=timingState.baseElapsedMs+(Date.now()-timingState.syncedAt);
+    if(elapsedMs<0)elapsedMs=0;
+    var ee=clock(elapsedMs);
+    var samples=Number(timingState.samples)||0;
+    var median=timingState.medianMs;
+    var mainText='',subText='';
+    if(samples>0&&median!=null){
+      if(timingState.overdue||elapsedMs>median){
+        mainText='已等待 '+ee+' · 通常约 '+clock(median)+' 完成，本次稍久，仍在继续';
+        subText='';
+      }else{
+        var remainingMs=Math.max(0,median-elapsedMs);
+        mainText='已等待 '+ee+' · 预计还需约 '+clock(remainingMs);
+        subText='（基于最近 '+samples+' 次构建的中位耗时）';
+      }
+    }else{
+      mainText='已等待 '+ee+' · 正在积累历史耗时数据，暂无预计';
+      subText='';
+    }
+    if(main)main.textContent=mainText;
+    if(sub){sub.textContent=subText;sub.hidden=!subText;}
+    wrap.hidden=false;
+  }
+  function applyTiming(timing){
+    if(!timing||typeof timing!=='object'){timingState=null;renderTiming();return;}
+    timingState={
+      baseElapsedMs:Math.max(0,Number(timing.elapsedMs)||0),
+      medianMs:(timing.estimateMedianMs==null?null:Number(timing.estimateMedianMs)),
+      samples:Number(timing.estimateSamples)||0,
+      overdue:!!timing.overdue,
+      syncedAt:Date.now()
+    };
+    renderTiming();
+  }
   function poll(){
     fetch(statusUrl,{cache:'no-store',headers:{Accept:'application/json'}})
       .then(function(res){return res.ok?res.json():null;})
@@ -1420,12 +1560,14 @@ ${shouldAutoRefresh ? `;(function(){
         var branchEl=document.querySelector('[data-role="branch-name"]');
         if(branchEl&&data.displayBranch)branchEl.textContent=data.displayBranch;
         renderProgress(data.progress);
+        applyTiming(data.timing);
         renderServices(data.services);
       })
       .catch(function(){});
   }
   window.setInterval(poll,2000);
   window.setInterval(renderTip,4200);
+  window.setInterval(renderTiming,1000);
   window.setTimeout(poll,400);
   renderTip();
 }())` : ''}
