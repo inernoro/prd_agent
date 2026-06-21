@@ -756,7 +756,7 @@ async function runPnpmInstallWithCache(
     };
   }
   const result = await shell.exec(
-    'pnpm install --frozen-lockfile --prefer-offline',
+    'pnpm install --frozen-lockfile --prefer-offline --prod=false',
     { cwd, timeout: 300_000 },
   );
   if (result.exitCode === 0) markPnpmInstallStamp(cwd);
@@ -955,7 +955,7 @@ export async function validateBuildReadiness(
   // helper 自己那次就已经是等价的 boot 预检了。
   if (installResult._timing.skipped) {
     const bootInstall = await shell.exec(
-      'pnpm install --frozen-lockfile --prefer-offline',
+      'pnpm install --frozen-lockfile --prefer-offline --prod=false',
       { cwd: cdsDir, timeout: 240_000 },
     );
     if (bootInstall.exitCode !== 0) {
@@ -1061,13 +1061,13 @@ export async function validateBuildReadiness(
     timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
       skipCdsTsc
         ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
-        : shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: cdsTscTimeoutMs }),
+        : shell.exec('./node_modules/.bin/tsc --noEmit', { cwd: cdsDir, timeout: cdsTscTimeoutMs }),
     ),
     runWebTsc
       ? timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
           skipWebTsc
             ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc web (input sha unchanged)', stderr: '' })
-            : shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: webTscTimeoutMs }),
+            : shell.exec('./node_modules/.bin/tsc --noEmit', { cwd: webDir, timeout: webTscTimeoutMs }),
         )
       : Promise.resolve(null),
   ]);
@@ -18486,7 +18486,7 @@ cdscli project list --human
       ];
       if (!skipTscInBuild) {
         tasks.push(
-          shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
+          shell.exec('./node_modules/.bin/tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
         );
       }
       const buildResults = await Promise.all(tasks);
