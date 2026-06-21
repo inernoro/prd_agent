@@ -137,6 +137,36 @@ describe('MongoSplitStateBackingStore', () => {
     expect(handle.branches.docs.has('a')).toBe(true);
   });
 
+  it('strips runtime-derived executor.runningContainers from the persisted global doc', async () => {
+    // 回归 PR #871 Codex P2：写入合并把 structuredClone 推迟到 tick 末，broadcastState
+    // （onSave 监听器）会在那之前把派生字段 runningContainers 戳到 live state 上。
+    // 持久化投影必须剥掉它，瞬态 runtime 数据不得落库。
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.executors = {
+      node1: {
+        id: 'node1',
+        capacity: { maxBranches: 4, memoryMB: 8192, cpuCores: 4 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 },
+        labels: [],
+        branches: ['a', 'b'],
+        runningContainers: 7,
+        lastHeartbeat: 't',
+        registeredAt: 't',
+        role: 'embedded',
+      },
+    } as unknown as typeof state.executors;
+    store.save(state);
+    await store.flush();
+
+    const persisted = handle.global.docs.get('global') as { state: { executors?: Record<string, { runningContainers?: number }> } };
+    expect(persisted.state.executors?.node1).toBeDefined();
+    expect(persisted.state.executors?.node1.runningContainers).toBeUndefined();
+  });
+
   it('coalesces queued snapshots so a delete is not delayed by stale branch updates', async () => {
     const handle = new FakeSplitHandle();
     const store = new MongoSplitStateBackingStore(handle);

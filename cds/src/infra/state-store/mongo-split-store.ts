@@ -198,6 +198,22 @@ function globalRestOf(state: CdsState): GlobalRest {
       sanitizeServiceDeployment(deployment),
     ]),
   );
+  // executor.runningContainers 是运行期派生字段（executor-registry 每次心跳重算，
+  // 读取处以 `?? branches.length` 兜底），绝不应进入持久化文档。broadcastState
+  // （唯一的 onSave 监听器）会在 save() 之后同步把它重新戳到 live state 上；写入
+  // 合并把 structuredClone 推迟到 tick 末，故这个戳会被快照捕获。在持久化投影里
+  // 剥掉它：既杜绝瞬态 runtime 数据落库（修复 PR #871 Codex P2「Preserve
+  // save-call snapshot before deferring writes」），也让 runningContainers 抖动
+  // 不再触发全局文档写。新增 onSave 监听器一律不得 mutate 会被持久化的字段。
+  if (state.executors) {
+    restOfState.executors = Object.fromEntries(
+      Object.entries(state.executors).map(([id, node]) => {
+        if (node.runningContainers === undefined) return [id, node];
+        const { runningContainers: _dropped, ...rest } = node;
+        return [id, rest];
+      }),
+    ) as CdsState['executors'];
+  }
   return restOfState;
 }
 
