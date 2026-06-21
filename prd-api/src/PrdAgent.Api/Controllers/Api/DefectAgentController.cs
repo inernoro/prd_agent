@@ -3362,6 +3362,15 @@ public class DefectAgentController : ControllerBase
             messageId = message.Id;
         }
 
+        if (defect != null)
+        {
+            defect.Status = DefectStatus.Awaiting;
+            defect.VerifyFailReason = request.FailureReason?.Trim();
+            defect.ReporterUnread = true;
+            defect.UpdatedAt = DateTime.UtcNow;
+            await _db.DefectReports.ReplaceOneAsync(x => x.Id == defect.Id, defect, cancellationToken: ct);
+        }
+
         MarkRunItemFailed(run, defect, defect?.Id ?? defectId, request.FailureReason, request.FailurePhase);
         if (request.StopRun)
         {

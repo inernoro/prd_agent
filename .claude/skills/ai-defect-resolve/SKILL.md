@@ -149,7 +149,7 @@ Content-Type: application/json
 
 1. 不提交半成品。
 2. 评论说明原因、风险、建议拆分方式。
-3. 停止当前缺陷，等待用户确认或后续任务接管。
+3. 调用 `workflow/block` 停止当前缺陷。后端会把缺陷切到 `awaiting`，让它退出默认自动领取队列，等待用户确认或后续任务接管。
 
 ### 5. 修复与提交
 
@@ -221,6 +221,8 @@ Content-Type: application/json
 ```
 
 重量级缺陷默认停止，让用户确认。只有明确要求继续时，才允许 `stopRun=false`。
+
+`workflow/block` 会把缺陷状态切到 `awaiting`。日常任务默认状态过滤是 `submitted,assigned,processing`，因此被阻塞缺陷不会在下一轮自动反复领取；需要人工补充或重新提交后再进入自动化队列。
 
 ## 正式发布后的验收通知
 

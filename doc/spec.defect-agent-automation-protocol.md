@@ -164,6 +164,7 @@ Content-Type: application/json
 - 默认 `stopRun=true`，重量级缺陷停止本轮运行等待人类确认。
 - 如果显式 `stopRun=false`，允许工作流继续领取下一条。
 - 该端点必须写入 run item 的失败原因。
+- 已阻塞缺陷会切到 `awaiting`，从默认 `submitted,assigned,processing` 自动领取队列移出，避免日常任务反复领取同一条缺陷。
 
 ## 状态机
 
