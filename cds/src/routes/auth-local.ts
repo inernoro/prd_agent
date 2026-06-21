@@ -237,6 +237,22 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         res.status(404).json({ error: '用户不存在' });
         return;
       }
+      // 先做"可能失败"的密码重置，再做状态变更：否则状态会先落库，密码重置抛错
+      // （如目标是 GitHub 账号 not_local_account）后状态已改却返回错误，无原子回滚
+      // （修复 PR #865 Bugbot Medium「PATCH user applies status before password」）。
+      if (typeof newPassword === 'string' && newPassword.length > 0) {
+        // Admin reset: skip old-password check (caller is system owner).
+        await authService.changePassword(targetId, '', newPassword, true);
+        await authService.recordActivity({
+          userId: me.id,
+          userLogin: me.username || me.githubLogin,
+          action: 'reset-password',
+          summary: `重置账号 ${result?.username || result?.githubLogin} 的密码`,
+          targetType: 'user',
+          targetId,
+          ip: clientIp(req),
+        });
+      }
       if (status === 'active' || status === 'disabled') {
         if (status === 'disabled' && targetId === me.id) {
           res.status(400).json({ error: '不能禁用自己的账号' });
@@ -248,19 +264,6 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
           userLogin: me.username || me.githubLogin,
           action: status === 'disabled' ? 'disable-user' : 'enable-user',
           summary: `${status === 'disabled' ? '禁用' : '启用'}账号 ${result?.username || result?.githubLogin}`,
-          targetType: 'user',
-          targetId,
-          ip: clientIp(req),
-        });
-      }
-      if (typeof newPassword === 'string' && newPassword.length > 0) {
-        // Admin reset: skip old-password check (caller is system owner).
-        await authService.changePassword(targetId, '', newPassword, true);
-        await authService.recordActivity({
-          userId: me.id,
-          userLogin: me.username || me.githubLogin,
-          action: 'reset-password',
-          summary: `重置账号 ${result?.username || result?.githubLogin} 的密码`,
           targetType: 'user',
           targetId,
           ip: clientIp(req),

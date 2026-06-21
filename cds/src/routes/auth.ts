@@ -181,6 +181,8 @@ function formatError(err: AuthServiceError): string {
       return `GitHub OAuth 流程失败：${err.message}`;
     case 'bootstrap_failed':
       return `首次登录初始化失败：${err.message}`;
+    case 'account_disabled':
+      return '账号已被禁用，无法登录，请联系系统所有者';
     default:
       return '登录失败';
   }

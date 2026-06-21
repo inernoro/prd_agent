@@ -47,7 +47,8 @@ export class AuthServiceError extends Error {
       | 'state_mismatch'
       | 'org_not_allowed'
       | 'oauth_upstream'
-      | 'bootstrap_failed',
+      | 'bootstrap_failed'
+      | 'account_disabled',
     message: string,
     public readonly cause?: unknown,
   ) {
@@ -210,6 +211,13 @@ export class AuthService {
       avatarUrl: profile.avatarUrl,
       orgs: orgLogins,
     }, now);
+
+    // 被 owner 禁用的账号不得再通过 GitHub OAuth 登录——upsert 只同步资料，禁用
+    // 状态要在发会话前拦掉，否则禁用形同虚设、且会签出一个下次 validateSession 即失效
+    // 的孤儿会话（修复 PR #865 Bugbot High「OAuth login ignores disabled status」）。
+    if (user.status === 'disabled') {
+      throw new AuthServiceError('account_disabled', `账号 ${profile.login} 已被禁用，无法登录`);
+    }
 
     await this.store.touchUserLastLogin(user.id, now);
 
