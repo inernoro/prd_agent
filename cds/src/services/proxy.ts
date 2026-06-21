@@ -864,16 +864,21 @@ export class ProxyService {
     // 「pending 发布用源码 ETA」）。拿不到目标模式才兜底 source。
     let modeSource = deployedMode;
     if (modeSource === undefined || modeSource === '') {
-      const profiles = this.stateService.getBuildProfiles();
+      // 仅限本分支所属项目的 profile——CDS 是多项目实例，getBuildProfiles() 返回
+      // 全实例所有项目的 profile，若用全量会让别的项目的发布版 profile 串改本分支
+      // ETA（修复 PR #865 Bugbot「Wait ETA uses foreign profiles」）。
+      const projectProfiles = this.stateService.getBuildProfiles()
+        .filter((p) => p.projectId === branch.projectId);
       const targetModeFor = (pid: string): string | undefined =>
         branch.profileOverrides?.[pid]?.activeDeployMode
-        ?? profiles.find((p) => p.id === pid)?.activeDeployMode;
+        ?? projectProfiles.find((p) => p.id === pid)?.activeDeployMode;
       if (waitingProfileId) {
         modeSource = targetModeFor(waitingProfileId);
       } else {
-        // 整分支等待：任一 profile 目标是发布版 → 按发布版估。
+        // 整分支等待：本项目任一 profile 目标是发布版 → 按发布版估。
         const ids = Object.keys(branch.services || {});
-        const anyRelease = (ids.length ? ids : profiles.map((p) => p.id))
+        const scanIds = ids.length ? ids : projectProfiles.map((p) => p.id);
+        const anyRelease = scanIds
           .some((pid) => { const m = targetModeFor(pid); return m ? classifyDeployRuntime(m) === 'release' : false; });
         modeSource = anyRelease ? 'release' : undefined;
       }
