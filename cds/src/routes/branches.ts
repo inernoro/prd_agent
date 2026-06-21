@@ -416,9 +416,14 @@ function recordDeployDurationSample(
   opLog: OperationLog,
 ): void {
   if (opLog.status !== 'completed') return;
+  // 只在拿到真正的"就绪"信号(runtimeStartedAt，即 readiness 探测通过)时才采样。
+  // 多服务 finalize 会在"无错误"时即置 completed，此时容器可能还没 running、
+  // runtimeStartedAt 未设——若退化用 finishedAt-startedAt 会记下远短于真实就绪
+  // 的耗时，污染发布版/热加载的中位 ETA（修复 PR #865 Bugbot「未就绪也采样」）。
+  // 没有就绪时间就跳过本次采样（宁可样本少而准，等待页/卡片照样优雅降级显示已耗时）。
+  if (!opLog.runtimeStartedAt) return;
   const startMs = Date.parse(opLog.startedAt);
-  const endRaw = opLog.runtimeStartedAt || opLog.finishedAt;
-  const endMs = endRaw ? Date.parse(endRaw) : Number.NaN;
+  const endMs = Date.parse(opLog.runtimeStartedAt);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return;
   const elapsedMs = endMs - startMs;
   const mode = classifyBranchDeployModeForDuration(branch, profiles);

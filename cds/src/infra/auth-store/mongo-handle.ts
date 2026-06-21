@@ -22,7 +22,7 @@ export interface IAuthCollection<T = any> {
   findOne(filter: Record<string, unknown>): Promise<T | null>;
   find(
     filter: Record<string, unknown>,
-    options?: { sort?: Record<string, 1 | -1>; limit?: number },
+    options?: { sort?: Record<string, 1 | -1>; limit?: number; skip?: number },
   ): Promise<T[]>;
   insertOne(doc: T): Promise<void>;
   /**
@@ -107,6 +107,7 @@ function adaptCollection<TEntity>(col: Collection<any>): IAuthCollection<TEntity
     async find(filter, options) {
       let cursor = col.find(filter);
       if (options?.sort) cursor = cursor.sort(options.sort);
+      if (typeof options?.skip === 'number') cursor = cursor.skip(options.skip);
       if (typeof options?.limit === 'number') cursor = cursor.limit(options.limit);
       const docs = await cursor.toArray();
       return docs.map((d) => stripId(d as Record<string, unknown>));

@@ -1201,11 +1201,20 @@ export function createServer(deps: ServerDeps): express.Express {
   // We stash the bytes on req.rawBody so the GitHub webhook route can
   // HMAC-verify the exact payload GitHub signed (re-serialized JSON
   // would produce a different hash and fail signature checks).
-  app.use(express.json({
+  // 全局 JSON body 解析器（默认上限 100kb）。/api/reports 例外：验收报告正文
+  // 可达数 MB（HTML/Markdown 粘贴），其路由自带 12mb 的 json/text/multipart 解析器，
+  // 故这里跳过 /api/reports，避免大报告在全局 100kb 解析器处被 413 拦掉（修复 PR #865
+  // codex P2「大粘贴报告绕不过全局 JSON 解析器」）。rawBody 仅签名校验类路由需要，
+  // /api/reports 不需要。
+  const globalJsonParser = express.json({
     verify: (req, _res, buf) => {
       (req as { rawBody?: Buffer }).rawBody = buf;
     },
-  }));
+  });
+  app.use((req, res, next) => {
+    if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    return globalJsonParser(req, res, next);
+  });
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -1741,6 +1750,10 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use((req, res, next) => {
       if (req.path === '/') return next();
       if (req.path === '/login' || req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
+      // basic 模式下本地账号路由(github 模式才挂载)未注册：放行让其落到 404，
+      // 登录页据 404 回退到 /api/login，保住单用户 basic 部署仍可登录(修复 PR #865
+      // codex P1「basic-auth 登录回退被 401 截断」)。
+      if (req.path === '/api/auth/login' || req.path === '/api/auth/bootstrap' || req.path === '/api/auth/bootstrap-status') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
       // 被动授权:免密发起/轮询授权申请(github 模式同样放行,否则 agent 401)。
       if (isPublicAccessRequestRoute(req.method, req.path)) return next();

@@ -118,6 +118,16 @@ function genUuid(): string {
   return randomUUID().replace(/-/g, '');
 }
 
+/**
+ * Unique negative placeholder GitHub id for local-credential users (who have
+ * no real GitHub identity). Real GitHub ids are positive, so negatives never
+ * clash with OAuth users; a 53-bit random keeps collisions between local users
+ * astronomically unlikely so the `cds_users.githubId` unique index never trips.
+ */
+export function localPlaceholderGithubId(): number {
+  return -(Math.floor(Math.random() * 9_000_000_000_000_000) + 1);
+}
+
 /** Default session TTL in milliseconds. 30 days. */
 export const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -225,7 +235,10 @@ export class MemoryAuthStore implements AuthStore {
     const id = genUuid();
     const user: CdsUser = {
       id,
-      githubId: 0,
+      // 本地账号没有真实 GitHub 身份。给一个唯一负数占位（真实 GitHub ID 恒正），
+      // 避免多个本地用户都用 githubId:0 在 cds_users.githubId 唯一索引上撞键
+      // （修复 PR #865 P1「githubId 0 复用导致第二个本地账号建不出」）。
+      githubId: localPlaceholderGithubId(),
       githubLogin: username,
       authProvider: 'local',
       username,

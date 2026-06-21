@@ -41,7 +41,7 @@ import type {
   CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite, UpsertUserInput,
   CreateLocalUserInput, UserActivityRecord,
 } from '../../domain/auth.js';
-import { ACTIVITY_RING_CAPACITY } from './memory-store.js';
+import { ACTIVITY_RING_CAPACITY, localPlaceholderGithubId } from './memory-store.js';
 import type { IAuthMongoHandle } from './mongo-handle.js';
 
 export { IAuthMongoHandle };
@@ -136,7 +136,9 @@ export class MongoAuthStore implements AuthStore {
     }
     const user: CdsUser = {
       id: randomUUID().replace(/-/g, ''),
-      githubId: 0,
+      // 唯一负数占位，避免多个本地账号在 cds_users.githubId 唯一索引上撞 0
+      // （修复 PR #865 P1）。真实 GitHub ID 恒正，负数永不与 OAuth 用户冲突。
+      githubId: localPlaceholderGithubId(),
       githubLogin: username,
       authProvider: 'local',
       username,
@@ -178,7 +180,21 @@ export class MongoAuthStore implements AuthStore {
   // ── User activity / trace log ────────────────────────────────────────────
 
   async recordActivity(record: UserActivityRecord): Promise<void> {
-    await this.handle.activityCollection().insertOne(record);
+    const col = this.handle.activityCollection();
+    await col.insertOne(record);
+    // 与 memory store 的 ring buffer 对齐：mongo 端 cds_user_activity 无 TTL，
+    // 不裁剪会无界增长（修复 PR #865 Low「mongo 活动日志永不封顶」）。每隔若干次
+    // 插入做一次 best-effort 裁剪：删掉超出最近 ACTIVITY_RING_CAPACITY 条之外的旧记录。
+    // 抽样触发避免每次插入都扫描；裁剪失败不致命（下次再裁）。
+    if (Math.random() < 0.02) {
+      try {
+        const cutoff = await col.find({}, { sort: { at: -1 }, skip: ACTIVITY_RING_CAPACITY, limit: 1 });
+        const cutoffAt = cutoff[0]?.at;
+        if (cutoffAt) {
+          await col.deleteMany({ at: { $lte: cutoffAt } });
+        }
+      } catch { /* best-effort trim; tolerate failure */ }
+    }
   }
 
   async listActivity(opts?: { userId?: string; limit?: number }): Promise<UserActivityRecord[]> {

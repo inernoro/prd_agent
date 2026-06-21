@@ -450,7 +450,15 @@ describe('MongoAuthStore', () => {
     });
     expect(user.authProvider).toBe('local');
     expect(user.username).toBe('local1');
-    expect(user.githubId).toBe(0);
+    // Local users get a unique negative placeholder githubId (real GitHub ids
+    // are positive), so a second local account never collides with githubId:0
+    // on the cds_users.githubId unique index (PR #865 P1 fix).
+    expect(user.githubId).toBeLessThan(0);
+    const second = await store.createLocalUser({
+      username: 'Local2', passwordHash: 'deadbeef', passwordSalt: 'cafe', name: 'Local Two',
+    });
+    expect(second.githubId).toBeLessThan(0);
+    expect(second.githubId).not.toBe(user.githubId);
     const byUsername = await store.findUserByUsername('LOCAL1');
     expect(byUsername?.id).toBe(user.id);
   });
