@@ -468,9 +468,10 @@ export function ExperienceMap({
         </div>
       </GlassCard>
       <style>{`
-        /* 窄屏：viewBox 2.4:1 在单列下被压成细条，给非全屏 SVG 一个最小高度让块看得清/点得到 */
+        /* 窄屏：viewBox 2.4:1 在单列下被压成细条。让地图长满首屏主要高度（≈视口 66%），
+           吃掉卡片下方空白、块也看得清点得到（呼应 mobile-first-density 规则：内容占视口≥60%）。 */
         @media (max-width: 639px) {
-          .voc-map-svg { min-height: 300px; height: 300px !important; }
+          .voc-map-svg { min-height: 340px; height: min(66vh, 600px) !important; }
         }
         @keyframes voc-cell-glow { 0%,100% { stroke-opacity: .35; } 50% { stroke-opacity: 1; } }
         @keyframes voc-cell-in { from { opacity: 0; transform: scale(.45); } to { opacity: 1; transform: scale(1); } }

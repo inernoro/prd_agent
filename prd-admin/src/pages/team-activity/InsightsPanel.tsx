@@ -478,13 +478,13 @@ export function InsightsPanel({ from }: { from?: string }) {
   );
 
   return (
-    <GlassCard className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+    <GlassCard className="flex-1 flex flex-col" mobileFlush style={{ minHeight: 0 }}>
       <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }
           @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
           @keyframes voc-hero-swap { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }`}</style>
         {/* 闭环 ribbon：监测 → 预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落，从热力图/洞察现算 */}
-        <div className="px-5 pt-4">
+        <div className="px-1.5 pt-2 sm:px-5 sm:pt-4">
           <ExperienceRibbon mapData={mapData} insights={data} />
           {/* Hero：体验全景热力图占满整宽做主视觉。切换时间窗(loading && data)时叠一层「更新中」过渡态，
               旧内容保持可见，数据到达后 ExperienceMap 走 morph 几何补间平滑过渡。 */}
@@ -530,7 +530,7 @@ export function InsightsPanel({ from }: { from?: string }) {
         </div>
         {/* 数据源状态行：诚实告知信号从哪来、采集到什么程度 */}
         {data ? (
-          <div className="sticky top-0 z-10 flex items-center gap-3 flex-wrap px-5 py-2.5 text-[11px] text-white/40 border-b border-white/[0.05] backdrop-blur-md" style={{ background: 'rgba(16,17,19,0.72)' }}>
+          <div className="sticky top-0 z-10 flex items-center gap-3 flex-wrap px-2 sm:px-5 py-2.5 text-[11px] text-white/40 border-b border-white/[0.05] backdrop-blur-md" style={{ background: 'rgba(16,17,19,0.72)' }}>
             <span className="font-mono tabular-nums">
               {fmtDate(data.windowFrom)} ~ {fmtDate(data.windowTo)}
             </span>
@@ -564,7 +564,7 @@ export function InsightsPanel({ from }: { from?: string }) {
         ) : null}
 
         {briefOpen ? (
-          <div className="px-5 py-4 border-b border-white/[0.05] flex flex-col gap-2.5">
+          <div className="px-2 sm:px-5 py-4 border-b border-white/[0.05] flex flex-col gap-2.5">
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="text-[11px] font-semibold text-cyan-200/90">AI 洞察简报</span>
               {briefModel ? <span className="text-[10px] text-white/30 font-mono">{briefModel}</span> : null}
@@ -627,7 +627,7 @@ export function InsightsPanel({ from }: { from?: string }) {
             <div className="text-sm text-white/60">{error}</div>
           </div>
         ) : !data || data.items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center px-5">
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center px-2 sm:px-5">
             <Radar size={36} className="text-white/15" />
             <div className="text-sm text-white/60">当前窗口还没有形成洞察</div>
             <div className="text-[12px] text-white/35 max-w-md leading-relaxed">
@@ -648,7 +648,7 @@ export function InsightsPanel({ from }: { from?: string }) {
                 <div
                   key={key}
                   data-insight-target={item.target}
-                  className="relative px-5 py-3.5 flex gap-3.5 transition-colors hover:bg-white/[0.02]"
+                  className="relative px-2.5 sm:px-5 py-3.5 flex gap-3.5 transition-colors hover:bg-white/[0.02]"
                   style={{ opacity: status === 'ignored' ? 0.45 : 1 }}
                 >
                   {/* 左缘严重度色条：扫一眼即可分辨信号类型 */}

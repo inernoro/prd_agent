@@ -41,6 +41,11 @@ export interface GlassCardProps {
   /** 是否隐藏溢出内容（默认 false，不裁剪内容） */
   overflow?: 'hidden' | 'visible' | 'auto';
   /**
+   * 手机端满铺：isMobile 时让这张顶层卡片也去掉边框/圆角/底色/投影（透明满铺到边），
+   * 内容直接坐在页面底色上，营造手机原生「无卡框」观感。嵌套卡片(depth>0)手机端已自动满铺，无需传此参。
+   */
+  mobileFlush?: boolean;
+  /**
    * 是否启用入场动画（进入视口时 fade-in + 上移）
    * 性能模式下自动禁用
    */
@@ -75,6 +80,7 @@ export function GlassCard({
   onClick,
   style,
   overflow = 'visible',
+  mobileFlush = false,
   animated = false,
   animationDelay = 0,
   draggable,
@@ -87,10 +93,10 @@ export function GlassCard({
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
 
-  // 手机端密度：嵌套卡片去 chrome（仅移动端 + depth>0 生效，桌面端零影响）
+  // 手机端密度：嵌套卡片(depth>0) 或显式 mobileFlush 的顶层卡，手机端去 chrome 满铺（桌面端零影响）
   const depth = useContext(GlassCardDepthContext);
   const isMobile = useIsMobile();
-  const nestedMobile = isMobile && depth > 0;
+  const flush = isMobile && (depth > 0 || mobileFlush);
 
   // ── 入场动画：IntersectionObserver + CSS transition ──
   const ref = useRef<HTMLDivElement>(null);
@@ -132,19 +138,25 @@ export function GlassCard({
       }
     : cardStyle;
 
-  // 内边距：桌面保持原值；手机端整体收紧一档，嵌套卡片再收紧一档（寸土寸金）
-  const paddingClass = (
-    nestedMobile
-      ? { none: '', sm: 'p-2', md: 'p-2.5', lg: 'p-3' }
-      : isMobile
-        ? { none: '', sm: 'p-2.5', md: 'p-3', lg: 'p-4' }
-        : { none: '', sm: 'p-3', md: 'p-4', lg: 'p-6' }
-  )[padding];
+  // 内边距：桌面保持原值；手机端整体收紧一档；嵌套满铺卡再收紧一档；
+  // 顶层 mobileFlush 卡手机端直接 p-0（满铺到边，交给内容自己控制间距）
+  const topFlush = isMobile && mobileFlush;
+  const paddingClass = topFlush
+    ? ''
+    : (
+        flush
+          ? { none: '', sm: 'p-2', md: 'p-2.5', lg: 'p-3' }
+          : isMobile
+            ? { none: '', sm: 'p-2.5', md: 'p-3', lg: 'p-4' }
+            : { none: '', sm: 'p-3', md: 'p-4', lg: 'p-6' }
+      )[padding];
   const overflowClass = { hidden: 'overflow-hidden', visible: 'overflow-visible', auto: 'overflow-auto' };
-  // 嵌套卡片手机端缩小圆角，弱化「卡中卡」框感
-  const radiusClass = nestedMobile ? 'rounded-[10px]' : 'rounded-[16px]';
-  // 嵌套卡片手机端去重阴影（去掉外投影 3D 框，只保留淡边界），父卡已提供表面
-  const finalStyle: React.CSSProperties = nestedMobile ? { ...animatedStyle, boxShadow: 'none' } : animatedStyle;
+  // 满铺卡手机端缩小圆角，弱化「卡中卡」框感
+  const radiusClass = flush ? 'rounded-[10px]' : 'rounded-[16px]';
+  // 满铺卡手机端去掉底色/边框/投影，内容直接坐在页面底色上（手机原生无卡框观感）
+  const finalStyle: React.CSSProperties = flush
+    ? { ...animatedStyle, background: 'transparent', border: 'none', boxShadow: 'none' }
+    : animatedStyle;
 
   return (
     <GlassCardDepthContext.Provider value={depth + 1}>
@@ -153,7 +165,7 @@ export function GlassCard({
         className={cn(
           radiusClass,
           'relative no-focus-ring',
-          !isPerf && 'glass-blur-pseudo',
+          !isPerf && !flush && 'glass-blur-pseudo',
           !animated && 'transition-[border-color,box-shadow,opacity] duration-200',
           overflowClass[overflow],
           paddingClass,
