@@ -1,6 +1,6 @@
 # 缺陷自动化协议 · 规格
 
-> **版本**：v1.0 | **日期**：2026-06-21 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-06-22 | **状态**：开发中
 
 ## 目标
 
@@ -58,6 +58,25 @@ Authorization: Bearer {K}
 | `acceptance.storeName` | `缺陷修复验收报告` |
 
 ## 工作流协议 v1
+
+### 0. 启动前安全自检
+
+如果仓库包含 `scripts/defect-automation-probe.mjs`，每日任务启动前先运行：
+
+```bash
+DEFECT_AGENT_DOMAIN="https://map.ebcone.net" DEFECT_AGENT_KEY="<K>" node scripts/defect-automation-probe.mjs --safe
+```
+
+安全自检只调用 `connector` 与 `published-pending`，不会领取缺陷。它必须证明：
+
+| 检查项 | 期望 |
+|--------|------|
+| connector | HTTP 200 |
+| `auth.requiredScope` | `defect-agent:use` |
+| `workflow.version` | `defect-agent-workflow.v1` |
+| `published-pending` | 可访问，返回待验收数量 |
+
+自检失败时停止本轮，不调用 `start-next`，避免授权或协议错误时误改缺陷状态。
 
 ### 1. start-next
 
@@ -243,3 +262,16 @@ Authorization: Bearer {K}
 - `POST /api/defect-agent/agent/runs/{runId}/fail`
 
 日常自动化应优先使用 `defect-agent-workflow.v1`。
+
+## 每日任务提示词要求
+
+缺陷自动化面板复制出的每日计划必须包含：
+
+- `domain`、`K`、`scope`、`status`。
+- 启动前安全自检命令。
+- 一次只处理一个缺陷的规则。
+- 轻量修复与重量级阻塞边界。
+- `workflow/complete` 回写 commit/PR/trace 的要求。
+- 正式发布后才运行视觉验收、归档“缺陷修复验收报告”、调用 `validation-report` 通知提交人的要求。
+- 无缺陷、无待验收通知项时的正常结束规则。
+- 每日输出字段：runId、defectNo、commit、PR、预览地址、验收报告、通知结果、阻塞项。

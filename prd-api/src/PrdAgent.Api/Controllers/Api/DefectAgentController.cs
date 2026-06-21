@@ -4203,7 +4203,7 @@ public class DefectAgentController : ControllerBase
         };
     }
 
-    private static string BuildAutomationDailyPlanText(string domain, string key, string? projectId, string? teamId, string? status)
+    internal static string BuildAutomationDailyPlanText(string domain, string key, string? projectId, string? teamId, string? status)
     {
         var statusFilter = string.IsNullOrWhiteSpace(status)
             ? $"{DefectStatus.Submitted},{DefectStatus.Assigned},{DefectStatus.Processing}"
@@ -4223,6 +4223,17 @@ public class DefectAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(projectId)) lines.Add($"projectId: {projectId.Trim()}");
         if (!string.IsNullOrWhiteSpace(teamId)) lines.Add($"teamId: {teamId.Trim()}");
         lines.Add("");
+        lines.Add("执行边界：");
+        lines.Add("- 正式闭环只处理该 domain 下的真实缺陷；测试环境只能用于演练，不能通知正式缺陷提交人。");
+        lines.Add("- 不要把 PR 已创建当成完成；只有 workflow/complete 写回 commit 后，单缺陷修复阶段才算结束。");
+        lines.Add("- 不要把正式发布前的缺陷通知给提交人；只有 published-pending 返回 trace，视觉验收通过并回写 validation-report 后，才能发送“你的问题已修复”。");
+        lines.Add("- 不要把 K 写入 commit、报告、截图、Slack 或缺陷评论；每日输出只能写 keyId/keyName，不写明文 K。");
+        lines.Add("");
+        lines.Add("启动前自检：");
+        lines.Add("1. 如果仓库存在 scripts/defect-automation-probe.mjs，先运行 `DEFECT_AGENT_DOMAIN=<domain> DEFECT_AGENT_KEY=<K> node scripts/defect-automation-probe.mjs --safe`。");
+        lines.Add("2. 自检必须证明 connector 返回 200、requiredScope 为 defect-agent:use、workflow.version 为 defect-agent-workflow.v1。");
+        lines.Add("3. 如果自检失败，只输出失败原因并停止，不要领取缺陷。");
+        lines.Add("");
         lines.Add("执行顺序：");
         lines.Add("1. 调用 GET /api/defect-agent/agent/connector 校验 domain 与 K。");
         lines.Add("2. 调用 POST /api/defect-agent/agent/workflow/start-next 创建或复用运行记录，并领取一条缺陷。");
@@ -4232,7 +4243,11 @@ public class DefectAgentController : ControllerBase
         lines.Add("6. complete 返回下一次 start-next 入参；继续调用 start-next 领取下一条或结束。");
         lines.Add("7. 正式发布后再调用 published-pending，使用 create-visual-test-to-kb 归档到“缺陷修复验收报告”，回写 validation-report 并通知提交人。");
         lines.Add("");
-        lines.Add("每日更新要求：列出本轮拉取缺陷、处理结果、修复 commit、预览地址、正式发布待验收项、已通知用户和阻塞项。");
+        lines.Add("无缺陷时：");
+        lines.Add("- start-next 返回 hasNext=false 时，本轮正常结束，不创建 PR，不制造测试缺陷。");
+        lines.Add("- published-pending 为空时，只报告“无正式发布后待验收通知项”。");
+        lines.Add("");
+        lines.Add("每日更新要求：列出本轮拉取缺陷、runId、处理结果、修复 commit、PR、预览地址、正式发布待验收项、验收报告链接、已通知用户和阻塞项。");
         return string.Join("\n", lines);
     }
 

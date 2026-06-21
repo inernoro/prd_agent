@@ -115,6 +115,33 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void BuildAutomationDailyPlanText_IncludesProbeBoundariesAndNoWorkRules()
+    {
+        var plan = DefectAgentController.BuildAutomationDailyPlanText(
+            "https://map.ebcone.net/",
+            "{K}",
+            "project-1",
+            "team-1",
+            "submitted");
+
+        Assert.Contains("domain: https://map.ebcone.net/", plan);
+        Assert.Contains("K: {K}", plan);
+        Assert.Contains("scope: defect-agent:use", plan);
+        Assert.Contains("projectId: project-1", plan);
+        Assert.Contains("teamId: team-1", plan);
+        Assert.Contains("scripts/defect-automation-probe.mjs", plan);
+        Assert.Contains("自检失败", plan);
+        Assert.Contains("不要领取缺陷", plan);
+        Assert.Contains("workflow.version 为 defect-agent-workflow.v1", plan);
+        Assert.Contains("不要把 PR 已创建当成完成", plan);
+        Assert.Contains("不要把正式发布前的缺陷通知给提交人", plan);
+        Assert.Contains("start-next 返回 hasNext=false", plan);
+        Assert.Contains("无正式发布后待验收通知项", plan);
+        Assert.Contains("runId", plan);
+        Assert.Contains("验收报告链接", plan);
+    }
+
+    [Fact]
     public void CanReuseAutomationKey_RequiresActiveScopedAndUnexpiredKey()
     {
         var now = new DateTime(2026, 6, 18, 0, 0, 0, DateTimeKind.Utc);

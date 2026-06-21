@@ -12,8 +12,8 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.5.0";
-    public const string AiDefectResolveReleaseDate = "2026-06-21";
+    public const string AiDefectResolveVersion = "1.7.0";
+    public const string AiDefectResolveReleaseDate = "2026-06-22";
 
     public const string AiDefectResolveSkillMd = """
 ---
@@ -73,6 +73,14 @@ Content-Type: application/json
 
 旧端点 `runs`、`next`、`comments`、`commit-info`、`fix-status` 只用于兼容和排障；日常自动化优先使用 `defect-agent-workflow.v1`。
 
+如果仓库存在 `scripts/defect-automation-probe.mjs`，日常任务启动前必须先运行安全自检：
+
+```bash
+DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automation-probe.mjs --safe
+```
+
+安全自检只调用 `connector` 和 `published-pending`，不会领取缺陷。它必须证明 `auth.requiredScope == defect-agent:use` 且 `workflow.version == defect-agent-workflow.v1`。自检失败时停止本轮，不要调用 `start-next`。
+
 `workflow/complete` 会同时写入缺陷结构化字段和更新中心关联用的 `defect_resolution_traces`。发布中心只读取 commit id 关联结果并展示，不负责人工关联缺陷。
 
 闭环验收不能只看接口：更新中心的 commit 记录 UI 必须出现可点击的“关联缺陷 N”或“我的缺陷 N”标志。点击后必须能看到缺陷编号、标题、发布状态、验收报告或知识库链接。提交者本人场景必须证明按钮显示“我的缺陷 N”或弹窗内出现“我提交的”。普通 changelog 文案行没有 commit id，不允许按日期批量贴缺陷标志。
@@ -102,6 +110,7 @@ Content-Type: application/json
 - 评论和修复说明必须包含可验收步骤。
 - 只 commit 不调用 `workflow/complete` 不算闭环完成；旧 `commit-info` 只用于兼容和排障。
 - 正式发布前只在缺陷内更新进度，不给提交人发“已修复”通知。
+- `start-next` 返回 `hasNext=false` 时正常结束，不创建 PR，不制造测试缺陷。
 """;
 
     public const string AiDefectResolveReadme = """
