@@ -1366,11 +1366,17 @@ public class TeamActivityController : ControllerBase
     private static string? RedactSensitive(string? s)
     {
         if (string.IsNullOrWhiteSpace(s)) return s;
+        const string keys = "password|passwd|pwd|token|secret|client[_-]?secret|authorization|auth|api[_-]?key|access[_-]?key|credential|cookie|session|signature|sign|private[_-]?key";
         // JSON-ish 敏感键值：把 "key":"..." 或 "key":<非字符串> 的值替换为 "***"
         s = System.Text.RegularExpressions.Regex.Replace(
             s!,
-            "(?i)(\"(password|passwd|pwd|token|secret|authorization|auth|api[_-]?key|access[_-]?key|credential|cookie|session|signature|sign|private[_-]?key)\"\\s*:\\s*)(\"(?:[^\"\\\\]|\\\\.)*\"|[^,}\\s]+)",
+            "(?i)(\"(" + keys + ")\"\\s*:\\s*)(\"(?:[^\"\\\\]|\\\\.)*\"|[^,}\\s]+)",
             "$1\"***\"");
+        // 表单/查询串 key=value（application/x-www-form-urlencoded、curl --data、查询参数）：password=...&client_secret=...
+        s = System.Text.RegularExpressions.Regex.Replace(
+            s,
+            "(?i)(?<![A-Za-z0-9_-])(" + keys + ")=([^&\\s\"']*)",
+            "$1=***");
         // curl header-ish：-H 'Authorization: xxx' / Cookie / X-Api-Key / Set-Cookie 一律打码
         s = System.Text.RegularExpressions.Regex.Replace(
             s,
@@ -1931,7 +1937,9 @@ public class TeamActivityController : ControllerBase
             var already = await _db.Requirements
                 .Find(r => r.Id == existingState.RequirementId && !r.IsDeleted)
                 .FirstOrDefaultAsync();
-            if (already != null)
+            // 仅当已存在需求落在「当前选中产品」时才幂等返回；落在其它产品时不得把它的元数据回给只对本产品有权的用户，
+            // 改为在选中产品下新建（同一全局指纹可在不同产品各自成需求，状态指向最近一次）。
+            if (already != null && already.ProductId == productId)
             {
                 return Ok(ApiResponse<object>.Ok(new
                 {
