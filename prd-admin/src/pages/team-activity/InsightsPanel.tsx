@@ -204,6 +204,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
         setData(res.data);
         setError(null);
       } else {
+        // 失败清空旧数据（与并行的 mapData 失败清空对称），避免痛点榜/ribbon/stats 残留上个时间窗、与已清空的热力图打架
+        setData(null);
         setError(res.error?.message ?? '加载失败，请重试');
       }
       setLoading(false);
