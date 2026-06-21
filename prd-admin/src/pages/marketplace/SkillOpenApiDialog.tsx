@@ -30,6 +30,17 @@ import { cn } from '@/lib/cn';
  */
 interface Props {
   onClose: () => void;
+  /**
+   * 预选 scope —— 不同入口（如知识库页面「接入 AI」）传入希望默认勾选的权限范围。
+   * 传入时弹窗直接进入「我的 Key」并展开新建表单，省去走海鲜市场落地页。
+   * 缺省 = 海鲜市场默认行为（落地页 + marketplace.skills:read 预选）。
+   */
+  presetScopes?: string[];
+  /**
+   * 上下文标签 —— 用于改写弹窗标题/副标题（如「文档空间（知识库）」），
+   * 让非海鲜市场入口的措辞贴合当前页面。缺省 = 海鲜市场措辞。
+   */
+  contextLabel?: string;
 }
 
 type TabKey = 'start' | 'keys' | 'guide';
@@ -40,8 +51,10 @@ const TABS: Array<{ key: TabKey; label: string; icon: LucideIcon }> = [
   { key: 'guide', label: '使用指南', icon: Book },
 ];
 
-export function SkillOpenApiDialog({ onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<TabKey>('start');
+export function SkillOpenApiDialog({ onClose, presetScopes, contextLabel }: Props) {
+  /** 带 presetScopes 时（如从知识库进入）直接落到「我的 Key」并开新建表单 */
+  const presetEntry = !!presetScopes && presetScopes.length > 0;
+  const [activeTab, setActiveTab] = useState<TabKey>(presetEntry ? 'keys' : 'start');
   const [keys, setKeys] = useState<AgentApiKeyDto[]>([]);
   const [allowedScopes, setAllowedScopes] = useState<string[]>([
     'marketplace.skills:read',
@@ -49,7 +62,7 @@ export function SkillOpenApiDialog({ onClose }: Props) {
   ]);
   const [loading, setLoading] = useState(true);
   /** 单调递增的"新建信号"：StartTab 点智能体接入时 ++，KeysListTab 监听到就打开创建表单 */
-  const [openCreateSignal, setOpenCreateSignal] = useState(0);
+  const [openCreateSignal, setOpenCreateSignal] = useState(presetEntry ? 1 : 0);
   /** 当前走的是不是智能体接入流程 —— 影响 CreateKeyTab 的 agent CTA 高亮 */
   const [agentMode, setAgentMode] = useState(false);
 
@@ -125,10 +138,12 @@ export function SkillOpenApiDialog({ onClose }: Props) {
             </div>
             <div>
               <h2 className="text-sm font-semibold text-token-primary">
-                接入 AI · 海鲜市场开放接口
+                {contextLabel ? `签发 ${contextLabel} Key` : '接入 AI · 海鲜市场开放接口'}
               </h2>
               <div className="text-[11px] text-token-muted">
-                给外部 AI / Agent 授权一个长效 Key，让它帮你浏览、下载、上传技能
+                {contextLabel
+                  ? `给外部 AI / Agent 授权一个长效 Key，让它以你的身份操作${contextLabel}`
+                  : '给外部 AI / Agent 授权一个长效 Key，让它帮你浏览、下载、上传技能'}
               </div>
             </div>
           </div>
@@ -190,6 +205,7 @@ export function SkillOpenApiDialog({ onClose }: Props) {
               onRefresh={refresh}
               openCreateSignal={openCreateSignal}
               agentMode={agentMode}
+              presetScopes={presetScopes}
             />
           )}
           {activeTab === 'guide' && <GuideTab />}

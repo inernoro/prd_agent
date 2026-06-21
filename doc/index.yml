@@ -95,6 +95,7 @@ docs:
   design.toast: Toast 通知系统实现
   design.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
+  design.cds-build-time: CDS 构建耗时与发布版/热加载机制设计
   design.cds-agent-api: CDS Agent API 契约设计
   design.cds-agent-runtime-architecture: CDS Agent 运行时架构设计
   design.cds-agent-official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
