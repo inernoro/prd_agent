@@ -1068,3 +1068,4 @@
 | 2026-06-10 | 新增 | `design.cds-skill-version-update` | CDS 技能版本与更新架构 |
 | 2026-06-10 | 新增 | `plan.product-agent-version-workflow` | 产品管理智能体版本流程整改计划 |
 | 2026-06-11 | 新增 | `report.version-20260610-1-summary` | version-20260610-1 分支改动说明 |
+| 2026-06-21 | 新增 | `debt.cds-performance` | CDS 性能债务台账（Docker 垃圾堆积致构建越来越慢 + mongo 索引非主因结论 + 逐步解决路线） |

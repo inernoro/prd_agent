@@ -386,3 +386,4 @@ docs:
     title: "version-20260610-1 分支改动说明"
     status: active
   debt.map-mcp-connector: MAP MCP 连接器债务台账
+  debt.cds-performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）

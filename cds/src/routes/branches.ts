@@ -4006,6 +4006,137 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
+  // 判定一个分支是否「已停止」（2026-06-21 Bug B2）。
+  //
+  // 注意：BranchEntry.status 没有字面量 'stopped'——分支停掉后状态回落到
+  // 'idle'，而其下的服务（BranchService.status）会被置为 'stopped'。所以
+  // 「已停止分支」= 非进行中态 + 至少有一个服务处于 stopped + 没有任何服务
+  // 仍在运行/构建/启动/重启。从未部署过、纯空白的 idle 分支（services 为空）
+  // 不算「停止」，避免误删用户刚创建还没跑过的分支。
+  const isStoppedBranch = (b: BranchEntry): boolean => {
+    if (b.status === 'building' || b.status === 'starting'
+      || b.status === 'restarting' || b.status === 'stopping') return false;
+    const services = Object.values(b.services || {});
+    if (services.length === 0) return false;
+    const anyActive = services.some((svc) => (
+      svc.status === 'running' || svc.status === 'building'
+      || svc.status === 'starting' || svc.status === 'restarting'
+    ));
+    if (anyActive) return false;
+    return services.some((svc) => svc.status === 'stopped');
+  };
+
+  // 一键清理所有已停止的分支（2026-06-21 Bug B2）。
+  //
+  // 与 cleanup-damaged-containers 的区别：
+  //   - damaged：只删「非运行态的损坏容器」，保留分支 entry 与 worktree。
+  //   - cleanup-stopped：把「已停止分支」（见 isStoppedBranch）**整条**清掉
+  //     （容器 + worktree + entry），用于「停了的分支一键扫干净」。
+  //
+  // 非 SSE 批处理，返回 JSON 汇总。逐分支用 silent operation lease 串行，
+  // 跳过正在被其他写操作占用的分支。删除后广播 branch.removed，
+  // 让 /branches/stream 订阅者实时移除卡片，无需手动刷新。
+  router.post('/branches/cleanup-stopped', async (req, res) => {
+    const projectFilter = resolveProjectIdParam(req.query.project);
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
+    const actor = resolveActorFromRequest(req);
+    const trigger = triggerFromRequest(req);
+    const branches = Object.values(stateService.getState().branches).filter(
+      (b) => (!projectFilter || (b.projectId || 'default') === projectFilter) && isStoppedBranch(b),
+    );
+
+    const removed: Array<{ branchId: string; branch: string; projectId: string }> = [];
+    const skippedBusy: Array<{ branchId: string; reason: string }> = [];
+
+    for (const branch of branches) {
+      let branchOperationLease: BranchOperationLease | null = null;
+      let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+      try {
+        branchOperationLease = beginSilentBranchOperation(req, branch, {
+          kind: 'cleanup-stopped',
+          source: 'api.cleanup-stopped',
+          reason: '批量清理已停止分支：status=stopped',
+        });
+        if (branchOperationCoordinator && !branchOperationLease) {
+          skippedBusy.push({ branchId: branch.id, reason: '同分支已有写操作正在运行' });
+          continue;
+        }
+
+        // 停掉并删除该分支的所有容器
+        for (const [profileId, svc] of Object.entries(branch.services || {})) {
+          if (!svc.containerName) continue;
+          assertBranchOperationCurrent(branchOperationLease, `cleanup-stopped before ${profileId}`);
+          await containerService.remove(svc.containerName, {
+            projectId: branch.projectId,
+            branchId: branch.id,
+            profileId,
+            requestId,
+            operationId: branchOperationLease?.operationId || null,
+            actor,
+            trigger,
+            operation: 'cleanup-stopped',
+            source: 'api.cleanup-stopped',
+            reason: '批量清理已停止分支：status=stopped',
+          }).catch(() => undefined);
+        }
+
+        // 删除 worktree（git 历史不动）
+        try {
+          const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
+          await worktreeService.remove(repoRoot, branch.worktreePath);
+        } catch { /* best-effort */ }
+
+        try {
+          stateService.appendActivityLog(branch.projectId, {
+            type: 'stop',
+            branchId: branch.id,
+            branchName: branch.branch,
+            actor,
+            note: '批量清理已停止分支',
+          });
+        } catch { /* activity log is best-effort */ }
+
+        assertBranchOperationCurrent(branchOperationLease, `cleanup-stopped before remove ${branch.id}`);
+        stateService.removeLogs(branch.id);
+        stateService.removeBranch(branch.id);
+        removed.push({ branchId: branch.id, branch: branch.branch, projectId: branch.projectId });
+      } catch (err) {
+        branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+        skippedBusy.push({ branchId: branch.id, reason: (err as Error).message });
+      } finally {
+        completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+      }
+    }
+
+    if (removed.length > 0) {
+      stateService.save();
+      for (const item of removed) {
+        branchEvents.emitEvent({
+          type: 'branch.removed',
+          payload: { branchId: item.branchId, projectId: item.projectId, ts: nowIso() },
+        });
+      }
+    }
+
+    serverEventLogStore?.record({
+      category: 'container',
+      severity: removed.length > 0 ? 'warn' : 'info',
+      source: 'bulk-stopped-branch-cleanup',
+      action: 'app.stopped-branches.cleanup',
+      message: `cleaned ${removed.length} stopped branch(es)${projectFilter ? ` for project ${projectFilter}` : ''}`,
+      projectId: projectFilter || null,
+      details: { removed, skippedBusy },
+    });
+
+    res.json({
+      ok: true,
+      removedCount: removed.length,
+      skippedBusyCount: skippedBusy.length,
+      removed,
+      skippedBusy,
+    });
+  });
+
   router.post('/branches/cleanup-orphan-containers', async (req, res) => {
     const projectFilter = resolveProjectIdParam(req.query.project);
     const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
@@ -9731,6 +9862,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logDeploy(id, `[${ev.status}] ${ev.title || ev.step}${ev.log ? ' — ' + ev.log : ''}`);
     }
 
+    // 2026-06-21 Bug A 修复：部署整体 throw（如启动失败）时，catch 块只把
+    // entry.status 写成 'error' 并 save()，**没有**向 branchEvents 发
+    // branch.status 事件。/branches/stream 订阅者（分支卡片）因此收不到状态翻转，
+    // 卡片永远停在"构建中"并继续跑已等待计时，必须手动刷新页面才更新。
+    // 这里在 try 外先捕获进入部署前的状态，供 catch 块发事件用（try 内部的
+    // const __prevStatus 是块级作用域，catch 看不到）。
+    const __deployEntryStatus = entry.status;
+
     try {
       logDeploy(id, '开始部署');
 
@@ -10494,6 +10633,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.appendLog(id, opLog);
       stateService.save();
       logDeploy(id, `部署失败: ${errMsg}`);
+      // 2026-06-21 Bug A 修复：向 /branches/stream 订阅者广播状态翻转到 error，
+      // 让分支卡片立即停止"构建中"转圈并切到失败态，无需手动刷新页面。
+      // 与成功 finalize 路径（branch.status: running/error）同口径。
+      branchEvents.emitEvent({
+        type: 'branch.status',
+        payload: {
+          branchId: id, projectId: entry.projectId,
+          status: entry.status, previousStatus: __deployEntryStatus, ts: nowIso(),
+        },
+      });
       sendSSE(res, 'error', { message: errMsg });
       try {
         // catch 路径同样按本次 startup-plan 过滤 zombie 服务(profiles 在外层 4724

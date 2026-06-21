@@ -1397,6 +1397,7 @@ export function BranchListPage(): JSX.Element {
   const [hostStats, setHostStats] = useState<HostStatsState>({ status: 'loading' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
+  const [cleanupStoppedRunning, setCleanupStoppedRunning] = useState(false);
   const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
   // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
   // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
@@ -2054,6 +2055,26 @@ export function BranchListPage(): JSX.Element {
       && service.status !== 'restarting'
     )).length
   ), 0), [branches]);
+  // 已停止分支数量（一键清理停止分支按钮的可用性与计数）。
+  // 注意：后端 BranchSummary.status 实际不会是 'stopped'——分支停掉后回落
+  // 'idle'，停止信号在服务级（svc.status === 'stopped'）。与后端
+  // isStoppedBranch 同口径：非进行中态 + 至少一个服务 stopped + 无任何活跃服务。
+  // 纯空白未部署的 idle 分支（services 为空）不计入，避免误删。
+  const stoppedBranchCount = useMemo(
+    () => branches.filter((branch) => {
+      if (branch.status === 'building' || branch.status === 'starting'
+        || branch.status === 'restarting' || branch.status === 'stopping') return false;
+      const services = Object.values(branch.services || {});
+      if (services.length === 0) return false;
+      const anyActive = services.some((svc) => (
+        svc.status === 'running' || svc.status === 'building'
+        || svc.status === 'starting' || svc.status === 'restarting'
+      ));
+      if (anyActive) return false;
+      return services.some((svc) => svc.status === 'stopped');
+    }).length,
+    [branches],
+  );
   // Branches displayed in the grid: favorites first, then by recent activity.
   // We no longer expose status filters or compact toggles in the list itself
   // (the search dropdown and per-card status pill cover those needs).
@@ -2651,6 +2672,29 @@ export function BranchListPage(): JSX.Element {
       setCleanupDamagedRunning(false);
     }
   }, [cleanupDamagedRunning, damagedContainerCount, projectId, refresh]);
+
+  // 一键清理所有已停止的分支（容器 + worktree + entry）。
+  const cleanupStoppedBranches = useCallback(async (): Promise<void> => {
+    if (cleanupStoppedRunning) return;
+    setCleanupStoppedRunning(true);
+    try {
+      const result = await apiRequest<{ removedCount?: number; skippedBusyCount?: number }>(
+        `/api/branches/cleanup-stopped?project=${encodeURIComponent(projectId)}`,
+        { method: 'POST' },
+      );
+      const removed = result.removedCount || 0;
+      const skipped = result.skippedBusyCount || 0;
+      setToast(removed > 0
+        ? `已清理 ${removed} 个已停止分支${skipped > 0 ? `，跳过 ${skipped} 个忙碌分支` : ''}`
+        : '当前没有可清理的已停止分支');
+      await refresh(false);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setToast(`清理失败: ${message}`);
+    } finally {
+      setCleanupStoppedRunning(false);
+    }
+  }, [cleanupStoppedRunning, projectId, refresh]);
 
   const runBulkAction = useCallback(async (
     label: string,
@@ -3384,6 +3428,24 @@ export function BranchListPage(): JSX.Element {
                         <Button type="button" variant="outline" size="sm">
                           <Trash2 />
                           清理孤儿
+                        </Button>
+                      )}
+                    />
+                    <ConfirmAction
+                      title="清理所有已停止的分支?"
+                      description={`把当前项目 ${projectId} 下所有处于「已停止」状态的分支整条清掉（容器 + worktree + 分支条目），git 历史不动。正在运行/构建中的分支不受影响。${stoppedBranchCount > 0 ? `共 ${stoppedBranchCount} 个已停止分支。` : '当前没有已停止分支。'}`}
+                      confirmLabel="开始清理"
+                      onConfirm={() => cleanupStoppedBranches()}
+                      trigger={(
+                        <Button
+                          type="button"
+                          variant={stoppedBranchCount > 0 ? 'outline' : 'ghost'}
+                          size="sm"
+                          disabled={cleanupStoppedRunning || stoppedBranchCount === 0}
+                          title={stoppedBranchCount > 0 ? `清理 ${stoppedBranchCount} 个已停止分支（容器 + worktree + 条目）` : '当前没有已停止分支'}
+                        >
+                          {cleanupStoppedRunning ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                          清理停止分支{stoppedBranchCount > 0 ? ` ${stoppedBranchCount}` : ''}
                         </Button>
                       )}
                     />
