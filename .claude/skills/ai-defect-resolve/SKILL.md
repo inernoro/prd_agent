@@ -104,6 +104,7 @@ Content-Type: application/json
 {
   "runId": "可选；为空则创建新 run",
   "triggerType": "schedule",
+  "defectId": "可选；精确领取某个缺陷 ID 或缺陷编号，主要用于演练和回归",
   "projectId": "可选",
   "teamId": "可选",
   "status": "submitted,assigned,processing"
@@ -111,6 +112,8 @@ Content-Type: application/json
 ```
 
 响应中的 `data.run.id` 是本轮运行记录，`data.defect` 是当前唯一要处理的缺陷。当 `data.hasNext == false` 或 `data.defect == null` 时，本轮结束。
+
+日常任务默认不传 `defectId`，让系统按项目、团队和状态自动领取。演练、回归或人工确认后的单点处理必须传 `defectId`，避免误领其它存量缺陷。
 
 ### 3. 发表评论
 

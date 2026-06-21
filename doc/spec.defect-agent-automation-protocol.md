@@ -69,6 +69,7 @@ Content-Type: application/json
 {
   "runId": "可选；为空则创建新 run",
   "triggerType": "schedule",
+  "defectId": "可选；精确领取某个缺陷 ID 或缺陷编号，主要用于演练和回归",
   "projectId": "可选",
   "teamId": "可选",
   "status": "submitted,assigned,processing"
@@ -80,6 +81,7 @@ Content-Type: application/json
 - 没有 `runId` 时创建 `DefectAutomationRun`。
 - 有 `runId` 时复用该 run。
 - 每次只领取一条未在当前 run 中完成或失败的缺陷。
+- 有 `defectId` 时只领取该缺陷；该字段用于精确演练、回归或人工确认后的单点处理，日常任务默认不传。
 - 没有下一条时，将 run 标记为 `completed`。
 
 关键响应：

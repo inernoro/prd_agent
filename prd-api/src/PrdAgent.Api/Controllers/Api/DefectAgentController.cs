@@ -2892,6 +2892,7 @@ public class DefectAgentController : ControllerBase
             run.ProjectId,
             run.TeamId,
             run.StatusFilter,
+            request.DefectId,
             run,
             userId,
             hasManagePermission,
@@ -3206,6 +3207,7 @@ public class DefectAgentController : ControllerBase
             projectId,
             teamId,
             status,
+            null,
             run,
             userId,
             hasManagePermission,
@@ -3671,6 +3673,7 @@ public class DefectAgentController : ControllerBase
         string? projectId,
         string? teamId,
         string? status,
+        string? defectId,
         DefectAutomationRun? run,
         string userId,
         bool hasManagePermission,
@@ -3690,6 +3693,13 @@ public class DefectAgentController : ControllerBase
             filter &= builder.Eq(x => x.ProjectId, projectId.Trim());
         if (!string.IsNullOrWhiteSpace(teamId))
             filter &= builder.Eq(x => x.TeamId, teamId.Trim());
+        if (!string.IsNullOrWhiteSpace(defectId))
+        {
+            var target = defectId.Trim();
+            filter &= builder.Or(
+                builder.Eq(x => x.Id, target),
+                builder.Eq(x => x.DefectNo, target));
+        }
         if (!hasManagePermission && !isAiAccessRequest)
         {
             filter &= builder.Or(
@@ -6237,6 +6247,7 @@ public class EnsureDefectAutomationAuthorizationRequest
 public class StartDefectAutomationWorkflowRequest
 {
     public string? RunId { get; set; }
+    public string? DefectId { get; set; }
     public string? TriggerType { get; set; }
     public string? ProjectId { get; set; }
     public string? TeamId { get; set; }
