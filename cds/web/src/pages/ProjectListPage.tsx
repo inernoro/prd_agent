@@ -15,6 +15,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Gauge,
   FolderGit2,
   Github,
   KeyRound,
@@ -56,6 +57,7 @@ import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateBu
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
+import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 
 const PROJECT_DOCK_BASE_SIZE = 56;
 const PROJECT_DOCK_MAGNIFIED_SIZE = 68;
@@ -438,6 +440,7 @@ export function ProjectListPage(): JSX.Element {
   const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
   const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
   const [skillDownloadOpen, setSkillDownloadOpen] = useState(false);
+  const [monitoringOpen, setMonitoringOpen] = useState(false);
   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
   const [pendingImportOpen, setPendingImportOpen] = useState(false);
   const [pendingImportFocusId, setPendingImportFocusId] = useState<string | null>(null);
@@ -624,6 +627,15 @@ export function ProjectListPage(): JSX.Element {
           right={
             <>
               <PaletteHint />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMonitoringOpen(true)}
+                title="运维监控（性能 / 执行器 / 活动）"
+              >
+                <Gauge />
+                运维监控
+              </Button>
               {pendingImportCount > 0 ? (
                 <Button
                   variant="outline"
@@ -804,6 +816,10 @@ export function ProjectListPage(): JSX.Element {
         <SkillDownloadDialog
           open={skillDownloadOpen}
           onOpenChange={setSkillDownloadOpen}
+        />
+        <MonitoringDialog
+          open={monitoringOpen}
+          onOpenChange={setMonitoringOpen}
         />
         <PendingImportDialog
           open={pendingImportOpen}

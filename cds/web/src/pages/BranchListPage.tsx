@@ -41,6 +41,7 @@ import {
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
+import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
@@ -1403,6 +1404,7 @@ export function BranchListPage(): JSX.Element {
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
+  const [monitoringOpen, setMonitoringOpen] = useState(false);
   const noticeProject = useMemo(() => (
     state.status === 'ok' ? state.project : projectId ? fallbackProjectSummary(projectId) : null
   ), [projectId, state.status, state.status === 'ok' ? state.project.id : null, state.status === 'ok' ? state.project.slug : null, state.status === 'ok' ? state.project.name : null, state.status === 'ok' ? state.project.aliasName : null]);
@@ -3118,6 +3120,15 @@ export function BranchListPage(): JSX.Element {
               <Button
                 variant="ghost"
                 size="sm"
+                onClick={() => setMonitoringOpen(true)}
+                title="运维监控（性能 / 执行器 / 活动）"
+              >
+                <Gauge />
+                运维监控
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setOpsDrawerOpen(true)}
                 title="运维抽屉"
               >
@@ -3322,6 +3333,13 @@ export function BranchListPage(): JSX.Element {
           onToast={setToast}
           onActionComplete={() => void refresh()}
           onRelease={(branchId) => setReleaseBranchId(branchId)}
+        />
+
+        <MonitoringDialog
+          open={monitoringOpen}
+          onOpenChange={setMonitoringOpen}
+          projectId={projectId}
+          projectName={title}
         />
 
         {state.status === 'ok' ? (
@@ -4260,6 +4278,14 @@ function ReleaseBranchDialog({
   const [run, setRun] = useState<ReleaseRunSummary | null>(null);
   const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
   const [starting, setStarting] = useState(false);
+  // 发布过程是分钟级长任务（fast.sh + exec_dep.sh + 健康检查）。每秒滴答一次，
+  // 让运行中的步骤显示"已用时 mm:ss"，用户随时知道在动而非卡死（2 秒原则）。
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!run || isReleaseTerminal(run.status)) return undefined;
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [run?.releaseId, run?.status]);
 
   useEffect(() => {
     if (!branch) return undefined;
@@ -4413,6 +4439,20 @@ function ReleaseBranchDialog({
               </Button>
             </div>
 
+            {preflightState === 'running' ? (
+              <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                正在连接发布服务器并执行发布前检查…首次建立 SSH 连接可能需要若干秒，请稍候。
+              </div>
+            ) : null}
+
+            {starting && !run ? (
+              <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                正在提交发布任务，准备连接服务器…
+              </div>
+            ) : null}
+
             {targets.length === 0 && !loadingTargets ? (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
                 当前项目没有站点发布目标。先到发布中心添加站点发布。
@@ -4469,10 +4509,23 @@ function ReleaseBranchDialog({
 
             {run ? (
               <div className="space-y-3">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="font-mono">{run.releaseId}</span>
-                  <span className="rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-xs">{releaseStatusLabel(run.status)}</span>
+                  <span className="flex items-center gap-2">
+                    {!isReleaseTerminal(run.status) ? (
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        已用时 {formatReleaseElapsed(Math.max(0, nowTick - Date.parse(run.startedAt)))}
+                      </span>
+                    ) : null}
+                    <span className="rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-xs">{releaseStatusLabel(run.status)}</span>
+                  </span>
                 </div>
+                {!isReleaseTerminal(run.status) ? (
+                  <div className="text-xs text-muted-foreground">
+                    当前阶段：{releaseCurrentStepLabel(run, logs, selectedScripts)}。发布为分钟级任务，进度会随服务器日志实时刷新。
+                  </div>
+                ) : null}
                 <ReleaseRunStepList run={run} logs={logs} scripts={selectedScripts} />
                 <pre className="max-h-72 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs leading-5">
                   {logs.map((log) => `[${formatShortTime(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`).join('\n') || '等待发布日志...'}
@@ -4612,6 +4665,21 @@ function releaseStepsForRun(
 
 function releaseScriptPhase(script: string): string {
   return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
+}
+
+/** 当前正在跑（或下一个待跑）的发布步骤标签，供进行中的状态行展示。 */
+function releaseCurrentStepLabel(run: ReleaseRunSummary, logs: ReleaseLogEntry[], scripts: string[]): string {
+  const steps = releaseStepsForRun(run, logs, scripts);
+  const active = steps.find((step) => step.state === 'running') || steps.find((step) => step.state === 'pending');
+  return active?.label || '收尾中';
+}
+
+/** 把毫秒格式化成 mm:ss（发布是分钟级，不需要小时位）。 */
+function formatReleaseElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 function releaseStatusLabel(status: string): string {

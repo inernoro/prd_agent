@@ -396,6 +396,7 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
   // uses this to decide whether to show the "我是主节点" or "我是从节点"
   // tab (or both, for standalone where either could apply).
   router.get('/status', (_req, res) => {
+    registry.refreshEmbeddedMasterLoad(); // 让 embedded 主节点显示真实 CPU/内存/容器数（bug #5）
     const agent = getExecutorAgent();
     const hybrid = agent !== null && config.mode !== 'executor';
     const executors = registry.getAll();

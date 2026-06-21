@@ -639,18 +639,26 @@ async function computeSelfStatusPayload(
   }
 
   const daemonReadyAt = stateService.getState().daemonReadyAt || null;
+  const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
   const lastSelfUpdate = history[0] || null;
   let restartStatus: 'not_required' | 'pending' | 'completed' | 'incomplete' = 'not_required';
   if (activeSelfUpdate) {
     restartStatus = 'pending';
   } else if (lastSelfUpdate?.status === 'success' && lastSelfUpdate.updateMode !== 'web-only') {
-    const readyMs = daemonReadyAt ? Date.parse(daemonReadyAt) : Number.NaN;
     const updateMs = lastSelfUpdate.ts ? Date.parse(lastSelfUpdate.ts) : Number.NaN;
-    restartStatus = Number.isFinite(readyMs) && Number.isFinite(updateMs) && readyMs >= updateMs
-      ? 'completed'
-      : 'incomplete';
+    // 重启"已确认" = 当前正在跑的进程确实是这次更新之后才起来的。两个独立信号，
+    // 任一成立即视为已重启，避免单一信号丢失导致长期误报"重启未确认"：
+    //   1) daemonReadyAt：新进程 server.listen 后由 recordDaemonReady() 盖戳，
+    //      但只在能回填上一条 totalElapsedMs 时才 save()，偶发不落盘 → 读到旧值/空。
+    //   2) pidStartedAt（__CDS_PROCESS_STARTED_AT）：进程模块加载即盖戳（index.ts:45），
+    //      无条件可靠，作为权威兜底信号。进程启动时刻 >= 更新开始时刻即证明已重启。
+    // 二者皆早于/缺失才判 incomplete（即更新成功但进程没换 = 真的没重启）。
+    const readyMs = daemonReadyAt ? Date.parse(daemonReadyAt) : Number.NaN;
+    const pidMs = pidStartedAt ? Date.parse(pidStartedAt) : Number.NaN;
+    const confirmedByDaemon = Number.isFinite(readyMs) && Number.isFinite(updateMs) && readyMs >= updateMs;
+    const confirmedByPid = Number.isFinite(pidMs) && Number.isFinite(updateMs) && pidMs >= updateMs;
+    restartStatus = confirmedByDaemon || confirmedByPid ? 'completed' : 'incomplete';
   }
-  const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
 
   return {
     currentBranch,
