@@ -7,3 +7,4 @@
 | fix | cds | mongo 活动裁剪用 $lt 严格小于，避免同毫秒新记录被连带删除 |
 | fix | cds | pending 发布版重建时 ETA 取目标模式样本桶，等待页/卡片不再误用热加载估算 |
 | fix | cds | 预览等待 ETA 仅扫描本分支所属项目的 profile，避免他项目发布版 profile 串改估算 |
+| security | cds | 验收报告项目级 key 全面收敛：禁访全局/他项目报告、建报告强制归本项目、关联分支限本项目 |

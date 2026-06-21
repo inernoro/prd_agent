@@ -32,17 +32,40 @@
 import { Router, type Request, type Response, json as expressJson, text as expressText, raw as expressRaw } from 'express';
 import type { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
-import { assertProjectAccess } from './projects.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
  * Cookie / bootstrap auth leaves this undefined (human owner — unrestricted),
  * so report access stays per the feature's "CDS 登录即可、无需单独权限" design;
  * only project-scoped keys get narrowed to their own project (PR #865 Bugbot
- * learned rule: project-scoped resource handlers must call assertProjectAccess).
+ * learned rule: project-scoped resource handlers must enforce project scope).
  */
 function projectKeyOf(req: Request): { projectId: string; keyId: string } | undefined {
   return (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } }).cdsProjectKey;
+}
+
+/**
+ * Stricter than the generic assertProjectAccess for acceptance reports: a
+ * project-scoped key may ONLY touch reports whose projectId equals its own.
+ * Global reports (null projectId) are owner / human-session only — a project
+ * key is denied (the generic helper would allow a null target, leaking global
+ * reports; see PR #865 Bugbot「project keys read global reports」). Cookie /
+ * bootstrap auth (no key) is unrestricted.
+ */
+function reportAccessDenied(
+  req: Request,
+  reportProjectId: string | null | undefined,
+): { status: number; body: Record<string, unknown> } | null {
+  const key = projectKeyOf(req);
+  if (!key) return null;
+  if ((reportProjectId ?? null) === key.projectId) return null;
+  return {
+    status: 403,
+    body: {
+      error: 'project_mismatch',
+      message: '这把 key 只能访问其所属项目的验收报告（全局报告仅限登录用户）',
+    },
+  };
 }
 
 export interface ReportsRouterDeps {
@@ -202,12 +225,23 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     // Validate optional associations against known state so dangling ids do
     // not silently attach. Unknown ids are dropped (treated as null) rather
     // than rejected — the report itself is still valuable.
-    const resolvedProjectId =
+    const key = projectKeyOf(req);
+    let resolvedProjectId =
       projectId && stateService.getProject(projectId) ? stateService.getProject(projectId)!.id : null;
-    // 项目级 key 不得把报告挂到别的项目下（cookie/bootstrap 不受限）。
-    const createMismatch = assertProjectAccess({ cdsProjectKey: projectKeyOf(req) }, resolvedProjectId ?? undefined);
-    if (createMismatch) return res.status(createMismatch.status).json(createMismatch.body);
-    const resolvedBranchId = branchId && stateService.getBranch(branchId) ? branchId : null;
+    if (key) {
+      // 项目级 key 一律把报告归到自己的项目：杜绝建出本 key 之后列不出来的全局/孤儿
+      // 报告，也不许挂到别的项目（PR #865 Bugbot「orphan creates」+「read global」）。
+      resolvedProjectId = key.projectId;
+    }
+    // 关联分支必须属于报告所属项目，避免跨项目挂分支（PR #865 Bugbot「branch ignores
+    // scope」）。全局报告(null projectId，仅 owner 可建)可挂任意已存在分支。
+    let resolvedBranchId: string | null = null;
+    if (branchId) {
+      const br = stateService.getBranch(branchId);
+      if (br && (resolvedProjectId === null || (br.projectId ?? 'default') === (resolvedProjectId ?? 'default'))) {
+        resolvedBranchId = branchId;
+      }
+    }
 
     const meta = stateService.createAcceptanceReport({
       title: cleanTitle,
@@ -237,7 +271,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   router.get('/reports/:id', (req: Request, res: Response) => {
     const meta = stateService.getAcceptanceReport(req.params.id);
     if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
-    const mismatch = assertProjectAccess({ cdsProjectKey: projectKeyOf(req) }, meta.projectId ?? undefined);
+    const mismatch = reportAccessDenied(req, meta.projectId);
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
     return res.json({ report: meta });
   });
@@ -247,7 +281,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   router.get('/reports/:id/raw', (req: Request, res: Response) => {
     const meta = stateService.getAcceptanceReport(req.params.id);
     if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
-    const mismatch = assertProjectAccess({ cdsProjectKey: projectKeyOf(req) }, meta.projectId ?? undefined);
+    const mismatch = reportAccessDenied(req, meta.projectId);
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
     const content = stateService.readAcceptanceReportContent(meta.id);
     if (content === undefined) {
@@ -275,7 +309,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   router.patch('/reports/:id', jsonParser, textParser, (req: Request, res: Response) => {
     const existing = stateService.getAcceptanceReport(req.params.id);
     if (!existing) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
-    const mismatch = assertProjectAccess({ cdsProjectKey: projectKeyOf(req) }, existing.projectId ?? undefined);
+    const mismatch = reportAccessDenied(req, existing.projectId);
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
     const body = (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body))
       ? (req.body as Record<string, unknown>)
@@ -296,7 +330,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   router.delete('/reports/:id', (req: Request, res: Response) => {
     const meta = stateService.getAcceptanceReport(req.params.id);
     if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
-    const mismatch = assertProjectAccess({ cdsProjectKey: projectKeyOf(req) }, meta.projectId ?? undefined);
+    const mismatch = reportAccessDenied(req, meta.projectId);
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
     const removed = stateService.deleteAcceptanceReport(req.params.id);
     if (!removed) return res.status(404).json({ error: 'not_found', message: '报告不存在' });

@@ -25,12 +25,17 @@ async function call(
   server: http.Server,
   method: string,
   urlPath: string,
-  opts: { projectKey?: string } = {},
+  opts: { projectKey?: string; body?: unknown } = {},
 ): Promise<Res> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (opts.projectKey) headers['x-test-project-key'] = opts.projectKey;
+    const payload = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
+    if (payload) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = String(Buffer.byteLength(payload));
+    }
     const req = http.request(
       { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
       (res) => {
@@ -44,6 +49,7 @@ async function call(
       },
     );
     req.on('error', reject);
+    if (payload) req.write(payload);
     req.end();
   });
 }
@@ -54,6 +60,7 @@ describe('Acceptance report routes — project-scoped key access', () => {
   let service: StateService;
   let reportA: { id: string };
   let reportB: { id: string };
+  let reportGlobal: { id: string };
 
   beforeEach(async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-reports-access-'));
@@ -66,6 +73,9 @@ describe('Acceptance report routes — project-scoped key access', () => {
     });
     reportB = service.createAcceptanceReport({
       title: 'B report', format: 'md', content: '# b', projectId: 'proj-b', branchId: null, createdBy: 't',
+    });
+    reportGlobal = service.createAcceptanceReport({
+      title: 'Global report', format: 'md', content: '# g', projectId: null, branchId: null, createdBy: 't',
     });
 
     const app = express();
@@ -127,5 +137,43 @@ describe('Acceptance report routes — project-scoped key access', () => {
   it('project-a key cannot read another project report raw content (403)', async () => {
     const res = await call(server, 'GET', `/api/reports/${reportB.id}/raw`, { projectKey: 'proj-a' });
     expect(res.status).toBe(403);
+  });
+
+  it('project key cannot read/delete a global (null-project) report (403)', async () => {
+    const meta = await call(server, 'GET', `/api/reports/${reportGlobal.id}`, { projectKey: 'proj-a' });
+    expect(meta.status).toBe(403);
+    const raw = await call(server, 'GET', `/api/reports/${reportGlobal.id}/raw`, { projectKey: 'proj-a' });
+    expect(raw.status).toBe(403);
+    const del = await call(server, 'DELETE', `/api/reports/${reportGlobal.id}`, { projectKey: 'proj-a' });
+    expect(del.status).toBe(403);
+    expect(service.getAcceptanceReport(reportGlobal.id)).toBeTruthy();
+  });
+
+  it('human auth can read the global report', async () => {
+    const res = await call(server, 'GET', `/api/reports/${reportGlobal.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.report.id).toBe(reportGlobal.id);
+  });
+
+  it('project key create is forced into its own project (no orphan/global), then listable', async () => {
+    const created = await call(server, 'POST', '/api/reports', {
+      projectKey: 'proj-a',
+      body: { title: 'no-project', format: 'md', content: '# x' }, // no projectId given
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.report.projectId).toBe('proj-a');
+    // The same scoped key can now see it in its list.
+    const list = await call(server, 'GET', '/api/reports', { projectKey: 'proj-a' });
+    const ids = (list.body.reports as Array<{ id: string }>).map((r) => r.id);
+    expect(ids).toContain(created.body.report.id);
+  });
+
+  it('project key cannot create a report under another project', async () => {
+    const created = await call(server, 'POST', '/api/reports', {
+      projectKey: 'proj-a',
+      body: { title: 'cross', format: 'md', content: '# x', projectId: 'proj-b' },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.report.projectId).toBe('proj-a'); // forced back to the key's project
   });
 });
