@@ -171,8 +171,36 @@ describe('MongoSplitStateBackingStore', () => {
     await flushed;
 
     expect(handle.branches.docs.has('a')).toBe(false);
-    expect(handle.branches.bulkWrites).toHaveLength(2);
-    expect(handle.branches.bulkWrites[1]).toEqual([{ deleteOne: { filter: { _id: 'a' } } }]);
+    // 写入合并（2026-06-21）：building/running/deleted 三次同步 save 落在同一个
+    // 事件循环 tick，被合并成对最终态 deleted 的唯一一次落盘——中间态 upsert 完全
+    // 跳过。故只剩一次 bulkWrite，且就是那条 delete（比旧版的 2 次更省，delete 更不被拖延）。
+    expect(handle.branches.bulkWrites).toHaveLength(1);
+    expect(handle.branches.bulkWrites[0]).toEqual([{ deleteOne: { filter: { _id: 'a' } } }]);
+  });
+
+  it('coalesces a synchronous burst of saves into a single global write (event-loop relief)', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git', createdAt: 't', updatedAt: 't' }];
+    store.save(state);
+    await store.flush();
+
+    handle.global.replaceWrites = [];
+    // 模拟部署日志 append 风暴 / 调和器遍历：同一个 tick 内连续 50 次 save。
+    // 旧实现每次都同步 structuredClone(整个 state) + 排队落盘；新实现只在 tick 末
+    // 克隆一次、落盘一次。
+    for (let i = 0; i < 50; i++) {
+      const next = structuredClone(state);
+      (next as { activityLogs?: Record<string, unknown> }).activityLogs = { ['prd-agent']: [{ n: i }] };
+      store.save(next);
+    }
+    await store.flush();
+
+    // 50 次同步 save → 全局文档只写一次（合并），不是 50 次。
+    expect(handle.global.replaceWrites).toHaveLength(1);
   });
 
   it('does not leave flush hanging when a write fails before flush is awaited', async () => {

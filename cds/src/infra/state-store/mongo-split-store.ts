@@ -218,6 +218,14 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     resolve: () => void;
     reject: (err: unknown) => void;
   }> = [];
+  // 写入合并（2026-06-21 性能修复）：高频 save() 不再每次都同步
+  // structuredClone(整个 state)。那是 CDS master 事件循环被部署日志/调和器
+  // save 风暴堵死的根因——网页 524、就绪探测超时、容器被误判部署失败而清理，
+  // 都源于此。改为只记最新 live 引用 + 每个事件循环 tick 最多做一次快照克隆 +
+  // 落盘。flush() 会强制立即快照，保证 delete/stop 等终止操作的持久化语义不变。
+  private dirtyState: CdsState | null = null;
+  private dirtyGeneration = 0;
+  private snapshotScheduled = false;
 
   constructor(private readonly handle: ISplitMongoHandle) {}
 
@@ -267,12 +275,33 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   }
 
   save(state: CdsState): void {
-    // 同步刷 cache；异步写入时只保留最新快照。部署日志会高频 save(),
-    // 如果每个快照都排队写 Mongo，后续 delete/stop 这种终止操作的
-    // flush() 会被旧快照拖住，甚至误判持久化超时。
-    this.cache = structuredClone(state);
-    this.pendingSnapshot = this.cache;
-    this.pendingGeneration = ++this.writeGeneration;
+    // load() 立即看到最新（引用，不克隆——克隆推迟到本 tick 末的 takeSnapshot）。
+    this.cache = state;
+    // 记最新 live 引用 + 逻辑代次；本 tick 内多次 save 只在末尾克隆一次。
+    this.dirtyState = state;
+    this.dirtyGeneration = ++this.writeGeneration;
+    if (!this.snapshotScheduled) {
+      this.snapshotScheduled = true;
+      // setImmediate：把一连串同步 save（部署日志 append 风暴 / 调和器遍历分支）
+      // 合并成本 tick 末的一次克隆 + 落盘，事件循环不再被反复同步阻塞。
+      setImmediate(() => this.takeSnapshot());
+    }
+  }
+
+  /**
+   * 把当前 dirty 的 live state 克隆成不可变快照并入写队列（每 tick 至多一次）。
+   * 异步写盘期间 live state 仍会被业务代码 mutate，故写入必须基于此刻的不可变快照。
+   */
+  private takeSnapshot(): void {
+    this.snapshotScheduled = false;
+    const live = this.dirtyState;
+    if (!live) return;
+    const generation = this.dirtyGeneration;
+    this.dirtyState = null;
+    const snapshot = structuredClone(live);
+    this.cache = snapshot;
+    this.pendingSnapshot = snapshot;
+    this.pendingGeneration = generation;
     this.drainWrites();
   }
 
@@ -390,6 +419,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   }
 
   async forceFullSave(state: CdsState): Promise<void> {
+    // 全量写覆盖任何挂起的增量快照，避免 takeSnapshot 再做一次冗余落盘。
+    this.dirtyState = null;
     this.cache = structuredClone(state);
 
     const snapshot = this.cache;
@@ -440,6 +471,9 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   }
 
   async flush(): Promise<void> {
+    // 有未落盘的 dirty live state 时，先强制做一次快照入队——否则合并写推迟了
+    // structuredClone，flush 等的 generation 永远进不了写管线、会一直挂起。
+    if (this.dirtyState) this.takeSnapshot();
     const targetGeneration = this.writeGeneration;
     if (targetGeneration <= this.persistedGeneration) return;
     if (targetGeneration <= this.failedGeneration && this.lastWriteError) {
