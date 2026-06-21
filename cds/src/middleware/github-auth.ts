@@ -69,8 +69,18 @@ function wantsHtml(req: Request): boolean {
  */
 export function createGithubAuthMiddleware(deps: {
   authService: AuthService;
+  /**
+   * Optional machine-credential resolver. github mode previously only accepted
+   * the `cds_gh_session` cookie, so `cdsp_` project keys / `cdsg_` global keys /
+   * static AI key all 401'd before reaching key-aware routes (e.g. /api/reports).
+   * Wiring this lets agent keys coexist with human sessions — equal standing,
+   * both work (PR #865 Codex P2「accept project keys before the GitHub gate」).
+   * Returns a truthy session when a valid key is present and (for cdsp_) stamps
+   * `req.cdsProjectKey` as a side effect; null when no/invalid key.
+   */
+  resolveAgentKey?: (req: Request) => unknown;
 }) {
-  const { authService } = deps;
+  const { authService, resolveAgentKey } = deps;
 
   return async function githubAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Always let public paths through — otherwise the login page can't
@@ -84,6 +94,15 @@ export function createGithubAuthMiddleware(deps: {
     const result = await authService.validateSession(token ?? null);
 
     if (!result) {
+      // No valid human session — fall back to machine credentials (project /
+      // global / static AI keys), exactly like the basic-auth gate. Cookie auth
+      // takes precedence; keys only run when there is no session.
+      const agentSession = resolveAgentKey?.(req);
+      if (agentSession) {
+        (req as unknown as { _aiSession?: unknown })._aiSession = agentSession;
+        next();
+        return;
+      }
       if (wantsHtml(req)) {
         const redirect = encodeURIComponent(req.originalUrl || req.url || '/project-list');
         res.redirect(302, `/login?redirect=${redirect}`);

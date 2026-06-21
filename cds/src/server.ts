@@ -1713,7 +1713,13 @@ export function createServer(deps: ServerDeps): express.Express {
     });
     app.use('/api/workspaces', createWorkspacesRouter({ workspaceService }));
 
-    app.use(createGithubAuthMiddleware({ authService }));
+    // resolveAgentKey 让 cdsp_/cdsg_/静态 AI key 在 github 模式下与人类会话同等
+    // 放行（cookie 优先，无会话才认 key），并为 cdsp_ 戳 req.cdsProjectKey，使
+    // /api/reports 等按项目作用域生效（PR #865 Codex P2，用户确认"都兼得"）。
+    app.use(createGithubAuthMiddleware({
+      authService,
+      resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+    }));
 
     // Local username + password routes. Public endpoints (login / bootstrap)
     // are whitelisted in github-auth.ts PUBLIC_PATHS so they pass the gate;

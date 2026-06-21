@@ -142,24 +142,33 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       res.status(400).json({ error: '请输入用户名和密码' });
       return;
     }
-    const user = await authService.verifyLocalLogin(String(username), String(password));
-    if (!user) {
-      res.status(401).json({ error: '用户名或密码错误' });
-      return;
+    try {
+      const user = await authService.verifyLocalLogin(String(username), String(password));
+      if (!user) {
+        res.status(401).json({ error: '用户名或密码错误' });
+        return;
+      }
+      const session = await authService.createSessionForUser(user.id, {
+        userAgent: (req.headers['user-agent'] as string) || null,
+        ipAddress: clientIp(req),
+      });
+      await authService.recordActivity({
+        userId: user.id,
+        userLogin: user.username || user.githubLogin,
+        action: 'login',
+        summary: '本地账号登录',
+        ip: clientIp(req),
+      });
+      res.setHeader('Set-Cookie', buildSessionCookie(session.token, session.expiresAt, cookieSecure));
+      res.json({ user: toPublicUser(user) });
+    } catch (err) {
+      // 存储后端在 verifyLocalLogin / 建会话 / 记活动时拒绝时，async Express 4
+      // 处理器若不兜底会变成未处理 rejection，请求挂起甚至拖垮进程（修复 PR #865
+      // Codex P2「catch local-login store failures」）。统一兜底 500。
+      // eslint-disable-next-line no-console
+      console.error('[auth-local] login failed:', err);
+      res.status(500).json({ error: '登录失败' });
     }
-    const session = await authService.createSessionForUser(user.id, {
-      userAgent: (req.headers['user-agent'] as string) || null,
-      ipAddress: clientIp(req),
-    });
-    await authService.recordActivity({
-      userId: user.id,
-      userLogin: user.username || user.githubLogin,
-      action: 'login',
-      summary: '本地账号登录',
-      ip: clientIp(req),
-    });
-    res.setHeader('Set-Cookie', buildSessionCookie(session.token, session.expiresAt, cookieSecure));
-    res.json({ user: toPublicUser(user) });
   });
 
   // ── Change own password (authed) ──
