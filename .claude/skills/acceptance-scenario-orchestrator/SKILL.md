@@ -46,6 +46,13 @@ For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `ac
    - `证据要求`: page screenshot first, then API response, log, database state, or file evidence as corroboration.
    - `用户心智`: what a user or reviewer should understand from the page before seeing internal evidence.
 
+   The brief must be verbose enough to execute safely:
+   - Announce the expected result before testing. A step that says only "open page and observe" is not executable acceptance.
+   - Write the breadcrumb as a human path, for example `主页 -> 导航 -> 百宝箱 -> 视觉分镜台`, not only a URL.
+   - Include the evidence minimum for the step: entry proof, action proof, result proof, API/log/state proof, or negative proof.
+   - If one screenshot is expected to cover multiple assertions, list every covered assertion and why the screenshot has fusion value.
+   - If a changed path cannot be safely executed, specify the exact reason, the fallback evidence, and the forced verdict downgrade.
+
 4. Run `create-visual-test-to-kb` with the brief.
    - The downstream skill performs browser取证, screenshot marking, report writing, MAP归档, and share-link verification.
    - If execution discovers new scope drift, update the brief rather than silently changing the report conclusion.
@@ -67,6 +74,8 @@ For daily, PR, commit-range, release, or repeatedly disputed acceptance, run `ac
    - Include `标记法则与验收标准`.
    - Include `截图回读检查`.
    - Ensure the速览卡 verdict matches the mapped results and the worst meaningful failed/conditional item.
+   - Require content fullness. Daily/yesterday reports must contain enough narrative and table rows to explain the day, the covered modules, the uncovered modules, the evidence strength, and the downgrade reasons. A report that only has a few screenshots plus a short conclusion is not a valid daily acceptance report.
+   - Require anti-omission wording. Each high-risk or runtime assertion must end as `pass`, `conditional`, `fail`, `internal-only`, `non-runtime`, or `uncovered`; no assertion can be left implicit.
 
 ## Scenario Selection
 
@@ -125,6 +134,8 @@ If multiple scenarios match, choose the narrowest scenario as primary and list t
 - Do not mark a high-risk module as deeply accepted without an action/result pair or a negative-path/API proof. High-risk modules include auth, async workers, uploads/compression, external downloads, deployment, state transitions, and data restore.
 - Do not publish a MAP report whose share link has not been opened and verified.
 - Do not include an in-body table of contents for daily acceptance reports.
+- Do not accept thin daily reports. If the report cannot teach a reviewer what changed, where it was tested, why the evidence is relevant, what was not covered, and why the verdict is downgraded, send it back for expansion before archiving.
+- Do not use filler as fullness. More screenshots or repeated prose do not count unless they add source scope, expected result, actual result, evidence linkage, or risk explanation.
 
 ## References
 

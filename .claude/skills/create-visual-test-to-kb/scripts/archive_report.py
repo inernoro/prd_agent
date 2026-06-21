@@ -318,6 +318,7 @@ TIER_MIN_SHOTS = {"L0": 1, "L1": 3, "L2": 5}
 DEEP_DAILY_MIN_SHOTS = 12
 JUNK_TARGETS = {"test", "测试", "xxx", "demo", "tmp", "临时", "aaa", "todo"}
 PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\}|IMG:)")
+THIN_CELL_PAT = re.compile(r"^(同上|见上文|参见上文|略|省略|按常规|常规|待定|TBD|todo)$", re.I)
 
 
 def _target_declares_daily_scope(target):
@@ -429,6 +430,25 @@ def _declares_deep_daily_acceptance(target, body):
     return False
 
 
+def _thin_table_cells(body, section_names):
+    """Find table cells that hide missing evidence with vague filler words."""
+    hits = []
+    active = False
+    for line in (body or "").splitlines():
+        ls = line.strip()
+        if ls.startswith("#"):
+            active = any(name in ls for name in section_names)
+            continue
+        if not active or not ls.startswith("|"):
+            continue
+        cells = [c.strip().strip("。；;,.，") for c in ls.strip("|").split("|")]
+        for cell in cells:
+            if THIN_CELL_PAT.fullmatch(cell):
+                hits.append(ls[:120])
+                break
+    return hits
+
+
 def validate_inputs(a, body, manifest, cfg=None):
     """返回拒收原因列表（空 = 通过准入）。结构层校验，语义层(Verdict 一致性)由人/工具把关。"""
     errs = []
@@ -516,6 +536,18 @@ def validate_inputs(a, body, manifest, cfg=None):
             errs.append("[结构] 每日/昨日报告缺实际证据数：无法判断报告是否按预算执行")
         if re.search(r"(深度验收|深度复验|深入功能验收)", body) and not re.search(r"(负面|边界|失败路径|negative|boundary)", body, re.I):
             errs.append("[深度门禁] 深度每日验收缺负面/边界路径说明：不能只用 happy path 声称深度通过")
+        thin_hits = _thin_table_cells(body, (
+            "PR/commit 到结果映射",
+            "改动断言到证据表",
+            "改动断言表",
+            "页面优先证据分层",
+            "覆盖矩阵",
+            "覆盖缺口",
+            "缺陷清单",
+            "截图回读检查",
+        ))
+        if thin_hits:
+            errs.append("[内容充裕] 每日/昨日报告关键表格含空泛占位单元（同上/见上文/略/按常规/TBD 等），会遮盖遗漏。示例：" + " | ".join(thin_hits[:3]))
     if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
         errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):

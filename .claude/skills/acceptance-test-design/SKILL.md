@@ -21,6 +21,20 @@ The working chain is:
 
 If this chain is weak, stop and produce a design-risk report. Do not compensate by taking more screenshots.
 
+## Content Completeness Rule
+
+Daily acceptance fails when the design brief is thin. The brief must be deliberately full enough that a later executor can test without guessing and a reviewer can see what was excluded.
+
+For daily/yesterday, PR, commit-range, or disputed acceptance:
+
+- Do not write only a summary paragraph. Produce tables with one row per behavior assertion or fused assertion group.
+- Each assertion row must answer: source PR/commit, changed files, claimed behavior, who can notice it, where it appears, how to trigger it, expected result, strongest proof, failure condition, and coverage decision.
+- Every runtime/high-risk assertion is either covered by a fusion scenario, explicitly delegated to a later deep test, or marked uncovered. It must not disappear because it is inconvenient.
+- The design brief must include both breadth and depth: module inventory, high-risk inventory, user-visible surfaces, internal-only surfaces, negative/boundary needs, and untestable constraints.
+- Avoid empty shorthand such as `见上文`, `同上`, `略`, `待补`, or `按常规`. If a cell cannot be filled, write the specific missing input and the impact on verdict.
+- For a large day, group related commits, but keep the commit list visible inside the group. Grouping is allowed; omission is not.
+- The handoff must state whether the expected report can only be `广度冒烟`, `有条件通过`, or `不通过`. Do not let downstream execution infer this silently.
+
 ## Workflow
 
 1. Freeze the target.
@@ -60,6 +74,7 @@ If this chain is weak, stop and produce a design-risk report. Do not compensate 
      - `证明力矩阵`
      - `覆盖缺口与不可测项`
      - `交给视觉验收的执行清单`
+   - Fill the brief with enough detail to prevent omission. A daily brief must be able to explain what happened yesterday, why each high-risk module was or was not tested, and what evidence would change the verdict.
 
 7. Hand off to visual execution.
    - Pass the design brief into `acceptance-scenario-orchestrator`.
