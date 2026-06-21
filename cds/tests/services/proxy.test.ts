@@ -300,6 +300,31 @@ describe('ProxyService', () => {
       expect(payload.timing!.elapsedMs).toBeGreaterThanOrEqual(0);
     });
 
+    it('prefers lastDeployStartedAt over stale logs even when branch stays running (single-service redeploy)', () => {
+      // 回归 PR #865 Bugbot「单服务部署 ETA 偏斜」：单服务重部署只把 svc.status 置
+      // building、分支 status 仍是 running（interim 检测漏接）。stamped 不旧于最新
+      // op-log 时必须优先它，否则一条一天前的完成日志会把已等待算成一天。
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('one-svc', 'running', {
+        admin: { profileId: 'admin', status: 'building' },
+      }, 'feature/one-svc');
+      const branch = stateService.getBranch('one-svc')!;
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      stateService.appendLog('one-svc', {
+        type: 'build', startedAt: oneDayAgo, finishedAt: oneDayAgo, status: 'completed', events: [],
+      });
+      branch.lastDeployStartedAt = new Date(Date.now() - 15_000).toISOString();
+      stateService.save();
+
+      const req = makeReq({ host: 'one-svc.preview.test', accept: 'application/json' }, '/_cds/waiting-status?profile=admin');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      const payload = JSON.parse(written.body) as { timing: { elapsedMs: number } | null };
+      expect(payload.timing).not.toBeNull();
+      expect(payload.timing!.elapsedMs).toBeLessThan(5 * 60_000);
+    });
+
     it('should not return waiting-page HTML for module assets while branch is starting', () => {
       addBranch('my-branch', 'starting', {
         admin: { profileId: 'admin', status: 'starting' },

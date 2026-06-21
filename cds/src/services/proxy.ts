@@ -823,12 +823,13 @@ export class ProxyService {
       const ms = Date.parse(s);
       return Number.isFinite(ms) ? ms : null;
     };
-    // 0) 在途构建：分支上钉的本轮起点最可靠（op-log 此刻还没落库）
+    // 分支上钉的本轮 deploy 起点。每个部署起点（多服务/单服务/远端执行器）都会
+    // 在 status 切到 building 时刷新它，所以它永远等于"最近一次部署的开始时刻"。
+    const stamped = parse(branch.lastDeployStartedAt);
+    // 0) 在途构建：op-log 此刻还没落库，stamped 是唯一可靠起点。
     const interim = branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting';
-    if (interim) {
-      const stamped = parse(branch.lastDeployStartedAt);
-      if (stamped != null) return stamped;
-    }
+    if (interim && stamped != null) return stamped;
+
     let logs: import('../types.js').OperationLog[] = [];
     try {
       logs = this.stateService.getLogs?.(branch.id) || [];
@@ -848,10 +849,15 @@ export class ProxyService {
         if (!running || startedMs > (parse(running.startedAt) ?? -Infinity)) running = log;
       }
     }
-    const picked = running || newest;
-    if (picked) return parse(picked.startedAt);
-    // 3) 兜底：分支上钉的本轮起点（非在途态也兜一手），再不行用创建时间
-    return parse(branch.lastDeployStartedAt) ?? parse(branch.createdAt);
+    const pickedMs = parse((running || newest)?.startedAt);
+    // 2) stamped 不旧于最新 op-log 时优先它 —— 覆盖单服务重部署：该路径只把
+    //    svc.status 置 building、分支 status 未必翻 building（interim 检测漏接），
+    //    但 lastDeployStartedAt 已刷新，且必然 >= 上一轮已完成 op-log 的 startedAt，
+    //    故能盖过陈旧日志，不再误算几小时（修复 PR #865 Bugbot「单服务部署 ETA 偏斜」）。
+    if (stamped != null && (pickedMs == null || stamped >= pickedMs)) return stamped;
+    if (pickedMs != null) return pickedMs;
+    // 3) 最终兜底：分支创建时间（对 re-deploy 偏旧，仅在无任何来源时用）
+    return stamped ?? parse(branch.createdAt);
   }
 
   /**

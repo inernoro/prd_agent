@@ -10582,6 +10582,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.errorMessage = undefined;
       const existingSvc = entry.services[profile.id];
       if (existingSvc?.errorMessage) existingSvc.errorMessage = undefined;
+      // 本轮（单服务）构建起点锚点 —— 与多服务/远端执行器路径一致，供预览等待页
+      // ETA 计"已等待"，避免回退到上一轮历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
+      entry.lastDeployStartedAt = new Date().toISOString();
       stateService.save();
 
       // Pull latest code
@@ -15693,6 +15696,8 @@ cdscli project list --human
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 
         entry.status = 'building';
+        // 本轮（首次 clone 后）构建起点锚点，供预览等待页 ETA（见 BranchEntry.lastDeployStartedAt）。
+        entry.lastDeployStartedAt = new Date().toISOString();
         stateService.save();
 
         // Pre-allocate ports
