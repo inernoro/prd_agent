@@ -16,6 +16,7 @@ const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').t
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
+const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
 
 /**
  * 路由切换时 Suspense fallback。用品牌 logo + 加载文案,跟 CDS 视觉调性一致。
@@ -229,6 +230,7 @@ function shouldAutoReloadAfterChunkFailure(): boolean {
  *   /branch-panel/:branchId Branch detail + logs + single-service actions
  *   /branch-topology        Project service topology
  *   /release-center         Release targets, runs, logs and rollback
+ *   /reports                CDS self-hosted acceptance reports (HTML / Markdown)
  *   /settings/:projectId    Project settings
  */
 export function App(): JSX.Element {
@@ -249,6 +251,7 @@ export function App(): JSX.Element {
             <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
             <Route path="/branch-topology" element={<BranchTopologyPage />} />
             <Route path="/release-center" element={<ReleaseCenterPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
             <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
             <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />
             <Route path="*" element={<Navigate to="/project-list" replace />} />

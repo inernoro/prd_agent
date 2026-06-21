@@ -34,6 +34,7 @@ import {
   BarChart3,
   Send,
   Network,
+  KeyRound,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -44,6 +45,7 @@ import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
+import { SkillOpenApiDialog } from '@/pages/marketplace/SkillOpenApiDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
@@ -1648,6 +1650,8 @@ export function DocumentStorePage() {
   const [teamScope, setTeamScope] = useState<TeamScope>(() => useTeamStore.getState().getScope('document-store'));
   const [showCreate, setShowCreate] = useState(false);
   const [showSendToPeer, setShowSendToPeer] = useState(false);
+  /** 「接入 AI」：当场签发一个 document-store:write 长效 Key（谁需要谁签发） */
+  const [showOpenApi, setShowOpenApi] = useState(false);
   const [editTarget, setEditTarget] = useState<{ id: string; name: string; tags: string[] } | null>(null);
   const [shareTeamTarget, setShareTeamTarget] = useState<{ id: string; name: string; teamIds: string[] } | null>(null);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
@@ -2195,6 +2199,16 @@ export function DocumentStorePage() {
               <Send size={13} /> 发送到
             </Button>
           )}
+          {tab === 'mine' && (
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowOpenApi(true)}
+              title="当场签发一个长效 API Key（已预选「写入文档空间」权限），让外部 AI / Agent 以你的身份操作知识库"
+            >
+              <KeyRound size={13} /> 接入 AI
+            </Button>
+          )}
           <Button
             variant="primary"
             size="xs"
@@ -2550,6 +2564,14 @@ export function DocumentStorePage() {
           resourceType="document-store"
           onClose={() => setShowSendToPeer(false)}
           onDone={() => { if (tab === 'mine') loadStores('mine', null); }}
+        />
+      )}
+
+      {showOpenApi && (
+        <SkillOpenApiDialog
+          presetScopes={['document-store:write']}
+          contextLabel="文档空间（知识库）"
+          onClose={() => setShowOpenApi(false)}
         />
       )}
 

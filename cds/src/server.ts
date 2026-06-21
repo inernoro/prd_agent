@@ -17,6 +17,7 @@ import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
+import { createReportsRouter } from './routes/reports.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
@@ -34,6 +35,7 @@ import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { createAuthRouter } from './routes/auth.js';
+import { createAuthLocalRouter } from './routes/auth-local.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
 import type { AuthStore } from './infra/auth-store/memory-store.js';
@@ -692,6 +694,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /import-config': '导入配置',
     'POST /build-profiles/bulk-set-modes': '批量设置部署命令',
     'GET /export-config': '导出配置',
+    'GET /reports': '列出验收报告',
+    'POST /reports': '创建验收报告',
     'GET /cache/status': '查看缓存状态',
     'POST /cache/repair': '修复缓存挂载',
     'GET /cache/export': '导出缓存包',
@@ -748,6 +752,13 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /auth/github/callback': 'GitHub 登录回调',
     'POST /auth/logout': '退出登录',
     'GET /auth/status': '获取认证状态',
+    'POST /auth/login': '本地账号登录',
+    'GET /auth/bootstrap-status': '查询首启引导状态',
+    'POST /auth/bootstrap': '创建首个本地账号',
+    'POST /auth/change-password': '修改密码',
+    'GET /auth/users': '列出用户',
+    'POST /auth/users': '创建本地账号',
+    'GET /auth/activity': '查看用户操作痕迹',
     // 用户 / 系统基础信息
     'GET /me': '获取当前用户',
     'GET /status': '获取系统状态',
@@ -835,9 +846,14 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^PATCH \/auth\/users\/(.+)$/, '更新用户'],
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
+    [/^GET \/reports\/(.+)\/raw$/, '查看验收报告内容'],
+    [/^GET \/reports\/(.+)$/, '查看验收报告'],
+    [/^PATCH \/reports\/(.+)$/, '更新验收报告'],
+    [/^DELETE \/reports\/(.+)$/, '删除验收报告'],
     [/^GET \/config-snapshots\/(.+)$/, '查看配置快照详情'],
     [/^POST \/config-snapshots\/(.+)\/rollback$/, '回滚到配置快照'],
     [/^DELETE \/config-snapshots\/(.+)$/, '删除配置快照'],
@@ -1185,11 +1201,20 @@ export function createServer(deps: ServerDeps): express.Express {
   // We stash the bytes on req.rawBody so the GitHub webhook route can
   // HMAC-verify the exact payload GitHub signed (re-serialized JSON
   // would produce a different hash and fail signature checks).
-  app.use(express.json({
+  // 全局 JSON body 解析器（默认上限 100kb）。/api/reports 例外：验收报告正文
+  // 可达数 MB（HTML/Markdown 粘贴），其路由自带 12mb 的 json/text/multipart 解析器，
+  // 故这里跳过 /api/reports，避免大报告在全局 100kb 解析器处被 413 拦掉（修复 PR #865
+  // codex P2「大粘贴报告绕不过全局 JSON 解析器」）。rawBody 仅签名校验类路由需要，
+  // /api/reports 不需要。
+  const globalJsonParser = express.json({
     verify: (req, _res, buf) => {
       (req as { rawBody?: Buffer }).rawBody = buf;
     },
-  }));
+  });
+  app.use((req, res, next) => {
+    if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    return globalJsonParser(req, res, next);
+  });
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -1688,7 +1713,28 @@ export function createServer(deps: ServerDeps): express.Express {
     });
     app.use('/api/workspaces', createWorkspacesRouter({ workspaceService }));
 
-    app.use(createGithubAuthMiddleware({ authService }));
+    // resolveAgentKey 让 cdsp_/cdsg_/静态 AI key 在 github 模式下与人类会话同等
+    // 放行（cookie 优先，无会话才认 key），并为 cdsp_ 戳 req.cdsProjectKey，使
+    // /api/reports 等按项目作用域生效（PR #865 Codex P2，用户确认"都兼得"）。
+    app.use(createGithubAuthMiddleware({
+      authService,
+      resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+    }));
+
+    // Local username + password routes. Public endpoints (login / bootstrap)
+    // are whitelisted in github-auth.ts PUBLIC_PATHS so they pass the gate;
+    // authed endpoints (change-password / users / activity) read req.cdsUser
+    // attached by the gate above — hence mounted AFTER the middleware.
+    // 仅在持久化(mongo)后端开放首启 bootstrap：易失(memory)后端重启即清空，公开
+    // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
+    // （PR #865 Codex P1）。
+    const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
+    app.use('/api', createAuthLocalRouter({ authService, cookieSecure, bootstrapAllowed }));
+
+    // Expose the authService so downstream routers can record user activity
+    // at high-value touchpoints (deploy / stop / publish / report) when a
+    // session user is in scope. Optional — readers must null-check.
+    app.locals.cdsAuthService = authService;
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -1714,6 +1760,10 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use((req, res, next) => {
       if (req.path === '/') return next();
       if (req.path === '/login' || req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
+      // basic 模式下本地账号路由(github 模式才挂载)未注册：放行让其落到 404，
+      // 登录页据 404 回退到 /api/login，保住单用户 basic 部署仍可登录(修复 PR #865
+      // codex P1「basic-auth 登录回退被 401 截断」)。
+      if (req.path === '/api/auth/login' || req.path === '/api/auth/bootstrap' || req.path === '/api/auth/bootstrap-status') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
       // 被动授权:免密发起/轮询授权申请(github 模式同样放行,否则 agent 401)。
       if (isPublicAccessRequestRoute(req.method, req.path)) return next();
@@ -3122,6 +3172,9 @@ export function createServer(deps: ServerDeps): express.Express {
   // Cache diagnostics / repair / cross-server migration.
   // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).
   app.use('/api', createCacheRouter({ stateService: deps.stateService, shell: deps.shell }));
+  // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，
+  // 所以 CDS 登录态即可访问，无需额外权限配置。详见 routes/reports.ts。
+  app.use('/api', createReportsRouter({ stateService: deps.stateService }));
   // ConfigSnapshot (导入/破坏性操作前自动备份) + DestructiveOperationLog (紧急撤销).
   // 见 routes/snapshots.ts 头部注释。
   app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));
