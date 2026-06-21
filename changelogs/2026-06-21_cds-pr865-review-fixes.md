@@ -14,3 +14,5 @@
 | fix | cds | 本地账号创建捕获唯一索引冲突(E11000)，并补登 username 唯一稀疏索引文档 |
 | feat | cds | github 模式网关同等放行 cdsp_/cdsg_/静态 AI key（与人类会话并存），项目报告作用域生效 |
 | fix | cds | 本地登录处理器加 try/catch 兜底，存储后端异常返回 500 而非挂起 |
+| fix | cds | 预览等待页 ETA 在途重建时以 lastDeployStartedAt 为锚点，不再回退到上一轮历史日志误算几小时 |
+| fix | prd-admin | 知识库「接入 AI」弹窗在 allowedScopes 异步到达后重新播种预选 scope，一键签发不再因预选落空失败 |

@@ -2450,6 +2450,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // next retry will still target this executor (sticky).
     entry.executorId = executor.id;
     entry.status = 'building';
+    // 本轮构建起点锚点 —— 远端执行器路径同样要钉，否则预览等待页 ETA 会回退到
+    // 历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
+    entry.lastDeployStartedAt = new Date().toISOString();
     stateService.save();
 
     // Tell the client we're proxying — gives the transit page a nice hint
@@ -9730,6 +9733,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const __prevStatus = entry.status;
       entry.status = 'building';
       entry.lastAccessedAt = new Date().toISOString();
+      // 本轮构建起点锚点 —— 预览等待页 ETA 以此计"已等待"，避免回退到上一轮
+      // 已完成的历史 op-log 误算几小时（见 BranchEntry.lastDeployStartedAt）。
+      entry.lastDeployStartedAt = new Date().toISOString();
       stateService.save();
       // Live UI: surface the "building" transition to subscribed dashboards
       // so the branch card can flip to a spinner immediately on deploy kick-

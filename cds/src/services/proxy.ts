@@ -808,23 +808,33 @@ export class ProxyService {
   /**
    * 推断"本次 deploy/build 真正开始的时间"。
    *
-   * 首选：当前正在跑（status==='running'）的 build/run/auto-build op-log 的 startedAt
-   *      —— 这是"这一轮构建从哪一刻开始"的最准确戳。
+   * 首选：分支上钉的 lastDeployStartedAt —— 在 status 切到 building 的那一刻打戳，
+   *      是在途构建唯一可靠的起点。在途构建的 op-log 直到 finalize 才落库，期间
+   *      getLogs() 只剩上一轮已完成的部署，若以历史 op-log 兜底会算成几小时/几天
+   *      误判 overdue（修复 PR #865 Codex P2）。仅当分支处于在途态（building/
+   *      starting/restarting）才优先它，避免 running 后还指向上一次构建起点。
+   * 其次：当前正在跑（status==='running'）的 build/run/auto-build op-log 的 startedAt。
    * 退而求其次：最新一条 op-log 的 startedAt（可能刚结束但页面还没切走）。
-   * 最终兜底：branch.createdAt（对 re-deploy 已过期，故仅在无 op-log 时用）。
+   * 最终兜底：branch.createdAt（对 re-deploy 已过期，故仅在无任何来源时用）。
    */
   private resolveDeployStartedAtMs(branch: BranchEntry): number | null {
+    const parse = (s?: string): number | null => {
+      if (!s) return null;
+      const ms = Date.parse(s);
+      return Number.isFinite(ms) ? ms : null;
+    };
+    // 0) 在途构建：分支上钉的本轮起点最可靠（op-log 此刻还没落库）
+    const interim = branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting';
+    if (interim) {
+      const stamped = parse(branch.lastDeployStartedAt);
+      if (stamped != null) return stamped;
+    }
     let logs: import('../types.js').OperationLog[] = [];
     try {
       logs = this.stateService.getLogs?.(branch.id) || [];
     } catch {
       logs = [];
     }
-    const parse = (s?: string): number | null => {
-      if (!s) return null;
-      const ms = Date.parse(s);
-      return Number.isFinite(ms) ? ms : null;
-    };
     const deployTypes = new Set(['build', 'run', 'auto-build']);
     // 1) 最新的"正在跑"的部署 op-log
     let running: import('../types.js').OperationLog | null = null;
@@ -840,8 +850,8 @@ export class ProxyService {
     }
     const picked = running || newest;
     if (picked) return parse(picked.startedAt);
-    // 2) 兜底：分支创建时间（re-deploy 时偏旧，但好过没有）
-    return parse(branch.createdAt);
+    // 3) 兜底：分支上钉的本轮起点（非在途态也兜一手），再不行用创建时间
+    return parse(branch.lastDeployStartedAt) ?? parse(branch.createdAt);
   }
 
   /**

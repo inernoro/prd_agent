@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bot,
@@ -103,13 +103,24 @@ export function CreateKeyTab({
   presetScopes,
 }: Props) {
   const [name, setName] = useState(() => generateDefaultKeyName());
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(() => {
-    // 预选项与平台白名单取交集，避免勾选一个后端未开放的 scope。
-    const seed = presetScopes && presetScopes.length > 0
-      ? presetScopes
-      : ['marketplace.skills:read'];
-    return allowedScopes.filter((s) => seed.includes(s));
-  });
+  // 预选项与平台白名单取交集，避免勾选一个后端未开放的 scope。
+  const computeSeed = (allowed: string[], preset?: string[]): string[] => {
+    const wanted = preset && preset.length > 0 ? preset : ['marketplace.skills:read'];
+    return allowed.filter((s) => wanted.includes(s));
+  };
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(() =>
+    computeSeed(allowedScopes, presetScopes),
+  );
+  // 弹窗常在 allowedScopes 仍是海鲜市场默认值时就先渲染本表单，待 listAgentApiKeys
+  // 回来才补齐 document-store 等 scope。初始化器只跑一次会拿到陈旧白名单 → 预选落空，
+  // 知识库「接入 AI」一键创建会因没勾选而失败。故在 allowedScopes/presetScopes 变化时
+  // 重新播种；userEditedRef 守卫保证一旦用户手动勾选过就不再覆盖其选择（修复 PR #865
+  // Codex P2「Seed preset scopes after allowed scopes load」）。
+  const userEditedRef = useRef(false);
+  useEffect(() => {
+    if (userEditedRef.current) return;
+    setSelectedScopes(computeSeed(allowedScopes, presetScopes));
+  }, [allowedScopes, presetScopes]);
   const [ttlDays, setTtlDays] = useState<number>(365);
   const [creating, setCreating] = useState(false);
   const [plaintext, setPlaintext] = useState<string | null>(null);
@@ -149,6 +160,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
   };
 
   const toggleScope = (scope: string) => {
+    userEditedRef.current = true;
     setSelectedScopes((prev) =>
       prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope],
     );
