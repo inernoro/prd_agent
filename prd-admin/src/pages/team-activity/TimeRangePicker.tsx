@@ -147,26 +147,31 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
 
   const todayMs = startOfDay(new Date()).getTime();
 
-  // 各预设窗口的信号/痛点合计（前端聚合 90 天序列；today 单日、week 近 7 天、month 近 30 天、all 全 90 天）
+  // 预设窗口起点（ms）：与 presetFrom 一致——本周=本周一0点、本月=1号0点（不是滚动近7/30天），
+  // 保证悬浮微预览数字/sparkline 与点击后实际加载的时间窗一致，避免「真实聚合」误导。
+  const weekStartMs = useMemo(() => new Date(presetFrom('week')!).getTime(), []);
+  const monthStartMs = useMemo(() => new Date(presetFrom('month')!).getTime(), []);
+  // 各预设窗口的信号/痛点合计（前端聚合 90 天序列；today 单日、week 本周至今、month 本月至今、all 全 90 天）
   const presetSummary = useMemo(() => {
     const map: Record<RangeKey, { signal: number; pain: number }> = {
       all: sumWindow(days, undefined, todayMs),
       today: sumWindow(days, todayMs, todayMs),
-      week: sumWindow(days, todayMs - 6 * 86_400_000, todayMs),
-      month: sumWindow(days, todayMs - 29 * 86_400_000, todayMs),
+      week: sumWindow(days, weekStartMs, todayMs),
+      month: sumWindow(days, monthStartMs, todayMs),
     };
     return map;
-  }, [days, todayMs]);
+  }, [days, todayMs, weekStartMs, monthStartMs]);
 
   const presetSeg = useCallback(
     (key: RangeKey): number[] => {
       if (days.length === 0) return [];
       if (key === 'today') return days.slice(-1).map((d) => d.signal);
-      if (key === 'week') return days.slice(-7).map((d) => d.signal);
-      if (key === 'month') return days.slice(-30).map((d) => d.signal);
+      // 切片天数 = 实际窗口天数（本周一/本月一号 至今），与 presetSummary 同口径
+      if (key === 'week') return days.slice(-(Math.floor((todayMs - weekStartMs) / 86_400_000) + 1)).map((d) => d.signal);
+      if (key === 'month') return days.slice(-(Math.floor((todayMs - monthStartMs) / 86_400_000) + 1)).map((d) => d.signal);
       return days.map((d) => d.signal);
     },
-    [days]
+    [days, todayMs, weekStartMs, monthStartMs]
   );
 
   const activePreset = rangePreset(value);
