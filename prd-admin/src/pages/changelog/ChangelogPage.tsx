@@ -1863,7 +1863,30 @@ function buildDefectDetailUrl(defect: GitHubLinkedDefect): string {
 
 function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const status = resolveLinkedDefectStatus(defects);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && rootRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
   if (defects.length === 0 || !status) return null;
 
   const hasMine = defects.some((defect) => defect.isSubmittedByMe);
@@ -1887,10 +1910,14 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
   const ButtonIcon = buttonMeta.icon;
 
   return (
-    <div className="relative shrink-0">
+    <div ref={rootRef} className="relative shrink-0">
       <button
         type="button"
-        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((current) => !current);
+        }}
         className="inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px] transition-colors"
         style={{
           color: buttonMeta.color,
@@ -1906,6 +1933,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
       {open && (
         <div
           className="absolute right-0 top-[32px] z-40 w-[420px] max-w-[calc(100vw-48px)] rounded-lg p-3 shadow-2xl"
+          onClick={(event) => event.stopPropagation()}
           style={{
             background: 'rgba(30, 30, 40, 0.98)',
             border: '1px solid rgba(255, 255, 255, 0.14)',
@@ -1919,9 +1947,13 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
             </div>
             <button
               type="button"
-              onClick={() => setOpen(false)}
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpen(false);
+              }}
               className="h-6 w-6 inline-flex items-center justify-center rounded-md hover:bg-white/10"
               title="关闭"
+              aria-label="关闭关联缺陷窗口"
             >
               <X size={13} />
             </button>
@@ -1939,6 +1971,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                 <div className="flex items-start justify-between gap-2">
                   <a
                     href={buildDefectDetailUrl(defect)}
+                    onClick={() => setOpen(false)}
                     className="text-[13px] font-medium hover:underline"
                     style={{ color: '#bfdbfe' }}
                   >
@@ -1977,6 +2010,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <a
                     href={buildDefectDetailUrl(defect)}
+                    onClick={() => setOpen(false)}
                     className="inline-flex items-center gap-1 text-[12px] hover:underline"
                     style={{ color: 'var(--text-secondary)' }}
                   >
@@ -1997,6 +2031,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       href={defect.pullRequestUrl}
                       target="_blank"
                       rel="noreferrer"
+                      onClick={() => setOpen(false)}
                       className="inline-flex items-center gap-1 text-[12px] hover:underline"
                       style={{ color: 'var(--text-secondary)' }}
                     >
@@ -2009,6 +2044,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       href={defect.previewUrl}
                       target="_blank"
                       rel="noreferrer"
+                      onClick={() => setOpen(false)}
                       className="inline-flex items-center gap-1 text-[12px] hover:underline"
                       style={{ color: 'var(--text-secondary)' }}
                     >
@@ -2021,6 +2057,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       href={defect.visualReportUrl}
                       target="_blank"
                       rel="noreferrer"
+                      onClick={() => setOpen(false)}
                       className="inline-flex items-center gap-1 text-[12px] hover:underline"
                       style={{ color: 'var(--text-secondary)' }}
                     >
@@ -2033,6 +2070,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       href={defect.knowledgeBaseUrl}
                       target="_blank"
                       rel="noreferrer"
+                      onClick={() => setOpen(false)}
                       className="inline-flex items-center gap-1 text-[12px] hover:underline"
                       style={{ color: 'var(--text-secondary)' }}
                     >
