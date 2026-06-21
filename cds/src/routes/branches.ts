@@ -19004,6 +19004,74 @@ cdscli project list --human
     res.json(janitorService.getSnapshot());
   });
 
+  // ── GET /api/cds-system/perf-health — 运维健康观测 ──
+  //
+  // 一处汇总「会拖垮 CDS 的系统性信号」并算成 warnings，治本次性能事故的根因：
+  // 预览调度器被禁用 → 空闲分支永不回收 → 容器无限堆积 → 18 核主机 load 28 →
+  // 构建越来越慢/失败。这一切此前在面板上完全不可见。本端点把它显性化，监控弹窗
+  // 据此红黄告警，让「调度器禁用/主机过载/容器堆积/构建变慢」一眼可见、不再静默复发。
+  router.get('/cds-system/perf-health', (_req, res) => {
+    const cores = (typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) || 1;
+    const load = os.loadavg();
+    const loadAvg1 = Number((load[0] || 0).toFixed(2));
+    const loadPercent = Math.round((loadAvg1 / cores) * 100);
+    const totalMB = Math.round(os.totalmem() / (1024 * 1024));
+    const freeMB = Math.round(os.freemem() / (1024 * 1024));
+    const memPercent = totalMB > 0 ? Math.round(((totalMB - freeMB) / totalMB) * 100) : 0;
+
+    registry?.refreshEmbeddedMasterLoad();
+    const nodes = registry?.getAll() || [];
+    const runningContainers = nodes.reduce((sum, n) => sum + (n.runningContainers ?? n.branches.length), 0);
+
+    const snap = schedulerService?.getSnapshot();
+    const scheduler = snap
+      ? { wired: true, enabled: snap.enabled, maxHotBranches: snap.config.maxHotBranches, idleTTLSeconds: snap.config.idleTTLSeconds, hotCount: snap.hot.length }
+      : { wired: false, enabled: false, maxHotBranches: 0, idleTTLSeconds: 0, hotCount: 0 };
+
+    const projects = stateService.getState().projects || [];
+    const build = projects.map((p) => {
+      const est = stateService.getBranchDeployEstimate(p.id);
+      return {
+        projectId: p.id,
+        name: p.name || p.id,
+        sourceMedianMs: est.sourceMedianMs,
+        sourceSamples: est.sourceSamples,
+        releaseMedianMs: est.releaseMedianMs,
+        releaseSamples: est.releaseSamples,
+      };
+    });
+
+    const warnings: Array<{ level: 'critical' | 'warning'; code: string; message: string }> = [];
+    if (scheduler.wired && !scheduler.enabled) {
+      warnings.push({ level: 'critical', code: 'scheduler-disabled', message: '预览调度器已禁用：空闲分支不会自动回收，运行容器会无限堆积拖垮主机（本次性能问题根因）。请到调度器设置启用并设 maxHotBranches。' });
+    } else if (scheduler.enabled && scheduler.maxHotBranches === 0) {
+      warnings.push({ level: 'warning', code: 'scheduler-unlimited', message: '调度器已启用但 maxHotBranches=0（不限）：高峰期热分支数无上限，建议设一个上限防止容器堆积。' });
+    }
+    if (loadPercent >= 100) {
+      warnings.push({ level: 'critical', code: 'load-critical', message: `主机负载 ${loadAvg1} 已超过核数 ${cores}（loadPercent ${loadPercent}%）：构建会显著变慢甚至失败。` });
+    } else if (loadPercent >= 80) {
+      warnings.push({ level: 'warning', code: 'load-high', message: `主机负载偏高（loadPercent ${loadPercent}%），临近过载。` });
+    }
+    if (runningContainers > cores * 2) {
+      warnings.push({ level: 'warning', code: 'too-many-containers', message: `运行容器 ${runningContainers} 个，超过核数 2 倍（${cores * 2}）：CPU 严重争抢，构建变慢。` });
+    }
+    for (const b of build) {
+      const m = Math.max(b.sourceMedianMs || 0, b.releaseMedianMs || 0);
+      if (m > 6 * 60 * 1000) {
+        warnings.push({ level: 'warning', code: 'slow-build', message: `项目「${b.name}」构建中位耗时约 ${(m / 60000).toFixed(1)} 分钟，偏慢。` });
+      }
+    }
+
+    res.json({
+      host: { loadAvg1, loadAvg5: Number((load[1] || 0).toFixed(2)), loadAvg15: Number((load[2] || 0).toFixed(2)), cores, loadPercent, memPercent },
+      containers: { running: runningContainers },
+      scheduler,
+      build,
+      warnings,
+      generatedAt: new Date().toISOString(),
+    });
+  });
+
   router.put('/janitor/config', (req, res) => {
     if (!janitorService) {
       res.status(503).json({ error: 'Janitor service not wired in' });

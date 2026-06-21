@@ -767,6 +767,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /status': '获取系统状态',
     'GET /healthz': '健康检查',
     'GET /host-stats': '获取主机状态',
+    'GET /cds-system/perf-health': '运维健康观测',
     'GET /state-stream': '订阅状态流',
     'GET /activity-stream': '订阅活动流',
     'GET /cli-version': '获取 CLI 版本',

@@ -29,12 +29,38 @@ export interface MonitoringActivityLog {
   result?: 'success' | 'failed' | 'pending';
 }
 
+export interface PerfWarning {
+  level: 'critical' | 'warning';
+  code: string;
+  message: string;
+}
+
+export interface PerfBuild {
+  projectId: string;
+  name: string;
+  sourceMedianMs: number | null;
+  sourceSamples: number;
+  releaseMedianMs: number | null;
+  releaseSamples: number;
+}
+
+export interface PerfHealth {
+  host: { loadAvg1: number; loadAvg5: number; loadAvg15: number; cores: number; loadPercent: number; memPercent: number };
+  containers: { running: number };
+  scheduler: { wired: boolean; enabled: boolean; maxHotBranches: number; idleTTLSeconds: number; hotCount: number };
+  build: PerfBuild[];
+  warnings: PerfWarning[];
+  generatedAt: string;
+}
+
 export interface MonitoringSnapshot {
   host: NormalizedHostStats;
   executors: ExecutorNode[];
   cluster: ClusterStatus;
   /** Sum of runningContainers across all executor nodes. */
   totalContainers: number;
+  /** 运维健康观测（GET /api/cds-system/perf-health）。旧版 CDS 无此端点时为 null。 */
+  health: PerfHealth | null;
 }
 
 export type MonitoringState =
@@ -60,10 +86,11 @@ export function useMonitoringData(enabled: boolean, projectId?: string): {
 
   const loadHost = useCallback(async () => {
     try {
-      const [clusterRaw, executorsRes, hostRaw] = await Promise.all([
+      const [clusterRaw, executorsRes, hostRaw, healthRaw] = await Promise.all([
         apiRequest<ClusterStatus>('/api/cluster/status'),
         apiRequest<ExecutorsResponse>('/api/executors'),
         apiRequest<unknown>('/api/host-stats', { headers: { 'X-CDS-Poll': 'true' } }),
+        apiRequest<PerfHealth>('/api/cds-system/perf-health').catch(() => null),
       ]);
       const host = normalizeHostStats(hostRaw);
       if (!host) throw new Error('主机状态返回格式异常');
@@ -72,7 +99,7 @@ export function useMonitoringData(enabled: boolean, projectId?: string): {
         (sum, node) => sum + (node.runningContainers || 0),
         0,
       );
-      setState({ status: 'ok', data: { host, executors, cluster: clusterRaw, totalContainers } });
+      setState({ status: 'ok', data: { host, executors, cluster: clusterRaw, totalContainers, health: healthRaw } });
     } catch (err: unknown) {
       // transient (Cloudflare 边缘抖动) 静默,保留上次 ok 状态。
       if (err instanceof ApiError && err.transient) return;

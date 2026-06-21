@@ -17,7 +17,9 @@
 import { useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
   Boxes,
+  CheckCircle2,
   Cpu,
   Gauge,
   HardDrive,
@@ -44,7 +46,15 @@ import {
   type MonitoringActivityLog,
   type MonitoringActivityState,
   type MonitoringSnapshot,
+  type PerfHealth,
 } from './useMonitoringData';
+
+function formatBuildMedian(ms: number | null, samples: number): string {
+  if (!ms || ms <= 0 || samples <= 0) return '暂无样本';
+  const minutes = ms / 60000;
+  if (minutes >= 1) return `${minutes.toFixed(1)} 分钟 · ${samples} 次`;
+  return `${Math.round(ms / 1000)} 秒 · ${samples} 次`;
+}
 
 function formatBytesFromMB(value?: number): string {
   if (!value || value <= 0) return '未知';
@@ -210,11 +220,78 @@ export function MonitoringDialog({
   );
 }
 
+function HealthSection({ health }: { health: PerfHealth }): JSX.Element {
+  const { warnings, scheduler, build } = health;
+  const hasCritical = warnings.some((w) => w.level === 'critical');
+  return (
+    <div className="space-y-3">
+      {warnings.length === 0 ? (
+        <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-600 dark:text-emerald-300">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          运维健康：未发现影响性能的系统性问题。
+        </div>
+      ) : (
+        <div className={`rounded-md border px-4 py-3 ${hasCritical ? 'border-destructive/40 bg-destructive/10' : 'border-amber-500/40 bg-amber-500/10'}`}>
+          <div className={`mb-2 flex items-center gap-2 text-sm font-semibold ${hasCritical ? 'text-destructive' : 'text-amber-600 dark:text-amber-300'}`}>
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            运维健康告警（{warnings.length}）
+          </div>
+          <ul className="space-y-1.5">
+            {warnings.map((w) => (
+              <li key={w.code} className="flex items-start gap-2 text-xs leading-5">
+                <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${w.level === 'critical' ? 'bg-destructive/20 text-destructive' : 'bg-amber-500/20 text-amber-600 dark:text-amber-300'}`}>
+                  {w.level === 'critical' ? '严重' : '警告'}
+                </span>
+                <span className="text-foreground">{w.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-muted-foreground">预览调度器</span>
+        <span className={`rounded border px-1.5 py-0.5 font-medium ${scheduler.enabled ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>
+          {scheduler.enabled ? '已启用' : scheduler.wired ? '已禁用' : '未接入'}
+        </span>
+        {scheduler.enabled ? (
+          <span className="text-muted-foreground">
+            热分支 {scheduler.hotCount}
+            {scheduler.maxHotBranches > 0 ? ` / 上限 ${scheduler.maxHotBranches}` : ' / 不限'}
+            · 空闲回收 {Math.round(scheduler.idleTTLSeconds / 60)} 分钟
+          </span>
+        ) : null}
+      </div>
+
+      {build.some((b) => b.sourceSamples > 0 || b.releaseSamples > 0) ? (
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3">
+          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <Timer className="h-3.5 w-3.5" />
+            构建耗时中位（按项目）
+          </div>
+          <div className="space-y-1.5">
+            {build
+              .filter((b) => b.sourceSamples > 0 || b.releaseSamples > 0)
+              .map((b) => (
+                <div key={b.projectId} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+                  <span className="font-medium text-foreground">{b.name}</span>
+                  <span className="text-muted-foreground">热加载 {formatBuildMedian(b.sourceMedianMs, b.sourceSamples)}</span>
+                  <span className="text-muted-foreground">发布版 {formatBuildMedian(b.releaseMedianMs, b.releaseSamples)}</span>
+                </div>
+              ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PerformanceTab({ data }: { data: MonitoringSnapshot }): JSX.Element {
-  const { host, totalContainers, executors } = data;
+  const { host, totalContainers, executors, health } = data;
   const usedMem = host.mem.totalMB - host.mem.freeMB;
   return (
     <div className="space-y-5">
+      {health ? <HealthSection health={health} /> : null}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <MetricTile
           icon={<Cpu className="h-3.5 w-3.5" />}
