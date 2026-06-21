@@ -762,6 +762,12 @@ public class TeamActivityController : ControllerBase
                 { "Direction", new BsonDocument("$ne", "outbound") },
                 { "StatusCode", new BsonDocument { { "$gte", 400 }, { "$ne", 401 } } },
                 { "Path", new BsonDocument("$regex", "^/api") },
+                // 排除行为采集与团队动态自身端点（与热力图/趋势同口径），避免自我观测污染洞察
+                { "$nor", new BsonArray
+                    {
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/behavior")),
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/team-activity")),
+                    } },
             }),
         };
         pipeline.AddRange(PathNormalizeStages());
@@ -858,7 +864,7 @@ public class TeamActivityController : ControllerBase
 
         var result = new List<Insight>();
         foreach (var g in errLogs
-                     .Where(x => x.Path != null && x.Path.StartsWith("/api") && !x.Path.StartsWith("/api/behavior"))
+                     .Where(x => x.Path != null && x.Path.StartsWith("/api") && !x.Path.StartsWith("/api/behavior") && !x.Path.StartsWith("/api/team-activity"))
                      .GroupBy(x => (Path: NormalizePath(x.Path!), x.Method, x.StatusCode))
                      .Where(g => g.Count() >= 5))
         {
@@ -904,6 +910,13 @@ public class TeamActivityController : ControllerBase
                 { "IsEventStream", false },
                 { "DurationMs", new BsonDocument("$gte", 3000) },
                 { "Path", new BsonDocument("$regex", "^/api") },
+                // 排除行为采集与团队动态自身端点（与热力图/趋势同口径）：仪表盘自身慢请求 / LLM 诊断调用
+                // 不得回流成关于 VOC 页的「等待过久」洞察，避免自我观测的反馈回路挤占真实端点。
+                { "$nor", new BsonArray
+                    {
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/behavior")),
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/team-activity")),
+                    } },
             }),
         };
         pipeline.AddRange(PathNormalizeStages());
@@ -967,7 +980,7 @@ public class TeamActivityController : ControllerBase
 
         var result = new List<Insight>();
         foreach (var g in slowLogs
-                     .Where(x => x.Path != null && x.Path.StartsWith("/api"))
+                     .Where(x => x.Path != null && x.Path.StartsWith("/api") && !x.Path.StartsWith("/api/behavior") && !x.Path.StartsWith("/api/team-activity"))
                      .GroupBy(x => (Path: NormalizePath(x.Path!), x.Method))
                      .Where(g => g.Count() >= 5))
         {
@@ -1969,6 +1982,8 @@ public class TeamActivityController : ControllerBase
             Grade = ProductItemGrade.P2,
             WorkflowDefId = workflowDefId,
             CurrentState = initialState,
+            // 初始化进入当前状态的时间，否则产品看板 SLA（slaInfo(stateEnteredAt)）在首次流转前无状态停留/超期显示
+            StateEnteredAt = DateTime.UtcNow,
             OwnerId = userId,
             SourceSystem = "voc-insight",
             SourceUrl = request.Target,

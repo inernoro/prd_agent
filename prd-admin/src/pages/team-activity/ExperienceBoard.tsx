@@ -76,7 +76,9 @@ export function ExperienceBoard({
     let alive = true;
     setDefectsErr(null);
     setDefects(null);
-    void listDefects({ filter: 'all', limit: 30 }).then((res) => {
+    // 不传 filter：管理员拿到全员缺陷的全局列表（filter:'all' 会被后端解释为"我提交的∪派给我的"，
+    // 触发 forceMineScope，VOC 用户之声会漏掉其他人提交的缺陷，不再代表全员真实反馈）。
+    void listDefects({ limit: 30 }).then((res) => {
       if (!alive) return;
       if (res.success) {
         const sorted = [...res.data.items].sort(

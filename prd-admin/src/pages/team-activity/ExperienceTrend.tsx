@@ -111,7 +111,19 @@ export function ExperienceTrend({
 
   const series = useMemo(() => (data ? buildSeries(data.buckets, VH) : null), [data, VH]);
   const unit = data?.bucketUnit ?? 'day';
-  const burstPts = useMemo(() => (series ? series.errPts.filter((p) => p.burst) : []), [series]);
+  // 爆点画在「当前桶占主导的那条线」上：慢主导 → 黄(slow 线)，报错主导 → 红(err 线)。
+  // 避免 slow-only 突增被画到红色报错线的基线位置、误判成报错爆点。
+  const burstPts = useMemo(() => {
+    if (!series) return [];
+    return series.errPts
+      .map((ep, i) => ({ ep, sp: series.slowPts[i] }))
+      .filter(({ ep }) => ep.burst)
+      .map(({ ep, sp }) => {
+        const slowDominant = sp.bucket.slow > ep.bucket.errors;
+        const pt = slowDominant ? sp : ep;
+        return { x: pt.x, y: pt.y, burstPct: pt.burstPct, bucketStart: pt.bucket.bucketStart, color: slowDominant ? SLOW : ERR };
+      });
+  }, [series]);
 
   // 「有可绘制趋势」判定：至少 2 个时间桶才能连成线，且报错/慢请求并非全 0（全 0 是平线，无趋势价值）。
   const hasData = useMemo(() => {
@@ -222,14 +234,14 @@ export function ExperienceTrend({
             <TrendLine d={toPath(series.errPts)} color={ERR} />
             {/* 爆点标记：报错线上的突增桶，依次 pop（小圆点 + +N%） */}
             {burstPts.map((p, i) => (
-              <g key={`burst-${p.bucket.bucketStart}`} style={{ animation: 'voc-trend-pop .5s cubic-bezier(.34,1.56,.64,1) both', animationDelay: `${1.3 + i * 0.12}s`, transformBox: 'fill-box', transformOrigin: 'center' }}>
-                <circle cx={p.x} cy={p.y} r={5.5} fill="none" stroke={ERR} strokeWidth={1.4} style={{ animation: 'voc-trend-ping 1.8s ease-out infinite', animationDelay: `${1.6 + i * 0.12}s`, transformBox: 'fill-box', transformOrigin: 'center' }} />
-                <circle cx={p.x} cy={p.y} r={3} fill="#fff" style={{ filter: `drop-shadow(0 0 5px ${ERR})` }} />
+              <g key={`burst-${p.bucketStart}`} style={{ animation: 'voc-trend-pop .5s cubic-bezier(.34,1.56,.64,1) both', animationDelay: `${1.3 + i * 0.12}s`, transformBox: 'fill-box', transformOrigin: 'center' }}>
+                <circle cx={p.x} cy={p.y} r={5.5} fill="none" stroke={p.color} strokeWidth={1.4} style={{ animation: 'voc-trend-ping 1.8s ease-out infinite', animationDelay: `${1.6 + i * 0.12}s`, transformBox: 'fill-box', transformOrigin: 'center' }} />
+                <circle cx={p.x} cy={p.y} r={3} fill="#fff" style={{ filter: `drop-shadow(0 0 5px ${p.color})` }} />
                 <text
                   x={p.x}
                   y={p.y - 11}
                   textAnchor="middle"
-                  style={{ fill: ERR, fontSize: 11, fontWeight: 700, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.6)', strokeWidth: 2.5 }}
+                  style={{ fill: p.color, fontSize: 11, fontWeight: 700, paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.6)', strokeWidth: 2.5 }}
                 >
                   {`+${p.burstPct}%`}
                 </text>
