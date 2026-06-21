@@ -8,6 +8,390 @@
 
 ## [未发布]
 
+### 2026-06-21
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 验收报告页右侧预览撑满高度与宽度，不再挤成小窄盒（新增 .cds-workspace--fill 修饰类，修复外壳高度不传递） |
+| rule | cds | 新增「内容填满画布」原则：主产物区必须 flex-1 填满并占主导，高度从外壳一路传到产物 |
+| rule | cds | 新增「预期管理」总纲原则：让用户随时知道在做什么/还要多久/接下来怎样/变了什么/该做什么 |
+| fix | cds | 验收报告 JSON 粘贴绕过全局 100kb 解析器，大报告(数 MB)可正常保存 |
+| fix | cds | 本地账号 githubId 用唯一负数占位，避免多本地用户在 githubId 唯一索引撞键 |
+| fix | cds | basic 模式登录放行 /api/auth/login 等路由，保住单用户部署登录回退 |
+| fix | cds | 部署耗时仅在真正就绪(runtimeStartedAt)时采样，避免污染中位 ETA |
+| fix | cds | mongo 用户操作痕迹按容量裁剪，避免无界增长 |
+| security | cds | 验收报告路由对项目级 key 调用 assertProjectAccess，禁止跨项目列/读/改/删 |
+| fix | cds | mongo 活动裁剪用 $lt 严格小于，避免同毫秒新记录被连带删除 |
+| fix | cds | pending 发布版重建时 ETA 取目标模式样本桶，等待页/卡片不再误用热加载估算 |
+| fix | cds | 预览等待 ETA 仅扫描本分支所属项目的 profile，避免他项目发布版 profile 串改估算 |
+| security | cds | 验收报告项目级 key 全面收敛：禁访全局/他项目报告、建报告强制归本项目、关联分支限本项目 |
+| security | cds | 被禁用账号不能再通过 GitHub OAuth 登录（handleCallback 校验 status） |
+| fix | cds | 管理员改用户先重置密码再改状态，避免密码重置失败但状态已落库 |
+| security | cds | 易失(memory)存储后端禁用首启 bootstrap，防重启后被自封 system owner |
+| fix | cds | 本地账号创建捕获唯一索引冲突(E11000)，并补登 username 唯一稀疏索引文档 |
+| feat | cds | github 模式网关同等放行 cdsp_/cdsg_/静态 AI key（与人类会话并存），项目报告作用域生效 |
+| fix | cds | 本地登录处理器加 try/catch 兜底，存储后端异常返回 500 而非挂起 |
+| fix | cds | 预览等待页 ETA 在途重建时以 lastDeployStartedAt 为锚点，不再回退到上一轮历史日志误算几小时 |
+| fix | prd-admin | 知识库「接入 AI」弹窗在 allowedScopes 异步到达后重新播种预选 scope，一键签发不再因预选落空失败 |
+| fix | cds | 执行器构建路径在成功 complete 时戳 runtimeStartedAt 并采样部署耗时，执行器构建的项目也能积累 ETA 历史 |
+| fix | cds | 单服务/首次 clone 部署起点也钉 lastDeployStartedAt，且 ETA 解析在 stamped 不旧于最新日志时优先它，单服务重部署不再误算几小时 |
+| fix | cds | 首启引导加进程内串行锁，防并发 bootstrap 铸出多个 system owner |
+| fix | cds | 预览等待 ETA 不再跨模式回退：发布版重建无样本时显示「暂无预计」而非热加载 ETA |
+| fix | prd-admin | 知识库「接入 AI」按 Key 真实 scope 出文档空间 API 指令，不再发海鲜市场提示词/装 findmapskills |
+| fix | cds | 本地账号创建加进程内串行锁，关闭同名并发竞态（叠加 username 唯一索引 + E11000 兜底） |
+| ops | deploy | 新增 fast.sh 作为可超时的后端镜像预热脚本，并让 exec_dep.sh 默认使用镜像与静态包代理和超时拉取，避免正式发布被网络拉取阻塞 |
+| perf | cds | mongo-split 写入合并：高频 save() 不再每次同步 structuredClone 整个 state，改为每事件循环 tick 至多一次快照+落盘，根治 master 事件循环被部署日志/调和器 save 风暴堵死（网页 524 超时、就绪探测超时误判、容器被当部署失败清理） |
+| fix | prd-admin | 更新中心 GitHub commit 记录显示可点击的关联缺陷标志 |
+| fix | prd-api | 更新中心缺陷关联按 commit id 返回提交者本人标识和发布状态 |
+| feat | prd-api | 缺陷自动化新增 workflow 协议端点以减少智能体机械编排 |
+| docs | doc | 新增缺陷自动化协议规格并更新缺陷管理教程 |
+| rule | prd-api | 缺陷自动化技能补充更新中心 UI 标志验收门禁 |
+| fix | prd-api | 缺陷自动化 workflow 禁止已失败或已结束运行继续领取缺陷，并限制完成回写只能作用于当前运行已领取的缺陷 |
+| fix | prd-admin | 更新中心关联缺陷标志的“我的缺陷”计数仅统计当前提交人自己的缺陷 |
+| feat | prd-api | 缺陷自动化 workflow 支持 defectId 精确领取，用于演练、回归和人工确认后的单点处理 |
+| fix | prd-api | 缺陷自动化 workflow/block 将阻塞缺陷切到待补充状态，避免后续日常任务反复领取同一条缺陷 |
+| rule | acceptance | 加固每日验收内容充裕门禁，防止薄报告和空泛占位遮盖遗漏 |
+| fix | acceptance | 修复每日验收场景识别、深入功能验收深度门禁和跨分支范围盘点 |
+| feat | prd-api | 缺陷自动化完成和验收回写增加 PR、commit、验收报告证据评论 |
+| feat | prd-admin | 更新中心关联缺陷弹层展示 PR、commit、验收报告并支持直达缺陷详情 |
+| fix | prd-admin | 修复更新中心关联缺陷直达详情在目标不在当前列表时无法打开 |
+| feat | prd-admin | 知识库页新增「接入 AI」入口，当场签发 document-store:write 长效 Key（谁需要谁签发） |
+| refactor | prd-admin | SkillOpenApiDialog 支持 presetScopes/contextLabel，复用为知识库签发入口；CreateKeyTab scope 图标去 emoji 改 lucide |
+| ci | prd-admin | 修复最新 admin 前端 Pages 产物只落到子目录导致正式同步源仍可能读取旧资源 |
+| fix | prd-api | 修复群会话切换到测试角色后执行测试技能仍被成员固定角色拦截的问题 |
+| fix | prd-api | 修复官方验收技能包依赖下发与复杂验收门禁误判 |
+| feat | skill | 为每日自动验收新增范围盘点脚本、深度门禁与分享链三次打开验证 |
+
+### 2026-06-20
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-api | 新增验收测试设计官方技能，强化每日视觉验收的影响面、融合测试和证明力门禁 |
+| ops | prd-admin | 补充 CDS Admin 静态预览所需 serve 运行依赖 |
+| fix | prd-api | 官方视觉验收技能下载包随包下发验收设计和场景编排依赖技能 |
+| test | prd-api | 稳定模型池 Race 调度测试，避免 CI 偶发失败 |
+| ops | prd-api | API 镜像构建注入 commit 与构建时间，支持正式环境发布版本比对 |
+| feat | cds | 新增 CDS 自托管验收报告（支持 HTML/Markdown，挂在 CDS 登录态之后无需知识库或额外权限） |
+| feat | cds | 验收报告 HTML 以无 same-origin 沙箱 iframe 渲染，Markdown 经 marked 转换后同样沙箱隔离 |
+| fix | cds | Java/Go/Rust/Python 项目缓存挂载固化（新增 cache-catalog SSOT），避免每次构建重复下载依赖 |
+| feat | cds | 自动发布成功后记录 lastPublishReason/lastPublishAt，使"自动切发布版"的模式跃迁可观测 |
+| docs | cds | 新增 CDS 构建耗时诊断与发布版/热加载机制说明文档（design.cds-build-time） |
+| feat | cds | 分支构建中卡片展示已耗时与历史中位预计耗时，区分发布版/热加载（近 20 次中位值，无样本则只显示已耗时） |
+| fix | cds | 修复 ESM 模块内 require('node:*') 运行时报错（memory 后端鉴权全 500、stack 检测、TCP 探测三处） |
+| test | cds | 新增 ESM 卫士测试，禁止源码出现 CommonJS require() 调用（单测因 CJS interop 掩盖此类 bug） |
+| fix | cds | 修复旧 deploy fenced cleanup 误删更新运行时容器导致预览回到 503 |
+| fix | cds | 保留构建中分支的 forwarder 预览域名路由，避免部署状态回退时出现 unknown-host 503 |
+| fix | cds | 源码部署容器自动注入 commit 与构建时间环境变量，保证 /api/version 可用于发布版本比对 |
+| feat | cds | 新增本地账号密码登录（与 GitHub OAuth 并存）：scrypt 加盐哈希、首启引导创建系统所有者、修改密码、系统所有者用户管理（创建/禁用/重置密码） |
+| feat | cds | 新增用户操作痕迹（登录/退出/改密/建用户等关键操作记录），CDS 系统设置「用户管理」「用户痕迹」两个 tab，系统所有者看全部、普通用户看自己 |
+| feat | cds | 预览构建等待页展示已等待时长与预计剩余时间（复用部署耗时中位，无样本时不编造） |
+| polish | prd-admin | 缺陷自动化弹窗展示最近运行的单缺陷处理明细、commit、预览地址和失败原因 |
+| polish | prd-api | 缺陷自动化每日计划文案补齐可直接执行的连接配置、单缺陷闭环步骤和发布后验收通知阶段 |
+| test | prd-admin | 增加缺陷自动化运行项状态文案测试 |
+| polish | prd-api | 强化缺陷自动修复技能的真实闭环证据门禁 |
+| docs | prd-api | 更新 ai-defect-resolve 官方兜底技能到 1.4.1，明确日常自动化 domain+K、单缺陷闭环和发布中心只读关联 |
+| polish | prd-admin | 缺陷自动化面板入口文案从历史分享调整为分享管理，并区分首次生成与重新生成授权配置 |
+| test | prd-admin | 补充缺陷自动化授权复制按钮文案单元测试 |
+| feat | prd-api | 知识库正文写入新增图片资产规范化：支持 {{IMG:name}}+assets[] 一次性传输，自动把 data:image 迁移为正式资产图链 |
+| refactor | create-visual-test-to-kb | 验收归档脚本改为知识库传输共享协议，一次提交报告正文与截图资产，由知识库后端统一上传图片和重写正文 |
+| rule | skill | 更新 create-visual-test-to-kb 与 ai-defect-resolve，禁止绕过知识库写入边界手动上传图片或写入 data:image |
+| fix | prd-api | 修复官方技能版本断言与验收报告知识库归档鉴权兜底 |
+
+### 2026-06-19
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 额度判定排除限流误报：429 / "Rate limit exceeded" / "requests per minute" 等节流不再被当成额度用尽（LLM_QUOTA_EXCEEDED 误触发额度告警）；额度只认 key/credit/quota/balance/billing 明确信号 |
+| fix | prd-admin | 视觉分镜台并发竞态修复：每轮「生成分镜」自增 genRef 作废上一轮在途关键帧 SSE 与图生视频轮询（stale-response guard），旧回调不再画到新分镜板同 sceneIndex；创建关键帧任务无 runId 时复位 spinner 为 error；同镜正在转视频时禁止重复触发「动起来」 |
+| fix | prd-admin | 视觉分镜台图生视频改走 visual-agent 自有端点（/api/visual-agent/video-gen/runs，appKey=visual-agent），避免 visual-agent-only 账号撞 video-agent 403、并用本应用配额/appKey（遵循 app-identity 规则） |
+| fix | prd-admin | 图生视频轮询：客户端窗口 6→11 分钟以覆盖后端 worker 10 分钟终态期，避免 6-10 分钟才完成的视频被误判「生成超时」；提交失败/超时回填补 genRef 守卫，旧板任务不再误标新板场景 |
+| fix | prd-api | OpenRouter 图片回退收窄：images/generations 失败回退 chat/completions 仅在非鉴权(401/403)/额度(402)/限流(429)时触发，避免真实上游错误被改协议重试覆盖+徒增流量 |
+| fix | prd-admin | 视觉分镜台卡片渲染按 vidStatus 优先：重绘关键帧时清空旧视频状态，且 vidStatus 为 running/error 时不再显示上一版成片——重生视频能正常显示进度/失败 UI，用户可核对新关键帧 |
+| fix | prd-api | 图生视频 worker 按 run.AppKey 选 caller：visual-agent 分镜台创建的 run 归属 visual-agent 视频配额/模型池与日志归因（新增 AppCallerRegistry.VisualAgent.VideoGen.Generate），不再一律记到 video-agent |
+| fix | prd-api | 分镜脚本 JSON 提取改用括号深度匹配（字符串内花括号不计 + 去 markdown 围栏），替代「首 { 到末 }」贪婪截取，模型夹带说明文字/值含 } 时不再「分镜解析失败」 |
+| fix | prd-admin | 该镜正在转视频时禁用「重绘」并在 regenerateScene 早退：单镜重绘不 bump genRef，旧 animateScene 轮询会用上一帧成片覆盖刚重绘的新关键帧，故视频生成中不允许重绘（Codex review） |
+| fix | prd-admin | 视觉分镜台关键帧放大预览改用 createPortal 挂到 document.body，遵循 frontend-modal.md（避免 overflow/transform 祖先裁剪 position:fixed 浮层）（Codex review） |
+| fix | prd-admin | 关键帧批次与单镜重绘并发隔离：新增 per-scene 运行 token（sceneKfGen），后发重绘顶替该镜所有权，使先前批次对该镜的 SSE 回填/流结束兜底变 no-op，避免「批次仍在跑、其中一镜被重绘」时批次兜底把正在重绘的镜误判失败（Bugbot review） |
+| fix | prd-admin | 图生视频沿用关键帧出图画幅：SceneVM 记录 kfAspect，animateScene 用 s.kfAspect 而非全局 aspect，避免用户改画幅后用旧帧出错比例（Codex review） |
+| feat | prd-api | 放开视觉创作视频每日限额（DailyLimit 1→999，用户决定）：原 1/天「体验」限额会让多镜分镜每天只能动 1 镜，其余被配额 400 挡；放开后多镜分镜可逐镜出视频 |
+| fix | prd-admin | 分镜台卸载时 bump genRef 停止图生视频轮询（避免卸载后 setScenes）；分镜卡片按 s.kfAspect 取景（改全局画幅后旧镜不再被错误裁剪） |
+| fix | prd-api | OpenRouter 出图回退进一步收窄为「仅端点缺失」(404/405/501)：原先非 400/413 等即回退，对非 OpenRouter 平台(如 Volces)瞬时 5xx 会用错协议重打、覆盖真实错误（Codex+Bugbot 双标），现只在端点确实不存在时回退 |
+| fix | prd-admin | handleGenerate 补 stale 守卫：拆分镜 await 返回后校验 genRef，卸载/新一轮已作废时丢弃过期脚本响应，不再 setTitle/setScenes/启动 renderKeyframes |
+| fix | prd-api | 拆分镜接口转发 gateway 中文报错：原先失败统一回 `分镜生成失败：{ErrorCode}` 丢掉 ErrorMessage，额度等错误的 LLM_QUOTA_EXCEEDED 中文文案被吞成泛化提示，现转发 ErrorMessage + 透传 gateway ErrorCode（Bugbot review） |
+| fix | prd-api | LlmGateway.StreamAsync 非 2xx 分支补额度检测：原先只有非流式 SendAsync/Raw 路径调 IsQuotaExceeded/HandleQuotaExceeded，导致 toolbox/defect/literary/polish 等主聊天(走 StreamAsync)遇 OpenRouter 402 / Key limit exceeded 不触发 admin 额度告警、不透传额度文案，现对齐（Codex review） |
+| fix | prd-admin | 分镜台「动起来」补同步去重：vidStatus='running' 是异步 state，两次快速点击会在落地前都通过守卫、重复提交后端视频 run + 叠加轮询，改用 animatingRef Set 同步拦截（Bugbot review） |
+| fix | prd-admin | 分镜台挂载拉取生图模型补 alive 守卫：卸载/重挂后丢弃过期响应，不在已卸载组件上 setPools/setModelsLoading（Bugbot review） |
+| fix | prd-api | 额度告警改 await 写入：IPoolFailoverNotifier 为 Scoped、持 scoped MongoDbContext，原 fire-and-forget 在 request/stream scope 释放后 upsert 会被取消/off-thread 失败，恰在 402/额度用尽时丢告警，现 await 确保 scope 存活期内写完（Codex review） |
+| fix | prd-admin | 分镜台关键帧提示词改后标 kfDirty：出图后编辑提示词不再静默沿用旧帧，转视频前强制重绘，避免「旧首帧 + 新提示词」出错配视频（Codex review） |
+| fix | prd-admin | 分镜台「动起来」锁改为按 genRef 代次记账：重新生成分镜后旧板未结束的视频轮询不再占用相同 sceneIndex 导致新板动起来静默无响应；旧轮询 finally 仅在仍持本代次锁时释放，不会清掉新板锁（Bugbot review） |
+| fix | prd-api | IsQuotaExceeded 去掉「429 一律 false」短路：部分供应商(如 OpenAI insufficient_quota)用 429 返回额度耗尽，原短路使其漏掉额度告警走泛化 LLM_ERROR，改为只按速率文本排除限流，额度文本(quota/credit/balance)继续判定（Codex review） |
+| fix | prd-api | 分镜 title/topic/keyframePrompt/motionPrompt 落库前剥 emoji + system prompt 加无 emoji 约束：LLM 返回的标题会直接渲染进页头，违反 CLAUDE.md §0 禁 emoji（Codex review） |
+| fix | prd-admin | 分镜台「动起来」提交后若被新一轮生成/卸载作废，取消刚创建的视频 run（新增 cancelVisualVideoRunReal 走 visual-agent cancel 端点），避免后台继续烧视频额度且结果已无法回到 UI（Codex review） |
+| fix | prd-admin | 分镜台视频轮询期间作废也取消后端 run：上一轮只在轮询开始前取消，轮询中的 genRef 守卫直接 return 不取消，worker 仍烧额度。抽 bailIfStale 统一在所有 stale 退出点取消（Bugbot review） |
+| fix | prd-admin | 关键帧 dirty 判定改按提示词比对：渲染途中改词后，旧提示词的图到达时不再无条件清脏，仅当当前词仍等于已出图的词才清，避免旧帧配新词被当干净帧（Codex review） |
+| fix | prd-admin | 分镜台关键帧模型选择改用 text2img 专属池端点（/models/text2img），不再用合并了 img2img/vision 的列表，避免选到只配了 img2img/vision 的池导致每帧失败（Codex review） |
+| fix | prd-api | 图生视频直出 worker 提交前补取消闸：CancelRunAsync 仅设 CancelRequested，而 claim 只过滤 Status==Queued，取消的 run 仍可能在 worker 提交到 OpenRouter 后才被轮询取消、白烧额度。ProcessDirectVideoGenAsync 领取后 + 提交前两处检查 CancelRequested，命中即置终态不提交（Codex review） |
+| fix | prd-api | 分镜台 ExtractChatText 兼容数组型 content：部分 chat 网关把 message.content 返回为部件数组 [{type:text,text:..}]，原先只当字符串读会抛异常退回整段响应、导致 JSON 提取抓到外层 envelope 而非分镜对象、报通用解析失败。改为字符串/数组两种形态都正确拼接文本（Bugbot review） |
+| fix | prd-api | ExtractChatText 再兼容单对象型 content：网关把 message.content 返回为单个 {type,text} 对象（非数组）时也能取文本，抽 PartText 助手统一处理 字符串/单对象/数组三形态（Bugbot review 续） |
+| fix | prd-api | 分镜解析截断至 MaxStoryboardScenes(12)，与请求侧 sceneCount 钳制共用常量：模型对长文超产时不再全量下发撞图生图 run 条目上限导致整板无关键帧（Codex review） |
+| docs | prd-agent | debt.cds-backend-deploy-freeze.md 移除 3 个裸 NUL 字节(改字面 \0)，使 git 不再把该 md 当二进制、diff 工具可正常处理（Codex review） |
+| polish | prd-admin | 分镜台拆分镜等待加预估耗时文案(10-40s)，补全 CLAUDE.md §6 兜底(动画加载+预估耗时)；完整 SSE 流式见 debt #4（Codex review） |
+| fix | prd-api | 图生视频 submit/status 失败转发 Gateway 额度文案：OpenRouterVideoClient 原先只从 Content/ErrorCode 构造错误，丢掉 SendRawWithResolutionAsync 已写入 ErrorMessage 的 LLM_QUOTA_EXCEEDED 中文提示。新增 QuotaOrUpstreamMessage：额度错误优先用友好文案、其余保留 /videos 上游解析，使「动起来」与拆分镜额度提示一致（Bugbot review） |
+| fix | prd-admin | 关键帧 imageDone 但 url/base64 均缺时标 error 而非 done：原先无图也置 done、kfUrl 为空，卡片永远停在 shimmer（卡片仅在 done && kfUrl 才显示图）。改为无图即 error 提示重绘（Bugbot review） |
+| fix | prd-api | 图生视频下载失败路径也走 QuotaOrUpstreamMessage：原先只用 ErrorCode/HTTP 状态+诊断，丢掉 Gateway 的 LLM_QUOTA_EXCEEDED 友好文案，与 submit/status 不一致（Bugbot review） |
+| fix | prd-api | 分镜解析按请求 sceneCount 截断：ParseStoryboard 接收 maxScenes(用户指定 N 则裁到 N，否则全局上限 12)，兑现 system prompt「恰好 N 个」、控制下游关键帧批量与成本（Bugbot review） |
+| fix | prd-api | OpenRouter 生图解析回退兜底：启发式(body 含 choices/image_url/images 子串)命中但解析到 0 张图时，不再立即失败，回退标准 data[] 解析，避免有效 images/generations 响应被误报「未包含图片数据」（Bugbot review） |
+| ops | prd-api | cds-compose.yml 的 api 服务 build/run 显式统一 `-c Debug`：原先 build 与 dotnet run --no-build 都依赖默认配置，缺显式 -c 易漂移(build 出 Release 而 run 加载 Debug → 跑旧程序集，正是部署冻结症状)（Bugbot review） |
+| fix | prd-admin | 分镜「动起来」视频轮询超时改基于服务器状态：worker 串行处理，本镜排在长任务后会长时间 Queued，原按创建时间起算 11 分钟会在后端刚开始时误判超时。改为离开 Queued 才起算处理窗口(11min)，排队期单独按 20min 上限 + 「排队中」文案（Codex review） |
+| fix | prd-api | OpenRouter/标准 data URL 生图保留 MIME：data:image/jpeg|webp 原先只剥 base64、丢 MIME，落库用默认 image/png，导致 COS 存成 png 却是 JPEG/WebP 字节。ImageGenImage 加 Mime 字段，解析时取 data URL 头 MIME，上传时据此设 outMime（Bugbot review） |
+| fix | prd-admin | 分镜关键帧模型从池内挑健康端点：原先固定取最高优先级 sorted[0]，该端点不可用/降级时关键帧全失败而无视池内其他健康模型。改为优先 Healthy → 非 Unavailable → 回退 sorted[0]（Codex review） |
+| fix | prd-admin | 分镜「动起来」本地超时后取消后端视频 run：原先只标错误，仍 Queued 的任务会被 worker 更晚提交 OpenRouter、在 UI 已告知失败后继续烧额度（Codex review） |
+| fix | prd-api | OpenRouter 出图透传画幅 aspect_ratio：按官方 image-generation 文档，chat/completions 出图加 image_config.aspect_ratio（从请求 size 推最接近受支持比例），修复 16:9/9:16 关键帧被裁切/与图生视频画幅错配；推不出比例则不加避免未知字段（Codex review，待部署验证） |
+| fix | prd-api | 图生视频未指定模型时不再硬编码 alibaba/wan-2.6：留空交由 AppCaller 对应视频池(visual-agent/video-agent)解析各自默认模型，避免以 Wan 当 expectedModel 搜遍所有池绕过 visual-agent 池配置（Codex review） |
+
+### 2026-06-18
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| ops | cds | 延长 prd-admin 静态发布 readiness timeout，避免主干生产构建完成前被误判失败 |
+| feat | cds | 新增 CDS 全局 7 天过期删除策略设置，并修正停止来源归因与卡片展示 |
+| fix | cds | 修复 exec_cds.sh init 在新环境缺少 Node.js 或 Docker 时只提示不自动安装的问题 |
+| fix | cds | 关闭预览 nginx 到 cds_worker 的 upstream keepalive，修复预览域名间歇性空 400 |
+| fix | prd-api | 更新中心关联缺陷反查兼容短 commit id |
+| feat | prd-api | 新增缺陷自动化长期授权确保接口 |
+| fix | prd-api | 缺陷自动化单次运行跳过已完成或失败的缺陷 |
+| fix | prd-api | 缺陷自动化连接器授权复用检查补充过期与撤销判断 |
+| security | prd-api | 缺陷自动化写入端点增加运行记录、目标缺陷和验收 trace 权限边界 |
+| security | prd-api | 新增 defect-agent:share 窄 scope，仅允许访问缺陷分享端点 |
+| fix | prd-admin | 缺陷分享临时密钥申请 scope 改为 defect-agent:share |
+| feat | prd-api | 缺陷来源连接器返回单缺陷和轻量修复机读策略 |
+| docs | prd-api | 更新 ai-defect-resolve 技能到 1.4.0 |
+| fix | cds | API 预览服务补充就绪超时配置，避免冷启动被误判为 503 |
+| fix | cds | Admin 静态预览改用锁定的 serve 依赖启动，避免 npx 动态安装后端口未监听 |
+| feat | prd-api | 新增缺陷自动化控制台接口，返回长期授权、运行历史、统计和每日计划模板 |
+| feat | prd-admin | 缺陷页面新增缺陷自动化控制台，支持一键生成并复制长期授权每日计划 |
+| docs | skills | ai-defect-resolve 改为优先使用缺陷页面自动化入口生成永不过期授权 |
+| ops | cds | Admin 预览容器改为从仓库根目录进入 prd-admin 启动，避免源码模式缺少 package.json |
+| fix | prd-api | 缺陷自动化 commit 回写优先使用长期 K 标识，确保发布后验收和通知可继续查询 |
+| chore | doc | 熵清理：D3 补缺 2 条（debt.map-mcp-connector / plan.md-to-ppt-next-wave），D6 处理 5 条 changelog（marketplace 技能分享 / 短视频卡片 / 快捷指令剪贴板 / 工作流自动配置 / ASR 多模态 chat）|
+| fix | prd-api | LlmGateway 二进制响应改为「先无损读字节再判类型」+ 文件魔数嗅探(LooksBinary)：彻底修复图生视频成片下载被当文本损坏（mp4 标成 application/json 也能识别），不再依赖单一 ExpectBinaryResponse 标志 |
+| feat | prd-api | 大模型额度用尽/限额及时提醒：网关识别 OpenRouter "Key limit exceeded"/402 等限额错误 → 专门错误码 LLM_QUOTA_EXCEEDED + 清晰中文提示 + 主动站内告警(去重)，避免额度不足时各功能静默失败、用户无从知晓 |
+| feat | prd-admin | 新增液态玻璃三方对照评估页(labs/liquid-glass):现有重模糊做法 vs B清晰棱光 vs A SVG真折射并排对比,供选型 |
+| feat | prd-admin | App背景加极淡彩色光晕(.app-aurora,双主题):此前全站接近纯黑平底导致液态玻璃无内容可折射,光晕给玻璃"有活干"的深度,克制不伤正文对比度 |
+| fix | prd-admin | 液态玻璃默认开启:DEFAULT_THEME_CONFIG.performanceMode 由 performance 改 quality,此前默认性能模式导致全站GlassCard走实底降级、液态玻璃从不渲染 |
+| feat | prd-admin | 液态玻璃改用B方案:全站GlassCard质量模式blur大幅下调(40→14px)+边缘棱光/镜面反光+暗色底色提一档,清晰度优先不靠重模糊 |
+| feat | prd-admin | 共享弹窗改液态玻璃:遮罩降不透明度(0.72→0.40)+backdrop模糊让繁忙页面映照出来,面板由实底改半透磨砂玻璃(blur24+棱光镜面),所有走Dialog/prd-dialog-content的弹窗一并升级 |
+| feat | prd-admin | 头像菜单新增「液态玻璃」一键开关:点击不关菜单,当场切换全局玻璃开/关(performance↔quality),无需进设置中心皮肤页 |
+| polish | prd-admin | 全局 aurora 背景光晕温和加强(暗色 5 团色斑透明度 +~35% 并扩大范围),让半透卡片(--bg-card 白@0.08)与玻璃面板背后透出更明显的淡彩底色;浅色主题不变 |
+| fix | prd-admin | 修复 aurora 背景被内容区遮挡:<main> 背景由不透明 var(--bg-base) 改 transparent,让外层 .app-aurora 彩色光晕透到内容区,半透卡片/玻璃面板才能折射到淡彩底色而非平底色(aurora 自身以 var(--bg-base) 收底,floor 色不变) |
+| perf | prd-admin | 性能模式下停掉全局 aurora 背景动画并回退 var(--bg-base) 实底,去除全屏大渐变持续重绘的视觉负载(玻璃关闭时无需可折射底色) |
+| fix | prd-admin | 液态玻璃性能模式/reduced-motion 边界统一退实底:shouldReduceEffects 纳入 prefers-reduced-motion,与性能模式同路径由 themeApplier 把 --glass-bg 整体切实底并打 data-perf-mode(卡片/弹窗/所有玻璃面统一退实底);头像菜单徽章用 shouldReduceEffects 判定(auto 在 Windows 降级时显示「已关闭」);弹窗面板在两路径下恢复近实底背景 + 遮罩回退 rgba(0,0,0,0.72),避免半透失焦 |
+| fix | prd-admin | reduced-motion 反应性闭合:initializeTheme 监听 prefers-reduced-motion 变化重跑 applyThemeToDOM(含老 Safari addListener 回退);新增 useReducedMotion 钩子(useSyncExternalStore),Dialog 遮罩与头像玻璃徽章随 OS 偏好运行中变化即时重渲染,消除滞后 |
+| fix | prd-admin | 液态玻璃评估页(labs)对照卡响应式:初始位置按舞台实测宽度铺开,并用 ResizeObserver 在窄屏/缩放时把三张卡夹回可视范围,避免被 overflow:hidden 裁出舞台 |
+| fix | prd-admin | 玻璃评估页(labs)对照卡:舞台首次测得宽度为 0 时补做铺开(spreadDoneRef 标志),避免三张卡堆在原点后不再展开 |
+| fix | prd-api | 短视频卡片时长按平台单位自适应：BuildShortVideoCard 用 >=1000 阈值区分毫秒/秒，避免把已是秒的小数值（如 45）误当毫秒算成 0 或过短（Bugbot Medium） |
+| feat | prd-admin | 知识库右上角「运行中的智能体」入口：短视频解析任务关掉抽屉/刷新页面后仍可见（sessionStorage 持久化 shortVideoRunStore），点击重开抽屉恢复进度；新增页面级 Host 对非终态 run 周期续查，刷新后自动继续推进不再凭空卡住/重新计时 |
+| fix | prd-api | 视频下载器把任意 */octet-stream（含 binary/octet-stream）归一成 video/mp4（Bugbot），ASR 转写 chat-audio 路径排除所有 Exchange（gemini-native 等 transformer 会丢音频，doubao-asr 已单独分流，Codex P2） |
+| fix | prd-api | 短视频解析卡死自愈：(1) ShortVideoMaterialRun.Status 默认值由 running 改为 queued，杜绝缺省/反序列化出的 run 永远卡"处理中"无人 claim；(2) Worker 增加周期性兜底，把 status=running 且 updatedAt 超 15 分钟未推进、非当前处理中的 run 标记为失败（自愈成"可重试"），不再依赖重启才回收；(3) ProcessAsync 进入即把 parse 标 running 并落库，前端立刻看到"正在解析"而非僵在 pending，同时作为心跳。根治"加了短视频链接半天没反应" |
+| fix | prd-admin | 短视频卡片：视频已入库但转写 stage 失败（run 为 done、phase 非 error）时，补一行显示转写失败原因 + 可单独重试提示，不再让用户看不出"为什么没有文字"（Codex P2） |
+| fix | prd-admin | 短视频轮询：run 为 done 但未返回完整入库产物时，error 消息一并同步终态 run，避免卡片渲染上一轮旧 run 与终态 API 不一致（Bugbot Low） |
+| fix | prd-api | 短视频下载器对通用 Content-Type（application/octet-stream 等非 video/*）归一成 video/mp4，避免 COS 落成 .bin 地址导致前端卡片把可播放视频当图片显示成破损媒体（Codex P2） |
+| fix | prd-api | 视频下载器对显式非视频类型（text/html 分享/登录/防盗链页、image/*）直接拒绝而非改写成 mp4 存入非视频字节，避免 source 假成功 + 卡片/ASR 误导性失败；仅 缺失/application/octet-stream 归一成 video/mp4（Codex P2 二轮） |
+| feat | prd-admin | 视觉分镜台新增关键帧模型选择器：不再硬绑首个模型池，单一 OpenRouter 出图模型偶发 404 时可一键切换到其他可用出图模型（仅一个模型时自动隐藏选择器） |
+| fix | prd-api | LlmGateway 原始响应二进制识别补齐 video/* 与 image/*：图生视频（Wan 2.6 等）下载 video/mp4 时此前被当文本读取，导致「视频下载失败: HTTP 200」，视频产物无法落 COS |
+| fix | prd-api | 图生视频下载根因修复：OpenRouter /videos/{id}/content 回 mp4 字节却标 Content-Type=application/json，新增 GatewayRawRequest.ExpectBinaryResponse 强制按字节读取，彻底修复「视频下载失败: HTTP 200」 |
+| fix | prd-api | 图生视频下载二次根因：下载 GET 复用视频 resolution(isExchange=true) 误入 Exchange async 轮询，二进制响应跳过轮询(与响应转换块同口径 !isBinaryResponse)，成片字节直出 |
+| perf | prd-admin | 视觉创作上传大图自动压缩（最长边封顶 2560px / 体积 8MB），缓解画布卡顿 |
+| fix | prd-admin | 视觉创作批量上传超过 20 张时先截断再压缩，避免解码丢弃图拖卡标签页 |
+| fix | prd-admin | 视觉创作上传压缩：尺寸被缩过时即便字节变大也返回封顶版本，防止超大图漏过尺寸封顶 |
+| fix | prd-admin | 视觉创作上传压缩移入串行锁内，避免并发上传同时解码多张大图触发内存峰值 |
+| fix | prd-admin | 视觉创作批量上传改串行逐张压缩，避免单批 20 张并发解码爆内存 |
+| fix | prd-admin | 视觉创作上传压缩放行 SVG（与 GIF 一致），避免矢量图被栅格化丢失语义 |
+| fix | prd-admin | 视觉创作上传压缩按 EXIF 方向解码（createImageBitmap），避免手机照片压缩后旋转/镜像 |
+| fix | prd-admin | 视觉创作上传压缩对可能透明的输入只输出 webp，不兜底 jpeg，避免透明图被糊成黑底 |
+
+### 2026-06-17
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 修复 PR 834 活跃请求观测后续 review 问题，补齐 /_cds 部署分类、observer 自排除和 delayed close 清理 |
+
+### 2026-06-16
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | ASR chat-audio 路由收紧：IsChatAudioModel 不再用裸 gpt-4o 匹配（gpt-4o/gpt-4o-mini 不支持 input_audio），只认含 audio 或 gemini 的模型 |
+| fix | prd-admin | 短视频卡片在解析失败/轮询超时（phase=error）时显示错误与详情，不再被卡片吞掉；状态行不再误显"忙碌中" |
+| fix | cds | 修复性能概览与活跃请求列表漏看 forwarder 流量和部署 SSE 分类错误 |
+| feat | prd-api | 新增缺陷修复与 commit 关联追踪记录，修复报告可回写 commit、预览和验收报告信息 |
+| feat | prd-api | 新增缺陷自动化 Agent 端点，支持长期授权拉取下一条缺陷、评论、回写提交信息并标记修复 |
+| feat | prd-api | 新增缺陷自动化运行记录、连接器握手和正式发布后验收通知回写接口，保存验收结论与知识库名称 |
+| feat | prd-admin | 发布中心 GitHub 提交行展示关联缺陷入口和发布状态 |
+| feat | skills | 升级 ai-defect-resolve 到 domain + 长期授权 K 的日常自动化闭环流程，并接入发布后视觉验收归档协议 |
+| docs | doc | 补充缺陷修复追踪和自动化运行集合的 MongoDB 索引说明 |
+| fix | prd-admin | 修复产品管理列表「筛选设置」弹层被工具栏 overflow 裁剪导致筛选项看不到：改 createPortal + fixed 锚定按钮定位，滚动自动关闭；筛选下拉宽度上限放宽到 220px 防长标签截断 |
+| refactor | prd-admin | FEATURE_TYPE_LABEL/FEATURE_TYPES 提取到 types.ts（消除 FeatureCatalogTab 与 ProductObjectDetailPage 两处重复定义） |
+| fix | prd-admin | 知识库插入图片/保存正文不再整页刷新回顶：保存后用服务端 updatedAt 推进 loadedContentKey 短路内容重拉，插入即所见、图片不再消失 |
+| feat | prd-api | 知识库版本控制：新增 document_entry_versions 集合 + DocumentVersionService，每次保存留存快照（去重+留存上限100），新增 列出/查看/恢复 版本三端点；版本只存文本不碰图片资产，恢复不删除任何资产 |
+| feat | prd-admin | 知识库文档编辑器新增「历史版本」弹窗：版本列表 + 正文预览 + 一键恢复（恢复就地更新预览不刷新） |
+| feat | prd-api | 知识库大小统计端点 GET stores/{id}/size：正文/附件/图片/历史版本字节与数量聚合 |
+| feat | prd-admin | 知识库标题栏新增大小徽章（总体量 + 图片数，tooltip 给出明细） |
+| test | prd-api | 新增 DocumentVersionLogicTests（版本去重/递增/UTF-8 字节/图片外链文本快照安全性）6 例 |
+| feat | prd-api | 订阅源/GitHub 同步覆盖文档正文前先把旧正文快照成版本（source=sync，去重）：订阅文档被远端同步覆盖时，用户本地插入的配图等改动不丢，可从历史版本恢复 |
+| fix | prd-admin | 历史版本弹窗面板改用不透明 --bg-elevated（原 --bg-card 暗色为 rgba(255,255,255,0.08) 半透明，背景正文透出造成重叠）+ 阴影/轻背板模糊 |
+| feat | prd-admin | 编辑订阅/GitHub 每日同步文档时顶部显示警示横幅：手动修改（含插入配图）可能被下次同步覆盖，改动已留存历史版本可恢复 |
+| feat | prd-admin | 知识库列表卡片副标题新增体量徽章（懒加载，滚动进视口才取 size），库外即可纵览每个知识库多大 |
+| fix | prd-api | UpdateEntryContent 用单一时间戳写库与返回（原两次 DateTime.UtcNow 差几毫秒，前端缓存键与列表重载不一致会触发多余重拉回顶）—— Bugbot |
+| fix | prd-admin | 历史版本列表 RelativeTime 加 refreshIntervalMs=0（列表场景禁用每实例刷新定时器，最多 100 行）—— Bugbot |
+| fix | prd-api | GitHub 同步 SHA 缓存复用分支补齐覆盖前后版本快照（原仅 live-fetch 分支快照，缓存分支会静默覆盖本地改动无法恢复）—— Codex |
+| fix | prd-api | AI 再加工写回（reprocess apply replace/append）接入版本快照，历史可撤销 AI 改写 —— Codex |
+| fix | prd-admin | 历史版本「恢复」按钮不再因「是最新快照」禁用（存在不产生版本的写入路径时会挡住撤销）—— Codex |
+| fix | prd-api | 版本恢复 ApplyContentToEntryAsync：DocumentId 指向的 ParsedPrd 行丢失时也 upsert 落库正文，避免恢复后重载空白 —— Bugbot High |
+| fix | prd-api | DeleteStore 级联删除 document_entry_versions，避免删库后版本全文残留泄漏 —— Bugbot |
+| fix | prd-api | GitHub 同步删除远端已不存在的子条目时级联删除其历史版本，与手动删除一致 —— Bugbot |
+| fix | prd-api | AI 再加工写回对无 DocumentId 短文档也快照改动前基线（ContentIndex 即完整正文），保证可撤销 —— Bugbot |
+| fix | prd-api | 版本恢复前的基线快照来源由 sync 改为 edit，避免历史里把手动编辑误显示为「外部同步」—— Bugbot |
+| fix | prd-api | UpdateEntryContent：DocumentId 指向 ParsedPrd 丢失时也 upsert 落库正文（原只在 doc!=null 时保存→重载空白）；无 DocumentId 短文档用 ContentIndex 做基线快照 —— Bugbot High/Medium |
+| fix | prd-admin | 历史版本列表加载加 fetchId 防过期响应守卫（切换文档后慢响应不覆盖当前列表）—— Bugbot |
+| fix | prd-api | 版本恢复 ApplyContentToEntryAsync 对无 DocumentId 短文档也用 ContentIndex 做基线快照，与 UpdateEntryContent 一致 —— Bugbot |
+| fix | prd-admin | 历史版本切换时先清空 detail + 加载中禁用恢复 + handleRestore 校验 detail.id==selectedId，避免拿上一条快照误恢复 —— Bugbot |
+| fix | prd-api | 编辑/恢复/AI再加工写入正文改为内容寻址+共享保护：旧 ParsedPrd 被别的 entry 共享时不就地覆盖（避免改到他人正文），独占时复用旧 id 不产生孤儿 —— Codex P1 |
+| fix | prd-api | 历史版本 列出/查看 端点改为要求写权限，避免公开库只读访客取回作者已删除的旧版本正文 —— Codex P1 |
+| fix | prd-api | 知识库大小统计按 MIME 判定图片（上传附件 Type 统一为 Document），修复上传图片统计为 0 图 —— Codex P2 |
+| fix | prd-admin | DocBrowser loadEntryContent 加 fetchId 防过期响应 + commitLocalSave 作废在途加载，保护「保存不刷新」不被慢请求回滚 —— Bugbot |
+| fix | prd-admin | 历史版本弹窗切换 entry 时先清空 versions/selectedId，避免残留上一篇版本列表 —— Bugbot |
+| fix | prd-api | 版本基线快照不再回退截断的 ContentIndex（2000字上限）：DocumentId 在但 ParsedPrd 丢失时宁可不快照，避免长文档留下截断的改动前版本 —— Bugbot |
+| fix | prd-admin | commitLocalSave 记录刚保存内容；onSaveContent 返回 void 时 loadEntryContent 凭快照直接采纳新 key 跳过重拉，保存不刷新对所有调用方生效 —— Bugbot |
+| fix | prd-admin | commitLocalSave 作废在途加载时同步清 contentLoading，避免内容区卡在 loading 占位 —— Codex P2 |
+| fix | prd-admin | 历史版本首条徽章「当前」改为「最新」，个别写入路径（替换文件）不产生版本时不误导为当前在线正文 —— Codex P2 |
+| fix | prd-admin | 保存豁免重拉改为一次性（用完即清 lastSavedContentRef），只豁免保存紧接的那次重拉；之后订阅同步 bump updatedAt 仍正常重拉，不会一直拿本地旧文盖掉服务端已同步的新内容 —— Bugbot |
+| fix | prd-admin | 知识库大小徽章 refreshKey 改为含各 entry updatedAt（原仅条目数）：编辑/恢复/替换改变体积但条目数不变时也刷新 —— Codex P2 |
+| fix | prd-admin | 版本恢复回调硬化：preview 为 null 时也写出恢复正文（防空白）+ 校验恢复的是当前选中条目（防画错文档）+ 作废在途加载（防慢响应覆盖）—— Bugbot High/Medium |
+| fix | prd-admin | commitLocalSave 同步内部 searchResults 的 updatedAt，避免搜索命中条目保存后 contentKey 不一致引发整页重拉闪烁 —— Bugbot |
+| fix | prd-admin | loadEntryContent 改用 previewRef 读当前 preview（移除 preview 依赖），避免切文档时 setPreview(null) 改变回调标识触发二次加载、大文档下载两次 —— Codex P2 |
+| fix | prd-api | 版本列表次级按 CreatedAt 倒序，并发重复 VersionNumber 时顺序确定（最新徽章不随机）；唯一性兜底索引建议入 guide.mongodb-indexes —— Codex/Bugbot P2 |
+| feat | prd-api | 新增 MAP MCP 连接器网关（POST /api/mcp，Streamable HTTP）：把海鲜市场/知识库的开放接口翻译成 MCP 工具，可被 Claude/Codex 当连接器接入，复用 sk-ak + scope 鉴权，tools/call 回环转发到真实接口 |
+| feat | prd-api | 新增 document-store 开放接口 DocumentStoreOpenApiController（/api/open/document-store，ApiKey+scope+boundUserId），让 MCP 知识库工具用 sk-ak 跑通（原 stores/entries 业务路由因 PublicRoutes 豁免无法注入 sk-ak 身份会 401） |
+| fix | prd-api | MCP 网关处理 PR 二轮评审：协议版本回我方支持版本（不回声客户端任意版本）、回环地址解析补 `://*` 通配符 |
+| fix | prd-api | MCP 动态工具 tools/call 替换 Path 中的 {param} 占位（原样转发会让路由参数原文漏到 loopback）；document-store 开放接口的 entries/content 也排除项目库/产品库/识途库专用库（与 stores 列表一致，防止知道 id 绕过） |
+| fix | prd-api | MCP 端点路由由顶级 `/mcp` 改为 `/api/mcp`：CDS 反代只把 `/api/*` 转后端，顶级路径被前端 SPA 兜底接走导致 404/200-html 不可达；回环同时转发 X-AI-Access-Key fallback 鉴权头 |
+| security | prd-api | MCP 回环 client 禁用自动重定向(AllowAutoRedirect=false):防回环目标返回跨主机重定向时把转发的 sk-ak/X-AI-Access-Key 凭据带到外部主机;回环异常信息改用 JsonObject 序列化防 ex.Message 破坏 JSON 信封 |
+| test | prd-api | 新增 MCP 网关纯逻辑单测 McpGatewayLogicTests（工具目录/scope写隐含读/动态工具名唯一/路径占位替换/请求拼装/inputSchema 推断），不依赖 live 密钥即可断言行为 |
+| feat | prd-api | AgentApiKeysController 增加 AiAccessKey 自助通道(全局超级密钥+X-AI-Impersonate 代用户签发 scoped sk-ak;归属校验+scope 白名单兜底),供 AI 无人值守自测开放接口 |
+| fix | prd-api | MCP 回环转发 X-Client-Base-Url/X-Forwarded-Host/X-Forwarded-Proto,使下游 ResolveServerUrl 构造公网 URL 而非 localhost(影响海鲜市场 official skills 下载链接) |
+| fix | prd-api | MCP 回环 client 禁用系统代理(UseProxy=false),防配了 HTTP_PROXY 的部署把携带 sk-ak 的回环请求发给代理 |
+| docs | doc | 新增 guide.mcp-connector 接入教程(Claude/Codex 接入 + 5 工具 + 共享其他 Agent + 自助签发自测 + 排障) |
+| fix | prd-api | MCP 回环 SendAsync 改用 CancellationToken.None(对齐 server-authority:客户端瞬断不取消下游长任务,120s 超时兜底) |
+| fix | prd-api | MCP 网关非抛出式读取 method/name(畸形如 "method":1 返回 -32600 而非 500),加 AsString 单测 |
+| revert | prd-api | 撤回 AgentApiKeysController 的 AiAccessKey 自助通道(改回纯 [Authorize])——双凭据时 FindFirst(sub) 选错用户(Bugbot Medium);AiAccessKey 鉴权器原设计未动;AI 自助签发改为未来专用端点 |
+| fix | prd-api | 动态工具 inputSchema 把 Path 的 {param} 占位补为 required 字符串属性(否则客户端不传致下游 404);回环超时 120s→600s(动态长任务 Agent 动作),配合 None 取消由下游服务端限制控制 |
+| fix | prd-api | 网页托管 PDF 壳子改用 PDF.js 渲染成 canvas，修复转发链接在手机浏览器/微信内置 WebView 打开 PDF 一片空白 |
+| fix | prd-admin | 分享页 PDF 站点统一 iframe 到壳子 siteUrl（PDF.js canvas），移动端可正常显示 |
+| fix | prd-admin | 短视频卡片标题/标签贴底：底部信息块 pb-20 改 pb-4，避免窄卡片下标题悬在中部、底部留大片空白 |
+| fix | prd-admin | 修复短视频卡片布局：封面图加 referrerPolicy=no-referrer 绕过抖音防盗链（之前封面 403 变成纯色块）；底部标题/标签让出右侧互动指标栏宽度，避免窄卡片下文字与点赞数重叠 |
+| fix | prd-api | 后台任务"定向消费"：知识库 Agent（字幕/视频转文字、文档再加工）与短视频解析的 run 增加 OwnerInstanceId（=git 分支），Worker 只领取属于本实例（或历史无主）的 queued 任务、启动兜底也只回收本实例的 running 任务。根治共享 Mongo 下多分支/主干容器互抢任务、A 分支的任务被跑旧代码的 B 容器消费的问题（见 cross-project-isolation 规则） |
+| fix | prd-admin | 短视频卡片右栏无可见互动指标时不再为其预留 60px padding |
+| fix | prd-admin | PosterFeedCardView 底部留白改为 compactFooter 可配置：默认 px-7 pb-20 给轮播叠加控件让位，短视频抽屉传 compactFooter 用紧凑 px-4 pb-4，修复改共享默认导致周报轮播标题被分页/CTA 控件遮挡的回归（Codex P2） |
+| fix | prd-api | 定向消费边界修复：启动兜底回收一并回收历史无主（OwnerInstanceId 空）的 running 任务，避免上线前旧代码遗留的在途任务永卡 running；再加工续聊重新排队、字幕去重复用时把 run 归属改/限定为当前实例，避免复用别的分支/主干拥有的 queued run 后本实例不处理导致永卡（Codex P2） |
+| fix | prd-api | 字幕去重复用改为原子认领：用 FindOneAndUpdate 一次性钉住无主 queued run 的归属，杜绝「先 Find 再 UpdateOne」期间被别的实例抢走却仍当复用返回的 TOCTOU；无主 running 不再复用，避免观测到跑在别处的 run（Codex P2） |
+
+### 2026-06-15
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | prd-api | 视频转文字/字幕生成支持「多模态 chat + input_audio」转写路径：模型名含 audio/gemini/gpt-4o（非 whisper）时把音频发到 /v1/chat/completions 让多模态模型逐字转写，支持 OpenRouter 等无 Whisper 端点的平台（短视频转写 CapsuleExecutor 与知识库字幕 SubtitleGenerationProcessor 两条链路均覆盖） |
+| fix | prd-api | 多模态 chat 音频转写仅对 OpenAI 兼容平台启用：按平台类型排除原生 google/gemini/anthropic/claude（google 与 gemini 都是原生 Google 平台，走 v1beta generateContent），避免把 OpenAI input_audio 形态请求发到原生端点导致转写失败（Codex P2，SubtitleGenerationProcessor + CapsuleExecutor 两处同步） |
+| fix | prd-api | 字幕 ffmpeg 抽音频在 WaitForExit 前并发读 stderr/stdout，避免长输入写满管道缓冲死锁、任务卡在 running（Codex P2） |
+| feat | prd-api | CCAS 设备素材库新增本地上传接口（equipment/upload） |
+| feat | prd-admin | CCAS 设备素材库 Tab 支持上传本地图片入库 |
+| polish | prd-admin | CCAS 设备素材库 Tab 描述补充上传说明 |
+| feat | prd-api | CCAS PRD 新增多轮改稿 SSE 端点 prd/revise/stream |
+| feat | prd-admin | CCAS PRD Tab 底部改稿助手，整篇文档流式修订 |
+| fix | cds | 修复手机端分支详情抽屉、设置导航和主题悬浮按钮的布局挤压与遮挡问题 |
+| test | cds | 新增手机端布局冒烟脚本，监控横向溢出、文字竖排挤压和可点击目标遮挡 |
+| fix | cds | 修复慢请求观测口径，新增 active 长请求和按类型拆分的 CDS 请求慢榜 |
+| feat | prd-api | 营销问策列表分页+筛选：GET /api/product/consult 支持 page/pageSize/keyword/customerId/verdict/template，返回{items,total,page,pageSize}；MarketingConsultReport 加 Verdict 字段并生成时落库（旧数据回退解析） |
+| feat | prd-api | 问策知识库端点：GET consult/knowledge(列表)、GET consult/knowledge/{id}(全文)、POST consult/knowledge(添加，需管理权限)，复用 find-or-create 问策库 |
+| feat | prd-admin | 营销问策子模块重做为「列表→详情」：分页+搜索+客户/判定/模版筛选+「问策」按钮；详情聚合同一客户的其他问策；compose 自由文本/可选客户一键问策 |
+| feat | prd-admin | 设置「问策知识库」改为文档列表展示：点击查看（Markdown 渲染）+「添加资料」扩充 |
+| feat | prd-api | 营销问策支持自由文本问策（不绑定客户）：生成端点改为 POST /api/product/consult/generate，body {customerId?,input?,note?,template?}；MarketingConsultReport.CustomerId 可空；新增 GET /api/product/consult 全部问策列表（含客户名/自由问策）；BuildConsultData 兼容无客户 |
+| feat | prd-admin | 营销问策子模块重设计：顶部显眼介绍（基于米多四力模型4FM与全域粉销理念）+ 左问策列表 + 右 AI 输入/回答；默认自由文本输入客户情况，可选「选已有客户一键问策」；报告右侧内联预览（可全屏）+ 分享/切模版/存托管 |
+| fix | prd-api | 修复营销问策报告匿名分享链接返回 UNAUTHORIZED：AdminControllerScanner 匿名白名单补登 /api/product/consult/shared/（同项目简报先例，token 即凭证 + 查库校验） |
+| style | prd-admin | 全局输入聚焦环由靛紫(indigo)改为品牌青(cyan)，输入光标色同步，去除紫色聚焦框 |
+| refactor | prd-admin | 产品管理「客户」改为 客户管理 / 营销问策 两个平级子模块：营销问策从客户详情 Tab 独立出来，自带客户选择器；客户列表行/详情提供「营销问策」快捷入口，点击把该客户作为上下文带入 |
+| feat | prd-admin | 客户详情仅保留 基本信息 / 动态跟进；新增/编辑客户按「设置→客户→客户表单」配置渲染自定义字段（DynamicForm，存 FormData） |
+| fix | prd-api | 修复营销问策报告渲染器编译错误（MarketingReportRenderer 误用 t.Template，Theme 无该属性，应为 d.Template），导致 P2 后端构建失败、api 容器启动失败 |
+| style | prd-admin | 输入框聚焦不再画内环（input/textarea/select focus-visible outline 去除），只保留容器外边框 + focus 边框变色反馈 |
+| style | prd-admin | 产品管理卡片图标由 Boxes 换为 Blocks（更具辨识度，区别于项目管理 FolderKanban） |
+| feat | prd-api | 产品管理客户实体扩展商户基础字段（商户编号/简称/状态/认证状态/区域/行业/开户时间/过期时间），新增动态跟进 CustomerFollowUp 模型 + customer_follow_ups 集合 + follow-ups 三端点 |
+| feat | prd-admin | 产品管理「客户」模块改为 master-detail，详情拆分三 Tab：客户信息（商户基础字段表单）/ 动态跟进（富文本时间线，记录时间·创建人·内容）/ 营销问策（P2 占位） |
+| feat | prd-api | 产品管理客户新增「营销问策」：聚合客户全量信息+动态跟进+问策知识库(全域粉销/4FM)，AI 流式产出营销评估并服务端渲染为自包含 HTML(4 专业模版)，支持切模版/分享/保存网页托管，全链路对照项目简报 |
+| feat | prd-api | 新增 MarketingConsultReport 模型 + marketing_consult_reports 集合 + MarketingReportRenderer(4模版) + MarketingConsultService(SSE 流式 LLM) + consult 端点区，注册 AppCaller product-agent.marketing-consult::chat |
+| feat | prd-api | 问策知识库 find-or-create（DocumentStore），首次自动灌入 3 份默认资料（4FM/范式革命/缩量内卷），种子 md 随程序部署(SeedData) |
+| feat | prd-admin | 客户「营销问策」Tab：输入客户情况/一键问策 + SSE 流式可视化(阶段·模型·思考·逐字) + 4 模版选择 + iframe 报告预览 + 分享/切模版/保存网页托管 + 历史报告列表 |
+| feat | prd-admin | 设置「问策知识库」分类说明默认资料与维护入口 |
+| refactor | prd-admin | 产品管理 / 项目管理智能体显示名去掉「智能体」后缀（导航 + 百宝箱 + 后端 AppName + 权限标签） |
+| feat | prd-admin | 产品管理「应用」与「设置」合并为统一「设置」中心，按 权限/产品/需求/功能/缺陷/客户/问策知识库 七分类组织（ProductSettingsHub） |
+| feat | prd-api | 产品管理新增通用等级目录 ProductGradeOption（优先级/严重程度 × 需求/功能/缺陷，可增删改查 + 内置默认项），新增 grade-options CRUD 端点 |
+| feat | prd-admin | 产品管理设置内新增「优先级 / 严重程度」可配置目录（GradeCatalogManager） |
+| feat | prd-api | 产品管理单产品新增「产品结构」：ProductStructureNode 模块/能力骨架树（product_structure_nodes 集合 + 树 CRUD，删除级联软删后代并解挂功能）；Feature 加 StructureNodeId + PUT features/{id}/structure-node 挂载端点 |
+| feat | prd-admin | 单产品新增「产品蓝图」导航：子 tab 产品结构（树编辑：增删改/逐层展开）+ 功能清单（已有功能挂结构节点的结构化全局总览 + 未归类区，复用 Feature 不另存） |
+| feat | prd-api | 产品蓝图新增「产品规则」「产品字典」两实体（product_rules/product_terms 集合 + 各 GET/POST(upsert)/DELETE 端点，写=产品管理员）；ProductRule 含分类/标题/Markdown正文/状态，ProductTerm 含术语/别名/Markdown定义/分类 |
+| feat | prd-admin | 产品蓝图新增「产品规则」「产品字典」子 tab：规则按分类分组+状态(生效/草稿/废弃)+Markdown正文折叠查看；字典术语+别名+分类+Markdown定义+搜索；均支持增删改，正文可用 [[术语]] 轻量交叉引用 |
+| feat | prd-admin | 教程走完毕业帽飞回「教程」入口时，pill 用弹簧物理「接住」一下（非等比挤压回弹 + 环形辉光 + 涟漪），全局单点实现，全站入口统一生效 |
+| fix | prd-admin | 修复页面卡顿时「接住」闪光比帽子落地迟数秒的脱钩：接住动画改为与飞行同帧挂载、用合成层 delay 预约引爆，不再走 onfinish→setState→重渲染的主线程链路，无论页面多卡都与帽子落地严丝合缝 |
+| fix | prd-admin | 修复「接住」FX 在延迟未引爆时被新教程打断卸载后，挂在入口节点上的预约挤压动画幽灵引爆并与下次接住重叠（Bugbot Medium）：卸载时取消仍在 delay 期的 pill 动画、新教程启动前清空 flyBack/landFx |
+
+### 2026-06-14
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-admin | 修复海鲜市场技能预览右侧 SKILL.md 失真：代码块内 Prism markdown 表格 token 类名 `table` 与 Tailwind v4 `.table{display:table}` 撞名导致每个单元格各占一行，强制代码块 token 回退 inline |
+| feat | prd-admin | 技能分享公开页顶部横条新增「下载技能压缩包」按钮（免登录直下，走已有公开 zip 端点） |
+| feat | prd-admin | 技能分享改为弹窗式，支持选择有效期（永久/7/30/90 天），全局单例 SkillShareDialog 由卡片与详情弹窗共用 |
+| fix | prd-admin | 技能分享弹窗：生成链接期间忽略别处 open()，避免界面与复制链接对应不同技能；详情弹窗 Esc 让位给上层分享弹窗，不再一次 Esc 连关两层 |
+| fix | prd-admin | 技能分享弹窗 busy 闸改为生成时同步置位（不走 effect），杜绝点击到 effect 之间的竞态窗口 |
+| feat | prd-api | 「我的分享」聚合新增技能分享（marketplace_skill），跨 5 类统一管理；技能分享链接 /s/skill/{token} 可在「我的分享」查看/复制 |
+| feat | prd-admin | 「我的分享」页新增「技能」分类标签与筛选 |
+| polish | prd-admin | 海鲜市场官方技能去置顶：取消「官方推荐」独立置顶区，官方与社区技能按当前排序（热门/最新）混排，官方身份仍由卡片「官方」徽章标识 |
+| feat | prd-api | 短视频解析新增 Card 展示卡片数据（封面/作者/头像/时长/话题/点赞评论等统计）+ COS 永久视频地址，后端从平台原始元数据抽取干净字段供前端直接渲染 |
+| feat | prd-admin | 短视频解析粘贴链接后改用仿真短视频卡片（复用海报 PosterFeedCardView）展示封面+可播放视频，取代原先的文字块；解析进度降为卡片下方一行状态，封面先出、入库后切 COS 永久地址播放 |
+| fix | prd-admin | 修复快捷指令复制到剪贴板在非安全上下文/内嵌浏览器下静默失败却假报「已复制」的问题 |
+| feat | prd-admin | 新增健壮剪贴板工具 lib/clipboard.ts（async API + execCommand 兜底 + 真实成功反馈），统一快捷指令各处复制 |
+| fix | prd-admin | 快捷指令 iCloud 模板安装：配置复制失败时不再跳转 iCloud，避免装出来读不到配置 |
+| fix | prd-admin | 快捷指令扫码安装页错误提示读错字段（永远显示「加载失败」），改为按 error.code 区分过期/失效/已删除/网络并给出下一步与重试 |
+| feat | prd-admin | 快捷指令安装页新增「连接自检/验证密钥」：装完点一下诚实探活密钥是否仍被服务器接受（安装后唯一用户自查不了的失败点），非破坏性、不展示收藏内容。注：scs- token 按账号汇总且可共用，靠收藏计数判定「本次安装成功」不可靠，故只验密钥 |
+| feat | prd-admin | 快捷指令安装页新增「遇到问题」常见卡点 FAQ（iOS 15+/不受信任/分享表单/网络权限） |
+| polish | prd-admin | 快捷指令安装页手动兜底场景增加诚实友好提示（说明为何要多走几步+鼓励），并补全手动添加步骤（请求体/头部/自检收尾） |
+| polish | prd-admin | 快捷指令 iCloud 模板配置面板增加影响说明（不配=全员手动，配好=全站一键），促使一次性配好 |
+| fix | prd-admin | 快捷指令手动兜底：自动复制被浏览器拦截时也解锁「打开快捷指令编辑器」，避免照提示手动复制后仍卡死无法继续 |
+| fix | prd-admin | 安装页暴露「完整配置」JSON 可手动复制：iCloud/签名流程下自动复制被拦截时不再死胡同（模板从剪贴板读的是整段 JSON 而非仅 Token） |
+| fix | prd-admin | iCloud 流程自动复制被拦截后，新增「已手动复制？点此打开 iCloud 模板」直达链接，手动复制后仍能继续不卡死 |
+| fix | prd-admin/prd-api | 连接自检改走专用 GET /api/shortcuts/verify，校验口径与 Collect 一致（密钥有效+未禁用+未过期），修复「已禁用快捷指令自检却显示密钥有效」；前端区分禁用/失效给不同提示 |
+| fix | prd-admin | 安装页换快捷指令（路由 :id/t 变化复用组件）时重置 step/copyTried 并 remount 连接自检，避免显示上一条指令的「已复制/密钥有效」 |
+| fix | prd-admin | iCloud/签名流程下自动复制失败的提示改为指向「完整配置」整段（模板读 JSON），纯手动流程仍指 Token/接口，避免照提示复制错内容 |
+| feat | prd-admin | 新增「视觉分镜台」：想法/文章拆成电影分镜，关键帧复用视觉创作生图引擎实时生长、逐镜精修，预留 image-to-video |
+| feat | prd-api | 新增视觉分镜拆镜接口 storyboard-script（visual-agent.storyboard.script::chat）：输出每镜关键帧图 prompt + 运动 prompt |
+| fix | prd-api | OpenAIImageClient 支持 OpenRouter 图片生成协议（/chat/completions + modalities:[image,text]，从 message.images 取图），修复 OpenRouter 图片模型 404 |
+| feat | prd-api | 工作流对话助手新增「校验+自动接线+自愈+缺项扫描」闭环：AI 生成的工作流自动规范化插槽、按 dataType 自动接线、结构错误回喂 LLM 自愈最多 2 轮，把产物从草稿变可跑件 |
+| feat | prd-admin | 工作流助手对话气泡新增自动校验卡：展示校验状态、自动接线说明、待补齐配置/密钥项 |
+| fix | prd-api | 修复工作流 from-chat SSE 事件用 `event: message` 包裹导致前端按 data.type 分发失效（workflow_created/generated/delta 事件无法触达） |
+| feat | prd-api | 对话助手系统提示注入「暂未开放能力」清单（定时/Webhook 触发），引导 AI 改用手动触发而非静默省略 |
+| feat | prd-admin | 工作流自动校验卡的「待补项」改为就地可填表单：填完一键「补齐并应用到编辑器」把值烘焙进节点配置/变量，省去逐节点找配置 |
+| feat | prd-admin | 工作流列表页新增「一句话生成工作流」入口：描述需求 → 自动建流进画布并由 AI 生成，不必先建空白再手配 |
+| fix | prd-api | 工作流校验对重复 nodeId 容错（不再 ToDictionary 抛异常崩 SSE），重复 ID 报为结构问题交自愈 |
+| fix | prd-api | AI 生成工作流仅在结构校验通过时才落库自动创建，自愈仍失败的退回草稿不持久化残缺工作流 |
+| fix | prd-admin | 有缺项时隐藏「应用到编辑器」绿钮（避免用未填值覆盖）；缺项未填全时禁用「补齐并应用」，杜绝假「已补齐」 |
+| fix | prd-api | 工作流校验对重复变量 key / null 节点 config 容错，不再崩 SSE；SSE 错误事件补 message 字段让前端显示真实失败原因 |
+| fix | prd-api | 自动接线改为「补缺连线」：漏接一跳的处理节点自动从前序节点补上游，避免它当空输入独立根却被判可执行 |
+| fix | prd-admin | 「一句话起步」auto-send 与历史加载竞态：历史晚返回不再覆盖刚追加的流式消息 |
+| fix | prd-admin | 画布保存补回 variables：AI 缺项补齐填入的变量默认值（如 cookie）不再在 handleSave 时丢失，并带入执行变量 |
+| fix | prd-api | 缺项扫描新增条件必填：TAPD 选 Cookie 认证时 cookie/dscToken 必填、选 Open API 时 authToken 必填，避免漏报后执行才炸 |
+| fix | prd-api | 自动接线改为按插槽粒度：data-merger 等多输入节点的每个必填输入槽都补上游，补不上的暴露为结构问题（不再单输入静默通过） |
+| fix | prd-api | 校验结果随对话消息持久化：刷新对话历史后「应用门禁」与缺项卡可恢复 |
+| fix | prd-admin | 应用门禁加严：结构无效（环/重复/停用舱补不掉）时禁用「应用到编辑器」「补齐并应用」，并提示先解决结构问题 |
+
+
 ### 2026-06-15
 
 | 类型 | 模块 | 描述 |
