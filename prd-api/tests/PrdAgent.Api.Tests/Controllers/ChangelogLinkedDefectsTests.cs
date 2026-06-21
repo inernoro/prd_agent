@@ -133,6 +133,9 @@ public class ChangelogLinkedDefectsTests
         Assert.Contains("自检失败", plan);
         Assert.Contains("不要领取缺陷", plan);
         Assert.Contains("workflow.version 为 defect-agent-workflow.v1", plan);
+        Assert.Contains("正式缺陷系统 domain 负责拉取真实缺陷", plan);
+        Assert.Contains("测试或预览环境只负责修复验证与视觉验收", plan);
+        Assert.Contains("不要从测试环境领取正式缺陷", plan);
         Assert.Contains("不要把 PR 已创建当成完成", plan);
         Assert.Contains("不要把正式发布前的缺陷通知给提交人", plan);
         Assert.Contains("start-next 返回 hasNext=false", plan);

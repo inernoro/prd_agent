@@ -26,6 +26,8 @@ public class OfficialSkillCatalogTests
         Assert.Contains("不允许按日期批量贴缺陷标志", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("scripts/defect-automation-probe.mjs", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("hasNext=false", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("正式缺陷系统只负责读取待验收 trace", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("测试或预览环境跑视觉验收", OfficialSkillTemplates.AiDefectResolveSkillMd);
     }
 
     [Fact]

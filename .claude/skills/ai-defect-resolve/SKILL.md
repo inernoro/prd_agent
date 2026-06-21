@@ -149,7 +149,7 @@ Content-Type: application/json
 
 - 开始修复前：说明理解、计划、风险。
 - 遇到阻塞时：说明阻塞点和需要人类确认的事项。
-- 修复完成后：说明 PR、commit、预览地址、验收步骤；正式环境验收报告生成后必须再评论报告地址和知识库地址。
+- 修复完成后：说明 PR、commit、测试或预览验收地址、验收步骤；发布后验收报告生成后必须再评论报告地址和知识库地址。
 
 ### 4. 轻量修复判定
 
@@ -261,7 +261,7 @@ Authorization: Bearer {K}
 
 对每个 item：
 
-1. 使用 `create-visual-test-to-kb` 跑正式环境验收。目标优先取 `item.acceptance.target`，commit 取 `item.acceptance.commitSha`，预览地址取 `item.acceptance.previewUrl`。
+1. 正式缺陷系统只负责读取待验收 trace、回写报告和通知提交人；使用 `create-visual-test-to-kb` 在测试或预览环境跑视觉验收。目标优先取 `item.acceptance.target`，commit 取 `item.acceptance.commitSha`，验收地址取 `item.acceptance.previewUrl`。
 2. 复制 `.claude/skills/create-visual-test-to-kb/acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本里把 `report.storeName` 改成“缺陷修复验收报告”。
 3. 用验收技能归档报告；如果知识库不存在，归档脚本按 find-or-create 逻辑创建。归档必须走知识库传输共享协议：正文和截图 `assets[]` 一次性提交给知识库后端，由知识库决定正式图片域名和缓存刷新。禁止直接写 Mongo、禁止手动上传图片后拼 URL、禁止把 `data:image` 写进报告。
 4. 视觉验收必须进入更新中心的 commit 记录列表，截取对应 commit 行上的“关联缺陷 N”或“我的缺陷 N”按钮；必须点击按钮并截取弹窗，证明缺陷编号、标题、发布状态、验收报告或知识库链接可见。提交者本人场景必须证明按钮显示“我的缺陷 N”或弹窗内出现“我提交的”。普通 changelog 文案行不作为缺陷关联验收目标。
@@ -298,9 +298,9 @@ Content-Type: application/json
 
 `verdict` 可取值：
 
-- `pass`：正式环境验收通过。
+- `pass`：测试或预览环境验收通过，且报告已回写正式缺陷系统。
 - `conditional`：有条件通过，必须在报告和消息中说明限制。
-- `fail`：正式环境验收未通过，需要继续改进。
+- `fail`：测试或预览环境验收未通过，需要继续改进。
 - `invalid`：验收报告证明用户提交的缺陷陈述不成立，用于有证据地回复用户。
 
 `knowledgeBaseUrl` 必须填写为验收报告知识库可打开地址；缺少该地址时后端会拒绝发送通知，避免用户收到无法查收的消息。
@@ -325,4 +325,4 @@ Content-Type: application/json
 5. 不提前通知用户：正式发布前只在缺陷内更新进度，不给提交人发“已修复”通知。
 6. 不把“已创建 PR”当作完成：必须等 commit 被正式发布后，才进入视觉验收和提交人通知。
 7. 不处理无关缺陷：验收或演练时先创建独立项目，运行记录带 `projectId` 过滤，避免领取线上其它人的存量缺陷。
-8. 不混淆环境：测试环境数据库和正式环境数据库不同。测试环境通过只能证明协议可用，不能证明正式缺陷已修复。
+8. 不混淆环境：正式缺陷系统负责拉取、评论、commit/PR/validation-report 回写和通知；测试或预览环境负责修复验证与视觉验收。测试库里的演练缺陷不能当正式闭环结果，正式缺陷的状态和评论必须写回正式缺陷系统。

@@ -219,7 +219,7 @@ function AutomationBoundary() {
     '启动前先跑 connector 自检，协议或授权不对就停止。',
     '一次只处理一个缺陷，complete 回写 commit 和 PR 后再领取下一条。',
     'PR 已创建不等于完成，正式发布前不通知提交人。',
-    '发布后才跑视觉验收，报告入“缺陷修复验收报告”并回写 validation-report。',
+    '正式缺陷系统读写，测试或预览环境验收，报告入“缺陷修复验收报告”后回写 validation-report。',
   ];
 
   return (
