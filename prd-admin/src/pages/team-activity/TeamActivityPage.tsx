@@ -60,12 +60,12 @@ function readPrivacyPreference(): boolean {
 }
 
 export default function TeamActivityPage() {
-  // 视图切换：feed（动态流）/ insights（行为洞察），深链 ?tab=insights
+  // 视图切换：insights（行为洞察/VOC，默认首屏）/ feed（动态流），深链 ?tab=feed 回到动态流
   const [searchParams, setSearchParams] = useSearchParams();
-  const view = searchParams.get('tab') === 'insights' ? 'insights' : 'feed';
+  const view = searchParams.get('tab') === 'feed' ? 'feed' : 'insights';
   const switchView = useCallback(
     (next: 'feed' | 'insights') => {
-      setSearchParams(next === 'insights' ? { tab: 'insights' } : {}, { replace: true });
+      setSearchParams(next === 'feed' ? { tab: 'feed' } : {}, { replace: true });
     },
     [setSearchParams]
   );
@@ -195,12 +195,12 @@ export default function TeamActivityPage() {
   return (
     // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡
     <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1840 }}>
-      {/* 页头：视图切换走 tabs（动态流 / 行为洞察），时间范围 chips 走 actions 槽显眼可见 */}
+      {/* 页头：视图切换走 tabs（行为洞察/VOC 在前 / 动态流），时间范围 chips 走 actions 槽显眼可见 */}
       <PageHeader
-        title="团队动态"
+        title="VOC"
         tabs={[
-          { key: 'feed', label: '动态流', icon: <Activity size={13} /> },
           { key: 'insights', label: '行为洞察', icon: <Radar size={13} /> },
+          { key: 'feed', label: '动态流', icon: <Activity size={13} /> },
         ]}
         activeTab={view}
         onTabChange={(key) => switchView(key === 'insights' ? 'insights' : 'feed')}

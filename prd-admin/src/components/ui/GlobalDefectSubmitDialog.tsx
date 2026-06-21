@@ -214,8 +214,16 @@ export function GlobalDefectSubmitDialog() {
 
   // 应用预填草稿（行为洞察「转为缺陷」复用本面板时携带）：打开瞬间把标题/正文/严重度/指派人灌进表单。
   // title 作为正文首行（本面板用首行提取标题），避免再开一个标题输入框，复用既有「首行即标题」交互。
+  // 无预填时清空正文/严重度，避免上一次 VOC 草稿在「侧边栏快捷无预填」重开时残留（关闭未提交时未重置）。
   useEffect(() => {
-    if (!showDialog || !prefill) return;
+    if (!showDialog) return;
+    if (!prefill) {
+      setContent('');
+      setSeverity(DefectSeverity.Trivial);
+      setAttachments([]);
+      setPreviewIndex(null);
+      return;
+    }
     const titleLine = prefill.title?.trim();
     const body = prefill.content ?? '';
     setContent(titleLine ? `${titleLine}\n\n${body}`.trim() : body);

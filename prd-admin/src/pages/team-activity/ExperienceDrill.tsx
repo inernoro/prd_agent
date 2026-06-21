@@ -31,6 +31,7 @@ export function ExperienceDrill({
   target,
   label,
   from,
+  to,
   convertingRequirement,
   requirementNo,
   onRequestDefectModal,
@@ -41,6 +42,8 @@ export function ExperienceDrill({
   /** 痛点块/痛点榜给的展示名（模块 · 端点），明细到达前先用它兜底面包屑 */
   label: string;
   from?: string;
+  /** 选中的窗口结束时间：透传给明细 + 诊断，避免后端默认 end=now 把历史选择混入后续请求 */
+  to?: string;
   /** 父组件正在执行「转需求」 */
   convertingRequirement?: boolean;
   /** 该痛点已转产品需求时的需求编号（展示「已转需求 #No」chip） */
@@ -70,10 +73,10 @@ export function ExperienceDrill({
   const startDiagnose = useCallback(() => {
     setDiagModel(null);
     void diag.start({
-      url: `/api/team-activity/diagnose?target=${encodeURIComponent(target)}${from ? `&from=${encodeURIComponent(from)}` : ''}`,
+      url: `/api/team-activity/diagnose?target=${encodeURIComponent(target)}${from ? `&from=${encodeURIComponent(from)}` : ''}${to ? `&to=${encodeURIComponent(to)}` : ''}`,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target, from]);
+  }, [target, from, to]);
 
   // 进入即拉明细 + 自动开始 AI 诊断（边等边看，符合「禁止空白等待」）
   useEffect(() => {
@@ -81,7 +84,7 @@ export function ExperienceDrill({
     setLoading(true);
     setDetail(null);
     setDetailError(null);
-    void getTeamActivityEndpointDetail({ target, from }).then((res) => {
+    void getTeamActivityEndpointDetail({ target, from, to }).then((res) => {
       if (!alive) return;
       if (res.success) {
         setDetail(res.data);
@@ -96,7 +99,7 @@ export function ExperienceDrill({
       diag.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target, from]);
+  }, [target, from, to]);
 
   const moduleName = detail?.module || label.split(' · ')[0] || '模块';
   const leafName = detail?.label || label.split(' · ')[1] || label;

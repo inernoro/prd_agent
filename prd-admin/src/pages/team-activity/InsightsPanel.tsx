@@ -95,8 +95,10 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const [trendEmpty, setTrendEmpty] = useState(false);
   // 全屏热力图浮层开关（createPortal 到 body）
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
-  // 下钻抽屉：从右侧滑入的浮层 drawer（createPortal 到 body），target 非空即展开
-  const [drillTarget, setDrillTarget] = useState<{ target: string; label: string } | null>(null);
+  // 下钻抽屉：从右侧滑入的浮层 drawer（createPortal 到 body），target 非空即展开。
+  // kind 记录下钻入口的叶子类型（api-error 红/报错 · slow 琥珀/等待过久），保证转缺陷/转需求时
+  // kind|target 指纹与真实痛点一致（slow-only 痛点不会被误标成 api-error）。
+  const [drillTarget, setDrillTarget] = useState<{ target: string; label: string; kind?: string } | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   // 转缺陷：复用真实缺陷面板（GlobalDefectSubmitDialog），通过全局 store 携预填打开
   const openDefectDialog = useGlobalDefectStore((s) => s.openDialog);
@@ -209,18 +211,21 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     // 体验全景热力图与痛点榜同源（apirequestlogs），并行拉取，互不阻塞
     void getTeamActivityExperienceMap({ from, to }).then((res) => {
       if (fetchIdRef.current !== fetchId) return;
+      // 失败时清空旧窗口数据（treemap 显示空/加载态），避免新选择下还残留上一个时间窗的热力图
       if (res.success) setMapData(res.data);
+      else setMapData(null);
     });
   }, [from, to, includeIgnored]);
 
   // 点击热力图痛点块 / 痛点榜「AI 诊断」→ 打开右侧浮层下钻抽屉（查真实明细 + AI 根因诊断，未上榜也能下钻）
-  const openDrill = useCallback((target: string, label: string) => {
-    setDrillTarget({ target, label });
+  // kind 可选：来自叶子健康（红=api-error / 琥珀=slow）或痛点榜行的 item.kind，用于转缺陷/转需求时回写正确指纹。
+  const openDrill = useCallback((target: string, label: string, kind?: string) => {
+    setDrillTarget({ target, label, kind });
   }, []);
 
   const handleSelectTarget = useCallback(
-    (target: string, fallback?: { label: string; metric: string }) => {
-      openDrill(target, fallback?.label ?? target);
+    (target: string, fallback?: { label: string; metric: string; kind?: string }) => {
+      openDrill(target, fallback?.label ?? target, fallback?.kind);
     },
     [openDrill]
   );
@@ -304,6 +309,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     }
     const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
     const dt = drillTarget;
+    // 走到这里说明未命中痛点榜（hit 必为空），指纹 kind 取下钻入口叶子类型，兜底 api-error
+    const kind = drillTarget.kind ?? 'api-error';
     openDefectDialog({
       prefill: {
         title: `[体验下钻] ${dt.label}：${dt.target}`,
@@ -320,7 +327,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
       },
       onCreated: (defect) => {
         void setTeamActivityInsightState({
-          kind: 'api-error',
+          kind,
           target: dt.target,
           status: 'confirmed',
           defectId: defect.id,
@@ -337,7 +344,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     const hit = data?.items.find((i) => i.target === drillTarget.target && i.kind === 'api-error')
       ?? data?.items.find((i) => i.target === drillTarget.target);
     const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
-    const kind = hit?.kind ?? 'api-error';
+    // 指纹 kind 取下钻入口叶子类型（slow-only 痛点不被误标 api-error），兜底 hit?.kind / api-error
+    const kind = drillTarget.kind ?? hit?.kind ?? 'api-error';
     const title = hit
       ? `[用户体验之声] ${hit.kindLabel}：${hit.target}`
       : `[用户体验之声] ${drillTarget.label}`;
@@ -773,7 +781,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                         <>
                           {item.kind === 'api-error' || item.kind === 'slow-endpoint' ? (
                             <ActionButton
-                              onClick={() => openDrill(item.target, `${item.kindLabel} · ${item.target}`)}
+                              onClick={() => openDrill(item.target, `${item.kindLabel} · ${item.target}`, item.kind)}
                               icon={Microscope}
                               label="AI 诊断"
                             />
@@ -824,6 +832,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                   target={drillTarget.target}
                   label={drillTarget.label}
                   from={from}
+                  to={to}
                   convertingRequirement={reqSubmitting && reqModal?.target === drillTarget.target}
                   requirementNo={data?.items.find((i) => i.target === drillTarget.target && i.requirementNo)?.requirementNo ?? null}
                   onRequestDefectModal={openDefectDialogForDrill}

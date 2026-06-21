@@ -37,6 +37,13 @@ public class TeamActivityController : ControllerBase
         _llmRequestContext = llmRequestContext;
     }
 
+    /// <summary>是否具备指定权限（super 全通过）。对照 ProductAgentController.HasPermission。</summary>
+    private bool HasPermission(string perm)
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
     /// <summary>
     /// 动态列表（按时间倒序分页），支持按人 / 模块 / 时间范围筛选。
     /// </summary>
@@ -1857,12 +1864,19 @@ public class TeamActivityController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.ProductId))
             return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "请先选择落入哪个产品的需求池"));
 
+        var userId = this.GetRequiredUserId();
         var productId = request.ProductId!.Trim();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null)
             return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "目标产品不存在或已删除，请重新选择"));
 
-        var userId = this.GetRequiredUserId();
+        // 产品访问域校验（对照 ProductAgentController.FindAccessibleProductAsync）：负责人 / 成员 / 产品管理权限之一，
+        // 否则禁止把体验之声写进无权访问的产品需求池（team-activity.manage 不等于可越权写任意产品）。
+        if (!product.IsProductOwner(userId)
+            && !product.MemberIds.Contains(userId)
+            && !HasPermission(AdminPermissionCatalog.ProductAgentManage))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权将体验之声写入该产品需求池"));
+
         var fingerprint = $"{request.Kind}|{request.Target}";
 
         // 幂等：该指纹已转过需求且需求仍存在 → 返回已存在的，不重复创建
@@ -1910,6 +1924,15 @@ public class TeamActivityController : ControllerBase
             SourceUrl = request.Target,
         };
         await _db.Requirements.InsertOneAsync(requirement);
+
+        // 维护去规范化计数：重算该产品需求数（镜像 ProductAgentController.RecalcProductCountsAsync，仅需求计数）。
+        // 仅在真实新建路径执行，幂等命中已存在需求时已提前 return，不会到这里。
+        var reqCount = await _db.Requirements.CountDocumentsAsync(r => r.ProductId == productId && !r.IsDeleted);
+        await _db.Products.UpdateOneAsync(
+            p => p.Id == productId,
+            Builders<Product>.Update
+                .Set(p => p.RequirementCount, (int)reqCount)
+                .Set(p => p.UpdatedAt, DateTime.UtcNow));
 
         // 回写关联到洞察状态：RequirementId/RequirementNo + status=confirmed（确认待改）
         var update = Builders<BehaviorInsightState>.Update

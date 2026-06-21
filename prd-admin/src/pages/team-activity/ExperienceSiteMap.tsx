@@ -50,7 +50,7 @@ export function ExperienceSiteMap({
   headerExtra,
 }: {
   mapData: TeamActivityExperienceMapData | null;
-  onSelectTarget?: (target: string, fallback: { label: string; metric: string }) => void;
+  onSelectTarget?: (target: string, fallback: { label: string; metric: string; kind?: string }) => void;
   onSwitchHeatmap?: () => void;
   /** 头部右侧额外控件（四图仪表盘里注入 热力图⇄站点地图 子切换器） */
   headerExtra?: ReactNode;
@@ -113,7 +113,7 @@ export function ExperienceSiteMap({
                         key={l.target}
                         type="button"
                         disabled={!clickable}
-                        onClick={clickable ? () => onSelectTarget!(l.target, { label: `${m.group.label} · ${l.label}`, metric: l.metric }) : undefined}
+                        onClick={clickable ? () => onSelectTarget!(l.target, { label: `${m.group.label} · ${l.label}`, metric: l.metric, kind: l.status === 'error' ? 'api-error' : l.status === 'slow' ? 'slow-endpoint' : undefined }) : undefined}
                         title={clickable ? `下钻 ${l.target}` : l.target}
                         className="group/site flex items-center gap-2 px-2 py-1 rounded-md text-left transition-colors min-w-0"
                         style={{

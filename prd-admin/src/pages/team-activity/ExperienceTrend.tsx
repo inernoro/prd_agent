@@ -102,7 +102,9 @@ export function ExperienceTrend({
     setLoading(true);
     void getTeamActivityExperienceTrend({ from, to }).then((res) => {
       if (fetchIdRef.current !== id) return;
+      // 失败时清空旧数据，避免新选择下还残留上一个时间范围的曲线
       if (res.success) setData(res.data);
+      else setData(null);
       setLoading(false);
     });
   }, [from, to]);

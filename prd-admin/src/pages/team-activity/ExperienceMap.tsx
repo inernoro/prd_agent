@@ -119,7 +119,7 @@ export function ExperienceMap({
 }: {
   data: TeamActivityExperienceMapData | null;
   loading: boolean;
-  onSelectTarget?: (target: string, fallback: { label: string; metric: string }) => void;
+  onSelectTarget?: (target: string, fallback: { label: string; metric: string; kind?: string }) => void;
   /** 全屏态：放大视口 + 显示更多标签层级（块更大、标签阈值放宽） */
   fullscreen?: boolean;
   /** 非全屏时点右上角「全屏」按钮触发（父组件挂全屏浮层） */
@@ -356,7 +356,7 @@ export function ExperienceMap({
                 gStyle.animationDelay = `${revealDelay}ms`;
               }
               return (
-                <g key={c.leaf.target} style={gStyle} onClick={clickable ? () => onSelectTarget!(c.leaf.target, { label: `${c.group.label} · ${c.leaf.label}`, metric: c.leaf.metric }) : undefined}>
+                <g key={c.leaf.target} style={gStyle} onClick={clickable ? () => onSelectTarget!(c.leaf.target, { label: `${c.group.label} · ${c.leaf.label}`, metric: c.leaf.metric, kind: c.leaf.status === 'error' ? 'api-error' : c.leaf.status === 'slow' ? 'slow-endpoint' : undefined }) : undefined}>
                   <title>{`${c.group.label} · ${c.leaf.label}\n${c.leaf.target}\n${c.leaf.metric}`}</title>
                   <rect
                     rx={2}

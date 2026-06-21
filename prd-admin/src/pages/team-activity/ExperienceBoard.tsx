@@ -53,7 +53,7 @@ export function ExperienceBoard({
   onSwitchHeatmap,
 }: {
   items: BehaviorInsight[];
-  onSelectTarget?: (target: string, fallback: { label: string; metric: string }) => void;
+  onSelectTarget?: (target: string, fallback: { label: string; metric: string; kind?: string }) => void;
   onSwitchHeatmap?: () => void;
 }) {
   const navigate = useNavigate();
@@ -144,7 +144,7 @@ function BehaviorChannel({
   onSelectTarget,
 }: {
   items: BehaviorInsight[];
-  onSelectTarget?: (target: string, fallback: { label: string; metric: string }) => void;
+  onSelectTarget?: (target: string, fallback: { label: string; metric: string; kind?: string }) => void;
 }) {
   return (
     <div className="flex flex-col gap-2 min-w-0">
@@ -163,7 +163,7 @@ function BehaviorChannel({
               key={`${it.kind}|${it.target}`}
               type="button"
               disabled={!clickable}
-              onClick={clickable ? () => onSelectTarget!(it.target, { label: `${it.kindLabel} · ${it.target}`, metric: it.metric }) : undefined}
+              onClick={clickable ? () => onSelectTarget!(it.target, { label: `${it.kindLabel} · ${it.target}`, metric: it.metric, kind: it.kind }) : undefined}
               title={clickable ? `下钻 ${it.target}` : it.target}
               className="flex flex-col gap-1.5 rounded-lg px-2.5 py-2 text-left border transition-colors hover:border-white/20"
               style={{
