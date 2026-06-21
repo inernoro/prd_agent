@@ -68,9 +68,11 @@ function fmtBucket(iso: string, unit: 'hour' | 'day'): string {
 
 export function ExperienceTrend({
   from,
+  to,
   onSwitchHeatmap,
 }: {
   from?: string;
+  to?: string;
   /** 空数据引导：一键切回热力图 */
   onSwitchHeatmap?: () => void;
 }) {
@@ -81,12 +83,12 @@ export function ExperienceTrend({
   useEffect(() => {
     const id = ++fetchIdRef.current;
     setLoading(true);
-    void getTeamActivityExperienceTrend({ from }).then((res) => {
+    void getTeamActivityExperienceTrend({ from, to }).then((res) => {
       if (fetchIdRef.current !== id) return;
       if (res.success) setData(res.data);
       setLoading(false);
     });
-  }, [from]);
+  }, [from, to]);
 
   const series = useMemo(() => (data ? buildSeries(data.buckets) : null), [data]);
   const unit = data?.bucketUnit ?? 'day';

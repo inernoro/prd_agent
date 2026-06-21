@@ -86,7 +86,7 @@ function buildDefectContent(item: BehaviorInsight, window: string): string {
   ].join('\n');
 }
 
-export function InsightsPanel({ from }: { from?: string }) {
+export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const [data, setData] = useState<TeamActivityInsightsData | null>(null);
   const [mapData, setMapData] = useState<TeamActivityExperienceMapData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,9 +132,13 @@ export function InsightsPanel({ from }: { from?: string }) {
     setBriefModel(null);
     setPublishedTitle(null);
     setBriefComplete(false);
-    void brief.start({ url: `/api/team-activity/insights/brief${from ? `?from=${encodeURIComponent(from)}` : ''}` });
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    const qs = params.toString();
+    void brief.start({ url: `/api/team-activity/insights/brief${qs ? `?${qs}` : ''}` });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [from]);
+  }, [from, to]);
 
   const publishBrief = useCallback(async () => {
     const markdown = brief.typing.trim();
@@ -194,7 +198,7 @@ export function InsightsPanel({ from }: { from?: string }) {
   const reload = useCallback(() => {
     const fetchId = ++fetchIdRef.current;
     setLoading(true);
-    void getTeamActivityInsights({ from, includeIgnored: includeIgnored || undefined }).then((res) => {
+    void getTeamActivityInsights({ from, to, includeIgnored: includeIgnored || undefined }).then((res) => {
       if (fetchIdRef.current !== fetchId) return;
       if (res.success) {
         setData(res.data);
@@ -205,11 +209,11 @@ export function InsightsPanel({ from }: { from?: string }) {
       setLoading(false);
     });
     // 体验全景热力图与痛点榜同源（apirequestlogs），并行拉取，互不阻塞
-    void getTeamActivityExperienceMap({ from }).then((res) => {
+    void getTeamActivityExperienceMap({ from, to }).then((res) => {
       if (fetchIdRef.current !== fetchId) return;
       if (res.success) setMapData(res.data);
     });
-  }, [from, includeIgnored]);
+  }, [from, to, includeIgnored]);
 
   // 点击热力图痛点块 / 痛点榜「AI 诊断」→ 打开右侧浮层下钻抽屉（查真实明细 + AI 根因诊断，未上榜也能下钻）
   const openDrill = useCallback((target: string, label: string) => {
@@ -427,7 +431,7 @@ export function InsightsPanel({ from }: { from?: string }) {
   const renderHeroBody = () => {
     switch (heroView) {
       case 'trend':
-        return <ExperienceTrend from={from} onSwitchHeatmap={switchToHeatmap} />;
+        return <ExperienceTrend from={from} to={to} onSwitchHeatmap={switchToHeatmap} />;
       case 'radar':
         return <ExperienceRadar items={data?.items ?? []} mapData={mapData} onSwitchHeatmap={switchToHeatmap} />;
       case 'sitemap':

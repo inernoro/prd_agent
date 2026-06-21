@@ -17,6 +17,7 @@ import { getTeamActivityLogs, getTeamActivityModules, getTeamActivityStats } fro
 import type { ActivityModuleOption, TeamActivityItem, TeamActivityStatsData } from '@/services/contracts/teamActivity';
 import { CategoryStatsPanel, MemberStatsPanel } from './StatsPanels';
 import { InsightsPanel } from './InsightsPanel';
+import { TimeRangePicker, resolveRange, rangePreset, type RangeKey, type TeamRange } from './TimeRangePicker';
 import { getModuleMeta } from './moduleMeta';
 import { getActionIcon } from './actionIcons';
 import { aggregateConsecutive, maskName, type AggregatedActivity } from './pulse';
@@ -26,36 +27,13 @@ const PAGE_SIZE = 30;
 // 隐私脱敏为纯 UI 偏好（发版后旧值无害），按 no-localstorage.md 例外清单允许 localStorage 记忆
 const PRIVACY_KEY = 'team-activity-privacy-mask';
 
-type RangeKey = 'all' | 'today' | 'week' | 'month';
-
-const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
-  { key: 'all', label: '全部' },
-  { key: 'today', label: '今天' },
-  { key: 'week', label: '本周' },
-  { key: 'month', label: '本月' },
-];
-
-/** 环比文案：脉搏的对照窗口与所选范围同长（昨天/上周/上月）；「全部」无环比 */
+/** 环比文案：脉搏的对照窗口与所选范围同长（昨天/上周/上月）；「全部」/自定义无环比 */
 const COMPARE_LABELS: Record<RangeKey, string | null> = {
   all: null,
   today: '较昨日',
   week: '较上周',
   month: '较上月',
 };
-
-function rangeFrom(key: RangeKey): string | undefined {
-  if (key === 'all') return undefined;
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (key === 'week') {
-    // 周一为一周起点
-    const day = (start.getDay() + 6) % 7;
-    start.setDate(start.getDate() - day);
-  } else if (key === 'month') {
-    start.setDate(1);
-  }
-  return start.toISOString();
-}
 
 function dayKeyOf(iso: string): string {
   const d = new Date(iso);
@@ -105,8 +83,13 @@ export default function TeamActivityPage() {
 
   const [filterUserId, setFilterUserId] = useState('');
   const [filterModule, setFilterModule] = useState('');
-  // 默认「今天」：脉搏回答的是「团队此刻在干嘛」，历史全量是查询场景而非默认视图
-  const [filterRange, setFilterRange] = useState<RangeKey>('today');
+  // 默认「今天」：脉搏回答的是「团队此刻在干嘛」，历史全量是查询场景而非默认视图。
+  // 时间范围扩展为「预设 | 自定义[from,to]」，由 TimeRangePicker 驱动。
+  const [timeRange, setTimeRange] = useState<TeamRange>({ kind: 'preset', preset: 'today' });
+  // 当前选中的预设 key（自定义时为 null），用于脉搏环比文案等仅预设场景
+  const rangePresetKey = rangePreset(timeRange);
+  // 解析成发给后端的 from/to（自定义时 to 为所选末日 23:59:59；预设 to=undefined 至今）
+  const { from: rangeFromIso, to: rangeToIso } = resolveRange(timeRange);
 
   // 过期响应守卫：快速切换筛选 / 加载更多与刷新竞态时，丢弃晚到的旧请求结果
   const fetchIdRef = useRef(0);
@@ -128,7 +111,8 @@ export default function TeamActivityPage() {
         pageSize: PAGE_SIZE,
         userId: filterUserId || undefined,
         module: filterModule || undefined,
-        from: rangeFrom(filterRange),
+        from: rangeFromIso,
+        to: rangeToIso,
       });
       if (fetchIdRef.current !== fetchId) return;
       if (res.success) {
@@ -148,7 +132,7 @@ export default function TeamActivityPage() {
       setLoading(false);
       setLoadingMore(false);
     },
-    [filterUserId, filterModule, filterRange]
+    [filterUserId, filterModule, rangeFromIso, rangeToIso]
   );
 
   // 筛选条件变化时重置到第一页（仅动态流视图拉取；行为洞察视图不拉 feed，避免白白加重切换卡顿）
@@ -165,13 +149,14 @@ export default function TeamActivityPage() {
     void getTeamActivityStats({
       userId: filterUserId || undefined,
       module: filterModule || undefined,
-      from: rangeFrom(filterRange),
+      from: rangeFromIso,
+      to: rangeToIso,
     }).then((res) => {
       if (statsFetchIdRef.current !== fetchId) return;
       if (res.success) setStats(res.data);
       setStatsLoading(false);
     });
-  }, [filterUserId, filterModule, filterRange, view]);
+  }, [filterUserId, filterModule, rangeFromIso, rangeToIso, view]);
 
   const togglePrivacy = useCallback(() => {
     setPrivacy((prev) => {
@@ -219,13 +204,7 @@ export default function TeamActivityPage() {
         ]}
         activeTab={view}
         onTabChange={(key) => switchView(key === 'insights' ? 'insights' : 'feed')}
-        actions={
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {RANGE_OPTIONS.map((r) => (
-              <FilterChip key={r.key} active={filterRange === r.key} label={r.label} onClick={() => setFilterRange(r.key)} />
-            ))}
-          </div>
-        }
+        actions={<TimeRangePicker value={timeRange} onChange={setTimeRange} />}
       />
 
       {/* 下方筛选栏：仅动态流视图保留（成员 / 模块 / 隐私脱敏）。行为洞察视图时间已上移页头，无需此栏。 */}
@@ -264,7 +243,7 @@ export default function TeamActivityPage() {
       ) : null}
 
       {view === 'insights' ? (
-        <InsightsPanel from={rangeFrom(filterRange)} />
+        <InsightsPanel from={rangeFromIso} to={rangeToIso} />
       ) : (
       // 控制台三栏：两侧统计栏各自滚动，中间时间线吃满剩余宽度。
       // 窄屏单列纵向堆叠（手机三栏挤爆），lg 起恢复 264 / 1fr / 300 三栏。
@@ -281,7 +260,7 @@ export default function TeamActivityPage() {
             stats={stats}
             loading={statsLoading}
             privacy={privacy}
-            compareLabel={COMPARE_LABELS[filterRange]}
+            compareLabel={rangePresetKey ? COMPARE_LABELS[rangePresetKey] : null}
             activeActorId={filterUserId}
             onPickActor={pickActor}
           />
