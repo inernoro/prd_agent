@@ -136,6 +136,12 @@ export class AuthService {
     allowedOrgs: string[];
   };
   private readonly stateStore = new StateStore();
+  /**
+   * 首启引导串行锁。两个并发 POST /api/auth/bootstrap 可能都先通过 hasAnyUser()
+   * 再各自 createLocalUser → 铸出两个 system owner（PR #865 Codex P2）。CDS master
+   * 是单实例单进程，把"检查空库 + 插入"串到这条链上即可彻底关闭竞态窗口。
+   */
+  private bootstrapChain: Promise<void> = Promise.resolve();
 
   constructor(deps: {
     store: AuthStore;
@@ -317,12 +323,22 @@ export class AuthService {
     password: string;
     name?: string;
   }): Promise<CdsUser> {
-    if (await this.hasAnyUser()) {
-      throw new LocalAuthError('username_taken', '系统已存在用户，首启引导不可用');
+    // 串到 bootstrapChain 上：上一次引导（成功或失败）彻底结束后才执行本次的
+    // "检查空库 + 插入"，避免并发请求都看到空库各自铸 owner（见 bootstrapChain 注释）。
+    const prev = this.bootstrapChain;
+    let release!: () => void;
+    this.bootstrapChain = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await prev.catch(() => { /* 上一次失败不应阻断本次重试 */ });
+      if (await this.hasAnyUser()) {
+        throw new LocalAuthError('username_taken', '系统已存在用户，首启引导不可用');
+      }
+      const user = await this.createLocalUser({ ...input, isSystemOwner: true });
+      await this.ensurePersonalWorkspace(user).catch(() => { /* non-fatal: workspace is best-effort */ });
+      return user;
+    } finally {
+      release();
     }
-    const user = await this.createLocalUser({ ...input, isSystemOwner: true });
-    await this.ensurePersonalWorkspace(user).catch(() => { /* non-fatal: workspace is best-effort */ });
-    return user;
   }
 
   /**

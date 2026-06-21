@@ -110,6 +110,23 @@ describe('AuthService local credentials', () => {
     await expect(svc.bootstrapFirstLocalUser({ username: 'root2', password: 'root-password-2' }))
       .rejects.toBeInstanceOf(LocalAuthError);
   });
+
+  it('serializes concurrent bootstrap so only one system owner is minted', async () => {
+    // 回归 PR #865 Codex P2：两个并发首启引导不能都通过空库检查各自铸 owner。
+    expect(await svc.hasAnyUser()).toBe(false);
+    const results = await Promise.allSettled([
+      svc.bootstrapFirstLocalUser({ username: 'alice', password: 'alice-password-1' }),
+      svc.bootstrapFirstLocalUser({ username: 'bob', password: 'bob-password-1' }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    // 全库只应有一个用户，且是 system owner。
+    const users = await svc.listUsers();
+    expect(users).toHaveLength(1);
+    expect(users.filter((u) => u.isSystemOwner)).toHaveLength(1);
+  });
 });
 
 describe('AuthService user activity log', () => {
