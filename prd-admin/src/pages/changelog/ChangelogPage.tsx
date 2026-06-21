@@ -431,7 +431,7 @@ export default function ChangelogPage() {
         // 否则 35s 轮询 / 手动刷新 / SSE 会用 first-page 80 条覆盖整个列表，
         // 用户正在看的更老内容直接消失（Bugbot #3 + Codex P2）。
         const preservedTail = (previous?.logs ?? []).filter((log) => !newShas.has(log.sha));
-        // ⚠️ 关键：合并 tail 时也要保留 previous 的 hasMore / nextCursor。
+        // 注意：合并 tail 时也要保留 previous 的 hasMore / nextCursor。
         // 否则用 res.data 的 nextCursor（first-page 最后一条 sha）去续接，
         // 会拉回已经在 preservedTail 里的同一批，产生重复（Bugbot High #1 + Codex P2）
         const merged: GitHubLogsView = preservedTail.length > 0 && previous
@@ -498,7 +498,7 @@ export default function ChangelogPage() {
         before: requestedCursor,
       });
       if (!res.success || !res.data) return;
-      // ⚠️ 关键：读最新 ref，而不是用 startSnapshot —— refresh 可能在我们等待期间到达。
+      // 注意：读最新 ref，而不是用 startSnapshot，refresh 可能在我们等待期间到达。
       // 若 latest 已不包含 requestedCursor（=refresh 已用新数据完全覆盖），
       // 本次返回的旧 cursor 数据是过时的，直接丢弃，避免用 stale 数据覆盖新列表（Bugbot #2）。
       const latest = githubLogsRef.current;
@@ -1861,6 +1861,8 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
   if (defects.length === 0 || !status) return null;
 
   const hasMine = defects.some((defect) => defect.isSubmittedByMe);
+  const mineCount = defects.filter((defect) => defect.isSubmittedByMe).length;
+  const badgeCount = hasMine ? mineCount : defects.length;
   const buttonMeta = hasMine
     ? {
         label: '我的缺陷',
@@ -1892,7 +1894,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
         title={hasMine ? '查看我提交且关联此更新的缺陷' : '查看该更新关联的缺陷'}
       >
         <ButtonIcon size={11} />
-        {buttonMeta.label} {defects.length}
+        {buttonMeta.label} {badgeCount}
         <span style={{ color: buttonMeta.color, opacity: 0.86 }}>{status.label}</span>
       </button>
       {open && (

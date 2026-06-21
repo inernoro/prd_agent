@@ -149,6 +149,42 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void CanAutomationRunContinue_OnlyAllowsRunningRuns()
+    {
+        Assert.True(DefectAgentController.CanAutomationRunContinue(new DefectAutomationRun { Status = DefectAutomationRunStatus.Running }));
+        Assert.False(DefectAgentController.CanAutomationRunContinue(new DefectAutomationRun { Status = DefectAutomationRunStatus.Failed }));
+        Assert.False(DefectAgentController.CanAutomationRunContinue(new DefectAutomationRun { Status = DefectAutomationRunStatus.Completed }));
+        Assert.False(DefectAgentController.CanAutomationRunContinue(null));
+    }
+
+    [Fact]
+    public void IsAutomationRunClaimedDefect_RejectsUnclaimedAndTerminalItems()
+    {
+        var run = new DefectAutomationRun
+        {
+            Status = DefectAutomationRunStatus.Running,
+            CurrentDefectId = "current",
+            Items =
+            [
+                new DefectAutomationRunItem { DefectId = "fetched", Status = DefectAutomationRunItemStatus.Fetched },
+                new DefectAutomationRunItem { DefectId = "commented", Status = DefectAutomationRunItemStatus.Commented },
+                new DefectAutomationRunItem { DefectId = "commit", Status = DefectAutomationRunItemStatus.CommitWritten },
+                new DefectAutomationRunItem { DefectId = "fixed", Status = DefectAutomationRunItemStatus.Fixed },
+                new DefectAutomationRunItem { DefectId = "failed", Status = DefectAutomationRunItemStatus.Failed },
+            ],
+        };
+
+        Assert.True(DefectAgentController.IsAutomationRunClaimedDefect(run, "current"));
+        Assert.True(DefectAgentController.IsAutomationRunClaimedDefect(run, "fetched"));
+        Assert.True(DefectAgentController.IsAutomationRunClaimedDefect(run, "commented"));
+        Assert.True(DefectAgentController.IsAutomationRunClaimedDefect(run, "commit"));
+        Assert.False(DefectAgentController.IsAutomationRunClaimedDefect(run, "fixed"));
+        Assert.False(DefectAgentController.IsAutomationRunClaimedDefect(run, "failed"));
+        Assert.False(DefectAgentController.IsAutomationRunClaimedDefect(run, "other"));
+        Assert.False(DefectAgentController.IsAutomationRunClaimedDefect(new DefectAutomationRun { Status = DefectAutomationRunStatus.Failed, CurrentDefectId = "current" }, "current"));
+    }
+
+    [Fact]
     public void CanAutomationAccessDefect_LimitsScopedKeysToAssignedOrUnassignedDefects()
     {
         var assigned = new DefectReport { AssigneeId = "owner" };

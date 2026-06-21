@@ -2871,6 +2871,8 @@ public class DefectAgentController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在"));
             if (!CanAutomationAccessRun(run, userId, hasManagePermission, isAiAccessRequest))
                 return AutomationForbidden("无权访问该自动化运行记录");
+            if (!CanAutomationRunContinue(run))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "运行记录已结束或失败，请创建新的运行记录"));
         }
         else
         {
@@ -3241,6 +3243,16 @@ public class DefectAgentController : ControllerBase
         if (!CanAutomationAccessDefect(defect, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
             return AutomationForbidden("无权处理该缺陷");
 
+        var run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在"));
+        if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
+            return AutomationForbidden("无权修改该自动化运行记录");
+        if (!CanAutomationRunContinue(run))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "运行记录已结束或失败，不能提交完成结果"));
+        if (!IsAutomationRunClaimedDefect(run, defect.Id))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能完成当前运行记录已领取且未终止的缺陷"));
+
         var commitRequest = new SubmitAutomationCommitInfoRequest
         {
             RunId = request.RunId,
@@ -3256,7 +3268,7 @@ public class DefectAgentController : ControllerBase
             AgentName = request.AgentName,
         };
 
-        var commitResult = await ApplyAutomationCommitInfoAsync(defect, commitRequest, ct);
+        var commitResult = await ApplyAutomationCommitInfoAsync(defect, commitRequest, ct, run);
         if (commitResult.Error != null)
             return commitResult.Error;
 
@@ -3268,7 +3280,8 @@ public class DefectAgentController : ControllerBase
                 Resolution = request.Resolution,
                 AgentName = request.AgentName,
             },
-            ct);
+            ct,
+            run);
         if (fixResult.Error != null)
             return fixResult.Error;
 
@@ -3853,7 +3866,8 @@ public class DefectAgentController : ControllerBase
     private async Task<AutomationCommitApplyResult> ApplyAutomationCommitInfoAsync(
         DefectReport defect,
         SubmitAutomationCommitInfoRequest request,
-        CancellationToken ct)
+        CancellationToken ct,
+        DefectAutomationRun? prevalidatedRun = null)
     {
         var commitSha = NormalizeCommitSha(request.CommitSha);
         if (string.IsNullOrWhiteSpace(commitSha))
@@ -3864,23 +3878,26 @@ public class DefectAgentController : ControllerBase
             };
         }
 
-        DefectAutomationRun? run = null;
+        DefectAutomationRun? run = prevalidatedRun;
         if (!string.IsNullOrWhiteSpace(request.RunId))
         {
-            run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
             if (run == null)
             {
-                return new AutomationCommitApplyResult
+                run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
+                if (run == null)
                 {
-                    Error = NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在")),
-                };
-            }
-            if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
-            {
-                return new AutomationCommitApplyResult
+                    return new AutomationCommitApplyResult
+                    {
+                        Error = NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在")),
+                    };
+                }
+                if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
                 {
-                    Error = AutomationForbidden("无权修改该自动化运行记录"),
-                };
+                    return new AutomationCommitApplyResult
+                    {
+                        Error = AutomationForbidden("无权修改该自动化运行记录"),
+                    };
+                }
             }
         }
 
@@ -3930,25 +3947,29 @@ public class DefectAgentController : ControllerBase
     private async Task<AutomationFixApplyResult> ApplyAutomationFixStatusAsync(
         DefectReport defect,
         AutomationFixStatusRequest request,
-        CancellationToken ct)
+        CancellationToken ct,
+        DefectAutomationRun? prevalidatedRun = null)
     {
-        DefectAutomationRun? run = null;
+        DefectAutomationRun? run = prevalidatedRun;
         if (!string.IsNullOrWhiteSpace(request.RunId))
         {
-            run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
             if (run == null)
             {
-                return new AutomationFixApplyResult
+                run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
+                if (run == null)
                 {
-                    Error = NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在")),
-                };
-            }
-            if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
-            {
-                return new AutomationFixApplyResult
+                    return new AutomationFixApplyResult
+                    {
+                        Error = NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在")),
+                    };
+                }
+                if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
                 {
-                    Error = AutomationForbidden("无权修改该自动化运行记录"),
-                };
+                    return new AutomationFixApplyResult
+                    {
+                        Error = AutomationForbidden("无权修改该自动化运行记录"),
+                    };
+                }
             }
         }
 
@@ -4221,6 +4242,25 @@ public class DefectAgentController : ControllerBase
             return true;
         return !string.IsNullOrWhiteSpace(agentKeyId)
                && string.Equals(trace.AgentIdentifier, agentKeyId, StringComparison.Ordinal);
+    }
+
+    internal static bool CanAutomationRunContinue(DefectAutomationRun? run)
+        => run != null && string.Equals(run.Status, DefectAutomationRunStatus.Running, StringComparison.Ordinal);
+
+    internal static bool IsAutomationRunClaimedDefect(DefectAutomationRun? run, string? defectId)
+    {
+        if (run == null || string.IsNullOrWhiteSpace(defectId))
+            return false;
+        if (!CanAutomationRunContinue(run))
+            return false;
+        if (string.Equals(run.CurrentDefectId, defectId, StringComparison.Ordinal))
+            return true;
+
+        return run.Items.Any(x =>
+            string.Equals(x.DefectId, defectId, StringComparison.Ordinal)
+            && x.Status is DefectAutomationRunItemStatus.Fetched
+                or DefectAutomationRunItemStatus.Commented
+                or DefectAutomationRunItemStatus.CommitWritten);
     }
 
     private static object BuildAutomationPolicyPayload()
