@@ -111,7 +111,7 @@ export function ExperienceBoard({
   }
 
   return (
-    <GlassCard className="overflow-hidden h-full flex flex-col" style={{ padding: 0, minHeight: 320 }}>
+    <GlassCard className="overflow-hidden h-full flex flex-col min-h-[320px] lg:min-h-0" style={{ padding: 0 }}>
       <Header />
       <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1 min-h-0" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {/* 左声道：行为之声 = 遥测自动发现的痛点 */}

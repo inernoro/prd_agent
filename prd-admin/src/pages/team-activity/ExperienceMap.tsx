@@ -11,13 +11,10 @@ import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { ExperienceMapGroup, ExperienceMapLeaf, TeamActivityExperienceMapData } from '@/services/contracts/teamActivity';
 
-const VW = 1000;
-// 默认视图高度（SSR / ResizeObserver 量到尺寸前的回退）。布局实际高度按容器真实宽高比动态算（aspect-aware），
-// 这样 treemap 几何铺满容器真实形状，不再在全屏/方格里上下 letterbox 留白。
+// 量到容器真实像素前的回退尺寸（SSR / ResizeObserver 首帧）。运行时 viewBox 用容器真实像素，
+// 使 viewBox 宽高比恒等于容器 → preserveAspectRatio="meet" 退化为恒等变换 → treemap 永远铺满整格、零 letterbox。
+const VW_FALLBACK = 1000;
 const VH_FALLBACK = 560;
-// 把动态 VH 夹在合理区间：太扁(横长)文字挤、太高(竖长)块过窄，都不好认。
-const VH_MIN = 300;
-const VH_MAX = 1400;
 const PAD = 3;
 const HDR = 14;
 
@@ -137,24 +134,25 @@ export function ExperienceMap({
   // aspect-aware：量出 SVG 容器真实像素宽高比，让 treemap 布局高度跟容器同比例铺满，消除上下 letterbox 空白。
   // ResizeObserver 量到前用回退值（避免 SSR/首帧白屏）。
   const svgBoxRef = useRef<HTMLDivElement | null>(null);
-  const [boxAspect, setBoxAspect] = useState<number | null>(null);
+  const [boxDims, setBoxDims] = useState<{ w: number; h: number } | null>(null);
   useLayoutEffect(() => {
     const el = svgBoxRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const measure = () => {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) setBoxAspect(r.height / r.width);
+      if (r.width > 4 && r.height > 4) {
+        setBoxDims((prev) => (prev && Math.abs(prev.w - r.width) < 1 && Math.abs(prev.h - r.height) < 1 ? prev : { w: Math.round(r.width), h: Math.round(r.height) }));
+      }
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, [fullscreen]);
-  // 动态视图高度：容器有真实宽高比就按它（VW × aspect），否则回退；夹在合理区间避免极端拉伸。
-  const VH = useMemo(() => {
-    const raw = boxAspect != null ? VW * boxAspect : VH_FALLBACK;
-    return Math.min(VH_MAX, Math.max(VH_MIN, Math.round(raw)));
-  }, [boxAspect]);
+  // 像素级 viewBox：viewBox 宽高 = 容器真实像素，使 viewBox 宽高比恒等于容器宽高比，
+  // preserveAspectRatio="meet" 退化为恒等变换 → treemap 永远铺满整格、零 letterbox、无拉伸变形。
+  const VW = boxDims?.w ?? VW_FALLBACK;
+  const VH = boxDims?.h ?? VH_FALLBACK;
   const layout = useMemo(() => {
     if (!data || data.groups.length === 0) return { cells: [] as LeafCell[], groupRects: [] as Placed<ExperienceMapGroup>[] };
     let srcGroups = data.groups;
@@ -182,7 +180,7 @@ export function ExperienceMap({
       });
     });
     return { cells, groupRects };
-  }, [data, mode, VH]);
+  }, [data, mode, VW, VH]);
 
   // 入场闸门：只在首次渲染地图时为 true（生产单次渲染可靠；dev StrictMode 下可能跳过入场，无害）
   const enteredRef = useRef(false);

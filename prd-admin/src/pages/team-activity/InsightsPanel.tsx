@@ -485,7 +485,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
-            gridAutoRows: '220px',
+            gridAutoRows: '244px',
             gap: '12px',
             transition: 'grid-template-rows .4s',
           }}
