@@ -13,9 +13,9 @@ import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
 import { toast } from '@/lib/toast';
+import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import {
   addDocumentEntry,
-  createDefect,
   createDocumentStore,
   getTeamActivityExperienceMap,
   getTeamActivityInsights,
@@ -32,14 +32,10 @@ import { ExperienceRibbon } from './ExperienceRibbon';
 import { ExperienceStats } from './ExperienceStats';
 import { ExperienceDrill } from './ExperienceDrill';
 import { ExperienceTrend } from './ExperienceTrend';
-import { ExperienceRadar } from './ExperienceRadar';
 import { ExperienceSiteMap } from './ExperienceSiteMap';
 import { ExperienceBoard } from './ExperienceBoard';
-import { DefectConvertModal, type DefectConvertDraft } from './DefectConvertModal';
 import { RequirementConvertModal, type RequirementConvertDraft } from './RequirementConvertModal';
 
-// 转缺陷弹窗上下文：除草稿外，还需要回写洞察状态用的 kind/target
-type DefectModalState = { kind: string; target: string; draft: DefectConvertDraft };
 // 转需求弹窗上下文：草稿 + 回写用的 kind/target
 type RequirementModalState = { kind: string; target: string; draft: RequirementConvertDraft };
 
@@ -56,13 +52,12 @@ const STATUS_LABEL: Record<string, string> = {
   ignored: '已忽略',
 };
 
-// Hero 多视角：同一份体验信号的不同可视化模式（不是页头的 动态流/行为洞察 tab）
-type HeroView = 'heatmap' | 'trend' | 'radar' | 'sitemap' | 'board';
+// 移动端单图视图切换：同一份体验信号的不同可视化模式（桌面端走四图仪表盘，不用切换器）
+type HeroView = 'heatmap' | 'trend' | 'stats' | 'board';
 const HERO_VIEWS: { key: HeroView; label: string; icon: LucideIcon }[] = [
   { key: 'heatmap', label: '热力图', icon: LayoutGrid },
   { key: 'trend', label: '趋势爆点', icon: TrendingUp },
-  { key: 'radar', label: '痛点雷达', icon: Radar },
-  { key: 'sitemap', label: '站点地图', icon: Network },
+  { key: 'stats', label: '痛点指数', icon: BarChart3 },
   { key: 'board', label: '声道看板', icon: Megaphone },
 ];
 
@@ -92,17 +87,18 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [includeIgnored, setIncludeIgnored] = useState(false);
-  const [statsOpen, setStatsOpen] = useState(true);
-  // Hero 可视化模式：默认体验全景热力图，可切到趋势/雷达/站点地图/看板
+  // 移动端单图切换：默认体验全景热力图，可切到趋势/痛点指数/声道看板（桌面端不用此切换，走四图仪表盘）
   const [heroView, setHeroView] = useState<HeroView>('heatmap');
+  // 端点地图格子内子切换：热力图 ⇄ 站点地图（两者都是端点地图，共用一格，不单独占格）
+  const [mapMode, setMapMode] = useState<'heatmap' | 'sitemap'>('heatmap');
   // 全屏热力图浮层开关（createPortal 到 body）
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   // 下钻抽屉：从右侧滑入的浮层 drawer（createPortal 到 body），target 非空即展开
   const [drillTarget, setDrillTarget] = useState<{ target: string; label: string } | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  // 转缺陷 / 转需求弹窗：打开时持有预填草稿 + 回写上下文，确认时才真正创建
-  const [defectModal, setDefectModal] = useState<DefectModalState | null>(null);
-  const [defectSubmitting, setDefectSubmitting] = useState(false);
+  // 转缺陷：复用真实缺陷面板（GlobalDefectSubmitDialog），通过全局 store 携预填打开
+  const openDefectDialog = useGlobalDefectStore((s) => s.openDialog);
+  // 转需求弹窗：打开时持有预填草稿 + 回写上下文，确认时才真正流转
   const [reqModal, setReqModal] = useState<RequirementModalState | null>(null);
   const [reqSubmitting, setReqSubmitting] = useState(false);
   const [briefOpen, setBriefOpen] = useState(false);
@@ -270,86 +266,67 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     [reload]
   );
 
-  // 痛点榜「转为缺陷」：不再直接创建，改为按当前洞察生成预填草稿并打开弹窗，确认后才发送。
-  const openDefectModalForInsight = useCallback(
+  // 「转为缺陷」统一出口：打开真实缺陷面板（GlobalDefectSubmitDialog）携预填，创建成功后回写洞察状态。
+  // 复用是第一目标——不再自造缺陷表单。回写仍走 setTeamActivityInsightState 保持闭环 ribbon / 行内 chip 联动。
+  const openDefectDialogForInsight = useCallback(
     (item: BehaviorInsight) => {
       const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
-      setDefectModal({
-        kind: item.kind,
-        target: item.target,
-        draft: {
+      openDefectDialog({
+        prefill: {
           title: `[行为洞察] ${item.kindLabel}：${item.target}`,
           content: buildDefectContent(item, window),
-          assigneeUserId: '',
           severity: item.kind === 'api-error' ? 'major' : 'minor',
+        },
+        onCreated: (defect) => {
+          void setTeamActivityInsightState({
+            kind: item.kind,
+            target: item.target,
+            status: 'confirmed',
+            defectId: defect.id,
+            defectTitle: defect.title,
+          }).then(() => reload());
         },
       });
     },
-    [data]
+    [data, openDefectDialog, reload]
   );
 
   // 下钻抽屉「转为缺陷」：优先复用痛点榜上同 target 的富洞察（证据更全），未上榜则用下钻信息建最小草稿。
-  const openDefectModalForDrill = useCallback(() => {
+  const openDefectDialogForDrill = useCallback(() => {
     if (!drillTarget) return;
     const hit = data?.items.find((i) => i.target === drillTarget.target && i.kind === 'api-error')
       ?? data?.items.find((i) => i.target === drillTarget.target);
     if (hit) {
-      openDefectModalForInsight(hit);
+      openDefectDialogForInsight(hit);
       return;
     }
     const window = data ? `${fmtDate(data.windowFrom)} ~ ${fmtDate(data.windowTo)}` : '';
-    setDefectModal({
-      kind: 'api-error',
-      target: drillTarget.target,
-      draft: {
-        title: `[体验下钻] ${drillTarget.label}：${drillTarget.target}`,
+    const dt = drillTarget;
+    openDefectDialog({
+      prefill: {
+        title: `[体验下钻] ${dt.label}：${dt.target}`,
         content: [
           '## 体验下钻转报（自动生成）',
           '',
-          `- 端点：${drillTarget.target}`,
+          `- 端点：${dt.target}`,
           `- 来源：团队动态 - 体验全景热力图下钻`,
           `- 分析窗口：${window}`,
           '',
           '> 该端点尚未进入痛点榜（信号偏弱），但被手动下钻识别为需关注项，请结合「AI 根因诊断」与真实请求样本核查。',
         ].join('\n'),
-        assigneeUserId: '',
         severity: 'minor',
       },
+      onCreated: (defect) => {
+        void setTeamActivityInsightState({
+          kind: 'api-error',
+          target: dt.target,
+          status: 'confirmed',
+          defectId: defect.id,
+          defectTitle: defect.title,
+        }).then(() => reload());
+      },
     });
-  }, [drillTarget, data, openDefectModalForInsight]);
-
-  // 缺陷弹窗确认：用用户核对/编辑后的草稿真正创建缺陷 + 回写洞察状态（沿用原直接执行逻辑）。
-  const confirmDefect = useCallback(
-    async (draft: DefectConvertDraft) => {
-      if (!defectModal) return;
-      const { kind, target } = defectModal;
-      setDefectSubmitting(true);
-      const res = await createDefect({
-        title: draft.title,
-        content: draft.content,
-        assigneeUserId: draft.assigneeUserId,
-        severity: draft.severity,
-      });
-      if (!res.success) {
-        setDefectSubmitting(false);
-        toast.error(res.error?.message ?? '创建缺陷失败');
-        return;
-      }
-      const defect = res.data.defect;
-      await setTeamActivityInsightState({
-        kind,
-        target,
-        status: 'confirmed',
-        defectId: defect.id,
-        defectTitle: defect.title,
-      });
-      setDefectSubmitting(false);
-      setDefectModal(null);
-      toast.success(`已创建缺陷《${defect.title}》，可在缺陷管理中跟进`);
-      reload();
-    },
-    [defectModal, reload]
-  );
+  }, [drillTarget, data, openDefectDialog, openDefectDialogForInsight, reload]);
 
   // 下钻抽屉「转需求」：不再就地展开直接发送，改为生成预填草稿并打开步骤向导弹窗。
   // 优先复用同 target 的富洞察（指标/证据更全），未上榜则用下钻展示名兜底。
@@ -425,38 +402,67 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     );
   }
 
-  // Hero 视图渲染槽：多视角可切换（Wave B）。顶部 segmented 切换器 + 按选中视图条件渲染。
-  // 热力图保留原样接线（下钻 + 全屏）；趋势图自取数据；雷达/站点地图/看板复用 mapData/insights 现算。
-  // 切视图时给一层轻过渡（淡入 + 微上移），符合「变化可感知」；切回热力图作为各视图空数据引导出口。
-  const renderHeroBody = () => {
-    switch (heroView) {
-      case 'trend':
-        return <ExperienceTrend from={from} to={to} onSwitchHeatmap={switchToHeatmap} />;
-      case 'radar':
-        return <ExperienceRadar items={data?.items ?? []} mapData={mapData} onSwitchHeatmap={switchToHeatmap} />;
-      case 'sitemap':
-        return <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} />;
-      case 'board':
-        return <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} />;
-      case 'heatmap':
-      default:
+  // 端点地图格头部右侧：热力图 ⇄ 站点地图 子切换器（端点地图的两种铺法，共用一格，不单独占格）
+  const mapModeSwitcher = (
+    <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+      {([
+        { key: 'heatmap' as const, label: '热力图', icon: LayoutGrid },
+        { key: 'sitemap' as const, label: '站点地图', icon: Network },
+      ]).map((m) => {
+        const MIcon = m.icon;
+        const active = mapMode === m.key;
         return (
-          <ExperienceMap
-            data={mapData}
-            loading={loading}
-            onSelectTarget={handleSelectTarget}
-            onRequestFullscreen={() => setFullscreenOpen(true)}
-          />
+          <button
+            key={m.key}
+            type="button"
+            onClick={() => setMapMode(m.key)}
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] whitespace-nowrap transition-colors cursor-pointer ${active ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
+          >
+            <MIcon size={11} />
+            {m.label}
+          </button>
         );
-    }
-  };
+      })}
+    </div>
+  );
 
-  const renderHeroView = () => (
-    <div className="flex flex-col gap-2">
-      {/* 视图切换器（segmented）：体验信号的多种可视化模式，冷色海主题，与热力图内 全域/痛点 同款。
-          窄屏单行横向滚动（标签不换行），sm 起恢复原状。 */}
-      <div className="flex items-center justify-between gap-2 -mx-1 px-1 overflow-x-auto sm:mx-0 sm:px-0 sm:overflow-x-visible" style={{ overscrollBehavior: 'contain' }}>
-        <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 shrink-0">
+  // 端点地图格（热力图 ⇄ 站点地图）。两者都是端点地图，共用同一格，靠 headerExtra 注入子切换器。
+  // compact=true（桌面格内/移动单图）时给热力图挂全屏按钮，格里小、全屏看大。
+  const renderMapTile = () =>
+    mapMode === 'heatmap' ? (
+      <ExperienceMap
+        data={mapData}
+        loading={loading}
+        onSelectTarget={handleSelectTarget}
+        onRequestFullscreen={() => setFullscreenOpen(true)}
+        headerExtra={mapModeSwitcher}
+      />
+    ) : (
+      <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mapModeSwitcher} />
+    );
+
+  const renderTrendTile = () => <ExperienceTrend from={from} to={to} onSwitchHeatmap={switchToHeatmap} />;
+  const renderStatsTile = () => (data ? <ExperienceStats items={data.items} /> : null);
+  const renderBoardTile = () => <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} />;
+
+  // 桌面端（lg+）四图仪表盘：2×2 四格 = 端点地图 / 趋势爆点 / 痛点指数 / 声道看板。
+  // 每格即一张自带标题的卡（ExperienceMap/Trend/Stats/Board 各自含 header），靠 grid 等宽分配。
+  const renderDesktopDashboard = () => (
+    <div className="hidden lg:grid grid-cols-2 gap-3 items-start">
+      <div key={mapMode} style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
+        {renderMapTile()}
+      </div>
+      {renderTrendTile()}
+      {renderStatsTile()}
+      {renderBoardTile()}
+    </div>
+  );
+
+  // 移动端：四图不适合小屏，改单图视图切换器 + 单图展示（满宽满铺，嵌套卡 GlassCard 自动去 chrome）。
+  const renderMobileSingle = () => (
+    <div className="flex flex-col gap-2 lg:hidden">
+      <div className="-mx-1 px-1 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
+        <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
           {HERO_VIEWS.map((v) => {
             const VIcon = v.icon;
             const active = heroView === v.key;
@@ -474,11 +480,23 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
           })}
         </div>
       </div>
-      {/* key=heroView 触发重挂载 → 走入场过渡（淡入 + 微上移） */}
-      <div key={heroView} style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
-        {renderHeroBody()}
+      <div key={`${heroView}-${mapMode}`} style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
+        {heroView === 'heatmap'
+          ? renderMapTile()
+          : heroView === 'trend'
+            ? renderTrendTile()
+            : heroView === 'stats'
+              ? renderStatsTile()
+              : renderBoardTile()}
       </div>
     </div>
+  );
+
+  const renderHeroView = () => (
+    <>
+      {renderDesktopDashboard()}
+      {renderMobileSingle()}
+    </>
   );
 
   return (
@@ -490,11 +508,11 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
         {/* 闭环 ribbon：监测 → 预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落，从热力图/洞察现算 */}
         <div className="px-1.5 pt-2 sm:px-5 sm:pt-4">
           <ExperienceRibbon mapData={mapData} insights={data} />
-          {/* Hero：体验全景热力图占满整宽做主视觉。切换时间窗(loading && data)时叠一层「更新中」过渡态，
-              旧内容保持可见，数据到达后 ExperienceMap 走 morph 几何补间平滑过渡。 */}
+          {/* Hero：桌面 2×2 四图仪表盘 / 移动单图切换。切换时间窗(loading && data)时叠一层「更新中」过渡态，
+              旧内容保持可见，数据到达后各图走自己的补间平滑过渡。 */}
           <div className="relative">
             {renderHeroView()}
-            {loading && data && heroView === 'heatmap' ? (
+            {loading && data ? (
               <div
                 className="absolute inset-0 rounded-2xl overflow-hidden flex items-center justify-center"
                 style={{ background: 'rgba(16,17,19,0.35)', backdropFilter: 'blur(0.5px)' }}
@@ -513,24 +531,6 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               </div>
             ) : null}
           </div>
-          {/* 痛点指数：从右侧竖栏下放到热力图下方的一整块（可折叠） */}
-          {data ? (
-            statsOpen ? (
-              <div className="mt-3">
-                <ExperienceStats items={data.items} onCollapse={() => setStatsOpen(false)} />
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setStatsOpen(true)}
-                title="展开痛点指数面板"
-                className="mt-3 w-full inline-flex items-center justify-center gap-2 h-9 rounded-xl border border-white/10 bg-white/[0.03] text-white/45 hover:text-white/80 hover:border-white/25 transition-colors cursor-pointer"
-              >
-                <BarChart3 size={15} />
-                <span className="text-[11px]">展开痛点指数</span>
-              </button>
-            )
-          ) : null}
         </div>
         {/* 数据源状态行：诚实告知信号从哪来、采集到什么程度 */}
         {data ? (
@@ -717,7 +717,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                             />
                           ) : null}
                           {!item.defectId ? (
-                            <ActionButton onClick={() => openDefectModalForInsight(item)} icon={Bug} label="转为缺陷" emphasis />
+                            <ActionButton onClick={() => openDefectDialogForInsight(item)} icon={Bug} label="转为缺陷" emphasis />
                           ) : null}
                           {status !== 'confirmed' ? (
                             <ActionButton onClick={() => void setState(item, 'confirmed')} icon={Check} label="确认待改" />
@@ -745,24 +745,29 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               style={{ background: 'rgba(0,0,0,0.5)' }}
               onClick={closeDrill}
             >
+              {/* 右侧整高 drawer：从右边缘滑入，桌面 ~440px、手机 min(440px,94vw)，整高。
+                  遵守 frontend-modal.md：关键尺寸 inline style + 滚动区由 ExperienceDrill 内部 min-h:0 + overscroll contain。 */}
               <div
-                className="flex flex-col"
-                style={{ width: 'min(420px, 94vw)', height: '100vh', animation: 'voc-drawer-in .26s cubic-bezier(.22,1,.36,1)' }}
+                className="flex flex-col border-l border-white/10"
+                style={{
+                  width: 'min(440px, 94vw)',
+                  height: '100vh',
+                  background: '#16171b',
+                  boxShadow: '-24px 0 80px rgba(0,0,0,0.5)',
+                  animation: 'voc-drawer-in .26s cubic-bezier(.22,1,.36,1)',
+                }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex-1 px-3 py-3" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                  <ExperienceDrill
-                    target={drillTarget.target}
-                    label={drillTarget.label}
-                    from={from}
-                    converting={(defectSubmitting && defectModal?.target === drillTarget.target) || busyKey === `api-error|${drillTarget.target}`}
-                    convertingRequirement={reqSubmitting && reqModal?.target === drillTarget.target}
-                    requirementNo={data?.items.find((i) => i.target === drillTarget.target && i.requirementNo)?.requirementNo ?? null}
-                    onRequestDefectModal={openDefectModalForDrill}
-                    onRequestRequirementModal={openRequirementModalForDrill}
-                    onClose={closeDrill}
-                  />
-                </div>
+                <ExperienceDrill
+                  target={drillTarget.target}
+                  label={drillTarget.label}
+                  from={from}
+                  convertingRequirement={reqSubmitting && reqModal?.target === drillTarget.target}
+                  requirementNo={data?.items.find((i) => i.target === drillTarget.target && i.requirementNo)?.requirementNo ?? null}
+                  onRequestDefectModal={openDefectDialogForDrill}
+                  onRequestRequirementModal={openRequirementModalForDrill}
+                  onClose={closeDrill}
+                />
               </div>
               <style>{`@keyframes voc-drawer-in { from { transform: translateX(36px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }`}</style>
             </div>,
@@ -801,17 +806,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
           )
         : null}
 
-      {/* 转为缺陷弹窗：预填可编辑标题/正文 + 指派人（发给谁）+ 严重度，确认后才创建并回写洞察状态 */}
-      {defectModal ? (
-        <DefectConvertModal
-          draft={defectModal.draft}
-          submitting={defectSubmitting}
-          onConfirm={(draft) => void confirmDefect(draft)}
-          onClose={() => {
-            if (!defectSubmitting) setDefectModal(null);
-          }}
-        />
-      ) : null}
+      {/* 转为缺陷复用真实缺陷面板（GlobalDefectSubmitDialog，挂在 AppShell 根），通过全局 store 携预填打开，此处无需渲染 */}
 
       {/* 转需求弹窗（3 步向导）：选产品 → 核对内容 → 确认流转，确认后才流转需求 */}
       {reqModal ? (

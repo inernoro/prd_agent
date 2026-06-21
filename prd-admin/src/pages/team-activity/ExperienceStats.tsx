@@ -5,7 +5,6 @@
  * - 声道占比：把洞察按类型归并为 报错/等待/停留/流失/横跳 五声道，按加权占比排条
  */
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import type { BehaviorInsight } from '@/services/contracts/teamActivity';
 
@@ -110,7 +109,7 @@ function Gauge({ value }: { value: number }) {
   );
 }
 
-export function ExperienceStats({ items, onCollapse }: { items: BehaviorInsight[]; onCollapse: () => void }) {
+export function ExperienceStats({ items }: { items: BehaviorInsight[] }) {
   const index = computePainIndex(items);
   const channels = computeChannels(items);
   const open = items.filter((i) => i.status !== 'resolved' && i.status !== 'ignored').length;
@@ -119,14 +118,6 @@ export function ExperienceStats({ items, onCollapse }: { items: BehaviorInsight[
     <GlassCard className="flex flex-col" style={{ padding: 0 }}>
       <div className="flex items-center justify-between px-4 pt-3 pb-2">
         <span className="text-[13px] font-semibold text-white/85">体验痛点指数</span>
-        <button
-          type="button"
-          onClick={onCollapse}
-          title="折叠"
-          className="inline-flex items-center justify-center w-6 h-6 rounded-md text-white/40 hover:text-white/80 hover:bg-white/[0.06] transition-colors cursor-pointer"
-        >
-          <ChevronRight size={15} />
-        </button>
       </div>
       <div className="px-4 pb-2">
         <Gauge value={index} />

@@ -10,8 +10,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Bug, ChevronRight, ClipboardList, RotateCcw, X } from 'lucide-react';
-import { GlassCard } from '@/components/design';
-import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
@@ -32,7 +31,6 @@ export function ExperienceDrill({
   target,
   label,
   from,
-  converting,
   convertingRequirement,
   requirementNo,
   onRequestDefectModal,
@@ -43,13 +41,11 @@ export function ExperienceDrill({
   /** 痛点块/痛点榜给的展示名（模块 · 端点），明细到达前先用它兜底面包屑 */
   label: string;
   from?: string;
-  /** 父组件正在执行「转为缺陷」（复用 InsightsPanel 的 createDefect 逻辑） */
-  converting?: boolean;
   /** 父组件正在执行「转需求」 */
   convertingRequirement?: boolean;
   /** 该痛点已转产品需求时的需求编号（展示「已转需求 #No」chip） */
   requirementNo?: string | null;
-  /** 请求父组件打开「转为缺陷」弹窗（预填可编辑 + 指派人 + 严重度，确认后才创建） */
+  /** 请求父组件打开「转为缺陷」真实缺陷面板（GlobalDefectSubmitDialog，携预填，确认后才创建） */
   onRequestDefectModal: () => void;
   /** 请求父组件打开「转需求」步骤向导弹窗（选产品 → 核对 → 确认流转） */
   onRequestRequirementModal: () => void;
@@ -110,22 +106,23 @@ export function ExperienceDrill({
   // 面包屑四级：模块 › 端点 › 错误码（无则用「样本」）› 样本
   const crumbs = [moduleName, leafName, topCode || '体验样本', '请求样本'];
 
+  // 整高 drawer 形态：自身撑满父级 drawer 高度（h-full），头部/面包屑/操作区固定，中间滚动区 flex-fill。
   return (
-    <GlassCard className="flex flex-col" style={{ padding: 0 }}>
-      <div className="flex items-center justify-between px-4 pt-3 pb-2">
+    <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
+      <div className="flex items-center justify-between px-4 pt-3.5 pb-2 shrink-0">
         <span className="text-[13px] font-semibold text-white/85">端点下钻诊断</span>
         <button
           type="button"
           onClick={onClose}
-          title="返回痛点指数面板"
-          className="inline-flex items-center justify-center w-6 h-6 rounded-md text-white/40 hover:text-white/80 hover:bg-white/[0.06] transition-colors cursor-pointer"
+          title="关闭"
+          className="inline-flex items-center justify-center w-7 h-7 rounded-md text-white/40 hover:text-white/80 hover:bg-white/[0.06] transition-colors cursor-pointer"
         >
-          <X size={15} />
+          <X size={16} />
         </button>
       </div>
 
       {/* 四级面包屑 */}
-      <div className="px-4 pb-2 flex items-center gap-1 flex-wrap text-[11px] text-white/45">
+      <div className="px-4 pb-2 flex items-center gap-1 flex-wrap text-[11px] text-white/45 shrink-0">
         {crumbs.map((c, i) => (
           <span key={i} className="inline-flex items-center gap-1">
             {i > 0 ? <ChevronRight size={11} className="text-white/25" /> : null}
@@ -135,8 +132,8 @@ export function ExperienceDrill({
       </div>
 
       <div
-        className="px-4 pb-4 flex flex-col gap-3.5"
-        style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', maxHeight: 520 }}
+        className="flex-1 px-4 pb-4 flex flex-col gap-3.5"
+        style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
       >
         {/* target + 量化指标 */}
         <div className="rounded-md px-3 py-2.5 bg-white/[0.02] border border-white/[0.06]">
@@ -261,19 +258,15 @@ export function ExperienceDrill({
       </div>
 
       {/* 操作区：「转为缺陷」「转需求」都改为请求父组件打开弹窗（预填可编辑 + 指派人 / 步骤向导），不再就地直接发送 */}
-      <div className="flex items-center gap-2 px-4 py-3 border-t border-white/[0.05] flex-wrap">
-        {converting ? (
-          <MapSpinner size={13} />
-        ) : (
-          <button
-            type="button"
-            onClick={onRequestDefectModal}
-            className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-amber-500/15 text-amber-200 border-amber-500/30 hover:bg-amber-500/25 transition-colors cursor-pointer"
-          >
-            <Bug size={12} />
-            转为缺陷
-          </button>
-        )}
+      <div className="flex items-center gap-2 px-4 py-3 border-t border-white/[0.05] flex-wrap shrink-0">
+        <button
+          type="button"
+          onClick={onRequestDefectModal}
+          className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-amber-500/15 text-amber-200 border-amber-500/30 hover:bg-amber-500/25 transition-colors cursor-pointer"
+        >
+          <Bug size={12} />
+          转为缺陷
+        </button>
         {requirementNo ? (
           <span className="inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] bg-cyan-500/10 text-cyan-200/90 border border-cyan-500/25">
             <ClipboardList size={12} />
@@ -300,15 +293,9 @@ export function ExperienceDrill({
           className="ml-auto inline-flex items-center gap-1 px-2.5 h-[26px] rounded text-[11px] border bg-white/[0.03] text-white/50 border-white/10 hover:text-white/80 hover:border-white/25 transition-colors cursor-pointer"
         >
           <X size={12} />
-          返回指数
+          关闭
         </button>
       </div>
-
-      {loading && !detail && !detailError ? (
-        <div className="px-4 pb-4">
-          <MapSectionLoader text="正在拉取端点明细…" />
-        </div>
-      ) : null}
-    </GlassCard>
+    </div>
   );
 }

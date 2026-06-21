@@ -5,7 +5,7 @@
  * 痛点节点高亮（error 红 / slow 琥珀），点痛点节点 → 调 onSelectTarget 下钻（与热力图同一抽屉联动）。
  * 入场：节点依次生长（淡入 + 左移）。纯 DOM + SVG 连接线，冷色海主题，禁止 emoji。
  */
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Network, AlertTriangle, Clock } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import type { ExperienceMapGroup, ExperienceMapLeaf, TeamActivityExperienceMapData } from '@/services/contracts/teamActivity';
@@ -47,17 +47,20 @@ export function ExperienceSiteMap({
   mapData,
   onSelectTarget,
   onSwitchHeatmap,
+  headerExtra,
 }: {
   mapData: TeamActivityExperienceMapData | null;
   onSelectTarget?: (target: string, fallback: { label: string; metric: string }) => void;
   onSwitchHeatmap?: () => void;
+  /** 头部右侧额外控件（四图仪表盘里注入 热力图⇄站点地图 子切换器） */
+  headerExtra?: ReactNode;
 }) {
   const tree = useMemo(() => buildTree(mapData), [mapData]);
 
   if (tree.length === 0) {
     return (
       <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
-        <Header />
+        <Header headerExtra={headerExtra} />
         <div className="flex flex-col items-center justify-center gap-2.5 text-center" style={{ height: 300 }}>
           <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
           <span className="text-sm text-emerald-300/85">当前窗口没有可铺设的站点路径</span>
@@ -79,7 +82,7 @@ export function ExperienceSiteMap({
   let nodeIdx = 0;
   return (
     <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
-      <Header />
+      <Header headerExtra={headerExtra} />
       <div className="px-3 pb-3" style={{ maxHeight: 460, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         <div className="flex flex-col gap-3 pt-1">
           {tree.map((m) => {
@@ -158,9 +161,9 @@ export function ExperienceSiteMap({
   );
 }
 
-function Header() {
+function Header({ headerExtra }: { headerExtra?: ReactNode }) {
   return (
-    <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
+    <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2 shrink-0">
       <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
         <span className="whitespace-nowrap">路由站点地图</span>
         <span className="hidden sm:inline-flex text-[11px] text-white/35 font-normal items-center gap-1.5 whitespace-nowrap">
@@ -168,6 +171,7 @@ function Header() {
           按模块铺开路由树 · 点痛点节点下钻
         </span>
       </span>
+      {headerExtra ? <span className="shrink-0">{headerExtra}</span> : null}
     </div>
   );
 }

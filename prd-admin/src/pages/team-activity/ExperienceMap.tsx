@@ -5,7 +5,7 @@
  * 配色遵循 ui-ux-pro-max 的 treemap 规范：父级不同色相、子级同色相浅色梯度；暖色只留给告警。
  * 数据源：GET /api/team-activity/experience-map（与 insights 同源 apirequestlogs，target 同口径）。
  */
-import { useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -113,6 +113,7 @@ export function ExperienceMap({
   fullscreen = false,
   onRequestFullscreen,
   onExitFullscreen,
+  headerExtra,
 }: {
   data: TeamActivityExperienceMapData | null;
   loading: boolean;
@@ -123,6 +124,8 @@ export function ExperienceMap({
   onRequestFullscreen?: () => void;
   /** 全屏态点「退出全屏」按钮触发 */
   onExitFullscreen?: () => void;
+  /** 头部右侧额外控件（四图仪表盘里注入 热力图⇄站点地图 子切换器） */
+  headerExtra?: ReactNode;
 }) {
   // 两个范围模式：all=全域(全部端点按访问量) / pain=痛点(只看病灶，按问题严重度放大)
   const [mode, setMode] = useState<'all' | 'pain'>('all');
@@ -221,6 +224,7 @@ export function ExperienceMap({
                 痛点
               </button>
             </div>
+            {headerExtra ? <span className="shrink-0">{headerExtra}</span> : null}
             <span className="hidden sm:inline w-px h-3.5 bg-white/10" />
             <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: ERR }} />报错
