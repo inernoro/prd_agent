@@ -1,5 +1,20 @@
 import { useState } from 'react';
-import { AlertTriangle, Bot, Check, Copy, Download, EyeOff, Play, Sparkles, Video } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bot,
+  BookOpen,
+  Check,
+  Copy,
+  Dices,
+  Download,
+  EyeOff,
+  KeyRound,
+  Play,
+  Sparkles,
+  Upload,
+  Video,
+  type LucideIcon,
+} from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { createAgentApiKey } from '@/services';
 import { useDemoVideoUrl } from '@/stores/homepageAssetsStore';
@@ -23,18 +38,35 @@ interface Props {
    * - 顶部用醒目说明引导用户粘贴给 AI
    */
   agentMode?: boolean;
+  /**
+   * 预选 scope —— 由不同入口（如知识库页面）传入希望默认勾选的权限范围。
+   * 会与 allowedScopes 取交集，避免预选一个平台未开放的 scope。
+   * 缺省时回退为「marketplace.skills:read」（海鲜市场默认行为不变）。
+   */
+  presetScopes?: string[];
 }
 
-const SCOPE_META: Record<string, { title: string; desc: string; icon: string }> = {
+/** scope → 友好标签 + lucide 图标（禁止 emoji，见 CLAUDE.md 规则 #0） */
+const SCOPE_META: Record<string, { title: string; desc: string; icon: LucideIcon }> = {
   'marketplace.skills:read': {
     title: '浏览 & 下载技能',
     desc: '查询市场、拉详情、fork 下载 zip',
-    icon: '📥',
+    icon: Download,
   },
   'marketplace.skills:write': {
     title: '上传技能',
     desc: '以你的身份发布 zip 技能包',
-    icon: '📤',
+    icon: Upload,
+  },
+  'document-store:read': {
+    title: '读取文档空间',
+    desc: '列出知识库、读取文章内容',
+    icon: BookOpen,
+  },
+  'document-store:write': {
+    title: '写入文档空间',
+    desc: '以你的身份创建知识库、上传 / 更新文章',
+    icon: Upload,
   },
 };
 
@@ -63,11 +95,21 @@ function generateDefaultKeyName(): string {
   return `接入 ${yyyy}-${mm}-${dd} ${hh}:${mi} · ${suffix}`;
 }
 
-export function CreateKeyTab({ allowedScopes, onCreated, onBackToList, agentMode = false }: Props) {
+export function CreateKeyTab({
+  allowedScopes,
+  onCreated,
+  onBackToList,
+  agentMode = false,
+  presetScopes,
+}: Props) {
   const [name, setName] = useState(() => generateDefaultKeyName());
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(() => [
-    ...allowedScopes.filter((s) => s === 'marketplace.skills:read'),
-  ]);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(() => {
+    // 预选项与平台白名单取交集，避免勾选一个后端未开放的 scope。
+    const seed = presetScopes && presetScopes.length > 0
+      ? presetScopes
+      : ['marketplace.skills:read'];
+    return allowedScopes.filter((s) => seed.includes(s));
+  });
   const [ttlDays, setTtlDays] = useState<number>(365);
   const [creating, setCreating] = useState(false);
   const [plaintext, setPlaintext] = useState<string | null>(null);
@@ -350,10 +392,11 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
           <button
             type="button"
             onClick={() => setName(generateDefaultKeyName())}
-            className="text-[10px] text-token-muted transition-opacity hover:opacity-80"
+            className="inline-flex items-center gap-1 text-[10px] text-token-muted transition-opacity hover:opacity-80"
             title="换一个随机名称"
           >
-            🎲 换一个
+            <Dices size={11} />
+            换一个
           </button>
         </div>
         <input
@@ -377,7 +420,8 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
         {/* 2 列卡片选择器：紧凑可视、主次分明 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
           {allowedScopes.map((scope) => {
-            const meta = SCOPE_META[scope] ?? { title: scope, desc: '', icon: '🔑' };
+            const meta = SCOPE_META[scope] ?? { title: scope, desc: '', icon: KeyRound };
+            const ScopeIcon = meta.icon;
             const checked = selectedScopes.includes(scope);
             return (
               <button
@@ -396,8 +440,8 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
                 >
                   {checked && <Check size={10} className="text-white" strokeWidth={3} />}
                 </div>
-                <div className="text-[18px] mb-1.5" aria-hidden>
-                  {meta.icon}
+                <div className="mb-1.5 text-token-secondary" aria-hidden>
+                  <ScopeIcon size={18} />
                 </div>
                 <div className="mb-0.5 pr-6 text-[12.5px] font-semibold text-token-primary">
                   {meta.title}
