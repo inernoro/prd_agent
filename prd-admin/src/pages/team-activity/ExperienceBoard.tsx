@@ -51,10 +51,15 @@ export function ExperienceBoard({
   items,
   onSelectTarget,
   onSwitchHeatmap,
+  from,
+  to,
 }: {
   items: BehaviorInsight[];
   onSelectTarget?: (target: string, fallback: { label: string; metric: string; kind?: string }) => void;
   onSwitchHeatmap?: () => void;
+  /** 当前选中时间窗：用户之声（真实缺陷）也按此窗口对齐，与左侧行为之声同口径 */
+  from?: string;
+  to?: string;
 }) {
   const navigate = useNavigate();
   // 行为之声：遥测痛点（未忽略），按严重度排序
@@ -63,12 +68,14 @@ export function ExperienceBoard({
     [items]
   );
 
-  // 用户之声：用户主动提交的真实缺陷（按创建时间倒序取前若干条）
+  // 用户之声：用户主动提交的真实缺陷（按创建时间倒序取前若干条）。
+  // 随时间窗变化重新拉取（捕获新提交），并按 [from,to] 过滤，避免与左侧行为之声窗口不一致。
   const [defects, setDefects] = useState<DefectReport[] | null>(null);
   const [defectsErr, setDefectsErr] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     setDefectsErr(null);
+    setDefects(null);
     void listDefects({ filter: 'all', limit: 30 }).then((res) => {
       if (!alive) return;
       if (res.success) {
@@ -84,9 +91,22 @@ export function ExperienceBoard({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [from, to]);
 
-  const empty = behaviorVoice.length === 0 && (defects?.length ?? 0) === 0 && defects !== null;
+  // 按选中时间窗过滤（from/to 为空则不设对应边界）
+  const windowedDefects = useMemo(() => {
+    if (defects === null) return null;
+    const fromMs = from ? new Date(from).getTime() : undefined;
+    const toMs = to ? new Date(to).getTime() : undefined;
+    return defects.filter((d) => {
+      const t = new Date(d.createdAt).getTime();
+      if (fromMs !== undefined && t < fromMs) return false;
+      if (toMs !== undefined && t > toMs) return false;
+      return true;
+    });
+  }, [defects, from, to]);
+
+  const empty = behaviorVoice.length === 0 && (windowedDefects?.length ?? 0) === 0 && windowedDefects !== null;
 
   if (empty && !defectsErr) {
     return (
@@ -117,7 +137,7 @@ export function ExperienceBoard({
         {/* 左声道：行为之声 = 遥测自动发现的痛点 */}
         <BehaviorChannel items={behaviorVoice} onSelectTarget={onSelectTarget} />
         {/* 右声道：用户之声 = 用户主动提交的真实缺陷 */}
-        <UserChannel defects={defects} error={defectsErr} startIdx={behaviorVoice.length} onOpenDefect={() => navigate('/defect-agent')} />
+        <UserChannel defects={windowedDefects} error={defectsErr} startIdx={behaviorVoice.length} onOpenDefect={() => navigate('/defect-agent')} />
       </div>
       <style>{`
         /* Bento 桌面：本格 row-span-1（≈220px），卡撑满格高、内容区内部滚动，不给硬 min-height 撑破矮格；

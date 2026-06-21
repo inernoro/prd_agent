@@ -465,7 +465,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     />
   );
   const renderStatsTile = () => (data ? <ExperienceStats items={data.items} /> : null);
-  const renderBoardTile = () => <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} />;
+  const renderBoardTile = () => <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} from={from} to={to} />;
 
   // 桌面端（lg+）Bento 看板：四块大小不一拼成一张满看板（参照 behavior-insights-bento-demo.html）。
   // 12 列 grid + 固定行高，每块按内容定大小：

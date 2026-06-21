@@ -50,6 +50,12 @@ export function presetFrom(key: RangeKey): string | undefined {
 /** 把 TeamRange 解析成发给后端的 from/to（preset 的 to 为 undefined=至今） */
 export function resolveRange(range: TeamRange): { from?: string; to?: string } {
   if (range.kind === 'custom') return { from: range.from, to: range.to };
+  // 「全部」名副其实：覆盖密度窗口（近 DENSITY_DAYS 天），与悬浮预览（汇 90 天）一致。
+  // 不传 from 时后端 insights/热力图默认只聚合近 30 天，会与预览数字不符。
+  if (range.preset === 'all') {
+    const start = new Date(startOfDay(new Date()).getTime() - (DENSITY_DAYS - 1) * 86_400_000);
+    return { from: start.toISOString(), to: undefined };
+  }
   return { from: presetFrom(range.preset), to: undefined };
 }
 
@@ -380,11 +386,15 @@ function BrushPopover({
       }
       return [Math.min(lo, hi), Math.max(lo, hi)];
     }
-    // 预设映射到默认刷选窗口（今天/近7/近30/全部）
+    // 预设映射到与 presetFrom/实际加载一致的刷选窗口（今天/本周一/本月一号/全部90天），
+    // 不再用滚动近7/近30天，避免未拖动直接「应用范围」提交与当前预设不一致的窗口。
     if (initial.preset === 'today') return [n - 1, n - 1];
-    if (initial.preset === 'week') return [Math.max(0, n - 7), n - 1];
-    if (initial.preset === 'month') return [Math.max(0, n - 30), n - 1];
-    return [0, n - 1];
+    if (initial.preset === 'all') return [0, n - 1];
+    const startIso = presetFrom(initial.preset); // week / month 非空
+    const startKey = startIso ? startOfDay(new Date(startIso)).getTime() : days[0].dayStart;
+    let lo = days.findIndex((d) => d.dayStart >= startKey);
+    if (lo < 0) lo = 0;
+    return [lo, n - 1];
   }, [days, initial, n]);
 
   const [sel, setSel] = useState<[number, number]>(initialSel);
