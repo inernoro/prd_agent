@@ -99,7 +99,7 @@ public class PrdAgentSkillsController : ControllerBase
                     ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员")));
             }
 
-            return (session, member.MemberRole, null);
+            return (session, PrdAgentSkillRoleResolver.ResolveEffectiveAnswerRole(session), null);
         }
 
         return (session, default, StatusCode(StatusCodes.Status403Forbidden,
@@ -276,7 +276,7 @@ public class PrdAgentSkillsController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权执行此技能"));
 
         // 会话访问校验：个人会话必须 owner，群会话必须是成员。
-        // 群会话回答角色始终以 GroupMembers.MemberRole 为准，避免直接信任 session.CurrentRole。
+        // 技能列表和执行都以 session.CurrentRole 为准，避免切换角色后能看到技能但执行被成员固定角色拦截。
         var (session, effectiveAnswerRole, accessError) = await ResolveAccessibleSessionAsync(request.SessionId, userId, ct);
         if (accessError != null)
             return accessError;
@@ -697,4 +697,3 @@ public class SkillDraftResult
     public string? Category { get; set; }
     public string? Icon { get; set; }
 }
-
