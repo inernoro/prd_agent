@@ -315,8 +315,145 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
 
 # ── 准入门槛（入口准则，见 standard-v2.md §3.5）：输入不达标直接拒收 ──
 TIER_MIN_SHOTS = {"L0": 1, "L1": 3, "L2": 5}
+DEEP_DAILY_MIN_SHOTS = 12
 JUNK_TARGETS = {"test", "测试", "xxx", "demo", "tmp", "临时", "aaa", "todo"}
 PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\}|IMG:)")
+THIN_CELL_PAT = re.compile(r"^(同上|见上文|参见上文|略|省略|按常规|常规|待定|TBD|todo)$", re.I)
+
+
+def _target_declares_daily_scope(target):
+    t = (target or "").strip()
+    if not t:
+        return False
+    if re.fullmatch(r"(每日|昨日|昨天)(?:的)?(?:全部|所有)?(?:内容|工作|变更|更新|改动)?(?:验收|复验|测试|报告)?", t):
+        return True
+    return bool(re.search(
+        r"(每日验收|昨日验收|昨天验收|每日复验|昨日复验|昨天复验|每日测试|昨日测试|昨天测试|"
+        r"每日报告|昨日报告|昨天报告|验收昨日|验收昨天|"
+        r"(昨日|昨天)(?:的)?(?:全部|所有)(?:内容|开发|工作|更新|改动|变更|做完的内容)|"
+        r"(昨日|昨天)(?:做完的内容|开发的全部内容|开发的所有内容))",
+        t,
+    ))
+
+
+def _scope_declaration_text(target, body):
+    """Only scan target and explicit report scope/scenario/depth lines."""
+    picked = [(target or "").strip()]
+    table_scope_section = False
+    scope_label = re.compile(
+        r"(目标日期|验收目标|验收范围|验收场景|主场景|修饰场景|scenario|scope|"
+        r"提交范围|PR\s*范围|commit\s*(?:range|sha)|验收深度|深度预算|改动规模与深度预算)",
+        re.I,
+    )
+    table_scope_token = re.compile(
+        r"(PR\s*#?\s*\d+|[0-9a-f]{7,40}|pull[- ]request|commit[- ]range|"
+        r"unpublished[- ]branch|defect[- ]retest|visual[- ]regression|release[- ]preflight)",
+        re.I,
+    )
+    for line in (body or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("#"):
+            table_scope_section = bool(re.search(r"(PR/commit|PR\s*到|commit|提交|改动断言|范围映射)", s, re.I))
+            picked.append(s)
+            continue
+        if scope_label.search(s):
+            picked.append(s)
+            continue
+        if table_scope_section and s.startswith("|") and table_scope_token.search(s):
+            picked.append(s)
+    return "\n".join(picked)
+
+
+def _declares_complex_acceptance(target, body):
+    """Return true only for explicit complex acceptance scenarios, not generic metadata columns."""
+    if _target_declares_daily_scope(target):
+        return True
+    text = _scope_declaration_text(target, body)
+    patterns = [
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)",
+        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)",
+        r"PR\s*#?\s*\d+",
+        r"\b[0-9a-f]{7,40}\b",
+        r"pull[- ]request",
+        r"(commit|提交)\s*(?:[- ]?range|范围|验收|复验|测试|报告|[=:：# ]*[0-9a-f]{7,40})",
+        r"(未发布分支|分支验收|缺陷复测|视觉回归|发布前验收|"
+        r"unpublished[- ]branch|defect[- ]retest|visual[- ]regression|release[- ]preflight)",
+        r"\bdaily[-_ ]?yesterday\b",
+    ]
+    return any(re.search(p, text, re.I) for p in patterns)
+
+
+def _declares_daily_acceptance(target, body):
+    if _target_declares_daily_scope(target):
+        return True
+    text = _scope_declaration_text(target, body)
+    return bool(re.search(
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
+        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
+        r"\bdaily[-_ ]?yesterday\b",
+        text,
+        re.I,
+    ))
+
+
+def _declares_deep_daily_acceptance(target, body):
+    """Daily deep gate applies only to positive deep-acceptance declarations."""
+    scope_text = _scope_declaration_text(target, body)
+    daily_context = _target_declares_daily_scope(target) or bool(re.search(
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
+        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
+        r"\bdaily[-_ ]?yesterday\b",
+        scope_text,
+        re.I,
+    )) or bool(re.search(
+        r"(每日|昨日|昨天).{0,12}(深度验收|深度复验|深入功能验收)|"
+        r"(深度验收|深度复验|深入功能验收).{0,12}(每日|昨日|昨天)",
+        target or "",
+    ))
+    if not daily_context:
+        return False
+    negated = re.compile(
+        r"(不是|非|不属于|未达到|不满足|禁止|不能|不得|只能叫|只能标为|降级为).{0,14}(深度验收|深度复验|深入功能验收)|"
+        r"(深度验收|深度复验|深入功能验收).{0,14}(不通过|不适用|不满足|不能|不得)"
+    )
+    positive = re.compile(
+        r"(验收深度|深度|档位)\s*[:：|= ]+\s*(深度验收|深度复验|深入功能验收)|"
+        r"(本次|本报告|目标|验收目标).{0,12}(深度验收|深度复验|深入功能验收)|"
+        r"(每日|昨日|昨天).{0,12}(深度验收|深度复验|深入功能验收)|"
+        r"(深度验收|深度复验|深入功能验收).{0,12}(每日|昨日|昨天)"
+    )
+    for line in [target or "", *((body or "").splitlines())]:
+        s = line.strip()
+        if not s or not re.search(r"(深度验收|深度复验|深入功能验收)", s) or negated.search(s):
+            continue
+        if "验收深度" in s and re.search(r"(深度验收|深度复验|深入功能验收)", s):
+            return True
+        if s.startswith("|") and re.search(r"\|\s*(深度验收|深度复验|深入功能验收)\s*\|", s):
+            return True
+        if positive.search(s):
+            return True
+    return False
+
+
+def _thin_table_cells(body, section_names):
+    """Find table cells that hide missing evidence with vague filler words."""
+    hits = []
+    active = False
+    for line in (body or "").splitlines():
+        ls = line.strip()
+        if ls.startswith("#"):
+            active = any(name in ls for name in section_names)
+            continue
+        if not active or not ls.startswith("|"):
+            continue
+        cells = [c.strip().strip("。；;,.，") for c in ls.strip("|").split("|")]
+        for cell in cells:
+            if THIN_CELL_PAT.fullmatch(cell):
+                hits.append(ls[:120])
+                break
+    return hits
 
 
 def validate_inputs(a, body, manifest, cfg=None):
@@ -332,6 +469,14 @@ def validate_inputs(a, body, manifest, cfg=None):
     need = TIER_MIN_SHOTS.get(a.tier, 3)
     if len(manifest) < need:
         errs.append(f"[证据] 截图数 {len(manifest)} < {a.tier} 下限 {need}")
+    daily_acceptance_claim = _declares_daily_acceptance(a.target, body)
+    deep_daily_claim = _declares_deep_daily_acceptance(a.target, body)
+    complex_acceptance_claim = _declares_complex_acceptance(a.target, body)
+    if deep_daily_claim and len(manifest) < DEEP_DAILY_MIN_SHOTS:
+        errs.append(
+            f"[深度门禁] 每日/昨日报告声称深度验收，但截图数 {len(manifest)} < "
+            f"{DEEP_DAILY_MIN_SHOTS}。少量入口图只能标为「广度冒烟」，不得冒充深度验收"
+        )
     errs.extend(artifact_path_errors(manifest, cfg))
     for m in manifest:
         p = m.get("path", "")
@@ -365,6 +510,51 @@ def validate_inputs(a, body, manifest, cfg=None):
     # v2.1 强制：需求一一对应表（避免"用户提了 10 条只对应 6 条"的茫然，详见 standard-v2.md §6.4）
     if "需求一一对应表" not in body:
         errs.append("[结构] 报告缺「需求一一对应表」标题（v2.1 强制，详见 standard-v2.md §6.4）")
+    if complex_acceptance_claim:
+        if "改动断言到证据表" not in body:
+            errs.append("[结构] 复杂验收缺「改动断言到证据表」标题：必须把 PR/commit 的改动断言连到真实操作/API/状态证据，不能用同模块邻近页面顶替")
+        for kw in ("改动断言", "必要证明", "实际证据", "关联性"):
+            if kw not in body:
+                errs.append(f"[结构] 复杂验收缺「{kw}」字段：无法判断提交信息与截图/接口证据是否相关")
+        if "页面优先证据分层" not in body:
+            errs.append("[结构] 复杂验收缺「页面优先证据分层」标题：用户可感知改动必须先说明页面反馈，再用 API/日志/状态作内部佐证")
+        for kw in ("用户可见页面", "页面证据", "内部佐证"):
+            if kw not in body:
+                errs.append(f"[结构] 复杂验收缺「{kw}」字段：无法判断报告是否把页面反馈放在内部数据之前")
+        for section in ("改动断言表", "影响面矩阵", "融合测试设计", "证明力矩阵", "覆盖缺口"):
+            if section not in body:
+                errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
+    if daily_acceptance_claim:
+        for section in (
+            "昨日工作总结",
+            "改动规模与深度预算",
+            "标记法则与验收标准",
+            "PR/commit 到结果映射",
+            "覆盖矩阵",
+            "截图回读检查",
+            "重试记录",
+            "未发布状态",
+        ):
+            if section not in body:
+                errs.append(f"[结构] 每日/昨日报告缺「{section}」：每日自动验收必须能说明范围、标准、未发布状态、截图回读和重试事实")
+        if not re.search(r"(计划证据数|计划截图数|planned evidence|planned screenshots)", body, re.I):
+            errs.append("[结构] 每日/昨日报告缺计划证据数：无法判断深度预算是否覆盖变更规模")
+        if not re.search(r"(实际证据数|实际截图数|actual evidence|actual screenshots)", body, re.I):
+            errs.append("[结构] 每日/昨日报告缺实际证据数：无法判断报告是否按预算执行")
+        if deep_daily_claim and not re.search(r"(负面|边界|失败路径|negative|boundary)", body, re.I):
+            errs.append("[深度门禁] 深度每日验收缺负面/边界路径说明：不能只用 happy path 声称深度通过")
+        thin_hits = _thin_table_cells(body, (
+            "PR/commit 到结果映射",
+            "改动断言到证据表",
+            "改动断言表",
+            "页面优先证据分层",
+            "覆盖矩阵",
+            "覆盖缺口",
+            "缺陷清单",
+            "截图回读检查",
+        ))
+        if thin_hits:
+            errs.append("[内容充裕] 每日/昨日报告关键表格含空泛占位单元（同上/见上文/略/按常规/TBD 等），会遮盖遗漏。示例：" + " | ".join(thin_hits[:3]))
     if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
         errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):
