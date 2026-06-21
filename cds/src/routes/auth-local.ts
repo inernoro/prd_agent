@@ -28,6 +28,14 @@ export interface AuthLocalRouterDeps {
   authService: AuthService;
   /** Set to true for HTTPS environments; cookies get the Secure flag. */
   cookieSecure: boolean;
+  /**
+   * Whether the auth store is durable (mongo). The public first-run bootstrap
+   * endpoint is only safe on a persistent store: a volatile (memory) store is
+   * empty after every restart, so bootstrap would re-open and let the first
+   * visitor seize `isSystemOwner` in a reachable github-mode deployment
+   * (PR #865 Codex P1). When false, bootstrap is disabled.
+   */
+  bootstrapAllowed: boolean;
 }
 
 interface AuthedRequest extends Request {
@@ -78,15 +86,24 @@ function localErrStatus(err: LocalAuthError): number {
 
 export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   const router = Router();
-  const { authService, cookieSecure } = deps;
+  const { authService, cookieSecure, bootstrapAllowed } = deps;
 
   // ── First-run bootstrap (public) ──
   router.get('/auth/bootstrap-status', async (_req: Request, res: Response) => {
-    const needsBootstrap = !(await authService.hasAnyUser());
+    // 易失存储后端不开放 bootstrap（见 AuthLocalRouterDeps.bootstrapAllowed）。
+    const needsBootstrap = bootstrapAllowed && !(await authService.hasAnyUser());
     res.json({ needsBootstrap });
   });
 
   router.post('/auth/bootstrap', async (req: Request, res: Response) => {
+    if (!bootstrapAllowed) {
+      // 易失(memory)后端重启即清空，公开 bootstrap 会被重复利用自封 owner。
+      res.status(403).json({
+        error: '本地账号初始化需要持久化存储后端（mongo）。当前为易失存储，已禁用引导。',
+        code: 'bootstrap_unavailable',
+      });
+      return;
+    }
     const { username, password, name } = req.body || {};
     try {
       const user = await authService.bootstrapFirstLocalUser({

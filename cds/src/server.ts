@@ -1719,7 +1719,11 @@ export function createServer(deps: ServerDeps): express.Express {
     // are whitelisted in github-auth.ts PUBLIC_PATHS so they pass the gate;
     // authed endpoints (change-password / users / activity) read req.cdsUser
     // attached by the gate above — hence mounted AFTER the middleware.
-    app.use('/api', createAuthLocalRouter({ authService, cookieSecure }));
+    // 仅在持久化(mongo)后端开放首启 bootstrap：易失(memory)后端重启即清空，公开
+    // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
+    // （PR #865 Codex P1）。
+    const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
+    app.use('/api', createAuthLocalRouter({ authService, cookieSecure, bootstrapAllowed }));
 
     // Expose the authService so downstream routers can record user activity
     // at high-value touchpoints (deploy / stop / publish / report) when a

@@ -13,6 +13,8 @@
  * Indexes (maintained by DBA, NOT auto-created — see no-auto-index.md):
  *   cds_users.githubId          unique
  *   cds_users.id                unique
+ *   cds_users.username          unique, sparse (OAuth users have no username;
+ *                               closes the local-create duplicate-username race)
  *   cds_sessions.token          unique
  *   cds_sessions.userId         non-unique
  *   cds_sessions.expiresAt      TTL (optional but recommended)
@@ -155,7 +157,18 @@ export class MongoAuthStore implements AuthStore {
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
     };
-    await users.insertOne(user);
+    try {
+      await users.insertOne(user);
+    } catch (err) {
+      // 并发下两个同名 create 可能都过了上面的 findOne。若 DBA 建了
+      // cds_users.username 唯一(sparse)索引（见文件头 Indexes 段），DB 会以
+      // E11000 拒掉第二个 insert——这里归一成与 findOne 分支一致的"已存在"错误
+      // （修复 PR #865 Bugbot「Mongo local user duplicate username race」）。
+      if ((err as { code?: number })?.code === 11000) {
+        throw new Error(`Local user with username '${username}' already exists`);
+      }
+      throw err;
+    }
     return user;
   }
 

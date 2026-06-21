@@ -81,7 +81,7 @@ describe('Local auth routes (with gate)', () => {
     app.use(express.json());
     app.use('/api', createAuthRouter({ authService: svc, publicBaseUrl: 'http://localhost:9900', cookieSecure: false }));
     app.use(createGithubAuthMiddleware({ authService: svc }));
-    app.use('/api', createAuthLocalRouter({ authService: svc, cookieSecure: false }));
+    app.use('/api', createAuthLocalRouter({ authService: svc, cookieSecure: false, bootstrapAllowed: true }));
     server = app.listen(0);
   });
 
@@ -171,5 +171,43 @@ describe('Local auth routes (with gate)', () => {
     const actions = act.body.activity.map((a: { action: string }) => a.action);
     expect(actions).toContain('change-password');
     expect(actions).toContain('login');
+  });
+});
+
+describe('Local auth bootstrap gating (volatile store)', () => {
+  // PR #865 Codex P1: on a volatile (memory) backend the store empties on every
+  // restart, so the public bootstrap endpoint must be DISABLED to stop the first
+  // post-restart visitor from seizing isSystemOwner. Production wires
+  // bootstrapAllowed = (store is mongo); here we pass false to lock the gate.
+  let server: http.Server;
+
+  beforeEach(() => {
+    const store = new MemoryAuthStore();
+    const github = new GitHubOAuthClient({
+      clientId: 'cid', clientSecret: 'secret',
+      fetchImpl: async () => { throw new Error('github not used'); },
+    });
+    const svc = new AuthService({ store, github, config: { allowedOrgs: [] } });
+    const app = express();
+    app.use(express.json());
+    app.use(createGithubAuthMiddleware({ authService: svc }));
+    app.use('/api', createAuthLocalRouter({ authService: svc, cookieSecure: false, bootstrapAllowed: false }));
+    server = app.listen(0);
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it('reports needsBootstrap=false and refuses bootstrap (403) when not durable', async () => {
+    const status = await call(server, 'GET', '/api/auth/bootstrap-status');
+    expect(status.status).toBe(200);
+    expect(status.body.needsBootstrap).toBe(false);
+
+    const boot = await call(server, 'POST', '/api/auth/bootstrap', {
+      body: { username: 'root', password: 'root-password-1' },
+    });
+    expect(boot.status).toBe(403);
+    expect(boot.body.code).toBe('bootstrap_unavailable');
   });
 });

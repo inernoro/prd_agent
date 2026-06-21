@@ -10,3 +10,5 @@
 | security | cds | 验收报告项目级 key 全面收敛：禁访全局/他项目报告、建报告强制归本项目、关联分支限本项目 |
 | security | cds | 被禁用账号不能再通过 GitHub OAuth 登录（handleCallback 校验 status） |
 | fix | cds | 管理员改用户先重置密码再改状态，避免密码重置失败但状态已落库 |
+| security | cds | 易失(memory)存储后端禁用首启 bootstrap，防重启后被自封 system owner |
+| fix | cds | 本地账号创建捕获唯一索引冲突(E11000)，并补登 username 唯一稀疏索引文档 |
