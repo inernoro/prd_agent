@@ -748,6 +748,8 @@
 
 - [CDS Agent 工作台 · 债务台账](debt.cds-agent) `debt.cds-agent`
   > 4 条 open：R1 商业级 provider 闭环 / Lite 只读模式能力边界 / CDS Agent 文档群熵减 / 无 profile 时 Lite 直跑
+- [CDS 多分支跨分支隔离 · 债务台账](debt.cds-branch-isolation) `debt.cds-branch-isolation`
+  > 2 条 open：同项目多分支共享一张网 + 裸服务别名 → DNS round-robin 串台（worker 调 ai 间歇命中旧分支 404）/ 共享 Redis + BullMQ 无分支前缀 → 别分支旧 worker 抢 job；触发=多服务+多分支并存+代码不一致
 - [CDS 后端部署冻结 · 分支 api 跑旧代码](debt.cds-backend-deploy-freeze) `debt.cds-backend-deploy-freeze`
   > open（阻塞）：构建成功≠运行新代码，后端 .cs 改动进不到运行进程；图生视频下载鲁棒修复 + 额度用尽主动提醒已就绪待部署修好后复验
 - [视觉分镜台 · 债务台账](debt.visual-storyboard) `debt.visual-storyboard`
