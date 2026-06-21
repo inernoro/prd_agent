@@ -16,3 +16,4 @@
 | fix | cds | 本地登录处理器加 try/catch 兜底，存储后端异常返回 500 而非挂起 |
 | fix | cds | 预览等待页 ETA 在途重建时以 lastDeployStartedAt 为锚点，不再回退到上一轮历史日志误算几小时 |
 | fix | prd-admin | 知识库「接入 AI」弹窗在 allowedScopes 异步到达后重新播种预选 scope，一键签发不再因预选落空失败 |
+| fix | cds | 执行器构建路径在成功 complete 时戳 runtimeStartedAt 并采样部署耗时，执行器构建的项目也能积累 ETA 历史 |

@@ -2476,6 +2476,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       events: [{ step: preamble.step, status: preamble.status, title: preamble.title, timestamp: preamble.timestamp }],
     };
     let proxyHasError = false;
+    // 远端运行时就绪时刻 —— 收到成功的 complete 事件时戳。用作 opLog.runtimeStartedAt，
+    // 让执行器构建路径也能像本地路径一样采集部署耗时样本（见下方 finally）。
+    let remoteRuntimeReadyAt: string | null = null;
 
     // Prepare the payload the remote's /exec/deploy expects. The remote has
     // its own worktree + state, so we pass branch metadata + profiles + the
@@ -2584,6 +2587,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
               proxyHasError = true;
             }
           }
+          // 成功 complete = 远端运行时就绪的时刻（executor 在所有服务 running 后才发）。
+          // 戳为 runtimeStartedAt，让 finally 能像本地路径一样采样部署耗时（修复 PR #865
+          // Bugbot「executor deploys skip duration samples」）—— 否则执行器构建的项目
+          // 永远积累不出 ETA 样本，等待页/卡片一直显示"暂无历史预计"。
+          if (!proxyHasError) {
+            remoteRuntimeReadyAt = typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString();
+          }
         }
         opLog.events.push({
           step: typeof parsed.step === 'string' ? parsed.step : eventName,
@@ -2655,6 +2665,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 计时，下一拍可能立刻被 auto-stop。与本地路径对齐：stamp
         // lastDeployAt，让 release run 拿到自己的完整生命周期区间。
         stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
+        // 戳远端就绪时刻，供 finally 采样部署耗时（见 remoteRuntimeReadyAt 声明处）。
+        if (remoteRuntimeReadyAt) opLog.runtimeStartedAt = remoteRuntimeReadyAt;
       }
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
@@ -2671,6 +2683,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
+      // 与本地路径对齐：成功且有就绪时刻时采样部署耗时（recordDeployDurationSample
+      // 内部已 guard status==='completed' + runtimeStartedAt 存在，失败/缺戳自动 no-op）。
+      recordDeployDurationSample(stateService, entry, profiles, opLog);
       try { stateService.appendLog(entry.id, opLog); } catch { /* tolerate */ }
       try { res.end(); } catch { /* ignore */ }
     }
