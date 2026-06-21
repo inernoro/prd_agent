@@ -151,7 +151,7 @@ export function ReportsPage(): JSX.Element {
         />
       )}
     >
-      <Workspace>
+      <Workspace wide className="cds-workspace--fill">
         <div className="flex h-full min-h-0 flex-col gap-5">
           <section className="cds-surface-raised cds-hairline p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -336,7 +336,7 @@ function ReportViewer({ report }: { report: AcceptanceReport | null }): JSX.Elem
         // inside a no-same-origin sandbox, so this HTML is fully isolated.
         const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
           :root { color-scheme: light dark; }
-          body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 24px; max-width: 860px; margin: 0 auto; }
+          body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 28px clamp(28px, 6vw, 96px); max-width: 1100px; margin: 0 auto; }
           pre { background: rgba(127,127,127,0.12); padding: 12px; border-radius: 8px; overflow: auto; }
           code { background: rgba(127,127,127,0.12); padding: 1px 4px; border-radius: 4px; }
           pre code { background: transparent; padding: 0; }

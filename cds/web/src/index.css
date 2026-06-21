@@ -1135,6 +1135,21 @@
     margin-right: auto;
   }
 
+  /*
+   * 撑满高度的工作区（主从/预览/详情类页面用）。
+   * 病根：.cds-main 是 grid item（撑满视口高度），但 .cds-workspace 默认无高度，
+   * 于是页面根的 `h-full` 解析不到高度而塌成内容高度——预览/详情区被挤成一个
+   * 小盒子，四周大片留白。加这个修饰类让 workspace 填满 main 的高度，页面根
+   * `h-full min-h-0 flex flex-col` 才能让产物区 flex-1 占满。
+   * 详见 .claude/rules/content-fills-canvas.md。
+   */
+  .cds-workspace--fill {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
   .cds-workspace-wide {
     max-width: 1360px;
   }
