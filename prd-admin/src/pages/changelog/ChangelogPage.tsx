@@ -1830,14 +1830,14 @@ function getPublishStatusMeta(status?: string | null): PublishStatusMeta {
   }
   if (status === 'pending') {
     return {
-      label: '待发布',
+      label: '需要真人审核发布',
       color: '#fcd34d',
       bg: 'rgba(234, 179, 8, 0.10)',
       border: 'rgba(234, 179, 8, 0.28)',
     };
   }
   return {
-    label: '待确认',
+    label: '需要真人审核发布',
     color: '#cbd5e1',
     bg: 'rgba(148, 163, 184, 0.09)',
     border: 'rgba(148, 163, 184, 0.22)',
@@ -1853,6 +1853,12 @@ function resolveLinkedDefectStatus(defects: GitHubLinkedDefect[]): PublishStatus
     return getPublishStatusMeta('pending');
   }
   return getPublishStatusMeta('unknown');
+}
+
+function buildDefectDetailUrl(defect: GitHubLinkedDefect): string {
+  const params = new URLSearchParams({ defectId: defect.defectId });
+  if (defect.traceId) params.set('traceId', defect.traceId);
+  return `/defect-agent?${params.toString()}`;
 }
 
 function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
@@ -1932,7 +1938,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
               >
                 <div className="flex items-start justify-between gap-2">
                   <a
-                    href={`/defect-agent?defectId=${encodeURIComponent(defect.defectId)}`}
+                    href={buildDefectDetailUrl(defect)}
                     className="text-[13px] font-medium hover:underline"
                     style={{ color: '#bfdbfe' }}
                   >
@@ -1969,6 +1975,35 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                   </div>
                 )}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <a
+                    href={buildDefectDetailUrl(defect)}
+                    className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    <Eye size={11} />
+                    查看缺陷
+                  </a>
+                  {defect.commitSha && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[12px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <GitCommit size={11} />
+                      {defect.commitSha.slice(0, 7)}
+                    </span>
+                  )}
+                  {defect.pullRequestUrl && (
+                    <a
+                      href={defect.pullRequestUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <Github size={11} />
+                      {defect.pullRequestNumber ? `PR #${defect.pullRequestNumber}` : 'PR'}
+                    </a>
+                  )}
                   {defect.previewUrl && (
                     <a
                       href={defect.previewUrl}
@@ -1978,7 +2013,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       style={{ color: 'var(--text-secondary)' }}
                     >
                       <Eye size={11} />
-                      预览
+                      验收地址
                     </a>
                   )}
                   {defect.visualReportUrl && (

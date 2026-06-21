@@ -3072,9 +3072,12 @@ public class DefectAgentController : ControllerBase
 
         var now = DateTime.UtcNow;
         var verdict = NormalizeValidationVerdict(request.Verdict);
-        var validationStatus = verdict == "fail"
-            ? DefectResolutionValidationStatus.Failed
-            : DefectResolutionValidationStatus.Passed;
+        var validationStatus = verdict switch
+        {
+            "fail" => DefectResolutionValidationStatus.Failed,
+            "invalid" => DefectResolutionValidationStatus.Invalid,
+            _ => DefectResolutionValidationStatus.Passed,
+        };
         var knowledgeBaseName = string.IsNullOrWhiteSpace(request.KnowledgeBaseName)
             ? DefectAcceptanceStoreName
             : request.KnowledgeBaseName.Trim();
@@ -3099,7 +3102,12 @@ public class DefectAgentController : ControllerBase
             {
                 Key = notificationKey,
                 TargetUserId = defect.ReporterId,
-                Title = verdict == "fail" ? "你的问题需要继续改进" : "你的问题已修复",
+                Title = verdict switch
+                {
+                    "fail" => "你的问题需要继续改进",
+                    "invalid" => "你的问题已完成核验",
+                    _ => "你的问题已修复",
+                },
                 Message = message,
                 Level = verdict == "fail" ? "warning" : "success",
                 ActionLabel = "查看验收报告",
@@ -3128,6 +3136,19 @@ public class DefectAgentController : ControllerBase
             .Set(x => x.UpdatedAt, now);
         await _db.DefectResolutionTraces.UpdateOneAsync(x => x.Id == trace.Id, update, cancellationToken: ct);
 
+        var commentContent = BuildValidationEvidenceComment(
+            trace,
+            request,
+            knowledgeBaseName,
+            knowledgeBaseUrl,
+            visualReportUrl,
+            verdict);
+        var comment = await InsertAutomationCommentAsync(
+            defect,
+            request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value ?? trace.AgentName ?? "AI Agent",
+            commentContent,
+            ct);
+
         return Ok(ApiResponse<object>.Ok(new
         {
             success = true,
@@ -3137,6 +3158,7 @@ public class DefectAgentController : ControllerBase
             notifiedUserId = defect.ReporterId,
             notificationCreated,
             notificationId = notification.Id,
+            messageId = comment.Id,
         }));
     }
 
@@ -3264,6 +3286,8 @@ public class DefectAgentController : ControllerBase
             CommitUrl = request.CommitUrl,
             Repository = request.Repository,
             Branch = request.Branch,
+            PullRequestNumber = request.PullRequestNumber,
+            PullRequestUrl = request.PullRequestUrl,
             PreviewUrl = request.PreviewUrl,
             VisualReportUrl = request.VisualReportUrl,
             Resolution = request.Resolution,
@@ -3287,16 +3311,15 @@ public class DefectAgentController : ControllerBase
         if (fixResult.Error != null)
             return fixResult.Error;
 
-        string? messageId = null;
+        var completionComment = BuildCompletionEvidenceComment(request, commitResult.ShortSha);
         if (!string.IsNullOrWhiteSpace(request.CompletionComment))
-        {
-            var message = await InsertAutomationCommentAsync(
-                defect,
-                request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value ?? "AI Agent",
-                request.CompletionComment,
-                ct);
-            messageId = message.Id;
-        }
+            completionComment = $"{request.CompletionComment.Trim()}\n\n{completionComment}";
+        var message = await InsertAutomationCommentAsync(
+            defect,
+            request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value ?? "AI Agent",
+            completionComment,
+            ct);
+        var messageId = message.Id;
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -3318,6 +3341,7 @@ public class DefectAgentController : ControllerBase
                 updateCenterRelation = "commit-id",
                 publishState = "waiting_publish",
                 visualAcceptance = "run-after-production-publish",
+                requiredEvidence = new[] { "pull-request", "commit", "validation-report" },
             },
         }));
     }
@@ -3564,6 +3588,8 @@ public class DefectAgentController : ControllerBase
                 CommitUrl = i.CommitUrl?.Trim(),
                 Repository = i.Repository?.Trim(),
                 Branch = i.Branch?.Trim(),
+                PullRequestNumber = i.PullRequestNumber,
+                PullRequestUrl = i.PullRequestUrl?.Trim(),
                 PreviewUrl = i.PreviewUrl?.Trim(),
                 VisualReportUrl = i.VisualReportUrl?.Trim(),
             }).ToList(),
@@ -3621,6 +3647,8 @@ public class DefectAgentController : ControllerBase
                 .Set(x => x.AgentIdentifier, report.AgentIdentifier)
                 .Set(x => x.Repository, item.Repository)
                 .Set(x => x.Branch, item.Branch)
+                .Set(x => x.PullRequestNumber, item.PullRequestNumber)
+                .Set(x => x.PullRequestUrl, item.PullRequestUrl)
                 .Set(x => x.CommitSha, commitSha)
                 .Set(x => x.ShortSha, ResolveShortSha(commitSha, item.ShortSha))
                 .Set(x => x.CommitMessage, item.CommitMessage)
@@ -3792,17 +3820,18 @@ public class DefectAgentController : ControllerBase
                 "评论修复计划",
                 "判断是否轻量修复",
                 "修改代码并完成自测",
-                "提交中文 commit",
-                "把 commit 和验收信息填入 complete 或把阻塞原因填入 block",
+                "通过 PR 提交中文 commit",
+                "把 PR、commit 和验收信息填入 complete 或把阻塞原因填入 block",
             },
             serverResponsibilities = new[]
             {
                 "创建和维护 run",
                 "一次只领取一个缺陷",
                 "记录失败和阻塞",
-                "统一回写 commit 信息",
+                "统一回写 PR 和 commit 信息",
                 "写入 defect_resolution_traces",
                 "把缺陷标记为已修复",
+                "在完成和正式验收阶段写入证据评论",
             },
         };
 
@@ -3940,6 +3969,8 @@ public class DefectAgentController : ControllerBase
                     User.FindFirst("appId")?.Value),
                 Repository = request.Repository?.Trim(),
                 Branch = request.Branch?.Trim(),
+                PullRequestNumber = request.PullRequestNumber,
+                PullRequestUrl = request.PullRequestUrl?.Trim(),
                 CommitSha = commitSha,
                 ShortSha = ResolveShortSha(commitSha, request.ShortSha),
                 CommitMessage = request.CommitMessage?.Trim(),
@@ -4395,6 +4426,8 @@ public class DefectAgentController : ControllerBase
         item.ShortSha = ResolveShortSha(commitSha, request.ShortSha);
         item.CommitMessage = request.CommitMessage?.Trim();
         item.Branch = request.Branch?.Trim();
+        item.PullRequestNumber = request.PullRequestNumber;
+        item.PullRequestUrl = request.PullRequestUrl?.Trim();
         item.PreviewUrl = request.PreviewUrl?.Trim();
         item.VisualReportUrl = request.VisualReportUrl?.Trim();
         item.UpdatedAt = DateTime.UtcNow;
@@ -4453,15 +4486,18 @@ public class DefectAgentController : ControllerBase
     internal static string NormalizeValidationVerdict(string? verdict)
     {
         var value = verdict?.Trim().ToLowerInvariant();
-        return value is "pass" or "conditional" or "fail" ? value : "pass";
+        return value is "pass" or "conditional" or "fail" or "invalid" ? value : "pass";
     }
 
     internal static string BuildValidationNotificationMessage(DefectReport defect, string verdict)
     {
         var title = defect.Title ?? defect.DefectNo;
-        return verdict == "fail"
-            ? $"你的问题「{title}」已发布到正式环境，但验收未通过，需要继续改进。"
-            : $"你的问题「{title}」已修复并发布，验收报告已生成。";
+        return verdict switch
+        {
+            "fail" => $"你的问题「{title}」已发布到正式环境，但验收未通过，需要继续改进。",
+            "invalid" => $"你的问题「{title}」已完成正式环境核验，验收报告显示该问题陈述不成立。",
+            _ => $"你的问题「{title}」已修复并发布，验收报告已生成。",
+        };
     }
 
     internal static Dictionary<string, string> MergeAutomationCommitStructuredData(
@@ -4490,6 +4526,8 @@ public class DefectAgentController : ControllerBase
         SetIfPresent("修复提交地址", request.CommitUrl);
         SetIfPresent("修复仓库", request.Repository);
         SetIfPresent("修复分支", request.Branch);
+        SetIfPresent("修复PR编号", request.PullRequestNumber?.ToString());
+        SetIfPresent("修复PR地址", request.PullRequestUrl);
         SetIfPresent("预览地址", request.PreviewUrl);
         SetIfPresent("视觉验收报告", request.VisualReportUrl);
         return result;
@@ -4517,6 +4555,8 @@ public class DefectAgentController : ControllerBase
             .Set(x => x.AgentIdentifier, input.AgentIdentifier)
             .Set(x => x.Repository, input.Repository)
             .Set(x => x.Branch, input.Branch)
+            .Set(x => x.PullRequestNumber, input.PullRequestNumber)
+            .Set(x => x.PullRequestUrl, input.PullRequestUrl)
             .Set(x => x.CommitSha, input.CommitSha)
             .Set(x => x.ShortSha, input.ShortSha)
             .Set(x => x.CommitMessage, input.CommitMessage)
@@ -4552,6 +4592,95 @@ public class DefectAgentController : ControllerBase
         return string.IsNullOrWhiteSpace(normalized)
             ? null
             : normalized[..Math.Min(7, normalized.Length)];
+    }
+
+    internal static string BuildCompletionEvidenceComment(CompleteDefectAutomationWorkflowRequest request, string? shortSha)
+    {
+        var shaLabel = string.IsNullOrWhiteSpace(shortSha)
+            ? NormalizeCommitSha(request.CommitSha) ?? request.CommitSha.Trim()
+            : shortSha.Trim();
+        var commitLabel = string.IsNullOrWhiteSpace(request.CommitMessage)
+            ? shaLabel
+            : $"{shaLabel} {request.CommitMessage.Trim()}";
+        var lines = new List<string>
+        {
+            "自动化修复已提交，等待 PR 合并和正式环境发布后验收。",
+            "",
+            "证据链：",
+            string.IsNullOrWhiteSpace(request.CommitUrl)
+                ? $"- 提交：{commitLabel}"
+                : $"- 提交：[{commitLabel}]({request.CommitUrl.Trim()})",
+        };
+
+        if (request.PullRequestNumber.HasValue || !string.IsNullOrWhiteSpace(request.PullRequestUrl))
+        {
+            var prLabel = request.PullRequestNumber.HasValue ? $"PR #{request.PullRequestNumber.Value}" : "PR";
+            lines.Add(string.IsNullOrWhiteSpace(request.PullRequestUrl)
+                ? $"- PR：{prLabel}"
+                : $"- PR：[{prLabel}]({request.PullRequestUrl.Trim()})");
+        }
+        else
+        {
+            lines.Add("- PR：待创建或待回写，正式发布前必须补齐");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.PreviewUrl))
+            lines.Add($"- 验收地址：[{request.PreviewUrl.Trim()}]({request.PreviewUrl.Trim()})");
+
+        if (!string.IsNullOrWhiteSpace(request.VisualReportUrl))
+            lines.Add($"- 验收报告：[{request.VisualReportUrl.Trim()}]({request.VisualReportUrl.Trim()})");
+        else
+            lines.Add("- 验收报告：正式环境发布后生成并回写");
+
+        lines.Add("- 发布状态：未正式发布，需要真人审核发布后进入正式验收");
+        return string.Join("\n", lines);
+    }
+
+    internal static string BuildValidationEvidenceComment(
+        DefectResolutionTrace trace,
+        SubmitPublishedValidationReportRequest request,
+        string knowledgeBaseName,
+        string knowledgeBaseUrl,
+        string? visualReportUrl,
+        string verdict)
+    {
+        var verdictLabel = verdict switch
+        {
+            "fail" => "验收未通过，需要继续改进",
+            "invalid" => "验收报告证明该缺陷陈述不成立",
+            "conditional" => "有条件通过，请查看报告约束",
+            _ => "验收通过",
+        };
+        var commitLabel = string.IsNullOrWhiteSpace(trace.CommitMessage)
+            ? trace.ShortSha
+            : $"{trace.ShortSha} {trace.CommitMessage}";
+        var lines = new List<string>
+        {
+            $"正式环境验收结论：{verdictLabel}。",
+            "",
+            "验收证据：",
+            $"- 知识库：[{knowledgeBaseName}]({knowledgeBaseUrl})",
+        };
+
+        if (!string.IsNullOrWhiteSpace(visualReportUrl))
+            lines.Add($"- 验收报告：[{visualReportUrl.Trim()}]({visualReportUrl.Trim()})");
+
+        lines.Add(string.IsNullOrWhiteSpace(trace.CommitUrl)
+            ? $"- 提交：{commitLabel}"
+            : $"- 提交：[{commitLabel}]({trace.CommitUrl})");
+
+        if (trace.PullRequestNumber.HasValue || !string.IsNullOrWhiteSpace(trace.PullRequestUrl))
+        {
+            var prLabel = trace.PullRequestNumber.HasValue ? $"PR #{trace.PullRequestNumber.Value}" : "PR";
+            lines.Add(string.IsNullOrWhiteSpace(trace.PullRequestUrl)
+                ? $"- PR：{prLabel}"
+                : $"- PR：[{prLabel}]({trace.PullRequestUrl})");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Message))
+            lines.Add($"\n回复说明：{request.Message.Trim()}");
+
+        return string.Join("\n", lines);
     }
 
     private static string ComputeReportStatus(List<DefectFixReportItem> items)
@@ -6174,6 +6303,8 @@ public class DefectFixReportItemRequest
     public string? CommitUrl { get; set; }
     public string? Repository { get; set; }
     public string? Branch { get; set; }
+    public int? PullRequestNumber { get; set; }
+    public string? PullRequestUrl { get; set; }
     public string? PreviewUrl { get; set; }
     public string? VisualReportUrl { get; set; }
 }
@@ -6223,6 +6354,8 @@ public class SubmitAutomationCommitInfoRequest
     public string? CommitUrl { get; set; }
     public string? Repository { get; set; }
     public string? Branch { get; set; }
+    public int? PullRequestNumber { get; set; }
+    public string? PullRequestUrl { get; set; }
     public string? PreviewUrl { get; set; }
     public string? VisualReportUrl { get; set; }
     public string? Resolution { get; set; }
@@ -6273,6 +6406,8 @@ public class CompleteDefectAutomationWorkflowRequest
     public string? CommitUrl { get; set; }
     public string? Repository { get; set; }
     public string? Branch { get; set; }
+    public int? PullRequestNumber { get; set; }
+    public string? PullRequestUrl { get; set; }
     public string? PreviewUrl { get; set; }
     public string? VisualReportUrl { get; set; }
     public string? Resolution { get; set; }
@@ -6307,6 +6442,7 @@ public class SubmitPublishedValidationReportRequest
     public string? KnowledgeBaseUrl { get; set; }
     public string? Verdict { get; set; }
     public string? Message { get; set; }
+    public string? AgentName { get; set; }
 }
 
 public class AutomationCommitTraceInput
@@ -6315,6 +6451,8 @@ public class AutomationCommitTraceInput
     public string? AgentIdentifier { get; set; }
     public string? Repository { get; set; }
     public string? Branch { get; set; }
+    public int? PullRequestNumber { get; set; }
+    public string? PullRequestUrl { get; set; }
     public string? CommitSha { get; set; }
     public string? ShortSha { get; set; }
     public string? CommitMessage { get; set; }

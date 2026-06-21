@@ -93,6 +93,8 @@ export interface GitHubLinkedDefect {
   previewUrl?: string | null;
   visualReportUrl?: string | null;
   knowledgeBaseUrl?: string | null;
+  pullRequestNumber?: number | null;
+  pullRequestUrl?: string | null;
   commitSha: string;
 }
 

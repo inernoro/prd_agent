@@ -233,6 +233,8 @@ public class ChangelogController : ControllerBase
                 PreviewUrl = trace.PreviewUrl,
                 VisualReportUrl = trace.VisualReportUrl,
                 KnowledgeBaseUrl = trace.KnowledgeBaseUrl,
+                PullRequestNumber = trace.PullRequestNumber,
+                PullRequestUrl = trace.PullRequestUrl,
                 CommitSha = trace.CommitSha,
             });
         }
@@ -998,6 +1000,8 @@ public class ChangelogController : ControllerBase
         public string? PreviewUrl { get; set; }
         public string? VisualReportUrl { get; set; }
         public string? KnowledgeBaseUrl { get; set; }
+        public int? PullRequestNumber { get; set; }
+        public string? PullRequestUrl { get; set; }
         public string CommitSha { get; set; } = string.Empty;
     }
 

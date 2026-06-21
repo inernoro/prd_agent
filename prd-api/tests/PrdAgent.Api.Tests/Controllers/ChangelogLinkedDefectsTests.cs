@@ -232,6 +232,8 @@ public class ChangelogLinkedDefectsTests
                 CommitUrl = "https://example.com/commit/abcdef1",
                 Repository = "prd-agent",
                 Branch = "codex/defect-automation",
+                PullRequestNumber = 861,
+                PullRequestUrl = "https://github.com/inernoro/prd_agent/pull/861",
                 PreviewUrl = "https://preview.example.com/changelog",
                 VisualReportUrl = "https://report.example.com",
             });
@@ -244,6 +246,8 @@ public class ChangelogLinkedDefectsTests
         Assert.Equal("https://example.com/commit/abcdef1", structured["修复提交地址"]);
         Assert.Equal("prd-agent", structured["修复仓库"]);
         Assert.Equal("codex/defect-automation", structured["修复分支"]);
+        Assert.Equal("861", structured["修复PR编号"]);
+        Assert.Equal("https://github.com/inernoro/prd_agent/pull/861", structured["修复PR地址"]);
         Assert.Equal("https://preview.example.com/changelog", structured["预览地址"]);
         Assert.Equal("https://report.example.com", structured["视觉验收报告"]);
     }
@@ -254,6 +258,7 @@ public class ChangelogLinkedDefectsTests
     [InlineData("PASS", "pass")]
     [InlineData("conditional", "conditional")]
     [InlineData("fail", "fail")]
+    [InlineData("invalid", "invalid")]
     [InlineData("unknown", "pass")]
     public void NormalizeValidationVerdict_DefaultsToPass(string? input, string expected)
     {
@@ -271,5 +276,55 @@ public class ChangelogLinkedDefectsTests
 
         Assert.Contains("需要继续改进", DefectAgentController.BuildValidationNotificationMessage(defect, "fail"));
         Assert.Contains("已修复并发布", DefectAgentController.BuildValidationNotificationMessage(defect, "pass"));
+        Assert.Contains("陈述不成立", DefectAgentController.BuildValidationNotificationMessage(defect, "invalid"));
+    }
+
+    [Fact]
+    public void BuildCompletionEvidenceComment_RequiresPrCommitAndValidationReport()
+    {
+        var comment = DefectAgentController.BuildCompletionEvidenceComment(
+            new CompleteDefectAutomationWorkflowRequest
+            {
+                CommitSha = "abcdef1234567890",
+                CommitMessage = "fix(prd-api): 修复缺陷自动化证据链",
+                CommitUrl = "https://github.com/inernoro/prd_agent/commit/abcdef1",
+                PullRequestNumber = 861,
+                PullRequestUrl = "https://github.com/inernoro/prd_agent/pull/861",
+                PreviewUrl = "https://preview.example.com/changelog",
+            },
+            "abcdef1");
+
+        Assert.Contains("PR #861", comment);
+        Assert.Contains("abcdef1 fix(prd-api): 修复缺陷自动化证据链", comment);
+        Assert.Contains("正式环境发布后生成并回写", comment);
+        Assert.Contains("需要真人审核发布", comment);
+    }
+
+    [Fact]
+    public void BuildValidationEvidenceComment_CitesReportCommitAndPrForInvalidVerdict()
+    {
+        var comment = DefectAgentController.BuildValidationEvidenceComment(
+            new DefectResolutionTrace
+            {
+                ShortSha = "abcdef1",
+                CommitMessage = "fix(prd-api): 修复缺陷自动化证据链",
+                CommitUrl = "https://github.com/inernoro/prd_agent/commit/abcdef1",
+                PullRequestNumber = 861,
+                PullRequestUrl = "https://github.com/inernoro/prd_agent/pull/861",
+            },
+            new SubmitPublishedValidationReportRequest
+            {
+                Message = "报告显示正式环境无法复现该问题。",
+            },
+            "缺陷修复验收报告",
+            "https://map.ebcone.net/document-store/report",
+            "https://map.ebcone.net/report/visual",
+            "invalid");
+
+        Assert.Contains("缺陷陈述不成立", comment);
+        Assert.Contains("缺陷修复验收报告", comment);
+        Assert.Contains("PR #861", comment);
+        Assert.Contains("abcdef1 fix(prd-api): 修复缺陷自动化证据链", comment);
+        Assert.Contains("报告显示正式环境无法复现该问题", comment);
     }
 }
