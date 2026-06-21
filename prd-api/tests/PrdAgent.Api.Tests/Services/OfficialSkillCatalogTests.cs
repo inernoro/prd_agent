@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Controllers.Api.OfficialSkills;
 using Xunit;
 
@@ -13,7 +14,7 @@ public class OfficialSkillCatalogTests
     [Fact]
     public void AiDefectResolveOfficialTemplate_StatesDailyAutomationContract()
     {
-        Assert.Equal("1.5.0", OfficialSkillTemplates.AiDefectResolveVersion);
+        Assert.Equal("1.6.0", OfficialSkillTemplates.AiDefectResolveVersion);
         Assert.Contains("本技能的主目标是自动化闭环", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("日常执行缺少 domain 或 K 时停止", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("scope.type == daily-next", OfficialSkillTemplates.AiDefectResolveSkillMd);
@@ -22,8 +23,24 @@ public class OfficialSkillCatalogTests
         Assert.Contains("agent/workflow/start-next", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("agent/workflow/complete", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("agent/workflow/block", OfficialSkillTemplates.AiDefectResolveSkillMd);
-        Assert.Contains("发布中心只读取 commit id 关联结果并展示", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("更新中心只读取 commit id 关联结果并展示", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("不允许按日期批量贴缺陷标志", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("真实闭环验收门禁", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("所有代码改动必须通过 PR 完成", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("知识库传输共享协议", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("禁止把 `data:image` 写进报告", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("verdict` 使用 `invalid`", OfficialSkillTemplates.AiDefectResolveSkillMd);
+    }
+
+    [Fact]
+    public void DefectAgentLaunch_MinVersionTracksOfficialAiDefectResolveVersion()
+    {
+        var field = typeof(DefectAgentController).GetField(
+            "DefectResolveSkillMinVersion",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Assert.NotNull(field);
+        Assert.Equal(OfficialSkillTemplates.AiDefectResolveVersion, field!.GetRawConstantValue());
     }
 
     [Fact]
