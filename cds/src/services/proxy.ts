@@ -865,10 +865,11 @@ export class ProxyService {
     let modeSource = deployedMode;
     if (modeSource === undefined || modeSource === '') {
       // 仅限本分支所属项目的 profile——CDS 是多项目实例，getBuildProfiles() 返回
-      // 全实例所有项目的 profile，若用全量会让别的项目的发布版 profile 串改本分支
-      // ETA（修复 PR #865 Bugbot「Wait ETA uses foreign profiles」）。
-      const projectProfiles = this.stateService.getBuildProfiles()
-        .filter((p) => p.projectId === branch.projectId);
+      // 全实例所有项目的 profile，全量会让别的项目的发布版 profile 串改本分支 ETA。
+      // 用 canonical 的 getBuildProfilesForProject（内部按 (projectId||'default') 归一），
+      // 并把分支 projectId 同样归一，避免 undefined vs 'default' 不匹配导致过滤为空、
+      // 误退化成 source（修复 PR #865 Bugbot「foreign profiles」+「filter mismatch」）。
+      const projectProfiles = this.stateService.getBuildProfilesForProject(branch.projectId || 'default');
       const targetModeFor = (pid: string): string | undefined =>
         branch.profileOverrides?.[pid]?.activeDeployMode
         ?? projectProfiles.find((p) => p.id === pid)?.activeDeployMode;
