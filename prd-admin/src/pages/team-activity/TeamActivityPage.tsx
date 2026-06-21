@@ -266,15 +266,16 @@ export default function TeamActivityPage() {
       {view === 'insights' ? (
         <InsightsPanel from={rangeFrom(filterRange)} />
       ) : (
-      // 控制台三栏：两侧统计栏各自滚动，中间时间线吃满剩余宽度
+      // 控制台三栏：两侧统计栏各自滚动，中间时间线吃满剩余宽度。
+      // 窄屏单列纵向堆叠（手机三栏挤爆），lg 起恢复 264 / 1fr / 300 三栏。
       <div
-        className="flex-1 grid gap-4"
-        style={{ minHeight: 0, gridTemplateColumns: '264px minmax(0, 1fr) 300px' }}
+        className="flex-1 grid gap-4 grid-cols-1 lg:[grid-template-columns:264px_minmax(0,1fr)_300px]"
+        style={{ minHeight: 0 }}
       >
-        {/* 左栏：成员统计 */}
+        {/* 左栏：成员统计（窄屏自然高度堆叠，lg 起独立滚动） */}
         <div
-          className="flex flex-col gap-4 min-h-0"
-          style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+          className="flex flex-col gap-4 min-h-0 lg:overflow-y-auto"
+          style={{ overscrollBehavior: 'contain' }}
         >
           <MemberStatsPanel
             stats={stats}
@@ -348,10 +349,10 @@ export default function TeamActivityPage() {
         </div>
         </GlassCard>
 
-        {/* 右栏：分类统计 */}
+        {/* 右栏：分类统计（窄屏自然高度堆叠，lg 起独立滚动） */}
         <div
-          className="flex flex-col gap-4 min-h-0"
-          style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+          className="flex flex-col gap-4 min-h-0 lg:overflow-y-auto"
+          style={{ overscrollBehavior: 'contain' }}
         >
           <CategoryStatsPanel
             stats={stats}

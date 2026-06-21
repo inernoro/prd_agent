@@ -112,7 +112,7 @@ export function ExperienceSiteMap({
                         disabled={!clickable}
                         onClick={clickable ? () => onSelectTarget!(l.target, { label: `${m.group.label} · ${l.label}`, metric: l.metric }) : undefined}
                         title={clickable ? `下钻 ${l.target}` : l.target}
-                        className="group/site flex items-center gap-2 px-2 py-1 rounded-md text-left transition-colors"
+                        className="group/site flex items-center gap-2 px-2 py-1 rounded-md text-left transition-colors min-w-0"
                         style={{
                           animation: 'voc-site-in .35s ease both',
                           animationDelay: `${delay}ms`,
@@ -130,10 +130,10 @@ export function ExperienceSiteMap({
                         ) : (
                           <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: color }} />
                         )}
-                        <span className="text-[11.5px] truncate" style={{ color: isPain ? 'rgba(255,255,255,0.85)' : 'rgba(236,236,239,0.5)', maxWidth: 220 }}>
+                        <span className="text-[11.5px] truncate min-w-0 sm:max-w-[220px]" style={{ color: isPain ? 'rgba(255,255,255,0.85)' : 'rgba(236,236,239,0.5)' }}>
                           {l.label}
                         </span>
-                        <span className="text-[10px] font-mono text-white/30 truncate" style={{ maxWidth: 200 }}>
+                        <span className="hidden sm:inline text-[10px] font-mono text-white/30 truncate sm:max-w-[200px]">
                           {l.target}
                         </span>
                         {isPain ? (
@@ -161,9 +161,9 @@ export function ExperienceSiteMap({
 function Header() {
   return (
     <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
-      <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5">
-        路由站点地图
-        <span className="text-[11px] text-white/35 font-normal inline-flex items-center gap-1.5">
+      <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
+        <span className="whitespace-nowrap">路由站点地图</span>
+        <span className="hidden sm:inline-flex text-[11px] text-white/35 font-normal items-center gap-1.5 whitespace-nowrap">
           <Network size={12} className="text-cyan-300/70" />
           按模块铺开路由树 · 点痛点节点下钻
         </span>

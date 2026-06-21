@@ -91,8 +91,8 @@ export function ExperienceRibbon({
 
   return (
     <div
-      className="flex items-center gap-0 rounded-2xl border border-white/[0.07] px-3.5 py-2.5 mb-3"
-      style={{ background: 'linear-gradient(180deg,rgba(26,27,29,0.7),rgba(22,23,24,0.7))' }}
+      className="flex items-center gap-0 rounded-2xl border border-white/[0.07] px-3.5 py-2.5 mb-3 overflow-x-auto sm:overflow-x-visible"
+      style={{ background: 'linear-gradient(180deg,rgba(26,27,29,0.7),rgba(22,23,24,0.7))', overscrollBehavior: 'contain' }}
     >
       {steps.map((s, i) => {
         const dotStyle =
@@ -102,7 +102,8 @@ export function ExperienceRibbon({
               ? { background: 'rgba(167,139,250,0.18)', color: VIOLET, border: `1px solid rgba(167,139,250,0.5)`, animation: 'voc-ribbon-pulse 1.4s ease-in-out infinite' }
               : { background: 'rgba(255,255,255,0.05)', color: 'rgba(236,236,239,0.4)', border: '1px solid rgba(255,255,255,0.07)' };
         return (
-          <div key={s.name} className="flex items-center gap-2.5 flex-1 min-w-0">
+          // 窄屏：每阶段定宽 + 横向滚动（不挤压、文字不重叠）；sm 起 flex-1 等分恢复桌面布局
+          <div key={s.name} className="flex items-center gap-2.5 shrink-0 min-w-[150px] sm:flex-1 sm:min-w-0 sm:shrink">
             <span
               className="w-[25px] h-[25px] rounded-full flex items-center justify-center text-[11.5px] font-bold shrink-0"
               style={dotStyle}
@@ -116,7 +117,7 @@ export function ExperienceRibbon({
               <span className="text-[10px] text-white/35 whitespace-nowrap overflow-hidden text-ellipsis">{s.sub}</span>
             </span>
             {i < steps.length - 1 ? (
-              <span className="flex-1 h-px mx-2 min-w-[14px]" style={{ background: 'linear-gradient(90deg,rgba(255,255,255,0.13),transparent)' }} />
+              <span className="h-px mx-2 w-5 shrink-0 sm:flex-1 sm:w-auto sm:min-w-[14px]" style={{ background: 'linear-gradient(90deg,rgba(255,255,255,0.13),transparent)' }} />
             ) : null}
           </div>
         );

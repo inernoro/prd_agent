@@ -158,9 +158,9 @@ export function ExperienceRadar({
 function Header() {
   return (
     <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
-      <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5">
-        痛点雷达
-        <span className="text-[11px] text-white/35 font-normal inline-flex items-center gap-1.5">
+      <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
+        <span className="whitespace-nowrap">痛点雷达</span>
+        <span className="hidden sm:inline-flex text-[11px] text-white/35 font-normal items-center gap-1.5 whitespace-nowrap">
           <RadarIcon size={12} className="text-cyan-300/70" />
           五维体验健康轮廓 · 越往外越痛
         </span>

@@ -62,7 +62,7 @@ export function ExperienceBoard({
   return (
     <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
       <Header />
-      <div className="px-3 pb-3 grid grid-cols-2 gap-3" style={{ maxHeight: 460, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+      <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-3" style={{ maxHeight: 460, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {/* 左声道：行为之声 */}
         <Channel
           icon={Activity}
@@ -175,9 +175,9 @@ function Channel({
 function Header() {
   return (
     <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
-      <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5">
-        声道看板
-        <span className="text-[11px] text-white/35 font-normal inline-flex items-center gap-1.5">
+      <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
+        <span className="whitespace-nowrap">声道看板</span>
+        <span className="hidden sm:inline-flex text-[11px] text-white/35 font-normal items-center gap-1.5 whitespace-nowrap">
           <Megaphone size={12} className="text-cyan-300/70" />
           行为之声 + 用户之声 · 两边对齐
         </span>

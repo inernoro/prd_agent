@@ -187,11 +187,11 @@ export function ExperienceMap({
         className="overflow-hidden"
         style={fullscreen ? { padding: 0, height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 } : { padding: 0 }}
       >
-        <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
-          <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5">
-            体验全景热力图
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 pt-3 pb-2 shrink-0">
+          <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
+            <span className="whitespace-nowrap">体验全景热力图</span>
             <span
-              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap shrink-0"
               style={{ background: 'rgba(45,212,191,0.12)', color: '#5eead4', border: '1px solid rgba(45,212,191,0.32)' }}
             >
               <span className="relative inline-flex h-2 w-2">
@@ -200,11 +200,11 @@ export function ExperienceMap({
               </span>
               实时扫描中
             </span>
-            <span className="text-[11px] text-white/35 font-normal">
+            <span className="hidden sm:inline text-[11px] text-white/35 font-normal whitespace-nowrap">
               {mode === 'all' ? '每块=端点 · 面积=访问量 · 颜色=健康' : '只看病灶 · 面积=问题严重度 · 点击下钻'}
             </span>
           </span>
-          <div className="flex items-center gap-3.5 text-[11px] text-white/55">
+          <div className="flex items-center gap-2.5 sm:gap-3.5 text-[11px] text-white/55 flex-wrap min-w-0">
             <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
               <button
                 type="button"
@@ -221,14 +221,14 @@ export function ExperienceMap({
                 痛点
               </button>
             </div>
-            <span className="w-px h-3.5 bg-white/10" />
-            <span className="inline-flex items-center gap-1.5">
+            <span className="hidden sm:inline w-px h-3.5 bg-white/10" />
+            <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: ERR }} />报错
             </span>
-            <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: SLOW }} />等待过久
             </span>
-            <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
               <i className="w-2.5 h-2.5 rounded-sm" style={{ background: 'hsl(196 36% 36%)' }} />健康
             </span>
             {fullscreen ? (
@@ -268,6 +268,7 @@ export function ExperienceMap({
           <svg
             viewBox={`0 0 ${VW} ${VH}`}
             preserveAspectRatio="xMidYMid meet"
+            className={fullscreen ? undefined : 'voc-map-svg'}
             style={fullscreen ? { width: '100%', flex: 1, minHeight: 0, height: '100%', display: 'block' } : { width: '100%', height: 'auto', display: 'block' }}
           >
             {/* 分区边框 + 标签 */}
@@ -467,6 +468,10 @@ export function ExperienceMap({
         </div>
       </GlassCard>
       <style>{`
+        /* 窄屏：viewBox 2.4:1 在单列下被压成细条，给非全屏 SVG 一个最小高度让块看得清/点得到 */
+        @media (max-width: 639px) {
+          .voc-map-svg { min-height: 300px; height: 300px !important; }
+        }
         @keyframes voc-cell-glow { 0%,100% { stroke-opacity: .35; } 50% { stroke-opacity: 1; } }
         @keyframes voc-cell-in { from { opacity: 0; transform: scale(.45); } to { opacity: 1; transform: scale(1); } }
         @keyframes voc-grp-in { from { opacity: 0; } to { opacity: 1; } }

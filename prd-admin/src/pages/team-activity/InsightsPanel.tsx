@@ -449,9 +449,10 @@ export function InsightsPanel({ from }: { from?: string }) {
 
   const renderHeroView = () => (
     <div className="flex flex-col gap-2">
-      {/* 视图切换器（segmented）：体验信号的多种可视化模式，冷色海主题，与热力图内 全域/痛点 同款 */}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+      {/* 视图切换器（segmented）：体验信号的多种可视化模式，冷色海主题，与热力图内 全域/痛点 同款。
+          窄屏单行横向滚动（标签不换行），sm 起恢复原状。 */}
+      <div className="flex items-center justify-between gap-2 -mx-1 px-1 overflow-x-auto sm:mx-0 sm:px-0 sm:overflow-x-visible" style={{ overscrollBehavior: 'contain' }}>
+        <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 shrink-0">
           {HERO_VIEWS.map((v) => {
             const VIcon = v.icon;
             const active = heroView === v.key;
@@ -460,7 +461,7 @@ export function InsightsPanel({ from }: { from?: string }) {
                 key={v.key}
                 type="button"
                 onClick={() => setHeroView(v.key)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] transition-colors cursor-pointer ${active ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] whitespace-nowrap shrink-0 transition-colors cursor-pointer ${active ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/45 hover:text-white/75'}`}
               >
                 <VIcon size={12} />
                 {v.label}

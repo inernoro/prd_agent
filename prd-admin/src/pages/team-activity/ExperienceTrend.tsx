@@ -106,22 +106,22 @@ export function ExperienceTrend({
 
   return (
     <GlassCard className="overflow-hidden" style={{ padding: 0 }}>
-      <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
-        <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5">
-          趋势爆点曲线
-          <span className="text-[11px] text-white/35 font-normal inline-flex items-center gap-1.5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 pt-3 pb-2 shrink-0">
+        <span className="text-[13px] font-semibold text-white/85 inline-flex items-center gap-2.5 min-w-0 flex-wrap">
+          <span className="whitespace-nowrap">趋势爆点曲线</span>
+          <span className="hidden sm:inline-flex text-[11px] text-white/35 font-normal items-center gap-1.5 whitespace-nowrap">
             <TrendingUp size={12} className="text-cyan-300/70" />
             报错/慢请求随时间的波动 · 标出爆发点
           </span>
         </span>
-        <div className="flex items-center gap-3.5 text-[11px] text-white/55">
-          <span className="inline-flex items-center gap-1.5">
+        <div className="flex items-center gap-2.5 sm:gap-3.5 text-[11px] text-white/55 flex-wrap">
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
             <i className="w-2.5 h-2.5 rounded-sm" style={{ background: ERR }} />报错
           </span>
-          <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
             <i className="w-2.5 h-2.5 rounded-sm" style={{ background: SLOW }} />慢请求
           </span>
-          <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
             <span className="w-2 h-2 rounded-full" style={{ background: '#fff', boxShadow: `0 0 5px ${ERR}` }} />爆点
           </span>
         </div>
