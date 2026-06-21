@@ -5,7 +5,7 @@
  * 配色遵循 ui-ux-pro-max 的 treemap 规范：父级不同色相、子级同色相浅色梯度；暖色只留给告警。
  * 数据源：GET /api/team-activity/experience-map（与 insights 同源 apirequestlogs，target 同口径）。
  */
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -131,6 +131,11 @@ export function ExperienceMap({
 }) {
   // 两个范围模式：all=全域(全部端点按访问量) / pain=痛点(只看病灶，按问题严重度放大)
   const [mode, setMode] = useState<'all' | 'pain'>('all');
+  // SVG gradient id 唯一化：全屏浮层与格内地图同时挂载同一组件时，固定 id 会冲突导致渐变互相覆盖。
+  // useId 返回 ':r0:' 形态，去掉冒号以符合 SVG id 规范。
+  const uid = useId().replace(/:/g, '');
+  const cometGradId = `voc-comet-grad-${uid}`;
+  const penId = `voc-pen-${uid}`;
   // aspect-aware：量出 SVG 容器真实像素宽高比，让 treemap 布局高度跟容器同比例铺满，消除上下 letterbox 空白。
   // ResizeObserver 量到前用回退值（避免 SSR/首帧白屏）。
   const svgBoxRef = useRef<HTMLDivElement | null>(null);
@@ -400,7 +405,7 @@ export function ExperienceMap({
                 这样辉光溢出块边界的部分不会被相邻块覆盖（修复「边框光效被遮挡」）。 */}
             <defs>
               {/* 流星尾：尾端透明 → 头端高亮（objectBoundingBox，按每条线自身斜向 bbox 取向，无需逐块算坐标） */}
-              <linearGradient id="voc-comet-grad" gradientUnits="objectBoundingBox" x1="0" y1="1" x2="1" y2="0">
+              <linearGradient id={cometGradId} gradientUnits="objectBoundingBox" x1="0" y1="1" x2="1" y2="0">
                 <stop offset="0" stopColor={SLOW} stopOpacity="0" />
                 <stop offset="0.7" stopColor={SLOW} stopOpacity="0.55" />
                 <stop offset="1" stopColor="#fff" stopOpacity="0.95" />
@@ -461,7 +466,7 @@ export function ExperienceMap({
                         y1={r.y + 23}
                         x2={r.x + r.w - 10}
                         y2={r.y + 9}
-                        stroke="url(#voc-comet-grad)"
+                        stroke={`url(#${cometGradId})`}
                         strokeWidth={1.6}
                         strokeLinecap="round"
                       />
@@ -475,7 +480,7 @@ export function ExperienceMap({
             {isEntrance ? (
               <>
                 <defs>
-                  <linearGradient id="voc-pen" x1="0" x2="1" y1="0" y2="0">
+                  <linearGradient id={penId} x1="0" x2="1" y1="0" y2="0">
                     <stop offset="0" stopColor="#2dd4bf" stopOpacity="0" />
                     <stop offset="0.7" stopColor="#2dd4bf" stopOpacity="0.05" />
                     <stop offset="0.96" stopColor="#5eead4" stopOpacity="0.22" />
@@ -483,7 +488,7 @@ export function ExperienceMap({
                   </linearGradient>
                 </defs>
                 <g style={{ pointerEvents: 'none' }}>
-                  <rect x={-44} y={0} width={44} height={VH} fill="url(#voc-pen)">
+                  <rect x={-44} y={0} width={44} height={VH} fill={`url(#${penId})`}>
                     <animate attributeName="x" from={-44} to={VW} dur="1.3s" repeatCount="1" fill="freeze" />
                     <animate attributeName="opacity" from="1" to="0" begin="1.2s" dur="0.35s" fill="freeze" />
                   </rect>

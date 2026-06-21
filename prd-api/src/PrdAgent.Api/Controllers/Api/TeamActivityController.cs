@@ -45,6 +45,21 @@ public class TeamActivityController : ControllerBase
     }
 
     /// <summary>
+    /// 产品管理应用管理员判定（对照 ProductAgentController.IsProductApplicationAdminAsync）：
+    /// 设置未落库时回落到 ProductAgentAdmin 权限，落库后完全以 AdminIds 名单为准。
+    /// 应用管理员可管理产品模块全部产品，VOC 转需求时应一并放行。
+    /// </summary>
+    private async Task<bool> IsProductApplicationAdminAsync(string userId)
+    {
+        var settings = await _db.ProductAgentSettings
+            .Find(x => x.Id == ProductAgentSettings.SingletonId)
+            .FirstOrDefaultAsync();
+        return settings == null
+            ? HasPermission(AdminPermissionCatalog.ProductAgentAdmin)
+            : settings.AdminIds.Contains(userId);
+    }
+
+    /// <summary>
     /// 动态列表（按时间倒序分页），支持按人 / 模块 / 时间范围筛选。
     /// </summary>
     [HttpGet("logs")]
@@ -1330,11 +1345,38 @@ public class TeamActivityController : ControllerBase
         return (target!.Substring(0, idx).Trim(), target.Substring(idx + 1).Trim());
     }
 
-    /// <summary>归一化路径里 :id 之前的静态前缀（用于 MongoDB StartsWith 预过滤，缩小内存精确匹配的扫描量）</summary>
-    private static string StaticPrefix(string normPath)
+    /// <summary>
+    /// 由归一化路径（含 :id 占位段）构造逐段锚定的整路径正则，:id 段放宽为 [^/]+，其余段转义。
+    /// 用作 MongoDB 整路径预过滤（替代仅靠静态前缀的 StartsWith），让查询本身就几乎只返回目标端点的行，
+    /// 避免广泛 :id 家族下目标行落到 5000 上限之外导致计数被低估（[^/]+ 可能轻微过匹配，仍由内存精确匹配兜底收口）。
+    /// </summary>
+    private static string NormalizedPathRegex(string normPath)
     {
-        var idx = normPath.IndexOf("/:id", StringComparison.Ordinal);
-        return idx > 0 ? normPath.Substring(0, idx) : normPath;
+        var segments = normPath.Split('/');
+        var parts = segments.Select(s => s.StartsWith(':')
+            ? "[^/]+"
+            : System.Text.RegularExpressions.Regex.Escape(s));
+        return "^" + string.Join('/', parts) + "$";
+    }
+
+    /// <summary>
+    /// 脱敏：屏蔽 JSON / curl 里的敏感键值（密码 / token / 密钥 / cookie / 签名 等），
+    /// 防止 /api/v1/auth/login 之类端点的请求体明文出现在下钻样本、AI 诊断 prompt 等离开服务端的地方。
+    /// </summary>
+    private static string? RedactSensitive(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return s;
+        // JSON-ish 敏感键值：把 "key":"..." 或 "key":<非字符串> 的值替换为 "***"
+        s = System.Text.RegularExpressions.Regex.Replace(
+            s!,
+            "(?i)(\"(password|passwd|pwd|token|secret|authorization|auth|api[_-]?key|access[_-]?key|credential|cookie|session|signature|sign|private[_-]?key)\"\\s*:\\s*)(\"(?:[^\"\\\\]|\\\\.)*\"|[^,}\\s]+)",
+            "$1\"***\"");
+        // curl header-ish：-H 'Authorization: xxx' / Cookie / X-Api-Key / Set-Cookie 一律打码
+        s = System.Text.RegularExpressions.Regex.Replace(
+            s,
+            "(?im)(-H\\s+['\"]?(authorization|cookie|x-api-key|set-cookie)\\s*:\\s*)[^'\"\\n]*",
+            "$1***");
+        return s;
     }
 
     /// <summary>
@@ -1357,7 +1399,6 @@ public class TeamActivityController : ControllerBase
 
         var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
-        var prefix = StaticPrefix(normPath);
 
         var rb = Builders<ApiRequestLog>.Filter;
         var filters = new List<FilterDefinition<ApiRequestLog>>
@@ -1366,10 +1407,9 @@ public class TeamActivityController : ControllerBase
             rb.Lte(x => x.StartedAt, endUtc),
             rb.Ne(x => x.Direction, "outbound"),
             rb.Eq(x => x.Method, method),
+            // 整路径锚定预过滤（:id 段 → [^/]+），使查询本身就几乎只命中目标端点，5000 上限不再低估广泛 :id 家族
+            rb.Regex(x => x.Path, new BsonRegularExpression(NormalizedPathRegex(normPath))),
         };
-        // 静态前缀预过滤（:id 之前的部分）；前缀为空时退化为只按方法+时间，仍由内存归一化精确匹配
-        if (!string.IsNullOrEmpty(prefix))
-            filters.Add(rb.Regex(x => x.Path, new BsonRegularExpression("^" + System.Text.RegularExpressions.Regex.Escape(prefix))));
 
         var logs = await _db.ApiRequestLogs.Find(rb.And(filters))
             .SortByDescending(x => x.StartedAt)
@@ -1416,8 +1456,8 @@ public class TeamActivityController : ControllerBase
             {
                 statusCode = l.StatusCode,
                 durationMs = l.DurationMs,
-                curl = string.IsNullOrWhiteSpace(l.Curl) ? $"{l.Method} {l.Path}" : l.Curl,
-                requestBody = l.RequestBody,
+                curl = RedactSensitive(string.IsNullOrWhiteSpace(l.Curl) ? $"{l.Method} {l.Path}" : l.Curl),
+                requestBody = RedactSensitive(l.RequestBody),
                 occurredAt = l.StartedAt,
             })
             .ToList();
@@ -1589,7 +1629,6 @@ public class TeamActivityController : ControllerBase
 
         var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
-        var prefix = StaticPrefix(normPath);
 
         await WriteSseAsync("phase", new { message = "正在拉取该端点的真实请求样本…" });
 
@@ -1600,9 +1639,9 @@ public class TeamActivityController : ControllerBase
             rb.Lte(x => x.StartedAt, endUtc),
             rb.Ne(x => x.Direction, "outbound"),
             rb.Eq(x => x.Method, method),
+            // 整路径锚定预过滤（:id 段 → [^/]+），使查询本身就几乎只命中目标端点，5000 上限不再低估广泛 :id 家族
+            rb.Regex(x => x.Path, new BsonRegularExpression(NormalizedPathRegex(normPath))),
         };
-        if (!string.IsNullOrEmpty(prefix))
-            filters.Add(rb.Regex(x => x.Path, new BsonRegularExpression("^" + System.Text.RegularExpressions.Regex.Escape(prefix))));
 
         var logs = await _db.ApiRequestLogs.Find(rb.And(filters))
             .SortByDescending(x => x.StartedAt)
@@ -1654,7 +1693,8 @@ public class TeamActivityController : ControllerBase
             .Take(5)
             .Select(l =>
             {
-                var body = l.RequestBody;
+                // 先脱敏再截断：敏感请求体绝不进入离开服务端的 AI 诊断 prompt
+                var body = RedactSensitive(l.RequestBody);
                 if (!string.IsNullOrEmpty(body) && body!.Length > 240) body = body.Substring(0, 240) + "…";
                 return $"HTTP {l.StatusCode} · {(l.DurationMs ?? 0)}ms · 错误码 {(string.IsNullOrEmpty(l.ErrorCode) ? "无" : l.ErrorCode)} · 请求体 {(string.IsNullOrEmpty(body) ? "（无）" : body)}";
             })
@@ -1871,10 +1911,12 @@ public class TeamActivityController : ControllerBase
             return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "目标产品不存在或已删除，请重新选择"));
 
         // 产品访问域校验（对照 ProductAgentController.FindAccessibleProductAsync）：负责人 / 成员 / 产品管理权限之一，
-        // 否则禁止把体验之声写进无权访问的产品需求池（team-activity.manage 不等于可越权写任意产品）。
+        // 或产品管理应用管理员（AdminIds，可管理产品模块全部产品），否则禁止把体验之声写进无权访问的产品需求池
+        // （team-activity.manage 不等于可越权写任意产品；VOC 弹窗会向应用管理员展示全部产品，这里必须放行以免 403）。
         if (!product.IsProductOwner(userId)
             && !product.MemberIds.Contains(userId)
-            && !HasPermission(AdminPermissionCatalog.ProductAgentManage))
+            && !HasPermission(AdminPermissionCatalog.ProductAgentManage)
+            && !await IsProductApplicationAdminAsync(userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权将体验之声写入该产品需求池"));
 
         var fingerprint = $"{request.Kind}|{request.Target}";

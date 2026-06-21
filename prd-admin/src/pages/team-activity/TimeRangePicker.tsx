@@ -389,6 +389,16 @@ function BrushPopover({
 
   const [sel, setSel] = useState<[number, number]>(initialSel);
   const dragRef = useRef<null | { which: 'L' | 'R' | 'M'; startFrac: number; loStart: number; hiStart: number }>(null);
+  // 用户是否已动过刷选条。popover 在密度数据(days)加载前打开时 initialSel 退化为 [0,0]，
+  // 而 useState 只取一次初值——若不重算，days 到达后 Apply 会以「最早一天」为窗口（错误的历史窗）。
+  // 只要用户尚未交互，就在 days 由空变满时把 sel 重置为意图中的初始窗口；用户已拖动则不再覆盖。
+  const userInteractedRef = useRef(false);
+  useEffect(() => {
+    if (userInteractedRef.current) return;
+    setSel(initialSel);
+    // 依赖 n（days.length）：从 0 变为加载完成时触发重算
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [n]);
   const [popPos, setPopPos] = useState<{ left: number; top: number; width: number }>({ left: 0, top: 0, width: 0 });
 
   const width = isMobile ? Math.min(window.innerWidth - 16, 360) : Math.min(window.innerWidth - 24, 560);
@@ -419,6 +429,7 @@ function BrushPopover({
 
   const startDrag = useCallback(
     (which: 'L' | 'R' | 'M', clientX: number) => {
+      userInteractedRef.current = true; // 一旦动手，days 后续到达不再覆盖用户选区
       const frac = clientToFrac(clientX);
       dragRef.current = { which, startFrac: frac, loStart: sel[0], hiStart: sel[1] };
       document.body.style.cursor = 'ew-resize';
