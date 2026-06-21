@@ -1,5 +1,20 @@
-import { useState } from 'react';
-import { AlertTriangle, Bot, Check, Copy, Download, EyeOff, Play, Sparkles, Video } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  Bot,
+  BookOpen,
+  Check,
+  Copy,
+  Dices,
+  Download,
+  EyeOff,
+  KeyRound,
+  Play,
+  Sparkles,
+  Upload,
+  Video,
+  type LucideIcon,
+} from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { createAgentApiKey } from '@/services';
 import { useDemoVideoUrl } from '@/stores/homepageAssetsStore';
@@ -23,18 +38,35 @@ interface Props {
    * - 顶部用醒目说明引导用户粘贴给 AI
    */
   agentMode?: boolean;
+  /**
+   * 预选 scope —— 由不同入口（如知识库页面）传入希望默认勾选的权限范围。
+   * 会与 allowedScopes 取交集，避免预选一个平台未开放的 scope。
+   * 缺省时回退为「marketplace.skills:read」（海鲜市场默认行为不变）。
+   */
+  presetScopes?: string[];
 }
 
-const SCOPE_META: Record<string, { title: string; desc: string; icon: string }> = {
+/** scope → 友好标签 + lucide 图标（禁止 emoji，见 CLAUDE.md 规则 #0） */
+const SCOPE_META: Record<string, { title: string; desc: string; icon: LucideIcon }> = {
   'marketplace.skills:read': {
     title: '浏览 & 下载技能',
     desc: '查询市场、拉详情、fork 下载 zip',
-    icon: '📥',
+    icon: Download,
   },
   'marketplace.skills:write': {
     title: '上传技能',
     desc: '以你的身份发布 zip 技能包',
-    icon: '📤',
+    icon: Upload,
+  },
+  'document-store:read': {
+    title: '读取文档空间',
+    desc: '列出知识库、读取文章内容',
+    icon: BookOpen,
+  },
+  'document-store:write': {
+    title: '写入文档空间',
+    desc: '以你的身份创建知识库、上传 / 更新文章',
+    icon: Upload,
   },
 };
 
@@ -63,11 +95,32 @@ function generateDefaultKeyName(): string {
   return `接入 ${yyyy}-${mm}-${dd} ${hh}:${mi} · ${suffix}`;
 }
 
-export function CreateKeyTab({ allowedScopes, onCreated, onBackToList, agentMode = false }: Props) {
+export function CreateKeyTab({
+  allowedScopes,
+  onCreated,
+  onBackToList,
+  agentMode = false,
+  presetScopes,
+}: Props) {
   const [name, setName] = useState(() => generateDefaultKeyName());
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(() => [
-    ...allowedScopes.filter((s) => s === 'marketplace.skills:read'),
-  ]);
+  // 预选项与平台白名单取交集，避免勾选一个后端未开放的 scope。
+  const computeSeed = (allowed: string[], preset?: string[]): string[] => {
+    const wanted = preset && preset.length > 0 ? preset : ['marketplace.skills:read'];
+    return allowed.filter((s) => wanted.includes(s));
+  };
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(() =>
+    computeSeed(allowedScopes, presetScopes),
+  );
+  // 弹窗常在 allowedScopes 仍是海鲜市场默认值时就先渲染本表单，待 listAgentApiKeys
+  // 回来才补齐 document-store 等 scope。初始化器只跑一次会拿到陈旧白名单 → 预选落空，
+  // 知识库「接入 AI」一键创建会因没勾选而失败。故在 allowedScopes/presetScopes 变化时
+  // 重新播种；userEditedRef 守卫保证一旦用户手动勾选过就不再覆盖其选择（修复 PR #865
+  // Codex P2「Seed preset scopes after allowed scopes load」）。
+  const userEditedRef = useRef(false);
+  useEffect(() => {
+    if (userEditedRef.current) return;
+    setSelectedScopes(computeSeed(allowedScopes, presetScopes));
+  }, [allowedScopes, presetScopes]);
   const [ttlDays, setTtlDays] = useState<number>(365);
   const [creating, setCreating] = useState(false);
   const [plaintext, setPlaintext] = useState<string | null>(null);
@@ -76,10 +129,17 @@ export function CreateKeyTab({ allowedScopes, onCreated, onBackToList, agentMode
   const [downloadingSkill, setDownloadingSkill] = useState(false);
   const demoVideoUrl = useDemoVideoUrl(DEMO_VIDEO_ID);
 
+  // 本 Key 实际包含哪类 scope —— 决定给智能体的指令走"海鲜市场"还是"文档空间"。
+  // 知识库「接入 AI」签发的是 document-store-only Key，若仍发海鲜市场提示词 +
+  // 装 findmapskills（只覆盖 marketplace.skills:* 端点），AI 照做会 403 或拿不到
+  // 任何文档空间工作流（修复 PR #865 Codex P2「Provide document-store agent instructions」）。
+  const hasMarketplaceScope = selectedScopes.some((s) => s.startsWith('marketplace.skills'));
+  const hasDocStoreScope = selectedScopes.some((s) => s.startsWith('document-store'));
+
   /**
-   * 「复制给智能体使用」提示词 —— 最小化 + 安全：
-   *  1. 只告诉 AI 两件事：把 Key 存进 shell init 文件（不入仓库），下载 findmapskills 技能
-   *  2. 剩下的操作全写在 SKILL.md 里，AI 装完读一下就会
+   * 「复制给智能体使用」提示词 —— 按 Key 的真实 scope 出对应指令，最小化 + 安全：
+   *  - 含 marketplace.skills → 海鲜市场提示词 + 下载 findmapskills 技能
+   *  - 仅 document-store → 文档空间 API 提示词（真实端点，不装 marketplace 技能）
    *
    * 安全考量：
    *  - 明确要求"不要把 Key 写进仓库代码或 git 追踪的文件"
@@ -87,14 +147,34 @@ export function CreateKeyTab({ allowedScopes, onCreated, onBackToList, agentMode
    *  - 不使用 ~/.env 之类容易被 git commit 的文件
    */
   const buildAgentPrompt = (key: string) => {
-    const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS);
     const base = typeof window !== 'undefined' ? window.location.origin : '';
-    return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
-
-① 把下面这对 Key 存到 ~/.zshrc 或 ~/.bashrc（或其他不会被 git 追踪的安全位置），然后 source 生效。不要写进仓库里任何文件：
+    const keyBlock = `① 把下面这对 Key 存到 ~/.zshrc 或 ~/.bashrc（或其他不会被 git 追踪的安全位置），然后 source 生效。不要写进仓库里任何文件：
 
 export PRD_AGENT_API_KEY="${key}"
-export PRD_AGENT_BASE="${base}"
+export PRD_AGENT_BASE="${base}"`;
+
+    // 仅文档空间权限（无 marketplace）→ 文档空间 API 指令，不引用 findmapskills。
+    if (hasDocStoreScope && !hasMarketplaceScope) {
+      return `请帮我接入 PrdAgent 知识库（文档空间）开放接口。
+
+${keyBlock}
+
+② 调用文档空间 API（统一带请求头 Authorization: Bearer $PRD_AGENT_API_KEY）：
+- 列出我的知识库：GET  $PRD_AGENT_BASE/api/document-store/stores
+- 读取某篇文章：  GET  $PRD_AGENT_BASE/api/document-store/entries/{entryId}
+- 新建知识库：    POST $PRD_AGENT_BASE/api/document-store/stores
+- 在知识库下新增文章：POST $PRD_AGENT_BASE/api/document-store/stores/{storeId}/entries
+- 更新文章正文：  PUT  $PRD_AGENT_BASE/api/document-store/entries/{entryId}/content
+
+后续我说"把这份内容存进我的知识库"或"读一下我某个知识库的文章"，按上面的接口操作即可。
+`;
+    }
+
+    // 含海鲜市场权限 → 海鲜市场提示词 + findmapskills 技能。
+    const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS);
+    return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
+
+${keyBlock}
 
 ② 下载官方操作技能 findmapskills 到 ~/.claude/skills/：
 
@@ -107,6 +187,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
   };
 
   const toggleScope = (scope: string) => {
+    userEditedRef.current = true;
     setSelectedScopes((prev) =>
       prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope],
     );
@@ -303,17 +384,23 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
             )}
           </button>
 
-          <span aria-hidden className="opacity-30">·</span>
+          {/* findmapskills 只覆盖海鲜市场端点 —— 仅含 marketplace.skills scope 的 Key
+              才提供下载，文档空间专用 Key 不引导装这个无关技能（见 buildAgentPrompt）。 */}
+          {hasMarketplaceScope && (
+            <>
+              <span aria-hidden className="opacity-30">·</span>
 
-          <button
-            type="button"
-            onClick={handleDownloadSkillHere}
-            disabled={downloadingSkill}
-            className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
-          >
-            <Download size={11} />
-            {downloadingSkill ? '下载中…' : '下载 findmapskills 技能包'}
-          </button>
+              <button
+                type="button"
+                onClick={handleDownloadSkillHere}
+                disabled={downloadingSkill}
+                className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
+              >
+                <Download size={11} />
+                {downloadingSkill ? '下载中…' : '下载 findmapskills 技能包'}
+              </button>
+            </>
+          )}
 
           <span aria-hidden className="opacity-30">·</span>
 
@@ -350,10 +437,11 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
           <button
             type="button"
             onClick={() => setName(generateDefaultKeyName())}
-            className="text-[10px] text-token-muted transition-opacity hover:opacity-80"
+            className="inline-flex items-center gap-1 text-[10px] text-token-muted transition-opacity hover:opacity-80"
             title="换一个随机名称"
           >
-            🎲 换一个
+            <Dices size={11} />
+            换一个
           </button>
         </div>
         <input
@@ -377,7 +465,8 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
         {/* 2 列卡片选择器：紧凑可视、主次分明 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
           {allowedScopes.map((scope) => {
-            const meta = SCOPE_META[scope] ?? { title: scope, desc: '', icon: '🔑' };
+            const meta = SCOPE_META[scope] ?? { title: scope, desc: '', icon: KeyRound };
+            const ScopeIcon = meta.icon;
             const checked = selectedScopes.includes(scope);
             return (
               <button
@@ -396,8 +485,8 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
                 >
                   {checked && <Check size={10} className="text-white" strokeWidth={3} />}
                 </div>
-                <div className="text-[18px] mb-1.5" aria-hidden>
-                  {meta.icon}
+                <div className="mb-1.5 text-token-secondary" aria-hidden>
+                  <ScopeIcon size={18} />
                 </div>
                 <div className="mb-0.5 pr-6 text-[12.5px] font-semibold text-token-primary">
                   {meta.title}

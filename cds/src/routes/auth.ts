@@ -117,7 +117,23 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   router.post('/auth/logout', async (req: Request, res: Response) => {
     const token = parseCookie(req.headers.cookie, GH_SESSION_COOKIE);
     if (token) {
+      // Resolve the user before destroying the session so we can attribute the
+      // logout activity record.
+      const current = await authService.validateSession(token);
       await authService.logout(token);
+      if (current) {
+        await authService.recordActivity({
+          userId: current.user.id,
+          userLogin: current.user.username || current.user.githubLogin,
+          action: 'logout',
+          summary: '退出登录',
+          ip:
+            (req.headers['cf-connecting-ip'] as string) ||
+            ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? null) ||
+            req.ip ||
+            null,
+        });
+      }
     }
     res.setHeader('Set-Cookie', buildLogoutCookie(cookieSecure));
     res.json({ ok: true });
@@ -135,6 +151,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       user: {
         id: user.id,
         githubLogin: user.githubLogin,
+        username: user.username ?? null,
+        authProvider: user.authProvider ?? 'github',
         name: user.name,
         email: user.email,
         avatarUrl: user.avatarUrl,
@@ -163,6 +181,8 @@ function formatError(err: AuthServiceError): string {
       return `GitHub OAuth 流程失败：${err.message}`;
     case 'bootstrap_failed':
       return `首次登录初始化失败：${err.message}`;
+    case 'account_disabled':
+      return '账号已被禁用，无法登录，请联系系统所有者';
     default:
       return '登录失败';
   }
