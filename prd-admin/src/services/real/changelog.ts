@@ -86,11 +86,15 @@ export interface GitHubLinkedDefect {
   defectId: string;
   defectNo?: string | null;
   defectTitle?: string | null;
+  reporterName?: string | null;
+  isSubmittedByMe?: boolean;
   fixStatus: string;
   publishStatus: 'unknown' | 'pending' | 'published' | string;
   previewUrl?: string | null;
   visualReportUrl?: string | null;
   knowledgeBaseUrl?: string | null;
+  pullRequestNumber?: number | null;
+  pullRequestUrl?: string | null;
   commitSha: string;
 }
 

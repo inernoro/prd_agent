@@ -1,0 +1,4 @@
+interface:
+  display_name: "acceptance-test-design · 验收测试设计"
+  short_description: "把 PR/commit/昨日改动转成风险假设、影响面、融合用例和证明力矩阵，再交给视觉验收执行。"
+  default_prompt: "请用 acceptance-test-design 为这次变更先做验收测试设计：提取改动断言、影响面、融合用例、页面主证据、内部佐证和未覆盖风险。"

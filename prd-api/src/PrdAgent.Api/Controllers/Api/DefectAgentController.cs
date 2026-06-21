@@ -35,7 +35,7 @@ public class DefectAgentController : ControllerBase
 
     private const string AppKey = "defect-agent";
     private const string DefectResolveSkillName = "ai-defect-resolve";
-    private const string DefectResolveSkillMinVersion = "1.4.1";
+    private const string DefectResolveSkillMinVersion = "1.5.0";
     private const string CommitInfoStructuredKey = "提交信息";
     private const string SuggestedAutomationKeyName = "缺陷处理 Agent 授权";
     private const string DefectAcceptanceStoreName = "缺陷修复验收报告";
@@ -2577,7 +2577,7 @@ public class DefectAgentController : ControllerBase
 
         return new
         {
-            version = "1.1",
+            version = "1.2",
             mode = "daily-next",
             domain = baseUrl,
             auth = new
@@ -2594,10 +2594,11 @@ public class DefectAgentController : ControllerBase
             {
                 type = "daily-next",
                 nextUrl,
+                workflowStartNextUrl = "/api/defect-agent/agent/workflow/start-next",
                 projectId,
                 teamId,
                 status,
-                batchPolicy = "一次只处理一个缺陷；提交并回写 commit 后再拉取下一条。"
+                batchPolicy = "一次只处理一个缺陷；提交并调用 workflow/complete 后再拉取下一条。"
             },
             endpoints = new
             {
@@ -2605,6 +2606,9 @@ public class DefectAgentController : ControllerBase
                 postComment = "/api/defect-agent/agent/defects/{defectId}/comments",
                 submitCommitInfo = "/api/defect-agent/agent/defects/{defectId}/commit-info",
                 updateFixStatus = "/api/defect-agent/agent/defects/{defectId}/fix-status",
+                workflowStartNext = "/api/defect-agent/agent/workflow/start-next",
+                workflowComplete = "/api/defect-agent/agent/workflow/complete",
+                workflowBlock = "/api/defect-agent/agent/workflow/block",
             },
             skill = new
             {
@@ -2669,6 +2673,14 @@ public class DefectAgentController : ControllerBase
                 updateFixStatus = "/api/defect-agent/agent/defects/{defectId}/fix-status",
                 publishedPending = "/api/defect-agent/agent/published-pending",
                 submitValidationReport = "/api/defect-agent/agent/resolution-traces/{traceId}/validation-report",
+            },
+            workflow = new
+            {
+                version = "defect-agent-workflow.v1",
+                startNext = "/api/defect-agent/agent/workflow/start-next",
+                complete = "/api/defect-agent/agent/workflow/complete",
+                block = "/api/defect-agent/agent/workflow/block",
+                rule = "固定编排由 workflow 端点负责。智能体只负责理解缺陷、评论计划、修复代码、提交 commit 和填写 complete/block 入参。"
             },
             acceptance = new
             {
@@ -2838,6 +2850,72 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
+    /// [自动化工作流] 创建或复用运行记录，并领取下一条缺陷。
+    /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
+    [HttpPost("agent/workflow/start-next")]
+    public async Task<IActionResult> StartNextAutomationWorkflow(
+        [FromBody] StartDefectAutomationWorkflowRequest request,
+        CancellationToken ct)
+    {
+        request ??= new StartDefectAutomationWorkflowRequest();
+        var userId = GetUserId();
+        var hasManagePermission = HasManagePermission();
+        var isAiAccessRequest = IsAiAccessRequest();
+        DefectAutomationRun? run;
+
+        if (!string.IsNullOrWhiteSpace(request.RunId))
+        {
+            run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
+            if (run == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在"));
+            if (!CanAutomationAccessRun(run, userId, hasManagePermission, isAiAccessRequest))
+                return AutomationForbidden("无权访问该自动化运行记录");
+            if (!CanAutomationRunContinue(run))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "运行记录已结束或失败，请创建新的运行记录"));
+        }
+        else
+        {
+            run = await CreateAutomationRunAsync(
+                new StartDefectAutomationRunRequest
+                {
+                    TriggerType = request.TriggerType,
+                    ProjectId = request.ProjectId,
+                    TeamId = request.TeamId,
+                    Status = request.Status,
+                },
+                userId,
+                ct);
+        }
+
+        var result = await ClaimNextAutomationDefectAsync(
+            run.ProjectId,
+            run.TeamId,
+            run.StatusFilter,
+            request.DefectId,
+            run,
+            userId,
+            hasManagePermission,
+            isAiAccessRequest,
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            protocol = BuildAutomationWorkflowProtocolPayload(),
+            run = BuildAutomationRunDto(run),
+            defect = result.DefectPayload,
+            result.HasNext,
+            result.Endpoints,
+            agentTask = result.HasNext
+                ? BuildAutomationAgentTaskPayload(result.Defect, run)
+                : null,
+            nextAction = result.HasNext
+                ? "comment-plan-and-fix"
+                : "done",
+        }));
+    }
+
+    /// <summary>
     /// [自动化] 创建一次可恢复的缺陷自动化运行记录。
     /// </summary>
     [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
@@ -2846,34 +2924,7 @@ public class DefectAgentController : ControllerBase
     {
         request ??= new StartDefectAutomationRunRequest();
         var userId = GetUserId();
-        var keyId = User.FindFirst("agentApiKeyId")?.Value;
-        AgentApiKey? currentKey = null;
-        if (!string.IsNullOrWhiteSpace(keyId))
-            currentKey = await _db.AgentApiKeys.Find(x => x.Id == keyId).FirstOrDefaultAsync(ct);
-
-        var now = DateTime.UtcNow;
-        var run = new DefectAutomationRun
-        {
-            ConnectorType = DefectSourceConnectorType.MapDefectAgent,
-            Domain = ResolveBaseUrl(),
-            AgentApiKeyId = currentKey?.Id ?? keyId,
-            AgentApiKeyName = currentKey?.Name ?? User.FindFirst("appName")?.Value,
-            RequiredScope = AgentFixScope,
-            TriggerType = string.IsNullOrWhiteSpace(request.TriggerType)
-                ? DefectAutomationTriggerType.Manual
-                : request.TriggerType.Trim(),
-            ProjectId = request.ProjectId?.Trim(),
-            TeamId = request.TeamId?.Trim(),
-            StatusFilter = request.Status?.Trim(),
-            Status = DefectAutomationRunStatus.Running,
-            CreatedBy = userId,
-            CreatedByName = GetUsername() ?? User.FindFirst("appName")?.Value,
-            StartedAt = now,
-            CreatedAt = now,
-            UpdatedAt = now,
-        };
-
-        await _db.DefectAutomationRuns.InsertOneAsync(run, cancellationToken: ct);
+        var run = await CreateAutomationRunAsync(request, userId, ct);
         return Ok(ApiResponse<object>.Ok(new
         {
             run,
@@ -3021,9 +3072,12 @@ public class DefectAgentController : ControllerBase
 
         var now = DateTime.UtcNow;
         var verdict = NormalizeValidationVerdict(request.Verdict);
-        var validationStatus = verdict == "fail"
-            ? DefectResolutionValidationStatus.Failed
-            : DefectResolutionValidationStatus.Passed;
+        var validationStatus = verdict switch
+        {
+            "fail" => DefectResolutionValidationStatus.Failed,
+            "invalid" => DefectResolutionValidationStatus.Invalid,
+            _ => DefectResolutionValidationStatus.Passed,
+        };
         var knowledgeBaseName = string.IsNullOrWhiteSpace(request.KnowledgeBaseName)
             ? DefectAcceptanceStoreName
             : request.KnowledgeBaseName.Trim();
@@ -3048,7 +3102,12 @@ public class DefectAgentController : ControllerBase
             {
                 Key = notificationKey,
                 TargetUserId = defect.ReporterId,
-                Title = verdict == "fail" ? "你的问题需要继续改进" : "你的问题已修复",
+                Title = verdict switch
+                {
+                    "fail" => "你的问题需要继续改进",
+                    "invalid" => "你的问题已完成核验",
+                    _ => "你的问题已修复",
+                },
                 Message = message,
                 Level = verdict == "fail" ? "warning" : "success",
                 ActionLabel = "查看验收报告",
@@ -3077,6 +3136,19 @@ public class DefectAgentController : ControllerBase
             .Set(x => x.UpdatedAt, now);
         await _db.DefectResolutionTraces.UpdateOneAsync(x => x.Id == trace.Id, update, cancellationToken: ct);
 
+        var commentContent = BuildValidationEvidenceComment(
+            trace,
+            request,
+            knowledgeBaseName,
+            knowledgeBaseUrl,
+            visualReportUrl,
+            verdict);
+        var comment = await InsertAutomationCommentAsync(
+            defect,
+            request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value ?? trace.AgentName ?? "AI Agent",
+            commentContent,
+            ct);
+
         return Ok(ApiResponse<object>.Ok(new
         {
             success = true,
@@ -3086,6 +3158,7 @@ public class DefectAgentController : ControllerBase
             notifiedUserId = defect.ReporterId,
             notificationCreated,
             notificationId = notification.Id,
+            messageId = comment.Id,
         }));
     }
 
@@ -3138,87 +3211,206 @@ public class DefectAgentController : ControllerBase
     {
         var userId = GetUserId();
         DefectAutomationRun? run = null;
+        var hasManagePermission = HasManagePermission();
+        var isAiAccessRequest = IsAiAccessRequest();
         if (!string.IsNullOrWhiteSpace(runId))
         {
             run = await _db.DefectAutomationRuns.Find(x => x.Id == runId.Trim()).FirstOrDefaultAsync(ct);
             if (run == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在"));
-            if (!CanAutomationAccessRun(run, userId, HasManagePermission(), IsAiAccessRequest()))
+            if (!CanAutomationAccessRun(run, userId, hasManagePermission, isAiAccessRequest))
                 return AutomationForbidden("无权访问该自动化运行记录");
             projectId ??= run.ProjectId;
             teamId ??= run.TeamId;
             status ??= run.StatusFilter;
         }
 
-        var statuses = string.IsNullOrWhiteSpace(status)
-            ? new[] { DefectStatus.Submitted, DefectStatus.Assigned, DefectStatus.Processing }
-            : status.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        var builder = Builders<DefectReport>.Filter;
-        var filter = builder.Eq(x => x.IsDeleted, false) & builder.In(x => x.Status, statuses);
-        var excludedDefectIds = BuildRunExcludedDefectIds(run);
-        if (excludedDefectIds.Count > 0)
-            filter &= builder.Nin(x => x.Id, excludedDefectIds);
-        if (!string.IsNullOrWhiteSpace(projectId))
-            filter &= builder.Eq(x => x.ProjectId, projectId.Trim());
-        if (!string.IsNullOrWhiteSpace(teamId))
-            filter &= builder.Eq(x => x.TeamId, teamId.Trim());
-        if (!HasManagePermission() && !IsAiAccessRequest())
-        {
-            filter &= builder.Or(
-                builder.Eq(x => x.AssigneeId, userId),
-                builder.Eq(x => x.AssigneeId, null),
-                builder.Eq(x => x.AssigneeId, string.Empty));
-        }
-
-        var defect = await _db.DefectReports
-            .Find(filter)
-            .SortBy(x => x.CreatedAt)
-            .FirstOrDefaultAsync(ct);
-
-        if (defect == null)
-        {
-            if (run != null)
-            {
-                MarkRunCompletedIfNoNext(run);
-                await _db.DefectAutomationRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: ct);
-            }
-
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                defect = (object?)null,
-                hasNext = false,
-                run,
-                agentLaunch = BuildAutomationAgentLaunchPayload(projectId, teamId, status),
-            }));
-        }
-
-        if (run != null)
-        {
-            MarkRunItemFetched(run, defect);
-            await _db.DefectAutomationRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: ct);
-        }
-
-        var messages = await _db.DefectMessages
-            .Find(x => x.DefectId == defect.Id)
-            .SortBy(x => x.Seq)
-            .ToListAsync(ct);
-        var msgByDefect = messages
-            .GroupBy(m => m.DefectId)
-            .ToDictionary(g => g.Key, g => g.ToList());
+        var result = await ClaimNextAutomationDefectAsync(
+            projectId,
+            teamId,
+            status,
+            null,
+            run,
+            userId,
+            hasManagePermission,
+            isAiAccessRequest,
+            ct);
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            defect = BuildAgentDefectPayload(defect, msgByDefect),
-            hasNext = true,
-            run,
+            defect = result.DefectPayload,
+            hasNext = result.HasNext,
+            run = result.Run,
             agentLaunch = BuildAutomationAgentLaunchPayload(projectId, teamId, status),
-            endpoints = new
+            endpoints = result.Endpoints,
+        }));
+    }
+
+    /// <summary>
+    /// [自动化工作流] 提交修复结果：一次性回写 commit、标记修复，并返回下一步指令。
+    /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
+    [HttpPost("agent/workflow/complete")]
+    public async Task<IActionResult> CompleteAutomationWorkflow(
+        [FromBody] CompleteDefectAutomationWorkflowRequest request,
+        CancellationToken ct)
+    {
+        request ??= new CompleteDefectAutomationWorkflowRequest();
+        if (string.IsNullOrWhiteSpace(request.RunId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+        if (string.IsNullOrWhiteSpace(request.DefectId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "defectId 不能为空"));
+
+        var defect = await FindDefectByIdOrNoAsync(request.DefectId, ct);
+        if (defect == null || defect.IsDeleted)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+        if (!CanAutomationAccessDefect(defect, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
+            return AutomationForbidden("无权处理该缺陷");
+
+        var run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在"));
+        if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
+            return AutomationForbidden("无权修改该自动化运行记录");
+        if (!CanAutomationRunContinue(run))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "运行记录已结束或失败，不能提交完成结果"));
+        if (!IsAutomationRunClaimedDefect(run, defect.Id))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能完成当前运行记录已领取且未终止的缺陷"));
+
+        var commitRequest = new SubmitAutomationCommitInfoRequest
+        {
+            RunId = request.RunId,
+            CommitSha = request.CommitSha,
+            ShortSha = request.ShortSha,
+            CommitMessage = request.CommitMessage,
+            CommitUrl = request.CommitUrl,
+            Repository = request.Repository,
+            Branch = request.Branch,
+            PullRequestNumber = request.PullRequestNumber,
+            PullRequestUrl = request.PullRequestUrl,
+            PreviewUrl = request.PreviewUrl,
+            VisualReportUrl = request.VisualReportUrl,
+            Resolution = request.Resolution,
+            AgentName = request.AgentName,
+        };
+
+        var commitResult = await ApplyAutomationCommitInfoAsync(defect, commitRequest, ct, run);
+        if (commitResult.Error != null)
+            return commitResult.Error;
+
+        var fixResult = await ApplyAutomationFixStatusAsync(
+            defect,
+            new AutomationFixStatusRequest
             {
-                comments = $"/api/defect-agent/agent/defects/{defect.Id}/comments",
-                commitInfo = $"/api/defect-agent/agent/defects/{defect.Id}/commit-info",
-                fixStatus = $"/api/defect-agent/agent/defects/{defect.Id}/fix-status",
-            }
+                RunId = request.RunId,
+                Resolution = request.Resolution,
+                AgentName = request.AgentName,
+            },
+            ct,
+            run);
+        if (fixResult.Error != null)
+            return fixResult.Error;
+
+        var completionComment = BuildCompletionEvidenceComment(request, commitResult.ShortSha);
+        if (!string.IsNullOrWhiteSpace(request.CompletionComment))
+            completionComment = $"{request.CompletionComment.Trim()}\n\n{completionComment}";
+        var message = await InsertAutomationCommentAsync(
+            defect,
+            request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value ?? "AI Agent",
+            completionComment,
+            ct);
+        var messageId = message.Id;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            success = true,
+            protocol = BuildAutomationWorkflowProtocolPayload(),
+            defectId = defect.Id,
+            commitSha = commitResult.CommitSha,
+            shortSha = commitResult.ShortSha,
+            messageId,
+            run = fixResult.Run == null ? null : BuildAutomationRunDto(fixResult.Run),
+            next = new
+            {
+                method = "POST",
+                url = "/api/defect-agent/agent/workflow/start-next",
+                body = new { runId = fixResult.Run?.Id ?? request.RunId },
+            },
+            acceptance = new
+            {
+                updateCenterRelation = "commit-id",
+                publishState = "waiting_publish",
+                visualAcceptance = "run-after-production-publish",
+                requiredEvidence = new[] { "pull-request", "commit", "validation-report" },
+            },
+        }));
+    }
+
+    /// <summary>
+    /// [自动化工作流] 阻塞当前缺陷：记录失败/重量级原因，可选写评论，并默认停止本轮运行。
+    /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
+    [HttpPost("agent/workflow/block")]
+    public async Task<IActionResult> BlockAutomationWorkflow(
+        [FromBody] BlockDefectAutomationWorkflowRequest request,
+        CancellationToken ct)
+    {
+        request ??= new BlockDefectAutomationWorkflowRequest();
+        if (string.IsNullOrWhiteSpace(request.RunId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+
+        var run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在"));
+        if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
+            return AutomationForbidden("无权修改该自动化运行记录");
+
+        var defectId = string.IsNullOrWhiteSpace(request.DefectId)
+            ? run.CurrentDefectId
+            : request.DefectId.Trim();
+        if (string.IsNullOrWhiteSpace(defectId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "defectId 不能为空"));
+
+        var defect = await FindDefectByIdOrNoAsync(defectId, ct);
+        if (defect != null && !CanAutomationAccessDefect(defect, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
+            return AutomationForbidden("无权处理该缺陷");
+
+        string? messageId = null;
+        if (defect != null && !string.IsNullOrWhiteSpace(request.Comment))
+        {
+            var message = await InsertAutomationCommentAsync(
+                defect,
+                request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value ?? "AI Agent",
+                request.Comment,
+                ct);
+            messageId = message.Id;
+        }
+
+        if (defect != null)
+        {
+            defect.Status = DefectStatus.Awaiting;
+            defect.VerifyFailReason = request.FailureReason?.Trim();
+            defect.ReporterUnread = true;
+            defect.UpdatedAt = DateTime.UtcNow;
+            await _db.DefectReports.ReplaceOneAsync(x => x.Id == defect.Id, defect, cancellationToken: ct);
+        }
+
+        MarkRunItemFailed(run, defect, defect?.Id ?? defectId, request.FailureReason, request.FailurePhase);
+        if (request.StopRun)
+        {
+            run.Status = DefectAutomationRunStatus.Failed;
+            run.CompletedAt ??= DateTime.UtcNow;
+            run.UpdatedAt = DateTime.UtcNow;
+        }
+        await _db.DefectAutomationRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            success = true,
+            protocol = BuildAutomationWorkflowProtocolPayload(),
+            run = BuildAutomationRunDto(run),
+            messageId,
+            nextAction = request.StopRun ? "wait-human" : "start-next",
         }));
     }
 
@@ -3249,31 +3441,7 @@ public class DefectAgentController : ControllerBase
         }
 
         var agentName = request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value ?? "AI Agent";
-        var maxSeq = await _db.DefectMessages
-            .Find(x => x.DefectId == defect.Id)
-            .SortByDescending(x => x.Seq)
-            .Project(x => x.Seq)
-            .FirstOrDefaultAsync(ct);
-
-        var message = new DefectMessage
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            DefectId = defect.Id,
-            Seq = maxSeq + 1,
-            Role = DefectMessageRole.User,
-            UserName = agentName,
-            Content = request.Content.Trim(),
-            Source = DefectMessageSource.Ai,
-            AgentName = agentName,
-            CreatedAt = DateTime.UtcNow
-        };
-        await _db.DefectMessages.InsertOneAsync(message, cancellationToken: ct);
-        await _db.DefectReports.UpdateOneAsync(
-            x => x.Id == defect.Id,
-            Builders<DefectReport>.Update
-                .Set(x => x.ReporterUnread, true)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+        var message = await InsertAutomationCommentAsync(defect, agentName, request.Content, ct);
 
         if (run != null)
         {
@@ -3298,61 +3466,16 @@ public class DefectAgentController : ControllerBase
         if (!CanAutomationAccessDefect(defect, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
             return AutomationForbidden("无权处理该缺陷");
 
-        var commitSha = NormalizeCommitSha(request.CommitSha);
-        if (string.IsNullOrWhiteSpace(commitSha))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "commitSha 不能为空"));
-
-        DefectAutomationRun? run = null;
-        if (!string.IsNullOrWhiteSpace(request.RunId))
-        {
-            run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
-            if (run == null)
-                return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在"));
-            if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
-                return AutomationForbidden("无权修改该自动化运行记录");
-        }
-
-        var now = DateTime.UtcNow;
-        var structured = MergeAutomationCommitStructuredData(defect.StructuredData, request);
-        await _db.DefectReports.UpdateOneAsync(
-            x => x.Id == defect.Id,
-            Builders<DefectReport>.Update
-                .Set(x => x.StructuredData, structured)
-                .Set(x => x.Resolution, string.IsNullOrWhiteSpace(request.Resolution) ? defect.Resolution : request.Resolution.Trim())
-                .Set(x => x.UpdatedAt, now),
-            cancellationToken: ct);
-
-        await UpsertResolutionTraceAsync(
-            defect,
-            new AutomationCommitTraceInput
-            {
-                AgentName = request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value,
-                AgentIdentifier = ResolveAutomationAgentIdentifier(
-                    User.FindFirst("agentApiKeyId")?.Value,
-                    User.FindFirst("appId")?.Value),
-                Repository = request.Repository?.Trim(),
-                Branch = request.Branch?.Trim(),
-                CommitSha = commitSha,
-                ShortSha = ResolveShortSha(commitSha, request.ShortSha),
-                CommitMessage = request.CommitMessage?.Trim(),
-                CommitUrl = request.CommitUrl?.Trim(),
-                PreviewUrl = request.PreviewUrl?.Trim(),
-                VisualReportUrl = request.VisualReportUrl?.Trim(),
-            },
-            ct);
-
-        if (run != null)
-        {
-            MarkRunItemCommitWritten(run, defect, request, commitSha);
-            await _db.DefectAutomationRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: ct);
-        }
+        var result = await ApplyAutomationCommitInfoAsync(defect, request, ct);
+        if (result.Error != null)
+            return result.Error;
 
         return Ok(ApiResponse<object>.Ok(new
         {
             success = true,
             defectId = defect.Id,
-            commitSha,
-            shortSha = ResolveShortSha(commitSha, request.ShortSha),
+            commitSha = result.CommitSha,
+            shortSha = result.ShortSha,
             structuredKey = CommitInfoStructuredKey,
         }));
     }
@@ -3371,38 +3494,9 @@ public class DefectAgentController : ControllerBase
         if (!CanAutomationAccessDefect(defect, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
             return AutomationForbidden("无权处理该缺陷");
 
-        DefectAutomationRun? run = null;
-        if (!string.IsNullOrWhiteSpace(request.RunId))
-        {
-            run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
-            if (run == null)
-                return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在"));
-            if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
-                return AutomationForbidden("无权修改该自动化运行记录");
-        }
-
-        var resolvedByAgent = request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value ?? "AI Agent";
-        var resolution = request.Resolution?.Trim() ?? "AI Agent 自动修复，等待发布验收";
-        var update = Builders<DefectReport>.Update
-            .Set(x => x.Status, DefectStatus.Resolved)
-            .Set(x => x.Resolution, resolution)
-            .Set(x => x.ResolvedAt, DateTime.UtcNow)
-            .Set(x => x.IsAiResolved, true)
-            .Set(x => x.ResolvedByAgentName, resolvedByAgent)
-            .Set(x => x.ResolvedByName, resolvedByAgent)
-            .Set(x => x.UpdatedAt, DateTime.UtcNow);
-
-        await _db.DefectReports.UpdateOneAsync(x => x.Id == defect.Id, update, cancellationToken: ct);
-
-        defect.Status = DefectStatus.Resolved;
-        defect.Resolution = resolution;
-        _ = _webhookService.NotifyAsync(defect, DefectEventType.Resolved);
-
-        if (run != null)
-        {
-            MarkRunItemFixed(run, defect);
-            await _db.DefectAutomationRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: ct);
-        }
+        var result = await ApplyAutomationFixStatusAsync(defect, request, ct);
+        if (result.Error != null)
+            return result.Error;
 
         return Ok(ApiResponse<object>.Ok(new { success = true, defectId = defect.Id, status = DefectStatus.Resolved }));
     }
@@ -3494,6 +3588,8 @@ public class DefectAgentController : ControllerBase
                 CommitUrl = i.CommitUrl?.Trim(),
                 Repository = i.Repository?.Trim(),
                 Branch = i.Branch?.Trim(),
+                PullRequestNumber = i.PullRequestNumber,
+                PullRequestUrl = i.PullRequestUrl?.Trim(),
                 PreviewUrl = i.PreviewUrl?.Trim(),
                 VisualReportUrl = i.VisualReportUrl?.Trim(),
             }).ToList(),
@@ -3551,6 +3647,8 @@ public class DefectAgentController : ControllerBase
                 .Set(x => x.AgentIdentifier, report.AgentIdentifier)
                 .Set(x => x.Repository, item.Repository)
                 .Set(x => x.Branch, item.Branch)
+                .Set(x => x.PullRequestNumber, item.PullRequestNumber)
+                .Set(x => x.PullRequestUrl, item.PullRequestUrl)
                 .Set(x => x.CommitSha, commitSha)
                 .Set(x => x.ShortSha, ResolveShortSha(commitSha, item.ShortSha))
                 .Set(x => x.CommitMessage, item.CommitMessage)
@@ -3570,6 +3668,408 @@ public class DefectAgentController : ControllerBase
                 new UpdateOptions { IsUpsert = true },
                 ct);
         }
+    }
+
+    private async Task<DefectAutomationRun> CreateAutomationRunAsync(
+        StartDefectAutomationRunRequest request,
+        string userId,
+        CancellationToken ct)
+    {
+        var keyId = User.FindFirst("agentApiKeyId")?.Value;
+        AgentApiKey? currentKey = null;
+        if (!string.IsNullOrWhiteSpace(keyId))
+            currentKey = await _db.AgentApiKeys.Find(x => x.Id == keyId).FirstOrDefaultAsync(ct);
+
+        var now = DateTime.UtcNow;
+        var run = new DefectAutomationRun
+        {
+            ConnectorType = DefectSourceConnectorType.MapDefectAgent,
+            Domain = ResolveBaseUrl(),
+            AgentApiKeyId = currentKey?.Id ?? keyId,
+            AgentApiKeyName = currentKey?.Name ?? User.FindFirst("appName")?.Value,
+            RequiredScope = AgentFixScope,
+            TriggerType = string.IsNullOrWhiteSpace(request.TriggerType)
+                ? DefectAutomationTriggerType.Manual
+                : request.TriggerType.Trim(),
+            ProjectId = request.ProjectId?.Trim(),
+            TeamId = request.TeamId?.Trim(),
+            StatusFilter = request.Status?.Trim(),
+            Status = DefectAutomationRunStatus.Running,
+            CreatedBy = userId,
+            CreatedByName = GetUsername() ?? User.FindFirst("appName")?.Value,
+            StartedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+        await _db.DefectAutomationRuns.InsertOneAsync(run, cancellationToken: ct);
+        return run;
+    }
+
+    private async Task<AutomationNextDefectResult> ClaimNextAutomationDefectAsync(
+        string? projectId,
+        string? teamId,
+        string? status,
+        string? defectId,
+        DefectAutomationRun? run,
+        string userId,
+        bool hasManagePermission,
+        bool isAiAccessRequest,
+        CancellationToken ct)
+    {
+        var statuses = string.IsNullOrWhiteSpace(status)
+            ? new[] { DefectStatus.Submitted, DefectStatus.Assigned, DefectStatus.Processing }
+            : status.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var builder = Builders<DefectReport>.Filter;
+        var filter = builder.Eq(x => x.IsDeleted, false) & builder.In(x => x.Status, statuses);
+        var excludedDefectIds = BuildRunExcludedDefectIds(run);
+        if (excludedDefectIds.Count > 0)
+            filter &= builder.Nin(x => x.Id, excludedDefectIds);
+        if (!string.IsNullOrWhiteSpace(projectId))
+            filter &= builder.Eq(x => x.ProjectId, projectId.Trim());
+        if (!string.IsNullOrWhiteSpace(teamId))
+            filter &= builder.Eq(x => x.TeamId, teamId.Trim());
+        if (!string.IsNullOrWhiteSpace(defectId))
+        {
+            var target = defectId.Trim();
+            filter &= builder.Or(
+                builder.Eq(x => x.Id, target),
+                builder.Eq(x => x.DefectNo, target));
+        }
+        if (!hasManagePermission && !isAiAccessRequest)
+        {
+            filter &= builder.Or(
+                builder.Eq(x => x.AssigneeId, userId),
+                builder.Eq(x => x.AssigneeId, null),
+                builder.Eq(x => x.AssigneeId, string.Empty));
+        }
+
+        var defect = await _db.DefectReports
+            .Find(filter)
+            .SortBy(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (defect == null)
+        {
+            if (run != null)
+            {
+                MarkRunCompletedIfNoNext(run);
+                await _db.DefectAutomationRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: ct);
+            }
+
+            return new AutomationNextDefectResult
+            {
+                HasNext = false,
+                Run = run,
+                Defect = null,
+                DefectPayload = null,
+                Endpoints = BuildAutomationWorkflowEndpoints(null),
+            };
+        }
+
+        if (run != null)
+        {
+            MarkRunItemFetched(run, defect);
+            await _db.DefectAutomationRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: ct);
+        }
+
+        var messages = await _db.DefectMessages
+            .Find(x => x.DefectId == defect.Id)
+            .SortBy(x => x.Seq)
+            .ToListAsync(ct);
+        var msgByDefect = messages
+            .GroupBy(m => m.DefectId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        return new AutomationNextDefectResult
+        {
+            HasNext = true,
+            Run = run,
+            Defect = defect,
+            DefectPayload = BuildAgentDefectPayload(defect, msgByDefect),
+            Endpoints = BuildAutomationWorkflowEndpoints(defect),
+        };
+    }
+
+    private static object BuildAutomationWorkflowEndpoints(DefectReport? defect)
+        => new
+        {
+            workflowStartNext = "/api/defect-agent/agent/workflow/start-next",
+            workflowComplete = "/api/defect-agent/agent/workflow/complete",
+            workflowBlock = "/api/defect-agent/agent/workflow/block",
+            comments = defect == null ? null : $"/api/defect-agent/agent/defects/{defect.Id}/comments",
+            commitInfo = defect == null ? null : $"/api/defect-agent/agent/defects/{defect.Id}/commit-info",
+            fixStatus = defect == null ? null : $"/api/defect-agent/agent/defects/{defect.Id}/fix-status",
+        };
+
+    private static object BuildAutomationWorkflowProtocolPayload()
+        => new
+        {
+            version = "defect-agent-workflow.v1",
+            purpose = "把运行记录、领取缺陷、完成回写、阻塞记录这些机械编排下沉到后端工作流端点",
+            endpoints = new
+            {
+                startNext = "/api/defect-agent/agent/workflow/start-next",
+                complete = "/api/defect-agent/agent/workflow/complete",
+                block = "/api/defect-agent/agent/workflow/block",
+            },
+            agentResponsibilities = new[]
+            {
+                "理解缺陷和上下文",
+                "评论修复计划",
+                "判断是否轻量修复",
+                "修改代码并完成自测",
+                "通过 PR 提交中文 commit",
+                "把 PR、commit 和验收信息填入 complete 或把阻塞原因填入 block",
+            },
+            serverResponsibilities = new[]
+            {
+                "创建和维护 run",
+                "一次只领取一个缺陷",
+                "记录失败和阻塞",
+                "统一回写 PR 和 commit 信息",
+                "写入 defect_resolution_traces",
+                "把缺陷标记为已修复",
+                "在完成和正式验收阶段写入证据评论",
+            },
+        };
+
+    private static object? BuildAutomationAgentTaskPayload(DefectReport? defect, DefectAutomationRun run)
+    {
+        if (defect == null)
+            return null;
+
+        return new
+        {
+            runId = run.Id,
+            defectId = defect.Id,
+            defectNo = defect.DefectNo,
+            title = defect.Title,
+            phase = "agent-analysis-and-fix",
+            lightweightCriteria = BuildAutomationLightweightCriteria(),
+            completeWith = new
+            {
+                method = "POST",
+                url = "/api/defect-agent/agent/workflow/complete",
+                required = new[]
+                {
+                    "runId",
+                    "defectId",
+                    "commitSha",
+                    "commitMessage",
+                    "branch",
+                    "resolution",
+                },
+            },
+            blockWith = new
+            {
+                method = "POST",
+                url = "/api/defect-agent/agent/workflow/block",
+                required = new[]
+                {
+                    "runId",
+                    "defectId",
+                    "failureReason",
+                    "failurePhase",
+                },
+            },
+        };
+    }
+
+    private async Task<DefectMessage> InsertAutomationCommentAsync(
+        DefectReport defect,
+        string agentName,
+        string content,
+        CancellationToken ct)
+    {
+        var maxSeq = await _db.DefectMessages
+            .Find(x => x.DefectId == defect.Id)
+            .SortByDescending(x => x.Seq)
+            .Project(x => x.Seq)
+            .FirstOrDefaultAsync(ct);
+
+        var message = new DefectMessage
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            DefectId = defect.Id,
+            Seq = maxSeq + 1,
+            Role = DefectMessageRole.User,
+            UserName = agentName,
+            Content = content.Trim(),
+            Source = DefectMessageSource.Ai,
+            AgentName = agentName,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _db.DefectMessages.InsertOneAsync(message, cancellationToken: ct);
+        await _db.DefectReports.UpdateOneAsync(
+            x => x.Id == defect.Id,
+            Builders<DefectReport>.Update
+                .Set(x => x.ReporterUnread, true)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+        return message;
+    }
+
+    private async Task<AutomationCommitApplyResult> ApplyAutomationCommitInfoAsync(
+        DefectReport defect,
+        SubmitAutomationCommitInfoRequest request,
+        CancellationToken ct,
+        DefectAutomationRun? prevalidatedRun = null)
+    {
+        var commitSha = NormalizeCommitSha(request.CommitSha);
+        if (string.IsNullOrWhiteSpace(commitSha))
+        {
+            return new AutomationCommitApplyResult
+            {
+                Error = BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "commitSha 不能为空")),
+            };
+        }
+
+        DefectAutomationRun? run = prevalidatedRun;
+        if (!string.IsNullOrWhiteSpace(request.RunId))
+        {
+            if (run == null)
+            {
+                run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
+                if (run == null)
+                {
+                    return new AutomationCommitApplyResult
+                    {
+                        Error = NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在")),
+                    };
+                }
+                if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
+                {
+                    return new AutomationCommitApplyResult
+                    {
+                        Error = AutomationForbidden("无权修改该自动化运行记录"),
+                    };
+                }
+            }
+        }
+
+        var now = DateTime.UtcNow;
+        var structured = MergeAutomationCommitStructuredData(defect.StructuredData, request);
+        await _db.DefectReports.UpdateOneAsync(
+            x => x.Id == defect.Id,
+            Builders<DefectReport>.Update
+                .Set(x => x.StructuredData, structured)
+                .Set(x => x.Resolution, string.IsNullOrWhiteSpace(request.Resolution) ? defect.Resolution : request.Resolution.Trim())
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+
+        await UpsertResolutionTraceAsync(
+            defect,
+            new AutomationCommitTraceInput
+            {
+                AgentName = request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value,
+                AgentIdentifier = ResolveAutomationAgentIdentifier(
+                    User.FindFirst("agentApiKeyId")?.Value,
+                    User.FindFirst("appId")?.Value),
+                Repository = request.Repository?.Trim(),
+                Branch = request.Branch?.Trim(),
+                PullRequestNumber = request.PullRequestNumber,
+                PullRequestUrl = request.PullRequestUrl?.Trim(),
+                CommitSha = commitSha,
+                ShortSha = ResolveShortSha(commitSha, request.ShortSha),
+                CommitMessage = request.CommitMessage?.Trim(),
+                CommitUrl = request.CommitUrl?.Trim(),
+                PreviewUrl = request.PreviewUrl?.Trim(),
+                VisualReportUrl = request.VisualReportUrl?.Trim(),
+            },
+            ct);
+
+        if (run != null)
+        {
+            MarkRunItemCommitWritten(run, defect, request, commitSha);
+            await _db.DefectAutomationRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: ct);
+        }
+
+        return new AutomationCommitApplyResult
+        {
+            Run = run,
+            CommitSha = commitSha,
+            ShortSha = ResolveShortSha(commitSha, request.ShortSha),
+        };
+    }
+
+    private async Task<AutomationFixApplyResult> ApplyAutomationFixStatusAsync(
+        DefectReport defect,
+        AutomationFixStatusRequest request,
+        CancellationToken ct,
+        DefectAutomationRun? prevalidatedRun = null)
+    {
+        DefectAutomationRun? run = prevalidatedRun;
+        if (!string.IsNullOrWhiteSpace(request.RunId))
+        {
+            if (run == null)
+            {
+                run = await _db.DefectAutomationRuns.Find(x => x.Id == request.RunId.Trim()).FirstOrDefaultAsync(ct);
+                if (run == null)
+                {
+                    return new AutomationFixApplyResult
+                    {
+                        Error = NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "运行记录不存在")),
+                    };
+                }
+                if (!CanAutomationAccessRun(run, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
+                {
+                    return new AutomationFixApplyResult
+                    {
+                        Error = AutomationForbidden("无权修改该自动化运行记录"),
+                    };
+                }
+            }
+        }
+
+        var resolvedByAgent = request.AgentName?.Trim() ?? User.FindFirst("appName")?.Value ?? "AI Agent";
+        var resolution = request.Resolution?.Trim() ?? "AI Agent 自动修复，等待发布验收";
+        var update = Builders<DefectReport>.Update
+            .Set(x => x.Status, DefectStatus.Resolved)
+            .Set(x => x.Resolution, resolution)
+            .Set(x => x.ResolvedAt, DateTime.UtcNow)
+            .Set(x => x.IsAiResolved, true)
+            .Set(x => x.ResolvedByAgentName, resolvedByAgent)
+            .Set(x => x.ResolvedByName, resolvedByAgent)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.DefectReports.UpdateOneAsync(x => x.Id == defect.Id, update, cancellationToken: ct);
+
+        defect.Status = DefectStatus.Resolved;
+        defect.Resolution = resolution;
+        _ = _webhookService.NotifyAsync(defect, DefectEventType.Resolved);
+
+        if (run != null)
+        {
+            MarkRunItemFixed(run, defect);
+            await _db.DefectAutomationRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: ct);
+        }
+
+        return new AutomationFixApplyResult { Run = run };
+    }
+
+    private sealed class AutomationNextDefectResult
+    {
+        public bool HasNext { get; set; }
+        public DefectAutomationRun? Run { get; set; }
+        public DefectReport? Defect { get; set; }
+        public object? DefectPayload { get; set; }
+        public object? Endpoints { get; set; }
+    }
+
+    private sealed class AutomationCommitApplyResult
+    {
+        public IActionResult? Error { get; set; }
+        public DefectAutomationRun? Run { get; set; }
+        public string? CommitSha { get; set; }
+        public string? ShortSha { get; set; }
+    }
+
+    private sealed class AutomationFixApplyResult
+    {
+        public IActionResult? Error { get; set; }
+        public DefectAutomationRun? Run { get; set; }
     }
 
     private static DefectAutomationRunItem EnsureRunItem(DefectAutomationRun run, DefectReport? defect, string defectId)
@@ -3725,13 +4225,12 @@ public class DefectAgentController : ControllerBase
         lines.Add("");
         lines.Add("执行顺序：");
         lines.Add("1. 调用 GET /api/defect-agent/agent/connector 校验 domain 与 K。");
-        lines.Add("2. 调用 POST /api/defect-agent/agent/runs 创建运行记录。");
-        lines.Add("3. 每次只调用 GET /api/defect-agent/agent/next 拉取一个缺陷。");
-        lines.Add("4. 先评论修复计划，再按 issues-autofix 轻量标准判断是否可自动修复。");
-        lines.Add("5. 轻量缺陷自动修复、验证、提交中文 commit，并回写 commit-info。");
-        lines.Add("6. 回写成功后标记 fix-status，再继续拉取下一条缺陷。");
-        lines.Add("7. 重量级、无法自测、涉及破坏性变更或需要产品确认时，评论阻塞原因，调用 runs/{runId}/fail，并停止当前缺陷。");
-        lines.Add("8. 正式发布后再调用 published-pending，使用 create-visual-test-to-kb 归档到“缺陷修复验收报告”，回写 validation-report 并通知提交人。");
+        lines.Add("2. 调用 POST /api/defect-agent/agent/workflow/start-next 创建或复用运行记录，并领取一条缺陷。");
+        lines.Add("3. 智能体只负责理解缺陷、评论计划、判断轻量、改代码、验证并提交中文 commit。");
+        lines.Add("4. 轻量修复完成后调用 POST /api/defect-agent/agent/workflow/complete，一次性回写 commit、写入 defect_resolution_traces、标记缺陷已修复。");
+        lines.Add("5. 重量级、无法自测、涉及破坏性变更或需要产品确认时，评论阻塞原因，调用 POST /api/defect-agent/agent/workflow/block，并停止当前运行。");
+        lines.Add("6. complete 返回下一次 start-next 入参；继续调用 start-next 领取下一条或结束。");
+        lines.Add("7. 正式发布后再调用 published-pending，使用 create-visual-test-to-kb 归档到“缺陷修复验收报告”，回写 validation-report 并通知提交人。");
         lines.Add("");
         lines.Add("每日更新要求：列出本轮拉取缺陷、处理结果、修复 commit、预览地址、正式发布待验收项、已通知用户和阻塞项。");
         return string.Join("\n", lines);
@@ -3795,13 +4294,32 @@ public class DefectAgentController : ControllerBase
                && string.Equals(trace.AgentIdentifier, agentKeyId, StringComparison.Ordinal);
     }
 
+    internal static bool CanAutomationRunContinue(DefectAutomationRun? run)
+        => run != null && string.Equals(run.Status, DefectAutomationRunStatus.Running, StringComparison.Ordinal);
+
+    internal static bool IsAutomationRunClaimedDefect(DefectAutomationRun? run, string? defectId)
+    {
+        if (run == null || string.IsNullOrWhiteSpace(defectId))
+            return false;
+        if (!CanAutomationRunContinue(run))
+            return false;
+        if (string.Equals(run.CurrentDefectId, defectId, StringComparison.Ordinal))
+            return true;
+
+        return run.Items.Any(x =>
+            string.Equals(x.DefectId, defectId, StringComparison.Ordinal)
+            && x.Status is DefectAutomationRunItemStatus.Fetched
+                or DefectAutomationRunItemStatus.Commented
+                or DefectAutomationRunItemStatus.CommitWritten);
+    }
+
     private static object BuildAutomationPolicyPayload()
         => new
         {
             batch = new
             {
                 mode = "single-defect",
-                fetchNextAfter = "commit-info-and-fix-status",
+                fetchNextAfter = "workflow-complete",
                 skipTerminalItemsInSameRun = true,
                 heavyDefectDefaultAction = "fail-current-and-stop-for-human",
             },
@@ -3908,6 +4426,8 @@ public class DefectAgentController : ControllerBase
         item.ShortSha = ResolveShortSha(commitSha, request.ShortSha);
         item.CommitMessage = request.CommitMessage?.Trim();
         item.Branch = request.Branch?.Trim();
+        item.PullRequestNumber = request.PullRequestNumber;
+        item.PullRequestUrl = request.PullRequestUrl?.Trim();
         item.PreviewUrl = request.PreviewUrl?.Trim();
         item.VisualReportUrl = request.VisualReportUrl?.Trim();
         item.UpdatedAt = DateTime.UtcNow;
@@ -3966,15 +4486,18 @@ public class DefectAgentController : ControllerBase
     internal static string NormalizeValidationVerdict(string? verdict)
     {
         var value = verdict?.Trim().ToLowerInvariant();
-        return value is "pass" or "conditional" or "fail" ? value : "pass";
+        return value is "pass" or "conditional" or "fail" or "invalid" ? value : "pass";
     }
 
     internal static string BuildValidationNotificationMessage(DefectReport defect, string verdict)
     {
         var title = defect.Title ?? defect.DefectNo;
-        return verdict == "fail"
-            ? $"你的问题「{title}」已发布到正式环境，但验收未通过，需要继续改进。"
-            : $"你的问题「{title}」已修复并发布，验收报告已生成。";
+        return verdict switch
+        {
+            "fail" => $"你的问题「{title}」已发布到正式环境，但验收未通过，需要继续改进。",
+            "invalid" => $"你的问题「{title}」已完成正式环境核验，验收报告显示该问题陈述不成立。",
+            _ => $"你的问题「{title}」已修复并发布，验收报告已生成。",
+        };
     }
 
     internal static Dictionary<string, string> MergeAutomationCommitStructuredData(
@@ -4003,6 +4526,8 @@ public class DefectAgentController : ControllerBase
         SetIfPresent("修复提交地址", request.CommitUrl);
         SetIfPresent("修复仓库", request.Repository);
         SetIfPresent("修复分支", request.Branch);
+        SetIfPresent("修复PR编号", request.PullRequestNumber?.ToString());
+        SetIfPresent("修复PR地址", request.PullRequestUrl);
         SetIfPresent("预览地址", request.PreviewUrl);
         SetIfPresent("视觉验收报告", request.VisualReportUrl);
         return result;
@@ -4030,6 +4555,8 @@ public class DefectAgentController : ControllerBase
             .Set(x => x.AgentIdentifier, input.AgentIdentifier)
             .Set(x => x.Repository, input.Repository)
             .Set(x => x.Branch, input.Branch)
+            .Set(x => x.PullRequestNumber, input.PullRequestNumber)
+            .Set(x => x.PullRequestUrl, input.PullRequestUrl)
             .Set(x => x.CommitSha, input.CommitSha)
             .Set(x => x.ShortSha, input.ShortSha)
             .Set(x => x.CommitMessage, input.CommitMessage)
@@ -4065,6 +4592,95 @@ public class DefectAgentController : ControllerBase
         return string.IsNullOrWhiteSpace(normalized)
             ? null
             : normalized[..Math.Min(7, normalized.Length)];
+    }
+
+    internal static string BuildCompletionEvidenceComment(CompleteDefectAutomationWorkflowRequest request, string? shortSha)
+    {
+        var shaLabel = string.IsNullOrWhiteSpace(shortSha)
+            ? NormalizeCommitSha(request.CommitSha) ?? request.CommitSha.Trim()
+            : shortSha.Trim();
+        var commitLabel = string.IsNullOrWhiteSpace(request.CommitMessage)
+            ? shaLabel
+            : $"{shaLabel} {request.CommitMessage.Trim()}";
+        var lines = new List<string>
+        {
+            "自动化修复已提交，等待 PR 合并和正式环境发布后验收。",
+            "",
+            "证据链：",
+            string.IsNullOrWhiteSpace(request.CommitUrl)
+                ? $"- 提交：{commitLabel}"
+                : $"- 提交：[{commitLabel}]({request.CommitUrl.Trim()})",
+        };
+
+        if (request.PullRequestNumber.HasValue || !string.IsNullOrWhiteSpace(request.PullRequestUrl))
+        {
+            var prLabel = request.PullRequestNumber.HasValue ? $"PR #{request.PullRequestNumber.Value}" : "PR";
+            lines.Add(string.IsNullOrWhiteSpace(request.PullRequestUrl)
+                ? $"- PR：{prLabel}"
+                : $"- PR：[{prLabel}]({request.PullRequestUrl.Trim()})");
+        }
+        else
+        {
+            lines.Add("- PR：待创建或待回写，正式发布前必须补齐");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.PreviewUrl))
+            lines.Add($"- 验收地址：[{request.PreviewUrl.Trim()}]({request.PreviewUrl.Trim()})");
+
+        if (!string.IsNullOrWhiteSpace(request.VisualReportUrl))
+            lines.Add($"- 验收报告：[{request.VisualReportUrl.Trim()}]({request.VisualReportUrl.Trim()})");
+        else
+            lines.Add("- 验收报告：正式环境发布后生成并回写");
+
+        lines.Add("- 发布状态：未正式发布，需要真人审核发布后进入正式验收");
+        return string.Join("\n", lines);
+    }
+
+    internal static string BuildValidationEvidenceComment(
+        DefectResolutionTrace trace,
+        SubmitPublishedValidationReportRequest request,
+        string knowledgeBaseName,
+        string knowledgeBaseUrl,
+        string? visualReportUrl,
+        string verdict)
+    {
+        var verdictLabel = verdict switch
+        {
+            "fail" => "验收未通过，需要继续改进",
+            "invalid" => "验收报告证明该缺陷陈述不成立",
+            "conditional" => "有条件通过，请查看报告约束",
+            _ => "验收通过",
+        };
+        var commitLabel = string.IsNullOrWhiteSpace(trace.CommitMessage)
+            ? trace.ShortSha
+            : $"{trace.ShortSha} {trace.CommitMessage}";
+        var lines = new List<string>
+        {
+            $"正式环境验收结论：{verdictLabel}。",
+            "",
+            "验收证据：",
+            $"- 知识库：[{knowledgeBaseName}]({knowledgeBaseUrl})",
+        };
+
+        if (!string.IsNullOrWhiteSpace(visualReportUrl))
+            lines.Add($"- 验收报告：[{visualReportUrl.Trim()}]({visualReportUrl.Trim()})");
+
+        lines.Add(string.IsNullOrWhiteSpace(trace.CommitUrl)
+            ? $"- 提交：{commitLabel}"
+            : $"- 提交：[{commitLabel}]({trace.CommitUrl})");
+
+        if (trace.PullRequestNumber.HasValue || !string.IsNullOrWhiteSpace(trace.PullRequestUrl))
+        {
+            var prLabel = trace.PullRequestNumber.HasValue ? $"PR #{trace.PullRequestNumber.Value}" : "PR";
+            lines.Add(string.IsNullOrWhiteSpace(trace.PullRequestUrl)
+                ? $"- PR：{prLabel}"
+                : $"- PR：[{prLabel}]({trace.PullRequestUrl})");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Message))
+            lines.Add($"\n回复说明：{request.Message.Trim()}");
+
+        return string.Join("\n", lines);
     }
 
     private static string ComputeReportStatus(List<DefectFixReportItem> items)
@@ -5687,6 +6303,8 @@ public class DefectFixReportItemRequest
     public string? CommitUrl { get; set; }
     public string? Repository { get; set; }
     public string? Branch { get; set; }
+    public int? PullRequestNumber { get; set; }
+    public string? PullRequestUrl { get; set; }
     public string? PreviewUrl { get; set; }
     public string? VisualReportUrl { get; set; }
 }
@@ -5736,6 +6354,8 @@ public class SubmitAutomationCommitInfoRequest
     public string? CommitUrl { get; set; }
     public string? Repository { get; set; }
     public string? Branch { get; set; }
+    public int? PullRequestNumber { get; set; }
+    public string? PullRequestUrl { get; set; }
     public string? PreviewUrl { get; set; }
     public string? VisualReportUrl { get; set; }
     public string? Resolution { get; set; }
@@ -5766,6 +6386,46 @@ public class EnsureDefectAutomationAuthorizationRequest
     public string? Status { get; set; }
 }
 
+public class StartDefectAutomationWorkflowRequest
+{
+    public string? RunId { get; set; }
+    public string? DefectId { get; set; }
+    public string? TriggerType { get; set; }
+    public string? ProjectId { get; set; }
+    public string? TeamId { get; set; }
+    public string? Status { get; set; }
+}
+
+public class CompleteDefectAutomationWorkflowRequest
+{
+    public string? RunId { get; set; }
+    public string DefectId { get; set; } = string.Empty;
+    public string CommitSha { get; set; } = string.Empty;
+    public string? ShortSha { get; set; }
+    public string? CommitMessage { get; set; }
+    public string? CommitUrl { get; set; }
+    public string? Repository { get; set; }
+    public string? Branch { get; set; }
+    public int? PullRequestNumber { get; set; }
+    public string? PullRequestUrl { get; set; }
+    public string? PreviewUrl { get; set; }
+    public string? VisualReportUrl { get; set; }
+    public string? Resolution { get; set; }
+    public string? AgentName { get; set; }
+    public string? CompletionComment { get; set; }
+}
+
+public class BlockDefectAutomationWorkflowRequest
+{
+    public string RunId { get; set; } = string.Empty;
+    public string? DefectId { get; set; }
+    public string? FailureReason { get; set; }
+    public string? FailurePhase { get; set; }
+    public string? Comment { get; set; }
+    public string? AgentName { get; set; }
+    public bool StopRun { get; set; } = true;
+}
+
 public class FailDefectAutomationRunItemRequest
 {
     public string? DefectId { get; set; }
@@ -5782,6 +6442,7 @@ public class SubmitPublishedValidationReportRequest
     public string? KnowledgeBaseUrl { get; set; }
     public string? Verdict { get; set; }
     public string? Message { get; set; }
+    public string? AgentName { get; set; }
 }
 
 public class AutomationCommitTraceInput
@@ -5790,6 +6451,8 @@ public class AutomationCommitTraceInput
     public string? AgentIdentifier { get; set; }
     public string? Repository { get; set; }
     public string? Branch { get; set; }
+    public int? PullRequestNumber { get; set; }
+    public string? PullRequestUrl { get; set; }
     public string? CommitSha { get; set; }
     public string? ShortSha { get; set; }
     public string? CommitMessage { get; set; }

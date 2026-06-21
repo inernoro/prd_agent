@@ -39,6 +39,9 @@
 - [缺陷管理 Agent 产品方案](spec.defect-agent) `spec.defect-agent`
   > 缺陷管理 Agent 的产品需求与用户故事
 
+- [缺陷自动化协议](spec.defect-agent-automation-protocol) `spec.defect-agent-automation-protocol`
+  > domain + K、工作流端点、commit 回写、更新中心关联和发布后验收通知的稳定协议
+
 - [私人执行助理（PA Agent）产品方案](spec.pa-agent) `spec.pa-agent`
   > PA Agent 产品定位、Phase 1 能力与路线图，可独立下载评审
 

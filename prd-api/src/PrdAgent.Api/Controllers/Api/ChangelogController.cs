@@ -171,6 +171,19 @@ public class ChangelogController : ControllerBase
             .Find(x => shas.Contains(x.CommitSha))
             .ToListAsync()
             .ConfigureAwait(false);
+        var defectIds = traces
+            .Select(x => x.DefectId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var defectsById = defectIds.Count == 0
+            ? new Dictionary<string, DefectReport>(StringComparer.Ordinal)
+            : (await _db.DefectReports
+                .Find(x => defectIds.Contains(x.Id))
+                .ToListAsync()
+                .ConfigureAwait(false))
+                .ToDictionary(x => x.Id, StringComparer.Ordinal);
+        var currentUserId = this.GetRequiredUserId();
 
         var deployedCommitSha = ResolveCurrentDeployCommitSha();
         var deployedIndex = string.IsNullOrWhiteSpace(deployedCommitSha)
@@ -203,12 +216,16 @@ public class ChangelogController : ControllerBase
                 result[commitSha] = linked;
             }
 
+            defectsById.TryGetValue(trace.DefectId, out var defect);
             linked.Add(new GitHubLinkedDefectDto
             {
                 TraceId = trace.Id,
                 DefectId = trace.DefectId,
                 DefectNo = trace.DefectNo,
                 DefectTitle = trace.DefectTitle,
+                ReporterName = defect?.ReporterName,
+                IsSubmittedByMe = defect != null
+                    && string.Equals(defect.ReporterId, currentUserId, StringComparison.Ordinal),
                 FixStatus = publishStatus == DefectResolutionPublishStatus.Published
                     ? DefectResolutionFixStatus.Published
                     : trace.FixStatus,
@@ -216,6 +233,8 @@ public class ChangelogController : ControllerBase
                 PreviewUrl = trace.PreviewUrl,
                 VisualReportUrl = trace.VisualReportUrl,
                 KnowledgeBaseUrl = trace.KnowledgeBaseUrl,
+                PullRequestNumber = trace.PullRequestNumber,
+                PullRequestUrl = trace.PullRequestUrl,
                 CommitSha = trace.CommitSha,
             });
         }
@@ -570,7 +589,10 @@ public class ChangelogController : ControllerBase
 
     // ── DTO 映射 ──────────────────────────────────────────────────────
 
-    private static CurrentWeekDto MapCurrentWeek(CurrentWeekView view, int? daysLimit = null, int daysOffset = 0)
+    private static CurrentWeekDto MapCurrentWeek(
+        CurrentWeekView view,
+        int? daysLimit = null,
+        int daysOffset = 0)
     {
         var totalDays = view.Fragments.Count;
         var totalEntries = view.Fragments.Sum(f => f.Entries.Count);
@@ -600,7 +622,10 @@ public class ChangelogController : ControllerBase
         };
     }
 
-    private static ReleasesDto MapReleases(ReleasesView view, bool summary = false, int displayLimit = int.MaxValue) => new()
+    private static ReleasesDto MapReleases(
+        ReleasesView view,
+        bool summary = false,
+        int displayLimit = int.MaxValue) => new()
     {
         DataSourceAvailable = view.DataSourceAvailable,
         Source = view.Source,
@@ -612,7 +637,9 @@ public class ChangelogController : ControllerBase
         Releases = view.Releases.Take(displayLimit).Select(r => MapRelease(r, summary)).ToList(),
     };
 
-    private static ChangelogReleaseDto MapRelease(ChangelogRelease r, bool summary) => new()
+    private static ChangelogReleaseDto MapRelease(
+        ChangelogRelease r,
+        bool summary) => new()
     {
         Version = r.Version,
         ReleaseDate = r.ReleaseDate?.ToString("yyyy-MM-dd"),
@@ -966,11 +993,15 @@ public class ChangelogController : ControllerBase
         public string DefectId { get; set; } = string.Empty;
         public string? DefectNo { get; set; }
         public string? DefectTitle { get; set; }
+        public string? ReporterName { get; set; }
+        public bool IsSubmittedByMe { get; set; }
         public string FixStatus { get; set; } = string.Empty;
         public string PublishStatus { get; set; } = string.Empty;
         public string? PreviewUrl { get; set; }
         public string? VisualReportUrl { get; set; }
         public string? KnowledgeBaseUrl { get; set; }
+        public int? PullRequestNumber { get; set; }
+        public string? PullRequestUrl { get; set; }
         public string CommitSha { get; set; } = string.Empty;
     }
 

@@ -75,6 +75,12 @@ public class DefectFixReportItem
     /// <summary>修复所在分支</summary>
     public string? Branch { get; set; }
 
+    /// <summary>PR 编号</summary>
+    public int? PullRequestNumber { get; set; }
+
+    /// <summary>PR 链接</summary>
+    public string? PullRequestUrl { get; set; }
+
     /// <summary>CDS 预览地址</summary>
     public string? PreviewUrl { get; set; }
 
