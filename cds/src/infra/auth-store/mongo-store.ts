@@ -51,6 +51,15 @@ export { IAuthMongoHandle };
 export class MongoAuthStore implements AuthStore {
   constructor(private readonly handle: IAuthMongoHandle) {}
 
+  /**
+   * 本地账号创建串行锁。createLocalUser 是"findOne 查重 + insertOne"两步，并发下
+   * 两个同名 create 可能都过 findOne 再都 insert。CDS master 单实例单进程，把创建
+   * 串到这条链上即可关闭进程内竞态窗口；跨实例/DB 级仍由文件头记录的 cds_users.username
+   * 唯一(sparse)索引 + 下方 E11000 归一兜底（修复 PR #865 Codex P2「Make Mongo local
+   * username creation atomic」）。
+   */
+  private createUserChain: Promise<void> = Promise.resolve();
+
   // ── Users ─────────────────────────────────────────────────────────────────
 
   async upsertUser(input: UpsertUserInput, now = new Date()): Promise<CdsUser> {
@@ -130,6 +139,20 @@ export class MongoAuthStore implements AuthStore {
   // ── Local credential users ──────────────────────────────────────────────
 
   async createLocalUser(input: CreateLocalUserInput, now = new Date()): Promise<CdsUser> {
+    // 串到 createUserChain 上：上一次创建彻底结束后才执行本次的"查重 + 插入"，
+    // 关闭进程内同名并发竞态（见 createUserChain 注释）。
+    const prev = this.createUserChain;
+    let release!: () => void;
+    this.createUserChain = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await prev.catch(() => { /* 上一次失败不应阻断本次 */ });
+      return await this.createLocalUserUnlocked(input, now);
+    } finally {
+      release();
+    }
+  }
+
+  private async createLocalUserUnlocked(input: CreateLocalUserInput, now: Date): Promise<CdsUser> {
     const username = input.username.toLowerCase();
     const users = this.handle.usersCollection();
     const existing = await users.findOne({ username });

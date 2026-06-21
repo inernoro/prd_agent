@@ -909,10 +909,11 @@ export class ProxyService {
       release: { medianMs: full.releaseMedianMs, samples: full.releaseSamples },
       source: { medianMs: full.sourceMedianMs, samples: full.sourceSamples },
     };
-    if (buckets[preferred].samples > 0) return { mode: preferred, estimate: buckets[preferred] };
-    const other: DeployDurationMode = preferred === 'release' ? 'source' : 'release';
-    if (buckets[other].samples > 0) return { mode: other, estimate: buckets[other] };
-    // 两桶都无样本 → 保留首选 mode，样本为 0（调用方据此显示"暂无预计"）
+    // 只用首选模式的样本桶，绝不跨模式回退。跨模式（用另一模式的中位）会张冠李戴：
+    // 用户在等发布版重建却拿到热加载的短 ETA（发布版通常慢得多），正是首次发布版
+    // 重建最容易误导的场景。首选桶无样本就返回 0 样本，等待页据此显示"正在积累
+    // 历史数据，暂无预计"，宁可不给也不给错（no-rootless-tree，修复 PR #865 Codex P2
+    // 「Keep release waits on the release estimate bucket」）。
     return { mode: preferred, estimate: buckets[preferred] };
   }
 

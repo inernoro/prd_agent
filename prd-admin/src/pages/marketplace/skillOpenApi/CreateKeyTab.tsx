@@ -129,10 +129,17 @@ export function CreateKeyTab({
   const [downloadingSkill, setDownloadingSkill] = useState(false);
   const demoVideoUrl = useDemoVideoUrl(DEMO_VIDEO_ID);
 
+  // 本 Key 实际包含哪类 scope —— 决定给智能体的指令走"海鲜市场"还是"文档空间"。
+  // 知识库「接入 AI」签发的是 document-store-only Key，若仍发海鲜市场提示词 +
+  // 装 findmapskills（只覆盖 marketplace.skills:* 端点），AI 照做会 403 或拿不到
+  // 任何文档空间工作流（修复 PR #865 Codex P2「Provide document-store agent instructions」）。
+  const hasMarketplaceScope = selectedScopes.some((s) => s.startsWith('marketplace.skills'));
+  const hasDocStoreScope = selectedScopes.some((s) => s.startsWith('document-store'));
+
   /**
-   * 「复制给智能体使用」提示词 —— 最小化 + 安全：
-   *  1. 只告诉 AI 两件事：把 Key 存进 shell init 文件（不入仓库），下载 findmapskills 技能
-   *  2. 剩下的操作全写在 SKILL.md 里，AI 装完读一下就会
+   * 「复制给智能体使用」提示词 —— 按 Key 的真实 scope 出对应指令，最小化 + 安全：
+   *  - 含 marketplace.skills → 海鲜市场提示词 + 下载 findmapskills 技能
+   *  - 仅 document-store → 文档空间 API 提示词（真实端点，不装 marketplace 技能）
    *
    * 安全考量：
    *  - 明确要求"不要把 Key 写进仓库代码或 git 追踪的文件"
@@ -140,14 +147,34 @@ export function CreateKeyTab({
    *  - 不使用 ~/.env 之类容易被 git commit 的文件
    */
   const buildAgentPrompt = (key: string) => {
-    const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS);
     const base = typeof window !== 'undefined' ? window.location.origin : '';
-    return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
-
-① 把下面这对 Key 存到 ~/.zshrc 或 ~/.bashrc（或其他不会被 git 追踪的安全位置），然后 source 生效。不要写进仓库里任何文件：
+    const keyBlock = `① 把下面这对 Key 存到 ~/.zshrc 或 ~/.bashrc（或其他不会被 git 追踪的安全位置），然后 source 生效。不要写进仓库里任何文件：
 
 export PRD_AGENT_API_KEY="${key}"
-export PRD_AGENT_BASE="${base}"
+export PRD_AGENT_BASE="${base}"`;
+
+    // 仅文档空间权限（无 marketplace）→ 文档空间 API 指令，不引用 findmapskills。
+    if (hasDocStoreScope && !hasMarketplaceScope) {
+      return `请帮我接入 PrdAgent 知识库（文档空间）开放接口。
+
+${keyBlock}
+
+② 调用文档空间 API（统一带请求头 Authorization: Bearer $PRD_AGENT_API_KEY）：
+- 列出我的知识库：GET  $PRD_AGENT_BASE/api/document-store/stores
+- 读取某篇文章：  GET  $PRD_AGENT_BASE/api/document-store/entries/{entryId}
+- 新建知识库：    POST $PRD_AGENT_BASE/api/document-store/stores
+- 在知识库下新增文章：POST $PRD_AGENT_BASE/api/document-store/stores/{storeId}/entries
+- 更新文章正文：  PUT  $PRD_AGENT_BASE/api/document-store/entries/{entryId}/content
+
+后续我说"把这份内容存进我的知识库"或"读一下我某个知识库的文章"，按上面的接口操作即可。
+`;
+    }
+
+    // 含海鲜市场权限 → 海鲜市场提示词 + findmapskills 技能。
+    const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS);
+    return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
+
+${keyBlock}
 
 ② 下载官方操作技能 findmapskills 到 ~/.claude/skills/：
 
@@ -357,17 +384,23 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
             )}
           </button>
 
-          <span aria-hidden className="opacity-30">·</span>
+          {/* findmapskills 只覆盖海鲜市场端点 —— 仅含 marketplace.skills scope 的 Key
+              才提供下载，文档空间专用 Key 不引导装这个无关技能（见 buildAgentPrompt）。 */}
+          {hasMarketplaceScope && (
+            <>
+              <span aria-hidden className="opacity-30">·</span>
 
-          <button
-            type="button"
-            onClick={handleDownloadSkillHere}
-            disabled={downloadingSkill}
-            className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
-          >
-            <Download size={11} />
-            {downloadingSkill ? '下载中…' : '下载 findmapskills 技能包'}
-          </button>
+              <button
+                type="button"
+                onClick={handleDownloadSkillHere}
+                disabled={downloadingSkill}
+                className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
+              >
+                <Download size={11} />
+                {downloadingSkill ? '下载中…' : '下载 findmapskills 技能包'}
+              </button>
+            </>
+          )}
 
           <span aria-hidden className="opacity-30">·</span>
 

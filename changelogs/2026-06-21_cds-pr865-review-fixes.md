@@ -19,3 +19,6 @@
 | fix | cds | 执行器构建路径在成功 complete 时戳 runtimeStartedAt 并采样部署耗时，执行器构建的项目也能积累 ETA 历史 |
 | fix | cds | 单服务/首次 clone 部署起点也钉 lastDeployStartedAt，且 ETA 解析在 stamped 不旧于最新日志时优先它，单服务重部署不再误算几小时 |
 | fix | cds | 首启引导加进程内串行锁，防并发 bootstrap 铸出多个 system owner |
+| fix | cds | 预览等待 ETA 不再跨模式回退：发布版重建无样本时显示「暂无预计」而非热加载 ETA |
+| fix | prd-admin | 知识库「接入 AI」按 Key 真实 scope 出文档空间 API 指令，不再发海鲜市场提示词/装 findmapskills |
+| fix | cds | 本地账号创建加进程内串行锁，关闭同名并发竞态（叠加 username 唯一索引 + E11000 兜底） |
