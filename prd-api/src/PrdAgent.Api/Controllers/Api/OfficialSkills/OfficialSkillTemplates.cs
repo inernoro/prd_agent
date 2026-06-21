@@ -12,8 +12,8 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.5.0";
-    public const string AiDefectResolveReleaseDate = "2026-06-21";
+    public const string AiDefectResolveVersion = "1.7.0";
+    public const string AiDefectResolveReleaseDate = "2026-06-22";
 
     public const string AiDefectResolveSkillMd = """
 ---
@@ -73,6 +73,14 @@ Content-Type: application/json
 
 旧端点 `runs`、`next`、`comments`、`commit-info`、`fix-status` 只用于兼容和排障；日常自动化优先使用 `defect-agent-workflow.v1`。
 
+如果仓库存在 `scripts/defect-automation-probe.mjs`，日常任务启动前必须先运行安全自检：
+
+```bash
+DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automation-probe.mjs --safe
+```
+
+安全自检只调用 `connector` 和 `published-pending`，不会领取缺陷。它必须证明 `auth.requiredScope == defect-agent:use` 且 `workflow.version == defect-agent-workflow.v1`。自检失败时停止本轮，不要调用 `start-next`。
+
 `workflow/complete` 会同时写入缺陷结构化字段和更新中心关联用的 `defect_resolution_traces`。发布中心只读取 commit id 关联结果并展示，不负责人工关联缺陷。
 
 闭环验收不能只看接口：更新中心的 commit 记录 UI 必须出现可点击的“关联缺陷 N”或“我的缺陷 N”标志。点击后必须能看到缺陷编号、标题、发布状态、验收报告或知识库链接。提交者本人场景必须证明按钮显示“我的缺陷 N”或弹窗内出现“我提交的”。普通 changelog 文案行没有 commit id，不允许按日期批量贴缺陷标志。
@@ -80,7 +88,7 @@ Content-Type: application/json
 ## 正式发布后的验收通知
 
 1. `GET {domain}/api/defect-agent/agent/published-pending?limit=20` 拉取已正式发布但未通知提交人的修复记录。
-2. 使用 `create-visual-test-to-kb` 跑正式环境验收，目标取 `item.acceptance.target`，正式地址取 `item.acceptance.previewUrl`。
+2. 正式缺陷系统只负责读取待验收 trace 和回写通知；使用 `create-visual-test-to-kb` 在测试或预览环境跑视觉验收，目标取 `item.acceptance.target`，验收地址取 `item.acceptance.previewUrl`。
 3. 复制验收技能的 `acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本把 `report.storeName` 改为“缺陷修复验收报告”。
 4. 视觉验收必须进入更新中心的 commit 记录列表，截取对应 commit 行上的“关联缺陷 N”或“我的缺陷 N”按钮；必须点击按钮并截取弹窗，证明缺陷编号、标题、发布状态、验收报告或知识库链接可见。普通 changelog 文案行不作为缺陷关联验收目标。
 5. 归档后用 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
@@ -102,6 +110,7 @@ Content-Type: application/json
 - 评论和修复说明必须包含可验收步骤。
 - 只 commit 不调用 `workflow/complete` 不算闭环完成；旧 `commit-info` 只用于兼容和排障。
 - 正式发布前只在缺陷内更新进度，不给提交人发“已修复”通知。
+- `start-next` 返回 `hasNext=false` 时正常结束，不创建 PR，不制造测试缺陷。
 """;
 
     public const string AiDefectResolveReadme = """
