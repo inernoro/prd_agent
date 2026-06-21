@@ -4,7 +4,7 @@
  * - 痛点指数：按声道权重 × 影响人数 × log(频次) 的饱和曲线映射到 0-100（越低越健康，启发式）
  * - 声道占比：把洞察按类型归并为 报错/等待/停留/流失/横跳 五声道，按加权占比排条
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design';
 import type { BehaviorInsight } from '@/services/contracts/teamActivity';
 
@@ -114,29 +114,49 @@ export function ExperienceStats({ items }: { items: BehaviorInsight[] }) {
   const channels = computeChannels(items);
   const open = items.filter((i) => i.status !== 'resolved' && i.status !== 'ignored').length;
 
+  // 自适应紧凑度：Bento 满数据态本格是「最小方块」（窄 + 矮）。窄于阈值时表盘当主角、
+  // 声道占比压成「只留前两条 + 更细的条」，宽时（趋势空被吸收成 col-span-5）展开全部声道。
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => setNarrow(el.getBoundingClientRect().width < 320);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 窄方块只展示前两条声道（够指出主要痛点声道），避免在小方块里堆条溢出 / 留白
+  const shownChannels = narrow ? channels.slice(0, 2) : channels;
+
   return (
-    <GlassCard className="flex flex-col h-full" style={{ padding: 0, minHeight: 320 }}>
-      <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
-        <span className="text-[13px] font-semibold text-white/85">体验痛点指数</span>
+    <div ref={rootRef} className="h-full min-h-0">
+      <GlassCard className="flex flex-col h-full" style={{ padding: 0, minHeight: 0 }}>
+      <div className="flex items-center justify-between px-3.5 pt-2.5 pb-1.5 shrink-0">
+        <span className="text-[12.5px] font-semibold text-white/85">体验痛点指数</span>
       </div>
       {/* 仪表盘居中占据上半区，声道占比铺满下半区——两段一起把格子撑满，消除底部空白 */}
-      <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-4 pb-2">
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-3 pb-1.5 overflow-hidden">
         <Gauge value={index} />
-        <div className="text-center text-[11.5px] text-white/45 -mt-1">
+        <div className="text-center text-[11px] text-white/45 -mt-1 px-1 leading-tight">
           {index === 0 ? '当前窗口暂无未处理痛点' : `${open} 处待解决 · 修复后指数回落`}
         </div>
       </div>
-      {channels.length > 0 ? (
-        <div className="px-4 pb-4 pt-1 border-t border-white/[0.05] shrink-0">
-          <div className="text-[12px] text-white/55 font-medium mb-2.5 mt-2">痛点声道占比</div>
-          <div className="flex flex-col gap-2.5">
-            {channels.map((c) => (
+      {shownChannels.length > 0 ? (
+        <div className="px-3.5 pb-3 pt-1 border-t border-white/[0.05] shrink-0">
+          <div className="text-[11px] text-white/55 font-medium mb-2 mt-1.5">
+            痛点声道占比{narrow && channels.length > shownChannels.length ? `（前 ${shownChannels.length}）` : ''}
+          </div>
+          <div className={`flex flex-col ${narrow ? 'gap-1.5' : 'gap-2.5'}`}>
+            {shownChannels.map((c) => (
               <div key={c.kind}>
-                <div className="flex items-center justify-between text-[11.5px] mb-1">
-                  <span className="text-white/70">{c.label}</span>
-                  <span className="text-white/35 tabular-nums">{c.pct}%</span>
+                <div className="flex items-center justify-between text-[11px] mb-1">
+                  <span className="text-white/70 truncate">{c.label}</span>
+                  <span className="text-white/35 tabular-nums shrink-0 ml-1.5">{c.pct}%</span>
                 </div>
-                <div className="h-[7px] rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                <div className="rounded-full overflow-hidden" style={{ height: narrow ? 5 : 7, background: 'rgba(255,255,255,0.06)' }}>
                   <div style={{ width: `${c.pct}%`, height: '100%', borderRadius: 4, background: c.color, transition: 'width .9s cubic-bezier(.2,.8,.2,1)' }} />
                 </div>
               </div>
@@ -144,6 +164,7 @@ export function ExperienceStats({ items }: { items: BehaviorInsight[] }) {
           </div>
         </div>
       ) : null}
-    </GlassCard>
+      </GlassCard>
+    </div>
   );
 }

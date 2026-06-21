@@ -176,7 +176,9 @@ export function ExperienceTrend({
           </span>
         </div>
       </div>
-      <div ref={svgBoxRef} className="px-2 pb-2 flex-1 min-h-0 flex flex-col" style={{ minHeight: 280 }}>
+      {/* Bento 桌面：本格是「宽而矮」的 row-span-1（≈220px），曲线区给较小 min-height 以贴合矮格；
+          移动单图无 grid 撑高，靠媒体查询给更高 min-height 让曲线长满首屏。见底部 voc-trend-body 样式。 */}
+      <div ref={svgBoxRef} className="px-2 pb-2 flex-1 min-h-0 flex flex-col voc-trend-body">
         {!hasData || !series ? (
           <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2.5 text-center">
             <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
@@ -247,6 +249,12 @@ export function ExperienceTrend({
         )}
       </div>
       <style>{`
+        /* 曲线区高度：桌面 Bento「宽而矮」格里给较小 min-height（贴合 220px row-span-1，不撑破矮格）；
+           窄屏单图视图无 grid 撑高，给更高 min-height 让曲线长满首屏（呼应 mobile-first-density）。 */
+        .voc-trend-body { min-height: 150px; }
+        @media (max-width: 1023px) {
+          .voc-trend-body { min-height: 280px; }
+        }
         @keyframes voc-trend-draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
         @keyframes voc-trend-fade { from { opacity: 0; } to { opacity: 1; } }
         @keyframes voc-trend-pop { from { opacity: 0; transform: scale(.2); } to { opacity: 1; transform: scale(1); } }

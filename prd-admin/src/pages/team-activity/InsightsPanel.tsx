@@ -4,7 +4,7 @@
  * 操作：转为缺陷（接入 defect-agent 修复流水线）/ 标记已修复 / 忽略（指纹级持久化，不再打扰）。
  * 数据源：apirequestlogs（报错/慢端点，历史即有）+ behavior_events（路由信号，自采集上线起累积）。
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { BarChart3, BookOpen, Bug, Check, CheckCircle2, ClipboardList, EyeOff as IgnoreIcon, LayoutGrid, Megaphone, Microscope, Network, Radar, RotateCcw, ScrollText, TrendingUp, Users, X, type LucideIcon } from 'lucide-react';
 import { GlassCard } from '@/components/design';
@@ -457,39 +457,59 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const renderStatsTile = () => (data ? <ExperienceStats items={data.items} /> : null);
   const renderBoardTile = () => <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} />;
 
-  // 桌面端（lg+）四图仪表盘：端点地图 / 趋势爆点 / 痛点指数 / 声道看板。
-  // 「自由融合」：无数据的格（当前仅趋势可整格隐藏）退出布局，剩余 N 格用响应式 grid 自动铺满不留洞。
-  // 每格即一张自带标题的卡（各自含 header），靠 grid 等宽 + auto-rows-fr 等高分配。
+  // 桌面端（lg+）Bento 看板：四块大小不一拼成一张满看板（参照 behavior-insights-bento-demo.html）。
+  // 12 列 grid + 固定行高，每块按内容定大小：
+  //   - 热力图 hero：col-span-7 / row-span-2（左侧大块跨两行当主角）
+  //   - 趋势爆点：col-span-5 / row-span-1（右上宽而矮）
+  //   - 痛点指数：col-span-2 / row-span-1（最小方块）
+  //   - 声道看板：col-span-3 / row-span-1（右下中等）
+  // 「自由融合」：趋势无数据时整块移出布局，痛点指数 + 声道看板各长到 col-span-5 上下堆满右 5 列，
+  //   热力图主角不变，不留任何空洞。
+  // 布局关键尺寸（gridColumn/gridRow span、grid-template）一律走 inline style（frontend-modal 习惯，
+  //   避免 Tailwind arbitrary span 在某些构建路径不生效）。
   const renderDesktopDashboard = () => {
-    // 可见格：端点地图 + （趋势有数据时）趋势 + 痛点指数 + 声道看板。
-    // 趋势无数据 → 不进可见列，但下方仍以 display:none 持续挂载一个趋势实例（保持订阅 from/to、
-    // 数据回来能再上报 onEmptyChange(false) 让本格重新出现），避免「卸载后永久消失」。
-    const tiles: { key: string; node: ReactNode }[] = [
-      {
-        key: `map-${mapMode}`,
-        node: (
-          <div key={mapMode} className="h-full" style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
-            {renderMapTile()}
-          </div>
-        ),
-      },
-      ...(trendEmpty ? [] : [{ key: 'trend', node: renderTrendTile(true) }]),
-      { key: 'stats', node: renderStatsTile() },
-      { key: 'board', node: renderBoardTile() },
-    ].filter((t) => t.node != null);
+    // 各块 span：趋势有无数据两套尺寸（趋势无数据时 stats/board 吸收右 5 列上下堆叠）。
+    const span = (col: number, row: number): CSSProperties => ({
+      gridColumn: `span ${col}`,
+      gridRow: `span ${row}`,
+      minHeight: 0,
+    });
+    const mapSpan = span(7, 2);
+    const trendSpan = span(5, 1);
+    const statsSpan = trendEmpty ? span(5, 1) : span(2, 1);
+    const boardSpan = trendEmpty ? span(5, 1) : span(3, 1);
 
-    // 列数随有效格数自适应，auto-rows-fr 等高、items-stretch 撑满。
-    // 防留洞：奇数格（如趋势隐藏后剩 3 格）时让最后一格横跨两列，铺满下半行不留空洞。
-    const cols = tiles.length <= 1 ? 'grid-cols-1' : 'grid-cols-2';
-    const oddTail = tiles.length > 1 && tiles.length % 2 === 1;
     return (
       <div className="hidden lg:block">
-        <div className={`grid ${cols} gap-3 items-stretch auto-rows-fr`}>
-          {tiles.map((t, i) => (
-            <div key={t.key} className={`min-h-0${oddTail && i === tiles.length - 1 ? ' col-span-2' : ''}`}>
-              {t.node}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
+            gridAutoRows: '220px',
+            gap: '12px',
+            transition: 'grid-template-rows .4s',
+          }}
+        >
+          {/* 热力图 hero（跨两行主角）：内部 voc-hero-swap 入场 + 子切换 morph */}
+          <div style={mapSpan}>
+            <div key={mapMode} className="h-full" style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
+              {renderMapTile()}
             </div>
-          ))}
+          </div>
+          {/* 趋势爆点（宽而矮）：有数据才进布局；无数据整块移出，由 stats/board 吸收 */}
+          {trendEmpty ? null : (
+            <div style={trendSpan} className="voc-bento-tile">
+              {renderTrendTile(true)}
+            </div>
+          )}
+          {/* 痛点指数（满数据时最小方块，趋势空时长成右 5 列上块） */}
+          <div style={statsSpan} className="voc-bento-tile">
+            {renderStatsTile()}
+          </div>
+          {/* 声道看板（满数据时中等，趋势空时长成右 5 列下块） */}
+          <div style={boardSpan} className="voc-bento-tile">
+            {renderBoardTile()}
+          </div>
         </div>
         {/* 趋势隐藏时的持续挂载点：不占布局，仅维持订阅 + 空态上报，使窗口切到有数据时本格能复现 */}
         {trendEmpty ? <div style={{ display: 'none' }}>{renderTrendTile(true)}</div> : null}
@@ -543,7 +563,10 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
       <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }
           @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
-          @keyframes voc-hero-swap { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+          @keyframes voc-hero-swap { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+          /* Bento 格：span 变化时平滑过渡（趋势吸收/补满有动效），内部卡撑满格高 */
+          .voc-bento-tile { transition: grid-column .45s cubic-bezier(.2,.7,.2,1), grid-row .45s cubic-bezier(.2,.7,.2,1); min-height: 0; }
+          .voc-bento-tile > * { height: 100%; min-height: 0; }`}</style>
         {/* 闭环 ribbon：监测 → 预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落，从热力图/洞察现算 */}
         <div className="px-1.5 pt-2 sm:px-5 sm:pt-4">
           <ExperienceRibbon mapData={mapData} insights={data} />
@@ -825,7 +848,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
             >
               <div
                 className="flex-1 flex flex-col"
-                style={{ minHeight: 0, padding: '3vh 3vw', animation: 'voc-fs-in .34s cubic-bezier(.16,1,.3,1)', transformOrigin: 'center' }}
+                style={{ minHeight: 0, padding: '3vh 3vw', animation: 'voc-fs-in .42s cubic-bezier(.16,1,.3,1) both', transformOrigin: 'center' }}
                 onClick={(e) => e.stopPropagation()}
               >
                 <ExperienceMap
@@ -839,7 +862,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                   onExitFullscreen={() => setFullscreenOpen(false)}
                 />
               </div>
-              <style>{`@keyframes voc-fs-in { from { transform: scale(.86); opacity: 0; } to { transform: scale(1); opacity: 1; } }`}</style>
+              {/* 从中心放大入场（哇塞感）：从 0.78 缩放 + 透明渐入，cubic-bezier 带轻微过冲感 */}
+              <style>{`@keyframes voc-fs-in { from { transform: scale(.78); opacity: 0; } to { transform: scale(1); opacity: 1; } }`}</style>
             </div>,
             document.body
           )

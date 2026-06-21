@@ -90,7 +90,7 @@ export function ExperienceBoard({
 
   if (empty && !defectsErr) {
     return (
-      <GlassCard className="overflow-hidden h-full flex flex-col" style={{ padding: 0, minHeight: 320 }}>
+      <GlassCard className="overflow-hidden h-full flex flex-col voc-board-card" style={{ padding: 0, minHeight: 0 }}>
         <Header />
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2.5 text-center">
           <span className="w-3 h-3 rounded-full" style={{ background: '#34d399', boxShadow: '0 0 0 5px rgba(52,211,153,0.16)' }} />
@@ -119,7 +119,11 @@ export function ExperienceBoard({
         {/* 右声道：用户之声 = 用户主动提交的真实缺陷 */}
         <UserChannel defects={defects} error={defectsErr} startIdx={behaviorVoice.length} onOpenDefect={() => navigate('/defect-agent')} />
       </div>
-      <style>{`@keyframes voc-board-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+      <style>{`
+        /* Bento 桌面：本格 row-span-1（≈220px），卡撑满格高、内容区内部滚动，不给硬 min-height 撑破矮格；
+           窄屏单图视图无 grid 撑高，给 min-height 让声道看板有足够展开高度。 */
+        @media (max-width: 1023px) { .voc-board-card { min-height: 320px; } }
+        @keyframes voc-board-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`}</style>
     </GlassCard>
   );
 }
