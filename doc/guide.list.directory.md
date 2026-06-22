@@ -75,6 +75,9 @@
 - [CDS MAP 配对协议规格](spec.cds-map-pairing-protocol) `spec.cds-map-pairing-protocol`
   > CDS 与 MAP 平台之间的配对协议规格
 
+- [MAP 知识库传输协议（MAP-KBTP v1）规格](spec.map-kb-transfer-protocol) `spec.map-kb-transfer-protocol`
+  > MAP 平台知识库双向同步的底层传输协议规格（PeerSync + DocumentStoreSyncResource，v1.1 已落地）
+
 - [CDS 多项目数据字典](spec.cds-project-model) `spec.cds-project-model`
   > CDS 多项目数据模型的字段定义与约束
 
@@ -828,6 +831,9 @@
 
 - [MAP MCP 连接器 · 债务台账](debt.map-mcp-connector) `debt.map-mcp-connector`
   > MAP MCP 连接器核心链路已上线，债务台账记录 PR #836 后显式延后的硬化项（共 4 条，open 3）
+
+- [行为洞察 / VOC 体验之声 工程债务台账](debt.voc) `debt.voc`
+  > 行为洞察页面已知边界、待建造项（顶部 ribbon 流式动画、VOC 信息流等）与跨 session 债务
 
 ### 七、周报
 
