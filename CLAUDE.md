@@ -391,6 +391,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **preview-url** | `/preview` | 输入当前分支 → 自动拼接 `分支名.miduo.org` 预览地址，用于人工验收 |
 | **acceptance-checklist** | `/uat` | 输入功能场景 → 生成真人逐步打勾的 UAT 清单（Phase 0-7：前置 → 冷启 → 执行 → 验证 → 回归 → 回滚 → 负面），每步含预期结果 + 失败排查手册。CLI/Web 双通道支持 |
 | **acceptance-scenario-orchestrator** | `/验收场景` | 输入每日/PR/commit/未发布分支/缺陷复测等复杂验收目标 → 先做场景识别、PR/commit 到结果映射、指差法开测清单、证据链契约，再交给 `/验收` 取证归档 |
+| **acceptance-test-design** | `/验收设计` | 输入 PR/commit/昨日变更/发布范围 → 从行为断言出发，生成风险假设/用户可见影响/融合测试场景/证据要求，供下游视觉验收技能执行 |
 | **task-handoff-checklist** | `/handoff` | 输入当前变更 → 扫描导航/文档/规则/工作流/测试/风险/质量/后续 8 个维度，输出交接清单 |
 | **auto-fix-issues** | `/audit` | Agent 间 issue 反馈/修复/复测协议。三档标签 (`待解决` / `已解决待验收` / `已验收`)、issue + tracker + PR 收尾 + 复测报告四套模板，PR 合并必须改 label 的强制清单，杜绝"修了忘改 label" |
 | **issues-autofix** | `/issues-autofix` | 无人值守日常 issue 维护 Agent。批跑 open issue，按分类规则自动答复/修复/升级，绝不反向询问。完全跳过 `visual-test:*` / `discussion` / 其他 Agent 领地（详见 `doc/rule.issues-system.md` §3） |

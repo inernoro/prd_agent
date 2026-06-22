@@ -122,6 +122,9 @@
 - [工作流自动配置设计](design.workflow-auto-config) `design.workflow-auto-config`
   > AI 生成校验自愈闭环 + 降低工作流配置门槛（让用户只描述、自动配）
 
+- [赋码采集关联智能体（CCAS）设计](design.ccas-agent) `design.ccas-agent`
+  > 产线赋码业务三件套：PRD 文档生成 + 设备素材库 + 流程示意图（appKey: ccas-agent）
+
 - [工作流引擎 v2 流程控制舱与 SSE 实时推送设计](design.workflow-control-flow-sse) `design.workflow-control-flow-sse`
   > 工作流引擎 v2 的控制流与 SSE 实时推送
 
@@ -635,7 +638,10 @@
 
 - [AI 文本辅助通用 Domain 设计](plan.ai-text-assist) `plan.ai-text-assist`
 - [MD转PPT 对话式 artifact 工作台改造计划](plan.md-to-ppt-chat-redesign) `plan.md-to-ppt-chat-redesign`
-  > AI 文本辅助功能的通用领域模型设计
+  > MD 转 PPT 对话式工作台改造的实施计划
+
+- [MD 转 PPT 下一波执行计划](plan.md-to-ppt-next-wave) `plan.md-to-ppt-next-wave`
+  > MD 转 PPT 下一波：大纲右侧编辑器 / 状态机 / 澄清问卷 / 编辑深修
 
 - [配图标记手动干预](plan.manual-image-marking-control) `plan.manual-image-marking-control`
   > 配图标记从"自动黑盒"升级为"提示词+位置策略+段落级操作"的分阶段计划（Phase 1/2/3）
