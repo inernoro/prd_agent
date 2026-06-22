@@ -14,7 +14,7 @@
  *
  * Theme: every color goes through tokens (light + dark). See cds-theme-tokens.md.
  */
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -28,6 +28,7 @@ import {
   RefreshCw,
   Server,
   Timer,
+  Wrench,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -128,6 +129,12 @@ export interface MonitoringDialogProps {
   onOpenChange: (open: boolean) => void;
   projectId?: string;
   projectName?: string;
+  /**
+   * 项目级运维操作内容（清理孤儿/停止分支、运维状态、请求观测、访问痕迹）。
+   * 由项目页传入，作为「运维操作」页签渲染——让「运维」从此只有一个入口、一个面板，
+   * 不再是「运维监控」+「运维」两个按钮（2026-06-22 用户指出二者本是一个东西）。
+   */
+  children?: ReactNode;
 }
 
 export function MonitoringDialog({
@@ -135,9 +142,11 @@ export function MonitoringDialog({
   onOpenChange,
   projectId,
   projectName,
+  children,
 }: MonitoringDialogProps): JSX.Element {
   const { state, activity, reload } = useMonitoringData(open, projectId);
   const [tab, setTab] = useState('performance');
+  const hasOps = Boolean(children);
 
   const title = projectName ? `运维监控 · ${projectName}` : '运维监控';
   const description = projectId
@@ -147,7 +156,7 @@ export function MonitoringDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-3xl overflow-hidden p-0"
+        className={`${hasOps ? 'max-w-5xl' : 'max-w-3xl'} overflow-hidden p-0`}
         style={{ maxHeight: '86vh' }}
       >
         <div className="flex min-h-0 flex-col" style={{ maxHeight: '86vh' }}>
@@ -187,14 +196,20 @@ export function MonitoringDialog({
                 <Activity className="h-4 w-4 shrink-0" />
                 活动
               </TabsTrigger>
+              {hasOps ? (
+                <TabsTrigger value="ops" className={TAB_TRIGGER_CLASS}>
+                  <Wrench className="h-4 w-4 shrink-0" />
+                  运维操作
+                </TabsTrigger>
+              ) : null}
             </TabsList>
 
             <div
               className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
               style={{ minHeight: 0, overscrollBehavior: 'contain' }}
             >
-              {state.status === 'loading' ? <LoadingBlock label="加载监控数据" /> : null}
-              {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+              {tab !== 'ops' && state.status === 'loading' ? <LoadingBlock label="加载监控数据" /> : null}
+              {tab !== 'ops' && state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
               {state.status === 'ok' ? (
                 <>
                   <TabsContent value="performance">
@@ -212,6 +227,7 @@ export function MonitoringDialog({
                   </TabsContent>
                 </>
               ) : null}
+              {hasOps ? <TabsContent value="ops">{children}</TabsContent> : null}
             </div>
           </Tabs>
         </div>

@@ -1,9 +1,7 @@
-import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
-  AlertCircle,
   AlertTriangle,
   ArrowLeft,
   Bot,
@@ -1198,14 +1196,6 @@ function branchIssueCardClass(branch: BranchSummary): string {
 }
 
 // 错误提示条文字色 —— 同样按 category 派发,与卡片/胶囊一致。
-function branchIssueHintTextClass(branch: BranchSummary): string {
-  const category = branchIssueCategory(branch);
-  if (category === 'cds-runtime') return 'text-destructive/80';
-  if (category === 'app-code') return 'text-amber-700/90 dark:text-amber-300/90';
-  if (category === 'deploy-config') return 'text-orange-700/90 dark:text-orange-300/90';
-  return 'text-muted-foreground';
-}
-
 function statusLabel(status: BranchSummary['status'] | ServiceState['status']): string {
   const labels: Record<string, string> = {
     idle: '未运行',
@@ -1405,7 +1395,6 @@ export function BranchListPage(): JSX.Element {
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
-  const [monitoringOpen, setMonitoringOpen] = useState(false);
   const noticeProject = useMemo(() => (
     state.status === 'ok' ? state.project : projectId ? fallbackProjectSummary(projectId) : null
   ), [projectId, state.status, state.status === 'ok' ? state.project.id : null, state.status === 'ok' ? state.project.slug : null, state.status === 'ok' ? state.project.name : null, state.status === 'ok' ? state.project.aliasName : null]);
@@ -3164,17 +3153,8 @@ export function BranchListPage(): JSX.Element {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setMonitoringOpen(true)}
-                title="运维监控（性能 / 执行器 / 活动）"
-              >
-                <Gauge />
-                运维监控
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
                 onClick={() => setOpsDrawerOpen(true)}
-                title="运维抽屉"
+                title="运维（性能 / 执行器 / 活动 / 运维操作）"
               >
                 <Activity />
                 运维
@@ -3379,15 +3359,13 @@ export function BranchListPage(): JSX.Element {
           onRelease={(branchId) => setReleaseBranchId(branchId)}
         />
 
-        <MonitoringDialog
-          open={monitoringOpen}
-          onOpenChange={setMonitoringOpen}
-          projectId={projectId}
-          projectName={title}
-        />
-
         {state.status === 'ok' ? (
-          <OpsDrawer open={opsDrawerOpen} onClose={() => setOpsDrawerOpen(false)}>
+          <MonitoringDialog
+            open={opsDrawerOpen}
+            onOpenChange={setOpsDrawerOpen}
+            projectId={projectId}
+            projectName={title}
+          >
               
 
               {/* 2026-05-07 wave 1.1 v2 (用户反馈"还是灰色不响应"):彻底放弃
@@ -3897,7 +3875,7 @@ export function BranchListPage(): JSX.Element {
               </div>
 
 
-          </OpsDrawer>
+          </MonitoringDialog>
         ) : null}
 
         {/* 2026-05-07 wave 1.3:容量超限交互式选择停哪些分支 + 自动重试 */}
@@ -4262,64 +4240,8 @@ function BranchSearchDropdown({
   );
 }
 
-/*
- * OpsDrawer — right-side drawer for low-frequency operations (capacity /
- * hosts / executors / batch / activity). Keep the shell aligned with
- * BranchDetailDrawer so both heavy panels share the same size and dismissal
- * behavior.
- */
-function OpsDrawer({
-  open,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  onClose: () => void;
-  children: ReactNode;
-}): JSX.Element | null {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [open, onClose]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="运维抽屉">
-      <button
-        type="button"
-        className="absolute inset-0 z-0 bg-transparent"
-        onClick={onClose}
-        aria-label="关闭运维抽屉"
-      />
-      <div
-        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[min(1240px,calc(100vw-32px))] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
-        style={{ minHeight: 0 }}
-      >
-        <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <Activity className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="text-sm font-semibold">运维</span>
-            <span className="text-muted-foreground/60">·</span>
-            <span className="min-w-0 truncate text-xs text-muted-foreground">容量 / 主机 / 执行器 / 活动</span>
-          </div>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="关闭" title="关闭">
-            <X />
-          </Button>
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5" style={{ overscrollBehavior: 'contain' }}>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-}
+// OpsDrawer 已并入统一的「运维」面板（MonitoringDialog 的「运维操作」页签），
+// 不再单独存在右侧抽屉 + 独立的「运维监控」按钮（2026-06-22 用户指出二者本是一个东西）。
 
 function ReleaseBranchDialog({
   branch,
@@ -5275,7 +5197,32 @@ function BranchCard({
           - 启动中 / 异常 时,端口 chip 色统一跟 branch 状态(以前是
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
-      <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
+      <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3" style={{ minHeight: '1.75rem' }}>
+        {/* 2026-06-22 用户主诉求：停止/降温/出错（!running && !interim）时，隐藏"服务端口那一横"，
+            在同一槽位单行显示「容器停止/出错」统一标识 + 信息提醒（停止来源/调度器降温原因/错误），
+            让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。 */}
+        {shouldShowStopReason ? (
+          <div
+            className={`flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${isError ? issueClass : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'}`}
+            title={isError
+              ? deployFailureMessage(branch)
+              : `${stopSourceLabel} · ${branch.lastStoppedAt || '时间未知'}\n${stopReasonText}`}
+          >
+            {isError ? <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden /> : <PowerOff className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+            {isError ? (
+              // 出错：直接展示完整失败原因（含"应用代码错误："前缀 + 服务名/就绪探测超时等），
+              // 这是唯一的错误提醒——原先卡片底部单独的 BranchFailureHint 已并入此槽位（2026-06-22）。
+              <span className="min-w-0 flex-1 truncate">{deployFailureMessage(branch)}</span>
+            ) : (
+              <>
+                <span className="shrink-0 font-medium text-foreground/80">{stopSourceLabel}</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground/85">{stopReasonText}</span>
+              </>
+            )}
+            <span className="shrink-0 whitespace-nowrap text-muted-foreground/65">{stopTimeText}</span>
+          </div>
+        ) : (
+          <>
         {/* status chip 仅在异常/中间态显示;running 删除(冗余)。
             中间态的已用时间合并在同一个 chip 内,避免"启动中"和"启动 01:34"重复。 */}
         {(isError || isInterim) ? (
@@ -5420,23 +5367,11 @@ function BranchCard({
         <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>
           {timeBadge.label} {timeBadge.text}
         </span>
+          </>
+        )}
       </div>
 
-      {shouldShowStopReason ? (
-        <div
-          className="mx-5 mt-2 flex min-w-0 items-start gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground"
-          title={`${stopSourceLabel} · ${branch.lastStoppedAt || '时间未知'}\n${stopReasonText}`}
-        >
-          <PowerOff className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 font-medium text-foreground/75">{stopSourceLabel}</span>
-              <span className="shrink-0 text-muted-foreground/70">{stopTimeText}</span>
-            </div>
-            <div className="truncate text-muted-foreground/85">{stopReasonText}</div>
-          </div>
-        </div>
-      ) : null}
+      {/* 停止/降温/出错的统一状态提醒已并入上方端口槽位（同一行、等高），不再单独占一行。 */}
 
       {/* 标签 chips 行(还原 legacy app.js:3868-3881):
           - 卡片内 tag chip 只展示；点击 chip/行空白处走卡片整体 onClick 打开详情
@@ -5594,7 +5529,7 @@ function BranchCard({
         </div>
       ) : null}
 
-      <BranchFailureHint branch={branch} />
+      {/* 错误提醒已并入上方端口槽位（与停止/降温提醒同一行、只此一处），不再单独占一行（2026-06-22 用户："只一个提醒"）。 */}
 
       <footer
         className="mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
@@ -5796,45 +5731,7 @@ function BranchMoreMenu({
   );
 }
 
-function BranchFailureHint({
-  branch,
-}: {
-  branch: BranchSummary;
-}): JSX.Element | null {
-  /*
-   * 默认只占一条稳定高度的摘要，避免异常文案把整行 card 撑高。
-   * hover / keyboard focus 时用绝对定位浮层展开完整原因；浮层盖在网格
-   * 上方，不参与当前 card 的布局计算。
-   */
-  const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
-  if (branch.status !== 'error' && failedServices.length === 0) return null;
-  const message = deployFailureMessage(branch) || '分支处于异常状态';
-  const hintId = `branch-failure-hint-${branch.id}`;
-  return (
-    <div
-      className={`group/failure relative mx-5 mb-3 mt-1 h-8 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-current/35 ${branchIssueHintTextClass(branch)}`}
-      title={message}
-      tabIndex={0}
-      aria-describedby={hintId}
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <div className="flex h-8 min-w-0 items-center gap-2 rounded-md border border-current/30 bg-[hsl(var(--surface-raised))]/70 px-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">{message}</span>
-      </div>
-      <div
-        id={hintId}
-        className="pointer-events-auto absolute left-0 right-0 top-0 z-[120] hidden max-h-36 overflow-auto rounded-md border border-current/45 bg-[hsl(var(--surface-raised))] px-3 py-2.5 leading-5 shadow-2xl ring-1 ring-black/5 group-hover/failure:block group-focus/failure:block"
-      >
-        <div className="flex items-start gap-2">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 whitespace-pre-wrap break-words">{message}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
+// BranchFailureHint 已删除：错误提醒并入卡片端口槽位的统一状态行（只一个提醒，2026-06-22 用户要求）。
 
 function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string } | null {
   const runtime = branch.deployRuntime;

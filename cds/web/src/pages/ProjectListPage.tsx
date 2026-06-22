@@ -631,10 +631,10 @@ export function ProjectListPage(): JSX.Element {
                 variant="ghost"
                 size="sm"
                 onClick={() => setMonitoringOpen(true)}
-                title="运维监控（性能 / 执行器 / 活动）"
+                title="运维（性能 / 执行器 / 活动）"
               >
                 <Gauge />
-                运维监控
+                运维
               </Button>
               {pendingImportCount > 0 ? (
                 <Button
