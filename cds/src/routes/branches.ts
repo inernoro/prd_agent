@@ -3470,7 +3470,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 缓存的是 payload 对象（非序列化串），每个请求仍各自 res.json → server.ts 的
   // widget 跨项目过滤 wrapper 照常逐请求生效（它 {...body} 不改原对象，并发安全）。
   const BRANCHES_CACHE_TTL_MS = Math.max(0, Number(process.env.CDS_BRANCHES_CACHE_TTL_MS ?? 1000));
-  interface BranchesListResult { payload: unknown; timings: Record<string, number>; }
+  interface BranchesListResult { payload: unknown; serialized: string; timings: Record<string, number>; }
   const branchesListCache = new Map<string, { at: number; result: BranchesListResult }>();
   const branchesListInflight = new Map<string, Promise<BranchesListResult>>();
 
@@ -3710,15 +3710,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ),
     );
 
-    return {
-      payload: {
-        branches: branchesWithSubject,
-        defaultBranch: state.defaultBranch,
-        capacity: { maxContainers, runningContainers, totalMemGB },
-        tabTitleEnabled: stateService.isTabTitleEnabled(),
-      },
-      timings,
+    const payload = {
+      branches: branchesWithSubject,
+      defaultBranch: state.defaultBranch,
+      capacity: { maxContainers, runningContainers, totalMemGB },
+      tabTitleEnabled: stateService.isTabTitleEnabled(),
     };
+    // 预序列化一次：缓存命中的并发请求直接复用这串，免去每请求 res.json 再全量序列化
+    // （48 分支 + 资源，单次约 30-50ms，是 10 并发下单线程串行的主要成本）。
+    return { payload, serialized: JSON.stringify(payload), timings };
   }
 
   router.get('/branches', async (req, res) => {
@@ -3749,7 +3749,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.setHeader('Server-Timing', Object.entries(result.timings)
       .map(([name, duration]) => `${name};dur=${duration}`)
       .join(', '));
-    res.json(result.payload);
+    // widget(预览页)请求带 x-cds-source-* 头，必须走 res.json 让 server.ts 的跨项目
+    // 过滤 wrapper 逐请求裁剪；dashboard(无 source 头)无需裁剪，直接发预序列化串，
+    // 把每请求的全量再序列化省掉——这是高并发下单线程的主要可省成本。
+    const isWidgetRequest = !!(
+      req.headers['x-cds-source-host']
+      || req.headers['x-cds-source-project-id']
+      || req.headers['x-cds-source-branch-id']
+    );
+    if (isWidgetRequest) {
+      res.json(result.payload);
+    } else {
+      res.type('application/json').send(result.serialized);
+    }
   });
 
   router.get('/branches/state-audit', async (req, res) => {
