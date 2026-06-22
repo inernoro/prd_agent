@@ -35,8 +35,8 @@ public class ModelPoolDispatcherTests
             TestDataHelper.CreateEndpoint("model-2", "plat-2")
         };
         var dispatcher = new MockPoolHttpDispatcher()
-            .WithEndpoint("plat-1:model-1", new EndpointBehavior { LatencyMs = 200 })
-            .WithEndpoint("plat-2:model-2", new EndpointBehavior { LatencyMs = 10 });
+            .WithEndpoint("plat-1:model-1", new EndpointBehavior { LatencyMs = 1000 })
+            .WithEndpoint("plat-2:model-2", new EndpointBehavior { LatencyMs = 0 });
 
         var pool = ModelPoolDispatcher.Create("pool-1", "Test Pool", endpoints,
             PoolStrategyType.Race, dispatcher);

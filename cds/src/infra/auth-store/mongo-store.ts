@@ -13,6 +13,8 @@
  * Indexes (maintained by DBA, NOT auto-created — see no-auto-index.md):
  *   cds_users.githubId          unique
  *   cds_users.id                unique
+ *   cds_users.username          unique, sparse (OAuth users have no username;
+ *                               closes the local-create duplicate-username race)
  *   cds_sessions.token          unique
  *   cds_sessions.userId         non-unique
  *   cds_sessions.expiresAt      TTL (optional but recommended)
@@ -39,13 +41,24 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import type { AuthStore } from './memory-store.js';
 import type {
   CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite, UpsertUserInput,
+  CreateLocalUserInput, UserActivityRecord,
 } from '../../domain/auth.js';
+import { ACTIVITY_RING_CAPACITY, localPlaceholderGithubId } from './memory-store.js';
 import type { IAuthMongoHandle } from './mongo-handle.js';
 
 export { IAuthMongoHandle };
 
 export class MongoAuthStore implements AuthStore {
   constructor(private readonly handle: IAuthMongoHandle) {}
+
+  /**
+   * 本地账号创建串行锁。createLocalUser 是"findOne 查重 + insertOne"两步，并发下
+   * 两个同名 create 可能都过 findOne 再都 insert。CDS master 单实例单进程，把创建
+   * 串到这条链上即可关闭进程内竞态窗口；跨实例/DB 级仍由文件头记录的 cds_users.username
+   * 唯一(sparse)索引 + 下方 E11000 归一兜底（修复 PR #865 Codex P2「Make Mongo local
+   * username creation atomic」）。
+   */
+  private createUserChain: Promise<void> = Promise.resolve();
 
   // ── Users ─────────────────────────────────────────────────────────────────
 
@@ -117,6 +130,116 @@ export class MongoAuthStore implements AuthStore {
 
   async countUsers(): Promise<number> {
     return this.handle.usersCollection().countDocuments();
+  }
+
+  async listUsers(): Promise<CdsUser[]> {
+    return this.handle.usersCollection().find({});
+  }
+
+  // ── Local credential users ──────────────────────────────────────────────
+
+  async createLocalUser(input: CreateLocalUserInput, now = new Date()): Promise<CdsUser> {
+    // 串到 createUserChain 上：上一次创建彻底结束后才执行本次的"查重 + 插入"，
+    // 关闭进程内同名并发竞态（见 createUserChain 注释）。
+    const prev = this.createUserChain;
+    let release!: () => void;
+    this.createUserChain = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await prev.catch(() => { /* 上一次失败不应阻断本次 */ });
+      return await this.createLocalUserUnlocked(input, now);
+    } finally {
+      release();
+    }
+  }
+
+  private async createLocalUserUnlocked(input: CreateLocalUserInput, now: Date): Promise<CdsUser> {
+    const username = input.username.toLowerCase();
+    const users = this.handle.usersCollection();
+    const existing = await users.findOne({ username });
+    if (existing) {
+      throw new Error(`Local user with username '${username}' already exists`);
+    }
+    const user: CdsUser = {
+      id: randomUUID().replace(/-/g, ''),
+      // 唯一负数占位，避免多个本地账号在 cds_users.githubId 唯一索引上撞 0
+      // （修复 PR #865 P1）。真实 GitHub ID 恒正，负数永不与 OAuth 用户冲突。
+      githubId: localPlaceholderGithubId(),
+      githubLogin: username,
+      authProvider: 'local',
+      username,
+      passwordHash: input.passwordHash,
+      passwordSalt: input.passwordSalt,
+      email: input.email ?? null,
+      name: input.name?.trim() || input.username,
+      avatarUrl: null,
+      orgs: [],
+      orgsCheckedAt: now.toISOString(),
+      isSystemOwner: input.isSystemOwner ?? false,
+      status: 'active',
+      lastLoginAt: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    try {
+      await users.insertOne(user);
+    } catch (err) {
+      // 并发下两个同名 create 可能都过了上面的 findOne。若 DBA 建了
+      // cds_users.username 唯一(sparse)索引（见文件头 Indexes 段），DB 会以
+      // E11000 拒掉第二个 insert——这里归一成与 findOne 分支一致的"已存在"错误
+      // （修复 PR #865 Bugbot「Mongo local user duplicate username race」）。
+      if ((err as { code?: number })?.code === 11000) {
+        throw new Error(`Local user with username '${username}' already exists`);
+      }
+      throw err;
+    }
+    return user;
+  }
+
+  async findUserByUsername(username: string): Promise<CdsUser | null> {
+    return this.handle.usersCollection().findOne({ username: username.toLowerCase() });
+  }
+
+  async updateUserPassword(id: string, passwordHash: string, passwordSalt: string, now = new Date()): Promise<CdsUser | null> {
+    const users = this.handle.usersCollection();
+    const user = await users.findOne({ id });
+    if (!user) return null;
+    const updated: CdsUser = {
+      ...user,
+      passwordHash,
+      passwordSalt,
+      updatedAt: now.toISOString(),
+    };
+    await users.replaceOne({ id }, updated);
+    return updated;
+  }
+
+  // ── User activity / trace log ────────────────────────────────────────────
+
+  async recordActivity(record: UserActivityRecord): Promise<void> {
+    const col = this.handle.activityCollection();
+    await col.insertOne(record);
+    // 与 memory store 的 ring buffer 对齐：mongo 端 cds_user_activity 无 TTL，
+    // 不裁剪会无界增长（修复 PR #865 Low「mongo 活动日志永不封顶」）。每隔若干次
+    // 插入做一次 best-effort 裁剪：删掉超出最近 ACTIVITY_RING_CAPACITY 条之外的旧记录。
+    // 抽样触发避免每次插入都扫描；裁剪失败不致命（下次再裁）。
+    if (Math.random() < 0.02) {
+      try {
+        const cutoff = await col.find({}, { sort: { at: -1 }, skip: ACTIVITY_RING_CAPACITY, limit: 1 });
+        const cutoffAt = cutoff[0]?.at;
+        if (cutoffAt) {
+          // 严格小于 cutoff：与 cutoff 同毫秒(at 相等)的较新记录保留，避免一批
+          // 同毫秒写入被连带删掉而跌破容量（修复 PR #865 Bugbot「裁剪过删」）。
+          // 代价是偶尔多留几条，无害。
+          await col.deleteMany({ at: { $lt: cutoffAt } });
+        }
+      } catch { /* best-effort trim; tolerate failure */ }
+    }
+  }
+
+  async listActivity(opts?: { userId?: string; limit?: number }): Promise<UserActivityRecord[]> {
+    const limit = Math.max(1, Math.min(opts?.limit ?? 200, ACTIVITY_RING_CAPACITY));
+    const filter = opts?.userId ? { userId: opts.userId } : {};
+    return this.handle.activityCollection().find(filter, { sort: { at: -1 }, limit });
   }
 
   /**

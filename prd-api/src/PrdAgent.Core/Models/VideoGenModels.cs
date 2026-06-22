@@ -137,6 +137,9 @@ public class VideoGenRun
     public string? DirectResolution { get; set; }
     public int? DirectDuration { get; set; }
 
+    /// <summary>图生视频首帧图 URL（公开 HTTPS）。设置后 direct 模式走 image-to-video。</summary>
+    public string? DirectFirstFrameUrl { get; set; }
+
     // ─── 调用结果 ───
 
     /// <summary>direct 模式：OpenRouter jobId（storyboard 模式分镜各自的 jobId 在 Scenes 里）</summary>
@@ -194,6 +197,9 @@ public class CreateVideoGenRunRequest
     public string? DirectAspectRatio { get; set; }
     public string? DirectResolution { get; set; }
     public int? DirectDuration { get; set; }
+
+    /// <summary>图生视频首帧图 URL（公开 HTTPS）。设置后 direct 模式走 image-to-video（视觉分镜台「动起来」用）。</summary>
+    public string? DirectFirstFrameUrl { get; set; }
 }
 
 /// <summary>更新分镜请求（storyboard 模式编辑）</summary>

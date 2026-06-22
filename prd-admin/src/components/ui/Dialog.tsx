@@ -3,6 +3,9 @@ import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { glassPanel } from '@/lib/glassStyles';
 import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
+import { useThemeStore } from '@/stores/themeStore';
+import { shouldReduceEffects } from '@/lib/themeApplier';
+import { useReducedMotion } from '@/lib/useReducedMotion';
 
 export function Dialog({
   open,
@@ -37,6 +40,12 @@ export function Dialog({
 }) {
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
+  // 玻璃关闭(backdrop-filter 被全局清除)时半透遮罩会失焦，故回退近实底深色。
+  // useReducedMotion 让本组件在 OS 偏好变化时即时重渲染(遮罩 inline 不再滞后)，
+  // shouldReduceEffects 同时覆盖「性能模式」与「prefers-reduced-motion」两条路径。
+  const reducedMotion = useReducedMotion();
+  const themeConfigForGlass = useThemeStore((s) => s.config);
+  const glassReduced = reducedMotion || shouldReduceEffects(themeConfigForGlass);
 
   // 浅色下走纯白卡片(不依赖 glassPanel,因为 themeComputed.ts 在性能模式下
   // 会用暗色 bgElevated 重置 --glass-bg-start/end,不区分主题)
@@ -48,7 +57,14 @@ export function Dialog({
       }
     : glassPanel;
 
-  const overlayBg = isLight ? 'var(--modal-overlay)' : 'rgba(0,0,0,0.72)';
+  // B 玻璃：暗色遮罩降透明度(0.72→0.40)，配合 .prd-dialog-overlay 的 backdrop 模糊，
+  // 让底下繁忙页面"变暗+模糊"地透出来，弹窗玻璃才有内容可映照。
+  // 但玻璃关闭时没有模糊，需用近实底遮罩保证对比与聚焦。
+  const overlayBg = isLight
+    ? 'var(--modal-overlay)'
+    : glassReduced
+      ? 'rgba(0,0,0,0.72)'
+      : 'rgba(8,8,14,0.40)';
 
   const closeHoverCls = isLight
     ? 'hover:bg-[rgba(15,23,42,0.05)]'

@@ -269,6 +269,62 @@ describe('ProxyService', () => {
       expect(payload.services).toContainEqual({ profileId: 'admin', status: 'starting' });
     });
 
+    it('uses lastDeployStartedAt (not stale completed logs) for elapsed time while rebuilding', () => {
+      // 回归 PR #865 Codex P2「Use the active redeploy start time for waiting ETAs」：
+      // 在途构建的 op-log 直到 finalize 才落库，期间 getLogs() 只剩上一轮已完成的部署。
+      // 若以历史 op-log 兜底，已等待会算成几小时/几天并误判 overdue。新逻辑在 building
+      // 态优先用分支上钉的 lastDeployStartedAt。
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('rebuilt', 'building', {
+        admin: { profileId: 'admin', status: 'building' },
+      }, 'feature/rebuilt');
+      const branch = stateService.getBranch('rebuilt')!;
+      // 上一轮（一天前）已完成的部署日志 —— 陷阱来源
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      stateService.appendLog('rebuilt', {
+        type: 'build', startedAt: oneDayAgo, finishedAt: oneDayAgo, status: 'completed', events: [],
+      });
+      // 本轮 building 在 ~20s 前才开始
+      branch.lastDeployStartedAt = new Date(Date.now() - 20_000).toISOString();
+      stateService.save();
+
+      const req = makeReq({ host: 'rebuilt.preview.test', accept: 'application/json' }, '/_cds/waiting-status?profile=admin');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      const payload = JSON.parse(written.body) as { timing: { elapsedMs: number; overdue: boolean } | null };
+      expect(payload.timing).not.toBeNull();
+      // 已等待应是 ~20s 量级，绝不能是一天（86_400_000ms）
+      expect(payload.timing!.elapsedMs).toBeLessThan(5 * 60_000);
+      expect(payload.timing!.elapsedMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('prefers lastDeployStartedAt over stale logs even when branch stays running (single-service redeploy)', () => {
+      // 回归 PR #865 Bugbot「单服务部署 ETA 偏斜」：单服务重部署只把 svc.status 置
+      // building、分支 status 仍是 running（interim 检测漏接）。stamped 不旧于最新
+      // op-log 时必须优先它，否则一条一天前的完成日志会把已等待算成一天。
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('one-svc', 'running', {
+        admin: { profileId: 'admin', status: 'building' },
+      }, 'feature/one-svc');
+      const branch = stateService.getBranch('one-svc')!;
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      stateService.appendLog('one-svc', {
+        type: 'build', startedAt: oneDayAgo, finishedAt: oneDayAgo, status: 'completed', events: [],
+      });
+      branch.lastDeployStartedAt = new Date(Date.now() - 15_000).toISOString();
+      stateService.save();
+
+      const req = makeReq({ host: 'one-svc.preview.test', accept: 'application/json' }, '/_cds/waiting-status?profile=admin');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      const payload = JSON.parse(written.body) as { timing: { elapsedMs: number } | null };
+      expect(payload.timing).not.toBeNull();
+      expect(payload.timing!.elapsedMs).toBeLessThan(5 * 60_000);
+    });
+
     it('should not return waiting-page HTML for module assets while branch is starting', () => {
       addBranch('my-branch', 'starting', {
         admin: { profileId: 'admin', status: 'starting' },

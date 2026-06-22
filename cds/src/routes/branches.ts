@@ -15,8 +15,9 @@ import { resolveEffectiveProfile } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
+import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -384,6 +385,52 @@ function summarizeBranchDeployRuntime(
     // 漂移检测走 deploy-runtime.ts 的纯函数 SSOT(可单测、与本文件解耦)
     drift: computeServiceDrift(profiles.map((p) => p.id), branch.services),
   };
+}
+
+/**
+ * 把一次成功部署的整体运行模式归类为 'release' | 'source'，用于耗时样本分桶。
+ *
+ * 复用 summarizeBranchDeployRuntime 的真相判定（看容器实际跑的 deployedMode，
+ * 而非配置意图）。kind='release'/'mixed' → 'release'（只要有一个服务以发布版
+ * 在跑，整体就按发布版耗时统计，避免被混合里的源码服务拉低）；否则 'source'。
+ */
+function classifyBranchDeployModeForDuration(
+  branch: BranchEntry,
+  profiles: BuildProfile[],
+): import('../types.js').DeployDurationMode {
+  const runtime = summarizeBranchDeployRuntime(branch, profiles);
+  return runtime.kind === 'release' || runtime.kind === 'mixed' ? 'release' : 'source';
+}
+
+/**
+ * 部署成功后记录一次耗时样本（毫秒）。
+ *   - "ready" 耗时 = runtimeStartedAt - startedAt（拿不到就 finishedAt - startedAt）。
+ *   - 仅成功（opLog.status==='completed'）时记录；失败不记（失败耗时无参考价值）。
+ *   - 上界保护取 buildTimeout*2（缺省 30 分钟，由 recordDeployDuration 兜底），
+ *     过滤掉超时/卡死的离谱样本。
+ */
+function recordDeployDurationSample(
+  stateService: StateService,
+  branch: BranchEntry,
+  profiles: BuildProfile[],
+  opLog: OperationLog,
+): void {
+  if (opLog.status !== 'completed') return;
+  // 只在拿到真正的"就绪"信号(runtimeStartedAt，即 readiness 探测通过)时才采样。
+  // 多服务 finalize 会在"无错误"时即置 completed，此时容器可能还没 running、
+  // runtimeStartedAt 未设——若退化用 finishedAt-startedAt 会记下远短于真实就绪
+  // 的耗时，污染发布版/热加载的中位 ETA（修复 PR #865 Bugbot「未就绪也采样」）。
+  // 没有就绪时间就跳过本次采样（宁可样本少而准，等待页/卡片照样优雅降级显示已耗时）。
+  if (!opLog.runtimeStartedAt) return;
+  const startMs = Date.parse(opLog.startedAt);
+  const endMs = Date.parse(opLog.runtimeStartedAt);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return;
+  const elapsedMs = endMs - startMs;
+  const mode = classifyBranchDeployModeForDuration(branch, profiles);
+  // 上界：取参与本次部署的 profile 里最大的 buildTimeout * 2，兜底 30 分钟。
+  const maxTimeout = profiles.reduce((acc, p) => Math.max(acc, p.buildTimeout || 0), 0);
+  const maxReasonableMs = maxTimeout > 0 ? maxTimeout * 2 : 30 * 60 * 1000;
+  stateService.recordDeployDuration(branch.projectId || 'default', mode, elapsedMs, maxReasonableMs);
 }
 
 function applyProjectDefaultDeployModes(
@@ -1650,6 +1697,8 @@ export interface RouterDeps {
   config: CdsConfig;
   /** Optional warm-pool scheduler (v3.1). When absent, scheduler API returns disabled. */
   schedulerService?: SchedulerService;
+  /** Optional global expiry janitor. */
+  janitorService?: JanitorService;
   /**
    * Cluster executor registry (scheduler/standalone mode). When absent or
    * containing only an embedded master, deploys run locally. When a remote
@@ -1676,6 +1725,25 @@ export interface RouterDeps {
   branchOperationCoordinator?: BranchOperationCoordinator;
 }
 
+export function shouldSkipFencedDeployCleanupForNewerRuntime(
+  entry: Pick<BranchEntry, 'lastReadyAt' | 'lastDeployAt' | 'lastStoppedAt'>,
+  operationStartedAt?: string | null,
+): boolean {
+  const operationMs = operationStartedAt ? Date.parse(operationStartedAt) : NaN;
+  if (!Number.isFinite(operationMs)) return false;
+
+  const readyMs = entry.lastReadyAt ? Date.parse(entry.lastReadyAt) : NaN;
+  const deployMs = entry.lastDeployAt ? Date.parse(entry.lastDeployAt) : NaN;
+  const latestRuntimeMs = Math.max(
+    Number.isFinite(readyMs) ? readyMs : 0,
+    Number.isFinite(deployMs) ? deployMs : 0,
+  );
+  if (latestRuntimeMs <= operationMs) return false;
+
+  const stoppedMs = entry.lastStoppedAt ? Date.parse(entry.lastStoppedAt) : NaN;
+  return !Number.isFinite(stoppedMs) || stoppedMs < latestRuntimeMs;
+}
+
 export function createBranchRouter(deps: RouterDeps): Router {
   const {
     stateService,
@@ -1684,6 +1752,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     shell,
     config,
     schedulerService,
+    janitorService,
     registry,
     getClusterStrategy,
     githubApp,
@@ -1758,6 +1827,62 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (raw === 'janitor') return 'janitor';
     if (raw === 'system') return 'system';
     return 'manual';
+  }
+
+  function stopAttributionFromRequest(req: Request): {
+    reason: string;
+    source: NonNullable<BranchEntry['lastStopSource']>;
+    archiveSource: ContainerLogArchiveEntry['source'];
+    archiveMessage: string;
+  } {
+    const trigger = triggerFromRequest(req);
+    const actor = resolveActorFromRequest(req);
+    if (trigger === 'webhook') {
+      return {
+        reason: 'GitHub webhook 触发停止',
+        source: 'webhook',
+        archiveSource: 'webhook-stop',
+        archiveMessage: 'captured after webhook stop preserved containers',
+      };
+    }
+    if (actor === 'ai' || actor.startsWith('ai:')) {
+      return {
+        reason: 'AI Agent 调用停止',
+        source: 'ai',
+        archiveSource: 'ai-stop',
+        archiveMessage: 'captured after ai stop preserved containers',
+      };
+    }
+    if (trigger === 'scheduler') {
+      return {
+        reason: '调度器触发停止',
+        source: 'scheduler',
+        archiveSource: 'scheduler-stop',
+        archiveMessage: 'captured after scheduler stop preserved containers',
+      };
+    }
+    if (trigger === 'auto-lifecycle') {
+      return {
+        reason: 'CDS 生命周期策略触发停止',
+        source: 'cds',
+        archiveSource: 'auto-lifecycle-stop',
+        archiveMessage: 'captured after auto lifecycle stop preserved containers',
+      };
+    }
+    if (trigger === 'janitor' || trigger === 'system') {
+      return {
+        reason: trigger === 'janitor' ? 'Janitor 过期清理触发停止' : '系统触发停止',
+        source: 'system',
+        archiveSource: 'system-stop',
+        archiveMessage: 'captured after system stop preserved containers',
+      };
+    }
+    return {
+      reason: '用户手动停止',
+      source: 'user',
+      archiveSource: 'manual-stop',
+      archiveMessage: 'captured after user stop preserved containers',
+    };
   }
 
   function beginBranchOperation(
@@ -2076,6 +2201,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     requestId: string | undefined,
     reason: string,
     operationId?: string | null,
+    operationStartedAt?: string | null,
   ): Promise<void> {
     const terminalCleanupKinds = new Set<BranchOperationKind>([
       'delete',
@@ -2087,6 +2213,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
       'janitor-remove',
     ]);
     const branchStillExists = Boolean(stateService.getBranch(entry.id));
+    const hasNewerReadyRuntime = shouldSkipFencedDeployCleanupForNewerRuntime(entry, operationStartedAt);
+    if (hasNewerReadyRuntime && branchStillExists) {
+      for (const profileId of profileIds) {
+        const svc = entry.services?.[profileId];
+        if (!svc?.containerName) continue;
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'info',
+          source: 'deploy-fenced-cleanup',
+          action: 'container.remove.after-fenced-deploy.skipped',
+          message: `skipped fenced deploy cleanup because a newer runtime is already ready: ${svc.containerName}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId,
+          containerName: svc.containerName,
+          requestId: requestId || null,
+          operationId: operationId || null,
+          details: {
+            reason,
+            skipReason: 'newer-runtime-ready',
+            operationStartedAt: operationStartedAt || null,
+            lastReadyAt: entry.lastReadyAt || null,
+            lastDeployAt: entry.lastDeployAt || null,
+            lastStoppedAt: entry.lastStoppedAt || null,
+          },
+        });
+      }
+      return;
+    }
     const cleanupOwner = branchOperationCoordinator
       ?.getActiveOperations(entry.id)
       .find((active) => active.operationId !== operationId && terminalCleanupKinds.has(active.request.kind));
@@ -2295,6 +2450,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // next retry will still target this executor (sticky).
     entry.executorId = executor.id;
     entry.status = 'building';
+    // 本轮构建起点锚点 —— 远端执行器路径同样要钉，否则预览等待页 ETA 会回退到
+    // 历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
+    entry.lastDeployStartedAt = new Date().toISOString();
     stateService.save();
 
     // Tell the client we're proxying — gives the transit page a nice hint
@@ -2318,6 +2476,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       events: [{ step: preamble.step, status: preamble.status, title: preamble.title, timestamp: preamble.timestamp }],
     };
     let proxyHasError = false;
+    // 远端运行时就绪时刻 —— 收到成功的 complete 事件时戳。用作 opLog.runtimeStartedAt，
+    // 让执行器构建路径也能像本地路径一样采集部署耗时样本（见下方 finally）。
+    let remoteRuntimeReadyAt: string | null = null;
 
     // Prepare the payload the remote's /exec/deploy expects. The remote has
     // its own worktree + state, so we pass branch metadata + profiles + the
@@ -2426,6 +2587,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
               proxyHasError = true;
             }
           }
+          // 成功 complete = 远端运行时就绪的时刻（executor 在所有服务 running 后才发）。
+          // 戳为 runtimeStartedAt，让 finally 能像本地路径一样采样部署耗时（修复 PR #865
+          // Bugbot「executor deploys skip duration samples」）—— 否则执行器构建的项目
+          // 永远积累不出 ETA 样本，等待页/卡片一直显示"暂无历史预计"。
+          if (!proxyHasError) {
+            remoteRuntimeReadyAt = typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString();
+          }
         }
         opLog.events.push({
           step: typeof parsed.step === 'string' ? parsed.step : eventName,
@@ -2497,6 +2665,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 计时，下一拍可能立刻被 auto-stop。与本地路径对齐：stamp
         // lastDeployAt，让 release run 拿到自己的完整生命周期区间。
         stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
+        // 戳远端就绪时刻，供 finally 采样部署耗时（见 remoteRuntimeReadyAt 声明处）。
+        if (remoteRuntimeReadyAt) opLog.runtimeStartedAt = remoteRuntimeReadyAt;
       }
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
@@ -2513,6 +2683,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
+      // 与本地路径对齐：成功且有就绪时刻时采样部署耗时（recordDeployDurationSample
+      // 内部已 guard status==='completed' + runtimeStartedAt 存在，失败/缺戳自动 no-op）。
+      recordDeployDurationSample(stateService, entry, profiles, opLog);
       try { stateService.appendLog(entry.id, opLog); } catch { /* tolerate */ }
       try { res.end(); } catch { /* ignore */ }
     }
@@ -3378,6 +3551,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           b,
           stateService.getBuildProfilesForProject(b.projectId || 'default'),
         );
+        // 2026-06-20：随分支下发两种模式的历史中位预计耗时，分支卡片在
+        // 构建中据此展示"预计 MM:SS（近 N 次中位值）"，无需额外请求。
+        const deployEstimate = stateService.getBranchDeployEstimate(b.projectId || 'default');
         if (!live) {
           const derivedAi = aiActivityByBranch.get(b.id);
           return {
@@ -3390,6 +3566,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             projectSlug,
             previewSlug,
             deployRuntime,
+            deployEstimate,
           };
         }
         try {
@@ -3410,6 +3587,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             projectSlug,
             previewSlug,
             deployRuntime,
+            deployEstimate,
           };
         } catch {
           const derivedAi = aiActivityByBranch.get(b.id);
@@ -3423,6 +3601,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             projectSlug,
             previewSlug,
             deployRuntime,
+            deployEstimate,
           };
         }
       }),
@@ -9482,6 +9661,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const stopAttribution = stopAttributionFromRequest(req);
 
     // `lastAccessedAt` is the branch card's "last deploy attempt" clock.
     // Stamp it before dispatching so failures and remote rejections update the
@@ -9568,6 +9748,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const __prevStatus = entry.status;
       entry.status = 'building';
       entry.lastAccessedAt = new Date().toISOString();
+      // 本轮构建起点锚点 —— 预览等待页 ETA 以此计"已等待"，避免回退到上一轮
+      // 已完成的历史 op-log 误算几小时（见 BranchEntry.lastDeployStartedAt）。
+      entry.lastDeployStartedAt = new Date().toISOString();
       stateService.save();
       // Live UI: surface the "building" transition to subscribed dashboards
       // so the branch card can flip to a spinner immediately on deploy kick-
@@ -10144,6 +10327,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         hasError ? 'deploy-error' : 'deploy-finalize',
         activeProfileIds,
       );
+      // 2026-06-20：成功部署记一条耗时样本（区分发布版/源码），供分支卡片
+      // 在下次构建中展示"预计 MM:SS（近 N 次中位值）"。失败不记。
+      recordDeployDurationSample(stateService, entry, profiles, opLog);
       stateService.appendLog(id, opLog);
       stateService.save();
 
@@ -10269,6 +10455,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           requestId,
           `部署操作被更高优先级操作取代: ${errMsg}`,
           branchOperationLease?.operationId || null,
+          branchOperationLease?.startedAt || null,
         );
         logEvent({
           step: 'deploy-fenced',
@@ -10395,6 +10582,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.errorMessage = undefined;
       const existingSvc = entry.services[profile.id];
       if (existingSvc?.errorMessage) existingSvc.errorMessage = undefined;
+      // 本轮（单服务）构建起点锚点 —— 与多服务/远端执行器路径一致，供预览等待页
+      // ETA 计"已等待"，避免回退到上一轮历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
+      entry.lastDeployStartedAt = new Date().toISOString();
       stateService.save();
 
       // Pull latest code
@@ -10562,6 +10752,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status === 'running' ? 'deploy-finalize' : 'deploy-error',
         new Set([profile.id]),
       );
+      // 2026-06-20：单 profile 部署成功也记一条耗时样本（仅基于本次部署的
+      // profile 判定发布版/源码），与多服务路径同一台账。失败不记。
+      recordDeployDurationSample(stateService, entry, [profile], opLog);
       stateService.appendLog(id, opLog);
       stateService.save();
 
@@ -10584,6 +10777,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined,
           `单服务部署被更高优先级操作取代: ${errMsg}`,
           branchOperationLease?.operationId || null,
+          branchOperationLease?.startedAt || null,
         );
         logEvent({
           step: 'deploy-fenced',
@@ -10767,6 +10961,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const stopAttribution = stopAttributionFromRequest(req);
 
     // ── Cluster-aware stop ──
     //
@@ -10814,8 +11009,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const svc of Object.values(entry.services)) svc.status = 'stopped';
         entry.status = 'idle';
         entry.lastStoppedAt = new Date().toISOString();
-        entry.lastStopReason = `远端执行器 ${remoteExecutor.id} 停止`;
-        entry.lastStopSource = 'executor';
+        entry.lastStopReason = `${stopAttribution.reason}，远端执行器 ${remoteExecutor.id} 已停止`;
+        entry.lastStopSource = stopAttribution.source === 'user' ? 'executor' : stopAttribution.source;
         // 2026-05-14 Cursor Bugbot Medium 修复：远端执行器停止路径与本地
         // 手动停止 / scheduler coolFn / AutoLifecycle 一致，也要 +1 stopCount
         // 并写活动日志，否则 UI「停止次数」对远端停止漏计、活动时间线缺这条。
@@ -10825,6 +11020,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           branchId: id,
           branchName: entry.branch,
           actor: resolveActorForActivity(req),
+          note: entry.lastStopReason,
         });
         stateService.save();
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
@@ -10851,7 +11047,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Actually stop containers
       for (const svc of Object.values(entry.services)) {
         try {
-          await containerService.stop(svc.containerName, '用户手动停止', {
+          await containerService.stop(svc.containerName, stopAttribution.reason, {
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: svc.profileId,
@@ -10869,9 +11065,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService,
         containerService,
         branch: entry,
-        source: 'manual-stop',
+        source: stopAttribution.archiveSource,
         serverEventLogStore,
-        message: 'captured after user stop preserved containers',
+        message: stopAttribution.archiveMessage,
         requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
         operationId: branchOperationLease?.operationId || null,
         actor: resolveActorFromRequest(req),
@@ -10880,8 +11076,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.status = 'idle';
       // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
       entry.lastStoppedAt = new Date().toISOString();
-      entry.lastStopReason = '用户手动停止';
-      entry.lastStopSource = 'user';
+      entry.lastStopReason = stopAttribution.reason;
+      entry.lastStopSource = stopAttribution.source;
       cleanupPreviewServer(id);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'stopCount');
@@ -10890,6 +11086,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchId: id,
         branchName: entry.branch,
         actor: resolveActorForActivity(req),
+        note: stopAttribution.reason,
       });
       stateService.save();
       res.json({ message: '所有服务已停止' });
@@ -15499,6 +15696,8 @@ cdscli project list --human
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 
         entry.status = 'building';
+        // 本轮（首次 clone 后）构建起点锚点，供预览等待页 ETA（见 BranchEntry.lastDeployStartedAt）。
+        entry.lastDeployStartedAt = new Date().toISOString();
         stateService.save();
 
         // Pre-allocate ports
@@ -18629,6 +18828,58 @@ cdscli project list --human
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── Global expiry janitor API ──
+  //
+  // The janitor deletes branch-local containers/worktrees after the global
+  // expiry window. The window is intentionally capped at 7 days.
+  router.get('/janitor/state', (_req, res) => {
+    if (!janitorService) {
+      res.json({
+        enabled: false,
+        config: null,
+        dryRun: { wouldRemove: [], wouldSkip: [] },
+        disk: null,
+      });
+      return;
+    }
+    res.json(janitorService.getSnapshot());
+  });
+
+  router.put('/janitor/config', (req, res) => {
+    if (!janitorService) {
+      res.status(503).json({ error: 'Janitor service not wired in' });
+      return;
+    }
+    const body = (req.body || {}) as {
+      enabled?: unknown;
+      worktreeTTLDays?: unknown;
+    };
+
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是 boolean' });
+      return;
+    }
+    if (body.worktreeTTLDays !== undefined) {
+      const v = body.worktreeTTLDays;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 7) {
+        res.status(400).json({ error: 'worktreeTTLDays 必须是 1 到 7 之间的整数（天）' });
+        return;
+      }
+    }
+
+    if (typeof body.enabled === 'boolean') {
+      stateService.setJanitorEnabledOverride(body.enabled);
+      janitorService.setEnabled(body.enabled);
+    }
+    if (typeof body.worktreeTTLDays === 'number') {
+      stateService.setJanitorWorktreeTTLOverride(body.worktreeTTLDays);
+      janitorService.setWorktreeTTLDays(body.worktreeTTLDays);
+    }
+    stateService.save();
+
+    res.json({ ...janitorService.getSnapshot(), source: 'ui-override' });
   });
 
   // P4 Part 18 (G10): POST /api/detect-stack — auto-detect stack.

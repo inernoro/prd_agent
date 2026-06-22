@@ -128,6 +128,9 @@ interface BranchSummary {
   lastAccessedAt?: string;
   lastPullAt?: string;
   lastDeployAt?: string;
+  lastStoppedAt?: string;
+  lastStopReason?: string;
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   errorMessage?: string;
   commitSha?: string;
   subject?: string;
@@ -168,6 +171,17 @@ interface BranchSummary {
       unhealthyProfileIds: string[];
       hasDrift: boolean;
     };
+  };
+  /**
+   * 2026-06-20：两种部署模式的历史中位预计耗时（毫秒）+ 样本数。
+   * 后端 getBranchDeployEstimate 计算，构建中卡片据此展示"预计 MM:SS（近 N 次中位值）"。
+   * median 为 null = 无历史样本，卡片只显示已耗时，不编造预计值。
+   */
+  deployEstimate?: {
+    releaseMedianMs: number | null;
+    releaseSamples: number;
+    sourceMedianMs: number | null;
+    sourceSamples: number;
   };
 }
 
@@ -893,6 +907,50 @@ function formatElapsedFrom(since: string | undefined | null, now: number): strin
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+}
+
+/** 把毫秒格式化成 MM:SS（与 formatElapsedFrom 同口径，供"预计耗时"展示）。 */
+function formatDurationMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return '00:00';
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+}
+
+/**
+ * 根据分支当前运行模式（deployRuntime.kind）选对应的历史预计耗时。
+ *   - kind='release'/'mixed' → 发布版样本
+ *   - 其余 → 源码/热加载样本
+ * 无样本（median=null）时返回 null —— 卡片只显示已耗时，不编造预计值。
+ */
+function pickDeployEstimate(branch: BranchSummary): { mode: 'release' | 'source'; medianMs: number; samples: number } | null {
+  const est = branch.deployEstimate;
+  if (!est) return null;
+  const kind = branch.deployRuntime?.kind;
+  // pendingPublish=配置已切发布版但容器还没跟上(重建中)，此时 kind 仍报 source；
+  // 用户实际在等的是发布版重建，应取发布版样本桶（修复 PR #865 codex P2）。
+  const isRelease = kind === 'release' || kind === 'mixed' || branch.deployRuntime?.pendingPublish === true;
+  if (isRelease) {
+    if (est.releaseMedianMs != null && est.releaseSamples > 0) {
+      return { mode: 'release', medianMs: est.releaseMedianMs, samples: est.releaseSamples };
+    }
+    return null;
+  }
+  if (est.sourceMedianMs != null && est.sourceSamples > 0) {
+    return { mode: 'source', medianMs: est.sourceMedianMs, samples: est.sourceSamples };
+  }
+  return null;
+}
+
+/** 构建中卡片的模式标签：发布版 / 热加载（源码即热加载/dev 运行）。 */
+function deployModeLabel(branch: BranchSummary): string {
+  const kind = branch.deployRuntime?.kind;
+  if (kind === 'release') return '发布版';
+  if (kind === 'mixed') return '混合';
+  // 配置已切发布版、容器重建中：标签也跟着显示发布版，别误标热加载。
+  if (branch.deployRuntime?.pendingPublish === true) return '发布版';
+  return '热加载';
 }
 
 function formatElapsedSecondsFrom(since: string | undefined | null, now: number): string {
@@ -4751,6 +4809,20 @@ function BranchCard({
       danger: 'cds-actor-name-glow cds-actor-name-glow--danger',
     }[actorNameGlowTone]
     : 'text-foreground/70';
+  const stopSourceLabel = branch.lastStopSource === 'user' ? '用户'
+    : branch.lastStopSource === 'scheduler' ? '调度器'
+      : branch.lastStopSource === 'executor' ? '执行器'
+        : branch.lastStopSource === 'cds' ? 'CDS'
+          : branch.lastStopSource === 'webhook' ? 'Webhook'
+            : branch.lastStopSource === 'ai' ? 'AI'
+              : branch.lastStopSource === 'oom' ? 'OOM'
+                : branch.lastStopSource === 'external' ? '外部'
+                  : branch.lastStopSource === 'crash' ? '崩溃'
+                    : branch.lastStopSource === 'system' ? '系统'
+                      : '无记录';
+  const shouldShowStopReason = !isRunning && !isInterim;
+  const stopReasonText = branch.lastStopReason || '无停止记录';
+  const stopTimeText = branch.lastStoppedAt ? formatRelativeTime(branch.lastStoppedAt) : '时间未知';
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -5092,6 +5164,48 @@ function BranchCard({
             ) : null}
           </span>
         ) : null}
+        {/*
+          2026-06-20：构建中显示「模式 · 已耗时 · 历史中位预计耗时」。
+          - 模式标签区分 发布版 / 热加载（来自 deployRuntime.kind）。
+          - 已耗时实时累加（formatElapsedFrom 走 1s tick 的 now）。
+          - 预计耗时为静态历史中位（近 N 次），无样本则不显示预计（no-rootless-tree：
+            不编造数据）。下方细进度条对比已耗时 vs 预计，纯主题 token 着色，不喧宾夺主。
+        */}
+        {isInterim ? (() => {
+          const estimate = pickDeployEstimate(branch);
+          const elapsedMs = busySince ? Math.max(0, now - new Date(busySince).getTime()) : 0;
+          const ratio = estimate && estimate.medianMs > 0
+            ? Math.min(1, elapsedMs / estimate.medianMs)
+            : 0;
+          const overdue = estimate ? elapsedMs > estimate.medianMs : false;
+          return (
+            <span
+              className="inline-flex h-6 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+              title={estimate
+                ? `当前以「${deployModeLabel(branch)}」部署；已耗时 ${formatElapsedFrom(busySince, now)}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
+                : `当前以「${deployModeLabel(branch)}」部署；已耗时 ${formatElapsedFrom(busySince, now)}；暂无历史样本，完成后将累积预计耗时`}
+            >
+              <span className="font-medium text-foreground/85">{deployModeLabel(branch)}</span>
+              <span className="text-muted-foreground/80">耗时</span>
+              <span className="branch-deploy-timer-value font-mono text-foreground/85">{formatElapsedFrom(busySince, now)}</span>
+              {estimate ? (
+                <>
+                  <span className="text-muted-foreground/80">预计</span>
+                  <span className={`font-mono ${overdue ? 'text-amber-400' : 'text-foreground/70'}`}>{formatDurationMs(estimate.medianMs)}</span>
+                  <span
+                    className="h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--hairline))]"
+                    aria-hidden
+                  >
+                    <span
+                      className={`block h-full rounded-full transition-[width] duration-700 ease-out ${overdue ? 'bg-amber-400/70' : 'bg-primary/60'}`}
+                      style={{ width: `${Math.round(ratio * 100)}%` }}
+                    />
+                  </span>
+                </>
+              ) : null}
+            </span>
+          );
+        })() : null}
         {visibleResources.length > 0 ? visibleResources.map((resource) => {
           // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
           // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
@@ -5177,6 +5291,22 @@ function BranchCard({
           {timeBadge.label} {timeBadge.text}
         </span>
       </div>
+
+      {shouldShowStopReason ? (
+        <div
+          className="mx-5 mt-2 flex min-w-0 items-start gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground"
+          title={`${stopSourceLabel} · ${branch.lastStoppedAt || '时间未知'}\n${stopReasonText}`}
+        >
+          <PowerOff className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 font-medium text-foreground/75">{stopSourceLabel}</span>
+              <span className="shrink-0 text-muted-foreground/70">{stopTimeText}</span>
+            </div>
+            <div className="truncate text-muted-foreground/85">{stopReasonText}</div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 标签 chips 行(还原 legacy app.js:3868-3881):
           - 卡片内 tag chip 只展示；点击 chip/行空白处走卡片整体 onClick 打开详情
