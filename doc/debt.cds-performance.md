@@ -36,6 +36,30 @@
 
 ---
 
+## 构建并发治理 + 两个假设证伪（2026-06-22 专项，实测取证）
+
+用户追问"为什么一个构建要 11 分钟"。在真实实例（18 核 / 96GB RAM）逐项实测：
+
+### 落地：全局构建并发闸（已交付）
+- 病根：CDS 每次部署在临时容器里跑 `install + 编译`，**无任何并发上限**。多分支同时部署时 N 个构建一起把 CPU 吃满、彼此饿死。
+- 实测铁证：同一分支 admin 构建 isolated ~353s；误触发双部署重叠时被拖到 **636s / 754s**（纯争抢膨胀）。
+- 修复：`cds/src/services/build-gate.ts` 全局 FIFO 并发闸（槽位转移防超额），上限 `CDS_MAX_CONCURRENT_BUILDS`（默认 3）。排队状态写进部署日志 + SSE + `/api/cluster/status`，用户看到「排队中，前面还有 N 个」而非疑似卡死。6 个单测覆盖。
+
+### 证伪一：pnpm 跨设备复制 —— 不成立
+`/pnpm/store` 与 `/repo/node_modules` 同为 device `2049`（同一 ext4），hardlink 正常工作，**无跨设备复制拖慢**。共享 pnpm store + NuGet 缓存早于 2026-06-20 落地（`cache-catalog.ts`）。
+
+### 证伪二：vite build 并行度被压成 1 拖慢 —— 不成立
+同容器顺序 A/B 实测：maxParallelFileOps=1→**353s**，=4→**369s（反而略慢）**。放宽零收益，已 revert。瓶颈在 transform/bundle 的 **CPU 阶段**，非文件 I/O。
+
+### admin 部署构建拆解（baseline 598s）
+- vite build ≈ 353s（59%，CPU 固有）；corepack+install+容器开销 ≈ 245s（41%）
+- api（.NET）≈ 354s：`dotnet clean`+`--no-incremental` 全量重编，无持久 bin/obj 卷（fresh worktree 必然全编）。改增量无收益且重蹈 MSBuild 增量误判，故不动。
+
+### 结论
+admin/api 的编译耗时是 **CPU 固有成本**，I/O/并行旋钮榨不动；可动的是"别让构建互相饿 CPU"=并发闸。再快需减 bundle / 换机器 / 分布式构建。
+
+---
+
 ## 根因排查结论（按影响排序）
 
 | # | 根因 | 证据 | 严重度 | 状态 |
@@ -53,6 +77,7 @@
 
 ## 逐步解决路线
 
+0. [x] 全局构建并发闸（2026-06-22）：消除多构建互相饿 CPU 的争抢膨胀（353→636/754s），排队可观测。`cds/src/services/build-gate.ts`
 1. [x] janitor 安全清理悬空镜像 + 构建缓存（本次，非破坏性，默认开 `config.janitor.dockerPrune`）
 2. [ ] 删分支时停 per-branch infra 容器（确认命名约定后）
 3. [ ] getActivityLogs 5s TTL 记忆化（热路径降负载）
