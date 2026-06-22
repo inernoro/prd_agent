@@ -896,9 +896,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
 
   // 文档列表排序：服务端持久化（换设备 / 重登录 / 刷新都保持）。store.defaultSortMode 为 SSOT。
   const handleChangeSort = useCallback(async (mode: DocBrowserSortMode) => {
-    setStore(prev => prev ? { ...prev, defaultSortMode: mode } : prev); // 乐观更新
+    let prevMode: string | undefined;
+    setStore(prev => { prevMode = prev?.defaultSortMode; return prev ? { ...prev, defaultSortMode: mode } : prev; }); // 乐观更新 + 捕获回滚值
     const res = await updateDocumentStore(storeId, { defaultSortMode: mode });
-    if (!res.success) toast.error('保存排序失败', res.error?.message);
+    if (!res.success) {
+      setStore(prev => prev ? { ...prev, defaultSortMode: prevMode } : prev); // 失败回滚，避免侧栏排序与服务端不一致
+      toast.error('保存排序失败', res.error?.message);
+    }
   }, [storeId]);
 
   useEffect(() => {
