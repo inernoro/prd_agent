@@ -50,6 +50,7 @@ docs:
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
+  design.mobile-refactor: 手机端整体重构调研（使用强度 + 视觉取证 + 改造波次）
   design.daily-tips: 每日小贴士 / 路径式教程系统设计
   design.acceptance-system: 功能验收体系设计（业界对标的标准化验收 + 取证 + 归档）
   design.acceptance-kb: 验收报告知识库设计（最新在前 + 结论可视 + 模板约束 + 跨环境同步）

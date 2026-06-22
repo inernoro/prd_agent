@@ -89,6 +89,8 @@
 
 ### 二、设计文档
 
+- [手机端整体重构调研](design.mobile-refactor) `design.mobile-refactor`
+  > 真机视口取证 16 页 + 行为聚合使用强度 + 三波改造优先级（排除视觉创作）
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
   > 右下角悬浮教程书 + SpotlightOverlay 多步 Tour + 推送/批量/dismiss 闭环
 
