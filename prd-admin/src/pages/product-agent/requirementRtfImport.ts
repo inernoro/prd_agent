@@ -410,7 +410,7 @@ function parseRequirementRows(
       fields.ID = values[1]?.trim() ?? '';
       continue;
     }
-    if (values.length >= 4) {
+    if (values.length >= 2) {
       for (let index = 0; index + 1 < values.length; index += 2) {
         const label = values[index]?.trim();
         if (label) fields[label] = values[index + 1]?.trim() ?? '';
