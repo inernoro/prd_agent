@@ -209,17 +209,89 @@ git diff --stat
 # 期望：删除行数 = 幽灵条目数（精确匹配，不多不少）
 ```
 
-### Step 5 — 收尾
+### Step 5 — 收尾与推送
 
 ```bash
+# 1. 生成本次 changelog 碎片（用实际数字替换 N）
 cat > "changelogs/$(date +%Y-%m-%d)_entropy-cleanup.md" << 'EOF'
 | chore | doc | 熵清理：D1 N 个，D2 +N/-N，D3 +N/-N，D4 +N/-N，D6 N 条 |
 EOF
 
+# 2. Stage 并提交
 git add doc/ CLAUDE.md changelogs/ .claude/
 git commit -m "chore: 日常熵清理 $(date +%Y-%m-%d)"
+
+# 3. 推送（当前分支即目标分支，scheduled run 自带隔离分支）
 git push -u origin $(git branch --show-current)
 ```
+
+### Step 6 — 自动创建 PR 并开启合并监控（必须执行）
+
+推送完成后立即执行以下步骤，**不得省略**。这是本技能从"推代码"升级为"自动交付"的核心。
+
+#### 6.1 判断是否需要创建 PR
+
+- 若 `git log origin/main..HEAD --oneline` 输出为空（当前分支没有超过 main 的 commit），**跳过 PR 创建**并结束。
+- 若当前分支是 `main`，**跳过 PR 创建**并结束（不能从 main 向 main 发 PR）。
+
+#### 6.2 检查是否已有未合并的熵减 PR
+
+使用 `mcp__github__list_pull_requests`（state=open, base=main）查询 `inernoro/prd_agent`。
+- 若已有标题含「熵减计划」的 open PR，先尝试用 `mcp__github__merge_pull_request`（squash）合并旧 PR；合并失败则记录并继续创建新 PR。
+
+#### 6.3 创建 PR
+
+使用 `mcp__github__create_pull_request` 创建：
+
+```
+owner: inernoro
+repo:  prd_agent
+title: 每日熵减计划 YYYY-WXX — <本次主要修复内容，如 "D2+D3+D6 修补 (N 条)">
+base:  main
+head:  <当前分支名，由 git branch --show-current 取得>
+body:  （见下方模板）
+```
+
+PR body 模板（从 Step 2 报告提取数字）：
+```markdown
+## 熵清理摘要
+
+- D2 index.yml：+N/-N 条
+- D3 guide.list：+N/-N 条
+- D4 技能表：+N/-N 条
+- D6 changelog→doc：本次处理 N 条，manifest 累计 M 条
+
+## 改动 diff
+- `doc/index.yml`：补缺/删幽灵条目
+- `doc/guide.list.directory.md`：补缺/删幽灵条目
+- `changelogs/.entropy-manifest.yml`：新增已处理 changelog 记录
+- `changelogs/YYYY-MM-DD_entropy-cleanup.md`：本次 changelog 碎片
+
+## 测试
+- [x] 双向扫描完成，diff 核验通过
+- [x] 运行两次验证：第二次净变更为 0
+```
+
+#### 6.4 开启自动合并
+
+PR 创建成功后，立即调用 `mcp__github__enable_pr_auto_merge`：
+```
+owner:        inernoro
+repo:         prd_agent
+pullNumber:   <上一步返回的 PR number>
+mergeMethod:  squash
+```
+
+若 CI 未配置（仓库无必需 check），auto-merge 可能直接触发合并，这是预期行为。
+
+#### 6.5 订阅 PR 并监控到合并完成
+
+调用 `mcp__github__subscribe_pr_activity` 订阅该 PR：
+- 收到 CI 通过事件 → 确认 auto-merge 已触发
+- 收到 PR 已合并事件 → 记录合并 SHA，结束任务
+- 收到 CI 失败事件 → 分析失败原因；若是文档内容类冲突，尝试修复后 force-push；若无法自修复，发送通知给用户
+
+**重要**：订阅后不得用 `sleep` 轮询——等待 webhook 事件唤醒即可。PR 合并或关闭后自动调用 `mcp__github__unsubscribe_pr_activity` 解除订阅。
 
 ---
 
@@ -240,9 +312,11 @@ processed:
 
 ## PR 工作流
 
-- 标题约定：`每日熵减计划 YYYY-WXX — <本次主要修复内容>`
-- 检查现有 PR：运行前先查是否有未合并的熵减 PR，有则先尝试合并，避免冲突
-- 合并策略：CI 通过后自动 squash 合并，不需要人工审批
+- **标题约定**：`每日熵减计划 YYYY-WXX — <本次主要修复内容>`
+- **自动创建**：Step 6 在推送后必须自动调用 `mcp__github__create_pull_request` 创建，不需要人工触发
+- **自动合并**：创建后立即调用 `mcp__github__enable_pr_auto_merge`（squash 策略），CI 通过即自动合并
+- **去重保护**：创建前先查 open PR，有同类 PR 先合并再创建
+- **无净变更跳过**：当前分支没有超过 main 的 commit 时，不创建 PR（幂等运行不产生空 PR）
 
 ---
 
