@@ -172,6 +172,13 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             _logger.LogInformation(
                 "[PeerSyncScheduleWorker] auto-synced store {StoreId} dir={Dir} ok={Ok} created={C} updated={U} skipped={S}",
                 storeId, direction, result.Ok, result.Created, result.Updated, result.Skipped);
+
+            // 与手动 transfer 同口径：真正与对端成功通信过才 bump LastContactAt，否则 admin「最近通信」会因
+            // 仅靠后台自动同步的部署而长期陈旧（Bugbot）。
+            if (result.AnyPeerContact)
+                await db.PeerNodes.UpdateOneAsync(n => n.Id == node.Id,
+                    Builders<PeerNode>.Update.Set(n => n.LastContactAt, DateTime.UtcNow).Set(n => n.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
         }
         finally
         {

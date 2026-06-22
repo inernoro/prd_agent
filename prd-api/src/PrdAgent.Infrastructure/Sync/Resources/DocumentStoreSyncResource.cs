@@ -312,8 +312,11 @@ public class DocumentStoreSyncResource : ISyncableResource
                 lineageToTargetId[f.LineageId] = exFolder.Id;
                 if (addOnly) { skipped++; return; }
                 var newTags = f.Tags ?? new List<string>();
+                // 含 SortOrder/Category（v1.1）：仅文件夹手动排序/分类变化时也要落更新，否则目录顺序漂移
+                // 被漏同步（Bugbot: Apply exported folder ordering on import）。
                 var contentChanged = exFolder.Title != f.Title || exFolder.ParentId != parentId
-                    || !TagsEqual(exFolder.Tags, f.Tags) || !MetaEqual(exFolder.Metadata, f.Metadata);
+                    || !TagsEqual(exFolder.Tags, f.Tags) || !MetaEqual(exFolder.Metadata, f.Metadata)
+                    || exFolder.SortOrder != f.SortOrder || exFolder.Category != f.Category;
                 var timestampsChanged = NeedsRecordTimestampRefresh(exFolder, f, options.PreserveTimestamps);
                 if (contentChanged || timestampsChanged)
                 {
@@ -321,6 +324,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                         .Set(e => e.Title, f.Title)
                         .Set(e => e.ParentId, parentId)
                         .Set(e => e.Tags, newTags)
+                        .Set(e => e.SortOrder, f.SortOrder)
+                        .Set(e => e.Category, f.Category)
                         .Set(e => e.Metadata, WithLineage(f.Metadata, f.LineageId))
                         .Set(e => e.UpdatedBy, actorUserId)
                         .Set(e => e.UpdatedByName, actorName)
@@ -334,6 +339,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                     exFolder.Title = f.Title;
                     exFolder.ParentId = parentId;
                     exFolder.Tags = newTags;
+                    exFolder.SortOrder = f.SortOrder;
+                    exFolder.Category = f.Category;
                     exFolder.Metadata = WithLineage(f.Metadata, f.LineageId);
                     exFolder.UpdatedAt = PickTime(f.UpdatedAt);
                     if (options.PreserveTimestamps && f.CreatedAt.HasValue)
@@ -354,6 +361,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                 SourceType = DocumentSourceType.Import,
                 ContentType = "application/x-folder",
                 Tags = f.Tags ?? new List<string>(),
+                SortOrder = f.SortOrder,
+                Category = f.Category,
                 Metadata = WithLineage(f.Metadata, f.LineageId),
                 CreatedBy = actorUserId,
                 CreatedByName = actorName,

@@ -871,7 +871,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
       const my = ++seq;
       const res = await listPeerSyncRuns('document-store', storeId);
       if (alive && my === seq && res.success && res.data) {
-        setSyncActive((res.data.items || []).some(r => r.status === 'syncing'));
+        // 仅把「近 30 分钟内开始的 syncing 运行」算作进行中：崩溃残留的 syncing 运行（超过租约 TTL）
+        // 视为陈旧，不让按钮永久脉冲（与后端租约 TTL 同口径，Bugbot）。
+        const freshMs = 30 * 60 * 1000;
+        const now = Date.now();
+        setSyncActive((res.data.items || []).some(r =>
+          r.status === 'syncing' && now - new Date(r.startedAt).getTime() < freshMs));
       }
     };
     void check();
@@ -1199,8 +1204,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
     );
   }
 
-  // 同步进行中：本库有 syncing 运行记录，或服务端最近状态为 syncing → 按钮动起来
-  const syncBusy = syncActive || store.peerSyncStatus === 'syncing';
+  // 同步进行中：以「近期 syncing 运行记录」为准（syncActive）。
+  // 不再叠加 store.peerSyncStatus==='syncing'——后端 IsDue 已不用该字段判在途，
+  // 崩溃残留的 syncing 会让按钮永久脉冲（Bugbot: Stale syncing status pins UI）。
+  const syncBusy = syncActive;
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden"

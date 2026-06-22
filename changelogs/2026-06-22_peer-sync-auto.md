@@ -18,3 +18,7 @@
 | fix | prd-api | BuildActorAsync 恢复权限兜底：GetEffectivePermissions 瞬时失败时退回调用方传入的 JWT claims 权限，避免 super 用户被误降级（Bugbot） |
 | fix | prd-api | IsDue 不再用 PeerSyncStatus==syncing 判在途（崩溃残留 syncing 会永久禁用该库自动同步），改由租约承担互斥+在途检测（有 TTL 自愈）（Bugbot High） |
 | fix | prd-api | 库级同步互斥租约 TTL 10min→30min 并 worker/手动共用同一常量，覆盖大库最坏同步耗时防超时被并发抢锁；>30min 超大库的心跳续租列入 debt.peer-sync（Bugbot High） |
+| fix | prd-admin | 详情页同步按钮「进行中」只认近 30 分钟内的 syncing 运行（与租约 TTL 同口径），不再叠加可能陈旧的 store.peerSyncStatus，避免崩溃后永久脉冲（Bugbot） |
+| fix | prd-api | 自动同步 worker 成功通信后 bump 对端 PeerNode.LastContactAt（与手动 transfer 同口径），修复纯后台同步部署「最近通信」长期陈旧（Bugbot） |
+| fix | prd-api | 同步 apply 文件夹 upsert 纳入 SortOrder/Category 比较与写入，修复目录手动排序/分类漂移被漏同步（Codex） |
+| docs | prd-api | spec.map-kb-transfer-protocol 去除 ★ 星标记，改 (v1.1) 纯文本（CLAUDE.md §0，Codex P1） |

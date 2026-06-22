@@ -54,9 +54,9 @@
     "createdAt": "2026-01-01T...",
     "updatedAt": "2026-06-01T...",
     "templateKey": "acceptance-report-v2",
-    "primaryEntryLineage": "<lineage>",        // 主文档（按血缘，跨节点翻译）★v1.1
-    "pinnedEntryLineages": ["<lineage>"],      // 置顶（按血缘）           ★v1.1
-    "defaultSortMode": "created-desc",         // 排序偏好                 ★v1.1
+    "primaryEntryLineage": "<lineage>",        // 主文档（按血缘，跨节点翻译）(v1.1)
+    "pinnedEntryLineages": ["<lineage>"],      // 置顶（按血缘）           (v1.1)
+    "defaultSortMode": "created-desc",         // 排序偏好                 (v1.1)
     "extras": { }                    // 未知字段透传（向下兼容）
   },
   "records": [                        // 条目内记录（每篇文档 / 文件夹）
@@ -71,9 +71,9 @@
       "tags": ["短视频"],
       "metadata": { "syncLineageId": "...", "peerSourceContentHash": "..." },
       "content": "正文…（文件夹/二进制为 null）",
-      "contentHash": "<sha256(content)>",  // 源内容哈希，接收方先比它再决定是否做重活 ★v1.1
-      "sortOrder": 1.5,                    // 目录手动排序                          ★v1.1
-      "category": "教程",                   // 分类                                  ★v1.1
+      "contentHash": "<sha256(content)>",  // 源内容哈希，接收方先比它再决定是否做重活 (v1.1)
+      "sortOrder": 1.5,                    // 目录手动排序                          (v1.1)
+      "category": "教程",                   // 分类                                  (v1.1)
       "createdAt": "...", "updatedAt": "...", "lastChangedAt": "...",
       "extras": { }
     }
@@ -81,7 +81,7 @@
 }
 ```
 
-★v1.1 = 本次（2026-06-15）新增字段，老节点缺省时按默认兜底，不破。
+(v1.1) = 本次（2026-06-15）新增字段，老节点缺省时按默认兜底，不破。
 
 ---
 
