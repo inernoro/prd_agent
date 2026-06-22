@@ -1,6 +1,6 @@
 # 工作流自动配置 (Workflow Auto-Config) · 设计
 
-> **appKey**：`workflow-agent` | **状态**：Phase 1-2 已实现（2026-06-14） | **主文档**：`design.workflow-engine.md`
+> **版本**：v1.1 | **日期**：2026-06-14 | **状态**：已落地 | **appKey**：`workflow-agent` | **主文档**：`design.workflow-engine.md`
 >
 > 本文只覆盖「降低配置门槛 + AI 一次把问题配清楚」这一子领域，工作流引擎本体（DAG 执行、舱执行链路、调度）见主文档。
 
