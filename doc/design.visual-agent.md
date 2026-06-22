@@ -255,3 +255,8 @@
 | 大量并发生图消耗 API 额度 | 中 | 中 | Run 队列 + 速率限制 |
 | COS 存储成本随资产增长 | 低 | 中 | 定期清理孤立资产 + 用户配额 |
 | 多图组合语义理解偏差 | 中 | 低 | Clarify API 反问澄清 + Plan API 优化 prompt |
+
+
+## 视觉分镜台（Storyboard，2026-06-14）
+
+将文章/想法拆解为电影风格分镜，每镜生成关键帧 image prompt + 运动 prompt，复用现有生图引擎实时生长并支持逐镜精修。后端新增 `storyboard-script` 接口（`visual-agent.storyboard.script::chat`），预留 image-to-video 扩展点。同步修复 OpenAIImageClient 对 OpenRouter 图片生成协议的支持（`/chat/completions + modalities:[image,text]`）。
