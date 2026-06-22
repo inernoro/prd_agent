@@ -271,17 +271,22 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         if (!string.Equals(resourceType, "document-store", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(itemId))
             return;
 
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == itemId,
-            Builders<DocumentStore>.Update
-                .Set(s => s.PeerSyncStatus, status)
-                .Set(s => s.PeerSyncDirection, direction)
-                .Set(s => s.PeerSyncNodeId, node.RemoteNodeId)
-                .Set(s => s.PeerSyncNodeName, node.DisplayName)
-                .Set(s => s.PeerSyncNodeBaseUrl, node.BaseUrl)
-                .Set(s => s.PeerSyncLastAt, DateTime.UtcNow)
-                .Set(s => s.PeerSyncLastResult, result),
-            cancellationToken: ct);
+        var now = DateTime.UtcNow;
+        var update = Builders<DocumentStore>.Update
+            .Set(s => s.PeerSyncStatus, status)
+            .Set(s => s.PeerSyncDirection, direction)
+            .Set(s => s.PeerSyncNodeId, node.RemoteNodeId)
+            .Set(s => s.PeerSyncNodeName, node.DisplayName)
+            .Set(s => s.PeerSyncNodeBaseUrl, node.BaseUrl)
+            .Set(s => s.PeerSyncLastAt, now)
+            .Set(s => s.PeerSyncLastResult, result);
+        // 任何一次同步「完成」（不论手动还是自动）都顺带重置自动同步计时基准，
+        // 否则手动同步一个已到期的库后，worker 会在约 1 分钟内又自动跑一遍（IsDue 只看 AutoLastAt，Bugbot）。
+        // 仅在终态（非 syncing）回写，避免「进行中」就把计时往后推。
+        if (!string.Equals(status, "syncing", StringComparison.Ordinal))
+            update = update.Set(s => s.PeerSyncAutoLastAt, now);
+
+        await _db.DocumentStores.UpdateOneAsync(s => s.Id == itemId, update, cancellationToken: ct);
     }
 
     public static SyncApplyMode ParseMode(string? mode) => mode switch
