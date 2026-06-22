@@ -359,16 +359,19 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
 function RunCard({ run }: { run: PeerSyncRun }) {
   const incoming = run.origin === 'incoming';
   const dirLabel = directionLabel(run.direction);
-  const st = statusMeta(run.status);
+  // 崩溃残留的陈旧 syncing 行（超 30min）不再显示为「进行中」金色脉冲，按 stale 中性态展示（Bugbot）。
+  const active = isRunActive(run);
+  const stale = run.status === 'syncing' && !active;
+  const st = statusMeta(stale ? 'stale' : run.status);
   return (
-    <div className="rounded-xl border p-3" style={{ borderColor: run.status === 'syncing' ? 'rgba(245,158,11,0.34)' : 'rgba(148,163,184,0.16)', background: run.status === 'syncing' ? 'rgba(245,158,11,0.10)' : 'rgba(15,23,42,0.34)' }}>
+    <div className="rounded-xl border p-3" style={{ borderColor: active ? 'rgba(245,158,11,0.34)' : 'rgba(148,163,184,0.16)', background: active ? 'rgba(245,158,11,0.10)' : 'rgba(15,23,42,0.34)' }}>
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-semibold truncate">{run.itemName || run.itemId}</span>
           <span className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px]" style={{ color: incoming ? 'rgb(147,180,255)' : 'rgb(94,234,212)', background: incoming ? 'rgba(59,130,246,0.12)' : 'rgba(20,184,166,0.12)', border: `1px solid ${incoming ? 'rgba(59,130,246,0.3)' : 'rgba(45,212,191,0.34)'}` }}>{dirLabel}</span>
         </div>
         <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]" style={{ color: st.color, background: st.bg, border: `1px solid ${st.border}` }}>
-          {run.status === 'syncing' ? <MapSpinner size={11} /> : st.icon}{st.label}
+          {active ? <MapSpinner size={11} /> : st.icon}{st.label}
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -414,6 +417,8 @@ function statusMeta(s: string): { label: string; color: string; bg: string; bord
   if (s === 'synced') return { label: '完成', color: 'rgb(134,239,172)', bg: 'rgba(22,101,52,0.18)', border: 'rgba(34,197,94,0.3)', icon: <CheckCircle2 size={12} /> };
   if (s === 'skipped') return { label: '无变化', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <CheckCircle2 size={12} /> };
   if (s === 'error') return { label: '失败', color: 'rgb(252,165,165)', bg: 'rgba(127,29,29,0.18)', border: 'rgba(248,113,113,0.34)', icon: <AlertTriangle size={12} /> };
+  // 陈旧：标记 syncing 但超 30min 未收尾（多为进程中断），按中性「未完成」展示，不再金色脉冲。
+  if (s === 'stale') return { label: '未完成', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <AlertTriangle size={12} /> };
   return { label: '进行中', color: 'rgb(252,211,77)', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.34)', icon: <Clock3 size={12} /> };
 }
 
