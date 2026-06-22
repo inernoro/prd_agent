@@ -122,6 +122,9 @@
 - [工作流自动配置设计](design.workflow-auto-config) `design.workflow-auto-config`
   > AI 生成校验自愈闭环 + 降低工作流配置门槛（让用户只描述、自动配）
 
+- [赋码采集关联智能体（CCAS）设计](design.ccas-agent) `design.ccas-agent`
+  > 产线赋码业务三件套：PRD 文档生成 + 设备素材库 + 流程示意图（appKey: ccas-agent）
+
 - [工作流引擎 v2 流程控制舱与 SSE 实时推送设计](design.workflow-control-flow-sse) `design.workflow-control-flow-sse`
   > 工作流引擎 v2 的控制流与 SSE 实时推送
 
