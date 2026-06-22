@@ -117,12 +117,17 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             return;
         }
 
+        // 是否真正消费了本次同步周期：只有过了「到期双检」才算（node 缺失也算消费，避免每分钟空打）。
+        // 若因「不到期/已关/正被手动同步」提前返回，则不推进 AutoLastAt —— 否则会把一次没真跑的尝试
+        // 记成满周期，把下一次后台同步推迟最多一个 interval（Bugbot: Skipped auto sync advances timer）。
+        var attempted = false;
         try
         {
             // 抢到租约后重新读最新状态（可能刚被别人同步过 / 关掉了自动同步）。
             var store = await db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync(ct);
             if (store == null || !store.PeerSyncAutoEnabled) return;
             if (!PeerSyncSchedule.IsDue(store, DateTime.UtcNow)) return; // double-check：避免和刚结束的手动/别的容器叠跑
+            attempted = true; // 过了双检 = 本周期确实由我处理，无论 node 在不在都推进 AutoLastAt
 
             var node = await db.PeerNodes
                 .Find(n => n.RemoteNodeId == store.PeerSyncNodeId && n.Status == PeerNodeStatus.Connected)
@@ -154,15 +159,15 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
         }
         finally
         {
-            // ② 释放租约 + 记录本次自动同步时间（到期判定基准）。用 CancellationToken.None 确保收尾必落库
-            //    （server-authority：进程关停也要把租约还回去，否则要等 10 分钟过期）。
+            // ② 释放租约（必落库，CancellationToken.None）。AutoLastAt 仅在「本周期确实由我处理」时推进：
+            //    不到期/已关的提前返回只还租约、不推进，下个周期立即可被重新评估。
+            var update = Builders<DocumentStore>.Update
+                .Unset(s => s.PeerSyncLeaseOwner)
+                .Unset(s => s.PeerSyncLeaseExpiresAt);
+            if (attempted)
+                update = update.Set(s => s.PeerSyncAutoLastAt, DateTime.UtcNow);
             await db.DocumentStores.UpdateOneAsync(
-                s => s.Id == storeId,
-                Builders<DocumentStore>.Update
-                    .Set(s => s.PeerSyncAutoLastAt, DateTime.UtcNow)
-                    .Unset(s => s.PeerSyncLeaseOwner)
-                    .Unset(s => s.PeerSyncLeaseExpiresAt),
-                cancellationToken: CancellationToken.None);
+                s => s.Id == storeId, update, cancellationToken: CancellationToken.None);
         }
     }
 

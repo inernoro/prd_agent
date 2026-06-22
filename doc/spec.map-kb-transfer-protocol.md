@@ -1,6 +1,6 @@
-# MAP 知识库传输协议（MAP-KBTP v1）
+# MAP 知识库传输协议（MAP-KBTP v1） · 规格
 
-> 类型：spec（对外契约 / What） · 状态：active（v1 落地中）
+> **版本**：v1.1 | **日期**：2026-06-22 | **状态**：已落地
 > 负责模块：prd-api（PeerSync + DocumentStoreSyncResource）、prd-admin（同步中心）
 > 关联：`design.peer-sync.md`（节点配对设计）、`spec.cds-compose-contract.md`（同类对外契约写法）
 

@@ -1845,9 +1845,10 @@ export function DocumentStorePage() {
       const next = new Set(prev);
       if (next.has(storeId)) next.delete(storeId); else next.add(storeId);
       const ids = [...next];
+      const rollback = prev; // 捕获操作前的集合，失败时回滚到它（不能用 prev2=>prev2 空操作，那不会撤销乐观更新）
       updateDocumentStorePins(ids).then(res => {
         if (!res.success) {
-          setPinnedIds(prev2 => prev2); // 失败时下次刷新自动纠正
+          setPinnedIds(rollback);
           toast.error('置顶保存失败', res.error?.message);
         }
       });
@@ -2588,6 +2589,8 @@ export function DocumentStorePage() {
                               <div
                                 className="absolute right-0 top-[32px] z-[120] min-w-[148px] rounded-[10px] py-1 shadow-lg"
                                 style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}
+                                // 外部关闭监听的是 document 的 mousedown（先于 click 触发），不挡住会在 click 落到菜单项前就卸载菜单。
+                                onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}>
                                 <MoreItem icon={<Users size={14} />} label="分享到团队" onClick={() => {
                                   setOpenCardMenuId(null);

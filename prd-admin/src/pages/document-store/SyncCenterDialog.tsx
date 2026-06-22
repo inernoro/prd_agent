@@ -382,14 +382,15 @@ function RunCard({ run }: { run: PeerSyncRun }) {
 }
 
 function directionLabel(d: string): string {
+  // 纯文本，不带任何符号字形（遵守 CLAUDE.md §0 禁止 emoji；方向语义由文案表达，视觉强调走底色）。
   switch (d) {
-    case 'push': return '↗ 发送';
-    case 'pull': return '↙ 拉取';
-    case 'both': return '⇄ 双向';
-    case 'received': return '↙ 收到';
-    case 'align-remote': return '⚖ 远端为准';
-    case 'align-local': return '⚖ 本地为准';
-    case 'align-both': return '⚖ 同时对准';
+    case 'push': return '发送';
+    case 'pull': return '拉取';
+    case 'both': return '双向';
+    case 'received': return '收到';
+    case 'align-remote': return '远端为准';
+    case 'align-local': return '本地为准';
+    case 'align-both': return '同时对准';
     default: return d;
   }
 }
