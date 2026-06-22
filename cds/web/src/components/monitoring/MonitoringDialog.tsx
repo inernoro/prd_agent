@@ -14,7 +14,7 @@
  *
  * Theme: every color goes through tokens (light + dark). See cds-theme-tokens.md.
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -26,11 +26,13 @@ import {
   Layers,
   Network,
   RefreshCw,
+  ScrollText,
   Server,
   Timer,
   X,
 } from 'lucide-react';
 
+import { apiRequest, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
@@ -117,6 +119,35 @@ function activityTypeLabel(type: string): string {
 const TAB_TRIGGER_CLASS =
   'w-auto min-h-9 flex-row justify-center rounded-md border border-transparent px-4 data-[state=active]:border-[hsl(var(--hairline))] data-[state=active]:bg-[hsl(var(--surface-raised))]';
 
+// 依赖主机监控数据（host-stats/executors）的页签——只有这些在数据加载时显示
+// 「加载监控数据」骨架；日志中心 / 运维操作 各自独立取数，不被它阻塞。
+const HOST_TABS = new Set(['performance', 'executors', 'activity']);
+
+interface ServerEvent {
+  _id: string;
+  ts: string;
+  category: 'container' | 'docker' | 'system';
+  severity: 'info' | 'warn' | 'error';
+  source: string;
+  action: string;
+  message?: string;
+  branchId?: string | null;
+  commitSha?: string | null;
+  status?: string | null;
+}
+
+type LogCenterState =
+  | { status: 'loading' }
+  | { status: 'disabled'; message: string }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; events: ServerEvent[] };
+
+const LOG_SEVERITY_FILTERS: Array<{ value: '' | 'warn' | 'error'; label: string }> = [
+  { value: '', label: '全部' },
+  { value: 'warn', label: '警告及以上' },
+  { value: 'error', label: '仅错误' },
+];
+
 export interface OpsTab {
   value: string;
   label: string;
@@ -147,7 +178,6 @@ export function MonitoringDialog({
   const { state, activity, reload } = useMonitoringData(open, projectId);
   const [tab, setTab] = useState('performance');
   const ops = opsTabs || [];
-  const opsValues = new Set(ops.map((t) => t.value));
 
   const title = projectName ? `运维 · ${projectName}` : '运维';
   const description = projectId
@@ -210,6 +240,10 @@ export function MonitoringDialog({
               <Activity className="h-4 w-4 shrink-0" />
               活动
             </TabsTrigger>
+            <TabsTrigger value="logs" className={TAB_TRIGGER_CLASS}>
+              <ScrollText className="h-4 w-4 shrink-0" />
+              日志中心
+            </TabsTrigger>
             {ops.map((t) => (
               <TabsTrigger key={t.value} value={t.value} className={TAB_TRIGGER_CLASS}>
                 {t.icon}
@@ -222,8 +256,8 @@ export function MonitoringDialog({
             className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
             style={{ minHeight: 0, overscrollBehavior: 'contain' }}
           >
-            {!opsValues.has(tab) && state.status === 'loading' ? <LoadingBlock label="加载监控数据" /> : null}
-            {!opsValues.has(tab) && state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+            {HOST_TABS.has(tab) && state.status === 'loading' ? <LoadingBlock label="加载监控数据" /> : null}
+            {HOST_TABS.has(tab) && state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
             {state.status === 'ok' ? (
               <>
                 <TabsContent value="performance">
@@ -241,6 +275,9 @@ export function MonitoringDialog({
                 </TabsContent>
               </>
             ) : null}
+            <TabsContent value="logs">
+              <LogCenterTab projectId={projectId} />
+            </TabsContent>
             {ops.map((t) => (
               <TabsContent key={t.value} value={t.value}>
                 {t.content}
@@ -496,6 +533,108 @@ function ActivityRow({ log }: { log: MonitoringActivityLog }): JSX.Element {
         {log.actor ? `${log.actor}` : ''}
         {log.resourceName ? ` · ${log.resourceName}` : ''}
       </div>
+    </li>
+  );
+}
+
+// 日志中心：权威系统事件日志（GET /api/server-events）——容器/ docker / 系统三类事件，
+// 按严重级过滤。这是"权威可观测"的统一入口，比分散在各处的日志更可信。
+function LogCenterTab({ projectId }: { projectId?: string }): JSX.Element {
+  const [minSeverity, setMinSeverity] = useState<'' | 'warn' | 'error'>('');
+  const [state, setState] = useState<LogCenterState>({ status: 'loading' });
+
+  const load = useCallback(async () => {
+    setState({ status: 'loading' });
+    try {
+      const qs = new URLSearchParams({ limit: '200' });
+      if (projectId) qs.set('projectId', projectId);
+      if (minSeverity) qs.set('minSeverity', minSeverity);
+      const res = await apiRequest<{ ok: boolean; disabled?: boolean; message?: string; events: ServerEvent[] }>(
+        `/api/server-events?${qs.toString()}`,
+      );
+      if (res.disabled) {
+        setState({ status: 'disabled', message: res.message || '服务器事件日志未启用' });
+        return;
+      }
+      setState({ status: 'ok', events: res.events || [] });
+    } catch (err) {
+      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [projectId, minSeverity]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted-foreground">
+          权威系统事件日志（容器 / docker / 系统）{projectId ? ' · 本项目' : ' · 全实例'}。
+        </span>
+        <div className="ml-auto flex items-center gap-1.5">
+          {LOG_SEVERITY_FILTERS.map((f) => (
+            <button
+              key={f.value || 'all'}
+              type="button"
+              onClick={() => setMinSeverity(f.value)}
+              className={`rounded-md border px-2 py-1 text-xs ${
+                minSeverity === f.value
+                  ? 'border-primary/45 bg-primary/10 text-primary'
+                  : 'border-[hsl(var(--hairline))] text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+          <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+            <RefreshCw />
+            刷新
+          </Button>
+        </div>
+      </div>
+      {state.status === 'loading' ? <LoadingBlock label="加载系统事件日志" /> : null}
+      {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+      {state.status === 'disabled' ? (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+          {state.message}
+        </div>
+      ) : null}
+      {state.status === 'ok' ? (
+        state.events.length === 0 ? (
+          <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-10 text-center text-sm text-muted-foreground">
+            暂无匹配的系统事件。
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {state.events.map((ev) => <LogRow key={ev._id} ev={ev} />)}
+          </ul>
+        )
+      ) : null}
+    </div>
+  );
+}
+
+function LogRow({ ev }: { ev: ServerEvent }): JSX.Element {
+  const sevClass = ev.severity === 'error'
+    ? 'border-destructive/30 bg-destructive/10 text-destructive'
+    : ev.severity === 'warn'
+      ? 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+      : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
+  const sevLabel = ev.severity === 'error' ? '错误' : ev.severity === 'warn' ? '警告' : '信息';
+  return (
+    <li className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className={`rounded border px-1.5 py-0.5 ${sevClass}`}>{sevLabel}</span>
+        <span className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-muted-foreground">
+          {ev.category}
+        </span>
+        <span className="font-medium text-foreground/80">{ev.source}</span>
+        <span className="text-muted-foreground">/ {ev.action}</span>
+        {ev.branchId ? <span className="truncate font-mono text-muted-foreground/80">{ev.branchId}</span> : null}
+        <span className="ml-auto shrink-0 text-muted-foreground/65">{formatRelativeTime(ev.ts)}</span>
+      </div>
+      {ev.message ? (
+        <p className="mt-1 break-words text-xs leading-5 text-muted-foreground">{ev.message}</p>
+      ) : null}
     </li>
   );
 }
