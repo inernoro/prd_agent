@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as LucideIcons from 'lucide-react';
 import {
   MessageSquare,
   Image as ImageIcon,
   Bug,
   Bell,
   ChevronRight,
-  Bot,
   type LucideIcon,
 } from 'lucide-react';
+import { accentFor, iconFor, DEFAULT_ACCENT } from '@/lib/agentAccent';
 import { useAuthStore } from '@/stores/authStore';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
@@ -28,34 +27,7 @@ import {
 } from '@/components/mobile/appStore';
 import { AS_COLOR, AS_SPACE, AS_FONT_FAMILY, AS_TYPE } from '@/lib/appStoreTokens';
 
-/* ─────────── Agent 主题色（iOS System Colors 级，不刺眼） ─────────── */
-
-const AGENT_ACCENT: Record<string, { from: string; to: string }> = {
-  'prd-agent':       { from: '#0A84FF', to: '#64D2FF' },  // iOS Blue → Teal
-  'visual-agent':    { from: '#BF5AF2', to: '#FF375F' },  // iOS Purple → Pink
-  'literary-agent':  { from: '#30D158', to: '#64D2FF' },  // iOS Green → Teal
-  'defect-agent':    { from: '#FF9F0A', to: '#FF453A' },  // iOS Orange → Red
-  'video-agent':     { from: '#FF375F', to: '#BF5AF2' },  // iOS Pink → Purple
-  'report-agent':    { from: '#5E5CE6', to: '#0A84FF' },  // iOS Indigo → Blue
-  'review-agent':    { from: '#FFD60A', to: '#FF9F0A' },  // iOS Yellow → Orange
-  'pr-review':       { from: '#5E5CE6', to: '#64D2FF' },  // iOS Indigo → Teal
-  'shortcuts-agent': { from: '#FFD60A', to: '#FF9F0A' },  // iOS Yellow → Orange
-  'transcript-agent':{ from: '#FF375F', to: '#BF5AF2' },  // Pink → Purple
-  'workflow-agent':  { from: '#30D158', to: '#64D2FF' },  // Green → Teal
-  'arena':           { from: '#FF9F0A', to: '#FFD60A' },  // Orange → Yellow
-};
-
-const DEFAULT_ACCENT = { from: '#0A84FF', to: '#5E5CE6' };
-
-function accentFor(agentKey?: string): { from: string; to: string } {
-  if (!agentKey) return DEFAULT_ACCENT;
-  return AGENT_ACCENT[agentKey] ?? DEFAULT_ACCENT;
-}
-
-function iconFor(iconName: string): LucideIcon {
-  const icons = LucideIcons as unknown as Record<string, LucideIcon>;
-  return icons[iconName] ?? Bot;
-}
+/* ─────────── Agent 主题色 / 图标解析见 @/lib/agentAccent（移动端 SSOT） ─────────── */
 
 /* ─────────── Feed 类型映射 ─────────── */
 
