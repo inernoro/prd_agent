@@ -76,6 +76,12 @@ export default defineConfig({
   build: {
     // CDS static 部署在共享主机上 vite build 易 OOM（exitCode=137）。
     // isCdsBuild：关 minify + 限并行 + 关体积报告，优先保活过构建。
+    //
+    // 2026-06-22 并发治理后放宽 maxParallelFileOps（原来死死钉在 1，Rollup
+    // 文件 I/O 全串行 → 大型前端构建奇慢）：CDS 现有「全局构建并发闸」
+    // （CDS_MAX_CONCURRENT_BUILDS，默认 3）兜住同时构建数，单个构建的内存
+    // 压力大幅下降，不再需要把并行度压到 1 来防 OOM。默认放宽到 4，仍可用
+    // CDS_VITE_MAX_PARALLEL_FILE_OPS 按主机规模下调（小主机设 1~2 即回到旧行为）。
     sourcemap: false,
     minify: isCdsBuild ? false : 'esbuild',
     cssMinify: isCdsBuild ? false : 'esbuild',
@@ -83,7 +89,9 @@ export default defineConfig({
     target: 'es2022',
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
-      maxParallelFileOps: isCdsBuild ? 1 : undefined,
+      maxParallelFileOps: isCdsBuild
+        ? Math.max(1, Number.parseInt(process.env.CDS_VITE_MAX_PARALLEL_FILE_OPS || '', 10) || 4)
+        : undefined,
       output: {
         entryFileNames: `assets/[name]-[hash]-${buildId}.js`,
         chunkFileNames: `assets/[name]-[hash]-${buildId}.js`,
