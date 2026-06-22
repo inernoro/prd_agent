@@ -1406,6 +1406,12 @@ export const api = {
       if (opts?.force) params.push('force=true');
       return `/api/changelog/github-logs${params.length ? `?${params.join('&')}` : ''}`;
     },
+    githubPendingReview: (opts?: { limit?: number; force?: boolean }) => {
+      const params: string[] = [];
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.force) params.push('force=true');
+      return `/api/changelog/github-pending-review${params.length ? `?${params.join('&')}` : ''}`;
+    },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
     aiSummary: () => '/api/changelog/ai-summary',
     /** SSE 实时推送：后台刷新有更新时服务器主动推 update 事件 */
