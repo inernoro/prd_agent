@@ -30,3 +30,4 @@
 | fix | prd-api | 漂移签名 ComputeSignature 纳入 sortOrder/category/defaultSortMode，避免仅排序/分类变化时签名不变、漂移检测误报已同步（Codex） |
 | fix | prd-api | 自动同步 sourceBaseUrl 兜底取 config["ServerUrl"]（worker 无 Request），反代部署未设 PEER_SELF_BASE_URL 时图片本地化不再降级（Codex） |
 | fix | prd-admin | 知识库置顶写入串行化（合并为最新一次、单请求在途、失败拉服务端权威值），杜绝快速连点乱序丢项 + 陈旧回滚丢新选择（Codex） |
+| fix | prd-admin | 同步中心自动同步开关跟随 props 更新（onAfterSync 重载后不再与服务端不一致，Bugbot） |

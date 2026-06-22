@@ -78,6 +78,11 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
 
   useEffect(() => () => { mounted.current = false; }, []);
 
+  // 跟随 props 更新：onAfterSync 重载 store 后 autoEnabled/autoIntervalMinutes 会变，
+  // 弹窗常开时本地态需同步，否则 UI 与服务端不一致（Bugbot）。乐观更新成功后 prop==本地值，此处为 no-op。
+  useEffect(() => { setAutoOn(!!autoEnabled); }, [autoEnabled]);
+  useEffect(() => { if (autoIntervalMinutes && autoIntervalMinutes > 0) setAutoInterval(autoIntervalMinutes); }, [autoIntervalMinutes]);
+
   // runs 发号器：load 与 loadRuns 轮询都会 setRuns，只应用「最新一发」结果，防慢响应覆盖快响应
   // （学习规则：轮询/并发 fetch 需 stale-response 守卫）。
   const runsSeq = useRef(0);
