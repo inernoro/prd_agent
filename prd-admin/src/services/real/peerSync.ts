@@ -82,6 +82,19 @@ export async function transferToPeer(params: {
   );
 }
 
+/** 开/关某知识库的后台自动同步（复用最近一次同步的对端 + 方向；非破坏性，绝不删条目） */
+export async function setAutoSync(params: {
+  resourceType: string;
+  itemId: string;
+  enabled: boolean;
+  intervalMinutes?: number;
+}) {
+  return await apiRequest<{ enabled: boolean; intervalMinutes: number; direction?: string | null; nodeName?: string | null }>(
+    api.peerSync.autoSync(),
+    { method: 'POST', body: params },
+  );
+}
+
 /** 同步运行台账（进行中 / 发出去 / 收进来 / 历史） */
 export interface PeerSyncRun {
   id: string;

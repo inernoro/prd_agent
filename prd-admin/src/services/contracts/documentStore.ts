@@ -37,6 +37,10 @@ export type DocumentStore = {
   peerSyncNodeBaseUrl?: string | null;
   peerSyncLastAt?: string | null;
   peerSyncLastResult?: string | null;
+  /** 是否开启后台自动同步（用户在同步中心显式开启） */
+  peerSyncAutoEnabled?: boolean | null;
+  /** 自动同步周期（分钟，下限 5） */
+  peerSyncIntervalMinutes?: number | null;
   createdAt: string;
   updatedAt: string;
 };

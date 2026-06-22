@@ -9,12 +9,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from 'react-dom';
 import {
   ArrowLeftRight, ArrowRight, ArrowLeft, AlertTriangle, CheckCircle2, Clock3,
-  Globe, RefreshCw, Scale, Send, X,
+  Globe, RefreshCw, Scale, Send, X, Repeat,
 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
-  listPeerNodes, listPeerSyncRuns, transferToPeer,
+  listPeerNodes, listPeerSyncRuns, transferToPeer, setAutoSync,
   type PeerNode, type PeerSyncRun, type PeerAlign,
 } from '@/services/real/peerSync';
 
@@ -26,7 +26,22 @@ interface Props {
   onAfterSync?: () => void;
   /** 打开「发送到对端」高级弹窗（普通 push/pull/both） */
   onOpenSend?: () => void;
+  /** 当前是否已开启后台自动同步（来自 store.peerSyncAutoEnabled） */
+  autoEnabled?: boolean | null;
+  /** 自动同步周期（分钟，来自 store.peerSyncIntervalMinutes） */
+  autoIntervalMinutes?: number | null;
+  /** 最近一次同步的方向（非空表示已手动同步过一次，可开启自动同步） */
+  peerSyncDirection?: string | null;
+  /** 最近一次同步的对端名称 */
+  peerNodeName?: string | null;
 }
+
+const AUTO_INTERVAL_OPTS: { v: number; label: string }[] = [
+  { v: 15, label: '每 15 分钟' },
+  { v: 60, label: '每小时' },
+  { v: 360, label: '每 6 小时' },
+  { v: 1440, label: '每天' },
+];
 
 type TabKey = 'running' | 'out' | 'in' | 'history';
 const TABS: { key: TabKey; label: string }[] = [
@@ -42,7 +57,7 @@ const ALIGN_OPTS: { key: PeerAlign; label: string; desc: string; danger: boolean
   { key: 'both', label: '同时对准', desc: '两边合并，各自新增都保留，不删任何一边', danger: false, icon: <ArrowLeftRight size={15} /> },
 ];
 
-export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-store', onClose, onAfterSync, onOpenSend }: Props) {
+export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-store', onClose, onAfterSync, onOpenSend, autoEnabled, autoIntervalMinutes, peerSyncDirection, peerNodeName }: Props) {
   const [loading, setLoading] = useState(true);
   const [runs, setRuns] = useState<PeerSyncRun[]>([]);
   const [nodes, setNodes] = useState<PeerNode[]>([]);
@@ -52,7 +67,14 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   const [confirmAlign, setConfirmAlign] = useState<PeerAlign | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 后台自动同步本地态（乐观更新）
+  const [autoOn, setAutoOn] = useState(!!autoEnabled);
+  const [autoInterval, setAutoInterval] = useState(autoIntervalMinutes && autoIntervalMinutes > 0 ? autoIntervalMinutes : 60);
+  const [autoBusy, setAutoBusy] = useState(false);
   const mounted = useRef(true);
+
+  // 已手动同步过一次（有方向或有 outgoing 台账）才允许开启自动同步——和后端同口径。
+  const everSynced = !!peerSyncDirection || runs.some(r => r.origin === 'outgoing');
 
   useEffect(() => () => { mounted.current = false; }, []);
 
@@ -122,6 +144,30 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
     }
   };
 
+  // 后台自动同步开关 / 改周期（乐观更新 + 失败回滚）。
+  const applyAuto = async (enabled: boolean, interval: number) => {
+    if (resourceType !== 'document-store') return;
+    if (enabled && !everSynced) { setError('请先手动同步一次（确定对端与方向）后，再开启后台自动同步'); return; }
+    setAutoBusy(true);
+    setError(null);
+    const prevOn = autoOn;
+    const prevInterval = autoInterval;
+    setAutoOn(enabled);
+    setAutoInterval(interval);
+    const res = await setAutoSync({ resourceType, itemId: storeId, enabled, intervalMinutes: interval });
+    if (!mounted.current) return;
+    setAutoBusy(false);
+    if (res.success && res.data) {
+      setAutoOn(res.data.enabled);
+      setAutoInterval(res.data.intervalMinutes);
+      onAfterSync?.();
+    } else {
+      setAutoOn(prevOn);
+      setAutoInterval(prevInterval);
+      setError(res.error?.message || '设置自动同步失败');
+    }
+  };
+
   const modal = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4"
       style={{ background: 'rgba(5,7,12,0.70)' }} onClick={onClose}>
@@ -152,6 +198,46 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
         </div>
 
         <div className="flex min-h-0 flex-col" style={{ height: 'min(680px, calc(88vh - 65px))' }}>
+          {/* 后台自动同步：开启后由服务端定期复用最近一次同步的对端 + 方向，自动保持两端一致（非破坏性，绝不删条目） */}
+          {resourceType === 'document-store' && (
+            <div className="border-b px-6 py-3" style={{ borderColor: 'rgba(148,163,184,0.12)' }}>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Repeat size={15} style={{ color: autoOn ? 'rgb(94,234,212)' : 'var(--text-muted)' }} />
+                  <span className="text-sm font-semibold">后台自动同步</span>
+                  <span className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                    {autoOn
+                      ? `已开启 · 自动${peerNodeName ? ` 与「${peerNodeName}」` : ''}保持一致`
+                      : everSynced ? '关闭中 · 仅手动同步' : '需先手动同步一次后才能开启'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {autoOn && (
+                    <select
+                      value={autoInterval}
+                      onChange={e => applyAuto(true, Number(e.target.value))}
+                      disabled={autoBusy}
+                      className="prd-field h-8 rounded-lg px-2 text-xs outline-none"
+                      style={{ maxWidth: 140 }}
+                    >
+                      {AUTO_INTERVAL_OPTS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+                    </select>
+                  )}
+                  <Button
+                    size="sm"
+                    variant={autoOn ? 'primary' : 'secondary'}
+                    onClick={() => applyAuto(!autoOn, autoInterval)}
+                    disabled={autoBusy || (!autoOn && !everSynced)}
+                    title={!everSynced ? '请先手动同步一次（确定对端与方向）' : autoOn ? '关闭后台自动同步' : '开启后台自动同步'}
+                  >
+                    {autoBusy ? <MapSpinner size={13} /> : <Repeat size={13} />}
+                    {autoOn ? '已开启' : '开启自动'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 强制对齐 */}
           <div className="border-b px-6 py-3" style={{ borderColor: 'rgba(148,163,184,0.12)' }}>
             <div className="flex items-center justify-between gap-3 flex-wrap">

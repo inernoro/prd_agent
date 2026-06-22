@@ -1409,6 +1409,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         <SyncCenterDialog
           storeId={store.id}
           storeName={store.name}
+          autoEnabled={store.peerSyncAutoEnabled}
+          autoIntervalMinutes={store.peerSyncIntervalMinutes}
+          peerSyncDirection={store.peerSyncDirection}
+          peerNodeName={store.peerSyncNodeName}
           onClose={() => setShowSyncCenter(false)}
           onAfterSync={() => { void loadStore(); void loadEntries(); }}
           onOpenSend={() => { setShowSyncCenter(false); setShowSendToPeerDetail(true); }}

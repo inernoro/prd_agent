@@ -2470,6 +2470,8 @@ public class DocumentStoreController : ControllerBase
                 s.PeerSyncNodeBaseUrl,
                 s.PeerSyncLastAt,
                 s.PeerSyncLastResult,
+                s.PeerSyncAutoEnabled,
+                s.PeerSyncIntervalMinutes,
                 s.CreatedAt,
                 s.UpdatedAt,
                 hasActiveShare = sharedStoreIds.Contains(s.Id),

@@ -111,6 +111,28 @@ public class DocumentStore
     public string? PeerSyncLastResult { get; set; }
 
     /// <summary>
+    /// 是否开启后台自动同步（用户在「同步中心」显式开启）。开启后 PeerSyncScheduleWorker 按
+    /// PeerSyncIntervalMinutes 周期复用最近一次同步的对端 + 方向，自动 push/pull/both（非破坏性，绝不删条目）。
+    /// 默认 false —— 历史上手动同步过一次的库不会被动开始发流量，避免「意料之外」的对端请求。
+    /// </summary>
+    public bool PeerSyncAutoEnabled { get; set; }
+
+    /// <summary>自动同步周期（分钟）。null/缺省按 worker 默认（60）。下限 5 分钟，worker 会兜底夹紧。</summary>
+    public int? PeerSyncIntervalMinutes { get; set; }
+
+    /// <summary>最近一次「自动」同步的发起时间（与手动 PeerSyncLastAt 区分，仅用于到期判定）。</summary>
+    public DateTime? PeerSyncAutoLastAt { get; set; }
+
+    /// <summary>
+    /// 自动同步分布式租约持有者（实例 ID）。共享 Mongo 多容器部署下，
+    /// 同一个库同一时刻只有一个容器能拿到租约去同步，杜绝「N 个预览容器各发一遍」的请求风暴。
+    /// </summary>
+    public string? PeerSyncLeaseOwner { get; set; }
+
+    /// <summary>自动同步租约到期时间。owner 崩溃后租约自动过期，另一容器可接管（自愈）。</summary>
+    public DateTime? PeerSyncLeaseExpiresAt { get; set; }
+
+    /// <summary>
     /// 绑定的产品管理对象（product-agent），格式 "product:{id}" 或 "version:{id}"。
     /// 非空表示这是某产品/版本的知识库（整体库 / 版本库），从个人/公开列表中隐藏，
     /// 只在 product-agent 对应 tab 内访问。
