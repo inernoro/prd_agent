@@ -105,7 +105,9 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   useEffect(() => { void load(); }, [load]);
 
   // 轮询：有进行中任务时 2s 一刷（动起来），否则 6s 兜底。
-  const anyRunning = runs.some(r => r.status === 'syncing');
+  // 「进行中」只认近 30 分钟内开始的 syncing 运行（与详情页 + 后端租约 TTL 同口径），
+  // 崩溃残留的陈旧 syncing 台账不再让面板永久脉冲、也不再触发更快轮询（Bugbot）。
+  const anyRunning = runs.some(isRunActive);
   useEffect(() => {
     const t = window.setInterval(() => { void loadRuns(); }, anyRunning ? 2000 : 6000);
     return () => window.clearInterval(t);
@@ -118,14 +120,14 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   }, [onClose]);
 
   const filtered = useMemo(() => {
-    if (tab === 'running') return runs.filter(r => r.status === 'syncing');
+    if (tab === 'running') return runs.filter(isRunActive);
     if (tab === 'out') return runs.filter(r => r.origin === 'outgoing');
     if (tab === 'in') return runs.filter(r => r.origin === 'incoming');
     return runs;
   }, [runs, tab]);
 
   const counts = useMemo(() => ({
-    running: runs.filter(r => r.status === 'syncing').length,
+    running: runs.filter(isRunActive).length,
     out: runs.filter(r => r.origin === 'outgoing').length,
     in: runs.filter(r => r.origin === 'incoming').length,
     history: runs.length,
@@ -385,6 +387,13 @@ function RunCard({ run }: { run: PeerSyncRun }) {
       </div>
     </div>
   );
+}
+
+// 「进行中」判定：syncing 且开始于近 30 分钟内（与详情页 + 后端租约 TTL 同口径）。
+// 崩溃残留的陈旧 syncing 台账超过此窗口即视为非活动，不再让 UI 永久脉冲。
+const RUN_FRESH_MS = 30 * 60 * 1000;
+function isRunActive(r: PeerSyncRun): boolean {
+  return r.status === 'syncing' && Date.now() - new Date(r.startedAt).getTime() < RUN_FRESH_MS;
 }
 
 function directionLabel(d: string): string {
