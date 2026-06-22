@@ -94,7 +94,8 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             var registry = scope.ServiceProvider.GetRequiredService<ISyncResourceRegistry>();
             var transfer = scope.ServiceProvider.GetRequiredService<IPeerSyncTransferService>();
-            await SyncOneAsync(db, registry, transfer, storeId, ct);
+            var peer = scope.ServiceProvider.GetRequiredService<PrdAgent.Core.Interfaces.IPeerNodeService>();
+            await SyncOneAsync(db, registry, transfer, peer, storeId, ct);
         }
         catch (Exception ex)
         {
@@ -108,10 +109,11 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
 
     private async Task SyncOneAsync(
         MongoDbContext db, ISyncResourceRegistry registry, IPeerSyncTransferService transfer,
-        string storeId, CancellationToken ct)
+        PrdAgent.Core.Interfaces.IPeerNodeService peer, string storeId, CancellationToken ct)
     {
-        // ① 抢租约（防风暴第一层）：条件更新——未被占用 / 租约已过期 / owner 是自己 才抢得到。
-        if (!await TryAcquireLeaseAsync(db, storeId, ct))
+        // ① 抢租约（防风暴第一层）：与手动 transfer 共用同一把锁（TryAcquireStoreSyncLeaseAsync），
+        //    手动同步进行中时 worker 抢不到 → 不会和手动叠跑（治 Bugbot: Auto/manual overlap race）。
+        if (!await transfer.TryAcquireStoreSyncLeaseAsync(storeId, _instanceId, LeaseDuration, ct))
         {
             _logger.LogDebug("[PeerSyncScheduleWorker] lease busy for {StoreId}, skip on {InstanceId}", storeId, _instanceId);
             return;
@@ -137,6 +139,15 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
                 _logger.LogInformation("[PeerSyncScheduleWorker] store {StoreId} peer node {NodeId} not connected, skip",
                     storeId, store.PeerSyncNodeId);
                 return; // 释放租约时会更新 AutoLastAt，下个周期再试（不至于每分钟空打）
+            }
+
+            // 防自指（与 POST /transfer 同口径）：共享 Mongo 预览部署里对端 RemoteNodeId 可能等于本节点
+            // selfNodeId，自动同步若不挡会跑「自己同步自己」的无效流量（Bugbot: Auto worker skips self-node guard）。
+            var selfNodeId = await peer.GetSelfNodeIdAsync(ct);
+            if (string.Equals(node.RemoteNodeId, selfNodeId, StringComparison.Ordinal))
+            {
+                _logger.LogInformation("[PeerSyncScheduleWorker] store {StoreId} peer points to self ({NodeId}), skip", storeId, selfNodeId);
+                return;
             }
 
             var resource = registry.Resolve("document-store");
@@ -174,23 +185,6 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
                 update = update.Set(s => s.PeerSyncAutoLastAt, DateTime.UtcNow);
             await db.DocumentStores.UpdateOneAsync(releaseFilter, update, cancellationToken: CancellationToken.None);
         }
-    }
-
-    private async Task<bool> TryAcquireLeaseAsync(MongoDbContext db, string storeId, CancellationToken ct)
-    {
-        var now = DateTime.UtcNow;
-        var filter = Builders<DocumentStore>.Filter.And(
-            Builders<DocumentStore>.Filter.Eq(s => s.Id, storeId),
-            Builders<DocumentStore>.Filter.Eq(s => s.PeerSyncAutoEnabled, true),
-            Builders<DocumentStore>.Filter.Or(
-                Builders<DocumentStore>.Filter.Eq(s => s.PeerSyncLeaseOwner, null),
-                Builders<DocumentStore>.Filter.Lt(s => s.PeerSyncLeaseExpiresAt, now),
-                Builders<DocumentStore>.Filter.Eq(s => s.PeerSyncLeaseOwner, _instanceId)));
-        var update = Builders<DocumentStore>.Update
-            .Set(s => s.PeerSyncLeaseOwner, _instanceId)
-            .Set(s => s.PeerSyncLeaseExpiresAt, now.Add(LeaseDuration));
-        var result = await db.DocumentStores.UpdateOneAsync(filter, update, cancellationToken: ct);
-        return result.ModifiedCount > 0 || result.MatchedCount > 0;
     }
 
     /// <summary>把库上记录的方向归一成自动同步要跑的方向：push/pull 保留，其余（both/received/align-*）一律 both。</summary>

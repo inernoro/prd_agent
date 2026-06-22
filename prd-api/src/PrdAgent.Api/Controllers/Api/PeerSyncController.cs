@@ -522,6 +522,9 @@ public class PeerSyncController : ControllerBase
         // 之前总是 bump LastContactAt，即便全部 itemId 在本地（无权访问 / Export 返回 null）就失败、
         // 一次都没真正联系对端。LastContactAt 语义是"最近成功通信"（与 admin ping test 对齐），不该被误更新。
         var anyPeerContact = false;
+        // 本次手动 transfer 的租约持有者标识（区别于 worker 的实例 id）。
+        var manualLeaseOwner = $"manual:{this.GetRequiredUserId()}:{Guid.NewGuid():N}";
+        var isDocStore = string.Equals(resource.ResourceType, "document-store", StringComparison.Ordinal);
         foreach (var itemId in request.ItemIds.Distinct())
         {
             if (!allowedSet.Contains(itemId))
@@ -530,15 +533,31 @@ public class PeerSyncController : ControllerBase
                 anyFail = true;
                 continue;
             }
-            // per-item 两阶段同步核心已抽到 IPeerSyncTransferService（与自动同步 worker 共用同一条路径）。
-            // 注意：StartRun 的台账方向用 runDirection（align-* 区分对齐），状态回写/网络用 direction。
-            var r = await _transfer.SyncItemAsync(
-                node, resource, itemId, itemNames.GetValueOrDefault(itemId, string.Empty),
-                direction, runDirection, mode, actor,
-                request.PreserveTimestamps ?? true, request.RewriteAssetLinks ?? true, sourceBaseUrl, ct);
-            if (r.AnyPeerContact) anyPeerContact = true;
-            if (!r.Ok) anyFail = true;
-            results.Add(new { itemId, ok = r.Ok, message = r.Message, created = r.Created, updated = r.Updated, skipped = r.Skipped, deleted = r.Deleted, failed = r.Failed, assetsRewritten = r.AssetsRewritten, assetRewriteFailed = r.AssetRewriteFailed });
+            // 与自动同步 worker 共用同一把库级互斥锁：抢不到说明该库正被后台自动同步 / 他人手动同步占用，
+            // 直接跳过，避免同库并发同步（尤其手动 mirror 删除与自动 overwrite 交错损坏数据，Bugbot）。
+            var leased = isDocStore && await _transfer.TryAcquireStoreSyncLeaseAsync(itemId, manualLeaseOwner, TimeSpan.FromMinutes(10), ct);
+            if (isDocStore && !leased)
+            {
+                results.Add(new { itemId, ok = false, message = "该知识库正在同步中（后台自动或他人手动），请稍后重试" });
+                anyFail = true;
+                continue;
+            }
+            try
+            {
+                // per-item 两阶段同步核心已抽到 IPeerSyncTransferService（与自动同步 worker 共用同一条路径）。
+                // 注意：StartRun 的台账方向用 runDirection（align-* 区分对齐），状态回写/网络用 direction。
+                var r = await _transfer.SyncItemAsync(
+                    node, resource, itemId, itemNames.GetValueOrDefault(itemId, string.Empty),
+                    direction, runDirection, mode, actor,
+                    request.PreserveTimestamps ?? true, request.RewriteAssetLinks ?? true, sourceBaseUrl, ct);
+                if (r.AnyPeerContact) anyPeerContact = true;
+                if (!r.Ok) anyFail = true;
+                results.Add(new { itemId, ok = r.Ok, message = r.Message, created = r.Created, updated = r.Updated, skipped = r.Skipped, deleted = r.Deleted, failed = r.Failed, assetsRewritten = r.AssetsRewritten, assetRewriteFailed = r.AssetRewriteFailed });
+            }
+            finally
+            {
+                if (isDocStore) await _transfer.ReleaseStoreSyncLeaseAsync(itemId, manualLeaseOwner, ct);
+            }
         }
 
         // 仅在至少有一次真正与对端 HTTP 通信成功时才 bump LastContactAt（与 admin ping test 同口径），
@@ -688,7 +707,10 @@ public class PeerSyncController : ControllerBase
     {
         var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal)
             || string.Equals(User.FindFirst("isAiSuperAccess")?.Value, "1", StringComparison.Ordinal);
-        return _transfer.BuildActorAsync(userId, isRoot, ct);
+        // 把 JWT 里的 permissions claims 作为兜底传下去：GetEffectivePermissionsAsync 瞬时失败时
+        // 退回 claims，避免 super-via-permission 用户被误判为普通用户（Bugbot）。
+        var claimsPerms = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return _transfer.BuildActorAsync(userId, isRoot, ct, claimsPerms);
     }
 
     private static T? Deserialize<T>(string body) where T : class

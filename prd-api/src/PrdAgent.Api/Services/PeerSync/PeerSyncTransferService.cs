@@ -22,8 +22,20 @@ namespace PrdAgent.Api.Services.PeerSync;
 /// </summary>
 public interface IPeerSyncTransferService
 {
-    /// <summary>按 userId 构建同步操作者上下文（含 system role + allow-deny 的有效权限集）。</summary>
-    Task<SyncActor> BuildActorAsync(string userId, bool isRoot, CancellationToken ct);
+    /// <summary>按 userId 构建同步操作者上下文（含 system role + allow-deny 的有效权限集）。
+    /// fallbackPermissions：当 GetEffectivePermissionsAsync 瞬时失败时退回的权限集（Controller 传 JWT claims，
+    /// 避免把 super 用户误判为普通用户致手动互传被拒）；worker 无 claims 传 null。</summary>
+    Task<SyncActor> BuildActorAsync(string userId, bool isRoot, CancellationToken ct, IReadOnlyCollection<string>? fallbackPermissions = null);
+
+    /// <summary>
+    /// 抢占某知识库的同步互斥租约（document-store 专用）。手动 transfer 与自动 worker 共用同一把锁，
+    /// 防同库并发同步（尤其手动 mirror 删除与自动 overwrite 交错）。owner 不同则抢不到；
+    /// owner 相同 / 租约过期 / 无人持有 才可抢。返回 true=持有。
+    /// </summary>
+    Task<bool> TryAcquireStoreSyncLeaseAsync(string itemId, string ownerId, TimeSpan ttl, CancellationToken ct);
+
+    /// <summary>释放某知识库的同步互斥租约（仅当 owner 仍是自己才清，避免误清接管者）。</summary>
+    Task ReleaseStoreSyncLeaseAsync(string itemId, string ownerId, CancellationToken ct);
 
     /// <summary>
     /// 同步单个条目（push / pull / both 的完整两阶段 + 运行台账 + 状态回写）。
@@ -471,7 +483,7 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         return redirectedResp;
     }
 
-    public async Task<SyncActor> BuildActorAsync(string userId, bool isRoot, CancellationToken ct)
+    public async Task<SyncActor> BuildActorAsync(string userId, bool isRoot, CancellationToken ct, IReadOnlyCollection<string>? fallbackPermissions = null)
     {
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
         var name = user != null && !string.IsNullOrWhiteSpace(user.DisplayName) ? user.DisplayName
@@ -488,10 +500,40 @@ public sealed class PeerSyncTransferService : IPeerSyncTransferService
         }
         catch
         {
-            perms = new HashSet<string>(StringComparer.Ordinal);
+            // 瞬时故障兜底：退回调用方提供的 claims 权限（Controller 传 JWT permissions），
+            // 否则 super-via-permission 用户会被误判为普通用户、手动互传被拒（Bugbot）。
+            perms = fallbackPermissions?.ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
         }
         var isSuper = isRoot || perms.Contains(AdminPermissionCatalog.Super);
         return new SyncActor(userId, name, user?.Email, IsAdmin: isSuper, Permissions: perms);
+    }
+
+    public async Task<bool> TryAcquireStoreSyncLeaseAsync(string itemId, string ownerId, TimeSpan ttl, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var filter = Builders<DocumentStore>.Filter.And(
+            Builders<DocumentStore>.Filter.Eq(s => s.Id, itemId),
+            Builders<DocumentStore>.Filter.Or(
+                Builders<DocumentStore>.Filter.Eq(s => s.PeerSyncLeaseOwner, null),
+                Builders<DocumentStore>.Filter.Lt(s => s.PeerSyncLeaseExpiresAt, now),
+                Builders<DocumentStore>.Filter.Eq(s => s.PeerSyncLeaseOwner, ownerId)));
+        var update = Builders<DocumentStore>.Update
+            .Set(s => s.PeerSyncLeaseOwner, ownerId)
+            .Set(s => s.PeerSyncLeaseExpiresAt, now.Add(ttl));
+        var result = await _db.DocumentStores.UpdateOneAsync(filter, update, cancellationToken: ct);
+        return result.ModifiedCount > 0 || result.MatchedCount > 0;
+    }
+
+    public async Task ReleaseStoreSyncLeaseAsync(string itemId, string ownerId, CancellationToken ct)
+    {
+        // 仅当 owner 仍是自己才清，避免误清「超时被接管」后的新持有者。
+        var filter = Builders<DocumentStore>.Filter.And(
+            Builders<DocumentStore>.Filter.Eq(s => s.Id, itemId),
+            Builders<DocumentStore>.Filter.Eq(s => s.PeerSyncLeaseOwner, ownerId));
+        var update = Builders<DocumentStore>.Update
+            .Unset(s => s.PeerSyncLeaseOwner)
+            .Unset(s => s.PeerSyncLeaseExpiresAt);
+        await _db.DocumentStores.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
     }
 
     private static T? ExtractData<T>(string json) where T : class
