@@ -38,6 +38,7 @@ import type { StateService } from '../services/state.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
 import { ExecutorAgent } from '../executor/agent.js';
 import { updateEnvFile, defaultEnvFilePath } from '../services/env-file.js';
+import { buildGateStatus } from '../services/build-gate.js';
 
 /**
  * Shape of a cluster connection code after base64+JSON decoding. The UI
@@ -423,6 +424,9 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
       remoteExecutorCount: remoteCount,
       capacity: registry.getTotalCapacity(),
       strategy: getStrategy(),
+      // 全局构建并发闸快照：active 个正在构建 / queued 个排队中 / 上限 max。
+      // 供运维面板展示「构建排队」，让用户区分「在排队」与「卡死」。
+      buildGate: buildGateStatus(),
     });
   });
 

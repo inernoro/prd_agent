@@ -13,6 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift } from '../services/deploy-runtime.js';
+import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
@@ -10240,6 +10241,54 @@ export function createBranchRouter(deps: RouterDeps): Router {
             : '';
           const overrideLabel = branchOverride ? ' (分支自定义)' : '';
           const serviceStartTime = Date.now();
+
+          // ── 全局构建并发闸 ──
+          // 撞上 CDS_MAX_CONCURRENT_BUILDS 上限时排队，避免多分支构建同时跑把
+          // 宿主 CPU 吃满、彼此饿死（实测并发时 admin 构建从 ~300s 膨胀到 845s）。
+          // 排队状态写进部署日志 + SSE，让用户看到「排队中，前面还有 N 个」而不是
+          // 疑似卡死的 spinner（expectation-management.md：排队 ≠ 卡死，必须可感知）。
+          let queueRefreshTimer: NodeJS.Timeout | undefined;
+          const clearQueueTimer = () => {
+            if (queueRefreshTimer) {
+              clearInterval(queueRefreshTimer);
+              queueRefreshTimer = undefined;
+            }
+          };
+          const buildSlot = await acquireBuildSlot({
+            onQueued: ({ ahead, active, max }) => {
+              logEvent({
+                step: `queue-${profile.id}`,
+                status: 'info',
+                title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
+                timestamp: new Date().toISOString(),
+              });
+              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+              // 每 15s 刷新一次排队位置，长时间排队也持续有动静（不像卡死）。
+              queueRefreshTimer = setInterval(() => {
+                const s = buildGateStatus();
+                logEvent({
+                  step: `queue-${profile.id}`,
+                  status: 'info',
+                  title: `${effectiveProfile.name} 仍在排队：${s.queued} 个等待中 / ${s.active} 个构建中（上限 ${s.max}）`,
+                  timestamp: new Date().toISOString(),
+                });
+                sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 仍在排队：${s.queued} 等待 / ${s.active} 构建中\n` });
+              }, 15000);
+              if (typeof queueRefreshTimer.unref === 'function') queueRefreshTimer.unref();
+            },
+            onStart: ({ waitedMs }) => {
+              clearQueueTimer();
+              logEvent({
+                step: `queue-${profile.id}`,
+                status: 'info',
+                title: `${effectiveProfile.name} 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建`,
+                timestamp: new Date().toISOString(),
+              });
+              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队结束（等待 ${Math.round(waitedMs / 1000)}s），开始构建\n` });
+            },
+          });
+          clearQueueTimer();
+
           logEvent({
             step: `build-${profile.id}`,
             status: 'running',
@@ -10428,6 +10477,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               detail: { elapsedMs: elapsed },
               timestamp: new Date().toISOString(),
             });
+          } finally {
+            // 释放构建槽位（幂等），唤醒下一个排队的构建。
+            clearQueueTimer();
+            buildSlot.release();
           }
         }));
 

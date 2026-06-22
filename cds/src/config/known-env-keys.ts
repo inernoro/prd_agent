@@ -95,6 +95,7 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_SMOKE_SCRIPT_DIR', description: '冒烟测试脚本目录（默认 ./scripts）', isSecret: false, group: 'misc' },
   { key: 'CDS_CONFIG', description: '配置文件路径覆盖（默认 cds.config.json）', isSecret: false, group: 'misc' },
   { key: 'CDS_HOST', description: '运行时自动注入容器的 host 占位（无需手填）', isSecret: false, group: 'misc' },
+  { key: 'CDS_MAX_CONCURRENT_BUILDS', description: '全局构建并发上限（默认 3）；超出时分支构建排队，避免多构建同时把宿主 CPU 吃满', isSecret: false, group: 'misc' },
 ];
 
 export type EnvClassification = 'cds-canonical' | 'cds-legacy' | 'unknown';
