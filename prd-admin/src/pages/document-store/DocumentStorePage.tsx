@@ -1867,7 +1867,11 @@ export function DocumentStorePage() {
     pinInFlightRef.current = false;
     if (!res.success) {
       toast.error('置顶保存失败', res.error?.message);
-      const r = await getUserPreferences(); // 失败拉服务端权威值纠正本地（不做可能丢新选择的陈旧回滚）
+      // 失败时若用户在途又点了（pinPendingRef 有更新意图），优先把最新意图发出去——
+      // 不能在这里 return 不发，否则那次点击的 flushPins 早因 inFlight 而 bail，最新选择会一直不落库（Codex）。
+      // 也不能用服务端旧值覆盖用户的新选择，故仅在无 pending 时才拉权威值纠正。
+      if (pinPendingRef.current != null) { void flushPins(); return; }
+      const r = await getUserPreferences();
       if (r.success) setPinnedIds(new Set(r.data.documentStorePinnedIds ?? []));
       return;
     }
