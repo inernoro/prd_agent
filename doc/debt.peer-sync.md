@@ -17,6 +17,21 @@
 | 7 | 本节点对外地址来源 | selfBaseUrl 默认从请求 scheme+host 推断，反向代理 / 内网部署可能不可达；可在添加对端时手填 selfBaseUrl 覆盖 | 后续在系统设置固化「本节点对外地址」 |
 | 8 | 进度可视化 | transfer 为同步 HTTP 一次性返回逐条结果，未做 SSE 流式进度（多库大库时等待较久，仅 spinner） | 大批量时改 Run/Worker + SSE 推进度（呼应 CLAUDE.md §6） |
 
+## 后台自动同步（2026-06-22 PR #890 新增）
+
+把「双向同步」从手动一次性升级为定期自动保持一致（PeerSyncScheduleWorker + 每库开关）。已落地防风暴五层
+（每库 Mongo 租约 / 全局并发上限 / 批量上限 / 到期闸+5min 下限 / 抖动+租约自愈），手动 transfer 与自动 worker
+共用同一把库级互斥租约（`TryAcquireStoreSyncLeaseAsync`，30min TTL，owner 限定释放）。遗留项：
+
+| # | 边界 | 现状 | 后续方向 |
+|---|------|------|---------|
+| A1 | 租约无心跳续租 | 固定 30min TTL，覆盖单库最坏同步耗时（两阶段 HTTP 各 120s + 资源重传）。若出现 >30min 的超大库，超时后锁可被另一发起方抢走 → 同库并发 | 同步期间周期性续租（heartbeat），持短 TTL 但活着就续 |
+| A2 | force-align mirror 删除未级联 | 镜像删除对端缺失条目时只删 DocumentEntry（+可能的解析文档），未清其 sync 日志 / view events / 内联评论 / 版本 / mentions / agent runs / 附件 —— 与 `DocumentStoreController.DeleteEntry` 的级联不一致，留孤儿数据。仅手动 force-align 路径触发（自动同步只 Overwrite 不删，不受影响） | 抽 `DeleteEntry` 的级联清理为共享 helper（跨 Api/Infrastructure 层），mirror 删除复用 |
+| A3 | apply 不清理失效 primary/pins | 源库清空主文档 / 移除全部置顶后，bundle 无可解析血缘，apply 的 overwrite/mirror 路径只在解析到新 id 时才写 PrimaryEntryId、只在 PinnedEntryLineages 非 null 时才写 pins → 目标可能残留旧 primary/pins（含 mirror 刚删的条目 id） | 需先在协议层用「null=旧节点字段缺失 / 空=显式清空」哨兵区分，否则旧节点同步会误清目标置顶；区分后 overwrite/mirror 显式清空 |
+
+A2/A3 都是 **手动 force-align/mirror 路径**的既有问题，与本次新增的「自动同步」无关（自动同步恒 Overwrite、绝不删条目），
+故未在 PR #890 内仓促改动（需跨层 / 协议级改造），单列于此。
+
 ## 安全与一致性要点（已落地）
 
 - 节点配对：一次性配对码（5 分钟 TTL）+ 握手交换 32 字节共享密钥；后续请求 HMAC-SHA256 签名（method+path+ts+sha256(body)），时间戳偏移超 5 分钟拒绝（防重放）。共享密钥永不出现在 URL / 前端 / 日志。

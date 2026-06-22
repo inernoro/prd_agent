@@ -45,10 +45,13 @@ public class PeerSyncScheduleTests
     }
 
     [Fact]
-    public void Enabled_ButCurrentlySyncing_IsNotDue()
+    public void Enabled_StaleSyncingStatus_StillDue_LeaseHandlesInflight()
     {
-        var store = Synced(autoEnabled: true, autoLastAt: null, status: "syncing");
-        Assert.False(PeerSyncSchedule.IsDue(store, DateTime.UtcNow));
+        // 进程崩溃残留 status=syncing 不应永久禁用自动同步：在途互斥交给租约（有 TTL 自愈），
+        // IsDue 只按周期判到期。到期 + 残留 syncing → 仍可被捞起（Bugbot High 回归守卫）。
+        var now = DateTime.UtcNow;
+        var store = Synced(autoEnabled: true, autoLastAt: now.AddMinutes(-61), interval: 60, status: "syncing");
+        Assert.True(PeerSyncSchedule.IsDue(store, now));
     }
 
     [Fact]

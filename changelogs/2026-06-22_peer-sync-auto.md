@@ -16,3 +16,5 @@
 | fix | prd-api | 手动 transfer 与自动 worker 共用库级互斥租约（TryAcquireStoreSyncLeaseAsync），手动同步进行中 worker 抢不到、反之手动撞上自动直接跳过，杜绝同库并发同步（Bugbot 复发项） |
 | fix | prd-api | 自动同步 worker 补防自指守卫（对端 RemoteNodeId==selfNodeId 跳过），与手动 transfer 同口径，治共享 Mongo 预览自我同步（Bugbot） |
 | fix | prd-api | BuildActorAsync 恢复权限兜底：GetEffectivePermissions 瞬时失败时退回调用方传入的 JWT claims 权限，避免 super 用户被误降级（Bugbot） |
+| fix | prd-api | IsDue 不再用 PeerSyncStatus==syncing 判在途（崩溃残留 syncing 会永久禁用该库自动同步），改由租约承担互斥+在途检测（有 TTL 自愈）（Bugbot High） |
+| fix | prd-api | 库级同步互斥租约 TTL 10min→30min 并 worker/手动共用同一常量，覆盖大库最坏同步耗时防超时被并发抢锁；>30min 超大库的心跳续租列入 debt.peer-sync（Bugbot High） |

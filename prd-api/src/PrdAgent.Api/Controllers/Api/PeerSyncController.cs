@@ -535,7 +535,8 @@ public class PeerSyncController : ControllerBase
             }
             // 与自动同步 worker 共用同一把库级互斥锁：抢不到说明该库正被后台自动同步 / 他人手动同步占用，
             // 直接跳过，避免同库并发同步（尤其手动 mirror 删除与自动 overwrite 交错损坏数据，Bugbot）。
-            var leased = isDocStore && await _transfer.TryAcquireStoreSyncLeaseAsync(itemId, manualLeaseOwner, TimeSpan.FromMinutes(10), ct);
+            // 与 worker 共用同一 TTL（30min，足以覆盖单库最坏同步耗时，防大库超时后被并发抢锁）。
+            var leased = isDocStore && await _transfer.TryAcquireStoreSyncLeaseAsync(itemId, manualLeaseOwner, Services.PeerSync.PeerSyncScheduleWorker.LeaseDuration, ct);
             if (isDocStore && !leased)
             {
                 results.Add(new { itemId, ok = false, message = "该知识库正在同步中（后台自动或他人手动），请稍后重试" });

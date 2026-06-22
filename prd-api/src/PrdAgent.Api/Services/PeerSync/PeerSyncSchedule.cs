@@ -37,9 +37,10 @@ public static class PeerSyncSchedule
         if (string.IsNullOrWhiteSpace(store.PeerSyncNodeId) || string.IsNullOrWhiteSpace(store.PeerSyncDirection))
             return false;
 
-        // 上一轮还在跑（manual 或 auto）→ 不叠跑。
-        if (string.Equals(store.PeerSyncStatus, "syncing", StringComparison.Ordinal))
-            return false;
+        // 不再用 PeerSyncStatus=="syncing" 判在途 —— 进程在置 syncing 后崩溃会把状态永久卡在 syncing，
+        // 导致该库自动同步被永久禁用（Bugbot High: Stale syncing blocks auto forever）。
+        // 互斥与在途检测改由「租约」承担：worker 抢 TryAcquireStoreSyncLeaseAsync 才会真正跑，
+        // 租约有 TTL 会自愈；这里只按周期判到期，candidate 即使在途也会在抢租约阶段被挡掉。
 
         if (store.PeerSyncAutoLastAt == null)
             return true;
