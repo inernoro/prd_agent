@@ -24,7 +24,7 @@ public class HostedSiteService : IHostedSiteService
     // 后，控制器会把媒体包装成 ZIP 走这条路径，解压上限若仍是 200MB 会让 200-500MB 的上传
     // "过了控制器、却被服务层拒收"。该值同时保留 zip bomb 防御（停止解压超出此总大小的归档）。
     private const long MaxExtractedSize = 500L * 1024 * 1024; // 500MB
-    private const int MaxFileCount = 500;
+    public const int MaxZipFileCount = 5000;
 
     // 网页托管对象的 Cache-Control。配合 SiteUrl 上的 ?v={UpdatedAt.Ticks} 版本指纹形成
     // 「内容指纹缓存」：内容不变 → URL 不变 → 命中浏览器/CDN 缓存（满足"没更新就用缓存"）；
@@ -2237,9 +2237,9 @@ public class HostedSiteService : IHostedSiteService
     {
         var plan = new ZipPlan();
 
-        if (archive.Entries.Count > MaxFileCount)
+        if (archive.Entries.Count > MaxZipFileCount)
         {
-            plan.Error = $"ZIP 包含的文件数超过限制 ({MaxFileCount})";
+            plan.Error = $"ZIP 包含的文件数超过限制 ({MaxZipFileCount})";
             return plan;
         }
 
