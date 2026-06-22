@@ -12,8 +12,8 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.7.0";
-    public const string AiDefectResolveReleaseDate = "2026-06-22";
+    public const string AiDefectResolveVersion = "1.8.0";
+    public const string AiDefectResolveReleaseDate = "2026-06-23";
 
     public const string AiDefectResolveSkillMd = """
 ---
@@ -66,10 +66,11 @@ Content-Type: application/json
 1. `GET {domain}/api/defect-agent/agent/connector` 确认连接器协议和长期授权。响应会返回连接器类型、当前 K 元信息、授权创建建议和自动化端点清单。
 2. `POST {domain}/api/defect-agent/agent/workflow/start-next` 创建或复用运行记录，并领取下一条缺陷。响应必须包含 `protocol.version == defect-agent-workflow.v1`。
 3. `POST {domain}/api/defect-agent/agent/defects/{defectId}/comments` 评论修复计划，body 带 `runId`。
-4. 按轻量标准判断能否自动修复；重量级问题调用 `POST /api/defect-agent/agent/workflow/block` 写失败原因并默认停止。
-5. 轻量修复后执行代码校验并提交中文 commit。
-6. `POST {domain}/api/defect-agent/agent/workflow/complete` 一次性回写 `commitSha`、分支、预览和验收报告地址，写入 `defect_resolution_traces`，并标记缺陷已修复。
-7. `workflow/complete` 返回下一次 `workflow/start-next` 入参；再拉下一条，重复以上步骤。
+4. 先做 triage：过期、重复、已修复、无法复现、不是缺陷、缺少关键复现信息或不属于本仓库自动化范围时，必须先评论证据和结论，再调用 `POST /api/defect-agent/agent/workflow/block`，`failurePhase=triage` 且 `stopRun=false`，然后继续下一条。
+5. 按轻量标准判断能否自动修复；重量级、高风险或需要产品确认的问题调用 `POST /api/defect-agent/agent/workflow/block` 写失败原因并默认 `stopRun=true` 停止。
+6. 轻量修复后执行代码校验并提交中文 commit。
+7. `POST {domain}/api/defect-agent/agent/workflow/complete` 一次性回写 `commitSha`、分支、预览和验收报告地址，写入 `defect_resolution_traces`，并标记缺陷已修复。
+8. `workflow/complete` 或 `workflow/block(stopRun=false)` 返回下一次 `workflow/start-next` 入参；再拉下一条，重复以上步骤，直到 `start-next` 返回 `hasNext=false`。
 
 旧端点 `runs`、`next`、`comments`、`commit-info`、`fix-status` 只用于兼容和排障；日常自动化优先使用 `defect-agent-workflow.v1`。
 
@@ -84,6 +85,18 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 `workflow/complete` 会同时写入缺陷结构化字段和更新中心关联用的 `defect_resolution_traces`。发布中心只读取 commit id 关联结果并展示，不负责人工关联缺陷。
 
 闭环验收不能只看接口：更新中心的 commit 记录 UI 必须出现可点击的“关联缺陷 N”或“我的缺陷 N”标志。点击后必须能看到缺陷编号、标题、发布状态、验收报告或知识库链接。提交者本人场景必须证明按钮显示“我的缺陷 N”或弹窗内出现“我提交的”。普通 changelog 文案行没有 commit id，不允许按日期批量贴缺陷标志。
+
+## triage 跳过规则
+
+以下类别不进入代码修复，但必须回复缺陷并继续本轮任务：
+
+- `expired_or_stale`：缺陷创建时间过久，且业务页面、版本、提交、环境或复现路径已经变化；或已有新缺陷、新 PR、新需求替代当前描述。
+- `not_actionable`：不是缺陷，而是咨询、需求、吐槽、泛化建议；或缺少必要复现信息且无法从截图、日志、评论、代码定位。
+- `duplicate`：已有相同缺陷、PR、commit 或验收报告覆盖。
+- `already_fixed`：当前代码、预览或正式环境已经不存在该问题，并能给出验证证据。
+- `not_reproducible_with_evidence`：按缺陷描述复现失败，且截图、接口响应或验收报告能证明用户描述不成立。
+
+这些类别统一调用 `workflow/block`，`failurePhase=triage`，`failureReason` 使用对应前缀，`stopRun=false`。只有重量级、高风险、无法自测、需要产品确认或破坏性变更才 `stopRun=true`。
 
 ## 正式发布后的验收通知
 
@@ -105,7 +118,7 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 ## 约束
 
 - 有争议、破坏性、跨模块、接口签名或数据结构变更必须先请求人类确认。
-- 一次只处理一个缺陷，提交并回写 commit 后再继续下一条。
+- 一次只处理一个缺陷，提交并回写 commit 后再继续下一条；triage 跳过并回写 `block stopRun=false` 后也继续下一条。
 - 不把密钥写入日志、提交、报告或评论。
 - 评论和修复说明必须包含可验收步骤。
 - 只 commit 不调用 `workflow/complete` 不算闭环完成；旧 `commit-info` 只用于兼容和排障。

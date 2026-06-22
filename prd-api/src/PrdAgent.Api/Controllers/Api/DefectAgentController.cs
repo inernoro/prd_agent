@@ -2598,7 +2598,7 @@ public class DefectAgentController : ControllerBase
                 projectId,
                 teamId,
                 status,
-                batchPolicy = "一次只处理一个缺陷；提交并调用 workflow/complete 后再拉取下一条。"
+                batchPolicy = "一次只处理一个缺陷；提交并调用 workflow/complete 后再拉取下一条；过期或不合适缺陷回复并 workflow/block stopRun=false 后继续下一条。"
             },
             endpoints = new
             {
@@ -2680,7 +2680,7 @@ public class DefectAgentController : ControllerBase
                 startNext = "/api/defect-agent/agent/workflow/start-next",
                 complete = "/api/defect-agent/agent/workflow/complete",
                 block = "/api/defect-agent/agent/workflow/block",
-                rule = "固定编排由 workflow 端点负责。智能体只负责理解缺陷、评论计划、修复代码、提交 commit 和填写 complete/block 入参。"
+                rule = "固定编排由 workflow 端点负责。智能体只负责理解缺陷、分类回复、修复代码、提交 commit 和填写 complete/block 入参。complete 后继续 start-next；过期或不合适缺陷 block stopRun=false 后继续 start-next；重量级或高风险缺陷 block stopRun=true 等人确认。"
             },
             acceptance = new
             {
@@ -3411,6 +3411,14 @@ public class DefectAgentController : ControllerBase
             run = BuildAutomationRunDto(run),
             messageId,
             nextAction = request.StopRun ? "wait-human" : "start-next",
+            next = request.StopRun
+                ? null
+                : new
+                {
+                    method = "POST",
+                    url = "/api/defect-agent/agent/workflow/start-next",
+                    body = new { runId = run.Id },
+                },
         }));
     }
 
@@ -3817,11 +3825,14 @@ public class DefectAgentController : ControllerBase
             agentResponsibilities = new[]
             {
                 "理解缺陷和上下文",
+                "先判断缺陷是否过期、重复、无效或不适合自动修复",
                 "评论修复计划",
                 "判断是否轻量修复",
                 "修改代码并完成自测",
                 "通过 PR 提交中文 commit",
-                "把 PR、commit 和验收信息填入 complete 或把阻塞原因填入 block",
+                "把 PR、commit 和验收信息填入 complete",
+                "把过期或不合适缺陷用 block stopRun=false 回复并跳过",
+                "把重量级或高风险缺陷用 block stopRun=true 停下来等待人类确认",
             },
             serverResponsibilities = new[]
             {
@@ -3862,6 +3873,7 @@ public class DefectAgentController : ControllerBase
                     "resolution",
                 },
             },
+            triagePolicy = BuildAutomationTriagePolicyPayload(),
             blockWith = new
             {
                 method = "POST",
@@ -3872,6 +3884,16 @@ public class DefectAgentController : ControllerBase
                     "defectId",
                     "failureReason",
                     "failurePhase",
+                },
+                continueCurrentRun = new
+                {
+                    allowedFor = new[] { "expired_or_stale", "not_actionable", "duplicate", "already_fixed", "not_reproducible_with_evidence" },
+                    body = new { stopRun = false },
+                },
+                stopCurrentRun = new
+                {
+                    requiredFor = new[] { "heavy_or_high_risk", "needs_product_confirmation", "unsafe_without_human_review" },
+                    body = new { stopRun = true },
                 },
             },
         };
@@ -4238,11 +4260,13 @@ public class DefectAgentController : ControllerBase
         lines.Add("执行顺序：");
         lines.Add("1. 调用 GET /api/defect-agent/agent/connector 校验 domain 与 K。");
         lines.Add("2. 调用 POST /api/defect-agent/agent/workflow/start-next 创建或复用运行记录，并领取一条缺陷。");
-        lines.Add("3. 智能体只负责理解缺陷、评论计划、判断轻量、改代码、验证并提交中文 commit。");
-        lines.Add("4. 轻量修复完成后调用 POST /api/defect-agent/agent/workflow/complete，一次性回写 commit、写入 defect_resolution_traces、标记缺陷已修复。");
-        lines.Add("5. 重量级、无法自测、涉及破坏性变更或需要产品确认时，评论阻塞原因，调用 POST /api/defect-agent/agent/workflow/block，并停止当前运行。");
-        lines.Add("6. complete 返回下一次 start-next 入参；继续调用 start-next 领取下一条或结束。");
-        lines.Add("7. 正式发布后从正式缺陷系统调用 published-pending；在测试或预览环境跑 create-visual-test-to-kb 验证，再把报告归档到“缺陷修复验收报告”，回写正式缺陷系统 validation-report 并通知提交人。");
+        lines.Add("3. 每条缺陷先做 triage：判断是否过期、重复、已修复、无法复现、不是缺陷、缺少关键复现信息或不属于本仓库自动化范围。");
+        lines.Add("4. 过期或不合适缺陷必须先评论说明证据和结论，再调用 POST /api/defect-agent/agent/workflow/block，failurePhase=triage，failureReason 使用 expired_or_stale/not_actionable/duplicate/already_fixed/not_reproducible_with_evidence 前缀，stopRun=false，然后继续 start-next。");
+        lines.Add("5. 合适且轻量的缺陷再评论计划、改代码、验证并提交中文 commit。");
+        lines.Add("6. 轻量修复完成后调用 POST /api/defect-agent/agent/workflow/complete，一次性回写 commit、写入 defect_resolution_traces、标记缺陷已修复。");
+        lines.Add("7. 重量级、无法自测、涉及破坏性变更或需要产品确认时，评论阻塞原因，调用 POST /api/defect-agent/agent/workflow/block，stopRun=true，并停止当前运行。");
+        lines.Add("8. complete 或 block(stopRun=false) 返回下一次 start-next 入参；继续调用 start-next 领取下一条，直到 start-next 返回 hasNext=false。");
+        lines.Add("9. 正式发布后从正式缺陷系统调用 published-pending；在测试或预览环境跑 create-visual-test-to-kb 验证，再把报告归档到“缺陷修复验收报告”，回写正式缺陷系统 validation-report 并通知提交人。");
         lines.Add("");
         lines.Add("无缺陷时：");
         lines.Add("- start-next 返回 hasNext=false 时，本轮正常结束，不创建 PR，不制造测试缺陷。");
@@ -4335,10 +4359,12 @@ public class DefectAgentController : ControllerBase
             batch = new
             {
                 mode = "single-defect",
-                fetchNextAfter = "workflow-complete",
+                runUntil = "start-next-hasNext-false-or-human-block",
+                fetchNextAfter = new[] { "workflow-complete", "workflow-block-stopRun-false" },
                 skipTerminalItemsInSameRun = true,
                 heavyDefectDefaultAction = "fail-current-and-stop-for-human",
             },
+            triage = BuildAutomationTriagePolicyPayload(),
             lightweight = new
             {
                 maxDiffLines = AutomationMaxDiffLines,
@@ -4368,6 +4394,56 @@ public class DefectAgentController : ControllerBase
                 storeName = DefectAcceptanceStoreName,
                 notifyReporterAfterValidation = true,
             },
+        };
+
+    private static object BuildAutomationTriagePolicyPayload()
+        => new
+        {
+            phase = "triage",
+            mustRunBeforeFix = true,
+            continueAfterSkip = true,
+            blockEndpoint = "/api/defect-agent/agent/workflow/block",
+            categories = new[]
+            {
+                new
+                {
+                    code = "expired_or_stale",
+                    action = "reply-and-block-stopRun-false",
+                    evidence = new[] { "缺陷创建时间过久且业务页面、版本、提交或复现路径已经变化", "已有新缺陷、新 PR 或新需求替代当前描述" },
+                },
+                new
+                {
+                    code = "not_actionable",
+                    action = "reply-and-block-stopRun-false",
+                    evidence = new[] { "不是缺陷而是咨询、需求、吐槽或泛化建议", "缺少必要复现信息且无法从截图、日志、评论或代码定位" },
+                },
+                new
+                {
+                    code = "duplicate",
+                    action = "reply-and-block-stopRun-false",
+                    evidence = new[] { "已有相同缺陷、PR、commit 或验收报告覆盖" },
+                },
+                new
+                {
+                    code = "already_fixed",
+                    action = "reply-and-block-stopRun-false",
+                    evidence = new[] { "当前代码、预览或正式环境已经不存在该问题，并能给出验证证据" },
+                },
+                new
+                {
+                    code = "not_reproducible_with_evidence",
+                    action = "reply-and-block-stopRun-false",
+                    evidence = new[] { "按缺陷描述复现失败，且截图、接口响应或验收报告能证明用户描述不成立" },
+                },
+                new
+                {
+                    code = "heavy_or_high_risk",
+                    action = "reply-and-block-stopRun-true",
+                    evidence = new[] { "需要产品确认、跨服务协议改造、权限模型重写、数据库迁移或无法自测的关键路径" },
+                },
+            },
+            commentRequired = true,
+            failurePhase = "triage",
         };
 
     internal static IReadOnlyList<string> BuildAutomationLightweightCriteria()

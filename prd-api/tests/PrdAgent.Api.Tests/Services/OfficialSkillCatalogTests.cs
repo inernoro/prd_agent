@@ -13,7 +13,7 @@ public class OfficialSkillCatalogTests
     [Fact]
     public void AiDefectResolveOfficialTemplate_StatesDailyAutomationContract()
     {
-        Assert.Equal("1.7.0", OfficialSkillTemplates.AiDefectResolveVersion);
+        Assert.Equal("1.8.0", OfficialSkillTemplates.AiDefectResolveVersion);
         Assert.Contains("本技能的主目标是自动化闭环", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("日常执行缺少 domain 或 K 时停止", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("scope.type == daily-next", OfficialSkillTemplates.AiDefectResolveSkillMd);
@@ -26,6 +26,10 @@ public class OfficialSkillCatalogTests
         Assert.Contains("不允许按日期批量贴缺陷标志", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("scripts/defect-automation-probe.mjs", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("hasNext=false", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("stopRun=false", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("expired_or_stale", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("not_actionable", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("workflow/block(stopRun=false)", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("正式缺陷系统只负责读取待验收 trace", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("测试或预览环境跑视觉验收", OfficialSkillTemplates.AiDefectResolveSkillMd);
     }

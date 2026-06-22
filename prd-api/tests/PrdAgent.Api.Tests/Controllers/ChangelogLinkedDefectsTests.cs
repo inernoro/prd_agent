@@ -138,6 +138,11 @@ public class ChangelogLinkedDefectsTests
         Assert.Contains("不要从测试环境领取正式缺陷", plan);
         Assert.Contains("不要把 PR 已创建当成完成", plan);
         Assert.Contains("不要把正式发布前的缺陷通知给提交人", plan);
+        Assert.Contains("每条缺陷先做 triage", plan);
+        Assert.Contains("expired_or_stale", plan);
+        Assert.Contains("not_actionable", plan);
+        Assert.Contains("stopRun=false", plan);
+        Assert.Contains("complete 或 block(stopRun=false)", plan);
         Assert.Contains("start-next 返回 hasNext=false", plan);
         Assert.Contains("无正式发布后待验收通知项", plan);
         Assert.Contains("runId", plan);
