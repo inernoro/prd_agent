@@ -100,7 +100,6 @@ import {
   Type,
   Trash,
   PenTool,
-  Video,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -1646,8 +1645,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // activeTool 已在上方通过 isMobile 初始化：移动端默认 'hand'，桌面端默认 'select'
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const toolMenuCloseTimerRef = useRef<number | null>(null);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
-  const addMenuCloseTimerRef = useRef<number | null>(null);
   const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
   const shapeMenuCloseTimerRef = useRef<number | null>(null);
 
@@ -2135,6 +2132,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       stageRef.current?.focus();
     }
   }, []);
+
+  // 进入编辑器即「对话优先」：画布无产物时自动聚焦输入框（手机端直接打开聊天面板），
+  // 让用户进来就能「描述即生成」，无需先去左侧工具栏摆一个生成框。
+  // 见 .claude/rules/chief-designer-usability.md 第一/四原则、guided-exploration.md。
+  // 延时让 workspace 初始化异步恢复画布后再判定；ref 守卫保证只跑一次。
+  const initialComposerFocusRef = useRef(false);
+  useEffect(() => {
+    if (initialComposerFocusRef.current) return;
+    const t = window.setTimeout(() => {
+      if (initialComposerFocusRef.current) return;
+      initialComposerFocusRef.current = true;
+      const hasArtifact = (canvasRef.current ?? []).some(
+        (it) => (it.kind ?? 'image') === 'image' && !!it.src,
+      );
+      if (hasArtifact) return; // 已有作品：保持落在画布看作品，不打扰
+      if (isMobile) setMobileShowChat(true);
+      focusComposer();
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [isMobile, focusComposer]);
 
   const startResize = useCallback(
     (e: ReactPointerEvent, it: CanvasImageItem, corner: ResizeCorner) => {
@@ -7347,135 +7364,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <span>H</span>
                         </span>
                       </button>
-                      <button
-                        type="button"
-                        className="flex w-full cursor-not-allowed items-center gap-3 rounded-[14px] px-3 py-2 text-token-muted opacity-60"
-                        disabled
-                      >
-                        <MapPin size={18} />
-                        <span className="text-[16px] font-semibold">
-                          Mark
-                        </span>
-                        <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
-                          <span>-</span>
-                          <span>M</span>
-                        </span>
-                      </button>
                                           </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
 
-              {/* +新增 */}
-              <div
-                onPointerEnter={() => {
-                  if (addMenuCloseTimerRef.current != null) {
-                    window.clearTimeout(addMenuCloseTimerRef.current);
-                    addMenuCloseTimerRef.current = null;
-                  }
-                  setAddMenuOpen(true);
-                }}
-                onPointerLeave={() => {
-                  if (addMenuCloseTimerRef.current != null) window.clearTimeout(addMenuCloseTimerRef.current);
-                  addMenuCloseTimerRef.current = window.setTimeout(() => {
-                    setAddMenuOpen(false);
-                    addMenuCloseTimerRef.current = null;
-                  }, HOVER_MENU_CLOSE_DELAY_MS);
-                }}
+              {/* 上传图片（原"新增"下拉收敛为直接上传：去掉只剩单项的菜单 +
+                  移除未开发的"上传视频/智能画板"禁用占位，见 .claude/rules/chief-designer-usability.md 奥卡姆原则）*/}
+              <button
+                type="button"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
+                title="上传图片"
+                aria-label="上传图片"
+                onClick={() => openImageFilePicker()}
               >
-                <DropdownMenu.Root
-                  modal={false}
-                  open={addMenuOpen}
-                  onOpenChange={(open) => {
-                    if (!open) setAddMenuOpen(false);
-                  }}
-                >
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      type="button"
-                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
-                      title="新增"
-                      aria-label="新增"
-                    >
-                      <span className="text-[22px] leading-none font-semibold">+</span>
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      side="right"
-                      align="start"
-                      sideOffset={8}
-                      className="surface-popover z-50 min-w-[260px] rounded-[18px] p-3 text-token-primary"
-                      onPointerEnter={() => {
-                        if (addMenuCloseTimerRef.current != null) {
-                          window.clearTimeout(addMenuCloseTimerRef.current);
-                          addMenuCloseTimerRef.current = null;
-                        }
-                      }}
-                      onPointerLeave={() => {
-                        if (addMenuCloseTimerRef.current != null) window.clearTimeout(addMenuCloseTimerRef.current);
-                        addMenuCloseTimerRef.current = window.setTimeout(() => {
-                          setAddMenuOpen(false);
-                          addMenuCloseTimerRef.current = null;
-                        }, HOVER_MENU_CLOSE_DELAY_MS);
-                      }}
-                    >
-                      <div className="text-[14px] font-semibold text-token-primary">
-                        新增
-                      </div>
-                      <div className="mt-2 text-[12px] font-semibold text-token-muted">
-                        悬浮 - 展开菜单
-                      </div>
-                      <div className="mt-0.5 text-[12px] font-semibold text-token-muted">
-                        点按 - 执行操作
-                      </div>
-                      <div className="mt-2 h-px border-t border-token-subtle" />
-
-                      <div className="mt-3 grid gap-2">
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-token-primary hover:bg-white/5"
-                          onClick={() => {
-                            setAddMenuOpen(false);
-                            openImageFilePicker();
-                          }}
-                        >
-                          <ImagePlus size={18} />
-                          <span className="text-[16px] font-semibold">
-                            上传图片
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          className="flex w-full cursor-not-allowed items-center gap-3 rounded-[14px] px-3 py-2 text-token-muted opacity-60"
-                          disabled
-                        >
-                          <Video size={18} />
-                          <span className="text-[16px] font-semibold">
-                            上传视频
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          className="flex w-full cursor-not-allowed items-center gap-3 rounded-[14px] px-3 py-2 text-token-muted opacity-60"
-                          disabled
-                        >
-                          <span className="inline-flex h-5 w-5 items-center justify-center text-[18px] font-black">
-                            #
-                          </span>
-                          <span className="text-[16px] font-semibold">
-                            智能画板
-                          </span>
-                          <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
-                            <span>-</span>
-                            <span>F</span>
-                          </span>
-                        </button>
-                      </div>
-                                          </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-              </div>
+                <ImagePlus size={18} />
+              </button>
 
               {/* 形状 */}
               <div
@@ -7593,16 +7497,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             stageRef.current?.focus();
                           }}
                         />
-                      </div>
-                      <div className="mt-4 text-[14px] font-semibold text-token-primary">
-                        形状文本
-                      </div>
-                      <div className="mt-3 grid grid-cols-5 gap-3">
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-full border border-token-subtle opacity-60" disabled />
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
-                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
                       </div>
                                           </DropdownMenu.Content>
                   </DropdownMenu.Portal>
