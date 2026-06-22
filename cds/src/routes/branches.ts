@@ -3461,7 +3461,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
-  router.get('/branches', async (req, res) => {
+  // ── /api/branches 列表：短 TTL 缓存 + 并发去重（2026-06-22 性能）──
+  // 单线程下该 handler 单请求 ~500ms（48 分支 enrich + 资源聚合 + 全量序列化），
+  // 10 个并发各算一遍 → 串行排队 5s+，正是用户反馈"服务器效率太低、扛不住并发"的根因。
+  //   1) 短 TTL（默认 1s）payload 缓存：窗口内重复请求直接复用，不再重算/重序列化
+  //   2) in-flight 去重：同 key 并发未命中只算一次，其余 await 同一个 Promise（10 并发→1 次计算）
+  // live=true（显式 docker 对账 + 写状态）永远绕过，保持权威性。
+  // 缓存的是 payload 对象（非序列化串），每个请求仍各自 res.json → server.ts 的
+  // widget 跨项目过滤 wrapper 照常逐请求生效（它 {...body} 不改原对象，并发安全）。
+  const BRANCHES_CACHE_TTL_MS = Math.max(0, Number(process.env.CDS_BRANCHES_CACHE_TTL_MS ?? 1000));
+  interface BranchesListResult { payload: unknown; timings: Record<string, number>; }
+  const branchesListCache = new Map<string, { at: number; result: BranchesListResult }>();
+  const branchesListInflight = new Map<string, Promise<BranchesListResult>>();
+
+  async function computeBranchesListPayload(
+    opts: { projectFilter: string | null; live: boolean; requestId?: string },
+  ): Promise<BranchesListResult> {
+    const { projectFilter, live, requestId } = opts;
     const startedAt = Date.now();
     const timings: Record<string, number> = {};
     let lastTimingAt = startedAt;
@@ -3470,19 +3486,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       timings[name] = now - lastTimingAt;
       lastTimingAt = now;
     };
-    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const state = stateService.getState();
     markTiming('getState');
     // Default is an authoritative state snapshot. Docker/git probing is an
     // explicit operator action (`?live=true`) so passive page loads, polling,
     // widgets, and preview pages cannot silently turn reads into expensive
     // reconciliation work.
-    const live = req.query.live === 'true' || req.query.live === '1';
-    // P4 Part 3b: optional ?project=<id> filter. When absent or set to
-    // 'default', pre-P4 behavior is preserved (every branch rolls up
-    // because all legacy branches were migrated to projectId='default'
-    // in migrateProjectScoping).
-    const projectFilter = resolveProjectIdParam(req.query.project);
     const branches = Object.values(state.branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
@@ -3641,9 +3650,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     markTiming('capacity');
     timings.total = Date.now() - startedAt;
-    res.setHeader('Server-Timing', Object.entries(timings)
-      .map(([name, duration]) => `${name};dur=${duration}`)
-      .join(', '));
     const slowThresholdRaw = Number.parseInt(process.env.CDS_BRANCHES_SLOW_MS || '1000', 10);
     const slowThresholdMs = Number.isFinite(slowThresholdRaw) ? Math.max(0, slowThresholdRaw) : 1000;
     if (timings.total >= slowThresholdMs) {
@@ -3676,31 +3682,74 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const profilesByProject = new Map<string, BuildProfile[]>();
     const infraByProject = new Map<string, InfraService[]>();
-    for (const b of branchesWithSubject as Array<BranchEntry & { previewUrl?: string; resources?: unknown[] }>) {
-      const branchProjectId = b.projectId || 'default';
-      if (!profilesByProject.has(branchProjectId)) {
-        profilesByProject.set(branchProjectId, stateService.getBuildProfilesForProject(branchProjectId));
-      }
-      if (!infraByProject.has(branchProjectId)) {
-        infraByProject.set(branchProjectId, stateService.getInfraServicesForProject(branchProjectId));
-      }
-      b.resources = buildUnifiedBranchResources({
-        branch: b,
-        profiles: profilesByProject.get(branchProjectId) || [],
-        infraServices: infraByProject.get(branchProjectId) || [],
-        externalAccessPolicies: await getActiveResourceExternalAccessForBranch(branchProjectId, b),
-        cloneTasks: stateService.listResourceCloneTasks({ projectId: branchProjectId, branchId: b.id }),
-        previewUrl: b.previewUrl || '',
-        publicHost: previewHost,
-      });
-    }
+    const profilesFor = (pid: string): BuildProfile[] => {
+      let v = profilesByProject.get(pid);
+      if (!v) { v = stateService.getBuildProfilesForProject(pid); profilesByProject.set(pid, v); }
+      return v;
+    };
+    const infraFor = (pid: string): InfraService[] => {
+      let v = infraByProject.get(pid);
+      if (!v) { v = stateService.getInfraServicesForProject(pid); infraByProject.set(pid, v); }
+      return v;
+    };
+    // 并发解析每个分支的资源（原本 48 个 await 串行 ~一个一个排队，是单请求耗时大头）。
+    await Promise.all(
+      (branchesWithSubject as Array<BranchEntry & { previewUrl?: string; resources?: unknown[] }>).map(
+        async (b) => {
+          const branchProjectId = b.projectId || 'default';
+          b.resources = buildUnifiedBranchResources({
+            branch: b,
+            profiles: profilesFor(branchProjectId),
+            infraServices: infraFor(branchProjectId),
+            externalAccessPolicies: await getActiveResourceExternalAccessForBranch(branchProjectId, b),
+            cloneTasks: stateService.listResourceCloneTasks({ projectId: branchProjectId, branchId: b.id }),
+            previewUrl: b.previewUrl || '',
+            publicHost: previewHost,
+          });
+        },
+      ),
+    );
 
-    res.json({
-      branches: branchesWithSubject,
-      defaultBranch: state.defaultBranch,
-      capacity: { maxContainers, runningContainers, totalMemGB },
-      tabTitleEnabled: stateService.isTabTitleEnabled(),
-    });
+    return {
+      payload: {
+        branches: branchesWithSubject,
+        defaultBranch: state.defaultBranch,
+        capacity: { maxContainers, runningContainers, totalMemGB },
+        tabTitleEnabled: stateService.isTabTitleEnabled(),
+      },
+      timings,
+    };
+  }
+
+  router.get('/branches', async (req, res) => {
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    // 显式 docker 对账（写状态）走真实路径，永不缓存/去重。
+    const live = req.query.live === 'true' || req.query.live === '1';
+    // P4 Part 3b: optional ?project=<id> filter（缺省=全部，与历史一致）。
+    const projectFilter = resolveProjectIdParam(req.query.project);
+    let result: BranchesListResult;
+    if (live || BRANCHES_CACHE_TTL_MS === 0) {
+      result = await computeBranchesListPayload({ projectFilter, live, requestId });
+    } else {
+      const key = projectFilter || 'all';
+      const cached = branchesListCache.get(key);
+      if (cached && Date.now() - cached.at < BRANCHES_CACHE_TTL_MS) {
+        result = cached.result;
+      } else {
+        let inflight = branchesListInflight.get(key);
+        if (!inflight) {
+          inflight = computeBranchesListPayload({ projectFilter, live: false, requestId })
+            .then((r) => { branchesListCache.set(key, { at: Date.now(), result: r }); return r; })
+            .finally(() => { branchesListInflight.delete(key); });
+          branchesListInflight.set(key, inflight);
+        }
+        result = await inflight;
+      }
+    }
+    res.setHeader('Server-Timing', Object.entries(result.timings)
+      .map(([name, duration]) => `${name};dur=${duration}`)
+      .join(', '));
+    res.json(result.payload);
   });
 
   router.get('/branches/state-audit', async (req, res) => {
