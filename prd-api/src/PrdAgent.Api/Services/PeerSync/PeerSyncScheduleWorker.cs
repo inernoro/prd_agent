@@ -100,7 +100,8 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             var registry = scope.ServiceProvider.GetRequiredService<ISyncResourceRegistry>();
             var transfer = scope.ServiceProvider.GetRequiredService<IPeerSyncTransferService>();
             var peer = scope.ServiceProvider.GetRequiredService<PrdAgent.Core.Interfaces.IPeerNodeService>();
-            await SyncOneAsync(db, registry, transfer, peer, storeId, ct);
+            var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            await SyncOneAsync(db, registry, transfer, peer, config, storeId, ct);
         }
         catch (Exception ex)
         {
@@ -114,11 +115,16 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
 
     private async Task SyncOneAsync(
         MongoDbContext db, ISyncResourceRegistry registry, IPeerSyncTransferService transfer,
-        PrdAgent.Core.Interfaces.IPeerNodeService peer, string storeId, CancellationToken ct)
+        PrdAgent.Core.Interfaces.IPeerNodeService peer, IConfiguration config, string storeId, CancellationToken ct)
     {
+        // 每次尝试用「实例 id + 唯一后缀」做租约持有者：绝不能用裸 _instanceId —— 否则下一个扫描周期
+        // （1 分钟后）会因「同 owner 可重入」子句重新抢到自己上一轮仍在跑的租约，在同一实例上叠开两个
+        // SyncItemAsync，击穿库级互斥（Bugbot High: Auto sync overlaps same store）。唯一后缀后，
+        // 上一轮未结束（租约未过期、owner 不同）→ 本轮抢不到 → 跳过。
+        var leaseOwner = $"{_instanceId}:{Guid.NewGuid():N}";
         // ① 抢租约（防风暴第一层）：与手动 transfer 共用同一把锁（TryAcquireStoreSyncLeaseAsync），
-        //    手动同步进行中时 worker 抢不到 → 不会和手动叠跑（治 Bugbot: Auto/manual overlap race）。
-        if (!await transfer.TryAcquireStoreSyncLeaseAsync(storeId, _instanceId, LeaseDuration, ct))
+        //    手动同步 / 本实例上一轮仍在跑时都抢不到 → 不叠跑。
+        if (!await transfer.TryAcquireStoreSyncLeaseAsync(storeId, leaseOwner, LeaseDuration, ct))
         {
             _logger.LogDebug("[PeerSyncScheduleWorker] lease busy for {StoreId}, skip on {InstanceId}", storeId, _instanceId);
             return;
@@ -162,7 +168,11 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
             // 强制对齐（删除）是数据破坏路径，只能在 UI 二次确认后手动触发，自动同步不碰。
             var direction = NormalizeAutoDirection(store.PeerSyncDirection);
             var actor = await transfer.BuildActorAsync(store.OwnerId, isRoot: false, ct);
-            var selfBaseUrl = Environment.GetEnvironmentVariable("PEER_SELF_BASE_URL")?.Trim().TrimEnd('/');
+            // 本节点对外地址：worker 无 Request，按与 ResolveServerUrl 一致的「无请求」来源取——
+            // 先 PEER_SELF_BASE_URL，再 config["ServerUrl"]。反代部署只要配了其一，自动 push 的图片本地化
+            // 就与手动同步一致；都没配才退化为 null（Bugbot: Auto sync missing push base URL）。
+            var selfBaseUrl = Environment.GetEnvironmentVariable("PEER_SELF_BASE_URL")?.Trim().TrimEnd('/')
+                ?? config["ServerUrl"]?.Trim().TrimEnd('/');
 
             var result = await transfer.SyncItemAsync(
                 node, resource, store.Id, store.Name,
@@ -184,12 +194,12 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
         {
             // ② 释放租约（必落库，CancellationToken.None）。AutoLastAt 仅在「本周期确实由我处理」时推进：
             //    不到期/已关的提前返回只还租约、不推进，下个周期立即可被重新评估。
-            // 关键：收尾必须按 owner 限定（PeerSyncLeaseOwner == _instanceId）。若本次同步耗时超过租约、
-            // 期间被另一实例接管，则我已不是持有者，绝不能按 storeId 盲清——否则会抹掉新持有者的租约、
-            // 放行同库第三次并发同步（Bugbot High: Lease cleared without owner check）。
+            // 关键：收尾必须按本次尝试的 leaseOwner 限定。若本次同步耗时超过租约、期间被另一尝试/实例接管，
+            // 则我已不是持有者，绝不能按 storeId 盲清——否则会抹掉新持有者的租约、放行同库并发同步
+            // （Bugbot High: Lease cleared without owner check）。
             var releaseFilter = Builders<DocumentStore>.Filter.And(
                 Builders<DocumentStore>.Filter.Eq(s => s.Id, storeId),
-                Builders<DocumentStore>.Filter.Eq(s => s.PeerSyncLeaseOwner, _instanceId));
+                Builders<DocumentStore>.Filter.Eq(s => s.PeerSyncLeaseOwner, leaseOwner));
             var update = Builders<DocumentStore>.Update
                 .Unset(s => s.PeerSyncLeaseOwner)
                 .Unset(s => s.PeerSyncLeaseExpiresAt);

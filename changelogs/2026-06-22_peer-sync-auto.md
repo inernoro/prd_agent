@@ -26,3 +26,7 @@
 | fix | prd-admin | 同步台账卡片(RunCard)对陈旧 syncing 行(超30min)显示为中性「未完成」而非金色脉冲，与进行中判定一致（Bugbot） |
 | fix | prd-api | 同步完成（手动/自动）终态回写一并重置 PeerSyncAutoLastAt，避免手动同步一个已到期库后 worker 约 1 分钟内又自动跑一遍（Bugbot） |
 | fix | prd-admin | 知识库排序保存失败时回滚 defaultSortMode（同置顶回滚），避免侧栏排序与服务端不一致（Bugbot） |
+| fix | prd-api | 自动同步 worker 每次尝试用唯一租约持有者（实例id+guid），杜绝下一扫描周期因「同 owner 可重入」在同实例叠开同库第二个同步（Bugbot High） |
+| fix | prd-api | 漂移签名 ComputeSignature 纳入 sortOrder/category/defaultSortMode，避免仅排序/分类变化时签名不变、漂移检测误报已同步（Codex） |
+| fix | prd-api | 自动同步 sourceBaseUrl 兜底取 config["ServerUrl"]（worker 无 Request），反代部署未设 PEER_SELF_BASE_URL 时图片本地化不再降级（Codex） |
+| fix | prd-admin | 知识库置顶写入串行化（合并为最新一次、单请求在途、失败拉服务端权威值），杜绝快速连点乱序丢项 + 陈旧回滚丢新选择（Codex） |

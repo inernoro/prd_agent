@@ -27,10 +27,12 @@
 |---|------|------|---------|
 | A1 | 租约无心跳续租 | 固定 30min TTL，覆盖单库最坏同步耗时（两阶段 HTTP 各 120s + 资源重传）。若出现 >30min 的超大库，超时后锁可被另一发起方抢走 → 同库并发 | 同步期间周期性续租（heartbeat），持短 TTL 但活着就续 |
 | A2 | force-align mirror 删除未级联 | 镜像删除对端缺失条目时只删 DocumentEntry（+可能的解析文档），未清其 sync 日志 / view events / 内联评论 / 版本 / mentions / agent runs / 附件 —— 与 `DocumentStoreController.DeleteEntry` 的级联不一致，留孤儿数据。仅手动 force-align 路径触发（自动同步只 Overwrite 不删，不受影响） | 抽 `DeleteEntry` 的级联清理为共享 helper（跨 Api/Infrastructure 层），mirror 删除复用 |
-| A3 | apply 不清理失效 primary/pins | 源库清空主文档 / 移除全部置顶后，bundle 无可解析血缘，apply 的 overwrite/mirror 路径只在解析到新 id 时才写 PrimaryEntryId、只在 PinnedEntryLineages 非 null 时才写 pins → 目标可能残留旧 primary/pins（含 mirror 刚删的条目 id） | 需先在协议层用「null=旧节点字段缺失 / 空=显式清空」哨兵区分，否则旧节点同步会误清目标置顶；区分后 overwrite/mirror 显式清空 |
+| A3 | apply 不清理「源已清空」的 primary/pins/defaultSortMode | 源库清空主文档 / 移除全部置顶 / 清空默认排序后，apply 的 overwrite/mirror 路径只在「解析到新值 / 字段非 null」时才写 → 目标残留旧 PrimaryEntryId / PinnedEntryIds / DefaultSortMode（含 mirror 刚删的条目 id）。注：per-record 的 sortOrder/category 已纳入变更检测+签名（已修）；本项专指**库级**这三个「null=已清空 还是 null=旧节点没传」无法区分的字段 | 需先在协议层用「null=旧节点字段缺失 / 空=显式清空」哨兵区分，否则旧节点同步会误清目标；区分后 overwrite/mirror 显式清空 |
 
-A2/A3 都是 **手动 force-align/mirror 路径**的既有问题，与本次新增的「自动同步」无关（自动同步恒 Overwrite、绝不删条目），
-故未在 PR #890 内仓促改动（需跨层 / 协议级改造），单列于此。
+| A4 | 库级互斥锁未覆盖 incoming apply | `TryAcquireStoreSyncLeaseAsync` 已让**出站**两条路径（手动 `POST /transfer` + 自动 worker）互斥，但**入站** `RemoteApply`（对端 push 进来）直接 `ApplyAsync`，未取同一把锁。故「本地正在出站同步某库」与「对端同时 push 该库进来」仍可交错写。自动同步恒 Overwrite（幂等 upsert，最终收敛、不丢数据）；唯一真风险是入站 mirror 删除与本地写交错，而 mirror 仅手动 force-align（用户二次确认）触发 | RemoteApply 对 document-store 也取同一把锁；需处理「目标库尚不存在（首次接收）」时不存在锁文档、不应误判冲突的边界 |
+
+A2/A3/A4 都是 **手动 force-align/mirror 或入站 apply 路径**的既有/完整性问题，与本次新增的「自动出站同步」无关
+（自动同步恒 Overwrite、绝不删条目，幂等收敛），故未在 PR #890 内仓促改动（需跨层 / 协议级 / 安全端点改造），单列于此。
 
 ## 安全与一致性要点（已落地）
 

@@ -197,9 +197,14 @@ public class DocumentStoreSyncResource : ISyncableResource
                 contentHash = Sha256Hex(doc?.RawContent ?? string.Empty);
             }
             var tags = string.Join(",", (e.Tags ?? new List<string>()).OrderBy(t => t, StringComparer.Ordinal));
-            parts.Add($"{LineageOf(e)}|{(e.IsFolder ? 1 : 0)}|{e.Title}|{ParentLineage(e.ParentId) ?? string.Empty}|{tags}|{contentHash}");
+            // 纳入 SortOrder/Category（v1.1）：否则仅手动排序/分类变化的库签名不变，漂移检测会误报「已同步」
+            // 而下一次 transfer 仍会改数据（Codex）。SortOrder 用 InvariantCulture 保证跨 locale 哈希稳定。
+            var sortOrder = e.SortOrder?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+            parts.Add($"{LineageOf(e)}|{(e.IsFolder ? 1 : 0)}|{e.Title}|{ParentLineage(e.ParentId) ?? string.Empty}|{tags}|{contentHash}|{sortOrder}|{e.Category ?? string.Empty}");
         }
         parts.Sort(StringComparer.Ordinal);
+        // 库级稳定字段（默认排序）也纳入签名：仅改默认排序时同样应被漂移检测捕获。
+        parts.Add($"__store__|defaultSortMode={store.DefaultSortMode ?? string.Empty}");
         return Sha256Hex(string.Join("\n", parts));
     }
 

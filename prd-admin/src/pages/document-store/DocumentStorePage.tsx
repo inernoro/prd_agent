@@ -1852,22 +1852,36 @@ export function DocumentStorePage() {
     return () => { alive = false; };
   }, []);
 
-  // 切换置顶：乐观更新 + 服务端持久化（失败回滚 + 提示）
+  // 置顶写入串行化：每次点击只更新本地态 + 记下「最新目标列表」，由 flushPins 串行落库
+  // （一次仅一个在途请求，期间多次点击合并为最后一次）。这样服务端最终持久化的一定是最新一次选择，
+  // 不会因请求乱序（[A] 晚于 [A,B] 到达）丢掉后点的项；失败则从服务端拉权威值纠正，
+  // 避免「陈旧回滚丢新选择」（Codex: Serialize pin preference writes）。
+  const pinInFlightRef = useRef(false);
+  const pinPendingRef = useRef<string[] | null>(null);
+  const flushPins = useCallback(async () => {
+    if (pinInFlightRef.current || pinPendingRef.current == null) return;
+    const ids = pinPendingRef.current;
+    pinPendingRef.current = null;
+    pinInFlightRef.current = true;
+    const res = await updateDocumentStorePins(ids);
+    pinInFlightRef.current = false;
+    if (!res.success) {
+      toast.error('置顶保存失败', res.error?.message);
+      const r = await getUserPreferences(); // 失败拉服务端权威值纠正本地（不做可能丢新选择的陈旧回滚）
+      if (r.success) setPinnedIds(new Set(r.data.documentStorePinnedIds ?? []));
+      return;
+    }
+    if (pinPendingRef.current != null) void flushPins(); // 在途期间又有点击，继续发最新
+  }, []);
   const handleTogglePin = useCallback((storeId: string) => {
     setPinnedIds(prev => {
       const next = new Set(prev);
       if (next.has(storeId)) next.delete(storeId); else next.add(storeId);
-      const ids = [...next];
-      const rollback = prev; // 捕获操作前的集合，失败时回滚到它（不能用 prev2=>prev2 空操作，那不会撤销乐观更新）
-      updateDocumentStorePins(ids).then(res => {
-        if (!res.success) {
-          setPinnedIds(rollback);
-          toast.error('置顶保存失败', res.error?.message);
-        }
-      });
+      pinPendingRef.current = [...next];
+      void flushPins();
       return next;
     });
-  }, []);
+  }, [flushPins]);
 
   // 卡片「更多」菜单点外关闭
   useEffect(() => {
