@@ -1589,9 +1589,10 @@ public class DocumentStoreController : ControllerBase
             bytes = ms.ToArray();
         }
 
+        // 存到独立 cds/ 目录（现有桶内隔离，无需为验收报告/测试单独建桶）。
         var stored = await _assetStorage.SaveAsync(
             bytes, mime, ct,
-            domain: AppDomainPaths.DomainAssets,
+            domain: AppDomainPaths.DomainCds,
             type: AppDomainPaths.TypeImg,
             fileName: file.FileName);
 
