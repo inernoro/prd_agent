@@ -17,6 +17,7 @@ import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 
 // ── 页面组件（lazy 加载） ─────────────────────────────────
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
+const VisualStoryboardPage = lazy(() => import('@/pages/visual-storyboard/VisualStoryboardPage'));
 const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
 const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
@@ -304,6 +305,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/visual-storyboard',
+    permission: 'visual-agent.use',
+    element: shellGuarded('visual-agent.use', <VisualStoryboardPage />),
+    nav: {
+      label: '视觉分镜台',
+      shortLabel: '分镜',
+      description: '想法/文章拆成电影分镜，关键帧实时生长、逐镜精修，预留 image-to-video',
+      icon: 'Clapperboard',
+      section: 'toolbox',
+      appKey: 'visual-storyboard',
+      tags: ['视频', '分镜', '关键帧', '故事板', 'storyboard'],
+      wip: true,
+    },
+  },
+  {
     path: '/arena',
     permission: 'arena-agent.use',
     element: shellGuarded('arena-agent.use', <ArenaPage />),
@@ -461,7 +477,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     permission: 'pm-agent.use',
     element: fullscreenGuarded('pm-agent.use', <PmAgentPage />),
     nav: {
-      label: '项目管理智能体',
+      label: '项目管理',
       shortLabel: '项目',
       description: '项目立项、任务看板、甘特图，AI 自动拆解需求为任务（对齐 PMO 方法论）',
       icon: 'FolderKanban',
@@ -498,10 +514,10 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <OverviewShell />),
     nav: {
-      label: '产品管理智能体',
+      label: '产品管理',
       shortLabel: '产品',
       description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱',
-      icon: 'Boxes',
+      icon: 'Blocks',
       section: 'toolbox',
       appKey: 'product-agent',
       wip: true,
@@ -655,12 +671,12 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     permission: 'team-activity.read',
     element: shellGuarded('team-activity.read', <TeamActivityPage />),
     nav: {
-      label: '团队动态',
-      shortLabel: '动态',
-      description: '全员工作动态时间线（管理员）',
+      label: 'VOC',
+      shortLabel: 'VOC',
+      description: '行为洞察（VOC）+ 全员工作动态时间线（管理员）',
       icon: 'Activity',
       section: 'utility',
-      tags: ['动态', '活动', '工作日志', 'activity'],
+      tags: ['VOC', '行为洞察', '动态', '活动', '工作日志', 'activity', 'voice of customer'],
     },
   },
 

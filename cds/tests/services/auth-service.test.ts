@@ -203,6 +203,24 @@ describe('AuthService', () => {
       expect(result.user.githubLogin).toBe('alice');
     });
 
+    it('rejects OAuth login for a disabled account (PR #865 Bugbot High)', async () => {
+      const { service, store } = buildService();
+      // First login creates the user.
+      const first = service.startLogin('https://x/cb', '/projects.html');
+      const r1 = await service.handleCallback({
+        code: 'c1', state: first.state, redirectUri: 'https://x/cb', userAgent: null, ipAddress: null,
+      });
+      // Owner disables the account.
+      await store.setUserStatus(r1.user.id, 'disabled');
+      // A fresh OAuth round-trip must be rejected, not mint a new session.
+      const second = service.startLogin('https://x/cb', '/projects.html');
+      await expect(
+        service.handleCallback({
+          code: 'c2', state: second.state, redirectUri: 'https://x/cb', userAgent: null, ipAddress: null,
+        }),
+      ).rejects.toMatchObject({ code: 'account_disabled' });
+    });
+
     it('rejects when state token is unknown (CSRF protection)', async () => {
       const { service } = buildService();
       // Skip startLogin — no state token was registered.

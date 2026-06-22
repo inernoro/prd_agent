@@ -458,12 +458,12 @@ public static class AdminPermissionCatalog
         new(TaskTreeUse, "个人任务树智能体", "分层任务管理、对话摘取任务、卡点上报（创建/编辑/查看）"),
         new(TaskTreeViewAll, "个人任务树-全员卡点", "卡点墙聚合查看所有人的卡点（管理层/上级；普通成员只看自己）"),
 
-        new(PmAgentUse, "项目管理智能体", "项目立项、任务看板、甘特图与 AI 需求拆解"),
+        new(PmAgentUse, "项目管理", "项目立项、任务看板、甘特图与 AI 需求拆解"),
         new(PmAgentDashboard, "项目管理-组织NPSS看板", "查看公司级 NPSS 经营看板与奖金测算（仅授予管理层）"),
         new(PmAgentAudit, "项目管理-审计日志", "查看项目操作留痕审计日志（合规/追溯，仅授予管理层）"),
         new(PmAgentGlobal, "项目管理-全局总览", "跨全公司项目只读洞察看板（全局掌控视角，仅授予管理层）"),
 
-        new(ProductAgentUse, "产品管理智能体", "产品-版本-需求-功能-缺陷-客户全链路串联、知识图谱、知识库挂载"),
+        new(ProductAgentUse, "产品管理", "产品-版本-需求-功能-缺陷-客户全链路串联、知识图谱、知识库挂载"),
         new(ProductAgentManage, "产品管理-管理", "自定义表单模板与流程定义、删除产品等管理操作"),
         new(ProductAgentAdmin, "产品管理-管理层总览", "跨全部产品的聚合仪表盘/列表 + 全局表单/流程设置（管理层）"),
 

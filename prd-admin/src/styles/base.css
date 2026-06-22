@@ -35,7 +35,7 @@
 
 /* 注意：避免使用 color-mix()，部分浏览器/WebView 不支持 */
 :focus-visible {
-  outline: 2px solid rgba(99, 102, 241, 0.6);
+  outline: 2px solid rgba(34, 211, 238, 0.55);
   outline-offset: 2px;
 }
 
@@ -51,13 +51,13 @@
   color: #0F172A;
 }
 
-/* 文本输入控件焦点环走 inset（outline-offset 负值 = 画在 border 内侧），
-   避免被父容器/邻居元素裁切。按钮、卡片等保持原外环以维持 a11y 反馈。
-   适用于全站 <input> / <textarea> / <select>，无需各处单独加 ring 类。 */
+/* 文本输入控件不画聚焦内环：只靠容器外边框 + focus 时的 border 变色反馈，
+   避免框中又出现一圈 outline 内环（用户反馈：有外边框就够了）。
+   按钮/链接等仍保留外环以维持 a11y。 */
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline-offset: -2px;
+  outline: none;
 }
 
 /* 禁用 focus 样式的元素（用于自定义聚焦容器的内部元素） */
@@ -73,7 +73,7 @@ select:focus-visible {
   color: var(--text-primary);
   border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  caret-color: rgba(129, 140, 248, 0.85);
+  caret-color: rgba(34, 211, 238, 0.85);
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 

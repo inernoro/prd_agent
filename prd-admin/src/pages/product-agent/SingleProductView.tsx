@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, LayoutTemplate } from 'lucide-react';
 import { ProductAssistantPanel } from './ProductAssistantPanel';
 import { QuickActionsCard } from './QuickActionsCard';
 import { requirementSourceLabel } from './requirementSource';
@@ -17,6 +17,7 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { KnowledgeModule } from './knowledge/KnowledgeModule';
+import { ProductBlueprintTab } from './ProductBlueprintTab';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
@@ -72,7 +73,7 @@ import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
 import type { WorkflowTransition } from './types';
 
-type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
+type Section = 'overview' | 'blueprint' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
 
 /** 按 parentId 把扁平列表排成父子层级顺序（深度优先），返回每项 + 缩进深度。 */
 function orderByHierarchy<T extends { id: string; parentId?: string | null }>(items: T[]): { item: T; depth: number }[] {
@@ -93,10 +94,11 @@ function orderByHierarchy<T extends { id: string; parentId?: string | null }>(it
   return out;
 }
 
-const SECTION_KEYS = new Set<Section>(['overview', 'versions', 'requirements', 'features', 'board', 'rtm', 'reports', 'defects', 'team', 'knowledge', 'graph']);
+const SECTION_KEYS = new Set<Section>(['overview', 'blueprint', 'versions', 'requirements', 'features', 'board', 'rtm', 'reports', 'defects', 'team', 'knowledge', 'graph']);
 
 const NAV: NavItem<Section>[] = [
   { key: 'overview', label: '工作台', icon: LayoutDashboard },
+  { key: 'blueprint', label: '产品蓝图', icon: LayoutTemplate },
   { key: 'reports', label: '报表', icon: BarChart3 },
   { key: 'board', label: '看板', icon: LayoutGrid },
   { key: 'versions', label: '版本', icon: GitBranch },
@@ -156,7 +158,7 @@ export function SingleProductView() {
   }
 
   const SECTION_TITLE: Record<Section, string> = {
-    overview: '工作台', versions: '版本', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵', reports: '报表',
+    overview: '工作台', blueprint: '产品蓝图', versions: '版本', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵', reports: '报表',
     defects: '缺陷', team: '团队', knowledge: '知识库', graph: '图谱',
   };
 
@@ -193,6 +195,10 @@ export function SingleProductView() {
       ) : active === 'graph' ? (
         <div className="flex-1 min-h-0">
           <ProductGraphCanvas productId={product.id} />
+        </div>
+      ) : active === 'blueprint' ? (
+        <div className="flex-1 min-h-0">
+          <ProductBlueprintTab productId={product.id} isAdmin={isAdmin} />
         </div>
       ) : active === 'features' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">

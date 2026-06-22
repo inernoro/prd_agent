@@ -1,12 +1,13 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
+import { buildCacheMounts } from './cache-catalog.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
 import { isGenericPreviewProjectSlug, repoNameFromGitRef } from './preview-slug.js';
 import {
@@ -285,6 +286,7 @@ export class StateService {
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
       if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
       if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
+      if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
       if (!this.state.projects) this.state.projects = [];
       // Migrate: backfill cacheMounts for existing build profiles
@@ -314,6 +316,10 @@ export class StateService {
       // legacy default project 不动（保留 undefined 走 config 兜底）,
       // 否则会让线上的所有 pre-P4 容器跟当前 docker network 失联。
       this.migrateProjectDockerNetworks();
+      // 2026-06-18: 旧版 /stop 路由把所有停止都硬编码成 user。
+      // 如果 activity log 已经能证明触发源是 webhook / AI / 系统，则修正
+      // lastStopSource，避免卡片统计继续把系统清理误报成用户操作。
+      this.migrateLegacyStopAttribution();
     } else {
       this.state = emptyState();
       // Fresh installs start with zero projects. The project-list empty
@@ -355,10 +361,6 @@ export class StateService {
    */
   private migrateCacheMounts(): void {
     const CACHE_BASE = this.getCacheBase();
-    const IMAGE_CACHE_MAP: Record<string, Array<{ hostPath: string; containerPath: string }>> = {
-      'dotnet': [{ hostPath: `${CACHE_BASE}/nuget`, containerPath: '/root/.nuget/packages' }],
-      'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/pnpm/store' }],
-    };
 
     let changed = false;
     for (const profile of this.state.buildProfiles) {
@@ -376,15 +378,15 @@ export class StateService {
         }
       }
 
+      // SSOT: services/cache-catalog.ts。按 dockerImage 推断应挂载的依赖缓存目录，
+      // 缺哪类补哪类（合并语义，不覆盖用户自定义挂载）。2026-06-20 起覆盖
+      // java(.m2+.gradle)/go/rust/python——固化 Java 依赖缓存避免重复冷下载（任务 3）。
       const image = profile.dockerImage || '';
-      for (const [key, mounts] of Object.entries(IMAGE_CACHE_MAP)) {
-        if (!image.includes(key)) continue;
-        for (const mount of mounts) {
-          const alreadyMounted = profile.cacheMounts.some(cm => cm.containerPath === mount.containerPath);
-          if (!alreadyMounted) {
-            profile.cacheMounts.push({ ...mount });
-            changed = true;
-          }
+      for (const mount of buildCacheMounts(image, CACHE_BASE)) {
+        const alreadyMounted = profile.cacheMounts.some(cm => cm.containerPath === mount.containerPath);
+        if (!alreadyMounted) {
+          profile.cacheMounts.push({ ...mount });
+          changed = true;
         }
       }
     }
@@ -399,6 +401,49 @@ export class StateService {
     // No-op: TypeScript's optional fields handle missing deployModes gracefully.
     // This method exists as a migration hook in case future versions need to
     // transform deploy mode data (e.g., rename keys, merge formats).
+  }
+
+  private migrateLegacyStopAttribution(): void {
+    const branches = Object.values(this.state.branches || {});
+    if (branches.length === 0 || !this.state.activityLogs) return;
+    let changed = false;
+    for (const branch of branches) {
+      if (branch.lastStopSource !== 'user') continue;
+      if (branch.lastStopReason && branch.lastStopReason !== '用户手动停止') continue;
+      const projectId = branch.projectId || 'default';
+      const logs = this.state.activityLogs[projectId] || [];
+      const lastStoppedMs = branch.lastStoppedAt ? Date.parse(branch.lastStoppedAt) : Number.NaN;
+      const stopLog = [...logs]
+        .reverse()
+        .find((log) => {
+          if (log.type !== 'stop' || log.branchId !== branch.id) return false;
+          if (!Number.isFinite(lastStoppedMs)) return true;
+          const logMs = Date.parse(log.at);
+          return Number.isFinite(logMs) ? logMs <= lastStoppedMs + 5_000 : true;
+        });
+      if (!stopLog?.actor) continue;
+      const actor = stopLog.actor.toLowerCase();
+      if (actor === 'system:webhook') {
+        branch.lastStopSource = 'webhook';
+        branch.lastStopReason = 'GitHub webhook 触发停止';
+      } else if (actor === 'system:scheduler') {
+        branch.lastStopSource = 'scheduler';
+        branch.lastStopReason = '调度器触发停止';
+      } else if (actor === 'system:auto-lifecycle') {
+        branch.lastStopSource = 'cds';
+        branch.lastStopReason = 'CDS 生命周期策略触发停止';
+      } else if (actor === 'system:janitor' || actor === 'system:system') {
+        branch.lastStopSource = 'system';
+        branch.lastStopReason = actor === 'system:janitor' ? 'Janitor 过期清理触发停止' : '系统触发停止';
+      } else if (actor === 'ai' || actor.startsWith('ai:')) {
+        branch.lastStopSource = 'ai';
+        branch.lastStopReason = 'AI Agent 调用停止';
+      } else {
+        continue;
+      }
+      changed = true;
+    }
+    if (changed) this.save();
   }
 
   /**
@@ -1073,6 +1118,34 @@ export class StateService {
       delete this.state.schedulerMaxHotOverride;
     } else {
       this.state.schedulerMaxHotOverride = value;
+    }
+  }
+
+  // ── Janitor runtime override ──
+  //
+  // Mirrors scheduler override semantics: Dashboard writes these fields to
+  // state so global expiry settings survive CDS restarts.
+  getJanitorEnabledOverride(): boolean | undefined {
+    return this.state.janitorEnabledOverride;
+  }
+
+  setJanitorEnabledOverride(value: boolean | undefined): void {
+    if (value === undefined) {
+      delete this.state.janitorEnabledOverride;
+    } else {
+      this.state.janitorEnabledOverride = value;
+    }
+  }
+
+  getJanitorWorktreeTTLOverride(): number | undefined {
+    return this.state.janitorWorktreeTTLOverride;
+  }
+
+  setJanitorWorktreeTTLOverride(value: number | undefined): void {
+    if (value === undefined) {
+      delete this.state.janitorWorktreeTTLOverride;
+    } else {
+      this.state.janitorWorktreeTTLOverride = value;
     }
   }
 
@@ -2759,6 +2832,86 @@ export class StateService {
     });
   }
 
+  // ── 2026-06-20 部署耗时样本台账 ── 分支构建中卡片展示"已耗时 + 历史
+  //   中位预计耗时"，区分发布版/热加载。每 (projectId, mode) 一个桶，保留
+  //   最近 N 条毫秒耗时；只在部署成功时追加。OperationLog 不能用作历史
+  //   （per-branch 10 条上限 + build/run 混合 + 删分支即丢），故另立此台账。
+
+  /** 每个 (project, mode) 桶最多保留的样本数。窗口取近 30 次。 */
+  static readonly DEPLOY_DURATION_SAMPLES_MAX = 30;
+
+  /** 中位预计耗时基于"近 N 次"，UI 文案显示这个窗口大小。 */
+  static readonly DEPLOY_DURATION_ESTIMATE_WINDOW = 20;
+
+  private deployDurationBucketKey(projectId: string, mode: import('../types.js').DeployDurationMode): string {
+    return `${projectId || 'default'}::${mode}`;
+  }
+
+  /**
+   * 记录一次成功部署的耗时样本（毫秒，从 deploy 开始到 ready）。
+   *   - 仅追加合法值（>0 且不离谱）；非法值静默忽略，不污染中位。
+   *   - 按 (projectId, mode) 分桶，ring buffer 上限 DEPLOY_DURATION_SAMPLES_MAX。
+   *   - 落盘失败不致命（顶多丢这条样本）。
+   *
+   * @param maxReasonableMs 上界保护（调用方传 buildTimeout*2，缺省 30 分钟）。
+   */
+  recordDeployDuration(
+    projectId: string,
+    mode: import('../types.js').DeployDurationMode,
+    ms: number,
+    maxReasonableMs = 30 * 60 * 1000,
+  ): void {
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    if (Number.isFinite(maxReasonableMs) && maxReasonableMs > 0 && ms > maxReasonableMs) return;
+    const store = this.state.deployDurationSamples || { buckets: {} };
+    if (!store.buckets) store.buckets = {};
+    const key = this.deployDurationBucketKey(projectId, mode);
+    const bucket = store.buckets[key] || [];
+    bucket.push(Math.round(ms));
+    while (bucket.length > StateService.DEPLOY_DURATION_SAMPLES_MAX) bucket.shift();
+    store.buckets[key] = bucket;
+    this.state.deployDurationSamples = store;
+    try {
+      this.save();
+    } catch (err) {
+      console.warn('[state] recordDeployDuration save failed:', (err as Error).message);
+    }
+  }
+
+  /**
+   * 返回某 (project, mode) 桶的历史中位预计耗时（p50，毫秒）+ 参与样本数。
+   * 只取最近 DEPLOY_DURATION_ESTIMATE_WINDOW 条计算，与 UI 文案"近 N 次"一致。
+   * 无样本时 medianMs=null —— 调用方据此决定是否展示预计值（不编造）。
+   */
+  getDeployEstimate(
+    projectId: string,
+    mode: import('../types.js').DeployDurationMode,
+  ): import('../types.js').DeployDurationEstimate {
+    const store = this.state.deployDurationSamples;
+    const key = this.deployDurationBucketKey(projectId, mode);
+    const all = store?.buckets?.[key] || [];
+    const window = all.slice(-StateService.DEPLOY_DURATION_ESTIMATE_WINDOW);
+    if (window.length === 0) return { medianMs: null, sampleCount: 0 };
+    const sorted = [...window].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const medianMs = sorted.length % 2 === 1
+      ? sorted[mid]
+      : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    return { medianMs, sampleCount: window.length };
+  }
+
+  /** 一次拿齐两种模式的预计耗时，供 BranchSummary 下发到分支卡片。 */
+  getBranchDeployEstimate(projectId: string): import('../types.js').BranchDeployEstimate {
+    const release = this.getDeployEstimate(projectId, 'release');
+    const source = this.getDeployEstimate(projectId, 'source');
+    return {
+      releaseMedianMs: release.medianMs,
+      releaseSamples: release.sampleCount,
+      sourceMedianMs: source.medianMs,
+      sourceSamples: source.sampleCount,
+    };
+  }
+
   // ── 2026-05-07 GitHub webhook 投递日志(ring buffer 200)── 用户反馈
   // "需要看到每次 hook 详情"。github-webhook.ts 路由处理完毕后(无论成功/失败)
   // 调 recordGithubWebhookDelivery 写入。前端 CDS 系统设置 → GitHub Webhook
@@ -3242,5 +3395,115 @@ export class StateService {
       result[hostKey] = dockerHost;
     }
     return result;
+  }
+
+  // ── Acceptance reports (CDS self-hosted, 2026-06-20) ──
+  //
+  // Report bodies (potentially large HTML) live on disk under
+  // `<dataDir>/reports/<id>.<ext>`. Only lightweight metadata is kept in
+  // state.json. `<dataDir>` is the project data dir — the parent of the
+  // cache base (`getCacheBase()` returns `<dataDir>/cache`), so reports sit
+  // alongside cache rather than inside it.
+
+  /** Host-side dir holding report content files. Created lazily on write. */
+  getReportsBase(): string {
+    return path.join(path.dirname(this.getCacheBase()), 'reports');
+  }
+
+  private reportFilePath(meta: Pick<AcceptanceReportMeta, 'id' | 'format'>): string {
+    const ext = meta.format === 'md' ? 'md' : 'html';
+    return path.join(this.getReportsBase(), `${meta.id}.${ext}`);
+  }
+
+  /** List report metadata, newest first, optionally filtered by project. */
+  listAcceptanceReports(projectId?: string | null): AcceptanceReportMeta[] {
+    const all = this.state.acceptanceReports || [];
+    const filtered = projectId ? all.filter((r) => (r.projectId || null) === projectId) : all;
+    return [...filtered].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+  }
+
+  getAcceptanceReport(id: string): AcceptanceReportMeta | undefined {
+    return (this.state.acceptanceReports || []).find((r) => r.id === id);
+  }
+
+  /** Read the raw content of a report from disk, or undefined if missing. */
+  readAcceptanceReportContent(id: string): string | undefined {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return undefined;
+    try {
+      return fs.readFileSync(this.reportFilePath(meta), 'utf-8');
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Create a report: write the content file to disk + persist metadata.
+   * `content` byte length is recorded; the metadata id is generated here so
+   * callers cannot collide. Returns the stored metadata.
+   */
+  createAcceptanceReport(input: {
+    title: string;
+    format: 'html' | 'md';
+    content: string;
+    projectId?: string | null;
+    branchId?: string | null;
+    createdBy?: string;
+  }): AcceptanceReportMeta {
+    if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
+    const now = new Date().toISOString();
+    const meta: AcceptanceReportMeta = {
+      id: crypto.randomUUID().replace(/-/g, ''),
+      title: input.title,
+      format: input.format,
+      projectId: input.projectId ?? null,
+      branchId: input.branchId ?? null,
+      sizeBytes: Buffer.byteLength(input.content, 'utf8'),
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+    fs.mkdirSync(this.getReportsBase(), { recursive: true });
+    fs.writeFileSync(this.reportFilePath(meta), input.content, 'utf-8');
+    this.state.acceptanceReports.push(meta);
+    this.save();
+    return meta;
+  }
+
+  /**
+   * Update a report's title and/or content. When `content` is provided the
+   * disk file is rewritten and sizeBytes recomputed. Returns the updated
+   * metadata, or null when the report does not exist.
+   */
+  updateAcceptanceReport(
+    id: string,
+    updates: { title?: string; content?: string },
+  ): AcceptanceReportMeta | null {
+    const meta = this.getAcceptanceReport(id);
+    if (!meta) return null;
+    if (typeof updates.title === 'string') meta.title = updates.title;
+    if (typeof updates.content === 'string') {
+      fs.mkdirSync(this.getReportsBase(), { recursive: true });
+      fs.writeFileSync(this.reportFilePath(meta), updates.content, 'utf-8');
+      meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
+    }
+    meta.updatedAt = new Date().toISOString();
+    this.save();
+    return meta;
+  }
+
+  /** Delete a report's metadata + content file. Returns true when removed. */
+  deleteAcceptanceReport(id: string): boolean {
+    const all = this.state.acceptanceReports || [];
+    const meta = all.find((r) => r.id === id);
+    if (!meta) return false;
+    try {
+      fs.unlinkSync(this.reportFilePath(meta));
+    } catch {
+      // Content file may already be gone — metadata removal still proceeds.
+    }
+    this.state.acceptanceReports = all.filter((r) => r.id !== id);
+    this.save();
+    return true;
   }
 }

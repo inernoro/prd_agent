@@ -43,6 +43,7 @@ import {
   Newspaper,
   Image as ImageIcon,
   Boxes,
+  KeyRound,
   type LucideIcon,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -57,10 +58,12 @@ import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
+import { SkillOpenApiDialog } from '@/pages/marketplace/SkillOpenApiDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
+import { StoreSizeBadge } from './StoreSizeBadge';
 import {
   listDocumentStoresWithPreview,
   createDocumentStore,
@@ -79,6 +82,9 @@ import {
   deleteDocumentEntry,
   moveDocumentEntry,
   updateDocumentContent,
+  listEntryVersions,
+  getEntryVersion,
+  restoreEntryVersion,
   setFolderPrimaryChild,
   rebuildContentIndex,
   addDocumentEntry,
@@ -116,7 +122,8 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
-import { ReprocessChatDrawer } from './ReprocessChatDrawer';
+import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
+import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
@@ -1093,11 +1100,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           updatedByName: res.data.updatedByName ?? e.updatedByName,
         } : e));
       toast.success('已保存');
+      // 返回服务端最新 updatedAt：DocBrowser 用它推进 loadedContentKey，短路掉保存后的内容重拉
+      return { updatedAt: res.data.updatedAt };
     } else {
       toast.error('保存失败', res.error?.message);
       throw new Error(res.error?.message ?? '保存失败');
     }
   }, []);
+
+  // 版本控制接口：透传给 DocBrowser → VersionHistoryModal
+  const versionApi = useMemo(() => ({
+    list: (entryId: string, page: number, pageSize: number) => listEntryVersions(entryId, page, pageSize),
+    get: (entryId: string, versionId: string) => getEntryVersion(entryId, versionId),
+    restore: (entryId: string, versionId: string) => restoreEntryVersion(entryId, versionId),
+  }), []);
 
   const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     const res = await getDocumentContent(entryId);
@@ -1205,6 +1221,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
             <span className="text-[11px] text-token-muted tabular-nums">
               <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
             </span>
+            {/* refreshKey 含各 entry 的 updatedAt：编辑/恢复/替换会 bump updatedAt 但条目数不变，
+                只用 length 会让大小数字停留在旧值；带上 updatedAt 串内容变化即刷新（Codex P2）。 */}
+            <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />
           </div>
         }
         actions={
@@ -1335,6 +1354,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           onRenameEntry={handleRenameEntry}
           onMoveEntry={handleMoveEntry}
           onSaveContent={handleSaveContent}
+          versionApi={versionApi}
+          onEntryContentRestored={(entryId, updatedAt) => {
+            setEntries(prev => prev.map(e => e.id === entryId ? { ...e, updatedAt } : e));
+          }}
           enableSelectionAi
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
@@ -1508,6 +1531,23 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           })}
         </div>
       )}
+
+      {/* 右上角「运行中的智能体」入口：关掉抽屉/刷新后仍可见，点击重开抽屉恢复短视频任务进度。
+          始终挂载（Host 轮询不能因开抽屉而停），仅在抽屉打开时隐藏浮层避免遮挡。 */}
+      <ShortVideoRunIndicator
+        storeId={storeId}
+        hidden={!!reprocessTarget}
+        onOpenRun={(r) => {
+          // 把被点击的 run 设为当前活跃 run，抽屉以 short-video 模式打开后会据此恢复轮询
+          saveActiveShortVideoRun(r.storeId, r.runId);
+          setReprocessTarget({ mode: 'short-video', title: '短视频解析' });
+        }}
+        onRunCompleted={() => {
+          // 后台 run 跑完（抽屉关着/刷新后）→ 刷新知识库列表，让新入库的视频/文字条目出现
+          void loadEntries();
+          setTimeout(() => { void loadEntries(); }, 1500);
+        }}
+      />
 
       {/* 文档再加工对话抽屉 */}
       <AnimatePresence>
@@ -1755,6 +1795,8 @@ export function DocumentStorePage() {
   const [teamScope, setTeamScope] = useState<TeamScope>(() => useTeamStore.getState().getScope('document-store'));
   const [showCreate, setShowCreate] = useState(false);
   const [showSendToPeer, setShowSendToPeer] = useState(false);
+  /** 「接入 AI」：当场签发一个 document-store:write 长效 Key（谁需要谁签发） */
+  const [showOpenApi, setShowOpenApi] = useState(false);
   const [editTarget, setEditTarget] = useState<{ id: string; name: string; tags: string[] } | null>(null);
   const [shareTeamTarget, setShareTeamTarget] = useState<{ id: string; name: string; teamIds: string[] } | null>(null);
   // 置顶：用户级，服务端持久化（跨设备/重登录保持）。openCardMenuId = 当前展开「更多」菜单的卡片 id。
@@ -2342,6 +2384,16 @@ export function DocumentStorePage() {
               <Send size={13} /> 发送到
             </Button>
           )}
+          {tab === 'mine' && (
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowOpenApi(true)}
+              title="当场签发一个长效 API Key（已预选「写入文档空间」权限），让外部 AI / Agent 以你的身份操作知识库"
+            >
+              <KeyRound size={13} /> 接入 AI
+            </Button>
+          )}
           <Button
             variant="primary"
             size="xs"
@@ -2491,9 +2543,11 @@ export function DocumentStorePage() {
                         <h3 className="min-w-0 truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                           {s.name}
                         </h3>
-                        {/* 副标题：分类 · N 篇文章（状态徽标移到右上角与置顶/更多同一排对齐） */}
-                        <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                          {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
+                        {/* 副标题：分类 · N 篇文章 · 体量（状态徽标移到右上角与置顶/更多同一排对齐） */}
+                        <p className="text-[11px] truncate mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                          <span className="truncate">{category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章</span>
+                          <span aria-hidden>·</span>
+                          <StoreSizeBadge storeId={s.id} variant="compact" />
                         </p>
                       </div>
                       {/* 右上角一排：状态徽标(已分享/同步圆点) + 置顶 + 更多，统一 items-center 垂直居中对齐，
@@ -2701,6 +2755,14 @@ export function DocumentStorePage() {
           resourceType="document-store"
           onClose={() => setShowSendToPeer(false)}
           onDone={() => { if (tab === 'mine') loadStores('mine', null); }}
+        />
+      )}
+
+      {showOpenApi && (
+        <SkillOpenApiDialog
+          presetScopes={['document-store:write']}
+          contextLabel="文档空间（知识库）"
+          onClose={() => setShowOpenApi(false)}
         />
       )}
 

@@ -257,6 +257,62 @@ export async function updateDocumentContent(entryId: string, content: string, co
   );
 }
 
+// ───────────────────────── 知识库版本控制 ─────────────────────────
+
+export type DocumentEntryVersionMeta = {
+  id: string;
+  versionNumber: number;
+  charCount: number;
+  sizeBytes: number;
+  source: string;
+  restoredFromVersionId?: string | null;
+  createdBy: string;
+  createdByName?: string | null;
+  createdAt: string;
+};
+
+export type DocumentEntryVersionFull = DocumentEntryVersionMeta & { content: string };
+
+/** 列出文档历史版本（倒序，不含正文） */
+export async function listEntryVersions(entryId: string, page = 1, pageSize = 30) {
+  return await apiRequest<{ items: DocumentEntryVersionMeta[]; total: number; page: number; pageSize: number }>(
+    `${api.documentStore.entries.versions(entryId)}?page=${page}&pageSize=${pageSize}`,
+  );
+}
+
+/** 取某个历史版本的完整正文 */
+export async function getEntryVersion(entryId: string, versionId: string) {
+  return await apiRequest<DocumentEntryVersionFull>(
+    api.documentStore.entries.versionDetail(entryId, versionId),
+  );
+}
+
+/** 恢复某个历史版本 */
+export async function restoreEntryVersion(entryId: string, versionId: string) {
+  return await apiRequest<{ restored: boolean; fromVersionNumber: number; updatedAt: string }>(
+    api.documentStore.entries.versionRestore(entryId, versionId),
+    { method: 'POST' },
+  );
+}
+
+export type DocumentStoreSize = {
+  storeId: string;
+  entryCount: number;
+  folderCount: number;
+  documentBytes: number;
+  attachmentBytes: number;
+  imageBytes: number;
+  imageCount: number;
+  versionBytes: number;
+  versionCount: number;
+  totalBytes: number;
+};
+
+/** 知识库大小统计 */
+export async function getStoreSize(storeId: string) {
+  return await apiRequest<DocumentStoreSize>(api.documentStore.stores.size(storeId));
+}
+
 /** 设置文件夹内的主文档 */
 export async function setFolderPrimaryChild(folderId: string, entryId: string | null) {
   return await apiRequest<{ primaryChildId: string | null }>(

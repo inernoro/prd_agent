@@ -117,7 +117,7 @@ public static class Desktop
 /// </summary>
 public static class Product
 {
-    public const string AppName = "产品管理智能体";
+    public const string AppName = "产品管理";
 
     [AppCallerMetadata(
         "产品管理-图谱摘要",
@@ -150,6 +150,14 @@ public static class Product
         Category = "Analysis"
     )]
     public const string WorkAssistant = "product-agent.work-assistant::chat";
+
+    [AppCallerMetadata(
+        "产品管理-营销问策",
+        "客户详情「营销问策」：聚合客户全量信息 + 动态跟进 + 问策知识库（全域粉销/4FM），AI 产出专业营销评估报告，服务端渲染为自包含 HTML 多模版页，可分享/托管（SSE 流式）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string MarketingConsult = "product-agent.marketing-consult::chat";
 }
 
 /// <summary>
@@ -158,6 +166,17 @@ public static class Product
 public static class VisualAgent
 {
     public const string AppName = "Visual Agent";
+
+    public static class VideoGen
+    {
+        [AppCallerMetadata(
+            "视觉分镜台-图生视频",
+            "视觉分镜台「动起来」：以关键帧为首帧直出视频（Wan 2.6 等），归属 visual-agent 应用配额与模型池",
+            ModelTypes = new[] { ModelTypes.VideoGen },
+            Category = "Video"
+        )]
+        public const string Generate = "visual-agent.videogen::video-gen";
+    }
 
     public static class Image
     {
@@ -286,6 +305,21 @@ public static class VisualAgent
             Category = "ImageGen"
         )]
         public const string ExtractStyle = "visual-agent.image-gen.extract-style::vision";
+    }
+
+    /// <summary>
+    /// 视觉分镜台（storyboard-first）：把想法/文章拆成镜头，每镜先以关键帧图存在。
+    /// 关键帧渲染复用 VisualAgent.Image.Text2Img 生图链路，这里只负责"拆镜 + 写每镜的图 prompt / 运动 prompt"。
+    /// </summary>
+    public static class Storyboard
+    {
+        [AppCallerMetadata(
+            "视觉分镜台-拆镜",
+            "把想法/文章拆成镜头，生成每镜关键帧图 prompt + 运动 prompt（预留 image-to-video）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ImageGen"
+        )]
+        public const string Script = "visual-agent.storyboard.script::chat";
     }
 
     public static class Scene
@@ -661,6 +695,17 @@ public static class WorkflowAgent
             Category = "Workflow"
         )]
         public const string Chat = "workflow-agent.error-analyzer::chat";
+    }
+
+    public static class ChatRepair
+    {
+        [AppCallerMetadata(
+            "工作流-配置自愈",
+            "AI 生成的工作流配置结构校验失败时自动修正（替换停用舱/删除悬空连线/消除环/补必填字段）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "workflow-agent.chat-repair::chat";
     }
 
     public static class AiFill
@@ -1056,6 +1101,14 @@ public static class Admin
             Category = "Analysis"
         )]
         public const string InsightBrief = "prd-admin.team-activity.insight-brief::chat";
+
+        [AppCallerMetadata(
+            "团队动态-端点根因诊断",
+            "对体验全景热力图痛点端点的报错码分布/耗时/真实样本做 AI 根因诊断（SSE 流式，逐字推送给下钻抽屉）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string EndpointDiagnose = "prd-admin.team-activity.endpoint-diagnose::chat";
     }
 
     public static class Changelog
@@ -1305,7 +1358,7 @@ public static class TapdBugAgent
 /// </summary>
 public static class ProjectManagement
 {
-    public const string AppName = "项目管理智能体";
+    public const string AppName = "项目管理";
 
     public static class Decompose
     {

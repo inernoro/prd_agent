@@ -14,11 +14,21 @@ import type {
   Feature,
   FeatureVersion,
   Customer,
+  CustomerFollowUp,
+  MarketingTemplate,
+  MarketingConsultListItem,
+  MarketingConsultReport,
   FormTemplate,
   WorkflowDefinition,
   ProductEntityType,
   ProductCategory,
+  ProductStructureNode,
+  ProductRule,
+  ProductTerm,
   RequirementType,
+  ProductGradeOption,
+  GradeDimension,
+  GradeEntityType,
   DescTemplate,
   ProductMembersResult,
   ProductInitiation,
@@ -246,6 +256,52 @@ export function deleteFeature(featureId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/features/${featureId}`, { method: 'DELETE' });
 }
 
+// ── 产品结构（功能模块/能力骨架树）+ 功能清单挂载 ──
+export function listProductStructure(productId: string) {
+  return apiRequest<ListWrap<ProductStructureNode>>(`/api/product/products/${productId}/structure`);
+}
+export function upsertProductStructureNode(
+  productId: string,
+  body: { id?: string; parentId?: string | null; name: string; description?: string | null; nodeType?: string | null; sortOrder?: number },
+) {
+  return apiRequest<ProductStructureNode>(`/api/product/products/${productId}/structure`, { method: 'POST', body });
+}
+export function deleteProductStructureNode(nodeId: string) {
+  return apiRequest<{ deleted: boolean; deletedCount: number }>(`/api/product/structure/${nodeId}`, { method: 'DELETE' });
+}
+/** 设置/取消功能在结构树上的挂载（structureNodeId 传 null = 取消归类）。 */
+export function setFeatureStructureNode(featureId: string, structureNodeId: string | null) {
+  return apiRequest<Feature>(`/api/product/features/${featureId}/structure-node`, { method: 'PUT', body: { structureNodeId } });
+}
+
+// ── 产品规则（单产品维度的全局核心规则）──
+export function listProductRules(productId: string) {
+  return apiRequest<ListWrap<ProductRule>>(`/api/product/products/${productId}/rules`);
+}
+export function upsertProductRule(
+  productId: string,
+  body: { id?: string; category?: string | null; title: string; content?: string | null; status?: string; sortOrder?: number },
+) {
+  return apiRequest<ProductRule>(`/api/product/products/${productId}/rules`, { method: 'POST', body });
+}
+export function deleteProductRule(ruleId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/rules/${ruleId}`, { method: 'DELETE' });
+}
+
+// ── 产品字典/术语 ──
+export function listProductTerms(productId: string) {
+  return apiRequest<ListWrap<ProductTerm>>(`/api/product/products/${productId}/terms`);
+}
+export function upsertProductTerm(
+  productId: string,
+  body: { id?: string; term: string; aliases?: string[]; definition?: string | null; category?: string | null; sortOrder?: number },
+) {
+  return apiRequest<ProductTerm>(`/api/product/products/${productId}/terms`, { method: 'POST', body });
+}
+export function deleteProductTerm(termId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/terms/${termId}`, { method: 'DELETE' });
+}
+
 // ── 功能版本化 ──
 export function listFeatureVersions(productId: string, params?: { featureId?: string; versionId?: string }) {
   const q = new URLSearchParams();
@@ -262,20 +318,160 @@ export function deleteFeatureVersion(featureVersionId: string) {
 }
 
 // ── 客户（全局，跨产品共享）──
+/** 客户写入字段（创建/更新共用；商户名称复用 name）。日期字段传 ISO 字符串或 null。 */
+export type CustomerUpsertBody = Partial<Customer> & {
+  merchantNo?: string | null;
+  shortName?: string | null;
+  status?: string | null;
+  certStatus?: string | null;
+  region?: string | null;
+  industry?: string | null;
+  openedAt?: string | null;
+  expireAt?: string | null;
+};
 export function listCustomers(params?: { keyword?: string }) {
   const q = new URLSearchParams();
   if (params?.keyword) q.set('keyword', params.keyword);
   const qs = q.toString();
   return apiRequest<ListWrap<Customer>>(`/api/product/customers${qs ? `?${qs}` : ''}`);
 }
-export function createCustomer(body: Partial<Customer>) {
+export function createCustomer(body: CustomerUpsertBody) {
   return apiRequest<Customer>('/api/product/customers', { method: 'POST', body });
 }
-export function updateCustomer(customerId: string, body: Partial<Customer>) {
+export function updateCustomer(customerId: string, body: CustomerUpsertBody) {
   return apiRequest<Customer>(`/api/product/customers/${customerId}`, { method: 'PUT', body });
 }
 export function deleteCustomer(customerId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/customers/${customerId}`, { method: 'DELETE' });
+}
+
+// ── 客户动态跟进 CustomerFollowUp（仿动态时间线，按时间倒序）──
+export function listCustomerFollowUps(customerId: string) {
+  return apiRequest<ListWrap<CustomerFollowUp>>(`/api/product/customers/${customerId}/follow-ups`);
+}
+export function createCustomerFollowUp(customerId: string, body: { content: string }) {
+  return apiRequest<CustomerFollowUp>(`/api/product/customers/${customerId}/follow-ups`, { method: 'POST', body });
+}
+export function deleteCustomerFollowUp(followUpId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/follow-ups/${followUpId}`, { method: 'DELETE' });
+}
+
+// ── 营销问策 MarketingConsult（客户详情 Tab，全链路对照项目简报）──
+
+/**
+ * 4 套专业报告模版（SSOT 仍在后端 MarketingReportRenderer.Templates；此处为前端 picker 兜底清单，
+ * 需要后端动态色值时调 listConsultTemplates()）。
+ */
+export const MARKETING_TEMPLATES: { key: MarketingTemplate; label: string; desc: string }[] = [
+  { key: 'exec', label: '行政简报', desc: '克制稳重的深蓝商务（默认）' },
+  { key: 'consulting', label: '咨询报告', desc: '麦肯锡式黑红，强调结构与依据' },
+  { key: 'dashboard', label: '数据看板', desc: '暗夜科技，指标导向，四力高光' },
+  { key: 'magazine', label: '高端杂志', desc: '暖纸衬线，大字标题' },
+];
+
+/** 报告模版清单（后端 SSOT，带预览色）。 */
+export function listConsultTemplates() {
+  return apiRequest<ListWrap<{ key: MarketingTemplate; label: string; accent: string; pageBg: string }>>(
+    '/api/product/consult/templates',
+  );
+}
+
+/** 该客户的历史问策报告列表（精简，不含 html）。 */
+export function listConsultReports(customerId: string) {
+  return apiRequest<ListWrap<MarketingConsultListItem>>(`/api/product/customers/${customerId}/consult`);
+}
+
+export interface ConsultListQuery {
+  page?: number;
+  pageSize?: number;
+  keyword?: string;
+  customerId?: string;
+  verdict?: string;
+  template?: string;
+}
+export interface ConsultListPage {
+  items: MarketingConsultListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+/** 全部问策报告列表（分页 + 搜索 + 筛选）。营销问策列表页用。 */
+export function listAllConsultReports(q: ConsultListQuery = {}) {
+  const p = new URLSearchParams();
+  if (q.page) p.set('page', String(q.page));
+  if (q.pageSize) p.set('pageSize', String(q.pageSize));
+  if (q.keyword) p.set('keyword', q.keyword);
+  if (q.customerId) p.set('customerId', q.customerId);
+  if (q.verdict) p.set('verdict', q.verdict);
+  if (q.template) p.set('template', q.template);
+  const qs = p.toString();
+  return apiRequest<ConsultListPage>(`/api/product/consult${qs ? `?${qs}` : ''}`);
+}
+
+// ── 问策知识库（DocumentStore，设置面板列表展示 + 添加） ──
+export interface ConsultKbEntry {
+  id: string;
+  title: string;
+  summary?: string | null;
+  contentType?: string | null;
+  fileSize?: number;
+  createdAt: string;
+}
+/** 问策知识库条目列表（不含全文）。 */
+export function getConsultKnowledge() {
+  return apiRequest<{ storeId: string; storeName: string; entries: ConsultKbEntry[] }>('/api/product/consult/knowledge');
+}
+/** 问策知识库单条全文。 */
+export function getConsultKnowledgeEntry(entryId: string) {
+  return apiRequest<{ id: string; title: string; content: string }>(`/api/product/consult/knowledge/${entryId}`);
+}
+/** 新增一条问策知识库资料（需管理权限）。 */
+export function addConsultKnowledge(body: { title: string; content: string }) {
+  return apiRequest<ConsultKbEntry>('/api/product/consult/knowledge', { method: 'POST', body });
+}
+
+/** 问策报告详情（含 html）。 */
+export function getConsultReport(reportId: string) {
+  return apiRequest<MarketingConsultReport>(`/api/product/consult/${reportId}`);
+}
+
+/** 切换报告模版（零 LLM，用落库快照重渲染）。返回新 html。 */
+export function restyleConsultReport(reportId: string, template: MarketingTemplate) {
+  return apiRequest<{ template: MarketingTemplate; html: string }>(
+    `/api/product/consult/${reportId}/restyle`,
+    { method: 'POST', body: { template } },
+  );
+}
+
+/** 开启/关闭报告分享。enabled=true 返回 shareToken。 */
+export function shareConsultReport(reportId: string, enabled: boolean) {
+  return apiRequest<{ shared: boolean; shareToken: string | null }>(
+    `/api/product/consult/${reportId}/share`,
+    { method: 'POST', body: { enabled } },
+  );
+}
+
+/** 保存报告到网页托管，回写 hostedSiteUrl。 */
+export function saveConsultToHosting(reportId: string) {
+  return apiRequest<{ siteId: string; siteUrl: string }>(
+    `/api/product/consult/${reportId}/save-to-hosting`,
+    { method: 'POST' },
+  );
+}
+
+/**
+ * 生成营销问策报告的 SSE 端点（POST）。前端用 connectSse 接：
+ *   connectSse({ url: consultGenerateUrl(), method: 'POST', body: { customerId?, input?, note?, template? } })
+ * 带 customerId 且 input 空 = 对该客户一键问策；仅 input = 自由文本问策（不绑定客户）。
+ * 事件：stage{stage,message} / model{model} / thinking{text} / typing{text} / error{message} / done{reportId,title,model}。
+ */
+export function consultGenerateUrl() {
+  return '/api/product/consult/generate';
+}
+
+/** 匿名分享报告的直链（text/html，可直接 window.open）。 */
+export function consultSharedUrl(token: string) {
+  return `/api/product/consult/shared/${token}`;
 }
 
 // ── 通用表单模板引擎 ──
@@ -313,6 +509,18 @@ export function upsertRequirementType(body: Partial<RequirementType> & { id?: st
 }
 export function deleteRequirementType(typeId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/requirement-types/${typeId}`, { method: 'DELETE' });
+}
+
+// ── 等级目录（优先级 / 严重程度，按对象类型）──
+export function listGradeOptions(params: { dimension: GradeDimension; entityType: GradeEntityType }) {
+  const qs = `?dimension=${encodeURIComponent(params.dimension)}&entityType=${encodeURIComponent(params.entityType)}`;
+  return apiRequest<ListWrap<ProductGradeOption>>(`/api/product/grade-options${qs}`);
+}
+export function upsertGradeOption(body: Partial<ProductGradeOption> & { id?: string }) {
+  return apiRequest<ProductGradeOption>('/api/product/grade-options', { method: 'POST', body });
+}
+export function deleteGradeOption(optionId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/grade-options/${optionId}`, { method: 'DELETE' });
 }
 
 // ── 详情描述模板 ──

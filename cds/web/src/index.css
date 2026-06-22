@@ -206,6 +206,124 @@
   }
 
   /*
+   * Mobile layout hardening.
+   * These rules protect the high-traffic CDS surfaces from the exact class of
+   * regressions caught in mobile acceptance: vertical text squeeze, footer/FAB
+   * overlap, and settings pages whose long left nav consumes the whole first
+   * viewport.
+   */
+  @media (max-width: 900px) {
+    .cds-settings-nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex !important;
+      flex-direction: row !important;
+      gap: 0.5rem;
+      max-width: 100%;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .cds-settings-nav::-webkit-scrollbar {
+      display: none;
+    }
+
+    .cds-settings-nav-group {
+      display: contents;
+      margin-top: 0 !important;
+    }
+
+    .cds-settings-nav-group-label {
+      display: none;
+    }
+
+    .cds-settings-nav-trigger {
+      width: auto !important;
+      min-width: max-content;
+      min-height: 2.5rem !important;
+      flex: 0 0 auto;
+      gap: 0.5rem !important;
+      white-space: nowrap;
+      border: 1px solid hsl(var(--hairline));
+      background: hsl(var(--surface-sunken) / 0.56);
+      padding-inline: 0.75rem !important;
+      font-size: 0.8125rem !important;
+    }
+
+    .cds-settings-content {
+      padding: 1rem !important;
+    }
+
+    .cds-branch-detail-drawer {
+      max-width: 100vw !important;
+      border-left: 0;
+    }
+
+    .cds-branch-detail-header {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: stretch;
+      gap: 0.5rem;
+      padding-inline: 0.75rem;
+    }
+
+    .cds-branch-detail-header-actions {
+      width: 100%;
+      max-width: 100%;
+      justify-content: flex-start;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .cds-branch-detail-header-actions::-webkit-scrollbar {
+      display: none;
+    }
+
+    .cds-branch-detail-tabs {
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .cds-branch-detail-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .cds-branch-detail-footer {
+      display: grid !important;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+    }
+
+    .cds-branch-detail-footer > * {
+      min-width: 0;
+      width: 100%;
+    }
+
+    .cds-branch-detail-footer-primary {
+      grid-column: 1 / -1;
+    }
+
+    .cds-branch-detail-footer-secondary {
+      flex: 1 1 auto !important;
+    }
+
+    .cds-branch-detail-footer a,
+    .cds-branch-detail-footer button {
+      white-space: nowrap;
+    }
+  }
+
+  body[data-cds-branch-drawer-open='true'] .cds-theme-toggle,
+  body:has(.cds-branch-detail-drawer) .cds-theme-toggle {
+    display: none;
+  }
+
+  /*
    * BranchCard busy rim. Deliberately subtle: no large conic sweep across
    * the content area, only a quiet edge pulse while deployments are polling.
    */
@@ -1002,6 +1120,16 @@
 
   .cds-main {
     @apply min-w-0 px-8 pb-12 pt-6;
+    /*
+     * flex-grow + min-height:0 让 main 填满 topbar 之下的列高（列是 min-h-screen
+     * 的 grid item，短页 = 视口、长页 = 内容高度，二者都成立）。少了这两笔，
+     * .cds-workspace--fill 的 height:100% 会解析到一个塌成内容高度的 main 上，
+     * 预览/详情区被挤成小盒子（2026-06-21 验收报告页右侧预览塌成 182px 的根因）。
+     * 短页视觉不变（main 多出来的区域与列背景同色）；长页仍走文档滚动。
+     * 详见 .claude/rules/content-fills-canvas.md。
+     */
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   @media (max-width: 767px) {
@@ -1015,6 +1143,21 @@
     max-width: 1240px;
     margin-left: auto;
     margin-right: auto;
+  }
+
+  /*
+   * 撑满高度的工作区（主从/预览/详情类页面用）。
+   * 病根：.cds-main 是 grid item（撑满视口高度），但 .cds-workspace 默认无高度，
+   * 于是页面根的 `h-full` 解析不到高度而塌成内容高度——预览/详情区被挤成一个
+   * 小盒子，四周大片留白。加这个修饰类让 workspace 填满 main 的高度，页面根
+   * `h-full min-h-0 flex flex-col` 才能让产物区 flex-1 占满。
+   * 详见 .claude/rules/content-fills-canvas.md。
+   */
+  .cds-workspace--fill {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   .cds-workspace-wide {

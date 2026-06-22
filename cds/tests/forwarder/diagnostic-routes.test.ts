@@ -18,6 +18,7 @@ import type {
   MongoLike,
   RouteRecord,
 } from '../../src/forwarder/types.js';
+import type { ActiveHttpRequestRecord, HttpLogSink } from '../../src/services/http-log-store.js';
 
 class FakeMongo implements MongoLike {
   records: RouteRecord[] = [];
@@ -140,8 +141,8 @@ function newWatcher(fake: FakeMongo, jsonPath = '/dev/null'): RouteWatcher {
   return w;
 }
 
-function newProxy(): ProxyHandler {
-  const p = new ProxyHandler({});
+function newProxy(httpLogStore?: HttpLogSink): ProxyHandler {
+  const p = new ProxyHandler({ httpLogStore });
   proxies.push(p);
   return p;
 }
@@ -330,6 +331,76 @@ describe('Forwarder /__forwarder/stats', () => {
     const s = await startApp(w, proxy, false);
     servers.push(s);
     const r = await get(s.port, '/__forwarder/stats');
+    expect(r.status).toBe(403);
+  });
+});
+
+describe('Forwarder /__forwarder/active', () => {
+  it('returns active forwarder requests with query filters for master aggregation', async () => {
+    const fake = new FakeMongo();
+    const w = newWatcher(fake);
+    await w.start();
+    const active: ActiveHttpRequestRecord[] = [
+      {
+        id: 'forwarder-deploy',
+        startedAt: new Date('2026-06-16T08:00:00.000Z'),
+        ageMs: 42_000,
+        layer: 'forwarder',
+        requestKind: 'deploy',
+        requestId: 'req-deploy',
+        method: 'POST',
+        host: 'preview.miduo.org',
+        path: '/api/branches/main/deploy/api',
+        branchId: 'main',
+        profileId: 'api',
+        upstream: '127.0.0.1:10001',
+        request: {},
+      },
+      {
+        id: 'forwarder-poll',
+        startedAt: new Date('2026-06-16T08:00:30.000Z'),
+        ageMs: 2_000,
+        layer: 'forwarder',
+        requestKind: 'polling',
+        requestId: 'req-poll',
+        method: 'GET',
+        host: 'preview.miduo.org',
+        path: '/api/projects/main/instances',
+        request: {},
+      },
+    ];
+    const proxy = newProxy({
+      record() {},
+      findActive(filter = {}) {
+        return active.filter((request) => !filter.requestKind || request.requestKind === filter.requestKind);
+      },
+    });
+    const s = await startApp(w, proxy, true);
+    servers.push(s);
+
+    const r = await get(s.port, '/__forwarder/active?requestKind=deploy&minAgeMs=30000');
+
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body);
+    expect(body.total).toBe(1);
+    expect(body.active[0]).toMatchObject({
+      id: 'forwarder-deploy',
+      layer: 'forwarder',
+      requestKind: 'deploy',
+      profileId: 'api',
+    });
+  });
+
+  it('rejects non-loopback active diagnostics', async () => {
+    const fake = new FakeMongo();
+    const w = newWatcher(fake);
+    await w.start();
+    const proxy = newProxy({ record() {}, findActive: () => [] });
+    const s = await startApp(w, proxy, false);
+    servers.push(s);
+
+    const r = await get(s.port, '/__forwarder/active');
+
     expect(r.status).toBe(403);
   });
 });

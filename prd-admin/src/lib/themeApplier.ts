@@ -18,9 +18,21 @@ export function isWindowsPlatform(): boolean {
 }
 
 /**
+ * 系统是否开启「减少动态效果」偏好
+ */
+export function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false;
+}
+
+/**
  * 根据配置判断是否应该启用性能模式（降低特效）
  */
 export function shouldReduceEffects(config: ThemeConfig): boolean {
+  // prefers-reduced-motion 下全局 CSS 已用 !important 清掉所有 backdrop-filter，
+  // 玻璃必须整体退实底（否则半透表面无模糊地叠在 aurora/页面上失焦），故优先级最高。
+  if (prefersReducedMotion()) return true;
   if (config.performanceMode === 'performance') return true;
   if (config.performanceMode === 'quality') return false;
   // auto: Windows 自动启用性能模式

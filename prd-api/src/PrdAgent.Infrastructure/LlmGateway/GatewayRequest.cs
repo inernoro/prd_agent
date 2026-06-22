@@ -273,6 +273,13 @@ public class GatewayRawRequest
     public int TimeoutSeconds { get; init; } = 120;
 
     /// <summary>
+    /// 强制把响应体当二进制读取（按字节）。
+    /// 用于下游返回二进制但 Content-Type 标注不可靠的端点
+    /// （如 OpenRouter 视频下载 /videos/{id}/content 实际回 mp4 却标 application/json）。
+    /// </summary>
+    public bool ExpectBinaryResponse { get; init; }
+
+    /// <summary>
     /// 请求上下文（用于日志）
     /// </summary>
     public GatewayRequestContext? Context { get; init; }
