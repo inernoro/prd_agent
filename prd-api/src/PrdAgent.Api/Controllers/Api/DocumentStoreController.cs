@@ -461,6 +461,17 @@ public class DocumentStoreController : ControllerBase
                 .ToList();
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.Categories, cats));
         }
+        if (request.DefaultSortMode != null)
+        {
+            // 排序偏好服务端持久化（换设备/重登录/刷新都保持）。空串=清除回模板默认。
+            var allowedSorts = new HashSet<string>
+            {
+                "default", "created-desc", "created-asc", "updated-desc", "updated-asc", "title-asc",
+            };
+            var sort = request.DefaultSortMode.Trim();
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.DefaultSortMode,
+                allowedSorts.Contains(sort) ? sort : null));
+        }
 
         updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
 
@@ -2459,6 +2470,8 @@ public class DocumentStoreController : ControllerBase
                 s.PeerSyncNodeBaseUrl,
                 s.PeerSyncLastAt,
                 s.PeerSyncLastResult,
+                s.PeerSyncAutoEnabled,
+                s.PeerSyncIntervalMinutes,
                 s.CreatedAt,
                 s.UpdatedAt,
                 hasActiveShare = sharedStoreIds.Contains(s.Id),
@@ -5180,6 +5193,8 @@ public class UpdateDocumentStoreRequest
     public Dictionary<string, string>? TagColors { get; set; }
     /// <summary>可管理的分类清单（null=不变；空列表=清空）</summary>
     public List<string>? Categories { get; set; }
+    /// <summary>文档默认排序方式（null=不变；服务端持久化，详见 DocumentStore.DefaultSortMode）</summary>
+    public string? DefaultSortMode { get; set; }
 }
 
 public class SetStoreTeamsRequest

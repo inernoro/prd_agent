@@ -17,6 +17,23 @@
 | 7 | 本节点对外地址来源 | selfBaseUrl 默认从请求 scheme+host 推断，反向代理 / 内网部署可能不可达；可在添加对端时手填 selfBaseUrl 覆盖 | 后续在系统设置固化「本节点对外地址」 |
 | 8 | 进度可视化 | transfer 为同步 HTTP 一次性返回逐条结果，未做 SSE 流式进度（多库大库时等待较久，仅 spinner） | 大批量时改 Run/Worker + SSE 推进度（呼应 CLAUDE.md §6） |
 
+## 后台自动同步（2026-06-22 PR #890 新增）
+
+把「双向同步」从手动一次性升级为定期自动保持一致（PeerSyncScheduleWorker + 每库开关）。已落地防风暴五层
+（每库 Mongo 租约 / 全局并发上限 / 批量上限 / 到期闸+5min 下限 / 抖动+租约自愈），手动 transfer 与自动 worker
+共用同一把库级互斥租约（`TryAcquireStoreSyncLeaseAsync`，30min TTL，owner 限定释放）。遗留项：
+
+| # | 边界 | 现状 | 后续方向 |
+|---|------|------|---------|
+| A1 | 租约无心跳续租 | 固定 30min TTL，覆盖单库最坏同步耗时（两阶段 HTTP 各 120s + 资源重传）。若出现 >30min 的超大库，超时后锁可被另一发起方抢走 → 同库并发 | 同步期间周期性续租（heartbeat），持短 TTL 但活着就续 |
+| A2 | force-align mirror 删除未级联 | 镜像删除对端缺失条目时只删 DocumentEntry（+可能的解析文档），未清其 sync 日志 / view events / 内联评论 / 版本 / mentions / agent runs / 附件 —— 与 `DocumentStoreController.DeleteEntry` 的级联不一致，留孤儿数据。仅手动 force-align 路径触发（自动同步只 Overwrite 不删，不受影响） | 抽 `DeleteEntry` 的级联清理为共享 helper（跨 Api/Infrastructure 层），mirror 删除复用 |
+| A3 | apply 不清理「源已清空」的 primary/pins/defaultSortMode | 源库清空主文档 / 移除全部置顶 / 清空默认排序后，apply 的 overwrite/mirror 路径只在「解析到新值 / 字段非 null」时才写 → 目标残留旧 PrimaryEntryId / PinnedEntryIds / DefaultSortMode（含 mirror 刚删的条目 id）。注：per-record 的 sortOrder/category 已纳入变更检测+签名（已修）；本项专指**库级**这三个「null=已清空 还是 null=旧节点没传」无法区分的字段 | 需先在协议层用「null=旧节点字段缺失 / 空=显式清空」哨兵区分，否则旧节点同步会误清目标；区分后 overwrite/mirror 显式清空 |
+
+| A4 | 库级互斥锁未覆盖 incoming apply | `TryAcquireStoreSyncLeaseAsync` 已让**出站**两条路径（手动 `POST /transfer` + 自动 worker）互斥，但**入站** `RemoteApply`（对端 push 进来）直接 `ApplyAsync`，未取同一把锁。故「本地正在出站同步某库」与「对端同时 push 该库进来」仍可交错写。自动同步恒 Overwrite（幂等 upsert，最终收敛、不丢数据）；唯一真风险是入站 mirror 删除与本地写交错，而 mirror 仅手动 force-align（用户二次确认）触发 | RemoteApply 对 document-store 也取同一把锁；需处理「目标库尚不存在（首次接收）」时不存在锁文档、不应误判冲突的边界 |
+
+A2/A3/A4 都是 **手动 force-align/mirror 或入站 apply 路径**的既有/完整性问题，与本次新增的「自动出站同步」无关
+（自动同步恒 Overwrite、绝不删条目，幂等收敛），故未在 PR #890 内仓促改动（需跨层 / 协议级 / 安全端点改造），单列于此。
+
 ## 安全与一致性要点（已落地）
 
 - 节点配对：一次性配对码（5 分钟 TTL）+ 握手交换 32 字节共享密钥；后续请求 HMAC-SHA256 签名（method+path+ts+sha256(body)），时间戳偏移超 5 分钟拒绝（防重放）。共享密钥永不出现在 URL / 前端 / 日志。

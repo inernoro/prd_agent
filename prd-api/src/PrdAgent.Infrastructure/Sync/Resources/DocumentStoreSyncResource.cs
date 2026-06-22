@@ -129,11 +129,22 @@ public class DocumentStoreSyncResource : ISyncableResource
                 Tags = e.Tags,
                 Metadata = e.Metadata,
                 Content = content,
+                ContentHash = content != null ? Sha256Hex(content) : null,
+                SortOrder = e.SortOrder,
+                Category = e.Category,
                 CreatedAt = e.CreatedAt,
                 UpdatedAt = e.UpdatedAt,
                 LastChangedAt = e.LastChangedAt,
             });
         }
+
+        // 主文档 / 置顶按血缘导出（接收方翻译回本端 entry id）。
+        string? primaryLineage = !string.IsNullOrEmpty(store.PrimaryEntryId) && byId.TryGetValue(store.PrimaryEntryId, out var pe)
+            ? LineageOf(pe) : null;
+        var pinnedLineages = (store.PinnedEntryIds ?? new List<string>())
+            .Where(id => byId.ContainsKey(id))
+            .Select(id => LineageOf(byId[id]))
+            .ToList();
 
         return new SyncResourceBundle
         {
@@ -150,6 +161,9 @@ public class DocumentStoreSyncResource : ISyncableResource
                 CreatedAt = store.CreatedAt,
                 UpdatedAt = store.UpdatedAt,
                 TemplateKey = store.TemplateKey,
+                PrimaryEntryLineage = primaryLineage,
+                PinnedEntryLineages = pinnedLineages.Count > 0 ? pinnedLineages : null,
+                DefaultSortMode = store.DefaultSortMode,
             },
             Records = records,
         };
@@ -183,9 +197,14 @@ public class DocumentStoreSyncResource : ISyncableResource
                 contentHash = Sha256Hex(doc?.RawContent ?? string.Empty);
             }
             var tags = string.Join(",", (e.Tags ?? new List<string>()).OrderBy(t => t, StringComparer.Ordinal));
-            parts.Add($"{LineageOf(e)}|{(e.IsFolder ? 1 : 0)}|{e.Title}|{ParentLineage(e.ParentId) ?? string.Empty}|{tags}|{contentHash}");
+            // 纳入 SortOrder/Category（v1.1）：否则仅手动排序/分类变化的库签名不变，漂移检测会误报「已同步」
+            // 而下一次 transfer 仍会改数据（Codex）。SortOrder 用 InvariantCulture 保证跨 locale 哈希稳定。
+            var sortOrder = e.SortOrder?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+            parts.Add($"{LineageOf(e)}|{(e.IsFolder ? 1 : 0)}|{e.Title}|{ParentLineage(e.ParentId) ?? string.Empty}|{tags}|{contentHash}|{sortOrder}|{e.Category ?? string.Empty}");
         }
         parts.Sort(StringComparer.Ordinal);
+        // 库级稳定字段（默认排序）也纳入签名：仅改默认排序时同样应被漂移检测捕获。
+        parts.Add($"__store__|defaultSortMode={store.DefaultSortMode ?? string.Empty}");
         return Sha256Hex(string.Join("\n", parts));
     }
 
@@ -277,8 +296,9 @@ public class DocumentStoreSyncResource : ISyncableResource
             if (!byLineage.ContainsKey(k)) byLineage[k] = e;
         }
         var lineageToTargetId = new Dictionary<string, string>();
-        int created = 0, updated = 0, skipped = 0, failed = 0, assetsRewritten = 0, assetRewriteFailed = 0;
+        int created = 0, updated = 0, skipped = 0, failed = 0, deleted = 0, assetsRewritten = 0, assetRewriteFailed = 0;
         var addOnly = mode == SyncApplyMode.AddOnly;
+        var mirror = mode == SyncApplyMode.Mirror;
         var now = DateTime.UtcNow;
         DateTime PickTime(DateTime? source) => PickTimestamp(source, options.PreserveTimestamps, now);
 
@@ -297,8 +317,11 @@ public class DocumentStoreSyncResource : ISyncableResource
                 lineageToTargetId[f.LineageId] = exFolder.Id;
                 if (addOnly) { skipped++; return; }
                 var newTags = f.Tags ?? new List<string>();
+                // 含 SortOrder/Category（v1.1）：仅文件夹手动排序/分类变化时也要落更新，否则目录顺序漂移
+                // 被漏同步（Bugbot: Apply exported folder ordering on import）。
                 var contentChanged = exFolder.Title != f.Title || exFolder.ParentId != parentId
-                    || !TagsEqual(exFolder.Tags, f.Tags) || !MetaEqual(exFolder.Metadata, f.Metadata);
+                    || !TagsEqual(exFolder.Tags, f.Tags) || !MetaEqual(exFolder.Metadata, f.Metadata)
+                    || exFolder.SortOrder != f.SortOrder || exFolder.Category != f.Category;
                 var timestampsChanged = NeedsRecordTimestampRefresh(exFolder, f, options.PreserveTimestamps);
                 if (contentChanged || timestampsChanged)
                 {
@@ -306,6 +329,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                         .Set(e => e.Title, f.Title)
                         .Set(e => e.ParentId, parentId)
                         .Set(e => e.Tags, newTags)
+                        .Set(e => e.SortOrder, f.SortOrder)
+                        .Set(e => e.Category, f.Category)
                         .Set(e => e.Metadata, WithLineage(f.Metadata, f.LineageId))
                         .Set(e => e.UpdatedBy, actorUserId)
                         .Set(e => e.UpdatedByName, actorName)
@@ -319,6 +344,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                     exFolder.Title = f.Title;
                     exFolder.ParentId = parentId;
                     exFolder.Tags = newTags;
+                    exFolder.SortOrder = f.SortOrder;
+                    exFolder.Category = f.Category;
                     exFolder.Metadata = WithLineage(f.Metadata, f.LineageId);
                     exFolder.UpdatedAt = PickTime(f.UpdatedAt);
                     if (options.PreserveTimestamps && f.CreatedAt.HasValue)
@@ -339,6 +366,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                 SourceType = DocumentSourceType.Import,
                 ContentType = "application/x-folder",
                 Tags = f.Tags ?? new List<string>(),
+                SortOrder = f.SortOrder,
+                Category = f.Category,
                 Metadata = WithLineage(f.Metadata, f.LineageId),
                 CreatedBy = actorUserId,
                 CreatedByName = actorName,
@@ -397,7 +426,10 @@ public class DocumentStoreSyncResource : ISyncableResource
                     var targetMetadata = WithPeerSourceContentHash(WithLineage(fe.Metadata, fe.LineageId), sourceContentHash);
                     var recordFieldsChanged = exEntry.Title != fe.Title || exEntry.ParentId != parentId
                         || !TagsEqual(exEntry.Tags, fe.Tags) || exEntry.Summary != fe.Summary
-                        || !MetaEqual(exEntry.Metadata, fe.Metadata);
+                        || !MetaEqual(exEntry.Metadata, fe.Metadata)
+                        // v1.1 字段：仅排序/分类变化时也要落更新，否则只改 sortOrder/category 的对端改动会被廉价跳过
+                        // （Bugbot: Sort and category skip sync）。全量更新分支已 Set 这两个字段，故这里必须纳入比较。
+                        || exEntry.SortOrder != fe.SortOrder || exEntry.Category != fe.Category;
                     var timestampsChanged = NeedsRecordTimestampRefresh(exEntry, fe, options.PreserveTimestamps);
                     if (!recordFieldsChanged && HasAppliedSourceContent(exEntry.Metadata, sourceContentHash))
                     {
@@ -470,6 +502,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                         .Set(e => e.ContentIndex, content.Length > 2000 ? content[..2000] : content)
                         .Set(e => e.FileSize, fe.FileSize)
                         .Set(e => e.ContentType, string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType)
+                        .Set(e => e.SortOrder, fe.SortOrder)
+                        .Set(e => e.Category, fe.Category)
                         .Set(e => e.Metadata, targetMetadata)
                         .Set(e => e.UpdatedBy, actorUserId)
                         .Set(e => e.UpdatedByName, actorName)
@@ -504,6 +538,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                         ContentType = string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType,
                         FileSize = fe.FileSize,
                         Tags = fe.Tags ?? new List<string>(),
+                        SortOrder = fe.SortOrder,
+                        Category = fe.Category,
                         Metadata = WithPeerSourceContentHash(WithLineage(fe.Metadata, fe.LineageId), sourceContentHash),
                         DocumentId = parsed.Id,
                         ContentIndex = content.Length > 2000 ? content[..2000] : content,
@@ -525,6 +561,30 @@ public class DocumentStoreSyncResource : ISyncableResource
             {
                 _logger.LogWarning(ex, "[peer-sync] apply entry failed: {Title}", fe.Title);
                 failed++;
+            }
+        }
+
+        // 镜像对齐（强制对齐·远端为准 / 本地为准）：删除目标端存在、但本次 bundle 里没有的条目。
+        // 这是 MAP 知识库传输协议里唯一会删除数据的路径，故仅 SyncApplyMode.Mirror 触发，
+        // 且 PeerSyncController 在 align-remote/align-local 时才传 Mirror。普通 push/pull/both 不删。
+        if (mirror)
+        {
+            var incomingLineages = records.Select(r => r.LineageId).ToHashSet(StringComparer.Ordinal);
+            var toDelete = existing.Where(e => !incomingLineages.Contains(LineageOf(e))).ToList();
+            foreach (var e in toDelete)
+            {
+                try
+                {
+                    await _db.DocumentEntries.DeleteOneAsync(x => x.Id == e.Id, ct);
+                    if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
+                        await CleanupReplacedDocAsync(e.DocumentId, string.Empty, e.Id);
+                    deleted++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[peer-sync] mirror delete entry failed: {Title}", e.Title);
+                    failed++;
+                }
             }
         }
 
@@ -551,6 +611,27 @@ public class DocumentStoreSyncResource : ISyncableResource
                 .Set(s => s.TemplateKey, item.TemplateKey);
             if (options.PreserveTimestamps && item.CreatedAt.HasValue)
                 storeUpdate = storeUpdate.Set(s => s.CreatedAt, PickTime(item.CreatedAt));
+
+            // 主文档 / 置顶 / 排序偏好：把对端血缘翻译回本端 entry id 后落库（v1.1 字段完整性）。
+            // 解析顺序：本轮新建映射 → 既有条目映射；都查不到说明该条目没传过来，跳过不报错。
+            string? ResolveLineage(string? lin) => string.IsNullOrEmpty(lin) ? null
+                : lineageToTargetId.TryGetValue(lin!, out var tid) ? tid
+                : byLineage.TryGetValue(lin!, out var ex) ? ex.Id : null;
+            var primaryTargetId = ResolveLineage(item.PrimaryEntryLineage);
+            if (primaryTargetId != null)
+                storeUpdate = storeUpdate.Set(s => s.PrimaryEntryId, primaryTargetId);
+            if (item.PinnedEntryLineages != null)
+            {
+                var pinnedIds = item.PinnedEntryLineages
+                    .Select(ResolveLineage)
+                    .Where(x => !string.IsNullOrEmpty(x))
+                    .Cast<string>()
+                    .Distinct()
+                    .ToList();
+                storeUpdate = storeUpdate.Set(s => s.PinnedEntryIds, pinnedIds);
+            }
+            if (item.DefaultSortMode != null)
+                storeUpdate = storeUpdate.Set(s => s.DefaultSortMode, item.DefaultSortMode);
         }
 
         await _db.DocumentStores.UpdateOneAsync(s => s.Id == target.Id, storeUpdate, cancellationToken: ct);
@@ -562,9 +643,11 @@ public class DocumentStoreSyncResource : ISyncableResource
             Updated = updated,
             Skipped = skipped,
             Failed = failed,
+            Deleted = deleted,
             AssetsRewritten = assetsRewritten,
             AssetRewriteFailed = assetRewriteFailed,
             Message = $"新增{created}/更新{updated}/跳过{skipped}"
+                + (deleted > 0 ? $"/删除{deleted}" : "")
                 + (failed > 0 ? $"/失败{failed}" : "")
                 + (assetsRewritten > 0 || assetRewriteFailed > 0 ? $"；图片重传{assetsRewritten}/失败{assetRewriteFailed}" : ""),
         };
