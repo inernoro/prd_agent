@@ -133,6 +133,16 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
             openNotifications.Count, modelType, affectedUserIds.Count);
     }
 
+    public Task NotifyQuotaExceededAsync(string platformName, string message, CancellationToken ct = default)
+        => UpsertNotificationAsync(
+            key: "llm-quota-exceeded",
+            title: $"大模型平台额度已用尽 / 限额（{platformName}）",
+            message: message,
+            level: "error",
+            source: "llm-gateway-quota",
+            targetUserId: null,
+            ct: ct);
+
     private async Task UpsertNotificationAsync(
         string key, string title, string message, string level, string source,
         string? targetUserId = null, CancellationToken ct = default)

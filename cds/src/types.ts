@@ -558,6 +558,16 @@ export interface BranchEntry {
   /** 最近一次成功部署完成的 ISO 时间戳。 */
   lastDeployAt?: string;
   /**
+   * 2026-06-21：本轮 deploy/build 真正开始执行的 ISO 时间戳。
+   * 在 status 切到 'building' 的那一刻打戳（branches.ts 两处部署起点）。
+   * 用途：预览等待页 `/_cds/waiting-status` 的"已等待 / 预计还需"必须以
+   * **本轮构建开始**为锚点。在途构建的 op-log 直到 finalize 才落库，期间
+   * getLogs() 只有上一轮已完成的部署 → 若以历史 op-log 兜底会算成"几小时/几天"
+   * 误判 overdue。本字段是唯一可靠的在途构建起点（修复 PR #865 Codex P2
+   * 「Use the active redeploy start time for waiting ETAs」）。
+   */
+  lastDeployStartedAt?: string;
+  /**
    * 2026-05-14: 容器最近一次进入 running 状态的 ISO 时间戳。
    * 由 reconcileBranchStatus() 在状态机切换到 'running' 时打戳。
    * 调度器（项目级 autoPublishAfterMinutes）
@@ -590,9 +600,28 @@ export interface BranchEntry {
    *   - 'oom'       Docker / kernel 明确报告 OOMKilled
    *   - 'external'  未匹配到 CDS 意图的 docker kill / SIGKILL
    *   - 'cds'       CDS 生命周期操作（删除 / 重部署替换 / 清理旧容器）
+   *   - 'webhook'   GitHub webhook / 外部事件触发
+   *   - 'ai'        AI Agent 通过 API 触发
    *   - 'system'    其他系统侧（垃圾回收 / janitor 等）
    */
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
+  /**
+   * 2026-06-20：自动发布（auto-publish）最近一次成功把分支从源码/热加载切到
+   * 发布版并重建的 ISO 时间戳。与 lastStopReason 是兄弟字段，但语义不同——
+   * 这是"成功切到发布版"而非"被停止"，redeploy 成功路径**不能**钉 lastStoppedAt
+   * （否则 UI 会在一个正在运行的分支上误报"已停止"）。
+   *
+   * 病根（任务 3）：原来 auto-publish 的 release 重建只写一条 activity log，
+   * 分支卡片上没有任何持久态标记说明"我现在是被自动发布过的 release 版"，
+   * 用户看到容器重建一次却不知道为什么——把"发布版 vs 热加载"切换变得隐形。
+   * 本字段让这次模式跃迁在分支态里可观测。
+   */
+  lastPublishAt?: string;
+  /**
+   * 自动发布的人类可读原因短语，UI 直接展示。例如：
+   *   - "项目设置：启动满 30 分钟，已自动切到发布版并重新部署（web=prod）"
+   */
+  lastPublishReason?: string;
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -655,6 +684,9 @@ export interface ContainerLogArchiveEntry {
     | 'container-logs-stream'
     | 'pre-deploy-recreate'
     | 'manual-stop'
+    | 'webhook-stop'
+    | 'ai-stop'
+    | 'system-stop'
     | 'scheduler-stop'
     | 'auto-lifecycle-stop'
     | 'crash-detected'
@@ -790,6 +822,52 @@ export type CustomEnvStore = Record<string, Record<string, string>>;
 /** Reserved scope key for project-independent (global) variables. */
 export const GLOBAL_ENV_SCOPE = '_global';
 
+/**
+ * 部署耗时模式分类。与 deploy-runtime.ts 的 classifyDeployRuntime 输出对齐：
+ *   - 'release' ：发布版（生产/编译产物运行，prod/release/static…）
+ *   - 'source'  ：源码 / 热加载（dev watch / vite / 默认源码模式）
+ * 历史中位预计耗时按 (projectId, mode) 分桶，互不串味。
+ */
+export type DeployDurationMode = 'release' | 'source';
+
+/**
+ * 部署耗时样本桶（2026-06-20）。
+ *
+ * 病根：分支构建中卡片只显示"已耗时 NN s"，用户不知道"还要等多久"。
+ * 对应的历史样本不能用 OperationLog —— 那个 per-branch 上限 10 条、build/run
+ * 混在一起、删分支即没。这里另立一份持久化样本台账，keyed by projectId + mode，
+ * 每桶保留最近 N 条（毫秒，从 deploy 开始到 ready）。
+ *
+ * 系统级放 CdsState 顶层（与项目维度无关的存储位置选择，样本本身按 projectId
+ * 分桶）；随 save() 落盘，跟随 JSON ↔ Mongo 存储切换。
+ */
+export interface DeployDurationSamples {
+  /** key = `${projectId}::${mode}`，value = 最近若干条毫秒耗时（旧→新追加）。 */
+  buckets: Record<string, number[]>;
+}
+
+/**
+ * 单个 (project, mode) 桶的历史耗时估算结果。
+ * medianMs = p50；sampleCount = 参与计算的样本数。无样本时 medianMs = null。
+ */
+export interface DeployDurationEstimate {
+  medianMs: number | null;
+  sampleCount: number;
+}
+
+/**
+ * 分支卡片消费的部署预计耗时摘要（两种模式各一份），随 BranchSummary 下发，
+ * 卡片无需额外请求即可在构建中展示"预计 MM:SS（近 N 次中位值）"。
+ * 某模式无历史样本时 median 为 null —— 卡片只显示已耗时，不编造预计值
+ * （no-rootless-tree：不假定不存在的数据）。
+ */
+export interface BranchDeployEstimate {
+  releaseMedianMs: number | null;
+  releaseSamples: number;
+  sourceMedianMs: number | null;
+  sourceSamples: number;
+}
+
 export interface CdsState {
   /** Routing rules */
   routingRules: RoutingRule[];
@@ -875,6 +953,17 @@ export interface CdsState {
    * `schedulerEnabledOverride`. `undefined` = no override. `0` = unlimited.
    */
   schedulerMaxHotOverride?: number;
+  /**
+   * UI-controlled override for the global janitor enable flag. When defined,
+   * it supersedes `config.janitor.enabled` at runtime and is re-applied on boot.
+   */
+  janitorEnabledOverride?: boolean;
+  /**
+   * UI-controlled override for branch/container expiry in days.
+   * Range is intentionally capped at 7 days so stale local containers cannot
+   * accumulate indefinitely.
+   */
+  janitorWorktreeTTLOverride?: number;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
   /** Per-branch/per-resource external access policies. Keyed by projectId:branchId:resourceId. */
@@ -1016,6 +1105,13 @@ export interface CdsState {
    */
   selfUpdateHistory?: SelfUpdateRecord[];
   /**
+   * 部署耗时样本台账（2026-06-20）。keyed by `${projectId}::${mode}`，
+   * 每桶保留最近 N 条毫秒耗时（StateService.DEPLOY_DURATION_SAMPLES_MAX）。
+   * 仅在部署成功时由 recordDeployDuration() 追加；卡片"预计耗时"的中位值
+   * 数据源。系统级（与具体项目无关的存储位置，样本本身按 projectId 分桶）。
+   */
+  deployDurationSamples?: DeployDurationSamples;
+  /**
    * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
    * HTML 真是远程 agent 返回的」)。会话 done/fail/stop 时由 remote-hosts
    * 落一条摘要(收发预览各截 2000 字),ring buffer 500 条;全量事件仍在内存随重启丢失。
@@ -1069,6 +1165,44 @@ export interface CdsState {
    *     accept 端检查并返回 409 connection_duplicate
    */
   cdsConnections?: Record<string, CdsConnection>;
+  /**
+   * CDS 自托管验收报告元数据（2026-06-20）。系统级 —— 报告正文（可能是
+   * 很大的 HTML / Markdown）落在 `<dataDir>/reports/<id>.<ext>` 磁盘文件上，
+   * 不进 state.json；这里只存轻量元数据（标题/格式/大小/归属/时间）。
+   *
+   * 验收/视觉测试报告以往只能归档到外部知识库（需单独鉴权），CDS 自己托管
+   * 后挂在 CDS 登录态后面即可访问，无需额外权限配置。HTML 报告以沙箱
+   * iframe 渲染（不授予 same-origin），见 routes/reports.ts。
+   */
+  acceptanceReports?: AcceptanceReportMeta[];
+}
+
+/**
+ * CDS 自托管验收报告的元数据（2026-06-20）。
+ *
+ * 报告正文不入 state —— 存到 `<dataDir>/reports/<id>.<ext>` 磁盘文件。
+ * 这里只保留供列表/详情页展示的轻量字段。系统级（与具体 project 无关的
+ * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
+ */
+export interface AcceptanceReportMeta {
+  /** 稳定 ID（用于磁盘文件名 `<id>.<ext>` 与路由 `:id`）。 */
+  id: string;
+  /** 报告标题（用户填写，列表/详情展示）。 */
+  title: string;
+  /** 报告格式：'html' 原样渲染，'md' 转 HTML 后渲染。 */
+  format: 'html' | 'md';
+  /** 可选关联项目 ID（用于按项目过滤）；不关联时为 null。 */
+  projectId?: string | null;
+  /** 可选关联分支 ID；不关联时为 null。 */
+  branchId?: string | null;
+  /** 正文字节数（UTF-8）。 */
+  sizeBytes: number;
+  /** 创建人（resolveActorFromRequest 解析的 actor，如 'user' / 'ai'）。 */
+  createdBy?: string;
+  /** 创建时间 ISO 字符串。 */
+  createdAt: string;
+  /** 最近一次更新时间 ISO 字符串。 */
+  updatedAt: string;
 }
 
 /**
@@ -2420,9 +2554,9 @@ export interface ClusterCapacity {
  * See `doc/design.cds-resilience.md` Phase 2.
  */
 export interface JanitorConfig {
-  /** Enable the janitor. Default: false (backward compatible). */
+  /** Enable the janitor. Default: true. */
   enabled: boolean;
-  /** Remove worktrees not accessed in this many days. Default: 30. */
+  /** Remove worktrees and local containers not touched in this many days. Default: 7, max: 7. */
   worktreeTTLDays: number;
   /** Emit warning when disk usage exceeds this percent. Default: 80. */
   diskWarnPercent: number;

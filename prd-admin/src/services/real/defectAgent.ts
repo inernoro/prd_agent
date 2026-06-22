@@ -78,6 +78,11 @@ import type {
   CreateBatchShareContract,
   GetShareScoresContract,
   DefectAiScoreItem,
+  GetDefectAutomationConsoleContract,
+  EnsureDefectAutomationAuthorizationContract,
+  DefectAutomationConsole,
+  DefectAutomationAuthorization,
+  DefectAutomationCopyTemplate,
 } from '../contracts/defectAgent';
 
 // ========== Templates ==========
@@ -600,4 +605,38 @@ export const getShareScoresReal: GetShareScoresContract = async (input) => {
     api.defectAgent.shares.scores(encodeURIComponent(input.shareId)),
     { method: 'GET' }
   );
+};
+
+// ========== 缺陷自动化 ==========
+
+export const getDefectAutomationConsoleReal: GetDefectAutomationConsoleContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input?.projectId) qs.set('projectId', input.projectId);
+  if (input?.teamId) qs.set('teamId', input.teamId);
+  if (input?.status) qs.set('status', input.status);
+  const q = qs.toString();
+  return await apiRequest<DefectAutomationConsole>(
+    `${api.defectAgent.automation.console()}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const ensureDefectAutomationAuthorizationReal: EnsureDefectAutomationAuthorizationContract = async (input) => {
+  return await apiRequest<{
+    created: boolean;
+    item: DefectAutomationAuthorization;
+    apiKey?: string | null;
+    copyTemplate?: DefectAutomationCopyTemplate;
+    dailyPlan?: string;
+    warning?: string;
+    connector?: unknown;
+  }>(api.defectAgent.automation.ensureAuthorization(), {
+    method: 'POST',
+    body: {
+      forceNew: input?.forceNew ?? false,
+      projectId: input?.projectId,
+      teamId: input?.teamId,
+      status: input?.status,
+    },
+  });
 };

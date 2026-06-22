@@ -61,10 +61,12 @@ jobs:
           sudo apt-get install -y zip
           rm -rf site
           mkdir -p site/admin
+          cp -r prd-admin/dist/* site/
           cp -r prd-admin/dist/* site/admin/
           (cd prd-admin/dist && zip -r "../../site/prd-admin-dist-latest.zip" .)
           sha256sum "site/prd-admin-dist-latest.zip" > "site/prd-admin-dist-latest.zip.sha256"
           printf '%s\n' "${GITHUB_SHA}" > "site/commit.txt"
+          printf '%s\n' "${GITHUB_SHA}" > "site/admin/commit.txt"
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -77,4 +79,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-

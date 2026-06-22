@@ -248,6 +248,30 @@ describe('ProxyHandler — HTTP 透传', () => {
     expect(r.headers['x-trace-id']).toBe('abc123');
   });
 
+  it('非 2xx 上游响应仍保留 forwarder request id 和路由诊断头', async () => {
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(400, { 'content-type': 'text/plain' });
+      res.end('');
+    });
+    upstreams.push(u);
+    const route: RouteRecord = {
+      _id: 'demo-main:web:default:1',
+      host: 'demo.miduo.org',
+      upstreamPort: u.port,
+      weight: 100,
+      branchId: 'demo-main',
+      branchName: 'main',
+    };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port, { headers: { 'x-cds-request-id': 'req-test-1' } });
+    expect(r.status).toBe(400);
+    expect(r.headers['x-cds-request-id']).toBe('req-test-1');
+    expect(r.headers['x-cds-upstream']).toBe(`127.0.0.1:${u.port}`);
+    expect(r.headers['x-cds-branch']).toBe('demo-main');
+    expect(r.headers['x-cds-route-id']).toBe('demo-main:web:default:1');
+  });
+
   it('[C-3.3] X-Forwarded-For 正确累积(append,不覆盖)', async () => {
     let seenXff = '';
     const u = await startUpstream((req, res) => {

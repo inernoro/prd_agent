@@ -11,14 +11,45 @@
  * 5 (workspaces), 6 (workspace_members).
  */
 
-/** A CDS user, sourced from GitHub OAuth. */
+/**
+ * Which credential dimension a user authenticates through. GitHub OAuth users
+ * carry `github` (the historical default); locally-provisioned username +
+ * password users carry `local`. Both live in the same store and produce the
+ * same session shape — the only difference is how they prove identity.
+ *
+ * Optional for backward compatibility: existing OAuth users persisted before
+ * this field existed read as `undefined`, which callers treat as `github`.
+ */
+export type CdsAuthProvider = 'github' | 'local';
+
+/** A CDS user. Sourced from GitHub OAuth, or provisioned as a local account. */
 export interface CdsUser {
   /** UUID v4 string (CDS-internal ID, decoupled from GitHub's numeric ID). */
   id: string;
-  /** GitHub numeric ID — stable primary key from GitHub's side. */
+  /**
+   * GitHub numeric ID — stable primary key from GitHub's side. Local accounts
+   * have no GitHub identity; they use 0 as a sentinel (never looked up by it).
+   */
   githubId: number;
-  /** GitHub login (username). May change; use githubId for lookups. */
+  /**
+   * GitHub login (username). May change; use githubId for lookups. For local
+   * accounts this mirrors `username` so existing display code keeps working.
+   */
   githubLogin: string;
+  /**
+   * Which credential dimension this account uses. Undefined on legacy OAuth
+   * records → treat as 'github'.
+   */
+  authProvider?: CdsAuthProvider;
+  /**
+   * Local login handle, unique among local accounts. Undefined for OAuth-only
+   * users. Lowercased on write for case-insensitive lookup.
+   */
+  username?: string;
+  /** scrypt-derived password hash (hex). Server-side only — never returned. */
+  passwordHash?: string;
+  /** Per-user random salt (hex) paired with passwordHash. Server-side only. */
+  passwordSalt?: string;
   /** Primary email from GitHub, may be null if user hides it. */
   email: string | null;
   /** Display name (GitHub profile name), fallback to githubLogin. */
@@ -110,6 +141,87 @@ export interface UpsertUserInput {
   name: string;
   avatarUrl: string | null;
   orgs: string[];
+}
+
+/**
+ * Input shape for provisioning a local username + password account. The
+ * auth-service hashes the password before handing the store a persisted
+ * record — the store never sees plaintext.
+ */
+export interface CreateLocalUserInput {
+  /** Unique local login handle. Lowercased on persist. */
+  username: string;
+  /** Hex scrypt hash (already computed by auth-service). */
+  passwordHash: string;
+  /** Hex salt paired with passwordHash. */
+  passwordSalt: string;
+  /** Display name; falls back to username when omitted. */
+  name?: string;
+  /** Optional email. */
+  email?: string | null;
+  /** When true the new account is flagged as the system owner. */
+  isSystemOwner?: boolean;
+}
+
+/**
+ * A user record safe to send to the client — strips password material and
+ * other server-only fields. Used by GET /api/auth/users and /api/auth/activity.
+ */
+export interface PublicCdsUser {
+  id: string;
+  username: string | null;
+  githubLogin: string;
+  name: string;
+  email: string | null;
+  avatarUrl: string | null;
+  authProvider: CdsAuthProvider;
+  isSystemOwner: boolean;
+  status: CdsUser['status'];
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+/** Project a CdsUser to its client-safe shape (drops passwordHash/Salt). */
+export function toPublicUser(user: CdsUser): PublicCdsUser {
+  return {
+    id: user.id,
+    username: user.username ?? null,
+    githubLogin: user.githubLogin,
+    name: user.name,
+    email: user.email,
+    avatarUrl: user.avatarUrl,
+    authProvider: user.authProvider ?? 'github',
+    isSystemOwner: user.isSystemOwner,
+    status: user.status,
+    lastLoginAt: user.lastLoginAt,
+    createdAt: user.createdAt,
+  };
+}
+
+/**
+ * A single user-activity / trace record. Recorded at a handful of high-value
+ * touchpoints (login, logout, password change, user creation, deploy/stop,
+ * publish, report create/delete) so the system owner can audit who did what.
+ */
+export interface UserActivityRecord {
+  /** UUID v4 string. */
+  id: string;
+  /** The acting user's CDS id. */
+  userId: string;
+  /** Snapshot of the acting user's login/username at the time of the action. */
+  userLogin: string;
+  /** Machine-stable action key, e.g. 'login', 'branch.deploy'. */
+  action: string;
+  /** Optional kind of the target entity, e.g. 'branch', 'project', 'user'. */
+  targetType?: string | null;
+  /** Optional id of the target entity. */
+  targetId?: string | null;
+  /** Human-readable Chinese summary for the activity viewer. */
+  summary: string;
+  /** Remote IP snapshot, if available. */
+  ip?: string | null;
+  /** ISO timestamp when the action happened. */
+  at: string;
 }
 
 // ── P5: Team Workspace types ──────────────────────────────────────────────────

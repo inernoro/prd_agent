@@ -24,9 +24,11 @@ interface Props {
   openCreateSignal?: number;
   /** 智能体模式：显示时优先推荐「复制给智能体」CTA + 自动勾选 read scope */
   agentMode?: boolean;
+  /** 预选 scope —— 透传给新建表单（CreateKeyTab）作为默认勾选项 */
+  presetScopes?: string[];
 }
 
-export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreateSignal, agentMode }: Props) {
+export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreateSignal, agentMode, presetScopes }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -115,6 +117,7 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
         onCreated={onRefresh}
         onBackToList={() => setShowCreate(false)}
         agentMode={agentMode}
+        presetScopes={presetScopes}
       />
     );
   }

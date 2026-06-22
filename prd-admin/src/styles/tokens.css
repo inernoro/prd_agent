@@ -35,10 +35,11 @@
   --border-primary:   rgba(255, 255, 255, 0.12);
   --border-secondary: rgba(255, 255, 255, 0.06);
 
-  /* 玻璃效果变量（默认值，可被主题系统覆盖） */
-  --glass-bg-start: rgba(255, 255, 255, 0.04);
-  --glass-bg-end: rgba(255, 255, 255, 0.01);
-  --glass-border: rgba(255, 255, 255, 0.12);
+  /* 玻璃效果变量（默认值，可被主题系统覆盖）
+     B 方案（2026-06-16）：底色提一档 + 边框提亮，配合低模糊保证正文在花哨背景上仍耐读、玻璃边缘更清晰。 */
+  --glass-bg-start: rgba(255, 255, 255, 0.07);
+  --glass-bg-end: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.18);
   --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
   /* Glass 组件变量（与 prd-desktop 对齐） */
@@ -250,4 +251,47 @@ html, body {
 #root {
   height: 100%;
   width: 100%;
+}
+
+/*
+ * App 背景深度（2026-06-16）：在 AppShell 根容器铺一层明显的流动彩色背景。
+ * 此前全站背景是接近纯黑的平底，液态玻璃背后没东西可折射 = 玻璃看着像没做。
+ * 这层彩色背景在留白区与半透明面板/玻璃卡背后显现，让玻璃能"映照"出颜色、产生深度；
+ * 内容卡片是实色表面，正文压在卡片上，对比度不受影响。缓慢漂移让它有生命感（尊重 reduce-motion）。
+ * 因为 AppShell <main> 是 transparent，这层背景能穿透到页面内容与玻璃卡背后。
+ */
+.app-aurora {
+  background:
+    radial-gradient(62% 56% at 14% 12%, rgba(99, 102, 241, 0.42) 0%, transparent 60%),
+    radial-gradient(58% 52% at 86% 16%, rgba(34, 211, 238, 0.34) 0%, transparent 60%),
+    radial-gradient(64% 58% at 82% 88%, rgba(168, 85, 247, 0.36) 0%, transparent 62%),
+    radial-gradient(54% 50% at 18% 86%, rgba(236, 72, 153, 0.30) 0%, transparent 60%),
+    radial-gradient(85% 74% at 50% 50%, rgba(56, 189, 248, 0.14) 0%, transparent 74%),
+    var(--bg-base);
+  background-size: 180% 180%;
+  background-position: 0% 0%;
+  animation: app-aurora-drift 34s ease-in-out infinite alternate;
+}
+[data-theme="light"] .app-aurora {
+  background:
+    radial-gradient(58% 52% at 14% 12%, rgba(99, 102, 241, 0.14) 0%, transparent 56%),
+    radial-gradient(54% 48% at 86% 16%, rgba(34, 211, 238, 0.12) 0%, transparent 56%),
+    radial-gradient(60% 54% at 82% 88%, rgba(168, 85, 247, 0.12) 0%, transparent 58%),
+    radial-gradient(50% 46% at 18% 86%, rgba(236, 72, 153, 0.10) 0%, transparent 56%),
+    var(--bg-base);
+  background-size: 180% 180%;
+  animation: app-aurora-drift 34s ease-in-out infinite alternate;
+}
+@keyframes app-aurora-drift {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 100% 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-aurora { animation: none; }
+}
+/* 性能模式(玻璃关闭):停掉 aurora 动画并回退实底,避免全屏大渐变持续重绘。
+   玻璃关时本就没有可折射底色的需求,去掉这层视觉负载与性能模式语义一致。 */
+html[data-perf-mode="performance"] .app-aurora {
+  animation: none !important;
+  background: var(--bg-base) !important;
 }
