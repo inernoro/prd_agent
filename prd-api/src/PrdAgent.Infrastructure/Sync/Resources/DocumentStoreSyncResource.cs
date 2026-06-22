@@ -412,7 +412,10 @@ public class DocumentStoreSyncResource : ISyncableResource
                     var targetMetadata = WithPeerSourceContentHash(WithLineage(fe.Metadata, fe.LineageId), sourceContentHash);
                     var recordFieldsChanged = exEntry.Title != fe.Title || exEntry.ParentId != parentId
                         || !TagsEqual(exEntry.Tags, fe.Tags) || exEntry.Summary != fe.Summary
-                        || !MetaEqual(exEntry.Metadata, fe.Metadata);
+                        || !MetaEqual(exEntry.Metadata, fe.Metadata)
+                        // v1.1 字段：仅排序/分类变化时也要落更新，否则只改 sortOrder/category 的对端改动会被廉价跳过
+                        // （Bugbot: Sort and category skip sync）。全量更新分支已 Set 这两个字段，故这里必须纳入比较。
+                        || exEntry.SortOrder != fe.SortOrder || exEntry.Category != fe.Category;
                     var timestampsChanged = NeedsRecordTimestampRefresh(exEntry, fe, options.PreserveTimestamps);
                     if (!recordFieldsChanged && HasAppliedSourceContent(exEntry.Metadata, sourceContentHash))
                     {

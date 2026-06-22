@@ -78,13 +78,19 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
 
   useEffect(() => () => { mounted.current = false; }, []);
 
+  // runs 发号器：load 与 loadRuns 轮询都会 setRuns，只应用「最新一发」结果，防慢响应覆盖快响应
+  // （学习规则：轮询/并发 fetch 需 stale-response 守卫）。
+  const runsSeq = useRef(0);
+
   const loadRuns = useCallback(async () => {
+    const my = ++runsSeq.current;
     const res = await listPeerSyncRuns(resourceType, storeId);
-    if (mounted.current && res.success && res.data) setRuns(res.data.items || []);
+    if (mounted.current && my === runsSeq.current && res.success && res.data) setRuns(res.data.items || []);
   }, [resourceType, storeId]);
 
   const load = useCallback(async () => {
     setLoading(true);
+    const my = ++runsSeq.current;
     const [nodesRes, runsRes] = await Promise.all([listPeerNodes(), listPeerSyncRuns(resourceType, storeId)]);
     if (!mounted.current) return;
     if (nodesRes.success && nodesRes.data) {
@@ -92,7 +98,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
       setNodes(ns);
       if (ns.length === 1) setNodeId(ns[0].id);
     }
-    if (runsRes.success && runsRes.data) setRuns(runsRes.data.items || []);
+    if (my === runsSeq.current && runsRes.success && runsRes.data) setRuns(runsRes.data.items || []);
     setLoading(false);
   }, [resourceType, storeId]);
 

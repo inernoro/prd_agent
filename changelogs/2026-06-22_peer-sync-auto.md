@@ -9,3 +9,6 @@
 | fix | prd-admin | 知识库卡片「更多」菜单补 onMouseDown stopPropagation，修复菜单项点击前被 document mousedown 卸载（Bugbot/Codex） |
 | fix | prd-admin | 知识库置顶保存失败时回滚到操作前集合（原 prev2=>prev2 空操作不撤销乐观更新，Bugbot） |
 | docs | prd-api | spec.map-kb-transfer-protocol H1 补 · 规格 后缀 + 版本/日期/状态 标准头（doc-naming，Codex） |
+| fix | prd-api | 自动同步 worker 释放租约按 owner 限定（仅 PeerSyncLeaseOwner==本实例才清），避免超时被接管后误清新持有者租约放行第三次并发同步（Bugbot High） |
+| fix | prd-api | 同步 apply 的廉价跳过纳入 sortOrder/category 比较，修复仅排序/分类变化被漏同步（Bugbot） |
+| fix | prd-admin | 同步台账轮询加发号器 stale-response 守卫（DocumentStorePage + SyncCenterDialog），防慢响应覆盖新状态 |

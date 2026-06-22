@@ -866,9 +866,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   // 4s 一刷足够即时；无任务时也保持 4s（payload 很小），关页自动停。
   useEffect(() => {
     let alive = true;
+    let seq = 0; // 发号器：只应用「最新一发」的结果，防慢响应覆盖快响应（学习规则：轮询需 stale-response 守卫）
     const check = async () => {
+      const my = ++seq;
       const res = await listPeerSyncRuns('document-store', storeId);
-      if (alive && res.success && res.data) {
+      if (alive && my === seq && res.success && res.data) {
         setSyncActive((res.data.items || []).some(r => r.status === 'syncing'));
       }
     };

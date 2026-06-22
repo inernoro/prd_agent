@@ -161,13 +161,18 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
         {
             // ② 释放租约（必落库，CancellationToken.None）。AutoLastAt 仅在「本周期确实由我处理」时推进：
             //    不到期/已关的提前返回只还租约、不推进，下个周期立即可被重新评估。
+            // 关键：收尾必须按 owner 限定（PeerSyncLeaseOwner == _instanceId）。若本次同步耗时超过租约、
+            // 期间被另一实例接管，则我已不是持有者，绝不能按 storeId 盲清——否则会抹掉新持有者的租约、
+            // 放行同库第三次并发同步（Bugbot High: Lease cleared without owner check）。
+            var releaseFilter = Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.Eq(s => s.Id, storeId),
+                Builders<DocumentStore>.Filter.Eq(s => s.PeerSyncLeaseOwner, _instanceId));
             var update = Builders<DocumentStore>.Update
                 .Unset(s => s.PeerSyncLeaseOwner)
                 .Unset(s => s.PeerSyncLeaseExpiresAt);
             if (attempted)
                 update = update.Set(s => s.PeerSyncAutoLastAt, DateTime.UtcNow);
-            await db.DocumentStores.UpdateOneAsync(
-                s => s.Id == storeId, update, cancellationToken: CancellationToken.None);
+            await db.DocumentStores.UpdateOneAsync(releaseFilter, update, cancellationToken: CancellationToken.None);
         }
     }
 
