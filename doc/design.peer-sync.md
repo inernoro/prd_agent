@@ -230,6 +230,7 @@ bundle 里每个"作者/拥有者"字段带**用户名 + 邮箱**（不带 userI
 |------|------|------|
 | GET | `/api/peer-sync/nodes` | 列出可发送的对端节点（用户可见，不含 secret） |
 | POST | `/api/peer-sync/transfer` | 发起互传：{nodeId, resourceType, itemIds[], direction} |
+| POST | `/api/peer-sync/auto-sync` | 开/关单库后台自动同步：{resourceType, itemId, enabled, intervalMinutes}（仅 document-store，须先手动同步过一次） |
 
 ---
 
@@ -255,3 +256,29 @@ bundle 里每个"作者/拥有者"字段带**用户名 + 邮箱**（不带 userI
 3. `ping`：连通性验证（HMAC 自检）。
 
 失败不保存半连接状态；前端添加对端收敛为单一连接串粘贴流程。
+
+## 12. 已落地能力更新（2026-06-22）：后台自动同步
+
+此前「双向同步」只是手动一次性互传——`peerSyncDirection: both` 仅记录上一次手动同步的方向，
+没有任何后台任务会自动保持两端一致。本次补上「后台自动同步」。
+
+### 12.1 SSOT 抽取（compute-then-send）
+per-item 两阶段同步核心从 `PeerSyncController` 抽到 `IPeerSyncTransferService.SyncItemAsync`，
+手动 transfer 与自动同步 worker 共用同一条路径（含 PR #742 的全部 review 修正）。发送阶段只接收
+已解析的 node / resource / actor / mode，不再二次决策（遵守 `compute-then-send.md`）。
+
+### 12.2 PeerSyncScheduleWorker（定期保持一致）
+- 用户在「同步中心」显式开启某库自动同步（`POST /api/peer-sync/auto-sync`，须先手动同步过一次）。
+- worker 周期扫描「开启 + 有可复用对端 + 不在跑 + 到期」的库，复用最近一次同步的对端 + 方向，
+  自动跑 push/pull/both（`Overwrite`，**绝不 `Mirror` 删条目**；强制对齐仍只能手动二次确认触发）。
+- 默认每小时，下限 5 分钟（`PeerSyncSchedule.ClampInterval`）。
+
+### 12.3 防请求风暴（重点应对共享 Mongo 多容器，见 `cross-project-isolation.md`）
+1. **每库 Mongo 租约**（`PeerSyncLeaseOwner/ExpiresAt` 条件更新）：同库同刻仅一容器同步，杜绝 N 个预览容器各发一遍；
+2. **全局并发上限** `SemaphoreSlim(2)`：无论多少库到期，在途对端 HTTP ≤2；
+3. **每轮批量上限 + 最久未同步优先**：逐步排空，不惊群；
+4. **到期闸 + 周期下限**：只捞到期库，周期夹到 ≥5 分钟；
+5. **启动抖动 + 崩溃租约自动过期自愈**：多容器不同秒齐刷，owner 崩了别的容器可接管。
+
+新增 DocumentStore 字段：`PeerSyncAutoEnabled` / `PeerSyncIntervalMinutes` / `PeerSyncAutoLastAt` /
+`PeerSyncLeaseOwner` / `PeerSyncLeaseExpiresAt`。守卫测试：`PeerSyncScheduleTests`。
