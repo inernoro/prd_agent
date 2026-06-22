@@ -148,7 +148,7 @@ export function MonitoringDialog({
   const [tab, setTab] = useState('performance');
   const hasOps = Boolean(children);
 
-  const title = projectName ? `运维监控 · ${projectName}` : '运维监控';
+  const title = projectName ? `运维 · ${projectName}` : '运维';
   const description = projectId
     ? '主机性能、执行器节点与本项目最近活动。每 15 秒自动刷新。'
     : '主机性能与执行器节点（系统级）。每 15 秒自动刷新。';
