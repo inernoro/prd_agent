@@ -14,7 +14,7 @@
  *
  * Theme: every color goes through tokens (light + dark). See cds-theme-tokens.md.
  */
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -28,17 +28,10 @@ import {
   RefreshCw,
   Server,
   Timer,
-  Wrench,
+  X,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 import type { ExecutorNode } from '@/pages/cds-settings/types';
@@ -124,17 +117,24 @@ function activityTypeLabel(type: string): string {
 const TAB_TRIGGER_CLASS =
   'w-auto min-h-9 flex-row justify-center rounded-md border border-transparent px-4 data-[state=active]:border-[hsl(var(--hairline))] data-[state=active]:bg-[hsl(var(--surface-raised))]';
 
+export interface OpsTab {
+  value: string;
+  label: string;
+  icon?: ReactNode;
+  content: ReactNode;
+}
+
 export interface MonitoringDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId?: string;
   projectName?: string;
   /**
-   * 项目级运维操作内容（清理孤儿/停止分支、运维状态、请求观测、访问痕迹）。
-   * 由项目页传入，作为「运维操作」页签渲染——让「运维」从此只有一个入口、一个面板，
-   * 不再是「运维监控」+「运维」两个按钮（2026-06-22 用户指出二者本是一个东西）。
+   * 项目级运维操作页签（清理 / 请求观测 / 访问痕迹 等）。由项目页拆成多个页签传入，
+   * 与内置的 性能/执行器/活动 并列，统一在一个「运维」侧抽屉里（2026-06-22 用户：
+   * 运维面板用抽屉、运维操作拆多个页签）。
    */
-  children?: ReactNode;
+  opsTabs?: OpsTab[];
 }
 
 export function MonitoringDialog({
@@ -142,97 +142,114 @@ export function MonitoringDialog({
   onOpenChange,
   projectId,
   projectName,
-  children,
+  opsTabs,
 }: MonitoringDialogProps): JSX.Element {
   const { state, activity, reload } = useMonitoringData(open, projectId);
   const [tab, setTab] = useState('performance');
-  const hasOps = Boolean(children);
+  const ops = opsTabs || [];
+  const opsValues = new Set(ops.map((t) => t.value));
 
   const title = projectName ? `运维 · ${projectName}` : '运维';
   const description = projectId
-    ? '主机性能、执行器节点与本项目最近活动。每 15 秒自动刷新。'
+    ? '主机性能、执行器节点与本项目运维操作。每 15 秒自动刷新。'
     : '主机性能与执行器节点（系统级）。每 15 秒自动刷新。';
 
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onOpenChange(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onOpenChange]);
+
+  if (!open) return <></>;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className={`${hasOps ? 'max-w-5xl' : 'max-w-3xl'} overflow-hidden p-0`}
-        style={{ maxHeight: '86vh' }}
+    <div className="fixed inset-0 z-[100] flex" role="dialog" aria-modal="true" aria-label="运维面板">
+      <button
+        type="button"
+        className="absolute inset-0 z-0 bg-black/30"
+        onClick={() => onOpenChange(false)}
+        aria-label="关闭运维面板"
+      />
+      <div
+        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[min(1100px,calc(100vw-32px))] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
+        style={{ minHeight: 0 }}
       >
-        <div className="flex min-h-0 flex-col" style={{ maxHeight: '86vh' }}>
-          <DialogHeader className="shrink-0 border-b border-[hsl(var(--hairline))] px-6 py-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <DialogTitle className="flex items-center gap-2">
-                  <Gauge className="h-5 w-5 text-muted-foreground" />
-                  {title}
-                </DialogTitle>
-                <DialogDescription className="mt-1.5">{description}</DialogDescription>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => void reload()}
-              >
-                <RefreshCw />
-                刷新
-              </Button>
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-6 py-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-base font-semibold">
+              <Gauge className="h-5 w-5 text-muted-foreground" />
+              {title}
             </div>
-          </DialogHeader>
+            <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>
+              <RefreshCw />
+              刷新
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => onOpenChange(false)} aria-label="关闭" title="关闭">
+              <X />
+            </Button>
+          </div>
+        </header>
 
-          <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-            <TabsList className="shrink-0 flex-row gap-2 border-b border-[hsl(var(--hairline))] px-6 py-3">
-              <TabsTrigger value="performance" className={TAB_TRIGGER_CLASS}>
-                <Gauge className="h-4 w-4 shrink-0" />
-                性能
+        <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+          <TabsList className="shrink-0 flex-row flex-wrap gap-2 border-b border-[hsl(var(--hairline))] px-6 py-3">
+            <TabsTrigger value="performance" className={TAB_TRIGGER_CLASS}>
+              <Gauge className="h-4 w-4 shrink-0" />
+              性能
+            </TabsTrigger>
+            <TabsTrigger value="executors" className={TAB_TRIGGER_CLASS}>
+              <Server className="h-4 w-4 shrink-0" />
+              执行器
+            </TabsTrigger>
+            <TabsTrigger value="activity" className={TAB_TRIGGER_CLASS}>
+              <Activity className="h-4 w-4 shrink-0" />
+              活动
+            </TabsTrigger>
+            {ops.map((t) => (
+              <TabsTrigger key={t.value} value={t.value} className={TAB_TRIGGER_CLASS}>
+                {t.icon}
+                {t.label}
               </TabsTrigger>
-              <TabsTrigger value="executors" className={TAB_TRIGGER_CLASS}>
-                <Server className="h-4 w-4 shrink-0" />
-                执行器
-              </TabsTrigger>
-              <TabsTrigger value="activity" className={TAB_TRIGGER_CLASS}>
-                <Activity className="h-4 w-4 shrink-0" />
-                活动
-              </TabsTrigger>
-              {hasOps ? (
-                <TabsTrigger value="ops" className={TAB_TRIGGER_CLASS}>
-                  <Wrench className="h-4 w-4 shrink-0" />
-                  运维操作
-                </TabsTrigger>
-              ) : null}
-            </TabsList>
+            ))}
+          </TabsList>
 
-            <div
-              className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
-              style={{ minHeight: 0, overscrollBehavior: 'contain' }}
-            >
-              {tab !== 'ops' && state.status === 'loading' ? <LoadingBlock label="加载监控数据" /> : null}
-              {tab !== 'ops' && state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
-              {state.status === 'ok' ? (
-                <>
-                  <TabsContent value="performance">
-                    <PerformanceTab data={state.data} />
-                  </TabsContent>
-                  <TabsContent value="executors">
-                    <ExecutorsTab data={state.data} />
-                  </TabsContent>
-                  <TabsContent value="activity">
-                    <ActivityTab
-                      data={state.data}
-                      activity={activity}
-                      hasProject={Boolean(projectId)}
-                    />
-                  </TabsContent>
-                </>
-              ) : null}
-              {hasOps ? <TabsContent value="ops">{children}</TabsContent> : null}
-            </div>
-          </Tabs>
-        </div>
-      </DialogContent>
-    </Dialog>
+          <div
+            className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
+            style={{ minHeight: 0, overscrollBehavior: 'contain' }}
+          >
+            {!opsValues.has(tab) && state.status === 'loading' ? <LoadingBlock label="加载监控数据" /> : null}
+            {!opsValues.has(tab) && state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+            {state.status === 'ok' ? (
+              <>
+                <TabsContent value="performance">
+                  <PerformanceTab data={state.data} />
+                </TabsContent>
+                <TabsContent value="executors">
+                  <ExecutorsTab data={state.data} />
+                </TabsContent>
+                <TabsContent value="activity">
+                  <ActivityTab
+                    data={state.data}
+                    activity={activity}
+                    hasProject={Boolean(projectId)}
+                  />
+                </TabsContent>
+              </>
+            ) : null}
+            {ops.map((t) => (
+              <TabsContent key={t.value} value={t.value}>
+                {t.content}
+              </TabsContent>
+            ))}
+          </div>
+        </Tabs>
+      </div>
+    </div>
   );
 }
 

@@ -8,13 +8,10 @@ import {
   CheckCircle2,
   ChevronDown,
   Circle,
-  Copy,
-  Cpu,
   ExternalLink,
   Gauge,
   GitBranch,
   Github,
-  HardDrive,
   Lightbulb,
   Loader2,
   Clock3,
@@ -65,7 +62,7 @@ import {
   type BranchResourceProfileInput,
 } from '@/lib/resources';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
-import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
+import { ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
   id: string;
@@ -507,7 +504,6 @@ type BranchAction = {
 };
 
 type PreviewTarget = Window | null;
-type ActivityTypeFilter = 'all' | 'api' | 'web' | 'ai';
 
 type FailedDeployTarget = {
   branch: BranchSummary;
@@ -652,29 +648,9 @@ function activitySourceLabel(event: ActivityEvent): string {
   return event.type === 'web' ? 'Web' : 'API';
 }
 
-function activityFilterMatches(event: ActivityEvent, filter: ActivityTypeFilter): boolean {
-  if (filter === 'all') return true;
-  if (filter === 'ai') return event.source === 'ai';
-  if (filter === 'web') return event.type === 'web';
-  return event.type !== 'web' && event.source !== 'ai';
-}
-
 function activityBranchMatches(event: ActivityEvent, branchId: string): boolean {
   if (!branchId) return true;
   return event.branchId === branchId || (event.branchTags || []).includes(branchId);
-}
-
-function activitySummary(event: ActivityEvent): string {
-  return [
-    `[${event.ts}] ${activitySourceLabel(event)}`,
-    `${event.method} ${event.path}`,
-    `status=${event.status}`,
-    `duration=${event.duration}ms`,
-    event.requestId ? `requestId=${event.requestId}` : '',
-    event.errorSummary ? `error=${event.errorSummary}` : '',
-    event.branchId ? `branch=${event.branchId}` : '',
-    event.profileId ? `profile=${event.profileId}` : '',
-  ].filter(Boolean).join(' ');
 }
 
 function estimatedNewContainers(branch: BranchSummary): number {
@@ -811,27 +787,6 @@ function rememberAvatarStatus(url: string, status: 'loaded' | 'failed'): void {
   if (!url) return;
   avatarLoadStatusCache.set(url, status);
   writeAvatarStorage(url, status);
-}
-
-function formatBytesFromMB(value?: number): string {
-  if (!value || value <= 0) return '未知';
-  if (value >= 1024) return `${Math.round(value / 102.4) / 10} GB`;
-  return `${value} MB`;
-}
-
-function formatUptime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return '未知';
-  const hours = Math.floor(seconds / 3600);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  const restHours = hours % 24;
-  return restHours ? `${days}d ${restHours}h` : `${days}d`;
-}
-
-function executorMemPercent(node: ExecutorNodeSummary): number {
-  const total = node.capacity?.memoryMB || 0;
-  if (total <= 0) return 0;
-  return Math.round(((node.load?.memoryUsedMB || 0) / total) * 100);
 }
 
 function deployFailureMessage(branch?: BranchSummary): string {
@@ -1379,12 +1334,9 @@ export function BranchListPage(): JSX.Element {
   const [actions, setActions] = useState<Record<string, BranchAction>>({});
   const [actionClock, setActionClock] = useState(Date.now());
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
-  const [activityTypeFilter, setActivityTypeFilter] = useState<ActivityTypeFilter>('all');
-  const [activityBranchFilter, setActivityBranchFilter] = useState('');
-  const [selectedActivityId, setSelectedActivityId] = useState<number | null>(null);
-  const [opsStatus, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
+  const [, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
   const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
-  const [hostStats, setHostStats] = useState<HostStatsState>({ status: 'loading' });
+  const [, setHostStats] = useState<HostStatsState>({ status: 'loading' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
   const [cleanupStoppedRunning, setCleanupStoppedRunning] = useState(false);
@@ -1392,7 +1344,6 @@ export function BranchListPage(): JSX.Element {
   // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
   // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
   const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
-  const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
   const noticeProject = useMemo(() => (
@@ -2102,10 +2053,6 @@ export function BranchListPage(): JSX.Element {
       setActiveTagFilter(null);
     }
   }, [activeTagFilter, allTags]);
-  const activityBranchOptions = useMemo(
-    () => branches.map((branch) => ({ id: branch.id, label: branch.branch || branch.id })),
-    [branches],
-  );
   const deployments = useMemo<BranchDeploymentItem[]>(() => (
     Object.entries(actions)
       .reduce<BranchDeploymentItem[]>((items, [key, action]) => {
@@ -2934,67 +2881,17 @@ export function BranchListPage(): JSX.Element {
     await refresh(false);
   }, [capacityAssist, refresh, stopBranch]);
 
-  const drainExecutor = useCallback(async (node: ExecutorNodeSummary): Promise<void> => {
-    if (!node.id) return;
-    setExecutorAction((current) => ({ ...current, [node.id]: '排空中' }));
-    try {
-      await apiRequest(`/api/executors/${encodeURIComponent(node.id)}/drain`, { method: 'POST' });
-      setToast(`执行器 ${node.id} 已进入排空状态`);
-      await refreshOpsStatus();
-    } catch (err) {
-      setToast(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setExecutorAction((current) => {
-        const next = { ...current };
-        delete next[node.id];
-        return next;
-      });
-    }
-  }, [refreshOpsStatus]);
-
-  const removeExecutor = useCallback(async (node: ExecutorNodeSummary): Promise<void> => {
-    if (!node.id) return;
-    setExecutorAction((current) => ({ ...current, [node.id]: '移除中' }));
-    try {
-      await apiRequest(`/api/executors/${encodeURIComponent(node.id)}`, { method: 'DELETE' });
-      setToast(`执行器 ${node.id} 已移除`);
-      await refreshOpsStatus();
-    } catch (err) {
-      setToast(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setExecutorAction((current) => {
-        const next = { ...current };
-        delete next[node.id];
-        return next;
-      });
-    }
-  }, [refreshOpsStatus]);
-
   if (!projectId) return <Navigate to="/project-list" replace />;
 
   const title = state.status === 'ok' ? displayName(state.project) : projectId;
   const runningServices = branches.reduce((sum, branch) => sum + runningServiceCount(branch), 0);
   const selectedAllFavorite = selectedBranches.length > 0 && selectedBranches.every((branch) => branch.isFavorite);
   const selectedErroredCount = selectedBranches.filter((branch) => branch.status === 'error').length;
-  const branchIdSet = new Set(branches.map((branch) => branch.id));
-  const recentActivityEvents = activityEvents
-    .filter((event) => !event.branchId || branchIdSet.has(event.branchId) || event.path.includes(`/projects/${projectId}`))
-    .filter((event) => activityFilterMatches(event, activityTypeFilter))
-    .filter((event) => activityBranchMatches(event, activityBranchFilter))
-    .slice(0, 8);
-  const selectedActivity = recentActivityEvents.find((event) => event.id === selectedActivityId) || null;
   const selectedNewContainers = selectedBranches.reduce((sum, branch) => sum + estimatedNewContainers(branch), 0);
   const capacityRemaining = state.status === 'ok' && state.capacity
     ? Math.max(0, state.capacity.maxContainers - state.capacity.runningContainers)
     : null;
   const selectedCapacityWarning = state.status === 'ok' ? capacityMessage(state.capacity, selectedBranches) : '';
-  const executorCapacity = opsStatus.status === 'ok' ? opsStatus.capacity : null;
-  const executorNodes = Array.isArray(executorCapacity?.nodes) ? executorCapacity.nodes : [];
-  const onlineExecutors = typeof executorCapacity?.online === 'number' ? executorCapacity.online : 0;
-  const offlineExecutors = typeof executorCapacity?.offline === 'number' ? executorCapacity.offline : 0;
-  const totalExecutors = onlineExecutors + offlineExecutors;
-  const executorFreePercent = typeof executorCapacity?.freePercent === 'number' ? Math.round(executorCapacity.freePercent) : 0;
-  const clusterMode = opsStatus.status === 'ok' ? opsStatus.cluster.mode : 'unknown';
   const slowHttpData = slowHttpState.status === 'ok' ? slowHttpState.data : null;
   const activeHttpRequests = slowHttpData?.activeRequests || [];
   const slowHttpSections = [
@@ -3365,517 +3262,315 @@ export function BranchListPage(): JSX.Element {
             onOpenChange={setOpsDrawerOpen}
             projectId={projectId}
             projectName={title}
-          >
-              
-
-              {/* 2026-05-07 wave 1.1 v2 (用户反馈"还是灰色不响应"):彻底放弃
-                  toggle 折叠 — 抽屉就是为了展示运维内容,折叠头多一步交互纯属
-                  反人类。直接展示标题 + 内容,无任何 click handler,杜绝灰色
-                  发呆。用户反馈"打开就一片灰"很可能是 useState toggle 路径上
-                  某种 race condition,直接删掉。 */}
-              {/* 2026-05-07:孤儿容器清理 — 用户反馈"删除分支后过时容器还在面板上,
-                  不知怎么清"。后端 POST /api/cleanup-orphans 已存在,加 UI 入口。
-                  扫描 origin remote → 找出本地有但远端已删的分支 entry → 停容器 + 删 entry。 */}
-              <div className="overflow-hidden cds-surface-raised cds-hairline">
-                <div className="flex w-full flex-wrap items-center justify-between gap-3 px-3 py-3 text-sm">
-                  <span className="inline-flex items-center gap-2 font-semibold">
-                    <Gauge className="h-4 w-4 text-muted-foreground" />
-                    运维与日志
-                  </span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <ConfirmAction
-                      title="清理孤儿容器?"
-                      description={`扫描 origin 远端,把本地有但远端已删除的分支 worktree + 容器 + entry 全部清掉(已勾选项目 ${projectId} 范围)。停止过的服务可恢复(重新部署),但 worktree 删了 git 历史不动。`}
-                      confirmLabel="开始清理"
-                      onConfirm={async () => {
-                        try {
-                          let lastMsg = '清理完成';
-                          await postSse(`/api/cleanup-orphans?project=${encodeURIComponent(projectId)}`, {}, (event, data) => {
-                            if (event === 'complete' && data && typeof data === 'object') {
-                              const d = data as { message?: string; orphanCount?: number };
-                              lastMsg = d.message || `清理完成,共处理 ${d.orphanCount || 0} 个孤儿`;
-                            }
-                          });
-                          setToast(lastMsg);
-                          await refresh(false);
-                        } catch (e) {
-                          setToast(`清理失败: ${(e as Error).message}`);
-                        }
-                      }}
-                      trigger={(
-                        <Button type="button" variant="outline" size="sm">
-                          <Trash2 />
-                          清理孤儿
-                        </Button>
-                      )}
-                    />
-                    <ConfirmAction
-                      title="清理所有已停止的分支?"
-                      description={`把当前项目 ${projectId} 下所有处于「已停止」状态的分支整条清掉（容器 + worktree + 分支条目），git 历史不动。正在运行/构建中的分支不受影响。${stoppedBranchCount > 0 ? `共 ${stoppedBranchCount} 个已停止分支。` : '当前没有已停止分支。'}`}
-                      confirmLabel="开始清理"
-                      onConfirm={() => cleanupStoppedBranches()}
-                      trigger={(
-                        <Button
-                          type="button"
-                          variant={stoppedBranchCount > 0 ? 'outline' : 'ghost'}
-                          size="sm"
-                          disabled={cleanupStoppedRunning || stoppedBranchCount === 0}
-                          title={stoppedBranchCount > 0 ? `清理 ${stoppedBranchCount} 个已停止分支（容器 + worktree + 条目）` : '当前没有已停止分支'}
-                        >
-                          {cleanupStoppedRunning ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                          清理停止分支{stoppedBranchCount > 0 ? ` ${stoppedBranchCount}` : ''}
-                        </Button>
-                      )}
-                    />
-                    <span className="text-xs text-muted-foreground">容量 / 主机 / 执行器 / 活动</span>
-                  </div>
-                </div>
-                <div className="divide-y divide-border border-t border-border">
-              <div className="p-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <h2 className="text-sm font-semibold">运维状态</h2>
-                  <Gauge className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <MetricTile label="运行服务" value={runningServices} />
-                  <MetricTile label="容量槽" value={state.capacity ? `${state.capacity.runningContainers}/${state.capacity.maxContainers}` : '未知'} />
-                  <MetricTile label="内存" value={state.capacity ? `${state.capacity.totalMemGB} GB` : '未知'} />
-                </div>
-                <div className={`mt-3 rounded-md border px-3 py-2 text-xs leading-5 ${
-                  selectedCapacityWarning
-                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                    : 'border-border bg-muted/20 text-muted-foreground'
-                }`}
-                >
-                  {selectedBranches.length ? (
-                    selectedCapacityWarning ? (
-                      <span>{selectedCapacityWarning} 点击部署时会在按钮旁确认。</span>
-                    ) : (
-                      <span>
-                        已选分支预计新增 {selectedNewContainers} 个容器
-                        {capacityRemaining === null ? '' : `，剩余容量 ${capacityRemaining} 个槽`}。
-                      </span>
-                    )
-                  ) : (
-                    <span>勾选分支后会预估部署容量；运行中的分支不会重复占用容量槽。</span>
-                  )}
-                </div>
-                {capacityAssist.deficit > 0 ? (
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
-                    <span className="text-amber-700 dark:text-amber-300">
-                      还差 {capacityAssist.deficit} 个容量槽，可停止 {capacityAssist.candidates.length} 个较旧运行分支。
-                    </span>
-                    <ConfirmAction
-                      title="停止较旧分支腾容量？"
-                      description={`将停止 ${capacityAssist.candidates.length} 个较旧运行分支，预计腾出 ${capacityAssist.freed} 个容量槽。`}
-                      confirmLabel="停止"
-                      disabled={capacityAssist.candidates.length === 0}
-                      onConfirm={() => void stopOldBranchesForCapacity()}
-                      trigger={(
-                        <Button type="button" size="sm" variant="outline">
-                          <PowerOff />
-                          腾容量
-                        </Button>
-                      )}
-                    />
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="p-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold">请求观测</h2>
-                    <div className="mt-1 text-xs text-muted-foreground">正在运行请求和已完成慢榜分开统计</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button type="button" variant="ghost" size="icon" onClick={() => void refreshSlowHttp()} title="刷新请求观测">
-                      <RefreshCw className="h-4 w-4" />
-                    </Button>
-                    <Gauge className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </div>
-                {slowHttpState.status === 'idle' || slowHttpState.status === 'loading' ? (
-                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">正在读取 HTTP 耗时样本</div>
-                ) : slowHttpState.status === 'error' ? (
-                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-xs text-destructive">
-                    {slowHttpState.message}
-                  </div>
-                ) : slowHttpData?.disabled ? (
-                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                    {slowHttpData.message || 'HTTP 持久化日志未启用'}
-                  </div>
-                ) : !slowHttpData ? (
-                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                    暂无 HTTP 耗时样本。
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-3 gap-2">
-                      <MetricTile label="样本" value={`${slowHttpData.sampleSize}`} />
-                      <MetricTile label="耗时样本" value={`${slowHttpData.durationSampleSize ?? slowHttpData.sampleSize}`} />
-                      <MetricTile label="运行中" value={`${slowHttpData.activeSummary?.total ?? activeHttpRequests.length}`} />
+            opsTabs={[
+              {
+                value: 'cleanup',
+                label: '清理',
+                icon: <Trash2 className="h-4 w-4 shrink-0" />,
+                content: (
+                  <div className="space-y-4">
+                    {/* 2026-06-22:运维操作拆多个页签 + 抽屉化。清理页签承载孤儿/停止
+                        分支清理 + 批量运维（部署/拉取/停止/收藏/重置异常/删除）。 */}
+                    {/* 2026-05-07:孤儿容器清理 — 用户反馈"删除分支后过时容器还在面板上,
+                        不知怎么清"。后端 POST /api/cleanup-orphans 已存在,加 UI 入口。
+                        扫描 origin remote → 找出本地有但远端已删的分支 entry → 停容器 + 删 entry。 */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <ConfirmAction
+                        title="清理孤儿容器?"
+                        description={`扫描 origin 远端,把本地有但远端已删除的分支 worktree + 容器 + entry 全部清掉(已勾选项目 ${projectId} 范围)。停止过的服务可恢复(重新部署),但 worktree 删了 git 历史不动。`}
+                        confirmLabel="开始清理"
+                        onConfirm={async () => {
+                          try {
+                            let lastMsg = '清理完成';
+                            await postSse(`/api/cleanup-orphans?project=${encodeURIComponent(projectId)}`, {}, (event, data) => {
+                              if (event === 'complete' && data && typeof data === 'object') {
+                                const d = data as { message?: string; orphanCount?: number };
+                                lastMsg = d.message || `清理完成,共处理 ${d.orphanCount || 0} 个孤儿`;
+                              }
+                            });
+                            setToast(lastMsg);
+                            await refresh(false);
+                          } catch (e) {
+                            setToast(`清理失败: ${(e as Error).message}`);
+                          }
+                        }}
+                        trigger={(
+                          <Button type="button" variant="outline" size="sm">
+                            <Trash2 />
+                            清理孤儿
+                          </Button>
+                        )}
+                      />
+                      <ConfirmAction
+                        title="清理所有已停止的分支?"
+                        description={`把当前项目 ${projectId} 下所有处于「已停止」状态的分支整条清掉（容器 + worktree + 分支条目），git 历史不动。正在运行/构建中的分支不受影响。${stoppedBranchCount > 0 ? `共 ${stoppedBranchCount} 个已停止分支。` : '当前没有已停止分支。'}`}
+                        confirmLabel="开始清理"
+                        onConfirm={() => cleanupStoppedBranches()}
+                        trigger={(
+                          <Button
+                            type="button"
+                            variant={stoppedBranchCount > 0 ? 'outline' : 'ghost'}
+                            size="sm"
+                            disabled={cleanupStoppedRunning || stoppedBranchCount === 0}
+                            title={stoppedBranchCount > 0 ? `清理 ${stoppedBranchCount} 个已停止分支（容器 + worktree + 条目）` : '当前没有已停止分支'}
+                          >
+                            {cleanupStoppedRunning ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                            清理停止分支{stoppedBranchCount > 0 ? ` ${stoppedBranchCount}` : ''}
+                          </Button>
+                        )}
+                      />
                     </div>
-                    <div className="rounded-md border border-border bg-muted/15 px-2.5 py-2 text-xs">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="font-medium">正在运行长请求</span>
-                        <span className="text-muted-foreground">
-                          10s+ {slowHttpData.activeSummary?.over10s ?? 0} / 30s+ {slowHttpData.activeSummary?.over30s ?? 0} / 60s+ {slowHttpData.activeSummary?.over60s ?? 0}
-                        </span>
-                      </div>
-                      {activeHttpRequests.length === 0 ? (
-                        <div className="rounded border border-dashed border-border px-2 py-2 text-muted-foreground">当前没有运行中的 HTTP 请求。</div>
-                      ) : (
-                        <div className="max-h-32 space-y-1 overflow-y-auto pr-1">
-                          {activeHttpRequests.slice(0, 8).map((item) => (
-                            <div key={item.id} className="flex items-center gap-2 rounded border border-border bg-background/60 px-2 py-1.5">
-                              <span className={`rounded border px-1.5 py-0.5 ${requestKindTone(item.requestKind)}`}>{requestKindLabel(item.requestKind)}</span>
-                              <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
-                              <code className="min-w-0 flex-1 truncate font-mono" title={`${item.host || ''}${item.path}`}>{item.path}</code>
-                              <span className="font-mono text-amber-600">{formatLatency(item.ageMs)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                      {slowHttpSections.map((section) => (
-                        <div key={section.key} className="rounded-md border border-border bg-muted/10 px-2.5 py-2 text-xs">
-                          <div className="mb-1.5 flex items-center justify-between gap-2">
-                            <span className="font-medium">{section.title}</span>
-                            <span className="text-muted-foreground">{section.items.length} 个端点</span>
+                    <div>
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-sm font-semibold">批量运维</h2>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {selectedBranches.length ? `已选择 ${selectedBranches.length} 个分支` : '先在左侧勾选分支'}
                           </div>
-                          {section.items.length === 0 ? (
-                            <div className="rounded border border-dashed border-border px-2 py-2 text-muted-foreground">暂无样本。</div>
+                        </div>
+                        <Settings className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedCapacityWarning ? (
+                          <ConfirmAction
+                            title="容量不足，仍然批量部署？"
+                            description={selectedCapacityWarning}
+                            confirmLabel="继续部署"
+                            disabled={selectedBranches.length === 0}
+                            onConfirm={() => void runBulkAction('批量部署', selectedBranches, (branch) => deployBranch(branch, false))}
+                            trigger={(
+                              <Button variant="outline" size="sm">
+                                <Play />
+                                部署
+                              </Button>
+                            )}
+                          />
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={selectedBranches.length === 0}
+                            onClick={() => void runBulkAction('批量部署', selectedBranches, (branch) => deployBranch(branch, false))}
+                          >
+                            <Play />
+                            部署
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={selectedBranches.length === 0}
+                          onClick={() => void runBulkAction('批量拉取', selectedBranches, pullBranch)}
+                        >
+                          <RotateCw />
+                          拉取
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={selectedBranches.length === 0}
+                          onClick={() => void runBulkAction('批量停止', selectedBranches.filter((branch) => branch.status === 'running'), stopBranch)}
+                        >
+                          <Square />
+                          停止
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={selectedBranches.length === 0}
+                          onClick={() => void bulkSetFavorite(selectedBranches, !selectedAllFavorite)}
+                        >
+                          <Star />
+                          {selectedAllFavorite ? '取消收藏' : '收藏'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={selectedErroredCount === 0}
+                          onClick={() => void bulkResetErrored(selectedBranches)}
+                        >
+                          <RotateCw />
+                          重置异常
+                        </Button>
+                        <ConfirmAction
+                          title={`删除 ${selectedBranches.length} 个分支？`}
+                          description="会停止服务并删除对应工作区。"
+                          confirmLabel="删除"
+                          disabled={selectedBranches.length === 0}
+                          onConfirm={() => void bulkDeleteBranches(selectedBranches)}
+                          trigger={(
+                            <Button variant="destructive" size="sm">
+                              <Trash2 />
+                              删除
+                            </Button>
+                          )}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                value: 'capacity',
+                label: '运维状态',
+                icon: <Gauge className="h-4 w-4 shrink-0" />,
+                content: (
+                  <div>
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <h2 className="text-sm font-semibold">运维状态</h2>
+                      <Gauge className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <MetricTile label="运行服务" value={runningServices} />
+                      <MetricTile label="容量槽" value={state.capacity ? `${state.capacity.runningContainers}/${state.capacity.maxContainers}` : '未知'} />
+                      <MetricTile label="内存" value={state.capacity ? `${state.capacity.totalMemGB} GB` : '未知'} />
+                    </div>
+                    <div className={`mt-3 rounded-md border px-3 py-2 text-xs leading-5 ${
+                      selectedCapacityWarning
+                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                        : 'border-border bg-muted/20 text-muted-foreground'
+                    }`}
+                    >
+                      {selectedBranches.length ? (
+                        selectedCapacityWarning ? (
+                          <span>{selectedCapacityWarning} 点击部署时会在按钮旁确认。</span>
+                        ) : (
+                          <span>
+                            已选分支预计新增 {selectedNewContainers} 个容器
+                            {capacityRemaining === null ? '' : `，剩余容量 ${capacityRemaining} 个槽`}。
+                          </span>
+                        )
+                      ) : (
+                        <span>勾选分支后会预估部署容量；运行中的分支不会重复占用容量槽。</span>
+                      )}
+                    </div>
+                    {capacityAssist.deficit > 0 ? (
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+                        <span className="text-amber-700 dark:text-amber-300">
+                          还差 {capacityAssist.deficit} 个容量槽，可停止 {capacityAssist.candidates.length} 个较旧运行分支。
+                        </span>
+                        <ConfirmAction
+                          title="停止较旧分支腾容量？"
+                          description={`将停止 ${capacityAssist.candidates.length} 个较旧运行分支，预计腾出 ${capacityAssist.freed} 个容量槽。`}
+                          confirmLabel="停止"
+                          disabled={capacityAssist.candidates.length === 0}
+                          onConfirm={() => void stopOldBranchesForCapacity()}
+                          trigger={(
+                            <Button type="button" size="sm" variant="outline">
+                              <PowerOff />
+                              腾容量
+                            </Button>
+                          )}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ),
+              },
+              {
+                value: 'requests',
+                label: '请求观测',
+                icon: <Activity className="h-4 w-4 shrink-0" />,
+                content: (
+                  <div>
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-sm font-semibold">请求观测</h2>
+                        <div className="mt-1 text-xs text-muted-foreground">正在运行请求和已完成慢榜分开统计</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button type="button" variant="ghost" size="icon" onClick={() => void refreshSlowHttp()} title="刷新请求观测">
+                          <RefreshCw className="h-4 w-4" />
+                        </Button>
+                        <Gauge className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </div>
+                    {slowHttpState.status === 'idle' || slowHttpState.status === 'loading' ? (
+                      <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">正在读取 HTTP 耗时样本</div>
+                    ) : slowHttpState.status === 'error' ? (
+                      <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-xs text-destructive">
+                        {slowHttpState.message}
+                      </div>
+                    ) : slowHttpData?.disabled ? (
+                      <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                        {slowHttpData.message || 'HTTP 持久化日志未启用'}
+                      </div>
+                    ) : !slowHttpData ? (
+                      <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                        暂无 HTTP 耗时样本。
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-3 gap-2">
+                          <MetricTile label="样本" value={`${slowHttpData.sampleSize}`} />
+                          <MetricTile label="耗时样本" value={`${slowHttpData.durationSampleSize ?? slowHttpData.sampleSize}`} />
+                          <MetricTile label="运行中" value={`${slowHttpData.activeSummary?.total ?? activeHttpRequests.length}`} />
+                        </div>
+                        <div className="rounded-md border border-border bg-muted/15 px-2.5 py-2 text-xs">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span className="font-medium">正在运行长请求</span>
+                            <span className="text-muted-foreground">
+                              10s+ {slowHttpData.activeSummary?.over10s ?? 0} / 30s+ {slowHttpData.activeSummary?.over30s ?? 0} / 60s+ {slowHttpData.activeSummary?.over60s ?? 0}
+                            </span>
+                          </div>
+                          {activeHttpRequests.length === 0 ? (
+                            <div className="rounded border border-dashed border-border px-2 py-2 text-muted-foreground">当前没有运行中的 HTTP 请求。</div>
                           ) : (
-                            <div className="space-y-1.5">
-                              {section.items.slice(0, 5).map((item, index) => (
-                                <div key={`${section.key}:${item.method}:${item.endpoint}`} className="rounded border border-border bg-background/60 px-2 py-1.5">
-                                  <div className="flex items-center gap-2">
-                                    <span className="w-5 text-right font-mono text-muted-foreground">#{index + 1}</span>
-                                    <span className={`rounded border px-1.5 py-0.5 ${requestKindTone(item.requestKind)}`}>{requestKindLabel(item.requestKind)}</span>
-                                    <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
-                                    <code className="min-w-0 flex-1 truncate font-mono" title={`${item.method} ${item.endpoint}`}>
-                                      {item.endpoint}
-                                    </code>
-                                    <span className="font-mono text-amber-600">{formatLatency(item.p95Ms)}</span>
-                                  </div>
-                                  <div className="mt-1 flex flex-wrap gap-2 text-muted-foreground">
-                                    <span>count {item.count}</span>
-                                    <span>avg {formatLatency(item.avgMs)}</span>
-                                    <span>max {formatLatency(item.maxMs)}</span>
-                                    {item.errorCount > 0 ? <span className="text-destructive">error {item.errorCount}</span> : null}
-                                    <span className="ml-auto font-mono">requestId {item.slowest.requestId}</span>
-                                  </div>
+                            <div className="max-h-32 space-y-1 overflow-y-auto pr-1">
+                              {activeHttpRequests.slice(0, 8).map((item) => (
+                                <div key={item.id} className="flex items-center gap-2 rounded border border-border bg-background/60 px-2 py-1.5">
+                                  <span className={`rounded border px-1.5 py-0.5 ${requestKindTone(item.requestKind)}`}>{requestKindLabel(item.requestKind)}</span>
+                                  <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
+                                  <code className="min-w-0 flex-1 truncate font-mono" title={`${item.host || ''}${item.path}`}>{item.path}</code>
+                                  <span className="font-mono text-amber-600">{formatLatency(item.ageMs)}</span>
                                 </div>
                               ))}
                             </div>
                           )}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="p-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold">主机健康</h2>
-                    <div className="mt-1 text-xs text-muted-foreground">本机 CPU、内存和运行时长</div>
-                  </div>
-                  <Cpu className="h-4 w-4 text-muted-foreground" />
-                </div>
-                {hostStats.status === 'loading' ? (
-                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">正在读取主机状态</div>
-                ) : hostStats.status === 'error' ? (
-                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-xs text-destructive">
-                    {hostStats.message}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-3 gap-2">
-                      <MetricTile label="CPU" value={`${hostStats.data.cpu.loadPercent}%`} />
-                      <MetricTile label="内存" value={`${hostStats.data.mem.usedPercent}%`} />
-                      <MetricTile label="运行" value={formatUptime(hostStats.data.uptimeSeconds)} />
-                    </div>
-                    <div className="grid gap-2 text-xs text-muted-foreground">
-                      <HealthMeter
-                        icon={<Cpu className="h-3.5 w-3.5" />}
-                        label={`${hostStats.data.cpu.cores} 核 · load ${hostStats.data.cpu.loadAvg1}/${hostStats.data.cpu.loadAvg5}/${hostStats.data.cpu.loadAvg15}`}
-                        value={Math.min(100, Math.max(0, hostStats.data.cpu.loadPercent))}
-                      />
-                      <HealthMeter
-                        icon={<HardDrive className="h-3.5 w-3.5" />}
-                        label={`${formatBytesFromMB(hostStats.data.mem.totalMB - hostStats.data.mem.freeMB)} / ${formatBytesFromMB(hostStats.data.mem.totalMB)}`}
-                        value={Math.min(100, Math.max(0, hostStats.data.mem.usedPercent))}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="p-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold">执行器</h2>
-                    <div className="mt-1 text-xs text-muted-foreground">集群模式与可用执行节点</div>
-                  </div>
-                  <Server className="h-4 w-4 text-muted-foreground" />
-                </div>
-                {opsStatus.status === 'loading' ? (
-                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">正在读取执行器状态</div>
-                ) : opsStatus.status === 'error' ? (
-                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-xs text-destructive">
-                    {opsStatus.message}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-3 gap-2">
-                      <MetricTile label="模式" value={clusterMode} />
-                      <MetricTile label="在线" value={`${onlineExecutors}/${totalExecutors}`} />
-                      <MetricTile label="空闲" value={`${executorFreePercent}%`} />
-                    </div>
-                    <div className="space-y-2">
-                      {executorNodes.length === 0 ? (
-                        <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">暂无执行节点</div>
-                      ) : null}
-                      {executorNodes.map((node) => (
-                        <ExecutorNodeRow
-                          key={node.id}
-                          node={node}
-                          actionLabel={executorAction[node.id]}
-                          onDrain={() => void drainExecutor(node)}
-                          onRemove={() => void removeExecutor(node)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="p-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold">批量运维</h2>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {selectedBranches.length ? `已选择 ${selectedBranches.length} 个分支` : '先在左侧勾选分支'}
-                    </div>
-                  </div>
-                  <Settings className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {selectedCapacityWarning ? (
-                    <ConfirmAction
-                      title="容量不足，仍然批量部署？"
-                      description={selectedCapacityWarning}
-                      confirmLabel="继续部署"
-                      disabled={selectedBranches.length === 0}
-                      onConfirm={() => void runBulkAction('批量部署', selectedBranches, (branch) => deployBranch(branch, false))}
-                      trigger={(
-                        <Button variant="outline" size="sm">
-                          <Play />
-                          部署
-                        </Button>
-                      )}
-                    />
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={selectedBranches.length === 0}
-                      onClick={() => void runBulkAction('批量部署', selectedBranches, (branch) => deployBranch(branch, false))}
-                    >
-                      <Play />
-                      部署
-                    </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={selectedBranches.length === 0}
-                    onClick={() => void runBulkAction('批量拉取', selectedBranches, pullBranch)}
-                  >
-                    <RotateCw />
-                    拉取
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={selectedBranches.length === 0}
-                    onClick={() => void runBulkAction('批量停止', selectedBranches.filter((branch) => branch.status === 'running'), stopBranch)}
-                  >
-                    <Square />
-                    停止
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={selectedBranches.length === 0}
-                    onClick={() => void bulkSetFavorite(selectedBranches, !selectedAllFavorite)}
-                  >
-                    <Star />
-                    {selectedAllFavorite ? '取消收藏' : '收藏'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={selectedErroredCount === 0}
-                    onClick={() => void bulkResetErrored(selectedBranches)}
-                  >
-                    <RotateCw />
-                    重置异常
-                  </Button>
-                  <ConfirmAction
-                    title={`删除 ${selectedBranches.length} 个分支？`}
-                    description="会停止服务并删除对应工作区。"
-                    confirmLabel="删除"
-                    disabled={selectedBranches.length === 0}
-                    onConfirm={() => void bulkDeleteBranches(selectedBranches)}
-                    trigger={(
-                      <Button variant="destructive" size="sm">
-                        <Trash2 />
-                        删除
-                      </Button>
+                        <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                          {slowHttpSections.map((section) => (
+                            <div key={section.key} className="rounded-md border border-border bg-muted/10 px-2.5 py-2 text-xs">
+                              <div className="mb-1.5 flex items-center justify-between gap-2">
+                                <span className="font-medium">{section.title}</span>
+                                <span className="text-muted-foreground">{section.items.length} 个端点</span>
+                              </div>
+                              {section.items.length === 0 ? (
+                                <div className="rounded border border-dashed border-border px-2 py-2 text-muted-foreground">暂无样本。</div>
+                              ) : (
+                                <div className="space-y-1.5">
+                                  {section.items.slice(0, 5).map((item, index) => (
+                                    <div key={`${section.key}:${item.method}:${item.endpoint}`} className="rounded border border-border bg-background/60 px-2 py-1.5">
+                                      <div className="flex items-center gap-2">
+                                        <span className="w-5 text-right font-mono text-muted-foreground">#{index + 1}</span>
+                                        <span className={`rounded border px-1.5 py-0.5 ${requestKindTone(item.requestKind)}`}>{requestKindLabel(item.requestKind)}</span>
+                                        <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
+                                        <code className="min-w-0 flex-1 truncate font-mono" title={`${item.method} ${item.endpoint}`}>
+                                          {item.endpoint}
+                                        </code>
+                                        <span className="font-mono text-amber-600">{formatLatency(item.p95Ms)}</span>
+                                      </div>
+                                      <div className="mt-1 flex flex-wrap gap-2 text-muted-foreground">
+                                        <span>count {item.count}</span>
+                                        <span>avg {formatLatency(item.avgMs)}</span>
+                                        <span>max {formatLatency(item.maxMs)}</span>
+                                        {item.errorCount > 0 ? <span className="text-destructive">error {item.errorCount}</span> : null}
+                                        <span className="ml-auto font-mono">requestId {item.slowest.requestId}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
-                  />
-                </div>
-              </div>
-
-              <div className="p-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold">最近活动</h2>
-                    <div className="mt-1 text-xs text-muted-foreground">CDS API 与预览访问的实时事件</div>
                   </div>
-                  <Activity className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <div className="mb-3 space-y-2">
-                  <div className="flex flex-wrap gap-2">
-                    <QuickFilterButton active={activityTypeFilter === 'all'} onClick={() => setActivityTypeFilter('all')}>全部</QuickFilterButton>
-                    <QuickFilterButton active={activityTypeFilter === 'api'} onClick={() => setActivityTypeFilter('api')}>API</QuickFilterButton>
-                    <QuickFilterButton active={activityTypeFilter === 'web'} onClick={() => setActivityTypeFilter('web')}>Web</QuickFilterButton>
-                    <QuickFilterButton active={activityTypeFilter === 'ai'} onClick={() => setActivityTypeFilter('ai')}>AI</QuickFilterButton>
-                  </div>
-                  <label className="sr-only" htmlFor="activity-branch-filter">活动分支筛选</label>
-                  <select
-                    id="activity-branch-filter"
-                    value={activityBranchFilter}
-                    onChange={(event) => {
-                      setActivityBranchFilter(event.target.value);
-                      setSelectedActivityId(null);
-                    }}
-                    className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <option value="">全部分支</option>
-                    {activityBranchOptions.map((branch) => (
-                      <option key={branch.id} value={branch.id}>{branch.label}</option>
-                    ))}
-                  </select>
-                </div>
-                {recentActivityEvents.length === 0 ? (
-                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                    暂无活动。部署、预览或自动化事件会显示在这里。
-                  </div>
-                ) : (
-                  <div className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
-                    {recentActivityEvents.map((event) => (
-                      <div
-                        key={event.id}
-                        className={`rounded-md border px-2.5 py-2 transition-colors ${
-                          selectedActivityId === event.id ? 'border-primary/50 bg-primary/5' : 'border-border bg-muted/20'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="rounded border border-border px-1.5 py-0.5 font-mono">{event.method}</span>
-                          <span className={`rounded border px-1.5 py-0.5 ${activityStatusClass(event.status)}`}>{event.status}</span>
-                          <span className="ml-auto font-mono text-muted-foreground">{formatDuration(event.duration)}</span>
-                        </div>
-                        <div className="mt-1 truncate text-sm font-medium">{activityLabel(event)}</div>
-                        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                          <span>{activitySourceLabel(event)}</span>
-                          {event.branchId ? <CodePill>{event.branchTags?.[0] || event.branchId}</CodePill> : null}
-                          <span className="ml-auto">{formatShortTime(event.ts)}</span>
-                        </div>
-                        <div className="mt-1 flex justify-end gap-1">
-                          <Button
-                            type="button"
-                            variant={selectedActivityId === event.id ? 'secondary' : 'ghost'}
-                            size="sm"
-                            onClick={() => setSelectedActivityId((current) => (current === event.id ? null : event.id))}
-                          >
-                            详情
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              void navigator.clipboard.writeText(activitySummary(event)).then(() => setToast('活动摘要已复制'));
-                            }}
-                          >
-                            <Copy />
-                            复制
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {selectedActivity ? (
-                  <div className="mt-3 rounded-md border border-border bg-background px-3 py-3 text-xs">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <div className="font-semibold">活动详情</div>
-                      <CodePill>{formatShortTime(selectedActivity.ts)}</CodePill>
-                    </div>
-                    <div className="grid gap-2 text-muted-foreground">
-                      <div className="grid gap-1">
-                        <span className="font-medium text-foreground">请求</span>
-                        <code className="break-all rounded bg-muted px-2 py-1 font-mono">
-                          {selectedActivity.method} {selectedActivity.path}
-                          {selectedActivity.query ? `?${selectedActivity.query}` : ''}
-                        </code>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <MetricTile label="状态" value={selectedActivity.status} />
-                        <MetricTile label="耗时" value={formatDuration(selectedActivity.duration)} />
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <CodePill>{activitySourceLabel(selectedActivity)}</CodePill>
-                        {selectedActivity.requestId ? <CodePill>requestId {selectedActivity.requestId}</CodePill> : null}
-                        {selectedActivity.branchId ? (
-                          <CodePill>{selectedActivity.branchTags?.[0] || selectedActivity.branchId}</CodePill>
-                        ) : null}
-                        {selectedActivity.profileId ? <CodePill>{selectedActivity.profileId}</CodePill> : null}
-                      </div>
-                      {selectedActivity.errorSummary ? (
-                        <div className="grid gap-1">
-                          <span className="font-medium text-foreground">错误摘要</span>
-                          <code className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded bg-destructive/10 px-2 py-1 font-mono text-destructive">
-                            {selectedActivity.errorSummary}
-                          </code>
-                        </div>
-                      ) : null}
-                      {selectedActivity.referer ? (
-                        <div className="break-all">
-                          Referer：<code>{selectedActivity.referer}</code>
-                        </div>
-                      ) : null}
-                      {selectedActivity.body ? (
-                        <div className="grid gap-1">
-                          <span className="font-medium text-foreground">Body</span>
-                          <code className="max-h-24 overflow-auto rounded bg-muted px-2 py-1 font-mono">{selectedActivity.body}</code>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-                </div>
-              </div>
-
-
-          </MonitoringDialog>
+                ),
+              },
+            ]}
+          />
         ) : null}
 
         {/* 2026-05-07 wave 1.3:容量超限交互式选择停哪些分支 + 自动重试 */}
@@ -5787,131 +5482,3 @@ function branchOriginBadge(branch: BranchSummary): { label: string; title: strin
   };
 }
 
-function QuickFilterButton({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs transition-colors ${
-        active
-          ? 'border-primary bg-primary text-primary-foreground'
-          : 'border-border bg-background text-muted-foreground hover:text-foreground'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function HealthMeter({
-  icon,
-  label,
-  value,
-}: {
-  icon: JSX.Element;
-  label: string;
-  value: number;
-}): JSX.Element {
-  const tone =
-    value >= 85
-      ? 'bg-destructive'
-      : value >= 70
-        ? 'bg-amber-500'
-        : 'bg-emerald-500';
-  return (
-    <div className="cds-surface-sunken cds-hairline px-3 py-2">
-      <div className="mb-2 flex min-w-0 items-center gap-2">
-        <span className="text-muted-foreground">{icon}</span>
-        <span className="min-w-0 truncate">{label}</span>
-        <span className="ml-auto font-mono text-foreground">{value}%</span>
-      </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-        <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function ExecutorNodeRow({
-  node,
-  actionLabel,
-  onDrain,
-  onRemove,
-}: {
-  node: ExecutorNodeSummary;
-  actionLabel?: string;
-  onDrain: () => void;
-  onRemove: () => void;
-}): JSX.Element {
-  const isEmbedded = node.role === 'embedded';
-  const memPercent = executorMemPercent(node);
-  const canDrain = !isEmbedded && node.status === 'online' && !actionLabel;
-  const canRemove = !isEmbedded && !actionLabel;
-  return (
-    <div className="cds-surface-sunken cds-hairline px-3 py-2 text-xs">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Network className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate font-medium text-foreground">{node.id}</span>
-          </div>
-          <div className="mt-1 truncate text-muted-foreground">
-            {node.host || 'local'}{node.port ? `:${node.port}` : ''} · {node.role || 'remote'}
-          </div>
-        </div>
-        <span className={`rounded border px-1.5 py-0.5 ${
-          node.status === 'online'
-            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
-            : node.status === 'draining'
-              ? 'border-amber-500/30 bg-amber-500/10 text-amber-600'
-              : 'border-destructive/30 bg-destructive/10 text-destructive'
-        }`}
-        >
-          {actionLabel || node.status}
-        </span>
-      </div>
-      <div className="mt-2 grid grid-cols-3 gap-2">
-        <MetricTile label="分支" value={node.branchCount || 0} />
-        <MetricTile label="CPU" value={`${node.load?.cpuPercent ?? 0}%`} />
-        <MetricTile label="内存" value={`${memPercent}%`} />
-      </div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <ConfirmAction
-          title={`排空执行器 ${node.id}？`}
-          description="它不会再接收新的分支部署，已有服务不会立即删除。"
-          confirmLabel="排空"
-          disabled={!canDrain}
-          onConfirm={onDrain}
-          trigger={(
-            <Button type="button" size="sm" variant="outline">
-              <PowerOff />
-              排空
-            </Button>
-          )}
-        />
-        <ConfirmAction
-          title={`移除执行器 ${node.id}？`}
-          description="只会从主节点注册表移除该节点，不会 SSH 到远端机器停止进程。在线节点可能会在下一次心跳后重新出现。"
-          confirmLabel="移除"
-          disabled={!canRemove}
-          onConfirm={onRemove}
-          trigger={(
-            <Button type="button" size="sm" variant="outline">
-              <Trash2 />
-              移除
-            </Button>
-          )}
-        />
-        {isEmbedded ? <span className="self-center text-muted-foreground">本机主执行器不可移除</span> : null}
-      </div>
-    </div>
-  );
-}
