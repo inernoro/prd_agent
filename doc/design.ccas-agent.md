@@ -1,6 +1,6 @@
-# 赋码采集关联智能体（CCAS Agent）设计
+# 赋码采集关联智能体（CCAS Agent）· 设计
 
-> **appKey**：`ccas-agent` | **状态**：已实现 | **路由**：`/ccas-agent`
+> **版本**：v1.0 | **日期**：2026-06-15 | **状态**：已落地 | **appKey**：`ccas-agent` | **路由**：`/ccas-agent`
 >
 > CCAS = 赋码采集关联（Code/Collect/Associate System）。聚焦产线赋码业务，提供三件套能力：PRD 文档生成 + 设备素材库 + 流程示意图。由魏喜胜主导开发。
 
