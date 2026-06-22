@@ -1558,6 +1558,53 @@ public class DocumentStoreController : ControllerBase
     // ─────────────────────────────────────────────
 
     /// <summary>
+    /// 单独上传一张图片到知识库资产存储（不创建条目），返回稳定可访问 URL，
+    /// 供报告/文档正文（Markdown 的 ![](url) 或 HTML 的 &lt;img src&gt;）直接引用。
+    /// 走统一的 IAssetStorage（由 ASSETS_PROVIDER 决定：local 占位 / cloudflareR2 / tencentCos），
+    /// SHA256 内容去重。解决"上传 HTML 报告时内嵌图片存不住、又没有单独传图入口"的问题。
+    /// </summary>
+    [HttpPost("stores/{storeId}/images")]
+    [RequestSizeLimit(MaxUploadBytes)]
+    public async Task<IActionResult> UploadImage(string storeId, [FromForm] IFormFile file, CancellationToken ct = default)
+    {
+        var (userId, _, _) = await GetActorWithAvatarAsync();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync(ct);
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要上传的图片"));
+        if (file.Length > MaxUploadBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"图片大小不能超过 {MaxUploadBytes / 1024 / 1024}MB"));
+
+        var mime = InferMime(file.ContentType, file.FileName);
+        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持上传图片文件"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        var stored = await _assetStorage.SaveAsync(
+            bytes, mime, ct,
+            domain: AppDomainPaths.DomainAssets,
+            type: AppDomainPaths.TypeImg,
+            fileName: file.FileName);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            url = stored.Url,
+            sha256 = stored.Sha256,
+            mime = stored.Mime,
+            sizeBytes = stored.SizeBytes,
+        }));
+    }
+
+    /// <summary>
     /// 上传文件到文档空间（multipart/form-data）。
     /// 文件存储到 IAssetStorage，文本内容提取后存到 ParsedPrd，
     /// 创建 DocumentEntry 关联 AttachmentId + DocumentId。
