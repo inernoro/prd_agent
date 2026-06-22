@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   TerminalSquare,
   Timer,
+  Users,
   Wrench,
 } from 'lucide-react';
 
@@ -23,6 +24,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const AccessKeysTab = lazy(() => import('@/pages/cds-settings/tabs/AccessKeysTab').then((m) => ({ default: m.AccessKeysTab })));
 const AuthTab = lazy(() => import('@/pages/cds-settings/tabs/AuthTab').then((m) => ({ default: m.AuthTab })));
+const UsersTab = lazy(() => import('@/pages/cds-settings/tabs/UsersTab').then((m) => ({ default: m.UsersTab })));
+const ActivityTab = lazy(() => import('@/pages/cds-settings/tabs/ActivityTab').then((m) => ({ default: m.ActivityTab })));
 const ClusterTab = lazy(() => import('@/pages/cds-settings/tabs/ClusterTab').then((m) => ({ default: m.ClusterTab })));
 const ConnectionsTab = lazy(() => import('@/pages/cds-settings/tabs/ConnectionsTab').then((m) => ({ default: m.ConnectionsTab })));
 const ConfigSnapshotsTab = lazy(() => import('@/pages/cds-settings/tabs/ConfigSnapshotsTab').then((m) => ({ default: m.ConfigSnapshotsTab })));
@@ -47,6 +50,8 @@ const StorageTab = lazy(() => import('@/pages/cds-settings/tabs/StorageTab').the
 type TabValue =
   | 'overview'
   | 'auth'
+  | 'users'
+  | 'activity'
   | 'access-keys'
   | 'github'
   | 'github-whitelist'
@@ -92,6 +97,8 @@ const tabGroups: TabGroup[] = [
     label: '接入',
     items: [
       { value: 'auth', label: '登录与认证', icon: KeyRound },
+      { value: 'users', label: '用户管理', icon: Users },
+      { value: 'activity', label: '用户痕迹', icon: Activity },
       { value: 'github', label: 'GitHub 集成', icon: Github },
       { value: 'github-whitelist', label: 'GitHub 白名单', icon: ShieldCheck },
       { value: 'webhook-log', label: 'Webhook 日志', icon: Activity },
@@ -198,6 +205,12 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="auth">
                   {activeTab === 'auth' ? <AuthTab /> : null}
+                </TabsContent>
+                <TabsContent value="users">
+                  {activeTab === 'users' ? <UsersTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="activity">
+                  {activeTab === 'activity' ? <ActivityTab /> : null}
                 </TabsContent>
                 <TabsContent value="access-keys">
                   {activeTab === 'access-keys' ? <AccessKeysTab onToast={setToast} /> : null}

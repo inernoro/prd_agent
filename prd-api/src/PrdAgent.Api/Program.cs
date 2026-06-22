@@ -364,6 +364,7 @@ builder.Services.AddHttpClient("McpLoopback", c =>
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreAssetNormalizer>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoMaterialProcessor>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ShortVideoMaterialWorker>();

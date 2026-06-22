@@ -39,6 +39,9 @@
 - [缺陷管理 Agent 产品方案](spec.defect-agent) `spec.defect-agent`
   > 缺陷管理 Agent 的产品需求与用户故事
 
+- [缺陷自动化协议](spec.defect-agent-automation-protocol) `spec.defect-agent-automation-protocol`
+  > domain + K、工作流端点、commit 回写、更新中心关联和发布后验收通知的稳定协议
+
 - [私人执行助理（PA Agent）产品方案](spec.pa-agent) `spec.pa-agent`
   > PA Agent 产品定位、Phase 1 能力与路线图，可独立下载评审
 
@@ -206,6 +209,9 @@
 
 - [CDS (Cloud Development Suite) 设计文档](design.cds) `design.cds`
   > 云开发套件的架构设计
+
+- [CDS 构建耗时与发布版/热加载机制设计](design.cds-build-time) `design.cds-build-time`
+  > 构建流水线时间去向、>10 分钟根因（Java 重复下载依赖 / buildTimeout 上限 / 自动发布双构建）、发布版 vs 热加载对照与自动发布介入时机
 
 - [CDS Agent API 契约设计](design.cds-agent-api) `design.cds-agent-api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
@@ -742,6 +748,12 @@
 
 - [CDS Agent 工作台 · 债务台账](debt.cds-agent) `debt.cds-agent`
   > 4 条 open：R1 商业级 provider 闭环 / Lite 只读模式能力边界 / CDS Agent 文档群熵减 / 无 profile 时 Lite 直跑
+- [CDS 多分支跨分支隔离 · 债务台账](debt.cds-branch-isolation) `debt.cds-branch-isolation`
+  > 2 条 open：同项目多分支共享一张网 + 裸服务别名 → DNS round-robin 串台（worker 调 ai 间歇命中旧分支 404）/ 共享 Redis + BullMQ 无分支前缀 → 别分支旧 worker 抢 job；触发=多服务+多分支并存+代码不一致
+- [CDS 后端部署冻结 · 分支 api 跑旧代码](debt.cds-backend-deploy-freeze) `debt.cds-backend-deploy-freeze`
+  > open（阻塞）：构建成功≠运行新代码，后端 .cs 改动进不到运行进程；图生视频下载鲁棒修复 + 额度用尽主动提醒已就绪待部署修好后复验
+- [视觉分镜台 · 债务台账](debt.visual-storyboard) `debt.visual-storyboard`
+  > open：OpenRouter 出图画幅(size/image_config)+modalities 需按模型能力派生 / 拆镜改 SSE 流式逐镜吐出 / 关键帧 ImageGenRun 离场取消（SSE 无同步 runId）
 
 - [MD 转网页 PPT · 债务台账](debt.md-to-ppt) `debt.md-to-ppt`
   > 2 条 open：预览 iframe same-origin 安全债（重构时从隔离源渲染）/ 知识库注入 CDS Agent 会话未实现（UI 已禁用占位）
@@ -966,6 +978,8 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-06-19 | 新增 | `debt.visual-storyboard` | 视觉分镜台债务台账：OpenRouter 出图画幅/modalities 按能力派生 + 拆镜 SSE 流式 + 关键帧 ImageGenRun 离场取消 |
+| 2026-06-19 | 新增 | `debt.cds-backend-deploy-freeze` | CDS 后端部署冻结台账：分支 api 跑旧代码（构建成功≠运行新代码）+ 图生视频下载修复/额度提醒待部署复验 |
 | 2026-06-04 | 新增 | `report.tutorial-coverage` `debt.onboarding-tips` | 页面教程系统统一升级:全量路由覆盖审计 + 债务台账(video-agent/薄教程加厚/编辑器/跨页待补) |
 | 2026-06-02 | 新增 | `design.agent-universe` `debt.agent-universe` | 智能体宇宙设计（能力契约 + 调用信封）与债务台账 |
 | 2026-06-02 | 新增 | `design.cds-visual-deploy` `guide.cds-one-click-deploy` `report.cds-visual-deploy` `debt.cds-visual-deploy` | CDS 绝对可视化一键部署收尾:设计(含架构图)+使用教程+完整报告+债务台账;`plan.cds-visual-deploy` 状态更新为核心收尾 |
@@ -1053,4 +1067,5 @@
 | 2026-06-10 | 新增 | `debt.cds-nginx-loading-pages` | CDS loading pages 债务台账 |
 | 2026-06-10 | 新增 | `design.cds-skill-version-update` | CDS 技能版本与更新架构 |
 | 2026-06-10 | 新增 | `plan.product-agent-version-workflow` | 产品管理智能体版本流程整改计划 |
+| 2026-06-20 | 新增 | `design.team-activity-voc` | 团队动态·用户体验之声(VOC) 设计（treemap + 痛点指数 + 闭环 + 设计思想） |
 | 2026-06-11 | 新增 | `report.version-20260610-1-summary` | version-20260610-1 分支改动说明 |

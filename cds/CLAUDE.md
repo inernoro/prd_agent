@@ -190,3 +190,5 @@ cds/
 | `.claude/rules/bridge-ops.md` | `cds/src/routes/bridge.ts` | URL path 位置 + description 必填 + spa-navigate |
 | `.claude/rules/cds-auto-deploy.md` | 已 link GitHub 的项目 | push 即部署，不再手动 /cds-deploy |
 | `.claude/rules/quickstart-zero-friction.md` | `exec_cds.sh` | 一键启动包办所有依赖 |
+| `.claude/rules/content-fills-canvas.md` | `cds/web/src/**/*.tsx`, `cds/web/src/index.css` | 内容填满画布：预览/详情/结果区必须 flex-1 填满占主导，禁小盒子 + 大片留白；高度从外壳（`.cds-workspace--fill`）一路传到产物 |
+| `.claude/rules/expectation-management.md` | 任何用户感知的交互/等待/反馈 | 预期管理总纲：让用户随时知道在做什么/还要多久/接下来怎样/变了什么；CDS 的 ETA 等待页、构建进度即其落地 |

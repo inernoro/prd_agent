@@ -1,0 +1,4 @@
+interface:
+  display_name: "验收场景编排"
+  short_description: "按每日、PR、commit、未发布分支、缺陷复测等场景编排视觉验收策略。"
+  default_prompt: "根据当前验收目标识别场景，生成证据链、指差法步骤、截图回读和报告结构，再调用 create-visual-test-to-kb 完成归档。"

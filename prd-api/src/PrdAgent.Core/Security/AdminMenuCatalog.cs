@@ -34,7 +34,7 @@ public static class AdminMenuCatalog
         // ── 系统管理 (admin) ──
         new("mds", "/mds", "模型中心", "模型、提示词与实验室", "Cpu", 50, "admin"),
         new("users", "/users", "用户权限", "用户与角色管理", "Users", 60, "admin"),
-        new("team-activity", "/team-activity", "团队动态", "全员工作动态时间线", "Activity", 65, "admin"),
+        new("team-activity", "/team-activity", "VOC", "行为洞察（VOC）+ 全员工作动态时间线", "Activity", 65, "admin"),
         new("settings", "/settings", "设置", "账户、皮肤与导航设置", "Settings", 70, "admin"),
 
         // ── 头像面板 (无 Group，不在侧边栏显示) ──

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/design/Button';
 import { Surface } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
 import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
+import { getDefect } from '@/services';
 import { DefectStatus } from '@/services/contracts/defectAgent';
 import { Bot, Bug, Plus, FileText, RefreshCw, LayoutGrid, List, Columns3, BarChart3, FolderKanban } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -30,6 +32,8 @@ export default function DefectAgentPage() {
     filter,
     setFilter,
     selectedDefectId,
+    setSelectedDefectId,
+    addDefectToList,
     showSubmitPanel,
     setShowSubmitPanel,
     showTemplateDialog,
@@ -50,7 +54,10 @@ export default function DefectAgentPage() {
   const [showProjectDialog, setShowProjectDialog] = useState(false);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   const [showAutomationPanel, setShowAutomationPanel] = useState(false);
+  const [searchParams] = useSearchParams();
   const notifiedRef = useRef(false);
+  const directLoadRef = useRef<string | null>(null);
+  const queryDefectId = searchParams.get('defectId');
 
   // 与 DefectList 一致的客户端过滤逻辑，计算当前可见的缺陷 ID
   const visibleDefectIds = useMemo(() => {
@@ -70,8 +77,55 @@ export default function DefectAgentPage() {
   }, [defects, filter, userId, searchQuery]);
 
   useEffect(() => {
+    if (queryDefectId && filter !== 'all') {
+      setFilter('all');
+      return;
+    }
     void loadAll();
-  }, [loadAll]);
+  }, [filter, loadAll, queryDefectId, setFilter]);
+
+  useEffect(() => {
+    if (!queryDefectId || loading) return;
+    const target = defects.find((d) => d.id === queryDefectId || d.defectNo === queryDefectId);
+    if (target) {
+      if (selectedDefectId !== target.id) {
+        setSelectedDefectId(target.id);
+      }
+      setViewMode('list');
+      directLoadRef.current = null;
+      return;
+    }
+
+    if (directLoadRef.current === queryDefectId) return;
+    directLoadRef.current = queryDefectId;
+
+    let cancelled = false;
+    void (async () => {
+      const res = await getDefect({ id: queryDefectId });
+      if (cancelled) return;
+
+      if (res.success && res.data?.defect) {
+        const defect = res.data.defect;
+        addDefectToList(defect);
+        setSelectedDefectId(defect.id);
+        setViewMode('list');
+      } else {
+        toast.error(res.error?.message || '缺陷详情加载失败');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    addDefectToList,
+    defects,
+    loading,
+    queryDefectId,
+    selectedDefectId,
+    setSelectedDefectId,
+    setViewMode,
+  ]);
 
   // 显示待处理缺陷的通知（每次会话显示一次）
   useEffect(() => {
