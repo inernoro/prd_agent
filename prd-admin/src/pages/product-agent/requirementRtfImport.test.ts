@@ -55,6 +55,19 @@ describe('parseRequirementRtfBytes', () => {
     expect(parsed[1].sourceStatus).toBe('已上线');
   });
 
+  it('parses paired field rows when the trailing value cell is empty', () => {
+    const input = String.raw`{\rtf1\ansi
+      \intbl ID\cell 1007159\cell\cell\cell\row
+      \intbl \u12304?\u30707?\u28286?\u12305?\u31388?\u36135?\u20998?\u26512?\cell\row
+      \intbl \u29366?\u24577?\cell \u24453?\u35780?\u23457?\cell \u20248?\u20808?\u32423?\cell High\cell\row
+      \intbl \u20998?\u31867?\cell \u38450?\u31388?\u29289?\u27969?\cell \u19994?\u21153?\u20215?\u20540?\cell\cell\row
+      \intbl \u35814?\u32454?\u25551?\u36848?\cell \u27491?\u25991?\cell\row
+    }`;
+    const parsed = parseRequirementRtfBytes(rtf(input), 'category.rtf');
+    expect(parsed[0].fields.分类).toBe('防窜物流');
+    expect(parsed[0].sourcePriority).toBe('High');
+  });
+
   it('replaces import image markers in html', () => {
     expect(replaceImportImageMarkers(
       '<p>正文</p><p data-import-image="0"></p>',

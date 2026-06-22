@@ -31,8 +31,8 @@ export type VersionWorkflowImportRow = {
   sourceRow: number;
 };
 
-const RELEASE_HINTS = ['正式版本号', 'v号', 'v 号', '上线号', '上线公告'];
-const INITIATION_HINTS = ['立项号', 't立项号', 't 立项号', '第一稿', '开发状态'];
+const RELEASE_HINTS = ['正式版本号', 'v号', 'v 号', '上线号', '上线时间', '上线日期', '上线公告'];
+const INITIATION_HINTS = ['立项号', 't立项号', 't 立项号', '第一稿', '立项时间', '开发状态'];
 
 function cellStr(value: unknown): string {
   if (value == null) return '';
@@ -157,8 +157,8 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     ? indexOfHeader(headers, '内部版本号', 't立项号', 't 立项号', '立项号', 't号')
     : -1;
   const dateIndex = kind === 'release'
-    ? indexOfHeader(headers, '上线日期', '实际上线时间', '计划上线时间', '上线时间', '日期')
-    : indexOfHeader(headers, '立项时间', '立项时间（三稿通过）', '三稿通过');
+    ? indexOfHeader(headers, '上线时间', '上线日期', '实际上线时间', '计划上线时间', '日期')
+    : indexOfHeader(headers, '立项时间（三稿通过）', '立项时间', '三稿通过');
   const firstDraftIndex = indexOfHeader(headers, '第一稿会议时间', '第一稿');
   const secondDraftIndex = indexOfHeader(headers, '第二稿会议时间', '第二稿');
   const thirdDraftIndex = indexOfHeader(headers, '第三稿会议时间', '第三稿');

@@ -14,6 +14,8 @@ import {
   type RtfImportRequirement,
 } from './requirementRtfImport';
 import { REQUIREMENT_SOURCE_RTF } from './requirementSource';
+import { applyFallbackProductToRows, promoteRequirementCategoryToProductField, rowHasExplicitProductRouteField } from './requirementImportRouting';
+import type { Product } from './types';
 
 interface ParsedRequirementItem {
   file: File;
@@ -30,22 +32,25 @@ interface ParsedFile {
 
 export function RequirementRtfImportDialog({
   productId,
+  products = [],
   files,
   onClose,
   onImported,
   crossProductRoute = false,
 }: {
   productId: string;
+  products?: Product[];
   files: File[];
   onClose: () => void;
   onImported: () => Promise<void>;
   crossProductRoute?: boolean;
 }) {
+  const [fallbackProductId, setFallbackProductId] = useState(productId);
   const [parsedFiles, setParsedFiles] = useState<ParsedFile[]>([]);
   const [parsing, setParsing] = useState(true);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState('');
-  const [result, setResult] = useState<{ created: number; updated: number; skippedImages: number } | null>(null);
+  const [result, setResult] = useState<{ created: number; updated: number; skipped: number; skippedImages: number; unmatched?: unknown[] } | null>(null);
   const [imageWarnings, setImageWarnings] = useState<string[]>([]);
 
   const validItems = useMemo(
@@ -53,6 +58,15 @@ export function RequirementRtfImportDialog({
     [parsedFiles],
   );
   const totalRequirementCount = validItems.length;
+  const fallbackProduct = useMemo(
+    () => products.find((product) => product.id === fallbackProductId),
+    [fallbackProductId, products],
+  );
+  const shouldShowFallbackProductPicker = crossProductRoute
+    && totalRequirementCount > 0
+    && validItems.every((item) => !rowHasExplicitProductRouteField({
+      sourceFields: promoteRequirementCategoryToProductField(item.requirement.fields),
+    }));
 
   useEffect(() => {
     let active = true;
@@ -175,7 +189,7 @@ export function RequirementRtfImportDialog({
         externalId: requirement.externalId,
         sourceStatus: requirement.sourceStatus,
         sourcePriority: requirement.sourcePriority,
-        sourceFields: requirement.fields,
+        sourceFields: promoteRequirementCategoryToProductField(requirement.fields),
         handlerNames: requirement.handlerNames,
         developerNames: requirement.developerNames,
         creatorNames: requirement.creatorNames,
@@ -190,9 +204,19 @@ export function RequirementRtfImportDialog({
       });
     }
 
-    setProgress(`正在写入 ${rows.length} 条需求`);
+    const rowsToImport = shouldShowFallbackProductPicker
+      ? applyFallbackProductToRows(rows, fallbackProduct?.name)
+      : rows;
+
+    if (crossProductRoute && rowsToImport.every((row) => !rowHasExplicitProductRouteField(row))) {
+      setImporting(false);
+      setProgress('无法导入：文件没有「应用/产品/所属产品/分类」字段，请选择默认归属产品后再导入。');
+      return;
+    }
+
+    setProgress(`正在写入 ${rowsToImport.length} 条需求`);
     const imported = crossProductRoute
-      ? await importOverviewRequirements(rows)
+      ? await importOverviewRequirements(rowsToImport)
       : await importRequirements(productId, rows);
     setImporting(false);
     if (!imported.success) {
@@ -203,10 +227,21 @@ export function RequirementRtfImportDialog({
     setResult({
       created: imported.data.created,
       updated: imported.data.updated ?? 0,
+      skipped: imported.data.skipped ?? 0,
+      unmatched: imported.data.unmatched,
       skippedImages: skippedImageCount,
     });
     setImageWarnings(warningMessages.slice(0, 8));
-    setProgress(skippedImageCount > 0 ? `导入完成，${skippedImageCount} 张图片未上传（需求正文已去除对应占位）` : '');
+    const created = imported.data.created ?? 0;
+    const updated = imported.data.updated ?? 0;
+    const skipped = imported.data.skipped ?? 0;
+    setProgress(
+      created + updated > 0
+        ? (skippedImageCount > 0 ? `导入完成，${skippedImageCount} 张图片未上传（需求正文已去除对应占位）` : '导入完成，列表已刷新。')
+        : skipped > 0
+          ? `未写入任何需求：${skipped} 条因未匹配系统产品被跳过。`
+          : '未写入任何需求，请检查文件内容或归属产品。',
+    );
     await onImported();
   };
 
@@ -235,6 +270,20 @@ export function RequirementRtfImportDialog({
             </div>
           ) : (
             <div className="flex flex-col gap-3">
+              {totalRequirementCount === 0 && failedFileCount === 0 && (
+                <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-100/90">
+                  没有从 RTF 中识别到需求记录。请确认文件是 TAPD / 需求池导出的需求详情 RTF，而不是列表页、空文件或被截断的富文本。
+                </div>
+              )}
+              {shouldShowFallbackProductPicker && (
+                <label className="rounded-lg border border-amber-400/20 bg-amber-400/5 p-3">
+                  <span className="mb-1.5 block text-xs font-medium text-amber-100/80">RTF 未包含「应用/产品/分类」字段，请选择默认归属产品</span>
+                  <select value={fallbackProductId} onChange={(event) => setFallbackProductId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#171a20] px-3 py-2 text-sm text-white outline-none">
+                    {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                  </select>
+                  <span className="mt-1.5 block text-[11px] text-white/40">提交时会把这里选择的产品写入所有未带产品字段的 RTF 需求。</span>
+                </label>
+              )}
               {parsedFiles.map((item) => (
                 <div key={`${item.file.name}-${item.file.lastModified}`} className="rounded-lg border border-white/10 bg-white/[0.025] p-3.5">
                   {item.error ? (
@@ -282,7 +331,13 @@ export function RequirementRtfImportDialog({
           {result && (
             <div className="mb-3 text-xs text-emerald-200">
               导入完成：新增 {result.created} 条，更新 {result.updated} 条
+              {result.skipped > 0 ? `，跳过 ${result.skipped} 条` : ''}
               {result.skippedImages > 0 ? `，跳过 ${result.skippedImages} 张图片` : ''}。
+            </div>
+          )}
+          {result && result.created + result.updated === 0 && (
+            <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
+              没有写入任何需求。{result.skipped > 0 ? '原因：所有记录都未匹配到系统产品。请确认文件中的「分类」值能匹配系统产品，或选择默认归属产品。' : '请检查 RTF 是否为 TAPD 需求导出格式。'}
             </div>
           )}
           {imageWarnings.length > 0 && (
@@ -307,7 +362,7 @@ export function RequirementRtfImportDialog({
               {!result && (
                 <button
                   onClick={() => void runImport()}
-                  disabled={parsing || importing || totalRequirementCount === 0}
+                  disabled={parsing || importing || totalRequirementCount === 0 || (shouldShowFallbackProductPicker && !fallbackProductId)}
                   className="px-4 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/35 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40 flex items-center gap-1.5"
                 >
                   {importing ? <MapSpinner size={14} /> : <Upload size={14} />}
