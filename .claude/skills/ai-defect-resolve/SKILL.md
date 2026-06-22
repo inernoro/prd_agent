@@ -161,7 +161,7 @@ Content-Type: application/json
 }
 ```
 
-`workflow/block(stopRun=false)` 返回 `next` 时，必须继续调用 `next` 里的 `workflow/start-next`。只有重量级、高风险、无法自测、需要产品确认或会造成破坏性变更的缺陷，才允许 `stopRun=true` 停止整轮运行。
+`workflow/block(stopRun=false)` 返回 `next` 时，必须继续调用 `next` 里的 `workflow/start-next`。兼容旧服务端：如果响应只有 `nextAction=start-next` 但没有 `next` 字段，就用同一个 `runId` 调用 `POST /api/defect-agent/agent/workflow/start-next`。只有重量级、高风险、无法自测、需要产品确认或会造成破坏性变更的缺陷，才允许 `stopRun=true` 停止整轮运行。
 
 ### 3. 发表评论
 
@@ -280,7 +280,7 @@ Content-Type: application/json
 
 `workflow/block` 会把缺陷状态切到 `awaiting`。日常任务默认状态过滤是 `submitted,assigned,processing`，因此被阻塞缺陷不会在下一轮自动反复领取；需要人工补充或重新提交后再进入自动化队列。
 
-`workflow/block(stopRun=false)` 会返回下一次 `workflow/start-next` 入参。每日任务必须继续调用该入参，直到 `start-next` 返回 `hasNext=false`。
+`workflow/block(stopRun=false)` 会返回下一次 `workflow/start-next` 入参。兼容旧服务端：如果没有 `next` 字段但 `nextAction=start-next`，用同一个 `runId` 手动调用 `workflow/start-next`。每日任务必须继续调用，直到 `start-next` 返回 `hasNext=false`。
 
 ## 正式发布后的验收通知
 
