@@ -70,7 +70,7 @@ interface BranchDetailData {
   /** 2026-05-14: 最近一次停止的时间戳与原因，drawer 顶部用它解释"分支变灰"。 */
   lastStoppedAt?: string;
   lastStopReason?: string;
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   deployCount?: number;
   pullCount?: number;
   stopCount?: number;
@@ -1819,6 +1819,8 @@ export function BranchDetailDrawer({
                                   : branch.lastStopSource === 'scheduler' ? '调度器'
                                   : branch.lastStopSource === 'executor' ? '执行器'
                                   : branch.lastStopSource === 'cds' ? 'CDS'
+                                  : branch.lastStopSource === 'webhook' ? 'Webhook'
+                                  : branch.lastStopSource === 'ai' ? 'AI'
                                   : branch.lastStopSource === 'oom' ? 'OOM'
                                   : branch.lastStopSource === 'external' ? '外部'
                                   : branch.lastStopSource === 'crash' ? '崩溃'

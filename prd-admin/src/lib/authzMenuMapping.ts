@@ -71,7 +71,7 @@ export const menuList: MenuDef[] = [
   },
   {
     appKey: 'team-activity',
-    label: '团队动态',
+    label: 'VOC',
     icon: 'Activity',
     permissions: ['team-activity.read'],
   },

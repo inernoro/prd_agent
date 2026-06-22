@@ -15,10 +15,12 @@ set -eu
 #   SKIP_VERIFY=1 ./exec_dep.sh  # 同上，环境变量方式
 #
 # 可选环境变量：
-#   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO 组装 :latest）
+#   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO 组装 :latest，并优先走 get.miduo.org 镜像代理）
+#   - API_PULL_TIMEOUT_SECONDS：后端镜像拉取超时时间，默认 30 秒
+#   - SKIP_API_PULL=1：跳过后端镜像拉取，仅更新静态站点并重建 compose
 #   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
 #   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
-#   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认 https://<owner>.github.io/<repo>/）
+#   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认优先走 get.miduo.org 代理）
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
 
 # 只维护一个版本：latest（任何参数都按 latest 处理）
@@ -53,7 +55,7 @@ REPO_NAME="${REPO##*/}"
 
 # 默认后端镜像（latest 一键部署）
 if [ -z "${PRD_AGENT_API_IMAGE:-}" ]; then
-  export PRD_AGENT_API_IMAGE="ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:latest"
+  export PRD_AGENT_API_IMAGE="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:latest"
 fi
 
 if command -v docker-compose >/dev/null 2>&1; then
@@ -75,7 +77,7 @@ sha_url=""
 if [ -n "${DIST_URL:-}" ]; then
   asset_url="$DIST_URL"
 else
-  pages_base="${PAGES_BASE_URL:-https://${OWNER}.github.io/${REPO_NAME}}"
+  pages_base="${PAGES_BASE_URL:-https://get.miduo.org/https://${OWNER}.github.io/${REPO_NAME}}"
   asset_url="${pages_base%/}/prd-admin-dist-latest.zip"
   sha_url="${pages_base%/}/prd-admin-dist-latest.zip.sha256"
 fi
@@ -262,13 +264,22 @@ ensure_ffmpeg() {
 
 ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
 
-echo "Pulling latest api image..."
-$COMPOSE pull api
+if [ -n "${SKIP_API_PULL:-}" ]; then
+  echo "Skipping api image pull (SKIP_API_PULL=1)"
+else
+  echo "Pulling latest api image..."
+  pull_timeout_seconds="${API_PULL_TIMEOUT_SECONDS:-30}"
+  if command -v timeout >/dev/null 2>&1; then
+    if ! timeout "$pull_timeout_seconds" $COMPOSE pull api; then
+      echo "WARN: api image pull skipped or timed out after ${pull_timeout_seconds}s; continuing with existing local image" >&2
+    fi
+  elif ! $COMPOSE pull api; then
+    echo "WARN: api image pull failed; continuing with existing local image" >&2
+  fi
+fi
 
 echo "Ensuring Docker network exists..."
 docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
 
 echo "Starting compose (force recreate to ensure new image is used)..."
 $COMPOSE up -d --force-recreate
-
-

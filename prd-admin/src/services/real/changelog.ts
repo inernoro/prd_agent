@@ -81,6 +81,23 @@ export interface GitHubCoAuthor {
   matchedDisplayName?: string | null;
 }
 
+export interface GitHubLinkedDefect {
+  traceId: string;
+  defectId: string;
+  defectNo?: string | null;
+  defectTitle?: string | null;
+  reporterName?: string | null;
+  isSubmittedByMe?: boolean;
+  fixStatus: string;
+  publishStatus: 'unknown' | 'pending' | 'published' | string;
+  previewUrl?: string | null;
+  visualReportUrl?: string | null;
+  knowledgeBaseUrl?: string | null;
+  pullRequestNumber?: number | null;
+  pullRequestUrl?: string | null;
+  commitSha: string;
+}
+
 export interface GitHubLogEntry {
   sha: string;
   shortSha: string;
@@ -95,6 +112,8 @@ export interface GitHubLogEntry {
   matchedDisplayName?: string | null;
   /** Co-authored-by 联合作者（已剔除与主作者同人），每位同样带系统用户匹配结果 */
   coAuthors?: GitHubCoAuthor[];
+  /** 与该 commit 关联的缺陷修复记录 */
+  linkedDefects?: GitHubLinkedDefect[];
 }
 
 export interface GitHubLogsView {

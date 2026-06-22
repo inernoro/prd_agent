@@ -28,6 +28,7 @@ import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
+import { buildCacheMounts } from '../services/cache-catalog.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
@@ -574,14 +575,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   }
 
   function defaultCacheMountsFor(image: string): BuildProfile['cacheMounts'] {
-    const cacheBase = stateService.getCacheBase();
-    const mounts: NonNullable<BuildProfile['cacheMounts']> = [];
-    if (image.includes('node')) {
-      mounts.push({ hostPath: `${cacheBase}/pnpm`, containerPath: '/pnpm/store' });
-    }
-    if (image.includes('dotnet')) {
-      mounts.push({ hostPath: `${cacheBase}/nuget`, containerPath: '/root/.nuget/packages' });
-    }
+    // SSOT: services/cache-catalog.ts。覆盖 node/dotnet/java(.m2+.gradle)/go/rust/python，
+    // 新增栈只改 catalog 一处。Java 缓存挂载固化后不再每次重新下载依赖（任务 3）。
+    const mounts = buildCacheMounts(image, stateService.getCacheBase());
     return mounts.length > 0 ? mounts : undefined;
   }
 
@@ -1072,8 +1068,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * with no obvious path forward.
    */
   function composeFallbackDetection(repoPath: string): StackDetection | null {
-    const fs = require('node:fs') as typeof import('node:fs');
-    const path = require('node:path') as typeof import('node:path');
+    // 2026-06-20：ESM 模块运行时无 require()，原先 require('node:fs'/'node:path')
+    // 真实运行会抛 "require is not defined"。复用文件顶部已 import 的 nodeFs/nodePath。
+    const fs = nodeFs;
+    const path = nodePath;
     const composeNames = [
       'docker-compose.yml',
       'docker-compose.yaml',

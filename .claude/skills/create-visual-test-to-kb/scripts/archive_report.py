@@ -2,8 +2,9 @@
 """MAP 验收 · 报告归档（项目无关，配置驱动，双模式）。
 
 两种输出模式（由 acceptance.config.json 的 report.mode 决定）：
-  - doc-store：上传截图 → 删图条目(保URL) → 找/建报告库 → 建条目(正文以 # 标题
-    打头,根治目录 `---`) → 写正文 → 出分享短链。需要文档空间 API + AI 密钥。
+  - doc-store：找/建报告库 → 建条目(正文以 # 标题打头,根治目录 `---`)
+    → 一次性提交正文 + assets[]，由知识库后端资产化图片并重写图链 → 出分享短链。
+    需要文档空间 API + AI 密钥。
   - local：把报告写成本地 md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
     适合没有文档空间的仓库。
 
@@ -19,7 +20,7 @@
 依赖 env（仅 doc-store 模式）：见 config.auth.api（默认 AI_ACCESS_KEY + MAP_AI_USER）。
 local 模式不读任何 env、不发任何网络请求。
 """
-import argparse, json, os, subprocess, datetime, re, shutil, time
+import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile
 from pathlib import Path
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
@@ -38,6 +39,28 @@ def curl(args, retries=5):
             if i < retries - 1:
                 time.sleep(3 * (i + 1)); continue
     print("RAW(重试后仍失败):", (last or "")[:200]); raise RuntimeError("curl 返回非 JSON（多为预览环境 524/重启）")
+
+
+def curl_json(headers, method, url, payload, retries=5):
+    """通过临时文件发送 JSON，避免截图 base64 过大触发系统 argv 长度限制。"""
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as f:
+        json.dump(payload, f, ensure_ascii=False)
+        tmp = f.name
+    try:
+        return curl(headers + ["-H", "Content-Type: application/json", "-X", method, "--data-binary", f"@{tmp}", url], retries=retries)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def data_or_raise(resp, context):
+    if not isinstance(resp, dict) or not resp.get("success", True):
+        raise RuntimeError(f"{context} 失败：{json.dumps(resp, ensure_ascii=False)[:500]}")
+    if "data" not in resp or resp.get("data") is None:
+        raise RuntimeError(f"{context} 响应缺少 data：{json.dumps(resp, ensure_ascii=False)[:500]}")
+    return resp["data"]
 
 
 def preview_from_cmd(cmd):
@@ -136,13 +159,20 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     api = cfg["auth"]["api"]
     # 简便方式（推荐）：设 MAP_DOC_STORE_KEY=sk-ak-...（带 document-store:write scope 的最小权限长效 Key），
     # 走 Authorization: Bearer，无需 impersonate、无需 AI 超级密钥。
+    # 正式环境临时兜底可设 MAP_DOC_STORE_JWT=ey...（登录态 Bearer）。
     # 未设时回退 AI 超级密钥 + X-AI-Impersonate（向后兼容）。
     agent_key_env = api.get("agentKeyEnv", "MAP_DOC_STORE_KEY")
     agent_key = os.environ.get(agent_key_env, "").strip()
+    jwt_env = api.get("jwtEnv", "MAP_DOC_STORE_JWT")
+    jwt = os.environ.get(jwt_env, "").strip()
     if agent_key:
         H = ["-H", f"Authorization: Bearer {agent_key}"]
         imp = os.environ.get(api.get("impersonateEnv", ""), "") or "(scoped-key-owner)"
         print(f"  鉴权：AgentApiKey scope（{agent_key_env}，最小权限 document-store:write）")
+    elif jwt:
+        H = ["-H", f"Authorization: Bearer {jwt}"]
+        imp = os.environ.get(api.get("impersonateEnv", ""), "") or "(jwt-user)"
+        print(f"  鉴权：登录态 Bearer（{jwt_env}，正式环境临时兜底）")
     else:
         key = os.environ[api["keyEnv"]]
         imp = os.environ[api["impersonateEnv"]]
@@ -154,7 +184,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     store_name = cfg["report"]["storeName"]
     want_public = bool(cfg["report"].get("isPublic", False))
     want_template = cfg["report"].get("templateKey")
-    stores = curl(H + [f"{base}/stores?pageSize=100"])["data"]["items"]
+    stores = data_or_raise(curl(H + [f"{base}/stores?pageSize=100"]), "列出知识库")["items"]
     match = [s for s in stores if s["name"] == store_name]
     if match:
         rid = match[0]["id"]
@@ -171,26 +201,37 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
             curl(HJ + ["-X", "PUT", "-d", json.dumps({"templateKey": want_template}), f"{base}/stores/{rid}"])
             print(f"  复用库缺 templateKey，已补设为 {want_template}（让最新报告排最前）")
     else:
-        rid = curl(HJ + ["-X", "POST", "-d", json.dumps(
+        rid = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps(
             {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
              "isPublic": want_public,
              # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance-kb.md §5.B）。
              # 机器归档缺必填 metadata/正文 section 会被后端 422 拒收。
              "templateKey": want_template}
-        ), f"{base}/stores"])["data"]["id"]
+        ), f"{base}/stores"]), "创建知识库")["id"]
     print(f"  报告库 id={rid}")
 
-    url_map = {}
+    # 一次性知识库传输协议：
+    # - 正文仍用 {{IMG:name}} 或 {{EVIDENCE}} 表达结构。
+    # - 截图 bytes 随 PUT /content 的 assets[] 一次提交。
+    # - 后端负责上传正式资产、重写 Markdown 图片 URL、写 ParsedPrd 与刷新 document 缓存。
+    # 这样技能不再猜图片域名，也不会留下 data:image 破图或“上传临时图条目再删除”的中间状态。
+    evidence = "\n\n".join(f"**{m['caption']}**\n\n{{{{IMG:{m['name']}}}}}" for m in manifest)
+    assets = []
     for m in manifest:
-        d = curl(H + ["-F", f"file=@{m['path']}", f"{base}/stores/{rid}/upload"])["data"]
-        url_map[m["name"]] = d["fileUrl"]
-        curl(H + ["-X", "DELETE", f"{base}/entries/{d['entry']['id']}"])
-        print(f"  上传+清理 {m['name']} -> {d['fileUrl']}")
+        with open(m["path"], "rb") as f:
+            data = base64.b64encode(f.read()).decode("ascii")
+        assets.append({
+            "name": m["name"],
+            "caption": m["caption"],
+            "mime": "image/png",
+            "base64": data,
+            "fileName": f"{m['name']}.png",
+            "extensionHint": "png",
+        })
+        print(f"  准备一次性图片资产 {m['name']} ({os.path.getsize(m['path'])}B)")
 
-    evidence = "\n\n".join(f"**{m['caption']}**\n\n![{m['caption']}]({url_map[m['name']]})" for m in manifest)
-    img_md = {m["name"]: f"![{m['caption']}]({url_map[m['name']]})" for m in manifest}
     meta = build_meta(report_id, now, imp, a, preview)
-    content = assemble(title, body, evidence, meta, img_md)
+    content = assemble(title, body, evidence, meta)
 
     # metadata：结论可视(前端按 verdict 渲染绿/琥珀/红徽章) + 跨环境同步幂等(reportId 去重)。
     # kind=acceptance-report 让后端模板校验对本次写入"硬卡"(缺项 422 而非软放行)。
@@ -206,12 +247,12 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     # 配合库的 created-desc 排序，新报告永远在最顶。曾经按模块自动建子文件夹，
     # 反而把最新报告藏进文件夹、与"最新最前"打架，已撤销。
     # （原始诉求 Q5 问的是"验收报告是否独立成库"，是库级隔离，不是库内再分子文件夹。）
-    eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
+    eid = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
         "sourceType": "reference", "contentType": "text/markdown",
         "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
         "metadata": entry_meta,
-    }), f"{base}/stores/{rid}/entries"])["data"]["id"]
+    }), f"{base}/stores/{rid}/entries"]), "创建知识库条目")["id"]
     print(f"  报告条目 id={eid} title={title} tags={tags or []}")
     # 防「断头报告」：标题建了但 PUT 524 丢了正文 → 留下能看到标题、点开却空白的空壳条目。
     # PUT 本身可能 524 抛错（curl 重试耗尽），也可能返回了但正文没落库 → 两种都得兜住：
@@ -223,11 +264,19 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
             return False
     ok = False
     try:
-        w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
+        w = curl_json(H, "PUT", f"{base}/entries/{eid}/content", {
+            "content": content,
+            "assets": assets,
+            "assetDomain": cfg["report"].get("assetDomain"),
+        })
         print(f"  写正文 success={w.get('success')}")
         ok = _has_content()
         if not ok:  # 返回了但没落库 → 再写一次
-            curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
+            curl_json(H, "PUT", f"{base}/entries/{eid}/content", {
+                "content": content,
+                "assets": assets,
+                "assetDomain": cfg["report"].get("assetDomain"),
+            })
             ok = _has_content()
     except Exception as e:  # PUT 抛错（524 重试耗尽）；先确认是否其实写进去了
         print(f"  写正文异常：{str(e)[:120]}")
@@ -244,8 +293,8 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     owner_view = "登录后 知识库 → 「" + store_name + "」库 → 本篇（授权路径,正文+截图完整渲染,本人验收用）"
     share_url = None
     try:
-        tok = curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
-                         f"{base}/stores/{rid}/share-links"])["data"]["token"]
+        tok = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
+                         f"{base}/stores/{rid}/share-links"]), "创建分享链接")["token"]
         # 正确路由(实测 2026-05-27)：App.tsx 是 /s/lib/:token，旧 /library/share/ 会落到首页。
         # 带 ?entry={eid}(2026-05-28)：让分享对象一打开就高亮本次归档的新报告，不用在目录里翻找。
         # LibraryShareViewPage 读 useSearchParams('entry')，优先级最高(高于 view.entryId / primaryEntryId / 最新创建)。
@@ -266,8 +315,145 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
 
 # ── 准入门槛（入口准则，见 standard-v2.md §3.5）：输入不达标直接拒收 ──
 TIER_MIN_SHOTS = {"L0": 1, "L1": 3, "L2": 5}
+DEEP_DAILY_MIN_SHOTS = 12
 JUNK_TARGETS = {"test", "测试", "xxx", "demo", "tmp", "临时", "aaa", "todo"}
 PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\}|IMG:)")
+THIN_CELL_PAT = re.compile(r"^(同上|见上文|参见上文|略|省略|按常规|常规|待定|TBD|todo)$", re.I)
+
+
+def _target_declares_daily_scope(target):
+    t = (target or "").strip()
+    if not t:
+        return False
+    if re.fullmatch(r"(每日|昨日|昨天)(?:的)?(?:全部|所有)?(?:内容|工作|变更|更新|改动)?(?:验收|复验|测试|报告)?", t):
+        return True
+    return bool(re.search(
+        r"(每日验收|昨日验收|昨天验收|每日复验|昨日复验|昨天复验|每日测试|昨日测试|昨天测试|"
+        r"每日报告|昨日报告|昨天报告|验收昨日|验收昨天|"
+        r"(昨日|昨天)(?:的)?(?:全部|所有)(?:内容|开发|工作|更新|改动|变更|做完的内容)|"
+        r"(昨日|昨天)(?:做完的内容|开发的全部内容|开发的所有内容))",
+        t,
+    ))
+
+
+def _scope_declaration_text(target, body):
+    """Only scan target and explicit report scope/scenario/depth lines."""
+    picked = [(target or "").strip()]
+    table_scope_section = False
+    scope_label = re.compile(
+        r"(目标日期|验收目标|验收范围|验收场景|主场景|修饰场景|scenario|scope|"
+        r"提交范围|PR\s*范围|commit\s*(?:range|sha)|验收深度|深度预算|改动规模与深度预算)",
+        re.I,
+    )
+    table_scope_token = re.compile(
+        r"(PR\s*#?\s*\d+|[0-9a-f]{7,40}|pull[- ]request|commit[- ]range|"
+        r"unpublished[- ]branch|defect[- ]retest|visual[- ]regression|release[- ]preflight)",
+        re.I,
+    )
+    for line in (body or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("#"):
+            table_scope_section = bool(re.search(r"(PR/commit|PR\s*到|commit|提交|改动断言|范围映射)", s, re.I))
+            picked.append(s)
+            continue
+        if scope_label.search(s):
+            picked.append(s)
+            continue
+        if table_scope_section and s.startswith("|") and table_scope_token.search(s):
+            picked.append(s)
+    return "\n".join(picked)
+
+
+def _declares_complex_acceptance(target, body):
+    """Return true only for explicit complex acceptance scenarios, not generic metadata columns."""
+    if _target_declares_daily_scope(target):
+        return True
+    text = _scope_declaration_text(target, body)
+    patterns = [
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)",
+        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)",
+        r"PR\s*#?\s*\d+",
+        r"\b[0-9a-f]{7,40}\b",
+        r"pull[- ]request",
+        r"(commit|提交)\s*(?:[- ]?range|范围|验收|复验|测试|报告|[=:：# ]*[0-9a-f]{7,40})",
+        r"(未发布分支|分支验收|缺陷复测|视觉回归|发布前验收|"
+        r"unpublished[- ]branch|defect[- ]retest|visual[- ]regression|release[- ]preflight)",
+        r"\bdaily[-_ ]?yesterday\b",
+    ]
+    return any(re.search(p, text, re.I) for p in patterns)
+
+
+def _declares_daily_acceptance(target, body):
+    if _target_declares_daily_scope(target):
+        return True
+    text = _scope_declaration_text(target, body)
+    return bool(re.search(
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
+        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
+        r"\bdaily[-_ ]?yesterday\b",
+        text,
+        re.I,
+    ))
+
+
+def _declares_deep_daily_acceptance(target, body):
+    """Daily deep gate applies only to positive deep-acceptance declarations."""
+    scope_text = _scope_declaration_text(target, body)
+    daily_context = _target_declares_daily_scope(target) or bool(re.search(
+        r"(每日|昨日|昨天)\s*(?:验收|复验|测试|报告)|"
+        r"(?:验收|复验|测试|报告).{0,8}(每日|昨日|昨天)|"
+        r"\bdaily[-_ ]?yesterday\b",
+        scope_text,
+        re.I,
+    )) or bool(re.search(
+        r"(每日|昨日|昨天).{0,12}(深度验收|深度复验|深入功能验收)|"
+        r"(深度验收|深度复验|深入功能验收).{0,12}(每日|昨日|昨天)",
+        target or "",
+    ))
+    if not daily_context:
+        return False
+    negated = re.compile(
+        r"(不是|非|不属于|未达到|不满足|禁止|不能|不得|只能叫|只能标为|降级为).{0,14}(深度验收|深度复验|深入功能验收)|"
+        r"(深度验收|深度复验|深入功能验收).{0,14}(不通过|不适用|不满足|不能|不得)"
+    )
+    positive = re.compile(
+        r"(验收深度|深度|档位)\s*[:：|= ]+\s*(深度验收|深度复验|深入功能验收)|"
+        r"(本次|本报告|目标|验收目标).{0,12}(深度验收|深度复验|深入功能验收)|"
+        r"(每日|昨日|昨天).{0,12}(深度验收|深度复验|深入功能验收)|"
+        r"(深度验收|深度复验|深入功能验收).{0,12}(每日|昨日|昨天)"
+    )
+    for line in [target or "", *((body or "").splitlines())]:
+        s = line.strip()
+        if not s or not re.search(r"(深度验收|深度复验|深入功能验收)", s) or negated.search(s):
+            continue
+        if "验收深度" in s and re.search(r"(深度验收|深度复验|深入功能验收)", s):
+            return True
+        if s.startswith("|") and re.search(r"\|\s*(深度验收|深度复验|深入功能验收)\s*\|", s):
+            return True
+        if positive.search(s):
+            return True
+    return False
+
+
+def _thin_table_cells(body, section_names):
+    """Find table cells that hide missing evidence with vague filler words."""
+    hits = []
+    active = False
+    for line in (body or "").splitlines():
+        ls = line.strip()
+        if ls.startswith("#"):
+            active = any(name in ls for name in section_names)
+            continue
+        if not active or not ls.startswith("|"):
+            continue
+        cells = [c.strip().strip("。；;,.，") for c in ls.strip("|").split("|")]
+        for cell in cells:
+            if THIN_CELL_PAT.fullmatch(cell):
+                hits.append(ls[:120])
+                break
+    return hits
 
 
 def validate_inputs(a, body, manifest, cfg=None):
@@ -283,6 +469,14 @@ def validate_inputs(a, body, manifest, cfg=None):
     need = TIER_MIN_SHOTS.get(a.tier, 3)
     if len(manifest) < need:
         errs.append(f"[证据] 截图数 {len(manifest)} < {a.tier} 下限 {need}")
+    daily_acceptance_claim = _declares_daily_acceptance(a.target, body)
+    deep_daily_claim = _declares_deep_daily_acceptance(a.target, body)
+    complex_acceptance_claim = _declares_complex_acceptance(a.target, body)
+    if deep_daily_claim and len(manifest) < DEEP_DAILY_MIN_SHOTS:
+        errs.append(
+            f"[深度门禁] 每日/昨日报告声称深度验收，但截图数 {len(manifest)} < "
+            f"{DEEP_DAILY_MIN_SHOTS}。少量入口图只能标为「广度冒烟」，不得冒充深度验收"
+        )
     errs.extend(artifact_path_errors(manifest, cfg))
     for m in manifest:
         p = m.get("path", "")
@@ -316,6 +510,51 @@ def validate_inputs(a, body, manifest, cfg=None):
     # v2.1 强制：需求一一对应表（避免"用户提了 10 条只对应 6 条"的茫然，详见 standard-v2.md §6.4）
     if "需求一一对应表" not in body:
         errs.append("[结构] 报告缺「需求一一对应表」标题（v2.1 强制，详见 standard-v2.md §6.4）")
+    if complex_acceptance_claim:
+        if "改动断言到证据表" not in body:
+            errs.append("[结构] 复杂验收缺「改动断言到证据表」标题：必须把 PR/commit 的改动断言连到真实操作/API/状态证据，不能用同模块邻近页面顶替")
+        for kw in ("改动断言", "必要证明", "实际证据", "关联性"):
+            if kw not in body:
+                errs.append(f"[结构] 复杂验收缺「{kw}」字段：无法判断提交信息与截图/接口证据是否相关")
+        if "页面优先证据分层" not in body:
+            errs.append("[结构] 复杂验收缺「页面优先证据分层」标题：用户可感知改动必须先说明页面反馈，再用 API/日志/状态作内部佐证")
+        for kw in ("用户可见页面", "页面证据", "内部佐证"):
+            if kw not in body:
+                errs.append(f"[结构] 复杂验收缺「{kw}」字段：无法判断报告是否把页面反馈放在内部数据之前")
+        for section in ("改动断言表", "影响面矩阵", "融合测试设计", "证明力矩阵", "覆盖缺口"):
+            if section not in body:
+                errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
+    if daily_acceptance_claim:
+        for section in (
+            "昨日工作总结",
+            "改动规模与深度预算",
+            "标记法则与验收标准",
+            "PR/commit 到结果映射",
+            "覆盖矩阵",
+            "截图回读检查",
+            "重试记录",
+            "未发布状态",
+        ):
+            if section not in body:
+                errs.append(f"[结构] 每日/昨日报告缺「{section}」：每日自动验收必须能说明范围、标准、未发布状态、截图回读和重试事实")
+        if not re.search(r"(计划证据数|计划截图数|planned evidence|planned screenshots)", body, re.I):
+            errs.append("[结构] 每日/昨日报告缺计划证据数：无法判断深度预算是否覆盖变更规模")
+        if not re.search(r"(实际证据数|实际截图数|actual evidence|actual screenshots)", body, re.I):
+            errs.append("[结构] 每日/昨日报告缺实际证据数：无法判断报告是否按预算执行")
+        if deep_daily_claim and not re.search(r"(负面|边界|失败路径|negative|boundary)", body, re.I):
+            errs.append("[深度门禁] 深度每日验收缺负面/边界路径说明：不能只用 happy path 声称深度通过")
+        thin_hits = _thin_table_cells(body, (
+            "PR/commit 到结果映射",
+            "改动断言到证据表",
+            "改动断言表",
+            "页面优先证据分层",
+            "覆盖矩阵",
+            "覆盖缺口",
+            "缺陷清单",
+            "截图回读检查",
+        ))
+        if thin_hits:
+            errs.append("[内容充裕] 每日/昨日报告关键表格含空泛占位单元（同上/见上文/略/按常规/TBD 等），会遮盖遗漏。示例：" + " | ".join(thin_hits[:3]))
     if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
         errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):

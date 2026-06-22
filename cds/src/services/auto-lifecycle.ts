@@ -417,6 +417,12 @@ export class AutoLifecycleService {
         fresh.lastStoppedAt = new Date(this.clock.now()).toISOString();
         fresh.lastStopReason = note;
         fresh.lastStopSource = 'system';
+      } else {
+        // 2026-06-20：redeploy 成功路径分支仍在运行，不钉 lastStoppedAt（否则
+        // UI 误报"已停止"）。改钉 lastPublishReason/lastPublishAt，把"自动切到
+        // 发布版"这次隐形的模式跃迁显式记到分支态，供卡片/抽屉展示（任务 3 可观测性）。
+        fresh.lastPublishAt = new Date(this.clock.now()).toISOString();
+        fresh.lastPublishReason = note;
       }
       stateService.save();
       try {

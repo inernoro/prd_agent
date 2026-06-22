@@ -23,11 +23,12 @@ function makeBranch(id: string, lastAccessedDaysAgo?: number, extras: Partial<Br
     : undefined;
   return {
     id,
+    projectId: 'default',
     branch: id,
     worktreePath: `/tmp/wt/${id}`,
     services: {},
     status: 'idle',
-    createdAt: new Date(0).toISOString(),
+    createdAt: new Date('2026-01-01T00:00:00Z').toISOString(),
     lastAccessedAt,
     ...extras,
   };
@@ -44,7 +45,7 @@ describe('JanitorService', () => {
 
   const defaultConfig: JanitorConfig = {
     enabled: true,
-    worktreeTTLDays: 30,
+    worktreeTTLDays: 7,
     diskWarnPercent: 80,
     sweepIntervalSeconds: 3600,
   };
@@ -100,8 +101,8 @@ describe('JanitorService', () => {
 
   describe('sweep — TTL removal', () => {
     it('removes branches idle longer than worktreeTTLDays', async () => {
-      stateService.addBranch(makeBranch('stale', 35)); // 35 days > 30
-      stateService.addBranch(makeBranch('fresh', 5));  // 5 days < 30
+      stateService.addBranch(makeBranch('stale', 8)); // 8 days > 7
+      stateService.addBranch(makeBranch('fresh', 5));  // 5 days < 7
 
       const report = await janitor.sweep();
 
@@ -109,8 +110,30 @@ describe('JanitorService', () => {
       expect(removed).toEqual(['stale']);
     });
 
-    it('keeps branches that have never been accessed (no lastAccessedAt)', async () => {
-      stateService.addBranch(makeBranch('new-never-accessed'));
+    it('removes never-accessed branches by createdAt when they exceed TTL', async () => {
+      stateService.addBranch(makeBranch('old-never-accessed'));
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches).toEqual(['old-never-accessed']);
+      expect(removed).toEqual(['old-never-accessed']);
+    });
+
+    it('keeps never-accessed branches created within TTL', async () => {
+      stateService.addBranch(makeBranch('new-never-accessed', undefined, {
+        createdAt: new Date('2026-04-09T12:00:00Z').toISOString(),
+      }));
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches).toEqual([]);
+      expect(removed).toEqual([]);
+    });
+
+    it('uses the newest lifecycle timestamp instead of an older access timestamp', async () => {
+      stateService.addBranch(makeBranch('recently-stopped', 30, {
+        lastStoppedAt: new Date('2026-04-09T12:00:00Z').toISOString(),
+      }));
 
       const report = await janitor.sweep();
 
@@ -125,6 +148,16 @@ describe('JanitorService', () => {
 
       expect(report.removedBranches).toEqual([]);
       expect(report.skippedPinned).toEqual(['pinned']);
+    });
+
+    it('skips stale branches owned by remote executors', async () => {
+      stateService.addBranch(makeBranch('remote-owned', 30, { executorId: 'exec-1' }));
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches).toEqual([]);
+      expect(report.skippedRemote).toEqual(['remote-owned']);
+      expect(removed).toEqual([]);
     });
 
     it('skips defaultBranch even if stale', async () => {
@@ -207,8 +240,8 @@ describe('JanitorService', () => {
 
   describe('dryRun', () => {
     it('returns would-remove / would-skip without mutating', async () => {
-      stateService.addBranch(makeBranch('stale-a', 40));
-      stateService.addBranch(makeBranch('stale-pinned', 40, { pinnedByUser: true }));
+      stateService.addBranch(makeBranch('stale-a', 8));
+      stateService.addBranch(makeBranch('stale-pinned', 8, { pinnedByUser: true }));
       stateService.addBranch(makeBranch('fresh', 5));
 
       const result = janitor.dryRun();
@@ -217,6 +250,15 @@ describe('JanitorService', () => {
       expect(result.wouldSkip).toEqual(['stale-pinned']);
       // No actual removal
       expect(removed).toEqual([]);
+    });
+
+    it('skips remote-owned branches instead of reporting them as removable', () => {
+      stateService.addBranch(makeBranch('stale-remote', 30, { executorId: 'exec-1' }));
+
+      const result = janitor.dryRun();
+
+      expect(result.wouldRemove).toEqual([]);
+      expect(result.wouldSkip).toEqual(['stale-remote']);
     });
   });
 
@@ -234,6 +276,24 @@ describe('JanitorService', () => {
       janitor.start();
       janitor.start();
       janitor.stop();
+    });
+  });
+
+  describe('janitor override persistence (StateService)', () => {
+    it('enabled override round-trips and clears with undefined', () => {
+      expect(stateService.getJanitorEnabledOverride()).toBeUndefined();
+      stateService.setJanitorEnabledOverride(false);
+      expect(stateService.getJanitorEnabledOverride()).toBe(false);
+      stateService.setJanitorEnabledOverride(undefined);
+      expect(stateService.getJanitorEnabledOverride()).toBeUndefined();
+    });
+
+    it('worktree TTL override survives a save + reload cycle', () => {
+      stateService.setJanitorWorktreeTTLOverride(7);
+      stateService.save();
+      const reloaded = new StateService(stateFile);
+      reloaded.load();
+      expect(reloaded.getJanitorWorktreeTTLOverride()).toBe(7);
     });
   });
 });

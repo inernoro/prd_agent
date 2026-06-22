@@ -6,13 +6,14 @@ import {
   Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
   Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, Cog,
   Github, GitCommit, ExternalLink, Brain, Wand2, Radio, UserCheck, Flame,
+  Bug, FileCheck2, Eye,
 } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { glassPanel } from '@/lib/glassStyles';
 import { getChangelogGitHubLogs, postChangelogAiSummary } from '@/services';
-import type { ChangelogEntry, ChangelogRelease, GitHubLogEntry, GitHubLogsView } from '@/services';
+import type { ChangelogEntry, ChangelogRelease, GitHubLinkedDefect, GitHubLogEntry, GitHubLogsView } from '@/services';
 import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
 import { TabBar } from '@/components/design/TabBar';
@@ -430,7 +431,7 @@ export default function ChangelogPage() {
         // 否则 35s 轮询 / 手动刷新 / SSE 会用 first-page 80 条覆盖整个列表，
         // 用户正在看的更老内容直接消失（Bugbot #3 + Codex P2）。
         const preservedTail = (previous?.logs ?? []).filter((log) => !newShas.has(log.sha));
-        // ⚠️ 关键：合并 tail 时也要保留 previous 的 hasMore / nextCursor。
+        // 注意：合并 tail 时也要保留 previous 的 hasMore / nextCursor。
         // 否则用 res.data 的 nextCursor（first-page 最后一条 sha）去续接，
         // 会拉回已经在 preservedTail 里的同一批，产生重复（Bugbot High #1 + Codex P2）
         const merged: GitHubLogsView = preservedTail.length > 0 && previous
@@ -497,7 +498,7 @@ export default function ChangelogPage() {
         before: requestedCursor,
       });
       if (!res.success || !res.data) return;
-      // ⚠️ 关键：读最新 ref，而不是用 startSnapshot —— refresh 可能在我们等待期间到达。
+      // 注意：读最新 ref，而不是用 startSnapshot，refresh 可能在我们等待期间到达。
       // 若 latest 已不包含 requestedCursor（=refresh 已用新数据完全覆盖），
       // 本次返回的旧 cursor 数据是过时的，直接丢弃，避免用 stale 数据覆盖新列表（Bugbot #2）。
       const latest = githubLogsRef.current;
@@ -1811,6 +1812,244 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
   );
 }
 
+interface PublishStatusMeta {
+  label: string;
+  color: string;
+  bg: string;
+  border: string;
+}
+
+function getPublishStatusMeta(status?: string | null): PublishStatusMeta {
+  if (status === 'published') {
+    return {
+      label: '已发布',
+      color: '#86efac',
+      bg: 'rgba(34, 197, 94, 0.09)',
+      border: 'rgba(34, 197, 94, 0.28)',
+    };
+  }
+  if (status === 'pending') {
+    return {
+      label: '需要真人审核发布',
+      color: '#fcd34d',
+      bg: 'rgba(234, 179, 8, 0.10)',
+      border: 'rgba(234, 179, 8, 0.28)',
+    };
+  }
+  return {
+    label: '需要真人审核发布',
+    color: '#cbd5e1',
+    bg: 'rgba(148, 163, 184, 0.09)',
+    border: 'rgba(148, 163, 184, 0.22)',
+  };
+}
+
+function resolveLinkedDefectStatus(defects: GitHubLinkedDefect[]): PublishStatusMeta | null {
+  if (defects.length === 0) return null;
+  if (defects.every((defect) => defect.publishStatus === 'published')) {
+    return getPublishStatusMeta('published');
+  }
+  if (defects.some((defect) => defect.publishStatus === 'pending')) {
+    return getPublishStatusMeta('pending');
+  }
+  return getPublishStatusMeta('unknown');
+}
+
+function buildDefectDetailUrl(defect: GitHubLinkedDefect): string {
+  const params = new URLSearchParams({ defectId: defect.defectId });
+  if (defect.traceId) params.set('traceId', defect.traceId);
+  return `/defect-agent?${params.toString()}`;
+}
+
+function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
+  const [open, setOpen] = useState(false);
+  const status = resolveLinkedDefectStatus(defects);
+  if (defects.length === 0 || !status) return null;
+
+  const hasMine = defects.some((defect) => defect.isSubmittedByMe);
+  const mineCount = defects.filter((defect) => defect.isSubmittedByMe).length;
+  const badgeCount = hasMine ? mineCount : defects.length;
+  const buttonMeta = hasMine
+    ? {
+        label: '我的缺陷',
+        color: '#f0abfc',
+        bg: 'rgba(217, 70, 239, 0.13)',
+        border: 'rgba(217, 70, 239, 0.36)',
+        icon: UserCheck,
+      }
+    : {
+        label: '关联缺陷',
+        color: status.color,
+        bg: status.bg,
+        border: status.border,
+        icon: Bug,
+      };
+  const ButtonIcon = buttonMeta.icon;
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px] transition-colors"
+        style={{
+          color: buttonMeta.color,
+          background: buttonMeta.bg,
+          border: `1px solid ${buttonMeta.border}`,
+        }}
+        title={hasMine ? '查看我提交且关联此更新的缺陷' : '查看该更新关联的缺陷'}
+      >
+        <ButtonIcon size={11} />
+        {buttonMeta.label} {badgeCount}
+        <span style={{ color: buttonMeta.color, opacity: 0.86 }}>{status.label}</span>
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-[32px] z-40 w-[420px] max-w-[calc(100vw-48px)] rounded-lg p-3 shadow-2xl"
+          style={{
+            background: 'rgba(30, 30, 40, 0.98)',
+            border: '1px solid rgba(255, 255, 255, 0.14)',
+            boxShadow: '0 18px 60px rgba(0, 0, 0, 0.36)',
+          }}
+        >
+          <div className="flex items-center justify-between gap-3 pb-2 border-b border-white/10">
+            <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {hasMine ? <UserCheck size={13} /> : <Bug size={13} />}
+              {hasMine ? '我的关联缺陷' : '关联缺陷'}
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="h-6 w-6 inline-flex items-center justify-center rounded-md hover:bg-white/10"
+              title="关闭"
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <div className="mt-2 space-y-2">
+            {defects.map((defect) => (
+              <div
+                key={defect.traceId}
+                className="rounded-md p-2"
+                style={{
+                  background: defect.isSubmittedByMe ? 'rgba(217, 70, 239, 0.055)' : 'rgba(255, 255, 255, 0.035)',
+                  border: `1px solid ${defect.isSubmittedByMe ? 'rgba(217, 70, 239, 0.24)' : 'rgba(255, 255, 255, 0.08)'}`,
+                }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <a
+                    href={buildDefectDetailUrl(defect)}
+                    className="text-[13px] font-medium hover:underline"
+                    style={{ color: '#bfdbfe' }}
+                  >
+                    {defect.defectNo ? `#${defect.defectNo}` : '缺陷'} {defect.defectTitle || '未命名缺陷'}
+                  </a>
+                  <div className="shrink-0 inline-flex items-center gap-1">
+                    {defect.isSubmittedByMe && (
+                      <span
+                        className="rounded px-1.5 py-0.5 text-[11px]"
+                        style={{
+                          color: '#f0abfc',
+                          background: 'rgba(217, 70, 239, 0.12)',
+                          border: '1px solid rgba(217, 70, 239, 0.28)',
+                        }}
+                      >
+                        我提交的
+                      </span>
+                    )}
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[11px]"
+                      style={{
+                        color: getPublishStatusMeta(defect.publishStatus).color,
+                        background: getPublishStatusMeta(defect.publishStatus).bg,
+                        border: `1px solid ${getPublishStatusMeta(defect.publishStatus).border}`,
+                      }}
+                    >
+                      {getPublishStatusMeta(defect.publishStatus).label}
+                    </span>
+                  </div>
+                </div>
+                {defect.reporterName && (
+                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    提交人：{defect.reporterName}
+                  </div>
+                )}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <a
+                    href={buildDefectDetailUrl(defect)}
+                    className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    <Eye size={11} />
+                    查看缺陷
+                  </a>
+                  {defect.commitSha && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[12px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <GitCommit size={11} />
+                      {defect.commitSha.slice(0, 7)}
+                    </span>
+                  )}
+                  {defect.pullRequestUrl && (
+                    <a
+                      href={defect.pullRequestUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <Github size={11} />
+                      {defect.pullRequestNumber ? `PR #${defect.pullRequestNumber}` : 'PR'}
+                    </a>
+                  )}
+                  {defect.previewUrl && (
+                    <a
+                      href={defect.previewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <Eye size={11} />
+                      验收地址
+                    </a>
+                  )}
+                  {defect.visualReportUrl && (
+                    <a
+                      href={defect.visualReportUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <FileCheck2 size={11} />
+                      验收报告
+                    </a>
+                  )}
+                  {defect.knowledgeBaseUrl && (
+                    <a
+                      href={defect.knowledgeBaseUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <FileText size={11} />
+                      知识库
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: number; isLiveNew: boolean }) {
   const commitDateTime = formatCommitDateTime(log.commitTimeUtc) ?? log.commitTimeUtc;
   const relativeTime = formatRelativeTime(log.commitTimeUtc);
@@ -1819,6 +2058,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
   const isMatched = Boolean(log.matchedDisplayName);
   const primaryAuthorLabel = log.matchedDisplayName ?? log.authorName;
   const coAuthors = log.coAuthors ?? [];
+  const linkedDefects = log.linkedDefects ?? [];
   const authorTooltip = [
     `GitHub 作者：${log.authorName}`,
     isMatched
@@ -1829,7 +2069,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       : null,
   ].filter(Boolean).join('\n');
   return (
-    <motion.a
+    <motion.div
       layout
       initial={{ opacity: 0, y: isLiveNew ? -18 : 10, scale: isLiveNew ? 0.985 : 0.995 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1839,10 +2079,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
         delay: isLiveNew ? Math.min(index, 6) * 0.035 : 0,
         ease: [0.25, 0.46, 0.45, 0.94],
       }}
-      href={log.htmlUrl}
-      target="_blank"
-      rel="noreferrer"
-      className="rounded-lg px-3.5 py-3 flex items-center gap-3 transition-colors hover:bg-white/5"
+      className="relative rounded-lg px-3.5 py-3 flex items-center gap-3 transition-colors hover:bg-white/5"
       style={{
         background: isLiveNew
           ? 'linear-gradient(90deg, rgba(34, 197, 94, 0.13), rgba(99, 102, 241, 0.07), rgba(255, 255, 255, 0.025))'
@@ -1920,7 +2157,10 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       >
         {relativeTime || formatDisplayDate('', log.commitTimeUtc)}
       </div>
-      <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
-    </motion.a>
+      <LinkedDefectsPopover defects={linkedDefects} />
+      <a href={log.htmlUrl} target="_blank" rel="noreferrer" className="shrink-0 inline-flex" title="查看 GitHub commit">
+        <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
+      </a>
+    </motion.div>
   );
 }

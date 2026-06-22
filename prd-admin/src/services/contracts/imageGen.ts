@@ -34,6 +34,28 @@ export type ImageGenGenerateResponse = {
 
 export type PlanImageGenContract = (input: { text: string; maxItems?: number; systemPromptOverride?: string }) => Promise<ApiResponse<ImageGenPlanResponse>>;
 
+// -------- 视觉分镜台（Storyboard） --------
+
+export type StoryboardScene = {
+  index: number;
+  topic: string;
+  keyframePrompt: string;
+  motionPrompt: string;
+  duration: number;
+};
+
+export type StoryboardScriptResponse = {
+  title: string;
+  style: string;
+  scenes: StoryboardScene[];
+};
+
+export type ScriptStoryboardContract = (input: {
+  brief: string;
+  style?: string;
+  sceneCount?: number;
+}) => Promise<ApiResponse<StoryboardScriptResponse>>;
+
 // -------- 提示词澄清（Prompt Clarification） --------
 
 export type ImageGenClarifyResponse = {

@@ -44,12 +44,136 @@ async function loadImage(file: File): Promise<HTMLImageElement> {
   });
 }
 
+type DrawableSource = {
+  width: number;
+  height: number;
+  draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void;
+  close: () => void;
+};
+
+/**
+ * 解码图片用于 canvas 重绘，并按 EXIF 方向摆正。
+ * 关键：`<img>` 渲染会自动应用 EXIF orientation，但 `ctx.drawImage` 不会——直接画
+ * HTMLImageElement 会丢掉手机照片的方向信息，导致压缩后在画布上旋转/镜像。
+ * 优先用 `createImageBitmap(file, { imageOrientation: 'from-image' })`（按 EXIF 解码），
+ * 不支持时退回 HTMLImageElement（多数现代浏览器对 `<img>` 也已默认摆正，退路可接受）。
+ */
+async function loadOrientedSource(file: File): Promise<DrawableSource> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      return {
+        width: bitmap.width,
+        height: bitmap.height,
+        draw: (ctx, w, h) => ctx.drawImage(bitmap, 0, 0, w, h),
+        close: () => bitmap.close(),
+      };
+    } catch {
+      // 退回 HTMLImageElement
+    }
+  }
+  const img = await loadImage(file);
+  return {
+    width: img.width,
+    height: img.height,
+    draw: (ctx, w, h) => ctx.drawImage(img, 0, 0, w, h),
+    close: () => {},
+  };
+}
+
 function buildOutputFile(blob: Blob, originFile: File): File {
   const mimeType = blob.type || 'image/jpeg';
   const ext = inferExtFromMime(mimeType);
   const rawName = (originFile.name || '').trim();
   const baseName = rawName ? rawName.replace(/\.[^/.]+$/, '') : `pasted-image-${Date.now()}`;
   return new File([blob], `${baseName}.${ext}`, { type: mimeType, lastModified: Date.now() });
+}
+
+/**
+ * 视觉创作画布上传专用压缩参数。
+ * 画布卡顿的真凶是「像素尺寸」而非「文件体积」——一张 4000x4000 的图哪怕只有 3MB，
+ * 解码进浏览器位图缓存也要 ~64MB。所以这里按最长边封顶来缩，而不是只看 byte。
+ */
+export const CANVAS_UPLOAD_MAX_DIMENSION = 2560;
+export const CANVAS_UPLOAD_MAX_BYTES = 8 * 1024 * 1024; // 留足后端 15MB 上限的余量
+
+/**
+ * 上传到视觉创作画布前的图片压缩：把最长边缩到 maxDimension 以内，体积控制在 maxBytes 以内。
+ * - 已在尺寸/体积阈值内且是浏览器友好格式的图片：原样返回，不重新编码。
+ * - GIF：跳过（动图，canvas 重绘会丢动画）。
+ * - 解码失败 / 浏览器不支持 canvas：放行原图，交由后端兜底，不阻断上传。
+ */
+export async function compressImageForCanvas(
+  file: File,
+  opts?: { maxDimension?: number; maxBytes?: number },
+): Promise<{ file: File; compressed: boolean }> {
+  const maxDimension = opts?.maxDimension ?? CANVAS_UPLOAD_MAX_DIMENSION;
+  const maxBytes = opts?.maxBytes ?? CANVAS_UPLOAD_MAX_BYTES;
+
+  // 动图 / 矢量图保持原样：canvas 重绘会把动图多帧拍扁成单帧、把 SVG 栅格化丢掉矢量语义。
+  // SVG 本身是文本、解码后按显示尺寸栅格化，不会像位图那样吃大块解码内存，无需也不应压缩。
+  if (file.type === 'image/gif' || file.type === 'image/svg+xml') return { file, compressed: false };
+
+  let source: DrawableSource;
+  try {
+    source = await loadOrientedSource(file);
+  } catch {
+    // 解码失败不阻断上传，放行原图由后端兜底
+    return { file, compressed: false };
+  }
+
+  // ImageBitmap 持有解码像素，所有返回路径都必须 close 释放，故包一层 try/finally。
+  try {
+    const maxEdge = Math.max(source.width, source.height);
+    const webFriendly = file.type === 'image/jpeg' || file.type === 'image/webp' || file.type === 'image/png';
+    // 尺寸和体积都达标且格式友好：无需重新编码
+    if (maxEdge <= maxDimension && file.size <= maxBytes && webFriendly) {
+      return { file, compressed: false };
+    }
+
+    const baseScale = maxEdge > 0 ? Math.min(1, maxDimension / maxEdge) : 1;
+    // 输出格式：JPEG 输入本就无透明通道，保持 jpeg；其余（PNG/WebP/BMP/HEIC… 可能含透明）一律 webp。
+    // 禁止给可能透明的输入兜底 jpeg——canvas 导出 jpeg 会丢 alpha，把透明 logo/贴纸糊成黑底（Codex P2）。
+    // webp 既保留 alpha 又压缩好；万一浏览器不支持 webp（toBlob 返回 null），下方循环会跳过、最终放行原图。
+    const outputMimeTypes = file.type === 'image/jpeg' ? ['image/jpeg'] : ['image/webp'];
+
+    let bestBlob: Blob | null = null;
+    for (let scale = baseScale; scale >= baseScale * MIN_COMPRESS_SCALE; scale *= SCALE_REDUCE_FACTOR) {
+      const width = Math.max(1, Math.floor(source.width * scale));
+      const height = Math.max(1, Math.floor(source.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return { file, compressed: false };
+
+      ctx.clearRect(0, 0, width, height);
+      source.draw(ctx, width, height);
+
+      for (const mimeType of outputMimeTypes) {
+        for (let quality = 0.92; quality >= MIN_COMPRESS_QUALITY; quality -= QUALITY_REDUCE_STEP) {
+          const blob = await toBlob(canvas, mimeType, quality);
+          if (!blob) continue;
+          if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+          if (blob.size <= maxBytes) {
+            return { file: buildOutputFile(blob, file), compressed: true };
+          }
+        }
+      }
+    }
+
+    // 收尾兜底：缩到下限仍超 maxBytes。
+    // 关键：只要尺寸被缩过（baseScale < 1，即原图最长边超过 maxDimension），bestBlob 的像素尺寸
+    // 必 ≤ maxDimension（循环内所有 scale ≤ baseScale）。此时即使字节比原图还大也必须返回——
+    // 画布卡顿由解码后的位图像素尺寸决定，封顶尺寸才是目的；返回原图会让大尺寸图漏过封顶继续卡。
+    const dimensionWasReduced = baseScale < 1;
+    if (bestBlob && (dimensionWasReduced || bestBlob.size < file.size)) {
+      return { file: buildOutputFile(bestBlob, file), compressed: true };
+    }
+    return { file, compressed: false };
+  } finally {
+    source.close();
+  }
 }
 
 export async function compressImageToLimit(file: File, maxBytes: number): Promise<{ file: File; compressed: boolean }> {
