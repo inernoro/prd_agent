@@ -192,6 +192,29 @@ describe('ProxyService preview auto-wake scoping', () => {
     expect(revive).toHaveBeenCalledTimes(1);
   });
 
+  it('does NOT fire for a prefetch / prerender request', async () => {
+    // Prefetch/link-preview fetches send Accept: text/html but are not a real
+    // visit — they must not restart cooled containers.
+    addBranch({});
+    const revive = vi.fn(async () => {});
+    proxy.setOnReviveCooled(revive);
+    for (const prefetchHeaders of [
+      { 'sec-purpose': 'prefetch;prerender' },
+      { purpose: 'prefetch' },
+      { 'x-purpose': 'preview' },
+      { 'x-moz': 'prefetch' },
+    ]) {
+      revive.mockClear();
+      const req = {
+        method: 'GET',
+        url: '/',
+        headers: { host: 'feat-cooled.preview.example.com', accept: 'text/html', ...prefetchHeaders },
+      } as unknown as http.IncomingMessage;
+      await proxy.handleRequest(req, makeRes());
+      expect(revive).not.toHaveBeenCalled();
+    }
+  });
+
   it('does NOT fire for a static asset request (only top-level navigation)', async () => {
     addBranch({});
     const revive = vi.fn(async () => {});

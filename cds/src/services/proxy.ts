@@ -1065,6 +1065,20 @@ export class ProxyService {
    * `Sec-Fetch-Mode: navigate` / `Sec-Fetch-Dest: document`).
    */
   private hasBrowserNavSignal(req: http.IncomingMessage): boolean {
+    // Prefetch / prerender / link-preview fetches carry Accept: text/html but
+    // are NOT an actual visit — waking a cooled container for them defeats
+    // scheduler cooling. Reject them before accepting any HTML signal.
+    // Covers Chrome (Sec-Purpose: prefetch;prerender / Purpose: prefetch),
+    // Firefox (X-Moz: prefetch), and legacy X-Purpose: preview/prefetch.
+    const secPurpose = String(req.headers['sec-purpose'] || '').toLowerCase();
+    if (secPurpose.includes('prefetch') || secPurpose.includes('prerender')) return false;
+    const purpose = String(req.headers['purpose'] || '').toLowerCase();
+    if (purpose.includes('prefetch')) return false;
+    const xPurpose = String(req.headers['x-purpose'] || '').toLowerCase();
+    if (xPurpose.includes('prefetch') || xPurpose.includes('preview')) return false;
+    const xMoz = String(req.headers['x-moz'] || '').toLowerCase();
+    if (xMoz.includes('prefetch')) return false;
+
     const accept = String(req.headers['accept'] || '').toLowerCase();
     if (accept.includes('text/html')) return true;
     const mode = String(req.headers['sec-fetch-mode'] || '').toLowerCase();

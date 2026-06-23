@@ -1374,6 +1374,12 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         branch.lastStoppedAt = undefined;
         branch.lastStopReason = undefined;
         branch.lastStopSource = undefined;
+        // Refresh lastReadyAt to now: the branch just became ready again. If we
+        // only cleared lastStoppedAt, AutoLifecycleService.tick() (which backfills
+        // stale readiness only while lastReadyAt <= lastStoppedAt) would keep
+        // computing age from the OLD pre-cooling readiness time and could
+        // immediately auto-publish/redeploy a branch the user just opened.
+        branch.lastReadyAt = new Date().toISOString();
         // Manual /restart 同款：先刷新 lastAccessedAt 再 markHot，否则被空闲 TTL
         // 降温过的陈旧时间戳会让下一个调度 tick 立刻又把它降温。
         branch.lastAccessedAt = new Date().toISOString();
