@@ -340,20 +340,26 @@
     flex-wrap: nowrap;
     gap: 8px;
   }
-  /* 标题居中 */
+  /* 标题 + tab 整组水平居中（放得下就居中，放不下退化为可横滚） */
   .surface-nav-title {
     justify-content: center;
     text-align: center;
   }
-  /* tabs / 操作行：单行横滚 + 右侧渐隐（滚动可达性提示） */
-  .surface-nav-tabs,
+  .surface-nav-tabs {
+    justify-content: safe center;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .surface-nav-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  /* 操作行：放不下时单行横滚 + 右侧渐隐（滚动可达性提示） */
   .surface-nav-actions {
     overflow-x: auto;
     scrollbar-width: none;
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
     mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
   }
-  .surface-nav-tabs::-webkit-scrollbar,
   .surface-nav-actions::-webkit-scrollbar {
     display: none;
   }
