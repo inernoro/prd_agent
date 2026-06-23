@@ -588,7 +588,17 @@ export class ProxyService {
       // the exact same resolution the poll uses, so a wake always implies a
       // pollable waiting page. Non-preview routings keep the diagnostic page.
       const isPreviewHost = this.extractPreviewBranch(req.headers.host || '') !== null;
-      if (isGetNavigation && isPreviewHost && this.isHtmlNavigationRequest(req) && this.shouldAutoWakeCooled(branch)) {
+      // Require a POSITIVE browser-navigation signal (see hasBrowserNavSignal):
+      // isHtmlNavigationRequest treats a missing Accept header as HTML, so a
+      // bare `GET /` health probe / link checker would otherwise restart cooled
+      // containers and defeat scheduler cooling.
+      if (
+        isGetNavigation
+        && isPreviewHost
+        && this.hasBrowserNavSignal(req)
+        && this.isHtmlNavigationRequest(req)
+        && this.shouldAutoWakeCooled(branch)
+      ) {
         this.triggerCooledWake(branch.id);
       }
       this.serveBranchStatusResponse(req, res, branchSlug, branch);
@@ -1046,6 +1056,24 @@ export class ProxyService {
    * page so a passive visit can never restart a broken or intentionally-stopped
    * branch.
    */
+  /**
+   * Stricter than isHtmlNavigationRequest: require a POSITIVE browser-navigation
+   * signal before auto-waking a cooled container. isHtmlNavigationRequest treats
+   * a missing Accept header as HTML, so a bare `GET /` from a health probe / link
+   * checker would otherwise restart containers and defeat scheduler cooling.
+   * Real browser navigations always send `Accept: text/html` (and modern ones
+   * `Sec-Fetch-Mode: navigate` / `Sec-Fetch-Dest: document`).
+   */
+  private hasBrowserNavSignal(req: http.IncomingMessage): boolean {
+    const accept = String(req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/html')) return true;
+    const mode = String(req.headers['sec-fetch-mode'] || '').toLowerCase();
+    if (mode === 'navigate') return true;
+    const dest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+    if (dest === 'document') return true;
+    return false;
+  }
+
   private shouldAutoWakeCooled(branch: BranchEntry): boolean {
     if (!this.onReviveCooled) return false;
     if (branch.lastStopSource !== 'scheduler') return false;
@@ -1692,6 +1720,12 @@ ${shouldAutoRefresh ? `;(function(){
       .then(function(data){
         if(!data)return;
         if(data.ready){location.reload();return;}
+        // Terminal non-loading state (error / idle / stopped / not-found): the
+        // operation failed or the branch is no longer coming up. Reload so the
+        // server renders the diagnostic page (with redeploy guidance) instead of
+        // leaving the visitor on a spinner forever — e.g. when auto-wake's
+        // restart/readiness fails and flips the branch to error.
+        if(data.loading===false){location.reload();return;}
         var statusEl=document.querySelector('[data-role="branch-status"]');
         if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
         var branchEl=document.querySelector('[data-role="branch-name"]');

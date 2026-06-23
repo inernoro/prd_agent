@@ -159,6 +159,39 @@ describe('ProxyService preview auto-wake scoping', () => {
     expect(revive).not.toHaveBeenCalled();
   });
 
+  it('does NOT fire for a bare GET without an HTML nav signal (health probe / bot)', async () => {
+    // isHtmlNavigationRequest treats a missing Accept as HTML; the wake path
+    // additionally requires Accept: text/html or Sec-Fetch navigate/document so
+    // a bare `GET /` probe can't restart cooled containers.
+    addBranch({});
+    const revive = vi.fn(async () => {});
+    proxy.setOnReviveCooled(revive);
+    const req = {
+      method: 'GET',
+      url: '/',
+      headers: { host: 'feat-cooled.preview.example.com' }, // no accept / sec-fetch
+    } as unknown as http.IncomingMessage;
+
+    await proxy.handleRequest(req, makeRes());
+
+    expect(revive).not.toHaveBeenCalled();
+  });
+
+  it('fires for a GET with only Sec-Fetch navigation metadata (no Accept)', async () => {
+    addBranch({});
+    const revive = vi.fn(async () => {});
+    proxy.setOnReviveCooled(revive);
+    const req = {
+      method: 'GET',
+      url: '/',
+      headers: { host: 'feat-cooled.preview.example.com', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    } as unknown as http.IncomingMessage;
+
+    await proxy.handleRequest(req, makeRes());
+
+    expect(revive).toHaveBeenCalledTimes(1);
+  });
+
   it('does NOT fire for a static asset request (only top-level navigation)', async () => {
     addBranch({});
     const revive = vi.fn(async () => {});
