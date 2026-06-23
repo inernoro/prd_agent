@@ -7,9 +7,15 @@ import {
   ChevronRight,
   type LucideIcon,
 } from 'lucide-react';
+import { useMemo } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { iconFor } from '@/lib/agentAccent';
+import { buildStaticInfra, deriveLauncherPerms } from '@/lib/homeLauncherItems';
+
+/** 平台能力图标的轮转配色（iOS 系统色，视觉有层次但不刺眼） */
+const INFRA_COLORS = ['#0A84FF', '#30D158', '#FF9F0A', '#BF5AF2', '#64D2FF', '#5E5CE6', '#FF375F', '#FFD60A'];
 
 /* ── 菜单项 ── */
 interface MenuItem {
@@ -40,6 +46,10 @@ export default function MobileProfilePage() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const isRoot = useAuthStore((s) => s.isRoot);
+  const permissions = useAuthStore((s) => s.permissions ?? []);
+
+  // 平台能力快捷入口（知识库置首）—— 与首页、桌面同一数据源
+  const infra = useMemo(() => buildStaticInfra(deriveLauncherPerms(permissions)), [permissions]);
 
   const avatarUrl = user ? resolveAvatarUrl(user) : null;
 
@@ -89,6 +99,46 @@ export default function MobileProfilePage() {
             </div>
           </div>
         </div>
+
+        {/* ── 平台能力（知识库等基础设施快捷入口，与首页/桌面同源） ── */}
+        {infra.length > 0 && (
+          <div className="surface-inset rounded-2xl overflow-hidden mb-6">
+            <div
+              className="px-4 pt-3.5 pb-1.5 text-[11px] font-semibold tracking-wide"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              平台能力
+            </div>
+            {infra.map((it, i) => {
+              const InfraIcon = iconFor(it.icon);
+              const color = INFRA_COLORS[i % INFRA_COLORS.length];
+              return (
+                <button
+                  key={it.id}
+                  onClick={() => it.routePath && navigate(it.routePath)}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-all active:bg-white/[0.03]"
+                  style={{ borderBottom: i < infra.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}
+                >
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                    style={{ background: `${color}20` }}
+                  >
+                    <InfraIcon size={16} style={{ color }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                      {it.name}
+                    </div>
+                    <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>
+                      {it.description}
+                    </div>
+                  </div>
+                  <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* ── 菜单列表 ── */}
         <div
