@@ -240,7 +240,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                 var attIdentity = e.Metadata != null && e.Metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var src) && !string.IsNullOrEmpty(src)
                     ? src
                     : (binAttById.TryGetValue(e.AttachmentId!, out var att) ? att.Url : string.Empty);
-                contentHash = Sha256Hex("attachment:" + (attIdentity ?? string.Empty));
+                // 附件标识 + 大小：内容寻址下 URL 已唯一，叠加 size 兜住「同 URL 换字节」也能被漂移检测捕获。
+                contentHash = Sha256Hex("attachment:" + (attIdentity ?? string.Empty) + ":" + e.FileSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
             }
             var tags = string.Join(",", (e.Tags ?? new List<string>()).OrderBy(t => t, StringComparer.Ordinal));
             // 纳入 SortOrder/Category（v1.1）：否则仅手动排序/分类变化的库签名不变，漂移检测会误报「已同步」
@@ -481,7 +482,11 @@ public class DocumentStoreSyncResource : ISyncableResource
                             || !TagsEqual(exBin.Tags, fe.Tags) || exBin.Summary != fe.Summary
                             || !MetaEqual(exBin.Metadata, fe.Metadata)
                             || exBin.SortOrder != fe.SortOrder || exBin.Category != fe.Category;
-                        var binApplied = HasAppliedSourceAttachment(exBin.Metadata, pa.Url);
+                        // 幂等不只看 URL，还要比文件大小：对象存储是内容寻址（sha256→URL），同 URL 即同字节，
+                        // 但万一底层存储复用了 URL 又换了字节，size 不一致即视为变化 → 强制重下，避免「同 URL 留旧文件」
+                        // （Bugbot: Stale file when URL unchanged）。size 未知（<=0）时退回仅 URL 判定。
+                        var binSizeMatches = pa.Size <= 0 || exBin.FileSize == pa.Size;
+                        var binApplied = HasAppliedSourceAttachment(exBin.Metadata, pa.Url) && binSizeMatches;
                         var binTimestampsChanged = NeedsRecordTimestampRefresh(exBin, fe, options.PreserveTimestamps);
 
                         // 二进制已下载且字段无变化 → 廉价跳过（必要时只刷新时间戳）。
@@ -504,6 +509,9 @@ public class DocumentStoreSyncResource : ISyncableResource
                             continue;
                         }
 
+                        // 此前若同血缘是文本条目（带 DocumentId），转成二进制后要清理被替换的 ParsedPrd，
+                        // 否则留孤儿解析文档（Bugbot: Orphan doc after binary overwrite）。
+                        var binOldDocId = exBin.DocumentId;
                         var binAttachmentId = exBin.AttachmentId;
                         var binContentType = exBin.ContentType;
                         var binFileSize = exBin.FileSize;
@@ -540,6 +548,8 @@ public class DocumentStoreSyncResource : ISyncableResource
                         if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
                             binUpdate = binUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
                         await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exBin.Id, binUpdate, cancellationToken: ct);
+                        if (!string.IsNullOrEmpty(binOldDocId))
+                            await CleanupReplacedDocAsync(binOldDocId, string.Empty, exBin.Id);
                         updated++;
                         continue;
                     }
