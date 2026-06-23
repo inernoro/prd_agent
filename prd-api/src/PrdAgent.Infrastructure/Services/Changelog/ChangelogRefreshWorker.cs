@@ -43,6 +43,7 @@ public sealed class ChangelogRefreshWorker : BackgroundService
             await _reader.GetCurrentWeekAsync().ConfigureAwait(false);
             await _reader.GetReleasesAsync(ReleasesLimit).ConfigureAwait(false);
             await _reader.GetGitHubLogsAsync(GitHubLogsLimit).ConfigureAwait(false);
+            await _reader.GetGitHubPendingReviewAsync(50).ConfigureAwait(false);
             _logger.LogInformation("[Changelog] 启动预热完成（只读存量）");
         }
         catch (Exception ex)

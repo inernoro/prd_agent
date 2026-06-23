@@ -65,10 +65,10 @@ describe('mapDefectImportRows', () => {
   it('reads 处理人 and 创建人 columns', () => {
     const headers = [...tapdHeaders, '处理人', '创建人'];
     const rows = mapDefectImportRows(headers, [
-      ['1023034', '登录失败', '偶发', 'new', '高', '', '伍林波;', '陈嘉颖'],
+      ['1023034', '登录失败', '偶发', 'new', '高', '', '测试处理人;', '测试创建人'],
     ]);
-    expect(rows[0].handlerNames).toEqual(['伍林波']);
-    expect(rows[0].reporterNames).toEqual(['陈嘉颖']);
+    expect(rows[0].handlerNames).toEqual(['测试处理人']);
+    expect(rows[0].reporterNames).toEqual(['测试创建人']);
   });
 
   it('parses 所属产品 column for cross-product routing', () => {

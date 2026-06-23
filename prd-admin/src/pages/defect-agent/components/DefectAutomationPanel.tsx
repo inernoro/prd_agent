@@ -150,6 +150,8 @@ export function DefectAutomationPanel({
                 <Metric label="失败/阻塞" value={data.stats.totalFailed} tone={data.stats.totalFailed > 0 ? 'danger' : undefined} />
               </div>
 
+              <AutomationBoundary />
+
               <section className="surface-row rounded-lg p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
@@ -209,6 +211,31 @@ export function DefectAutomationPanel({
         </div>
       }
     />
+  );
+}
+
+function AutomationBoundary() {
+  const items = [
+    '启动前先跑 connector 自检，协议或授权不对就停止。',
+    '一次只处理一个缺陷，complete 回写 commit 和 PR 后再领取下一条。',
+    'PR 已创建不等于完成，正式发布前不通知提交人。',
+    '正式缺陷系统读写，测试或预览环境验收，报告入“缺陷修复验收报告”后回写 validation-report。',
+  ];
+
+  return (
+    <section className="surface-row rounded-lg p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <CheckCircle2 size={14} className="text-token-success" />
+        <h3 className="text-sm font-medium text-token-primary">自动化边界</h3>
+      </div>
+      <div className="grid gap-2 md:grid-cols-2">
+        {items.map((item) => (
+          <div key={item} className="rounded-lg border border-token-subtle bg-token-nested px-2 py-1.5 text-xs text-token-secondary">
+            {item}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

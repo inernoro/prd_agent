@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VOC 用户原声洞察中枢（创意 demo）</title>
+<style>
+  :root{
+    --bg:#0e0f10; --card:#1a1b1d; --card2:#202123; --elev:#26282b;
+    --bd:rgba(255,255,255,0.07); --bd2:rgba(255,255,255,0.13);
+    --t1:#ececef; --t2:rgba(236,236,239,0.62); --t3:rgba(236,236,239,0.40);
+    --neg:#f8717a; --neu:#94a3b8; --pos:#34d399; --amber:#fbbf24; --violet:#a78bfa; --teal:#2dd4bf; --blue:#60a5fa;
+    --shadow:0 8px 30px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:radial-gradient(1200px 600px at 80% -10%,rgba(167,139,250,.06),transparent 60%),
+      radial-gradient(900px 500px at -5% 10%,rgba(45,212,191,.05),transparent 55%),var(--bg);
+    color:var(--t1);padding:22px 26px 50px;min-height:100vh;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1400px;margin:0 auto}
+  .head{display:flex;align-items:baseline;gap:14px;margin-bottom:14px}
+  .head h1{font-size:19px;font-weight:680}
+  .head .sub{font-size:12.5px;color:var(--t3)}
+
+  /* 闭环 ribbon */
+  .ribbon{display:flex;align-items:center;gap:0;margin-bottom:16px;background:linear-gradient(180deg,var(--card),#161718);
+    border:1px solid var(--bd);border-radius:14px;padding:10px 14px;box-shadow:var(--shadow);overflow:hidden}
+  .stp{display:flex;align-items:center;gap:9px;flex:1;position:relative}
+  .stp .dot{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:0 0 auto;
+    background:rgba(255,255,255,.05);color:var(--t3);border:1px solid var(--bd)}
+  .stp .tx{display:flex;flex-direction:column;line-height:1.25}
+  .stp .tx b{font-size:12.5px}
+  .stp .tx span{font-size:10.5px;color:var(--t3)}
+  .stp .arrow{flex:1;height:2px;margin:0 8px;background:linear-gradient(90deg,var(--bd),transparent)}
+  .stp.done .dot{background:rgba(52,211,153,.16);color:var(--pos);border-color:rgba(52,211,153,.4)}
+  .stp.cur .dot{background:rgba(248,113,122,.18);color:var(--neg);border-color:rgba(248,113,122,.5);animation:pp 1.4s ease-in-out infinite}
+  .stp.cur .tx b{color:var(--neg)}
+  @keyframes pp{0%,100%{box-shadow:0 0 0 0 rgba(248,113,122,0)}50%{box-shadow:0 0 0 6px rgba(248,113,122,.18)}}
+
+  .stage{display:grid;grid-template-columns:1fr 0fr;gap:16px;transition:grid-template-columns .45s cubic-bezier(.4,0,.2,1)}
+  .stage.open{grid-template-columns:1.55fr 1fr}
+  .card{background:linear-gradient(180deg,var(--card),#161718);border:1px solid var(--bd);border-radius:16px;box-shadow:var(--shadow);overflow:hidden;min-width:0}
+  .ch{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px}
+  .ch .t{font-size:13px;font-weight:650;display:flex;align-items:center;gap:9px}
+  .live{font-size:11px;color:var(--teal);display:inline-flex;align-items:center;gap:6px}
+  .live .b{width:7px;height:7px;border-radius:50%;background:var(--teal);animation:blink 1.3s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.3)}}
+  .ctrls{display:flex;align-items:center;gap:12px}
+  .seg{display:inline-flex;border:1px solid var(--bd);background:rgba(255,255,255,.03);border-radius:9px;padding:2px}
+  .seg button{border:0;background:transparent;color:var(--t3);font-size:11.5px;padding:5px 12px;border-radius:7px;cursor:pointer;transition:all .15s}
+  .seg button.on[data-m="all"]{background:rgba(45,212,191,.15);color:#5eead4}
+  .seg button.on[data-m="neg"]{background:rgba(248,113,122,.15);color:var(--neg)}
+  .legend{display:flex;gap:13px}.legend span{font-size:11px;color:var(--t2);display:inline-flex;align-items:center;gap:6px}.legend i{width:9px;height:9px;border-radius:3px}
+
+  .tmwrap{padding:0 10px 10px}
+  svg.tm{width:100%;height:auto;display:block}
+  .cell{cursor:pointer}
+  .cell:hover rect.f{filter:brightness(1.18)}
+  .glb{fill:rgba(236,236,239,.82);font-size:10.5px;font-weight:700;paint-order:stroke;stroke:rgba(0,0,0,.6);stroke-width:2.5px}
+  .clb{fill:#fff;font-size:10px;font-weight:600;paint-order:stroke;stroke:rgba(0,0,0,.55);stroke-width:2.5px}
+  .csub{fill:rgba(255,255,255,.85);font-size:9px;paint-order:stroke;stroke:rgba(0,0,0,.55);stroke-width:2px}
+  @keyframes cg{0%,100%{stroke-opacity:.35}50%{stroke-opacity:1}}
+
+  /* 突增彗星 */
+  @keyframes comet{0%{transform:translate(0,0);opacity:0}15%{opacity:1}100%{transform:translate(46px,-46px);opacity:0}}
+  .burst-badge{fill:#fff;font-size:9.5px;font-weight:800}
+
+  /* drawer */
+  .drawer{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--bd);border-radius:16px;box-shadow:var(--shadow);
+    display:flex;flex-direction:column;min-width:0;opacity:0;transition:opacity .3s .1s}
+  .stage.open .drawer{opacity:1}
+  .dh{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--bd)}
+  .crumb{font-size:12px;color:var(--t2);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .crumb b{color:var(--t1)}.crumb .sep{color:var(--t3)}
+  .dh .x{width:26px;height:26px;border-radius:7px;border:0;background:rgba(255,255,255,.05);color:var(--t3);cursor:pointer;font-size:15px}
+  .dbody{padding:14px 16px;overflow-y:auto;flex:1;min-height:0}
+  .statrow{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .st{background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:9px 12px;flex:1;min-width:84px}
+  .st .v{font-size:18px;font-weight:780;font-variant-numeric:tabular-nums}
+  .st .l{font-size:10px;color:var(--t3);margin-top:2px}
+  .sec-t{font-size:12px;color:var(--t2);font-weight:600;margin:14px 0 9px;display:flex;align-items:center;gap:7px}
+  .sec-t::before{content:'';width:3px;height:12px;border-radius:2px;background:var(--neg)}
+  .cloud{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:baseline;padding:4px 0}
+  .cloud span{color:var(--t2)}
+  .cloud .w1{font-size:20px;color:var(--neg);font-weight:700}.cloud .w2{font-size:16px;color:#fb923c;font-weight:600}.cloud .w3{font-size:13px}.cloud .w4{font-size:11px;color:var(--t3)}
+  .cmt{background:var(--card2);border:1px solid var(--bd);border-left:2px solid var(--neg);border-radius:8px;padding:9px 11px;margin-bottom:8px}
+  .cmt .stars{color:var(--amber);font-size:11px;letter-spacing:1px}
+  .cmt .txt{font-size:12px;color:var(--t1);line-height:1.5;margin-top:3px}
+  .cmt .meta{font-size:10.5px;color:var(--t3);margin-top:4px}
+
+  .diag{background:linear-gradient(180deg,rgba(167,139,250,.06),transparent);border:1px solid rgba(167,139,250,.22);border-radius:11px;padding:12px 14px;margin-top:6px}
+  .diag .dt{font-size:12px;color:var(--violet);font-weight:650;display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .diag .model{font-size:10px;color:var(--t3);font-family:ui-monospace,Menlo,monospace}
+  .diag .body{font-size:12.5px;line-height:1.7;color:var(--t1)}
+  .diag .body b{color:var(--amber)}
+  .caret{display:inline-block;width:6px;height:14px;background:var(--violet);vertical-align:-2px;margin-left:1px;animation:bk 1s steps(1) infinite}
+  @keyframes bk{50%{opacity:0}}
+
+  .acts{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .acts button{flex:1;min-width:120px;border:1px solid var(--bd2);border-radius:9px;padding:9px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:all .15s}
+  .acts .work{background:rgba(251,191,36,.13);color:var(--amber);border-color:rgba(251,191,36,.35)}
+  .acts .req{background:rgba(167,139,250,.13);color:var(--violet);border-color:rgba(167,139,250,.4)}
+  .acts .imp{background:rgba(52,211,153,.12);color:var(--pos);border-color:rgba(52,211,153,.35)}
+  .acts button:hover{filter:brightness(1.15)}
+  .flowtag{font-size:11px;color:var(--pos);margin-top:10px;display:none;align-items:center;gap:7px}
+  .flowtag.show{display:flex}
+
+  .hint{font-size:11px;color:var(--t3);text-align:center;padding:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>用户原声 · VOC 洞察中枢</h1>
+    <span class="sub">监测 → 预警 → 诊断 → 追踪 → 洞察 → 需求池：一条从「消费者原声」到「产品需求」的闭环</span>
+  </div>
+
+  <!-- 闭环 ribbon -->
+  <div class="ribbon" id="ribbon"></div>
+
+  <div class="stage" id="stage">
+    <!-- 热力图 -->
+    <div class="card">
+      <div class="ch">
+        <span class="t">声量热力图<span class="live"><span class="b"></span>实时舆情</span></span>
+        <div class="ctrls">
+          <div class="seg" id="seg">
+            <button data-m="all" class="on">全域</button>
+            <button data-m="neg">负面</button>
+          </div>
+          <div class="legend">
+            <span><i style="background:var(--neg)"></i>负面</span>
+            <span><i style="background:var(--neu)"></i>中性</span>
+            <span><i style="background:var(--pos)"></i>正面</span>
+          </div>
+        </div>
+      </div>
+      <div class="tmwrap"><svg class="tm" id="tm" viewBox="0 0 1000 440" preserveAspectRatio="xMidYMid meet"></svg></div>
+      <div class="hint">点任意「负面突增」块（脉冲红块）下钻 → 四级原文 + AI 根因诊断 + 一键流转需求池</div>
+    </div>
+
+    <!-- drill drawer -->
+    <div class="drawer" id="drawer">
+      <div class="dh">
+        <div class="crumb" id="crumb"></div>
+        <button class="x" id="closeDrawer">×</button>
+      </div>
+      <div class="dbody" id="dbody"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const NS='http://www.w3.org/2000/svg';
+  const C={neg:'#f8717a',neu:'#94a3b8',pos:'#34d399',amber:'#fbbf24',violet:'#a78bfa'};
+  const SENT={neg:C.neg,neu:C.neu,pos:C.pos};
+
+  // ribbon
+  const STAGES=[
+    {n:'监测',s:'声量已采 12.4 万条',st:'done'},
+    {n:'预警',s:'安慕希黄桃 突增 +213%',st:'done'},
+    {n:'诊断',s:'AI 根因生成中',st:'cur'},
+    {n:'追踪',s:'待立改善项目',st:''},
+    {n:'洞察',s:'机会概念待涌现',st:''},
+    {n:'需求池',s:'待流转',st:''},
+  ];
+  document.getElementById('ribbon').innerHTML=STAGES.map((s,i)=>`
+    <div class="stp ${s.st}">
+      <span class="dot">${i+1}</span>
+      <span class="tx"><b>${s.n}</b><span>${s.s}</span></span>
+      ${i<STAGES.length-1?'<span class="arrow"></span>':''}
+    </div>`).join('');
+
+  // ---- VOC 数据：产品线 → 话题/SKU，面积=声量，颜色=情感 ----
+  function lf(name,vol,sent,opt={}){return {name,value:vol,sent,...opt}}
+  const GROUPS=[
+    {name:'安慕希',leaves:[
+      lf('黄桃·结块',1247,'neg',{burst:213,pain:true,id:'jiekuai'}),
+      lf('原味·顺滑',2300,'pos'),lf('蓝莓·甜度',1100,'neu'),lf('丝绒·口感',1400,'pos'),
+      lf('包装·便携',800,'pos'),lf('AMX·高端',600,'pos'),lf('价格·偏贵',520,'neg',{pain:true,id:'amx-price'})
+    ]},
+    {name:'金典',leaves:[
+      lf('有机·涨价',1050,'neg',{burst:64,pain:true,id:'price'}),lf('醇香·浓郁',1900,'pos'),
+      lf('娟姗·口感',1300,'pos'),lf('低温·新鲜',900,'neu'),lf('梦幻盖·设计',700,'pos')
+    ]},
+    {name:'优酸乳',leaves:[
+      lf('草莓·漏液',760,'neg',{pain:true,id:'leak'}),lf('原味·性价比',1600,'pos'),
+      lf('果粒·口感',1100,'neu'),lf('便利店·铺货',600,'pos')
+    ]},
+    {name:'舒化',leaves:[lf('无乳糖·肠胃',1400,'pos'),lf('低脂·口感淡',640,'neg',{pain:true,id:'thin'}),lf('便携·装',700,'neu')]},
+    {name:'QQ星',leaves:[lf('儿童·含糖争议',900,'neg',{pain:true,id:'sugar'}),lf('钙铁锌·配方',1200,'pos'),lf('卡通·包装',800,'pos')]},
+    {name:'谷粒多',leaves:[lf('燕麦·口感',1300,'pos'),lf('黑谷·甜度',700,'neu'),lf('早餐·场景',900,'pos')]},
+    {name:'巧乐兹',leaves:[lf('脆皮·融化快',820,'neg',{burst:88,pain:true,id:'melt'}),lf('经典·味道',1500,'pos'),lf('新品·猎奇',600,'neu')]},
+  ];
+
+  // ---- squarified treemap ----
+  const VW=1000,VH=440,PAD=3,HDR=14;
+  function worst(row,side,sc){const a=row.map(r=>r.value*sc);const s=a.reduce((x,y)=>x+y,0);const mx=Math.max(...a),mn=Math.min(...a);return Math.max(side*side*mx/(s*s),s*s/(side*side*mn))}
+  function squ(items,rect){const it=items.filter(i=>i.value>0).map(i=>({...i})).sort((a,b)=>b.value-a.value);const out=[];const free={...rect};let ft=it.reduce((s,i)=>s+i.value,0);let i=0;
+    while(i<it.length&&ft>0&&free.w>.5&&free.h>.5){const sc=free.w*free.h/ft;const side=Math.min(free.w,free.h);const row=[it[i]];let last=worst(row,side,sc);let j=i+1;
+      while(j<it.length){row.push(it[j]);const w=worst(row,side,sc);if(w>last){row.pop();break}last=w;j++}
+      const rv=row.reduce((s,r)=>s+r.value,0),ra=rv*sc;
+      if(free.w>=free.h){const cw=ra/free.h;let yy=free.y;row.forEach(r=>{const rh=r.value*sc/cw;r.rect={x:free.x,y:yy,w:cw,h:rh};yy+=rh;out.push(r)});free.x+=cw;free.w-=cw}
+      else{const rh=ra/free.w;let xx=free.x;row.forEach(r=>{const rw=r.value*sc/rh;r.rect={x:xx,y:free.y,w:rw,h:rh};xx+=rw;out.push(r)});free.y+=rh;free.h-=rh}
+      ft-=rv;i=j}
+    return out}
+
+  const HUES=[222,200,186,170,150,210,132,196];
+  let mode='all';
+  function render(){
+    const tm=document.getElementById('tm');tm.innerHTML='';
+    let src=GROUPS;
+    if(mode==='neg'){src=GROUPS.map(g=>({...g,leaves:g.leaves.filter(l=>l.sent==='neg').map(l=>({...l,value:l.value}))})).filter(g=>g.leaves.length);}
+    src=src.map(g=>({...g,value:g.leaves.reduce((s,l)=>s+l.value,0)}));
+    const grs=squ(src,{x:PAD,y:PAD,w:VW-PAD*2,h:VH-PAD*2});
+    grs.forEach((g,gi)=>{
+      const r=g.rect;
+      const gb=document.createElementNS(NS,'rect');gb.setAttribute('x',r.x);gb.setAttribute('y',r.y);gb.setAttribute('width',r.w);gb.setAttribute('height',r.h);gb.setAttribute('rx',4);gb.setAttribute('fill','none');gb.setAttribute('stroke','rgba(255,255,255,.10)');tm.appendChild(gb);
+      if(r.w>64&&r.h>28){const t=document.createElementNS(NS,'text');t.setAttribute('class','glb');t.setAttribute('x',r.x+5);t.setAttribute('y',r.y+11);t.textContent=g.name;tm.appendChild(t)}
+      const inner={x:r.x+2,y:r.y+HDR,w:r.w-4,h:r.h-HDR-2};if(inner.w<4||inner.h<4)return;
+      squ(g.leaves,inner).forEach((lf,li)=>{
+        const q=lf.rect;if(q.w<1||q.h<1)return;
+        const isPain=lf.sent==='neg';
+        const fill= mode==='neg'? SENT.neg : (lf.sent==='neg'?C.neg:lf.sent==='neu'?'hsl('+HUES[gi%HUES.length]+' 14% 30%)':'hsl(150 30% 30%)');
+        const cell=document.createElementNS(NS,'g');cell.setAttribute('class','cell');
+        if(lf.pain){cell.style.filter='drop-shadow(0 0 6px '+C.neg+')';cell.addEventListener('click',()=>openDrawer(lf,g))}
+        const rc=document.createElementNS(NS,'rect');rc.setAttribute('class','f');rc.setAttribute('x',q.x+.5);rc.setAttribute('y',q.y+.5);rc.setAttribute('width',Math.max(0,q.w-1));rc.setAttribute('height',Math.max(0,q.h-1));rc.setAttribute('rx',2);rc.setAttribute('fill',fill);rc.setAttribute('stroke','rgba(255,255,255,.07)');cell.appendChild(rc);
+        if(lf.pain){const gl=document.createElementNS(NS,'rect');gl.setAttribute('x',q.x+1);gl.setAttribute('y',q.y+1);gl.setAttribute('width',Math.max(0,q.w-2));gl.setAttribute('height',Math.max(0,q.h-2));gl.setAttribute('rx',2);gl.setAttribute('fill','none');gl.setAttribute('stroke','#fff');gl.setAttribute('stroke-width',1.4);gl.style.animation='cg '+(2+li*.2)+'s ease-in-out infinite';cell.appendChild(gl)}
+        if(q.w>44&&q.h>20){const t=document.createElementNS(NS,'text');t.setAttribute('class','clb');t.setAttribute('x',q.x+5);t.setAttribute('y',q.y+14);t.textContent=lf.name;cell.appendChild(t);
+          if(lf.burst&&q.h>30){const s=document.createElementNS(NS,'text');s.setAttribute('class','csub');s.setAttribute('x',q.x+5);s.setAttribute('y',q.y+26);s.textContent='突增 +'+lf.burst+'%';cell.appendChild(s)}}
+        // 突增彗星
+        if(lf.burst&&lf.burst>=100&&q.w>50&&q.h>30){
+          const cx=q.x+q.w-12,cy=q.y+q.h-12;
+          const cm=document.createElementNS(NS,'g');
+          const tail=document.createElementNS(NS,'line');tail.setAttribute('x1',cx);tail.setAttribute('y1',cy);tail.setAttribute('x2',cx-16);tail.setAttribute('y2',cy+16);tail.setAttribute('stroke',C.amber);tail.setAttribute('stroke-width',2);tail.setAttribute('stroke-linecap','round');cm.appendChild(tail);
+          const hd=document.createElementNS(NS,'circle');hd.setAttribute('cx',cx);hd.setAttribute('cy',cy);hd.setAttribute('r',3.5);hd.setAttribute('fill','#fff');cm.appendChild(hd);
+          cm.style.transformOrigin=cx+'px '+cy+'px';cm.style.animation='comet 2.2s ease-out infinite';
+          cell.appendChild(cm);
+        }
+        tm.appendChild(cell);
+      });
+    });
+  }
+  document.getElementById('seg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;mode=b.dataset.m;document.querySelectorAll('#seg button').forEach(x=>x.classList.toggle('on',x===b));render()});
+
+  // ---- drawer + AI 诊断流式 ----
+  const DIAG={
+    jiekuai:`**时间聚集**：87% 负面集中在近 7 天，与一次批次出库时间高度吻合。\n**区域聚集**：华东(38%)、华南(31%)占比偏高，均为近期高温区域。\n**文本聚类**：「结块 / 颗粒」与「常温 / 高温 / 运输」高频共现（共现度 0.71）。\n**疑似根因**：某批次乳化工艺波动叠加高温运输，导致蛋白质聚集结块（双因叠加，非单一）。\n**建议动作**：① 核查 20260605 批次乳化参数；② 高温区加冷链提示与隔热包装；③ 客服话术统一安抚 + 补寄。`,
+  };
+  const COMMENTS={
+    jiekuai:[
+      {s:2,t:'买的黄桃味一整箱全是结块的颗粒，常温放两天更严重，夏天买真要小心。',m:'★ 华东 · 7 天前 · 已购'},
+      {s:3,t:'这批次结块挺明显，客服说是高温运输导致，希望厂家改进一下包装。',m:'★ 华南 · 5 天前 · 已购'},
+    ],
+  };
+  const CLOUD=['结块','颗粒感','不顺滑','常温','高温','某批次','运输','退货','沉淀','喝不下','夏天','客服'];
+
+  const stage=document.getElementById('stage');
+  let typingTimer=null;
+  function openDrawer(lf,g){
+    if(typingTimer)clearTimeout(typingTimer);
+    stage.classList.add('open');
+    const topic = lf.name.split('·')[0]||lf.name;
+    const issue = lf.name.split('·')[1]||lf.name;
+    document.getElementById('crumb').innerHTML=`<b>${g.name}</b><span class="sep">›</span>${topic}味<span class="sep">›</span>品质·口感<span class="sep">›</span><b style="color:var(--neg)">${issue}</b>`;
+    const cmts=COMMENTS[lf.id]||[{s:2,t:'近期负面反馈集中在该话题，详见原声。',m:'多区域 · 近 7 天'}];
+    const diag=DIAG[lf.id]||`**时间聚集**：负面在近 7 天明显抬头。\n**文本聚类**：围绕「${issue}」的抱怨高频共现。\n**疑似根因**：需结合批次/区域进一步定位。\n**建议动作**：建工单交质量部核查，并立改善项目每日复测声量。`;
+    document.getElementById('dbody').innerHTML=`
+      <div class="statrow">
+        <div class="st"><div class="v">${lf.value.toLocaleString()}</div><div class="l">声量(条)</div></div>
+        <div class="st"><div class="v" style="color:var(--neg)">89%</div><div class="l">负面占比</div></div>
+        <div class="st"><div class="v" style="color:var(--amber)">${lf.burst?'+'+lf.burst+'%':'—'}</div><div class="l">7日突增</div></div>
+        <div class="st"><div class="v">2.1<span style="font-size:11px;color:var(--t3)">★</span></div><div class="l">均分</div></div>
+      </div>
+      <div class="sec-t">关键词词云（四级下钻）</div>
+      <div class="cloud">${CLOUD.map((w,i)=>`<span class="w${i<2?1:i<5?2:i<9?3:4}">${w}</span>`).join('')}</div>
+      <div class="sec-t">原声样本</div>
+      ${cmts.map(c=>`<div class="cmt"><div class="stars">${'★'.repeat(c.s)}${'☆'.repeat(5-c.s)}</div><div class="txt">${c.t}</div><div class="meta">${c.m}</div></div>`).join('')}
+      <div class="sec-t" style="--x:1">AI 根因诊断</div>
+      <div class="diag">
+        <div class="dt">根因诊断 <span class="model" id="dmodel"></span></div>
+        <div class="body" id="diagBody"></div>
+      </div>
+      <div class="acts">
+        <button class="work" onclick="this.textContent='已建工单 #Q-2048';this.disabled=true">建质量工单 · 派质量部</button>
+        <button class="req" onclick="document.getElementById('flowtag').classList.add('show');this.textContent='已流转 REQ-318';this.disabled=true">流转需求池 · 包装改进</button>
+        <button class="imp" onclick="this.textContent='已立项 · 每日复测';this.disabled=true">立改善项目</button>
+      </div>
+      <div class="flowtag" id="flowtag">已生成需求 REQ-318（来源可回溯到 ${cmts.length} 条原声）→ 进入产品评审流程</div>`;
+    // 流式打字
+    const mEl=document.getElementById('dmodel');
+    const bEl=document.getElementById('diagBody');
+    setTimeout(()=>{mEl.textContent='● claude-sonnet-4-6 · 流式';},300);
+    let i=0;const full=diag;
+    function mk(t){return t.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br/>')}
+    function type(){
+      if(i<=full.length){bEl.innerHTML=mk(full.slice(0,i))+'<span class="caret"></span>';i++;typingTimer=setTimeout(type,16);}
+      else{bEl.innerHTML=mk(full);}
+    }
+    setTimeout(type,500);
+  }
+  document.getElementById('closeDrawer').addEventListener('click',()=>{stage.classList.remove('open');if(typingTimer)clearTimeout(typingTimer)});
+
+  render();
+})();
+</script>
+</body>
+</html>

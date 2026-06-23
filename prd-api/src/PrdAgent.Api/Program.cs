@@ -145,6 +145,11 @@ builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncableResource,
     PrdAgent.Infrastructure.Sync.Resources.DefectSyncResource>();
 builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncResourceRegistry,
     PrdAgent.Infrastructure.Sync.SyncResourceRegistry>();
+// 跨节点互传 per-item 核心（Controller 手动 transfer + 自动同步 worker 共用同一条路径，SSOT）。
+builder.Services.AddScoped<PrdAgent.Api.Services.PeerSync.IPeerSyncTransferService,
+    PrdAgent.Api.Services.PeerSync.PeerSyncTransferService>();
+// 知识库后台自动同步 worker（双向同步从「点一次跑一次」变「定期保持一致」；防风暴见 PeerSyncScheduleWorker）。
+builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncScheduleWorker>();
 
 // 双链 + 反向链接（详见 doc/design.knowledge-base-mention-network.md）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.MentionService>();

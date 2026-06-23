@@ -671,6 +671,10 @@ public class WorkflowAgentController : ControllerBase
         if (workflow == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工作流不存在"));
 
+        var isOwner = workflow.CreatedBy == userId || workflow.OwnerUserId == userId;
+        if (!isOwner && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限执行此工作流"));
+
         if (workflow.Nodes.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("EMPTY_WORKFLOW", "工作流没有节点，无法执行"));
 

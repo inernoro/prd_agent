@@ -72,3 +72,16 @@ if (typeof window !== 'undefined') {
 export function useBreakpoint(): BreakpointState {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
+
+/**
+ * 只取 isMobile 布尔的轻量选择器：getSnapshot 返回原始布尔，
+ * useSyncExternalStore 仅在跨过 768px 阈值（布尔翻转）时才触发重渲染，
+ * 不随每像素 resize 抖动 —— 适合在 GlassCard 这类高频渲染的共享原语里调用。
+ */
+export function useIsMobile(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => current.isMobile,
+    () => false
+  );
+}
