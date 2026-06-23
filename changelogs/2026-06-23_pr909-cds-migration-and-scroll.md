@@ -4,3 +4,4 @@
 | fix | cds | 迁移 Tab 健壮性:跨项目切换 stale-guard(防别项目 cds-compose+明文 env 串显)、加载失败不再无限转圈、verify/replicate/data-plan 统一带回退 key 鉴权(修空 key peer 推送 401) |
 | fix | cds | 修复 CDS 系统设置/项目设置长页(如「更新与重启」)滚动条默认隐藏、看似滑不动:壳 h-screen 固定 + 内容区 .cds-main 自身 overflow-y:auto + scrollbar-gutter:stable + 全局 ::-webkit-scrollbar 常驻可见非 overlay,顶栏/左导航钉住 |
 | fix | prd-admin | 修复更新中心空数据渲染崩溃:releases/fragments/days/entries/highlights 全面补空值保护,避免整页跌入错误边界;更新中心滚动区加 .clg-scroll 常驻可见滚动条 |
+| fix | cds | 迁移「节点地址」输入框默认值由 noroenrn.com(测试残留)改为空,仅保留 placeholder,避免误添加错误目标 |

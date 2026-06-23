@@ -2813,7 +2813,7 @@ function ProjectMigrationTab({
   const [peers, setPeers] = useState<MigrationPeer[] | null>(null);
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
   const [newName, setNewName] = useState('');
-  const [newUrl, setNewUrl] = useState('noroenrn.com');
+  const [newUrl, setNewUrl] = useState('');
   const [newKey, setNewKey] = useState('');
   const [adding, setAdding] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
