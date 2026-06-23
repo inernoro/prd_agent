@@ -61,7 +61,8 @@ type Variant = 'A' | 'B' | 'C';
 export function LearningCenterTeaser({
   compact = false,
   variant = 'A',
-}: { compact?: boolean; variant?: Variant } = {}) {
+  tourAnchor = true,
+}: { compact?: boolean; variant?: Variant; tourAnchor?: boolean } = {}) {
   const navigate = useNavigate();
   const progress = useDailyTipsStore((s) => s.progress);
   const loadProgress = useDailyTipsStore((s) => s.loadProgress);
@@ -83,6 +84,9 @@ export function LearningCenterTeaser({
   const SHARED_BORDER = '1px solid rgba(196,181,253,0.28)';
 
   const go = () => navigate('/learning-center');
+  // 同页若并列多张承接卡(设计选型对比),只让其中一张承载页面教程锚点,
+  // 否则 document.querySelector 只会命中第一张,其余两张共享同一 anchor(Bugbot)。
+  const anchorId = tourAnchor ? 'home-learning-center' : undefined;
   const cardBase = {
     background: SHARED_BG,
     border: SHARED_BORDER,
@@ -108,7 +112,7 @@ export function LearningCenterTeaser({
   // ── 非紧凑（旧宽版，暂保留兼容）──
   if (!compact) {
     return (
-      <button type="button" onClick={go} data-tour-id="home-learning-center" className="w-full text-left rounded-2xl flex items-center gap-4" style={{ padding: '14px 18px', ...cardBase }}>
+      <button type="button" onClick={go} data-tour-id={anchorId} className="w-full text-left rounded-2xl flex items-center gap-4" style={{ padding: '14px 18px', ...cardBase }}>
         <div className="shrink-0 inline-flex items-center justify-center rounded-xl" style={{ width: 46, height: 46, background: 'rgba(196,181,253,0.16)', border: '1px solid rgba(196,181,253,0.3)' }}>
           <LevelHat level={level} size={30} />
         </div>
@@ -133,7 +137,7 @@ export function LearningCenterTeaser({
     const C = 2 * Math.PI * R;
     const dash = total > 0 ? (pct / 100) * C : 0;
     return (
-      <button type="button" onClick={go} data-tour-id="home-learning-center" title="进入学习中心" className="w-full text-left rounded-xl flex items-center gap-3" style={{ padding: '11px 13px', ...cardBase }}>
+      <button type="button" onClick={go} data-tour-id={anchorId} title="进入学习中心" className="w-full text-left rounded-xl flex items-center gap-3" style={{ padding: '11px 13px', ...cardBase }}>
         <div className="relative shrink-0" style={{ width: 46, height: 46 }}>
           <svg width={46} height={46} viewBox="0 0 46 46" style={{ transform: 'rotate(-90deg)' }}>
             <circle cx={23} cy={23} r={R} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={3} />
@@ -158,7 +162,7 @@ export function LearningCenterTeaser({
   // ── 效果 B：等级横幅（游戏化段位条，帽子 + 大号 Lv + XP chip + 进度条）──
   if (variant === 'B') {
     return (
-      <button type="button" onClick={go} data-tour-id="home-learning-center" title="进入学习中心" className="w-full text-left rounded-xl flex items-center gap-3" style={{ padding: '11px 13px', ...cardBase }}>
+      <button type="button" onClick={go} data-tour-id={anchorId} title="进入学习中心" className="w-full text-left rounded-xl flex items-center gap-3" style={{ padding: '11px 13px', ...cardBase }}>
         <div className="shrink-0 inline-flex items-center justify-center rounded-lg" style={{ width: 44, height: 44, background: `${tier.board}1f`, border: `1px solid ${tier.board}55` }}>
           <LevelHat level={level} size={30} />
         </div>
@@ -180,7 +184,7 @@ export function LearningCenterTeaser({
 
   // ── 效果 C：帽子阶梯（7 顶帽子收集进度，已解锁高亮 / 未解锁灰化，最强游戏感）──
   return (
-    <button type="button" onClick={go} data-tour-id="home-learning-center" title="进入学习中心" className="w-full text-left rounded-xl flex flex-col gap-2" style={{ padding: '11px 13px', ...cardBase }}>
+    <button type="button" onClick={go} data-tour-id={anchorId} title="进入学习中心" className="w-full text-left rounded-xl flex flex-col gap-2" style={{ padding: '11px 13px', ...cardBase }}>
       <div className="flex items-center gap-2">
         <LevelHat level={level} size={22} />
         <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary,#fff)' }}>教程中心</span>

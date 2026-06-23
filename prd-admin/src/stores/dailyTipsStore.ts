@@ -70,6 +70,9 @@ interface DailyTipsState {
   cardTips: () => DailyTip[];
 }
 
+/** loadProgress 的模块级在途请求,用于并发去重(见 loadProgress 注释)。 */
+let progressInFlight: Promise<void> | null = null;
+
 export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
   items: [],
   loaded: false,
@@ -99,12 +102,21 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
 
   async loadProgress(opts) {
     if (get().progress && !opts?.force) return;
-    try {
-      const res = await getTutorialProgress();
-      if (res.success && res.data) set({ progress: res.data });
-    } catch {
-      /* 进度拉取失败不阻塞 UI(头像环只是不显示) */
-    }
+    // 并发去重:同一冷启动下多个组件(如首页三套教程承接卡)同时挂载会各调一次 loadProgress,
+    // 仅靠 progress==null 判空挡不住「请求在途」的并发,会打出多发 getTutorialProgress(Bugbot)。
+    // 用模块级在途 Promise 兜住,后到的调用直接复用同一请求。
+    if (progressInFlight) return progressInFlight;
+    progressInFlight = (async () => {
+      try {
+        const res = await getTutorialProgress();
+        if (res.success && res.data) set({ progress: res.data });
+      } catch {
+        /* 进度拉取失败不阻塞 UI(头像环只是不显示) */
+      } finally {
+        progressInFlight = null;
+      }
+    })();
+    return progressInFlight;
   },
 
   dismiss(id: string) {

@@ -853,7 +853,9 @@ export default function AgentLauncherPage() {
 
             {/* Hero content */}
             <div className={`relative ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
-              <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-8'}`}>
+              {/* flex-wrap：中等宽度(1024-1190px,非 mobile)下让右栏整体换行落到问候语下方，
+                  避免「左列 + 搜索 280 + 教程 280」单行不换挤爆视口(Codex) */}
+              <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-x-8 gap-y-6 flex-wrap'}`}>
                 <div className="shrink-0">
                   {/* 小型 eyebrow 标签：品牌定位 */}
                   <Reveal delay={REVEAL.heroEyebrow} duration={REVEAL_DURATION}>
@@ -914,7 +916,7 @@ export default function AgentLauncherPage() {
 
                 {/* 右栏：搜索框 + 教程中心承接卡，搜索在左、教程在右，顶部对齐分列 */}
                 <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                  <div className={isMobile ? 'flex flex-col gap-3 w-full' : 'shrink-0 flex items-start gap-4'}>
+                  <div className={isMobile ? 'flex flex-col gap-3 w-full' : 'shrink-0 flex flex-wrap items-start gap-4'}>
                     {/* 搜索框：移到顶部、教程左侧 */}
                     <div className="relative" style={{ width: isMobile ? '100%' : 280 }}>
                       <Search
@@ -955,7 +957,7 @@ export default function AgentLauncherPage() {
                             <span className="text-[10px] font-semibold tracking-wide" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
                               效果 {i + 1}
                             </span>
-                            <LearningCenterTeaser compact variant={v} />
+                            <LearningCenterTeaser compact variant={v} tourAnchor={i === 0} />
                           </div>
                         ))}
                       </div>
