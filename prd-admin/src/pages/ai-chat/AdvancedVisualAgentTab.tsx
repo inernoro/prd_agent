@@ -1159,11 +1159,14 @@ function recordGenDurationMs(ms: number): void {
 // 超过预计时长显示「即将完成」并转黄，避免「卡 93%」式假精确。
 function GenProgressOverlay({ createdAt }: { createdAt?: number }) {
   const [now, setNow] = useState(() => Date.now());
+  // 兜底起点固定在挂载时刻（不随 now tick 漂移）：createdAt 缺失时若用每秒更新的 now 当起点，
+  // start 恒等于 now → elapsed 永远为 0、计时不走（Bugbot 2026-06-23）。用 ref 锁住挂载时间。
+  const mountAtRef = useRef(Date.now());
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
-  const start = createdAt && createdAt > 0 ? createdAt : now;
+  const start = createdAt && createdAt > 0 ? createdAt : mountAtRef.current;
   const elapsedMs = Math.max(0, now - start);
   const estMs = getGenAvgMs();
   const elapsedS = Math.round(elapsedMs / 1000);
