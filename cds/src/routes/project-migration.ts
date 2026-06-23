@@ -140,15 +140,17 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
   }
 
   function guard(req: any, res: any, projectId: string): boolean {
-    // 迁移是系统级特权操作:跨节点推送 + verify/replicate/data-plan 在 peer 未配 key 时
-    // 会回退本机 bootstrap AI_ACCESS_KEY 当 X-AI-Access-Key 打远端。项目级 Agent Key 一律拒绝——
-    // 否则其可(a)新增攻击者控制 baseUrl 的 peer,诱导服务端把 bootstrap key 外泄(Codex P1);
-    // (b)看/删别项目建的全局迁移目标(Bugbot);(c)对多项目目标做破坏性 replace(Bugbot/Codex)。
-    // CdsPeer 是系统级资源(远端节点,见 scope-naming.md),仅 admin/cookie/bootstrap 可管理与使用。
-    if (req.cdsProjectKey) {
+    // 迁移会跨节点 + verify/replicate/data-plan 在 peer 未配 key 时回退本机 bootstrap
+    // AI_ACCESS_KEY 当 X-AI-Access-Key 打远端 → 属于「会外泄本机密钥」的敏感操作。必须**人类
+    // 管理员**(CDS cookie 或 GitHub 会话)才能用:AI 会话(x-cds-ai-token / _aiSession)、
+    // 项目级/全局 Agent Key、静态 AI_ACCESS_KEY 一律拒绝——否则任一非人类调用方都能加一个
+    // 攻击者控制 baseUrl 的 peer,诱导服务端把 bootstrap key 发出去外泄(Bugbot High / Codex P1)。
+    // 判定口径与 operator-console / remote-hosts 等系统级管理端一致(secret-revealing 须 cookie 鉴权)。
+    const isHumanAdmin = req._cdsCookieAuth === true || (!!req.cdsUser && !!req.cdsSession);
+    if (!isHumanAdmin) {
       res.status(403).json({
-        error: 'admin_required',
-        message: '项目迁移是系统级操作(跨节点 + 可能用本机密钥鉴权远端),仅管理员可用,项目级密钥无权。',
+        error: 'human_auth_required',
+        message: '项目迁移会用本机密钥鉴权远端,属敏感操作,仅允许已登录的人类管理员(CDS cookie 或 GitHub 会话)执行;AI 会话 / 项目级或全局密钥 / 静态 AI_ACCESS_KEY 一律被拒绝。',
       });
       return false;
     }
