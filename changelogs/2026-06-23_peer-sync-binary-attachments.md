@@ -4,3 +4,6 @@
 | docs | doc | debt.peer-sync 标记原 #1（二进制附件跨节点）已实现，新增 B1-B3 残留边界 |
 | fix | prd-api | peer-sync 二进制幂等叠加文件大小校验（同 URL 换字节也重下），漂移签名纳入 size（Bugbot Medium） |
 | fix | prd-api | peer-sync 文本条目转二进制时清理被替换的 ParsedPrd，消除孤儿解析文档（Bugbot Medium） |
+| fix | prd-api | peer-sync 二进制导出携带规范 sourceId（源头身份）与本地 url 分离，修复 both 双向回流时两侧身份错位、永不收敛（Codex P1 / Bugbot） |
+| fix | prd-api | peer-sync MetaEqual 剥离 peerSourceAttachmentUrl 键，避免接收方单边写入导致每次重同步误判已变化反复重写（Bugbot Medium） |
+| fix | prd-api | peer-sync 附件下载边读边卡 50MB 上限（流式），防对端不带 Content-Length 时缓爆内存（Codex P2） |

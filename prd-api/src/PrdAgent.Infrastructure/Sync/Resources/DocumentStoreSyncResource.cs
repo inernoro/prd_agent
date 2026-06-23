@@ -150,11 +150,19 @@ public class DocumentStoreSyncResource : ISyncableResource
                 LastChangedAt = e.LastChangedAt,
             };
             // 文件条目：带上附件访问信息，接收方据此下载重传重建（content 为 null 不再被跳过）。
+            // sourceId = 规范的「源头身份」：本条目若本身来自对端（metadata 有 peerSourceAttachmentUrl），
+            // 再导出时必须沿用原始源头 URL 而非本地副本 URL，否则 both（push 再 pull）回流时源头认不出自己的文件，
+            // 两侧 peerSourceAttachmentUrl 互相错位 → 双向同步永不收敛（Codex P1）。
+            // url = 本节点实际可下载地址（始终对本节点可达），与 sourceId 分离：身份做幂等/签名，url 做取字节。
             if (content == null && !e.IsFolder && !string.IsNullOrEmpty(e.AttachmentId)
                 && attById.TryGetValue(e.AttachmentId!, out var att) && !string.IsNullOrWhiteSpace(att.Url))
             {
+                var sourceId = e.Metadata != null
+                    && e.Metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var psu) && !string.IsNullOrEmpty(psu)
+                    ? psu : att.Url;
                 record.Extras["peerAttachment"] = JsonSerializer.SerializeToElement(new
                 {
+                    sourceId,
                     url = att.Url,
                     mimeType = att.MimeType,
                     fileName = att.FileName,
@@ -486,7 +494,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                         // 但万一底层存储复用了 URL 又换了字节，size 不一致即视为变化 → 强制重下，避免「同 URL 留旧文件」
                         // （Bugbot: Stale file when URL unchanged）。size 未知（<=0）时退回仅 URL 判定。
                         var binSizeMatches = pa.Size <= 0 || exBin.FileSize == pa.Size;
-                        var binApplied = HasAppliedSourceAttachment(exBin.Metadata, pa.Url) && binSizeMatches;
+                        var binApplied = HasAppliedSourceAttachment(exBin.Metadata, pa.SourceId) && binSizeMatches;
                         var binTimestampsChanged = NeedsRecordTimestampRefresh(exBin, fe, options.PreserveTimestamps);
 
                         // 二进制已下载且字段无变化 → 廉价跳过（必要时只刷新时间戳）。
@@ -498,7 +506,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                                     .Set(e => e.UpdatedBy, actorUserId)
                                     .Set(e => e.UpdatedByName, actorName)
                                     .Set(e => e.UpdatedAt, PickTime(fe.UpdatedAt))
-                                    .Set(e => e.Metadata, WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.Url));
+                                    .Set(e => e.Metadata, WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId));
                                 if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
                                     tsUpdate = tsUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
                                 if (options.PreserveTimestamps && (fe.LastChangedAt.HasValue || fe.UpdatedAt.HasValue))
@@ -526,7 +534,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                             binContentType = string.IsNullOrEmpty(fe.ContentType) ? stored.Mime : fe.ContentType;
                             binFileSize = fe.FileSize > 0 ? fe.FileSize : stored.SizeBytes;
                         }
-                        var binMeta = WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.Url);
+                        var binMeta = WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId);
                         var binUpdatedAt = PickTime(fe.UpdatedAt);
                         var binChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
                         var binUpdate = Builders<DocumentEntry>.Update
@@ -574,7 +582,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                         Tags = fe.Tags ?? new List<string>(),
                         SortOrder = fe.SortOrder,
                         Category = fe.Category,
-                        Metadata = WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.Url),
+                        Metadata = WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId),
                         CreatedBy = actorUserId,
                         CreatedByName = actorName,
                         CreatedByAvatarFileName = actorAvatar,
@@ -974,7 +982,7 @@ public class DocumentStoreSyncResource : ISyncableResource
     // ─────────────────────────────────────────────────────────────
 
     private sealed record PeerAttachmentInfo(
-        string Url, string? MimeType, string? FileName, long Size,
+        string SourceId, string Url, string? MimeType, string? FileName, long Size,
         AttachmentType Type, string? ThumbnailUrl, string? ExtractedText);
 
     /// <summary>从导出记录的 Extras["peerAttachment"] 解析附件元信息（旧节点 / 缺字段返回 false）。</summary>
@@ -990,6 +998,10 @@ public class DocumentStoreSyncResource : ISyncableResource
         var url = urlEl.GetString();
         if (string.IsNullOrWhiteSpace(url)) return false;
 
+        // sourceId 缺省（旧导出无该字段）时退回 url 自身作为身份，保持向下兼容。
+        var sourceId = raw.TryGetProperty("sourceId", out var sidEl) && sidEl.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(sidEl.GetString())
+            ? sidEl.GetString()! : url!;
         string? mime = raw.TryGetProperty("mimeType", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
         string? fileName = raw.TryGetProperty("fileName", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
         long size = raw.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt64(out var sv) ? sv : 0;
@@ -999,7 +1011,7 @@ public class DocumentStoreSyncResource : ISyncableResource
         string? thumb = raw.TryGetProperty("thumbnailUrl", out var th) && th.ValueKind == JsonValueKind.String ? th.GetString() : null;
         string? extracted = raw.TryGetProperty("extractedText", out var ex) && ex.ValueKind == JsonValueKind.String ? ex.GetString() : null;
 
-        info = new PeerAttachmentInfo(url!, mime, fileName, size, type, thumb, extracted);
+        info = new PeerAttachmentInfo(sourceId, url!, mime, fileName, size, type, thumb, extracted);
         return true;
     }
 
@@ -1050,9 +1062,24 @@ public class DocumentStoreSyncResource : ISyncableResource
         if (length.HasValue && length.Value > MaxPeerAttachmentBytes)
             return null;
 
-        var bytes = await response.Content.ReadAsByteArrayAsync(ct);
-        if (bytes.Length > MaxPeerAttachmentBytes)
-            return null;
+        // 边读边卡上限：对端若不带 Content-Length，直接 ReadAsByteArrayAsync 会把整个响应缓进内存后才判超限，
+        // 恶意/超大附件可远超 50MB 撑爆内存、拖死同步 worker（Codex P2）。改为流式拷贝，越界即中止。
+        byte[] bytes;
+        await using (var src = await response.Content.ReadAsStreamAsync(ct))
+        using (var ms = new MemoryStream())
+        {
+            var buffer = new byte[81920];
+            long total = 0;
+            int read;
+            while ((read = await src.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
+            {
+                total += read;
+                if (total > MaxPeerAttachmentBytes)
+                    return null;
+                ms.Write(buffer, 0, read);
+            }
+            bytes = ms.ToArray();
+        }
 
         var mime = !string.IsNullOrWhiteSpace(pa.MimeType)
             ? pa.MimeType!
@@ -1274,8 +1301,11 @@ public class DocumentStoreSyncResource : ISyncableResource
 
     private static bool MetaEqual(Dictionary<string, string>? a, Dictionary<string, string>? b)
     {
+        // 这三个键都是接收方在 apply 时单边写入的同步内部标记（源端 metadata 没有），
+        // 比对前必须剥离，否则「收到的 metadata 没有该键、本地有」会让 MetaEqual 恒判不等，
+        // 导致二进制/文本条目每次重同步都被当作「已变化」反复重写（Bugbot: MetaEqual ignores attachment URL key）。
         static string Norm(Dictionary<string, string>? m) => string.Join("\n", (m ?? new())
-            .Where(kv => kv.Key != SyncLineageKey && kv.Key != PeerSourceContentHashKey)
+            .Where(kv => kv.Key != SyncLineageKey && kv.Key != PeerSourceContentHashKey && kv.Key != PeerSourceAttachmentUrlKey)
             .OrderBy(kv => kv.Key, StringComparer.Ordinal)
             .Select(kv => kv.Key + "=" + kv.Value));
         return Norm(a) == Norm(b);
