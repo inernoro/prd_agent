@@ -95,9 +95,11 @@ restart path"。
   缓解而非根除。Kill-switch：`CDS_PREVIEW_AUTOWAKE=0` 整体关闭。
 - [ ] **多服务分支**：逐个 `restartServiceInPlace`，任一失败该分支转 `error`。未做部分
   成功的细粒度展示。
-- [ ] **与调度器 tick 的竞态**：靠 `branchOperationCoordinator` 租约（kind=`restart`，
-  优先级 80 > scheduler-cooling 30）抢占；唤醒成功后 `markHot` + 刷新 `lastAccessedAt`，
-  避免下一 tick 立刻又按陈旧时间戳降温（与手动 `/restart` 同款修法）。
+- [ ] **与调度器 tick 的竞态**：靠 `branchOperationCoordinator` 租约（kind=`auto-restart`
+  → priorityOf 35）抢占——高于 scheduler-cooling（30，可抢占），低于 auto-lifecycle（40）/
+  webhook deploy（50）/ manual restart·deploy（80，让位）。唤醒成功后刷新 `lastReadyAt` +
+  `lastAccessedAt` 再 `markHot`，避免下一 tick 立刻按陈旧时间戳降温或 auto-publish（与手动
+  `/restart` 同款修法）。容量驱逐 best-effort（驱逐失败不毒化本分支）。
 
 **完成标准**：CDS 环境实测「降温 → 访问预览域名 → 看到唤醒等待页 → 落到真实应用页」
 闭环；并对 janitor 回收后的 fallback、kill-switch 各验一次。

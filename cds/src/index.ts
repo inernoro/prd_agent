@@ -1274,9 +1274,17 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     // Acquire the operation lease BEFORE mutating state — throws on conflict
     // (a deploy / cooling already owns the branch), in which case we abort
     // without flipping status and the proxy renders the normal page.
+    // kind:'auto-restart' (priorityOf → 35), NOT 'restart'. With trigger
+    // 'scheduler', a 'restart' kind would resolve to priority 30 (the generic
+    // scheduler tier, == scheduler-cooling) and the coordinator only preempts on
+    // STRICTLY greater priority — so a wake racing an in-flight cooling (30)
+    // would be rejected and never fire. 'auto-restart' is keyed off kind (35),
+    // so the wake preempts scheduler-cooling (30) while still deferring to real
+    // operations: auto-lifecycle (40), webhook deploy (50), manual restart/
+    // deploy (80). Semantically accurate too — this is an automatic restart.
     const lease = beginBackgroundBranchOperation({
       branchId: slug,
-      kind: 'restart',
+      kind: 'auto-restart',
       trigger: 'scheduler',
       actor: 'scheduler',
       source: 'proxy.preview-auto-wake',
