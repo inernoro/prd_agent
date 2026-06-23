@@ -1259,6 +1259,8 @@ public class MdToPptController : ControllerBase
             error = run.Error,
             model = run.Model,
             platform = run.Platform,
+            degraded = run.Degraded,
+            total = run.Total,
             createdAt = run.CreatedAt,
             updatedAt = run.UpdatedAt,
         });
@@ -1305,7 +1307,7 @@ public class MdToPptController : ControllerBase
         return run;
     }
 
-    private async Task PersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform)
+    private async Task PersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform, int degraded = 0, int total = 0)
     {
         try
         {
@@ -1313,6 +1315,8 @@ public class MdToPptController : ControllerBase
             run.Html = html;
             run.Model = model;
             run.Platform = platform;
+            run.Degraded = degraded;
+            run.Total = total;
             run.UpdatedAt = DateTime.UtcNow;
             await _db.MdToPptRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: CancellationToken.None);
         }
@@ -1914,7 +1918,9 @@ public class MdToPptController : ControllerBase
         var gate = new SemaphoreSlim(4, 4); // 并行度：4 路子智能体
         var presession = await TakePrewarmedSessionAsync(userId, profile.Id); // 预热会话给第 1 页（模型须匹配）
         var doneCount = 0;
-        var fallbackCount = 0; // 退化为「范本/裸要点」兜底页的数量（done 时回报，禁止把全页降级当成功）
+        // 退化为「范本/裸要点」兜底页：按页打标（每页一个槽位，写两次仍是 true，幂等），
+        // 避免用共享计数器在「retry 兜底后 EmitAsync 又抛 → 外层 catch 再加一次」时重复计数（Bugbot Medium）
+        var fallbackFlags = new bool[total];
 
         try
         {
@@ -1955,7 +1961,7 @@ public class MdToPptController : ControllerBase
                             : string.Empty;
                         if (string.IsNullOrEmpty(section))
                         {
-                            Interlocked.Increment(ref fallbackCount);
+                            fallbackFlags[i] = true;
                             section = anchor != null && layout != null
                                 ? AnchoredFallbackSlide(layout, pages[i], i)
                                 : SanitizeSection(FallbackSection(pages[i], i));
@@ -1971,7 +1977,7 @@ public class MdToPptController : ControllerBase
                   {
                       // 单页全链路兜底：任何异常都不许杀整本
                       _logger.LogError(pageEx, "[MdToPpt-Pages] page {Idx} hard-failed, fallback slide", i);
-                      Interlocked.Increment(ref fallbackCount);
+                      fallbackFlags[i] = true;
                       var fb = anchor != null
                           ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design), pages[i], i)
                           : SanitizeSection(FallbackSection(pages[i], i));
@@ -1989,8 +1995,9 @@ public class MdToPptController : ControllerBase
                 sections[0] = AddActiveToFirstSlide(sections[0]);
             var html = head + string.Join("\n", sections) + suffix;
             var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+            var fallbackCount = fallbackFlags.Count(b => b);
             _logger.LogInformation("[MdToPpt-Pages] DONE userId={UserId} totalMs={Ms} htmlLen={Len} degraded={Degraded}/{Total}", userId, totalMs, html.Length, fallbackCount, total);
-            await PersistRunDoneAsync(run, html, profile.Model, "CDS Agent");
+            await PersistRunDoneAsync(run, html, profile.Model, "CDS Agent", fallbackCount, total);
             await EmitAsync("done", new { html, degraded = fallbackCount, total });
         }
         catch (Exception ex)

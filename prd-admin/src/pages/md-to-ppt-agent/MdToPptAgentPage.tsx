@@ -557,6 +557,28 @@ function genStageMsg(sec: number, isPatch: boolean): string {
   return '内容较多，正在精修中（大模型生成约需 1 分钟）...';
 }
 
+// 从恢复的 run（刷新/断线重连）构造完成消息：有页降级时如实告警，与实时 onDone 口径一致。
+// 治「断线后只读持久化 run，degraded 丢失 → 恢复路径仍报普通成功」（Codex P2）。
+function buildRecoveredDoneMessage(run: { degraded?: number; total?: number }): string {
+  const degraded = run.degraded ?? 0;
+  if (degraded > 0) {
+    const tp = run.total || 0;
+    return `PPT 已生成${tp ? `，共 ${tp} 页` : ''}，但其中 ${degraded} 页因 CDS Agent 生成失败` +
+      '退化为「标题 + 要点」兜底版式（非完整设计稿）。可对这些页用工具栏「重绘本页」重试，' +
+      '或检查 CDS Agent 运行状态后整体重新生成。';
+  }
+  return 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。';
+}
+
+function warnIfDegraded(run: { degraded?: number }): void {
+  if ((run.degraded ?? 0) > 0) {
+    toast.warning(
+      `有 ${run.degraded} 页未走 Agent 设计`,
+      'CDS Agent 部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
+    );
+  }
+}
+
 // ─── 幻灯进度解析（Gamma 式"页面一张张点亮"）────────────────────────────────
 // 从已接收的 HTML 流里数 <section>：闭合的算"已生成"（抽出页内首个标题展示），
 // 已开口未闭合的算"正在绘制"。deck 是扁平 section 结构，正则解析足够。
@@ -1300,12 +1322,12 @@ export function MdToPptAgentPage() {
 
     // 恢复对账：把聊天里残留的「正在生成/修改」气泡按 run 真实状态翻转——
     // 此前只恢复 deck 不对账消息，刷新后气泡永远停在"正在生成 PPT..."（2026-06-11 实测）
-    const reconcileMessages = (status: 'done' | 'error', error?: string | null) => {
+    const reconcileMessages = (status: 'done' | 'error', error?: string | null, doneContent?: string) => {
       setMessages((prev) =>
         prev.map((m) =>
           m.role === 'assistant' && (m.phase === 'generating' || m.phase === 'patching')
             ? status === 'done'
-              ? { ...m, phase: 'done', content: 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。' }
+              ? { ...m, phase: 'done', content: doneContent ?? 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。' }
               : { ...m, phase: 'error', content: '生成失败：' + (error ?? '未知错误') }
             : m
         )
@@ -1320,7 +1342,8 @@ export function MdToPptAgentPage() {
         setGeneratedHtml(run.html);
         setActiveRunId(runId);
         setArtifactPhase('done');
-        reconcileMessages('done');
+        warnIfDegraded(run);
+        reconcileMessages('done', null, buildRecoveredDoneMessage(run));
       } else if (run.status === 'error') {
         setArtifactPhase('idle');
         reconcileMessages('error', run.error);
@@ -1805,10 +1828,11 @@ export function MdToPptAgentPage() {
             setGeneratedHtml(run.html);
             setArtifactPhase('done');
             setIsProcessing(false);
+            warnIfDegraded(run);
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === genMsg.id
-                  ? { ...m, content: 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。', phase: 'done' }
+                  ? { ...m, content: buildRecoveredDoneMessage(run), phase: 'done' }
                   : m
               )
             );
@@ -1942,10 +1966,11 @@ export function MdToPptAgentPage() {
                 setGeneratedHtml(run.html);
                 setArtifactPhase('done');
                 setIsProcessing(false);
+                warnIfDegraded(run);
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === genMsg.id
-                      ? { ...m, content: 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。', phase: 'done' }
+                      ? { ...m, content: buildRecoveredDoneMessage(run), phase: 'done' }
                       : m
                   )
                 );

@@ -610,6 +610,10 @@ export interface MdToPptRunDetail {
   error?: string | null;
   model?: string | null;
   platform?: string | null;
+  /** 退化为「标题+要点」兜底的页数（>0 时恢复路径也要如实告警，与 done 事件一致） */
+  degraded?: number;
+  /** 总页数（与 degraded 配对还原「共 N 页其中 X 页降级」文案） */
+  total?: number;
   createdAt: string;
   updatedAt: string;
 }
