@@ -31,6 +31,10 @@ public class DocumentStoreSyncResource : ISyncableResource
     // 二进制附件条目（无正文、走 AttachmentId）的来源 URL 幂等键：接收方据此判断「这个对端附件是否已下载重建过」，
     // 命中即廉价跳过，不重复下载。见 debt.peer-sync A 系列。
     private const string PeerSourceAttachmentUrlKey = "peerSourceAttachmentUrl";
+    // 源头附件字节数（与 url 同写）：用于幂等的「同源同字节」判定与漂移签名。必须与 url 一样比的是「源头侧的
+    // att.Size」（导出端发的 pa.Size），不能拿来跟本地 DocumentEntry.FileSize 比 —— 二者是不同字段、不保证相等，
+    // 那样会让每次同步都误判 size 变化、反复重下（Bugbot: Binary sync size mismatch loop）。
+    private const string PeerSourceAttachmentSizeKey = "peerSourceAttachmentSize";
     private const long MaxPeerAttachmentBytes = 50L * 1024 * 1024;
 
     private readonly MongoDbContext _db;
@@ -245,11 +249,15 @@ public class DocumentStoreSyncResource : ISyncableResource
             }
             else if (!e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
             {
+                // 标识 + 源头字节数都取「源头侧口径」，保证两节点对同一文件得同一签名：
+                // 接收方读 metadata 的 peerSourceAttachmentUrl/Size；源头节点（无该 metadata）读自身 att.Url/att.Size。
+                // 不能用 e.FileSize（entry 字段，与 att.Size 不同口径）做签名，否则两侧恒不等（Bugbot: size mismatch loop）。
+                binAttById.TryGetValue(e.AttachmentId!, out var att);
                 var attIdentity = e.Metadata != null && e.Metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var src) && !string.IsNullOrEmpty(src)
                     ? src
-                    : (binAttById.TryGetValue(e.AttachmentId!, out var att) ? att.Url : string.Empty);
-                // 附件标识 + 大小：内容寻址下 URL 已唯一，叠加 size 兜住「同 URL 换字节」也能被漂移检测捕获。
-                contentHash = Sha256Hex("attachment:" + (attIdentity ?? string.Empty) + ":" + e.FileSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    : (att?.Url ?? string.Empty);
+                var attSize = AppliedSourceAttachmentSize(e.Metadata) ?? att?.Size ?? 0;
+                contentHash = Sha256Hex("attachment:" + attIdentity + ":" + attSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
             }
             var tags = string.Join(",", (e.Tags ?? new List<string>()).OrderBy(t => t, StringComparer.Ordinal));
             // 纳入 SortOrder/Category（v1.1）：否则仅手动排序/分类变化的库签名不变，漂移检测会误报「已同步」
@@ -490,10 +498,13 @@ public class DocumentStoreSyncResource : ISyncableResource
                             || !TagsEqual(exBin.Tags, fe.Tags) || exBin.Summary != fe.Summary
                             || !MetaEqual(exBin.Metadata, fe.Metadata)
                             || exBin.SortOrder != fe.SortOrder || exBin.Category != fe.Category;
-                        // 幂等不只看 URL，还要比文件大小：对象存储是内容寻址（sha256→URL），同 URL 即同字节，
-                        // 但万一底层存储复用了 URL 又换了字节，size 不一致即视为变化 → 强制重下，避免「同 URL 留旧文件」
-                        // （Bugbot: Stale file when URL unchanged）。size 未知（<=0）时退回仅 URL 判定。
-                        var binSizeMatches = pa.Size <= 0 || exBin.FileSize == pa.Size;
+                        // 幂等不只看 URL，还要比「源头字节数」：对象存储是内容寻址（sha256→URL），同 URL 即同字节，
+                        // 但万一底层存储复用了 URL 又换了字节，size 不一致即强制重下（Bugbot: Stale file when URL unchanged）。
+                        // 关键：比的是「上次记录的源头 size」(AppliedSourceAttachmentSize) 与「本次源头 size」(pa.Size)，
+                        // 二者同口径；绝不拿本地 DocumentEntry.FileSize 比，否则 entry.FileSize≠att.Size 时会无限重下
+                        // （Bugbot: Binary sync size mismatch loop）。任一侧 size 未知（<=0/未记录）时退回仅 URL 判定。
+                        var binAppliedSize = AppliedSourceAttachmentSize(exBin.Metadata);
+                        var binSizeMatches = pa.Size <= 0 || binAppliedSize == null || binAppliedSize.Value == pa.Size;
                         var binApplied = HasAppliedSourceAttachment(exBin.Metadata, pa.SourceId) && binSizeMatches;
                         var binTimestampsChanged = NeedsRecordTimestampRefresh(exBin, fe, options.PreserveTimestamps);
 
@@ -506,7 +517,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                                     .Set(e => e.UpdatedBy, actorUserId)
                                     .Set(e => e.UpdatedByName, actorName)
                                     .Set(e => e.UpdatedAt, PickTime(fe.UpdatedAt))
-                                    .Set(e => e.Metadata, WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId));
+                                    .Set(e => e.Metadata, WithPeerSourceAttachment(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId, pa.Size));
                                 if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
                                     tsUpdate = tsUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
                                 if (options.PreserveTimestamps && (fe.LastChangedAt.HasValue || fe.UpdatedAt.HasValue))
@@ -534,7 +545,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                             binContentType = string.IsNullOrEmpty(fe.ContentType) ? stored.Mime : fe.ContentType;
                             binFileSize = fe.FileSize > 0 ? fe.FileSize : stored.SizeBytes;
                         }
-                        var binMeta = WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId);
+                        var binMeta = WithPeerSourceAttachment(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId, pa.Size);
                         var binUpdatedAt = PickTime(fe.UpdatedAt);
                         var binChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
                         var binUpdate = Builders<DocumentEntry>.Update
@@ -582,7 +593,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                         Tags = fe.Tags ?? new List<string>(),
                         SortOrder = fe.SortOrder,
                         Category = fe.Category,
-                        Metadata = WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId),
+                        Metadata = WithPeerSourceAttachment(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId, pa.Size),
                         CreatedBy = actorUserId,
                         CreatedByName = actorName,
                         CreatedByAvatarFileName = actorAvatar,
@@ -1088,9 +1099,11 @@ public class DocumentStoreSyncResource : ISyncableResource
         return await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: fileName);
     }
 
-    private static Dictionary<string, string> WithPeerSourceAttachmentUrl(Dictionary<string, string> metadata, string sourceUrl)
+    private static Dictionary<string, string> WithPeerSourceAttachment(Dictionary<string, string> metadata, string sourceUrl, long sourceSize)
     {
         metadata[PeerSourceAttachmentUrlKey] = sourceUrl;
+        if (sourceSize > 0)
+            metadata[PeerSourceAttachmentSizeKey] = sourceSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return metadata;
     }
 
@@ -1098,6 +1111,13 @@ public class DocumentStoreSyncResource : ISyncableResource
         => metadata != null
             && metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var applied)
             && string.Equals(applied, sourceUrl, StringComparison.Ordinal);
+
+    /// <summary>已记录的源头附件字节数（与导出端 pa.Size 同口径）；未记录返回 null（退回仅 URL 判定）。</summary>
+    private static long? AppliedSourceAttachmentSize(Dictionary<string, string>? metadata)
+        => metadata != null
+            && metadata.TryGetValue(PeerSourceAttachmentSizeKey, out var raw)
+            && long.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var v)
+            ? v : (long?)null;
 
     private IEnumerable<Uri> GetConfiguredAssetBaseUris()
     {
@@ -1305,7 +1325,8 @@ public class DocumentStoreSyncResource : ISyncableResource
         // 比对前必须剥离，否则「收到的 metadata 没有该键、本地有」会让 MetaEqual 恒判不等，
         // 导致二进制/文本条目每次重同步都被当作「已变化」反复重写（Bugbot: MetaEqual ignores attachment URL key）。
         static string Norm(Dictionary<string, string>? m) => string.Join("\n", (m ?? new())
-            .Where(kv => kv.Key != SyncLineageKey && kv.Key != PeerSourceContentHashKey && kv.Key != PeerSourceAttachmentUrlKey)
+            .Where(kv => kv.Key != SyncLineageKey && kv.Key != PeerSourceContentHashKey
+                && kv.Key != PeerSourceAttachmentUrlKey && kv.Key != PeerSourceAttachmentSizeKey)
             .OrderBy(kv => kv.Key, StringComparer.Ordinal)
             .Select(kv => kv.Key + "=" + kv.Value));
         return Norm(a) == Norm(b);
