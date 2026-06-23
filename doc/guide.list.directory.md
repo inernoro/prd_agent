@@ -841,6 +841,9 @@
 - [行为洞察 / VOC 体验之声 工程债务台账](debt.voc) `debt.voc`
   > 行为洞察页面已知边界、待建造项（顶部 ribbon 流式动画、VOC 信息流等）与跨 session 债务
 
+- [移动端控制条过载治理台账](debt.mobile-control-bar-overload) `debt.mobile-control-bar-overload`
+  > 移动端控制条过载问题（知识库/缺陷/周报/海鲜市场等页面，进内容前控制条 >1 条），治理机制与进度
+
 ### 七、周报
 
 - [智能体宇宙 · 完备度看板](report.agent-universe-completeness) `report.agent-universe-completeness`
@@ -1088,3 +1091,4 @@
 | 2026-06-20 | 新增 | `design.team-activity-voc` | 团队动态·用户体验之声(VOC) 设计（treemap + 痛点指数 + 闭环 + 设计思想） |
 | 2026-06-11 | 新增 | `report.version-20260610-1-summary` | version-20260610-1 分支改动说明 |
 | 2026-06-21 | 新增 | `debt.cds-performance` | CDS 性能债务台账（Docker 垃圾堆积致构建越来越慢 + mongo 索引非主因结论 + 逐步解决路线） |
+| 2026-06-22 | 新增 | `debt.mobile-control-bar-overload` | 移动端控制条过载治理台账（知识库/缺陷/周报等页面，进内容前控制条 >1 条，治理机制与进度） |
