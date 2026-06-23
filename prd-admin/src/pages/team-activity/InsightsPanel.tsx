@@ -243,6 +243,11 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     reload();
   }, [reload]);
 
+  // brief 对象每次渲染都是新引用（useSseStream 返回），用 ref 持有最新值，避免把它放进 ESC effect 依赖
+  // 导致每帧（尤其流式 delta 时）重挂 keydown 监听。
+  const briefRef = useRef(brief);
+  briefRef.current = brief;
+
   // 浮层 ESC 关闭：按视觉层叠从上往下关。全屏最高；AI 用户分析抽屉的 portal 在下钻抽屉之后渲染，
   // 同 z-[100] 下叠在下钻抽屉之上，故 brief 必须先于 drill 关，避免 ESC 关掉被盖住的 drill 而可见的 brief 仍开着。
   useEffect(() => {
@@ -251,13 +256,13 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
       if (e.key !== 'Escape') return;
       if (fullscreenOpen) setFullscreenOpen(false);
       else if (briefOpen) {
-        brief.abort();
+        briefRef.current.abort();
         setBriefOpen(false);
       } else if (drillTarget) closeDrill();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreenOpen, drillTarget, briefOpen, closeDrill, brief]);
+  }, [fullscreenOpen, drillTarget, briefOpen, closeDrill]);
 
   const setState = useCallback(
     async (item: BehaviorInsight, status: 'confirmed' | 'resolved' | 'ignored' | 'open') => {
