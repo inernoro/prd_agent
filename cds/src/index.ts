@@ -1306,6 +1306,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       // maxHotBranches is unset.
       await schedulerService.evictLruIfOverCapacity(slug);
 
+      const profiles = stateService.getBuildProfilesForProject(branch.projectId);
       const failed: string[] = [];
       for (const svc of services) {
         lease?.assertCurrent(`auto-wake before ${svc.profileId}`);
@@ -1321,12 +1322,35 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           reason: '预览访问自动唤醒（docker restart，未重建代码）',
         });
         lease?.assertCurrent(`auto-wake after ${svc.profileId}`);
-        if (ok) {
+        if (!ok) {
+          svc.status = 'error';
+          svc.errorMessage = `容器 ${svc.containerName} 自动唤醒失败（可能已被回收），请改用「重新部署」`;
+          failed.push(svc.containerName);
+          continue;
+        }
+        // restartServiceInPlace only waits for container liveness
+        // (waitForContainerAlive), not for the app to actually bind its port /
+        // serve HTTP. If we marked running here, the waiting poll would flip to
+        // ready, reload, and proxy to a still-binding upstream (502 / refresh
+        // loop) for slow-booting apps. Gate on real readiness exactly like the
+        // deploy path: optional startup-signal, then TCP/HTTP probe. The branch
+        // stays 'restarting' meanwhile, so the waiting page keeps showing
+        // progress until the upstream truly serves.
+        const profile = profiles.find((p) => p.id === svc.profileId);
+        let ready = false;
+        if (profile?.startupSignal) {
+          ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal);
+        }
+        if (!profile?.startupSignal || ready) {
+          ready = await containerService.waitForReadiness(svc.hostPort, profile?.readinessProbe);
+        }
+        lease?.assertCurrent(`auto-wake readiness ${svc.profileId}`);
+        if (ready) {
           svc.status = 'running';
           svc.errorMessage = undefined;
         } else {
           svc.status = 'error';
-          svc.errorMessage = `容器 ${svc.containerName} 自动唤醒失败（可能已被回收），请改用「重新部署」`;
+          svc.errorMessage = `容器 ${svc.containerName} 就绪探测超时，请改用「重新部署」`;
           failed.push(svc.containerName);
         }
       }
