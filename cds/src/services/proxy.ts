@@ -70,6 +70,17 @@ export class ProxyService {
   private resolveUpstream: ((branchId: string, profileId?: string) => string | null) | null = null;
   /** Callback: trigger auto-build for a branch that isn't running yet */
   private onAutoBuild: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
+  /**
+   * Callback: revive a scheduler-cooled branch on preview access (lightweight
+   * `docker restart` of preserved containers, no rebuild). Wired only when
+   * preview auto-wake is enabled. Must flip branch.status to a loading state
+   * synchronously (before its first await) so the waiting page rendered right
+   * after firing shows progress instead of the cooled diagnostic page.
+   * See .claude/rules/cds-auto-deploy.md + index.ts setOnReviveCooled wiring.
+   */
+  private onReviveCooled: ((branchSlug: string) => Promise<void>) | null = null;
+  /** Slugs with an auto-wake in flight — dedupes concurrent navigation hits. */
+  private readonly revivingSlugs = new Set<string>();
   /** Callback: notify dashboard of web access events */
   private onAccess: ((branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void) | null = null;
   /** Optional worktree service for remote branch lookups */
@@ -102,6 +113,10 @@ export class ProxyService {
 
   setOnAutoBuild(fn: (branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void): void {
     this.onAutoBuild = fn;
+  }
+
+  setOnReviveCooled(fn: (branchSlug: string) => Promise<void>): void {
+    this.onReviveCooled = fn;
   }
 
   setOnAccess(fn: (branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void): void {
@@ -545,6 +560,18 @@ export class ProxyService {
     }
 
     if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
+      // Auto-wake: a branch put to sleep by the scheduler (containers preserved,
+      // not removed) is revived on a real page navigation via a cheap
+      // `docker restart`, so users don't hit a dead-end "go redeploy manually"
+      // page just because it idled out. Strictly scoped to scheduler-cooled
+      // branches — errored / crashed / user-stopped / deleted branches keep the
+      // diagnostic page (no passive deploy loops). Only top-level HTML
+      // navigation triggers it (asset/bot/prefetch requests do not), and the
+      // revive flips status synchronously so serveBranchStatusResponse below
+      // renders the live waiting page instead of the cooled dead-end.
+      if (this.isHtmlNavigationRequest(req) && this.shouldAutoWakeCooled(branch)) {
+        this.triggerCooledWake(branchSlug);
+      }
       this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;
     }
@@ -990,6 +1017,49 @@ export class ProxyService {
       description: 'CDS 找到了该分支记录，但当前状态无法到达真实页面。这不是等待会自动完成的状态，请回到控制台处理后重新部署。',
       detail: branch.errorMessage || branch.lastStopReason,
     };
+  }
+
+  /**
+   * Is this branch eligible for preview auto-wake? Only branches the scheduler
+   * cooled (idle/stopped with lastStopSource='scheduler') and that still have
+   * preserved service containers to restart. Everything else (errored, crashed,
+   * OOM, user-stopped, deleted, or no built services) is left to its diagnostic
+   * page so a passive visit can never restart a broken or intentionally-stopped
+   * branch.
+   */
+  private shouldAutoWakeCooled(branch: BranchEntry): boolean {
+    if (!this.onReviveCooled) return false;
+    if (branch.lastStopSource !== 'scheduler') return false;
+    if (branch.status !== 'idle') return false;
+    return Object.keys(branch.services || {}).length > 0;
+  }
+
+  /**
+   * Fire the wake callback for a cooled branch, deduped per slug. Called
+   * synchronously so the callback can flip branch.status to a loading state
+   * (before its first await); the waiting page rendered immediately after this
+   * returns then reflects that progress. On lease conflict (a deploy/cool is
+   * already running) the callback rejects without flipping status, and the
+   * branch's diagnostic page shows as before — that other operation owns it.
+   */
+  private triggerCooledWake(slug: string): void {
+    if (!this.onReviveCooled || this.revivingSlugs.has(slug)) return;
+    this.revivingSlugs.add(slug);
+    let pending: Promise<void>;
+    try {
+      pending = this.onReviveCooled(slug);
+    } catch (err) {
+      this.revivingSlugs.delete(slug);
+      console.error(`[proxy] auto-wake threw for "${slug}": ${(err as Error).message}`);
+      return;
+    }
+    pending
+      .catch((err) => {
+        console.error(`[proxy] auto-wake failed for "${slug}": ${(err as Error).message}`);
+      })
+      .finally(() => {
+        this.revivingSlugs.delete(slug);
+      });
   }
 
   private failureCopyForService(service: BranchEntry['services'][string] | undefined, profileId: string): { heading: string; description: string; detail?: string } | null {

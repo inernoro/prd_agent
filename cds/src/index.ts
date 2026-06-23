@@ -1236,11 +1236,118 @@ schedulerService.setCoolFn(async (slug: string) => {
     completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
   }
 });
-// wakeFn intentionally left unset at boot: the proxy's existing onAutoBuild
-// handler already covers the "branch is not running" case and runs the full
-// SSE build flow. A dedicated wakeFn would duplicate that logic. Future
-// work (Phase 2) may introduce a lighter-weight restart path.
 proxyService.setScheduler(schedulerService);
+
+// Preview auto-wake (the lighter-weight restart path the cooling closure above
+// left as a TODO). A branch the scheduler put to sleep keeps its containers
+// (cooling only `docker stop`s them), so a real page navigation can revive it
+// with a cheap `docker restart` instead of dumping the visitor on a "go
+// redeploy manually" dead-end. Strictly scoped by the proxy to
+// scheduler-cooled branches; this callback double-guards the same. Errored /
+// crashed / user-stopped branches are never revived here. Kill-switch:
+// CDS_PREVIEW_AUTOWAKE=0 disables it (falls back to the diagnostic page).
+if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
+  proxyService.setOnReviveCooled(async (slug: string) => {
+    const branch = stateService.getBranch(slug);
+    if (!branch) return;
+    // Re-check eligibility on this side: only scheduler-cooled, still idle, with
+    // preserved containers. Guards against a status change between the proxy's
+    // check and this async entry.
+    if (branch.lastStopSource !== 'scheduler') return;
+    if (branch.status !== 'idle') return;
+    const services = Object.values(branch.services);
+    if (services.length === 0) return;
+
+    // Acquire the operation lease BEFORE mutating state — throws on conflict
+    // (a deploy / cooling already owns the branch), in which case we abort
+    // without flipping status and the proxy renders the normal page.
+    const lease = beginBackgroundBranchOperation({
+      branchId: slug,
+      kind: 'restart',
+      trigger: 'scheduler',
+      actor: 'scheduler',
+      source: 'proxy.preview-auto-wake',
+      reason: '预览访问自动唤醒（调度器降温分支，docker restart 未重建代码）',
+    });
+    let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+
+    // Synchronous prefix (runs before the first await): flip to a loading state
+    // and persist, so the waiting page the proxy renders right after firing
+    // this callback shows live progress instead of the cooled dead-end.
+    branch.status = 'restarting';
+    for (const svc of services) {
+      if (svc.status === 'stopped' || svc.status === 'idle') svc.status = 'starting';
+    }
+    stateService.save();
+
+    try {
+      const failed: string[] = [];
+      for (const svc of services) {
+        lease?.assertCurrent(`auto-wake before ${svc.profileId}`);
+        const ok = await containerService.restartServiceInPlace(svc.containerName, undefined, {
+          projectId: branch.projectId,
+          branchId: branch.id,
+          profileId: svc.profileId,
+          operationId: lease?.operationId || null,
+          actor: 'scheduler',
+          trigger: 'scheduler',
+          operation: 'branch-auto-wake',
+          source: 'proxy.preview-auto-wake',
+          reason: '预览访问自动唤醒（docker restart，未重建代码）',
+        });
+        lease?.assertCurrent(`auto-wake after ${svc.profileId}`);
+        if (ok) {
+          svc.status = 'running';
+          svc.errorMessage = undefined;
+        } else {
+          svc.status = 'error';
+          svc.errorMessage = `容器 ${svc.containerName} 自动唤醒失败（可能已被回收），请改用「重新部署」`;
+          failed.push(svc.containerName);
+        }
+      }
+
+      if (failed.length === 0) {
+        lease?.assertCurrent('auto-wake before success save');
+        branch.status = 'running';
+        branch.errorMessage = undefined;
+        branch.lastStoppedAt = undefined;
+        branch.lastStopReason = undefined;
+        branch.lastStopSource = undefined;
+        // Manual /restart 同款：先刷新 lastAccessedAt 再 markHot，否则被空闲 TTL
+        // 降温过的陈旧时间戳会让下一个调度 tick 立刻又把它降温。
+        branch.lastAccessedAt = new Date().toISOString();
+        schedulerService.markHot(slug);
+        try {
+          stateService.appendActivityLog(branch.projectId, {
+            type: 'restart',
+            branchId: slug,
+            branchName: branch.branch,
+            actor: 'scheduler',
+            note: '预览访问自动唤醒（docker restart，未重建代码）',
+          });
+        } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
+        stateService.save();
+      } else {
+        branchOperationFinalStatus = 'failed';
+        branch.status = 'error';
+        branch.errorMessage = `${failed.length} 个容器自动唤醒失败：${failed.join(', ')}`;
+        stateService.save();
+      }
+    } catch (err) {
+      branchOperationFinalStatus = 'failed';
+      // Don't leave the branch stuck on a spinner: revert to idle so the next
+      // visit shows the diagnostic page rather than an endless "restarting".
+      const fresh = stateService.getBranch(slug);
+      if (fresh && fresh.status === 'restarting') {
+        fresh.status = 'idle';
+        stateService.save();
+      }
+      throw err;
+    } finally {
+      completeBackgroundBranchOperation(lease, branchOperationFinalStatus);
+    }
+  });
+}
 
 // ── Janitor (Phase 2 resilience) ──
 // Enabled by default. Sweeps stale local containers/worktrees after a global
