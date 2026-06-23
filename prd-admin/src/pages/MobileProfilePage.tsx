@@ -3,6 +3,7 @@ import {
   Palette,
   Bell,
   ScrollText,
+  GraduationCap,
   LogOut,
   ChevronRight,
   type LucideIcon,
@@ -30,6 +31,7 @@ interface MenuItem {
 
 /* ── 固定菜单：只保留用户真正需要的功能 ── */
 const MENU_ITEMS: MenuItem[] = [
+  { key: 'learn',  label: '学习中心', desc: '全部教程与新手引导',    icon: GraduationCap, color: '#60A5FA', path: '/learning-center' },
   { key: 'theme',  label: '主题设置', desc: '皮肤、配色、玻璃效果',  icon: Palette,    color: '#818CF8', path: '/settings?tab=skin' },
   { key: 'notify', label: '系统通知', desc: '查看与处理系统消息',    icon: Bell,       color: '#FB923C', path: '/notifications' },
   { key: 'logs',   label: '请求日志', desc: '查看 LLM 调用记录',     icon: ScrollText, color: '#34D399', path: '/logs' },
