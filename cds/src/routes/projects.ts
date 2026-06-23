@@ -34,6 +34,7 @@ import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
 import {
   getInfraCatalogEntry,
   infraCatalogIds,
@@ -2450,6 +2451,48 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     const updated = stateService.getProject(project.id)!;
     res.json({ project: toSummary(updated, statsFor(updated)) });
+  });
+
+  // POST /api/projects/:id/align-deploy-modes — 2026-06-23 强制把项目「默认运行模式」
+  // 对齐到**所有已有分支**（写入每个分支的 profileOverrides.activeDeployMode）。
+  //
+  // 默认运行模式（project.defaultDeployModes）原本只在「建分支时」拷贝一次,已有分支
+  // 不受影响。本端点让用户一键把现有分支全部对齐到当前默认（如全切极速版）。
+  //
+  // 重要（debt.cds-ci-prebuilt #8 宿主容量）：**只写配置,不批量重部署**。同时重启
+  // 大量分支容器（尤其极速版要逐个 docker pull 镜像）会压垮共享宿主。对齐后各分支
+  // 在「下次部署」时按新模式生效；需立即生效的分支单独在分支详情里重部署。
+  router.post('/projects/:id/align-deploy-modes', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: 'not_found' }); return; }
+    const defaults = project.defaultDeployModes || {};
+    if (Object.keys(defaults).length === 0) {
+      res.status(400).json({ error: 'no_defaults', message: '项目未设置默认运行模式,请先在项目设置选好默认模式再对齐' });
+      return;
+    }
+    const profiles = stateService.getBuildProfilesForProject(project.id);
+    const branches = stateService.getBranchesForProject(project.id);
+    const aligned: Array<{ branchId: string; modes: Record<string, string> }> = [];
+    for (const branch of branches) {
+      // 复用 SSOT 写入逻辑（建分支与 webhook 自动建分支同款）
+      applyDefaultDeployModesToBranch(branch, defaults, profiles);
+      const modes: Record<string, string> = {};
+      for (const profile of profiles) {
+        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) continue;
+        const ov = branch.profileOverrides?.[profile.id];
+        if (!ov) continue;
+        stateService.setBranchProfileOverride(branch.id, profile.id, ov);
+        modes[profile.id] = ov.activeDeployMode || '';
+      }
+      aligned.push({ branchId: branch.id, modes });
+    }
+    stateService.save();
+    res.json({
+      aligned: aligned.length,
+      branches: aligned,
+      defaultDeployModes: defaults,
+      note: '已把默认运行模式写入全部分支配置；为避免同时重部署压垮宿主，未触发批量重启，各分支下次部署生效。需立即生效的分支请单独重部署。',
+    });
   });
 
   // POST /api/projects/:id/files — upload arbitrary text files into a branch worktree.

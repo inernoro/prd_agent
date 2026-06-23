@@ -24,6 +24,7 @@ import {
   resolveActiveDeployModeId,
   branchUsesPrebuiltMode,
   classifyDeployRuntime,
+  applyDefaultDeployModesToBranch,
 } from '../../src/services/deploy-runtime.js';
 
 const FULL_SHA = 'deadbeef00112233445566778899aabbccddeeff';
@@ -81,6 +82,20 @@ describe('极速版 — 纯函数', () => {
     expect(branchUsesPrebuiltMode([p], undefined, { api: 'express' })).toBe(true);
     expect(branchUsesPrebuiltMode([p], undefined, { api: 'dev' })).toBe(false);
     expect(branchUsesPrebuiltMode([p], undefined, undefined)).toBe(false);
+  });
+
+  it('applyDefaultDeployModesToBranch 把已有分支(原 dev)对齐到项目默认 express（强制对齐核心）', () => {
+    const p = expressApiProfile();
+    const branch = { profileOverrides: { api: { activeDeployMode: 'dev' } } } as unknown as BranchEntry;
+    applyDefaultDeployModesToBranch(branch, { api: 'express' }, [p]);
+    expect(branch.profileOverrides!.api.activeDeployMode).toBe('express');
+  });
+
+  it('applyDefaultDeployModesToBranch 跳过 profile 不存在的目标模式（不写脏配置）', () => {
+    const p = expressApiProfile();
+    const branch = {} as unknown as BranchEntry;
+    applyDefaultDeployModesToBranch(branch, { api: 'nonexistent' }, [p]);
+    expect(branch.profileOverrides?.api?.activeDeployMode).toBeUndefined();
   });
 
   it('classifyDeployRuntime 把 express 归类为 release', () => {

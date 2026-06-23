@@ -644,11 +644,31 @@ function RuntimeDefaultsTab({
   const [modes, setModes] = useState<Record<string, string>>(project.defaultDeployModes || {});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [aligning, setAligning] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     setModes(project.defaultDeployModes || {});
   }, [project.defaultDeployModes]);
+
+  // 2026-06-23 强制把当前「默认运行模式」对齐到所有已有分支（只写配置,不批量重部署,
+  // 避免同时拉镜像/重启容器压垮宿主;各分支下次部署生效）。
+  async function alignAllBranches(): Promise<void> {
+    if (!window.confirm('把当前默认运行模式写入【所有已有分支】的配置？\n（只改配置，不会立即重部署；为保护宿主不做批量重启，各分支下次部署时生效）')) return;
+    setAligning(true);
+    setError('');
+    try {
+      const result = await apiRequest<{ aligned: number; note?: string }>(
+        `/api/projects/${encodeURIComponent(projectId)}/align-deploy-modes`,
+        { method: 'POST' },
+      );
+      onToast(`已对齐 ${result.aligned} 个分支的运行模式；各分支下次部署生效（未批量重启，避免压宿主）`);
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setAligning(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -733,7 +753,17 @@ function RuntimeDefaultsTab({
             {saving ? <Loader2 className="animate-spin" /> : <Save />}
             保存默认模式
           </Button>
-          <span className="text-xs text-muted-foreground">已有分支请在分支详情抽屉里单独切换。</span>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void alignAllBranches()}
+            disabled={aligning || saving || loading || profiles.length === 0}
+            title="把当前默认模式写入所有已有分支配置；不批量重部署（避免压宿主），各分支下次部署生效"
+          >
+            {aligning ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            强制所有分支对齐
+          </Button>
+          <span className="text-xs text-muted-foreground">「保存默认模式」只影响新分支；「强制对齐」把当前默认写入所有已有分支（下次部署生效，不立即重启）。</span>
         </div>
       </Section>
 
