@@ -243,17 +243,17 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     reload();
   }, [reload]);
 
-  // 浮层 ESC 关闭：全屏 > 下钻抽屉 > AI 用户分析抽屉（栈式关闭）
+  // 浮层 ESC 关闭：按视觉层叠从上往下关。全屏最高；AI 用户分析抽屉的 portal 在下钻抽屉之后渲染，
+  // 同 z-[100] 下叠在下钻抽屉之上，故 brief 必须先于 drill 关，避免 ESC 关掉被盖住的 drill 而可见的 brief 仍开着。
   useEffect(() => {
     if (!fullscreenOpen && !drillTarget && !briefOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (fullscreenOpen) setFullscreenOpen(false);
-      else if (drillTarget) closeDrill();
-      else {
+      else if (briefOpen) {
         brief.abort();
         setBriefOpen(false);
-      }
+      } else if (drillTarget) closeDrill();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
