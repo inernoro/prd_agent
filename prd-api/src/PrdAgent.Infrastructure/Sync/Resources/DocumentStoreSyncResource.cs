@@ -546,6 +546,9 @@ public class DocumentStoreSyncResource : ISyncableResource
                             binFileSize = fe.FileSize > 0 ? fe.FileSize : stored.SizeBytes;
                         }
                         var binMeta = WithPeerSourceAttachment(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId, pa.Size);
+                        // 文本条目转二进制后，旧 ContentIndex 是被替换文档的正文摘要，必须改写为附件的提取文本
+                        // （或清空），否则搜索/列表仍按旧文本命中这条已变成文件的条目（Codex: Clear stale content index）。
+                        var binContentIndex = BinaryContentIndex(pa.ExtractedText);
                         var binUpdatedAt = PickTime(fe.UpdatedAt);
                         var binChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
                         var binUpdate = Builders<DocumentEntry>.Update
@@ -556,6 +559,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                             .Set(e => e.ParentId, binParentId)
                             .Set(e => e.Tags, fe.Tags ?? new List<string>())
                             .Set(e => e.ContentType, binContentType)
+                            .Set(e => e.ContentIndex, binContentIndex)
                             .Set(e => e.FileSize, binFileSize)
                             .Set(e => e.SortOrder, fe.SortOrder)
                             .Set(e => e.Category, fe.Category)
@@ -589,6 +593,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                         SourceType = DocumentSourceType.Import,
                         AttachmentId = attNew.AttachmentId,
                         ContentType = string.IsNullOrEmpty(fe.ContentType) ? storedNew.Mime : fe.ContentType,
+                        ContentIndex = BinaryContentIndex(pa.ExtractedText),
                         FileSize = fe.FileSize > 0 ? fe.FileSize : storedNew.SizeBytes,
                         Tags = fe.Tags ?? new List<string>(),
                         SortOrder = fe.SortOrder,
@@ -1025,6 +1030,12 @@ public class DocumentStoreSyncResource : ISyncableResource
         info = new PeerAttachmentInfo(sourceId, url!, mime, fileName, size, type, thumb, extracted);
         return true;
     }
+
+    /// <summary>二进制条目的文本索引：取附件提取文本前 2000 字（无提取文本则 null，清掉旧文本残留）。</summary>
+    private static string? BinaryContentIndex(string? extractedText)
+        => string.IsNullOrEmpty(extractedText)
+            ? null
+            : (extractedText.Length > 2000 ? extractedText[..2000] : extractedText);
 
     private static Attachment BuildAttachment(PeerAttachmentInfo pa, StoredAsset stored, string uploaderUserId)
         => new()

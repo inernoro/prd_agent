@@ -8,3 +8,5 @@
 | fix | prd-api | peer-sync MetaEqual 剥离 peerSourceAttachmentUrl 键，避免接收方单边写入导致每次重同步误判已变化反复重写（Bugbot Medium） |
 | fix | prd-api | peer-sync 附件下载边读边卡 50MB 上限（流式），防对端不带 Content-Length 时缓爆内存（Codex P2） |
 | fix | prd-api | peer-sync 二进制幂等/签名改用「源头侧 att.Size」（存入 peerSourceAttachmentSize 元数据）同口径比对，修复 entry.FileSize≠att.Size 时无限重下循环（Bugbot Medium） |
+| fix | prd-api | peer-sync 文本条目转二进制时改写 ContentIndex 为附件提取文本（或清空），消除旧正文残留导致的搜索误命中（Bugbot/Codex Medium） |
+| docs | doc | debt.peer-sync 新增 B4：可提取文本文件（PDF/DOCX）仅同步正文不同步原件，留待结构性合并文本/二进制 apply 路径 |
