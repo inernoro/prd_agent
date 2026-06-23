@@ -2,6 +2,12 @@ import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import type {
+  GetTeamActivityEndpointDetailContract,
+  GetTeamActivityEndpointDetailParams,
+  GetTeamActivityExperienceMapContract,
+  GetTeamActivityExperienceMapParams,
+  GetTeamActivityExperienceTrendContract,
+  GetTeamActivityExperienceTrendParams,
   GetTeamActivityInsightsContract,
   GetTeamActivityInsightsParams,
   GetTeamActivityLogsContract,
@@ -9,15 +15,29 @@ import type {
   GetTeamActivityParams,
   GetTeamActivityStatsContract,
   GetTeamActivityStatsParams,
+  InsightToRequirementContract,
+  InsightToRequirementParams,
+  InsightToRequirementResult,
   SetInsightStateParams,
   SetTeamActivityInsightStateContract,
+  TeamActivityEndpointDetailData,
+  TeamActivityExperienceMapData,
+  TeamActivityExperienceTrendData,
   TeamActivityInsightsData,
   TeamActivityListData,
   TeamActivityModulesData,
   TeamActivityStatsData,
 } from '@/services/contracts/teamActivity';
 
-function toQuery(params?: GetTeamActivityParams | GetTeamActivityStatsParams | GetTeamActivityInsightsParams) {
+function toQuery(
+  params?:
+    | GetTeamActivityParams
+    | GetTeamActivityStatsParams
+    | GetTeamActivityInsightsParams
+    | GetTeamActivityExperienceMapParams
+    | GetTeamActivityExperienceTrendParams
+    | GetTeamActivityEndpointDetailParams
+) {
   const sp = new URLSearchParams();
   if (!params) return '';
   Object.entries(params).forEach(([k, v]) => {
@@ -63,4 +83,40 @@ export const setTeamActivityInsightStateReal: SetTeamActivityInsightStateContrac
     method: 'POST',
     body: params,
   });
+};
+
+export const insightToRequirementReal: InsightToRequirementContract = async (
+  params: InsightToRequirementParams
+): Promise<ApiResponse<InsightToRequirementResult>> => {
+  return await apiRequest<InsightToRequirementResult>(api.teamActivity.insightToRequirement(), {
+    method: 'POST',
+    body: params,
+  });
+};
+
+export const getTeamActivityExperienceMapReal: GetTeamActivityExperienceMapContract = async (
+  params?: GetTeamActivityExperienceMapParams
+): Promise<ApiResponse<TeamActivityExperienceMapData>> => {
+  return await apiRequest<TeamActivityExperienceMapData>(
+    `${api.teamActivity.experienceMap()}${toQuery(params)}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamActivityExperienceTrendReal: GetTeamActivityExperienceTrendContract = async (
+  params?: GetTeamActivityExperienceTrendParams
+): Promise<ApiResponse<TeamActivityExperienceTrendData>> => {
+  return await apiRequest<TeamActivityExperienceTrendData>(
+    `${api.teamActivity.experienceTrend()}${toQuery(params)}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamActivityEndpointDetailReal: GetTeamActivityEndpointDetailContract = async (
+  params: GetTeamActivityEndpointDetailParams
+): Promise<ApiResponse<TeamActivityEndpointDetailData>> => {
+  return await apiRequest<TeamActivityEndpointDetailData>(
+    `${api.teamActivity.endpointDetail()}${toQuery(params)}`,
+    { method: 'GET' }
+  );
 };

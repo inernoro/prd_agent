@@ -323,6 +323,7 @@ public class MongoDbContext
     // 系统级跨节点互传（Peer Sync）
     public IMongoCollection<PeerNode> PeerNodes => _database.GetCollection<PeerNode>("peer_nodes");
     public IMongoCollection<PeerPairingCode> PeerPairingCodes => _database.GetCollection<PeerPairingCode>("peer_pairing_codes");
+    public IMongoCollection<PeerSyncRun> PeerSyncRuns => _database.GetCollection<PeerSyncRun>("peer_sync_runs");
 
     // Team 团队（跨应用协作单位：网页托管 + 知识库共用）
     public IMongoCollection<Team> Teams => _database.GetCollection<Team>("teams");

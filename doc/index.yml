@@ -43,6 +43,7 @@ docs:
   spec.cds-compose-contract: CDS Compose 契约（SSOT）
   spec.cds-lifecycle: CDS 服务生命周期与缓存范围规格
   spec.cds-map-pairing-protocol: CDS MAP 配对协议规格
+  spec.map-kb-transfer-protocol: MAP 知识库传输协议（MAP-KBTP v1）规格
   spec.cds-project-model: CDS 多项目数据字典
   spec.short-links: 统一短链系统规格
   spec.speech-agent: 演讲智能体（长文本 → 思维导图演讲）产品规格
@@ -50,6 +51,7 @@ docs:
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
+  design.mobile-refactor: 手机端整体重构调研（使用强度 + 视觉取证 + 改造波次）
   design.daily-tips: 每日小贴士 / 路径式教程系统设计
   design.acceptance-system: 功能验收体系设计（业界对标的标准化验收 + 取证 + 归档）
   design.acceptance-kb: 验收报告知识库设计（最新在前 + 结论可视 + 模板约束 + 跨环境同步）
@@ -66,6 +68,7 @@ docs:
   design.external-authorization: 外部授权中心（TAPD/语雀/GitHub 凭证统一管理）
   design.workflow-engine: 工作流引擎设计方案
   design.workflow-auto-config: 工作流自动配置（AI 生成校验自愈 + 降低配置门槛）
+  design.ccas-agent: 赋码采集关联智能体（CCAS）设计（PRD 生成 + 设备素材库 + 流程示意图）
   design.workflow-control-flow-sse: 工作流引擎 v2 流程控制舱与 SSE 实时推送设计
   design.admin: PRD Admin 设计系统规范
   design.account-data-sharing: 账户数据共享设计文档
@@ -138,6 +141,7 @@ docs:
   design.speech-agent: 演讲智能体技术设计（数据模型 / Controller / Service / SSE 协议）
   design.peer-sync: 系统级跨节点互传（Peer Sync）设计
   design.reprocess-chat-routing: 文档再加工 · 智能体调用路由设计
+  design.team-activity-voc: 团队动态·用户体验之声(VOC) 设计（体验全景热力图 treemap + 痛点指数 + 闭环 + 设计思想）
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
@@ -276,7 +280,9 @@ docs:
 
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
+  debt.cds-project-migration: 项目迁移(CDS 项目移植) · 债务台账
   debt.agent-universe: 智能体宇宙 · 债务台账
+  debt.cds-ci-prebuilt: CDS 极速版（CI 预构建）· 已知边界与遗留事项
   debt.knowledge-base-mention-network: 知识库引用网络 · MVP 已知边界与遗留事项
   debt.knowledge-base-versioning: 知识库版本控制/图片插入/大小统计 · 已知边界
   debt.onboarding-tips: 页面教程(小技巧)系统 · 债务台账
@@ -337,6 +343,7 @@ docs:
   report.claude-agent-sdk-map-intrusion-root-cause-2026-05-18: Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告
   report.cds-agent-current-progress: CDS Agent 当前进度面板
   report.cds-agent-workbench-2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
+  report.2026-W25: 周报 2026-W25 (06-15 ~ 06-21)
   report.2026-W24: 周报 2026-W24 (06-08 ~ 06-14)
   report.2026-W23: 周报 2026-W23 (06-01 ~ 06-07)
   report.2026-W22: 周报 2026-W22 (05-25 ~ 05-31)
@@ -386,3 +393,6 @@ docs:
     title: "version-20260610-1 分支改动说明"
     status: active
   debt.map-mcp-connector: MAP MCP 连接器债务台账
+  debt.cds-performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
+  debt.voc: 行为洞察 / VOC 体验之声 工程债务台账
+  debt.mobile-control-bar-overload: 移动端控制条过载治理台账

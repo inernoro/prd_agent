@@ -1101,6 +1101,14 @@ public static class Admin
             Category = "Analysis"
         )]
         public const string InsightBrief = "prd-admin.team-activity.insight-brief::chat";
+
+        [AppCallerMetadata(
+            "团队动态-端点根因诊断",
+            "对体验全景热力图痛点端点的报错码分布/耗时/真实样本做 AI 根因诊断（SSE 流式，逐字推送给下钻抽屉）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string EndpointDiagnose = "prd-admin.team-activity.endpoint-diagnose::chat";
     }
 
     public static class Changelog

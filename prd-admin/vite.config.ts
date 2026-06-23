@@ -76,6 +76,11 @@ export default defineConfig({
   build: {
     // CDS static 部署在共享主机上 vite build 易 OOM（exitCode=137）。
     // isCdsBuild：关 minify + 限并行 + 关体积报告，优先保活过构建。
+    //
+    // 2026-06-22 实测：把 maxParallelFileOps 从 1 放宽到 4 对构建时间无改善
+    // （同容器顺序 A/B：1→353s，4→369s，反而略慢）——本应用 vite build 的瓶颈
+    // 在 transform/bundle 的 CPU 阶段，不是文件 I/O 并行度。故保留 1（防 OOM
+    // 的保守值），构建期的真实优化交给「全局构建并发闸」消除互相饿 CPU。
     sourcemap: false,
     minify: isCdsBuild ? false : 'esbuild',
     cssMinify: isCdsBuild ? false : 'esbuild',
