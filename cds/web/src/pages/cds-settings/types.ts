@@ -59,6 +59,8 @@ export interface ExecutorNode {
   role?: string;
   status?: string;
   branchCount?: number;
+  /** /api/executors 返回的是分支名数组（无 branchCount）；卡片用 branches.length 兜底统计。 */
+  branches?: string[];
   runningContainers?: number;
   lastHeartbeat?: string;
   labels?: string[];
