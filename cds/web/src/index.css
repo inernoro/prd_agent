@@ -206,6 +206,62 @@
   }
 
   /*
+   * 分支卡片生命周期动效(2026-06-23):
+   *   - enter:新分支(webhook / 手动创建)淡入长出来
+   *   - leave:分支被回收(GitHub 删分支 → branch.removed)淡出收起,父组件
+   *     两段式延迟移除,等这段动画播完才真正从列表 filter 掉。
+   * 收起用 max-height + 透明度 + 轻微位移,在网格里读起来像「卡片被收走」。
+   */
+  @keyframes cds-branch-card-enter {
+    0% {
+      opacity: 0;
+      transform: translateY(10px) scale(0.97);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .cds-branch-card-enter {
+    animation: cds-branch-card-enter 440ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes cds-branch-card-leave {
+    0% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      max-height: 520px;
+      margin-bottom: 0;
+    }
+    35% {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.95);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.95);
+      max-height: 0;
+      margin-bottom: -1rem;
+      padding-top: 0;
+      padding-bottom: 0;
+      border-width: 0;
+    }
+  }
+  .cds-branch-card-leave {
+    pointer-events: none;
+    animation: cds-branch-card-leave 340ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  }
+  /* 尊重系统「减少动态效果」偏好:直接给最终态,不播过渡。 */
+  @media (prefers-reduced-motion: reduce) {
+    .cds-branch-card-enter {
+      animation: none;
+    }
+    .cds-branch-card-leave {
+      animation: none;
+      opacity: 0;
+    }
+  }
+
+  /*
    * Mobile layout hardening.
    * These rules protect the high-traffic CDS surfaces from the exact class of
    * regressions caught in mobile acceptance: vertical text squeeze, footer/FAB

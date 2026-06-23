@@ -1880,6 +1880,16 @@ export function BranchListPage(): JSX.Element {
 
   // SSE 连接状态只用于故障兜底。在线状态不再渲染绿点,避免无意义状态噪音。
   const [sseConnected, setSseConnected] = useState(true);
+  /*
+   * 卡片生命周期动效(2026-06-23 用户反馈「webhook 回收分支没有动效」):
+   *   - 新分支(branch.created)→ enteringIds → 卡片淡入长出来
+   *   - 分支回收(branch.removed,GitHub 删分支链路)→ 两段式:先标记 leavingIds
+   *     播淡出收起动画,~360ms 动画结束后才真正从列表 filter 掉,避免「瞬间消失」。
+   * 用 ref 存计时器以便 projectId 切换 / 卸载时清理,防止泄漏 + 重复触发。
+   */
+  const [enteringIds, setEnteringIds] = useState<Set<string>>(() => new Set());
+  const [leavingIds, setLeavingIds] = useState<Set<string>>(() => new Set());
+  const cardPhaseTimersRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     if (!projectId) return;
     const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(projectId)}`);
@@ -1916,6 +1926,17 @@ export function BranchListPage(): JSX.Element {
       }
       if (!data.branch || data.branch.projectId !== projectId) return;
       applySseAction({ type: 'sseBranchUpsert', branch: data.branch, projectId });
+      // 新分支淡入动画:仅对 branch.created 触发(快照/branch.updated 不触发,
+      // 否则首屏全量卡片会一起闪)。播 ~480ms 后摘掉 entering 标记。
+      const newId = data.branch.id;
+      const enterKey = `enter:${newId}`;
+      const prevEnter = cardPhaseTimersRef.current.get(enterKey);
+      if (prevEnter) window.clearTimeout(prevEnter);
+      setEnteringIds((prev) => { const next = new Set(prev); next.add(newId); return next; });
+      cardPhaseTimersRef.current.set(enterKey, window.setTimeout(() => {
+        cardPhaseTimersRef.current.delete(enterKey);
+        setEnteringIds((prev) => { const next = new Set(prev); next.delete(newId); return next; });
+      }, 480));
     });
     source.addEventListener('branch.updated', (ev) => {
       const data = parseSseJson<{ branch?: BranchSummary; projectId?: string }>(ev);
@@ -1963,9 +1984,24 @@ export function BranchListPage(): JSX.Element {
       }
       if (!data.branchId) return;
       if (data.projectId !== projectId) return;
-      applySseAction({ type: 'sseBranchRemove', branchId: data.branchId, projectId });
+      // 两段式回收:先标记 leaving 播淡出收起动画,动画结束再真正移除。
+      const removedId = data.branchId;
+      const leaveKey = `leave:${removedId}`;
+      const prevLeave = cardPhaseTimersRef.current.get(leaveKey);
+      if (prevLeave) window.clearTimeout(prevLeave);
+      setLeavingIds((prev) => { const next = new Set(prev); next.add(removedId); return next; });
+      cardPhaseTimersRef.current.set(leaveKey, window.setTimeout(() => {
+        cardPhaseTimersRef.current.delete(leaveKey);
+        applySseAction({ type: 'sseBranchRemove', branchId: removedId, projectId });
+        setLeavingIds((prev) => { const next = new Set(prev); next.delete(removedId); return next; });
+      }, 360));
     });
-    return () => source.close();
+    return () => {
+      source.close();
+      // 切项目 / 卸载:清掉所有未触发的动效计时器,避免泄漏 + 对旧项目的延迟移除。
+      for (const timer of cardPhaseTimersRef.current.values()) window.clearTimeout(timer);
+      cardPhaseTimersRef.current.clear();
+    };
   }, [confirmEmptyBranchList, projectId]);
 
   useEffect(() => {
@@ -3246,6 +3282,7 @@ export function BranchListPage(): JSX.Element {
                     resourceChipDisplay={state.status === 'ok' ? state.project.resourceChipDisplay : undefined}
                     highlighted={highlightedBranchId === branch.id}
                     highlightPulse={highlightPulseBranchId === branch.id}
+                    phase={leavingIds.has(branch.id) ? 'leaving' : enteringIds.has(branch.id) ? 'entering' : undefined}
                     activityEvents={activityEvents
                       .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
                       .slice(0, 5)}
@@ -4659,6 +4696,7 @@ function BranchCard({
   resourceChipDisplay,
   highlighted,
   highlightPulse,
+  phase,
   activityEvents = [],
   activeTagFilter,
   onPreview,
@@ -4700,6 +4738,10 @@ function BranchCard({
   // 稳定选中态 + 自动滚到可视区。详见 focusBranchCard / index.css。
   highlighted?: boolean;
   highlightPulse?: boolean;
+  // 卡片生命周期动效阶段:'entering' = 新分支(webhook/手动创建)长出来;
+  // 'leaving' = 分支被回收(GitHub 删分支 → branch.removed)淡出收起。
+  // 由父组件根据 SSE 事件驱动,播完动画后才真正从列表移除(两段式)。
+  phase?: 'entering' | 'leaving';
   // 当前激活的标签过滤(给 chip 高亮显示用)
   activeTagFilter?: string | null;
   onSelect?: () => void;
@@ -4918,7 +4960,7 @@ function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : 'overflow-hidden'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
