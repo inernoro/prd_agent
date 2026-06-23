@@ -4099,7 +4099,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 跳过正在被其他写操作占用的分支。删除后广播 branch.removed，
   // 让 /branches/stream 订阅者实时移除卡片，无需手动刷新。
   router.post('/branches/cleanup-stopped', async (req, res) => {
-    const projectFilter = resolveProjectIdParam(req.query.project);
+    let projectFilter = resolveProjectIdParam(req.query.project);
+    // 项目级访问控制（Bugbot High / learned rule: 所有项目级资源 handler 必须 assertProjectAccess）：
+    // 该接口会整条删除分支（容器 + worktree + entry），项目级 cdsp_ key 绝不能跨项目批量删。
+    //   - 项目级 key 未带 ?project= → 强制锁定到 key 自己的项目（不允许"清全部"）；
+    //   - 带了 ?project= → assertProjectAccess 校验与 key 一致，否则 403；
+    //   - bootstrap / cookie / 全局 key（cdsProjectKey 为空）→ 不受限，保持原行为。
+    const projectKey = (req as any).cdsProjectKey as { projectId: string; keyId: string } | undefined;
+    if (projectKey) {
+      if (!projectFilter) projectFilter = projectKey.projectId;
+      const m = assertProjectAccess(req as any, projectFilter);
+      if (m) {
+        res.status(m.status).json(m.body);
+        return;
+      }
+    }
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
     const actor = resolveActorFromRequest(req);
     const trigger = triggerFromRequest(req);

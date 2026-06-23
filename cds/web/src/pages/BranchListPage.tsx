@@ -52,7 +52,6 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
-import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
 import { releaseCenterHref } from '@/lib/releaseCenter';
 import {
   buildBranchResources,
@@ -381,53 +380,6 @@ interface FocusBranchEventDetail {
   branchId?: string;
 }
 
-type HostStatsResponse = NormalizedHostStats;
-
-interface ExecutorNodeSummary {
-  id: string;
-  role?: string;
-  host?: string;
-  port?: number;
-  status: 'online' | 'offline' | string;
-  capacity?: {
-    maxBranches?: number;
-    memoryMB?: number;
-    cpuCores?: number;
-  };
-  load?: {
-    memoryUsedMB?: number;
-    cpuPercent?: number;
-  };
-  branchCount?: number;
-  runningContainers?: number;
-  lastHeartbeat?: string;
-  labels?: string[];
-}
-
-interface ExecutorCapacityResponse {
-  online: number;
-  offline: number;
-  total: {
-    maxBranches: number;
-    memoryMB: number;
-    cpuCores: number;
-  };
-  used: {
-    branches: number;
-    memoryMB: number;
-    cpuPercent: number;
-  };
-  freePercent: number;
-  nodes: ExecutorNodeSummary[];
-}
-
-interface ClusterStatusResponse {
-  mode: string;
-  effectiveRole?: string;
-  remoteExecutorCount?: number;
-  strategy?: string;
-  capacity?: ExecutorCapacityResponse;
-}
 
 type LoadState =
   | { status: 'loading' }
@@ -481,11 +433,6 @@ function parseSseJson<T>(event: Event): T | null {
   }
 }
 
-type OpsStatusState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ok'; capacity: ExecutorCapacityResponse; cluster: ClusterStatusResponse };
-
 type SlowHttpState =
   | { status: 'idle' | 'loading' }
   | { status: 'error'; message: string }
@@ -510,11 +457,6 @@ type FailedDeployTarget = {
   profileId?: string;
   label: string;
 };
-
-type HostStatsState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ok'; data: HostStatsResponse };
 
 function createAction(kind: BranchAction['kind'], message: string): BranchAction {
   return {
@@ -1334,9 +1276,7 @@ export function BranchListPage(): JSX.Element {
   const [actions, setActions] = useState<Record<string, BranchAction>>({});
   const [actionClock, setActionClock] = useState(Date.now());
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
-  const [, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
   const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
-  const [, setHostStats] = useState<HostStatsState>({ status: 'loading' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
   const [cleanupStoppedRunning, setCleanupStoppedRunning] = useState(false);
@@ -1652,20 +1592,6 @@ export function BranchListPage(): JSX.Element {
     void refreshRemoteBranches(false);
   }, [refreshRemoteBranches]);
 
-  const refreshOpsStatus = useCallback(async () => {
-    try {
-      const headers = { 'X-CDS-Poll': 'true' };
-      const [capacity, cluster] = await Promise.all([
-        apiRequest<ExecutorCapacityResponse>('/api/executors/capacity', { headers }),
-        apiRequest<ClusterStatusResponse>('/api/cluster/status', { headers }),
-      ]);
-      setOpsStatus({ status: 'ok', capacity, cluster });
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : String(err);
-      setOpsStatus({ status: 'error', message });
-    }
-  }, []);
-
   const refreshSlowHttp = useCallback(async () => {
     setSlowHttpState((current) => current.status === 'ok' ? current : { status: 'loading' });
     try {
@@ -1679,39 +1605,16 @@ export function BranchListPage(): JSX.Element {
     }
   }, []);
 
+  // 运维抽屉打开时刷新「慢接口」数据（cluster/executor/host-stats 已由
+  // MonitoringDialog 内部 useMonitoringData 自取，不在此重复轮询 —— Bugbot Low）。
   useEffect(() => {
     if (!opsDrawerOpen) return;
-    void refreshOpsStatus();
     void refreshSlowHttp();
     const timer = window.setInterval(() => {
-      void refreshOpsStatus();
       void refreshSlowHttp();
     }, 30_000);
     return () => window.clearInterval(timer);
-  }, [opsDrawerOpen, refreshOpsStatus, refreshSlowHttp]);
-
-  const refreshHostStats = useCallback(async () => {
-    try {
-      const raw = await apiRequest<unknown>('/api/host-stats', {
-        headers: { 'X-CDS-Poll': 'true' },
-      });
-      const data = normalizeHostStats(raw);
-      if (!data) {
-        setHostStats({ status: 'error', message: '主机状态返回格式异常，已阻止页面崩溃' });
-        return;
-      }
-      setHostStats({ status: 'ok', data });
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : String(err);
-      setHostStats({ status: 'error', message });
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshHostStats();
-    const timer = window.setInterval(() => void refreshHostStats(), 8_000);
-    return () => window.clearInterval(timer);
-  }, [refreshHostStats]);
+  }, [opsDrawerOpen, refreshSlowHttp]);
 
   // 一次性拉所有项目列表给 Crumb 上的项目切换 dropdown 用。
   // 失败静默降级到"无 dropdown,但 Crumb 项目名仍能跳 /project-list"。
