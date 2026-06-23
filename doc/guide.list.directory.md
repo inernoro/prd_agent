@@ -897,6 +897,9 @@
 - [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
 
+- [周报 2026-W25 (06-15 ~ 06-21)](report.2026-W25) `report.2026-W25`
+  > 2026 年第 25 周工作总结（288 commits / 27 PRs，W24 峰值后的归途收口周：缺陷自动化闭环正式合龙 defect-agent v3+控制台 UI+精确领取+证据链+授权窄 scope、CDS 灰度预览体感升级 构建 ETA+本地账号登录+验收报告项目级鉴权+mongo-split 写入合并+持久化投影剥离 runtime 派生、视觉创作首页重新设计+上传压缩保留透明通道+视频本地超时取消后端 run、知识库图片插入/版本恢复/大库分页三老 Bug 收口、网页托管 PDF 改 PDF.js 治微信打开空白、产品蓝图 Wave1+Wave2+PRD 多轮改稿+设备素材本地上传、教程飞回入口 pill 弹簧接住光效、新增 expectation-management/content-fills-canvas 两条系统规则；fix 占比 50% 名副其实归途周）
+
 - [周报 2026-W24 (06-08 ~ 06-14)](report.2026-W24) `report.2026-W24`
   > 2026 年第 24 周工作总结（566 commits / 56 PRs，6 周以来最忙的一周：PM Agent Phase 2 全屏改版+AI 工作台+跨项目报表+P3 里程碑详情+AI 项目简报、Product Agent 立项 v1+TAPD 数字编号统一、MD 转 PPT 锚定 deck 模式+流式逐页大纲+模型池直选、知识库双链 v2+反向链接+Obsidian 风宇宙图+划词 AI 局部编辑、CDS 资源工作台协议+数据库工作台闭环+SSH 发布作战台+Agent 请求观测台、跨项目密钥隔离穿透事故复盘+平台密钥自检自愈、三个新智能体上线 TAPD 缺陷提报/商品溯源/识途、团队动态+行为洞察、网页托管团队空间 P0~P2、教程系统 v3 我已学会退出口+飞回动画半速+轻微提醒更新子类）
 
@@ -999,6 +1002,11 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-06-21 | 新增 | `report.2026-W25` | 2026-W25 周报（06-15 ~ 06-21）：W24 峰值后归途收口周，缺陷自动化闭环合龙 + CDS 灰度预览体感升级 + 视觉/知识库收口 + 两条新系统规则 |
+| 2026-06-21 | 新增 | `.claude/rules/expectation-management.md` | 预期管理总纲：让用户任何时刻知道在做什么/还要多久/接下来怎样/刚才变了什么/我该做什么 |
+| 2026-06-21 | 新增 | `.claude/rules/content-fills-canvas.md` | 内容填满画布：主产物必须 flex-1 占主导，禁内容小盒子 + 大留白 |
+| 2026-06-21 | 新增 | `doc/debt.cds-branch-isolation.md` | CDS 多分支跨分支隔离债务台账 |
+| 2026-06-21 | 新增 | `doc/spec.defect-agent-automation-protocol.md` | 缺陷自动化协议契约 SSOT |
 | 2026-06-19 | 新增 | `debt.visual-storyboard` | 视觉分镜台债务台账：OpenRouter 出图画幅/modalities 按能力派生 + 拆镜 SSE 流式 + 关键帧 ImageGenRun 离场取消 |
 | 2026-06-19 | 新增 | `debt.cds-backend-deploy-freeze` | CDS 后端部署冻结台账：分支 api 跑旧代码（构建成功≠运行新代码）+ 图生视频下载修复/额度提醒待部署复验 |
 | 2026-06-04 | 新增 | `report.tutorial-coverage` `debt.onboarding-tips` | 页面教程系统统一升级:全量路由覆盖审计 + 债务台账(video-agent/薄教程加厚/编辑器/跨页待补) |
