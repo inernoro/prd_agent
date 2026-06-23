@@ -1367,6 +1367,18 @@ export class GitHubWebhookDispatcher {
       this.deps.stateService.updateBranchGithubMeta(branchId, { githubCommitSha: commitSha });
       this.deps.stateService.save();
     }
+    // 极速版 CI 闸门（Bugbot: check run skips CI wait）：check_run re-run 不得绕过
+    // 「等 CI 镜像」直接部署预构建镜像 —— ghcr 镜像可能还没 push,docker pull 必失败。
+    // 仅当 CI 镜像已 ready 才放行部署;waiting/failed/尚未构建时只 ack,不返回 deployRequest。
+    // 非极速版分支维持原有「check_run re-run = 重部署」行为不变。
+    const checkProfiles = this.deps.stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    if (branchUsesPrebuiltMode(checkProfiles, entry) && entry.ciImageStatus !== 'ready') {
+      return {
+        action: 'ci-image-waiting',
+        message: `${dryRun ? '[dry-run] ' : ''}极速版分支 '${branchId}' 等待 CI 镜像就绪,check_run 重跑不触发预构建部署（状态:${entry.ciImageStatus || '未构建'}）`,
+        branchId,
+      };
+    }
     return {
       action: 'check-run-requeued',
       message: `${dryRun ? '[dry-run] ' : ''}Queued redeploy of '${branchId}' at ${commitSha.slice(0, 7)}`,

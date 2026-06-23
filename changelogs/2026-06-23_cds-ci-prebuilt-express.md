@@ -17,3 +17,5 @@
 | fix | cds | PR review 修复（Bugbot/Codex P2）：早到 CI 结果缓存键加 head_branch,同一 commit 的两分支各跑各的 workflow_run 不再互相覆盖/吞噬;认领时也按分支匹配,避免 A 分支用 B 分支的成功结果误标 ready |
 | fix | cds | PR review 修复（Codex P2）：docs-only push 推进 ciTargetSha 后同样认领早到的 CI 缓存(提取 claimCachedCiRunForExpress 复用),命中直接 ready+deploy/failed,不再因绕过认领而卡 waiting |
 | fix | cds | PR review 修复（Codex P2）：极速版 docker pull 前 fail-fast 校验镜像 tag 已解析,未解析(含 ${ / 空 :sha-)直接报可操作错误而非语义不清的拉取失败 |
+| fix | cds | PR review 修复（Bugbot）：check_run 重跑在极速版 waiting/failed 分支不再绕过 CI 闸门直接部署预构建镜像(镜像可能未 push),仅 ciImageStatus=ready 才放行;非极速版行为不变 |
+| fix | cds | PR review 修复（Bugbot）：align-deploy-modes 写 override 时若分支模式真的变了,清掉旧 ciImageStatus/ciTargetSha/ciWorkflowConclusion/ciWorkflowRunUrl,避免卡片显示与新模式不符的「等待 CI / CI 失败」陈旧徽章;模式未变不动(不打断 in-flight 等待) |

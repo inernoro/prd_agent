@@ -2484,15 +2484,34 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const branches = stateService.getBranchesForProject(project.id);
     const aligned: Array<{ branchId: string; modes: Record<string, string> }> = [];
     for (const branch of branches) {
+      // 对齐前记录各 profile 当前激活模式,用于判定本次对齐是否真的改了模式。
+      const prevModes: Record<string, string> = {};
+      for (const profile of profiles) {
+        prevModes[profile.id] = branch.profileOverrides?.[profile.id]?.activeDeployMode || '';
+      }
       // 复用 SSOT 写入逻辑（建分支与 webhook 自动建分支同款）
       applyDefaultDeployModesToBranch(branch, defaults, profiles);
       const modes: Record<string, string> = {};
+      let modeChanged = false;
       for (const profile of profiles) {
         if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) continue;
         const ov = branch.profileOverrides?.[profile.id];
         if (!ov) continue;
         stateService.setBranchProfileOverride(branch.id, profile.id, ov);
         modes[profile.id] = ov.activeDeployMode || '';
+        if ((ov.activeDeployMode || '') !== (prevModes[profile.id] || '')) modeChanged = true;
+      }
+      // 模式真的变了才清 CI 徽章状态（Bugbot: align leaves stale CI badges）：
+      // align 只写 override、不部署,旧的 ciImageStatus/ciTargetSha 等若不清,卡片会
+      // 显示与新模式不符的「等待 CI / CI 失败」直到下次 push。模式未变则不动(避免清掉
+      // 正在 in-flight 等待的极速版分支状态)。CI 字段在下次 express push 时重新 stamp。
+      if (modeChanged && branch.ciImageStatus !== undefined) {
+        stateService.updateBranchGithubMeta(branch.id, {
+          ciImageStatus: undefined,
+          ciTargetSha: undefined,
+          ciWorkflowConclusion: undefined,
+          ciWorkflowRunUrl: undefined,
+        });
       }
       aligned.push({ branchId: branch.id, modes });
     }

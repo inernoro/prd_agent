@@ -441,4 +441,33 @@ describe('极速版 — dispatcher', () => {
     expect(result.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: NEW_SHA });
     expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('ready');
   });
+
+  it('check_run 重跑在极速版 waiting 分支不返回 deployRequest（Bugbot: check run skips CI wait）', async () => {
+    const pushed = await pushOnce(); // express, ciImageStatus=waiting
+    const result = await dispatcher.handle('check_run', {
+      action: 'rerequested',
+      check_run: { external_id: pushed.branchId, head_sha: FULL_SHA },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('ci-image-waiting');
+    expect(result.deployRequest).toBeUndefined();
+  });
+
+  it('check_run 重跑在极速版 ready 分支放行部署', async () => {
+    const pushed = await pushOnce();
+    // 让 CI 成功 → ready
+    await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 50, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, head_branch: 'feature', conclusion: 'success' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('ready');
+    const result = await dispatcher.handle('check_run', {
+      action: 'rerequested',
+      check_run: { external_id: pushed.branchId, head_sha: FULL_SHA },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('check-run-requeued');
+    expect(result.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: FULL_SHA });
+  });
 });
