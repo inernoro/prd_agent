@@ -29,6 +29,7 @@ function injectKeyframes() {
   0% { -webkit-mask-position: 120% 0; mask-position: 120% 0; }
   100% { -webkit-mask-position: -120% 0; mask-position: -120% 0; }
 }
+@keyframes map-glow { 0%,100% { opacity: 0.3; transform: scale(0.92); } 50% { opacity: 0.6; transform: scale(1.04); } }
   `;
   document.head.appendChild(style);
 }
@@ -104,14 +105,26 @@ export function PageTransitionLoader({
         alignItems: 'center',
         justifyContent: 'center',
         // 透明:不再用不透明深色铺满内容区(那会盖掉 App 的 aurora 背景,
-        // 看起来就像「一块巨大黑板」)。让真实背景透出,加载只是个小指示。
+        // 看起来就像「一块巨大黑板」)。让真实背景透出,加载只是个过渡指示。
         background: 'transparent',
         zIndex: isFullscreen ? 9999 : 10,
         userSelect: 'none',
         pointerEvents: 'none',
       }}
     >
-      <CleanWordmark size={26} />
+      {/* 柔光:让 MAP 过渡在任意背景上都清晰可见,但不形成黑板 */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          width: 280,
+          height: 160,
+          borderRadius: '50%',
+          background: 'radial-gradient(closest-side, rgba(255,255,255,0.10), transparent 70%)',
+          animation: 'map-glow 1.8s ease-in-out infinite',
+        }}
+      />
+      <CleanWordmark size={48} />
     </div>
   );
 }
