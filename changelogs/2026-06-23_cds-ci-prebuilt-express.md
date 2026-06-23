@@ -27,3 +27,8 @@
 | fix | cds | PR review 修复（Codex P2）：本地 deploy 在 worktree pull 后用真实 HEAD 刷新 githubCommitSha,避免远端已前进时极速版镜像 tag 仍渲染 pull 前旧 SHA 导致跑旧镜像/拉错 tag;主 deploy 与单服务 deploy 两路径均覆盖 |
 | fix | cds | PR review 修复（Bugbot/Codex P2）：极速版部署严格锁定 CI 就绪 SHA——deploy 闸门改为「仅 ciImageStatus=ready 且 ciTargetSha===目标 SHA」放行(undefined/align 清空/ready-但-SHA-不符 一律 409);pull 后刷新 githubCommitSha 仅限非极速版,极速版镜像永远锁在 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD |
 | fix | cds | PR review 修复（Codex P2）：分支卡 CI 徽章改用 deployRuntime?.prebuilt!==false 判定,使 SSE 新建(无 deployRuntime 的原始 BranchEntry)的极速版分支在全量刷新前也显示「等待 CI/构建失败」反馈;明确非极速版(prebuilt=false)仍隐藏 |
+| feat | ci | branch-image.yml 改为 path-filter 按组件构建(dorny/paths-filter):只改 prd-api/ 只构建 api、只改 prd-admin/ 只构建 admin、仅 cds/docs 两者都不构建,不再每次重复构建两镜像 |
+| feat | cds | 极速版「逐组件回退主分支」(用户决策):DeployModeOverride 新增 fallbackImage;runService 按「本 commit 镜像 → 固定主分支镜像(:branch-main)」优先级 docker pull,任一拉到即用,两者都拉不到才报错——解决 CI 按需构建后某 commit 缺某组件镜像(三场景:只一个构建/都没构建/仅 cds 改动)导致预览起不来 |
+| fix | cds | 极速版部署移除手动/单服务硬闸门(改为上面的逐组件回退):deploy 路由不再返回 409 ci_image_not_ready;镜像可用性下沉到 runService 逐组件回退处理,never 硬失败 |
+| fix | cds | workflow_run 匹配补「当前仍是极速版」校验(branchUsesPrebuiltMode),分支切回 dev/static 后旧 CI 完成事件不再被认领自动重部署一个已退出极速版的分支 |
+| docs | cds | debt.cds-ci-prebuilt 状态枚举改「进行中」(合规 rule.doc-naming);#3「每次构建两镜像」标记已偿还(改 path-filter + 回退) |

@@ -118,6 +118,19 @@ describe('极速版 — 纯函数', () => {
     // 关键：express 无 command 时不继承 baseline 源码命令,置空 → 用镜像 ENTRYPOINT。
     expect(eff.command || '').toBe('');
   });
+
+  it('resolveEffectiveProfile 带 fallbackImage 时解析模板并保留（逐组件回退主分支）', () => {
+    const p = expressApiProfile();
+    p.deployModes!.express.fallbackImage = 'ghcr.io/inernoro/prd_agent/prdagent-server:branch-${CDS_BRANCH_SLUG}';
+    const branch = {
+      id: 'p1-main', branch: 'Feat/Cool', githubCommitSha: FULL_SHA,
+      profileOverrides: { api: { activeDeployMode: 'express' } },
+    } as unknown as BranchEntry;
+    const eff = resolveEffectiveProfile(p, branch);
+    expect(eff.dockerImage).toBe(`ghcr.io/inernoro/prd_agent/prdagent-server:sha-${FULL_SHA}`);
+    // 回退镜像的 ${CDS_BRANCH_SLUG} 也被解析(此例分支名 → feat-cool);固定主分支时写死 branch-main 即原样保留。
+    expect(eff.fallbackImage).toBe('ghcr.io/inernoro/prd_agent/prdagent-server:branch-feat-cool');
+  });
 });
 
 // ── dispatcher 集成 ───────────────────────────────────────────────────
@@ -245,6 +258,19 @@ describe('极速版 — dispatcher', () => {
     expect(wf.deployRequest).toBeUndefined();
     // 分支仍指向旧的就绪 SHA,未被 NEW 顶替部署。
     expect(stateService.getBranch(pushed.branchId!)?.ciTargetSha).toBe(FULL_SHA);
+  });
+
+  it('分支已切回非极速版 → workflow_run 完成不再被认领自动重部署（Codex P2: re-check mode before consuming CI completions）', async () => {
+    const pushed = await pushOnce(); // waiting, express
+    // 用户把 override 从 express 切回 dev（CI 字段可能还残留）。
+    stateService.setBranchProfileOverride(pushed.branchId!, 'api', { activeDeployMode: 'dev' } as any);
+    const result = await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 90, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, head_branch: 'feature', conclusion: 'success' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('workflow-acknowledged');
+    expect(result.deployRequest).toBeUndefined();
   });
 
   it('workflow_run(branch-image.yml, failure) → ci-image-failed,无 deployRequest', async () => {

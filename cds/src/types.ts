@@ -161,6 +161,12 @@ export interface BuildProfile {
    */
   prebuiltImage?: boolean;
   /**
+   * 2026-06-23 极速版「逐组件回退主分支」新增 —— 预构建镜像缺失时的回退镜像（解析后）。
+   * 由 DeployModeOverride.fallbackImage 经 resolveEffectiveProfile 解析模板得到。
+   * runService 在 `docker pull dockerImage` 失败（本 commit 无该组件镜像）时改拉此镜像。
+   */
+  fallbackImage?: string;
+  /**
    * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略。
    *
    * 'shared'(默认):所有分支共用一个数据库实例 + 一个 database name。
@@ -332,6 +338,14 @@ export interface DeployModeOverride {
    * 模式不同（如 prd-api 源码模式 5000,生产镜像 8080;prd-admin dist serve 8080）。
    */
   containerPort?: number;
+  /**
+   * 2026-06-23 极速版「逐组件回退主分支」新增 —— 当本 commit 没有预构建镜像时的回退镜像。
+   * CI 按 path-filter 只构建改动的组件（不重复构建）,所以某个 commit 可能只有 api 镜像
+   * 而没有 admin 镜像（或反之、或都没有，如仅 cds/docs 改动）。此时该组件回退到固定的
+   * 主分支镜像，保证预览总能起来、不硬失败（用户 2026-06-23 决策:没有镜像默认回退固定主分支）。
+   * 同样支持模板变量,例: `ghcr.io/inernoro/prd_agent/prdagent-server:branch-main`。
+   */
+  fallbackImage?: string;
 }
 
 /**

@@ -804,10 +804,15 @@ export class GitHubWebhookDispatcher {
     //  - waiting **或** failed:操作员对失败 run 点 re-run 且同 SHA 成功时允许 failed→ready 恢复。
     //  - head_branch 比对:多分支可能指向同一 commit,GitHub 按分支分别跑 branch-image.yml,
     //    缺省时退回只按 SHA(向后兼容)。
+    // 还要校验分支**当前**仍是极速版（Codex P2: re-check mode before consuming CI
+    // completions）:用户若把 override 从 express 切回 dev/static,旧的 ciImageStatus/
+    // ciTargetSha 可能还在,此时不该再认 CI 完成事件去自动重部署一个已退出极速版的分支。
+    const wfProfiles = this.deps.stateService.getBuildProfilesForProject(project.id);
     const matchable = (b: BranchEntry): boolean =>
       (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
       && b.ciTargetSha === headSha
-      && (!run.head_branch || b.branch === run.head_branch);
+      && (!run.head_branch || b.branch === run.head_branch)
+      && branchUsesPrebuiltMode(wfProfiles, b);
     const target = branches.find(matchable);
     if (!target) {
       // 没有分支匹配:很可能是 push webhook 还没处理到(延迟/重试),分支尚未 stamp。

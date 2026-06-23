@@ -65,6 +65,8 @@ x-cds-deploy-modes:
       label: "极速版（CI 预构建）"
       # 无 command：使用镜像自带 ENTRYPOINT（dotnet PrdAgent.Api.dll）。
       image: "ghcr.io/inernoro/prd_agent/prdagent-server:sha-${CDS_COMMIT_SHA}"
+      # 本 commit 没有 api 镜像（仅改了 admin/cds/docs，CI 未构建 api）时回退到固定主分支镜像。
+      fallbackImage: "ghcr.io/inernoro/prd_agent/prdagent-server:branch-main"
       prebuilt: true
       # 生产镜像监听 8080（与源码模式 5000 不同），覆盖容器端口 + 端口相关 env。
       containerPort: 8080
@@ -97,6 +99,8 @@ x-cds-deploy-modes:
       label: "极速版（CI 预构建）"
       # 无 command：使用镜像自带 CMD（serve -s dist -l 8080）。
       image: "ghcr.io/inernoro/prd_agent/prdagent-admin:sha-${CDS_COMMIT_SHA}"
+      # 本 commit 没有 admin 镜像（仅改了 api/cds/docs，CI 未构建 admin）时回退到固定主分支镜像。
+      fallbackImage: "ghcr.io/inernoro/prd_agent/prdagent-admin:branch-main"
       prebuilt: true
       containerPort: 8080
 services:

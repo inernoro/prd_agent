@@ -9859,37 +9859,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    // 极速版 CI 闸门（Bugbot/Codex P2: manual deploy skips CI gate / require CI readiness for
-    // the deployed SHA）：极速版分支的镜像由 CI 按 commit 构建,只有 CI 把**目标 SHA**标 ready
-    // 才存在可拉取的镜像。放行条件必须是「ready 且 ciTargetSha === 即将部署的 SHA」;其余一律 block:
-    //   - undefined（align 清过 CI / auto-publish 刚切极速版 / 从未 push）→ 没有 ready 镜像;
-    //   - waiting / failed → 镜像未就绪;
-    //   - ready 但 ciTargetSha 与本次部署 SHA 不符（如显式 body.commitSha 指了别的 commit）。
-    // 否则后续 docker pull 一个不存在的镜像而失败,把「等 CI」变成噪音错误。非极速版分支不受影响;
-    // CI 驱动的内部部署此时 status 已 ready 且 SHA 对齐故自然放行。确认镜像已存在的高级用户可
-    // ?ignoreCiGate=1 强制。
-    const ignoreCiGate = req.query?.ignoreCiGate === '1' || req.query?.ignoreCiGate === 'true';
-    if (!ignoreCiGate && branchUsesPrebuiltMode(profiles, entry)) {
-      const gateReqSha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
-        ? req.body.commitSha : undefined;
-      const prospectiveSha = gateReqSha || entry.githubCommitSha;
-      const ciReadyForSha = entry.ciImageStatus === 'ready' && !!entry.ciTargetSha && entry.ciTargetSha === prospectiveSha;
-      if (!ciReadyForSha) {
-        res.status(409).json({
-          error: 'ci_image_not_ready',
-          ciImageStatus: entry.ciImageStatus ?? null,
-          ciTargetSha: entry.ciTargetSha ?? null,
-          targetSha: prospectiveSha ?? null,
-          message: entry.ciImageStatus === 'failed'
-            ? '极速版分支的 CI 镜像构建失败,无法拉取部署。请重跑 CI,或在分支详情切回源码编译模式后再部署。'
-            : entry.ciImageStatus === 'ready'
-              ? '极速版分支的 CI 镜像就绪 SHA 与本次部署目标不一致,等对应 commit 的 CI 构建完成后会自动部署。'
-              : '极速版分支正在等待 CI 构建镜像,镜像就绪后会自动部署,无需手动触发。如确认镜像已存在可加 ?ignoreCiGate=1 强制。',
-          escapeHatch: { hint: '附加 ?ignoreCiGate=1 query 可跳过此检查(仅在确认 ghcr 镜像已存在时使用)' },
-        });
-        return;
-      }
-    }
+    // 极速版部署不再硬闸门(用户 2026-06-23 决策:没有镜像默认回退固定主分支,不硬失败)。
+    // 镜像可用性由 container.ts runService 逐组件处理:本 commit 镜像拉不到就回退固定主分支
+    // 镜像(fallbackImage),两者都拉不到才报错。CI 仍按 path-filter 只构建改动组件(不重复构建),
+    // 期间 ciImageStatus=waiting 仅作 UI 反馈 + 触发 CI 完成后的自动重部署,不阻塞手动部署。
 
     // Phase 8 — env required check:必填项未填则 412 Precondition Failed,UI 弹窗强制感知
     // 用户可以"承诺会跑起来"按 ?ignoreRequired=1 query 强制 deploy(降级路径,不推荐)

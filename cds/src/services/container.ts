@@ -190,6 +190,9 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
         : profile.env,
       ...(override.prebuilt !== undefined ? { prebuiltImage: override.prebuilt } : {}),
       ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+      // 极速版「逐组件回退主分支」:把本模式的 fallbackImage 一并带出,供 runService 在
+      // 本 commit 无该组件镜像时回退（path-filter 只构建改动组件,某些 commit 缺镜像）。
+      ...(override.fallbackImage !== undefined ? { fallbackImage: override.fallbackImage } : {}),
     };
   }
   // 极速版(prebuilt)不跑 hot reload watcher —— 镜像里是编译产物,没有源码可 watch。
@@ -277,11 +280,16 @@ export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEn
   const branchOverride = branch?.profileOverrides?.[profile.id];
   const withBranchOverride = applyProfileOverride(profile, branchOverride);
   const withMode = resolveProfileWithMode(withBranchOverride);
-  // 2026-06-23 极速版：deploy-mode 解析完后,把 dockerImage 里的 ${CDS_COMMIT_SHA}
-  // 等模板变量按当前分支上下文替换。无模板变量时是 no-op。
+  // 2026-06-23 极速版：deploy-mode 解析完后,把 dockerImage / fallbackImage 里的
+  // ${CDS_COMMIT_SHA} 等模板变量按当前分支上下文替换。无模板变量时是 no-op。
   const resolvedImage = resolveImageTemplate(withMode.dockerImage, branch);
-  if (resolvedImage !== withMode.dockerImage) {
-    return { ...withMode, dockerImage: resolvedImage || withMode.dockerImage };
+  const resolvedFallback = resolveImageTemplate(withMode.fallbackImage, branch);
+  if (resolvedImage !== withMode.dockerImage || resolvedFallback !== withMode.fallbackImage) {
+    return {
+      ...withMode,
+      dockerImage: resolvedImage || withMode.dockerImage,
+      ...(withMode.fallbackImage !== undefined ? { fallbackImage: resolvedFallback || withMode.fallbackImage } : {}),
+    };
   }
   return withMode;
 }
@@ -900,52 +908,75 @@ export class ContainerService {
     // 暴露给用户（对应「等待+提示,手动切回源码编译」兜底），并在 SSE 日志给反馈
     // 而非空白等待。
     if (profile.prebuiltImage === true) {
-      // 防御性兜底（Codex P2: derive a SHA before rendering prebuilt image tags）：
-      // 部署路径(branches.ts)已在分发前从 commitSha/worktree HEAD 兜底推导 githubCommitSha,
-      // 正常不会到这。但若仍出现「模板变量没解析(含 ${)」或「tag 被空串替换成 :sha-/:branch-」,
-      // 直接 docker pull 会得到一个语义不清的错误。这里 fail-fast,给出可操作的提示。
-      const img = profile.dockerImage || '';
-      const tag = img.includes(':') ? img.slice(img.lastIndexOf(':') + 1) : '';
-      if (img.includes('${') || tag === '' || tag.endsWith('-')) {
-        const reason = `极速版镜像 tag 未解析: ${img || '(空)'} —— 缺 commit SHA / 分支 slug。`;
+      // 极速版「逐组件回退主分支」(用户 2026-06-23 决策)：CI 按 path-filter 只构建改动的
+      // 组件(不重复构建),所以某个 commit 可能缺本组件的镜像(只改了 api / 只改了 admin /
+      // 仅改 cds 或 docs)。按优先级尝试:① 本 commit 镜像(dockerImage) → ② 固定主分支回退
+      // 镜像(fallbackImage)。任一拉到即用它跑容器,**不硬失败**;两者都拉不到才报错。
+      const isUnresolved = (im: string): boolean => {
+        if (!im) return true;
+        if (im.includes('${')) return true; // 模板变量没解析
+        const tag = im.includes(':') ? im.slice(im.lastIndexOf(':') + 1) : '';
+        return tag === '' || tag.endsWith('-'); // tag 被空串替换成 :sha-/:branch-
+      };
+      const primary = (profile.dockerImage || '').trim();
+      const fallback = (profile.fallbackImage || '').trim();
+      const candidates: Array<{ image: string; kind: 'primary' | 'fallback' }> = [];
+      if (!isUnresolved(primary)) candidates.push({ image: primary, kind: 'primary' });
+      if (fallback && !isUnresolved(fallback) && fallback !== primary) candidates.push({ image: fallback, kind: 'fallback' });
+
+      if (candidates.length === 0) {
+        const reason = `极速版镜像 tag 未解析且无可用回退镜像: ${primary || '(空)'} —— 缺 commit SHA / 分支 slug。`;
         onOutput?.(`── ${reason} ──\n`);
         this.recordContainerEvent({
           severity: 'error',
           source: 'cds-container-service',
           action: 'app.pull.unresolved-tag',
-          message: `prebuilt image tag unresolved: ${img}`,
+          message: `prebuilt image tag unresolved: ${primary}`,
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: profile.id,
           requestId: context.requestId ?? undefined,
           operationId: context.operationId ?? undefined,
-          details: { image: img, reason: '极速版镜像 tag 模板变量为空/未解析' },
+          details: { image: primary, fallback, reason: '极速版镜像 tag 模板变量为空/未解析且无回退' },
         });
-        throw new Error(`${reason}\n请确认分支已有 commit（push 或部署请求携带 commitSha）,或在分支详情切回源码编译。`);
+        throw new Error(`${reason}\n请确认分支已有 commit（push 或部署请求携带 commitSha）,或配置回退镜像 / 切回源码编译。`);
       }
-      onOutput?.(`── 极速版: 拉取 CI 预构建镜像 ${profile.dockerImage}（CDS 不再本机编译）──\n`);
-      context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
-      const pull = await this.shell.exec(`docker pull ${profile.dockerImage}`);
-      if (pull.stdout) onOutput?.(pull.stdout + '\n');
-      if (pull.exitCode !== 0) {
-        const detail = (pull.stderr || pull.stdout || '').trim();
-        onOutput?.(`── 拉取失败: ${detail} ──\n`);
+
+      let pulledImage: string | null = null;
+      let lastDetail = '';
+      for (const cand of candidates) {
+        onOutput?.(cand.kind === 'fallback'
+          ? `── 本 commit 无该组件 CI 镜像,回退固定主分支镜像 ${cand.image} ──\n`
+          : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
+        context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
+        const pull = await this.shell.exec(`docker pull ${cand.image}`);
+        if (pull.stdout) onOutput?.(pull.stdout + '\n');
+        if (pull.exitCode === 0) { pulledImage = cand.image; break; }
+        lastDetail = (pull.stderr || pull.stdout || '').trim();
+        const hasNext = cand.kind === 'primary' && candidates.some((c) => c.kind === 'fallback');
+        onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? '（改用回退主分支镜像）' : ''} ──\n`);
+      }
+
+      if (!pulledImage) {
+        onOutput?.(`── 极速版镜像拉取失败(含回退) ──\n`);
         this.recordContainerEvent({
           severity: 'error',
           source: 'cds-container-service',
           action: 'app.pull.failed',
-          message: `docker pull failed for ${profile.dockerImage}`,
+          message: `docker pull failed for prebuilt image(s): ${candidates.map((c) => c.image).join(', ')}`,
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: profile.id,
           requestId: context.requestId ?? undefined,
           operationId: context.operationId ?? undefined,
-          command: { name: 'docker pull', exitCode: pull.exitCode, stdoutPreview: pull.stdout, stderrPreview: pull.stderr },
-          details: { image: profile.dockerImage, reason: '极速版预构建镜像拉取失败' },
+          command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
+          details: { images: candidates.map((c) => c.image), reason: '极速版预构建镜像(含回退)拉取失败' },
         });
-        throw new Error(`极速版镜像拉取失败: ${profile.dockerImage}\n${detail}\n（CI 镜像可能尚未就绪或未设为 public,可在分支详情切回源码编译）`);
+        throw new Error(`极速版镜像拉取失败(含回退): ${candidates.map((c) => c.image).join(' / ')}\n${lastDetail}\n（CI 镜像可能尚未就绪或未设为 public,可在分支详情切回源码编译）`);
       }
-      onOutput?.(`── 镜像就绪 ──\n`);
+      // 用实际拉到的镜像(可能是回退主分支镜像)跑容器:下游 docker run 读 profile.dockerImage。
+      if (pulledImage !== profile.dockerImage) profile.dockerImage = pulledImage;
+      onOutput?.(`── 镜像就绪: ${pulledImage} ──\n`);
     }
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
