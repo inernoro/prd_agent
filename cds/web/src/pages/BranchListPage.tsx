@@ -2001,6 +2001,11 @@ export function BranchListPage(): JSX.Element {
       // 切项目 / 卸载:清掉所有未触发的动效计时器,避免泄漏 + 对旧项目的延迟移除。
       for (const timer of cardPhaseTimersRef.current.values()) window.clearTimeout(timer);
       cardPhaseTimersRef.current.clear();
+      // 计时器被清后,完成回调不会再跑 → 必须把 entering/leaving 标记一并清空,
+      // 否则某个 id 残留在集合里,下次进同项目时卡片会带着错误 phase class
+      // 渲染(且永远不会被移除,因为对应的延迟 remove 定时器已被清掉)。
+      setEnteringIds((prev) => (prev.size ? new Set() : prev));
+      setLeavingIds((prev) => (prev.size ? new Set() : prev));
     };
   }, [confirmEmptyBranchList, projectId]);
 
