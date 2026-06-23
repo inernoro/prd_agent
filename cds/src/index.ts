@@ -1258,6 +1258,16 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     const services = Object.values(branch.services);
     if (services.length === 0) return;
 
+    // Remote-executor branches run their containers off-master; the local
+    // `restartServiceInPlace` (docker on THIS host) can't reach them — manual
+    // /restart returns 409 for exactly this. Skip auto-wake (no state flip) so
+    // the branch keeps its idle diagnostic page instead of being flipped to
+    // restarting then error by a doomed local docker restart.
+    const remoteExecutor = branch.executorId && registry
+      ? registry.getAll().find((n) => n.id === branch.executorId && n.role !== 'embedded')
+      : null;
+    if (remoteExecutor) return;
+
     // Acquire the operation lease BEFORE mutating state — throws on conflict
     // (a deploy / cooling already owns the branch), in which case we abort
     // without flipping status and the proxy renders the normal page.
