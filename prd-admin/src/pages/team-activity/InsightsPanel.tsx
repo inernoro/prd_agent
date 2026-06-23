@@ -887,8 +887,17 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                         <StreamingText text={brief.typing} streaming mode="blur" />
                       </div>
                     )
-                  ) : (
+                  ) : brief.phase === 'connecting' || brief.phase === 'streaming' ? (
                     <MapSectionLoader text="正在聚合用户画像…" />
+                  ) : (
+                    // 终态空（error / 无 delta 的 done）：别再转 loader 假装在聚合，给明确空/错误态 + 重新生成
+                    <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+                      <Radar size={28} className="text-white/20" />
+                      <div className="text-[12.5px] text-white/55">
+                        {brief.phase === 'error' ? (brief.phaseMessage || '生成失败，请重试') : '本次没有生成内容，请重试'}
+                      </div>
+                      <ActionButton onClick={startBrief} icon={RotateCcw} label="重新生成" />
+                    </div>
                   )}
                 </div>
                 {/* 底部操作：重新生成 / 发布到知识库（与原内联面板等价） */}
