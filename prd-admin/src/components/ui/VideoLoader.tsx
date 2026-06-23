@@ -103,13 +103,15 @@ export function PageTransitionLoader({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'var(--bg-base, #141418)',
+        // 透明:不再用不透明深色铺满内容区(那会盖掉 App 的 aurora 背景,
+        // 看起来就像「一块巨大黑板」)。让真实背景透出,加载只是个小指示。
+        background: 'transparent',
         zIndex: isFullscreen ? 9999 : 10,
         userSelect: 'none',
-        borderRadius: isFullscreen ? 0 : 'inherit',
+        pointerEvents: 'none',
       }}
     >
-      <CleanWordmark size={42} />
+      <CleanWordmark size={26} />
     </div>
   );
 }
