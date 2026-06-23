@@ -79,9 +79,9 @@ export function normalizeBaseUrl(raw: string): string {
   return url.replace(/\/+$/, '');
 }
 
-/** 解析对该 peer 鉴权要用的 key:优先 peer 自带,回退本机 AI_ACCESS_KEY。 */
-function resolvePeerKey(peer: CdsPeer): string | undefined {
-  return peer.accessKey || getCdsAiAccessKey();
+/** 解析对该 peer 鉴权要用的 key:优先 peer 自带,回退本机 key(process.env + Dashboard 全局变量)。 */
+function resolvePeerKey(peer: CdsPeer, fallbackKey: string | undefined): string | undefined {
+  return peer.accessKey || fallbackKey;
 }
 
 /** 带超时的远端 CDS 请求,自动附 X-AI-Access-Key。 */
@@ -89,8 +89,9 @@ async function remoteFetch(
   peer: CdsPeer,
   path: string,
   init: { method?: string; body?: string; timeoutMs?: number } = {},
+  fallbackKey?: string,
 ): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
-  const key = resolvePeerKey(peer);
+  const key = resolvePeerKey(peer, fallbackKey);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 20_000);
   try {
@@ -127,6 +128,16 @@ function buildProjectComposeYaml(stateService: StateService, projectId: string):
 export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router {
   const router = Router();
   const { stateService } = deps;
+
+  // 本机回退 key:server 鉴权既认 process.env(CDS_AI_ACCESS_KEY / AI_ACCESS_KEY)也认
+  // Dashboard 全局变量里的 AI_ACCESS_KEY(getCustomEnv() 合并 _global)。peer 未配自带 key 且
+  // 与本机同 key 时,两处都要看,否则 Dashboard 配 key 的装机会误判「缺 key」(Codex P2)。
+  function localFallbackKey(): string | undefined {
+    const fromEnv = getCdsAiAccessKey();
+    if (fromEnv) return fromEnv;
+    const globalEnv = stateService.getCustomEnv() as Record<string, string> | undefined;
+    return globalEnv?.['AI_ACCESS_KEY'] || undefined;
+  }
 
   function guard(req: any, res: any, projectId: string): boolean {
     // 迁移是系统级特权操作:跨节点推送 + verify/replicate/data-plan 在 peer 未配 key 时
@@ -201,12 +212,12 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       res.status(404).json({ error: '迁移目标不存在' });
       return;
     }
-    if (!resolvePeerKey(peer)) {
+    if (!resolvePeerKey(peer, localFallbackKey())) {
       res.status(400).json({ ok: false, error: '该目标未配置 accessKey,且本机 AI_ACCESS_KEY 也缺失,无法鉴权' });
       return;
     }
     try {
-      const me = await remoteFetch(peer, '/api/me', { timeoutMs: 15_000 });
+      const me = await remoteFetch(peer, '/api/me', { timeoutMs: 15_000 }, localFallbackKey());
       if (!me.ok) {
         res.status(200).json({
           ok: false,
@@ -258,7 +269,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       res.status(404).json({ error: '迁移目标不存在,请先在「迁移目标」里添加远端 CDS 节点' });
       return;
     }
-    if (!resolvePeerKey(peer)) {
+    if (!resolvePeerKey(peer, localFallbackKey())) {
       res.status(400).json({ error: '该目标未配置 accessKey,且本机 AI_ACCESS_KEY 缺失,无法推送' });
       return;
     }
@@ -307,7 +318,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     let targetReachable = false;
     let targetError: string | undefined;
     try {
-      const me = await remoteFetch(peer, '/api/me', { timeoutMs: 12_000 });
+      const me = await remoteFetch(peer, '/api/me', { timeoutMs: 12_000 }, localFallbackKey());
       targetReachable = me.ok;
       if (!me.ok) targetError = `目标返回 HTTP ${me.status}`;
     } catch (err) {

@@ -2814,6 +2814,7 @@ function ProjectMigrationTab({
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('noroenrn.com');
+  const [newKey, setNewKey] = useState('');
   const [adding, setAdding] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
 
@@ -2832,6 +2833,7 @@ function ProjectMigrationTab({
   useEffect(() => {
     setPeers(null); setPreview(null); setSelectedPeerId('');
     setReplicateResult(null); setDataPlan(null); setShowYaml(false);
+    setReplicating(null); setScanning(false);
   }, [projectId]);
 
   const loadPeers = useCallback(async () => {
@@ -2874,12 +2876,12 @@ function ProjectMigrationTab({
       const res = await fetch(apiUrl(`${base}/peers`), {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), baseUrl: newUrl.trim() }),
+        body: JSON.stringify({ name: newName.trim(), baseUrl: newUrl.trim(), accessKey: newKey.trim() || undefined }),
       });
       const body = await res.json();
       if (!res.ok) { onToast(`添加失败:${body.error || res.status}`); return; }
       onToast('已添加迁移目标');
-      setNewName(''); setNewUrl('');
+      setNewName(''); setNewUrl(''); setNewKey('');
       await loadPeers();
       if (body.peer?.id) setSelectedPeerId(body.peer.id);
     } catch (err) {
@@ -2887,7 +2889,7 @@ function ProjectMigrationTab({
     } finally {
       setAdding(false);
     }
-  }, [base, newName, newUrl, onToast, loadPeers]);
+  }, [base, newName, newUrl, newKey, onToast, loadPeers]);
 
   const verifyPeer = useCallback(async (peerId: string) => {
     setVerifyingId(peerId);
@@ -2922,6 +2924,7 @@ function ProjectMigrationTab({
 
   const replicate = useCallback(async (dryRun: boolean) => {
     if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return; }
+    const reqPid = projectId;
     setReplicating(dryRun ? 'dry' : 'apply');
     setReplicateResult(null);
     try {
@@ -2933,18 +2936,21 @@ function ProjectMigrationTab({
         body: JSON.stringify({ peerId: selectedPeerId, dryRun }),
       });
       const body = await res.json();
+      if (reqPid !== liveProjectId.current) return; // 项目已切换,旧推送结果/toast 不得落到新项目
       setReplicateResult(body as ReplicateResult);
       if (body.ok) onToast(dryRun ? '预演完成:目标已返回将要变更的内容' : '配置已推送到目标 CDS 复刻');
       else onToast(`推送失败:${body.error || `HTTP ${body.remoteStatus ?? res.status}`}`);
     } catch (err) {
+      if (reqPid !== liveProjectId.current) return;
       onToast(`推送异常:${(err as Error).message}`);
     } finally {
-      setReplicating(null);
+      if (reqPid === liveProjectId.current) setReplicating(null);
     }
-  }, [base, selectedPeerId, onToast]);
+  }, [base, selectedPeerId, onToast, projectId]);
 
   const runDataPlan = useCallback(async () => {
     if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return; }
+    const reqPid = projectId;
     setScanning(true);
     setDataPlan(null);
     try {
@@ -2954,12 +2960,14 @@ function ProjectMigrationTab({
         body: JSON.stringify({ peerId: selectedPeerId }),
       });
       const body = await res.json();
+      if (reqPid !== liveProjectId.current) return; // 项目已切换,旧扫描结果/toast 不得落到新项目
       if (!res.ok) { onToast(`扫描失败:${body.error || res.status}`); return; }
       setDataPlan(body as DataPlanResult);
     } catch (err) {
+      if (reqPid !== liveProjectId.current) return;
       onToast(`扫描异常:${(err as Error).message}`);
     } finally {
-      setScanning(false);
+      if (reqPid === liveProjectId.current) setScanning(false);
     }
   }, [base, selectedPeerId, onToast]);
 
@@ -3013,6 +3021,10 @@ function ProjectMigrationTab({
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">节点地址</label>
             <input className={monoInputClass} style={{ width: 280 }} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="noroenrn.com" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">Access Key(可选,留空用本机同款)</label>
+            <input className={monoInputClass} style={{ width: 240 }} type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="目标 AI Access Key" />
           </div>
           <Button type="button" size="sm" onClick={() => void addPeer()} disabled={adding}>
             {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} 添加目标
