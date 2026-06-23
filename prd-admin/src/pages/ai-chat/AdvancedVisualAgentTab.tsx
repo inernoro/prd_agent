@@ -1136,6 +1136,70 @@ function buildTemplate(name: string) {
   return '';
 }
 
+// ── 生图等待计时（消灭空等：已耗时 + 平均预期时长 + 进度条）────────────────────────
+// 平均预期来自历史完成耗时的指数滑动平均，存 localStorage（设备本地、非敏感、发版后旧值无害，
+// 符合 no-localstorage.md 例外清单）。首次无样本时用 40s 兜底（实测手机端单图约 44s）。
+const GEN_AVG_KEY = 'visualGenAvgMs';
+const GEN_AVG_DEFAULT_MS = 40_000;
+function getGenAvgMs(): number {
+  try {
+    const v = Number(localStorage.getItem(GEN_AVG_KEY));
+    if (Number.isFinite(v) && v >= 5_000 && v <= 180_000) return v;
+  } catch { /* localStorage 不可用时走默认 */ }
+  return GEN_AVG_DEFAULT_MS;
+}
+function recordGenDurationMs(ms: number): void {
+  if (!Number.isFinite(ms) || ms < 2_000 || ms > 300_000) return; // 异常值不纳入平均
+  const next = Math.round(getGenAvgMs() * 0.7 + ms * 0.3); // 指数滑动平均，新样本权重 0.3
+  try { localStorage.setItem(GEN_AVG_KEY, String(Math.min(180_000, Math.max(5_000, next)))); } catch { /* 忽略写失败 */ }
+}
+
+// 画布占位上的「已耗时 / 预计 ~Ns / 进度条」小药丸。自计时（每秒 tick），
+// 用 invZoom 反缩放保持任意画布缩放下都清晰可读；进度按时间逼近、封顶 95%（出图替换占位才算 100%），
+// 超过预计时长显示「即将完成」并转黄，避免「卡 93%」式假精确。
+function GenProgressOverlay({ createdAt }: { createdAt?: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const start = createdAt && createdAt > 0 ? createdAt : now;
+  const elapsedMs = Math.max(0, now - start);
+  const estMs = getGenAvgMs();
+  const elapsedS = Math.round(elapsedMs / 1000);
+  const estS = Math.max(1, Math.round(estMs / 1000));
+  const overtime = elapsedMs > estMs;
+  const pct = Math.min(0.95, elapsedMs / estMs);
+  return (
+    <div
+      className="absolute left-1/2 bottom-3 pointer-events-none"
+      style={{ transform: 'translateX(-50%) scale(var(--invZoom))', transformOrigin: 'center bottom', zIndex: 30 }}
+    >
+      <div
+        className="rounded-2xl px-3 py-1.5 flex flex-col gap-1"
+        style={{ background: 'rgba(0,0,0,0.46)', border: '1px solid rgba(255,255,255,0.12)', minWidth: 144, backdropFilter: 'blur(4px)' }}
+      >
+        <div className="flex items-center justify-between gap-3 text-[11px] font-bold" style={{ color: 'rgba(255,255,255,0.86)' }}>
+          <span>已耗时 {elapsedS}s</span>
+          <span style={{ color: overtime ? 'rgba(250,204,21,0.92)' : 'rgba(255,255,255,0.55)' }}>
+            {overtime ? '即将完成' : `预计 ~${estS}s`}
+          </span>
+        </div>
+        <div className="h-1 w-full rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.14)' }}>
+          <div
+            className="h-full rounded-full"
+            style={{
+              width: `${Math.round(pct * 100)}%`,
+              background: overtime ? 'rgba(250,204,21,0.9)' : 'linear-gradient(90deg,#60a5fa,#a78bfa)',
+              transition: 'width .7s ease-out',
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdvancedVisualAgentTab(props: { workspaceId: string; initialPrompt?: string }) {
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
@@ -2267,6 +2331,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [pendingCount, setPendingCount] = useState(0);
   const runningCountRef = useRef(0);
   const [runningCount, setRunningCount] = useState(0);
+
+  // 生图耗时采样：占位 running → done 时记录真实耗时，刷新「平均预期时长」(getGenAvgMs 滑动平均)。
+  // 集中在一个 effect 做，不侵入散落各处的回填路径；用 createdAt 作为起点（占位创建即开始计时）。
+  const genStartRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    const m = genStartRef.current;
+    const stillRunning = new Set<string>();
+    for (const it of canvas) {
+      if (it.status === 'running') {
+        stillRunning.add(it.key);
+        if (!m.has(it.key)) m.set(it.key, it.createdAt && it.createdAt > 0 ? it.createdAt : Date.now());
+      }
+    }
+    for (const [key, start] of [...m.entries()]) {
+      if (stillRunning.has(key)) continue;
+      const done = canvas.find((x) => x.key === key && x.status === 'done' && !!x.src);
+      if (done) recordGenDurationMs(Date.now() - start); // 仅成功出图计入平均，失败/取消不计
+      m.delete(key);
+    }
+  }, [canvas]);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const openImageFilePicker = useCallback(() => {
@@ -6100,6 +6184,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         {it.status === 'running' ? (
                           <div className="absolute inset-0">
                             <PrdPetalBreathingLoader fill className="absolute inset-0" />
+                            <GenProgressOverlay createdAt={it.createdAt} />
                           </div>
                         ) : it.status === 'error' ? (
                           <div className="absolute inset-0">
@@ -6168,6 +6253,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <div className="absolute inset-0">
                           <PrdPetalBreathingLoader fill className="absolute inset-0" />
                         </div>
+                        <GenProgressOverlay createdAt={it.createdAt} />
                       </div>
                     ) : kind === 'shape' ? (
                       <div className="w-full h-full flex items-center justify-center">
