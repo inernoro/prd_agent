@@ -209,6 +209,44 @@ export class ExecutorRegistry {
   }
 
   /**
+   * Refresh the embedded master node's live load + container/branch counts.
+   *
+   * The embedded master never POSTs itself an HTTP heartbeat (heartbeats only
+   * come from *remote* executors), so without this its `load` stays
+   * {cpuPercent:0, memoryUsedMB:0}, `runningContainers` stays 0 and `branches`
+   * empty — the dashboard then shows "CPU 0% / 内存 0% / 分支 0" on a clearly
+   * busy host (bug #5: 统计不正确). We recompute on demand right before the
+   * dashboard reads: CPU/mem from os (whole-machine), and container/branch
+   * counts from master state (running services on locally-owned branches).
+   */
+  refreshEmbeddedMasterLoad(): void {
+    const embedded = this.getAll().find((n) => n.role === 'embedded');
+    if (!embedded) return;
+
+    const cores = embedded.capacity.cpuCores || 1;
+    const load1 = os.loadavg()[0] || 0;
+    const cpuPercent = Math.max(0, Math.min(100, Math.round((load1 / cores) * 100)));
+    const totalMB = Math.round(os.totalmem() / (1024 * 1024));
+    const freeMB = Math.round(os.freemem() / (1024 * 1024));
+    embedded.load = { cpuPercent, memoryUsedMB: Math.max(0, totalMB - freeMB) };
+
+    // 本地（embedded）拥有的分支 = executorId 为空(本机直部署)或指向本节点。
+    const localBranches: string[] = [];
+    let runningContainers = 0;
+    for (const branch of this.stateService.getAllBranches()) {
+      if (branch.executorId && branch.executorId !== embedded.id) continue;
+      localBranches.push(branch.id);
+      for (const svc of Object.values(branch.services || {})) {
+        if (svc && (svc as { status?: string }).status === 'running') runningContainers++;
+      }
+    }
+    embedded.branches = localBranches;
+    embedded.runningContainers = runningContainers;
+    embedded.lastHeartbeat = new Date().toISOString();
+    this.stateService.setExecutor(embedded);
+  }
+
+  /**
    * Process a heartbeat from an executor.
    *
    * Also syncs the executor's reported branches into master state so the

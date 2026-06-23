@@ -64,6 +64,8 @@ describe('JanitorService', () => {
       '/tmp/wt',
       clock,
       mockDiskUsage,
+      // 注入无副作用的 docker 清理桩：测试环境无 docker，用真实实现会污染 errors 断言。
+      async () => ({ ran: true, reclaimed: [], errors: [] }),
     );
     removed = [];
     janitor.setRemoveFn(async (slug) => { removed.push(slug); });

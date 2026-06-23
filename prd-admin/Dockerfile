@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 # ── Stage 1: build ────────────────────────────────────────────────────────────
 FROM node:20-slim AS builder
 
@@ -9,8 +10,12 @@ WORKDIR /app
 # Copy lockfile and manifest first for better layer caching
 COPY package.json pnpm-lock.yaml ./
 
-# Install all dependencies (including devDependencies needed for the build)
-RUN pnpm install --frozen-lockfile
+# Install all dependencies (including devDependencies needed for the build).
+# BuildKit cache mount：pnpm content-addressable store 跨 build 复用，避免每个分支
+# 预览都从零重新下载全量依赖（这是构建耗时长的主因之一，见根 CLAUDE.md 性能说明）。
+# store 目录走 pnpm 默认位置 $XDG_DATA_HOME/pnpm/store = /root/.local/share/pnpm/store。
+RUN --mount=type=cache,id=pnpm-store-admin,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # Copy the rest of the source
 COPY . .

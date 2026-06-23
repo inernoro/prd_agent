@@ -44,6 +44,12 @@ public class MdToPptRun
 
     public string? Platform { get; set; }
 
+    /// <summary>退化为「标题+要点」兜底的页数（并行逐页路径 done 时落库，刷新恢复仍能如实告警）</summary>
+    public int Degraded { get; set; }
+
+    /// <summary>总页数（与 Degraded 配对，恢复路径据此还原「共 N 页其中 X 页降级」文案）</summary>
+    public int Total { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
