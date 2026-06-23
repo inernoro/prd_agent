@@ -48,8 +48,11 @@ import {
   createMdToPptTemplate,
   deleteMdToPptTemplate,
   prewarmMdToPpt,
+  getMdToPptConnectionStatus,
 } from '@/services/real/mdToPptService';
 import { apiRequest } from '@/services/real/apiClient';
+import { useNavigate } from 'react-router-dom';
+import { toast } from '@/lib/toast';
 import { NextStepBar } from './NextStepBar';
 import { SelectionFeedbackOverlay, type SelectionRectPct } from './SelectionFeedbackOverlay';
 
@@ -554,6 +557,28 @@ function genStageMsg(sec: number, isPatch: boolean): string {
   return '内容较多，正在精修中（大模型生成约需 1 分钟）...';
 }
 
+// 从恢复的 run（刷新/断线重连）构造完成消息：有页降级时如实告警，与实时 onDone 口径一致。
+// 治「断线后只读持久化 run，degraded 丢失 → 恢复路径仍报普通成功」（Codex P2）。
+function buildRecoveredDoneMessage(run: { degraded?: number; total?: number }): string {
+  const degraded = run.degraded ?? 0;
+  if (degraded > 0) {
+    const tp = run.total || 0;
+    return `PPT 已生成${tp ? `，共 ${tp} 页` : ''}，但其中 ${degraded} 页因 CDS Agent 生成失败` +
+      '退化为「标题 + 要点」兜底版式（非完整设计稿）。可对这些页用工具栏「重绘本页」重试，' +
+      '或检查 CDS Agent 运行状态后整体重新生成。';
+  }
+  return 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。';
+}
+
+function warnIfDegraded(run: { degraded?: number }): void {
+  if ((run.degraded ?? 0) > 0) {
+    toast.warning(
+      `有 ${run.degraded} 页未走 Agent 设计`,
+      'CDS Agent 部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
+    );
+  }
+}
+
 // ─── 幻灯进度解析（Gamma 式"页面一张张点亮"）────────────────────────────────
 // 从已接收的 HTML 流里数 <section>：闭合的算"已生成"（抽出页内首个标题展示），
 // 已开口未闭合的算"正在绘制"。deck 是扁平 section 结构，正则解析足够。
@@ -930,6 +955,12 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export function MdToPptAgentPage() {
+  const navigate = useNavigate();
+
+  // ─── CDS 连接门禁：PPT 生成完全依赖 CDS Agent，未连接整页禁用并引导去授权。
+  // 'checking' 期间显示加载，'disconnected' 走 blocked 早返回（不挂载任何生成 UI）。
+  const [connStatus, setConnStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+
   // ─── Session lazy-load: run BEFORE any other useState so saveSession
   // never overwrites sessionStorage with empty initial state on first render.
   const [savedSession] = useState<SessionState | null>(loadSession);
@@ -1240,6 +1271,20 @@ export function MdToPptAgentPage() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // ─── CDS 连接门禁：进入页面即检测，未连接整页禁用（item 1）
+  // seq 守卫：重新检测可能与挂载检测/连点并发，慢的旧响应不得覆盖新结果（Bugbot Medium）
+  const connCheckSeqRef = useRef(0);
+  const runConnectionCheck = useCallback(() => {
+    const seq = ++connCheckSeqRef.current;
+    setConnStatus('checking');
+    void getMdToPptConnectionStatus().then((connected) => {
+      if (seq === connCheckSeqRef.current) setConnStatus(connected ? 'connected' : 'disconnected');
+    });
+  }, []);
+  useEffect(() => {
+    runConnectionCheck();
+  }, [runConnectionCheck]);
+
   // ─── Elapsed timer for artifact progress
   useEffect(() => {
     if (artifactPhase === 'generating' || artifactPhase === 'patching') {
@@ -1277,12 +1322,12 @@ export function MdToPptAgentPage() {
 
     // 恢复对账：把聊天里残留的「正在生成/修改」气泡按 run 真实状态翻转——
     // 此前只恢复 deck 不对账消息，刷新后气泡永远停在"正在生成 PPT..."（2026-06-11 实测）
-    const reconcileMessages = (status: 'done' | 'error', error?: string | null) => {
+    const reconcileMessages = (status: 'done' | 'error', error?: string | null, doneContent?: string) => {
       setMessages((prev) =>
         prev.map((m) =>
           m.role === 'assistant' && (m.phase === 'generating' || m.phase === 'patching')
             ? status === 'done'
-              ? { ...m, phase: 'done', content: 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。' }
+              ? { ...m, phase: 'done', content: doneContent ?? 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。' }
               : { ...m, phase: 'error', content: '生成失败：' + (error ?? '未知错误') }
             : m
         )
@@ -1297,7 +1342,8 @@ export function MdToPptAgentPage() {
         setGeneratedHtml(run.html);
         setActiveRunId(runId);
         setArtifactPhase('done');
-        reconcileMessages('done');
+        warnIfDegraded(run);
+        reconcileMessages('done', null, buildRecoveredDoneMessage(run));
       } else if (run.status === 'error') {
         setArtifactPhase('idle');
         reconcileMessages('error', run.error);
@@ -1782,10 +1828,11 @@ export function MdToPptAgentPage() {
             setGeneratedHtml(run.html);
             setArtifactPhase('done');
             setIsProcessing(false);
+            warnIfDegraded(run);
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === genMsg.id
-                  ? { ...m, content: 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。', phase: 'done' }
+                  ? { ...m, content: buildRecoveredDoneMessage(run), phase: 'done' }
                   : m
               )
             );
@@ -1877,16 +1924,29 @@ export function MdToPptAgentPage() {
           setIsProcessing(false);
           const pageCount = outlinePages?.length ?? pages;
           const titleSample = outlinePages?.slice(0, 3).map((p) => p.title).filter(Boolean).join('、');
+          // item 2：部分页 Agent 生成失败、退化为「标题+要点」兜底时，如实告知，禁止把降级当成功
+          const degraded = result.degraded ?? 0;
+          const totalPg = result.total ?? pageCount ?? 0;
+          if (degraded > 0) {
+            toast.warning(
+              `有 ${degraded} 页未走 Agent 设计`,
+              'CDS Agent 部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
+            );
+          }
           setMessages((prev) =>
             prev.map((m) =>
               m.id === genMsg.id
                 ? {
                     ...m,
                     content:
-                      `PPT 已生成${pageCount ? `，共 ${pageCount} 页` : ''}` +
-                      (titleSample ? `（${titleSample} 等）` : '') +
-                      '！你可以继续对话精修，例如：「第3页改两栏对比」「整体换商务蓝」「加一页讲 ROI」；' +
-                      '哪页排版不满意，工具栏「重绘本页」一键重画。',
+                      degraded > 0
+                        ? `PPT 已生成${totalPg ? `，共 ${totalPg} 页` : ''}，但其中 ${degraded} 页因 CDS Agent 生成失败` +
+                          '退化为「标题 + 要点」兜底版式（非完整设计稿）。可对这些页用工具栏「重绘本页」重试，' +
+                          '或检查 CDS Agent 运行状态后整体重新生成。'
+                        : `PPT 已生成${pageCount ? `，共 ${pageCount} 页` : ''}` +
+                          (titleSample ? `（${titleSample} 等）` : '') +
+                          '！你可以继续对话精修，例如：「第3页改两栏对比」「整体换商务蓝」「加一页讲 ROI」；' +
+                          '哪页排版不满意，工具栏「重绘本页」一键重画。',
                     phase: 'done',
                   }
                 : m
@@ -1906,10 +1966,11 @@ export function MdToPptAgentPage() {
                 setGeneratedHtml(run.html);
                 setArtifactPhase('done');
                 setIsProcessing(false);
+                warnIfDegraded(run);
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === genMsg.id
-                      ? { ...m, content: 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。', phase: 'done' }
+                      ? { ...m, content: buildRecoveredDoneMessage(run), phase: 'done' }
                       : m
                   )
                 );
@@ -2423,6 +2484,57 @@ export function MdToPptAgentPage() {
   const isStreaming = artifactPhase === 'generating' || artifactPhase === 'patching';
 
   // ─── Render ─────────────────────────────────────────────────────────────────
+
+  // ─── CDS 未连接门禁（item 1）：整页禁用，仅保留标题 + 引导卡，不挂载任何生成 UI
+  if (connStatus !== 'connected') {
+    return (
+      <div className="flex flex-col h-full min-h-0">
+        {/* Header（与正常态一致，保留页面身份） */}
+        <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-white/8">
+          <div className="w-6 h-6 rounded-md bg-purple-500/15 flex items-center justify-center">
+            <FileText size={13} className="text-purple-400" />
+          </div>
+          <span className="text-sm font-semibold text-[var(--text-primary)]">PPT 创作工作台</span>
+        </div>
+
+        {connStatus === 'checking' ? (
+          <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-[var(--text-tertiary)]">
+            <MapSpinner size={18} />
+            <span className="text-xs">正在检查 CDS Agent 连接...</span>
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 flex items-center justify-center p-6">
+            <div className="max-w-md w-full flex flex-col items-center text-center gap-4 rounded-2xl border border-white/10 bg-white/[0.03] px-8 py-10">
+              <div className="w-12 h-12 rounded-xl bg-amber-500/15 flex items-center justify-center">
+                <AlertCircle size={22} className="text-amber-400" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <h2 className="text-base font-semibold text-[var(--text-primary)]">未连接 CDS Agent，无法生成 PPT</h2>
+                <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
+                  PPT 创作完全依赖 CDS Agent 运行环境来生成带版式与配色的设计稿。当前没有可用的 CDS
+                  连接，若强行生成只会退化成裸标题 + 要点列表，因此本页已禁用。请先在「基础设施服务」完成
+                  CDS 授权连接，再回来创作。
+                </p>
+              </div>
+              <button
+                onClick={() => navigate('/infra-services')}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-purple-500/85 text-white hover:bg-purple-500 transition-colors"
+              >
+                前往连接 CDS Agent
+                <ChevronRight size={13} />
+              </button>
+              <button
+                onClick={runConnectionCheck}
+                className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] underline"
+              >
+                已完成连接？点此重新检测
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full min-h-0">
