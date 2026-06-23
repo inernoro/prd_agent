@@ -8,7 +8,7 @@
 
 | # | 边界 | 现状 | 后续方向 |
 |---|------|------|---------|
-| 1 | 二进制附件跨节点 | 只传知识库正文（markdown / 文本）+ 引用元数据；图片等二进制资产不随包传输，对端无对应附件时图片可能断链 | 后续走对象存储签名 URL 或附件流式传输 |
+| 1 | 二进制附件跨节点 | 已实现（2026-06-23）：导出时文件条目（无正文、走 AttachmentId）带 `Extras["peerAttachment"]`（url/mime/fileName/size/type/thumbnailUrl/extractedText）；接收方下载文件 → 重传到本节点存储 → 重建 Attachment + DocumentEntry，`peerSourceAttachmentUrl` 元数据做幂等。签名也纳入附件标识（避免仅二进制变化的伪「已同步」）。残留小边界见下方 B 系列 | — |
 | 2 | 影子用户 | 归属对齐失败（对端无同名 username / email）时归到「操作者」（push 路径=发起用户；node-to-node apply 路径=配对管理员），不创建影子账号 | 后续加「按邮箱建影子账户」开关 |
 | 3 | 解除配对的对端清理 | DELETE 仅删本端 PeerNode，对端残留记录需对端管理员手动删 | 后续加 revoke 通知对端 |
 | 4 | 双向合并语义 | both = push(targetKey) 然后 pull(targetKey)，共享条目以发起方为准、两侧新增都保留；非「逐条三方合并」 | 复用现有 DocumentStoreSyncController 的签名快照三态判定可做更精细的「仅改动侧驱动」 |
@@ -33,6 +33,18 @@
 
 A2/A3/A4 都是 **手动 force-align/mirror 或入站 apply 路径**的既有/完整性问题，与本次新增的「自动出站同步」无关
 （自动同步恒 Overwrite、绝不删条目，幂等收敛），故未在 PR #890 内仓促改动（需跨层 / 协议级 / 安全端点改造），单列于此。
+
+## 二进制附件跨节点（2026-06-23 新增，原 debt #1）
+
+文件类条目（PNG / yaml / pdf 等，无正文、走 AttachmentId）现已随包跨节点：导出带 `peerAttachment` 元信息 →
+接收方经 SSRF 校验下载 → 重传到本节点存储 → 重建 Attachment + DocumentEntry，`peerSourceAttachmentUrl` 做幂等。
+缩略图尽力本地化，签名纳入附件标识。残留小边界：
+
+| # | 边界 | 现状 | 后续方向 |
+|---|------|------|---------|
+| B1 | 单文件大小上限 50MB | 超过即跳过该条（failed 计数），避免超大文件拖垮同步 | 需要更大文件时改分片 / 直传对象存储签名 URL |
+| B2 | mirror 删除二进制条目不删 Attachment | 镜像删除时只删 DocumentEntry，孤儿 Attachment 残留（内容寻址、无害但占空间）。与 A2 同源 | 复用 A2 的级联清理 helper 时一并处理 |
+| B3 | 缩略图本地化失败置空 | 缩略图下载失败时 ThumbnailUrl 留空（不留指向对端的悬挂 URL），主文件仍正常 | 可接受；前端对无缩略图已有兜底 |
 
 ## 安全与一致性要点（已落地）
 

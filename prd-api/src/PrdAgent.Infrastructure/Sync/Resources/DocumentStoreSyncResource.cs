@@ -28,6 +28,10 @@ public class DocumentStoreSyncResource : ISyncableResource
 {
     private const string SyncLineageKey = "syncLineageId";
     private const string PeerSourceContentHashKey = "peerSourceContentHash";
+    // 二进制附件条目（无正文、走 AttachmentId）的来源 URL 幂等键：接收方据此判断「这个对端附件是否已下载重建过」，
+    // 命中即廉价跳过，不重复下载。见 debt.peer-sync A 系列。
+    private const string PeerSourceAttachmentUrlKey = "peerSourceAttachmentUrl";
+    private const long MaxPeerAttachmentBytes = 50L * 1024 * 1024;
 
     private readonly MongoDbContext _db;
     private readonly IDocumentService _documentService;
@@ -106,6 +110,15 @@ public class DocumentStoreSyncResource : ISyncableResource
 
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync(ct);
         var byId = entries.ToDictionary(e => e.Id, e => e);
+        // 二进制/文件条目（无 DocumentId、有 AttachmentId）的附件元信息：批量取出，导出时带上其访问 URL，
+        // 接收方据此下载 + 重传到自己存储 + 重建条目（debt.peer-sync A 系列：二进制附件跨节点）。
+        var attachmentIds = entries
+            .Where(e => !e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
+            .Select(e => e.AttachmentId!).Distinct().ToList();
+        var attById = attachmentIds.Count > 0
+            ? (await _db.Attachments.Find(a => attachmentIds.Contains(a.AttachmentId)).ToListAsync(ct))
+                .GroupBy(a => a.AttachmentId).ToDictionary(g => g.Key, g => g.First())
+            : new Dictionary<string, Attachment>();
         var records = new List<SyncRecord>();
         foreach (var e in entries)
         {
@@ -117,7 +130,7 @@ public class DocumentStoreSyncResource : ISyncableResource
             if (!string.IsNullOrEmpty(e.ParentId) && byId.TryGetValue(e.ParentId, out var parent))
                 parentLineage = LineageOf(parent);
 
-            records.Add(new SyncRecord
+            var record = new SyncRecord
             {
                 LineageId = LineageOf(e),
                 ParentLineageId = parentLineage,
@@ -135,7 +148,23 @@ public class DocumentStoreSyncResource : ISyncableResource
                 CreatedAt = e.CreatedAt,
                 UpdatedAt = e.UpdatedAt,
                 LastChangedAt = e.LastChangedAt,
-            });
+            };
+            // 文件条目：带上附件访问信息，接收方据此下载重传重建（content 为 null 不再被跳过）。
+            if (content == null && !e.IsFolder && !string.IsNullOrEmpty(e.AttachmentId)
+                && attById.TryGetValue(e.AttachmentId!, out var att) && !string.IsNullOrWhiteSpace(att.Url))
+            {
+                record.Extras["peerAttachment"] = JsonSerializer.SerializeToElement(new
+                {
+                    url = att.Url,
+                    mimeType = att.MimeType,
+                    fileName = att.FileName,
+                    size = att.Size,
+                    type = att.Type.ToString(),
+                    thumbnailUrl = att.ThumbnailUrl,
+                    extractedText = att.ExtractedText,
+                });
+            }
+            records.Add(record);
         }
 
         // 主文档 / 置顶按血缘导出（接收方翻译回本端 entry id）。
@@ -185,6 +214,16 @@ public class DocumentStoreSyncResource : ISyncableResource
         //   路径（漂移检测调用），可接受；apply 路径本来就要全量传输 RawContent，带宽匹配。
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == itemId).ToListAsync(ct);
         var byId = entries.ToDictionary(e => e.Id, e => e);
+        // 二进制附件条目：纳入「来源附件标识」做签名，否则仅二进制文件变化的库签名不变 → 漂移检测误报「已同步」。
+        // 标识用 peerSourceAttachmentUrl（接收节点）∥ att.Url（源节点）—— 两节点对同一份文件得到同一个值，
+        // 与是否共享 CDN 无关，避免「内容一致但签名永不同」的伪漂移。
+        var binAttachmentIds = entries
+            .Where(e => !e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
+            .Select(e => e.AttachmentId!).Distinct().ToList();
+        var binAttById = binAttachmentIds.Count > 0
+            ? (await _db.Attachments.Find(a => binAttachmentIds.Contains(a.AttachmentId)).ToListAsync(ct))
+                .GroupBy(a => a.AttachmentId).ToDictionary(g => g.Key, g => g.First())
+            : new Dictionary<string, Attachment>();
         string? ParentLineage(string? parentId)
             => string.IsNullOrEmpty(parentId) || !byId.TryGetValue(parentId!, out var p) ? null : LineageOf(p);
         var parts = new List<string>(entries.Count);
@@ -195,6 +234,13 @@ public class DocumentStoreSyncResource : ISyncableResource
             {
                 var doc = await _documentService.GetByIdAsync(e.DocumentId);
                 contentHash = Sha256Hex(doc?.RawContent ?? string.Empty);
+            }
+            else if (!e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
+            {
+                var attIdentity = e.Metadata != null && e.Metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var src) && !string.IsNullOrEmpty(src)
+                    ? src
+                    : (binAttById.TryGetValue(e.AttachmentId!, out var att) ? att.Url : string.Empty);
+                contentHash = Sha256Hex("attachment:" + (attIdentity ?? string.Empty));
             }
             var tags = string.Join(",", (e.Tags ?? new List<string>()).OrderBy(t => t, StringComparer.Ordinal));
             // 纳入 SortOrder/Category（v1.1）：否则仅手动排序/分类变化的库签名不变，漂移检测会误报「已同步」
@@ -409,7 +455,130 @@ public class DocumentStoreSyncResource : ISyncableResource
         {
             try
             {
-                if (fe.Content == null) { skipped++; continue; }
+                if (fe.Content == null)
+                {
+                    // 二进制 / 文件条目（无正文、走 AttachmentId）：对端导出时带了 peerAttachment 元信息，
+                    // 接收方据此下载文件 → 重传到自己存储 → 重建条目，从而真正做到「两库一篇不差」。
+                    // 旧节点 / 无附件信息的占位记录仍按原行为跳过（不阻塞同步）。
+                    if (!TryReadPeerAttachment(fe, out var pa))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    var binParentId = ResolveParent(fe.ParentLineageId);
+
+                    if (byLineage.TryGetValue(fe.LineageId, out var exBinFolder) && exBinFolder.IsFolder)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    if (byLineage.TryGetValue(fe.LineageId, out var exBin) && !exBin.IsFolder)
+                    {
+                        if (addOnly) { skipped++; continue; }
+                        var binFieldsChanged = exBin.Title != fe.Title || exBin.ParentId != binParentId
+                            || !TagsEqual(exBin.Tags, fe.Tags) || exBin.Summary != fe.Summary
+                            || !MetaEqual(exBin.Metadata, fe.Metadata)
+                            || exBin.SortOrder != fe.SortOrder || exBin.Category != fe.Category;
+                        var binApplied = HasAppliedSourceAttachment(exBin.Metadata, pa.Url);
+                        var binTimestampsChanged = NeedsRecordTimestampRefresh(exBin, fe, options.PreserveTimestamps);
+
+                        // 二进制已下载且字段无变化 → 廉价跳过（必要时只刷新时间戳）。
+                        if (binApplied && !binFieldsChanged)
+                        {
+                            if (binTimestampsChanged)
+                            {
+                                var tsUpdate = Builders<DocumentEntry>.Update
+                                    .Set(e => e.UpdatedBy, actorUserId)
+                                    .Set(e => e.UpdatedByName, actorName)
+                                    .Set(e => e.UpdatedAt, PickTime(fe.UpdatedAt))
+                                    .Set(e => e.Metadata, WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.Url));
+                                if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
+                                    tsUpdate = tsUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+                                if (options.PreserveTimestamps && (fe.LastChangedAt.HasValue || fe.UpdatedAt.HasValue))
+                                    tsUpdate = tsUpdate.Set(e => e.LastChangedAt, PickTime(fe.LastChangedAt ?? fe.UpdatedAt));
+                                await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exBin.Id, tsUpdate, cancellationToken: ct);
+                            }
+                            skipped++;
+                            continue;
+                        }
+
+                        var binAttachmentId = exBin.AttachmentId;
+                        var binContentType = exBin.ContentType;
+                        var binFileSize = exBin.FileSize;
+                        if (!binApplied)
+                        {
+                            var stored = await DownloadAndStoreAttachmentAsync(pa, ct);
+                            if (stored == null) { failed++; continue; }
+                            var att = BuildAttachment(pa, stored, actorUserId);
+                            await ReLocalizeAttachmentThumbnailAsync(att, pa, ct);
+                            await _db.Attachments.InsertOneAsync(att, cancellationToken: ct);
+                            binAttachmentId = att.AttachmentId;
+                            binContentType = string.IsNullOrEmpty(fe.ContentType) ? stored.Mime : fe.ContentType;
+                            binFileSize = fe.FileSize > 0 ? fe.FileSize : stored.SizeBytes;
+                        }
+                        var binMeta = WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.Url);
+                        var binUpdatedAt = PickTime(fe.UpdatedAt);
+                        var binChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
+                        var binUpdate = Builders<DocumentEntry>.Update
+                            .Set(e => e.AttachmentId, binAttachmentId)
+                            .Set(e => e.DocumentId, (string?)null)
+                            .Set(e => e.Title, fe.Title)
+                            .Set(e => e.Summary, fe.Summary)
+                            .Set(e => e.ParentId, binParentId)
+                            .Set(e => e.Tags, fe.Tags ?? new List<string>())
+                            .Set(e => e.ContentType, binContentType)
+                            .Set(e => e.FileSize, binFileSize)
+                            .Set(e => e.SortOrder, fe.SortOrder)
+                            .Set(e => e.Category, fe.Category)
+                            .Set(e => e.Metadata, binMeta)
+                            .Set(e => e.UpdatedBy, actorUserId)
+                            .Set(e => e.UpdatedByName, actorName)
+                            .Set(e => e.UpdatedAt, binUpdatedAt)
+                            .Set(e => e.LastChangedAt, binChangedAt);
+                        if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
+                            binUpdate = binUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+                        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exBin.Id, binUpdate, cancellationToken: ct);
+                        updated++;
+                        continue;
+                    }
+
+                    // 新建二进制条目
+                    var storedNew = await DownloadAndStoreAttachmentAsync(pa, ct);
+                    if (storedNew == null) { failed++; continue; }
+                    var attNew = BuildAttachment(pa, storedNew, actorUserId);
+                    await ReLocalizeAttachmentThumbnailAsync(attNew, pa, ct);
+                    await _db.Attachments.InsertOneAsync(attNew, cancellationToken: ct);
+                    var entryBin = new DocumentEntry
+                    {
+                        StoreId = target.Id,
+                        ParentId = binParentId,
+                        IsFolder = false,
+                        Title = fe.Title,
+                        Summary = fe.Summary,
+                        SourceType = DocumentSourceType.Import,
+                        AttachmentId = attNew.AttachmentId,
+                        ContentType = string.IsNullOrEmpty(fe.ContentType) ? storedNew.Mime : fe.ContentType,
+                        FileSize = fe.FileSize > 0 ? fe.FileSize : storedNew.SizeBytes,
+                        Tags = fe.Tags ?? new List<string>(),
+                        SortOrder = fe.SortOrder,
+                        Category = fe.Category,
+                        Metadata = WithPeerSourceAttachmentUrl(WithLineage(fe.Metadata, fe.LineageId), pa.Url),
+                        CreatedBy = actorUserId,
+                        CreatedByName = actorName,
+                        CreatedByAvatarFileName = actorAvatar,
+                        UpdatedBy = actorUserId,
+                        UpdatedByName = actorName,
+                        CreatedAt = PickTime(fe.CreatedAt),
+                        UpdatedAt = PickTime(fe.UpdatedAt),
+                        LastChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt),
+                    };
+                    await _db.DocumentEntries.InsertOneAsync(entryBin, cancellationToken: ct);
+                    byLineage[fe.LineageId] = entryBin;
+                    created++;
+                    continue;
+                }
                 var parentId = ResolveParent(fe.ParentLineageId);
                 var content = fe.Content;
 
@@ -789,6 +958,109 @@ public class DocumentStoreSyncResource : ISyncableResource
         var fileName = Path.GetFileName(uri.LocalPath);
         return await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: fileName);
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // 二进制附件跨节点（peerAttachment）
+    // ─────────────────────────────────────────────────────────────
+
+    private sealed record PeerAttachmentInfo(
+        string Url, string? MimeType, string? FileName, long Size,
+        AttachmentType Type, string? ThumbnailUrl, string? ExtractedText);
+
+    /// <summary>从导出记录的 Extras["peerAttachment"] 解析附件元信息（旧节点 / 缺字段返回 false）。</summary>
+    private static bool TryReadPeerAttachment(SyncRecord record, out PeerAttachmentInfo info)
+    {
+        info = null!;
+        if (record.Extras == null
+            || !record.Extras.TryGetValue("peerAttachment", out var raw)
+            || raw.ValueKind != JsonValueKind.Object)
+            return false;
+        if (!raw.TryGetProperty("url", out var urlEl) || urlEl.ValueKind != JsonValueKind.String)
+            return false;
+        var url = urlEl.GetString();
+        if (string.IsNullOrWhiteSpace(url)) return false;
+
+        string? mime = raw.TryGetProperty("mimeType", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+        string? fileName = raw.TryGetProperty("fileName", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
+        long size = raw.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt64(out var sv) ? sv : 0;
+        var type = raw.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String
+            && string.Equals(t.GetString(), nameof(AttachmentType.Document), StringComparison.OrdinalIgnoreCase)
+            ? AttachmentType.Document : AttachmentType.Image;
+        string? thumb = raw.TryGetProperty("thumbnailUrl", out var th) && th.ValueKind == JsonValueKind.String ? th.GetString() : null;
+        string? extracted = raw.TryGetProperty("extractedText", out var ex) && ex.ValueKind == JsonValueKind.String ? ex.GetString() : null;
+
+        info = new PeerAttachmentInfo(url!, mime, fileName, size, type, thumb, extracted);
+        return true;
+    }
+
+    private static Attachment BuildAttachment(PeerAttachmentInfo pa, StoredAsset stored, string uploaderUserId)
+        => new()
+        {
+            UploaderId = uploaderUserId,
+            FileName = string.IsNullOrWhiteSpace(pa.FileName) ? Path.GetFileName(stored.Url) : pa.FileName!,
+            MimeType = string.IsNullOrWhiteSpace(pa.MimeType) ? stored.Mime : pa.MimeType!,
+            Size = pa.Size > 0 ? pa.Size : stored.SizeBytes,
+            Url = stored.Url,
+            Type = pa.Type,
+            ExtractedText = pa.ExtractedText,
+        };
+
+    /// <summary>缩略图（仅图片）尽力本地化：失败则置空，避免留下指向对端的悬挂 URL。</summary>
+    private async Task ReLocalizeAttachmentThumbnailAsync(Attachment att, PeerAttachmentInfo pa, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(pa.ThumbnailUrl)) return;
+        if (!Uri.TryCreate(pa.ThumbnailUrl, UriKind.Absolute, out var thumbUri) || thumbUri.Scheme is not ("http" or "https"))
+            return;
+        try
+        {
+            await _urlValidator.EnsureSafeHttpUrlAsync(thumbUri.ToString(), "peer-sync attachment thumbnail", ct);
+            var stored = await DownloadAndStoreAssetAsync(thumbUri, ct);
+            if (stored != null) att.ThumbnailUrl = stored.Url;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[peer-sync] thumbnail re-localize failed: {Url}", pa.ThumbnailUrl);
+        }
+    }
+
+    /// <summary>下载对端附件文件并重传到本节点存储（通用，不限图片）。SSRF 防护 + 大小上限。</summary>
+    private async Task<StoredAsset?> DownloadAndStoreAttachmentAsync(PeerAttachmentInfo pa, CancellationToken ct)
+    {
+        if (!Uri.TryCreate(pa.Url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+            return null;
+        await _urlValidator.EnsureSafeHttpUrlAsync(uri.ToString(), "peer-sync attachment", ct);
+
+        var client = _httpFactory.CreateClient("PeerSync");
+        client.Timeout = TimeSpan.FromSeconds(120);
+        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var length = response.Content.Headers.ContentLength;
+        if (length.HasValue && length.Value > MaxPeerAttachmentBytes)
+            return null;
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+        if (bytes.Length > MaxPeerAttachmentBytes)
+            return null;
+
+        var mime = !string.IsNullOrWhiteSpace(pa.MimeType)
+            ? pa.MimeType!
+            : response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+        var fileName = !string.IsNullOrWhiteSpace(pa.FileName) ? pa.FileName : Path.GetFileName(uri.LocalPath);
+        return await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: fileName);
+    }
+
+    private static Dictionary<string, string> WithPeerSourceAttachmentUrl(Dictionary<string, string> metadata, string sourceUrl)
+    {
+        metadata[PeerSourceAttachmentUrlKey] = sourceUrl;
+        return metadata;
+    }
+
+    private static bool HasAppliedSourceAttachment(Dictionary<string, string>? metadata, string sourceUrl)
+        => metadata != null
+            && metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var applied)
+            && string.Equals(applied, sourceUrl, StringComparison.Ordinal);
 
     private IEnumerable<Uri> GetConfiguredAssetBaseUris()
     {
