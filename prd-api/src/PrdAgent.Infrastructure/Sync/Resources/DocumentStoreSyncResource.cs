@@ -544,7 +544,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                         var binAttachmentId = exBin.AttachmentId;
                         if (!binApplied)
                         {
-                            var stored = await DownloadAndStoreAttachmentAsync(pa, ct);
+                            var stored = await DownloadAndStoreAttachmentAsync(pa, options.SourceBaseUrl, ct);
                             if (stored == null) { failed++; continue; }
                             var att = BuildAttachment(pa, stored, actorUserId);
                             await ReLocalizeAttachmentThumbnailAsync(att, pa, ct);
@@ -594,7 +594,7 @@ public class DocumentStoreSyncResource : ISyncableResource
                     }
 
                     // 新建二进制条目
-                    var storedNew = await DownloadAndStoreAttachmentAsync(pa, ct);
+                    var storedNew = await DownloadAndStoreAttachmentAsync(pa, options.SourceBaseUrl, ct);
                     if (storedNew == null) { failed++; continue; }
                     var attNew = BuildAttachment(pa, storedNew, actorUserId);
                     await ReLocalizeAttachmentThumbnailAsync(attNew, pa, ct);
@@ -1087,10 +1087,28 @@ public class DocumentStoreSyncResource : ISyncableResource
         }
     }
 
-    /// <summary>下载对端附件文件并重传到本节点存储（通用，不限图片）。SSRF 防护 + 大小上限。</summary>
-    private async Task<StoredAsset?> DownloadAndStoreAttachmentAsync(PeerAttachmentInfo pa, CancellationToken ct)
+    /// <summary>把对端附件 URL 解析为可下载的绝对地址：绝对 http(s) 直接用；相对路径（如本地存储后端返回的
+    /// <c>/api/...</c>）按 sourceBaseUrl 拼成绝对，使自托管/本地存储节点也能同步附件（Codex: relative peer attachment URLs）。</summary>
+    private static Uri? ResolvePeerAttachmentUri(string raw, string? sourceBaseUrl)
     {
-        if (!Uri.TryCreate(pa.Url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var abs))
+            return abs.Scheme is "http" or "https" ? abs : null;
+        if (raw.StartsWith("/", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(sourceBaseUrl)
+            && Uri.TryCreate(sourceBaseUrl.Trim().TrimEnd('/'), UriKind.Absolute, out var baseUri)
+            && baseUri.Scheme is "http" or "https"
+            && Uri.TryCreate(baseUri, raw, out var resolved)
+            && resolved.Scheme is "http" or "https")
+            return resolved;
+        return null;
+    }
+
+    /// <summary>下载对端附件文件并重传到本节点存储（通用，不限图片）。SSRF 防护 + 大小上限。</summary>
+    private async Task<StoredAsset?> DownloadAndStoreAttachmentAsync(PeerAttachmentInfo pa, string? sourceBaseUrl, CancellationToken ct)
+    {
+        var uri = ResolvePeerAttachmentUri(pa.Url, sourceBaseUrl);
+        if (uri == null)
             return null;
         await _urlValidator.EnsureSafeHttpUrlAsync(uri.ToString(), "peer-sync attachment", ct);
 
