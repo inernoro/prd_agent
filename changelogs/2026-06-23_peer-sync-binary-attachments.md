@@ -10,3 +10,4 @@
 | fix | prd-api | peer-sync 二进制幂等/签名改用「源头侧 att.Size」（存入 peerSourceAttachmentSize 元数据）同口径比对，修复 entry.FileSize≠att.Size 时无限重下循环（Bugbot Medium） |
 | fix | prd-api | peer-sync 文本条目转二进制时改写 ContentIndex 为附件提取文本（或清空），消除旧正文残留导致的搜索误命中（Bugbot/Codex Medium） |
 | docs | doc | debt.peer-sync 新增 B4：可提取文本文件（PDF/DOCX）仅同步正文不同步原件，留待结构性合并文本/二进制 apply 路径 |
+| fix | prd-api | peer-sync 文本覆盖时清空残留 AttachmentId（与二进制路径清 DocumentId 对称），避免同条目同时挂文档+附件引用（Bugbot Medium） |

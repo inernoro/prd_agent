@@ -698,6 +698,10 @@ public class DocumentStoreSyncResource : ISyncableResource
                     var changedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
                     var fullUpdate = Builders<DocumentEntry>.Update
                         .Set(e => e.DocumentId, parsed.Id)
+                        // 与二进制路径置 DocumentId=null 对称：文本覆盖时清掉可能残留的 AttachmentId，
+                        // 否则同血缘先以二进制落地、后以文本同步会同时挂 DocumentId+AttachmentId，UI 错乱、文件元数据残留
+                        // （Bugbot: Text sync keeps stale AttachmentId）。
+                        .Set(e => e.AttachmentId, (string?)null)
                         .Set(e => e.Title, fe.Title)
                         .Set(e => e.Summary, fe.Summary)
                         .Set(e => e.ParentId, parentId)
