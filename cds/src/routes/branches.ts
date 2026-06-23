@@ -9890,6 +9890,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // visible time just like successful deploys do.
     entry.lastAccessedAt = new Date().toISOString();
 
+    // ── Commit SHA derivation (hoisted before cluster dispatch) ──
+    // 极速版镜像 tag 模板 `:sha-${CDS_COMMIT_SHA}` 在 resolveEffectiveProfile
+    // 里用 entry.githubCommitSha 解析。集群路径在下面 proxyDeployToExecutor 前
+    // 就 return,而 proxyDeployToExecutor 内部已经 resolveEffectiveProfile ——
+    // 所以 SHA 必须在「分发决策之前」就 stamp 好,否则远端 payload 的
+    // dockerImage 仍是 `:sha-`（空 tag）→ docker pull 必失败（Bugbot review）。
+    // 优先级与本地路径一致:① req.body.commitSha（webhook 锚定）② 已存 SHA
+    // ③ worktree HEAD 兜底。本地路径下方不再重复推导。
+    if (requestCommitSha) {
+      entry.githubCommitSha = requestCommitSha;
+    } else if (!entry.githubCommitSha && entry.worktreePath) {
+      try {
+        const sha = await shell.exec('git rev-parse HEAD', { cwd: entry.worktreePath });
+        if (sha.exitCode === 0 && sha.stdout.trim()) {
+          entry.githubCommitSha = sha.stdout.trim();
+        }
+      } catch {
+        /* non-fatal — 极速版镜像 tag 推导失败时由后续 docker pull 报错暴露 */
+      }
+    }
+    stateService.save();
+
     // ── Cluster dispatch decision ──
     //
     // Before touching the local deploy path, decide whether this branch
@@ -9994,34 +10016,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
 
       // ── GitHub Checks integration ──
-      // Priority for the commit SHA fed to the check run:
-      //   1. req.body.commitSha — the authoritative value from the
-      //      webhook-originated dispatcher, pinned at webhook-handling
-      //      time so concurrent pushes can't race it
-      //   2. entry.githubCommitSha — stored on the branch by the push
-      //      handler (same value in the normal flow)
-      //   3. current worktree HEAD — fallback for UI-triggered deploys
-      // If none of the above resolve, the check-run path is a no-op.
-      const bodyCommitSha = requestCommitSha;
-      if (bodyCommitSha) {
-        entry.githubCommitSha = bodyCommitSha;
-      } else if (!entry.githubCommitSha) {
-        // 从 worktree HEAD 兜底推导 commit SHA（Bugbot/Codex review）：
-        // 不再用 `entry.githubRepoFullName &&` 设门 —— 极速版镜像 tag 模板
-        // `:sha-${CDS_COMMIT_SHA}` 依赖 githubCommitSha,UI 建分支 / align 切极速版
-        // 但从未 webhook push 的分支 githubCommitSha 为空 → tag 变成 `:sha-`（空）→
-        // docker pull 必失败。worktree 有 HEAD 就该推导出来。对非极速版分支也无害
-        // （只是把真实 commit 戳上去）。
-        try {
-          const sha = await shell.exec('git rev-parse HEAD', { cwd: entry.worktreePath });
-          if (sha.exitCode === 0 && sha.stdout.trim()) {
-            entry.githubCommitSha = sha.stdout.trim();
-          }
-        } catch {
-          /* non-fatal — check run / 极速版镜像 tag 推导失败时由后续 docker pull 报错暴露 */
-        }
-      }
-      stateService.save();
+      // commit SHA 已在上方「分发决策之前」按同一优先级
+      //   ① req.body.commitSha ② 已存 SHA ③ worktree HEAD
+      // stamp 到 entry.githubCommitSha（本地 + 远端共用），此处直接用即可,
+      // 不再重复推导。若三者都没解析出来,check-run / 极速版 tag 推导是 no-op。
       // Open an in-progress check run — best effort, errors logged not
       // thrown (so GitHub connectivity issues don't block the deploy).
       await checkRunRunner.ensureOpen(entry);
