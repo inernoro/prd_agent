@@ -219,20 +219,36 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       return;
     }
     try {
-      const me = await remoteFetch(peer, '/api/me', { timeoutMs: 15_000 }, localFallbackKey());
-      if (!me.ok) {
+      // 用「真正会用到的端点」验证 key 是否被目标接受:/api/me 在 github-auth 远端会因无 cookie
+      // 401、在 auth-disabled 远端会无脑 200,都无法证明 key 有效(Bugbot)。改用 import-config
+      // dryRun(空配置,非破坏)——它就是复刻要打的端点,各鉴权模式下都按 X-AI-Access-Key 校验。
+      const probe = await remoteFetch(peer, '/api/import-config', {
+        method: 'POST',
+        body: JSON.stringify({ config: { $schema: 'cds-config', buildProfiles: [] }, dryRun: true }),
+        timeoutMs: 15_000,
+      }, localFallbackKey());
+      if (!probe.ok) {
         res.status(200).json({
           ok: false,
-          remoteStatus: me.status,
-          error: me.status === 401 ? '鉴权失败:目标 CDS 不接受当前 accessKey' : `目标返回 HTTP ${me.status}`,
+          remoteStatus: probe.status,
+          error: probe.status === 401
+            ? '鉴权失败:目标 CDS 不接受当前 key'
+            : `目标 import-config 返回 HTTP ${probe.status}`,
         });
         return;
       }
-      const identity = (me.json as { username?: string; user?: string } | null) || {};
-      const label = identity.username || identity.user || '已连接';
+      // key 有效。再尽力取个友好名字(/api/me,失败忽略,不影响判定)。
+      let label = peer.baseUrl.replace(/^https?:\/\//, '');
+      try {
+        const me = await remoteFetch(peer, '/api/me', { timeoutMs: 8_000 }, localFallbackKey());
+        if (me.ok) {
+          const id = (me.json as { username?: string; user?: string } | null) || {};
+          label = id.username || id.user || label;
+        }
+      } catch { /* 仅取名,忽略 */ }
       stateService.updateCdsPeer(peer.id, { lastVerifiedAt: new Date().toISOString(), remoteLabel: label });
       stateService.save();
-      res.json({ ok: true, remoteStatus: me.status, identity, peer: toPublicView(stateService.getCdsPeer(peer.id)!) });
+      res.json({ ok: true, remoteStatus: probe.status, peer: toPublicView(stateService.getCdsPeer(peer.id)!) });
     } catch (err) {
       res.status(200).json({ ok: false, error: `连接失败: ${(err as Error).message}` });
     }
@@ -320,9 +336,14 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     let targetReachable = false;
     let targetError: string | undefined;
     try {
-      const me = await remoteFetch(peer, '/api/me', { timeoutMs: 12_000 }, localFallbackKey());
-      targetReachable = me.ok;
-      if (!me.ok) targetError = `目标返回 HTTP ${me.status}`;
+      // 同 verify:用 import-config dryRun 探活 + 验 key,而非 /api/me(各鉴权模式下会误报)。
+      const probe = await remoteFetch(peer, '/api/import-config', {
+        method: 'POST',
+        body: JSON.stringify({ config: { $schema: 'cds-config', buildProfiles: [] }, dryRun: true }),
+        timeoutMs: 12_000,
+      }, localFallbackKey());
+      targetReachable = probe.ok;
+      if (!probe.ok) targetError = probe.status === 401 ? '鉴权失败:目标不接受当前 key' : `目标返回 HTTP ${probe.status}`;
     } catch (err) {
       targetError = (err as Error).message;
     }
