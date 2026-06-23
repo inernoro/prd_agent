@@ -5,7 +5,7 @@
  * 配色遵循 ui-ux-pro-max 的 treemap 规范：父级不同色相、子级同色相浅色梯度；暖色只留给告警。
  * 数据源：GET /api/team-activity/experience-map（与 insights 同源 apirequestlogs，target 同口径）。
  */
-import { useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { GlassCard } from '@/components/design';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -138,10 +138,15 @@ export function ExperienceMap({
   const penId = `voc-pen-${uid}`;
   // aspect-aware：量出 SVG 容器真实像素宽高比，让 treemap 布局高度跟容器同比例铺满，消除上下 letterbox 空白。
   // ResizeObserver 量到前用回退值（避免 SSR/首帧白屏）。
-  const svgBoxRef = useRef<HTMLDivElement | null>(null);
   const [boxDims, setBoxDims] = useState<{ w: number; h: number } | null>(null);
-  useLayoutEffect(() => {
-    const el = svgBoxRef.current;
+  const roRef = useRef<ResizeObserver | null>(null);
+  // 用「回调 ref」而非 useLayoutEffect(deps=[fullscreen]) 来测量：首屏会先渲染 loader 早退（此时 SVG 容器还没挂载），
+  // effect 跑在 el=null 上直接 bail，且依赖不变后不会重跑 → boxDims 永远是 null → 回退到 1000×560 比例 →
+  // preserveAspectRatio="meet" 把 treemap 装进信箱框、四周留白（时填满时不填满的随机感即源于此）。
+  // 回调 ref 保证「容器一挂载即测量并 observe，一卸载即 disconnect」，根治该 letterbox。
+  const measureBoxRef = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    roRef.current = null;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const measure = () => {
       const r = el.getBoundingClientRect();
@@ -152,8 +157,8 @@ export function ExperienceMap({
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [fullscreen]);
+    roRef.current = ro;
+  }, []);
   // 像素级 viewBox：viewBox 宽高 = 容器真实像素，使 viewBox 宽高比恒等于容器宽高比，
   // preserveAspectRatio="meet" 退化为恒等变换 → treemap 永远铺满整格、零 letterbox、无拉伸变形。
   const VW = boxDims?.w ?? VW_FALLBACK;
@@ -202,9 +207,11 @@ export function ExperienceMap({
 
   if (!data || data.groups.length === 0) return null;
 
-  // 首屏入场只放一次：第一次拿到地图数据时走「写字 + 点睛」；之后换时间窗只做 morph 生长，不重演入场
-  const isEntrance = !enteredRef.current;
-  enteredRef.current = true;
+  // 首屏入场只放一次：第一次拿到地图数据时走「写字 + 点睛」；之后换时间窗只做 morph 生长，不重演入场。
+  // 闸门绑在「已拿到真实测量尺寸(boxDims)的首帧」——回退尺寸那一帧不点亮入场，避免随后 boxDims 落地、
+  // 布局重算时把正在播的入场动画吃掉（旧实现里这正是入场动画时有时无的根因）。
+  const isEntrance = !!boxDims && !enteredRef.current;
+  if (boxDims) enteredRef.current = true;
 
   // 全屏态视口更大（同一 viewBox 撑满更大物理像素），放宽标签阈值让更多块显示标签层级
   const labelMinW = fullscreen ? 34 : 46;
@@ -288,7 +295,7 @@ export function ExperienceMap({
           </div>
         </div>
         <div
-          ref={svgBoxRef}
+          ref={measureBoxRef}
           className={`px-2 pb-2 flex-1 min-h-0 flex flex-col${fullscreen ? '' : ' voc-map-body'}`}
         >
           {layout.groupRects.length === 0 ? (
