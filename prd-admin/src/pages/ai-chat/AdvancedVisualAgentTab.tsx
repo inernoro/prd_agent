@@ -2133,9 +2133,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, []);
 
-  // 进入编辑器即「对话优先」：画布无产物时自动聚焦输入框（手机端直接打开聊天面板），
-  // 让用户进来就能「描述即生成」，无需先去左侧工具栏摆一个生成框。
-  // 见 .claude/rules/chief-designer-usability.md 第一/四原则、guided-exploration.md。
+  // 进入编辑器即「对话优先」：画布无产物时自动聚焦输入框，让用户进来就能「描述即生成」，
+  // 无需先去左侧工具栏摆一个生成框。见 .claude/rules/chief-designer-usability.md 第一/四原则。
+  // 注：手机端走 pc-only 门槛（见 VisualAgentFullscreenPage），此处不强开聊天/不抢焦点，
+  //     避免把不为手机设计的画布硬塞进手机产生留白。
   // 延时让 workspace 初始化异步恢复画布后再判定；ref 守卫保证只跑一次。
   const initialComposerFocusRef = useRef(false);
   useEffect(() => {
@@ -2143,11 +2144,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const t = window.setTimeout(() => {
       if (initialComposerFocusRef.current) return;
       initialComposerFocusRef.current = true;
+      if (isMobile) return; // 手机端 pc-only，不抢焦点
       const hasArtifact = (canvasRef.current ?? []).some(
         (it) => (it.kind ?? 'image') === 'image' && !!it.src,
       );
       if (hasArtifact) return; // 已有作品：保持落在画布看作品，不打扰
-      if (isMobile) setMobileShowChat(true);
       focusComposer();
     }, 1200);
     return () => window.clearTimeout(t);
