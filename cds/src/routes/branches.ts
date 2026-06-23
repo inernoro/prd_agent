@@ -3945,7 +3945,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
   });
 
   router.post('/branches/cleanup-damaged-containers', async (req, res) => {
-    const projectFilter = resolveProjectIdParam(req.query.project);
+    let projectFilter = resolveProjectIdParam(req.query.project);
+    // 项目级访问控制（Codex P1 / learned rule，同 cleanup-stopped）：本接口删容器/服务条目，
+    // 项目级 cdsp_ key 不得跨项目操作 —— 未带 ?project= 锁到自身项目，带了则校验一致否则 403。
+    {
+      const projectKey = (req as any).cdsProjectKey as { projectId: string; keyId: string } | undefined;
+      if (projectKey) {
+        if (!projectFilter) projectFilter = projectKey.projectId;
+        const m = assertProjectAccess(req as any, projectFilter);
+        if (m) {
+          res.status(m.status).json(m.body);
+          return;
+        }
+      }
+    }
     const branches = Object.values(stateService.getState().branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );

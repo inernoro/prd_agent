@@ -446,7 +446,7 @@ function ExecutorRow({ node }: { node: ExecutorNode }): JSX.Element {
         {node.port ? `:${node.port}` : ''} · {node.role || 'remote'} · 心跳 {formatRelativeTime(node.lastHeartbeat)}
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <MetricTile label="分支" value={node.branchCount || 0} />
+        <MetricTile label="分支" value={node.branchCount ?? node.branches?.length ?? 0} />
         <MetricTile label="容器" value={node.runningContainers ?? '-'} />
         <MetricTile label="CPU" value={`${node.load?.cpuPercent ?? 0}%`} />
         <MetricTile label="内存" value={`${memPercent}%`} />
