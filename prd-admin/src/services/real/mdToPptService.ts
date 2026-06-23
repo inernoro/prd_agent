@@ -168,6 +168,22 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
   return () => abortController.abort();
 }
 
+// ============ CDS 连接状态（未连接时整页禁用）============
+
+/**
+ * 当前是否存在可用的 active CDS 连接。PPT 生成完全依赖 CDS Agent，
+ * 未连接时前端整页禁用并引导用户去「基础设施服务」完成 CDS 授权。
+ * 查询失败时按「未连接」处理（保守：不放行到必然失败的生成）。
+ */
+export async function getMdToPptConnectionStatus(): Promise<boolean> {
+  try {
+    const res = await apiRequest<{ connected: boolean }>('/api/md-to-ppt/connection-status');
+    return res.success && res.data?.connected === true;
+  } catch {
+    return false;
+  }
+}
+
 // ============ Prewarm（大纲确认期间预热 CDS Agent 会话）============
 
 /**
@@ -391,7 +407,8 @@ export interface MdToPptConvertSseOptions {
   /** 推理模型思考过程增量（先想后写的模型，等待期展示思考内容） */
   onThinking?: (text: string) => void;
   onDelta?: (text: string) => void;
-  onDone?: (result: { html: string }) => void;
+  /** degraded：退化为裸要点/范本兜底的页数；total：总页数（>0 时说明本次未全程走 Agent 设计） */
+  onDone?: (result: { html: string; degraded?: number; total?: number }) => void;
   onError?: (message: string) => void;
 }
 
@@ -441,7 +458,11 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
         onPage: options.onPage,
         onDone: (data) => {
           resolved = true;
-          options.onDone?.({ html: (data.html as string) ?? '' });
+          options.onDone?.({
+            html: (data.html as string) ?? '',
+            degraded: typeof data.degraded === 'number' ? data.degraded : undefined,
+            total: typeof data.total === 'number' ? data.total : undefined,
+          });
         },
         onError: (msg) => {
           resolved = true;
@@ -589,6 +610,10 @@ export interface MdToPptRunDetail {
   error?: string | null;
   model?: string | null;
   platform?: string | null;
+  /** 退化为「标题+要点」兜底的页数（>0 时恢复路径也要如实告警，与 done 事件一致） */
+  degraded?: number;
+  /** 总页数（与 degraded 配对还原「共 N 页其中 X 页降级」文案） */
+  total?: number;
   createdAt: string;
   updatedAt: string;
 }
