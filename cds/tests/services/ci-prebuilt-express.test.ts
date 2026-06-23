@@ -56,9 +56,10 @@ describe('极速版 — 纯函数', () => {
     expect(
       resolveImageTemplate('ghcr.io/x/api:sha-${CDS_COMMIT_SHA}', branch),
     ).toBe(`ghcr.io/x/api:sha-${FULL_SHA}`);
+    // slug 对齐 docker/metadata-action:保留大小写,空格(非法)→ '-'。
     expect(
       resolveImageTemplate('ghcr.io/x/api:branch-${CDS_BRANCH_SLUG}', branch),
-    ).toBe('ghcr.io/x/api:branch-feat-cool-thing');
+    ).toBe('ghcr.io/x/api:branch-feat-Cool-Thing');
   });
 
   it('resolveImageTemplate 无模板变量原样返回', () => {
@@ -75,9 +76,12 @@ describe('极速版 — 纯函数', () => {
     expect(resolveImageTemplate('ghcr.io/x/api:sha-${CDS_COMMIT_SHA}', noTarget)).toBe(`ghcr.io/x/api:sha-${FULL_SHA}`);
   });
 
-  it('slugifyBranchForImage 小写 + 非 [a-z0-9-] 转 - + 去头尾', () => {
-    expect(slugifyBranchForImage('Feature/Foo_Bar')).toBe('feature-foo-bar');
-    expect(slugifyBranchForImage('--main--')).toBe('main');
+  it('slugifyBranchForImage 对齐 docker/metadata-action(保留大小写/下划线/点, / 与空格→ -)', () => {
+    expect(slugifyBranchForImage('my/branch')).toBe('my-branch');
+    expect(slugifyBranchForImage('Codex/fix')).toBe('Codex-fix');
+    expect(slugifyBranchForImage('release/v1.2')).toBe('release-v1.2');
+    expect(slugifyBranchForImage('Feature/Foo_Bar')).toBe('Feature-Foo_Bar');
+    expect(slugifyBranchForImage('--main')).toBe('main'); // 去前导 '-'(Docker tag 不能以 '-' 开头)
   });
 
   it('resolveActiveDeployModeId 优先级 分支override > 基线 > 项目默认', () => {
@@ -141,9 +145,9 @@ describe('极速版 — 纯函数', () => {
     } as unknown as BranchEntry;
     const eff = resolveEffectiveProfile(p, branch);
     expect(eff.dockerImage).toBe(`ghcr.io/inernoro/prd_agent/prdagent-server:sha-${FULL_SHA}`);
-    // 回退链逐元素解析:① 本分支 tag(branch-feat-cool,保住本分支已有改动) ② 固定 branch-main。
+    // 回退链逐元素解析:① 本分支 tag(branch-Feat-Cool,保留大小写,保住本分支已有改动) ② 固定 branch-main。
     expect(eff.fallbackImage).toEqual([
-      'ghcr.io/inernoro/prd_agent/prdagent-server:branch-feat-cool',
+      'ghcr.io/inernoro/prd_agent/prdagent-server:branch-Feat-Cool',
       'ghcr.io/inernoro/prd_agent/prdagent-server:branch-main',
     ]);
   });

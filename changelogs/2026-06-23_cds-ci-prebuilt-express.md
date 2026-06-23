@@ -35,3 +35,5 @@
 | fix | cds | PR review 修复（Bugbot High）：极速版镜像 tag 的 ${CDS_COMMIT_SHA} 优先解析为 ciTargetSha(CI 真正构建镜像的 commit)而非 githubCommitSha——后者会被 docs-only push / 被拦的 check_run 重跑悄悄推进却不产新镜像,用它渲染会拉错 SHA 镜像或静默回退 branch-main,使预览与就绪 CI 产物不一致;ciTargetSha 未设时退回 githubCommitSha |
 | fix | cds | PR review 修复（Bugbot）：path-filter 下 docs-only push 不再推进 ciTargetSha / 认领缓存——docs commit 不产镜像,推进会把正在构建的代码 commit 顶成孤儿(永不部署)或让分支显示「CI ready」却指向无镜像 SHA;改为只刷新展示用 githubCommitSha,CI 状态保持等待正在构建的代码 commit |
 | fix | cds | PR review 修复（Codex P1）：极速版回退改为**有序回退链**(fallbackImage 支持 string[])——本 commit 无该组件镜像时先退到本分支该组件最近一次构建(:branch-<slug>),再退到固定主分支(:branch-main)。修复「A 改 api、B 只改 admin」部署 B 时 api 直接回退 main、丢掉本分支 A 的 api 改动(混入 main 代码);admin 对称。runService 按链逐个 docker pull,第一个拉到即用 |
+| fix | cds | PR review 修复（Codex P2）：slugifyBranchForImage 对齐 docker/metadata-action 的 tag 规则——保留大小写、保留 _ 和 .,只把非法字符序列转 -,使 branch-${CDS_BRANCH_SLUG} 回退能命中 CI 实际推送的 tag(此前小写+改写 _/. 会让 Codex/fix、release/v1.2 等分支回退落空到 main、丢本分支改动) |
+| docs | cds | guide.cds-github-webhook-events 补充:极速版(CI 预构建)项目必须额外订阅 workflow_run 事件(需 Actions:Read-only 权限),否则极速版分支永久卡「等待 CI 镜像」;workflow_run 从噪声过滤表移到必订表 |

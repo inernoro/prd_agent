@@ -233,13 +233,21 @@ export function resolveImageTemplate(image: string | undefined, branch?: BranchE
     .replace(/\$\{CDS_BRANCH_SLUG\}/g, slug);
 }
 
-/** 分支名 → 镜像 tag 友好 slug（小写、非 [a-z0-9-] 转 -、合并/去头尾 -）。与 CI workflow 的 slugify 保持一致。 */
+/**
+ * 分支名 → 镜像 tag slug。**必须与 CI 的 `.github/workflows/branch-image.yml` 经
+ * docker/metadata-action `type=ref,event=branch,prefix=branch-` 推送的 tag 一致**,
+ * 否则 path-filter 跳过某组件时 `branch-${CDS_BRANCH_SLUG}` 回退会找不到本分支镜像
+ * （Codex P2: align branch-image fallback slugging）。docker/metadata-action 的 sanitizeTag:
+ *   - 只把**不属于 Docker tag 合法字符集** `[A-Za-z0-9._-]` 的连续序列替换为 '-';
+ *   - **保留大小写**、保留 '_' 和 '.'（不像旧实现那样小写 + 改写 '_'/'.'）;
+ *   - 例: `my/branch`→`my-branch`、`Codex/fix`→`Codex-fix`、`release/v1.2`→`release-v1.2`。
+ * 额外去掉前导 '.'/'-'(Docker tag 不能以它们开头) + 截到 128 字符上限。
+ */
 export function slugifyBranchForImage(branch: string): string {
   return branch
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^[.-]+/, '')
+    .slice(0, 128);
 }
 
 /**
