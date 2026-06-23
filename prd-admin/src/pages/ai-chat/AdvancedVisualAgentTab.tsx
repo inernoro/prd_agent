@@ -6,7 +6,7 @@ import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
-import { GenSweepLoader } from '@/components/ui/GenSweepLoader';
+import { GenSweepLoader } from '@/components/ui/GenSweepLoader'; // 生图等待动效=流光进度条（替换旧金色 Nebula）
 import { recordGenDurationMs } from '@/lib/genTiming';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { getGenAvgMs } from '@/lib/genTiming';
 
+// build-marker: gen-sweep-loader v1 (2026-06-23) — 强制 chunk 重编译，冲掉 CDS 构建缓存
+
 /**
  * GenSweepLoader — 生图等待「流光进度条」加载动效（靛蓝新风格，2026-06 替换金色 Nebula）
  *
