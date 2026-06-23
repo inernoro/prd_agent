@@ -37,6 +37,7 @@ import {
   Trash2,
   X,
   XCircle,
+  Zap,
 } from 'lucide-react';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -4755,7 +4756,9 @@ function BranchCard({
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
-  const runtimeIconClass = runtime?.kind === 'pending'
+  const runtimeIconClass = runtime?.prebuilt
+    ? 'text-sky-500'
+    : runtime?.kind === 'pending'
     ? 'text-amber-500'
     : runtime?.kind === 'mixed'
       ? 'text-violet-500'
@@ -4961,7 +4964,12 @@ function BranchCard({
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
-            {runtime ? (
+            {runtime?.prebuilt ? (
+              <Zap
+                className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+                aria-label={runtime.label}
+              />
+            ) : runtime ? (
               <Rocket
                 className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
                 aria-label={runtime.label}
@@ -5761,8 +5769,19 @@ function BranchFailureHint({
   );
 }
 
-function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string } | null {
+function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string; prebuilt?: boolean } | null {
   const runtime = branch.deployRuntime;
+  // 2026-06-23 极速版（CI 预构建）：分类上属 release,但要从「发布版」里细分出来,
+  // 给独立标签「极速版」+ Zap 闪电图标 + 青色,让用户一眼区分「拉 CI 镜像」vs「源码编译发布」。
+  if (runtime?.prebuilt === true) {
+    return {
+      kind: 'release',
+      prebuilt: true,
+      label: '极速版',
+      title: runtime.title || '极速版（CI 预构建）：拉取 GitHub Actions 编译的镜像运行,CDS 不本机编译',
+      className: 'border-sky-400/35 bg-sky-400/10 text-sky-700 dark:text-sky-300',
+    };
+  }
   if (runtime?.kind === 'release') {
     return {
       kind: 'release',
