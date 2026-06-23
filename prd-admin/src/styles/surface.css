@@ -326,6 +326,21 @@
   display: none;
 }
 
+/* 移动端：tab 工具栏单行横滚，避免 flex-wrap 把 tabs + 教程/操作挤成两行
+   （见 .claude/rules/mobile-first-density.md：进内容前控制条 ≤1 条）。
+   仅手机生效，桌面保持 space-between + wrap 不变。 */
+@media (max-width: 767px) {
+  .surface-nav-content {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .surface-nav-content::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 .surface-nav-indicator {
   position: absolute;
   height: 28px;
