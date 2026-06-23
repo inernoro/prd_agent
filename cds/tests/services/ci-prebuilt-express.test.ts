@@ -392,8 +392,8 @@ describe('极速版 — dispatcher', () => {
     expect(stateService.getBranch('proj-brand-new')).toBeUndefined();
   });
 
-  it('docs-only push 让等待中的极速版分支同步推进 ciTargetSha（Bugbot: doc-only push stale CI target）', async () => {
-    const pushed = await pushOnce(); // waiting, ciTargetSha=FULL_SHA
+  it('docs-only push 不动 CI 状态,保护正在构建的代码 commit（Bugbot: CI ready without image builds — 防孤儿）', async () => {
+    const pushed = await pushOnce(); // waiting, ciTargetSha=FULL_SHA(代码 commit,CI 构建中)
     const NEW_SHA = 'aaaa1111bbbb2222cccc3333dddd4444eeee5555';
     const result = await dispatcher.handle('push', {
       ref: 'refs/heads/feature',
@@ -403,9 +403,10 @@ describe('极速版 — dispatcher', () => {
     });
     expect(result.action).toBe('ignored-doc-only');
     const branch = stateService.getBranch(pushed.branchId!);
-    // 仍在等待,但目标 SHA 已推进到新 commit,使新 CI run 能匹配
+    // path-filter 下 docs commit 不产镜像 → ciTargetSha 必须**保持**在代码 commit(FULL_SHA),
+    // 否则会把正在构建的代码 commit 顶成孤儿;只刷新展示用 githubCommitSha。
     expect(branch?.ciImageStatus).toBe('waiting');
-    expect(branch?.ciTargetSha).toBe(NEW_SHA);
+    expect(branch?.ciTargetSha).toBe(FULL_SHA);
     expect(branch?.githubCommitSha).toBe(NEW_SHA);
   });
 
@@ -486,10 +487,11 @@ describe('极速版 — dispatcher', () => {
     expect(stateService.getBranch(p2.branchId!)?.ciImageStatus).toBe('ready');
   });
 
-  it('docs-only push 推进 ciTargetSha 后认领该新 SHA 的早到缓存 → ready+deploy（Codex P2: check cached CI runs after docs-only target changes）', async () => {
-    const pushed = await pushOnce(); // waiting, ciTargetSha=FULL_SHA
+  it('docs-only push 不认领 docs SHA 的缓存,继续等待代码 commit（path-filter:docs 不产镜像）', async () => {
+    const pushed = await pushOnce(); // waiting, ciTargetSha=FULL_SHA(代码 commit)
     const NEW_SHA = 'bbbb2222cccc3333dddd4444eeee5555ffff6666';
-    // 新 SHA 的 CI 先完成并缓存(docs-only 那次 push 尚未到)。
+    // 假设有一条 NEW_SHA 的 workflow_run 早到并缓存(实际 path-filter 下 docs commit 不会产生
+    // 有意义的镜像,这里只验证 docs-only push 不会去认领它、不会顶掉代码 commit 的等待)。
     await dispatcher.handle('workflow_run', {
       action: 'completed',
       workflow_run: {
@@ -499,16 +501,18 @@ describe('极速版 — dispatcher', () => {
       },
       repository: { full_name: 'octocat/repo' },
     });
-    // docs-only push 到新 SHA → 推进 ciTargetSha 并认领缓存,直接 ready+deploy。
     const result = await dispatcher.handle('push', {
       ref: 'refs/heads/feature',
       after: NEW_SHA,
       repository: { id: 1, full_name: 'octocat/repo' },
       commits: [{ id: NEW_SHA, added: [], removed: [], modified: ['README.md'] }],
     });
-    expect(result.action).toBe('ci-image-ready');
-    expect(result.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: NEW_SHA });
-    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('ready');
+    // docs-only → 不部署、不认领缓存;仍等待代码 commit FULL_SHA。
+    expect(result.action).toBe('ignored-doc-only');
+    expect(result.deployRequest).toBeUndefined();
+    const branch = stateService.getBranch(pushed.branchId!);
+    expect(branch?.ciImageStatus).toBe('waiting');
+    expect(branch?.ciTargetSha).toBe(FULL_SHA);
   });
 
   it('check_run 重跑在极速版 waiting 分支不返回 deployRequest（Bugbot: check run skips CI wait）', async () => {

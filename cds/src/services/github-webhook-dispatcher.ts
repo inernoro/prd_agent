@@ -1066,13 +1066,14 @@ export class GitHubWebhookDispatcher {
     const docsOnly = entry ? this.isDocsOnlyPush(event) : { ok: false, changedPaths: [] };
     if (docsOnly.ok) {
       if (!dryRun) {
-        // 极速版分支正在「等待 CI 镜像」时,docs-only push 也会让 branch-image.yml
-        // 重新构建出新 commit 的镜像(CI 不做 path-filter)。若只刷新 githubCommitSha
-        // 而不同步 ciTargetSha,workflow_run 匹配按 ciTargetSha===head_sha 就会落在
-        // 旧 SHA 上,新 commit 的 run 永远不匹配 → 分支卡死在 waiting（Bugbot:
-        // doc-only push stale CI target）。故 express + waiting 时把 ciTargetSha 一并推进。
-        const docsOnlyExpressWaiting =
-          !!entry && entry.ciImageStatus === 'waiting' && branchUsesPrebuiltMode(profiles, entry);
+        // docs-only push 不动 CI 状态（2026-06-23 path-filter + 回退模型修正,Bugbot:
+        // CI ready without image builds）。理由：极速版镜像由 CI **按改动路径**构建
+        // （prd-api/** → api、prd-admin/** → admin），docs-only commit 不会产生任何
+        // sha-* 镜像。此前为「每个 commit 都构建」模型把 ciTargetSha 推进到 docs commit,
+        // 在 path-filter 下会:① 把正在构建的**代码 commit** 的 in-flight build 顶掉(孤儿,
+        // 永不部署);② 让分支显示「CI ready」却指向一个没有镜像的 SHA、只能全回退 main。
+        // 正确做法:docs-only 只刷新展示用 metadata,ciImageStatus/ciTargetSha 保持不动 ——
+        // 继续等待正在构建的代码 commit;docs 改动本就不进运行时镜像,无需重部署。
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           githubRepoFullName: repoFullName,
           githubCommitSha: commitSha,
@@ -1080,19 +1081,8 @@ export class GitHubWebhookDispatcher {
           githubSenderLogin: event.sender?.login,
           githubSenderAvatarUrl: event.sender?.avatar_url,
           githubInstallationId: project.githubInstallationId ?? event.installation?.id,
-          ...(docsOnlyExpressWaiting ? { ciTargetSha: commitSha } : {}),
         });
         this.deps.stateService.save();
-        // docs-only 把 ciTargetSha 推进到新 commit 后,若该新 SHA 的 CI 完成事件早已
-        // 到达并被缓存,这条 docs-only 路径不会再收到第二个 completion 来推进 → 必须
-        // 同样认领缓存,否则分支卡死 waiting（Codex P2:check cached CI runs after
-        // docs-only target changes）。命中即直接 ready+deploy / failed。
-        if (docsOnlyExpressWaiting) {
-          const claimed = this.claimCachedCiRunForExpress(
-            branchId, entry!.projectId, branchName, repoFullName, commitSha,
-          );
-          if (claimed) return claimed;
-        }
         const updatedEntry = this.deps.stateService.getBranch(branchId);
         if (updatedEntry) {
           branchEvents.emitEvent({
