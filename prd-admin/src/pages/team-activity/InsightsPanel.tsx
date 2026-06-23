@@ -471,11 +471,12 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const renderStatsTile = () => (data ? <ExperienceStats items={data.items} /> : null);
   const renderBoardTile = () => <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} from={from} to={to} />;
 
-  // 桌面端（lg+）Bento 看板：全景热力图为绝对主角。
-  // 12 列 grid + 固定行高，热力图占 9 列（约 3/4）× 2 行满高；其余仪表盘压在右 3 列（约 1/4）竖排：
-  //   - 热力图 hero：col-span-9 / row-span-2（左侧大块当主角，越大越好）
-  //   - 右 1/4 竖排：趋势爆点 / 痛点指数 / 声道看板，各 flex-1 平分右列高度
-  // 「自由融合」：趋势无数据时整块移出，痛点指数 + 声道看板平分右列剩余高度，热力图主角不变。
+  // 桌面端（lg+）Bento 看板：全景热力图为主角。
+  // 12 列 grid 撑满首屏（gridTemplateRows 1fr/1fr + height:100%），热力图占 8 列（约 2/3）× 2 行满高；
+  //   其余仪表盘压在右 4 列（约 1/3，用户选定折中比例）：
+  //   - 热力图 hero：col-span-8 / row-span-2（左侧大块当主角）
+  //   - 右 1/3：趋势整宽在上（col-span-4），痛点指数仪表盘 + 声道并排在下（各 col-span-2）——给足高度让仪表盘完整渲染
+  // 「自由融合」：趋势无数据时整块移出，痛点指数 + 声道上下各占一行吸收其高度，热力图主角不变。
   // 布局关键尺寸（gridColumn/gridRow span、grid-template）一律走 inline style（frontend-modal 习惯，
   //   避免 Tailwind arbitrary span 在某些构建路径不生效）。
   const renderDesktopDashboard = () => {
