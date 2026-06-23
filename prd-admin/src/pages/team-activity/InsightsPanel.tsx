@@ -418,6 +418,20 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     );
   }
 
+  // 热力图头部常驻「AI 用户分析」入口：仪表盘填满整屏后，底部数据行那个触发按钮会落到首屏之下，
+  // 故在首屏可见的热力图卡头再放一个常驻入口（一键直达、点击才分析、不常驻空跑），底部那个保留。
+  const aiAnalysisHeaderBtn = (
+    <button
+      type="button"
+      onClick={startBrief}
+      title="从行为信号读懂用户此刻的处境（点击才分析）"
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border bg-cyan-500/10 text-cyan-200/90 border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+    >
+      <ScrollText size={11} />
+      AI 用户分析
+    </button>
+  );
+
   // 端点地图格头部右侧：热力图 ⇄ 站点地图 子切换器（端点地图的两种铺法，共用一格，不单独占格）
   const mapModeSwitcher = (
     <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
@@ -442,7 +456,15 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     </div>
   );
 
-  // 端点地图格（热力图 ⇄ 站点地图）。两者都是端点地图，共用同一格，靠 headerExtra 注入子切换器。
+  // 头部右侧注入：AI 用户分析常驻入口 + 热力图⇄站点地图 子切换器（mapModeSwitcher 须先定义，避免 TDZ）
+  const mapHeaderExtra = (
+    <span className="inline-flex items-center gap-2 shrink-0">
+      {aiAnalysisHeaderBtn}
+      {mapModeSwitcher}
+    </span>
+  );
+
+  // 端点地图格（热力图 ⇄ 站点地图）。两者都是端点地图，共用同一格，靠 headerExtra 注入入口 + 子切换器。
   // compact=true（桌面格内/移动单图）时给热力图挂全屏按钮，格里小、全屏看大。
   const renderMapTile = () =>
     mapMode === 'heatmap' ? (
@@ -451,10 +473,10 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
         loading={loading}
         onSelectTarget={handleSelectTarget}
         onRequestFullscreen={() => setFullscreenOpen(true)}
-        headerExtra={mapModeSwitcher}
+        headerExtra={mapHeaderExtra}
       />
     ) : (
-      <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mapModeSwitcher} />
+      <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mapHeaderExtra} />
     );
 
   // 趋势格：桌面四图仪表盘传 hideWhenEmpty（无数据直接 null，让 grid 自适应铺满剩余格 + 上报空态）；
