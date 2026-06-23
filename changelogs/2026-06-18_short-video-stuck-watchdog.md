@@ -1,1 +1,0 @@
-| fix | prd-api | 短视频解析卡死自愈：(1) ShortVideoMaterialRun.Status 默认值由 running 改为 queued，杜绝缺省/反序列化出的 run 永远卡"处理中"无人 claim；(2) Worker 增加周期性兜底，把 status=running 且 updatedAt 超 15 分钟未推进、非当前处理中的 run 标记为失败（自愈成"可重试"），不再依赖重启才回收；(3) ProcessAsync 进入即把 parse 标 running 并落库，前端立刻看到"正在解析"而非僵在 pending，同时作为心跳。根治"加了短视频链接半天没反应" |

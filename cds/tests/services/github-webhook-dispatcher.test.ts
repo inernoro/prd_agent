@@ -180,6 +180,30 @@ describe('GitHubWebhookDispatcher', () => {
       expect(result.deployRequest).toBeUndefined();
     });
 
+    it('ignores push when the project is paused (no branch, no deploy)', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+        paused: true,
+      });
+      const d = buildDispatcher();
+      const result = await d.handle('push', {
+        ref: 'refs/heads/feature',
+        after: 'abc123def456789012345678901234567890aaaa',
+        repository: { id: 1, full_name: 'octocat/repo' },
+      });
+      expect(result.action).toBe('ignored-project-paused');
+      expect(result.deployRequest).toBeUndefined();
+      // Paused freeze must not auto-create a worktree for the pushed branch.
+      expect(worktree.createdWorktrees).toHaveLength(0);
+    });
+
     it('creates a new branch + records deploy request on push', async () => {
       stateService.addProject({
         id: 'p1',

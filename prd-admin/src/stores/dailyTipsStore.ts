@@ -70,6 +70,13 @@ interface DailyTipsState {
   cardTips: () => DailyTip[];
 }
 
+/** loadProgress 的模块级在途请求(仅 non-force),用于并发去重(见 loadProgress 注释)。 */
+let progressInFlight: Promise<void> | null = null;
+/** 单调递增的请求序号:只有「最新发起」的请求才允许落库,防止更早发出、更晚返回的请求覆盖新数据。 */
+let progressReqSeq = 0;
+/** 当前 progressInFlight 的归属序号,用于在结束时只清理「确实是自己」占用的在途槽。 */
+let progressInFlightSeq = 0;
+
 export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
   items: [],
   loaded: false,
@@ -99,12 +106,30 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
 
   async loadProgress(opts) {
     if (get().progress && !opts?.force) return;
-    try {
-      const res = await getTutorialProgress();
-      if (res.success && res.data) set({ progress: res.data });
-    } catch {
-      /* 进度拉取失败不阻塞 UI(头像环只是不显示) */
+    // 并发去重:冷启动多组件(如首页三套教程承接卡)同时挂载会各调一次 loadProgress,
+    // 仅靠 progress==null 判空挡不住「请求在途」的并发,会打出多发 getTutorialProgress(Bugbot)。
+    // 仅对 non-force 复用在途请求;force 必须发新请求 —— 否则 markLearned 后的权威校正会复用
+    // 更早的请求,拿回「学会前」的旧 XP/掌握度(Bugbot Medium / Codex P2)。
+    if (!opts?.force && progressInFlight) return progressInFlight;
+    const seq = ++progressReqSeq;
+    const p = (async () => {
+      try {
+        const res = await getTutorialProgress();
+        // 只有「本次是最新发起的请求」才落库:挡住更早发出、更晚返回的请求覆盖新数据
+        // (并发 stale overwrite / 账号切换串数据 / force 被在途旧请求压回)。
+        if (seq === progressReqSeq && res.success && res.data) set({ progress: res.data });
+      } catch {
+        /* 进度拉取失败不阻塞 UI(头像环只是不显示) */
+      } finally {
+        // 仅当在途槽仍属于本次请求时才清空(用序号判定归属,避免引用尚未赋值的 p)。
+        if (progressInFlightSeq === seq) progressInFlight = null;
+      }
+    })();
+    if (!opts?.force) {
+      progressInFlight = p;
+      progressInFlightSeq = seq;
     }
+    return p;
   },
 
   dismiss(id: string) {
@@ -178,6 +203,10 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
 // 同时复位 items/loaded/dismissed,避免残留上个用户的 tip(sessionStorage 在 logout 时也会被 clear)。
 registerLogoutReset(() => {
   locallyLearnedVersions.clear();
+  // 复位进度请求去重态:nulling 在途 + bump seq,让上个用户在途的 getTutorialProgress
+  // 既不会被下个用户复用,返回后也因 seq 失配被丢弃(Bugbot High:跨账号串教程进度)。
+  progressInFlight = null;
+  progressReqSeq++;
   useDailyTipsStore.setState({ items: [], loaded: false, loading: false, dismissed: new Set(), progress: null });
 });
 
