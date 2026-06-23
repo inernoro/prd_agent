@@ -2133,26 +2133,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, []);
 
-  // 进入编辑器即「对话优先」：画布无产物时自动聚焦输入框，让用户进来就能「描述即生成」，
-  // 无需先去左侧工具栏摆一个生成框。见 .claude/rules/chief-designer-usability.md 第一/四原则。
-  // 注：手机端走 pc-only 门槛（见 VisualAgentFullscreenPage），此处不强开聊天/不抢焦点，
-  //     避免把不为手机设计的画布硬塞进手机产生留白。
-  // 延时让 workspace 初始化异步恢复画布后再判定；ref 守卫保证只跑一次。
-  const initialComposerFocusRef = useRef(false);
-  useEffect(() => {
-    if (initialComposerFocusRef.current) return;
-    const t = window.setTimeout(() => {
-      if (initialComposerFocusRef.current) return;
-      initialComposerFocusRef.current = true;
-      if (isMobile) return; // 手机端 pc-only，不抢焦点
-      const hasArtifact = (canvasRef.current ?? []).some(
-        (it) => (it.kind ?? 'image') === 'image' && !!it.src,
-      );
-      if (hasArtifact) return; // 已有作品：保持落在画布看作品，不打扰
-      focusComposer();
-    }, 1200);
-    return () => window.clearTimeout(t);
-  }, [isMobile, focusComposer]);
+  // 「对话优先」聚焦输入框的逻辑放在 workspace 启动恢复完成点（applyCanvasFocus，见下方 boot 效应），
+  // 不再用独立定时器：那样既无法随 workspace 切换重跑（一次性 ref 守卫永久失效），
+  // 又会在画布异步水合前用 1200ms 定时器误判空画布抢焦点。见 chief-designer-usability.md 第一/四原则。
+  // isMobile 走 ref 读取：boot 效应不应因跨断点缩放（isMobile 翻转）整体重跑重拉 workspace。
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
 
   const startResize = useCallback(
     (e: ReactPointerEvent, it: CanvasImageItem, corner: ResizeCorner) => {
@@ -2638,6 +2624,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             if (isEditable) return;
             focusStage();
           });
+        } else if (!isMobileRef.current) {
+          // 画布恢复完成且确认无产物 →「对话优先」聚焦输入框，让用户进来就能「描述即生成」。
+          // 放在恢复完成点（非定时器）：随 workspace 切换每次 boot 重跑，且不会在水合前误判空画布。
+          // 手机端走 pc-only 门槛（见 VisualAgentFullscreenPage），不抢焦点。
+          requestAnimationFrame(() => {
+            const ae = document.activeElement as HTMLElement | null;
+            const tag = (ae?.tagName ?? '').toLowerCase();
+            const isEditable =
+              tag === 'textarea' ||
+              tag === 'input' ||
+              Boolean(ae?.isContentEditable) ||
+              Boolean(ae?.getAttribute?.('contenteditable'));
+            if (isEditable) return; // 用户已在某输入框，不抢
+            focusComposer();
+          });
         }
       };
 
@@ -2727,7 +2728,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         initWorkspaceRef.current.started = false;
       }
     };
-  }, [focusStage, pushMsg, setViewport, workspaceId]);
+  }, [focusStage, focusComposer, pushMsg, setViewport, workspaceId]);
 
   // 当前 workspaceId 的最新值引用：供异步回调判断是否已切换 workspace（防串台）
   const workspaceIdRef = useRef(workspaceId);
