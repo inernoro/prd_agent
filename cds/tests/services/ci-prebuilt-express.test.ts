@@ -266,4 +266,35 @@ describe('极速版 — dispatcher', () => {
     expect(result.action).toBe('workflow-acknowledged');
     expect(result.deployRequest).toBeUndefined();
   });
+
+  it('CI 失败后 re-run 同 SHA 成功 → failed 恢复 ready + deployRequest（Codex review）', async () => {
+    const pushed = await pushOnce();
+    // 第一次失败
+    await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 10, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, conclusion: 'failure' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('failed');
+    // re-run 同 SHA 成功 → 应恢复 ready + 部署（不需再 push）
+    const result = await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 11, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, conclusion: 'success' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('ci-image-ready');
+    expect(result.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: FULL_SHA });
+    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('ready');
+  });
+
+  it('workflow_run head_branch 与等待分支不符 → ack（不误派给同 SHA 的别的分支，Bugbot/Codex review）', async () => {
+    await pushOnce(); // 分支名 feature
+    const result = await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 12, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, head_branch: 'other-branch', conclusion: 'success' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('workflow-acknowledged');
+    expect(result.deployRequest).toBeUndefined();
+  });
 });

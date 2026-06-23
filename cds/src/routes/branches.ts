@@ -10005,14 +10005,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const bodyCommitSha = requestCommitSha;
       if (bodyCommitSha) {
         entry.githubCommitSha = bodyCommitSha;
-      } else if (entry.githubRepoFullName && !entry.githubCommitSha) {
+      } else if (!entry.githubCommitSha) {
+        // 从 worktree HEAD 兜底推导 commit SHA（Bugbot/Codex review）：
+        // 不再用 `entry.githubRepoFullName &&` 设门 —— 极速版镜像 tag 模板
+        // `:sha-${CDS_COMMIT_SHA}` 依赖 githubCommitSha,UI 建分支 / align 切极速版
+        // 但从未 webhook push 的分支 githubCommitSha 为空 → tag 变成 `:sha-`（空）→
+        // docker pull 必失败。worktree 有 HEAD 就该推导出来。对非极速版分支也无害
+        // （只是把真实 commit 戳上去）。
         try {
           const sha = await shell.exec('git rev-parse HEAD', { cwd: entry.worktreePath });
-          if (sha.exitCode === 0) {
+          if (sha.exitCode === 0 && sha.stdout.trim()) {
             entry.githubCommitSha = sha.stdout.trim();
           }
         } catch {
-          /* non-fatal — check run just won't fire */
+          /* non-fatal — check run / 极速版镜像 tag 推导失败时由后续 docker pull 报错暴露 */
         }
       }
       stateService.save();

@@ -678,8 +678,19 @@ export class GitHubWebhookDispatcher {
       return { action: 'workflow-acknowledged', message: 'workflow_run head_sha 缺失/格式非法,已 ack' };
     }
     // 找等待该 SHA 的极速版分支（push 时已把 ciTargetSha 钉为该 commit）。
+    // 匹配条件（Bugbot/Codex review）：
+    //  1. ciTargetSha === head_sha;
+    //  2. **同时**比对 head_branch —— 多个分支可能指向同一 commit,GitHub 会按分支分别
+    //     跑 branch-image.yml,只按 SHA 取「第一个」会把 B 分支的 run 误派给 A 分支。
+    //     head_branch 缺省时退回只按 SHA（向后兼容）。
+    //  3. waiting **或** failed —— 操作员对失败的 run 点 re-run 且同 SHA 成功时,应允许
+    //     failed → ready 恢复,而不是因为不再是 waiting 就 ack 不动作（只能靠再 push 恢复）。
     const branches = this.deps.stateService.getBranchesForProject(project.id);
-    const target = branches.find((b) => b.ciImageStatus === 'waiting' && b.ciTargetSha === headSha);
+    const matchable = (b: BranchEntry): boolean =>
+      (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
+      && b.ciTargetSha === headSha
+      && (!run.head_branch || b.branch === run.head_branch);
+    const target = branches.find(matchable);
     if (!target) {
       return {
         action: 'workflow-acknowledged',
@@ -1050,8 +1061,14 @@ export class GitHubWebhookDispatcher {
 
     // 该分支是否走预构建镜像模式？是 → 不本机编译,改为「等待 CI 镜像就绪」,
     // 等 GitHub Actions 的 workflow_run.completed 到达后再按 commit SHA 拉取部署。
+    //
+    // 注意（Bugbot/Codex review）：此处**不传** project.defaultDeployModes —— 部署路径
+    // resolveEffectiveProfile 按 2026-05-14 产品决策**不读**项目默认（默认只在建分支时
+    // 拷贝一次写进 override）。若这里用项目默认判定,则「已存在、无 override」的分支会被
+    // 误判成极速版 → 置 waiting 等 CI,但 deploy 仍走源码模式,自相矛盾。created 分支上面
+    // 已 applyDefaultDeployModesToBranch 写了 override,靠 override 即可命中。
     const entryForMode = this.deps.stateService.getBranch(branchId) ?? entry;
-    const isExpress = branchUsesPrebuiltMode(profiles, entryForMode, project.defaultDeployModes);
+    const isExpress = branchUsesPrebuiltMode(profiles, entryForMode);
     if (isExpress) {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'waiting',

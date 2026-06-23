@@ -4481,10 +4481,10 @@ function BranchCard({
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
-  const runtimeIconClass = runtime?.prebuilt
-    ? 'text-sky-500'
-    : runtime?.kind === 'pending'
+  const runtimeIconClass = runtime?.kind === 'pending'
     ? 'text-amber-500'
+    : runtime?.prebuilt
+    ? 'text-sky-500'
     : runtime?.kind === 'mixed'
       ? 'text-violet-500'
       : runtime?.kind === 'release'
@@ -4978,7 +4978,7 @@ function BranchCard({
           把该 commit 编译成 ghcr 镜像;期间显示「等待 CI 镜像」(动效不静止,符合禁止空白
           等待);CI 失败显示「CI 构建失败」并提供「切回源码编译」（打开详情切部署模式）。
         */}
-        {branch.ciImageStatus === 'waiting' ? (
+        {branch.ciImageStatus === 'waiting' && branch.deployRuntime?.prebuilt === true ? (
           <span
             className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
             title={`极速版（CI 预构建）：等待 GitHub Actions 把 commit ${(branch.ciTargetSha || '').slice(0, 7)} 编译成镜像,完成后自动拉取部署`}
@@ -4996,7 +4996,7 @@ function BranchCard({
             ) : null}
           </span>
         ) : null}
-        {branch.ciImageStatus === 'failed' ? (
+        {branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt === true ? (
           <span
             className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs text-amber-500"
             title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}）。可切回源码编译,或重试 CI 后再部署。`}
@@ -5474,6 +5474,17 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
   // 2026-06-23 极速版（CI 预构建）：分类上属 release,但要从「发布版」里细分出来,
   // 给独立标签「极速版」+ Zap 闪电图标 + 青色,让用户一眼区分「拉 CI 镜像」vs「源码编译发布」。
   if (runtime?.prebuilt === true) {
+    // 配置=极速版,但容器还没真正以极速版跑起来（force-align 后未重部署 / 重建中 / 还停着）
+    // → 「极速版·待生效」橙色,别误显示绿/青的「已在跑」（Codex review）。
+    if (runtime.pendingPublish) {
+      return {
+        kind: 'pending',
+        prebuilt: true,
+        label: '极速版·待生效',
+        title: runtime.title || '已配置极速版（CI 预构建），但容器还没以极速版跑起来（重部署后生效）',
+        className: 'border-amber-400/40 bg-amber-400/10 text-amber-700 dark:text-amber-300',
+      };
+    }
     return {
       kind: 'release',
       prebuilt: true,

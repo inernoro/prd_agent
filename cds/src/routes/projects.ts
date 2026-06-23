@@ -2465,6 +2465,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   router.post('/projects/:id/align-deploy-modes', (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) { res.status(404).json({ error: 'not_found' }); return; }
+    // 项目级写操作：必须校验调用方（项目 scope Agent Key）有权访问本项目,
+    // 否则项目 A 的 key 可改写项目 B 的全部分支运行模式（Bugbot/Codex review）。
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
     const defaults = project.defaultDeployModes || {};
     if (Object.keys(defaults).length === 0) {
       res.status(400).json({ error: 'no_defaults', message: '项目未设置默认运行模式,请先在项目设置选好默认模式再对齐' });
