@@ -12,7 +12,7 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.8.0";
+    public const string AiDefectResolveVersion = "1.8.1";
     public const string AiDefectResolveReleaseDate = "2026-06-23";
 
     public const string AiDefectResolveSkillMd = """
@@ -58,6 +58,12 @@ Content-Type: application/json
 
 - 如果用户提供 `agentLaunch` 且 `scope.type == daily-next`，按其中的 `domain/auth/scope.nextUrl` 执行。
 - 如果只有 `scope.shareUrl`，仍可按分享端点处理，但不要把分享链接当成日常任务主路径。
+
+## 每日自动化任务职责
+
+自动化任务只是调度壳，不承载缺陷处理细则。每日任务提示词只需要提供工作目录、正式缺陷系统 `domain`、K 的本机文件路径或当次输入的 K、可选过滤条件，并明确调用本技能。
+
+自动化任务不得复制本技能的 triage、轻量判定、发布后验收、通知、更新中心验收等长规则。规则的唯一维护位置是本技能与后端 `defect-agent-workflow.v1` 协议。
 
 ## 自动化流程
 

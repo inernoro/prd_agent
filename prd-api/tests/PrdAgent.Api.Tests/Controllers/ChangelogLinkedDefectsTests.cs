@@ -129,24 +129,17 @@ public class ChangelogLinkedDefectsTests
         Assert.Contains("scope: defect-agent:use", plan);
         Assert.Contains("projectId: project-1", plan);
         Assert.Contains("teamId: team-1", plan);
+        Assert.Contains("自动化任务只是调度壳", plan);
+        Assert.Contains("缺陷领取、triage、轻量判定、修复、PR、回写、发布后验收和通知全部按 ai-defect-resolve 技能执行", plan);
         Assert.Contains("scripts/defect-automation-probe.mjs", plan);
-        Assert.Contains("自检失败", plan);
-        Assert.Contains("不要领取缺陷", plan);
-        Assert.Contains("workflow.version 为 defect-agent-workflow.v1", plan);
-        Assert.Contains("正式缺陷系统 domain 负责拉取真实缺陷", plan);
-        Assert.Contains("测试或预览环境只负责修复验证与视觉验收", plan);
-        Assert.Contains("不要从测试环境领取正式缺陷", plan);
-        Assert.Contains("不要把 PR 已创建当成完成", plan);
-        Assert.Contains("不要把正式发布前的缺陷通知给提交人", plan);
-        Assert.Contains("每条缺陷先做 triage", plan);
-        Assert.Contains("expired_or_stale", plan);
-        Assert.Contains("not_actionable", plan);
-        Assert.Contains("stopRun=false", plan);
-        Assert.Contains("complete 或 block(stopRun=false)", plan);
-        Assert.Contains("start-next 返回 hasNext=false", plan);
-        Assert.Contains("无正式发布后待验收通知项", plan);
+        Assert.Contains("正式缺陷系统是缺陷读取、评论、commit/PR/validation-report 回写和通知的唯一落点", plan);
+        Assert.Contains("测试或预览环境只用于修复验证与视觉验收", plan);
         Assert.Contains("runId", plan);
-        Assert.Contains("验收报告链接", plan);
+        Assert.Contains("验收报告", plan);
+        Assert.DoesNotContain("expired_or_stale", plan);
+        Assert.DoesNotContain("not_actionable", plan);
+        Assert.DoesNotContain("每条缺陷先做 triage", plan);
+        Assert.DoesNotContain("start-next 返回 hasNext=false", plan);
     }
 
     [Fact]

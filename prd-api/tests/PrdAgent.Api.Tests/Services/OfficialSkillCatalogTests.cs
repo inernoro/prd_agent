@@ -13,8 +13,10 @@ public class OfficialSkillCatalogTests
     [Fact]
     public void AiDefectResolveOfficialTemplate_StatesDailyAutomationContract()
     {
-        Assert.Equal("1.8.0", OfficialSkillTemplates.AiDefectResolveVersion);
+        Assert.Equal("1.8.1", OfficialSkillTemplates.AiDefectResolveVersion);
         Assert.Contains("本技能的主目标是自动化闭环", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("自动化任务只是调度壳", OfficialSkillTemplates.AiDefectResolveSkillMd);
+        Assert.Contains("自动化任务不得复制本技能的 triage", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("日常执行缺少 domain 或 K 时停止", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("scope.type == daily-next", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("defect_resolution_traces", OfficialSkillTemplates.AiDefectResolveSkillMd);

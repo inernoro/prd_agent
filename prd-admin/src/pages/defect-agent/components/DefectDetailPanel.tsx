@@ -48,6 +48,7 @@ import {
 } from 'lucide-react';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { enhanceDefectMarkdown } from './defectMarkdown';
 
 const statusLabels: Record<string, string> = {
   [DefectStatus.Draft]: '草稿',
@@ -112,6 +113,40 @@ function isImageAttachment(att: DefectAttachment): boolean {
 
 function isLogAttachment(att: DefectAttachment): boolean {
   return att.type === DefectAttachmentType.LogRequest || att.type === DefectAttachmentType.LogError;
+}
+
+function DefectMarkdownContent({ content, compact = false }: { content: string; compact?: boolean }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkBreaks]}
+      components={{
+        a: ({ href, children }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={href}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-sky-400/35 bg-sky-400/10 px-1.5 py-0.5 font-semibold text-sky-200 underline underline-offset-2 transition-colors hover:border-sky-300/60 hover:bg-sky-400/18 hover:text-sky-100"
+          >
+            <span className="min-w-0 break-all">{children}</span>
+            <ExternalLink size={compact ? 10 : 12} className="shrink-0" />
+          </a>
+        ),
+        strong: ({ children }) => (
+          <strong className="font-semibold text-token-primary">
+            {children}
+          </strong>
+        ),
+        p: ({ children }) => (
+          <p className={compact ? 'my-1 break-words' : 'my-1.5 break-words'}>
+            {children}
+          </p>
+        ),
+      }}
+    >
+      {enhanceDefectMarkdown(content)}
+    </ReactMarkdown>
+  );
 }
 
 export function DefectDetailPanel() {
@@ -614,9 +649,7 @@ export function DefectDetailPanel() {
                   contentSegments.map((seg, idx) =>
                     seg.type === 'text' ? (
                       <div key={idx} className="defect-md">
-                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                          {seg.content}
-                        </ReactMarkdown>
+                        <DefectMarkdownContent content={seg.content} />
                       </div>
                     ) : (
                       <button
@@ -1022,9 +1055,7 @@ export function DefectDetailPanel() {
                           {msgSegments.map((seg, idx) =>
                             seg.type === 'text' ? (
                               <div key={idx} className="defect-md text-[12px]">
-                                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                                  {seg.content}
-                                </ReactMarkdown>
+                                <DefectMarkdownContent content={seg.content} compact />
                               </div>
                             ) : (
                               <button
