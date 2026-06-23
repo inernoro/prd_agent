@@ -653,11 +653,46 @@ function RuntimeDefaultsTab({
   const [modes, setModes] = useState<Record<string, string>>(project.defaultDeployModes || {});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [aligning, setAligning] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     setModes(project.defaultDeployModes || {});
   }, [project.defaultDeployModes]);
+
+  // 当前下拉选择是否与「已保存」的项目默认有出入。align-deploy-modes 后端按
+  // **已保存**的 project.defaultDeployModes 对齐(请求不带 modes),所以一旦有未保存
+  // 改动就不能直接对齐 —— 否则会拿旧默认覆盖所有分支,而 toast/确认却让用户以为
+  // 应用的是屏上的新选择（Codex P2: prevent aligning unsaved default selections）。
+  const savedModes = project.defaultDeployModes || {};
+  const dirty = (() => {
+    const keys = new Set<string>([
+      ...profiles.map((p) => p.id),
+      ...Object.keys(savedModes),
+      ...Object.keys(modes),
+    ]);
+    for (const k of keys) if ((modes[k] || '') !== (savedModes[k] || '')) return true;
+    return false;
+  })();
+
+  // 2026-06-23 强制把当前「默认运行模式」对齐到所有已有分支（只写配置,不批量重部署,
+  // 避免同时拉镜像/重启容器压垮宿主;各分支下次部署生效）。
+  async function alignAllBranches(): Promise<void> {
+    if (!window.confirm('把当前默认运行模式写入【所有已有分支】的配置？\n（只改配置，不会立即重部署；为保护宿主不做批量重启，各分支下次部署时生效）')) return;
+    setAligning(true);
+    setError('');
+    try {
+      const result = await apiRequest<{ aligned: number; note?: string }>(
+        `/api/projects/${encodeURIComponent(projectId)}/align-deploy-modes`,
+        { method: 'POST' },
+      );
+      onToast(`已对齐 ${result.aligned} 个分支的运行模式；各分支下次部署生效（未批量重启，避免压宿主）`);
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setAligning(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -742,7 +777,25 @@ function RuntimeDefaultsTab({
             {saving ? <Loader2 className="animate-spin" /> : <Save />}
             保存默认模式
           </Button>
-          <span className="text-xs text-muted-foreground">已有分支请在分支详情抽屉里单独切换。</span>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void alignAllBranches()}
+            disabled={aligning || saving || loading || profiles.length === 0 || dirty}
+            title={
+              dirty
+                ? '有未保存的默认模式改动，请先点「保存默认模式」再对齐（对齐按已保存的默认执行）'
+                : '把当前默认模式写入所有已有分支配置；不批量重部署（避免压宿主），各分支下次部署生效'
+            }
+          >
+            {aligning ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            强制所有分支对齐
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {dirty
+              ? '有未保存改动：请先「保存默认模式」，再「强制对齐」（对齐按已保存的默认执行，不是屏上未保存的选择）。'
+              : '「保存默认模式」只影响新分支；「强制对齐」把当前默认写入所有已有分支（下次部署生效，不立即重启）。'}
+          </span>
         </div>
       </Section>
 

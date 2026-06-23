@@ -319,10 +319,11 @@ describe('GitHub webhook route', () => {
 
   it('ack-and-skip (200 + suppress-activity header) for unsubscribed noise events', async () => {
     server = startServer();
-    // check_suite / workflow_run / pull_request_review / status are
-    // common culprits when the GitHub App is subscribed to "all events"
-    // — none actionable by CDS, should bypass the dispatcher entirely.
-    for (const noiseEvent of ['check_suite', 'workflow_run', 'pull_request_review', 'status', 'star']) {
+    // check_suite / pull_request_review / status are common culprits when the
+    // GitHub App is subscribed to "all events" — none actionable by CDS, should
+    // bypass the dispatcher entirely.
+    // 注:workflow_run 自 2026-06-23 起被极速版（CI 预构建）消费,已不在噪音清单。
+    for (const noiseEvent of ['check_suite', 'pull_request_review', 'status', 'star']) {
       const body = JSON.stringify({ repository: { full_name: 'octocat/repo' } });
       const res = await request(server, 'POST', '/api/github/webhook', body, {
         'X-GitHub-Event': noiseEvent,

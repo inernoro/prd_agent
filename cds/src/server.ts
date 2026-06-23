@@ -792,6 +792,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
     'GET /projects/:id/comment-template': '获取项目评论模板',
     'PUT /projects/:id/comment-template': '更新项目评论模板',
+    'POST /projects/:id/align-deploy-modes': '对齐全部分支运行模式',
     'GET /projects/:id/agent-sessions': '列出项目 Agent 会话',
     // 调度 / 集群
     'GET /scheduler/state': '获取调度器状态',
