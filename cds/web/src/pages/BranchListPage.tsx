@@ -2018,7 +2018,16 @@ export function BranchListPage(): JSX.Element {
     return () => {
       source.close();
       // 切项目 / 卸载:清掉所有未触发的动效计时器,避免泄漏 + 对旧项目的延迟移除。
-      for (const timer of cardPhaseTimersRef.current.values()) window.clearTimeout(timer);
+      // 但 leave 计时器被清前必须先把「回收」收尾(真正从列表移除),否则一个已被
+      // branch.removed 处理的分支会因为 pending remove 被丢弃,而以「正常卡片」残留
+      // 在旧列表数据里,直到下次刷新完成(Cursor Bugbot Medium)。enter 计时器直接清
+      // 即可——entering 分支本就该留下,只是少播一次入场动画。
+      for (const [key, timer] of cardPhaseTimersRef.current.entries()) {
+        window.clearTimeout(timer);
+        if (key.startsWith('leave:')) {
+          applySseAction({ type: 'sseBranchRemove', branchId: key.slice('leave:'.length), projectId });
+        }
+      }
       cardPhaseTimersRef.current.clear();
       // 计时器被清后,完成回调不会再跑 → 必须把 entering/leaving 标记一并清空,
       // 否则某个 id 残留在集合里,下次进同项目时卡片会带着错误 phase class
