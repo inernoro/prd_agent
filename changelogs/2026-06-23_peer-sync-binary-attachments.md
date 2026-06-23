@@ -13,3 +13,4 @@
 | fix | prd-api | peer-sync 文本覆盖时清空残留 AttachmentId（与二进制路径清 DocumentId 对称），避免同条目同时挂文档+附件引用（Bugbot Medium） |
 | fix | prd-api | peer-sync 二进制条目变更检测纳入 ContentType/FileSize/提取文本，文件未变仅元数据变也落更新；文件未变时刷新已存在 Attachment.ExtractedText/FileName，消除陈旧提取文本（Bugbot Medium x2） |
 | fix | prd-api | peer-sync 附件下载支持相对 URL：按 sourceBaseUrl 解析对端本地存储返回的相对地址（/api/...），使自托管/本地存储节点也能同步文件（Codex P2） |
+| fix | prd-api | peer-sync 文件条目被改成（空）文本时强制走全量更新，避免空文本与文件兜底空串哈希相等导致条目卡在旧文件不转文本（Codex P2） |

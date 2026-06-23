@@ -648,7 +648,12 @@ public class DocumentStoreSyncResource : ISyncableResource
                         || !MetaEqual(exEntry.Metadata, fe.Metadata)
                         // v1.1 字段：仅排序/分类变化时也要落更新，否则只改 sortOrder/category 的对端改动会被廉价跳过
                         // （Bugbot: Sort and category skip sync）。全量更新分支已 Set 这两个字段，故这里必须纳入比较。
-                        || exEntry.SortOrder != fe.SortOrder || exEntry.Category != fe.Category;
+                        || exEntry.SortOrder != fe.SortOrder || exEntry.Category != fe.Category
+                        // 形态切换：现有条目是文件（带 AttachmentId），对端改成文本（哪怕空文本、其它字段没变）也必须走全量
+                        // 更新分支，否则空文本与「现有文件无 DocumentId 取到的 string.Empty」哈希相等 → 被廉价跳过，条目
+                        // 永远停在旧文件、不转成文本（Codex: Handle empty text when replacing a synced file）。转换后
+                        // fullUpdate 会写 DocumentId 并清 AttachmentId，下次该条件即为 false，无循环。
+                        || !string.IsNullOrEmpty(exEntry.AttachmentId);
                     var timestampsChanged = NeedsRecordTimestampRefresh(exEntry, fe, options.PreserveTimestamps);
                     if (!recordFieldsChanged && HasAppliedSourceContent(exEntry.Metadata, sourceContentHash))
                     {
