@@ -751,11 +751,11 @@ export default function ChangelogPage() {
   const counts = useMemo(() => {
     const released = releases?.totalEntries
       ?? (releases?.releases ?? []).reduce((sum, release) => (
-        sum + (release.entryCount ?? (release.days ?? []).reduce((daySum, day) => daySum + day.entries.length, 0))
+        sum + (release.entryCount ?? (release.days ?? []).reduce((daySum, day) => daySum + (day.entries?.length ?? 0), 0))
       ), 0)
       ?? 0;
     const unpublished = currentWeek?.totalEntries
-      ?? (currentWeek?.fragments ?? []).reduce((sum, fragment) => sum + fragment.entries.length, 0)
+      ?? (currentWeek?.fragments ?? []).reduce((sum, fragment) => sum + (fragment.entries?.length ?? 0), 0)
       ?? 0;
     // chip 显示仓库全历史提交总数（用户关心的是「这个仓库一共提交了多少次」），
     // 统计失败时降级为「最近一周」窗口内条数
@@ -855,7 +855,7 @@ export default function ChangelogPage() {
         if (totalCount === 0 && (release.highlights?.length ?? 0) === 0 && !release.entriesOmitted) {
           return null;
         }
-        const entryCount = release.entryCount ?? (release.days ?? []).reduce((sum, day) => sum + day.entries.length, 0);
+        const entryCount = release.entryCount ?? (release.days ?? []).reduce((sum, day) => sum + (day.entries?.length ?? 0), 0);
         return { release, visibleDays, totalCount, entryCount };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);

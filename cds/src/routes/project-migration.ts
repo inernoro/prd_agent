@@ -129,6 +129,18 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
   const { stateService } = deps;
 
   function guard(req: any, res: any, projectId: string): boolean {
+    // 迁移是系统级特权操作:跨节点推送 + verify/replicate/data-plan 在 peer 未配 key 时
+    // 会回退本机 bootstrap AI_ACCESS_KEY 当 X-AI-Access-Key 打远端。项目级 Agent Key 一律拒绝——
+    // 否则其可(a)新增攻击者控制 baseUrl 的 peer,诱导服务端把 bootstrap key 外泄(Codex P1);
+    // (b)看/删别项目建的全局迁移目标(Bugbot);(c)对多项目目标做破坏性 replace(Bugbot/Codex)。
+    // CdsPeer 是系统级资源(远端节点,见 scope-naming.md),仅 admin/cookie/bootstrap 可管理与使用。
+    if (req.cdsProjectKey) {
+      res.status(403).json({
+        error: 'admin_required',
+        message: '项目迁移是系统级操作(跨节点 + 可能用本机密钥鉴权远端),仅管理员可用,项目级密钥无权。',
+      });
+      return false;
+    }
     const access = deps.assertProjectAccess(req, projectId);
     if (access) {
       res.status(access.status).json(access.body);
@@ -234,13 +246,13 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
   router.post('/projects/:id/migration/replicate-config', async (req, res) => {
     if (!guard(req, res, req.params.id)) return;
     const projectId = req.params.id;
-    const { peerId, dryRun = true, cleanMode = 'merge' } = (req.body || {}) as {
-      peerId?: string; dryRun?: boolean; cleanMode?: 'merge' | 'replace-all';
+    const { peerId, dryRun = true } = (req.body || {}) as {
+      peerId?: string; dryRun?: boolean;
     };
-    if (cleanMode !== 'merge' && cleanMode !== 'replace-all') {
-      res.status(400).json({ error: `非法的 cleanMode: ${cleanMode}(允许 merge / replace-all)` });
-      return;
-    }
+    // 只支持 merge(纯新增/更新)。远端 /api/import-config 的 replace-all 是**全局破坏**:
+    // 清空目标 CDS 所有项目的 buildProfiles/env/infra/routingRules,对多项目目标会误删无关项目
+    // (Bugbot High / Codex P1)。迁移语义是「把本项目搬过去」,绝不该清空目标整机,故强制 merge。
+    const cleanMode = 'merge' as const;
     const peer = peerId ? stateService.getCdsPeer(peerId) : undefined;
     if (!peer) {
       res.status(404).json({ error: '迁移目标不存在,请先在「迁移目标」里添加远端 CDS 节点' });

@@ -2819,7 +2819,6 @@ function ProjectMigrationTab({
 
   const [preview, setPreview] = useState<ConfigPreview | null>(null);
   const [showYaml, setShowYaml] = useState(false);
-  const [cleanMode, setCleanMode] = useState<'merge' | 'replace-all'>('merge');
   const [replicating, setReplicating] = useState<'dry' | 'apply' | null>(null);
   const [replicateResult, setReplicateResult] = useState<ReplicateResult | null>(null);
 
@@ -2907,17 +2906,15 @@ function ProjectMigrationTab({
 
   const replicate = useCallback(async (dryRun: boolean) => {
     if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return; }
-    if (!dryRun && cleanMode === 'replace-all') {
-      const ok = window.confirm('replace-all 会清空目标节点该项目的构建配置/环境变量/基础设施/路由后重建,确定执行?');
-      if (!ok) return;
-    }
     setReplicating(dryRun ? 'dry' : 'apply');
     setReplicateResult(null);
     try {
+      // 只走 merge(纯新增/更新)。后端已强制 merge —— 远端 import-config 的 replace-all
+      // 是全局破坏,会清掉目标其它项目的配置,迁移语义下绝不使用。
       const res = await fetch(apiUrl(`${base}/replicate-config`), {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ peerId: selectedPeerId, dryRun, cleanMode }),
+        body: JSON.stringify({ peerId: selectedPeerId, dryRun }),
       });
       const body = await res.json();
       setReplicateResult(body as ReplicateResult);
@@ -2928,7 +2925,7 @@ function ProjectMigrationTab({
     } finally {
       setReplicating(null);
     }
-  }, [base, selectedPeerId, cleanMode, onToast]);
+  }, [base, selectedPeerId, onToast]);
 
   const runDataPlan = useCallback(async () => {
     if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return; }
@@ -3077,13 +3074,9 @@ function ProjectMigrationTab({
           </Button>
         </div>
 
-        <details className="text-xs">
-          <summary className="cursor-pointer text-muted-foreground">高级选项</summary>
-          <label className="mt-2 flex items-center gap-1.5">
-            <input type="checkbox" checked={cleanMode === 'replace-all'} onChange={(e) => setCleanMode(e.target.checked ? 'replace-all' : 'merge')} />
-            <span className="text-amber-600 dark:text-amber-400">替换全部(清空目标该项目配置后重建,危险);默认是合并新增/更新</span>
-          </label>
-        </details>
+        <p className="text-xs text-muted-foreground">
+          复刻只做「合并」(新增/更新),不会删除目标节点上任何已有配置;先用「预演」看目标将要变更的内容再推送。
+        </p>
 
         {replicateResult ? (
           <div className={`mt-3 rounded-md border p-3 ${replicateResult.ok ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-destructive/40 bg-destructive/5'}`}>
