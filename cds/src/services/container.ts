@@ -900,6 +900,29 @@ export class ContainerService {
     // 暴露给用户（对应「等待+提示,手动切回源码编译」兜底），并在 SSE 日志给反馈
     // 而非空白等待。
     if (profile.prebuiltImage === true) {
+      // 防御性兜底（Codex P2: derive a SHA before rendering prebuilt image tags）：
+      // 部署路径(branches.ts)已在分发前从 commitSha/worktree HEAD 兜底推导 githubCommitSha,
+      // 正常不会到这。但若仍出现「模板变量没解析(含 ${)」或「tag 被空串替换成 :sha-/:branch-」,
+      // 直接 docker pull 会得到一个语义不清的错误。这里 fail-fast,给出可操作的提示。
+      const img = profile.dockerImage || '';
+      const tag = img.includes(':') ? img.slice(img.lastIndexOf(':') + 1) : '';
+      if (img.includes('${') || tag === '' || tag.endsWith('-')) {
+        const reason = `极速版镜像 tag 未解析: ${img || '(空)'} —— 缺 commit SHA / 分支 slug。`;
+        onOutput?.(`── ${reason} ──\n`);
+        this.recordContainerEvent({
+          severity: 'error',
+          source: 'cds-container-service',
+          action: 'app.pull.unresolved-tag',
+          message: `prebuilt image tag unresolved: ${img}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId: profile.id,
+          requestId: context.requestId ?? undefined,
+          operationId: context.operationId ?? undefined,
+          details: { image: img, reason: '极速版镜像 tag 模板变量为空/未解析' },
+        });
+        throw new Error(`${reason}\n请确认分支已有 commit（push 或部署请求携带 commitSha）,或在分支详情切回源码编译。`);
+      }
       onOutput?.(`── 极速版: 拉取 CI 预构建镜像 ${profile.dockerImage}（CDS 不再本机编译）──\n`);
       context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
       const pull = await this.shell.exec(`docker pull ${profile.dockerImage}`);

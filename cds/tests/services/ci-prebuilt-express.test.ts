@@ -384,4 +384,61 @@ describe('极速版 — dispatcher', () => {
     expect(pushed.deployRequest).toBeUndefined();
     expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('failed');
   });
+
+  it('同一 SHA 两分支各跑 CI 早到 → 缓存按 head_branch 分键,各自认领不互相吞（Bugbot: shared CI cache single consume）', async () => {
+    // 两分支 feature / feature-2 指向同一 commit,GitHub 各发一条带不同 head_branch 的 run。
+    for (const br of ['feature', 'feature-2']) {
+      const r = await dispatcher.handle('workflow_run', {
+        action: 'completed',
+        workflow_run: {
+          id: br === 'feature' ? 30 : 31,
+          name: 'Branch Image',
+          path: '.github/workflows/branch-image.yml',
+          head_sha: FULL_SHA,
+          head_branch: br,
+          conclusion: 'success',
+          html_url: `https://github.com/octocat/repo/actions/${br}`,
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('workflow-acknowledged'); // 都先缓存
+    }
+    // 两次 push 各自认领自己的缓存 → 都 ready+deploy,互不吞噬。
+    const p1 = await dispatcher.handle('push', {
+      ref: 'refs/heads/feature', after: FULL_SHA, repository: { id: 1, full_name: 'octocat/repo' },
+    });
+    const p2 = await dispatcher.handle('push', {
+      ref: 'refs/heads/feature-2', after: FULL_SHA, repository: { id: 1, full_name: 'octocat/repo' },
+    });
+    expect(p1.action).toBe('ci-image-ready');
+    expect(p2.action).toBe('ci-image-ready');
+    expect(p1.branchId).not.toBe(p2.branchId);
+    expect(stateService.getBranch(p1.branchId!)?.ciImageStatus).toBe('ready');
+    expect(stateService.getBranch(p2.branchId!)?.ciImageStatus).toBe('ready');
+  });
+
+  it('docs-only push 推进 ciTargetSha 后认领该新 SHA 的早到缓存 → ready+deploy（Codex P2: check cached CI runs after docs-only target changes）', async () => {
+    const pushed = await pushOnce(); // waiting, ciTargetSha=FULL_SHA
+    const NEW_SHA = 'bbbb2222cccc3333dddd4444eeee5555ffff6666';
+    // 新 SHA 的 CI 先完成并缓存(docs-only 那次 push 尚未到)。
+    await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: {
+        id: 40, name: 'Branch Image', path: '.github/workflows/branch-image.yml',
+        head_sha: NEW_SHA, head_branch: 'feature', conclusion: 'success',
+        html_url: 'https://github.com/octocat/repo/actions/runs/40',
+      },
+      repository: { full_name: 'octocat/repo' },
+    });
+    // docs-only push 到新 SHA → 推进 ciTargetSha 并认领缓存,直接 ready+deploy。
+    const result = await dispatcher.handle('push', {
+      ref: 'refs/heads/feature',
+      after: NEW_SHA,
+      repository: { id: 1, full_name: 'octocat/repo' },
+      commits: [{ id: NEW_SHA, added: [], removed: [], modified: ['README.md'] }],
+    });
+    expect(result.action).toBe('ci-image-ready');
+    expect(result.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: NEW_SHA });
+    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('ready');
+  });
 });

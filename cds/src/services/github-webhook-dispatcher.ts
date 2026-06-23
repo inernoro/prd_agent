@@ -344,11 +344,22 @@ export class GitHubWebhookDispatcher {
   private static readonly RECENT_RUN_CACHE_MAX = 200;
   private static readonly RECENT_RUN_CACHE_TTL_MS = 60 * 60 * 1000; // 1h
 
-  private recentRunKey(repoFullName: string, sha: string): string {
-    return `${repoFullName.toLowerCase()}::${sha.toLowerCase()}`;
+  // 缓存键带 head_branch:branch-image.yml 对每个分支的 push 各跑一次 workflow_run,
+  // 即便两个分支指向同一 commit,GitHub 也会发两条带不同 head_branch 的事件。若只按
+  // repo+sha 做键,第二条会覆盖第一条、且一次性消费会让另一分支永远认领不到
+  // （Bugbot:shared CI cache single consume）。带上 branch 即可让两个分支各拿各的。
+  // head_branch 缺省的旧 payload 退回 repo+sha(branch='')。
+  private recentRunKey(repoFullName: string, sha: string, branch?: string): string {
+    return `${repoFullName.toLowerCase()}::${(branch || '').toLowerCase()}::${sha.toLowerCase()}`;
   }
 
-  private rememberCompletedRun(repoFullName: string, sha: string, conclusion: string, htmlUrl?: string): void {
+  private rememberCompletedRun(
+    repoFullName: string,
+    sha: string,
+    branch: string | undefined,
+    conclusion: string,
+    htmlUrl?: string,
+  ): void {
     const now = Date.now();
     // 顺手剪枝过期项,顺带把 Map 控制在上限内(超限删最旧)。
     for (const [k, v] of this.recentCompletedRuns) {
@@ -359,16 +370,70 @@ export class GitHubWebhookDispatcher {
       if (oldest === undefined) break;
       this.recentCompletedRuns.delete(oldest);
     }
-    this.recentCompletedRuns.set(this.recentRunKey(repoFullName, sha), { conclusion, htmlUrl, at: now });
+    this.recentCompletedRuns.set(this.recentRunKey(repoFullName, sha, branch), { conclusion, htmlUrl, at: now });
   }
 
-  private takeCompletedRun(repoFullName: string, sha: string): { conclusion: string; htmlUrl?: string } | undefined {
-    const key = this.recentRunKey(repoFullName, sha);
-    const hit = this.recentCompletedRuns.get(key);
-    if (!hit) return undefined;
-    this.recentCompletedRuns.delete(key); // 一次性消费,避免下次 push 误用陈旧结果
-    if (Date.now() - hit.at > GitHubWebhookDispatcher.RECENT_RUN_CACHE_TTL_MS) return undefined;
-    return { conclusion: hit.conclusion, htmlUrl: hit.htmlUrl };
+  private takeCompletedRun(
+    repoFullName: string,
+    sha: string,
+    branch: string,
+  ): { conclusion: string; htmlUrl?: string } | undefined {
+    // 先认领「本分支专属」键,未命中再退回旧 payload 的无分支键(branch='')。
+    for (const key of [this.recentRunKey(repoFullName, sha, branch), this.recentRunKey(repoFullName, sha, '')]) {
+      const hit = this.recentCompletedRuns.get(key);
+      if (!hit) continue;
+      this.recentCompletedRuns.delete(key); // 一次性消费,避免下次 push 误用陈旧结果
+      if (Date.now() - hit.at > GitHubWebhookDispatcher.RECENT_RUN_CACHE_TTL_MS) return undefined;
+      return { conclusion: hit.conclusion, htmlUrl: hit.htmlUrl };
+    }
+    return undefined;
+  }
+
+  /**
+   * 极速版分支认领「早到并已缓存」的 CI 完成结果。命中即把分支推进到 ready/failed
+   * 并返回对应结果(success 带 deployRequest);未命中返回 null 让调用方继续置 waiting。
+   * push 正常路径与 docs-only 推进 ciTargetSha 后都走这里,避免缓存结果被漏认领
+   * （Codex P2:check cached CI runs after docs-only target changes）。
+   */
+  private claimCachedCiRunForExpress(
+    branchId: string,
+    projectId: string,
+    branchName: string,
+    repoFullName: string,
+    commitSha: string,
+  ): WebhookDispatchResult | null {
+    const cached = this.takeCompletedRun(repoFullName, commitSha, branchName);
+    if (!cached) return null;
+    if (cached.conclusion === 'success') {
+      this.deps.stateService.updateBranchGithubMeta(branchId, {
+        ciImageStatus: 'ready',
+        ciTargetSha: commitSha,
+        ciWorkflowConclusion: cached.conclusion,
+        ciWorkflowRunUrl: cached.htmlUrl,
+      });
+      this.deps.stateService.save();
+      this.emitCiStatus(branchId, projectId, 'ready', commitSha, cached.htmlUrl);
+      return {
+        action: 'ci-image-ready',
+        message: `极速版分支 '${branchId}' 命中已完成的 CI 镜像（commit ${commitSha.slice(0, 7)}）,直接触发部署`,
+        branchId,
+        deployRequest: { branchId, commitSha },
+      };
+    }
+    // 失败 / cancelled / timed_out — 置 failed,不自动回退（与 workflow_run 路径一致）。
+    this.deps.stateService.updateBranchGithubMeta(branchId, {
+      ciImageStatus: 'failed',
+      ciTargetSha: commitSha,
+      ciWorkflowConclusion: cached.conclusion,
+      ciWorkflowRunUrl: cached.htmlUrl,
+    });
+    this.deps.stateService.save();
+    this.emitCiStatus(branchId, projectId, 'failed', commitSha, cached.htmlUrl);
+    return {
+      action: 'ci-image-failed',
+      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,可在分支详情切回源码编译`,
+      branchId,
+    };
   }
 
   /**
@@ -751,7 +816,7 @@ export class GitHubWebhookDispatcher {
       // 没有分支匹配:很可能是 push webhook 还没处理到(延迟/重试),分支尚未 stamp。
       // 暂存结果,等稍后 push 把分支置 express-waiting 时认领(takeCompletedRun)。
       if (!dryRun) {
-        this.rememberCompletedRun(event.repository.full_name, headSha, run.conclusion || 'unknown', run.html_url);
+        this.rememberCompletedRun(event.repository.full_name, headSha, run.head_branch, run.conclusion || 'unknown', run.html_url);
       }
       return {
         action: 'workflow-acknowledged',
@@ -1011,6 +1076,16 @@ export class GitHubWebhookDispatcher {
           ...(docsOnlyExpressWaiting ? { ciTargetSha: commitSha } : {}),
         });
         this.deps.stateService.save();
+        // docs-only 把 ciTargetSha 推进到新 commit 后,若该新 SHA 的 CI 完成事件早已
+        // 到达并被缓存,这条 docs-only 路径不会再收到第二个 completion 来推进 → 必须
+        // 同样认领缓存,否则分支卡死 waiting（Codex P2:check cached CI runs after
+        // docs-only target changes）。命中即直接 ready+deploy / failed。
+        if (docsOnlyExpressWaiting) {
+          const claimed = this.claimCachedCiRunForExpress(
+            branchId, entry!.projectId, branchName, repoFullName, commitSha,
+          );
+          if (claimed) return claimed;
+        }
         const updatedEntry = this.deps.stateService.getBranch(branchId);
         if (updatedEntry) {
           branchEvents.emitEvent({
@@ -1186,39 +1261,10 @@ export class GitHubWebhookDispatcher {
       // 竞态认领:若 branch-image.yml 的 workflow_run.completed 早于本次 push 到达,
       // 结果已被 rememberCompletedRun 暂存。这里先认领 —— 命中就不必置 waiting 苦等
       // 一个永远不会再来的 completion 事件（Bugbot/Codex P2）。
-      const cached = this.takeCompletedRun(repoFullName, commitSha);
-      if (cached) {
-        if (cached.conclusion === 'success') {
-          this.deps.stateService.updateBranchGithubMeta(branchId, {
-            ciImageStatus: 'ready',
-            ciTargetSha: commitSha,
-            ciWorkflowConclusion: cached.conclusion,
-            ciWorkflowRunUrl: cached.htmlUrl,
-          });
-          this.deps.stateService.save();
-          this.emitCiStatus(branchId, entryForMode.projectId, 'ready', commitSha, cached.htmlUrl);
-          return {
-            action: 'ci-image-ready',
-            message: `极速版分支 '${branchId}' 命中已完成的 CI 镜像（commit ${commitSha.slice(0, 7)}）,直接触发部署`,
-            branchId,
-            deployRequest: { branchId, commitSha },
-          };
-        }
-        // 失败 / cancelled / timed_out — 置 failed,不自动回退（与 workflow_run 路径一致）。
-        this.deps.stateService.updateBranchGithubMeta(branchId, {
-          ciImageStatus: 'failed',
-          ciTargetSha: commitSha,
-          ciWorkflowConclusion: cached.conclusion,
-          ciWorkflowRunUrl: cached.htmlUrl,
-        });
-        this.deps.stateService.save();
-        this.emitCiStatus(branchId, entryForMode.projectId, 'failed', commitSha, cached.htmlUrl);
-        return {
-          action: 'ci-image-failed',
-          message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,可在分支详情切回源码编译`,
-          branchId,
-        };
-      }
+      const claimed = this.claimCachedCiRunForExpress(
+        branchId, entryForMode.projectId, branchName, repoFullName, commitSha,
+      );
+      if (claimed) return claimed;
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'waiting',
         ciTargetSha: commitSha,
