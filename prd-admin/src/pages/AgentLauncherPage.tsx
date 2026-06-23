@@ -698,7 +698,9 @@ export default function AgentLauncherPage() {
 
             {/* Hero content */}
             <div className={`relative ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
-              <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-8'}`}>
+              {/* flex-wrap：中等宽度(1024-1190px,非 mobile)下让右栏整体换行落到问候语下方，
+                  避免「左列 + 搜索 280 + 教程 280」单行不换挤爆视口(Codex) */}
+              <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-x-8 gap-y-6 flex-wrap'}`}>
                 <div className="shrink-0">
                   {/* 小型 eyebrow 标签：品牌定位 */}
                   <Reveal delay={REVEAL.heroEyebrow} duration={REVEAL_DURATION}>
@@ -755,9 +757,13 @@ export default function AgentLauncherPage() {
                       <TipsRotator fallback="选一个智能体开始创作，或在下方的实用工具里探索平台能力" />
                     </div>
                   </Reveal>
-                  {/* 搜索框：靠左，紧跟问候/副标题下方（与右侧教程卡分列左右，不再堆叠在右上角） */}
-                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                    <div className="relative mt-4" style={{ maxWidth: isMobile ? '100%' : 360 }}>
+                </div>
+
+                {/* 右栏：搜索框 + 教程中心承接卡，搜索在左、教程在右，顶部对齐分列 */}
+                <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                  <div className={isMobile ? 'flex flex-col gap-3 w-full' : 'shrink-0 flex flex-wrap items-start gap-4'}>
+                    {/* 搜索框：移到顶部、教程左侧 */}
+                    <div className="relative" style={{ width: isMobile ? '100%' : 280 }}>
                       <Search
                         size={15}
                         className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -787,17 +793,22 @@ export default function AgentLauncherPage() {
                         }}
                       />
                     </div>
-                  </Reveal>
-                </div>
 
-                {/* 右栏：仅教程中心承接卡（靠右，与左侧搜索分列左右，不再堆叠） */}
-                {!searchQuery.trim() && (
-                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                    <div className="shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
-                      <LearningCenterTeaser compact />
-                    </div>
-                  </Reveal>
-                )}
+                    {/* 教程中心承接卡（搜索态隐藏）—— 设计选型：三套效果并列对比，选定后保留其一 */}
+                    {!searchQuery.trim() && (
+                      <div className="shrink-0 flex flex-col gap-2" style={{ width: isMobile ? '100%' : 280 }}>
+                        {(['A', 'B', 'C'] as const).map((v, i) => (
+                          <div key={v} className="flex flex-col gap-1">
+                            <span className="text-[10px] font-semibold tracking-wide" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
+                              效果 {i + 1}
+                            </span>
+                            <LearningCenterTeaser compact variant={v} tourAnchor={i === 0} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Reveal>
               </div>
             </div>
             {/* end hero content */}

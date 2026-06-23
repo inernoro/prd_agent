@@ -1236,11 +1236,211 @@ schedulerService.setCoolFn(async (slug: string) => {
     completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
   }
 });
-// wakeFn intentionally left unset at boot: the proxy's existing onAutoBuild
-// handler already covers the "branch is not running" case and runs the full
-// SSE build flow. A dedicated wakeFn would duplicate that logic. Future
-// work (Phase 2) may introduce a lighter-weight restart path.
 proxyService.setScheduler(schedulerService);
+
+// Preview auto-wake (the lighter-weight restart path the cooling closure above
+// left as a TODO). A branch the scheduler put to sleep keeps its containers
+// (cooling only `docker stop`s them), so a real page navigation can revive it
+// with a cheap `docker restart` instead of dumping the visitor on a "go
+// redeploy manually" dead-end. Strictly scoped by the proxy to
+// scheduler-cooled branches; this callback double-guards the same. Errored /
+// crashed / user-stopped branches are never revived here. Kill-switch:
+// CDS_PREVIEW_AUTOWAKE=0 disables it (falls back to the diagnostic page).
+if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
+  proxyService.setOnReviveCooled(async (slug: string) => {
+    const branch = stateService.getBranch(slug);
+    if (!branch) return;
+    // Re-check eligibility on this side: only scheduler-cooled, still idle, with
+    // preserved containers. Guards against a status change between the proxy's
+    // check and this async entry.
+    if (branch.lastStopSource !== 'scheduler') return;
+    if (branch.status !== 'idle') return;
+    const services = Object.values(branch.services);
+    if (services.length === 0) return;
+
+    // Executor-owned branches can't be revived by a LOCAL docker restart. A
+    // resolved deploy clears executorId to undefined for embedded/local runs
+    // (branches.ts: `stillRemote?.role==='embedded' || !stillRemote` → undefined),
+    // so a truthy executorId always means a REMOTE executor — whether currently
+    // registered OR temporarily absent from the registry (coordinator restart /
+    // missed heartbeat). In both cases the container runs off-master and the
+    // local `restartServiceInPlace` is a doomed no-op that would flip the branch
+    // to `error` and stop future retries. Skip without touching state so the
+    // diagnostic page stays and a later visit retries once the executor
+    // re-registers. Mirrors the auto-lifecycle stop path's
+    // `if (branch.executorId && !remoteExecutor)` remote-unavailable handling.
+    if (branch.executorId) return;
+
+    // Acquire the operation lease BEFORE mutating state — throws on conflict
+    // (a deploy / cooling already owns the branch), in which case we abort
+    // without flipping status and the proxy renders the normal page.
+    // kind:'auto-restart' (priorityOf → 35), NOT 'restart'. With trigger
+    // 'scheduler', a 'restart' kind would resolve to priority 30 (the generic
+    // scheduler tier, == scheduler-cooling) and the coordinator only preempts on
+    // STRICTLY greater priority — so a wake racing an in-flight cooling (30)
+    // would be rejected and never fire. 'auto-restart' is keyed off kind (35),
+    // so the wake preempts scheduler-cooling (30) while still deferring to real
+    // operations: auto-lifecycle (40), webhook deploy (50), manual restart/
+    // deploy (80). Semantically accurate too — this is an automatic restart.
+    const lease = beginBackgroundBranchOperation({
+      branchId: slug,
+      kind: 'auto-restart',
+      trigger: 'scheduler',
+      actor: 'scheduler',
+      source: 'proxy.preview-auto-wake',
+      reason: '预览访问自动唤醒（调度器降温分支，docker restart 未重建代码）',
+    });
+    let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+
+    try {
+      // Synchronous prefix (runs before the first await): flip to a loading
+      // state and persist, so the waiting page the proxy renders right after
+      // firing this callback shows live progress instead of the cooled
+      // dead-end. Kept INSIDE the try so a throwing save() (disk/Mongo failure)
+      // still hits the finally and completes the lease — otherwise the
+      // coordinator would keep an active op forever and reject all future
+      // deploy/restart/stop on this branch until process restart.
+      branch.status = 'restarting';
+      for (const svc of services) {
+        if (svc.status === 'stopped' || svc.status === 'idle') svc.status = 'starting';
+      }
+      stateService.save();
+
+      // Enforce the scheduler's hot-pool budget the same way scheduler.wake()
+      // does — evict the LRU branch before bringing this one up. Otherwise
+      // opening several cooled preview URLs would markHot() them all past
+      // maxHotBranches until the next scheduler tick, blowing the configured
+      // hot-container budget. No-op when the scheduler is disabled or
+      // maxHotBranches is unset.
+      //
+      // Best-effort: eviction can throw when the chosen LRU victim has an active
+      // higher-priority operation (its cool path rethrows the lease rejection).
+      // That's unrelated to THIS branch — letting it fall into the catch below
+      // would poison the requested branch into `error` and stop future preview
+      // retries over a mere capacity hiccup. Swallow it; the next scheduler tick
+      // re-enforces capacity. (A superseding op on THIS branch still surfaces via
+      // the assertCurrent checks in the restart loop, not here.)
+      try {
+        await schedulerService.evictLruIfOverCapacity(slug);
+      } catch (evictErr) {
+        console.warn(`[auto-wake] capacity eviction skipped for "${slug}": ${(evictErr as Error).message}`);
+      }
+
+      const profiles = stateService.getBuildProfilesForProject(branch.projectId);
+      const failed: string[] = [];
+      for (const svc of services) {
+        lease?.assertCurrent(`auto-wake before ${svc.profileId}`);
+        const ok = await containerService.restartServiceInPlace(svc.containerName, undefined, {
+          projectId: branch.projectId,
+          branchId: branch.id,
+          profileId: svc.profileId,
+          operationId: lease?.operationId || null,
+          actor: 'scheduler',
+          trigger: 'scheduler',
+          operation: 'branch-auto-wake',
+          source: 'proxy.preview-auto-wake',
+          reason: '预览访问自动唤醒（docker restart，未重建代码）',
+        });
+        lease?.assertCurrent(`auto-wake after ${svc.profileId}`);
+        if (!ok) {
+          svc.status = 'error';
+          svc.errorMessage = `容器 ${svc.containerName} 自动唤醒失败（可能已被回收），请改用「重新部署」`;
+          failed.push(svc.containerName);
+          continue;
+        }
+        // restartServiceInPlace only waits for container liveness
+        // (waitForContainerAlive), not for the app to actually bind its port /
+        // serve HTTP. If we marked running here, the waiting poll would flip to
+        // ready, reload, and proxy to a still-binding upstream (502 / refresh
+        // loop) for slow-booting apps. Gate on real readiness exactly like the
+        // deploy path: optional startup-signal, then TCP/HTTP probe. The branch
+        // stays 'restarting' meanwhile, so the waiting page keeps showing
+        // progress until the upstream truly serves.
+        const profile = profiles.find((p) => p.id === svc.profileId);
+        let ready = false;
+        if (profile?.startupSignal) {
+          ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal);
+        }
+        if (!profile?.startupSignal || ready) {
+          ready = await containerService.waitForReadiness(svc.hostPort, profile?.readinessProbe);
+        }
+        lease?.assertCurrent(`auto-wake readiness ${svc.profileId}`);
+        if (ready) {
+          svc.status = 'running';
+          svc.errorMessage = undefined;
+        } else {
+          svc.status = 'error';
+          svc.errorMessage = `容器 ${svc.containerName} 就绪探测超时，请改用「重新部署」`;
+          failed.push(svc.containerName);
+        }
+      }
+
+      if (failed.length === 0) {
+        lease?.assertCurrent('auto-wake before success save');
+        branch.status = 'running';
+        branch.errorMessage = undefined;
+        branch.lastStoppedAt = undefined;
+        branch.lastStopReason = undefined;
+        branch.lastStopSource = undefined;
+        // Refresh lastReadyAt to now: the branch just became ready again. If we
+        // only cleared lastStoppedAt, AutoLifecycleService.tick() (which backfills
+        // stale readiness only while lastReadyAt <= lastStoppedAt) would keep
+        // computing age from the OLD pre-cooling readiness time and could
+        // immediately auto-publish/redeploy a branch the user just opened.
+        branch.lastReadyAt = new Date().toISOString();
+        // Manual /restart 同款：先刷新 lastAccessedAt 再 markHot，否则被空闲 TTL
+        // 降温过的陈旧时间戳会让下一个调度 tick 立刻又把它降温。
+        branch.lastAccessedAt = new Date().toISOString();
+        schedulerService.markHot(slug);
+        try {
+          stateService.appendActivityLog(branch.projectId, {
+            type: 'restart',
+            branchId: slug,
+            branchName: branch.branch,
+            actor: 'scheduler',
+            note: '预览访问自动唤醒（docker restart，未重建代码）',
+          });
+        } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
+        stateService.save();
+      } else {
+        branchOperationFinalStatus = 'failed';
+        branch.status = 'error';
+        branch.errorMessage = `${failed.length} 个容器自动唤醒失败：${failed.join(', ')}`;
+        stateService.save();
+      }
+    } catch (err) {
+      const superseded = (err as Error).name === 'BranchOperationSupersededError';
+      branchOperationFinalStatus = superseded ? 'cancelled' : 'failed';
+      // Superseded = a higher-priority op (manual deploy/restart) took over the
+      // branch. It now owns the state machine, so we must NOT touch status here
+      // (reverting would clobber the in-flight op, leaving persisted 'idle' while
+      // services are actually 'starting'). Same handling as manual /restart.
+      // Genuine failure: move starting→error + branch→error (NOT back to 'idle')
+      // so the next visit shows the diagnostic page instead of re-triggering
+      // auto-wake forever (idle + lastStopSource='scheduler' stays eligible).
+      if (!superseded) {
+        try {
+          const fresh = stateService.getBranch(slug);
+          if (fresh) {
+            for (const svc of Object.values(fresh.services)) {
+              if (svc.status === 'starting') svc.status = 'error';
+            }
+            if (fresh.status === 'restarting') {
+              fresh.status = 'error';
+              fresh.errorMessage = `预览自动唤醒异常：${(err as Error).message}`;
+            }
+            stateService.save();
+          }
+        } catch { /* 状态恢复尽力而为，不掩盖原始错误 */ }
+        throw err;
+      }
+      // superseded: leave state to the new owner; swallow so the proxy doesn't
+      // log a misleading "auto-wake failed".
+    } finally {
+      completeBackgroundBranchOperation(lease, branchOperationFinalStatus);
+    }
+  });
+}
 
 // ── Janitor (Phase 2 resilience) ──
 // Enabled by default. Sweeps stale local containers/worktrees after a global
@@ -2934,6 +3134,35 @@ proxyService.setOnAutoBuild(async (branchSlug, req, res) => {
 const registry = new ExecutorRegistry(stateService);
 registry.startHealthChecks();
 registry.registerEmbeddedMaster(config.masterPort);
+
+// 运维健康自检（观测性，避免性能事故静默复发）：每 5 分钟检查「会拖垮 CDS 的
+// 系统性信号」——预览调度器被禁用 / 主机过载 / 容器堆积——命中即 console.warn，
+// 让日志与左上角 Activity Monitor 都能看到。前端监控弹窗的「运维健康告警」是同一
+// 套口径（GET /api/cds-system/perf-health）。本次性能事故根因（调度器被禁用导致
+// 容器无限堆积、18 核 load 28）此前完全无告警，本自检即为补这个洞。
+function startPerfHealthMonitor(): ReturnType<typeof setInterval> {
+  const check = (): void => {
+    try {
+      const cores = (typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) || 1;
+      const loadPercent = Math.round(((os.loadavg()[0] || 0) / cores) * 100);
+      registry.refreshEmbeddedMasterLoad();
+      const running = registry.getAll().reduce((s, n) => s + (n.runningContainers ?? n.branches.length), 0);
+      const schedDisabled = !schedulerService.isEnabled();
+      const problems: string[] = [];
+      if (schedDisabled) problems.push('预览调度器已禁用（空闲分支不回收，容器会无限堆积）');
+      if (loadPercent >= 100) problems.push(`主机过载 loadPercent=${loadPercent}%`);
+      if (running > cores * 2) problems.push(`运行容器 ${running} 超过核数 2 倍`);
+      if (problems.length > 0) {
+        console.warn(`[perf-health] ${problems.join(' · ')}（详见监控弹窗「运维健康」或 GET /api/cds-system/perf-health）`);
+      }
+    } catch { /* 自检不致命 */ }
+  };
+  const timer = setInterval(check, 5 * 60 * 1000);
+  timer.unref?.();
+  check();
+  return timer;
+}
+startPerfHealthMonitor();
 
 // Current dispatcher strategy — mutable so the Dashboard's strategy radio
 // can change it at runtime. Read fresh on every deploy by both the branch

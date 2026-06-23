@@ -70,6 +70,17 @@ export class ProxyService {
   private resolveUpstream: ((branchId: string, profileId?: string) => string | null) | null = null;
   /** Callback: trigger auto-build for a branch that isn't running yet */
   private onAutoBuild: ((branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void) | null = null;
+  /**
+   * Callback: revive a scheduler-cooled branch on preview access (lightweight
+   * `docker restart` of preserved containers, no rebuild). Wired only when
+   * preview auto-wake is enabled. Must flip branch.status to a loading state
+   * synchronously (before its first await) so the waiting page rendered right
+   * after firing shows progress instead of the cooled diagnostic page.
+   * See .claude/rules/cds-auto-deploy.md + index.ts setOnReviveCooled wiring.
+   */
+  private onReviveCooled: ((branchSlug: string) => Promise<void>) | null = null;
+  /** Slugs with an auto-wake in flight — dedupes concurrent navigation hits. */
+  private readonly revivingSlugs = new Set<string>();
   /** Callback: notify dashboard of web access events */
   private onAccess: ((branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void) | null = null;
   /** Optional worktree service for remote branch lookups */
@@ -102,6 +113,10 @@ export class ProxyService {
 
   setOnAutoBuild(fn: (branchSlug: string, req: http.IncomingMessage, res: http.ServerResponse) => void): void {
     this.onAutoBuild = fn;
+  }
+
+  setOnReviveCooled(fn: (branchSlug: string) => Promise<void>): void {
+    this.onReviveCooled = fn;
   }
 
   setOnAccess(fn: (branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void): void {
@@ -545,6 +560,47 @@ export class ProxyService {
     }
 
     if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
+      // Auto-wake: a branch put to sleep by the scheduler (containers preserved,
+      // not removed) is revived on a real page navigation via a cheap
+      // `docker restart`, so users don't hit a dead-end "go redeploy manually"
+      // page just because it idled out. Strictly scoped to scheduler-cooled
+      // branches — errored / crashed / user-stopped / deleted branches keep the
+      // diagnostic page (no passive deploy loops). Only top-level HTML
+      // navigation triggers it (asset/bot/prefetch requests do not), and the
+      // revive flips status synchronously so serveBranchStatusResponse below
+      // renders the live waiting page instead of the cooled dead-end.
+      // Pass the resolved entry id (branch.id) — NOT branchSlug — because for
+      // non-legacy/v3 projects the entry lives under a canonical id like
+      // `${projectSlug}-${slug}` while branchSlug is the bare preview label.
+      // The revive callback does stateService.getBranch(id), so the wrong key
+      // would silently no-op (same reason resolveUpstream/scheduler.touch below
+      // use branch.id).
+      // Restrict the wake to real GET navigations: isHtmlNavigationRequest also
+      // accepts HEAD and a missing Accept header, so uptime monitors / link
+      // checkers doing `HEAD /` against a preview host must not restart cooled
+      // containers (they aren't a user actually opening the page).
+      const isGetNavigation = (req.method || 'GET').toUpperCase() === 'GET';
+      // Only auto-wake on a PREVIEW host. The waiting page polls
+      // /_cds/waiting-status, which resolves the branch solely via
+      // extractPreviewBranch(host); for non-preview routing (X-Branch / cookie /
+      // routing rule / default branch) that poll can't resolve the branch, so
+      // the page would spin forever and never reload after the restart. Gate on
+      // the exact same resolution the poll uses, so a wake always implies a
+      // pollable waiting page. Non-preview routings keep the diagnostic page.
+      const isPreviewHost = this.extractPreviewBranch(req.headers.host || '') !== null;
+      // Require a POSITIVE browser-navigation signal (see hasBrowserNavSignal):
+      // isHtmlNavigationRequest treats a missing Accept header as HTML, so a
+      // bare `GET /` health probe / link checker would otherwise restart cooled
+      // containers and defeat scheduler cooling.
+      if (
+        isGetNavigation
+        && isPreviewHost
+        && this.hasBrowserNavSignal(req)
+        && this.isHtmlNavigationRequest(req)
+        && this.shouldAutoWakeCooled(branch)
+      ) {
+        this.triggerCooledWake(branch.id);
+      }
       this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;
     }
@@ -992,6 +1048,86 @@ export class ProxyService {
     };
   }
 
+  /**
+   * Is this branch eligible for preview auto-wake? Only branches the scheduler
+   * cooled (idle/stopped with lastStopSource='scheduler') and that still have
+   * preserved service containers to restart. Everything else (errored, crashed,
+   * OOM, user-stopped, deleted, or no built services) is left to its diagnostic
+   * page so a passive visit can never restart a broken or intentionally-stopped
+   * branch.
+   */
+  /**
+   * Stricter than isHtmlNavigationRequest: require a POSITIVE browser-navigation
+   * signal before auto-waking a cooled container. isHtmlNavigationRequest treats
+   * a missing Accept header as HTML, so a bare `GET /` from a health probe / link
+   * checker would otherwise restart containers and defeat scheduler cooling.
+   * Real browser navigations always send `Accept: text/html` (and modern ones
+   * `Sec-Fetch-Mode: navigate` / `Sec-Fetch-Dest: document`).
+   */
+  private hasBrowserNavSignal(req: http.IncomingMessage): boolean {
+    // Prefetch / prerender / link-preview fetches carry Accept: text/html but
+    // are NOT an actual visit — waking a cooled container for them defeats
+    // scheduler cooling. Reject them before accepting any HTML signal.
+    // Covers Chrome (Sec-Purpose: prefetch;prerender / Purpose: prefetch),
+    // Firefox (X-Moz: prefetch), and legacy X-Purpose: preview/prefetch.
+    const secPurpose = String(req.headers['sec-purpose'] || '').toLowerCase();
+    if (secPurpose.includes('prefetch') || secPurpose.includes('prerender')) return false;
+    const purpose = String(req.headers['purpose'] || '').toLowerCase();
+    if (purpose.includes('prefetch')) return false;
+    const xPurpose = String(req.headers['x-purpose'] || '').toLowerCase();
+    if (xPurpose.includes('prefetch') || xPurpose.includes('preview')) return false;
+    const xMoz = String(req.headers['x-moz'] || '').toLowerCase();
+    if (xMoz.includes('prefetch')) return false;
+
+    const accept = String(req.headers['accept'] || '').toLowerCase();
+    if (accept.includes('text/html')) return true;
+    const mode = String(req.headers['sec-fetch-mode'] || '').toLowerCase();
+    if (mode === 'navigate') return true;
+    const dest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+    if (dest === 'document') return true;
+    return false;
+  }
+
+  private shouldAutoWakeCooled(branch: BranchEntry): boolean {
+    if (!this.onReviveCooled) return false;
+    if (branch.lastStopSource !== 'scheduler') return false;
+    if (branch.status !== 'idle') return false;
+    // Executor-owned (remote) branches can't be revived by a local docker
+    // restart — a resolved local deploy clears executorId, so a truthy value
+    // means a remote executor (present or temporarily absent). The index.ts
+    // revive callback double-guards this.
+    if (branch.executorId) return false;
+    return Object.keys(branch.services || {}).length > 0;
+  }
+
+  /**
+   * Fire the wake callback for a cooled branch, deduped per slug. Called
+   * synchronously so the callback can flip branch.status to a loading state
+   * (before its first await); the waiting page rendered immediately after this
+   * returns then reflects that progress. On lease conflict (a deploy/cool is
+   * already running) the callback rejects without flipping status, and the
+   * branch's diagnostic page shows as before — that other operation owns it.
+   */
+  private triggerCooledWake(slug: string): void {
+    if (!this.onReviveCooled || this.revivingSlugs.has(slug)) return;
+    this.revivingSlugs.add(slug);
+    let pending: Promise<void>;
+    try {
+      pending = this.onReviveCooled(slug);
+    } catch (err) {
+      this.revivingSlugs.delete(slug);
+      console.error(`[proxy] auto-wake threw for "${slug}": ${(err as Error).message}`);
+      return;
+    }
+    pending
+      .catch((err) => {
+        console.error(`[proxy] auto-wake failed for "${slug}": ${(err as Error).message}`);
+      })
+      .finally(() => {
+        this.revivingSlugs.delete(slug);
+      });
+  }
+
   private failureCopyForService(service: BranchEntry['services'][string] | undefined, profileId: string): { heading: string; description: string; detail?: string } | null {
     const status = String(service?.status || '');
     if (!service || this.isRecoverablePreviewStatus(status) || status === 'running') return null;
@@ -1062,8 +1198,8 @@ h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:0;margin-bott
     <div class="chip">${safeBranch}</div>
     ${safeError ? `<div class="err">${safeError}</div>` : ''}
     <div class="actions">
-      <a class="btn" href="/project-list">返回 CDS 控制台</a>
-      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/cds-settings#loading-pages">查看加载页预览</a>
     </div>
     <div class="hint">CDS 会优先保留可诊断信息，避免把访问者带到空白或浏览器原生错误页。</div>
   </section>
@@ -1571,7 +1707,8 @@ ${shouldAutoRefresh ? `;(function(){
       }else{
         var remainingMs=Math.max(0,median-elapsedMs);
         mainText='已等待 '+ee+' · 预计还需约 '+clock(remainingMs);
-        subText='（基于最近 '+samples+' 次构建的中位耗时）';
+        var modeLabel=timingState.mode==='release'?'发布版':timingState.mode==='source'?'热加载':'';
+        subText='（基于本项目最近 '+samples+' 次'+modeLabel+'构建的中位耗时，非单分支）';
       }
     }else{
       mainText='已等待 '+ee+' · 正在积累历史耗时数据，暂无预计';
@@ -1587,6 +1724,7 @@ ${shouldAutoRefresh ? `;(function(){
       baseElapsedMs:Math.max(0,Number(timing.elapsedMs)||0),
       medianMs:(timing.estimateMedianMs==null?null:Number(timing.estimateMedianMs)),
       samples:Number(timing.estimateSamples)||0,
+      mode:(timing.mode||''),
       overdue:!!timing.overdue,
       syncedAt:Date.now()
     };
@@ -1598,6 +1736,20 @@ ${shouldAutoRefresh ? `;(function(){
       .then(function(data){
         if(!data)return;
         if(data.ready){location.reload();return;}
+        // Terminal non-loading state (branch error / idle / stopped / not-found):
+        // the operation failed or the branch is no longer coming up. Reload so
+        // the server renders the diagnostic page (with redeploy guidance) instead
+        // of leaving the visitor on a spinner forever — e.g. when auto-wake's
+        // restart/readiness fails and flips the branch to error.
+        //
+        // Branch-level waits only (no waitingProfile). For a PROFILE-scoped wait,
+        // one failed service can have loading=false while the branch (and other
+        // services) is still running; reloading there would land on the wrong
+        // upstream / 502 rather than a diagnostic page (routeToBranch only shows
+        // the status page for starting/building/restarting profiles, and
+        // resolveUpstream falls back to the first running service). Keep the
+        // prior in-place status update for that case.
+        if(data.loading===false && !waitingProfile){location.reload();return;}
         var statusEl=document.querySelector('[data-role="branch-status"]');
         if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
         var branchEl=document.querySelector('[data-role="branch-name"]');
@@ -1675,8 +1827,8 @@ ${shouldAutoRefresh ? `;(function(){
     <p class="desc">该分支在此 CDS 实例上未注册，无法自动恢复。请确认分支名称，或回到 CDS 控制台重新部署。</p>
     <div class="chip">${safe}</div>
     <div class="actions">
-      <a class="btn" href="/project-list">返回 CDS 控制台</a>
-      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/cds-settings#loading-pages">查看加载页预览</a>
     </div>
     <div class="hint">
       <span><strong>CDS 已停止自动恢复</strong> 避免错误分支被动访问后反复部署。</span>
@@ -1715,6 +1867,22 @@ ${shouldAutoRefresh ? `;(function(){
         default: return '&#39;';
       }
     });
+  }
+
+  /**
+   * Absolute base URL of the CDS dashboard host (e.g. "https://cds.miduo.org").
+   *
+   * These diagnostic pages are served on the *preview* subdomain
+   * (`<slug>.miduo.org`), so a relative href like `/project-list` would resolve
+   * against the preview host and land nowhere. The dashboard lives on a
+   * different host (dashboardDomain / mainDomain), so the "返回 CDS 控制台" /
+   * "查看加载页预览" links must be absolute. Same source of truth as
+   * index.ts `serveBranchGonePage` (dashboardDomain || mainDomain).
+   * Returns '' when no domain is configured, falling back to relative links.
+   */
+  private dashboardBaseUrl(): string {
+    const domain = this.config?.dashboardDomain || this.config?.mainDomain;
+    return domain ? `https://${domain}` : '';
   }
 
   /**

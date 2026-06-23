@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Services.PeerSync;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -27,8 +28,7 @@ public class PeerSyncController : ControllerBase
     private readonly IPeerNodeService _peer;
     private readonly ISyncResourceRegistry _registry;
     private readonly ISafeOutboundUrlValidator _urlValidator;
-    private readonly IHttpClientFactory _httpFactory;
-    private readonly IAdminPermissionService _permissionService;
+    private readonly IPeerSyncTransferService _transfer;
     private readonly IConfiguration _config;
     private readonly ILogger<PeerSyncController> _logger;
 
@@ -43,8 +43,7 @@ public class PeerSyncController : ControllerBase
         IPeerNodeService peer,
         ISyncResourceRegistry registry,
         ISafeOutboundUrlValidator urlValidator,
-        IHttpClientFactory httpFactory,
-        IAdminPermissionService permissionService,
+        IPeerSyncTransferService transfer,
         IConfiguration config,
         ILogger<PeerSyncController> logger)
     {
@@ -52,8 +51,7 @@ public class PeerSyncController : ControllerBase
         _peer = peer;
         _registry = registry;
         _urlValidator = urlValidator;
-        _httpFactory = httpFactory;
-        _permissionService = permissionService;
+        _transfer = transfer;
         _config = config;
         _logger = logger;
     }
@@ -407,15 +405,21 @@ public class PeerSyncController : ControllerBase
                 $"bundle.resourceType={req.Bundle.ResourceType} 与端点 {resource.ResourceType} 不匹配"));
 
         var actor = await BuildActorAsync(node!.CreatedBy, ct);
-        var mode = req.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
-        AttachPeerApplyOptions(req.Bundle, req.PreserveTimestamps ?? true, req.RewriteAssetLinks ?? true, req.SourceBaseUrl);
+        var mode = PeerSyncTransferService.ParseMode(req.Mode);
+        _transfer.AttachPeerApplyOptions(req.Bundle, req.PreserveTimestamps ?? true, req.RewriteAssetLinks ?? true, req.SourceBaseUrl);
+        var startedAt = DateTime.UtcNow;
         var outcome = await resource.ApplyAsync(req.Bundle, actor, mode, req.TargetKey, ct);
-        var receiverDirection = string.Equals(req.Direction, "both", StringComparison.OrdinalIgnoreCase) ? "both" : "received";
+        // incoming：对端推/对齐过来。mirror 时对端是「本地为准」，本端被镜像（可能删条目）。
+        var receiverDirection = mode == SyncApplyMode.Mirror ? "align-local"
+            : string.Equals(req.Direction, "both", StringComparison.OrdinalIgnoreCase) ? "both" : "received";
         var success = outcome.Failed == 0 && outcome.AssetRewriteFailed == 0;
         if (!string.IsNullOrWhiteSpace(outcome.TargetItemId))
         {
-            await MarkPeerSyncAsync(resource.ResourceType, outcome.TargetItemId, success ? "synced" : "error", receiverDirection, node,
+            await _transfer.MarkPeerSyncAsync(resource.ResourceType, outcome.TargetItemId, success ? "synced" : "error", receiverDirection, node,
                 outcome.Message, ct);
+            await _transfer.RecordRunAsync(resource.ResourceType, outcome.TargetItemId, req.Bundle.Item?.Name ?? "",
+                receiverDirection, PeerSyncOrigin.Incoming, node, outcome, success, node.CreatedBy, "对端节点",
+                startedAt, ct);
         }
         return Ok(ApiResponse<object>.Ok(outcome));
     }
@@ -474,15 +478,34 @@ public class PeerSyncController : ControllerBase
         var resource = _registry.Resolve(request.ResourceType);
         if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
 
-        var direction = (request.Direction ?? "push").Trim().ToLowerInvariant();
-        if (direction is not ("push" or "pull" or "both"))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方向无效（push/pull/both）"));
-        // PR #742 review P2：非双向资源拒绝 pull/both，否则 push-only 的 DefectSyncResource 等会被绕过状态机
-        // 反向 import 对端数据（例如把对端的 resolved 缺陷拉回本地覆盖本地未结的状态）。
-        if (!resource.SupportsBidirectional && direction != "push")
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"{resource.DisplayName}是单向（push-only）资源，不支持 {direction}"));
+        // 强制对齐（force-align）：remote=远端为准(pull+镜像删) / local=本地为准(push+镜像删) / both=同时对准(both,不删)。
+        // 镜像删除是 MAP 知识库传输协议里唯一的数据破坏路径，前端必须二次确认后才带 align。
+        var align = string.IsNullOrWhiteSpace(request.Align) ? null : request.Align!.Trim().ToLowerInvariant();
+        string direction;
+        SyncApplyMode mode;
+        if (align != null)
+        {
+            if (align is not ("remote" or "local" or "both"))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "对齐模式无效（remote/local/both）"));
+            if (!resource.SupportsBidirectional)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"{resource.DisplayName}是单向资源，不支持强制对齐"));
+            direction = align == "remote" ? "pull" : align == "local" ? "push" : "both";
+            mode = align == "both" ? SyncApplyMode.Overwrite : SyncApplyMode.Mirror;
+        }
+        else
+        {
+            direction = (request.Direction ?? "push").Trim().ToLowerInvariant();
+            if (direction is not ("push" or "pull" or "both"))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方向无效（push/pull/both）"));
+            // PR #742 review P2：非双向资源拒绝 pull/both，否则 push-only 的 DefectSyncResource 等会被绕过状态机
+            // 反向 import 对端数据（例如把对端的 resolved 缺陷拉回本地覆盖本地未结的状态）。
+            if (!resource.SupportsBidirectional && direction != "push")
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"{resource.DisplayName}是单向（push-only）资源，不支持 {direction}"));
+            mode = request.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
+        }
+        // 运行台账里记录的「方向/动作」：对齐用 align-*，普通走 push/pull/both。
+        var runDirection = align != null ? $"align-{align}" : direction;
 
-        var mode = request.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
         var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
         var sourceBaseUrl = GetRequestBaseUrl();
 
@@ -491,6 +514,7 @@ public class PeerSyncController : ControllerBase
         // ListItemsAsync 已经按 actor 视角做了访问过滤，此处用集合判定，资源层不必再各自重复鉴权。
         var allowedItems = await resource.ListItemsAsync(actor, ct);
         var allowedSet = allowedItems.Select(i => i.ItemId).ToHashSet(StringComparer.Ordinal);
+        var itemNames = allowedItems.GroupBy(i => i.ItemId).ToDictionary(g => g.Key, g => g.First().Name, StringComparer.Ordinal);
 
         var results = new List<object>();
         var anyFail = false;
@@ -498,6 +522,9 @@ public class PeerSyncController : ControllerBase
         // 之前总是 bump LastContactAt，即便全部 itemId 在本地（无权访问 / Export 返回 null）就失败、
         // 一次都没真正联系对端。LastContactAt 语义是"最近成功通信"（与 admin ping test 对齐），不该被误更新。
         var anyPeerContact = false;
+        // 本次手动 transfer 的租约持有者标识（区别于 worker 的实例 id）。
+        var manualLeaseOwner = $"manual:{this.GetRequiredUserId()}:{Guid.NewGuid():N}";
+        var isDocStore = string.Equals(resource.ResourceType, "document-store", StringComparison.Ordinal);
         foreach (var itemId in request.ItemIds.Distinct())
         {
             if (!allowedSet.Contains(itemId))
@@ -506,102 +533,31 @@ public class PeerSyncController : ControllerBase
                 anyFail = true;
                 continue;
             }
+            // 与自动同步 worker 共用同一把库级互斥锁：抢不到说明该库正被后台自动同步 / 他人手动同步占用，
+            // 直接跳过，避免同库并发同步（尤其手动 mirror 删除与自动 overwrite 交错损坏数据，Bugbot）。
+            // 与 worker 共用同一 TTL（30min，足以覆盖单库最坏同步耗时，防大库超时后被并发抢锁）。
+            var leased = isDocStore && await _transfer.TryAcquireStoreSyncLeaseAsync(itemId, manualLeaseOwner, Services.PeerSync.PeerSyncScheduleWorker.LeaseDuration, ct);
+            if (isDocStore && !leased)
+            {
+                results.Add(new { itemId, ok = false, message = "该知识库正在同步中（后台自动或他人手动），请稍后重试" });
+                anyFail = true;
+                continue;
+            }
             try
             {
-                await MarkPeerSyncAsync(resource.ResourceType, itemId, "syncing", direction, node, "正在跨系统同步", ct);
-                // PR #742 review fix：每条目独立 ok 标记。Push 或 Pull 任一阶段 outcome.Failed>0、
-                // outcome 为 null（对端返回无效）、bundle 为 null 都判失败，前端可正确标红、不再误显示"成功"。
-                var perItem = new List<string>();
-                var itemOk = true;
-                var pushOk = true;
-                var created = 0;
-                var updated = 0;
-                var skipped = 0;
-                var failed = 0;
-                var assetsRewritten = 0;
-                var assetRewriteFailed = 0;
-                if (direction is "push" or "both")
-                {
-                    var bundle = await resource.ExportAsync(itemId, actor, ct);
-                    if (bundle == null)
-                    {
-                        await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, "本地条目不存在或无权访问", ct);
-                        results.Add(new { itemId, ok = false, message = "本地条目不存在或无权访问" });
-                        anyFail = true;
-                        continue;
-                    }
-                    AttachPeerApplyOptions(bundle, request.PreserveTimestamps ?? true, request.RewriteAssetLinks ?? true, sourceBaseUrl);
-                    var outcome = await PushToPeerAsync(node, resource.ResourceType, bundle, itemId, mode, direction, request, sourceBaseUrl, ct);
-                    // outcome != null = 已收到对端 HTTP 响应 = 通信成功（即便 Failed>0 也算"通"了）
-                    if (outcome == null)
-                    {
-                        perItem.Add("发送 失败（对端返回无效）");
-                        itemOk = false;
-                        pushOk = false;
-                        anyFail = true;
-                    }
-                    else
-                    {
-                        anyPeerContact = true;
-                        perItem.Add("发送 " + (outcome.Message ?? "完成"));
-                        created += outcome.Created;
-                        updated += outcome.Updated;
-                        skipped += outcome.Skipped;
-                        failed += outcome.Failed;
-                        assetsRewritten += outcome.AssetsRewritten;
-                        assetRewriteFailed += outcome.AssetRewriteFailed;
-                        if (outcome.Failed > 0 || outcome.AssetRewriteFailed > 0) { itemOk = false; pushOk = false; anyFail = true; }
-                    }
-                }
-                // PR #742 review High：both 模式下若 push 失败仍跑 pull 会用对端覆盖本地未推上去的改动 ——
-                // 用户的本地编辑可能被丢。语义应为「先推后拉，推不通就不拉」，避免静默数据丢失。
-                if (direction == "pull" || (direction == "both" && pushOk))
-                {
-                    var bundle = await PullFromPeerAsync(node, resource.ResourceType, itemId, ct);
-                    if (bundle == null)
-                    {
-                        var message = string.Join("；", perItem.Append("拉取 失败（对端条目不存在或不可达）"));
-                        await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, message, ct);
-                        results.Add(new { itemId, ok = false, message });
-                        anyFail = true;
-                        continue;
-                    }
-                    // PR #742 review P2 fix：对称 RemoteApply 的类型校验 — 旧版/定制的对端或路由错配
-                    // 可能回 bundle.ResourceType 与本地请求的不一致，直接 ApplyAsync 会用错 handler 污染数据。
-                    if (!string.Equals(bundle.ResourceType, resource.ResourceType, StringComparison.Ordinal))
-                    {
-                        var message = string.Join("；", perItem.Append($"拉取 失败（对端 bundle.resourceType={bundle.ResourceType} 与请求 {resource.ResourceType} 不匹配）"));
-                        await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, message, ct);
-                        results.Add(new { itemId, ok = false, message });
-                        anyFail = true;
-                        continue;
-                    }
-                    anyPeerContact = true; // bundle != null = 对端 HTTP 200 应答 = 通信成功
-                    AttachPeerApplyOptions(bundle, request.PreserveTimestamps ?? true, request.RewriteAssetLinks ?? true, node.BaseUrl);
-                    var outcome = await resource.ApplyAsync(bundle, actor, mode, itemId, ct);
-                    perItem.Add("拉取 " + (outcome.Message ?? "完成"));
-                    created += outcome.Created;
-                    updated += outcome.Updated;
-                    skipped += outcome.Skipped;
-                    failed += outcome.Failed;
-                    assetsRewritten += outcome.AssetsRewritten;
-                    assetRewriteFailed += outcome.AssetRewriteFailed;
-                    if (outcome.Failed > 0 || outcome.AssetRewriteFailed > 0) { itemOk = false; anyFail = true; }
-                }
-                else if (direction == "both" && !pushOk)
-                {
-                    perItem.Add("拉取 已跳过（push 未成功，避免对端覆盖本地未推上去的改动）");
-                }
-                await MarkPeerSyncAsync(resource.ResourceType, itemId, itemOk ? "synced" : "error", direction, node,
-                    string.Join("；", perItem), ct);
-                results.Add(new { itemId, ok = itemOk, message = string.Join("；", perItem), created, updated, skipped, failed, assetsRewritten, assetRewriteFailed });
+                // per-item 两阶段同步核心已抽到 IPeerSyncTransferService（与自动同步 worker 共用同一条路径）。
+                // 注意：StartRun 的台账方向用 runDirection（align-* 区分对齐），状态回写/网络用 direction。
+                var r = await _transfer.SyncItemAsync(
+                    node, resource, itemId, itemNames.GetValueOrDefault(itemId, string.Empty),
+                    direction, runDirection, mode, actor,
+                    request.PreserveTimestamps ?? true, request.RewriteAssetLinks ?? true, sourceBaseUrl, ct);
+                if (r.AnyPeerContact) anyPeerContact = true;
+                if (!r.Ok) anyFail = true;
+                results.Add(new { itemId, ok = r.Ok, message = r.Message, created = r.Created, updated = r.Updated, skipped = r.Skipped, deleted = r.Deleted, failed = r.Failed, assetsRewritten = r.AssetsRewritten, assetRewriteFailed = r.AssetRewriteFailed });
             }
-            catch (Exception ex)
+            finally
             {
-                _logger.LogWarning(ex, "[peer-sync] transfer item {ItemId} failed", itemId);
-                await MarkPeerSyncAsync(resource.ResourceType, itemId, "error", direction, node, ex.Message, ct);
-                results.Add(new { itemId, ok = false, message = ex.Message });
-                anyFail = true;
+                if (isDocStore) await _transfer.ReleaseStoreSyncLeaseAsync(itemId, manualLeaseOwner, ct);
             }
         }
 
@@ -615,6 +571,82 @@ public class PeerSyncController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { direction, results, anyFail }));
     }
 
+    /// <summary>同步中心：列出运行台账（进行中 / 发出去 / 收进来 / 历史，前端按 origin/direction/status 分组）。
+    /// itemId 为空 = 该用户全部可见条目的记录；否则限定单条目（带访问校验）。</summary>
+    [Authorize]
+    [HttpGet("runs")]
+    public async Task<IActionResult> ListRuns(
+        [FromQuery] string resourceType, [FromQuery] string? itemId, [FromQuery] int limit, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(resourceType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 resourceType"));
+        var resource = _registry.Resolve(resourceType);
+        if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
+        var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
+        var allowed = (await resource.ListItemsAsync(actor, ct)).Select(i => i.ItemId).ToHashSet(StringComparer.Ordinal);
+
+        var take = limit is <= 0 or > 200 ? 80 : limit;
+        var filter = Builders<PeerSyncRun>.Filter.Eq(r => r.ResourceType, resourceType);
+        if (!string.IsNullOrWhiteSpace(itemId))
+        {
+            if (!allowed.Contains(itemId))
+                return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<PeerSyncRun>() }));
+            filter &= Builders<PeerSyncRun>.Filter.Eq(r => r.ItemId, itemId);
+        }
+        else
+        {
+            filter &= Builders<PeerSyncRun>.Filter.In(r => r.ItemId, allowed);
+        }
+        var runs = await _db.PeerSyncRuns.Find(filter).SortByDescending(r => r.StartedAt).Limit(take).ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items = runs }));
+    }
+
+    /// <summary>
+    /// 开/关某知识库的「后台自动同步」。开启后 PeerSyncScheduleWorker 按周期复用该库最近一次同步的
+    /// 对端 + 方向，自动跑 push/pull/both（非破坏性，绝不删条目）。仅 document-store 支持。
+    /// 必须先手动同步过一次（确定对端 + 方向）才能开启 —— 避免凭空向某个对端发流量。
+    /// </summary>
+    [Authorize]
+    [HttpPost("auto-sync")]
+    public async Task<IActionResult> SetAutoSync([FromBody] AutoSyncRequest request, CancellationToken ct)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.ResourceType) || string.IsNullOrWhiteSpace(request.ItemId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 resourceType 或 itemId"));
+        if (!string.Equals(request.ResourceType, "document-store", StringComparison.Ordinal))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目前仅知识库支持后台自动同步"));
+
+        var resource = _registry.Resolve(request.ResourceType);
+        if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
+
+        // 鉴权：itemId 必须在 actor 自己的可访问范围内（与 transfer 同口径）。
+        var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
+        var allowed = (await resource.ListItemsAsync(actor, ct)).Select(i => i.ItemId).ToHashSet(StringComparer.Ordinal);
+        if (!allowed.Contains(request.ItemId))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在或无权访问"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == request.ItemId).FirstOrDefaultAsync(ct);
+        if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
+
+        if (request.Enabled && (string.IsNullOrWhiteSpace(store.PeerSyncNodeId) || string.IsNullOrWhiteSpace(store.PeerSyncDirection)))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "请先手动同步一次（确定对端节点与方向）后，再开启后台自动同步"));
+
+        var interval = PeerSyncSchedule.ClampInterval(request.IntervalMinutes);
+        await _db.DocumentStores.UpdateOneAsync(s => s.Id == request.ItemId,
+            Builders<DocumentStore>.Update
+                .Set(s => s.PeerSyncAutoEnabled, request.Enabled)
+                .Set(s => s.PeerSyncIntervalMinutes, interval),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            enabled = request.Enabled,
+            intervalMinutes = interval,
+            direction = store.PeerSyncDirection,
+            nodeName = store.PeerSyncNodeName,
+        }));
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // 内部辅助
     // ═══════════════════════════════════════════════════════════════
@@ -625,147 +657,6 @@ public class PeerSyncController : ControllerBase
         if (!string.IsNullOrWhiteSpace(envBase))
             return envBase.Trim().TrimEnd('/');
         return Request.ResolveServerUrl(_config).TrimEnd('/');
-    }
-
-    private static void AttachPeerApplyOptions(
-        SyncResourceBundle bundle,
-        bool preserveTimestamps,
-        bool rewriteAssetLinks,
-        string? sourceBaseUrl)
-    {
-        bundle.Item.Extras ??= new Dictionary<string, JsonElement>();
-        bundle.Item.Extras["peerApplyOptions"] = JsonSerializer.SerializeToElement(new
-        {
-            preserveTimestamps,
-            rewriteAssetLinks,
-            sourceBaseUrl,
-        }, JsonOpts);
-    }
-
-    private async Task MarkPeerSyncAsync(
-        string resourceType,
-        string? itemId,
-        string status,
-        string direction,
-        PeerNode node,
-        string? result,
-        CancellationToken ct)
-    {
-        if (!string.Equals(resourceType, "document-store", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(itemId))
-            return;
-
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == itemId,
-            Builders<DocumentStore>.Update
-                .Set(s => s.PeerSyncStatus, status)
-                .Set(s => s.PeerSyncDirection, direction)
-                .Set(s => s.PeerSyncNodeId, node.RemoteNodeId)
-                .Set(s => s.PeerSyncNodeName, node.DisplayName)
-                .Set(s => s.PeerSyncNodeBaseUrl, node.BaseUrl)
-                .Set(s => s.PeerSyncLastAt, DateTime.UtcNow)
-                .Set(s => s.PeerSyncLastResult, result),
-            cancellationToken: ct);
-    }
-
-    private async Task<SyncApplyOutcome?> PushToPeerAsync(
-        PeerNode node,
-        string type,
-        SyncResourceBundle bundle,
-        string targetKey,
-        SyncApplyMode mode,
-        string direction,
-        TransferRequest request,
-        string sourceBaseUrl,
-        CancellationToken ct)
-    {
-        var payload = new ApplyRequest
-        {
-            Bundle = bundle,
-            TargetKey = targetKey,
-            Mode = mode == SyncApplyMode.AddOnly ? "add-only" : "overwrite",
-            Direction = direction,
-            PreserveTimestamps = request.PreserveTimestamps ?? true,
-            RewriteAssetLinks = request.RewriteAssetLinks ?? true,
-            SourceBaseUrl = sourceBaseUrl,
-        };
-        var (ok, json, status) = await CallPeerAsync(node, HttpMethod.Post, $"/api/peer-sync/resources/{type}/apply", payload, ct);
-        if (!ok) throw new InvalidOperationException($"对端 apply 失败（HTTP {status}）");
-        return ExtractData<SyncApplyOutcome>(json);
-    }
-
-    private async Task<SyncResourceBundle?> PullFromPeerAsync(PeerNode node, string type, string itemId, CancellationToken ct)
-    {
-        var payload = new ItemRequest { ItemId = itemId };
-        var (ok, json, status) = await CallPeerAsync(node, HttpMethod.Post, $"/api/peer-sync/resources/{type}/export", payload, ct);
-        if (!ok) return null;
-        return ExtractData<SyncResourceBundle>(json);
-    }
-
-    /// <summary>带 HMAC 签名调用对端（SSRF 校验 + 保留 base 子路径）。</summary>
-    private async Task<(bool ok, string json, int status)> CallPeerAsync(PeerNode node, HttpMethod method, string path, object? body, CancellationToken ct)
-    {
-        var baseUri = await _urlValidator.EnsureSafeHttpUrlAsync(node.BaseUrl, "peer-sync", ct);
-        var baseLeft = baseUri.GetLeftPart(UriPartial.Path).TrimEnd('/');
-        var bodyStr = body != null ? JsonSerializer.Serialize(body, JsonOpts) : string.Empty;
-        var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
-        var (ts, sign) = _peer.Sign(node.SharedSecret, method.Method, path, bodyStr);
-
-        var client = _httpFactory.CreateClient("PeerSync");
-        client.Timeout = TimeSpan.FromSeconds(120);
-        using var resp = await SendSignedPeerRequestAsync(client, node, method, baseLeft, path, bodyStr, selfNodeId, ts, sign, ct);
-        var json = await resp.Content.ReadAsStringAsync(ct);
-        return (resp.IsSuccessStatusCode, json, (int)resp.StatusCode);
-    }
-
-    private async Task<HttpResponseMessage> SendSignedPeerRequestAsync(
-        HttpClient client,
-        PeerNode node,
-        HttpMethod method,
-        string baseUrl,
-        string path,
-        string bodyStr,
-        string selfNodeId,
-        string ts,
-        string sign,
-        CancellationToken ct)
-    {
-        HttpRequestMessage BuildRequest(string requestUrl)
-        {
-            var req = new HttpRequestMessage(method, requestUrl);
-            req.Headers.TryAddWithoutValidation("X-Peer-Node", selfNodeId);
-            req.Headers.TryAddWithoutValidation("X-Peer-Ts", ts);
-            req.Headers.TryAddWithoutValidation("X-Peer-Sign", sign);
-            if (!string.IsNullOrEmpty(bodyStr))
-                req.Content = new StringContent(bodyStr, Encoding.UTF8, "application/json");
-            return req;
-        }
-
-        var url = baseUrl + path;
-        var resp = await client.SendAsync(BuildRequest(url), ct);
-        if (!PeerSyncRedirectHelper.IsRedirect(resp.StatusCode))
-            return resp;
-
-        if (!PeerSyncRedirectHelper.TryBuildSameHostHttpsRedirect(
-                new Uri(url), resp.Headers.Location, path,
-                out var redirectedBaseUrl, out var redirectedUrl, out var reason))
-            return resp;
-
-        await _urlValidator.EnsureSafeHttpUrlAsync(redirectedBaseUrl, "peer-sync", ct);
-        _logger.LogInformation("[peer-sync] normalized peer call baseUrl via redirect {NodeId}: {Original} -> {Redirected}",
-            node.RemoteNodeId, baseUrl, redirectedBaseUrl);
-        resp.Dispose();
-
-        var redirectedResp = await client.SendAsync(BuildRequest(redirectedUrl), ct);
-        if (redirectedResp.IsSuccessStatusCode && !string.Equals(node.BaseUrl, redirectedBaseUrl, StringComparison.Ordinal))
-        {
-            await _db.PeerNodes.UpdateOneAsync(n => n.Id == node.Id,
-                Builders<PeerNode>.Update
-                    .Set(n => n.BaseUrl, redirectedBaseUrl)
-                    .Set(n => n.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: ct);
-            node.BaseUrl = redirectedBaseUrl;
-        }
-        return redirectedResp;
     }
 
     /// <summary>
@@ -808,50 +699,25 @@ public class PeerSyncController : ControllerBase
         return body;
     }
 
-    private async Task<SyncActor> BuildActorAsync(string userId, CancellationToken ct)
+    /// <summary>
+    /// 构建用户发起端点的同步操作者：isRoot 取自 JWT claims（PeerSyncController 非 admin controller，
+    /// permissions claim 多半为空），其余有效权限由 IPeerSyncTransferService.BuildActorAsync 走中间件同款数据源补齐。
+    /// 接收端点（RemoteApply）以 node.CreatedBy 调用：此时 User 是 HMAC/匿名上下文，isRoot 自然为 false。
+    /// </summary>
+    private Task<SyncActor> BuildActorAsync(string userId, CancellationToken ct)
     {
-        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
-        var name = user != null && !string.IsNullOrWhiteSpace(user.DisplayName) ? user.DisplayName
-            : (user?.Username ?? "同步");
-
-        // PR #742 review P2 fix：AdminPermissionMiddleware 只对 [AdminController] 路由注入 permissions claim。
-        // PeerSyncController 不是 admin controller，于是用户端点的 HttpContext.User 里 permissions 多半为空 —
-        // 之前的实现把 root/super/defect-agent.manage 用户全当作普通用户。
-        // 改成在这里主动调 IAdminPermissionService.GetEffectivePermissionsAsync（中间件同款数据源），
-        // 取得 system role + allow - deny 的有效权限集，保证资源层得到的 actor 视角准确。
         var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal)
             || string.Equals(User.FindFirst("isAiSuperAccess")?.Value, "1", StringComparison.Ordinal);
-        IReadOnlyCollection<string> perms;
-        try
-        {
-            var list = await _permissionService.GetEffectivePermissionsAsync(userId, isRoot, ct);
-            perms = list.ToHashSet(StringComparer.Ordinal);
-        }
-        catch
-        {
-            // 兜底：极端故障下退回 claims（不至于直接拒绝服务）
-            perms = User.FindAll("permissions").Select(c => c.Value).ToHashSet(StringComparer.Ordinal);
-        }
-        var isSuper = isRoot || perms.Contains(AdminPermissionCatalog.Super);
-        return new SyncActor(userId, name, user?.Email, IsAdmin: isSuper, Permissions: perms);
+        // 把 JWT 里的 permissions claims 作为兜底传下去：GetEffectivePermissionsAsync 瞬时失败时
+        // 退回 claims，避免 super-via-permission 用户被误判为普通用户（Bugbot）。
+        var claimsPerms = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return _transfer.BuildActorAsync(userId, isRoot, ct, claimsPerms);
     }
 
     private static T? Deserialize<T>(string body) where T : class
     {
         if (string.IsNullOrWhiteSpace(body)) return null;
         try { return JsonSerializer.Deserialize<T>(body, JsonOpts); } catch { return null; }
-    }
-
-    private static T? ExtractData<T>(string json) where T : class
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("data", out var data))
-                return JsonSerializer.Deserialize<T>(data.GetRawText(), JsonOpts);
-        }
-        catch { /* ignore */ }
-        return null;
     }
 
     // ── DTO ──
@@ -880,27 +746,13 @@ public class PeerSyncController : ControllerBase
         public string SharedSecret { get; set; } = string.Empty;
     }
 
-    public class ItemRequest { public string ItemId { get; set; } = string.Empty; }
-
-    public class ApplyRequest
+    public class AutoSyncRequest
     {
-        public SyncResourceBundle? Bundle { get; set; }
-        public string? TargetKey { get; set; }
-        public string? Mode { get; set; }
-        public string? Direction { get; set; }
-        public bool? PreserveTimestamps { get; set; }
-        public bool? RewriteAssetLinks { get; set; }
-        public string? SourceBaseUrl { get; set; }
-    }
-
-    public class TransferRequest
-    {
-        public string? NodeId { get; set; }
         public string? ResourceType { get; set; }
-        public List<string>? ItemIds { get; set; }
-        public string? Direction { get; set; }
-        public string? Mode { get; set; }
-        public bool? PreserveTimestamps { get; set; }
-        public bool? RewriteAssetLinks { get; set; }
+        public string? ItemId { get; set; }
+        public bool Enabled { get; set; }
+        /// <summary>同步周期（分钟）。null = 默认 60；服务端会夹到 [5, +∞)。</summary>
+        public int? IntervalMinutes { get; set; }
     }
+
 }

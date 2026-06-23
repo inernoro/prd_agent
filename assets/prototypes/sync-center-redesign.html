@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知识库 · 同步中心 + 顶栏重设计 (Mockup)</title>
+<style>:root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --line:rgba(148,163,184,.16);
+    --line2:rgba(148,163,184,.28); --text:#e6e9ee; --muted:#9aa6b6; --faint:#6b7686;
+    --teal:#5eead4; --teal-bg:rgba(20,184,166,.12); --teal-line:rgba(45,212,191,.34);
+    --gold:#fcd34d; --gold-bg:rgba(245,158,11,.12); --gold-line:rgba(245,158,11,.34);
+    --red:#fca5a5; --red-bg:rgba(127,29,29,.18); --red-line:rgba(248,113,113,.34);
+    --green:#86efac; --blue:#93b4ff; --blue-bg:rgba(59,130,246,.12); --blue-line:rgba(59,130,246,.3);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,"PingFang SC","Microsoft Yahei",sans-serif}
+  .wrap{max-width:1160px;margin:0 auto;padding:28px 24px 80px}
+  h1{font-size:22px;margin:0 0 4px}
+  h2{font-size:15px;margin:34px 0 12px;display:flex;align-items:center;gap:8px;color:var(--text)}
+  h2 .tag{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--teal-bg);color:var(--teal);border:1px solid var(--teal-line)}
+  .lead{color:var(--muted);margin:0 0 6px;font-size:13px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .muted{color:var(--muted)} .faint{color:var(--faint)}
+  .small{font-size:12px}
+
+  /* ===== toolbar buttons ===== */
+  .tb{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .btn{height:30px;padding:0 11px;border-radius:9px;border:1px solid var(--line2);background:var(--panel2);
+       color:var(--text);font-size:12px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap}
+  .btn:hover{background:#222633}
+  .btn.primary{background:linear-gradient(135deg,#6366f1,#7c3aed);border:none;color:#fff;font-weight:600}
+  .btn.teal{background:var(--teal-bg);border-color:var(--teal-line);color:var(--teal);font-weight:600}
+  .btn.gold{background:var(--gold-bg);border-color:var(--gold-line);color:var(--gold);font-weight:600}
+  .btn .ic{width:13px;height:13px;display:inline-block;opacity:.9}
+  .chip{height:26px;padding:0 9px;border-radius:8px;font-size:11px;display:inline-flex;align-items:center;gap:5px}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+
+  .device{border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-top:10px}
+  .device .head{background:#0c0e12;padding:11px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line)}
+  .device .label{position:absolute;margin-top:-30px;margin-left:8px;font-size:11px;color:var(--faint)}
+  .title-left{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;min-width:0}
+  .title-left .n{color:var(--faint);font-weight:400;font-size:11px}
+
+  /* overflow menu */
+  .more-wrap{position:relative}
+  .menu{position:absolute;right:0;top:36px;background:var(--panel2);border:1px solid var(--line2);border-radius:12px;
+        padding:6px;min-width:188px;box-shadow:0 18px 50px rgba(0,0,0,.5);z-index:30;display:none}
+  .menu.open{display:block}
+  .mi{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;cursor:pointer;font-size:12px;color:var(--text)}
+  .mi:hover{background:rgba(255,255,255,.06)}
+  .mi .k{margin-left:auto;color:var(--faint);font-size:10px}
+  .mi.sep{border-top:1px solid var(--line);margin-top:4px;padding-top:10px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}
+  .legend b{color:var(--text);font-weight:600}
+
+  /* ===== sync center drawer ===== */
+  .drawer{background:linear-gradient(135deg,rgba(18,24,33,.99),rgba(28,32,42,.99));border:1px solid var(--line2);border-radius:18px;overflow:hidden}
+  .dh{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
+  .dh .t{display:flex;align-items:center;gap:11px}
+  .dh .ico{width:40px;height:40px;border-radius:12px;background:var(--teal-bg);border:1px solid var(--teal-line);display:flex;align-items:center;justify-content:center;color:var(--teal)}
+  .dh .sub{font-size:12px;color:var(--muted)}
+
+  .livebar{margin:16px 20px 0;border:1px solid var(--gold-line);background:var(--gold-bg);border-radius:13px;padding:13px 15px}
+  .livebar .top{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}
+  .spin{width:14px;height:14px;border-radius:50%;border:2px solid rgba(252,211,77,.3);border-top-color:var(--gold);display:inline-block;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .bar{height:7px;border-radius:99px;background:rgba(148,163,184,.16);overflow:hidden;margin-top:10px}
+  .bar >i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--teal),var(--green));width:46%;
+           position:relative;overflow:hidden}
+  .bar >i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.4),transparent);
+           transform:translateX(-100%);animation:beam 1.5s ease-in-out infinite}
+  @keyframes beam{to{transform:translateX(260%)}}
+
+  .tabs{display:flex;gap:4px;padding:14px 20px 0}
+  .tab{padding:8px 13px;border-radius:10px 10px 0 0;font-size:12px;cursor:pointer;color:var(--muted);display:flex;align-items:center;gap:7px;border:1px solid transparent;border-bottom:none}
+  .tab .b{min-width:18px;height:18px;border-radius:99px;background:rgba(148,163,184,.16);font-size:10px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
+  .tab.active{color:var(--text);background:var(--panel2);border-color:var(--line)}
+  .tab.active .b{background:var(--teal-bg);color:var(--teal)}
+  .panes{padding:14px 20px 4px;border-top:1px solid var(--line);margin-top:-1px}
+  .pane{display:none} .pane.active{display:block}
+
+  .rec{border:1px solid var(--line);border-radius:13px;padding:12px 14px;margin-bottom:10px;background:rgba(15,23,42,.34)}
+  .rec.run{border-color:var(--gold-line);background:var(--gold-bg)}
+  .rec .l1{display:flex;align-items:center;gap:10px;justify-content:space-between}
+  .rec .nm{font-weight:600;font-size:13px;display:flex;align-items:center;gap:8px;min-width:0}
+  .arrow{font-size:11px;color:var(--teal);background:var(--teal-bg);border:1px solid var(--teal-line);border-radius:7px;padding:2px 7px;white-space:nowrap}
+  .arrow.in{color:var(--blue);background:var(--blue-bg);border-color:var(--blue-line)}
+  .st{font-size:11px;padding:3px 9px;border-radius:99px;display:inline-flex;align-items:center;gap:5px}
+  .st.ok{color:var(--green);background:rgba(22,101,52,.18);border:1px solid rgba(34,197,94,.3)}
+  .st.run{color:var(--gold);background:var(--gold-bg);border:1px solid var(--gold-line)}
+  .st.skip{color:var(--muted);background:rgba(148,163,184,.1);border:1px solid var(--line2)}
+  .st.fail{color:var(--red);background:var(--red-bg);border:1px solid var(--red-line)}
+  .counts{display:flex;gap:12px;margin-top:9px;font-size:12px;flex-wrap:wrap}
+  .counts span{color:var(--muted)} .counts b{font-variant-numeric:tabular-nums}
+  .c-add b{color:var(--green)} .c-upd b{color:var(--teal)} .c-skip b{color:var(--muted)} .c-del b{color:var(--red)} .c-fail b{color:var(--red)}
+  .meta{margin-top:7px;font-size:11px;color:var(--faint);display:flex;gap:10px;flex-wrap:wrap}
+
+  /* force align */
+  .force{margin:6px 20px 18px;border:1px dashed var(--line2);border-radius:13px;padding:14px}
+  .force .ft{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .force .opts{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:14px}
+  @media(max-width:720px){.force .opts{grid-template-columns:1fr}}
+  .opt{border:1px solid var(--line2);border-radius:12px;padding:13px;cursor:pointer;background:rgba(15,23,42,.4);transition:.15s}
+  .opt:hover{border-color:var(--teal-line);background:var(--teal-bg)}
+  .opt h4{margin:0 0 6px;font-size:13px;display:flex;align-items:center;gap:7px}
+  .opt p{margin:0;font-size:11px;color:var(--muted);line-height:1.5}
+  .opt .warn{margin-top:8px;font-size:10.5px;color:var(--red);background:var(--red-bg);border:1px solid var(--red-line);border-radius:7px;padding:5px 8px}
+  .opt.safe .warn{color:var(--teal);background:var(--teal-bg);border-color:var(--teal-line)}
+  .hidden{display:none}
+
+  .note{margin-top:10px;border-left:3px solid var(--teal-line);background:rgba(20,184,166,.06);border-radius:0 10px 10px 0;padding:11px 14px;font-size:12.5px;color:var(--muted)}
+  .note b{color:var(--text)}
+  .kbd{font:11px ui-monospace,monospace;background:rgba(255,255,255,.07);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+  ul.tight{margin:8px 0 0;padding-left:18px} ul.tight li{margin:4px 0;color:var(--muted);font-size:12.5px}
+  ul.tight li b{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>知识库 · 同步中心 + 顶栏重设计</h1>
+  <p class="lead">交互草图（非最终样式），用来对齐三件事：① 同步按钮要「动起来」②点击进入「同步中心」看进行中/发出去/收进来/历史 + 强制对齐 ③ 顶栏减负 + 折叠屏自适应。</p>
+
+  <!-- ========================= 顶栏重设计 ========================= -->
+  <h2>一、顶栏重设计 <span class="tag">减负 + 折叠屏自适应</span></h2>
+
+  <div class="card">
+    <div class="muted small" style="margin-bottom:8px">现状：8 个同权重按钮挤一排，iPad 折叠 / 窄屏直接换行错位。</div>
+    <div class="device">
+      <div class="head">
+        <div class="title-left"><span>验收报告</span><span class="n">110 个文档</span></div>
+        <div class="tb">
+          <span class="btn">教程</span><span class="btn gold">双向同步</span>
+          <span class="btn">发布到智识殿堂</span><span class="btn">关系图谱</span>
+          <span class="btn">统计</span><span class="btn">分享</span>
+          <span class="btn">添加订阅</span><span class="btn primary">上传文档</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="muted small" style="margin:22px 0 8px">改版：3 个主操作常驻 + 1 个「同步」入口（带活态徽章）+ 其余收进「更多」。</div>
+    <div class="device">
+      <span class="label">宽屏</span>
+      <div class="head">
+        <div class="title-left"><span>验收报告</span><span class="n">110 个文档</span></div>
+        <div class="tb">
+          <!-- 活态同步徽章：平时静默，有任务时跳动 -->
+          <span class="btn gold" id="syncEntry" onclick="openMock()">
+            <span class="spin" style="border-color:rgba(252,211,77,.3);border-top-color:var(--gold)"></span>同步中 1
+          </span>
+          <span class="btn teal">分享</span>
+          <span class="btn primary">上传文档</span>
+          <div class="more-wrap">
+            <span class="btn" onclick="toggleMenu(event)">··· 更多</span>
+            <div class="menu" id="menu1">
+              <div class="mi">发布到智识殿堂</div>
+              <div class="mi">关系图谱</div>
+              <div class="mi">访客统计</div>
+              <div class="mi">添加订阅</div>
+              <div class="mi sep">本页教程</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="device" style="max-width:430px">
+      <span class="label">折叠屏 / 窄屏（图标化 + 更多）</span>
+      <div class="head">
+        <div class="title-left small"><span>验收报告</span></div>
+        <div class="tb">
+          <span class="btn gold" style="padding:0 9px"><span class="spin"></span>1</span>
+          <span class="btn" style="padding:0 9px"></span>
+          <span class="btn primary" style="padding:0 9px"></span>
+          <span class="btn" style="padding:0 9px">···</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><b>常驻</b>：上传文档（主）、分享、同步入口</span>
+      <span><b>收进「更多」</b>：发布到智识殿堂、关系图谱、访客统计、添加订阅</span>
+      <span><b>教程 pill</b>：保留但移到「更多」底部（onboarding 规则要求可达即可）</span>
+    </div>
+    <div class="note">
+      <b>判断依据</b>：一个知识库详情页的高频动作只有「传文档 / 分享 / 看同步」。发布、图谱、统计、订阅是低频管理动作，收进「更多」既减负又能在折叠屏只占 1 个图标位。<br>「同步」入口替代原「双向同步」——平时显示静默灰，有进行中任务时变金色 + 转圈 + 角标数字（这就是你说的「动起来」）。
+    </div>
+  </div>
+
+  <!-- ========================= 同步中心 ========================= -->
+  <h2>二、同步中心面板 <span class="tag">点同步按钮打开</span></h2>
+  <p class="lead">进行中 / 发出去(push) / 收进来(pull) / 历史 四视图 + 底部「强制对齐」三选项。</p>
+
+  <div class="drawer">
+    <div class="dh">
+      <div class="t">
+        <div class="ico"></div>
+        <div>
+          <div style="font-weight:600">同步中心 · 验收报告</div>
+          <div class="sub">对端「正式环境 map.miduo.org」· 实时刷新，关闭不中断后台任务</div>
+        </div>
+      </div>
+      <span class="btn">关闭</span>
+    </div>
+
+    <!-- 进行中活态条 -->
+    <div class="livebar">
+      <div class="top">
+        <span style="display:flex;align-items:center;gap:8px;font-weight:600;color:var(--gold)">
+          <span class="spin"></span>正在发送到「正式环境」· 第 38 / 110 篇
+        </span>
+        <span class="small muted">已用 24s · 预计剩余约 40s</span>
+      </div>
+      <div class="bar"><i></i></div>
+      <div class="small muted" style="margin-top:8px">阶段：图片重传到对端 COS（12 张已重传 / 2 张失败）->按血缘合并</div>
+    </div>
+
+    <!-- tabs -->
+    <div class="tabs">
+      <div class="tab active" onclick="sw(this,'p-run')">⟳ 进行中 <span class="b">1</span></div>
+      <div class="tab" onclick="sw(this,'p-out')">发出去 <span class="b">3</span></div>
+      <div class="tab" onclick="sw(this,'p-in')">收进来 <span class="b">2</span></div>
+      <div class="tab" onclick="sw(this,'p-his')">历史</div>
+    </div>
+
+    <div class="panes">
+      <!-- 进行中 -->
+      <div class="pane active" id="p-run">
+        <div class="rec run">
+          <div class="l1">
+            <div class="nm">验收报告 <span class="arrow">发送 push</span></div>
+            <span class="st run"><span class="spin" style="width:11px;height:11px"></span>同步中 35%</span>
+          </div>
+          <div class="counts">
+            <span class="c-add">新增 <b>6</b></span><span class="c-upd">更新 <b>3</b></span>
+            <span class="c-skip">跳过 <b>29</b></span><span class="c-del">删除 <b>1</b></span>
+          </div>
+          <div class="meta"><span>开始 06-15 06:24</span><span>对端 正式环境</span><span>触发：手动「发送到」</span></div>
+        </div>
+      </div>
+
+      <!-- 发出去 -->
+      <div class="pane" id="p-out">
+        <div class="rec">
+          <div class="l1"><div class="nm">验收报告 <span class="arrow">发送 push</span></div><span class="st ok">成功 完成</span></div>
+          <div class="counts"><span class="c-add">新增 <b>0</b></span><span class="c-upd">更新 <b>2</b></span><span class="c-skip">跳过 <b>108</b></span><span class="c-del">删除 <b>0</b></span></div>
+          <div class="meta"><span>06-14 22:10</span><span>耗时 9s</span><span>图片重传 2 / 失败 0</span></div>
+        </div>
+        <div class="rec">
+          <div class="l1"><div class="nm">视觉创作处理报告 <span class="arrow">发送 push</span></div><span class="st skip">— 无变化跳过</span></div>
+          <div class="counts"><span class="c-skip">跳过 <b>45</b>（全部命中内容哈希）</span></div>
+          <div class="meta"><span>06-14 21:02</span><span>耗时 0.6s</span><span class="faint">命中源哈希，未下载图片</span></div>
+        </div>
+        <div class="rec">
+          <div class="l1"><div class="nm">缺陷归档 <span class="arrow">发送 push</span></div><span class="st fail">失败 部分失败</span></div>
+          <div class="counts"><span class="c-add">新增 <b>3</b></span><span class="c-fail">失败 <b>2</b></span></div>
+          <div class="meta"><span>06-13 18:30</span><span class="faint">2 篇图片源域名不在对端白名单</span></div>
+        </div>
+      </div>
+
+      <!-- 收进来 -->
+      <div class="pane" id="p-in">
+        <div class="rec">
+          <div class="l1"><div class="nm">验收报告 <span class="arrow in">拉取 pull</span></div><span class="st ok">成功 完成</span></div>
+          <div class="counts"><span class="c-add">新增 <b>4</b></span><span class="c-upd">更新 <b>1</b></span><span class="c-del">删除 <b>2</b></span></div>
+          <div class="meta"><span>06-14 20:48</span><span>来自 正式环境</span><span>归属：按用户名对齐（蒋云峰）</span></div>
+        </div>
+        <div class="rec">
+          <div class="l1"><div class="nm">日报知识库 <span class="arrow in">拉取 pull</span></div><span class="st ok">成功 完成</span></div>
+          <div class="counts"><span class="c-add">新增 <b>7</b></span><span class="c-skip">跳过 <b>30</b></span></div>
+          <div class="meta"><span>06-12 09:15</span><span>来自 正式环境</span></div>
+        </div>
+      </div>
+
+      <!-- 历史 -->
+      <div class="pane" id="p-his">
+        <div class="muted small" style="padding:6px 0 12px">最近 30 天全部同步记录（push / pull 混排，可按方向/状态筛选）。</div>
+        <div class="rec"><div class="l1"><div class="nm">验收报告 <span class="arrow">push</span></div><span class="st ok">成功 完成</span></div><div class="meta"><span>06-14 22:10</span><span>新增0/更新2/跳过108</span></div></div>
+        <div class="rec"><div class="l1"><div class="nm">验收报告 <span class="arrow in">pull</span></div><span class="st ok">成功 完成</span></div><div class="meta"><span>06-14 20:48</span><span>新增4/更新1/删除2</span></div></div>
+        <div class="rec"><div class="l1"><div class="nm">缺陷归档 <span class="arrow">push</span></div><span class="st fail">失败 部分失败</span></div><div class="meta"><span>06-13 18:30</span><span>新增3/失败2</span></div></div>
+      </div>
+    </div>
+
+    <!-- 强制对齐 -->
+    <div class="force">
+      <div class="ft">
+        <div>
+          <div style="font-weight:600;font-size:13px">手动同步 · 强制对齐</div>
+          <div class="small muted">两边数量对不上时（你删了它没删 / 它新增你没有），用强制对齐一次性拉齐。</div>
+        </div>
+        <span class="btn gold" id="forceBtn" onclick="toggleForce()">强制对齐 </span>
+      </div>
+
+      <div class="opts hidden" id="forceOpts">
+        <div class="opt" onclick="pick('远端为准')">
+          <h4>远端为准</h4>
+          <p>以「正式环境」为准，本库完全对齐对端：对端有的拉过来，<b>对端没有的本地删掉</b>。</p>
+          <div class="warn">本地将删除对端不存在的条目</div>
+        </div>
+        <div class="opt" onclick="pick('本地为准')">
+          <h4>本地为准</h4>
+          <p>以本库为准，把对端完全对齐成本库：本地有的推过去，<b>本地没有的对端删掉</b>。</p>
+          <div class="warn">对端将删除本地不存在的条目</div>
+        </div>
+        <div class="opt safe" onclick="pick('同时对准')">
+          <h4>同时对准</h4>
+          <p>两边合并：各自新增都保留，同名按最近修改时间取新；<b>不删任何一边</b>（最安全）。</p>
+          <div class="warn">不发生删除，只新增/更新</div>
+        </div>
+      </div>
+      <div id="forcePicked" class="note hidden"></div>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:14px">
+    <b>这块解决你提的三件事</b>
+    <ul class="tight">
+      <li><b>删除会同步</b>：现在 push/pull 只新增不删（所以右边 109、左边还 145）。新增「删除」语义 = 强制对齐的「远端/本地为准」+ 双向同步里基于血缘的「对端已删->本地删」检测，记录里多一列 <span class="kbd">删除 N</span>。</li>
+      <li><b>跳过要快</b>：在「发出去」里把<b>源内容哈希</b>随包发给对端，对端先比哈希——命中就 <span class="kbd">0.6s 无变化跳过</span>，不再先下载一遍图片再说「跳过」。</li>
+      <li><b>图片落对端 COS</b>：每篇首次落地即把图片下载并重传到对端 COS（记录里 <span class="kbd">图片重传 N/失败 M</span>），之后命中哈希不再重复下载。</li>
+    </ul>
+  </div>
+
+</div>
+
+<script>function sw(el,id){
+    el.parentElement.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    document.querySelectorAll('.panes .pane').forEach(p=>p.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+  function toggleForce(){
+    document.getElementById('forceOpts').classList.toggle('hidden');
+    var b=document.getElementById('forceBtn'); b.innerHTML = b.innerHTML.includes('') ? ' 强制对齐 ' : ' 强制对齐 ';
+  }
+  function pick(name){
+    var box=document.getElementById('forcePicked'); box.classList.remove('hidden');
+    box.innerHTML='已选择 <b>'+name+'</b>。真实实现里这里会再弹一个二次确认（列出将删除/覆盖的条目数）后才执行。';
+  }
+  function toggleMenu(e){ e.stopPropagation(); document.getElementById('menu1').classList.toggle('open'); }
+  document.addEventListener('click',()=>document.getElementById('menu1').classList.remove('open'));
+  function openMock(){ document.querySelector('.drawer').scrollIntoView({behavior:'smooth'}); }
+</script>
+</body>
+</html>
