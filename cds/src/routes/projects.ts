@@ -34,6 +34,8 @@ import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { resolveActorFromRequest } from '../services/actor-resolver.js';
+import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
 import {
   getInfraCatalogEntry,
@@ -360,10 +362,19 @@ const EMPTY_STATS: ProjectStats = {
   lastDeployedAt: null,
 };
 
-interface ProjectSummary extends Project, ProjectStats {}
+interface ProjectSummary extends Project, ProjectStats {
+  /** 2026-06-23：项目级实时资源占用（CPU/内存/构建频次），由采样器周期写入。 */
+  resourceUsage?: ProjectResourceUsage | null;
+}
 
-function toSummary(project: Project, stats: ProjectStats): ProjectSummary {
-  return { ...project, ...stats };
+function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
+  return { ...project, ...stats, resourceUsage: usage ?? null };
+}
+
+/** 把最近一次资源采样快照转成 projectId → usage 的查找表（无快照时空表）。 */
+function resourceUsageLookup(): Map<string, ProjectResourceUsage> {
+  const snapshot = getLatestResourceUsage();
+  return new Map((snapshot?.projects || []).map((p) => [p.projectId, p]));
 }
 
 async function resolveRemoteDefaultBranch(shell: IShellExecutor, repoPath: string): Promise<string | null> {
@@ -1263,10 +1274,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   router.get('/projects', (req, res) => {
     try {
       const projects = stateService.getProjects();
+      const usageMap = resourceUsageLookup();
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
       // not values. cdsp_ project key (matching) and cookie auth bypass.
-      const summaries = projects.map((p) => maskProjectSummary(req, toSummary(p, statsFor(p))));
+      const summaries = projects.map((p) => maskProjectSummary(req, toSummary(p, statsFor(p), usageMap.get(p.id) || null)));
       // Sort: legacy pinned first (existing UX), then by runtime liveness
       // so projects with running services bubble up — useful once you
       // have many projects and only a few are active.
@@ -1304,7 +1316,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         });
         return;
       }
-      const summary = maskProjectSummary(req, toSummary(project, statsFor(project)));
+      const summary = maskProjectSummary(req, toSummary(project, statsFor(project), resourceUsageLookup().get(project.id) || null));
       // CDS-CLI-007 / #551 (a)：识别"半成品"项目（cloneStatus=error 或 git
       // 项目缺 repoPath）并在响应里附 recovery 指引，避免 Agent 反复尝试
       // clone 却拿不到具体下一步。这里只读不写，不会引入额外副作用。
@@ -1440,6 +1452,134 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     stateService.setProjectCommentTemplate(req.params.id, settings);
     stateService.save();
     res.json({ ok: true, body: settings.body, updatedAt: settings.updatedAt });
+  });
+
+  /**
+   * PUT /api/projects/:id/paused — 暂停 / 恢复一个项目（2026-06-23）。
+   *
+   * body: { paused: boolean, reason?: string }
+   *
+   * 暂停（paused=true）= 冻结整个项目：
+   *   - webhook（push/PR/delete/comment）一律忽略（isEventEnabled 闸门）
+   *   - 手动 / 自动 deploy 一律 423（branches.ts 兜底闸门）
+   *   - reconciler 不再重试该项目的 stale dispatch
+   *   - 立即停止该项目所有分支正在运行的容器（释放 CPU/内存）
+   * 恢复（paused=false）= 解冻，但**不自动重新部署**（用户手动 deploy）。
+   *
+   * 容器停止走内部自调 POST /branches/:id/stop（复用全部停止逻辑：远端执行器、
+   * 操作租约、归因、计数），fire-and-forget 不阻塞响应——暂停标记本身是同步落库的，
+   * 新构建立刻被拦；容器停止由前端轮询反映。
+   */
+  router.put('/projects/:id/paused', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found', message: `Project '${req.params.id}' does not exist.` });
+      return;
+    }
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    const { paused, reason } = (req.body || {}) as { paused?: boolean; reason?: string };
+    if (typeof paused !== 'boolean') {
+      res.status(400).json({ error: 'validation', field: 'paused', message: 'paused 必须是布尔值' });
+      return;
+    }
+    if (reason !== undefined && typeof reason !== 'string') {
+      res.status(400).json({ error: 'validation', field: 'reason', message: 'reason 必须是字符串' });
+      return;
+    }
+
+    const actor = resolveActorFromRequest(req as any);
+    const updated = stateService.setProjectPaused(project.id, paused, {
+      by: actor,
+      reason: reason?.slice(0, 200),
+    });
+    if (!updated) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+
+    // 收集需要停止的运行分支（仅暂停时）。
+    let stoppingBranchIds: string[] = [];
+    if (paused) {
+      const branches = stateService.getBranchesForProject(project.id);
+      stoppingBranchIds = branches
+        .filter((b) =>
+          Object.values(b.services || {}).some(
+            (s) => s.status === 'running' || s.status === 'starting' || s.status === 'building' || s.status === 'restarting',
+          ),
+        )
+        .map((b) => b.id);
+    }
+
+    res.json({
+      ok: true,
+      paused: updated.paused === true,
+      pausedAt: updated.pausedAt || null,
+      pausedBy: updated.pausedBy || null,
+      pauseReason: updated.pauseReason || null,
+      stoppingBranches: stoppingBranchIds,
+      message: paused
+        ? `项目「${updated.aliasName || updated.name}」已暂停，正在停止 ${stoppingBranchIds.length} 个分支的容器。`
+        : `项目「${updated.aliasName || updated.name}」已恢复，需手动重新部署分支。`,
+    });
+
+    // 暂停：后台停止所有运行容器（不阻塞响应；前端轮询会反映停止结果）。
+    if (paused && stoppingBranchIds.length > 0) {
+      const masterPort = config?.masterPort;
+      if (masterPort) {
+        for (const branchId of stoppingBranchIds) {
+          void fetch(`http://127.0.0.1:${masterPort}/api/branches/${encodeURIComponent(branchId)}/stop`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CDS-Internal': '1',
+              'X-CDS-Trigger': 'system',
+              'X-CDS-Source-Project-Id': project.id,
+              'X-CDS-Source-Branch-Id': branchId,
+            },
+            body: JSON.stringify({ reason: '项目已暂停，自动停止容器' }),
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn(`[project-pause] stop ${branchId} failed: ${(err as Error).message}`);
+          });
+        }
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn('[project-pause] masterPort 未配置，跳过容器停止（暂停标记已生效）');
+      }
+    }
+  });
+
+  /**
+   * GET /api/cds-system/resource-usage — 项目级资源占用排行（2026-06-23）。
+   *
+   * 系统级运维视图：把最近一次采样快照（每项目 CPU/内存/运行容器 + 近 1h/24h
+   * 构建频次）join 上项目名与暂停状态，前端据此排序揪出「CPU 大户 / 反复构建大户」
+   * 并一键暂停。返回 sampledAt=null 表示采样器尚未产出首个快照（刚启动）。
+   */
+  router.get('/cds-system/resource-usage', (_req, res) => {
+    const snapshot = getLatestResourceUsage();
+    const projectById = new Map(stateService.getProjects().map((p) => [p.id, p]));
+    const rows = (snapshot?.projects || []).map((usage) => {
+      const project = projectById.get(usage.projectId);
+      return {
+        ...usage,
+        name: project ? project.aliasName || project.name : usage.projectId,
+        paused: project?.paused === true,
+      };
+    });
+    res.json({
+      sampledAt: snapshot?.sampledAt ?? null,
+      intervalMs: snapshot?.intervalMs ?? null,
+      totals: snapshot?.totals ?? { cpuPercent: 0, memUsedMB: 0, runningContainers: 0 },
+      projects: rows,
+    });
   });
 
   // 项目级：对已存在项目按基建目录(infra-catalog SSOT)应用预设，生成真随机密码 +

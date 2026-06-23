@@ -1031,6 +1031,13 @@ function markWebhookDeployDispatch(
   const branch = stateService.getBranch(branchId);
   if (!branch) return;
   const ts = new Date().toISOString();
+  // 2026-06-23：一次「全新」的 webhook 派发（dispatching）重置重试预算——
+  // 钉首次派发时间（age 锚点）+ 归零重试计数，让新 commit 拿到干净的 N 次额度。
+  // accepted/failed 是同一轮派发的终态，不动这两个字段。
+  if (status === 'dispatching') {
+    branch.deployDispatchFirstAt = ts;
+    branch.deployDispatchRetryCount = 0;
+  }
   branch.lastDeployDispatchAt = ts;
   branch.lastDeployDispatchCommitSha = commitSha;
   branch.lastDeployDispatchSource = 'webhook';

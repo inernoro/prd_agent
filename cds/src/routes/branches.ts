@@ -14,6 +14,7 @@ import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
+import { recordBuild } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
@@ -9850,6 +9851,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    // 2026-06-23：项目暂停 = 部署的统一兜底闸门。webhook 闸门 / reconciler 跳过 /
+    // scheduler 跳过都各管一段，但任何路径（含 auto-lifecycle 自调）最终都落到本
+    // 端点——在这里拦一道，暂停项目就**绝无可能**再被构建。?force=1 为人工逃生口。
+    const forceDeployWhilePaused = req.query?.force === '1' || req.query?.force === 'true';
+    if (deployProject?.paused === true && !forceDeployWhilePaused) {
+      res.status(423).json({
+        error: 'project_paused',
+        message: `项目「${deployProject.aliasName || deployProject.name}」已暂停，部署被拦截。请先在项目列表恢复该项目，或附加 ?force=1 强制部署一次。`,
+        pausedAt: deployProject.pausedAt || null,
+        escapeHatch: { hint: '附加 ?force=1 query 可绕过暂停强制部署一次（不推荐）。' },
+      });
+      return;
+    }
+
     // P4 Part 17 (G2 fix): scope build profiles by the branch's project
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
@@ -9883,6 +9898,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
     }
+
+    // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
+    // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
+    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req));
 
     const requestCommitSha = typeof req.body?.commitSha === 'string'
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)

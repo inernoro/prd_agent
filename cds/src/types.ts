@@ -556,6 +556,22 @@ export interface BranchEntry {
   lastDeployDispatchStatus?: 'dispatching' | 'accepted' | 'failed' | 'interrupted';
   /** Failure reason when the deploy dispatch itself failed before deployment started. */
   lastDeployDispatchError?: string;
+  /**
+   * 2026-06-23：本轮 webhook 部署派发的**首次**派发时间（ISO）。与
+   * lastDeployDispatchAt 不同——后者每次 reconciler 重试都会被刷新成最新
+   * 重试时刻，导致「自派发以来的时长」永远归零、age 上限永不触发，正是
+   * 「7 小时前的构建还在跑」幽灵的根因之一。本字段在 markWebhookDeployDispatch
+   * 收到全新派发（新 commit / 上一轮已终态）时打戳，重试路径**不更新**，
+   * 因此 reconciler 可以据此判断「这个派发已经太老，放弃重试」。
+   */
+  deployDispatchFirstAt?: string;
+  /**
+   * 2026-06-23：本轮 webhook 部署派发已被 reconciler 自动重试的次数。
+   * 每次 dispatchRecoveredWebhookDeploys 真正重新 POST /deploy 时 +1；
+   * markWebhookDeployDispatch 收到全新派发时归 0。达到上限
+   * （CDS_DEPLOY_DISPATCH_MAX_RETRIES，默认 3）后不再重试，避免无限重试风暴。
+   */
+  deployDispatchRetryCount?: number;
   /** GitHub user login that triggered the latest webhook touching this branch. */
   githubSenderLogin?: string;
   /** Original GitHub avatar URL from webhook payload.sender.avatar_url. */
@@ -2230,6 +2246,22 @@ export interface Project {
   lastPullAt?: string;
   /** 最近一次成功部署完成的 ISO 时间戳（不是触发时间）。 */
   lastDeployAt?: string;
+  /**
+   * 2026-06-23：项目级「暂停」开关。设为 true 时**冻结整个项目**——
+   * 拒绝所有自动部署（webhook push/PR）、拒绝手动 deploy、reconciler 不再
+   * 重试该项目的 stale dispatch、scheduler/auto-lifecycle 跳过该项目。
+   * 暂停动作同时会停止该项目所有分支正在运行的容器（释放 CPU/内存）。
+   *
+   * 用途：长期不用却频繁被 webhook 触发反复构建的项目，无需删除即可
+   * 一键冻结止血；恢复后用户手动重新部署即可。缺省 / undefined 视作未暂停。
+   */
+  paused?: boolean;
+  /** 最近一次被暂停的 ISO 时间戳（恢复时清空）。 */
+  pausedAt?: string;
+  /** 发起暂停的操作者（actor 字符串，如 'user' / 'ai:xxx' / 'system'）。 */
+  pausedBy?: string;
+  /** 暂停原因（可选，用户在暂停时填写，UI 展示）。 */
+  pauseReason?: string;
   /**
    * PR_D.1: 项目级 GitHub 事件 policy。每个字段对应一类 webhook 事件，
    * undefined / true → 处理（默认行为，与 PR_D 之前一致），false → 短路忽略。
