@@ -1707,7 +1707,8 @@ ${shouldAutoRefresh ? `;(function(){
       }else{
         var remainingMs=Math.max(0,median-elapsedMs);
         mainText='已等待 '+ee+' · 预计还需约 '+clock(remainingMs);
-        subText='（基于最近 '+samples+' 次构建的中位耗时）';
+        var modeLabel=timingState.mode==='release'?'发布版':timingState.mode==='source'?'热加载':'';
+        subText='（基于本项目最近 '+samples+' 次'+modeLabel+'构建的中位耗时，非单分支）';
       }
     }else{
       mainText='已等待 '+ee+' · 正在积累历史耗时数据，暂无预计';
@@ -1723,6 +1724,7 @@ ${shouldAutoRefresh ? `;(function(){
       baseElapsedMs:Math.max(0,Number(timing.elapsedMs)||0),
       medianMs:(timing.estimateMedianMs==null?null:Number(timing.estimateMedianMs)),
       samples:Number(timing.estimateSamples)||0,
+      mode:(timing.mode||''),
       overdue:!!timing.overdue,
       syncedAt:Date.now()
     };

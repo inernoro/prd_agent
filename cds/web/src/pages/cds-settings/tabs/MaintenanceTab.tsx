@@ -379,6 +379,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const pickerWrapRef = useRef<HTMLDivElement>(null);
+  // 选中某个分支后会 inputRef.focus() 把光标放回输入框，但 input 的 onFocus
+  // 默认会重新 setPickerOpen(true)，导致下拉"点了不关"。用这个一次性标记在
+  // 选中后的那一次 focus 时跳过重开。
+  const suppressFocusOpenRef = useRef(false);
   const [runState, setRunState] = useState<UpdateRunState>('idle');
   const [runTitle, setRunTitle] = useState('');
   const [runLog, setRunLog] = useState<string[]>([]);
@@ -816,7 +820,13 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                           setPickerOpen(true);
                           setHighlightedIndex(0);
                         }}
-                        onFocus={() => setPickerOpen(true)}
+                        onFocus={() => {
+                          if (suppressFocusOpenRef.current) {
+                            suppressFocusOpenRef.current = false;
+                            return;
+                          }
+                          setPickerOpen(true);
+                        }}
                         onKeyDown={(event) => {
                           if (event.key === 'ArrowDown') {
                             event.preventDefault();
@@ -862,6 +872,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                                 onMouseEnter={() => setHighlightedIndex(idx)}
                                 onClick={() => {
                                   setSelectedBranch(branch.name);
+                                  suppressFocusOpenRef.current = true;
                                   setPickerOpen(false);
                                   inputRef.current?.focus();
                                 }}
