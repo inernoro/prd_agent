@@ -280,7 +280,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
         method: 'POST',
         body: JSON.stringify({ config: yamlText, dryRun: !!dryRun, cleanMode }),
         timeoutMs: 60_000,
-      });
+      }, localFallbackKey());
       res.status(remote.ok ? 200 : 502).json({
         ok: remote.ok,
         dryRun: !!dryRun,
