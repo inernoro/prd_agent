@@ -2284,9 +2284,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     for (const [key, start] of [...m.entries()]) {
       if (stillRunning.has(key)) continue;
-      const done = canvas.find((x) => x.key === key && x.status === 'done' && !!x.src);
-      if (done) recordGenDurationMs(Date.now() - start); // 仅成功出图计入平均，失败/取消不计
-      m.delete(key);
+      const item = canvas.find((x) => x.key === key);
+      if (item && item.status === 'done' && !!item.src) {
+        recordGenDurationMs(Date.now() - start); // 成功出图计入平均
+        m.delete(key);
+      } else if (item && item.status === 'error') {
+        // 暂存：error 可能被看门狗/对账治愈回 done（transient SSE/查询失败误标），
+        // 留住起点，等治愈后这条 effect 再命中 done 分支记录耗时（Bugbot 2026-06-23）。
+        continue;
+      } else {
+        // item 已从画布移除 / 变成非生成态 → 丢弃，不计入平均
+        m.delete(key);
+      }
     }
   }, [canvas]);
 
@@ -2636,6 +2645,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
         if (items.length > 0) {
           requestAnimationFrame(() => {
+            if (cancelled) return; // 已切 workspace / 卸载 → 陈旧回调不抢焦点
             const ae = document.activeElement as HTMLElement | null;
             const tag = (ae?.tagName ?? '').toLowerCase();
             const isEditable =
@@ -2651,6 +2661,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           // 放在恢复完成点（非定时器）：随 workspace 切换每次 boot 重跑，且不会在水合前误判空画布。
           // 手机端走 pc-only 门槛（见 VisualAgentFullscreenPage），不抢焦点。
           requestAnimationFrame(() => {
+            // 切 workspace / 卸载后这帧若才跑 → cancelled=true，避免陈旧回调把另一个正在加载的
+            // workspace 滚动并抢焦点到 composer（Bugbot 2026-06-23）。
+            if (cancelled) return;
             const ae = document.activeElement as HTMLElement | null;
             const tag = (ae?.tagName ?? '').toLowerCase();
             const isEditable =
