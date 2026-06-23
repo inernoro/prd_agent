@@ -494,10 +494,20 @@ public class DocumentStoreSyncResource : ISyncableResource
                     if (byLineage.TryGetValue(fe.LineageId, out var exBin) && !exBin.IsFolder)
                     {
                         if (addOnly) { skipped++; continue; }
+                        // 目标 ContentType/FileSize 取「源头条目值」（fe），缺省退回现有值；下载新件时再用 stored 兜底。
+                        // 这两个字段也纳入变更检测 + 落更新，否则即便文件未变、仅源头改了类型/大小也会被廉价跳过漏同步
+                        // （Bugbot: Binary sync skips entry metadata）。比的都是「源头条目口径」(fe vs 上次写入的 exBin)，无重下循环风险。
+                        var binTargetContentType = !string.IsNullOrEmpty(fe.ContentType) ? fe.ContentType : exBin.ContentType;
+                        var binTargetFileSize = fe.FileSize > 0 ? fe.FileSize : exBin.FileSize;
+                        // 附件提取文本快照：纳入变更检测，使「文件未变但提取文本变了」也能进重写分支刷新 Attachment.ExtractedText
+                        // （Bugbot: Stale attachment extracted text）。
+                        var binIncomingContentIndex = BinaryContentIndex(pa.ExtractedText);
                         var binFieldsChanged = exBin.Title != fe.Title || exBin.ParentId != binParentId
                             || !TagsEqual(exBin.Tags, fe.Tags) || exBin.Summary != fe.Summary
                             || !MetaEqual(exBin.Metadata, fe.Metadata)
-                            || exBin.SortOrder != fe.SortOrder || exBin.Category != fe.Category;
+                            || exBin.SortOrder != fe.SortOrder || exBin.Category != fe.Category
+                            || exBin.ContentType != binTargetContentType || exBin.FileSize != binTargetFileSize
+                            || exBin.ContentIndex != binIncomingContentIndex;
                         // 幂等不只看 URL，还要比「源头字节数」：对象存储是内容寻址（sha256→URL），同 URL 即同字节，
                         // 但万一底层存储复用了 URL 又换了字节，size 不一致即强制重下（Bugbot: Stale file when URL unchanged）。
                         // 关键：比的是「上次记录的源头 size」(AppliedSourceAttachmentSize) 与「本次源头 size」(pa.Size)，
@@ -532,8 +542,6 @@ public class DocumentStoreSyncResource : ISyncableResource
                         // 否则留孤儿解析文档（Bugbot: Orphan doc after binary overwrite）。
                         var binOldDocId = exBin.DocumentId;
                         var binAttachmentId = exBin.AttachmentId;
-                        var binContentType = exBin.ContentType;
-                        var binFileSize = exBin.FileSize;
                         if (!binApplied)
                         {
                             var stored = await DownloadAndStoreAttachmentAsync(pa, ct);
@@ -542,13 +550,21 @@ public class DocumentStoreSyncResource : ISyncableResource
                             await ReLocalizeAttachmentThumbnailAsync(att, pa, ct);
                             await _db.Attachments.InsertOneAsync(att, cancellationToken: ct);
                             binAttachmentId = att.AttachmentId;
-                            binContentType = string.IsNullOrEmpty(fe.ContentType) ? stored.Mime : fe.ContentType;
-                            binFileSize = fe.FileSize > 0 ? fe.FileSize : stored.SizeBytes;
+                            // 下载到新件后用 stored 兜底缺省类型/大小。
+                            binTargetContentType = string.IsNullOrEmpty(fe.ContentType) ? stored.Mime : fe.ContentType;
+                            binTargetFileSize = fe.FileSize > 0 ? fe.FileSize : stored.SizeBytes;
+                        }
+                        else if (!string.IsNullOrEmpty(exBin.AttachmentId))
+                        {
+                            // 文件未变（同 sourceId+size 跳过重下），但提取文本/文件名可能变了 → 刷新已存在 Attachment 行，
+                            // 否则 Attachment.ExtractedText 永远停在首次下载值（Bugbot: Stale attachment extracted text）。
+                            var attRefresh = Builders<Attachment>.Update
+                                .Set(a => a.ExtractedText, pa.ExtractedText);
+                            if (!string.IsNullOrWhiteSpace(pa.FileName))
+                                attRefresh = attRefresh.Set(a => a.FileName, pa.FileName!);
+                            await _db.Attachments.UpdateOneAsync(a => a.AttachmentId == exBin.AttachmentId, attRefresh, cancellationToken: ct);
                         }
                         var binMeta = WithPeerSourceAttachment(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId, pa.Size);
-                        // 文本条目转二进制后，旧 ContentIndex 是被替换文档的正文摘要，必须改写为附件的提取文本
-                        // （或清空），否则搜索/列表仍按旧文本命中这条已变成文件的条目（Codex: Clear stale content index）。
-                        var binContentIndex = BinaryContentIndex(pa.ExtractedText);
                         var binUpdatedAt = PickTime(fe.UpdatedAt);
                         var binChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
                         var binUpdate = Builders<DocumentEntry>.Update
@@ -558,9 +574,9 @@ public class DocumentStoreSyncResource : ISyncableResource
                             .Set(e => e.Summary, fe.Summary)
                             .Set(e => e.ParentId, binParentId)
                             .Set(e => e.Tags, fe.Tags ?? new List<string>())
-                            .Set(e => e.ContentType, binContentType)
-                            .Set(e => e.ContentIndex, binContentIndex)
-                            .Set(e => e.FileSize, binFileSize)
+                            .Set(e => e.ContentType, binTargetContentType)
+                            .Set(e => e.ContentIndex, binIncomingContentIndex)
+                            .Set(e => e.FileSize, binTargetFileSize)
                             .Set(e => e.SortOrder, fe.SortOrder)
                             .Set(e => e.Category, fe.Category)
                             .Set(e => e.Metadata, binMeta)
