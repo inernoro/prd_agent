@@ -289,16 +289,27 @@ export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEn
   const withMode = resolveProfileWithMode(withBranchOverride);
   // 2026-06-23 极速版：deploy-mode 解析完后,把 dockerImage / fallbackImage 里的
   // ${CDS_COMMIT_SHA} 等模板变量按当前分支上下文替换。无模板变量时是 no-op。
+  // fallbackImage 可为字符串或有序数组(逐组件回退链),逐元素解析。
   const resolvedImage = resolveImageTemplate(withMode.dockerImage, branch);
-  const resolvedFallback = resolveImageTemplate(withMode.fallbackImage, branch);
-  if (resolvedImage !== withMode.dockerImage || resolvedFallback !== withMode.fallbackImage) {
+  const resolvedFallback = Array.isArray(withMode.fallbackImage)
+    ? withMode.fallbackImage.map((f) => resolveImageTemplate(f, branch) || f)
+    : resolveImageTemplate(withMode.fallbackImage, branch);
+  const imageChanged = resolvedImage !== withMode.dockerImage;
+  const fallbackChanged = JSON.stringify(resolvedFallback) !== JSON.stringify(withMode.fallbackImage);
+  if (imageChanged || fallbackChanged) {
     return {
       ...withMode,
       dockerImage: resolvedImage || withMode.dockerImage,
-      ...(withMode.fallbackImage !== undefined ? { fallbackImage: resolvedFallback || withMode.fallbackImage } : {}),
+      ...(withMode.fallbackImage !== undefined ? { fallbackImage: resolvedFallback } : {}),
     };
   }
   return withMode;
+}
+
+/** 把 BuildProfile.fallbackImage(string | string[] | undefined) 规整为有序候选数组。 */
+export function normalizeFallbackImages(fallback: string | string[] | undefined): string[] {
+  if (!fallback) return [];
+  return (Array.isArray(fallback) ? fallback : [fallback]).map((s) => (s || '').trim()).filter(Boolean);
 }
 
 function missingEnvTemplates(env: Record<string, string>): string[] {
@@ -915,10 +926,12 @@ export class ContainerService {
     // 暴露给用户（对应「等待+提示,手动切回源码编译」兜底），并在 SSE 日志给反馈
     // 而非空白等待。
     if (profile.prebuiltImage === true) {
-      // 极速版「逐组件回退主分支」(用户 2026-06-23 决策)：CI 按 path-filter 只构建改动的
-      // 组件(不重复构建),所以某个 commit 可能缺本组件的镜像(只改了 api / 只改了 admin /
-      // 仅改 cds 或 docs)。按优先级尝试:① 本 commit 镜像(dockerImage) → ② 固定主分支回退
-      // 镜像(fallbackImage)。任一拉到即用它跑容器,**不硬失败**;两者都拉不到才报错。
+      // 极速版「逐组件有序回退」(用户 2026-06-23 决策 + Codex P1)：CI 按 path-filter 只构建
+      // 改动的组件(不重复构建),所以某 commit 可能缺本组件镜像。按**有序回退链**尝试:
+      //   ① 本 commit 镜像(dockerImage,:sha-<X>)
+      //   ② fallbackImage 链:先 :branch-<slug>(本分支该组件最近一次构建,保住本分支已有改动)
+      //      再 :branch-main(本分支从未构建过该组件时退到主分支)。
+      // 任一拉到即用它跑容器,**不硬失败**;全部拉不到才报错。
       const isUnresolved = (im: string): boolean => {
         if (!im) return true;
         if (im.includes('${')) return true; // 模板变量没解析
@@ -926,10 +939,15 @@ export class ContainerService {
         return tag === '' || tag.endsWith('-'); // tag 被空串替换成 :sha-/:branch-
       };
       const primary = (profile.dockerImage || '').trim();
-      const fallback = (profile.fallbackImage || '').trim();
+      const fallbackList = normalizeFallbackImages(profile.fallbackImage);
       const candidates: Array<{ image: string; kind: 'primary' | 'fallback' }> = [];
-      if (!isUnresolved(primary)) candidates.push({ image: primary, kind: 'primary' });
-      if (fallback && !isUnresolved(fallback) && fallback !== primary) candidates.push({ image: fallback, kind: 'fallback' });
+      const seen = new Set<string>();
+      if (!isUnresolved(primary)) { candidates.push({ image: primary, kind: 'primary' }); seen.add(primary); }
+      for (const fb of fallbackList) {
+        if (isUnresolved(fb) || seen.has(fb)) continue;
+        candidates.push({ image: fb, kind: 'fallback' });
+        seen.add(fb);
+      }
 
       if (candidates.length === 0) {
         const reason = `极速版镜像 tag 未解析且无可用回退镜像: ${primary || '(空)'} —— 缺 commit SHA / 分支 slug。`;
@@ -944,24 +962,25 @@ export class ContainerService {
           profileId: profile.id,
           requestId: context.requestId ?? undefined,
           operationId: context.operationId ?? undefined,
-          details: { image: primary, fallback, reason: '极速版镜像 tag 模板变量为空/未解析且无回退' },
+          details: { image: primary, fallback: fallbackList, reason: '极速版镜像 tag 模板变量为空/未解析且无回退' },
         });
         throw new Error(`${reason}\n请确认分支已有 commit（push 或部署请求携带 commitSha）,或配置回退镜像 / 切回源码编译。`);
       }
 
       let pulledImage: string | null = null;
       let lastDetail = '';
-      for (const cand of candidates) {
+      for (let i = 0; i < candidates.length; i++) {
+        const cand = candidates[i];
         onOutput?.(cand.kind === 'fallback'
-          ? `── 本 commit 无该组件 CI 镜像,回退固定主分支镜像 ${cand.image} ──\n`
+          ? `── 本 commit 无该组件 CI 镜像,按回退链尝试 ${cand.image} ──\n`
           : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
         context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
         const pull = await this.shell.exec(`docker pull ${cand.image}`);
         if (pull.stdout) onOutput?.(pull.stdout + '\n');
         if (pull.exitCode === 0) { pulledImage = cand.image; break; }
         lastDetail = (pull.stderr || pull.stdout || '').trim();
-        const hasNext = cand.kind === 'primary' && candidates.some((c) => c.kind === 'fallback');
-        onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? '（改用回退主分支镜像）' : ''} ──\n`);
+        const hasNext = i < candidates.length - 1;
+        onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? `（改用下一个回退镜像 ${candidates[i + 1].image}）` : ''} ──\n`);
       }
 
       if (!pulledImage) {

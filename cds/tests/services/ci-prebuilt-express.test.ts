@@ -19,7 +19,7 @@ import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry } from '../../src/types.js';
 import { GitHubWebhookDispatcher } from '../../src/services/github-webhook-dispatcher.js';
-import { resolveImageTemplate, slugifyBranchForImage, resolveEffectiveProfile } from '../../src/services/container.js';
+import { resolveImageTemplate, slugifyBranchForImage, resolveEffectiveProfile, normalizeFallbackImages } from '../../src/services/container.js';
 import {
   resolveActiveDeployModeId,
   branchUsesPrebuiltMode,
@@ -129,17 +129,29 @@ describe('极速版 — 纯函数', () => {
     expect(eff.command || '').toBe('');
   });
 
-  it('resolveEffectiveProfile 带 fallbackImage 时解析模板并保留（逐组件回退主分支）', () => {
+  it('resolveEffectiveProfile 带 fallbackImage 有序回退链时逐元素解析模板（Codex P1）', () => {
     const p = expressApiProfile();
-    p.deployModes!.express.fallbackImage = 'ghcr.io/inernoro/prd_agent/prdagent-server:branch-${CDS_BRANCH_SLUG}';
+    p.deployModes!.express.fallbackImage = [
+      'ghcr.io/inernoro/prd_agent/prdagent-server:branch-${CDS_BRANCH_SLUG}',
+      'ghcr.io/inernoro/prd_agent/prdagent-server:branch-main',
+    ];
     const branch = {
       id: 'p1-main', branch: 'Feat/Cool', githubCommitSha: FULL_SHA,
       profileOverrides: { api: { activeDeployMode: 'express' } },
     } as unknown as BranchEntry;
     const eff = resolveEffectiveProfile(p, branch);
     expect(eff.dockerImage).toBe(`ghcr.io/inernoro/prd_agent/prdagent-server:sha-${FULL_SHA}`);
-    // 回退镜像的 ${CDS_BRANCH_SLUG} 也被解析(此例分支名 → feat-cool);固定主分支时写死 branch-main 即原样保留。
-    expect(eff.fallbackImage).toBe('ghcr.io/inernoro/prd_agent/prdagent-server:branch-feat-cool');
+    // 回退链逐元素解析:① 本分支 tag(branch-feat-cool,保住本分支已有改动) ② 固定 branch-main。
+    expect(eff.fallbackImage).toEqual([
+      'ghcr.io/inernoro/prd_agent/prdagent-server:branch-feat-cool',
+      'ghcr.io/inernoro/prd_agent/prdagent-server:branch-main',
+    ]);
+  });
+
+  it('normalizeFallbackImages 把 string|string[]|undefined 规整为去空去重数组', () => {
+    expect(normalizeFallbackImages(undefined)).toEqual([]);
+    expect(normalizeFallbackImages('a:1')).toEqual(['a:1']);
+    expect(normalizeFallbackImages(['a:1', ' ', 'b:2'])).toEqual(['a:1', 'b:2']);
   });
 });
 

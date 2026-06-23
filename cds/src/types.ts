@@ -161,11 +161,11 @@ export interface BuildProfile {
    */
   prebuiltImage?: boolean;
   /**
-   * 2026-06-23 极速版「逐组件回退主分支」新增 —— 预构建镜像缺失时的回退镜像（解析后）。
+   * 2026-06-23 极速版「逐组件回退」新增 —— 预构建镜像缺失时的**有序回退链**（解析后）。
    * 由 DeployModeOverride.fallbackImage 经 resolveEffectiveProfile 解析模板得到。
-   * runService 在 `docker pull dockerImage` 失败（本 commit 无该组件镜像）时改拉此镜像。
+   * runService 在 `docker pull dockerImage` 失败时按数组顺序逐个回退,第一个拉到的即用。
    */
-  fallbackImage?: string;
+  fallbackImage?: string | string[];
   /**
    * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略。
    *
@@ -339,13 +339,16 @@ export interface DeployModeOverride {
    */
   containerPort?: number;
   /**
-   * 2026-06-23 极速版「逐组件回退主分支」新增 —— 当本 commit 没有预构建镜像时的回退镜像。
-   * CI 按 path-filter 只构建改动的组件（不重复构建）,所以某个 commit 可能只有 api 镜像
-   * 而没有 admin 镜像（或反之、或都没有，如仅 cds/docs 改动）。此时该组件回退到固定的
-   * 主分支镜像，保证预览总能起来、不硬失败（用户 2026-06-23 决策:没有镜像默认回退固定主分支）。
-   * 同样支持模板变量,例: `ghcr.io/inernoro/prd_agent/prdagent-server:branch-main`。
+   * 2026-06-23 极速版「逐组件回退」新增 —— 本 commit 没有该组件镜像时的**有序回退链**。
+   * CI 按 path-filter 只构建改动的组件（不重复构建），所以某 commit 可能缺某组件镜像。
+   * 按数组顺序逐个 docker pull,第一个拉到即用。推荐顺序（Codex P1: preserve prior branch
+   * images when a component is skipped）:
+   *   1. `:branch-${CDS_BRANCH_SLUG}` —— 本分支该组件最近一次构建（保住本分支已有改动,
+   *      避免「A 改 api、B 只改 admin」时部署 B 把 api 退到 main 丢掉本分支 api 改动）。
+   *   2. `:branch-main` —— 本分支从未构建过该组件时退到固定主分支镜像。
+   * 单字符串视为只有一个回退。支持模板变量(${CDS_BRANCH_SLUG} 等)。
    */
-  fallbackImage?: string;
+  fallbackImage?: string | string[];
 }
 
 /**

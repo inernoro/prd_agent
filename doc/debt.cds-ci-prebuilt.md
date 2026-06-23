@@ -21,7 +21,7 @@ SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。
 |---|------|------|------|
 | 1 | ghcr 包需手动设为 public | 首次 push 后 `prdagent-server` / `prdagent-admin` 两个包默认 private，需在 GitHub Packages 设置里改 Public，CDS 才能匿名 `docker pull`。否则极速版部署报「镜像拉取失败」 | 一次性 ops；未设则极速版不可用，分支显示「CI 构建失败」可切回源码 |
 | 2 | 工作流名硬编码 | CDS 只认 `branch-image.yml` / name `Branch Image` 的 workflow_run（避免 ci.yml 等先完成误触发）。常量在 `github-webhook-dispatcher.ts` 的 `CI_PREBUILT_WORKFLOW_FILE/NAME` | 泛化到任意 public 仓库时需做成 project 级配置 |
-| 3 | ~~每次 push 构建两镜像~~（已改为 path-filter，2026-06-23） | **已偿还**：改为 `dorny/paths-filter` 只构建改动组件（`prd-api/**`→api、`prd-admin/**`→admin），不再重复构建。某 commit 缺某组件镜像时，CDS runService 逐组件回退到固定主分支镜像（`:branch-main`，由 `DeployModeOverride.fallbackImage` 配置）。三种缺镜像场景（只一个构建/都没构建/仅 cds 改动）均由回退兜底，预览不硬失败 | 回退镜像目标固定写在 cds-compose `fallbackImage`；新仓库接入时需同步配置该字段 |
+| 3 | ~~每次 push 构建两镜像~~（已改为 path-filter，2026-06-23） | **已偿还**：改为 `dorny/paths-filter` 只构建改动组件（`prd-api/**`→api、`prd-admin/**`→admin），不再重复构建。某 commit 缺某组件镜像时，runService 走 `DeployModeOverride.fallbackImage` **有序回退链**：① `:branch-<slug>`（本分支该组件最近一次构建，保住本分支已有改动）② `:branch-main`（本分支从未构建过该组件时退到主分支）。避免「A 改 api、B 只改 admin」部署 B 把 api 直接退 main 丢掉本分支 A 的 api 改动。三种缺镜像场景均由回退链兜底，预览不硬失败 | 回退链写在 cds-compose `fallbackImage`（数组）；新仓库接入需同步配置；`:branch-<slug>` 依赖 CI 的 `type=ref,event=branch` 移动 tag 与 CDS slugify 一致 |
 | 4 | 极速版仍 git pull worktree | 部署时未跳过 `worktreeService.pull`（仅跳过编译）。pull 是廉价 git fetch，且保留 worktree 同步利于「切回源码编译」兜底；真正的重负载（编译）已由 prebuiltImage/skipSrcMount 消除 | 轻微冗余，不影响目标（卸载编译算力） |
 | 5 | 构建时延（分钟级） | push → 预览就绪比源码热加载慢出现（要等 CI 构建）。等待期分支卡有「等待 CI 镜像」徽章（非静止），符合预期管理 | 体验取舍：省 CDS CPU 换首次时延 |
 | 6 | 「切回源码编译」非一键 | 失败态徽章的「切回源码编译」打开分支详情抽屉，由现有部署模式下拉切回 source 模式（已可用），未在卡片做单击直切 | 能力已存在，仅少一步快捷 |

@@ -80,8 +80,8 @@ interface ComposeFile {
     prebuilt?: boolean;
     /** 2026-06-23 极速版：覆盖容器端口（预构建镜像监听端口常与源码模式不同）。 */
     containerPort?: number;
-    /** 2026-06-23 极速版：本 commit 无该组件镜像时的回退镜像（固定主分支镜像，如 `:branch-main`）。 */
-    fallbackImage?: string;
+    /** 2026-06-23 极速版：本 commit 无该组件镜像时的有序回退链（先 :branch-<slug> 再 :branch-main）。 */
+    fallbackImage?: string | string[];
   }>>;
 }
 
@@ -735,7 +735,7 @@ export function toCdsCompose(
   }
 
   // Optional x-cds-deploy-modes
-  type DeployModeYaml = { label: string; command?: string; image?: string; env?: Record<string, string>; prebuilt?: boolean; containerPort?: number; fallbackImage?: string };
+  type DeployModeYaml = { label: string; command?: string; image?: string; env?: Record<string, string>; prebuilt?: boolean; containerPort?: number; fallbackImage?: string | string[] };
   const deployModesOut: Record<string, Record<string, DeployModeYaml>> = {};
   for (const p of profiles) {
     if (p.deployModes && Object.keys(p.deployModes).length > 0) {
