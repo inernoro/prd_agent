@@ -27,6 +27,7 @@ SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。
 | 6 | 「切回源码编译」非一键 | 失败态徽章的「切回源码编译」打开分支详情抽屉，由现有部署模式下拉切回 source 模式（已可用），未在卡片做单击直切 | 能力已存在，仅少一步快捷 |
 | 7 | ClaudeSdkExecutor 回调端口 | express 模式 env 覆盖 `ClaudeSdkExecutor__CallbackBaseUrl` 为 `http://api-prd-agent:8080`（生产镜像端口）。若分支网络别名与项目 slug 不一致需核对 | 边缘功能；主链路（API 服务）不受影响 |
 | 8 | **极速版只省编译,不省运行时容器** | express 省掉的是 CDS 本机「编译」算力,但部署仍会 `docker run` 拉起运行时容器(api dotnet + admin serve)。在**已饱和的共享 CDS 宿主**上,首次 `docker pull` 大镜像(api ~数百 MB)的 I/O + 新容器内存,仍可能把宿主压到 CDS 控制台无响应。2026-06-23 实测一次:express 部署后 ~12:23 生产 CDS 控制台 healthz=000,约 1h 后恢复。**注意**:镜像首拉是一次性重 I/O,之后本地缓存命中,re-deploy 只 `docker run`(轻)。 | 共享宿主容量是独立于「编译卸载」的另一根轴;高负载实例上首拉大镜像前建议先看 `docker stats` / 停闲置分支。后续可考虑:拉取限流 / 拉取与运行分离 / 宿主容量预检 |
+| 9 | **早到 workflow_run 缓存是进程内** | push 延迟/重试导致 `workflow_run.completed` 早于 push 到达时,结果暂存在 dispatcher 的 `recentCompletedRuns`(Map,1h TTL/200 上限/一次性消费),push 置 express-waiting 时认领。**残留**:若 CDS 在「workflow_run 缓存」与「后续 push」之间重启,缓存丢失 → 分支仍会卡在 waiting,需再 push 或对失败 run 点 re-run 恢复。绝大多数竞态在秒级内完成,重启恰好插在中间概率极低。 | 进程内缓存够用;若要彻底持久化可把 completed-run 落 state(成本/收益不划算,暂不做) |
 
 ## 验证状态（2026-06-23 生产实证）
 
