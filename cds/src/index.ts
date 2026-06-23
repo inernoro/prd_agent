@@ -2935,6 +2935,35 @@ const registry = new ExecutorRegistry(stateService);
 registry.startHealthChecks();
 registry.registerEmbeddedMaster(config.masterPort);
 
+// 运维健康自检（观测性，避免性能事故静默复发）：每 5 分钟检查「会拖垮 CDS 的
+// 系统性信号」——预览调度器被禁用 / 主机过载 / 容器堆积——命中即 console.warn，
+// 让日志与左上角 Activity Monitor 都能看到。前端监控弹窗的「运维健康告警」是同一
+// 套口径（GET /api/cds-system/perf-health）。本次性能事故根因（调度器被禁用导致
+// 容器无限堆积、18 核 load 28）此前完全无告警，本自检即为补这个洞。
+function startPerfHealthMonitor(): ReturnType<typeof setInterval> {
+  const check = (): void => {
+    try {
+      const cores = (typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) || 1;
+      const loadPercent = Math.round(((os.loadavg()[0] || 0) / cores) * 100);
+      registry.refreshEmbeddedMasterLoad();
+      const running = registry.getAll().reduce((s, n) => s + (n.runningContainers ?? n.branches.length), 0);
+      const schedDisabled = !schedulerService.isEnabled();
+      const problems: string[] = [];
+      if (schedDisabled) problems.push('预览调度器已禁用（空闲分支不回收，容器会无限堆积）');
+      if (loadPercent >= 100) problems.push(`主机过载 loadPercent=${loadPercent}%`);
+      if (running > cores * 2) problems.push(`运行容器 ${running} 超过核数 2 倍`);
+      if (problems.length > 0) {
+        console.warn(`[perf-health] ${problems.join(' · ')}（详见监控弹窗「运维健康」或 GET /api/cds-system/perf-health）`);
+      }
+    } catch { /* 自检不致命 */ }
+  };
+  const timer = setInterval(check, 5 * 60 * 1000);
+  timer.unref?.();
+  check();
+  return timer;
+}
+startPerfHealthMonitor();
+
 // Current dispatcher strategy — mutable so the Dashboard's strategy radio
 // can change it at runtime. Read fresh on every deploy by both the branch
 // router and the cluster router. Default: 'least-load' (memory+CPU weighted).

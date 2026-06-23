@@ -254,17 +254,20 @@ export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
   // Public (no auth) so lightweight monitoring tools can poll it.
   // See `doc/design.cds-cluster-bootstrap.md` §4.3.
   router.get('/capacity', (_req, res) => {
+    registry.refreshEmbeddedMasterLoad(); // embedded 主节点真实负载（bug #5）
     res.json(registry.getTotalCapacity());
   });
 
   // ── GET /api/executors — list all executors ──
   router.get('/', (_req, res) => {
+    registry.refreshEmbeddedMasterLoad(); // embedded 主节点真实负载（bug #5）
     const executors = registry.getAll();
     res.json({ executors });
   });
 
   // ── GET /api/executors/:id — get single executor info ──
   router.get('/:id', (req, res) => {
+    registry.refreshEmbeddedMasterLoad(); // embedded 主节点真实负载（bug #5）
     const { id } = req.params;
     const executors = registry.getAll();
     const node = executors.find(n => n.id === id);

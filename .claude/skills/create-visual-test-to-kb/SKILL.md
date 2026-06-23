@@ -284,3 +284,19 @@ python3 $SKILL/scripts/read_comments.py --config $SKILL/acceptance.config.json \
 ## 合规
 
 全中文;禁 emoji(CLAUDE §0);截图通过知识库传输共享协议一次性提交,最终正文只能保留正式 HTTPS 图链,不允许 `data:image`;报告不可变(重测出新 report_id);预览地址走 cdscli 禁手拼(规则 #11)。
+
+## 报告图片与资产存储（2026-06-22）
+
+验收报告/知识库正文的图片走后端统一资产存储 `IAssetStorage`，由 `ASSETS_PROVIDER` 决定后端，**SHA256 内容去重**：
+
+| 后端 | ASSETS_PROVIDER | 必需 env | 用途 |
+|------|-----------------|----------|------|
+| 本地 | `local`（或未配凭据时自动兜底） | `ASSETS_LOCAL_DIR`（可选，默认 `{ContentRoot}/data/assets`） | 开发/预览/占位——无云凭据也能存图 |
+| Cloudflare R2 | `cloudflareR2` | `R2_ACCOUNT_ID` `R2_ACCESS_KEY_ID` `R2_SECRET_ACCESS_KEY` `R2_BUCKET`（+ 可选 `R2_PUBLIC_BASE_URL` `R2_PREFIX` `R2_ENDPOINT`） | 生产云端 |
+| 腾讯云 COS | `tencentCos` | `TENCENT_COS_BUCKET` `TENCENT_COS_REGION` `TENCENT_COS_SECRET_ID` `TENCENT_COS_SECRET_KEY` | 生产云端 |
+
+`ASSETS_PROVIDER` 未显式设置时按 **auto** 选择：有 COS 凭据→COS；否则有 R2 凭据→R2；都没有→**local 占位**（不再像旧逻辑那样直接抛异常，避免 CDS 预览等无凭据实例传图失败）。
+
+### 两种传图入口（接口已规范）
+1. **随正文一次性归档**（本技能默认）：Markdown 用 `{{IMG:name}}` 占位 + `assets[]` 传 base64，或正文直接内嵌 `data:image` / HTML `<img src="data:...">`。`PUT /api/document-store/entries/{id}/content` 的归一化器会抽取→存储→改写为正式 URL（正文不留 `data:image`）。
+2. **单独上传一张图片**（新增）：`POST /api/document-store/stores/{storeId}/images`（multipart `file`），返回 `{ url, sha256, mime, sizeBytes }`，供正文按 URL 引用。解决"上传 HTML 报告内嵌图存不住、又没有单独传图入口"。

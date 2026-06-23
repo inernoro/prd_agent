@@ -206,6 +206,78 @@
   }
 
   /*
+   * 分支卡片生命周期动效(2026-06-23):
+   *   - enter:新分支(webhook / 手动创建)淡入长出来
+   *   - leave:分支被回收(GitHub 删分支 → branch.removed)淡出收起,父组件
+   *     两段式延迟移除,等这段动画播完才真正从列表 filter 掉。
+   * 收起用 max-height + 透明度 + 轻微位移,在网格里读起来像「卡片被收走」。
+   */
+  @keyframes cds-branch-card-enter {
+    0% {
+      opacity: 0;
+      transform: translateY(10px) scale(0.97);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .cds-branch-card-enter {
+    animation: cds-branch-card-enter 440ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes cds-branch-card-leave {
+    0% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      max-height: 520px;
+      min-height: 0;
+      margin-bottom: 0;
+    }
+    35% {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.95);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.95);
+      max-height: 0;
+      min-height: 0;
+      margin-bottom: -1rem;
+      padding-top: 0;
+      padding-bottom: 0;
+      border-width: 0;
+    }
+  }
+  /*
+   * keyframe 里写 min-height:0 是关键:卡片根有 Tailwind min-h-[158px],
+   * 普通声明斗不过 utilities layer,但动画(keyframe)属于更高优先级来源,
+   * 能压住 min-height → max-height 收缩才真正生效(呼应 cds/CLAUDE.md 规则 #2)。
+   */
+  .cds-branch-card-leave {
+    pointer-events: none;
+    animation: cds-branch-card-leave 340ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  }
+  /* 尊重系统「减少动态效果」偏好:不播过渡,直接给最终「收起」态(高度归零),
+   * 否则卡片只是透明但仍占满布局空间,要等 ~360ms 移除定时器才让位。
+   * 这里无动画,普通声明斗不过 utilities layer 的 min-h-[158px],故用 !important。 */
+  @media (prefers-reduced-motion: reduce) {
+    .cds-branch-card-enter {
+      animation: none;
+    }
+    .cds-branch-card-leave {
+      animation: none;
+      opacity: 0;
+      overflow: hidden;
+      max-height: 0 !important;
+      min-height: 0 !important;
+      margin-bottom: -1rem;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      border-width: 0 !important;
+    }
+  }
+
+  /*
    * Mobile layout hardening.
    * These rules protect the high-traffic CDS surfaces from the exact class of
    * regressions caught in mobile acceptance: vertical text squeeze, footer/FAB
