@@ -643,17 +643,22 @@ public class DocumentStoreSyncResource : ISyncableResource
                     if (addOnly) { skipped++; continue; }
                     var sourceContentHash = Sha256Hex(content);
                     var targetMetadata = WithPeerSourceContentHash(WithLineage(fe.Metadata, fe.LineageId), sourceContentHash);
+                    // 「纯二进制」= 有 AttachmentId 且无 DocumentId。仅这种条目转文本时才算形态切换、才清 AttachmentId。
+                    // 关键：双形态条目（PDF/DOCX 等同时有 DocumentId + AttachmentId）导出只发文本（见 debt B4），both 回流时
+                    // 源头会拉回「纯文本回声」；若把「有 AttachmentId」一律当作二进制转文本，会把源头双形态条目的文件引用清掉
+                    // （Codex P1: Preserve attachments on dual text/file records）。故所有形态切换逻辑都只认 wasBinaryOnly。
+                    var wasBinaryOnly = !string.IsNullOrEmpty(exEntry.AttachmentId) && string.IsNullOrEmpty(exEntry.DocumentId);
                     var recordFieldsChanged = exEntry.Title != fe.Title || exEntry.ParentId != parentId
                         || !TagsEqual(exEntry.Tags, fe.Tags) || exEntry.Summary != fe.Summary
                         || !MetaEqual(exEntry.Metadata, fe.Metadata)
                         // v1.1 字段：仅排序/分类变化时也要落更新，否则只改 sortOrder/category 的对端改动会被廉价跳过
                         // （Bugbot: Sort and category skip sync）。全量更新分支已 Set 这两个字段，故这里必须纳入比较。
                         || exEntry.SortOrder != fe.SortOrder || exEntry.Category != fe.Category
-                        // 形态切换：现有条目是文件（带 AttachmentId），对端改成文本（哪怕空文本、其它字段没变）也必须走全量
-                        // 更新分支，否则空文本与「现有文件无 DocumentId 取到的 string.Empty」哈希相等 → 被廉价跳过，条目
-                        // 永远停在旧文件、不转成文本（Codex: Handle empty text when replacing a synced file）。转换后
-                        // fullUpdate 会写 DocumentId 并清 AttachmentId，下次该条件即为 false，无循环。
-                        || !string.IsNullOrEmpty(exEntry.AttachmentId);
+                        // 形态切换：现有为纯二进制文件，对端改成文本（哪怕空文本、其它字段没变）也必须走全量更新分支，
+                        // 否则空文本与「文件无 DocumentId 取到的 string.Empty」哈希相等 → 被廉价跳过，条目永远停在旧文件
+                        // （Codex: Handle empty text when replacing a synced file）。转换后 fullUpdate 写 DocumentId 并清
+                        // AttachmentId，下次 wasBinaryOnly 即为 false，无循环。
+                        || wasBinaryOnly;
                     var timestampsChanged = NeedsRecordTimestampRefresh(exEntry, fe, options.PreserveTimestamps);
                     if (!recordFieldsChanged && HasAppliedSourceContent(exEntry.Metadata, sourceContentHash))
                     {
@@ -719,10 +724,6 @@ public class DocumentStoreSyncResource : ISyncableResource
                     var changedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
                     var fullUpdate = Builders<DocumentEntry>.Update
                         .Set(e => e.DocumentId, parsed.Id)
-                        // 与二进制路径置 DocumentId=null 对称：文本覆盖时清掉可能残留的 AttachmentId，
-                        // 否则同血缘先以二进制落地、后以文本同步会同时挂 DocumentId+AttachmentId，UI 错乱、文件元数据残留
-                        // （Bugbot: Text sync keeps stale AttachmentId）。
-                        .Set(e => e.AttachmentId, (string?)null)
                         .Set(e => e.Title, fe.Title)
                         .Set(e => e.Summary, fe.Summary)
                         .Set(e => e.ParentId, parentId)
@@ -739,6 +740,11 @@ public class DocumentStoreSyncResource : ISyncableResource
                         .Set(e => e.LastChangedAt, changedAt);
                     if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
                         fullUpdate = fullUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+                    // 仅「纯二进制 → 文本」转换才清 AttachmentId（与二进制路径清 DocumentId 对称）。
+                    // 双形态条目（DocumentId + AttachmentId 并存，如 PDF/DOCX）正常文本更新时**不**清 AttachmentId，
+                    // 否则 both 回流会让源头丢失原始文件引用（Codex P1: Preserve attachments on dual text/file records）。
+                    if (wasBinaryOnly)
+                        fullUpdate = fullUpdate.Set(e => e.AttachmentId, (string?)null);
 
                     await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exEntry.Id, fullUpdate, cancellationToken: ct);
                     await CleanupReplacedDocAsync(oldDocId, parsed.Id, exEntry.Id);

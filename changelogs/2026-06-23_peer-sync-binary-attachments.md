@@ -14,3 +14,4 @@
 | fix | prd-api | peer-sync 二进制条目变更检测纳入 ContentType/FileSize/提取文本，文件未变仅元数据变也落更新；文件未变时刷新已存在 Attachment.ExtractedText/FileName，消除陈旧提取文本（Bugbot Medium x2） |
 | fix | prd-api | peer-sync 附件下载支持相对 URL：按 sourceBaseUrl 解析对端本地存储返回的相对地址（/api/...），使自托管/本地存储节点也能同步文件（Codex P2） |
 | fix | prd-api | peer-sync 文件条目被改成（空）文本时强制走全量更新，避免空文本与文件兜底空串哈希相等导致条目卡在旧文件不转文本（Codex P2） |
+| fix | prd-api | peer-sync 形态切换只认「纯二进制」(有 AttachmentId 且无 DocumentId)，双形态条目(PDF/DOCX 同时有文档+附件)文本更新不再误清 AttachmentId，修复 both 回流丢原件（Codex P1 回归修复） |
