@@ -1304,7 +1304,19 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       // maxHotBranches until the next scheduler tick, blowing the configured
       // hot-container budget. No-op when the scheduler is disabled or
       // maxHotBranches is unset.
-      await schedulerService.evictLruIfOverCapacity(slug);
+      //
+      // Best-effort: eviction can throw when the chosen LRU victim has an active
+      // higher-priority operation (its cool path rethrows the lease rejection).
+      // That's unrelated to THIS branch — letting it fall into the catch below
+      // would poison the requested branch into `error` and stop future preview
+      // retries over a mere capacity hiccup. Swallow it; the next scheduler tick
+      // re-enforces capacity. (A superseding op on THIS branch still surfaces via
+      // the assertCurrent checks in the restart loop, not here.)
+      try {
+        await schedulerService.evictLruIfOverCapacity(slug);
+      } catch (evictErr) {
+        console.warn(`[auto-wake] capacity eviction skipped for "${slug}": ${(evictErr as Error).message}`);
+      }
 
       const profiles = stateService.getBuildProfilesForProject(branch.projectId);
       const failed: string[] = [];
