@@ -1062,8 +1062,8 @@ h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:0;margin-bott
     <div class="chip">${safeBranch}</div>
     ${safeError ? `<div class="err">${safeError}</div>` : ''}
     <div class="actions">
-      <a class="btn" href="/project-list">返回 CDS 控制台</a>
-      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/cds-settings#loading-pages">查看加载页预览</a>
     </div>
     <div class="hint">CDS 会优先保留可诊断信息，避免把访问者带到空白或浏览器原生错误页。</div>
   </section>
@@ -1675,8 +1675,8 @@ ${shouldAutoRefresh ? `;(function(){
     <p class="desc">该分支在此 CDS 实例上未注册，无法自动恢复。请确认分支名称，或回到 CDS 控制台重新部署。</p>
     <div class="chip">${safe}</div>
     <div class="actions">
-      <a class="btn" href="/project-list">返回 CDS 控制台</a>
-      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="${this.dashboardBaseUrl()}/cds-settings#loading-pages">查看加载页预览</a>
     </div>
     <div class="hint">
       <span><strong>CDS 已停止自动恢复</strong> 避免错误分支被动访问后反复部署。</span>
@@ -1715,6 +1715,22 @@ ${shouldAutoRefresh ? `;(function(){
         default: return '&#39;';
       }
     });
+  }
+
+  /**
+   * Absolute base URL of the CDS dashboard host (e.g. "https://cds.miduo.org").
+   *
+   * These diagnostic pages are served on the *preview* subdomain
+   * (`<slug>.miduo.org`), so a relative href like `/project-list` would resolve
+   * against the preview host and land nowhere. The dashboard lives on a
+   * different host (dashboardDomain / mainDomain), so the "返回 CDS 控制台" /
+   * "查看加载页预览" links must be absolute. Same source of truth as
+   * index.ts `serveBranchGonePage` (dashboardDomain || mainDomain).
+   * Returns '' when no domain is configured, falling back to relative links.
+   */
+  private dashboardBaseUrl(): string {
+    const domain = this.config?.dashboardDomain || this.config?.mainDomain;
+    return domain ? `https://${domain}` : '';
   }
 
   /**
