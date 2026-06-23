@@ -486,30 +486,39 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     });
 
     return (
-      <div className="hidden lg:block">
+      <div className="hidden lg:block h-full">
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
-            gridAutoRows: '244px',
+            gridTemplateRows: '1fr 1fr',
             gap: '12px',
+            height: '100%',
+            minHeight: 0,
             transition: 'grid-template-rows .4s',
           }}
         >
-          {/* 热力图 hero（9 列 × 2 行主角，约占 3/4）：内部 voc-hero-swap 入场 + 子切换 morph */}
-          <div style={span(9, 2)}>
+          {/* 热力图 hero（8 列 × 2 行主角，约占 2/3）：内部 voc-hero-swap 入场 + 子切换 morph */}
+          <div style={span(8, 2)}>
             <div key={mapMode} className="h-full" style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
               {renderMapTile()}
             </div>
           </div>
-          {/* 右 1/4 列（3 列 × 2 行）：趋势 / 痛点指数 / 声道竖排平分；趋势无数据时由后两者吸收高度 */}
-          <div style={span(3, 2)} className="voc-bento-tile">
-            <div className="h-full flex flex-col gap-3" style={{ minHeight: 0 }}>
-              {trendEmpty ? null : <div className="flex-1 min-h-0">{renderTrendTile(true)}</div>}
-              <div className="flex-1 min-h-0">{renderStatsTile()}</div>
-              <div className="flex-1 min-h-0">{renderBoardTile()}</div>
-            </div>
-          </div>
+          {/* 右 1/3 列（4 列 × 2 行）：还原图2排布——趋势在上整宽，痛点指数 + 声道在下并排。
+              填满整屏后每格高度足够，痛点指数仪表盘与声道卡片都能完整渲染（不再被压扁裁掉）。
+              趋势无数据时整块移出，痛点指数 + 声道上下各占一行吸收其高度。 */}
+          {trendEmpty ? (
+            <>
+              <div style={span(4, 1)} className="voc-bento-tile">{renderStatsTile()}</div>
+              <div style={span(4, 1)} className="voc-bento-tile">{renderBoardTile()}</div>
+            </>
+          ) : (
+            <>
+              <div style={span(4, 1)} className="voc-bento-tile">{renderTrendTile(true)}</div>
+              <div style={span(2, 1)} className="voc-bento-tile">{renderStatsTile()}</div>
+              <div style={span(2, 1)} className="voc-bento-tile">{renderBoardTile()}</div>
+            </>
+          )}
         </div>
         {/* 趋势隐藏时的持续挂载点：不占布局，仅维持订阅 + 空态上报，使窗口切到有数据时本格能复现 */}
         {trendEmpty ? <div style={{ display: 'none' }}>{renderTrendTile(true)}</div> : null}
@@ -560,20 +569,21 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
 
   return (
     <GlassCard className="flex-1 flex flex-col" mobileFlush style={{ minHeight: 0 }}>
-      <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-        <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }
-          @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
-          @keyframes voc-hero-swap { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-          @keyframes voc-drawer-in { from { transform: translateX(36px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-          /* Bento 格：span 变化时平滑过渡（趋势吸收/补满有动效），内部卡撑满格高 */
-          .voc-bento-tile { transition: grid-column .45s cubic-bezier(.2,.7,.2,1), grid-row .45s cubic-bezier(.2,.7,.2,1); min-height: 0; }
-          .voc-bento-tile > * { height: 100%; min-height: 0; }`}</style>
-        {/* 闭环 ribbon：监测 → 预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落，从热力图/洞察现算 */}
-        <div className="px-1.5 pt-2 sm:px-5 sm:pt-4">
-          <ExperienceRibbon mapData={mapData} insights={data} />
-          {/* Hero：桌面 2×2 四图仪表盘 / 移动单图切换。切换时间窗(loading && data)时叠一层「更新中」过渡态，
-              旧内容保持可见，数据到达后各图走自己的补间平滑过渡。 */}
-          <div className="relative">
+      <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }
+        @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+        @keyframes voc-hero-swap { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes voc-drawer-in { from { transform: translateX(36px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        /* Bento 格：span 变化时平滑过渡（趋势吸收/补满有动效），内部卡撑满格高 */
+        .voc-bento-tile { transition: grid-column .45s cubic-bezier(.2,.7,.2,1), grid-row .45s cubic-bezier(.2,.7,.2,1); min-height: 0; }
+        .voc-bento-tile > * { height: 100%; min-height: 0; }`}</style>
+      {/* 闭环 ribbon 作为固定头部（不随内容滚动），让下方 hero 能精确填满滚动视口首屏 */}
+      <div className="px-1.5 pt-2 sm:px-5 sm:pt-4 shrink-0">
+        <ExperienceRibbon mapData={mapData} insights={data} />
+      </div>
+      {/* 滚动区：hero 桌面填满首屏（lg:h-full），底部数据行 + 痛点明细全宽放其下方、滚动可见 */}
+      <div className="flex-1 flex flex-col" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+        {/* Hero：桌面 2/3 热力图 + 1/3 仪表盘填满首屏 / 移动单图切换。切换时间窗(loading && data)叠「更新中」过渡态。 */}
+        <div className="relative px-1.5 sm:px-5 lg:h-full lg:shrink-0">
             {renderHeroView()}
             {loading && data ? (
               <div
@@ -594,7 +604,6 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               </div>
             ) : null}
           </div>
-        </div>
         {/* 数据源状态行：诚实告知信号从哪来、采集到什么程度 */}
         {data ? (
           <div className="sticky top-0 z-10 flex items-center gap-3 flex-wrap px-2 sm:px-5 py-2.5 text-[11px] text-white/40 border-b border-white/[0.05] backdrop-blur-md" style={{ background: 'rgba(16,17,19,0.72)' }}>
