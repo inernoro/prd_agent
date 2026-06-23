@@ -830,6 +830,10 @@ export class GitHubWebhookDispatcher {
       if (!dryRun) {
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           ciImageStatus: 'ready',
+          // 把 ciTargetSha 钉到本次 head_sha:fallback matcher 可能按 githubCommitSha
+          // 匹配到一个 ciTargetSha 仍是旧值的分支,不同步会让 check_run 闸门
+          //（ready && ciTargetSha===head_sha）永远卡住（Bugbot: CI ready omits target SHA）。
+          ciTargetSha: headSha,
           ciWorkflowConclusion: conclusion,
           ciWorkflowRunUrl: run.html_url,
         });
@@ -848,6 +852,7 @@ export class GitHubWebhookDispatcher {
     if (!dryRun) {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'failed',
+        ciTargetSha: headSha, // 同上:保持 ciTargetSha 与本次 run 的 head_sha 一致
         ciWorkflowConclusion: conclusion,
         ciWorkflowRunUrl: run.html_url,
       });

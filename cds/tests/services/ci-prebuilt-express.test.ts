@@ -211,7 +211,35 @@ describe('极速版 — dispatcher', () => {
     });
     expect(result.action).toBe('ci-image-ready');
     expect(result.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: FULL_SHA });
-    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('ready');
+    const ready = stateService.getBranch(pushed.branchId!);
+    expect(ready?.ciImageStatus).toBe('ready');
+    // ciTargetSha 必须与 head_sha 一致,否则 check_run 闸门会卡（Bugbot: CI ready omits target SHA）。
+    expect(ready?.ciTargetSha).toBe(FULL_SHA);
+  });
+
+  it('workflow_run 经 fallback(githubCommitSha)匹配后 ciTargetSha 同步到 head_sha,check_run 重跑可放行', async () => {
+    // 早到 + 后 push 之外的路径:构造一个 ciTargetSha 为旧值、githubCommitSha=新值的分支,
+    // 让 workflow_run 走 fallback 匹配,断言 ready 后 ciTargetSha 被钉到 head_sha。
+    const pushed = await pushOnce(); // waiting, ciTargetSha=FULL_SHA, githubCommitSha=FULL_SHA
+    const NEW = 'eeee5555ffff6666aaaa7777bbbb8888cccc9999';
+    // 手动把分支改成「githubCommitSha=NEW 但 ciTargetSha=旧」模拟 stamp 错位
+    stateService.updateBranchGithubMeta(pushed.branchId!, { githubCommitSha: NEW });
+    const result = await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 80, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: NEW, head_branch: 'feature', conclusion: 'success' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('ci-image-ready');
+    const b = stateService.getBranch(pushed.branchId!);
+    expect(b?.ciTargetSha).toBe(NEW); // fallback 匹配后已同步
+    // check_run 重跑携带 NEW → 此时 ready && ciTargetSha===NEW → 放行。
+    const cr = await dispatcher.handle('check_run', {
+      action: 'rerequested',
+      check_run: { external_id: pushed.branchId, head_sha: NEW },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(cr.action).toBe('check-run-requeued');
+    expect(cr.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: NEW });
   });
 
   it('workflow_run(branch-image.yml, failure) → ci-image-failed,无 deployRequest', async () => {

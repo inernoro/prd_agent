@@ -21,3 +21,4 @@
 | fix | cds | PR review 修复（Bugbot）：align-deploy-modes 写 override 时若分支模式真的变了,清掉旧 ciImageStatus/ciTargetSha/ciWorkflowConclusion/ciWorkflowRunUrl,避免卡片显示与新模式不符的「等待 CI / CI 失败」陈旧徽章;模式未变不动(不打断 in-flight 等待) |
 | fix | cds | PR review 修复（Bugbot）：check_run 重跑放行极速版部署须同时满足 ciImageStatus=ready 且 ciTargetSha===head_sha,避免「A 已 ready」误部署 commit B 的预构建镜像 |
 | fix | cds | PR review 修复（Bugbot）：新 push 重置 express 分支为 waiting 时一并清掉旧 ciWorkflowRunUrl,避免「等待 CI 镜像」卡片的「查看构建」指向旧的失败/无关 Actions run |
+| fix | cds | PR review 修复（Bugbot）：workflow_run 标记 ready/failed 时同步 ciTargetSha=head_sha,避免 fallback(按 githubCommitSha)匹配后 ciTargetSha 滞留旧值,导致 check_run 闸门(ready && ciTargetSha===head_sha)永久卡住 |
