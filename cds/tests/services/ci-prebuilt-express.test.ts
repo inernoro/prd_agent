@@ -470,4 +470,41 @@ describe('极速版 — dispatcher', () => {
     expect(result.action).toBe('check-run-requeued');
     expect(result.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: FULL_SHA });
   });
+
+  it('check_run 重跑:ready 的是别的 commit → 仍不放行（Bugbot: check run ignores CI target SHA）', async () => {
+    const pushed = await pushOnce(); // ciTargetSha=FULL_SHA
+    await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 60, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, head_branch: 'feature', conclusion: 'success' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('ready');
+    // check_run 携带另一个 commit B → ready(针对 A) 不应放行 B 的预构建部署。
+    const OTHER_SHA = 'cccc3333dddd4444eeee5555ffff6666aaaa7777';
+    const result = await dispatcher.handle('check_run', {
+      action: 'rerequested',
+      check_run: { external_id: pushed.branchId, head_sha: OTHER_SHA },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('ci-image-waiting');
+    expect(result.deployRequest).toBeUndefined();
+  });
+
+  it('新 push 重置 waiting 时清掉旧 ciWorkflowRunUrl（Bugbot: stale CI run link on wait）', async () => {
+    const pushed = await pushOnce();
+    // 先让上一轮失败并留下 run url。
+    await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 70, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, head_branch: 'feature', conclusion: 'failure', html_url: 'https://github.com/octocat/repo/actions/runs/70' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(stateService.getBranch(pushed.branchId!)?.ciWorkflowRunUrl).toBe('https://github.com/octocat/repo/actions/runs/70');
+    // 新 push 同分支新 commit → 重置 waiting,应清掉旧 run url。
+    const NEW_SHA = 'dddd4444eeee5555ffff6666aaaa7777bbbb8888';
+    await dispatcher.handle('push', { ref: 'refs/heads/feature', after: NEW_SHA, repository: { id: 1, full_name: 'octocat/repo' } });
+    const branch = stateService.getBranch(pushed.branchId!);
+    expect(branch?.ciImageStatus).toBe('waiting');
+    expect(branch?.ciTargetSha).toBe(NEW_SHA);
+    expect(branch?.ciWorkflowRunUrl).toBeUndefined();
+  });
 });

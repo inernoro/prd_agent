@@ -1269,6 +1269,9 @@ export class GitHubWebhookDispatcher {
         ciImageStatus: 'waiting',
         ciTargetSha: commitSha,
         ciWorkflowConclusion: undefined,
+        // 同时清掉上一次 run 的链接,否则「等待 CI 镜像」卡片的「查看构建」会指向
+        // 旧的(可能失败/无关)Actions run（Bugbot: stale CI run link on wait）。
+        ciWorkflowRunUrl: undefined,
       });
       this.deps.stateService.save();
       const waitEntry = this.deps.stateService.getBranch(branchId);
@@ -1367,15 +1370,18 @@ export class GitHubWebhookDispatcher {
       this.deps.stateService.updateBranchGithubMeta(branchId, { githubCommitSha: commitSha });
       this.deps.stateService.save();
     }
-    // 极速版 CI 闸门（Bugbot: check run skips CI wait）：check_run re-run 不得绕过
-    // 「等 CI 镜像」直接部署预构建镜像 —— ghcr 镜像可能还没 push,docker pull 必失败。
-    // 仅当 CI 镜像已 ready 才放行部署;waiting/failed/尚未构建时只 ack,不返回 deployRequest。
-    // 非极速版分支维持原有「check_run re-run = 重部署」行为不变。
+    // 极速版 CI 闸门（Bugbot: check run skips CI wait / ignores CI target SHA）：
+    // check_run re-run 不得绕过「等 CI 镜像」直接部署预构建镜像 —— ghcr 镜像可能还没
+    // push,docker pull 必失败。放行条件必须**同时**满足:① 镜像 ready;② ready 的就是
+    // 本次 head_sha（ciTargetSha===commitSha）。否则(waiting/failed/未构建,或 ready 的是
+    // 别的 commit)只 ack,不返回 deployRequest。非极速版分支维持原「re-run=重部署」不变。
     const checkProfiles = this.deps.stateService.getBuildProfilesForProject(entry.projectId || 'default');
-    if (branchUsesPrebuiltMode(checkProfiles, entry) && entry.ciImageStatus !== 'ready') {
+    const expressReadyForThisSha =
+      entry.ciImageStatus === 'ready' && entry.ciTargetSha === commitSha;
+    if (branchUsesPrebuiltMode(checkProfiles, entry) && !expressReadyForThisSha) {
       return {
         action: 'ci-image-waiting',
-        message: `${dryRun ? '[dry-run] ' : ''}极速版分支 '${branchId}' 等待 CI 镜像就绪,check_run 重跑不触发预构建部署（状态:${entry.ciImageStatus || '未构建'}）`,
+        message: `${dryRun ? '[dry-run] ' : ''}极速版分支 '${branchId}' 等待 CI 镜像就绪,check_run 重跑不触发预构建部署（状态:${entry.ciImageStatus || '未构建'}, 目标 SHA:${(entry.ciTargetSha || '-').slice(0, 7)} vs ${commitSha.slice(0, 7)}）`,
         branchId,
       };
     }
