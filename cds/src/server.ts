@@ -15,6 +15,7 @@ import { createPendingImportRouter } from './routes/pending-import.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
+import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createReportsRouter } from './routes/reports.js';
@@ -874,6 +875,14 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/service-deployments\/(.+)$/, '查看部署详情'],
     // shared-service Project 实例发现（spec.cds-map-pairing-protocol §3.2）
     [/^GET \/projects\/(.+)\/instances$/, '列出项目实例'],
+    // 项目迁移(配置复刻 + 数据迁移扫描，2026-06-23)
+    [/^GET \/projects\/(.+)\/migration\/peers$/, '列出迁移目标'],
+    [/^POST \/projects\/(.+)\/migration\/peers$/, '新增迁移目标'],
+    [/^POST \/projects\/(.+)\/migration\/peers\/(.+)\/verify$/, '测试迁移目标连接'],
+    [/^DELETE \/projects\/(.+)\/migration\/peers\/(.+)$/, '删除迁移目标'],
+    [/^GET \/projects\/(.+)\/migration\/config-preview$/, '预览可复刻配置'],
+    [/^POST \/projects\/(.+)\/migration\/replicate-config$/, '推送配置到目标 CDS'],
+    [/^POST \/projects\/(.+)\/migration\/data-plan$/, '扫描数据迁移计划'],
     // CDS 配对连接 :id 路径
     [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
     [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
@@ -3206,6 +3215,12 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createProjectComposeRouter({
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
+  }));
+  // 项目迁移:配置打包复刻 + 数据迁移扫描,把项目移植到另一个 CDS 节点(2026-06-23)
+  app.use('/api', createProjectMigrationRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+    authMode,
   }));
   // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
   app.use('/api', createProjectStorageRouter({

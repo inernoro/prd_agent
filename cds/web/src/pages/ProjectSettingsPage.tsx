@@ -22,6 +22,10 @@ import {
   RotateCcw,
   Rocket,
   Save,
+  Send,
+  Server,
+  Plus,
+  ShieldCheck,
   Settings,
   TerminalSquare,
   Trash2,
@@ -276,6 +280,7 @@ type TabValue =
   | 'compose'
   | 'infra'
   | 'storage'
+  | 'migration'
   | 'cache'
   | 'stats'
   | 'activity'
@@ -309,6 +314,7 @@ const tabGroups: TabGroup[] = [
       { value: 'compose', label: '项目配置', icon: FileText },
       { value: 'infra', label: '基础设施', icon: Plug },
       { value: 'storage', label: '存储', icon: Database },
+      { value: 'migration', label: '迁移', icon: Send },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
       { value: 'stats', label: '统计', icon: BarChart3 },
       { value: 'activity', label: '活动日志', icon: Activity },
@@ -500,7 +506,7 @@ export function ProjectSettingsPage(): JSX.Element {
             <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
               <TabsList
                 aria-label="项目设置分区"
-                className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-[72px] lg:self-start"
+                className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-0 lg:self-start"
               >
                 {tabGroups.map((group, groupIdx) => (
                   <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-2'}`}>
@@ -541,6 +547,9 @@ export function ProjectSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="storage">
                   <ProjectStorageTab projectId={project.id} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="migration">
+                  <ProjectMigrationTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="comment-template">
                   <CommentTemplateTab projectId={project.id} onToast={setToast} />
@@ -2753,6 +2762,403 @@ function ProjectComposeTab({
           </div>
         </details>
       ) : null}
+    </div>
+  );
+}
+
+// ---- 项目迁移(配置打包复刻 + 数据迁移扫描，2026-06-23) ----
+
+interface MigrationPeer {
+  id: string;
+  name: string;
+  baseUrl: string;
+  hasKey: boolean;
+  keyMasked: string | null;
+  createdAt: string;
+  lastVerifiedAt?: string;
+  remoteLabel?: string;
+}
+
+interface ConfigPreview {
+  yaml: string;
+  bytes: number;
+  summary: { profiles: number; infra: number; envVars: number; routingRules: number };
+}
+
+interface ReplicateResult {
+  ok: boolean;
+  dryRun: boolean;
+  cleanMode: string;
+  sentBytes: number;
+  remoteStatus: number;
+  remoteResult: unknown;
+  error?: string;
+}
+
+interface DataPlanResult {
+  sourceStores: Array<{ id: string; name: string; image: string; dbName?: string }>;
+  target: { reachable: boolean; error?: string };
+  manualBridge: Array<{ store: string; download: string; restore: string; note: string }>;
+}
+
+function ProjectMigrationTab({
+  projectId,
+  onToast,
+}: {
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const base = `/api/projects/${encodeURIComponent(projectId)}/migration`;
+
+  const [peers, setPeers] = useState<MigrationPeer[] | null>(null);
+  const [selectedPeerId, setSelectedPeerId] = useState<string>('');
+  const [newName, setNewName] = useState('');
+  const [newUrl, setNewUrl] = useState('');
+  const [newKey, setNewKey] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+
+  const [preview, setPreview] = useState<ConfigPreview | null>(null);
+  const [showYaml, setShowYaml] = useState(false);
+  const [replicating, setReplicating] = useState<'dry' | 'apply' | null>(null);
+  const [replicateResult, setReplicateResult] = useState<ReplicateResult | null>(null);
+
+  const [scanning, setScanning] = useState(false);
+  const [dataPlan, setDataPlan] = useState<DataPlanResult | null>(null);
+
+  // projectId 切换时:① 立刻清空上一个项目的残留(预览 cds-compose 含明文 env,绝不能跨项目串显);
+  // ② 旧项目的慢响应到达时用 liveProjectId 丢弃,避免覆盖新项目视图(Bugbot High「Stale migration preview leak」)。
+  const liveProjectId = useRef(projectId);
+  liveProjectId.current = projectId;
+  useEffect(() => {
+    setPeers(null); setPreview(null); setSelectedPeerId('');
+    setReplicateResult(null); setDataPlan(null); setShowYaml(false);
+    setReplicating(null); setScanning(false);
+  }, [projectId]);
+
+  const loadPeers = useCallback(async () => {
+    const reqPid = projectId;
+    try {
+      const res = await fetch(apiUrl(`${base}/peers`), { credentials: 'include' });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应
+      if (!res.ok) { onToast(`加载迁移目标失败:${body.error || res.status}`); setPeers([]); return; }
+      const list = (body.peers || []) as MigrationPeer[];
+      setPeers(list);
+      setSelectedPeerId((prev) => prev || (list[0]?.id ?? ''));
+    } catch (err) {
+      if (reqPid !== liveProjectId.current) return;
+      onToast(`加载异常:${(err as Error).message}`);
+      setPeers([]); // 失败也要退出 loading,否则一直卡在「加载迁移设置…」(Bugbot「Migration tab infinite loading」)
+    }
+  }, [base, onToast, projectId]);
+
+  const loadPreview = useCallback(async () => {
+    const reqPid = projectId;
+    try {
+      const res = await fetch(apiUrl(`${base}/config-preview`), { credentials: 'include' });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应(防别项目 cds-compose + env 泄露)
+      if (!res.ok) { onToast(`加载配置预览失败:${body.error || res.status}`); return; }
+      setPreview(body as ConfigPreview);
+    } catch (err) {
+      if (reqPid !== liveProjectId.current) return;
+      onToast(`加载异常:${(err as Error).message}`);
+    }
+  }, [base, onToast, projectId]);
+
+  useEffect(() => { void loadPeers(); void loadPreview(); }, [loadPeers, loadPreview]);
+
+  const addPeer = useCallback(async () => {
+    if (!newUrl.trim()) { onToast('请填写目标节点地址'); return; }
+    setAdding(true);
+    try {
+      const res = await fetch(apiUrl(`${base}/peers`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName.trim(), baseUrl: newUrl.trim(), accessKey: newKey.trim() || undefined }),
+      });
+      const body = await res.json();
+      if (!res.ok) { onToast(`添加失败:${body.error || res.status}`); return; }
+      onToast('已添加迁移目标');
+      setNewName(''); setNewUrl(''); setNewKey('');
+      await loadPeers();
+      if (body.peer?.id) setSelectedPeerId(body.peer.id);
+    } catch (err) {
+      onToast(`添加异常:${(err as Error).message}`);
+    } finally {
+      setAdding(false);
+    }
+  }, [base, newName, newUrl, newKey, onToast, loadPeers]);
+
+  const verifyPeer = useCallback(async (peerId: string) => {
+    setVerifyingId(peerId);
+    try {
+      const res = await fetch(apiUrl(`${base}/peers/${encodeURIComponent(peerId)}/verify`), {
+        method: 'POST', credentials: 'include',
+      });
+      const body = await res.json();
+      if (body.ok) onToast(`连接成功:${body.identity?.username || body.peer?.remoteLabel || '已连接'}`);
+      else onToast(`连接失败:${body.error || `HTTP ${body.remoteStatus ?? res.status}`}`);
+      await loadPeers();
+    } catch (err) {
+      onToast(`连接异常:${(err as Error).message}`);
+    } finally {
+      setVerifyingId(null);
+    }
+  }, [base, onToast, loadPeers]);
+
+  const deletePeer = useCallback(async (peerId: string) => {
+    try {
+      const res = await fetch(apiUrl(`${base}/peers/${encodeURIComponent(peerId)}`), {
+        method: 'DELETE', credentials: 'include',
+      });
+      if (!res.ok) { const b = await res.json().catch(() => ({})); onToast(`删除失败:${b.error || res.status}`); return; }
+      onToast('已删除迁移目标');
+      if (selectedPeerId === peerId) setSelectedPeerId('');
+      await loadPeers();
+    } catch (err) {
+      onToast(`删除异常:${(err as Error).message}`);
+    }
+  }, [base, onToast, loadPeers, selectedPeerId]);
+
+  const replicate = useCallback(async (dryRun: boolean) => {
+    if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return; }
+    const reqPid = projectId;
+    setReplicating(dryRun ? 'dry' : 'apply');
+    setReplicateResult(null);
+    try {
+      // 只走 merge(纯新增/更新)。后端已强制 merge —— 远端 import-config 的 replace-all
+      // 是全局破坏,会清掉目标其它项目的配置,迁移语义下绝不使用。
+      const res = await fetch(apiUrl(`${base}/replicate-config`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peerId: selectedPeerId, dryRun }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return; // 项目已切换,旧推送结果/toast 不得落到新项目
+      setReplicateResult(body as ReplicateResult);
+      if (body.ok) onToast(dryRun ? '预演完成:目标已返回将要变更的内容' : '配置已推送到目标 CDS 复刻');
+      else onToast(`推送失败:${body.error || `HTTP ${body.remoteStatus ?? res.status}`}`);
+    } catch (err) {
+      if (reqPid !== liveProjectId.current) return;
+      onToast(`推送异常:${(err as Error).message}`);
+    } finally {
+      if (reqPid === liveProjectId.current) setReplicating(null);
+    }
+  }, [base, selectedPeerId, onToast, projectId]);
+
+  const runDataPlan = useCallback(async () => {
+    if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return; }
+    const reqPid = projectId;
+    setScanning(true);
+    setDataPlan(null);
+    try {
+      const res = await fetch(apiUrl(`${base}/data-plan`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peerId: selectedPeerId }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return; // 项目已切换,旧扫描结果/toast 不得落到新项目
+      if (!res.ok) { onToast(`扫描失败:${body.error || res.status}`); return; }
+      setDataPlan(body as DataPlanResult);
+    } catch (err) {
+      if (reqPid !== liveProjectId.current) return;
+      onToast(`扫描异常:${(err as Error).message}`);
+    } finally {
+      if (reqPid === liveProjectId.current) setScanning(false);
+    }
+  }, [base, selectedPeerId, onToast]);
+
+  if (!peers) return <LoadingBlock label="加载迁移设置…" />;
+
+  const renderRemotePreview = (result: unknown): JSX.Element | null => {
+    const r = result as { valid?: boolean; applied?: boolean; preview?: Record<string, { add?: number; replace?: number; skip?: number; items?: string[] }>; message?: string } | null;
+    if (!r || typeof r !== 'object') return null;
+    const pv = r.preview || {};
+    return (
+      <div className="mt-2 space-y-1 text-xs">
+        <div className="text-muted-foreground">
+          目标校验:{r.valid ? '通过' : '未通过'} · {r.applied ? '已落库' : '仅预演(未改动目标)'}
+        </div>
+        {Object.entries(pv).map(([k, v]) => (
+          <div key={k} className="flex flex-wrap items-center gap-2">
+            <code className="font-mono">{k}</code>
+            <span className="text-muted-foreground">新增 {v.add ?? 0} · 替换 {v.replace ?? 0} · 跳过 {v.skip ?? 0}</span>
+            {(v.items || []).slice(0, 6).map((it, i) => (
+              <span key={i} className="rounded bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5">{it}</span>
+            ))}
+          </div>
+        ))}
+        {r.message ? <div className="text-muted-foreground">{r.message}</div> : null}
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h3 className="text-base font-semibold">项目迁移</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          把本项目「打包复刻」到另一个 CDS 节点:导出可移植的 <code className="font-mono">cds-compose</code> 配置并推送到目标节点复刻部署,再按需迁移数据库。
+        </p>
+      </div>
+
+      {/* 1. 迁移目标(远端 CDS 节点) */}
+      <section className="rounded-md border border-[hsl(var(--hairline))] p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Server className="h-4 w-4" />
+          <h4 className="text-sm font-semibold">迁移目标</h4>
+          <span className="text-xs text-muted-foreground">远端 CDS 节点,用其 AI Access Key 鉴权(留空则用本机同款密钥)</span>
+        </div>
+
+        <div className="mb-3 flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">名称(可选)</label>
+            <input className={inputClass} style={{ width: 180 }} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="生产 CDS" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">节点地址</label>
+            <input className={monoInputClass} style={{ width: 280 }} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="noroenrn.com" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground">Access Key(可选,留空用本机同款)</label>
+            <input className={monoInputClass} style={{ width: 240 }} type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="目标 AI Access Key" />
+          </div>
+          <Button type="button" size="sm" onClick={() => void addPeer()} disabled={adding}>
+            {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} 添加目标
+          </Button>
+        </div>
+
+        {peers.length === 0 ? (
+          <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] p-4 text-center text-sm text-muted-foreground">
+            还没有迁移目标。填入要移植到的 CDS 节点地址(如 noroenrn.com)并「添加目标」。
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {peers.map((p) => (
+              <div
+                key={p.id}
+                className={`flex flex-wrap items-center gap-2 rounded-md border p-2.5 ${selectedPeerId === p.id ? 'border-[hsl(var(--primary))]' : 'border-[hsl(var(--hairline))]'}`}
+              >
+                <input type="radio" name="migration-peer" checked={selectedPeerId === p.id} onChange={() => setSelectedPeerId(p.id)} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    {p.name}
+                    {p.remoteLabel ? <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-300">{p.remoteLabel}</span> : null}
+                  </div>
+                  <div className="truncate font-mono text-xs text-muted-foreground">
+                    {p.baseUrl} · key {p.keyMasked || '本机回退'}{p.lastVerifiedAt ? ` · 验证于 ${new Date(p.lastVerifiedAt).toLocaleString()}` : ''}
+                  </div>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => void verifyPeer(p.id)} disabled={verifyingId === p.id}>
+                  {verifyingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} 测试连接
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => void deletePeer(p.id)}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* 2. 配置复刻 */}
+      <section className="rounded-md border border-[hsl(var(--hairline))] p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Send className="h-4 w-4" />
+          <h4 className="text-sm font-semibold">配置复刻</h4>
+          <span className="text-xs text-muted-foreground">导出本项目配置并推送到目标 CDS 复刻部署</span>
+        </div>
+
+        {preview ? (
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded bg-[hsl(var(--surface-sunken))] px-2 py-1">构建配置 {preview.summary.profiles}</span>
+            <span className="rounded bg-[hsl(var(--surface-sunken))] px-2 py-1">基础设施 {preview.summary.infra}</span>
+            <span className="rounded bg-[hsl(var(--surface-sunken))] px-2 py-1">环境变量 {preview.summary.envVars}</span>
+            <span className="rounded bg-[hsl(var(--surface-sunken))] px-2 py-1">路由规则 {preview.summary.routingRules}</span>
+            <span className="text-muted-foreground">{preview.bytes} 字节</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setShowYaml((v) => !v)}>
+              <Eye className="h-3.5 w-3.5" /> {showYaml ? '隐藏' : '查看'} YAML
+            </Button>
+          </div>
+        ) : null}
+
+        {showYaml && preview ? (
+          <textarea
+            readOnly value={preview.yaml}
+            className="mb-3 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-xs"
+            rows={12} spellCheck={false} style={{ minHeight: 200, overflowY: 'auto' }}
+          />
+        ) : null}
+
+        <div className="mb-2 flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => void replicate(true)} disabled={replicating !== null || !selectedPeerId}>
+            {replicating === 'dry' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} 预演(dry-run)
+          </Button>
+          <Button type="button" size="sm" onClick={() => void replicate(false)} disabled={replicating !== null || !selectedPeerId}>
+            {replicating === 'apply' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} 推送复刻
+          </Button>
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          复刻只做「合并」(新增/更新),不会删除目标节点上任何已有配置;先用「预演」看目标将要变更的内容再推送。
+        </p>
+
+        {replicateResult ? (
+          <div className={`mt-3 rounded-md border p-3 ${replicateResult.ok ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-destructive/40 bg-destructive/5'}`}>
+            <div className="text-sm font-medium">
+              {replicateResult.ok ? (replicateResult.dryRun ? '预演成功' : '已推送复刻') : '推送失败'}
+              <span className="ml-2 text-xs text-muted-foreground">远端 HTTP {replicateResult.remoteStatus} · 发送 {replicateResult.sentBytes} 字节 · {replicateResult.cleanMode}</span>
+            </div>
+            {replicateResult.error ? <div className="mt-1 text-xs text-destructive">{replicateResult.error}</div> : null}
+            {renderRemotePreview(replicateResult.remoteResult)}
+          </div>
+        ) : null}
+      </section>
+
+      {/* 3. 数据迁移(扫描,高级折叠) */}
+      <details className="rounded-md border border-[hsl(var(--hairline))] p-4">
+        <summary className="flex cursor-pointer items-center gap-2">
+          <Database className="h-4 w-4" />
+          <h4 className="inline text-sm font-semibold">数据迁移(高级)</h4>
+          <span className="text-xs text-muted-foreground">扫描源库与目标可达性;全量落库走已测的备份/恢复原语</span>
+        </summary>
+
+        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void runDataPlan()} disabled={scanning || !selectedPeerId}>
+          {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 扫描数据迁移计划
+        </Button>
+
+        {dataPlan ? (
+          <div className="mt-3 space-y-2 text-xs">
+            <div className="text-muted-foreground">
+              目标可达:{dataPlan.target.reachable ? '是' : `否${dataPlan.target.error ? ` (${dataPlan.target.error})` : ''}`}
+            </div>
+            {dataPlan.sourceStores.length === 0 ? (
+              <div className="text-muted-foreground">本项目未发现 MongoDB 基础设施。</div>
+            ) : (
+              dataPlan.manualBridge.map((b) => (
+                <div key={b.store} className="rounded-md border border-[hsl(var(--hairline))] p-2.5">
+                  <div className="text-sm font-medium">{b.store}</div>
+                  <div className="mt-1 text-muted-foreground">{b.note}</div>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" asChild>
+                      <a href={apiUrl(b.download)} download>
+                        <Download className="h-3.5 w-3.5" /> 下载源库快照
+                      </a>
+                    </Button>
+                    <code className="self-center font-mono text-[11px] text-muted-foreground">恢复到 → {b.restore}</code>
+                  </div>
+                </div>
+              ))
+            )}
+            <p className="text-muted-foreground">
+              提示:建议先完成「配置复刻」,使目标节点 infra id 与源端对齐,再做数据迁移。
+            </p>
+          </div>
+        ) : null}
+      </details>
     </div>
   );
 }
