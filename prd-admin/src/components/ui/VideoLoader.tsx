@@ -109,7 +109,8 @@ export function PageTransitionLoader({
         background: 'transparent',
         zIndex: isFullscreen ? 9999 : 10,
         userSelect: 'none',
-        pointerEvents: 'none',
+        // 不设 pointerEvents:none —— 透明遮罩仍应在加载期间拦截点击,
+        // 避免点透到下方尚未就绪的 UI(Bugbot #904)。
       }}
     >
       {/* 柔光:让 MAP 过渡在任意背景上都清晰可见,但不形成黑板 */}
