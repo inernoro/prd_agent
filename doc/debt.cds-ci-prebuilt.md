@@ -26,15 +26,21 @@ SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。
 | 5 | 构建时延（分钟级） | push → 预览就绪比源码热加载慢出现（要等 CI 构建）。等待期分支卡有「等待 CI 镜像」徽章（非静止），符合预期管理 | 体验取舍：省 CDS CPU 换首次时延 |
 | 6 | 「切回源码编译」非一键 | 失败态徽章的「切回源码编译」打开分支详情抽屉，由现有部署模式下拉切回 source 模式（已可用），未在卡片做单击直切 | 能力已存在，仅少一步快捷 |
 | 7 | ClaudeSdkExecutor 回调端口 | express 模式 env 覆盖 `ClaudeSdkExecutor__CallbackBaseUrl` 为 `http://api-prd-agent:8080`（生产镜像端口）。若分支网络别名与项目 slug 不一致需核对 | 边缘功能；主链路（API 服务）不受影响 |
+| 8 | **极速版只省编译,不省运行时容器** | express 省掉的是 CDS 本机「编译」算力,但部署仍会 `docker run` 拉起运行时容器(api dotnet + admin serve)。在**已饱和的共享 CDS 宿主**上,首次 `docker pull` 大镜像(api ~数百 MB)的 I/O + 新容器内存,仍可能把宿主压到 CDS 控制台无响应。2026-06-23 实测一次:express 部署后 ~12:23 生产 CDS 控制台 healthz=000,约 1h 后恢复。**注意**:镜像首拉是一次性重 I/O,之后本地缓存命中,re-deploy 只 `docker run`(轻)。 | 共享宿主容量是独立于「编译卸载」的另一根轴;高负载实例上首拉大镜像前建议先看 `docker stats` / 停闲置分支。后续可考虑:拉取限流 / 拉取与运行分离 / 宿主容量预检 |
 
-## 验证状态
+## 验证状态（2026-06-23 生产实证）
 
 - CDS 后端 `pnpm tsc --noEmit` 零错误；web `pnpm tsc --noEmit` 零错误。
-- 新增 `tests/services/ci-prebuilt-express.test.ts`（12 用例）全绿：镜像模板解析、prebuilt 模式生效、
-  workflow_run head_sha 匹配、push→waiting、非预构建工作流忽略。
-- 回归：compose-parser / container / github-webhook-dispatcher / github-webhook(route) 全绿。
-- 端到端（真实 push → CI → CDS 拉取）需在 ghcr 包设 public 后于预览环境取证（未在本地沙箱跑通，
-  依赖 GitHub Actions 真实构建 + CDS 实例 webhook）。
+- 新增 `tests/services/ci-prebuilt-express.test.ts`（13 用例）全绿：镜像模板解析、prebuilt 模式生效、
+  **express 无 command 时 effective.command 为空（走镜像 ENTRYPOINT）**、workflow_run head_sha 匹配、
+  push→waiting、非预构建工作流忽略。回归：compose-parser / container / github-webhook-dispatcher / github-webhook(route) 全绿。
+- **端到端生产实证（铁证）**：CI 三次 run 最终 `98562a05` 两镜像 green 推 ghcr → self-update 生产 CDS 到本分支
+  → 导入 express 模式到 prd-agent 项目 → 分支设 express → 部署。`workflow_run` webhook **自动触发过部署**
+  （ciImageStatus waiting→ready）；直连预览 `…/api/v` 返回 `{commit:98562a05, environment:Production,
+  buildTimeUtc:2026-06-23T12:11:54Z}` —— 证明 API 跑的是 **CI 预构建镜像、经 ENTRYPOINT 启动、CDS 零编译**。
+- 真 bug 修复：express 无 command 原会继承 baseline 源码命令 → 预构建镜像里无 SDK/源码必失败；改为置空走
+  ENTRYPOINT（commit `98562a05`，先于实证修掉）。
+- 边界 #8（宿主容量）见上：实证过程中触发过一次共享 CDS 控制台短时宕机,已恢复。
 
 ## 已偿还（paid）
 
