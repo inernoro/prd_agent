@@ -1929,6 +1929,16 @@ export function BranchListPage(): JSX.Element {
       // 新分支淡入动画:仅对 branch.created 触发(快照/branch.updated 不触发,
       // 否则首屏全量卡片会一起闪)。播 ~480ms 后摘掉 entering 标记。
       const newId = data.branch.id;
+      // 互斥(Codex P2):若同一 id 正处于 leaving(回收动画 + 360ms 延迟移除中)
+      // 时分支被重建/重新 push,必须先取消 pending 的 leave 定时器 + 清掉 leaving
+      // 标记,否则旧 leave 定时器会把刚 upsert 进来的卡片误删,直到下次刷新/SSE 修复。
+      const staleLeaveKey = `leave:${newId}`;
+      const staleLeave = cardPhaseTimersRef.current.get(staleLeaveKey);
+      if (staleLeave) {
+        window.clearTimeout(staleLeave);
+        cardPhaseTimersRef.current.delete(staleLeaveKey);
+      }
+      setLeavingIds((prev) => { if (!prev.has(newId)) return prev; const next = new Set(prev); next.delete(newId); return next; });
       const enterKey = `enter:${newId}`;
       const prevEnter = cardPhaseTimersRef.current.get(enterKey);
       if (prevEnter) window.clearTimeout(prevEnter);
@@ -1986,6 +1996,15 @@ export function BranchListPage(): JSX.Element {
       if (data.projectId !== projectId) return;
       // 两段式回收:先标记 leaving 播淡出收起动画,动画结束再真正移除。
       const removedId = data.branchId;
+      // 互斥:取消可能 pending 的 enter 定时器 + 清 entering 标记,避免同一 id
+      // 既 entering 又 leaving(回收优先)。
+      const staleEnterKey = `enter:${removedId}`;
+      const staleEnter = cardPhaseTimersRef.current.get(staleEnterKey);
+      if (staleEnter) {
+        window.clearTimeout(staleEnter);
+        cardPhaseTimersRef.current.delete(staleEnterKey);
+      }
+      setEnteringIds((prev) => { if (!prev.has(removedId)) return prev; const next = new Set(prev); next.delete(removedId); return next; });
       const leaveKey = `leave:${removedId}`;
       const prevLeave = cardPhaseTimersRef.current.get(leaveKey);
       if (prevLeave) window.clearTimeout(prevLeave);
