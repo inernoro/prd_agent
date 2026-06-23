@@ -76,6 +76,10 @@ interface ComposeFile {
     command?: string;
     image?: string;
     env?: Record<string, string>;
+    /** 2026-06-23 极速版：预构建镜像模式（跳过 source mount,docker pull + run）。 */
+    prebuilt?: boolean;
+    /** 2026-06-23 极速版：覆盖容器端口（预构建镜像监听端口常与源码模式不同）。 */
+    containerPort?: number;
   }>>;
 }
 
@@ -546,6 +550,8 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           command: mode.command,
           dockerImage: mode.image,
           env: mode.env,
+          ...(mode.prebuilt !== undefined ? { prebuilt: mode.prebuilt === true || (mode.prebuilt as unknown) === 'true' } : {}),
+          ...(mode.containerPort !== undefined ? { containerPort: Number(mode.containerPort) } : {}),
         };
       }
       bp.deployModes = parsed;
@@ -726,16 +732,19 @@ export function toCdsCompose(
   }
 
   // Optional x-cds-deploy-modes
-  const deployModesOut: Record<string, Record<string, { label: string; command?: string; image?: string; env?: Record<string, string> }>> = {};
+  type DeployModeYaml = { label: string; command?: string; image?: string; env?: Record<string, string>; prebuilt?: boolean; containerPort?: number };
+  const deployModesOut: Record<string, Record<string, DeployModeYaml>> = {};
   for (const p of profiles) {
     if (p.deployModes && Object.keys(p.deployModes).length > 0) {
-      const modes: Record<string, { label: string; command?: string; image?: string; env?: Record<string, string> }> = {};
+      const modes: Record<string, DeployModeYaml> = {};
       for (const [modeId, mode] of Object.entries(p.deployModes)) {
         modes[modeId] = {
           label: mode.label,
           ...(mode.command ? { command: mode.command } : {}),
           ...(mode.dockerImage ? { image: mode.dockerImage } : {}),
           ...(mode.env ? { env: mode.env } : {}),
+          ...(mode.prebuilt ? { prebuilt: true } : {}),
+          ...(mode.containerPort !== undefined ? { containerPort: mode.containerPort } : {}),
         };
       }
       deployModesOut[p.id] = modes;

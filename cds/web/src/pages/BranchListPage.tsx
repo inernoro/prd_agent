@@ -154,6 +154,11 @@ interface BranchSummary {
   stopCount?: number;
   aiOpCount?: number;
   lastAiOccupantAt?: string;
+  // 2026-06-23 极速版（CI 预构建）状态
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  ciTargetSha?: string;
+  ciWorkflowConclusion?: string;
+  ciWorkflowRunUrl?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
     label: string;
@@ -163,6 +168,8 @@ interface BranchSummary {
     sourceProfiles: number;
     modes: string[];
     pendingPublish?: boolean;
+    /** 2026-06-23 极速版：任一 profile 走预构建镜像部署模式 */
+    prebuilt?: boolean;
     // P0 止血：期望态 vs 实际态漂移（后端 summarizeBranchDeployRuntime 计算）
     drift?: {
       expectedCount: number;
@@ -945,6 +952,8 @@ function pickDeployEstimate(branch: BranchSummary): { mode: 'release' | 'source'
 
 /** 构建中卡片的模式标签：发布版 / 热加载（源码即热加载/dev 运行）。 */
 function deployModeLabel(branch: BranchSummary): string {
+  // 极速版（CI 预构建）优先：它分类上属 release，但要细化标签让用户知道是「拉镜像非本机编译」。
+  if (branch.deployRuntime?.prebuilt === true) return '极速版';
   const kind = branch.deployRuntime?.kind;
   if (kind === 'release') return '发布版';
   if (kind === 'mixed') return '混合';
@@ -5206,6 +5215,52 @@ function BranchCard({
             </span>
           );
         })() : null}
+        {/*
+          2026-06-23 极速版（CI 预构建）状态。push 后不在 CDS 本机编译,等 GitHub Actions
+          把该 commit 编译成 ghcr 镜像;期间显示「等待 CI 镜像」(动效不静止,符合禁止空白
+          等待);CI 失败显示「CI 构建失败」并提供「切回源码编译」（打开详情切部署模式）。
+        */}
+        {branch.ciImageStatus === 'waiting' ? (
+          <span
+            className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+            title={`极速版（CI 预构建）：等待 GitHub Actions 把 commit ${(branch.ciTargetSha || '').slice(0, 7)} 编译成镜像,完成后自动拉取部署`}
+          >
+            <span className="cds-ai-kinetic-dot h-1.5 w-1.5 rounded-full bg-primary/60" aria-hidden />
+            等待 CI 镜像
+            {branch.ciWorkflowRunUrl ? (
+              <a
+                href={branch.ciWorkflowRunUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="font-medium text-primary/80 underline-offset-2 hover:text-primary hover:underline"
+              >查看构建</a>
+            ) : null}
+          </span>
+        ) : null}
+        {branch.ciImageStatus === 'failed' ? (
+          <span
+            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs text-amber-500"
+            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}）。可切回源码编译,或重试 CI 后再部署。`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+            CI 构建失败
+            {branch.ciWorkflowRunUrl ? (
+              <a
+                href={branch.ciWorkflowRunUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="font-medium underline-offset-2 hover:underline"
+              >查看</a>
+            ) : null}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onDetail(); }}
+              className="font-medium underline-offset-2 hover:underline"
+            >切回源码编译</button>
+          </span>
+        ) : null}
         {visibleResources.length > 0 ? visibleResources.map((resource) => {
           // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
           // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);

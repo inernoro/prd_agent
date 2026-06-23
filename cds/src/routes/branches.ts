@@ -12,7 +12,7 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
-import { classifyDeployRuntime, computeServiceDrift } from '../services/deploy-runtime.js';
+import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
@@ -204,6 +204,11 @@ type BranchDeployRuntime = {
    */
   pendingPublish: boolean;
   /**
+   * 2026-06-23 极速版（CI 预构建）：是否有任一 profile 走预构建镜像部署模式。
+   * true 时前端把徽章从「发布版」细化为「极速版」（拉取 CI 镜像,非本机编译）。
+   */
+  prebuilt: boolean;
+  /**
    * 2026-05-29 P0 止血：期望态 vs 实际态漂移检测。
    *
    * 病根（本次 openvisual 事故暴露）：branch.services 是"上次部署时的快照"，
@@ -312,10 +317,12 @@ function summarizeBranchDeployRuntime(
   let releaseProfiles = 0;   // 实际以发布版在跑的 profile 数（真相）
   let sourceProfiles = 0;    // 实际以源码在跑 / 未跑的 profile 数
   let pendingPublish = false; // 配置=发布版 但运行现状还没跟上
+  let prebuilt = false;       // 配置=极速版（任一 profile 走预构建镜像）
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
     const effectiveProfile = resolveEffectiveProfile(profile, branch);
+    if (effectiveProfile.prebuiltImage === true) prebuilt = true;
     const configMode = effectiveProfile.activeDeployMode;
     const configLabel = configMode
       ? effectiveProfile.deployModes?.[configMode]?.label || configMode
@@ -382,6 +389,7 @@ function summarizeBranchDeployRuntime(
     sourceProfiles,
     modes: modeLabels,
     pendingPublish,
+    prebuilt,
     // 漂移检测走 deploy-runtime.ts 的纯函数 SSOT(可单测、与本文件解耦)
     drift: computeServiceDrift(profiles.map((p) => p.id), branch.services),
   };
@@ -433,23 +441,9 @@ function recordDeployDurationSample(
   stateService.recordDeployDuration(branch.projectId || 'default', mode, elapsedMs, maxReasonableMs);
 }
 
-function applyProjectDefaultDeployModes(
-  branch: BranchEntry,
-  projectDefaultDeployModes: Record<string, string> | undefined,
-  profiles: BuildProfile[],
-): void {
-  if (!projectDefaultDeployModes || Object.keys(projectDefaultDeployModes).length === 0) return;
-  for (const profile of profiles) {
-    if (!Object.prototype.hasOwnProperty.call(projectDefaultDeployModes, profile.id)) continue;
-    const mode = projectDefaultDeployModes[profile.id] || '';
-    if (mode && !profile.deployModes?.[mode]) continue;
-    if (!branch.profileOverrides) branch.profileOverrides = {};
-    branch.profileOverrides[profile.id] = {
-      ...(branch.profileOverrides[profile.id] || {}),
-      activeDeployMode: mode,
-    };
-  }
-}
+// 2026-06-23：实现已下沉到 deploy-runtime.ts 的 applyDefaultDeployModesToBranch（SSOT）,
+// 供 branches.ts（建分支）与 github-webhook-dispatcher.ts（webhook 自动建分支）共用。
+const applyProjectDefaultDeployModes = applyDefaultDeployModesToBranch;
 
 /**
  * 纯计算 self-status payload。

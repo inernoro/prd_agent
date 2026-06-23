@@ -102,6 +102,9 @@ const SUPPORTED_EVENTS: ReadonlySet<string> = new Set([
   'delete',
   'repository',
   'release',
+  // 2026-06-23 极速版（CI 预构建）：监听 GitHub Actions 构建完成,据此按 commit SHA
+  // 拉取预构建镜像部署（替代 CDS 本机编译）。
+  'workflow_run',
 ]);
 
 /**
@@ -327,7 +330,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // path still requires a valid HMAC.
     if (!SUPPORTED_EVENTS.has(eventName)) {
       outcome.dispatchAction = 'ignored';
-      outcome.dispatchReason = `event '${eventName}' 不在 CDS 处理范围(只处理 push / pull_request / check_run / delete / issue_comment / release 等 10 类),已 ack 不动作`;
+      outcome.dispatchReason = `event '${eventName}' 不在 CDS 处理范围(只处理 push / pull_request / check_run / workflow_run / delete / issue_comment / release 等类),已 ack 不动作`;
       res.setHeader('X-CDS-Suppress-Activity', '1');
       res.json({
         ok: true,

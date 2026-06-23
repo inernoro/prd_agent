@@ -182,7 +182,15 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
       env: override.env
         ? { ...profile.env, ...override.env }
         : profile.env,
+      // 2026-06-23 极速版：prebuilt 模式跳过 source mount(复用 prebuiltImage 语义),
+      // containerPort 覆盖预构建镜像监听端口(api/admin 生产镜像 8080,与源码模式不同)。
+      ...(override.prebuilt !== undefined ? { prebuiltImage: override.prebuilt } : {}),
+      ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
     };
+  }
+  // 极速版(prebuilt)不跑 hot reload watcher —— 镜像里是编译产物,没有源码可 watch。
+  if (resolved.prebuiltImage) {
+    return resolved;
   }
   // Hot reload 优先级最高
   const hrCmd = resolveHotReloadCommand(resolved);
@@ -190,6 +198,34 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
     return { ...resolved, command: hrCmd };
   }
   return resolved;
+}
+
+/**
+ * 2026-06-23 极速版 —— 解析 dockerImage 里的部署期模板变量。
+ *
+ * 极速版镜像 tag 由 commit SHA 决定（CI 按 `github.sha` 推 `sha-<SHA>` tag），
+ * 必须在拿到具体分支上下文时才能确定。支持:
+ *   - `${CDS_COMMIT_SHA}`  → branch.githubCommitSha
+ *   - `${CDS_BRANCH_SLUG}` → 分支名 slugify（与 CI 的 branch-<slug> 移动 tag 对齐）
+ *
+ * 纯函数,export 给单测用。无模板变量时原样返回。
+ */
+export function resolveImageTemplate(image: string | undefined, branch?: BranchEntry): string | undefined {
+  if (!image || image.indexOf('${') === -1) return image;
+  const sha = branch?.githubCommitSha || '';
+  const slug = slugifyBranchForImage(branch?.branch || '');
+  return image
+    .replace(/\$\{CDS_COMMIT_SHA\}/g, sha)
+    .replace(/\$\{CDS_BRANCH_SLUG\}/g, slug);
+}
+
+/** 分支名 → 镜像 tag 友好 slug（小写、非 [a-z0-9-] 转 -、合并/去头尾 -）。与 CI workflow 的 slugify 保持一致。 */
+export function slugifyBranchForImage(branch: string): string {
+  return branch
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 /**
@@ -236,7 +272,14 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
 export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEntry): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
   const withBranchOverride = applyProfileOverride(profile, branchOverride);
-  return resolveProfileWithMode(withBranchOverride);
+  const withMode = resolveProfileWithMode(withBranchOverride);
+  // 2026-06-23 极速版：deploy-mode 解析完后,把 dockerImage 里的 ${CDS_COMMIT_SHA}
+  // 等模板变量按当前分支上下文替换。无模板变量时是 no-op。
+  const resolvedImage = resolveImageTemplate(withMode.dockerImage, branch);
+  if (resolvedImage !== withMode.dockerImage) {
+    return { ...withMode, dockerImage: resolvedImage || withMode.dockerImage };
+  }
+  return withMode;
 }
 
 function missingEnvTemplates(env: Record<string, string>): string[] {
@@ -840,9 +883,44 @@ export class ContainerService {
     });
 
     const command = profile.command || '';
-    if (!command) {
+    // 2026-06-23 极速版：预构建镜像自带 ENTRYPOINT（api=`dotnet PrdAgent.Api.dll`,
+    // admin=`serve -s dist`）,允许 command 为空 —— 此时不 `sh -c` 包装,直接用
+    // 镜像默认 ENTRYPOINT/CMD 启动。非预构建模式仍强制要求 command。
+    const usePrebuiltEntrypoint = profile.prebuiltImage === true && !command;
+    if (!command && !usePrebuiltEntrypoint) {
       throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
     }
+
+    // 极速版：运行前显式 docker pull 外部 ghcr 镜像（按 commit SHA tag 不可变）。
+    // 显式 pull 而非依赖 docker run 隐式拉取,是为了把「镜像缺失/拉取失败」第一时间
+    // 暴露给用户（对应「等待+提示,手动切回源码编译」兜底），并在 SSE 日志给反馈
+    // 而非空白等待。
+    if (profile.prebuiltImage === true) {
+      onOutput?.(`── 极速版: 拉取 CI 预构建镜像 ${profile.dockerImage}（CDS 不再本机编译）──\n`);
+      context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
+      const pull = await this.shell.exec(`docker pull ${profile.dockerImage}`);
+      if (pull.stdout) onOutput?.(pull.stdout + '\n');
+      if (pull.exitCode !== 0) {
+        const detail = (pull.stderr || pull.stdout || '').trim();
+        onOutput?.(`── 拉取失败: ${detail} ──\n`);
+        this.recordContainerEvent({
+          severity: 'error',
+          source: 'cds-container-service',
+          action: 'app.pull.failed',
+          message: `docker pull failed for ${profile.dockerImage}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId: profile.id,
+          requestId: context.requestId ?? undefined,
+          operationId: context.operationId ?? undefined,
+          command: { name: 'docker pull', exitCode: pull.exitCode, stdoutPreview: pull.stdout, stderrPreview: pull.stderr },
+          details: { image: profile.dockerImage, reason: '极速版预构建镜像拉取失败' },
+        });
+        throw new Error(`极速版镜像拉取失败: ${profile.dockerImage}\n${detail}\n（CI 镜像可能尚未就绪或未设为 public,可在分支详情切回源码编译）`);
+      }
+      onOutput?.(`── 镜像就绪 ──\n`);
+    }
+
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
 
     const envFilePath = this.writeEnvFile(resolvedEnv);
@@ -851,7 +929,9 @@ export class ContainerService {
       await this.buildProfileVolumeFlags(entry, profile, command, onOutput);
 
     try {
-      onOutput?.(`── 运行: ${command} ──\n`);
+      onOutput?.(usePrebuiltEntrypoint
+        ? `── 运行: ${profile.dockerImage}（镜像默认 ENTRYPOINT）──\n`
+        : `── 运行: ${command} ──\n`);
       // Bugbot 2026-05-06 1f32c1da:之前 log 的条件是 isNodeContainer && !skipSrcMount,
       // 比真正挂 volume 的条件(还要 /\bpnpm\b/.test(command))宽,npm/yarn 项目会
       // 看到"走 docker volume"的误导日志。改为与真实 mount 条件完全一致。
@@ -897,12 +977,14 @@ export class ContainerService {
         ...volumeFlags,
         ...resourceFlags,
         ...entrypointFlags,
-        `-w ${containerWorkDir}`,
+        // 极速版预构建镜像无 command 时,不覆盖 -w（用镜像自带 WORKDIR）也不 sh -c 包装,
+        // 直接让镜像 ENTRYPOINT/CMD 启动。
+        ...(usePrebuiltEntrypoint ? [] : [`-w ${containerWorkDir}`]),
         envFlag,
         '--tmpfs /tmp',
         this.appLabels(entry.projectId, entry.id, profile.id, network),
         profile.dockerImage,
-        `sh -c "${command.replace(/"/g, '\\"')}"`,
+        ...(usePrebuiltEntrypoint ? [] : [`sh -c "${command.replace(/"/g, '\\"')}"`]),
       ].join(' ');
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);

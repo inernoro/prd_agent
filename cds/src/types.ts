@@ -308,10 +308,30 @@ export interface DeployModeOverride {
   label: string;
   /** Override command (replaces profile.command when this mode is active) */
   command?: string;
-  /** Override Docker image (replaces profile.dockerImage when this mode is active) */
+  /**
+   * Override Docker image (replaces profile.dockerImage when this mode is active).
+   *
+   * 2026-06-23 极速版（CI 预构建）新增 —— 支持部署期模板变量,在
+   * resolveEffectiveProfile 解析 branch 上下文时替换:
+   *   - `${CDS_COMMIT_SHA}`  → branch.githubCommitSha（CI 按此 SHA 推镜像）
+   *   - `${CDS_BRANCH_SLUG}` → 分支 slug（CI 的 branch-<slug> 移动 tag）
+   * 例: `ghcr.io/inernoro/prd_agent/prdagent-server:sha-${CDS_COMMIT_SHA}`
+   */
   dockerImage?: string;
   /** Extra/override environment variables merged on top of profile.env */
   env?: Record<string, string>;
+  /**
+   * 2026-06-23 极速版新增 —— 预构建镜像模式开关（对齐 BuildProfile.prebuiltImage）。
+   * true 时本模式跳过 source mount,直接 docker pull + run 镜像里的编译产物
+   * （CI 已编译好,CDS 不再本机编译,省服务器算力）。
+   * cds-compose 中通过 `x-cds-deploy-modes.<svc>.<mode>.prebuilt: true` 触发。
+   */
+  prebuilt?: boolean;
+  /**
+   * 2026-06-23 极速版新增 —— 覆盖容器端口。预构建镜像监听端口通常与源码开发
+   * 模式不同（如 prd-api 源码模式 5000,生产镜像 8080;prd-admin dist serve 8080）。
+   */
+  containerPort?: number;
 }
 
 /**
@@ -525,6 +545,24 @@ export interface BranchEntry {
   githubSenderAvatarUrl?: string;
   githubCheckRunId?: number;
   githubInstallationId?: number;
+  /**
+   * 2026-06-23 极速版（CI 预构建）新增 —— CI 镜像就绪状态。
+   *
+   * 仅对走「极速版」部署模式的分支有意义。push 进来后 CDS 不立即本机编译,
+   * 而是置 'waiting' 等 GitHub Actions 把该 commit 编译成 ghcr 镜像;CI 完成的
+   * `workflow_run.completed` webhook 到达后:
+   *   - conclusion=success → 'ready' → 触发 docker pull + deploy
+   *   - 否则 → 'failed'（前端提示「CI 构建失败,可切回源码编译」,不自动回退）
+   *
+   * 非极速版分支不设此字段,行为不变（push 即本机编译）。
+   */
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  /** 极速版正在等待 CI 构建的目标 commit SHA（用于 workflow_run 的 head_sha 匹配）。 */
+  ciTargetSha?: string;
+  /** 最近一次匹配到的 CI workflow_run 结论（success / failure / cancelled / timed_out …）。 */
+  ciWorkflowConclusion?: string;
+  /** 关联的 GitHub Actions run 页面 URL,前端「等待中 / 失败」态可一键跳转查看。 */
+  ciWorkflowRunUrl?: string;
   /**
    * PR number this branch is associated with (via webhook `pull_request`
    * event). Populated when CDS first sees a PR opened/reopened from this

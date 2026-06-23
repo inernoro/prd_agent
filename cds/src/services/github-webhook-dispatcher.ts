@@ -25,6 +25,16 @@ import { branchEvents, nowIso } from './branch-events.js';
 import path from 'node:path';
 import { StateService as StateServiceClass } from './state.js';
 import { analyzeChangeImpact } from './change-impact-analyzer.js';
+import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch } from './deploy-runtime.js';
+
+/**
+ * 2026-06-23 极速版（CI 预构建）—— 负责构建预构建镜像的 GitHub Actions 工作流标识。
+ * CDS 只在这个工作流的 workflow_run.completed 到达时才触发拉取部署,避免被 ci.yml /
+ * cds.yml 等其它工作流的完成事件误触发（那时镜像还没 push 到 ghcr）。
+ * 后续可做成 project 级配置以泛化到任意 public 仓库（见 doc/debt.cds-ci-prebuilt.md）。
+ */
+const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
+const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
 
 /**
  * Validate a git ref (branch/tag) name against a strict allow-list before
@@ -96,7 +106,12 @@ export interface WebhookDispatchResult {
     | 'branch-deleted'
     | 'repo-renamed'
     | 'repo-detached'
-    | 'release-acknowledged';
+    | 'release-acknowledged'
+    // 2026-06-23 极速版（CI 预构建）
+    | 'ci-image-waiting'
+    | 'ci-image-ready'
+    | 'ci-image-failed'
+    | 'workflow-acknowledged';
   /** Short human message for the response + logs. */
   message: string;
   /** Populated when a branch was touched. */
@@ -281,6 +296,28 @@ export interface GitHubReleaseEvent {
   installation?: { id: number };
 }
 
+/**
+ * 2026-06-23 极速版（CI 预构建）—— GitHub Actions 构建完成事件。
+ * CDS 据此把「等待中」的极速版分支按 commit SHA 拉取预构建镜像部署。
+ */
+export interface GitHubWorkflowRunEvent {
+  action: 'requested' | 'in_progress' | 'completed';
+  workflow_run?: {
+    id: number;
+    name?: string;
+    /** 触发该 run 的 workflow 文件路径（如 `.github/workflows/branch-image.yml`）。 */
+    path?: string;
+    head_branch?: string;
+    head_sha?: string;
+    status?: string;
+    conclusion?: string | null;
+    html_url?: string;
+    event?: string;
+  };
+  repository?: { full_name: string };
+  installation?: { id: number };
+}
+
 export interface WebhookDispatcherDeps {
   stateService: StateService;
   worktreeService: WorktreeService;
@@ -335,6 +372,8 @@ export class GitHubWebhookDispatcher {
         return this.handleRepository(payload as GitHubRepositoryEvent, dryRun);
       case 'release':
         return this.handleRelease(payload as GitHubReleaseEvent);
+      case 'workflow_run':
+        return this.handleWorkflowRun(payload as GitHubWorkflowRunEvent, dryRun);
       default:
         return { action: 'ignored-event', message: `Unhandled event type '${eventName}'` };
     }
@@ -581,6 +620,108 @@ export class GitHubWebhookDispatcher {
   private async handleRelease(event: GitHubReleaseEvent): Promise<WebhookDispatchResult> {
     const tag = event.release?.tag_name || '?';
     return { action: 'release-acknowledged', message: `release.${event.action} (${tag}) — future: production deploy` };
+  }
+
+  /** 极速版（CI 预构建）：判断 workflow_run 是否来自「构建预构建镜像」的工作流。 */
+  private isPrebuiltImageWorkflow(run: NonNullable<GitHubWorkflowRunEvent['workflow_run']>): boolean {
+    // workflow_run.path 形如 `.github/workflows/branch-image.yml`。只认这个工作流,
+    // 避免 ci.yml / cds.yml 等其它工作流先完成就误触发部署（那时镜像还没 push）。
+    const base = (run.path || '').split('/').pop() || '';
+    if (base === CI_PREBUILT_WORKFLOW_FILE) return true;
+    // 兜底:按 workflow name 匹配（防止个别 GitHub 投递缺 path）。
+    return (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+  }
+
+  private emitCiStatus(
+    branchId: string,
+    projectId: string,
+    status: 'waiting' | 'ready' | 'failed',
+    sha: string,
+    runUrl?: string,
+  ): void {
+    branchEvents.emitEvent({
+      type: 'branch.updated',
+      payload: {
+        branchId,
+        projectId,
+        patch: { ciImageStatus: status, ciTargetSha: sha, ciWorkflowRunUrl: runUrl },
+        ts: nowIso(),
+      },
+    });
+  }
+
+  /**
+   * 2026-06-23 极速版（CI 预构建）—— GitHub Actions 构建完成。
+   *
+   * 只处理 `completed` + 来自预构建镜像工作流（branch-image.yml）的 run,按
+   * head_sha 找到「等待中」的极速版分支:
+   *   - success → 置 ready + 返回 deployRequest（路由层触发 docker pull + 部署）
+   *   - 其它   → 置 failed（前端提示可切回源码编译,不自动回退）
+   */
+  private async handleWorkflowRun(event: GitHubWorkflowRunEvent, dryRun: boolean): Promise<WebhookDispatchResult> {
+    const run = event.workflow_run;
+    if (!run || event.action !== 'completed') {
+      return { action: 'workflow-acknowledged', message: `workflow_run ${event.action} 已 ack（只处理 completed）` };
+    }
+    if (!event.repository) {
+      return { action: 'workflow-acknowledged', message: 'workflow_run 缺 repository,已 ack' };
+    }
+    if (!this.isPrebuiltImageWorkflow(run)) {
+      return { action: 'workflow-acknowledged', message: `workflow_run '${run.name || run.path || '?'}' 非预构建镜像工作流,已 ack` };
+    }
+    const project = this.deps.stateService.findProjectByRepoFullName(event.repository.full_name);
+    if (!project) {
+      return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
+    }
+    const headSha = run.head_sha;
+    if (typeof headSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(headSha)) {
+      return { action: 'workflow-acknowledged', message: 'workflow_run head_sha 缺失/格式非法,已 ack' };
+    }
+    // 找等待该 SHA 的极速版分支（push 时已把 ciTargetSha 钉为该 commit）。
+    const branches = this.deps.stateService.getBranchesForProject(project.id);
+    const target = branches.find((b) => b.ciImageStatus === 'waiting' && b.ciTargetSha === headSha);
+    if (!target) {
+      return {
+        action: 'workflow-acknowledged',
+        message: `workflow_run(${run.conclusion}) @ ${headSha.slice(0, 7)} 无等待中的极速版分支匹配,已 ack`,
+      };
+    }
+    const branchId = target.id;
+    const conclusion = run.conclusion || 'unknown';
+
+    if (conclusion === 'success') {
+      if (!dryRun) {
+        this.deps.stateService.updateBranchGithubMeta(branchId, {
+          ciImageStatus: 'ready',
+          ciWorkflowConclusion: conclusion,
+          ciWorkflowRunUrl: run.html_url,
+        });
+        this.deps.stateService.save();
+        this.emitCiStatus(branchId, target.projectId, 'ready', headSha, run.html_url);
+      }
+      return {
+        action: 'ci-image-ready',
+        message: `${dryRun ? '[dry-run] ' : ''}CI 镜像就绪（${headSha.slice(0, 7)}）,触发极速版部署 '${branchId}'`,
+        branchId,
+        deployRequest: { branchId, commitSha: headSha },
+      };
+    }
+
+    // 失败 / cancelled / timed_out — 不自动回退,等用户手动切回源码编译。
+    if (!dryRun) {
+      this.deps.stateService.updateBranchGithubMeta(branchId, {
+        ciImageStatus: 'failed',
+        ciWorkflowConclusion: conclusion,
+        ciWorkflowRunUrl: run.html_url,
+      });
+      this.deps.stateService.save();
+      this.emitCiStatus(branchId, target.projectId, 'failed', headSha, run.html_url);
+    }
+    return {
+      action: 'ci-image-failed',
+      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,可在分支详情切回源码编译`,
+      branchId,
+    };
   }
 
   /**
@@ -890,6 +1031,55 @@ export class GitHubWebhookDispatcher {
           },
         });
       }
+    }
+
+    // ── 2026-06-23 极速版（CI 预构建）分流 ──────────────────────────────
+    // webhook 自动建分支时补回项目默认 deploy mode（与 UI 建分支一致;否则新分支
+    // 拿不到极速版 override）。已存在分支不动（其 override 已是 SSOT）。
+    const profiles = this.deps.stateService.getBuildProfilesForProject(project.id);
+    if (created && project.defaultDeployModes && profiles.length > 0) {
+      const fresh = this.deps.stateService.getBranch(branchId);
+      if (fresh) {
+        applyDefaultDeployModesToBranch(fresh, project.defaultDeployModes, profiles);
+        // 显式落盘（mongo-split store 下 getBranch 可能返回副本,mutate 不持久化）
+        for (const [pid, ov] of Object.entries(fresh.profileOverrides || {})) {
+          this.deps.stateService.setBranchProfileOverride(branchId, pid, ov);
+        }
+      }
+    }
+
+    // 该分支是否走预构建镜像模式？是 → 不本机编译,改为「等待 CI 镜像就绪」,
+    // 等 GitHub Actions 的 workflow_run.completed 到达后再按 commit SHA 拉取部署。
+    const entryForMode = this.deps.stateService.getBranch(branchId) ?? entry;
+    const isExpress = branchUsesPrebuiltMode(profiles, entryForMode, project.defaultDeployModes);
+    if (isExpress) {
+      this.deps.stateService.updateBranchGithubMeta(branchId, {
+        ciImageStatus: 'waiting',
+        ciTargetSha: commitSha,
+        ciWorkflowConclusion: undefined,
+      });
+      this.deps.stateService.save();
+      const waitEntry = this.deps.stateService.getBranch(branchId);
+      if (waitEntry) {
+        branchEvents.emitEvent({
+          type: 'branch.updated',
+          payload: {
+            branchId,
+            projectId: waitEntry.projectId,
+            patch: {
+              ciImageStatus: 'waiting',
+              ciTargetSha: commitSha,
+              githubCommitSha: waitEntry.githubCommitSha,
+            },
+            ts: receivedAt,
+          },
+        });
+      }
+      return {
+        action: 'ci-image-waiting',
+        message: `极速版分支 '${branchId}' 等待 CI 构建镜像（commit ${commitSha.slice(0, 7)}）;CI 完成后自动拉取部署`,
+        branchId,
+      };
     }
 
     return {
