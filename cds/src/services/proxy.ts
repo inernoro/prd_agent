@@ -569,8 +569,14 @@ export class ProxyService {
       // navigation triggers it (asset/bot/prefetch requests do not), and the
       // revive flips status synchronously so serveBranchStatusResponse below
       // renders the live waiting page instead of the cooled dead-end.
+      // Pass the resolved entry id (branch.id) — NOT branchSlug — because for
+      // non-legacy/v3 projects the entry lives under a canonical id like
+      // `${projectSlug}-${slug}` while branchSlug is the bare preview label.
+      // The revive callback does stateService.getBranch(id), so the wrong key
+      // would silently no-op (same reason resolveUpstream/scheduler.touch below
+      // use branch.id).
       if (this.isHtmlNavigationRequest(req) && this.shouldAutoWakeCooled(branch)) {
-        this.triggerCooledWake(branchSlug);
+        this.triggerCooledWake(branch.id);
       }
       this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;

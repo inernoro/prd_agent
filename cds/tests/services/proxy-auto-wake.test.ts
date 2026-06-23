@@ -113,6 +113,47 @@ describe('ProxyService preview auto-wake scoping', () => {
     expect(revive).not.toHaveBeenCalled();
   });
 
+  it('passes the canonical branch.id (not the v3 preview slug) to the revive callback', async () => {
+    // Non-legacy/v3 branch: stored under a canonical id `${projectSlug}-${slug}`,
+    // reached via the v3 preview subdomain whose label differs from the id.
+    // Regression for the P1 where triggerCooledWake received branchSlug (the
+    // preview label) and the callback's getBranch(label) silently missed → no
+    // wake, still showing the diagnostic page.
+    stateService.addProject({
+      id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git',
+      legacyFlag: false, createdAt: new Date().toISOString(),
+    } as never);
+    stateService.addBranch({
+      id: 'prd-agent-claude-feat-cooled-xyz',
+      projectId: 'prd-agent',
+      branch: 'claude/feat-cooled-xyz',
+      worktreePath: '/tmp/v3cooled',
+      services: { admin: svc('admin', 'stopped') },
+      status: 'idle',
+      lastStopSource: 'scheduler',
+      createdAt: new Date().toISOString(),
+    } as BranchEntry);
+    const previewProxy = new ProxyService(stateService, {
+      masterPort: 9900, workerPort: 5500, repoRoot: '/tmp', worktreeBase: '/tmp',
+      portStart: 9000, previewDomain: 'preview.example.com', rootDomains: ['preview.example.com'],
+    } as never);
+    previewProxy.setResolveUpstream(() => 'http://127.0.0.1:9100');
+    const revive = vi.fn(async () => {});
+    previewProxy.setOnReviveCooled(revive);
+
+    const req = {
+      method: 'GET',
+      url: '/',
+      headers: { host: 'feat-cooled-xyz-claude-prd-agent.preview.example.com', accept: 'text/html' },
+      pipe: () => {},
+    } as unknown as http.IncomingMessage;
+    await previewProxy.handleRequest(req, makeRes());
+
+    expect(revive).toHaveBeenCalledTimes(1);
+    // Must be the stored canonical id, NOT the v3 preview label.
+    expect(revive).toHaveBeenCalledWith('prd-agent-claude-feat-cooled-xyz');
+  });
+
   it('dedupes concurrent navigation hits into a single revive', async () => {
     addBranch({});
     // Never-resolving promise keeps the slug "in flight" across both calls.
