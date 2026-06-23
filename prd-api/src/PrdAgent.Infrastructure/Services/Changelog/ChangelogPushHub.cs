@@ -6,7 +6,7 @@ namespace PrdAgent.Infrastructure.Services.Changelog;
 /// <summary>
 /// 一条「更新中心数据已刷新」推送事件。
 /// </summary>
-/// <param name="ViewType">视图类型：current-week / releases / github-logs</param>
+/// <param name="ViewType">视图类型：current-week / releases / github-logs / github-pending-review</param>
 /// <param name="FetchedAt">该视图最新拉取时间（UTC）</param>
 /// <param name="Source">数据来源：local / github / none</param>
 public sealed record ChangelogPushEvent(string ViewType, DateTime FetchedAt, string Source);

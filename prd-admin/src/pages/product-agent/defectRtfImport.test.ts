@@ -11,17 +11,17 @@ describe('mapDefectRtfItem', () => {
       grade: 'p2',
       sourceStatus: '已解决',
       sourcePriority: '高',
-      fields: { 优先级: '高', 处理人: '伍林波;', 创建人: '陈嘉颖' },
-      handlerNames: ['伍林波'],
+      fields: { 优先级: '高', 处理人: '测试处理人;', 创建人: '测试创建人' },
+      handlerNames: ['测试处理人'],
       developerNames: [],
-      creatorNames: ['陈嘉颖'],
+      creatorNames: ['测试创建人'],
       ccNames: [],
       comments: [],
       images: [],
     };
     const row = mapDefectRtfItem(item);
-    expect(row.handlerNames).toEqual(['伍林波']);
-    expect(row.reporterNames).toEqual(['陈嘉颖']);
+    expect(row.handlerNames).toEqual(['测试处理人']);
+    expect(row.reporterNames).toEqual(['测试创建人']);
     expect(row.externalId).toBe('1023030');
     expect(row.tapdSeverityRaw).toBe('高');
     expect(row.severity).toBe('严重');

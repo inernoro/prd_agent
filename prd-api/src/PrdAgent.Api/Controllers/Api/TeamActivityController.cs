@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Api.Extensions;
@@ -33,6 +35,28 @@ public class TeamActivityController : ControllerBase
         _db = db;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
+    }
+
+    /// <summary>是否具备指定权限（super 全通过）。对照 ProductAgentController.HasPermission。</summary>
+    private bool HasPermission(string perm)
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    /// <summary>
+    /// 产品管理应用管理员判定（对照 ProductAgentController.IsProductApplicationAdminAsync）：
+    /// 设置未落库时回落到 ProductAgentAdmin 权限，落库后完全以 AdminIds 名单为准。
+    /// 应用管理员可管理产品模块全部产品，VOC 转需求时应一并放行。
+    /// </summary>
+    private async Task<bool> IsProductApplicationAdminAsync(string userId)
+    {
+        var settings = await _db.ProductAgentSettings
+            .Find(x => x.Id == ProductAgentSettings.SingletonId)
+            .FirstOrDefaultAsync();
+        return settings == null
+            ? HasPermission(AdminPermissionCatalog.ProductAgentAdmin)
+            : settings.AdminIds.Contains(userId);
     }
 
     /// <summary>
@@ -240,6 +264,136 @@ public class TeamActivityController : ControllerBase
         return string.Join('/', segments);
     }
 
+    /// <summary>路径首段（/api/{module}/...）→ 中文模块名，用于体验全景热力图分区；未登记的回落原始段</summary>
+    private static readonly Dictionary<string, string> ModuleLabels = new()
+    {
+        ["visual-agent"] = "视觉创作", ["image-master"] = "视觉创作", ["literary-agent"] = "文学创作",
+        ["defect"] = "缺陷管理", ["defects"] = "缺陷管理", ["weekly-posters"] = "周报海报",
+        ["report-agent"] = "周报管理", ["ai-news"] = "AI 资讯", ["changelog"] = "更新中心",
+        ["ccas-agent"] = "渠道溯源", ["document-store"] = "知识库", ["documents"] = "文档",
+        ["sessions"] = "会话", ["groups"] = "项目", ["pr-review"] = "PR 审查",
+        ["emergence"] = "涌现探索", ["workflow"] = "工作流", ["open-platform"] = "开放平台",
+        ["marketplace"] = "海鲜市场", ["llm"] = "LLM 网关", ["models"] = "模型",
+        ["model-groups"] = "模型组", ["auth"] = "认证", ["authz"] = "权限鉴权", ["users"] = "用户",
+        ["attachments"] = "附件", ["hosted-sites"] = "网页托管", ["video"] = "视频",
+        ["watermark"] = "水印", ["admin"] = "后台管理", ["review"] = "产品评审",
+        ["submissions"] = "产品评审", ["mentions"] = "引用网络", ["toolbox"] = "百宝箱",
+        ["ai-toolbox"] = "AI 百宝箱", ["daily-tips"] = "每日教程", ["dashboard"] = "仪表盘",
+        ["shortcuts"] = "快捷入口", ["pm"] = "产品经理", ["v1"] = "开放接口",
+        ["homepage"] = "首页", ["peer-sync"] = "节点同步", ["product"] = "产品管理",
+        ["library"] = "智识殿堂", ["showcase"] = "作品广场", ["learning-center"] = "学习中心",
+        ["notifications"] = "通知", ["preferences"] = "偏好", ["share"] = "分享",
+        ["skills"] = "技能", ["prompts"] = "提示词", ["behavior"] = "行为采集",
+        ["channel"] = "渠道", ["tapd"] = "TAPD", ["video-agent"] = "视频生成",
+    };
+
+    private static string ModuleLabel(string key) => ModuleLabels.TryGetValue(key, out var l) ? l : key;
+
+    /// <summary>端点路径段 → 中文示意名（让非技术同事看得懂每块代表什么）；未登记的回落原始段</summary>
+    private static readonly Dictionary<string, string> SegmentLabels = new()
+    {
+        ["entries"] = "条目", ["entry"] = "条目", ["view"] = "浏览", ["views"] = "浏览量",
+        ["visible"] = "可见项", ["progress"] = "进度", ["track"] = "行为埋点", ["content"] = "内容",
+        ["upload"] = "上传", ["leave"] = "离开", ["stores"] = "空间", ["store"] = "空间",
+        ["inline-comments"] = "行内评论", ["inline-comment"] = "行内评论", ["with-preview"] = "带预览",
+        ["preview"] = "预览", ["public"] = "公开列表", ["creators"] = "创作者", ["current-week"] = "本周",
+        ["current"] = "当前", ["latest"] = "最新", ["attachments"] = "附件", ["login"] = "登录",
+        ["refresh"] = "刷新令牌", ["logout"] = "登出", ["user-preferences"] = "偏好设置",
+        ["version-check"] = "版本检查", ["requirements"] = "需求", ["products"] = "产品",
+        ["features"] = "功能", ["releases"] = "发布", ["versions"] = "版本",
+        ["workflow-definitions"] = "工作流定义", ["stats"] = "统计", ["defects"] = "缺陷",
+        ["form-templates"] = "表单模板", ["me"] = "当前用户", ["menu-catalog"] = "菜单目录",
+        ["items"] = "条目", ["marketplace"] = "市场", ["search-users"] = "搜索用户",
+        ["assets"] = "静态资源", ["transfer"] = "数据传输", ["mark-seen"] = "标记已读",
+        ["generate"] = "生成", ["list"] = "列表", ["likes"] = "点赞", ["favorites"] = "收藏",
+        ["comments"] = "评论", ["summary"] = "汇总", ["brief"] = "简报", ["state"] = "状态",
+        ["sync"] = "同步", ["logs"] = "日志", ["stream"] = "流式", ["export"] = "导出",
+        ["import"] = "导入", ["publish"] = "发布", ["clone"] = "复制", ["fork"] = "克隆",
+        ["run"] = "运行", ["runs"] = "运行记录", ["events"] = "事件", ["detail"] = "详情",
+        ["settings"] = "设置", ["modules"] = "模块", ["insights"] = "洞察", ["members"] = "成员",
+        ["customer"] = "客户", ["customers"] = "客户", ["dashboard"] = "仪表盘",
+        ["session"] = "会话", ["messages"] = "消息", ["comment"] = "评论", ["share"] = "分享",
+        ["download"] = "下载", ["status"] = "状态", ["health"] = "健康检查", ["test"] = "测试",
+    };
+
+    /// <summary>把归一化端点路径压成一个中文示意名：取末尾有意义的资源/动作段翻译，:id 段跳过</summary>
+    private static string LeafLabel(string method, string normalizedPath)
+    {
+        var seg = normalizedPath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Where(s => s != "api" && s != ":id")
+            .ToList();
+        if (seg.Count == 0) return "根";
+        // 只有模块段（如 /api/sessions）→ 用模块中文名
+        if (seg.Count == 1) return ModuleLabel(seg[0]);
+        var token = seg[^1];
+        return SegmentLabels.TryGetValue(token, out var zh) ? zh : token;
+    }
+
+
+    /// <summary>体验全景热力图的叶子累加器（按 module|method|归一化路径 聚类）</summary>
+    private sealed class LeafAcc
+    {
+        public string Module = string.Empty;
+        public string Method = string.Empty;
+        public string Path = string.Empty;
+        public int Count;
+        public int ErrorCount;
+        public int SlowCount;
+        public long SlowMsSum;
+        public readonly Dictionary<string, int> ErrorCodes = new();
+    }
+
+    /// <summary>体验全景热力图的叶子输出（聚合主路径与旧路径共用，喂给 BuildExperienceMapPayload）。BurstPct 为环比突增百分比，可空。</summary>
+    private sealed record LeafOut(string Target, string Label, string Method, int Value, double ErrRate, double SlowRate, string Status, string Metric, int? BurstPct = null);
+
+    // 体验全景热力图短 TTL 缓存：来回切时间档不重复聚合（key 取整到分钟）
+    private static readonly ConcurrentDictionary<string, (DateTime At, object Payload)> _expMapCache = new();
+    private const int ExpMapCacheSeconds = 30;
+
+    /// <summary>把 module → 叶子列表 组装成 treemap 响应（分区 Take 24、每区叶子 Take 30）</summary>
+    private static object BuildExperienceMapPayload(Dictionary<string, List<LeafOut>> byModule, long totalRequests, DateTime fromUtc, DateTime endUtc)
+    {
+        var groups = byModule
+            .Select(kv =>
+            {
+                var leaves = kv.Value
+                    .OrderByDescending(l => l.Value)
+                    .Take(30)
+                    .Select(l => new
+                    {
+                        target = l.Target,
+                        label = l.Label,
+                        method = l.Method,
+                        value = l.Value,
+                        status = l.Status,
+                        metric = l.Metric,
+                        errorRate = l.ErrRate,
+                        slowRate = l.SlowRate,
+                        topErrorCode = (string?)null,
+                        burstPct = l.BurstPct,
+                    })
+                    .ToList();
+                return new
+                {
+                    key = kv.Key,
+                    label = ModuleLabel(kv.Key),
+                    value = leaves.Sum(l => l.value),
+                    errorLeaves = leaves.Count(l => l.status == "error"),
+                    slowLeaves = leaves.Count(l => l.status == "slow"),
+                    leaves,
+                };
+            })
+            .Where(g => g.leaves.Count > 0)
+            .OrderByDescending(g => g.value)
+            .Take(24)
+            .ToList();
+
+        return new { groups, totalRequests, windowFrom = fromUtc, windowTo = endUtc };
+    }
+
+
+
     /// <summary>
     /// 行为洞察：从「沉默的行为信号」聚合出带证据的改进方向。
     /// 数据源两路：apirequestlogs（报错热点 / 等待过久，历史即有）+ behavior_events（停留过久 / 秒退 / 反复横跳，自采集上线起累积）。
@@ -258,12 +412,444 @@ public class TeamActivityController : ControllerBase
         return await BuildInsightsResponseAsync(insights, behaviorEventCount, fromUtc, endUtc, includeIgnored);
     }
 
-    /// <summary>规则式信号聚类（供 insights 查询与 AI 简报共用）</summary>
-    private async Task<(List<Insight> Insights, int BehaviorEventCount)> ComputeInsightsAsync(DateTime fromUtc, DateTime endUtc)
+    /// <summary>
+    /// 体验全景热力图：把系统接口面铺成 treemap —— 按模块（/api/{module}）分区，
+    /// 叶子为归一化端点，面积=访问量，颜色=健康（报错率/慢请求率）。
+    /// 痛点（红=报错、琥珀=慢）从一片平静里跳出来；叶子 target 与 insights 同口径，便于前端点击下钻联动。
+    /// 单一数据源 apirequestlogs，与 insights 的报错/慢信号同源，避免口径漂移。
+    /// </summary>
+    [HttpGet("experience-map")]
+    public async Task<IActionResult> ExperienceMap([FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
     {
-        var insights = new List<Insight>();
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
 
-        // ── 信号 A：报错热点（apirequestlogs，排除鉴权噪音 401）──
+        // 短 TTL 缓存：同一时间窗反复点击（尤其来回切档）直接命中，不重复聚合
+        var cacheKey = $"{fromUtc:yyyyMMddHHmm}|{endUtc:yyyyMMddHHmm}";
+        if (_expMapCache.TryGetValue(cacheKey, out var hit) && (DateTime.UtcNow - hit.At).TotalSeconds < ExpMapCacheSeconds)
+        {
+            return Ok(ApiResponse<object>.Ok(hit.Payload));
+        }
+
+        object payload;
+        try
+        {
+            // 主路径：分组下推到 MongoDB 聚合，只回传分组桶，避免拉取数万条文档到内存
+            payload = await ExperienceMapAggregateAsync(fromUtc, endUtc);
+        }
+        catch
+        {
+            // 兜底：聚合不可用时回退到「拉取 + C# 分组」旧路径，保证功能不挂
+            payload = await ExperienceMapLegacyAsync(fromUtc, endUtc);
+        }
+
+        _expMapCache[cacheKey] = (DateTime.UtcNow, payload);
+        if (_expMapCache.Count > 64)
+        {
+            foreach (var k in _expMapCache
+                         .Where(e => (DateTime.UtcNow - e.Value.At).TotalSeconds > ExpMapCacheSeconds)
+                         .Select(e => e.Key).ToList())
+            {
+                _expMapCache.TryRemove(k, out _);
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    /// <summary>主路径：MongoDB 服务端聚合（归一化路径折叠 :id → 按 method+路径分组统计），只回传分组桶</summary>
+    private async Task<object> ExperienceMapAggregateAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var slowCond = new BsonDocument("$and", new BsonArray
+        {
+            new BsonDocument("$eq", new BsonArray { "$IsEventStream", false }),
+            new BsonDocument("$gte", new BsonArray { "$DurationMs", 3000 }),
+        });
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(fromUtc) }, { "$lte", new BsonDateTime(endUtc) } } },
+                { "Direction", new BsonDocument("$ne", "outbound") },
+                { "Path", new BsonDocument("$regex", "^/api") },
+            }),
+            new BsonDocument("$set", new BsonDocument("_segs", new BsonDocument("$split", new BsonArray { "$Path", "/" }))),
+            new BsonDocument("$set", new BsonDocument("_norm", new BsonDocument("$map", new BsonDocument
+            {
+                { "input", "$_segs" },
+                { "as", "s" },
+                { "in", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$or", new BsonArray
+                        {
+                            new BsonDocument("$regexMatch", new BsonDocument { { "input", "$$s" }, { "regex", "^[0-9]+$" } }),
+                            new BsonDocument("$regexMatch", new BsonDocument { { "input", "$$s" }, { "regex", "^[0-9a-fA-F-]{16,}$" } }),
+                        }),
+                        ":id",
+                        "$$s",
+                    }) },
+            }))),
+            new BsonDocument("$set", new BsonDocument("_np", new BsonDocument("$reduce", new BsonDocument
+            {
+                { "input", "$_norm" },
+                { "initialValue", "" },
+                { "in", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$eq", new BsonArray { "$$this", "" }),
+                        "$$value",
+                        new BsonDocument("$concat", new BsonArray { "$$value", "/", "$$this" }),
+                    }) },
+            }))),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "m", "$Method" }, { "p", "$_np" } } },
+                { "count", new BsonDocument("$sum", 1) },
+                { "err", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$and", new BsonArray
+                        {
+                            new BsonDocument("$gte", new BsonArray { "$StatusCode", 400 }),
+                            new BsonDocument("$ne", new BsonArray { "$StatusCode", 401 }),
+                        }),
+                        1, 0,
+                    })) },
+                { "slow", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { slowCond, 1, 0 })) },
+                { "slowMs", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { slowCond, "$DurationMs", 0 })) },
+            }),
+            new BsonDocument("$match", new BsonDocument("count", new BsonDocument("$gte", 2))),
+            new BsonDocument("$sort", new BsonDocument("count", -1)),
+            new BsonDocument("$limit", 4000),
+        };
+
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true });
+        var buckets = await cursor.ToListAsync();
+
+        // 环比突增：对「上一个等长窗口」做同样的轻量聚合，按 method+归一化路径 取坏请求(报错+慢)数 badPrev，
+        // 用于给本窗口痛点叶子算 burstPct。失败不致命（突增字段降级为 null）。
+        var prevBad = await ExperienceMapPrevWindowBadAsync(fromUtc, endUtc);
+
+        long totalRequests = 0;
+        var byModule = new Dictionary<string, List<LeafOut>>();
+        foreach (var b in buckets)
+        {
+            var id = b["_id"].AsBsonDocument;
+            var method = id.GetValue("m", "GET").AsString;
+            var path = id.GetValue("p", "").AsString;
+            if (string.IsNullOrEmpty(path) || !path.StartsWith("/api")) continue;
+            if (path.StartsWith("/api/behavior") || path.StartsWith("/api/team-activity")) continue;
+            var seg = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (seg.Length < 2) continue;
+            var module = seg[1];
+            var count = b.GetValue("count", 0).ToInt32();
+            var err = b.GetValue("err", 0).ToInt32();
+            var slow = b.GetValue("slow", 0).ToInt32();
+            var slowMs = b.GetValue("slowMs", 0).ToDouble();
+            totalRequests += count;
+            var errRate = count > 0 ? (double)err / count : 0;
+            var slowRate = count > 0 ? (double)slow / count : 0;
+            var status = count >= 10 && errRate >= 0.05 && err >= 5 ? "error"
+                : count >= 10 && slowRate >= 0.10 && slow >= 5 ? "slow"
+                : "ok";
+            var avgSlowSec = slow > 0 ? slowMs / slow / 1000.0 : 0;
+            var metric = status == "error"
+                ? $"报错率 {errRate * 100:F0}%（{err} 次）"
+                : status == "slow"
+                    ? $"{slow} 次慢请求 · 均 {avgSlowSec:F1}s"
+                    : $"{count} 次调用";
+            var target = $"{method} {path}";
+            var burstPct = ComputeBurstPct(status, err + slow, prevBad.GetValueOrDefault($"{method}|{path}", 0));
+            if (!byModule.TryGetValue(module, out var list)) { list = new List<LeafOut>(); byModule[module] = list; }
+            list.Add(new LeafOut(target, LeafLabel(method, path), method, count, Math.Round(errRate, 3), Math.Round(slowRate, 3), status, metric, burstPct));
+        }
+
+        return BuildExperienceMapPayload(byModule, totalRequests, fromUtc, endUtc);
+    }
+
+    /// <summary>
+    /// 环比突增百分比：仅痛点(status!=ok)且本窗坏请求 badCur>=5 时才给值，避免噪音。
+    /// 有上一窗口基线 badPrev>0 → round((badCur-badPrev)/badPrev*100)；无基线则 null（新增由前端处理）。
+    /// </summary>
+    private static int? ComputeBurstPct(string status, int badCur, int badPrev)
+    {
+        if (status == "ok" || badCur < 5) return null;
+        if (badPrev <= 0) return null;
+        return (int)Math.Round((badCur - badPrev) / (double)badPrev * 100.0);
+    }
+
+    /// <summary>
+    /// 上一个等长窗口(fromUtc-span .. fromUtc, span=endUtc-fromUtc)的坏请求(报错+慢)聚合，
+    /// 按 method+归一化路径分组，键为 "{method}|{归一化路径}"，值为 badPrev=报错数+慢数（仅 bad>=1 的桶）。
+    /// 复用 PathNormalizeStages，下推到 MongoDB $group，只回小桶。
+    /// </summary>
+    private async Task<Dictionary<string, int>> ExperienceMapPrevWindowBadAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var result = new Dictionary<string, int>();
+        try
+        {
+            var span = endUtc - fromUtc;
+            if (span <= TimeSpan.Zero) return result;
+            var prevFrom = fromUtc - span;
+            var prevTo = fromUtc;
+
+            var slowCond = new BsonDocument("$and", new BsonArray
+            {
+                new BsonDocument("$eq", new BsonArray { "$IsEventStream", false }),
+                new BsonDocument("$gte", new BsonArray { "$DurationMs", 3000 }),
+            });
+            var pipeline = new List<BsonDocument>
+            {
+                new BsonDocument("$match", new BsonDocument
+                {
+                    { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(prevFrom) }, { "$lt", new BsonDateTime(prevTo) } } },
+                    { "Direction", new BsonDocument("$ne", "outbound") },
+                    { "Path", new BsonDocument("$regex", "^/api") },
+                }),
+            };
+            pipeline.AddRange(PathNormalizeStages());
+            pipeline.Add(new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "m", "$Method" }, { "p", "$_np" } } },
+                { "err", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$and", new BsonArray
+                        {
+                            new BsonDocument("$gte", new BsonArray { "$StatusCode", 400 }),
+                            new BsonDocument("$ne", new BsonArray { "$StatusCode", 401 }),
+                        }),
+                        1, 0,
+                    })) },
+                { "slow", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { slowCond, 1, 0 })) },
+            }));
+            pipeline.Add(new BsonDocument("$set", new BsonDocument("badcount", new BsonDocument("$add", new BsonArray { "$err", "$slow" }))));
+            pipeline.Add(new BsonDocument("$match", new BsonDocument("badcount", new BsonDocument("$gte", 1))));
+            pipeline.Add(new BsonDocument("$limit", 4000));
+
+            var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true });
+            var buckets = await cursor.ToListAsync();
+            foreach (var b in buckets)
+            {
+                var id = b["_id"].AsBsonDocument;
+                var method = id.GetValue("m", "GET").AsString;
+                var path = id.GetValue("p", "").AsString;
+                if (string.IsNullOrEmpty(path)) continue;
+                var bad = b.GetValue("badcount", 0).ToInt32();
+                result[$"{method}|{path}"] = bad;
+            }
+        }
+        catch
+        {
+            // 突增是增强项，前窗聚合失败时降级为「无基线」（burstPct 全部 null），不影响主热力图
+        }
+        return result;
+    }
+
+    /// <summary>兜底路径：拉取 + C# 分组（聚合管道不可用时使用，逻辑与原实现一致）</summary>
+    private async Task<object> ExperienceMapLegacyAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var rb = Builders<ApiRequestLog>.Filter;
+        var logs = await _db.ApiRequestLogs.Find(rb.And(
+                rb.Gte(x => x.StartedAt, fromUtc),
+                rb.Lte(x => x.StartedAt, endUtc),
+                rb.Ne(x => x.Direction, "outbound")))
+            .SortByDescending(x => x.StartedAt)
+            .Limit(60000)
+            .Project(x => new { x.Path, x.Method, x.StatusCode, x.DurationMs, x.IsEventStream, x.ErrorCode })
+            .ToListAsync();
+
+        var leafAgg = new Dictionary<string, LeafAcc>();
+        foreach (var l in logs)
+        {
+            if (l.Path == null || !l.Path.StartsWith("/api")) continue;
+            // 自身 / 行为采集端点不计入（避免洞察页统计到自己造成噪音）
+            if (l.Path.StartsWith("/api/behavior") || l.Path.StartsWith("/api/team-activity")) continue;
+            var seg = l.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (seg.Length < 2) continue;
+            var module = seg[1];
+            var norm = NormalizePath(l.Path);
+            var method = string.IsNullOrEmpty(l.Method) ? "GET" : l.Method;
+            var key = $"{module}|{method}|{norm}";
+            if (!leafAgg.TryGetValue(key, out var acc))
+            {
+                acc = new LeafAcc { Module = module, Method = method, Path = norm };
+                leafAgg[key] = acc;
+            }
+            acc.Count++;
+            if (l.StatusCode >= 400 && l.StatusCode != 401)
+            {
+                acc.ErrorCount++;
+                if (!string.IsNullOrEmpty(l.ErrorCode))
+                    acc.ErrorCodes[l.ErrorCode!] = acc.ErrorCodes.GetValueOrDefault(l.ErrorCode!) + 1;
+            }
+            if (!l.IsEventStream && (l.DurationMs ?? 0) >= 3000)
+            {
+                acc.SlowCount++;
+                acc.SlowMsSum += l.DurationMs ?? 0;
+            }
+        }
+
+        long totalRequests = 0;
+        var byModule = new Dictionary<string, List<LeafOut>>();
+        foreach (var a in leafAgg.Values)
+        {
+            if (a.Count < 2) continue;
+            var errRate = a.Count > 0 ? (double)a.ErrorCount / a.Count : 0;
+            var slowRate = a.Count > 0 ? (double)a.SlowCount / a.Count : 0;
+            var status = a.Count >= 10 && errRate >= 0.05 && a.ErrorCount >= 5 ? "error"
+                : a.Count >= 10 && slowRate >= 0.10 && a.SlowCount >= 5 ? "slow"
+                : "ok";
+            var avgSlowSec = a.SlowCount > 0 ? a.SlowMsSum / (double)a.SlowCount / 1000.0 : 0;
+            var metric = status == "error"
+                ? $"报错率 {errRate * 100:F0}%（{a.ErrorCount} 次）"
+                : status == "slow"
+                    ? $"{a.SlowCount} 次慢请求 · 均 {avgSlowSec:F1}s"
+                    : $"{a.Count} 次调用";
+            totalRequests += a.Count;
+            if (!byModule.TryGetValue(a.Module, out var list)) { list = new List<LeafOut>(); byModule[a.Module] = list; }
+            list.Add(new LeafOut($"{a.Method} {a.Path}", LeafLabel(a.Method, a.Path), a.Method, a.Count, Math.Round(errRate, 3), Math.Round(slowRate, 3), status, metric));
+        }
+
+        return BuildExperienceMapPayload(byModule, totalRequests, fromUtc, endUtc);
+    }
+
+    /// <summary>BsonValue → string，BsonNull/缺失回退空串</summary>
+    private static string BsonToStr(BsonValue v) => v is null || v.IsBsonNull ? string.Empty : v.AsString;
+
+    /// <summary>路径归一化的聚合阶段（$split → $map 折叠 :id → $reduce 拼回 _np），供 insights 报错/慢聚合复用</summary>
+    private static BsonDocument[] PathNormalizeStages() => new[]
+    {
+        new BsonDocument("$set", new BsonDocument("_segs", new BsonDocument("$split", new BsonArray { "$Path", "/" }))),
+        new BsonDocument("$set", new BsonDocument("_norm", new BsonDocument("$map", new BsonDocument
+        {
+            { "input", "$_segs" },
+            { "as", "s" },
+            { "in", new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$or", new BsonArray
+                    {
+                        new BsonDocument("$regexMatch", new BsonDocument { { "input", "$$s" }, { "regex", "^[0-9]+$" } }),
+                        new BsonDocument("$regexMatch", new BsonDocument { { "input", "$$s" }, { "regex", "^[0-9a-fA-F-]{16,}$" } }),
+                    }),
+                    ":id",
+                    "$$s",
+                }) },
+        }))),
+        new BsonDocument("$set", new BsonDocument("_np", new BsonDocument("$reduce", new BsonDocument
+        {
+            { "input", "$_norm" },
+            { "initialValue", "" },
+            { "in", new BsonDocument("$cond", new BsonArray
+                {
+                    new BsonDocument("$eq", new BsonArray { "$$this", "" }),
+                    "$$value",
+                    new BsonDocument("$concat", new BsonArray { "$$value", "/", "$$this" }),
+                }) },
+        }))),
+    };
+
+    private async Task<List<Insight>> ErrorInsightsAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        try { return await ErrorInsightsAggregateAsync(fromUtc, endUtc); }
+        catch { return await ErrorInsightsLegacyAsync(fromUtc, endUtc); }
+    }
+
+    /// <summary>报错热点聚合（服务端归一化 + $facet：ep 算分组与去重人数、codes 算错误码计数）</summary>
+    private async Task<List<Insight>> ErrorInsightsAggregateAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var pipeline = new List<BsonDocument>
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(fromUtc) }, { "$lte", new BsonDateTime(endUtc) } } },
+                { "Direction", new BsonDocument("$ne", "outbound") },
+                { "StatusCode", new BsonDocument { { "$gte", 400 }, { "$ne", 401 } } },
+                { "Path", new BsonDocument("$regex", "^/api") },
+                // 排除行为采集与团队动态自身端点（与热力图/趋势同口径），避免自我观测污染洞察
+                { "$nor", new BsonArray
+                    {
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/behavior")),
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/team-activity")),
+                    } },
+            }),
+        };
+        pipeline.AddRange(PathNormalizeStages());
+        pipeline.Add(new BsonDocument("$facet", new BsonDocument
+        {
+            { "ep", new BsonArray
+                {
+                    new BsonDocument("$group", new BsonDocument
+                    {
+                        { "_id", new BsonDocument { { "p", "$_np" }, { "m", "$Method" }, { "s", "$StatusCode" } } },
+                        { "count", new BsonDocument("$sum", 1) },
+                        { "users", new BsonDocument("$addToSet", "$UserId") },
+                    }),
+                    new BsonDocument("$match", new BsonDocument("count", new BsonDocument("$gte", 5))),
+                    new BsonDocument("$set", new BsonDocument("userCount", new BsonDocument("$size", "$users"))),
+                    new BsonDocument("$project", new BsonDocument("users", 0)),
+                    new BsonDocument("$sort", new BsonDocument("count", -1)),
+                    new BsonDocument("$limit", 1000),
+                } },
+            { "codes", new BsonArray
+                {
+                    new BsonDocument("$group", new BsonDocument
+                    {
+                        { "_id", new BsonDocument { { "p", "$_np" }, { "m", "$Method" }, { "s", "$StatusCode" }, { "ec", "$ErrorCode" } } },
+                        { "n", new BsonDocument("$sum", 1) },
+                    }),
+                } },
+        }));
+
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true });
+        var docs = await cursor.ToListAsync();
+        var result = new List<Insight>();
+        if (docs.Count == 0) return result;
+        var root = docs[0];
+
+        // 各 (path,method,status) 的最常见错误码
+        var topCode = new Dictionary<string, (string Code, int N)>();
+        foreach (var cv in root["codes"].AsBsonArray)
+        {
+            var c = cv.AsBsonDocument;
+            var cid = c["_id"].AsBsonDocument;
+            var ec = cid.Contains("ec") && !cid["ec"].IsBsonNull ? cid["ec"].AsString : string.Empty;
+            if (string.IsNullOrEmpty(ec)) continue;
+            var key = $"{cid.GetValue("p", "").AsString}|{BsonToStr(cid.GetValue("m", ""))}|{cid.GetValue("s", 0).ToInt32()}";
+            var n = c.GetValue("n", 0).ToInt32();
+            if (!topCode.TryGetValue(key, out var cur) || n > cur.N) topCode[key] = (ec, n);
+        }
+
+        foreach (var ev in root["ep"].AsBsonArray)
+        {
+            var e = ev.AsBsonDocument;
+            var eid = e["_id"].AsBsonDocument;
+            var p = eid.GetValue("p", "").AsString;
+            if (p.StartsWith("/api/behavior")) continue; // 排除行为采集端点（与旧逻辑一致）
+            var m = BsonToStr(eid.GetValue("m", ""));
+            var s = eid.GetValue("s", 0).ToInt32();
+            var count = e.GetValue("count", 0).ToInt32();
+            var users = e.GetValue("userCount", 0).ToInt32();
+            topCode.TryGetValue($"{p}|{m}|{s}", out var top);
+            result.Add(new Insight(
+                Kind: "api-error",
+                KindLabel: "频繁报错",
+                Target: $"{m} {p}",
+                UserCount: users,
+                EventCount: count,
+                Metric: $"HTTP {s} × {count}",
+                Suggestion: s >= 500
+                    ? "服务端错误高频出现，优先修复；用户遇到 5xx 通常会直接放弃当前操作"
+                    : "该接口在真实使用中高频失败，排查最常见错误码的触发条件；若属参数/状态校验，应把校验前移到前端并给出可行动的提示文案",
+                Evidence: new List<string>
+                {
+                    $"{count} 次失败，{users} 人遇到",
+                    top.Code != null ? $"最常见错误码 {top.Code}（{top.N} 次）" : "无业务错误码（多为框架层拒绝）",
+                },
+                Severity: count * (s >= 500 ? 3 : 1) + users * 2));
+        }
+        return result;
+    }
+
+    /// <summary>报错热点兜底：拉取 + C# 分组（聚合不可用时使用，逻辑与原实现一致）</summary>
+    private async Task<List<Insight>> ErrorInsightsLegacyAsync(DateTime fromUtc, DateTime endUtc)
+    {
         var rb = Builders<ApiRequestLog>.Filter;
         var errLogs = await _db.ApiRequestLogs.Find(rb.And(
                 rb.Gte(x => x.StartedAt, fromUtc),
@@ -276,16 +862,17 @@ public class TeamActivityController : ControllerBase
             .Project(x => new { x.Path, x.Method, x.StatusCode, x.ErrorCode, x.UserId })
             .ToListAsync();
 
+        var result = new List<Insight>();
         foreach (var g in errLogs
-                     .Where(x => x.Path != null && x.Path.StartsWith("/api") && !x.Path.StartsWith("/api/behavior"))
+                     .Where(x => x.Path != null && x.Path.StartsWith("/api") && !x.Path.StartsWith("/api/behavior") && !x.Path.StartsWith("/api/team-activity"))
                      .GroupBy(x => (Path: NormalizePath(x.Path!), x.Method, x.StatusCode))
                      .Where(g => g.Count() >= 5))
         {
             var count = g.Count();
             var users = g.Select(x => x.UserId).Distinct().Count();
-            var topCode = g.Where(x => !string.IsNullOrEmpty(x.ErrorCode))
+            var top = g.Where(x => !string.IsNullOrEmpty(x.ErrorCode))
                 .GroupBy(x => x.ErrorCode!).OrderByDescending(c => c.Count()).FirstOrDefault();
-            insights.Add(new Insight(
+            result.Add(new Insight(
                 Kind: "api-error",
                 KindLabel: "频繁报错",
                 Target: $"{g.Key.Method} {g.Key.Path}",
@@ -298,12 +885,88 @@ public class TeamActivityController : ControllerBase
                 Evidence: new List<string>
                 {
                     $"{count} 次失败，{users} 人遇到",
-                    topCode != null ? $"最常见错误码 {topCode.Key}（{topCode.Count()} 次）" : "无业务错误码（多为框架层拒绝）",
+                    top != null ? $"最常见错误码 {top.Key}（{top.Count()} 次）" : "无业务错误码（多为框架层拒绝）",
                 },
                 Severity: count * (g.Key.StatusCode >= 500 ? 3 : 1) + users * 2));
         }
+        return result;
+    }
 
-        // ── 信号 B：等待过久（apirequestlogs 中 ≥3s 的非流式慢请求）──
+    private async Task<List<Insight>> SlowInsightsAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        try { return await SlowInsightsAggregateAsync(fromUtc, endUtc); }
+        catch { return await SlowInsightsLegacyAsync(fromUtc, endUtc); }
+    }
+
+    /// <summary>等待过久聚合（服务端归一化 + 按 path,method 分组，userCount/durSum 服务端算好只回传小桶）</summary>
+    private async Task<List<Insight>> SlowInsightsAggregateAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var pipeline = new List<BsonDocument>
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(fromUtc) }, { "$lte", new BsonDateTime(endUtc) } } },
+                { "Direction", new BsonDocument("$ne", "outbound") },
+                { "IsEventStream", false },
+                { "DurationMs", new BsonDocument("$gte", 3000) },
+                { "Path", new BsonDocument("$regex", "^/api") },
+                // 排除行为采集与团队动态自身端点（与热力图/趋势同口径）：仪表盘自身慢请求 / LLM 诊断调用
+                // 不得回流成关于 VOC 页的「等待过久」洞察，避免自我观测的反馈回路挤占真实端点。
+                { "$nor", new BsonArray
+                    {
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/behavior")),
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/team-activity")),
+                    } },
+            }),
+        };
+        pipeline.AddRange(PathNormalizeStages());
+        pipeline.Add(new BsonDocument("$group", new BsonDocument
+        {
+            { "_id", new BsonDocument { { "p", "$_np" }, { "m", "$Method" } } },
+            { "count", new BsonDocument("$sum", 1) },
+            { "users", new BsonDocument("$addToSet", "$UserId") },
+            { "durSum", new BsonDocument("$sum", "$DurationMs") },
+        }));
+        pipeline.Add(new BsonDocument("$match", new BsonDocument("count", new BsonDocument("$gte", 5))));
+        pipeline.Add(new BsonDocument("$set", new BsonDocument("userCount", new BsonDocument("$size", "$users"))));
+        pipeline.Add(new BsonDocument("$project", new BsonDocument("users", 0)));
+        pipeline.Add(new BsonDocument("$sort", new BsonDocument("count", -1)));
+        pipeline.Add(new BsonDocument("$limit", 1000));
+
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true });
+        var docs = await cursor.ToListAsync();
+        var result = new List<Insight>();
+        foreach (var b in docs)
+        {
+            var id = b["_id"].AsBsonDocument;
+            var p = id.GetValue("p", "").AsString;
+            var m = BsonToStr(id.GetValue("m", ""));
+            var count = b.GetValue("count", 0).ToInt32();
+            var users = b.GetValue("userCount", 0).ToInt32();
+            var durSum = b.GetValue("durSum", 0).ToDouble();
+            var avgSec = count > 0 ? durSum / count / 1000.0 : 0;
+            result.Add(new Insight(
+                Kind: "slow-endpoint",
+                KindLabel: "等待过久",
+                Target: $"{m} {p}",
+                UserCount: users,
+                EventCount: count,
+                Metric: $"慢请求均值 {avgSec:F1}s",
+                Suggestion: "等待超过 3 秒且无流式反馈即为体验缺陷：优先做流式/分页/缓存/异步化，至少给阶段性进度提示",
+                Evidence: new List<string>
+                {
+                    $"{count} 次 ≥3s 的请求，{users} 人等待过",
+                    $"慢请求平均耗时 {avgSec:F1}s",
+                },
+                Severity: count + avgSec * 5 + users * 2));
+        }
+        return result;
+    }
+
+    /// <summary>等待过久兜底：拉取 + C# 分组（聚合不可用时使用，逻辑与原实现一致）</summary>
+    private async Task<List<Insight>> SlowInsightsLegacyAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var rb = Builders<ApiRequestLog>.Filter;
         var slowLogs = await _db.ApiRequestLogs.Find(rb.And(
                 rb.Gte(x => x.StartedAt, fromUtc),
                 rb.Lte(x => x.StartedAt, endUtc),
@@ -315,15 +978,16 @@ public class TeamActivityController : ControllerBase
             .Project(x => new { x.Path, x.Method, x.DurationMs, x.UserId })
             .ToListAsync();
 
+        var result = new List<Insight>();
         foreach (var g in slowLogs
-                     .Where(x => x.Path != null && x.Path.StartsWith("/api"))
+                     .Where(x => x.Path != null && x.Path.StartsWith("/api") && !x.Path.StartsWith("/api/behavior") && !x.Path.StartsWith("/api/team-activity"))
                      .GroupBy(x => (Path: NormalizePath(x.Path!), x.Method))
                      .Where(g => g.Count() >= 5))
         {
             var count = g.Count();
             var users = g.Select(x => x.UserId).Distinct().Count();
             var avgSec = g.Average(x => (double)(x.DurationMs ?? 0)) / 1000.0;
-            insights.Add(new Insight(
+            result.Add(new Insight(
                 Kind: "slow-endpoint",
                 KindLabel: "等待过久",
                 Target: $"{g.Key.Method} {g.Key.Path}",
@@ -338,6 +1002,17 @@ public class TeamActivityController : ControllerBase
                 },
                 Severity: count + avgSec * 5 + users * 2));
         }
+        return result;
+    }
+
+    /// <summary>规则式信号聚类（供 insights 查询与 AI 简报共用）</summary>
+    private async Task<(List<Insight> Insights, int BehaviorEventCount)> ComputeInsightsAsync(DateTime fromUtc, DateTime endUtc)
+    {
+        var insights = new List<Insight>();
+
+        // ── 信号 A/B：报错热点 + 等待过久（apirequestlogs）。分组下推到 MongoDB 聚合，失败回退 C# 扫描 ──
+        insights.AddRange(await ErrorInsightsAsync(fromUtc, endUtc));
+        insights.AddRange(await SlowInsightsAsync(fromUtc, endUtc));
 
         // ── 行为事件（采集自上线起）──
         var bb = Builders<BehaviorEvent>.Filter;
@@ -468,6 +1143,18 @@ public class TeamActivityController : ControllerBase
             .Select(i =>
             {
                 states.TryGetValue($"{i.Kind}|{i.Target}", out var st);
+                // 复测回落：仅对「报错/慢请求」类（EventCount 即坏请求数）且已记录 resolved 基线时计算。
+                // reboundPct = (当前坏请求 - 基线) / 基线 × 100；负数=回落（好），正数=复发（坏）。
+                int? resolvedBadCount = null;
+                int? reboundPct = null;
+                if (st?.Status == "resolved"
+                    && st.ResolvedBadCount is int baseBad and > 0
+                    && (i.Kind == "api-error" || i.Kind == "slow-endpoint"))
+                {
+                    resolvedBadCount = baseBad;
+                    var cur = (int)i.EventCount;
+                    reboundPct = (int)Math.Round((cur - baseBad) / (double)baseBad * 100.0);
+                }
                 return new
                 {
                     kind = i.Kind,
@@ -481,6 +1168,10 @@ public class TeamActivityController : ControllerBase
                     status = st?.Status,
                     defectId = st?.DefectId,
                     defectTitle = st?.DefectTitle,
+                    requirementId = st?.RequirementId,
+                    requirementNo = st?.RequirementNo,
+                    resolvedBadCount,
+                    reboundPct,
                 };
             })
             .ToList();
@@ -657,6 +1348,499 @@ public class TeamActivityController : ControllerBase
         }
     }
 
+    // ────────────────────────── 端点下钻 + AI 根因诊断 ──────────────────────────
+
+    /// <summary>把 target（"METHOD 归一化路径"）拆成 method + 归一化路径；空格分隔，路径里不含空格</summary>
+    private static (string Method, string NormPath) ParseTarget(string target)
+    {
+        var idx = (target ?? string.Empty).IndexOf(' ');
+        if (idx <= 0) return (string.Empty, target ?? string.Empty);
+        return (target!.Substring(0, idx).Trim(), target.Substring(idx + 1).Trim());
+    }
+
+    /// <summary>
+    /// 由归一化路径（含 :id 占位段）构造逐段锚定的整路径正则，:id 段放宽为 [^/]+，其余段转义。
+    /// 用作 MongoDB 整路径预过滤（替代仅靠静态前缀的 StartsWith），让查询本身就几乎只返回目标端点的行，
+    /// 避免广泛 :id 家族下目标行落到 5000 上限之外导致计数被低估（[^/]+ 可能轻微过匹配，仍由内存精确匹配兜底收口）。
+    /// </summary>
+    private static string NormalizedPathRegex(string normPath)
+    {
+        var segments = normPath.Split('/');
+        var parts = segments.Select(s => s.StartsWith(':')
+            ? "[^/]+"
+            : System.Text.RegularExpressions.Regex.Escape(s));
+        return "^" + string.Join('/', parts) + "$";
+    }
+
+    /// <summary>
+    /// 脱敏：屏蔽 JSON / curl 里的敏感键值（密码 / token / 密钥 / cookie / 签名 等），
+    /// 防止 /api/v1/auth/login 之类端点的请求体明文出现在下钻样本、AI 诊断 prompt 等离开服务端的地方。
+    /// </summary>
+    private static string? RedactSensitive(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return s;
+        const string keys = "password|passwd|pwd|token|secret|client[_-]?secret|authorization|auth|api[_-]?key|access[_-]?key|credential|cookie|session|signature|sign|private[_-]?key";
+        // JSON-ish 敏感键值：把 "key":"..." 或 "key":<非字符串> 的值替换为 "***"
+        s = System.Text.RegularExpressions.Regex.Replace(
+            s!,
+            "(?i)(\"(" + keys + ")\"\\s*:\\s*)(\"(?:[^\"\\\\]|\\\\.)*\"|[^,}\\s]+)",
+            "$1\"***\"");
+        // 表单/查询串 key=value（application/x-www-form-urlencoded、curl --data、查询参数）：password=...&client_secret=...
+        s = System.Text.RegularExpressions.Regex.Replace(
+            s,
+            "(?i)(?<![A-Za-z0-9_-])(" + keys + ")=([^&\\s\"']*)",
+            "$1=***");
+        // curl header-ish：-H 'Authorization: xxx' / Cookie / X-Api-Key / Set-Cookie 一律打码
+        s = System.Text.RegularExpressions.Regex.Replace(
+            s,
+            "(?im)(-H\\s+['\"]?(authorization|cookie|x-api-key|set-cookie)\\s*:\\s*)[^'\"\\n]*",
+            "$1***");
+        return s;
+    }
+
+    /// <summary>
+    /// 端点下钻明细：取该端点（target = METHOD 归一化路径）在窗口内的真实 apirequestlogs，
+    /// 聚合错误码分布、慢/错计数，并取最近的代表性请求样本（curl / 请求体 / 状态码 / 耗时）。
+    /// 量不大，走 Find + 内存归一化精确匹配（StartsWith 静态前缀预过滤 + Limit 控量）。
+    /// </summary>
+    [HttpGet("endpoint-detail")]
+    public async Task<IActionResult> EndpointDetail(
+        [FromQuery] string target,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "target 不能为空"));
+
+        var (method, normPath) = ParseTarget(target);
+        if (string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(normPath))
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "target 格式应为「METHOD 路径」"));
+
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+
+        var rb = Builders<ApiRequestLog>.Filter;
+        var filters = new List<FilterDefinition<ApiRequestLog>>
+        {
+            rb.Gte(x => x.StartedAt, fromUtc),
+            rb.Lte(x => x.StartedAt, endUtc),
+            rb.Ne(x => x.Direction, "outbound"),
+            rb.Eq(x => x.Method, method),
+            // 整路径锚定预过滤（:id 段 → [^/]+），使查询本身就几乎只命中目标端点，5000 上限不再低估广泛 :id 家族
+            rb.Regex(x => x.Path, new BsonRegularExpression(NormalizedPathRegex(normPath))),
+        };
+
+        var logs = await _db.ApiRequestLogs.Find(rb.And(filters))
+            .SortByDescending(x => x.StartedAt)
+            .Limit(5000)
+            .Project(x => new
+            {
+                x.Path,
+                x.Method,
+                x.StatusCode,
+                x.DurationMs,
+                x.IsEventStream,
+                x.ErrorCode,
+                x.Curl,
+                x.RequestBody,
+                x.StartedAt,
+            })
+            .ToListAsync();
+
+        // 内存里归一化路径精确匹配（Path 含真实 id，NormalizePath 后才与 target 同口径）
+        var matched = logs
+            .Where(l => l.Path != null && NormalizePath(l.Path) == normPath)
+            .ToList();
+
+        var count = matched.Count;
+        var errorCount = matched.Count(l => l.StatusCode >= 400 && l.StatusCode != 401);
+        var slowCount = matched.Count(l => !l.IsEventStream && (l.DurationMs ?? 0) >= 3000);
+        var slowMsSum = matched.Where(l => !l.IsEventStream && (l.DurationMs ?? 0) >= 3000).Sum(l => l.DurationMs ?? 0);
+        var avgSlowSec = slowCount > 0 ? slowMsSum / (double)slowCount / 1000.0 : 0;
+
+        var codes = matched
+            .Where(l => !string.IsNullOrEmpty(l.ErrorCode))
+            .GroupBy(l => l.ErrorCode!)
+            .Select(g => new { code = g.Key, n = g.Count() })
+            .OrderByDescending(c => c.n)
+            .Take(8)
+            .ToList();
+
+        // 样本：优先报错 / 慢的，其次最近的；最多 5 条，curl 缺失时用 method + path 兜底
+        var samples = matched
+            .OrderByDescending(l => (l.StatusCode >= 400 && l.StatusCode != 401) || (!l.IsEventStream && (l.DurationMs ?? 0) >= 3000) ? 1 : 0)
+            .ThenByDescending(l => l.StartedAt)
+            .Take(5)
+            .Select(l => new
+            {
+                statusCode = l.StatusCode,
+                durationMs = l.DurationMs,
+                curl = RedactSensitive(string.IsNullOrWhiteSpace(l.Curl) ? $"{l.Method} {l.Path}" : l.Curl),
+                requestBody = RedactSensitive(l.RequestBody),
+                occurredAt = l.StartedAt,
+            })
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            target,
+            method,
+            path = normPath,
+            label = LeafLabel(method, normPath),
+            module = ModuleLabel(normPath.Split('/', StringSplitOptions.RemoveEmptyEntries).Skip(1).FirstOrDefault() ?? string.Empty),
+            count,
+            errorCount,
+            slowCount,
+            avgSlowSec = Math.Round(avgSlowSec, 1),
+            codes,
+            samples,
+            windowFrom = fromUtc,
+            windowTo = endUtc,
+        }));
+    }
+
+    // ────────────────────────── 趋势爆点曲线 ──────────────────────────
+
+    // 趋势曲线短 TTL 缓存：与体验全景热力图同源、同档反复切换不重复聚合（key 取整到分钟 + 桶粒度）
+    private static readonly ConcurrentDictionary<string, (DateTime At, object Payload)> _trendCache = new();
+    private const int TrendCacheSeconds = 30;
+
+    /// <summary>
+    /// 趋势爆点曲线：按时间桶聚合 apirequestlogs 的总量/报错/慢请求，回答「什么时候开始变差」。
+    /// 桶粒度自适应：窗口 ≤ 约 2 天 → 按小时桶；更长 / 全部 → 按天桶（「全部」与 insights 同口径取近 30 天）。
+    /// 走 MongoDB 聚合下推（$dateTrunc 按桶分组），口径与 ExperienceMapAggregateAsync 一致：
+    /// Direction != outbound + Path ^/api，排除 /api/behavior 与 /api/team-activity；
+    /// err=StatusCode>=400 且 !=401，slow=非流式且 DurationMs>=3000。失败兜底返回空桶数组（不致命）。
+    /// </summary>
+    [HttpGet("experience-trend")]
+    public async Task<IActionResult> ExperienceTrend([FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+    {
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+        // 窗口 ≤ 约 2 天用小时桶（看清一天内的波动），更长用天桶（避免桶过多）
+        var unit = (endUtc - fromUtc) <= TimeSpan.FromHours(50) ? "hour" : "day";
+
+        var cacheKey = $"{fromUtc:yyyyMMddHHmm}|{endUtc:yyyyMMddHHmm}|{unit}";
+        if (_trendCache.TryGetValue(cacheKey, out var hit) && (DateTime.UtcNow - hit.At).TotalSeconds < TrendCacheSeconds)
+        {
+            return Ok(ApiResponse<object>.Ok(hit.Payload));
+        }
+
+        object payload;
+        try
+        {
+            payload = await ExperienceTrendAggregateAsync(fromUtc, endUtc, unit);
+        }
+        catch
+        {
+            // 趋势是增强视图，聚合失败时返回空桶（前端走空数据引导态），不影响其他视图
+            payload = new { buckets = Array.Empty<object>(), windowFrom = fromUtc, windowTo = endUtc, bucketUnit = unit };
+        }
+
+        _trendCache[cacheKey] = (DateTime.UtcNow, payload);
+        if (_trendCache.Count > 64)
+        {
+            foreach (var k in _trendCache
+                         .Where(e => (DateTime.UtcNow - e.Value.At).TotalSeconds > TrendCacheSeconds)
+                         .Select(e => e.Key).ToList())
+            {
+                _trendCache.TryRemove(k, out _);
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(payload));
+    }
+
+    /// <summary>按时间桶下推聚合（$dateTrunc 按 hour/day 分组），回传按桶起点升序的 total/errors/slow。</summary>
+    private async Task<object> ExperienceTrendAggregateAsync(DateTime fromUtc, DateTime endUtc, string unit)
+    {
+        var slowCond = new BsonDocument("$and", new BsonArray
+        {
+            new BsonDocument("$eq", new BsonArray { "$IsEventStream", false }),
+            new BsonDocument("$gte", new BsonArray { "$DurationMs", 3000 }),
+        });
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(fromUtc) }, { "$lte", new BsonDateTime(endUtc) } } },
+                { "Direction", new BsonDocument("$ne", "outbound") },
+                { "Path", new BsonDocument("$regex", "^/api") },
+                // 排除行为采集与团队动态自身端点（与热力图同口径，避免自我观测污染趋势）
+                { "$nor", new BsonArray
+                    {
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/behavior")),
+                        new BsonDocument("Path", new BsonDocument("$regex", "^/api/team-activity")),
+                    } },
+            }),
+            new BsonDocument("$set", new BsonDocument("_bucket", new BsonDocument("$dateTrunc", new BsonDocument
+            {
+                { "date", "$StartedAt" },
+                { "unit", unit },
+            }))),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", "$_bucket" },
+                { "total", new BsonDocument("$sum", 1) },
+                { "errors", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    {
+                        new BsonDocument("$and", new BsonArray
+                        {
+                            new BsonDocument("$gte", new BsonArray { "$StatusCode", 400 }),
+                            new BsonDocument("$ne", new BsonArray { "$StatusCode", 401 }),
+                        }),
+                        1, 0,
+                    })) },
+                { "slow", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray { slowCond, 1, 0 })) },
+            }),
+            new BsonDocument("$sort", new BsonDocument("_id", 1)),
+            new BsonDocument("$limit", 1000),
+        };
+
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true });
+        var docs = await cursor.ToListAsync();
+        var buckets = new List<object>();
+        foreach (var d in docs)
+        {
+            var idVal = d.GetValue("_id", BsonNull.Value);
+            if (idVal.IsBsonNull) continue;
+            var bucketStart = idVal.ToUniversalTime();
+            buckets.Add(new
+            {
+                bucketStart,
+                total = d.GetValue("total", 0).ToInt32(),
+                errors = d.GetValue("errors", 0).ToInt32(),
+                slow = d.GetValue("slow", 0).ToInt32(),
+            });
+        }
+
+        return new { buckets, windowFrom = fromUtc, windowTo = endUtc, bucketUnit = unit };
+    }
+
+    /// <summary>
+    /// 端点 AI 根因诊断（SSE 流式）：聚合该端点的报错码分布 / 耗时 / 样本 / 按天计数，
+    /// 交给 LLM 给出现象判断、聚集线索、疑似根因、建议动作。事件：phase / model / delta / done / error。
+    /// 遵循 server-authority：LLM 调用用 CancellationToken.None，客户端断开只停写不停算，10s 心跳。
+    /// </summary>
+    [HttpGet("diagnose")]
+    public async Task EndpointDiagnoseStream(
+        [FromQuery] string target,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache, no-transform";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        var userId = this.GetRequiredUserId();
+
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            await WriteSseAsync("error", new { message = "target 不能为空" });
+            return;
+        }
+        var (method, normPath) = ParseTarget(target);
+        if (string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(normPath))
+        {
+            await WriteSseAsync("error", new { message = "target 格式应为「METHOD 路径」" });
+            return;
+        }
+
+        var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
+        var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
+
+        await WriteSseAsync("phase", new { message = "正在拉取该端点的真实请求样本…" });
+
+        var rb = Builders<ApiRequestLog>.Filter;
+        var filters = new List<FilterDefinition<ApiRequestLog>>
+        {
+            rb.Gte(x => x.StartedAt, fromUtc),
+            rb.Lte(x => x.StartedAt, endUtc),
+            rb.Ne(x => x.Direction, "outbound"),
+            rb.Eq(x => x.Method, method),
+            // 整路径锚定预过滤（:id 段 → [^/]+），使查询本身就几乎只命中目标端点，5000 上限不再低估广泛 :id 家族
+            rb.Regex(x => x.Path, new BsonRegularExpression(NormalizedPathRegex(normPath))),
+        };
+
+        var logs = await _db.ApiRequestLogs.Find(rb.And(filters))
+            .SortByDescending(x => x.StartedAt)
+            .Limit(5000)
+            .Project(x => new
+            {
+                x.Path,
+                x.StatusCode,
+                x.DurationMs,
+                x.IsEventStream,
+                x.ErrorCode,
+                x.RequestBody,
+                x.StartedAt,
+            })
+            .ToListAsync();
+
+        var matched = logs.Where(l => l.Path != null && NormalizePath(l.Path) == normPath).ToList();
+        if (matched.Count == 0)
+        {
+            await WriteSseAsync("error", new { message = "该端点在当前窗口没有可分析的请求记录" });
+            return;
+        }
+
+        var count = matched.Count;
+        var errorCount = matched.Count(l => l.StatusCode >= 400 && l.StatusCode != 401);
+        var slowCount = matched.Count(l => !l.IsEventStream && (l.DurationMs ?? 0) >= 3000);
+        var slowMsSum = matched.Where(l => !l.IsEventStream && (l.DurationMs ?? 0) >= 3000).Sum(l => l.DurationMs ?? 0);
+        var avgSlowSec = slowCount > 0 ? slowMsSum / (double)slowCount / 1000.0 : 0;
+        var avgAllSec = matched.Where(l => !l.IsEventStream).Select(l => (double)(l.DurationMs ?? 0)).DefaultIfEmpty(0).Average() / 1000.0;
+
+        var topCodes = matched
+            .Where(l => !string.IsNullOrEmpty(l.ErrorCode))
+            .GroupBy(l => l.ErrorCode!)
+            .Select(g => new { Code = g.Key, N = g.Count() })
+            .OrderByDescending(c => c.N)
+            .Take(6)
+            .ToList();
+
+        var byDay = matched
+            .GroupBy(l => l.StartedAt.ToUniversalTime().Date)
+            .OrderBy(g => g.Key)
+            .Select(g => $"{g.Key:MM-dd} 共 {g.Count()} 次、报错 {g.Count(x => x.StatusCode >= 400 && x.StatusCode != 401)} 次")
+            .TakeLast(10)
+            .ToList();
+
+        var sampleSummaries = matched
+            .OrderByDescending(l => (l.StatusCode >= 400 && l.StatusCode != 401) || (!l.IsEventStream && (l.DurationMs ?? 0) >= 3000) ? 1 : 0)
+            .ThenByDescending(l => l.StartedAt)
+            .Take(5)
+            .Select(l =>
+            {
+                // 先脱敏再截断：敏感请求体绝不进入离开服务端的 AI 诊断 prompt
+                var body = RedactSensitive(l.RequestBody);
+                if (!string.IsNullOrEmpty(body) && body!.Length > 240) body = body.Substring(0, 240) + "…";
+                return $"HTTP {l.StatusCode} · {(l.DurationMs ?? 0)}ms · 错误码 {(string.IsNullOrEmpty(l.ErrorCode) ? "无" : l.ErrorCode)} · 请求体 {(string.IsNullOrEmpty(body) ? "（无）" : body)}";
+            })
+            .ToList();
+
+        var facts = new StringBuilder();
+        facts.AppendLine($"端点：{method} {normPath}（{LeafLabel(method, normPath)}）");
+        facts.AppendLine($"分析窗口：{fromUtc:yyyy-MM-dd} ~ {endUtc:yyyy-MM-dd}");
+        facts.AppendLine($"总调用 {count} 次，报错 {errorCount} 次（报错率 {(count > 0 ? errorCount * 100.0 / count : 0):F0}%），慢请求(≥3s) {slowCount} 次，慢请求均值 {avgSlowSec:F1}s，整体均值 {avgAllSec:F1}s。");
+        facts.AppendLine("错误码分布：" + (topCodes.Count > 0 ? string.Join("；", topCodes.Select(c => $"{c.Code}×{c.N}")) : "无业务错误码（多为框架层拒绝或无报错）"));
+        facts.AppendLine("按天计数：" + (byDay.Count > 0 ? string.Join("；", byDay) : "无"));
+        facts.AppendLine("代表性请求样本：");
+        foreach (var s in sampleSummaries) facts.AppendLine($"- {s}");
+
+        var systemPrompt =
+            "你是接口体验诊断分析师。下面是某个 API 端点在真实使用中的报错码分布、耗时、按天计数与请求样本。" +
+            "请用中文输出一份根因诊断（Markdown，禁止使用 emoji，不要臆造数据，证据不足时明确说明）：" +
+            "① 一句话判断这个端点当前最主要的问题；" +
+            "② 时间聚集 / 错误聚类 / 参数线索（从错误码分布、按天计数、样本请求体里能看出什么规律，看不出就说看不出）；" +
+            "③ 疑似根因（可多因叠加，逐条给出，并标注依据的是哪条证据）；" +
+            "④ 建议动作（具体可执行，如校验前移到前端、长任务改 SSE 流式、放宽过严的权限校验、修复模型池健康/降级链等）。";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: facts.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[TeamActivity-EndpointDiagnose]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Admin.TeamActivity.EndpointDiagnose));
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.TeamActivity.EndpointDiagnose,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            TimeoutSeconds = 300,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = facts.ToString() },
+                },
+                ["temperature"] = 0.4,
+                ["max_tokens"] = 8192,
+            },
+        };
+
+        var clientGone = false;
+        var sentModel = false;
+        var writeLock = new SemaphoreSlim(1, 1);
+        using var heartbeatCts = new CancellationTokenSource();
+        var heartbeat = Task.Run(async () =>
+        {
+            try
+            {
+                while (!heartbeatCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(10), heartbeatCts.Token);
+                    if (clientGone) continue;
+                    await writeLock.WaitAsync(heartbeatCts.Token);
+                    try
+                    {
+                        await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
+                        await Response.Body.FlushAsync(CancellationToken.None);
+                    }
+                    catch (ObjectDisposedException) { clientGone = true; }
+                    finally { writeLock.Release(); }
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+
+        async Task SendAsync(string eventName, object? payload)
+        {
+            await writeLock.WaitAsync();
+            try { await WriteSseAsync(eventName, payload); }
+            finally { writeLock.Release(); }
+        }
+
+        try
+        {
+            if (!clientGone) { try { await SendAsync("phase", new { message = "正在诊断根因…" }); } catch (ObjectDisposedException) { clientGone = true; } }
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && !sentModel && chunk.Resolution != null)
+                {
+                    sentModel = true;
+                    if (!clientGone)
+                    {
+                        try { await SendAsync("model", new { model = chunk.Resolution.ActualModel, platform = chunk.Resolution.ActualPlatformName }); }
+                        catch (ObjectDisposedException) { clientGone = true; }
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    if (!clientGone)
+                    {
+                        try { await SendAsync("delta", new { text = chunk.Content }); }
+                        catch (ObjectDisposedException) { clientGone = true; }
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    if (!clientGone) { try { await SendAsync("error", new { message = chunk.Error ?? "LLM 网关返回未知错误" }); } catch { } }
+                    return;
+                }
+            }
+            if (!clientGone) { try { await SendAsync("done", new { complete = true }); } catch (ObjectDisposedException) { } }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex)
+        {
+            if (!clientGone) { try { await SendAsync("error", new { message = ex.Message }); } catch { } }
+        }
+        finally
+        {
+            heartbeatCts.Cancel();
+            try { await heartbeat; } catch { /* 心跳收尾异常不影响响应 */ }
+        }
+    }
+
     private async Task WriteSseAsync(string eventName, object? data)
     {
         var dataLine = data == null
@@ -666,7 +1850,7 @@ public class TeamActivityController : ControllerBase
         await Response.Body.FlushAsync(CancellationToken.None);
     }
 
-    public record SetInsightStateRequest(string Kind, string Target, string Status, string? DefectId, string? DefectTitle);
+    public record SetInsightStateRequest(string Kind, string Target, string Status, string? DefectId, string? DefectTitle, int? BadCount = null);
 
     /// <summary>
     /// 设置洞察处理状态（洞察生命周期）。status: confirmed / resolved / ignored / open（open = 清除状态恢复待处理）。
@@ -702,12 +1886,180 @@ public class TeamActivityController : ControllerBase
         {
             update = update.Set(x => x.DefectId, request.DefectId).Set(x => x.DefectTitle, request.DefectTitle);
         }
+        // 复测回落基线：标记 resolved 时快照当时的坏请求数（前端传当前 err+slow），改回非 resolved 时清空。
+        if (request.Status == "resolved")
+        {
+            update = update
+                .Set(x => x.ResolvedAt, DateTime.UtcNow)
+                .Set(x => x.ResolvedBadCount, request.BadCount);
+        }
+        else
+        {
+            update = update
+                .Set(x => x.ResolvedAt, (DateTime?)null)
+                .Set(x => x.ResolvedBadCount, (int?)null);
+        }
         await _db.BehaviorInsightStates.UpdateOneAsync(
             x => x.Fingerprint == fingerprint,
             update,
             new UpdateOptions { IsUpsert = true });
 
         return Ok(ApiResponse<object>.Ok(new { fingerprint, status = request.Status }));
+    }
+
+    public record ToRequirementRequest(string Kind, string Target, string? Title, string? Description, string? ProductId);
+
+    /// <summary>
+    /// 痛点洞察流转产品需求池（VOC 闭环收口）：把一个体验痛点一键转成产品管理智能体的需求记录（Requirement），
+    /// 落入指定产品的需求池，并把 RequirementId/RequirementNo 回写到 BehaviorInsightState、status 置 confirmed。
+    /// 幂等：同一指纹已转过需求（state.RequirementId 非空且需求仍存在）则直接返回已存在的，不重复创建。
+    /// 需求创建逻辑对照 ProductAgentController.ConvertDefectToRequirementInternalAsync（编号 + 流程默认 + 初始状态）。
+    /// </summary>
+    [HttpPost("insights/to-requirement")]
+    public async Task<IActionResult> ToRequirement([FromBody] ToRequirementRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Kind) || string.IsNullOrWhiteSpace(request.Target))
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "kind/target 不合法"));
+        if (string.IsNullOrWhiteSpace(request.ProductId))
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "请先选择落入哪个产品的需求池"));
+
+        var userId = this.GetRequiredUserId();
+        var productId = request.ProductId!.Trim();
+        var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
+        if (product == null)
+            return Ok(ApiResponse<object>.Fail("INVALID_ARGUMENT", "目标产品不存在或已删除，请重新选择"));
+
+        // 产品访问域校验（对照 ProductAgentController.FindAccessibleProductAsync）：负责人 / 成员 / 产品管理权限之一，
+        // 或产品管理应用管理员（AdminIds，可管理产品模块全部产品），否则禁止把体验之声写进无权访问的产品需求池
+        // （team-activity.manage 不等于可越权写任意产品；VOC 弹窗会向应用管理员展示全部产品，这里必须放行以免 403）。
+        if (!product.IsProductOwner(userId)
+            && !product.MemberIds.Contains(userId)
+            && !HasPermission(AdminPermissionCatalog.ProductAgentManage)
+            && !await IsProductApplicationAdminAsync(userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权将体验之声写入该产品需求池"));
+
+        var fingerprint = $"{request.Kind}|{request.Target}";
+
+        // 幂等：该指纹已转过需求且需求仍存在 → 返回已存在的，不重复创建
+        var existingState = await _db.BehaviorInsightStates
+            .Find(x => x.Fingerprint == fingerprint)
+            .SortByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync();
+        if (existingState != null && !string.IsNullOrWhiteSpace(existingState.RequirementId))
+        {
+            var already = await _db.Requirements
+                .Find(r => r.Id == existingState.RequirementId && !r.IsDeleted)
+                .FirstOrDefaultAsync();
+            // 仅当已存在需求落在「当前选中产品」时才幂等返回；落在其它产品时不得把它的元数据回给只对本产品有权的用户，
+            // 改为在选中产品下新建（同一全局指纹可在不同产品各自成需求，状态指向最近一次）。
+            if (already != null && already.ProductId == productId)
+            {
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    fingerprint,
+                    requirementId = already.Id,
+                    requirementNo = already.RequirementNo,
+                    productId = already.ProductId,
+                    alreadyExists = true,
+                }));
+            }
+        }
+
+        // 解析需求默认流程定义 + 初始状态（默认模板优先匹配本产品，回退全局默认）
+        var workflowDefId = await ResolveRequirementWorkflowDefIdAsync(productId);
+        var initialState = await ResolveRequirementInitialStateAsync(workflowDefId);
+
+        var title = string.IsNullOrWhiteSpace(request.Title)
+            ? $"[用户体验之声] {request.Kind}：{request.Target}"
+            : request.Title!.Trim();
+
+        var requirement = new Requirement
+        {
+            ProductId = productId,
+            RequirementNo = await GenerateNextRequirementNoAsync(),
+            Title = title,
+            Description = request.Description,
+            Grade = ProductItemGrade.P2,
+            WorkflowDefId = workflowDefId,
+            CurrentState = initialState,
+            // 初始化进入当前状态的时间，否则产品看板 SLA（slaInfo(stateEnteredAt)）在首次流转前无状态停留/超期显示
+            StateEnteredAt = DateTime.UtcNow,
+            OwnerId = userId,
+            SourceSystem = "voc-insight",
+            SourceUrl = request.Target,
+        };
+        await _db.Requirements.InsertOneAsync(requirement);
+
+        // 维护去规范化计数：重算该产品需求数（镜像 ProductAgentController.RecalcProductCountsAsync，仅需求计数）。
+        // 仅在真实新建路径执行，幂等命中已存在需求时已提前 return，不会到这里。
+        var reqCount = await _db.Requirements.CountDocumentsAsync(r => r.ProductId == productId && !r.IsDeleted);
+        await _db.Products.UpdateOneAsync(
+            p => p.Id == productId,
+            Builders<Product>.Update
+                .Set(p => p.RequirementCount, (int)reqCount)
+                .Set(p => p.UpdatedAt, DateTime.UtcNow));
+
+        // 回写关联到洞察状态：RequirementId/RequirementNo + status=confirmed（确认待改）
+        var update = Builders<BehaviorInsightState>.Update
+            .Set(x => x.Kind, request.Kind)
+            .Set(x => x.Target, request.Target)
+            .Set(x => x.RequirementId, requirement.Id)
+            .Set(x => x.RequirementNo, requirement.RequirementNo)
+            .Set(x => x.UpdatedBy, userId)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow)
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(x => x.CreatedAt, DateTime.UtcNow);
+        // 尚未有状态（或处于待处理）时置 confirmed；不覆盖已 resolved/ignored 的人工决策
+        if (existingState == null || string.IsNullOrWhiteSpace(existingState.Status) || existingState.Status == "confirmed")
+        {
+            update = update.Set(x => x.Status, "confirmed");
+        }
+        await _db.BehaviorInsightStates.UpdateOneAsync(
+            x => x.Fingerprint == fingerprint,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            fingerprint,
+            requirementId = requirement.Id,
+            requirementNo = requirement.RequirementNo,
+            productId,
+            alreadyExists = false,
+        }));
+    }
+
+    /// <summary>下一需求编号：全库 Requirements 单表 TAPD 纯数字全局递增（对照 ProductAgentController.GenerateNextTapdStyleRequirementIdAsync）。</summary>
+    private async Task<string> GenerateNextRequirementNoAsync()
+    {
+        var items = await _db.Requirements
+            .Find(r => !r.IsDeleted)
+            .Project(r => new { r.RequirementNo, r.ExternalId })
+            .ToListAsync();
+        return PrdAgent.Core.Helpers.ProductEntityNumbering.NextTapdNumericId(
+            items.SelectMany(i => new[] { i.RequirementNo, i.ExternalId }));
+    }
+
+    /// <summary>解析需求的默认流程定义 Id（默认匹配本产品，回退全局默认；都缺失时用内置默认流程 Id）。</summary>
+    private async Task<string?> ResolveRequirementWorkflowDefIdAsync(string productId)
+    {
+        var wfFilter = Builders<ProductWorkflowDefinition>.Filter.And(
+            Builders<ProductWorkflowDefinition>.Filter.Eq(w => w.EntityType, ProductEntityType.Requirement),
+            Builders<ProductWorkflowDefinition>.Filter.Eq(w => w.IsDeleted, false),
+            Builders<ProductWorkflowDefinition>.Filter.Eq(w => w.IsDefault, true));
+        var workflows = await _db.ProductWorkflowDefinitions.Find(wfFilter).ToListAsync();
+        var wf = workflows.FirstOrDefault(w => w.ProductId == productId) ?? workflows.FirstOrDefault(w => w.ProductId == null);
+        return wf?.Id;
+    }
+
+    /// <summary>解析需求初始状态 Key（流程定义优先，缺失回退内置 New）。</summary>
+    private async Task<string> ResolveRequirementInitialStateAsync(string? workflowDefId)
+    {
+        if (string.IsNullOrWhiteSpace(workflowDefId))
+            return RequirementWorkflowCatalog.New;
+        var def = await _db.ProductWorkflowDefinitions.Find(w => w.Id == workflowDefId && !w.IsDeleted).FirstOrDefaultAsync();
+        var key = def?.GetInitialStateKey();
+        return string.IsNullOrWhiteSpace(key) ? RequirementWorkflowCatalog.New : key;
     }
 
     /// <summary>

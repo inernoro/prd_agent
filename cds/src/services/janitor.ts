@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import type { BranchEntry } from '../types.js';
 import type { StateService } from './state.js';
 
@@ -32,7 +33,58 @@ export interface JanitorConfig {
   diskWarnPercent: number;
   /** How often (in seconds) to run the sweep. */
   sweepIntervalSeconds: number;
+  /**
+   * Prune unused Docker build junk each sweep. Default on (undefined === true).
+   * 只清理"绝对安全"的垃圾——悬空(untagged)镜像 + 构建缓存，**绝不**碰容器
+   * (停止的分支容器用户可能要重启) 也不碰 volume(数据)。这是 CDS 跑过几百次
+   * 构建后"构建越来越慢"的主因(悬空层 + 构建缓存无限堆积，吃满磁盘/IO)。
+   */
+  dockerPrune?: boolean;
 }
+
+/** 一次 Docker 垃圾清理的结果。 */
+export interface DockerPruneResult {
+  ran: boolean;
+  /** docker 报告回收的空间(原文，如 "Total reclaimed space: 3.2GB")。 */
+  reclaimed: string[];
+  errors: string[];
+}
+
+/** Callback: 执行安全的 Docker 垃圾清理。可注入以便测试。 */
+export type DockerPruneFn = () => Promise<DockerPruneResult>;
+
+function execDocker(args: string[], timeoutMs = 120_000): Promise<string> {
+  return new Promise((resolve) => {
+    execFile('docker', args, { timeout: timeoutMs }, (err, stdout, stderr) => {
+      if (err) resolve(`__ERR__ ${(stderr || err.message || '').trim()}`);
+      else resolve((stdout || '').trim());
+    });
+  });
+}
+
+/**
+ * 默认 Docker 清理实现：只回收"无主"垃圾。
+ *  - `docker image prune -f`：悬空(untagged，多为旧 build 的中间层)镜像。
+ *  - `docker builder prune -f --keep-storage 10GB`：BuildKit 构建缓存，保留近 10GB 加速下次构建。
+ * 刻意**不**带 `-a`(会删有 tag 的基础镜像→下次构建重新 pull 反而更慢)、
+ * **不** `container prune`(会删停止的分支容器)、**不** `--volumes`(数据)。
+ */
+export const defaultDockerPrune: DockerPruneFn = async () => {
+  const result: DockerPruneResult = { ran: true, reclaimed: [], errors: [] };
+  for (const [label, args] of [
+    ['悬空镜像', ['image', 'prune', '-f']],
+    ['构建缓存', ['builder', 'prune', '-f', '--keep-storage', '10GB']],
+  ] as Array<[string, string[]]>) {
+    const out = await execDocker(args);
+    if (out.startsWith('__ERR__')) {
+      result.errors.push(`${label}: ${out.replace('__ERR__ ', '')}`);
+    } else {
+      const reclaimedLine = out.split('\n').find((l) => /reclaimed/i.test(l)) || out.split('\n').pop() || '';
+      result.reclaimed.push(`${label}: ${reclaimedLine.trim() || '无可回收'}`);
+    }
+  }
+  return result;
+};
 
 /** Report returned by a single sweep pass. */
 export interface JanitorSweepReport {
@@ -47,6 +99,8 @@ export interface JanitorSweepReport {
   disk: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
   /** true when disk usage exceeded diskWarnPercent. */
   diskWarning: boolean;
+  /** Docker 垃圾清理结果(悬空镜像 + 构建缓存)。null = 本次未执行。 */
+  dockerPrune: DockerPruneResult | null;
   /** Any errors encountered (non-fatal). */
   errors: string[];
 }
@@ -132,6 +186,7 @@ export class JanitorService {
     private readonly worktreeBase: string,
     private readonly clock: JanitorClock = systemJanitorClock,
     private readonly diskUsage: DiskUsageFn = defaultDiskUsage,
+    private readonly dockerPrune: DockerPruneFn = defaultDockerPrune,
   ) {}
 
   setRemoveFn(fn: RemoveBranchFn): void {
@@ -195,6 +250,7 @@ export class JanitorService {
       skippedRemote: [],
       disk: null,
       diskWarning: false,
+      dockerPrune: null,
       errors: [],
     };
 
@@ -212,6 +268,20 @@ export class JanitorService {
       }
     } catch (err) {
       report.errors.push(`disk check: ${(err as Error).message}`);
+    }
+
+    // 1.5 Docker 垃圾清理(默认开，非破坏性——只清悬空镜像 + 构建缓存)。
+    //     与 enabled(控制破坏性分支删除) 解耦：哪怕用户没开 TTL 清理，悬空层/构建
+    //     缓存的堆积也是"构建越来越慢"的主因，故默认就清。config.dockerPrune=false 可关。
+    if (this.config.dockerPrune !== false) {
+      try {
+        report.dockerPrune = await this.dockerPrune();
+        const summary = report.dockerPrune.reclaimed.join(' · ');
+        if (summary) console.log(`[janitor] docker prune: ${summary}`);
+        for (const e of report.dockerPrune.errors) report.errors.push(`docker prune ${e}`);
+      } catch (err) {
+        report.errors.push(`docker prune: ${(err as Error).message}`);
+      }
     }
 
     // 2. Worktree TTL cleanup (only when enabled — destructive)

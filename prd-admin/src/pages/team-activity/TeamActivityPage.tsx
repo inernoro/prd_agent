@@ -17,6 +17,7 @@ import { getTeamActivityLogs, getTeamActivityModules, getTeamActivityStats } fro
 import type { ActivityModuleOption, TeamActivityItem, TeamActivityStatsData } from '@/services/contracts/teamActivity';
 import { CategoryStatsPanel, MemberStatsPanel } from './StatsPanels';
 import { InsightsPanel } from './InsightsPanel';
+import { TimeRangePicker, resolveRange, rangePreset, type RangeKey, type TeamRange } from './TimeRangePicker';
 import { getModuleMeta } from './moduleMeta';
 import { getActionIcon } from './actionIcons';
 import { aggregateConsecutive, maskName, type AggregatedActivity } from './pulse';
@@ -26,36 +27,13 @@ const PAGE_SIZE = 30;
 // 隐私脱敏为纯 UI 偏好（发版后旧值无害），按 no-localstorage.md 例外清单允许 localStorage 记忆
 const PRIVACY_KEY = 'team-activity-privacy-mask';
 
-type RangeKey = 'all' | 'today' | 'week' | 'month';
-
-const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
-  { key: 'all', label: '全部' },
-  { key: 'today', label: '今天' },
-  { key: 'week', label: '本周' },
-  { key: 'month', label: '本月' },
-];
-
-/** 环比文案：脉搏的对照窗口与所选范围同长（昨天/上周/上月）；「全部」无环比 */
+/** 环比文案：脉搏的对照窗口与所选范围同长（昨天/上周/上月）；「全部」/自定义无环比 */
 const COMPARE_LABELS: Record<RangeKey, string | null> = {
   all: null,
   today: '较昨日',
   week: '较上周',
   month: '较上月',
 };
-
-function rangeFrom(key: RangeKey): string | undefined {
-  if (key === 'all') return undefined;
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (key === 'week') {
-    // 周一为一周起点
-    const day = (start.getDay() + 6) % 7;
-    start.setDate(start.getDate() - day);
-  } else if (key === 'month') {
-    start.setDate(1);
-  }
-  return start.toISOString();
-}
 
 function dayKeyOf(iso: string): string {
   const d = new Date(iso);
@@ -82,12 +60,12 @@ function readPrivacyPreference(): boolean {
 }
 
 export default function TeamActivityPage() {
-  // 视图切换：feed（动态流）/ insights（行为洞察），深链 ?tab=insights
+  // 视图切换：insights（行为洞察/VOC，默认首屏）/ feed（动态流），深链 ?tab=feed 回到动态流
   const [searchParams, setSearchParams] = useSearchParams();
-  const view = searchParams.get('tab') === 'insights' ? 'insights' : 'feed';
+  const view = searchParams.get('tab') === 'feed' ? 'feed' : 'insights';
   const switchView = useCallback(
     (next: 'feed' | 'insights') => {
-      setSearchParams(next === 'insights' ? { tab: 'insights' } : {}, { replace: true });
+      setSearchParams(next === 'feed' ? { tab: 'feed' } : {}, { replace: true });
     },
     [setSearchParams]
   );
@@ -105,8 +83,13 @@ export default function TeamActivityPage() {
 
   const [filterUserId, setFilterUserId] = useState('');
   const [filterModule, setFilterModule] = useState('');
-  // 默认「今天」：脉搏回答的是「团队此刻在干嘛」，历史全量是查询场景而非默认视图
-  const [filterRange, setFilterRange] = useState<RangeKey>('today');
+  // 默认「今天」：脉搏回答的是「团队此刻在干嘛」，历史全量是查询场景而非默认视图。
+  // 时间范围扩展为「预设 | 自定义[from,to]」，由 TimeRangePicker 驱动。
+  const [timeRange, setTimeRange] = useState<TeamRange>({ kind: 'preset', preset: 'today' });
+  // 当前选中的预设 key（自定义时为 null），用于脉搏环比文案等仅预设场景
+  const rangePresetKey = rangePreset(timeRange);
+  // 解析成发给后端的 from/to（自定义时 to 为所选末日 23:59:59；预设 to=undefined 至今）
+  const { from: rangeFromIso, to: rangeToIso } = resolveRange(timeRange);
 
   // 过期响应守卫：快速切换筛选 / 加载更多与刷新竞态时，丢弃晚到的旧请求结果
   const fetchIdRef = useRef(0);
@@ -128,7 +111,8 @@ export default function TeamActivityPage() {
         pageSize: PAGE_SIZE,
         userId: filterUserId || undefined,
         module: filterModule || undefined,
-        from: rangeFrom(filterRange),
+        from: rangeFromIso,
+        to: rangeToIso,
       });
       if (fetchIdRef.current !== fetchId) return;
       if (res.success) {
@@ -148,28 +132,31 @@ export default function TeamActivityPage() {
       setLoading(false);
       setLoadingMore(false);
     },
-    [filterUserId, filterModule, filterRange]
+    [filterUserId, filterModule, rangeFromIso, rangeToIso]
   );
 
-  // 筛选条件变化时重置到第一页
+  // 筛选条件变化时重置到第一页（仅动态流视图拉取；行为洞察视图不拉 feed，避免白白加重切换卡顿）
   useEffect(() => {
+    if (view !== 'feed') return;
     void load(1, false);
-  }, [load]);
+  }, [load, view]);
 
-  // 脉搏聚合统计随同一组筛选条件刷新（统计不分页）
+  // 脉搏聚合统计随同一组筛选条件刷新（统计不分页；同样仅动态流视图拉取）
   useEffect(() => {
+    if (view !== 'feed') return;
     const fetchId = ++statsFetchIdRef.current;
     setStatsLoading(true);
     void getTeamActivityStats({
       userId: filterUserId || undefined,
       module: filterModule || undefined,
-      from: rangeFrom(filterRange),
+      from: rangeFromIso,
+      to: rangeToIso,
     }).then((res) => {
       if (statsFetchIdRef.current !== fetchId) return;
       if (res.success) setStats(res.data);
       setStatsLoading(false);
     });
-  }, [filterUserId, filterModule, filterRange]);
+  }, [filterUserId, filterModule, rangeFromIso, rangeToIso, view]);
 
   const togglePrivacy = useCallback(() => {
     setPrivacy((prev) => {
@@ -208,94 +195,72 @@ export default function TeamActivityPage() {
   return (
     // 控制台三栏：左成员统计 / 中时间线 / 右分类统计。限一个上限宽避免巨幕下三栏间距失衡
     <div className="flex flex-col gap-4 h-full min-h-0 w-full mx-auto" style={{ maxWidth: 1840 }}>
-      <PageHeader title="团队动态" description="团队脉搏总览 + 动态时间线 + 行为洞察（按白名单动作与路由信号自动采集）" />
+      {/* 页头：视图切换走 tabs（行为洞察/VOC 在前 / 动态流），时间范围 chips 走 actions 槽显眼可见 */}
+      <PageHeader
+        title="VOC"
+        tabs={[
+          { key: 'insights', label: '行为洞察', icon: <Radar size={13} /> },
+          { key: 'feed', label: '动态流', icon: <Activity size={13} /> },
+        ]}
+        activeTab={view}
+        onTabChange={(key) => switchView(key === 'insights' ? 'insights' : 'feed')}
+        actions={<TimeRangePicker value={timeRange} onChange={setTimeRange} />}
+      />
 
-      {/* 筛选栏：视图切换 / 人 / 模块 / 时间快捷段 / 隐私脱敏 */}
-      <div className="flex items-center gap-3 flex-wrap shrink-0">
-        {/* 视图切换：动态流（发生了什么）/ 行为洞察（哪里不好用） */}
-        <div className="flex items-center gap-1 p-0.5 rounded-md border border-white/10 bg-white/[0.02]">
+      {/* 下方筛选栏：仅动态流视图保留（成员 / 模块 / 隐私脱敏）。行为洞察视图时间已上移页头，无需此栏。 */}
+      {view === 'feed' ? (
+        <div className="flex items-center gap-3 flex-wrap shrink-0">
+          <div className="w-52">
+            <UserSearchSelect
+              value={filterUserId}
+              onChange={setFilterUserId}
+              showAllOption
+              allOptionLabel="全部成员"
+              placeholder="按成员筛选"
+              uiSize="sm"
+            />
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <FilterChip active={filterModule === ''} label="全部模块" onClick={() => setFilterModule('')} />
+            {modules.map((m) => (
+              <FilterChip key={m.key} active={filterModule === m.key} label={m.label} onClick={() => setFilterModule(m.key)} />
+            ))}
+          </div>
           <button
             type="button"
-            onClick={() => switchView('feed')}
-            className={`inline-flex items-center gap-1.5 px-2.5 h-[24px] rounded text-[12px] transition-colors ${
-              view === 'feed' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:text-white/75'
+            onClick={togglePrivacy}
+            title={privacy ? '匿名模式：隐藏成员姓名（文档标题保持明文），点击切换实名' : '实名模式：点击切换匿名（隐藏成员姓名）'}
+            className={`ml-auto inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
+              privacy
+                ? 'bg-violet-500/15 text-violet-200 border-violet-500/35'
+                : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
             }`}
           >
-            <Activity size={13} />
-            动态流
-          </button>
-          <button
-            type="button"
-            onClick={() => switchView('insights')}
-            className={`inline-flex items-center gap-1.5 px-2.5 h-[24px] rounded text-[12px] transition-colors ${
-              view === 'insights' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:text-white/75'
-            }`}
-          >
-            <Radar size={13} />
-            行为洞察
+            {privacy ? <EyeOff size={13} /> : <Eye size={13} />}
+            {privacy ? '匿名' : '实名'}
           </button>
         </div>
-
-        {view === 'feed' ? (
-          <>
-            <div className="w-52">
-              <UserSearchSelect
-                value={filterUserId}
-                onChange={setFilterUserId}
-                showAllOption
-                allOptionLabel="全部成员"
-                placeholder="按成员筛选"
-                uiSize="sm"
-              />
-            </div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <FilterChip active={filterModule === ''} label="全部模块" onClick={() => setFilterModule('')} />
-              {modules.map((m) => (
-                <FilterChip key={m.key} active={filterModule === m.key} label={m.label} onClick={() => setFilterModule(m.key)} />
-              ))}
-            </div>
-          </>
-        ) : null}
-        <div className="flex items-center gap-1.5 ml-auto">
-          {RANGE_OPTIONS.map((r) => (
-            <FilterChip key={r.key} active={filterRange === r.key} label={r.label} onClick={() => setFilterRange(r.key)} />
-          ))}
-          {view === 'feed' ? (
-            <button
-              type="button"
-              onClick={togglePrivacy}
-              title={privacy ? '匿名模式：隐藏成员姓名（文档标题保持明文），点击切换实名' : '实名模式：点击切换匿名（隐藏成员姓名）'}
-              className={`inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-md text-[12px] border transition-colors ${
-                privacy
-                  ? 'bg-violet-500/15 text-violet-200 border-violet-500/35'
-                  : 'bg-white/[0.03] text-white/50 border-white/10 hover:text-white/75 hover:border-white/20'
-              }`}
-            >
-              {privacy ? <EyeOff size={13} /> : <Eye size={13} />}
-              {privacy ? '匿名' : '实名'}
-            </button>
-          ) : null}
-        </div>
-      </div>
+      ) : null}
 
       {view === 'insights' ? (
-        <InsightsPanel from={rangeFrom(filterRange)} />
+        <InsightsPanel from={rangeFromIso} to={rangeToIso} />
       ) : (
-      // 控制台三栏：两侧统计栏各自滚动，中间时间线吃满剩余宽度
+      // 控制台三栏：两侧统计栏各自滚动，中间时间线吃满剩余宽度。
+      // 窄屏单列纵向堆叠（手机三栏挤爆），lg 起恢复 264 / 1fr / 300 三栏。
       <div
-        className="flex-1 grid gap-4"
-        style={{ minHeight: 0, gridTemplateColumns: '264px minmax(0, 1fr) 300px' }}
+        className="flex-1 grid gap-4 grid-cols-1 lg:[grid-template-columns:264px_minmax(0,1fr)_300px]"
+        style={{ minHeight: 0 }}
       >
-        {/* 左栏：成员统计 */}
+        {/* 左栏：成员统计（窄屏自然高度堆叠，lg 起独立滚动） */}
         <div
-          className="flex flex-col gap-4 min-h-0"
-          style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+          className="flex flex-col gap-4 min-h-0 lg:overflow-y-auto"
+          style={{ overscrollBehavior: 'contain' }}
         >
           <MemberStatsPanel
             stats={stats}
             loading={statsLoading}
             privacy={privacy}
-            compareLabel={COMPARE_LABELS[filterRange]}
+            compareLabel={rangePresetKey ? COMPARE_LABELS[rangePresetKey] : null}
             activeActorId={filterUserId}
             onPickActor={pickActor}
           />
@@ -363,10 +328,10 @@ export default function TeamActivityPage() {
         </div>
         </GlassCard>
 
-        {/* 右栏：分类统计 */}
+        {/* 右栏：分类统计（窄屏自然高度堆叠，lg 起独立滚动） */}
         <div
-          className="flex flex-col gap-4 min-h-0"
-          style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+          className="flex flex-col gap-4 min-h-0 lg:overflow-y-auto"
+          style={{ overscrollBehavior: 'contain' }}
         >
           <CategoryStatsPanel
             stats={stats}

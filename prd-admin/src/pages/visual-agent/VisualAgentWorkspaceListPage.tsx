@@ -644,7 +644,7 @@ function QuickInputBox(props: {
             <button
               type="button"
               data-tour-id="visual-defect-btn"
-              onClick={openDefectDialog}
+              onClick={() => openDefectDialog()}
               className="h-9 w-9 rounded-xl flex items-center justify-center transition-all duration-200 hover:bg-white/10"
               style={{
                 background: 'var(--bg-input-hover)',

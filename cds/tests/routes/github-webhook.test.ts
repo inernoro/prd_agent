@@ -319,10 +319,11 @@ describe('GitHub webhook route', () => {
 
   it('ack-and-skip (200 + suppress-activity header) for unsubscribed noise events', async () => {
     server = startServer();
-    // check_suite / workflow_run / pull_request_review / status are
-    // common culprits when the GitHub App is subscribed to "all events"
-    // — none actionable by CDS, should bypass the dispatcher entirely.
-    for (const noiseEvent of ['check_suite', 'workflow_run', 'pull_request_review', 'status', 'star']) {
+    // check_suite / pull_request_review / status are common culprits when the
+    // GitHub App is subscribed to "all events" — none actionable by CDS, should
+    // bypass the dispatcher entirely.
+    // 注:workflow_run 自 2026-06-23 起被极速版（CI 预构建）消费,已不在噪音清单。
+    for (const noiseEvent of ['check_suite', 'pull_request_review', 'status', 'star']) {
       const body = JSON.stringify({ repository: { full_name: 'octocat/repo' } });
       const res = await request(server, 'POST', '/api/github/webhook', body, {
         'X-GitHub-Event': noiseEvent,
@@ -476,6 +477,60 @@ describe('GitHub webhook route', () => {
     expect(res.status).toBe(200);
     expect(res.body.deliveries.map((item: { id: string }) => item.id)).toEqual(['exact']);
     expect(res.body.filteredTotal).toBe(1);
+  });
+
+  it('matches deliveries whose ref is a bare branch name against a refs/heads query', async () => {
+    // Regression for the "日志永远只有一条" bug: push deliveries carry a full
+    // `refs/heads/<branch>` ref AND a stamped branchId, but pull_request /
+    // check_run / issue_comment deliveries carry a bare `head.ref` and no
+    // branchId. The frontend always queries with `ref=refs/heads/<branch>` +
+    // repoFullName, so a bare-ref delivery must still be associated to the
+    // branch via the normalized ref + repo fallback.
+    stateService.recordGithubWebhookDelivery({
+      id: 'push-stamped',
+      receivedAt: new Date(Date.now() - 2000).toISOString(),
+      durationMs: 1,
+      event: 'push',
+      signatureValid: true,
+      dispatchAction: 'deploy',
+      branchId: 'proj-feat',
+      repoFullName: 'octocat/repo',
+      ref: 'refs/heads/feat',
+    });
+    stateService.recordGithubWebhookDelivery({
+      id: 'pr-bare-ref',
+      receivedAt: new Date(Date.now() - 1000).toISOString(),
+      durationMs: 1,
+      event: 'pull_request',
+      signatureValid: true,
+      dispatchAction: 'skipped',
+      // bare branch name (pull_request.head.ref form), no branchId stamped
+      repoFullName: 'octocat/repo',
+      ref: 'feat',
+    });
+    stateService.recordGithubWebhookDelivery({
+      id: 'other-branch',
+      receivedAt: new Date().toISOString(),
+      durationMs: 1,
+      event: 'pull_request',
+      signatureValid: true,
+      dispatchAction: 'skipped',
+      repoFullName: 'octocat/repo',
+      ref: 'other',
+    });
+    server = startServer();
+
+    const res = await request(
+      server,
+      'GET',
+      '/api/cds-system/github/webhook-deliveries?branchId=proj-feat&repoFullName=octocat%2Frepo&ref=refs%2Fheads%2Ffeat&limit=10',
+      '{}',
+    );
+
+    expect(res.status).toBe(200);
+    const ids = res.body.deliveries.map((item: { id: string }) => item.id).sort();
+    expect(ids).toEqual(['pr-bare-ref', 'push-stamped']);
+    expect(res.body.filteredTotal).toBe(2);
   });
 
   it('records and skips a valid GitHub webhook from a non-allowed owner', async () => {

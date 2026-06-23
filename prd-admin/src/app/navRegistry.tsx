@@ -671,12 +671,12 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     permission: 'team-activity.read',
     element: shellGuarded('team-activity.read', <TeamActivityPage />),
     nav: {
-      label: '团队动态',
-      shortLabel: '动态',
-      description: '全员工作动态时间线（管理员）',
+      label: 'VOC',
+      shortLabel: 'VOC',
+      description: '行为洞察（VOC）+ 全员工作动态时间线（管理员）',
       icon: 'Activity',
       section: 'utility',
-      tags: ['动态', '活动', '工作日志', 'activity'],
+      tags: ['VOC', '行为洞察', '动态', '活动', '工作日志', 'activity', 'voice of customer'],
     },
   },
 

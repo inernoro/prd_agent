@@ -209,17 +209,101 @@ git diff --stat
 # 期望：删除行数 = 幽灵条目数（精确匹配，不多不少）
 ```
 
-### Step 5 — 收尾
+### Step 5 — 收尾与推送
 
 ```bash
+# 1. 生成本次 changelog 碎片（用实际数字替换 N）
 cat > "changelogs/$(date +%Y-%m-%d)_entropy-cleanup.md" << 'EOF'
 | chore | doc | 熵清理：D1 N 个，D2 +N/-N，D3 +N/-N，D4 +N/-N，D6 N 条 |
 EOF
 
+# 2. Stage 并提交
 git add doc/ CLAUDE.md changelogs/ .claude/
 git commit -m "chore: 日常熵清理 $(date +%Y-%m-%d)"
+
+# 3. 推送（当前分支即目标分支，scheduled run 自带隔离分支）
 git push -u origin $(git branch --show-current)
 ```
+
+### Step 6 — 自动创建 PR、核查内容后手动合并（必须执行）
+
+推送完成后立即执行以下步骤，**不得省略**。这是本技能从"推代码"升级为"自动交付"的核心：Agent 自己建 PR、自己通读内容核查、核查通过后自己 squash 合并，**不把合并决定权交给仓库 auto-merge 开关**。
+
+#### 6.1 判断是否需要创建 PR
+
+- 若 `git log origin/main..HEAD --oneline` 输出为空（当前分支没有超过 main 的 commit），**跳过 PR 创建**并结束。
+- 若当前分支是 `main`，**跳过 PR 创建**并结束（不能从 main 向 main 发 PR）。
+
+#### 6.2 检查是否已有未合并的熵减 PR
+
+使用 `mcp__github__list_pull_requests`（state=open, base=main）查询 `inernoro/prd_agent`。
+- 若已有标题含「熵减计划」的 open PR，先尝试用 `mcp__github__merge_pull_request`（squash）合并旧 PR；合并失败则记录并继续创建新 PR。
+
+#### 6.3 创建 PR
+
+使用 `mcp__github__create_pull_request` 创建：
+
+```
+owner: inernoro
+repo:  prd_agent
+title: 每日熵减计划 YYYY-WXX — <本次主要修复内容，如 "D2+D3+D6 修补 (N 条)">
+base:  main
+head:  <当前分支名，由 git branch --show-current 取得>
+body:  （见下方模板）
+```
+
+PR body 模板（从 Step 2 报告提取数字）：
+```markdown
+## 熵清理摘要
+
+- D2 index.yml：+N/-N 条
+- D3 guide.list：+N/-N 条
+- D4 技能表：+N/-N 条
+- D6 changelog→doc：本次处理 N 条，manifest 累计 M 条
+
+## 改动 diff
+- `doc/index.yml`：补缺/删幽灵条目
+- `doc/guide.list.directory.md`：补缺/删幽灵条目
+- `changelogs/.entropy-manifest.yml`：新增已处理 changelog 记录
+- `changelogs/YYYY-MM-DD_entropy-cleanup.md`：本次 changelog 碎片
+
+## 测试
+- [x] 双向扫描完成，diff 核验通过
+- [x] 运行两次验证：第二次净变更为 0
+```
+
+#### 6.4 检查 PR 内容（合并前强制，不得跳过）
+
+合并前必须逐项核查 PR 的真实改动，确认是「干净的文档/索引熵清理」而非误删或越界：
+
+1. 调用 `mcp__github__pull_request_read`（method=`get`）确认 `mergeable_state`：
+   - `behind` → 先调 `mcp__github__update_pull_request_branch` 把 main 合进来，再继续
+   - `dirty`（有冲突）→ 本地拉取 + 解决冲突 + force-push（manifest 冲突一律 `--ours`，guide.list/doc 内容冲突手动合并两边精华），不得盲目合并
+   - `clean` / `unstable` → 可继续
+2. 调用 `mcp__github__pull_request_read`（method=`get_diff`）通读 diff，逐条核对：
+   - 所有 `-`（删除）行：必须是真实「幽灵条目」（对应 `doc/${key}.md` / `.claude/skills/${name}/` 确实不存在）。**发现删除了仍存在的文件对应条目 → 立即停止，不合并，通知用户**
+   - 所有 `+`（追加）行：仅限 `doc/index.yml` / `doc/guide.list.directory.md` / `CLAUDE.md` 技能表 / `changelogs/` / manifest，不得有代码文件（`.cs`/`.ts`/`.tsx` 等）混入
+   - `changed_files` 应全部落在文档/索引/changelog/技能元数据范围内
+3. 任一核查不通过 → **不合并**，发通知说明问题，等用户裁决。
+
+#### 6.5 手动 squash 合并（核查通过后）
+
+内容核查全部通过后，由 Agent 直接调用 `mcp__github__merge_pull_request` 完成合并（**不依赖仓库 auto-merge 开关**）：
+```
+owner:         inernoro
+repo:          prd_agent
+pullNumber:    <PR number>
+merge_method:  squash
+commit_title:  每日熵减计划 YYYY-WXX — <本次主要修复内容>
+```
+
+合并成功后记录返回的 SHA。**禁止**调用 `mcp__github__enable_pr_auto_merge` 把合并决定权交给仓库设置——熵减 PR 的合并必须经过本技能 6.4 的内容核查这道闸。
+
+#### 6.6 收尾
+
+- 合并成功 → 记录 SHA，结束任务。
+- 若 6.4 发现 PR `dirty` 需要本地解冲突，解完 force-push 后回到 6.4 重新核查再合并。
+- 全程**禁止**用 `sleep` 空转轮询；合并是同步调用，拿到结果即结束。
 
 ---
 
@@ -240,9 +324,12 @@ processed:
 
 ## PR 工作流
 
-- 标题约定：`每日熵减计划 YYYY-WXX — <本次主要修复内容>`
-- 检查现有 PR：运行前先查是否有未合并的熵减 PR，有则先尝试合并，避免冲突
-- 合并策略：CI 通过后自动 squash 合并，不需要人工审批
+- **标题约定**：`每日熵减计划 YYYY-WXX — <本次主要修复内容>`
+- **自动创建**：Step 6 在推送后必须自动调用 `mcp__github__create_pull_request` 创建，不需要人工触发
+- **合并前核查**：合并前必须走 6.4 内容核查（diff 通读 + 删除行幽灵验证 + 无代码混入），核查通过才合并
+- **手动 squash 合并**：由 Agent 调 `mcp__github__merge_pull_request`（squash）直接合并，**不依赖仓库 auto-merge 开关**，也不调 `enable_pr_auto_merge`——合并必须过技能内容核查这道闸
+- **去重保护**：创建前先查 open PR，有同类 PR 先合并再创建
+- **无净变更跳过**：当前分支没有超过 main 的 commit 时，不创建 PR（幂等运行不产生空 PR）
 
 ---
 

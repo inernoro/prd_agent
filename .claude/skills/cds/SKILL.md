@@ -187,3 +187,13 @@ cds-project-scan   cds-deploy-pipeline
 ```
 
 两个子技能都从 `../cds/cli/cdscli.py` 引用 CLI，**不维护各自的拷贝**。
+
+## 部署项目的资产存储（prd-agent 图片/报告，2026-06-22）
+
+prd-agent 的图片/验收报告走后端 `IAssetStorage`，由**项目环境变量** `ASSETS_PROVIDER` 选择后端（在「项目环境变量」里配，不是 CDS 全局变量）：
+
+- 未配任何云凭据（典型 CDS 预览）→ 后端自动 **auto 回退 local**，图片存到容器内 `ASSETS_LOCAL_DIR`（默认 `{ContentRoot}/data/assets`），**无需任何配置即可正常传图**（修复"无云凭据实例传图直接失败"）。
+- 生产/需云端持久 → 配 `ASSETS_PROVIDER=cloudflareR2` + `R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET`（R2 后端已内置，S3 兼容），或 `tencentCos` + `TENCENT_COS_*`。
+- local 是占位/兜底，容器重建即丢；要持久化预览图片可挂卷到 `ASSETS_LOCAL_DIR` 或直接配 R2。
+
+详见 `.claude/skills/create-visual-test-to-kb/SKILL.md`「报告图片与资产存储」。

@@ -2686,7 +2686,7 @@ public class DefectAgentController : ControllerBase
             {
                 skill = "create-visual-test-to-kb",
                 storeName = DefectAcceptanceStoreName,
-                note = "正式发布后才运行视觉验收。验收技能归档时复制 acceptance.config.json 到临时目录，并把 report.storeName 改为“缺陷修复验收报告”。"
+                note = "正式缺陷系统只负责拉取、评论、回写 commit/PR/validation-report 和通知；修复验证与视觉验收在测试或预览环境执行。验收技能归档时复制 acceptance.config.json 到临时目录，并把 report.storeName 改为“缺陷修复验收报告”。"
             },
             policy = BuildAutomationPolicyPayload(),
             agentLaunch = BuildAutomationAgentLaunchPayload(projectId, teamId, status),
@@ -4203,7 +4203,7 @@ public class DefectAgentController : ControllerBase
         };
     }
 
-    private static string BuildAutomationDailyPlanText(string domain, string key, string? projectId, string? teamId, string? status)
+    internal static string BuildAutomationDailyPlanText(string domain, string key, string? projectId, string? teamId, string? status)
     {
         var statusFilter = string.IsNullOrWhiteSpace(status)
             ? $"{DefectStatus.Submitted},{DefectStatus.Assigned},{DefectStatus.Processing}"
@@ -4223,6 +4223,18 @@ public class DefectAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(projectId)) lines.Add($"projectId: {projectId.Trim()}");
         if (!string.IsNullOrWhiteSpace(teamId)) lines.Add($"teamId: {teamId.Trim()}");
         lines.Add("");
+        lines.Add("执行边界：");
+        lines.Add("- 正式缺陷系统 domain 负责拉取真实缺陷、评论、回写 commit/PR/validation-report 和通知；测试或预览环境只负责修复验证与视觉验收。");
+        lines.Add("- 不要从测试环境领取正式缺陷，也不要把测试环境数据库中的演练缺陷当成正式闭环结果。");
+        lines.Add("- 不要把 PR 已创建当成完成；只有 workflow/complete 写回 commit 后，单缺陷修复阶段才算结束。");
+        lines.Add("- 不要把正式发布前的缺陷通知给提交人；只有 published-pending 返回 trace，视觉验收通过并回写 validation-report 后，才能发送“你的问题已修复”。");
+        lines.Add("- 不要把 K 写入 commit、报告、截图、Slack 或缺陷评论；每日输出只能写 keyId/keyName，不写明文 K。");
+        lines.Add("");
+        lines.Add("启动前自检：");
+        lines.Add("1. 如果仓库存在 scripts/defect-automation-probe.mjs，先运行 `DEFECT_AGENT_DOMAIN=<domain> DEFECT_AGENT_KEY=<K> node scripts/defect-automation-probe.mjs --safe`。");
+        lines.Add("2. 自检必须证明 connector 返回 200、requiredScope 为 defect-agent:use、workflow.version 为 defect-agent-workflow.v1。");
+        lines.Add("3. 如果自检失败，只输出失败原因并停止，不要领取缺陷。");
+        lines.Add("");
         lines.Add("执行顺序：");
         lines.Add("1. 调用 GET /api/defect-agent/agent/connector 校验 domain 与 K。");
         lines.Add("2. 调用 POST /api/defect-agent/agent/workflow/start-next 创建或复用运行记录，并领取一条缺陷。");
@@ -4230,9 +4242,13 @@ public class DefectAgentController : ControllerBase
         lines.Add("4. 轻量修复完成后调用 POST /api/defect-agent/agent/workflow/complete，一次性回写 commit、写入 defect_resolution_traces、标记缺陷已修复。");
         lines.Add("5. 重量级、无法自测、涉及破坏性变更或需要产品确认时，评论阻塞原因，调用 POST /api/defect-agent/agent/workflow/block，并停止当前运行。");
         lines.Add("6. complete 返回下一次 start-next 入参；继续调用 start-next 领取下一条或结束。");
-        lines.Add("7. 正式发布后再调用 published-pending，使用 create-visual-test-to-kb 归档到“缺陷修复验收报告”，回写 validation-report 并通知提交人。");
+        lines.Add("7. 正式发布后从正式缺陷系统调用 published-pending；在测试或预览环境跑 create-visual-test-to-kb 验证，再把报告归档到“缺陷修复验收报告”，回写正式缺陷系统 validation-report 并通知提交人。");
         lines.Add("");
-        lines.Add("每日更新要求：列出本轮拉取缺陷、处理结果、修复 commit、预览地址、正式发布待验收项、已通知用户和阻塞项。");
+        lines.Add("无缺陷时：");
+        lines.Add("- start-next 返回 hasNext=false 时，本轮正常结束，不创建 PR，不制造测试缺陷。");
+        lines.Add("- published-pending 为空时，只报告“无正式发布后待验收通知项”。");
+        lines.Add("");
+        lines.Add("每日更新要求：列出正式缺陷系统 runId、处理缺陷、处理结果、修复 commit、PR、测试/预览验收地址、正式发布待验收项、验收报告链接、已通知用户和阻塞项。");
         return string.Join("\n", lines);
     }
 
@@ -4495,7 +4511,7 @@ public class DefectAgentController : ControllerBase
         return verdict switch
         {
             "fail" => $"你的问题「{title}」已发布到正式环境，但验收未通过，需要继续改进。",
-            "invalid" => $"你的问题「{title}」已完成正式环境核验，验收报告显示该问题陈述不成立。",
+            "invalid" => $"你的问题「{title}」已完成发布后核验，验收报告显示该问题陈述不成立。",
             _ => $"你的问题「{title}」已修复并发布，验收报告已生成。",
         };
     }
@@ -4656,7 +4672,7 @@ public class DefectAgentController : ControllerBase
             : $"{trace.ShortSha} {trace.CommitMessage}";
         var lines = new List<string>
         {
-            $"正式环境验收结论：{verdictLabel}。",
+            $"发布后验收结论：{verdictLabel}。",
             "",
             "验收证据：",
             $"- 知识库：[{knowledgeBaseName}]({knowledgeBaseUrl})",

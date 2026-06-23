@@ -69,6 +69,8 @@ public class ShortcutsController : ControllerBase
                 .FirstOrDefaultAsync(ct);
             if (workflow == null)
                 return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "工作流不存在"));
+            if (!CanUseBoundWorkflow(workflow, userId))
+                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权限绑定此工作流"));
             bindingTargetName ??= workflow.Name;
         }
 
@@ -643,6 +645,20 @@ public class ShortcutsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Url) && string.IsNullOrWhiteSpace(request.Text))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "url 和 text 不能同时为空"));
 
+        if (shortcut.BindingType == ShortcutBindingType.Workflow)
+        {
+            if (string.IsNullOrWhiteSpace(shortcut.BindingTargetId))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "快捷指令未绑定工作流"));
+
+            var boundWorkflow = await _db.Workflows
+                .Find(x => x.Id == shortcut.BindingTargetId)
+                .FirstOrDefaultAsync(ct);
+            if (boundWorkflow == null)
+                return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "绑定的工作流不存在"));
+            if (!CanUseBoundWorkflow(boundWorkflow, shortcut.UserId))
+                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权限触发绑定的工作流"));
+        }
+
         // 从分享文本中自动提取 URL（如抖音口令 "4.84 复制打开抖音...https://v.douyin.com/xxx/"）
         if (string.IsNullOrWhiteSpace(request.Url) && !string.IsNullOrWhiteSpace(request.Text))
         {
@@ -1086,6 +1102,12 @@ public class ShortcutsController : ControllerBase
     private string? GetAdminId()
     {
         return User.FindFirst("sub")?.Value ?? User.FindFirst("userId")?.Value;
+    }
+
+    private static bool CanUseBoundWorkflow(Workflow workflow, string? userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return false;
+        return workflow.CreatedBy == userId || workflow.OwnerUserId == userId;
     }
 
     private string ResolveServerUrl() => Request.ResolveServerUrl(_config);

@@ -1,0 +1,145 @@
+name: Branch Image
+
+# 极速版（CI 预构建）—— 每个分支 push 时，把 prd-api / prd-admin 编译成 ghcr 镜像，
+# 按 commit SHA 打 tag（`sha-<40hex>`，不可变）+ `branch-<slug>` 移动 tag。
+# CDS 收到本工作流的 workflow_run.completed 后，按 SHA docker pull + run，
+# 不再在 CDS 服务器本机编译（省算力）。镜像 tag 公式与 cds-compose.yml 的
+# x-cds-deploy-modes.*.express.image / CDS slugifyBranchForImage 保持一致（SSOT）。
+#
+# 触发：所有分支 push。**按 path-filter 只构建改动的组件，不重复构建**（用户 2026-06-23
+# 决策）：只改了 prd-api/ 就只构建 api 镜像，只改了 prd-admin/ 就只构建 admin，仅改 cds/ 或
+# docs 则两者都不构建。某个 commit 缺某组件镜像时，CDS 侧 runService 会**逐组件回退到固定
+# 主分支镜像**（`:branch-main`，由 main 分支构建经 `type=ref,event=branch,prefix=branch-`
+# 维护），保证预览总能起来、不硬失败。tag push 不会命中（用 branches 过滤；tag 走 desktop-release.yml）。
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  API_IMAGE: ${{ github.repository }}/prdagent-server
+  ADMIN_IMAGE: ${{ github.repository }}/prdagent-admin
+
+jobs:
+  changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      admin: ${{ steps.filter.outputs.admin }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # 按改动路径判定构建哪些组件（不重复构建）。新分支(before=0000…)或拉取基线缺失时
+      # dorny 退化为「全部视为改动」→ 两者都构建，安全兜底。
+      - name: Path filter
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            api:
+              - 'prd-api/**'
+              - '.github/workflows/branch-image.yml'
+            admin:
+              - 'prd-admin/**'
+              - '.github/workflows/branch-image.yml'
+
+  api-image:
+    name: Build prd-api image
+    needs: changes
+    if: ${{ needs.changes.outputs.api == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.API_IMAGE }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=ref,event=branch,prefix=branch-
+
+      - name: Build metadata
+        id: build_meta
+        shell: bash
+        run: echo "build_time_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./prd-api
+          file: ./prd-api/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME_UTC=${{ steps.build_meta.outputs.build_time_utc }}
+          provenance: false
+          sbom: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=branch-prd-api
+          cache-to: type=gha,mode=max,scope=branch-prd-api
+
+  admin-image:
+    name: Build prd-admin image
+    needs: changes
+    if: ${{ needs.changes.outputs.admin == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ADMIN_IMAGE }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=ref,event=branch,prefix=branch-
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./prd-admin
+          file: ./prd-admin/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=branch-prd-admin
+          cache-to: type=gha,mode=max,scope=branch-prd-admin

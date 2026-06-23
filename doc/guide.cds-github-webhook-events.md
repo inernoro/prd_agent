@@ -1,12 +1,12 @@
 # CDS GitHub Webhook 订阅配置指南
 
-> **类型**：操作指南 (How-to) | **日期**：2026-04-19 | **版本**：v1.0 | **适用**：CDS GitHub App
+> **类型**：操作指南 (How-to) | **日期**：2026-06-23 | **版本**：v1.1 | **适用**：CDS GitHub App
 
 ---
 
 ## 1. 一句话结论
 
-在 GitHub App "Permissions & events → Subscribe to events" 页面,**只勾 7 个事件就够了**:
+在 GitHub App "Permissions & events → Subscribe to events" 页面,**勾这 7 个核心事件**:
 
 - `Push`
 - `Pull request`
@@ -16,7 +16,11 @@
 - `Delete`
 - `Repository`
 
-其他全部留空。即使历史配置中勾了全部事件,CDS 从 2026-04-19 起也会在服务端自动静默过滤,不会导致重复构建或活动流刷屏,但**仍建议去 GitHub 后台取消勾选**,节省 GitHub 端投递成本。
+**用「极速版（CI 预构建）」部署模式的项目，必须额外勾 `Workflow run`**（2026-06-23 起）：极速版分支 push 后置「等待 CI 镜像」，靠 GitHub Actions 的 `workflow_run.completed` 通知 CDS 镜像就绪后才拉取部署。**不订 `workflow_run`，极速版分支会永远卡在「等待 CI 镜像」**。只用源码编译/热加载模式的项目无需此事件。
+
+> 权限要求：订阅 `Workflow run` 需要 GitHub App 拥有 `Actions: Read-only` 权限（在 "Permissions → Repository permissions → Actions" 勾选）。
+
+其他事件全部留空。即使历史配置中勾了全部事件,CDS 也会在服务端自动静默过滤,不会导致重复构建或活动流刷屏,但**仍建议去 GitHub 后台取消勾选**,节省 GitHub 端投递成本。
 
 ---
 
@@ -28,6 +32,7 @@
 | `pull_request` | ✅ **必订** | opened/reopened → 发预览评论;closed → 停预览容器 | 不订,PR 合并/关闭后容器不会自动回收 |
 | `issue_comment` | ✅ **必订** | 解析 `/cds <cmd>` 斜杠命令 (redeploy/stop/logs/help) | 不订,PR 评论里的 `/cds redeploy` 等命令全部失效 |
 | `check_run` | ✅ **必订** | `rerequested` → 按 check 重跑部署;其他动作仅记录 | 不订,PR Checks 面板的"Re-run" 按钮失效 |
+| `workflow_run` | 🟠 **极速版必订** | `completed` 且工作流为 `branch-image.yml` → 极速版分支按 commit SHA 拉取 CI 镜像部署 | 仅用「极速版（CI 预构建）」模式的项目需要;不订则极速版分支永久卡在「等待 CI 镜像」。需 `Actions: Read-only` 权限。源码/热加载模式无需此事件 |
 | `installation_repositories` | ✅ **必订** | 仓库从 installation 移除时自动解绑项目 | 不订,用户在 GitHub 后台取消授权后 CDS 仍会处理旧 push |
 | `delete` | ✅ **必订** | 远端分支删除 → 停对应 CDS 预览容器 | 不订,删分支不会回收容器,资源持续占用 |
 | `repository` | ✅ **必订** | renamed/transferred/deleted → 解绑项目避免错投 | 不订,仓库改名后 CDS 链接成脏数据 |
@@ -44,7 +49,7 @@
 | 事件 | 为什么过滤 |
 |---|---|
 | `check_suite` | GitHub 对每个 commit 自动创建,且 CDS 只关心具体 `check_run`,suite 层不需要 |
-| `workflow_run` / `workflow_job` | GitHub Actions CI 的事件,CDS 不替用户跑 CI,只关心自己的 check_run |
+| `workflow_job` | GitHub Actions CI 的子事件,CDS 不关心 job 粒度(只在 `workflow_run.completed` 时按整体结论动作) |
 | `status` | 老式 commit status API,现已被 check_run 取代 |
 | `pull_request_review` / `pull_request_review_comment` / `pull_request_review_thread` | 代码 review 活动,CDS 预览只关心 PR 生命周期 (opened/closed) |
 | `commit_comment` | 提交页面上的独立评论,CDS 不处理 |

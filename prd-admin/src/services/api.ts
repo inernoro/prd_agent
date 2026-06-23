@@ -195,6 +195,10 @@ export const api = {
     stats: () => '/api/team-activity/stats',
     insights: () => '/api/team-activity/insights',
     insightState: () => '/api/team-activity/insights/state',
+    insightToRequirement: () => '/api/team-activity/insights/to-requirement',
+    experienceMap: () => '/api/team-activity/experience-map',
+    experienceTrend: () => '/api/team-activity/experience-trend',
+    endpointDetail: () => '/api/team-activity/endpoint-detail',
   },
 
   // ============ Skills 技能管理 ============
@@ -326,6 +330,7 @@ export const api = {
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
+      docStorePins: () => '/api/dashboard/user-preferences/doc-store-pins',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
@@ -1340,6 +1345,9 @@ export const api = {
     nodes: () => '/api/peer-sync/nodes',
     items: (type: string) => `/api/peer-sync/resources/${type}/items`,
     transfer: () => '/api/peer-sync/transfer',
+    autoSync: () => '/api/peer-sync/auto-sync',
+    runs: (type: string, itemId?: string) =>
+      `/api/peer-sync/runs?resourceType=${encodeURIComponent(type)}${itemId ? `&itemId=${encodeURIComponent(itemId)}` : ''}`,
     // 管理侧（设置 → 系统互联）
     adminList: () => '/api/admin/peer-nodes',
     adminPairingCode: () => '/api/admin/peer-nodes/pairing-code',
@@ -1401,6 +1409,12 @@ export const api = {
       if (opts?.before) params.push(`before=${encodeURIComponent(opts.before)}`);
       if (opts?.force) params.push('force=true');
       return `/api/changelog/github-logs${params.length ? `?${params.join('&')}` : ''}`;
+    },
+    githubPendingReview: (opts?: { limit?: number; force?: boolean }) => {
+      const params: string[] = [];
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.force) params.push('force=true');
+      return `/api/changelog/github-pending-review${params.length ? `?${params.join('&')}` : ''}`;
     },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
     aiSummary: () => '/api/changelog/ai-summary',

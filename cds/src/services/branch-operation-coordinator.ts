@@ -11,6 +11,7 @@ export type BranchOperationKind =
   | 'reset'
   | 'delete'
   | 'cleanup-damaged'
+  | 'cleanup-stopped'
   | 'cleanup-orphans'
   | 'factory-reset'
   | 'scheduler-cooling'
