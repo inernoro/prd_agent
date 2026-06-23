@@ -10051,15 +10051,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
-      // 非极速版（源码编译）路径:镜像/构建用 pull 后真实 HEAD,故无显式 body.commitSha 时
-      // 用 pullResult.head 刷新 githubCommitSha,避免镜像 tag/构建对应到 pull 前旧 SHA
-      // （Codex P2: refresh prebuilt SHA after pulling latest code）。
-      // **极速版例外**：极速版镜像由 CI 按 commit 预构建,只有 ciTargetSha(=CI ready 的 SHA)
-      // 才有可拉取的镜像。绝不能跟随 pull 后的新 HEAD（那个 SHA 多半还没 CI 镜像）——上面的
-      // CI 闸门已保证 ciImageStatus=ready 且 ciTargetSha===githubCommitSha,这里保持不动,
-      // 让镜像 tag 锁定在 CI 就绪的 SHA（Codex P2: require CI readiness for the deployed SHA）。
+      // 无显式 body.commitSha 时,用 pull 后真实 HEAD 刷新 githubCommitSha,避免镜像 tag/构建
+      // 对应到 pull 前旧 SHA（Codex P2: refresh prebuilt SHA after pulling latest code）。
+      // **极速版且 ciTargetSha 已锁定**时跳过:镜像 tag 由 resolveImageTemplate 优先取
+      // ciTargetSha(CI 就绪 SHA),不该被 pull 后的新 HEAD 带跑。但**极速版而 ciTargetSha 为空**
+      // (如 align-deploy-modes 清过 CI / 从未走过 CI)时仍要刷新——否则 resolveImageTemplate
+      // 退回到的 githubCommitSha 还是 pull 前旧值,与 worktree HEAD 不一致,镜像 tag 指向错
+      // commit 并静默回退（Bugbot: prebuilt pull skips SHA refresh）。
       if (!requestCommitSha
-        && !branchUsesPrebuiltMode(profiles, entry)
+        && (!branchUsesPrebuiltMode(profiles, entry) || !entry.ciTargetSha)
         && !(pullResult as { skipped?: boolean }).skipped
         && typeof pullResult.head === 'string'
         && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
@@ -10930,9 +10930,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
+        // 极速版且 ciTargetSha 已锁定才跳过刷新;极速版但 ciTargetSha 为空时仍刷新,
+        // 避免 resolveImageTemplate 退回到 pull 前旧 githubCommitSha（Bugbot: prebuilt
+        // pull skips SHA refresh,与主 deploy 路径同口径）。
         const isPrebuiltProfile = resolveEffectiveProfile(profile, entry).prebuiltImage === true;
         if (!bodySha
-          && !isPrebuiltProfile
+          && (!isPrebuiltProfile || !entry.ciTargetSha)
           && !(pullResult as { skipped?: boolean }).skipped
           && typeof pullResult.head === 'string'
           && /^[0-9a-f]{7,40}$/i.test(pullResult.head)

@@ -813,10 +813,17 @@ export class GitHubWebhookDispatcher {
       && b.ciTargetSha === headSha
       && (!run.head_branch || b.branch === run.head_branch)
       && branchUsesPrebuiltMode(wfProfiles, b);
-    const target = branches.find(matchable);
+    const matches = branches.filter(matchable);
+    // head_branch 缺省时不能靠 Array.find 取「第一个」——多分支可能指向同一 commit,
+    // 会把 CI 结果误派给排在前面的分支（Bugbot: missing head_branch picks wrong branch）。
+    // 有 head_branch → 精确命中至多一个;无 head_branch → 仅当全项目只有一个候选(无歧义)
+    // 才认领,否则放弃匹配(走下方缓存,等带 head_branch 的事件 / 后续 push 认领)。
+    const target = run.head_branch
+      ? matches[0]
+      : (matches.length === 1 ? matches[0] : undefined);
     if (!target) {
-      // 没有分支匹配:很可能是 push webhook 还没处理到(延迟/重试),分支尚未 stamp。
-      // 暂存结果,等稍后 push 把分支置 express-waiting 时认领(takeCompletedRun)。
+      // 没有分支匹配(或 head_branch 缺省且有歧义):很可能是 push webhook 还没处理到
+      // (延迟/重试),分支尚未 stamp。暂存结果,等稍后 push 把分支置 express-waiting 时认领。
       if (!dryRun) {
         this.rememberCompletedRun(event.repository.full_name, headSha, run.head_branch, run.conclusion || 'unknown', run.html_url);
       }

@@ -383,6 +383,33 @@ describe('极速版 — dispatcher', () => {
     expect(result.deployRequest).toBeUndefined();
   });
 
+  it('workflow_run 缺 head_branch 且同 SHA 多个候选 → 不误派给第一个,ack（Bugbot: missing head_branch picks wrong branch）', async () => {
+    await dispatcher.handle('push', { ref: 'refs/heads/feature', after: FULL_SHA, repository: { id: 1, full_name: 'octocat/repo' } });
+    await dispatcher.handle('push', { ref: 'refs/heads/feature-2', after: FULL_SHA, repository: { id: 1, full_name: 'octocat/repo' } });
+    // 两个极速版分支都 waiting 在同一 SHA;workflow_run 缺 head_branch → 有歧义 → 放弃匹配。
+    const result = await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 13, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, conclusion: 'success' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('workflow-acknowledged');
+    expect(result.deployRequest).toBeUndefined();
+    // 两个分支都仍 waiting,没有任何一个被误标 ready。
+    expect(stateService.getBranch('proj-feature')?.ciImageStatus).toBe('waiting');
+    expect(stateService.getBranch('proj-feature-2')?.ciImageStatus).toBe('waiting');
+  });
+
+  it('workflow_run 缺 head_branch 但只有一个候选 → 无歧义,正常认领', async () => {
+    const pushed = await pushOnce();
+    const result = await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 14, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, conclusion: 'success' },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(result.action).toBe('ci-image-ready');
+    expect(result.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: FULL_SHA });
+  });
+
   it('dry-run push 在极速版分支 → ci-image-waiting,不返回 deployRequest（Bugbot: dry-run ignores express wait path）', async () => {
     // 先真实建分支（已有 express override）。
     await pushOnce();
