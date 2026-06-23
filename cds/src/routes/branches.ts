@@ -9859,25 +9859,36 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    // 极速版 CI 闸门（Bugbot: manual deploy skips CI gate）：极速版分支的镜像由 CI 构建,
-    // 在 CI 把目标 SHA 标 ready 之前手动/内部重部署只会 docker pull 一个还不存在的镜像而失败,
-    // 留下噪音错误态。push / check_run 路径已拦,这里补上 deploy 路径:waiting/failed 时
-    // block(409),给可操作提示。非极速版分支不受影响;CI 驱动的内部部署此时 status 已是 ready
-    // 故自然放行。确知镜像已存在的高级用户可 ?ignoreCiGate=1 强制(逃生口,与 ignoreRequired 同风格)。
+    // 极速版 CI 闸门（Bugbot/Codex P2: manual deploy skips CI gate / require CI readiness for
+    // the deployed SHA）：极速版分支的镜像由 CI 按 commit 构建,只有 CI 把**目标 SHA**标 ready
+    // 才存在可拉取的镜像。放行条件必须是「ready 且 ciTargetSha === 即将部署的 SHA」;其余一律 block:
+    //   - undefined（align 清过 CI / auto-publish 刚切极速版 / 从未 push）→ 没有 ready 镜像;
+    //   - waiting / failed → 镜像未就绪;
+    //   - ready 但 ciTargetSha 与本次部署 SHA 不符（如显式 body.commitSha 指了别的 commit）。
+    // 否则后续 docker pull 一个不存在的镜像而失败,把「等 CI」变成噪音错误。非极速版分支不受影响;
+    // CI 驱动的内部部署此时 status 已 ready 且 SHA 对齐故自然放行。确认镜像已存在的高级用户可
+    // ?ignoreCiGate=1 强制。
     const ignoreCiGate = req.query?.ignoreCiGate === '1' || req.query?.ignoreCiGate === 'true';
-    if (!ignoreCiGate
-      && branchUsesPrebuiltMode(profiles, entry)
-      && (entry.ciImageStatus === 'waiting' || entry.ciImageStatus === 'failed')) {
-      res.status(409).json({
-        error: 'ci_image_not_ready',
-        ciImageStatus: entry.ciImageStatus,
-        ciTargetSha: entry.ciTargetSha,
-        message: entry.ciImageStatus === 'failed'
-          ? '极速版分支的 CI 镜像构建失败,无法拉取部署。请重跑 CI,或在分支详情切回源码编译模式后再部署。'
-          : '极速版分支正在等待 CI 构建镜像,镜像就绪后会自动部署,无需手动触发。如确认镜像已存在可加 ?ignoreCiGate=1 强制。',
-        escapeHatch: { hint: '附加 ?ignoreCiGate=1 query 可跳过此检查(仅在确认 ghcr 镜像已存在时使用)' },
-      });
-      return;
+    if (!ignoreCiGate && branchUsesPrebuiltMode(profiles, entry)) {
+      const gateReqSha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+        ? req.body.commitSha : undefined;
+      const prospectiveSha = gateReqSha || entry.githubCommitSha;
+      const ciReadyForSha = entry.ciImageStatus === 'ready' && !!entry.ciTargetSha && entry.ciTargetSha === prospectiveSha;
+      if (!ciReadyForSha) {
+        res.status(409).json({
+          error: 'ci_image_not_ready',
+          ciImageStatus: entry.ciImageStatus ?? null,
+          ciTargetSha: entry.ciTargetSha ?? null,
+          targetSha: prospectiveSha ?? null,
+          message: entry.ciImageStatus === 'failed'
+            ? '极速版分支的 CI 镜像构建失败,无法拉取部署。请重跑 CI,或在分支详情切回源码编译模式后再部署。'
+            : entry.ciImageStatus === 'ready'
+              ? '极速版分支的 CI 镜像就绪 SHA 与本次部署目标不一致,等对应 commit 的 CI 构建完成后会自动部署。'
+              : '极速版分支正在等待 CI 构建镜像,镜像就绪后会自动部署,无需手动触发。如确认镜像已存在可加 ?ignoreCiGate=1 强制。',
+          escapeHatch: { hint: '附加 ?ignoreCiGate=1 query 可跳过此检查(仅在确认 ghcr 镜像已存在时使用)' },
+        });
+        return;
+      }
     }
 
     // Phase 8 — env required check:必填项未填则 412 Precondition Failed,UI 弹窗强制感知
@@ -10067,12 +10078,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
-      // 极速版镜像 tag 用 githubCommitSha 渲染（:sha-${CDS_COMMIT_SHA}）。本地路径在分发前
-      // 已兜底推导过 githubCommitSha,但那是 pull **之前** 的 HEAD;若远端分支已前进,pull 会把
-      // 源码更新到新 HEAD,而镜像 tag 仍渲染旧 SHA → 跑旧镜像 / 拉一个和刚 pull 的 HEAD 不对应的
-      // tag（Codex P2: refresh prebuilt SHA after pulling latest code）。无显式 body.commitSha 时,
-      // 用 pull 后真实 HEAD 刷新,使镜像 tag 与源码一致。
+      // 非极速版（源码编译）路径:镜像/构建用 pull 后真实 HEAD,故无显式 body.commitSha 时
+      // 用 pullResult.head 刷新 githubCommitSha,避免镜像 tag/构建对应到 pull 前旧 SHA
+      // （Codex P2: refresh prebuilt SHA after pulling latest code）。
+      // **极速版例外**：极速版镜像由 CI 按 commit 预构建,只有 ciTargetSha(=CI ready 的 SHA)
+      // 才有可拉取的镜像。绝不能跟随 pull 后的新 HEAD（那个 SHA 多半还没 CI 镜像）——上面的
+      // CI 闸门已保证 ciImageStatus=ready 且 ciTargetSha===githubCommitSha,这里保持不动,
+      // 让镜像 tag 锁定在 CI 就绪的 SHA（Codex P2: require CI readiness for the deployed SHA）。
       if (!requestCommitSha
+        && !branchUsesPrebuiltMode(profiles, entry)
         && !(pullResult as { skipped?: boolean }).skipped
         && typeof pullResult.head === 'string'
         && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
@@ -10935,13 +10949,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
-      // 同主 deploy 路径:pull 后用真实 HEAD 刷新 githubCommitSha,使极速版镜像 tag 与
-      // 刚拉到的源码一致（Codex P2: refresh prebuilt SHA after pulling latest code）。
-      // 本单服务路径无 requestCommitSha 变量,内联判定 body.commitSha 是否显式指定。
+      // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
+      // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
+      // SHA after pulling latest code + require CI readiness for the deployed SHA）。
+      // 本单服务路径无 requestCommitSha 变量,内联判定 body.commitSha 是否显式指定;
+      // 用本 profile 的 prebuiltImage 判定是否极速版。
       {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
+        const isPrebuiltProfile = resolveEffectiveProfile(profile, entry).prebuiltImage === true;
         if (!bodySha
+          && !isPrebuiltProfile
           && !(pullResult as { skipped?: boolean }).skipped
           && typeof pullResult.head === 'string'
           && /^[0-9a-f]{7,40}$/i.test(pullResult.head)

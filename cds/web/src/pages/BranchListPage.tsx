@@ -4978,7 +4978,15 @@ function BranchCard({
           把该 commit 编译成 ghcr 镜像;期间显示「等待 CI 镜像」(动效不静止,符合禁止空白
           等待);CI 失败显示「CI 构建失败」并提供「切回源码编译」（打开详情切部署模式）。
         */}
-        {branch.ciImageStatus === 'waiting' && branch.deployRuntime?.prebuilt === true ? (
+        {/*
+          deployRuntime 仅由 GET /branches 汇总注入;SSE 的 branch.created/updated 推的是
+          原始 BranchEntry(无 deployRuntime)。若硬要 prebuilt===true,webhook 新建的极速版
+          分支卡在全量刷新前不显示 CI 徽章,丢失等待/失败反馈（Codex P2: show CI badges for
+          SSE-created express branches）。改用 `!== false`:deployRuntime 缺省(SSE)→显示;
+          有且 prebuilt=true→显示;有且明确非极速版(prebuilt=false,如已切回源码)→隐藏。
+          ciImageStatus 仅由极速版流程写入,其存在本身即极速版信号,故缺 deployRuntime 时安全。
+        */}
+        {branch.ciImageStatus === 'waiting' && branch.deployRuntime?.prebuilt !== false ? (
           <span
             className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
             title={`极速版（CI 预构建）：等待 GitHub Actions 把 commit ${(branch.ciTargetSha || '').slice(0, 7)} 编译成镜像,完成后自动拉取部署`}
@@ -4996,7 +5004,7 @@ function BranchCard({
             ) : null}
           </span>
         ) : null}
-        {branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt === true ? (
+        {branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt !== false ? (
           <span
             className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs text-amber-500"
             title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}）。可切回源码编译,或重试 CI 后再部署。`}

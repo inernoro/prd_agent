@@ -408,25 +408,29 @@ describe('Branch Routes', () => {
       expect((res.body as any).error).toBe('invalid_branch_name');
     });
 
-    // 极速版 CI 闸门（Bugbot: manual deploy skips CI gate）
-    function addExpressBranch(id: string, ciImageStatus: 'waiting' | 'failed' | 'ready', sha = 'deadbeef00112233445566778899aabbccddeeff') {
-      stateService.addBuildProfile({
-        id: 'api', projectId: 'default', name: 'API',
-        dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0', workDir: 'prd-api',
-        command: 'dotnet run', containerPort: 5000,
-        deployModes: { express: { label: '极速版', dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}', prebuilt: true, containerPort: 8080 } },
-      } as any);
+    // 极速版 CI 闸门（Bugbot/Codex P2: manual deploy skips CI gate / require CI readiness for the deployed SHA）
+    const SHA_A = 'deadbeef00112233445566778899aabbccddeeff';
+    const SHA_B = 'aaaa1111bbbb2222cccc3333dddd4444eeee5555';
+    function addExpressBranch(id: string, opts: { ciImageStatus?: 'waiting' | 'failed' | 'ready'; ciTargetSha?: string; githubCommitSha?: string }) {
+      if (!stateService.getBuildProfilesForProject('default').some((p) => p.id === 'api')) {
+        stateService.addBuildProfile({
+          id: 'api', projectId: 'default', name: 'API',
+          dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0', workDir: 'prd-api',
+          command: 'dotnet run', containerPort: 5000,
+          deployModes: { express: { label: '极速版', dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}', prebuilt: true, containerPort: 8080 } },
+        } as any);
+      }
       stateService.addBranch({
         id, projectId: 'default', branch: 'feature',
         worktreePath: `/tmp/wt/${id}`, services: {}, status: 'idle',
         createdAt: new Date().toISOString(),
         profileOverrides: { api: { activeDeployMode: 'express' } },
-        ciImageStatus, ciTargetSha: sha, githubCommitSha: sha,
+        ciImageStatus: opts.ciImageStatus, ciTargetSha: opts.ciTargetSha, githubCommitSha: opts.githubCommitSha,
       } as any);
     }
 
     it('refuses with 409 ci_image_not_ready when 极速版 branch is waiting for CI', async () => {
-      addExpressBranch('express-waiting', 'waiting');
+      addExpressBranch('express-waiting', { ciImageStatus: 'waiting', ciTargetSha: SHA_A, githubCommitSha: SHA_A });
       const res = await request(server, 'POST', '/api/branches/express-waiting/deploy');
       expect(res.status).toBe(409);
       expect((res.body as any).error).toBe('ci_image_not_ready');
@@ -434,11 +438,26 @@ describe('Branch Routes', () => {
     });
 
     it('refuses with 409 ci_image_not_ready when 极速版 branch CI failed', async () => {
-      addExpressBranch('express-failed', 'failed');
+      addExpressBranch('express-failed', { ciImageStatus: 'failed', ciTargetSha: SHA_A, githubCommitSha: SHA_A });
       const res = await request(server, 'POST', '/api/branches/express-failed/deploy');
       expect(res.status).toBe(409);
       expect((res.body as any).error).toBe('ci_image_not_ready');
       expect((res.body as any).ciImageStatus).toBe('failed');
+    });
+
+    it('refuses with 409 when 极速版 branch has no CI status (e.g. align cleared / never built)', async () => {
+      addExpressBranch('express-unset', { ciImageStatus: undefined, githubCommitSha: SHA_A });
+      const res = await request(server, 'POST', '/api/branches/express-unset/deploy');
+      expect(res.status).toBe(409);
+      expect((res.body as any).error).toBe('ci_image_not_ready');
+    });
+
+    it('refuses with 409 when 极速版 branch is ready for a different SHA than the deploy target', async () => {
+      // ready 的是 SHA_A,但分支当前 HEAD(githubCommitSha) 已前进到 SHA_B → 没有 B 的 ready 镜像。
+      addExpressBranch('express-ready-mismatch', { ciImageStatus: 'ready', ciTargetSha: SHA_A, githubCommitSha: SHA_B });
+      const res = await request(server, 'POST', '/api/branches/express-ready-mismatch/deploy');
+      expect(res.status).toBe(409);
+      expect((res.body as any).error).toBe('ci_image_not_ready');
     });
   });
 

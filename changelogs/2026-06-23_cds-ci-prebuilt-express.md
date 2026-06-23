@@ -25,3 +25,5 @@
 | fix | cds | PR review 修复（Bugbot）：deploy 路由补极速版 CI 闸门——极速版分支 ciImageStatus=waiting/failed 时手动/内部重部署返回 409 ci_image_not_ready(给可操作提示 + ?ignoreCiGate=1 逃生口),避免 docker pull 不存在的镜像留下噪音错误;非极速版/ready/CI 驱动部署不受影响 |
 | fix | cds | PR review 修复（Codex P2）：移除 workflow_run 的 githubCommitSha 兜底匹配,只按 ciTargetSha(显式等待标记)匹配,避免 docs-only push 刷新 githubCommitSha 后其 CI 完成被误部署(docs-only 已显式跳过);早到竞态仍由结果缓存兜底 |
 | fix | cds | PR review 修复（Codex P2）：本地 deploy 在 worktree pull 后用真实 HEAD 刷新 githubCommitSha,避免远端已前进时极速版镜像 tag 仍渲染 pull 前旧 SHA 导致跑旧镜像/拉错 tag;主 deploy 与单服务 deploy 两路径均覆盖 |
+| fix | cds | PR review 修复（Bugbot/Codex P2）：极速版部署严格锁定 CI 就绪 SHA——deploy 闸门改为「仅 ciImageStatus=ready 且 ciTargetSha===目标 SHA」放行(undefined/align 清空/ready-但-SHA-不符 一律 409);pull 后刷新 githubCommitSha 仅限非极速版,极速版镜像永远锁在 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD |
+| fix | cds | PR review 修复（Codex P2）：分支卡 CI 徽章改用 deployRuntime?.prebuilt!==false 判定,使 SSE 新建(无 deployRuntime 的原始 BranchEntry)的极速版分支在全量刷新前也显示「等待 CI/构建失败」反馈;明确非极速版(prebuilt=false)仍隐藏 |
