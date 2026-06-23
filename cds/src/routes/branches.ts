@@ -361,6 +361,16 @@ function summarizeBranchDeployRuntime(
     if (configKind === 'release' && actualKind !== 'release') pendingPublish = true;
     if (configKind === 'release' && !running) pendingPublish = true;
 
+    // 极速版(prebuilt)特例（Codex P2: mark static-to-express as pending）:
+    // static 与 express 都归类 release,上面 configKind/actualKind 比对都是 release →
+    // 不会判 pending,但容器实际还是旧 static 镜像。只要"配置=极速版"而"实际跑的不是
+    // 这个极速版模式"（没在跑 / 确知 deployedMode 与 configMode 不一致）就该判待生效,
+    // 否则卡片会亮"极速版"绿徽章而其实没切过去。无真相的旧数据不误报(沿用上面口径)。
+    if (effectiveProfile.prebuiltImage === true) {
+      if (!running) pendingPublish = true;
+      else if (hasTruth && svc!.deployedMode !== configMode) pendingPublish = true;
+    }
+
     const suffix = hasTruth && actualMode !== configMode
       ? `${actualLabel}（配置 ${configLabel}，待生效）`
       : actualLabel;

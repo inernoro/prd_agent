@@ -297,4 +297,91 @@ describe('极速版 — dispatcher', () => {
     expect(result.action).toBe('workflow-acknowledged');
     expect(result.deployRequest).toBeUndefined();
   });
+
+  it('dry-run push 在极速版分支 → ci-image-waiting,不返回 deployRequest（Bugbot: dry-run ignores express wait path）', async () => {
+    // 先真实建分支（已有 express override）。
+    await pushOnce();
+    const result = await dispatcher.handle(
+      'push',
+      { ref: 'refs/heads/feature', after: FULL_SHA, repository: { id: 1, full_name: 'octocat/repo' } },
+      { dryRun: true },
+    );
+    expect(result.action).toBe('ci-image-waiting');
+    expect(result.deployRequest).toBeUndefined();
+  });
+
+  it('dry-run push 新建极速版分支(项目默认 express) → ci-image-waiting,不返回 deployRequest', async () => {
+    // 全新分支,dry-run 不落盘;项目 defaultDeployModes={api:express} → 应模拟出极速版。
+    const result = await dispatcher.handle(
+      'push',
+      { ref: 'refs/heads/brand-new', after: FULL_SHA, repository: { id: 1, full_name: 'octocat/repo' } },
+      { dryRun: true },
+    );
+    expect(result.action).toBe('ci-image-waiting');
+    expect(result.deployRequest).toBeUndefined();
+    // dry-run 不应真的建分支
+    expect(stateService.getBranch('proj-brand-new')).toBeUndefined();
+  });
+
+  it('docs-only push 让等待中的极速版分支同步推进 ciTargetSha（Bugbot: doc-only push stale CI target）', async () => {
+    const pushed = await pushOnce(); // waiting, ciTargetSha=FULL_SHA
+    const NEW_SHA = 'aaaa1111bbbb2222cccc3333dddd4444eeee5555';
+    const result = await dispatcher.handle('push', {
+      ref: 'refs/heads/feature',
+      after: NEW_SHA,
+      repository: { id: 1, full_name: 'octocat/repo' },
+      commits: [{ id: NEW_SHA, added: [], removed: [], modified: ['README.md'] }],
+    });
+    expect(result.action).toBe('ignored-doc-only');
+    const branch = stateService.getBranch(pushed.branchId!);
+    // 仍在等待,但目标 SHA 已推进到新 commit,使新 CI run 能匹配
+    expect(branch?.ciImageStatus).toBe('waiting');
+    expect(branch?.ciTargetSha).toBe(NEW_SHA);
+    expect(branch?.githubCommitSha).toBe(NEW_SHA);
+  });
+
+  it('workflow_run 抢先到达(分支未 stamp waiting) → 缓存,后续 push 认领直接 ready+deploy（Bugbot/Codex P2: 不丢早到的 completion）', async () => {
+    // 模拟 push webhook 延迟:先收到 branch-image.yml 成功的 workflow_run。
+    const early = await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: {
+        id: 20,
+        name: 'Branch Image',
+        path: '.github/workflows/branch-image.yml',
+        head_sha: FULL_SHA,
+        head_branch: 'feature',
+        conclusion: 'success',
+        html_url: 'https://github.com/octocat/repo/actions/runs/20',
+      },
+      repository: { full_name: 'octocat/repo' },
+    });
+    expect(early.action).toBe('workflow-acknowledged'); // 暂无分支,已缓存
+    expect(early.deployRequest).toBeUndefined();
+
+    // 稍后 push 到达,建分支(极速版) → 应认领缓存的成功结果,直接 ready+deploy,不置 waiting。
+    const pushed = await pushOnce();
+    expect(pushed.action).toBe('ci-image-ready');
+    expect(pushed.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: FULL_SHA });
+    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('ready');
+  });
+
+  it('workflow_run 抢先到达且失败 → 后续 push 认领为 failed,不置 waiting 苦等', async () => {
+    await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: {
+        id: 21,
+        name: 'Branch Image',
+        path: '.github/workflows/branch-image.yml',
+        head_sha: FULL_SHA,
+        head_branch: 'feature',
+        conclusion: 'failure',
+        html_url: 'https://github.com/octocat/repo/actions/runs/21',
+      },
+      repository: { full_name: 'octocat/repo' },
+    });
+    const pushed = await pushOnce();
+    expect(pushed.action).toBe('ci-image-failed');
+    expect(pushed.deployRequest).toBeUndefined();
+    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('failed');
+  });
 });
