@@ -309,7 +309,27 @@ export class SchedulerService {
     // 走 per-project default：项目级值优先，未设时兜底到旧 state.defaultBranch。
     if (this.stateService.getDefaultBranchFor(branch.projectId) === branch.id) return true;
     if (this.config.pinnedBranches?.includes(branch.id)) return true;
+    // 主分支（仓库默认分支）永不降温（用户 2026-06-23 要求）。
+    // 按 **git 分支名** 匹配,不依赖 Project.defaultBranch(存的是 CDS 分支 id,可能未配置
+    // 或与实际不符 —— 这正是 main 被误降温的根因)。优先比对远端默认分支名 gitDefaultBranch,
+    // 再兜底 main/master 字面量,保证 trunk 永远保活、不被空闲/容量降温驱逐。
+    if (this.isTrunkBranch(branch)) return true;
     return false;
+  }
+
+  /**
+   * 该分支是否为「主干分支」(仓库默认分支)。按 git 分支名判定:
+   *   - 命中项目 gitDefaultBranch(远端 reported default,如 main/master) → 是
+   *   - 兜底:分支名恰为 main / master → 是
+   * 仅依据分支名,与 Project.defaultBranch(CDS 路由 fallback 的分支 id)解耦。
+   */
+  private isTrunkBranch(branch: BranchEntry): boolean {
+    const branchName = (branch.branch || '').trim();
+    if (!branchName) return false;
+    const project = this.stateService.getProject(branch.projectId);
+    const remoteDefault = (project?.gitDefaultBranch || '').trim();
+    if (remoteDefault && branchName === remoteDefault) return true;
+    return branchName === 'main' || branchName === 'master';
   }
 
   /**
