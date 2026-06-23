@@ -1258,15 +1258,18 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     const services = Object.values(branch.services);
     if (services.length === 0) return;
 
-    // Remote-executor branches run their containers off-master; the local
-    // `restartServiceInPlace` (docker on THIS host) can't reach them — manual
-    // /restart returns 409 for exactly this. Skip auto-wake (no state flip) so
-    // the branch keeps its idle diagnostic page instead of being flipped to
-    // restarting then error by a doomed local docker restart.
-    const remoteExecutor = branch.executorId && registry
-      ? registry.getAll().find((n) => n.id === branch.executorId && n.role !== 'embedded')
-      : null;
-    if (remoteExecutor) return;
+    // Executor-owned branches can't be revived by a LOCAL docker restart. A
+    // resolved deploy clears executorId to undefined for embedded/local runs
+    // (branches.ts: `stillRemote?.role==='embedded' || !stillRemote` → undefined),
+    // so a truthy executorId always means a REMOTE executor — whether currently
+    // registered OR temporarily absent from the registry (coordinator restart /
+    // missed heartbeat). In both cases the container runs off-master and the
+    // local `restartServiceInPlace` is a doomed no-op that would flip the branch
+    // to `error` and stop future retries. Skip without touching state so the
+    // diagnostic page stays and a later visit retries once the executor
+    // re-registers. Mirrors the auto-lifecycle stop path's
+    // `if (branch.executorId && !remoteExecutor)` remote-unavailable handling.
+    if (branch.executorId) return;
 
     // Acquire the operation lease BEFORE mutating state — throws on conflict
     // (a deploy / cooling already owns the branch), in which case we abort

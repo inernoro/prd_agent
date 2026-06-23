@@ -93,6 +93,18 @@ describe('ProxyService preview auto-wake scoping', () => {
     expect(revive).not.toHaveBeenCalled();
   });
 
+  it('does NOT fire for an executor-owned (remote) branch', async () => {
+    // executorId is set only for remote-executor branches; local docker restart
+    // can't reach off-master containers, so auto-wake must skip them.
+    addBranch({ executorId: 'executor-remote-1' });
+    const revive = vi.fn(async () => {});
+    proxy.setOnReviveCooled(revive);
+
+    await proxy.handleRequest(makeReq(), makeRes());
+
+    expect(revive).not.toHaveBeenCalled();
+  });
+
   it('does NOT fire for a cooled branch with no built services', async () => {
     addBranch({ services: {} });
     const revive = vi.fn(async () => {});

@@ -1037,6 +1037,11 @@ export class ProxyService {
     if (!this.onReviveCooled) return false;
     if (branch.lastStopSource !== 'scheduler') return false;
     if (branch.status !== 'idle') return false;
+    // Executor-owned (remote) branches can't be revived by a local docker
+    // restart — a resolved local deploy clears executorId, so a truthy value
+    // means a remote executor (present or temporarily absent). The index.ts
+    // revive callback double-guards this.
+    if (branch.executorId) return false;
     return Object.keys(branch.services || {}).length > 0;
   }
 
