@@ -1720,12 +1720,20 @@ ${shouldAutoRefresh ? `;(function(){
       .then(function(data){
         if(!data)return;
         if(data.ready){location.reload();return;}
-        // Terminal non-loading state (error / idle / stopped / not-found): the
-        // operation failed or the branch is no longer coming up. Reload so the
-        // server renders the diagnostic page (with redeploy guidance) instead of
-        // leaving the visitor on a spinner forever — e.g. when auto-wake's
+        // Terminal non-loading state (branch error / idle / stopped / not-found):
+        // the operation failed or the branch is no longer coming up. Reload so
+        // the server renders the diagnostic page (with redeploy guidance) instead
+        // of leaving the visitor on a spinner forever — e.g. when auto-wake's
         // restart/readiness fails and flips the branch to error.
-        if(data.loading===false){location.reload();return;}
+        //
+        // Branch-level waits only (no waitingProfile). For a PROFILE-scoped wait,
+        // one failed service can have loading=false while the branch (and other
+        // services) is still running; reloading there would land on the wrong
+        // upstream / 502 rather than a diagnostic page (routeToBranch only shows
+        // the status page for starting/building/restarting profiles, and
+        // resolveUpstream falls back to the first running service). Keep the
+        // prior in-place status update for that case.
+        if(data.loading===false && !waitingProfile){location.reload();return;}
         var statusEl=document.querySelector('[data-role="branch-status"]');
         if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
         var branchEl=document.querySelector('[data-role="branch-name"]');
