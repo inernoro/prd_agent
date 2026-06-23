@@ -8,7 +8,7 @@
 
 | # | 边界 | 现状 | 后续方向 |
 |---|------|------|---------|
-| 1 | 二进制附件跨节点 | 只传知识库正文（markdown / 文本）+ 引用元数据；图片等二进制资产不随包传输，对端无对应附件时图片可能断链 | 后续走对象存储签名 URL 或附件流式传输 |
+| 1 | 二进制附件跨节点 | 已实现（2026-06-23）：导出时文件条目（无正文、走 AttachmentId）带 `Extras["peerAttachment"]`（url/mime/fileName/size/type/thumbnailUrl/extractedText）；接收方下载文件 → 重传到本节点存储 → 重建 Attachment + DocumentEntry，`peerSourceAttachmentUrl` 元数据做幂等。签名也纳入附件标识（避免仅二进制变化的伪「已同步」）。残留小边界见下方 B 系列 | — |
 | 2 | 影子用户 | 归属对齐失败（对端无同名 username / email）时归到「操作者」（push 路径=发起用户；node-to-node apply 路径=配对管理员），不创建影子账号 | 后续加「按邮箱建影子账户」开关 |
 | 3 | 解除配对的对端清理 | DELETE 仅删本端 PeerNode，对端残留记录需对端管理员手动删 | 后续加 revoke 通知对端 |
 | 4 | 双向合并语义 | both = push(targetKey) 然后 pull(targetKey)，共享条目以发起方为准、两侧新增都保留；非「逐条三方合并」 | 复用现有 DocumentStoreSyncController 的签名快照三态判定可做更精细的「仅改动侧驱动」 |
@@ -33,6 +33,21 @@
 
 A2/A3/A4 都是 **手动 force-align/mirror 或入站 apply 路径**的既有/完整性问题，与本次新增的「自动出站同步」无关
 （自动同步恒 Overwrite、绝不删条目，幂等收敛），故未在 PR #890 内仓促改动（需跨层 / 协议级 / 安全端点改造），单列于此。
+
+## 二进制附件跨节点（2026-06-23 新增，原 debt #1）
+
+文件类条目（PNG / yaml / pdf 等，无正文、走 AttachmentId）现已随包跨节点：导出带 `peerAttachment` 元信息 →
+接收方经 SSRF 校验下载 → 重传到本节点存储 → 重建 Attachment + DocumentEntry，`peerSourceAttachmentUrl` 做幂等。
+缩略图尽力本地化，签名纳入附件标识。残留小边界：
+
+| # | 边界 | 现状 | 后续方向 |
+|---|------|------|---------|
+| B1 | 单文件大小上限 50MB | 超过即跳过该条（failed 计数），避免超大文件拖垮同步 | 需要更大文件时改分片 / 直传对象存储签名 URL |
+| B2 | mirror 删除二进制条目不删 Attachment | 镜像删除时只删 DocumentEntry，孤儿 Attachment 残留（内容寻址、无害但占空间）。与 A2 同源 | 复用 A2 的级联清理 helper 时一并处理 |
+| B3 | 缩略图本地化失败置空 | 缩略图下载失败时 ThumbnailUrl 留空（不留指向对端的悬挂 URL），主文件仍正常 | 可接受；前端对无缩略图已有兜底 |
+| B5 | 附件替换/形态转换不删旧 Attachment 行 | 重下变更的二进制（插新 Attachment）、或纯二进制→文本（清 AttachmentId）时，不删旧 Attachment DB 行（及仅它引用的存储 blob），与 `DocumentStoreController` 的替换清理不一致，留孤儿（Bugbot Low）。内容寻址 blob 通常被多处共享，删除需引用计数 | 与 A2/B2 一并：抽共享级联清理 helper，带引用计数后再删 |
+| B6 | 本地替换文件后 peer 源标记未刷新 | 经 peer-sync 导入的二进制条目，之后本地走 `ReplaceEntryFile` 换文件：只改 AttachmentId，没清 metadata 的 peerSourceAttachmentUrl/Size → 再导出仍发旧 sourceId；若新文件同大小，已应用旧标记的对端会判「未变」跳过下载，本地替换不传播（Codex P2，narrow：import→本地替换→再导出 链路） | `ReplaceEntryFile`（及其它改 AttachmentId 的本地路径）替换附件时清除 peerSourceAttachmentUrl/Size/peerSourceContentHash 标记；或导出时校验标记仍描述当前附件 |
+| B4 | 可提取文本的文件（PDF/DOCX/TXT）只同步正文不同步原始下载件 | 这类上传同时存 DocumentId（正文）+ AttachmentId（原件）。当前导出仅在 `content==null` 时带 peerAttachment，故走纯文本路径：知识正文/可搜索内容已同步，但接收方条目无 AttachmentId → 原始可下载文件缺失。纯二进制条目（图片/yaml 等证据件，无 DocumentId）已完整同步——用户「证据图」诉求不受影响（PNG 即纯二进制） | 需把 apply 的文本路径与二进制路径合并为「一条记录可同时落 DocumentId + AttachmentId」：导出在有 AttachmentId 时恒带 peerAttachment 且保留 content；apply 文本 upsert 后再幂等下载挂载附件。属结构性改造，留待专门处理（避免在评审环路内无本地编译器盲改文本路径引回归） |
 
 ## 安全与一致性要点（已落地）
 
