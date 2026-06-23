@@ -1334,15 +1334,33 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         stateService.save();
       }
     } catch (err) {
-      branchOperationFinalStatus = 'failed';
-      // Don't leave the branch stuck on a spinner: revert to idle so the next
-      // visit shows the diagnostic page rather than an endless "restarting".
-      const fresh = stateService.getBranch(slug);
-      if (fresh && fresh.status === 'restarting') {
-        fresh.status = 'idle';
-        stateService.save();
+      const superseded = (err as Error).name === 'BranchOperationSupersededError';
+      branchOperationFinalStatus = superseded ? 'cancelled' : 'failed';
+      // Superseded = a higher-priority op (manual deploy/restart) took over the
+      // branch. It now owns the state machine, so we must NOT touch status here
+      // (reverting would clobber the in-flight op, leaving persisted 'idle' while
+      // services are actually 'starting'). Same handling as manual /restart.
+      // Genuine failure: move starting→error + branch→error (NOT back to 'idle')
+      // so the next visit shows the diagnostic page instead of re-triggering
+      // auto-wake forever (idle + lastStopSource='scheduler' stays eligible).
+      if (!superseded) {
+        try {
+          const fresh = stateService.getBranch(slug);
+          if (fresh) {
+            for (const svc of Object.values(fresh.services)) {
+              if (svc.status === 'starting') svc.status = 'error';
+            }
+            if (fresh.status === 'restarting') {
+              fresh.status = 'error';
+              fresh.errorMessage = `预览自动唤醒异常：${(err as Error).message}`;
+            }
+            stateService.save();
+          }
+        } catch { /* 状态恢复尽力而为，不掩盖原始错误 */ }
+        throw err;
       }
-      throw err;
+      // superseded: leave state to the new owner; swallow so the proxy doesn't
+      // log a misleading "auto-wake failed".
     } finally {
       completeBackgroundBranchOperation(lease, branchOperationFinalStatus);
     }
