@@ -2825,29 +2825,45 @@ function ProjectMigrationTab({
   const [scanning, setScanning] = useState(false);
   const [dataPlan, setDataPlan] = useState<DataPlanResult | null>(null);
 
+  // projectId 切换时:① 立刻清空上一个项目的残留(预览 cds-compose 含明文 env,绝不能跨项目串显);
+  // ② 旧项目的慢响应到达时用 liveProjectId 丢弃,避免覆盖新项目视图(Bugbot High「Stale migration preview leak」)。
+  const liveProjectId = useRef(projectId);
+  liveProjectId.current = projectId;
+  useEffect(() => {
+    setPeers(null); setPreview(null); setSelectedPeerId('');
+    setReplicateResult(null); setDataPlan(null); setShowYaml(false);
+  }, [projectId]);
+
   const loadPeers = useCallback(async () => {
+    const reqPid = projectId;
     try {
       const res = await fetch(apiUrl(`${base}/peers`), { credentials: 'include' });
       const body = await res.json();
-      if (!res.ok) { onToast(`加载迁移目标失败:${body.error || res.status}`); return; }
+      if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应
+      if (!res.ok) { onToast(`加载迁移目标失败:${body.error || res.status}`); setPeers([]); return; }
       const list = (body.peers || []) as MigrationPeer[];
       setPeers(list);
       setSelectedPeerId((prev) => prev || (list[0]?.id ?? ''));
     } catch (err) {
+      if (reqPid !== liveProjectId.current) return;
       onToast(`加载异常:${(err as Error).message}`);
+      setPeers([]); // 失败也要退出 loading,否则一直卡在「加载迁移设置…」(Bugbot「Migration tab infinite loading」)
     }
-  }, [base, onToast]);
+  }, [base, onToast, projectId]);
 
   const loadPreview = useCallback(async () => {
+    const reqPid = projectId;
     try {
       const res = await fetch(apiUrl(`${base}/config-preview`), { credentials: 'include' });
       const body = await res.json();
+      if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应(防别项目 cds-compose + env 泄露)
       if (!res.ok) { onToast(`加载配置预览失败:${body.error || res.status}`); return; }
       setPreview(body as ConfigPreview);
     } catch (err) {
+      if (reqPid !== liveProjectId.current) return;
       onToast(`加载异常:${(err as Error).message}`);
     }
-  }, [base, onToast]);
+  }, [base, onToast, projectId]);
 
   useEffect(() => { void loadPeers(); void loadPreview(); }, [loadPeers, loadPreview]);
 
