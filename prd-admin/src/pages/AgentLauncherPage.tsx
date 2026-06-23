@@ -910,9 +910,13 @@ export default function AgentLauncherPage() {
                       <TipsRotator fallback="选一个智能体开始创作，或在下方的实用工具里探索平台能力" />
                     </div>
                   </Reveal>
-                  {/* 搜索框：靠左，紧跟问候/副标题下方（与右侧教程卡分列左右，不再堆叠在右上角） */}
-                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                    <div className="relative mt-4" style={{ maxWidth: isMobile ? '100%' : 360 }}>
+                </div>
+
+                {/* 右栏：搜索框 + 教程中心承接卡，搜索在左、教程在右，顶部对齐分列 */}
+                <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                  <div className={isMobile ? 'flex flex-col gap-3 w-full' : 'shrink-0 flex items-start gap-4'}>
+                    {/* 搜索框：移到顶部、教程左侧 */}
+                    <div className="relative" style={{ width: isMobile ? '100%' : 280 }}>
                       <Search
                         size={15}
                         className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -942,17 +946,22 @@ export default function AgentLauncherPage() {
                         }}
                       />
                     </div>
-                  </Reveal>
-                </div>
 
-                {/* 右栏：仅教程中心承接卡（靠右，与左侧搜索分列左右，不再堆叠） */}
-                {!searchQuery.trim() && (
-                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                    <div className="shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
-                      <LearningCenterTeaser compact />
-                    </div>
-                  </Reveal>
-                )}
+                    {/* 教程中心承接卡（搜索态隐藏）—— 设计选型：三套效果并列对比，选定后保留其一 */}
+                    {!searchQuery.trim() && (
+                      <div className="shrink-0 flex flex-col gap-2" style={{ width: isMobile ? '100%' : 280 }}>
+                        {(['A', 'B', 'C'] as const).map((v, i) => (
+                          <div key={v} className="flex flex-col gap-1">
+                            <span className="text-[10px] font-semibold tracking-wide" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
+                              效果 {i + 1}
+                            </span>
+                            <LearningCenterTeaser compact variant={v} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Reveal>
               </div>
             </div>
             {/* end hero content */}
