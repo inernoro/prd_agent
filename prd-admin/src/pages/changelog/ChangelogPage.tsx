@@ -2211,6 +2211,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
 function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntry; index: number }) {
   const updatedTime = formatRelativeTime(item.updatedAtUtc);
   const avatarLetter = (item.authorName || '?').trim().charAt(0).toUpperCase() || '?';
+  const linkedDefects = item.linkedDefects ?? [];
   const statusLabel = item.isDraft ? '草稿' : '待审核';
   const statusStyle = item.isDraft
     ? {
@@ -2225,15 +2226,12 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
       };
 
   return (
-    <motion.a
+    <motion.div
       layout
       initial={{ opacity: 0, y: 10, scale: 0.995 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -8, scale: 0.99 }}
       transition={{ duration: 0.28, delay: Math.min(index, 8) * 0.025, ease: [0.25, 0.46, 0.45, 0.94] }}
-      href={item.htmlUrl}
-      target="_blank"
-      rel="noreferrer"
       className="rounded-lg px-3.5 py-3 flex items-center gap-3 transition-colors hover:bg-white/5"
       style={{
         background: 'rgba(255, 255, 255, 0.025)',
@@ -2325,8 +2323,11 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
       >
         {updatedTime || formatDisplayDate('', item.updatedAtUtc)}
       </div>
-      <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
-    </motion.a>
+      <LinkedDefectsPopover defects={linkedDefects} />
+      <a href={item.htmlUrl} target="_blank" rel="noreferrer" className="shrink-0 inline-flex" title="查看 GitHub PR">
+        <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
+      </a>
+    </motion.div>
   );
 }
 

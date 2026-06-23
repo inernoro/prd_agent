@@ -70,6 +70,21 @@ public class ChangelogLinkedDefectsTests
     }
 
     [Fact]
+    public void ResolvePendingReviewPublishStatus_TreatsOpenPrAsPending()
+    {
+        Assert.Equal(
+            DefectResolutionPublishStatus.Pending,
+            ChangelogController.ResolvePendingReviewPublishStatus(new DefectResolutionTrace()));
+
+        Assert.Equal(
+            DefectResolutionPublishStatus.Published,
+            ChangelogController.ResolvePendingReviewPublishStatus(new DefectResolutionTrace
+            {
+                PublishStatus = DefectResolutionPublishStatus.Published,
+            }));
+    }
+
+    [Fact]
     public void BuildCommitShaAliases_IncludesFullAndShortShaForms()
     {
         var aliases = ChangelogController.BuildCommitShaAliases(

@@ -330,8 +330,119 @@ public class ChangelogController : ControllerBase
     {
         if (limit <= 0 || limit > 100) limit = 50;
         var view = await _reader.GetGitHubPendingReviewAsync(limit, force).ConfigureAwait(false);
+        var linkedDefectsByPrNumber = await GetLinkedDefectsForPendingReviewAsync(view).ConfigureAwait(false);
         if (!force) SetClientCacheHeaders();
-        return Ok(ApiResponse<GitHubPendingReviewDto>.Ok(MapGitHubPendingReview(view)));
+        return Ok(ApiResponse<GitHubPendingReviewDto>.Ok(MapGitHubPendingReview(view, linkedDefectsByPrNumber)));
+    }
+
+    private async Task<IReadOnlyDictionary<int, List<GitHubLinkedDefectDto>>> GetLinkedDefectsForPendingReviewAsync(
+        GitHubPendingReviewView view)
+    {
+        if (view.Items.Count == 0)
+            return new Dictionary<int, List<GitHubLinkedDefectDto>>();
+
+        var prNumbers = view.Items
+            .Select(x => x.Number)
+            .Distinct()
+            .ToList();
+        var shaAliasesByPr = view.Items
+            .Select(item => new { item.Number, Aliases = BuildCommitShaAliases(item.HeadSha, item.ShortSha) })
+            .ToList();
+        var shas = shaAliasesByPr
+            .SelectMany(x => x.Aliases)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var prNumberByAlias = shaAliasesByPr
+            .SelectMany(x => x.Aliases.Select(alias => new { Alias = alias, x.Number }))
+            .GroupBy(x => x.Alias, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Number, StringComparer.OrdinalIgnoreCase);
+
+        var filters = new List<FilterDefinition<DefectResolutionTrace>>();
+        if (prNumbers.Count > 0)
+        {
+            filters.Add(Builders<DefectResolutionTrace>.Filter.In(
+                x => x.PullRequestNumber,
+                prNumbers.Select(x => (int?)x)));
+        }
+        if (shas.Count > 0)
+        {
+            filters.Add(Builders<DefectResolutionTrace>.Filter.In(x => x.CommitSha, shas));
+        }
+        if (filters.Count == 0)
+            return new Dictionary<int, List<GitHubLinkedDefectDto>>();
+
+        var filter = filters.Count == 1
+            ? filters[0]
+            : Builders<DefectResolutionTrace>.Filter.Or(filters);
+        var traces = await _db.DefectResolutionTraces
+            .Find(filter)
+            .ToListAsync()
+            .ConfigureAwait(false);
+        var defectIds = traces
+            .Select(x => x.DefectId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var defectsById = defectIds.Count == 0
+            ? new Dictionary<string, DefectReport>(StringComparer.Ordinal)
+            : (await _db.DefectReports
+                .Find(x => defectIds.Contains(x.Id))
+                .ToListAsync()
+                .ConfigureAwait(false))
+                .ToDictionary(x => x.Id, StringComparer.Ordinal);
+        var currentUserId = this.GetRequiredUserId();
+
+        var result = new Dictionary<int, List<GitHubLinkedDefectDto>>();
+        foreach (var trace in traces)
+        {
+            var prNumber = trace.PullRequestNumber;
+            if (!prNumber.HasValue)
+            {
+                var normalizedTraceSha = trace.CommitSha.Trim().ToLowerInvariant();
+                if (prNumberByAlias.TryGetValue(normalizedTraceSha, out var matchedPrNumber))
+                    prNumber = matchedPrNumber;
+            }
+            if (!prNumber.HasValue)
+                continue;
+
+            if (!result.TryGetValue(prNumber.Value, out var linked))
+            {
+                linked = new List<GitHubLinkedDefectDto>();
+                result[prNumber.Value] = linked;
+            }
+
+            defectsById.TryGetValue(trace.DefectId, out var defect);
+            var publishStatus = ResolvePendingReviewPublishStatus(trace);
+            linked.Add(new GitHubLinkedDefectDto
+            {
+                TraceId = trace.Id,
+                DefectId = trace.DefectId,
+                DefectNo = trace.DefectNo,
+                DefectTitle = trace.DefectTitle,
+                ReporterName = defect?.ReporterName,
+                IsSubmittedByMe = defect != null
+                    && string.Equals(defect.ReporterId, currentUserId, StringComparison.Ordinal),
+                FixStatus = publishStatus == DefectResolutionPublishStatus.Published
+                    ? DefectResolutionFixStatus.Published
+                    : trace.FixStatus,
+                PublishStatus = publishStatus,
+                PreviewUrl = trace.PreviewUrl,
+                VisualReportUrl = trace.VisualReportUrl,
+                KnowledgeBaseUrl = trace.KnowledgeBaseUrl,
+                PullRequestNumber = trace.PullRequestNumber ?? prNumber,
+                PullRequestUrl = trace.PullRequestUrl,
+                CommitSha = trace.CommitSha,
+            });
+        }
+
+        return result;
+    }
+
+    internal static string ResolvePendingReviewPublishStatus(DefectResolutionTrace trace)
+    {
+        return trace.PublishStatus == DefectResolutionPublishStatus.Published
+            ? DefectResolutionPublishStatus.Published
+            : DefectResolutionPublishStatus.Pending;
     }
 
     // ── GitHub 作者名 ↔ 系统用户 彩蛋匹配 ────────────────────────────
@@ -772,7 +883,9 @@ public class ChangelogController : ControllerBase
         Description = e.Description,
     };
 
-    private static GitHubPendingReviewDto MapGitHubPendingReview(GitHubPendingReviewView view) => new()
+    private static GitHubPendingReviewDto MapGitHubPendingReview(
+        GitHubPendingReviewView view,
+        IReadOnlyDictionary<int, List<GitHubLinkedDefectDto>> linkedDefectsByPrNumber) => new()
     {
         DataSourceAvailable = view.DataSourceAvailable,
         Source = view.Source,
@@ -792,6 +905,9 @@ public class ChangelogController : ControllerBase
             CreatedAtUtc = item.CreatedAtUtc.ToString("o"),
             UpdatedAtUtc = item.UpdatedAtUtc.ToString("o"),
             HtmlUrl = item.HtmlUrl,
+            LinkedDefects = linkedDefectsByPrNumber.TryGetValue(item.Number, out var linkedDefects)
+                ? linkedDefects
+                : new List<GitHubLinkedDefectDto>(),
         }),
     };
 
@@ -1091,6 +1207,8 @@ public class ChangelogController : ControllerBase
         public string CreatedAtUtc { get; set; } = string.Empty;
         public string UpdatedAtUtc { get; set; } = string.Empty;
         public string HtmlUrl { get; set; } = string.Empty;
+        /// <summary>该 open PR 关联的缺陷修复记录</summary>
+        public List<GitHubLinkedDefectDto> LinkedDefects { get; set; } = new();
     }
 
     public sealed class GitHubPendingReviewDto
