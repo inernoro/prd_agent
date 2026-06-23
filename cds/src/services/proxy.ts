@@ -575,7 +575,12 @@ export class ProxyService {
       // The revive callback does stateService.getBranch(id), so the wrong key
       // would silently no-op (same reason resolveUpstream/scheduler.touch below
       // use branch.id).
-      if (this.isHtmlNavigationRequest(req) && this.shouldAutoWakeCooled(branch)) {
+      // Restrict the wake to real GET navigations: isHtmlNavigationRequest also
+      // accepts HEAD and a missing Accept header, so uptime monitors / link
+      // checkers doing `HEAD /` against a preview host must not restart cooled
+      // containers (they aren't a user actually opening the page).
+      const isGetNavigation = (req.method || 'GET').toUpperCase() === 'GET';
+      if (isGetNavigation && this.isHtmlNavigationRequest(req) && this.shouldAutoWakeCooled(branch)) {
         this.triggerCooledWake(branch.id);
       }
       this.serveBranchStatusResponse(req, res, branchSlug, branch);

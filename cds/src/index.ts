@@ -1284,16 +1284,20 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     });
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
-    // Synchronous prefix (runs before the first await): flip to a loading state
-    // and persist, so the waiting page the proxy renders right after firing
-    // this callback shows live progress instead of the cooled dead-end.
-    branch.status = 'restarting';
-    for (const svc of services) {
-      if (svc.status === 'stopped' || svc.status === 'idle') svc.status = 'starting';
-    }
-    stateService.save();
-
     try {
+      // Synchronous prefix (runs before the first await): flip to a loading
+      // state and persist, so the waiting page the proxy renders right after
+      // firing this callback shows live progress instead of the cooled
+      // dead-end. Kept INSIDE the try so a throwing save() (disk/Mongo failure)
+      // still hits the finally and completes the lease — otherwise the
+      // coordinator would keep an active op forever and reject all future
+      // deploy/restart/stop on this branch until process restart.
+      branch.status = 'restarting';
+      for (const svc of services) {
+        if (svc.status === 'stopped' || svc.status === 'idle') svc.status = 'starting';
+      }
+      stateService.save();
+
       const failed: string[] = [];
       for (const svc of services) {
         lease?.assertCurrent(`auto-wake before ${svc.profileId}`);

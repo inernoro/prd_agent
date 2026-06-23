@@ -115,6 +115,23 @@ describe('ProxyService preview auto-wake scoping', () => {
     expect(revive).not.toHaveBeenCalled();
   });
 
+  it('does NOT fire for a HEAD request (uptime monitors / link checkers)', async () => {
+    // isHtmlNavigationRequest accepts HEAD; the wake path must require GET so a
+    // `HEAD /` health check doesn't restart cooled containers.
+    addBranch({});
+    const revive = vi.fn(async () => {});
+    proxy.setOnReviveCooled(revive);
+    const req = {
+      method: 'HEAD',
+      url: '/',
+      headers: { 'x-branch': 'feat/cooled', accept: 'text/html' },
+    } as unknown as http.IncomingMessage;
+
+    await proxy.handleRequest(req, makeRes());
+
+    expect(revive).not.toHaveBeenCalled();
+  });
+
   it('does NOT fire for a static asset request (only top-level navigation)', async () => {
     addBranch({});
     const revive = vi.fn(async () => {});
