@@ -361,9 +361,9 @@ export default function ChangelogPage() {
   // 改为：以 `release.entriesOmitted` 本身作为「是否需要拉」的信号；store 端
   // 用 `loadingReleaseVersions` 做并发去重，本端无需再缓存。
   useEffect(() => {
-    if (!releases || releases.releases.length === 0) return;
-    const firstUnarchived = releases.releases.find(isUnarchivedRelease);
-    const firstPublished = releases.releases.find((release) => !isUnarchivedRelease(release));
+    if (!releases || (releases.releases?.length ?? 0) === 0) return;
+    const firstUnarchived = (releases.releases ?? []).find(isUnarchivedRelease);
+    const firstPublished = (releases.releases ?? []).find((release) => !isUnarchivedRelease(release));
     for (const release of [firstUnarchived, firstPublished]) {
       if (release?.entriesOmitted) void loadReleaseDetail(release.version);
     }
@@ -750,12 +750,12 @@ export default function ChangelogPage() {
 
   const counts = useMemo(() => {
     const released = releases?.totalEntries
-      ?? releases?.releases.reduce((sum, release) => (
-        sum + (release.entryCount ?? release.days.reduce((daySum, day) => daySum + day.entries.length, 0))
+      ?? (releases?.releases ?? []).reduce((sum, release) => (
+        sum + (release.entryCount ?? (release.days ?? []).reduce((daySum, day) => daySum + day.entries.length, 0))
       ), 0)
       ?? 0;
     const unpublished = currentWeek?.totalEntries
-      ?? currentWeek?.fragments.reduce((sum, fragment) => sum + fragment.entries.length, 0)
+      ?? (currentWeek?.fragments ?? []).reduce((sum, fragment) => sum + fragment.entries.length, 0)
       ?? 0;
     // chip 显示仓库全历史提交总数（用户关心的是「这个仓库一共提交了多少次」），
     // 统计失败时降级为「最近一周」窗口内条数
@@ -773,17 +773,17 @@ export default function ChangelogPage() {
   const { availableTypes } = useMemo(() => {
     const types = new Set<string>();
     if (releases) {
-      for (const r of releases.releases) {
-        for (const d of r.days) {
-          for (const e of d.entries) {
+      for (const r of releases.releases ?? []) {
+        for (const d of r.days ?? []) {
+          for (const e of d.entries ?? []) {
             if (e.type) types.add(e.type.toLowerCase());
           }
         }
       }
     }
     if (currentWeek) {
-      for (const fragment of currentWeek.fragments) {
-        for (const entry of fragment.entries) {
+      for (const fragment of currentWeek.fragments ?? []) {
+        for (const entry of fragment.entries ?? []) {
           if (entry.type) types.add(entry.type.toLowerCase());
         }
       }
@@ -804,17 +804,17 @@ export default function ChangelogPage() {
       result[key] = (result[key] ?? 0) + 1;
     };
     if (releases) {
-      for (const r of releases.releases) {
-        for (const d of r.days) {
+      for (const r of releases.releases ?? []) {
+        for (const d of r.days ?? []) {
           if (d.date < cutoffKey) continue;
-          for (const e of d.entries) add(e.type);
+          for (const e of d.entries ?? []) add(e.type);
         }
       }
     }
     if (currentWeek) {
-      for (const f of currentWeek.fragments) {
+      for (const f of currentWeek.fragments ?? []) {
         if (f.date < cutoffKey) continue;
-        for (const e of f.entries) add(e.type);
+        for (const e of f.entries ?? []) add(e.type);
       }
     }
     return result;
@@ -836,26 +836,26 @@ export default function ChangelogPage() {
     if (!releases) return [];
     // 去重：CHANGELOG.md 文末有第二个 `## [未发布]` 模板锚点，parser 会重复匹配
     const seenVersions = new Set<string>();
-    return releases.releases
+    return (releases.releases ?? [])
       .filter((r) => {
         if (seenVersions.has(r.version)) return false;
         seenVersions.add(r.version);
         return true;
       })
       .map((release) => {
-        const visibleDays = release.days
+        const visibleDays = (release.days ?? [])
           .map((d) => ({
             ...d,
-            entries: d.entries.filter(matchFilter),
+            entries: (d.entries ?? []).filter(matchFilter),
           }))
           .filter((d) => d.entries.length > 0);
         const totalCount = visibleDays.reduce((s, d) => s + d.entries.length, 0);
         // summary 模式（entriesOmitted=true）下 days 故意为空——仍然要渲染卡片，让 IntersectionObserver
         // 能挂到 dom 上触发详情拉取。只有当 release 真的「无 entries + 无 highlights + 非 summary」时才隐藏。
-        if (totalCount === 0 && release.highlights.length === 0 && !release.entriesOmitted) {
+        if (totalCount === 0 && (release.highlights?.length ?? 0) === 0 && !release.entriesOmitted) {
           return null;
         }
-        const entryCount = release.entryCount ?? release.days.reduce((sum, day) => sum + day.entries.length, 0);
+        const entryCount = release.entryCount ?? (release.days ?? []).reduce((sum, day) => sum + day.entries.length, 0);
         return { release, visibleDays, totalCount, entryCount };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);
@@ -877,7 +877,7 @@ export default function ChangelogPage() {
       }
       for (const day of visibleDays) {
         const group = ensureGroup(day.date);
-        group.rows.push(...day.entries.map((entry) => ({
+        group.rows.push(...(day.entries ?? []).map((entry) => ({
           ...entry,
           date: day.date,
           commitTimeUtc: day.commitTimeUtc ?? null,
@@ -892,11 +892,11 @@ export default function ChangelogPage() {
 
   const fragmentGroups = useMemo(() => {
     if (!currentWeek) return [];
-    return currentWeek.fragments.reduce<Array<{
+    return (currentWeek.fragments ?? []).reduce<Array<{
       date: string;
       rows: Array<FlatEntry & { fileName: string }>;
     }>>((acc, fragment) => {
-      const visibleEntries = fragment.entries.filter(matchFilter);
+      const visibleEntries = (fragment.entries ?? []).filter(matchFilter);
       if (visibleEntries.length === 0) return acc;
       const bucket = acc.find((item) => item.date === fragment.date);
       const rows = visibleEntries.map((entry) => ({
@@ -955,7 +955,7 @@ export default function ChangelogPage() {
     const visibleDates = new Set(
       publishedTimelineGroups.slice(0, releaseList.visibleCount).map((group) => group.date)
     );
-    for (const release of releases.releases) {
+    for (const release of releases.releases ?? []) {
       if (!release.entriesOmitted) continue;
       if (release.releaseDate && visibleDates.has(release.releaseDate)) {
         void loadReleaseDetail(release.version);
@@ -1062,7 +1062,7 @@ export default function ChangelogPage() {
       <WeeklyReportSourceDialog />
 
       {activeTab === 'update_center' && (
-      <div ref={scrollRootRef} className="flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto pr-1"
+      <div ref={scrollRootRef} className="clg-scroll flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto pr-1"
         style={{ overscrollBehavior: 'contain' }}>
       {/* ── Header ───────────────────────────────────────── */}
       <header
@@ -1296,7 +1296,7 @@ export default function ChangelogPage() {
             ] as const).map((tab) => {
               const active = historySubtab === tab.key;
               const count = counts[tab.key];
-              const fragmentFileCount = currentWeek?.totalDays ?? currentWeek?.fragments.length ?? 0;
+              const fragmentFileCount = currentWeek?.totalDays ?? currentWeek?.fragments?.length ?? 0;
               const tabTitle = tab.key === 'fragments' && currentWeek
                 ? `${fragmentFileCount} 个碎片文件 · ${count} 条未发布改动\n来源：changelogs/*.md\n进入已发布流水：发布到 admin 生产环境后合入 CHANGELOG.md`
                 : undefined;
@@ -1605,7 +1605,7 @@ export default function ChangelogPage() {
           <>
             {!currentWeek && <MapSectionLoader text="正在加载未发布改动…" />}
 
-            {currentWeek && currentWeek.fragments.length === 0 && (
+            {currentWeek && (currentWeek.fragments?.length ?? 0) === 0 && (
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{
@@ -1618,7 +1618,7 @@ export default function ChangelogPage() {
               </div>
             )}
 
-            {currentWeek && currentWeek.fragments.length > 0 && fragmentGroups.length === 0 && (
+            {currentWeek && (currentWeek.fragments?.length ?? 0) > 0 && fragmentGroups.length === 0 && (
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{

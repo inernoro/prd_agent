@@ -3068,18 +3068,7 @@ function ProjectMigrationTab({
           />
         ) : null}
 
-        <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
-          <label className="flex items-center gap-1.5">
-            <input type="radio" name="clean-mode" checked={cleanMode === 'merge'} onChange={() => setCleanMode('merge')} />
-            合并(新增/更新,保留目标存量)
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input type="radio" name="clean-mode" checked={cleanMode === 'replace-all'} onChange={() => setCleanMode('replace-all')} />
-            <span className="text-amber-600 dark:text-amber-400">替换全部(清空后重建)</span>
-          </label>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
+        <div className="mb-2 flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => void replicate(true)} disabled={replicating !== null || !selectedPeerId}>
             {replicating === 'dry' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} 预演(dry-run)
           </Button>
@@ -3087,6 +3076,14 @@ function ProjectMigrationTab({
             {replicating === 'apply' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} 推送复刻
           </Button>
         </div>
+
+        <details className="text-xs">
+          <summary className="cursor-pointer text-muted-foreground">高级选项</summary>
+          <label className="mt-2 flex items-center gap-1.5">
+            <input type="checkbox" checked={cleanMode === 'replace-all'} onChange={(e) => setCleanMode(e.target.checked ? 'replace-all' : 'merge')} />
+            <span className="text-amber-600 dark:text-amber-400">替换全部(清空目标该项目配置后重建,危险);默认是合并新增/更新</span>
+          </label>
+        </details>
 
         {replicateResult ? (
           <div className={`mt-3 rounded-md border p-3 ${replicateResult.ok ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-destructive/40 bg-destructive/5'}`}>
@@ -3100,15 +3097,15 @@ function ProjectMigrationTab({
         ) : null}
       </section>
 
-      {/* 3. 数据迁移(扫描) */}
-      <section className="rounded-md border border-[hsl(var(--hairline))] p-4">
-        <div className="mb-3 flex items-center gap-2">
+      {/* 3. 数据迁移(扫描,高级折叠) */}
+      <details className="rounded-md border border-[hsl(var(--hairline))] p-4">
+        <summary className="flex cursor-pointer items-center gap-2">
           <Database className="h-4 w-4" />
-          <h4 className="text-sm font-semibold">数据迁移</h4>
+          <h4 className="inline text-sm font-semibold">数据迁移(高级)</h4>
           <span className="text-xs text-muted-foreground">扫描源库与目标可达性;全量落库走已测的备份/恢复原语</span>
-        </div>
+        </summary>
 
-        <Button type="button" variant="outline" size="sm" onClick={() => void runDataPlan()} disabled={scanning || !selectedPeerId}>
+        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void runDataPlan()} disabled={scanning || !selectedPeerId}>
           {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 扫描数据迁移计划
         </Button>
 
@@ -3140,7 +3137,7 @@ function ProjectMigrationTab({
             </p>
           </div>
         ) : null}
-      </section>
+      </details>
     </div>
   );
 }
