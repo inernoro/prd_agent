@@ -92,6 +92,8 @@
 
 ### 二、设计文档
 
+- [手机端整体重构调研](design.mobile-refactor) `design.mobile-refactor`
+  > 真机视口取证 16 页 + 行为聚合使用强度 + 三波改造优先级（排除视觉创作）
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
   > 右下角悬浮教程书 + SpotlightOverlay 多步 Tour + 推送/批量/dismiss 闭环
 
@@ -729,8 +731,12 @@
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
 
+- [项目迁移(CDS 项目移植) · 债务台账](debt.cds-project-migration) `debt.cds-project-migration`
+  > 配置复刻已落地(dry-run/merge/replace-all 到远端 CDS)；数据全量落库走手动备份/恢复桥接(只读扫描)、accessKey 明文存 state、仅 MongoDB 扫描
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
+- [CDS 极速版（CI 预构建）· 已知边界与遗留事项](debt.cds-ci-prebuilt) `debt.cds-ci-prebuilt`
+  > 7 条 open：ghcr 包需手动设 public / 工作流名硬编码 / 每 push 双镜像 / 仍 git pull worktree / 构建时延 / 切回源码非一键 / ClaudeSdk 回调端口
 - [知识库版本控制/图片插入/大小统计 · 已知边界](debt.knowledge-base-versioning) `debt.knowledge-base-versioning`
   > 图片插入不刷新已修；版本控制独立集合 + 恢复只写文本不删资产；遗留：github 日同步覆盖手动编辑、大小不含外链图片字节、版本留存上限100
 - [更新中心（终身存储 + SSE 推送）债务台账](debt.changelog-center) `debt.changelog-center`

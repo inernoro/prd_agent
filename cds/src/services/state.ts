@@ -1493,6 +1493,11 @@ export class StateService {
       githubInstallationId?: number;
       githubPrNumber?: number;
       githubPreviewCommentId?: number;
+      // 2026-06-23 极速版（CI 预构建）状态字段
+      ciImageStatus?: 'waiting' | 'ready' | 'failed';
+      ciTargetSha?: string;
+      ciWorkflowConclusion?: string;
+      ciWorkflowRunUrl?: string;
     },
   ): void {
     const branch = this.state.branches[id];
@@ -1510,6 +1515,10 @@ export class StateService {
     if ('githubInstallationId' in updates) branch.githubInstallationId = updates.githubInstallationId;
     if ('githubPrNumber' in updates) branch.githubPrNumber = updates.githubPrNumber;
     if ('githubPreviewCommentId' in updates) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
+    if ('ciImageStatus' in updates) branch.ciImageStatus = updates.ciImageStatus;
+    if ('ciTargetSha' in updates) branch.ciTargetSha = updates.ciTargetSha;
+    if ('ciWorkflowConclusion' in updates) branch.ciWorkflowConclusion = updates.ciWorkflowConclusion;
+    if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
   }
 
   // ── Remote hosts (shared-service deployment targets, 2026-05-06) ──

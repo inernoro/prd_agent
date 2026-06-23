@@ -32,6 +32,7 @@ import {
   Trash2,
   X,
   XCircle,
+  Zap,
 } from 'lucide-react';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -149,6 +150,11 @@ interface BranchSummary {
   stopCount?: number;
   aiOpCount?: number;
   lastAiOccupantAt?: string;
+  // 2026-06-23 极速版（CI 预构建）状态
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  ciTargetSha?: string;
+  ciWorkflowConclusion?: string;
+  ciWorkflowRunUrl?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
     label: string;
@@ -158,6 +164,8 @@ interface BranchSummary {
     sourceProfiles: number;
     modes: string[];
     pendingPublish?: boolean;
+    /** 2026-06-23 极速版：任一 profile 走预构建镜像部署模式 */
+    prebuilt?: boolean;
     // P0 止血：期望态 vs 实际态漂移（后端 summarizeBranchDeployRuntime 计算）
     drift?: {
       expectedCount: number;
@@ -841,6 +849,8 @@ function pickDeployEstimate(branch: BranchSummary): { mode: 'release' | 'source'
 
 /** 构建中卡片的模式标签：发布版 / 热加载（源码即热加载/dev 运行）。 */
 function deployModeLabel(branch: BranchSummary): string {
+  // 极速版（CI 预构建）优先：它分类上属 release，但要细化标签让用户知道是「拉镜像非本机编译」。
+  if (branch.deployRuntime?.prebuilt === true) return '极速版';
   const kind = branch.deployRuntime?.kind;
   if (kind === 'release') return '发布版';
   if (kind === 'mixed') return '混合';
@@ -4473,6 +4483,8 @@ function BranchCard({
   const runtime = branchRuntimeBadge(branch);
   const runtimeIconClass = runtime?.kind === 'pending'
     ? 'text-amber-500'
+    : runtime?.prebuilt
+    ? 'text-sky-500'
     : runtime?.kind === 'mixed'
       ? 'text-violet-500'
       : runtime?.kind === 'release'
@@ -4677,7 +4689,12 @@ function BranchCard({
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
-            {runtime ? (
+            {runtime?.prebuilt ? (
+              <Zap
+                className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+                aria-label={runtime.label}
+              />
+            ) : runtime ? (
               <Rocket
                 className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
                 aria-label={runtime.label}
@@ -4956,6 +4973,60 @@ function BranchCard({
             </span>
           );
         })() : null}
+        {/*
+          2026-06-23 极速版（CI 预构建）状态。push 后不在 CDS 本机编译,等 GitHub Actions
+          把该 commit 编译成 ghcr 镜像;期间显示「等待 CI 镜像」(动效不静止,符合禁止空白
+          等待);CI 失败显示「CI 构建失败」并提供「切回源码编译」（打开详情切部署模式）。
+        */}
+        {/*
+          deployRuntime 仅由 GET /branches 汇总注入;SSE 的 branch.created/updated 推的是
+          原始 BranchEntry(无 deployRuntime)。若硬要 prebuilt===true,webhook 新建的极速版
+          分支卡在全量刷新前不显示 CI 徽章,丢失等待/失败反馈（Codex P2: show CI badges for
+          SSE-created express branches）。改用 `!== false`:deployRuntime 缺省(SSE)→显示;
+          有且 prebuilt=true→显示;有且明确非极速版(prebuilt=false,如已切回源码)→隐藏。
+          ciImageStatus 仅由极速版流程写入,其存在本身即极速版信号,故缺 deployRuntime 时安全。
+        */}
+        {branch.ciImageStatus === 'waiting' && branch.deployRuntime?.prebuilt !== false ? (
+          <span
+            className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+            title={`极速版（CI 预构建）：等待 GitHub Actions 把 commit ${(branch.ciTargetSha || '').slice(0, 7)} 编译成镜像,完成后自动拉取部署`}
+          >
+            <span className="cds-ai-kinetic-dot h-1.5 w-1.5 rounded-full bg-primary/60" aria-hidden />
+            等待 CI 镜像
+            {branch.ciWorkflowRunUrl ? (
+              <a
+                href={branch.ciWorkflowRunUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="font-medium text-primary/80 underline-offset-2 hover:text-primary hover:underline"
+              >查看构建</a>
+            ) : null}
+          </span>
+        ) : null}
+        {branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt !== false ? (
+          <span
+            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs text-amber-500"
+            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}）。可切回源码编译,或重试 CI 后再部署。`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+            CI 构建失败
+            {branch.ciWorkflowRunUrl ? (
+              <a
+                href={branch.ciWorkflowRunUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="font-medium underline-offset-2 hover:underline"
+              >查看</a>
+            ) : null}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onDetail(); }}
+              className="font-medium underline-offset-2 hover:underline"
+            >切回源码编译</button>
+          </span>
+        ) : null}
         {visibleResources.length > 0 ? visibleResources.map((resource) => {
           // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
           // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
@@ -5406,8 +5477,30 @@ function BranchMoreMenu({
 
 // BranchFailureHint 已删除：错误提醒并入卡片端口槽位的统一状态行（只一个提醒，2026-06-22 用户要求）。
 
-function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string } | null {
+function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string; prebuilt?: boolean } | null {
   const runtime = branch.deployRuntime;
+  // 2026-06-23 极速版（CI 预构建）：分类上属 release,但要从「发布版」里细分出来,
+  // 给独立标签「极速版」+ Zap 闪电图标 + 青色,让用户一眼区分「拉 CI 镜像」vs「源码编译发布」。
+  if (runtime?.prebuilt === true) {
+    // 配置=极速版,但容器还没真正以极速版跑起来（force-align 后未重部署 / 重建中 / 还停着）
+    // → 「极速版·待生效」橙色,别误显示绿/青的「已在跑」（Codex review）。
+    if (runtime.pendingPublish) {
+      return {
+        kind: 'pending',
+        prebuilt: true,
+        label: '极速版·待生效',
+        title: runtime.title || '已配置极速版（CI 预构建），但容器还没以极速版跑起来（重部署后生效）',
+        className: 'border-amber-400/40 bg-amber-400/10 text-amber-700 dark:text-amber-300',
+      };
+    }
+    return {
+      kind: 'release',
+      prebuilt: true,
+      label: '极速版',
+      title: runtime.title || '极速版（CI 预构建）：拉取 GitHub Actions 编译的镜像运行,CDS 不本机编译',
+      className: 'border-sky-400/35 bg-sky-400/10 text-sky-700 dark:text-sky-300',
+    };
+  }
   if (runtime?.kind === 'release') {
     return {
       kind: 'release',
