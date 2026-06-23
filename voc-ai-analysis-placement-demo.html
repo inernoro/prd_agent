@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>VOC · 行为之声 AI 用户分析 — 摆放位置演示</title>
+<title>VOC · 全景热力图为主 + AI 用户分析抽屉（点击才分析）</title>
 <style>
   :root {
     --bg-primary:#0e0f10; --bg-card:#1a1b1d; --bg-card-2:#202123; --bg-elevated:#26282b;
@@ -18,100 +18,89 @@
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
     background:radial-gradient(1200px 600px at 80% -10%,rgba(167,139,250,0.06),transparent 60%),
       radial-gradient(900px 500px at -5% 10%,rgba(45,212,191,0.05),transparent 55%),var(--bg-primary);
-    color:var(--text-1); padding:20px 26px 56px; -webkit-font-smoothing:antialiased;
+    color:var(--text-1); padding:18px 24px 50px; -webkit-font-smoothing:antialiased;
   }
-  .wrap { max-width:1560px; margin:0 auto; min-height:100vh; display:flex; flex-direction:column; }
+  .wrap { max-width:1640px; margin:0 auto; min-height:100vh; display:flex; flex-direction:column; }
 
-  /* ---- 演示控制条 ---- */
-  .demo-bar { display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:18px;
-    padding:12px 16px; background:linear-gradient(180deg,#1c1d20,#161718); border:1px solid var(--border-strong); border-radius:14px; }
-  .demo-bar .lbl { font-size:12px; color:var(--text-3); }
-  .demo-bar h2 { font-size:14px; font-weight:650; margin-right:6px; }
-  .seg { display:inline-flex; background:#101113; border:1px solid var(--border); border-radius:10px; padding:3px; gap:2px; }
-  .seg button { border:none; background:transparent; color:var(--text-2); font-size:12.5px; padding:7px 14px; border-radius:7px; cursor:pointer; transition:.18s; white-space:nowrap; }
-  .seg button.on { background:var(--teal-soft); color:#7fe9da; box-shadow:inset 0 0 0 1px var(--teal-line); }
-  .seg button:hover:not(.on) { color:var(--text-1); }
-  .demo-note { font-size:12px; color:var(--text-2); line-height:1.55; margin-left:auto; max-width:520px; }
-  .demo-note b { color:#8fe7d9; font-weight:600; }
+  /* 演示提示条 */
+  .demo-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:16px;padding:11px 16px;
+    background:linear-gradient(180deg,#1c1d20,#161718);border:1px solid var(--border-strong);border-radius:13px}
+  .demo-bar h2{font-size:14px;font-weight:660}
+  .demo-bar .note{font-size:12px;color:var(--text-2);line-height:1.55}
+  .demo-bar .note b{color:#8fe7d9}
+  .demo-bar .cta{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:#0e1311;font-weight:600;
+    background:linear-gradient(180deg,#5eead4,#2dd4bf);border:none;border-radius:9px;padding:8px 14px;cursor:pointer}
 
-  /* ---- 页头 ---- */
-  .page-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
-  .page-head .titles { display:flex; align-items:center; gap:14px; }
-  .page-head h1 { font-size:18px; font-weight:680; letter-spacing:.5px; }
-  .tabs { display:inline-flex; gap:4px; background:#101113; border:1px solid var(--border); border-radius:10px; padding:3px; }
-  .tabs span { font-size:12.5px; color:var(--text-2); padding:6px 12px; border-radius:7px; display:inline-flex; align-items:center; gap:6px; }
-  .tabs span.on { background:rgba(45,212,191,0.13); color:#7fe9da; }
-  .range-pills { display:inline-flex; gap:6px; }
-  .range-pills button { border:1px solid var(--border); background:var(--bg-card); color:var(--text-2); font-size:12px; padding:6px 12px; border-radius:8px; cursor:pointer; }
-  .range-pills button.active { background:rgba(167,139,250,0.13); border-color:rgba(167,139,250,0.4); color:var(--violet); }
+  /* 页头 */
+  .page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px}
+  .page-head .titles{display:flex;align-items:center;gap:14px}
+  .page-head h1{font-size:18px;font-weight:680;letter-spacing:.5px}
+  .tabs{display:inline-flex;gap:4px;background:#101113;border:1px solid var(--border);border-radius:10px;padding:3px}
+  .tabs span{font-size:12.5px;color:var(--text-2);padding:6px 12px;border-radius:7px;display:inline-flex;align-items:center;gap:6px}
+  .tabs span.on{background:rgba(45,212,191,0.13);color:#7fe9da}
+  .range-pills{display:inline-flex;gap:6px}
+  .range-pills button{border:1px solid var(--border);background:var(--bg-card);color:var(--text-2);font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer}
+  .range-pills button.active{background:rgba(167,139,250,0.13);border-color:rgba(167,139,250,0.4);color:var(--violet)}
 
-  .card { background:linear-gradient(180deg,var(--bg-card),#161718); border:1px solid var(--border); border-radius:16px; box-shadow:var(--shadow); position:relative; overflow:hidden; }
-  .card-h { display:flex; align-items:center; justify-content:space-between; padding:13px 16px 9px; }
-  .card-h .t { font-size:12.5px; font-weight:650; display:flex; align-items:center; gap:8px; }
-  .live { font-size:11px; color:var(--teal); display:inline-flex; align-items:center; gap:6px; font-weight:500; }
-  .live .blip { width:7px; height:7px; border-radius:50%; background:var(--teal); animation:blink 1.3s ease-in-out infinite; }
-  @keyframes blink { 0%,100%{opacity:.3;transform:scale(.8)} 50%{opacity:1;transform:scale(1.3)} }
-  .muted { font-size:11px; color:var(--text-3); font-weight:400; }
+  .card{background:linear-gradient(180deg,var(--bg-card),#161718);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .card-h{display:flex;align-items:center;justify-content:space-between;padding:12px 15px 8px;gap:10px}
+  .card-h .t{font-size:12.5px;font-weight:650;display:flex;align-items:center;gap:8px;min-width:0}
+  .live{font-size:11px;color:var(--teal);display:inline-flex;align-items:center;gap:6px;font-weight:500}
+  .live .blip{width:7px;height:7px;border-radius:50%;background:var(--teal);animation:blink 1.3s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.3)}}
+  .muted{font-size:11px;color:var(--text-3);font-weight:400}
 
-  /* ---- 主区：仪表盘 + AI 列 —— 上面蓝框：撑满整页视口高度 ---- */
-  .stage { flex:1; min-height:0; display:grid; gap:16px; align-items:stretch; transition:grid-template-columns .4s cubic-bezier(.2,.7,.2,1); }
-  .stage[data-layout="right"] { grid-template-columns:minmax(0,1fr) 392px; }
-  .stage[data-layout="left"]  { grid-template-columns:392px minmax(0,1fr); }
-  .stage[data-layout="bottom"]{ grid-template-columns:minmax(0,1fr); }
-  .stage[data-layout="left"] .dashboard { order:2; }
-  .stage[data-layout="left"] .ai-col { order:1; }
+  /* 上面蓝框：仪表盘撑满首屏视口；热力图占 3/4，其余 1/4 */
+  .dashboard{flex:1;min-height:0;display:grid;grid-template-columns:repeat(12,1fr);grid-template-rows:1fr 1fr;gap:13px}
+  .tile-map  {grid-column:span 9;grid-row:span 2}   /* 75% 宽 · 满高 —— 主角 */
+  .tile-trend{grid-column:span 3;grid-row:span 1}   /* 右 1/4 列上 */
+  .tile-rail {grid-column:span 3;grid-row:span 1;display:grid;grid-template-columns:1fr 1fr;gap:13px} /* 右 1/4 列下：痛点指数 + 声道 */
+  .dashboard .card{min-height:0}
 
-  /* 仪表盘 bento：高度撑满 stage（2 行各占一半，长度随页面延伸） */
-  .dashboard { display:grid; grid-template-columns:repeat(12,1fr); grid-template-rows:1fr 1fr; gap:12px; min-width:0; min-height:0; }
-  .tile-map   { grid-column:span 7; grid-row:span 2; }
-  .tile-trend { grid-column:span 5; }
-  .tile-stat  { grid-column:span 2; }
-  .tile-board { grid-column:span 3; }
-  .dashboard .card { min-height:0; }
-
-  /* 热力图（CSS 仿 treemap，重点是“铺满”，与 bug 形成对照） */
-  .treemap { position:absolute; inset:38px 8px 8px; display:grid; grid-template-columns:repeat(6,1fr); grid-template-rows:repeat(4,1fr); gap:4px; }
-  .blk { border-radius:5px; border:1px solid rgba(255,255,255,0.06); padding:6px 7px; font-size:10px; color:rgba(255,255,255,0.82);
-    text-shadow:0 1px 2px rgba(0,0,0,.6); overflow:hidden; position:relative; }
-  .blk.err  { background:var(--red); color:#2a0d10; font-weight:700; box-shadow:0 0 10px rgba(248,113,122,.5); }
-  .blk.slow { background:var(--amber); color:#2a1e05; font-weight:700; box-shadow:0 0 9px rgba(251,191,36,.45); }
-  .blk small { display:block; font-size:9px; opacity:.85; margin-top:1px; }
+  /* 热力图 treemap（CSS 仿，重点：铺满，与 bug 对照） */
+  .treemap{position:absolute;inset:40px 8px 8px;display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(5,1fr);gap:4px}
+  .blk{border-radius:5px;border:1px solid rgba(255,255,255,0.06);padding:6px 7px;font-size:10px;color:rgba(255,255,255,0.82);text-shadow:0 1px 2px rgba(0,0,0,.6);overflow:hidden;position:relative}
+  .blk.err{background:var(--red);color:#2a0d10;font-weight:700;box-shadow:0 0 10px rgba(248,113,122,.5);cursor:pointer}
+  .blk.slow{background:var(--amber);color:#2a1e05;font-weight:700;box-shadow:0 0 9px rgba(251,191,36,.45);cursor:pointer}
+  .blk small{display:block;font-size:9px;opacity:.85;margin-top:1px}
   .h1{background:hsl(222 36% 32%)}.h2{background:hsl(200 36% 35%)}.h3{background:hsl(186 36% 33%)}
   .h4{background:hsl(170 36% 31%)}.h5{background:hsl(150 36% 33%)}.h6{background:hsl(210 36% 30%)}
-  .h7{background:hsl(196 36% 34%)}.h8{background:hsl(176 36% 32%)}
+  .h7{background:hsl(196 36% 34%)}.h8{background:hsl(176 36% 32%)}.h9{background:hsl(160 36% 31%)}.h10{background:hsl(214 36% 30%)}
 
-  /* 趋势 mini */
-  .trend-body{position:absolute;inset:38px 14px 12px}
+  .trend-body{position:absolute;inset:38px 12px 10px}
   .trend-svg{width:100%;height:100%}
-  /* 痛点指数 gauge */
-  .gauge{position:absolute;inset:34px 0 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
-  .gauge .num{font-size:30px;font-weight:750;color:#fff}
-  .gauge .cap{font-size:10.5px;color:var(--text-3)}
-  /* 声道看板 mini */
-  .board-body{position:absolute;inset:36px 10px 10px;display:flex;flex-direction:column;gap:5px;overflow:hidden}
-  .vrow{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--text-2);background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:7px;padding:5px 7px}
-  .vrow i{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
+  .gauge{position:absolute;inset:32px 0 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+  .gauge .num{font-size:26px;font-weight:750}
+  .gauge .cap{font-size:10px;color:var(--text-3);text-align:center;padding:0 6px}
+  .board-body{position:absolute;inset:34px 9px 9px;display:flex;flex-direction:column;gap:5px;overflow:hidden}
+  .vrow{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-2);background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:6px;padding:4px 6px}
+  .vrow i{width:5px;height:5px;border-radius:50%;flex:0 0 auto}
 
-  /* ---- AI 用户分析面板（本演示主角） ---- */
-  .ai-col{display:flex;min-width:0}
-  .ai-panel{display:flex;flex-direction:column;width:100%;background:linear-gradient(180deg,#181b1d,#141617);
-    border:1px solid var(--teal-line);border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.45),0 0 0 1px rgba(45,212,191,.05);overflow:hidden;position:relative}
-  .ai-panel::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;
-    background:linear-gradient(90deg,transparent,var(--teal),transparent);opacity:.8}
-  .ai-h{display:flex;align-items:center;gap:10px;padding:14px 16px 11px;border-bottom:1px solid var(--border)}
-  .ai-h .ic{width:30px;height:30px;border-radius:9px;background:var(--teal-soft);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
-  .ai-h .ttl{font-size:13.5px;font-weight:680}
-  .ai-h .sub{font-size:11px;color:var(--text-3);margin-top:1px}
-  .ai-h .model{margin-left:auto;font-size:10px;color:var(--text-3);font-family:ui-monospace,monospace;text-align:right;line-height:1.4}
-  .ai-body{flex:1;min-height:0;overflow-y:auto;padding:14px 16px 16px;display:flex;flex-direction:column;gap:13px}
-  .ai-body::-webkit-scrollbar{width:7px}.ai-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px}
+  /* 顶部「AI 用户分析」入口按钮：点击才开抽屉（点击才分析） */
+  .ai-btn{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#8fe7d9;background:var(--teal-soft);
+    border:1px solid var(--teal-line);border-radius:8px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+  .ai-btn:hover{background:rgba(45,212,191,.2)}
+
+  /* ===== AI 用户分析抽屉（右侧滑入浮层，不挤占热力图） ===== */
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .26s;z-index:90}
+  .scrim.open{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;top:0;right:0;height:100vh;width:min(440px,94vw);background:#16171b;border-left:1px solid var(--border-strong);
+    box-shadow:-24px 0 80px rgba(0,0,0,.5);transform:translateX(100%);transition:transform .28s cubic-bezier(.22,1,.36,1);z-index:91;display:flex;flex-direction:column}
+  .drawer.open{transform:translateX(0)}
+  .dr-h{display:flex;align-items:center;gap:10px;padding:15px 16px 12px;border-bottom:1px solid var(--border)}
+  .dr-h .ic{width:30px;height:30px;border-radius:9px;background:var(--teal-soft);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .dr-h .ttl{font-size:13.5px;font-weight:680}
+  .dr-h .sub{font-size:11px;color:var(--text-3);margin-top:1px}
+  .dr-h .x{margin-left:auto;width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,.03);color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .dr-ctx{font-size:11px;color:var(--text-3);padding:10px 16px 0;font-family:ui-monospace,monospace}
+  .dr-body{flex:1;min-height:0;overflow-y:auto;padding:13px 16px 18px;display:flex;flex-direction:column;gap:13px}
+  .dr-body::-webkit-scrollbar{width:7px}.dr-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px}
   .phase{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:#8fe7d9;background:var(--teal-soft);border:1px solid var(--teal-line);border-radius:20px;padding:4px 11px;align-self:flex-start}
   .phase .sp{width:11px;height:11px;border:2px solid rgba(45,212,191,.3);border-top-color:var(--teal);border-radius:50%;animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .sec-ttl{font-size:11px;font-weight:680;color:#8fe7d9;letter-spacing:.4px;display:flex;align-items:center;gap:7px}
   .sec-ttl::before{content:"";width:3px;height:13px;border-radius:2px;background:var(--teal)}
   .ai-p{font-size:12.5px;line-height:1.72;color:rgba(236,236,239,.82)}
-  .ai-p .hl{color:var(--amber);font-weight:600}
   .ai-p .hlr{color:var(--red);font-weight:600}
   .ai-ul{display:flex;flex-direction:column;gap:8px;margin-top:2px}
   .ai-li{display:flex;gap:9px;font-size:12px;line-height:1.6;color:rgba(236,236,239,.78)}
@@ -122,26 +111,19 @@
   .persona .meta{font-size:11px;color:var(--text-3);margin-top:2px;line-height:1.5}
   .cursor{display:inline-block;width:7px;height:14px;background:var(--teal);vertical-align:-2px;margin-left:2px;animation:cb .8s step-end infinite}
   @keyframes cb{50%{opacity:0}}
-  .ai-foot{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--border);background:rgba(0,0,0,.18)}
-  .btn{flex:1;border:1px solid var(--border-strong);background:rgba(255,255,255,.03);color:var(--text-2);font-size:12px;padding:8px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:.16s}
-  .btn:hover{color:var(--text-1);border-color:var(--teal-line)}
+  .dr-foot{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--border);background:rgba(0,0,0,.18)}
+  .btn{flex:1;border:1px solid var(--border-strong);background:rgba(255,255,255,.03);color:var(--text-2);font-size:12px;padding:8px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}
   .btn.primary{background:var(--teal-soft);color:#8fe7d9;border-color:var(--teal-line)}
 
-  /* ---- 当前（底部隐藏）态 ---- */
-  .current-trigger{margin-top:16px;display:flex;align-items:center;gap:10px;padding:11px 14px;background:rgba(255,255,255,.02);border:1px dashed var(--border-strong);border-radius:12px;font-size:12px;color:var(--text-2)}
-  .current-trigger .pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#8fe7d9;background:var(--teal-soft);border:1px solid var(--teal-line);border-radius:6px;padding:4px 8px}
-  .current-trigger .warn{margin-left:auto;color:var(--amber);font-size:11.5px}
-  .datarow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text-3);padding:9px 14px;border:1px solid var(--border);border-radius:11px;background:rgba(255,255,255,.015)}
-  .datarow b{color:rgba(236,236,239,.7);font-weight:600;font-family:ui-monospace,monospace}
-  .datarow .pill{margin-left:auto}
-  .sep{width:1px;height:12px;background:rgba(255,255,255,.12)}
-  svg{display:block}
-
-  /* ---- 下面蓝框：首屏之下的明细条 ---- */
-  .below-fold{margin-top:26px;display:flex;flex-direction:column;gap:12px;min-height:auto}
+  /* 下面蓝框：下移到首屏之下的明细条 */
+  .below-fold{max-width:1640px;margin:26px auto 0;display:flex;flex-direction:column;gap:12px}
   .scroll-hint{align-self:center;font-size:11px;color:var(--text-3);display:inline-flex;align-items:center;gap:7px;padding:5px 13px;border:1px solid var(--border);border-radius:20px;background:rgba(255,255,255,.02)}
   .scroll-hint::before{content:"";width:5px;height:5px;border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(45deg);margin-top:-3px;animation:bob 1.4s ease-in-out infinite}
   @keyframes bob{0%,100%{transform:translateY(0) rotate(45deg)}50%{transform:translateY(3px) rotate(45deg)}}
+  .datarow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text-3);padding:9px 14px;border:1px solid var(--border);border-radius:11px;background:rgba(255,255,255,.015)}
+  .datarow b{color:rgba(236,236,239,.7);font-weight:600;font-family:ui-monospace,monospace}
+  .datarow .ai-btn{margin-left:auto}
+  .sep{width:1px;height:12px;background:rgba(255,255,255,.12)}
   .insight-row{display:flex;gap:13px;align-items:flex-start;position:relative;padding:14px 16px 13px;border:1px solid var(--border);border-radius:13px;background:linear-gradient(180deg,var(--bg-card),#161718)}
   .ir-bar{position:absolute;left:0;top:14px;bottom:14px;width:2px;border-radius:0 2px 2px 0}
   .ir-ic{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;margin-top:1px}
@@ -156,26 +138,21 @@
   .ir-act{display:flex;gap:8px;margin-top:2px}
   .ir-act .ab{font-size:11px;color:var(--text-2);border:1px solid var(--border-strong);border-radius:7px;padding:5px 10px;cursor:pointer}
   .ir-act .ab.primary{background:rgba(251,191,36,.14);color:#fbbf24;border-color:rgba(251,191,36,.3)}
+  svg{display:block}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <!-- 演示控制条 -->
   <div class="demo-bar">
-    <h2>行为之声 · AI 用户分析</h2>
-    <span class="lbl">摆放位置</span>
-    <div class="seg" id="seg">
-      <button data-layout="right" class="on">右侧常驻（推荐）</button>
-      <button data-layout="left">左侧常驻</button>
-      <button data-layout="bottom">当前：藏在底部</button>
-    </div>
-    <div class="demo-note" id="note">
-      <b>右侧常驻</b>：AI 用户分析升级为与热力图并排的主角，进页即流式生成、始终可见，不用滚到底去找。
-    </div>
+    <h2>全景热力图为主</h2>
+    <span class="note"><b>热力图占 3/4</b>、其余仪表盘压到 1/4；<b>AI 用户分析 = 点击才开的右侧抽屉</b>（与端点下钻同一种抽屉），不点不分析、不常驻占地。</span>
+    <button class="cta" id="ctaOpen">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0e1311" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3 3 3 0 0 0 0 6 3 3 0 0 0 3 3v1a3 3 0 0 0 6 0v-1a3 3 0 0 0 3-3 3 3 0 0 0 0-6 3 3 0 0 0-3-3V5a3 3 0 0 0-3-3Z"/></svg>
+      点我开「AI 用户分析」抽屉
+    </button>
   </div>
 
-  <!-- 模拟页头 -->
   <div class="page-head">
     <div class="titles">
       <h1>VOC</h1>
@@ -186,214 +163,167 @@
     </div>
   </div>
 
-  <!-- 主舞台 -->
-  <div class="stage" id="stage" data-layout="right">
-
-    <!-- 仪表盘 -->
-    <div class="dashboard">
-      <!-- 热力图（铺满，作正向对照） -->
-      <div class="card tile-map">
-        <div class="card-h">
-          <div class="t">体验全景热力图 <span class="live"><span class="blip"></span>实时扫描中</span></div>
-          <div class="muted">每块=端点 · 面积=访问量 · 颜色=健康</div>
-        </div>
-        <div class="treemap">
-          <div class="blk h1" style="grid-column:span 2;grid-row:span 2">每日教程<small>可见项</small></div>
-          <div class="blk h2" style="grid-column:span 2;grid-row:span 2">更新中心<small>本周</small></div>
-          <div class="blk slow" style="grid-row:span 2">github-logs<small>慢 +133%</small></div>
-          <div class="blk h6">产品评审</div>
-          <div class="blk h3" style="grid-column:span 2;grid-row:span 2">视觉创作<small>markers</small></div>
-          <div class="blk h7">开放接口</div>
-          <div class="blk h4">mds</div>
-          <div class="blk h5" style="grid-column:span 2">web-pages</div>
-          <div class="blk err">logs<small>报错 13</small></div>
-          <div class="blk h8">周报管理</div>
-          <div class="blk h1">知识库</div>
-          <div class="blk h2">开放平台</div>
-          <div class="blk h6">权限鉴权</div>
-          <div class="blk h3">首页</div>
-        </div>
+  <!-- 上面蓝框：仪表盘撑满首屏，热力图 3/4 -->
+  <div class="dashboard">
+    <!-- 热力图主角 -->
+    <div class="card tile-map">
+      <div class="card-h">
+        <div class="t">体验全景热力图 <span class="live"><span class="blip"></span>实时扫描中</span>
+          <span class="muted">每块=端点 · 面积=访问量 · 颜色=健康</span></div>
+        <button class="ai-btn" data-open><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8fe7d9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3 3 3 0 0 0 0 6 3 3 0 0 0 3 3v1a3 3 0 0 0 6 0v-1a3 3 0 0 0 3-3 3 3 0 0 0 0-6 3 3 0 0 0-3-3V5a3 3 0 0 0-3-3Z"/></svg>AI 用户分析</button>
       </div>
-
-      <!-- 趋势爆点 -->
-      <div class="card tile-trend">
-        <div class="card-h"><div class="t">趋势爆点曲线</div><div class="muted">报错/慢请求波动</div></div>
-        <div class="trend-body">
-          <svg class="trend-svg" viewBox="0 0 300 90" preserveAspectRatio="none">
-            <polyline points="0,70 50,66 100,72 150,40 200,20 250,55 300,48" fill="none" stroke="#f8717a" stroke-width="2"/>
-            <polyline points="0,80 50,78 100,76 150,70 200,66 250,72 300,68" fill="none" stroke="#fbbf24" stroke-width="2"/>
-          </svg>
-        </div>
+      <div class="treemap">
+        <div class="blk h1" style="grid-column:span 3;grid-row:span 2">每日教程<small>可见项</small></div>
+        <div class="blk h2" style="grid-column:span 2;grid-row:span 3">更新中心<small>本周</small></div>
+        <div class="blk h3" style="grid-column:span 2;grid-row:span 2">视觉创作<small>markers</small></div>
+        <div class="blk slow" style="grid-row:span 2">github-logs<small>慢 +133%</small></div>
+        <div class="blk h6">产品评审</div>
+        <div class="blk h7">开放接口</div>
+        <div class="blk h4" style="grid-column:span 2">mds</div>
+        <div class="blk h5" style="grid-column:span 2">web-pages</div>
+        <div class="blk h8">周报管理</div>
+        <div class="blk h9">知识库</div>
+        <div class="blk h10">开放平台</div>
+        <div class="blk err" data-open>logs<small>报错 13</small></div>
+        <div class="blk h1">权限鉴权</div>
+        <div class="blk h2">仪表盘</div>
+        <div class="blk h3">AI 百宝箱</div>
+        <div class="blk h4">首页</div>
+        <div class="blk h5">AI 资讯</div>
+        <div class="blk h6">缺陷</div>
+        <div class="blk h7">评论</div>
+        <div class="blk h8">teams</div>
       </div>
+    </div>
 
-      <!-- 痛点指数 -->
-      <div class="card tile-stat">
+    <!-- 右 1/4：趋势 -->
+    <div class="card tile-trend">
+      <div class="card-h"><div class="t">趋势爆点曲线</div><div class="muted">波动</div></div>
+      <div class="trend-body">
+        <svg class="trend-svg" viewBox="0 0 200 80" preserveAspectRatio="none">
+          <polyline points="0,62 35,58 70,64 100,30 130,14 165,48 200,40" fill="none" stroke="#f8717a" stroke-width="2"/>
+          <polyline points="0,72 35,70 70,68 100,62 130,58 165,64 200,60" fill="none" stroke="#fbbf24" stroke-width="2"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- 右 1/4：痛点指数 + 声道 -->
+    <div class="tile-rail">
+      <div class="card">
         <div class="card-h"><div class="t">痛点指数</div></div>
         <div class="gauge"><div class="num" style="color:#fbbf24">54</div><div class="cap">4 处待解决</div></div>
       </div>
-
-      <!-- 声道看板 -->
-      <div class="card tile-board">
-        <div class="card-h"><div class="t">声道看板</div><div class="muted">行为 + 用户</div></div>
+      <div class="card">
+        <div class="card-h"><div class="t">声道看板</div></div>
         <div class="board-body">
-          <div class="vrow"><i style="background:#f8717a"></i>logs/model-stats · 报错 13 次</div>
-          <div class="vrow"><i style="background:#fbbf24"></i>github-logs · 慢 36s</div>
-          <div class="vrow"><i style="background:#a78bfa"></i>用户提交：周报海报错位</div>
-          <div class="vrow"><i style="background:#a78bfa"></i>用户提交：导出无反馈</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- AI 用户分析列（右/左常驻态显示） -->
-    <div class="ai-col" id="aiCol">
-      <div class="ai-panel">
-        <div class="ai-h">
-          <div class="ic">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3 3 3 0 0 0 0 6 3 3 0 0 0 3 3v1a3 3 0 0 0 6 0v-1a3 3 0 0 0 3-3 3 3 0 0 0 0-6 3 3 0 0 0-3-3V5a3 3 0 0 0-3-3Z"/></svg>
-          </div>
-          <div>
-            <div class="ttl">AI 用户分析</div>
-            <div class="sub">从行为信号读懂用户此刻的处境</div>
-          </div>
-          <div class="model">deepseek-ai/DeepSeek-V4<br>· 硅基流动</div>
-        </div>
-        <div class="ai-body" id="aiBody"></div>
-        <div class="ai-foot">
-          <button class="btn primary">发布到知识库</button>
-          <button class="btn">重新生成</button>
+          <div class="vrow"><i style="background:#f8717a"></i>logs · 报错 13</div>
+          <div class="vrow"><i style="background:#fbbf24"></i>github · 慢 36s</div>
+          <div class="vrow"><i style="background:#a78bfa"></i>海报错位</div>
+          <div class="vrow"><i style="background:#a78bfa"></i>导出无反馈</div>
         </div>
       </div>
     </div>
   </div>
+</div><!-- /wrap -->
 
-  </div><!-- /wrap：上面蓝框（仪表盘 + AI 列）撑满首屏视口 -->
+<!-- 下面蓝框：下移到首屏之下 -->
+<div class="below-fold">
+  <div class="scroll-hint">向下滚动 · 痛点明细与处理闭环</div>
+  <div class="datarow">
+    <span><b>2026-06-17</b> ~ <b>2026-06-23</b></span><span class="sep"></span>
+    <span>路由信号 <b>2,382</b> 条（自 2026-06-13 起采集）</span><span class="sep"></span>
+    <span>报错/等待信号来自 API 请求日志（含历史）</span>
+    <button class="ai-btn" data-open><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8fe7d9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3 3 3 0 0 0 0 6 3 3 0 0 0 3 3v1a3 3 0 0 0 6 0v-1a3 3 0 0 0 3-3 3 3 0 0 0 0-6 3 3 0 0 0-3-3V5a3 3 0 0 0-3-3Z"/></svg>AI 用户分析</button>
+  </div>
 
-  <!-- ===== 下面蓝框：下移到首屏之下，需向下滚动才进入（明细条 / 处理闭环） ===== -->
-  <div class="wrap below-fold">
-    <div class="scroll-hint">向下滚动 · 痛点明细与处理闭环</div>
-
-    <div class="datarow">
-      <span><b>2026-06-17</b> ~ <b>2026-06-23</b></span><span class="sep"></span>
-      <span>路由信号 <b>2,382</b> 条（自 2026-06-13 起采集）</span><span class="sep"></span>
-      <span>报错/等待信号来自 API 请求日志（含历史）</span>
-      <span class="sep"></span><span class="pill">AI 简报</span>
-    </div>
-
-    <!-- 当前态对照说明：仅“当前：藏在底部”布局显示 -->
-    <div id="bottomExtra" style="display:none">
-      <div class="current-trigger">
-        <span class="pill">AI 简报</span>
-        <span>当前：AI 用户分析被折进数据源状态行的小按钮，点开后渲染在整页最底部，用户要滚到底才看得见。</span>
-        <span class="warn">体验缺陷：主角被埋</span>
-      </div>
-    </div>
-
-    <!-- 痛点明细行（如你截图里的“等待过久 GET /api/changelog/github-logs”） -->
-    <div class="insight-row">
-      <span class="ir-bar" style="background:#fbbf24"></span>
-      <span class="ir-ic" style="background:rgba(251,191,36,.14)">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-      </span>
-      <div class="ir-main">
-        <div class="ir-top">
-          <span class="ir-kind" style="color:#fbbf24">等待过久</span>
-          <span class="ir-tgt">GET /api/changelog/github-logs</span>
-          <span class="ir-metric">慢请求均值 38.3s</span>
-          <span class="ir-tag">已确认</span>
-          <span class="ir-cnt">2 人 · 7 次</span>
-        </div>
-        <div class="ir-sug">等待超过 3 秒且无流式反馈即为体验缺陷：优先做流式/分页/缓存/异步化，至少给阶段性进度提示。</div>
-        <div class="ir-act"><span class="ab">AI 诊断</span><span class="ab">已修复</span><span class="ab">忽略</span></div>
-      </div>
-    </div>
-
-    <div class="insight-row">
-      <span class="ir-bar" style="background:#f8717a"></span>
-      <span class="ir-ic" style="background:rgba(248,113,122,.14)">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f8717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10.5 20.5-7-7a5 5 0 0 1 7-7l.5.5.5-.5a5 5 0 0 1 7 7l-7 7Z"/><path d="M12 9v4M12 17h.01"/></svg>
-      </span>
-      <div class="ir-main">
-        <div class="ir-top">
-          <span class="ir-kind" style="color:#f8717a">频繁报错</span>
-          <span class="ir-tgt">POST /api/logs/llm/model-stats/batch</span>
-          <span class="ir-metric">HTTP 400 × 13</span>
-          <span class="ir-cnt">3 人 · 13 次</span>
-        </div>
-        <div class="ir-sug">100% 请求被框架层直接拒绝、无业务错误码，问题在到达业务代码前已被拦截（参数校验/鉴权前置）。</div>
-        <div class="ir-act"><span class="ab primary">转为缺陷</span><span class="ab">AI 诊断</span><span class="ab">确认待改</span><span class="ab">忽略</span></div>
-      </div>
+  <div class="insight-row">
+    <span class="ir-bar" style="background:#fbbf24"></span>
+    <span class="ir-ic" style="background:rgba(251,191,36,.14)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+    <div class="ir-main">
+      <div class="ir-top"><span class="ir-kind" style="color:#fbbf24">等待过久</span><span class="ir-tgt">GET /api/changelog/github-logs</span><span class="ir-metric">慢请求均值 38.3s</span><span class="ir-tag">已确认</span><span class="ir-cnt">2 人 · 7 次</span></div>
+      <div class="ir-sug">等待超过 3 秒且无流式反馈即为体验缺陷：优先做流式/分页/缓存/异步化，至少给阶段性进度提示。</div>
+      <div class="ir-act"><span class="ab" data-open>AI 诊断</span><span class="ab">已修复</span><span class="ab">忽略</span></div>
     </div>
   </div>
+
+  <div class="insight-row">
+    <span class="ir-bar" style="background:#f8717a"></span>
+    <span class="ir-ic" style="background:rgba(248,113,122,.14)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f8717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10.5 20.5-7-7a5 5 0 0 1 7-7l.5.5.5-.5a5 5 0 0 1 7 7l-7 7Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+    <div class="ir-main">
+      <div class="ir-top"><span class="ir-kind" style="color:#f8717a">频繁报错</span><span class="ir-tgt">POST /api/logs/llm/model-stats/batch</span><span class="ir-metric">HTTP 400 × 13</span><span class="ir-cnt">3 人 · 13 次</span></div>
+      <div class="ir-sug">100% 请求被框架层直接拒绝、无业务错误码，问题在到达业务代码前已被拦截（参数校验/鉴权前置）。</div>
+      <div class="ir-act"><span class="ab primary">转为缺陷</span><span class="ab" data-open>AI 诊断</span><span class="ab">忽略</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- AI 用户分析抽屉 -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer">
+  <div class="dr-h">
+    <div class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3 3 3 0 0 0 0 6 3 3 0 0 0 3 3v1a3 3 0 0 0 6 0v-1a3 3 0 0 0 3-3 3 3 0 0 0 0-6 3 3 0 0 0-3-3V5a3 3 0 0 0-3-3Z"/></svg></div>
+    <div><div class="ttl">AI 用户分析</div><div class="sub">deepseek-ai/DeepSeek-V4 · 硅基流动</div></div>
+    <button class="x" id="drawerX"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="dr-ctx" id="drCtx">分析范围：当前窗口 2,382 条行为信号</div>
+  <div class="dr-body" id="drBody"></div>
+  <div class="dr-foot">
+    <button class="btn primary">发布到知识库</button>
+    <button class="btn">重新生成</button>
+  </div>
+</aside>
 
 <script>
-  // ---- 布局切换 ----
-  const stage = document.getElementById('stage');
-  const aiCol = document.getElementById('aiCol');
-  const bottomExtra = document.getElementById('bottomExtra');
-  const note = document.getElementById('note');
-  const NOTES = {
-    right: '<b>右侧常驻</b>：AI 用户分析升级为与热力图并排的主角，进页即流式生成、始终可见，不用滚到底去找。',
-    left:  '<b>左侧常驻</b>：把 AI 用户分析放到最左侧第一视觉落点（先看结论、再看图）。仪表盘顺移到右，左右一键互换。',
-    bottom:'<b>当前态（对照）</b>：AI 用户分析折进底部状态行的小按钮，渲染在整页最下方——这就是你说的“藏在了下面”。',
-  };
-  document.getElementById('seg').addEventListener('click', (e) => {
-    const b = e.target.closest('button'); if (!b) return;
-    document.querySelectorAll('#seg button').forEach(x => x.classList.remove('on'));
-    b.classList.add('on');
-    const layout = b.dataset.layout;
-    stage.dataset.layout = layout;
-    note.innerHTML = NOTES[layout];
-    if (layout === 'bottom') { aiCol.style.display = 'none'; bottomExtra.style.display = 'block'; }
-    else { aiCol.style.display = 'flex'; bottomExtra.style.display = 'none'; runStream(); }
-  });
+  const scrim=document.getElementById('scrim'), drawer=document.getElementById('drawer'),
+        drBody=document.getElementById('drBody'), drCtx=document.getElementById('drCtx');
+  let timer=null;
 
-  // ---- AI 面板流式生成动画（artifact-is-experience：等待期就是产物在生长） ----
-  const body = document.getElementById('aiBody');
-  let streamTimer = null;
-  function runStream() {
-    if (streamTimer) clearTimeout(streamTimer);
-    body.innerHTML = '<div class="phase"><span class="sp"></span>正在从 2,382 条行为信号中聚合用户画像…</div>';
-    const blocks = [
-      () => sec('一句话结论'),
-      () => para('本周用户最受挫的动作是 <span class="hlr">查看 LLM 模型统计</span>：13 次请求全部被框架层直接拒绝（HTTP 400），用户点了却什么都没拿到，是当前体验的<span class="hlr">头号出血点</span>。'),
-      () => sec('用户此刻的处境'),
-      () => ul([
-        '点开模型统计 → 空白 → 重试 → 还是空白，<b style="color:#f8717a">13 次里 0 次成功</b>，多半已放弃这条路；',
-        'github-logs 等待 <b style="color:#fbbf24">中位 36s</b> 且无任何进度反馈，有 2 人等满 3 秒以上仍在干等；',
-        '周报海报、导出无反馈各收到 1 条真实用户吐槽，与遥测信号互相印证。',
-      ]),
-      () => sec('最像谁（行为画像）'),
-      () => persona('#fbbf24', '运', '运营/数据角色', '高频进出「统计/日志」类页面，对数字敏感，遇到报错不会提单、直接走人 → 流失风险高，建议优先修。'),
-      () => sec('建议下一步'),
-      () => ul([
-        '把 logs/model-stats 的 400 根因排掉（参数/鉴权前置拦截），这一条修好痛点指数预计回落 ~12；',
-        '给 github-logs 这类慢端点加流式/分页 + 阶段进度，消灭“静止等待”；',
-      ], 'num'),
-    ];
-    let i = 0;
-    function next() {
-      if (i === 0) body.innerHTML = '';
-      if (i >= blocks.length) { addCursorDone(); return; }
-      const el = blocks[i++]();
-      body.appendChild(el);
-      requestAnimationFrame(() => el.style.opacity = 1);
-      body.scrollTop = body.scrollHeight;
-      streamTimer = setTimeout(next, 520);
-    }
-    streamTimer = setTimeout(next, 900);
+  function openDrawer(ctx){
+    drCtx.textContent = ctx || '分析范围：当前窗口 2,382 条行为信号';
+    scrim.classList.add('open'); drawer.classList.add('open');
+    runStream();
   }
-  function base(el){ el.style.opacity = 0; el.style.transition = 'opacity .4s ease'; return el; }
-  function sec(t){ const d=document.createElement('div'); d.className='sec-ttl'; d.textContent=t; return base(d); }
-  function para(html){ const d=document.createElement('div'); d.className='ai-p'; d.innerHTML=html; return base(d); }
-  function ul(items, num){ const d=document.createElement('div'); d.className='ai-ul';
-    items.forEach((t,idx)=>{ const li=document.createElement('div'); li.className='ai-li';
-      li.innerHTML=`<span class="dot">${num?idx+1:'·'}</span><span>${t}</span>`; d.appendChild(li); }); return base(d); }
-  function persona(c,ch,nm,meta){ const d=document.createElement('div'); d.className='persona';
-    d.innerHTML=`<span class="av" style="background:${c}">${ch}</span><div><div class="nm">${nm}</div><div class="meta">${meta}</div></div>`; return base(d); }
-  function addCursorDone(){ const last = body.querySelector('.ai-li:last-child span:last-child') || body.lastElementChild;
-    if (last) { const c=document.createElement('span'); c.className='cursor'; setTimeout(()=>c.remove(), 1600); last.appendChild(c); } }
+  function closeDrawer(){ scrim.classList.remove('open'); drawer.classList.remove('open'); if(timer) clearTimeout(timer); }
 
-  runStream();
+  document.querySelectorAll('[data-open]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const tgt = el.closest('.blk')?.textContent?.trim() || el.closest('.insight-row')?.querySelector('.ir-tgt')?.textContent;
+      openDrawer(tgt ? ('分析对象：'+tgt) : null);
+    });
+  });
+  document.getElementById('ctaOpen').addEventListener('click',()=>openDrawer());
+  document.getElementById('drawerX').addEventListener('click',closeDrawer);
+  scrim.addEventListener('click',closeDrawer);
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+
+  function runStream(){
+    if(timer) clearTimeout(timer);
+    drBody.innerHTML='<div class="phase"><span class="sp"></span>正在从行为信号中聚合用户画像…</div>';
+    const blocks=[
+      ()=>sec('一句话结论'),
+      ()=>para('本周用户最受挫的动作是 <span class="hlr">查看 LLM 模型统计</span>：13 次请求全部被框架层直接拒绝（HTTP 400），点了却什么都没拿到，是当前体验的<span class="hlr">头号出血点</span>。'),
+      ()=>sec('用户此刻的处境'),
+      ()=>ul(['点开模型统计 → 空白 → 重试 → 还是空白，<b style="color:#f8717a">13 次里 0 次成功</b>，多半已放弃；','github-logs 等待 <b style="color:#fbbf24">中位 36s</b> 且无进度反馈，2 人等满 3 秒以上仍在干等；','周报海报、导出无反馈各 1 条真实吐槽，与遥测互相印证。']),
+      ()=>sec('最像谁（行为画像）'),
+      ()=>persona('#fbbf24','运','运营/数据角色','高频进出「统计/日志」类页面，对数字敏感，遇报错不提单直接走人 → 流失风险高，建议优先修。'),
+      ()=>sec('建议下一步'),
+      ()=>ul(['排掉 logs/model-stats 的 400 根因（参数/鉴权前置拦截），痛点指数预计回落 ~12；','给 github-logs 这类慢端点加流式/分页 + 阶段进度，消灭静止等待；'],true),
+    ];
+    let i=0;
+    (function next(){
+      if(i===0) drBody.innerHTML='';
+      if(i>=blocks.length){ done(); return; }
+      const el=blocks[i++](); drBody.appendChild(el);
+      requestAnimationFrame(()=>el.style.opacity=1); drBody.scrollTop=drBody.scrollHeight;
+      timer=setTimeout(next,500);
+    })();
+  }
+  function base(el){el.style.opacity=0;el.style.transition='opacity .4s ease';return el;}
+  function sec(t){const d=document.createElement('div');d.className='sec-ttl';d.textContent=t;return base(d);}
+  function para(h){const d=document.createElement('div');d.className='ai-p';d.innerHTML=h;return base(d);}
+  function ul(items,num){const d=document.createElement('div');d.className='ai-ul';items.forEach((t,idx)=>{const li=document.createElement('div');li.className='ai-li';li.innerHTML='<span class="dot">'+(num?idx+1:'·')+'</span><span>'+t+'</span>';d.appendChild(li);});return base(d);}
+  function persona(c,ch,nm,meta){const d=document.createElement('div');d.className='persona';d.innerHTML='<span class="av" style="background:'+c+'">'+ch+'</span><div><div class="nm">'+nm+'</div><div class="meta">'+meta+'</div></div>';return base(d);}
+  function done(){const last=drBody.lastElementChild;if(last){const c=document.createElement('span');c.className='cursor';setTimeout(()=>c.remove(),1600);(last.querySelector('span:last-child')||last).appendChild(c);}}
 </script>
 </body>
 </html>
