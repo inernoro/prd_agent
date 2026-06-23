@@ -685,6 +685,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /docker-images': '获取 Docker 镜像',
     'POST /cleanup': '清理已停止容器',
     'POST /cleanup-orphans': '清理孤儿容器',
+    'POST /branches/cleanup-damaged-containers': '清理损坏容器',
+    'POST /branches/cleanup-stopped': '清理已停止分支',
+    'POST /branches/cleanup-orphan-containers': '清理孤儿容器',
     'POST /prune-stale-branches': '清理过期分支',
     'POST /factory-reset': '恢复出厂设置',
     'GET /check-updates': '检查远程更新',
@@ -764,6 +767,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /status': '获取系统状态',
     'GET /healthz': '健康检查',
     'GET /host-stats': '获取主机状态',
+    'GET /cds-system/perf-health': '运维健康观测',
     'GET /state-stream': '订阅状态流',
     'GET /activity-stream': '订阅活动流',
     'GET /cli-version': '获取 CLI 版本',
@@ -2421,11 +2425,14 @@ export function createServer(deps: ServerDeps): express.Express {
       }
       const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
       const lastUpdate = history[0] || null;
+      // 与 branches.ts computeSelfStatusSnapshot 的判定保持一致：重启"已确认" =
+      // 当前进程的启动时刻晚于本次更新的开始时刻（pidStartedAt >= update.ts）。
+      // web-only 更新无需重启 → not_required，不再因 pidStartedAt 恒真而误报 completed。
+      const updateMs = lastUpdate?.ts ? Date.parse(lastUpdate.ts) : Number.NaN;
+      const pidMs = pidStartedAt ? Date.parse(pidStartedAt) : Number.NaN;
       const restartStatus =
-        lastUpdate?.status === 'success'
-          ? pidStartedAt
-            ? 'completed'
-            : 'incomplete'
+        lastUpdate?.status === 'success' && lastUpdate.updateMode !== 'web-only'
+          ? (Number.isFinite(pidMs) && Number.isFinite(updateMs) && pidMs >= updateMs ? 'completed' : 'incomplete')
           : lastUpdate?.status === 'deferred'
             ? 'pending'
             : 'not_required';
@@ -2568,8 +2575,45 @@ export function createServer(deps: ServerDeps): express.Express {
   // AND manually from the cluster hot-upgrade path when in-memory config
   // changes (mode flip) without a state.json write. Other modules reach it
   // via the exported `broadcastClusterChange()` below.
+  //
+  // 性能（2026-06-22）：原本 onSave 每次都同步 `JSON.stringify(整个 state)`
+  // （含全部分支 + 部署日志）。构建期间 deploy-log 每追加一行就 save() 一次，
+  // 一秒内能触发几十次全量序列化，把单线程事件循环钉死 → 仪表盘和所有 /api/*
+  // 在构建期间集体卡死（用户反复反馈的"阻塞"根因之一）。
+  // 这里把广播改成"前沿即时 + 尾沿合并"节流：突发写入时最多每
+  // BROADCAST_MIN_INTERVAL_MS 序列化一次，并保证突发结束后一定补发最终态。
+  // SSE 客户端在 200ms 内收敛到最新状态，肉眼无感，但事件循环不再被烤糊。
+  const BROADCAST_MIN_INTERVAL_MS = 200;
+  let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
+  let broadcastPending = false;
+  let lastBroadcastAt = 0;
+
   function broadcastState(): void {
     if (stateClients.size === 0) return;
+    const sinceLast = Date.now() - lastBroadcastAt;
+    // 前沿：距上次广播已超过最小间隔且没有挂起的定时器 → 立即发，单次变更零延迟。
+    if (!broadcastTimer && sinceLast >= BROADCAST_MIN_INTERVAL_MS) {
+      doBroadcastState();
+      return;
+    }
+    // 冷却期内：标记脏 + 安排一次尾沿补发，把突发期的中间态合并掉。
+    broadcastPending = true;
+    if (!broadcastTimer) {
+      const wait = Math.max(0, BROADCAST_MIN_INTERVAL_MS - sinceLast);
+      broadcastTimer = setTimeout(() => {
+        broadcastTimer = null;
+        if (broadcastPending) {
+          broadcastPending = false;
+          doBroadcastState();
+        }
+      }, wait);
+      broadcastTimer.unref?.();
+    }
+  }
+
+  function doBroadcastState(): void {
+    if (stateClients.size === 0) return;
+    lastBroadcastAt = Date.now();
     const state = deps.stateService.getState();
 
     // ── Populate embedded master's runningContainers from local state ──
