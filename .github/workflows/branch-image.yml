@@ -11,6 +11,13 @@ name: Branch Image
 # docs 则两者都不构建。某个 commit 缺某组件镜像时，CDS 侧 runService 会**逐组件回退到固定
 # 主分支镜像**（`:branch-main`，由 main 分支构建经 `type=ref,event=branch,prefix=branch-`
 # 维护），保证预览总能起来、不硬失败。tag push 不会命中（用 branches 过滤；tag 走 desktop-release.yml）。
+#
+# 例外（2026-06-23 修复 main 部署 404）：**默认分支 main 无论改了什么都构建两镜像**，不走
+# path-filter 跳过。原因有二：① `:branch-main` 是所有 feature 分支缺组件时的**回退镜像源**，
+# 必须随 main 保持新鲜；② main 自身极速版部署只认 `sha-<commit>`，若某次 main 推送只改了
+# cds/docs 而跳过构建，该 `sha-<commit>` 镜像不存在 → CDS docker pull 404、分支显示「部署出现
+# 异常 / 无法构建」（旧版 CDS 无回退链时直接硬失败）。让 main 永远产出自身 sha 镜像，从 CI 侧
+# 根治此问题，且不依赖 CDS 服务版本。feature 分支保留 path-filter 优化（缺组件回退 `:branch-main`）。
 
 on:
   push:
@@ -49,7 +56,8 @@ jobs:
   api-image:
     name: Build prd-api image
     needs: changes
-    if: ${{ needs.changes.outputs.api == 'true' }}
+    # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
+    if: ${{ needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -102,7 +110,8 @@ jobs:
   admin-image:
     name: Build prd-admin image
     needs: changes
-    if: ${{ needs.changes.outputs.admin == 'true' }}
+    # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
+    if: ${{ needs.changes.outputs.admin == 'true' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
