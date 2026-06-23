@@ -15,10 +15,13 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Gauge,
   FolderGit2,
   Github,
   KeyRound,
   Loader2,
+  Pause,
+  Play,
   Plus,
   RefreshCw,
   Settings,
@@ -56,6 +59,7 @@ import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateBu
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
+import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 
 const PROJECT_DOCK_BASE_SIZE = 56;
 const PROJECT_DOCK_MAGNIFIED_SIZE = 68;
@@ -100,6 +104,21 @@ interface ProjectSummary {
   cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
   cloneError?: string;
   autoDetectOnClone?: boolean;
+  /** 2026-06-23：项目暂停态 + 实时资源占用（后端 toSummary 注入）。 */
+  paused?: boolean;
+  pausedAt?: string | null;
+  pauseReason?: string | null;
+  resourceUsage?: ProjectResourceUsage | null;
+}
+
+interface ProjectResourceUsage {
+  projectId: string;
+  cpuPercent: number;
+  memUsedMB: number;
+  runningContainers: number;
+  recentBuilds1h: number;
+  recentBuilds24h: number;
+  lastBuildAt?: string | null;
 }
 
 interface ProjectsResponse {
@@ -432,12 +451,15 @@ export function ProjectListPage(): JSX.Element {
   const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
+  const [pauseTarget, setPauseTarget] = useState<ProjectSummary | null>(null);
+  const [resourceOpen, setResourceOpen] = useState(false);
   const [cloneTarget, setCloneTarget] = useState<ProjectSummary | null>(null);
   // Phase 8 — clone 完成后的 env 配置弹窗:必填项强制让用户感知,配完跳分支页
   const [envSetupTarget, setEnvSetupTarget] = useState<ProjectSummary | null>(null);
   const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
   const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
   const [skillDownloadOpen, setSkillDownloadOpen] = useState(false);
+  const [monitoringOpen, setMonitoringOpen] = useState(false);
   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
   const [pendingImportOpen, setPendingImportOpen] = useState(false);
   const [pendingImportFocusId, setPendingImportFocusId] = useState<string | null>(null);
@@ -497,6 +519,21 @@ export function ProjectListPage(): JSX.Element {
     }
   }, [loadPendingImports]);
 
+  // 暂停 / 恢复一个项目。乐观刷新；暂停会停止运行容器，由后端后台执行，
+  // 前端轮询反映停止结果。返回的 message 已含「正在停止 N 个分支」。
+  const applyPause = useCallback(async (project: ProjectSummary, paused: boolean) => {
+    try {
+      const res = await apiRequest<{ paused: boolean; message?: string }>(
+        `/api/projects/${encodeURIComponent(project.id)}/paused`,
+        { method: 'PUT', body: { paused } },
+      );
+      setToast(res.message || (paused ? `已暂停 ${displayName(project)}` : `已恢复 ${displayName(project)}`));
+      await refresh(false);
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [refresh]);
+
   useEffect(() => {
     void refresh(true);
   }, [refresh]);
@@ -504,9 +541,12 @@ export function ProjectListPage(): JSX.Element {
   useEffect(() => {
     const timer = window.setInterval(() => {
       void loadPendingImports();
+      // 2026-06-23：周期刷新项目列表，让卡片上的实时 CPU/构建频次与暂停态
+      // 跟随后端采样更新（refresh(false) 不触发整页 loading，只热替换数据）。
+      void refresh(false);
     }, 10000);
     return () => window.clearInterval(timer);
-  }, [loadPendingImports]);
+  }, [loadPendingImports, refresh]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -624,6 +664,24 @@ export function ProjectListPage(): JSX.Element {
           right={
             <>
               <PaletteHint />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMonitoringOpen(true)}
+                title="运维（性能 / 执行器 / 活动）"
+              >
+                <Gauge />
+                运维
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setResourceOpen(true)}
+                title="项目级资源占用排行（CPU / 内存 / 构建频次），一键暂停作死项目"
+              >
+                <Activity />
+                资源占用
+              </Button>
               {pendingImportCount > 0 ? (
                 <Button
                   variant="outline"
@@ -731,6 +789,7 @@ export function ProjectListPage(): JSX.Element {
                   onAgentKeys={() => setAgentKeyProject(project)}
                   onAgentSessions={() => navigate(`/agent-requests/${encodeURIComponent(project.id)}`)}
                   onDelete={() => setDeleteTarget(project)}
+                  onTogglePause={() => (project.paused ? void applyPause(project, false) : setPauseTarget(project))}
                 />
               ))}
             </div>
@@ -805,6 +864,10 @@ export function ProjectListPage(): JSX.Element {
           open={skillDownloadOpen}
           onOpenChange={setSkillDownloadOpen}
         />
+        <MonitoringDialog
+          open={monitoringOpen}
+          onOpenChange={setMonitoringOpen}
+        />
         <PendingImportDialog
           open={pendingImportOpen}
           onOpenChange={(open) => {
@@ -832,6 +895,23 @@ export function ProjectListPage(): JSX.Element {
             setDeleteTarget(null);
             await refresh(false);
           }}
+        />
+        <PauseProjectDialog
+          project={pauseTarget}
+          onOpenChange={(open) => {
+            if (!open) setPauseTarget(null);
+          }}
+          onConfirm={async () => {
+            const target = pauseTarget;
+            setPauseTarget(null);
+            if (target) await applyPause(target, true);
+          }}
+        />
+        <ResourceUsageDialog
+          open={resourceOpen}
+          onOpenChange={setResourceOpen}
+          onToast={setToast}
+          onChanged={() => refresh(false)}
         />
         <LegacyMigrateDialog
           open={legacyDialogOpen}
@@ -1697,14 +1777,25 @@ function ProjectCard({
   onAgentKeys,
   onAgentSessions,
   onDelete,
+  onTogglePause,
 }: {
   project: ProjectSummary;
   onClone: () => void;
   onAgentKeys: () => void;
   onAgentSessions: () => void;
   onDelete: () => void;
+  onTogglePause: () => void;
 }): JSX.Element {
   const title = displayName(project);
+  const paused = project.paused === true;
+  const usage = project.resourceUsage;
+  const cpu = usage?.cpuPercent ?? 0;
+  const recentBuilds1h = usage?.recentBuilds1h ?? 0;
+  const cpuToneClass = cpu >= 100
+    ? 'text-red-600 dark:text-red-400'
+    : cpu >= 50
+      ? 'text-amber-600 dark:text-amber-400'
+      : 'text-muted-foreground';
   const isReady = !project.cloneStatus || project.cloneStatus === 'ready';
   const cloneLabel =
     project.cloneStatus === 'pending'
@@ -1726,13 +1817,15 @@ function ProjectCard({
   const visibleStackBrands = stackBrands.slice(0, 6);
   const hiddenStackBrandCount = Math.max(0, stackBrands.length - visibleStackBrands.length);
   const dockMouseX = useMotionValue(Infinity);
-  const dotTone = project.cloneStatus === 'error'
-    ? 'bg-destructive'
-    : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
-      ? 'bg-amber-500'
-      : running > 0
-        ? 'bg-emerald-500'
-        : 'bg-muted-foreground/40';
+  const dotTone = paused
+    ? 'bg-muted-foreground/40'
+    : project.cloneStatus === 'error'
+      ? 'bg-destructive'
+      : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
+        ? 'bg-amber-500'
+        : running > 0
+          ? 'bg-emerald-500'
+          : 'bg-muted-foreground/40';
 
   return (
     <article className="cds-project-card group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg">
@@ -1741,7 +1834,7 @@ function ProjectCard({
         onClick={(event) => {
           if (!isReady) event.preventDefault();
         }}
-        className="flex flex-1 flex-col rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={`flex flex-1 flex-col rounded-lg transition-[filter,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${paused ? 'opacity-60 grayscale' : ''}`}
       >
         {/* Header */}
         <header className="flex items-start justify-between gap-3 px-5 pt-5">
@@ -1810,12 +1903,27 @@ function ProjectCard({
               <span className="text-muted-foreground/60">·</span>
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone}`} aria-hidden />
               <span className="shrink-0 text-foreground">
-                {isReady ? (running > 0 ? '运行中' : '已就绪') : cloneLabel || '未就绪'}
+                {paused ? '已暂停' : isReady ? (running > 0 ? '运行中' : '已就绪') : cloneLabel || '未就绪'}
               </span>
-              {totalServices > 0 ? (
+              {!paused && totalServices > 0 ? (
                 <>
                   <span className="text-muted-foreground/60">·</span>
                   <span className="min-w-0 truncate tabular-nums">{totalOnline}/{Math.max(totalServices, totalOnline)} 容器在线</span>
+                </>
+              ) : null}
+              {!paused && cpu > 0 ? (
+                <>
+                  <span className="text-muted-foreground/60">·</span>
+                  <span className={`inline-flex shrink-0 items-center gap-1 tabular-nums ${cpuToneClass}`} title="该项目所有运行容器 CPU% 之和">
+                    <Gauge className="h-3 w-3" aria-hidden />
+                    {Math.round(cpu)}%
+                  </span>
+                </>
+              ) : null}
+              {!paused && recentBuilds1h > 0 ? (
+                <>
+                  <span className="text-muted-foreground/60">·</span>
+                  <span className="shrink-0 tabular-nums" title="近 1 小时构建次数">{recentBuilds1h} 次构建/时</span>
                 </>
               ) : null}
             </div>
@@ -1830,7 +1938,30 @@ function ProjectCard({
 
       </a>
 
-      <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+      <div
+        className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1 transition-opacity duration-150 ${
+          paused ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'
+        }`}
+      >
+        {paused ? (
+          <span className="pointer-events-none mr-0.5 inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-600 shadow-sm backdrop-blur">
+            <Pause className="h-3 w-3" aria-hidden />
+            已暂停
+          </span>
+        ) : null}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
+          onClick={(event) => {
+            event.stopPropagation();
+            onTogglePause();
+          }}
+          aria-label={paused ? `恢复 ${title}` : `暂停 ${title}`}
+          title={paused ? '恢复项目（解冻自动部署/webhook）' : '暂停项目（停止容器并冻结构建/部署/webhook）'}
+        >
+          {paused ? <Play /> : <Pause />}
+        </Button>
         {project.cloneStatus === 'pending' || project.cloneStatus === 'error' ? (
           <Button
             type="button"
@@ -3727,6 +3858,268 @@ function DeleteProjectDialog({
           <Button type="button" variant="destructive" onClick={() => void handleDelete()} disabled={submitting}>
             {submitting ? <Loader2 className="animate-spin" /> : <Trash2 />}
             删除
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PauseProjectDialog({
+  project,
+  onOpenChange,
+  onConfirm,
+}: {
+  project: ProjectSummary | null;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => Promise<void>;
+}): JSX.Element {
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleConfirm(): Promise<void> {
+    setSubmitting(true);
+    try {
+      await onConfirm();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={Boolean(project)} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>暂停项目</DialogTitle>
+          <DialogDescription>
+            {project
+              ? `将冻结「${displayName(project)}」：停止其所有分支正在运行的容器，并禁用自动部署 / 手动部署 / GitHub webhook。恢复后需手动重新部署。`
+              : ''}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          适用于长期不用却被反复构建的项目：暂停即止血，随时可一键恢复。
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button type="button" onClick={() => void handleConfirm()} disabled={submitting}>
+            {submitting ? <Loader2 className="animate-spin" /> : <Pause />}
+            暂停项目
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface ResourceUsageRow {
+  projectId: string;
+  name: string;
+  paused: boolean;
+  cpuPercent: number;
+  memUsedMB: number;
+  runningContainers: number;
+  recentBuilds1h: number;
+  recentBuilds24h: number;
+  lastBuildAt?: string | null;
+}
+
+interface ResourceUsageResponse {
+  sampledAt: number | null;
+  intervalMs: number | null;
+  totals: { cpuPercent: number; memUsedMB: number; runningContainers: number };
+  projects: ResourceUsageRow[];
+}
+
+function ResourceUsageDialog({
+  open,
+  onOpenChange,
+  onToast,
+  onChanged,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onToast: (msg: string) => void;
+  onChanged: () => void;
+}): JSX.Element {
+  const [data, setData] = useState<ResourceUsageResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [sortKey, setSortKey] = useState<'cpu' | 'builds' | 'mem'>('cpu');
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await apiRequest<ResourceUsageResponse>('/api/cds-system/resource-usage');
+      setData(res);
+    } catch (err) {
+      onToast(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [onToast]);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    void load().finally(() => setLoading(false));
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => window.clearInterval(timer);
+  }, [open, load]);
+
+  const rows = useMemo(() => {
+    const list = [...(data?.projects || [])];
+    list.sort((a, b) =>
+      sortKey === 'cpu'
+        ? b.cpuPercent - a.cpuPercent
+        : sortKey === 'builds'
+          ? b.recentBuilds1h - a.recentBuilds1h
+          : b.memUsedMB - a.memUsedMB,
+    );
+    return list;
+  }, [data, sortKey]);
+
+  async function togglePause(row: ResourceUsageRow): Promise<void> {
+    setBusyId(row.projectId);
+    try {
+      const res = await apiRequest<{ message?: string }>(
+        `/api/projects/${encodeURIComponent(row.projectId)}/paused`,
+        { method: 'PUT', body: { paused: !row.paused } },
+      );
+      onToast(res.message || (row.paused ? `已恢复 ${row.name}` : `已暂停 ${row.name}`));
+      await load();
+      onChanged();
+    } catch (err) {
+      onToast(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const totals = data?.totals;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>资源占用排行</DialogTitle>
+          <DialogDescription>
+            周期采样各项目运行容器的 CPU / 内存，并统计近 1 小时构建频次。揪出 CPU 大户或反复构建的项目，一键暂停止血。
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1 text-xs">
+            <span className="mr-1 text-muted-foreground">排序</span>
+            {([['cpu', 'CPU'], ['builds', '构建频次'], ['mem', '内存']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSortKey(key)}
+                className={`rounded-md border px-2 py-1 transition-colors ${
+                  sortKey === key
+                    ? 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-foreground'
+                    : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {totals ? (
+            <div className="text-xs tabular-nums text-muted-foreground">
+              合计 CPU {Math.round(totals.cpuPercent)}% · {totals.memUsedMB} MB · {totals.runningContainers} 容器
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          className="max-h-[55vh] overflow-y-auto rounded-md border border-[hsl(var(--hairline))]"
+          style={{ overscrollBehavior: 'contain' }}
+        >
+          {loading && !data ? (
+            <div className="flex items-center justify-center gap-2 px-4 py-10 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> 采样中…
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+              {data?.sampledAt ? '当前无运行容器或构建活动。' : '采样器尚未产出首个快照，请稍候…'}
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-[hsl(var(--surface-raised))] text-left text-xs text-muted-foreground">
+                <tr className="border-b border-[hsl(var(--hairline))]">
+                  <th className="px-3 py-2 font-medium">项目</th>
+                  <th className="px-3 py-2 text-right font-medium">CPU</th>
+                  <th className="px-3 py-2 text-right font-medium">内存</th>
+                  <th className="px-3 py-2 text-right font-medium">容器</th>
+                  <th className="px-3 py-2 text-right font-medium">构建/时</th>
+                  <th className="px-3 py-2 text-right font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => {
+                  const cpuTone =
+                    row.cpuPercent >= 100
+                      ? 'text-red-600 dark:text-red-400'
+                      : row.cpuPercent >= 50
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-foreground';
+                  const buildsTone =
+                    row.recentBuilds1h >= 10
+                      ? 'text-red-600 dark:text-red-400'
+                      : row.recentBuilds1h >= 4
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-foreground';
+                  return (
+                    <tr key={row.projectId} className="border-b border-[hsl(var(--hairline))] last:border-0">
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate font-medium">{row.name}</span>
+                          {row.paused ? (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                              <Pause className="h-2.5 w-2.5" aria-hidden /> 已暂停
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${cpuTone}`}>{Math.round(row.cpuPercent)}%</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{row.memUsedMB} MB</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{row.runningContainers}</td>
+                      <td
+                        className={`px-3 py-2 text-right tabular-nums ${buildsTone}`}
+                        title={`近 24 小时 ${row.recentBuilds24h} 次`}
+                      >
+                        {row.recentBuilds1h}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={row.paused ? 'outline' : 'ghost'}
+                          disabled={busyId === row.projectId}
+                          onClick={() => void togglePause(row)}
+                          title={row.paused ? '恢复项目' : '暂停项目（停止容器并冻结构建）'}
+                        >
+                          {busyId === row.projectId ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : row.paused ? (
+                            <Play className="h-3.5 w-3.5" />
+                          ) : (
+                            <Pause className="h-3.5 w-3.5" />
+                          )}
+                          {row.paused ? '恢复' : '暂停'}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
           </Button>
         </DialogFooter>
       </DialogContent>

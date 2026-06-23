@@ -28,6 +28,14 @@ public class DocumentStoreSyncResource : ISyncableResource
 {
     private const string SyncLineageKey = "syncLineageId";
     private const string PeerSourceContentHashKey = "peerSourceContentHash";
+    // 二进制附件条目（无正文、走 AttachmentId）的来源 URL 幂等键：接收方据此判断「这个对端附件是否已下载重建过」，
+    // 命中即廉价跳过，不重复下载。见 debt.peer-sync A 系列。
+    private const string PeerSourceAttachmentUrlKey = "peerSourceAttachmentUrl";
+    // 源头附件字节数（与 url 同写）：用于幂等的「同源同字节」判定与漂移签名。必须与 url 一样比的是「源头侧的
+    // att.Size」（导出端发的 pa.Size），不能拿来跟本地 DocumentEntry.FileSize 比 —— 二者是不同字段、不保证相等，
+    // 那样会让每次同步都误判 size 变化、反复重下（Bugbot: Binary sync size mismatch loop）。
+    private const string PeerSourceAttachmentSizeKey = "peerSourceAttachmentSize";
+    private const long MaxPeerAttachmentBytes = 50L * 1024 * 1024;
 
     private readonly MongoDbContext _db;
     private readonly IDocumentService _documentService;
@@ -106,6 +114,15 @@ public class DocumentStoreSyncResource : ISyncableResource
 
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync(ct);
         var byId = entries.ToDictionary(e => e.Id, e => e);
+        // 二进制/文件条目（无 DocumentId、有 AttachmentId）的附件元信息：批量取出，导出时带上其访问 URL，
+        // 接收方据此下载 + 重传到自己存储 + 重建条目（debt.peer-sync A 系列：二进制附件跨节点）。
+        var attachmentIds = entries
+            .Where(e => !e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
+            .Select(e => e.AttachmentId!).Distinct().ToList();
+        var attById = attachmentIds.Count > 0
+            ? (await _db.Attachments.Find(a => attachmentIds.Contains(a.AttachmentId)).ToListAsync(ct))
+                .GroupBy(a => a.AttachmentId).ToDictionary(g => g.Key, g => g.First())
+            : new Dictionary<string, Attachment>();
         var records = new List<SyncRecord>();
         foreach (var e in entries)
         {
@@ -117,7 +134,7 @@ public class DocumentStoreSyncResource : ISyncableResource
             if (!string.IsNullOrEmpty(e.ParentId) && byId.TryGetValue(e.ParentId, out var parent))
                 parentLineage = LineageOf(parent);
 
-            records.Add(new SyncRecord
+            var record = new SyncRecord
             {
                 LineageId = LineageOf(e),
                 ParentLineageId = parentLineage,
@@ -135,7 +152,31 @@ public class DocumentStoreSyncResource : ISyncableResource
                 CreatedAt = e.CreatedAt,
                 UpdatedAt = e.UpdatedAt,
                 LastChangedAt = e.LastChangedAt,
-            });
+            };
+            // 文件条目：带上附件访问信息，接收方据此下载重传重建（content 为 null 不再被跳过）。
+            // sourceId = 规范的「源头身份」：本条目若本身来自对端（metadata 有 peerSourceAttachmentUrl），
+            // 再导出时必须沿用原始源头 URL 而非本地副本 URL，否则 both（push 再 pull）回流时源头认不出自己的文件，
+            // 两侧 peerSourceAttachmentUrl 互相错位 → 双向同步永不收敛（Codex P1）。
+            // url = 本节点实际可下载地址（始终对本节点可达），与 sourceId 分离：身份做幂等/签名，url 做取字节。
+            if (content == null && !e.IsFolder && !string.IsNullOrEmpty(e.AttachmentId)
+                && attById.TryGetValue(e.AttachmentId!, out var att) && !string.IsNullOrWhiteSpace(att.Url))
+            {
+                var sourceId = e.Metadata != null
+                    && e.Metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var psu) && !string.IsNullOrEmpty(psu)
+                    ? psu : att.Url;
+                record.Extras["peerAttachment"] = JsonSerializer.SerializeToElement(new
+                {
+                    sourceId,
+                    url = att.Url,
+                    mimeType = att.MimeType,
+                    fileName = att.FileName,
+                    size = att.Size,
+                    type = att.Type.ToString(),
+                    thumbnailUrl = att.ThumbnailUrl,
+                    extractedText = att.ExtractedText,
+                });
+            }
+            records.Add(record);
         }
 
         // 主文档 / 置顶按血缘导出（接收方翻译回本端 entry id）。
@@ -185,6 +226,16 @@ public class DocumentStoreSyncResource : ISyncableResource
         //   路径（漂移检测调用），可接受；apply 路径本来就要全量传输 RawContent，带宽匹配。
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == itemId).ToListAsync(ct);
         var byId = entries.ToDictionary(e => e.Id, e => e);
+        // 二进制附件条目：纳入「来源附件标识」做签名，否则仅二进制文件变化的库签名不变 → 漂移检测误报「已同步」。
+        // 标识用 peerSourceAttachmentUrl（接收节点）∥ att.Url（源节点）—— 两节点对同一份文件得到同一个值，
+        // 与是否共享 CDN 无关，避免「内容一致但签名永不同」的伪漂移。
+        var binAttachmentIds = entries
+            .Where(e => !e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
+            .Select(e => e.AttachmentId!).Distinct().ToList();
+        var binAttById = binAttachmentIds.Count > 0
+            ? (await _db.Attachments.Find(a => binAttachmentIds.Contains(a.AttachmentId)).ToListAsync(ct))
+                .GroupBy(a => a.AttachmentId).ToDictionary(g => g.Key, g => g.First())
+            : new Dictionary<string, Attachment>();
         string? ParentLineage(string? parentId)
             => string.IsNullOrEmpty(parentId) || !byId.TryGetValue(parentId!, out var p) ? null : LineageOf(p);
         var parts = new List<string>(entries.Count);
@@ -195,6 +246,18 @@ public class DocumentStoreSyncResource : ISyncableResource
             {
                 var doc = await _documentService.GetByIdAsync(e.DocumentId);
                 contentHash = Sha256Hex(doc?.RawContent ?? string.Empty);
+            }
+            else if (!e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
+            {
+                // 标识 + 源头字节数都取「源头侧口径」，保证两节点对同一文件得同一签名：
+                // 接收方读 metadata 的 peerSourceAttachmentUrl/Size；源头节点（无该 metadata）读自身 att.Url/att.Size。
+                // 不能用 e.FileSize（entry 字段，与 att.Size 不同口径）做签名，否则两侧恒不等（Bugbot: size mismatch loop）。
+                binAttById.TryGetValue(e.AttachmentId!, out var att);
+                var attIdentity = e.Metadata != null && e.Metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var src) && !string.IsNullOrEmpty(src)
+                    ? src
+                    : (att?.Url ?? string.Empty);
+                var attSize = AppliedSourceAttachmentSize(e.Metadata) ?? att?.Size ?? 0;
+                contentHash = Sha256Hex("attachment:" + attIdentity + ":" + attSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
             }
             var tags = string.Join(",", (e.Tags ?? new List<string>()).OrderBy(t => t, StringComparer.Ordinal));
             // 纳入 SortOrder/Category（v1.1）：否则仅手动排序/分类变化的库签名不变，漂移检测会误报「已同步」
@@ -409,7 +472,163 @@ public class DocumentStoreSyncResource : ISyncableResource
         {
             try
             {
-                if (fe.Content == null) { skipped++; continue; }
+                if (fe.Content == null)
+                {
+                    // 二进制 / 文件条目（无正文、走 AttachmentId）：对端导出时带了 peerAttachment 元信息，
+                    // 接收方据此下载文件 → 重传到自己存储 → 重建条目，从而真正做到「两库一篇不差」。
+                    // 旧节点 / 无附件信息的占位记录仍按原行为跳过（不阻塞同步）。
+                    if (!TryReadPeerAttachment(fe, out var pa))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    var binParentId = ResolveParent(fe.ParentLineageId);
+
+                    if (byLineage.TryGetValue(fe.LineageId, out var exBinFolder) && exBinFolder.IsFolder)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    if (byLineage.TryGetValue(fe.LineageId, out var exBin) && !exBin.IsFolder)
+                    {
+                        if (addOnly) { skipped++; continue; }
+                        // 目标 ContentType/FileSize 取「源头条目值」（fe），缺省退回现有值；下载新件时再用 stored 兜底。
+                        // 这两个字段也纳入变更检测 + 落更新，否则即便文件未变、仅源头改了类型/大小也会被廉价跳过漏同步
+                        // （Bugbot: Binary sync skips entry metadata）。比的都是「源头条目口径」(fe vs 上次写入的 exBin)，无重下循环风险。
+                        var binTargetContentType = !string.IsNullOrEmpty(fe.ContentType) ? fe.ContentType : exBin.ContentType;
+                        var binTargetFileSize = fe.FileSize > 0 ? fe.FileSize : exBin.FileSize;
+                        // 附件提取文本快照：纳入变更检测，使「文件未变但提取文本变了」也能进重写分支刷新 Attachment.ExtractedText
+                        // （Bugbot: Stale attachment extracted text）。
+                        var binIncomingContentIndex = BinaryContentIndex(pa.ExtractedText);
+                        var binFieldsChanged = exBin.Title != fe.Title || exBin.ParentId != binParentId
+                            || !TagsEqual(exBin.Tags, fe.Tags) || exBin.Summary != fe.Summary
+                            || !MetaEqual(exBin.Metadata, fe.Metadata)
+                            || exBin.SortOrder != fe.SortOrder || exBin.Category != fe.Category
+                            || exBin.ContentType != binTargetContentType || exBin.FileSize != binTargetFileSize
+                            || exBin.ContentIndex != binIncomingContentIndex;
+                        // 幂等不只看 URL，还要比「源头字节数」：对象存储是内容寻址（sha256→URL），同 URL 即同字节，
+                        // 但万一底层存储复用了 URL 又换了字节，size 不一致即强制重下（Bugbot: Stale file when URL unchanged）。
+                        // 关键：比的是「上次记录的源头 size」(AppliedSourceAttachmentSize) 与「本次源头 size」(pa.Size)，
+                        // 二者同口径；绝不拿本地 DocumentEntry.FileSize 比，否则 entry.FileSize≠att.Size 时会无限重下
+                        // （Bugbot: Binary sync size mismatch loop）。任一侧 size 未知（<=0/未记录）时退回仅 URL 判定。
+                        var binAppliedSize = AppliedSourceAttachmentSize(exBin.Metadata);
+                        var binSizeMatches = pa.Size <= 0 || binAppliedSize == null || binAppliedSize.Value == pa.Size;
+                        var binApplied = HasAppliedSourceAttachment(exBin.Metadata, pa.SourceId) && binSizeMatches;
+                        var binTimestampsChanged = NeedsRecordTimestampRefresh(exBin, fe, options.PreserveTimestamps);
+
+                        // 二进制已下载且字段无变化 → 廉价跳过（必要时只刷新时间戳）。
+                        if (binApplied && !binFieldsChanged)
+                        {
+                            if (binTimestampsChanged)
+                            {
+                                var tsUpdate = Builders<DocumentEntry>.Update
+                                    .Set(e => e.UpdatedBy, actorUserId)
+                                    .Set(e => e.UpdatedByName, actorName)
+                                    .Set(e => e.UpdatedAt, PickTime(fe.UpdatedAt))
+                                    .Set(e => e.Metadata, WithPeerSourceAttachment(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId, pa.Size));
+                                if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
+                                    tsUpdate = tsUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+                                if (options.PreserveTimestamps && (fe.LastChangedAt.HasValue || fe.UpdatedAt.HasValue))
+                                    tsUpdate = tsUpdate.Set(e => e.LastChangedAt, PickTime(fe.LastChangedAt ?? fe.UpdatedAt));
+                                await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exBin.Id, tsUpdate, cancellationToken: ct);
+                            }
+                            skipped++;
+                            continue;
+                        }
+
+                        // 此前若同血缘是文本条目（带 DocumentId），转成二进制后要清理被替换的 ParsedPrd，
+                        // 否则留孤儿解析文档（Bugbot: Orphan doc after binary overwrite）。
+                        var binOldDocId = exBin.DocumentId;
+                        var binAttachmentId = exBin.AttachmentId;
+                        if (!binApplied)
+                        {
+                            var stored = await DownloadAndStoreAttachmentAsync(pa, options.SourceBaseUrl, ct);
+                            if (stored == null) { failed++; continue; }
+                            var att = BuildAttachment(pa, stored, actorUserId);
+                            await ReLocalizeAttachmentThumbnailAsync(att, pa, ct);
+                            await _db.Attachments.InsertOneAsync(att, cancellationToken: ct);
+                            binAttachmentId = att.AttachmentId;
+                            // 下载到新件后用 stored 兜底缺省类型/大小。
+                            binTargetContentType = string.IsNullOrEmpty(fe.ContentType) ? stored.Mime : fe.ContentType;
+                            binTargetFileSize = fe.FileSize > 0 ? fe.FileSize : stored.SizeBytes;
+                        }
+                        else if (!string.IsNullOrEmpty(exBin.AttachmentId))
+                        {
+                            // 文件未变（同 sourceId+size 跳过重下），但提取文本/文件名可能变了 → 刷新已存在 Attachment 行，
+                            // 否则 Attachment.ExtractedText 永远停在首次下载值（Bugbot: Stale attachment extracted text）。
+                            var attRefresh = Builders<Attachment>.Update
+                                .Set(a => a.ExtractedText, pa.ExtractedText);
+                            if (!string.IsNullOrWhiteSpace(pa.FileName))
+                                attRefresh = attRefresh.Set(a => a.FileName, pa.FileName!);
+                            await _db.Attachments.UpdateOneAsync(a => a.AttachmentId == exBin.AttachmentId, attRefresh, cancellationToken: ct);
+                        }
+                        var binMeta = WithPeerSourceAttachment(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId, pa.Size);
+                        var binUpdatedAt = PickTime(fe.UpdatedAt);
+                        var binChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt);
+                        var binUpdate = Builders<DocumentEntry>.Update
+                            .Set(e => e.AttachmentId, binAttachmentId)
+                            .Set(e => e.DocumentId, (string?)null)
+                            .Set(e => e.Title, fe.Title)
+                            .Set(e => e.Summary, fe.Summary)
+                            .Set(e => e.ParentId, binParentId)
+                            .Set(e => e.Tags, fe.Tags ?? new List<string>())
+                            .Set(e => e.ContentType, binTargetContentType)
+                            .Set(e => e.ContentIndex, binIncomingContentIndex)
+                            .Set(e => e.FileSize, binTargetFileSize)
+                            .Set(e => e.SortOrder, fe.SortOrder)
+                            .Set(e => e.Category, fe.Category)
+                            .Set(e => e.Metadata, binMeta)
+                            .Set(e => e.UpdatedBy, actorUserId)
+                            .Set(e => e.UpdatedByName, actorName)
+                            .Set(e => e.UpdatedAt, binUpdatedAt)
+                            .Set(e => e.LastChangedAt, binChangedAt);
+                        if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
+                            binUpdate = binUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+                        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exBin.Id, binUpdate, cancellationToken: ct);
+                        if (!string.IsNullOrEmpty(binOldDocId))
+                            await CleanupReplacedDocAsync(binOldDocId, string.Empty, exBin.Id);
+                        updated++;
+                        continue;
+                    }
+
+                    // 新建二进制条目
+                    var storedNew = await DownloadAndStoreAttachmentAsync(pa, options.SourceBaseUrl, ct);
+                    if (storedNew == null) { failed++; continue; }
+                    var attNew = BuildAttachment(pa, storedNew, actorUserId);
+                    await ReLocalizeAttachmentThumbnailAsync(attNew, pa, ct);
+                    await _db.Attachments.InsertOneAsync(attNew, cancellationToken: ct);
+                    var entryBin = new DocumentEntry
+                    {
+                        StoreId = target.Id,
+                        ParentId = binParentId,
+                        IsFolder = false,
+                        Title = fe.Title,
+                        Summary = fe.Summary,
+                        SourceType = DocumentSourceType.Import,
+                        AttachmentId = attNew.AttachmentId,
+                        ContentType = string.IsNullOrEmpty(fe.ContentType) ? storedNew.Mime : fe.ContentType,
+                        ContentIndex = BinaryContentIndex(pa.ExtractedText),
+                        FileSize = fe.FileSize > 0 ? fe.FileSize : storedNew.SizeBytes,
+                        Tags = fe.Tags ?? new List<string>(),
+                        SortOrder = fe.SortOrder,
+                        Category = fe.Category,
+                        Metadata = WithPeerSourceAttachment(WithLineage(fe.Metadata, fe.LineageId), pa.SourceId, pa.Size),
+                        CreatedBy = actorUserId,
+                        CreatedByName = actorName,
+                        CreatedByAvatarFileName = actorAvatar,
+                        UpdatedBy = actorUserId,
+                        UpdatedByName = actorName,
+                        CreatedAt = PickTime(fe.CreatedAt),
+                        UpdatedAt = PickTime(fe.UpdatedAt),
+                        LastChangedAt = PickTime(fe.LastChangedAt ?? fe.UpdatedAt),
+                    };
+                    await _db.DocumentEntries.InsertOneAsync(entryBin, cancellationToken: ct);
+                    byLineage[fe.LineageId] = entryBin;
+                    created++;
+                    continue;
+                }
                 var parentId = ResolveParent(fe.ParentLineageId);
                 var content = fe.Content;
 
@@ -424,12 +643,22 @@ public class DocumentStoreSyncResource : ISyncableResource
                     if (addOnly) { skipped++; continue; }
                     var sourceContentHash = Sha256Hex(content);
                     var targetMetadata = WithPeerSourceContentHash(WithLineage(fe.Metadata, fe.LineageId), sourceContentHash);
+                    // 「纯二进制」= 有 AttachmentId 且无 DocumentId。仅这种条目转文本时才算形态切换、才清 AttachmentId。
+                    // 关键：双形态条目（PDF/DOCX 等同时有 DocumentId + AttachmentId）导出只发文本（见 debt B4），both 回流时
+                    // 源头会拉回「纯文本回声」；若把「有 AttachmentId」一律当作二进制转文本，会把源头双形态条目的文件引用清掉
+                    // （Codex P1: Preserve attachments on dual text/file records）。故所有形态切换逻辑都只认 wasBinaryOnly。
+                    var wasBinaryOnly = !string.IsNullOrEmpty(exEntry.AttachmentId) && string.IsNullOrEmpty(exEntry.DocumentId);
                     var recordFieldsChanged = exEntry.Title != fe.Title || exEntry.ParentId != parentId
                         || !TagsEqual(exEntry.Tags, fe.Tags) || exEntry.Summary != fe.Summary
                         || !MetaEqual(exEntry.Metadata, fe.Metadata)
                         // v1.1 字段：仅排序/分类变化时也要落更新，否则只改 sortOrder/category 的对端改动会被廉价跳过
                         // （Bugbot: Sort and category skip sync）。全量更新分支已 Set 这两个字段，故这里必须纳入比较。
-                        || exEntry.SortOrder != fe.SortOrder || exEntry.Category != fe.Category;
+                        || exEntry.SortOrder != fe.SortOrder || exEntry.Category != fe.Category
+                        // 形态切换：现有为纯二进制文件，对端改成文本（哪怕空文本、其它字段没变）也必须走全量更新分支，
+                        // 否则空文本与「文件无 DocumentId 取到的 string.Empty」哈希相等 → 被廉价跳过，条目永远停在旧文件
+                        // （Codex: Handle empty text when replacing a synced file）。转换后 fullUpdate 写 DocumentId 并清
+                        // AttachmentId，下次 wasBinaryOnly 即为 false，无循环。
+                        || wasBinaryOnly;
                     var timestampsChanged = NeedsRecordTimestampRefresh(exEntry, fe, options.PreserveTimestamps);
                     if (!recordFieldsChanged && HasAppliedSourceContent(exEntry.Metadata, sourceContentHash))
                     {
@@ -511,6 +740,11 @@ public class DocumentStoreSyncResource : ISyncableResource
                         .Set(e => e.LastChangedAt, changedAt);
                     if (options.PreserveTimestamps && fe.CreatedAt.HasValue)
                         fullUpdate = fullUpdate.Set(e => e.CreatedAt, PickTime(fe.CreatedAt));
+                    // 仅「纯二进制 → 文本」转换才清 AttachmentId（与二进制路径清 DocumentId 对称）。
+                    // 双形态条目（DocumentId + AttachmentId 并存，如 PDF/DOCX）正常文本更新时**不**清 AttachmentId，
+                    // 否则 both 回流会让源头丢失原始文件引用（Codex P1: Preserve attachments on dual text/file records）。
+                    if (wasBinaryOnly)
+                        fullUpdate = fullUpdate.Set(e => e.AttachmentId, (string?)null);
 
                     await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exEntry.Id, fullUpdate, cancellationToken: ct);
                     await CleanupReplacedDocAsync(oldDocId, parsed.Id, exEntry.Id);
@@ -790,6 +1024,161 @@ public class DocumentStoreSyncResource : ISyncableResource
         return await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: fileName);
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // 二进制附件跨节点（peerAttachment）
+    // ─────────────────────────────────────────────────────────────
+
+    private sealed record PeerAttachmentInfo(
+        string SourceId, string Url, string? MimeType, string? FileName, long Size,
+        AttachmentType Type, string? ThumbnailUrl, string? ExtractedText);
+
+    /// <summary>从导出记录的 Extras["peerAttachment"] 解析附件元信息（旧节点 / 缺字段返回 false）。</summary>
+    private static bool TryReadPeerAttachment(SyncRecord record, out PeerAttachmentInfo info)
+    {
+        info = null!;
+        if (record.Extras == null
+            || !record.Extras.TryGetValue("peerAttachment", out var raw)
+            || raw.ValueKind != JsonValueKind.Object)
+            return false;
+        if (!raw.TryGetProperty("url", out var urlEl) || urlEl.ValueKind != JsonValueKind.String)
+            return false;
+        var url = urlEl.GetString();
+        if (string.IsNullOrWhiteSpace(url)) return false;
+
+        // sourceId 缺省（旧导出无该字段）时退回 url 自身作为身份，保持向下兼容。
+        var sourceId = raw.TryGetProperty("sourceId", out var sidEl) && sidEl.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(sidEl.GetString())
+            ? sidEl.GetString()! : url!;
+        string? mime = raw.TryGetProperty("mimeType", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+        string? fileName = raw.TryGetProperty("fileName", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
+        long size = raw.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt64(out var sv) ? sv : 0;
+        var type = raw.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String
+            && string.Equals(t.GetString(), nameof(AttachmentType.Document), StringComparison.OrdinalIgnoreCase)
+            ? AttachmentType.Document : AttachmentType.Image;
+        string? thumb = raw.TryGetProperty("thumbnailUrl", out var th) && th.ValueKind == JsonValueKind.String ? th.GetString() : null;
+        string? extracted = raw.TryGetProperty("extractedText", out var ex) && ex.ValueKind == JsonValueKind.String ? ex.GetString() : null;
+
+        info = new PeerAttachmentInfo(sourceId, url!, mime, fileName, size, type, thumb, extracted);
+        return true;
+    }
+
+    /// <summary>二进制条目的文本索引：取附件提取文本前 2000 字（无提取文本则 null，清掉旧文本残留）。</summary>
+    private static string? BinaryContentIndex(string? extractedText)
+        => string.IsNullOrEmpty(extractedText)
+            ? null
+            : (extractedText.Length > 2000 ? extractedText[..2000] : extractedText);
+
+    private static Attachment BuildAttachment(PeerAttachmentInfo pa, StoredAsset stored, string uploaderUserId)
+        => new()
+        {
+            UploaderId = uploaderUserId,
+            FileName = string.IsNullOrWhiteSpace(pa.FileName) ? Path.GetFileName(stored.Url) : pa.FileName!,
+            MimeType = string.IsNullOrWhiteSpace(pa.MimeType) ? stored.Mime : pa.MimeType!,
+            Size = pa.Size > 0 ? pa.Size : stored.SizeBytes,
+            Url = stored.Url,
+            Type = pa.Type,
+            ExtractedText = pa.ExtractedText,
+        };
+
+    /// <summary>缩略图（仅图片）尽力本地化：失败则置空，避免留下指向对端的悬挂 URL。</summary>
+    private async Task ReLocalizeAttachmentThumbnailAsync(Attachment att, PeerAttachmentInfo pa, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(pa.ThumbnailUrl)) return;
+        if (!Uri.TryCreate(pa.ThumbnailUrl, UriKind.Absolute, out var thumbUri) || thumbUri.Scheme is not ("http" or "https"))
+            return;
+        try
+        {
+            await _urlValidator.EnsureSafeHttpUrlAsync(thumbUri.ToString(), "peer-sync attachment thumbnail", ct);
+            var stored = await DownloadAndStoreAssetAsync(thumbUri, ct);
+            if (stored != null) att.ThumbnailUrl = stored.Url;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[peer-sync] thumbnail re-localize failed: {Url}", pa.ThumbnailUrl);
+        }
+    }
+
+    /// <summary>把对端附件 URL 解析为可下载的绝对地址：绝对 http(s) 直接用；相对路径（如本地存储后端返回的
+    /// <c>/api/...</c>）按 sourceBaseUrl 拼成绝对，使自托管/本地存储节点也能同步附件（Codex: relative peer attachment URLs）。</summary>
+    private static Uri? ResolvePeerAttachmentUri(string raw, string? sourceBaseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var abs))
+            return abs.Scheme is "http" or "https" ? abs : null;
+        if (raw.StartsWith("/", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(sourceBaseUrl)
+            && Uri.TryCreate(sourceBaseUrl.Trim().TrimEnd('/'), UriKind.Absolute, out var baseUri)
+            && baseUri.Scheme is "http" or "https"
+            && Uri.TryCreate(baseUri, raw, out var resolved)
+            && resolved.Scheme is "http" or "https")
+            return resolved;
+        return null;
+    }
+
+    /// <summary>下载对端附件文件并重传到本节点存储（通用，不限图片）。SSRF 防护 + 大小上限。</summary>
+    private async Task<StoredAsset?> DownloadAndStoreAttachmentAsync(PeerAttachmentInfo pa, string? sourceBaseUrl, CancellationToken ct)
+    {
+        var uri = ResolvePeerAttachmentUri(pa.Url, sourceBaseUrl);
+        if (uri == null)
+            return null;
+        await _urlValidator.EnsureSafeHttpUrlAsync(uri.ToString(), "peer-sync attachment", ct);
+
+        var client = _httpFactory.CreateClient("PeerSync");
+        client.Timeout = TimeSpan.FromSeconds(120);
+        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var length = response.Content.Headers.ContentLength;
+        if (length.HasValue && length.Value > MaxPeerAttachmentBytes)
+            return null;
+
+        // 边读边卡上限：对端若不带 Content-Length，直接 ReadAsByteArrayAsync 会把整个响应缓进内存后才判超限，
+        // 恶意/超大附件可远超 50MB 撑爆内存、拖死同步 worker（Codex P2）。改为流式拷贝，越界即中止。
+        byte[] bytes;
+        await using (var src = await response.Content.ReadAsStreamAsync(ct))
+        using (var ms = new MemoryStream())
+        {
+            var buffer = new byte[81920];
+            long total = 0;
+            int read;
+            while ((read = await src.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
+            {
+                total += read;
+                if (total > MaxPeerAttachmentBytes)
+                    return null;
+                ms.Write(buffer, 0, read);
+            }
+            bytes = ms.ToArray();
+        }
+
+        var mime = !string.IsNullOrWhiteSpace(pa.MimeType)
+            ? pa.MimeType!
+            : response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+        var fileName = !string.IsNullOrWhiteSpace(pa.FileName) ? pa.FileName : Path.GetFileName(uri.LocalPath);
+        return await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: fileName);
+    }
+
+    private static Dictionary<string, string> WithPeerSourceAttachment(Dictionary<string, string> metadata, string sourceUrl, long sourceSize)
+    {
+        metadata[PeerSourceAttachmentUrlKey] = sourceUrl;
+        if (sourceSize > 0)
+            metadata[PeerSourceAttachmentSizeKey] = sourceSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return metadata;
+    }
+
+    private static bool HasAppliedSourceAttachment(Dictionary<string, string>? metadata, string sourceUrl)
+        => metadata != null
+            && metadata.TryGetValue(PeerSourceAttachmentUrlKey, out var applied)
+            && string.Equals(applied, sourceUrl, StringComparison.Ordinal);
+
+    /// <summary>已记录的源头附件字节数（与导出端 pa.Size 同口径）；未记录返回 null（退回仅 URL 判定）。</summary>
+    private static long? AppliedSourceAttachmentSize(Dictionary<string, string>? metadata)
+        => metadata != null
+            && metadata.TryGetValue(PeerSourceAttachmentSizeKey, out var raw)
+            && long.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var v)
+            ? v : (long?)null;
+
     private IEnumerable<Uri> GetConfiguredAssetBaseUris()
     {
         var keys = new[]
@@ -992,8 +1381,12 @@ public class DocumentStoreSyncResource : ISyncableResource
 
     private static bool MetaEqual(Dictionary<string, string>? a, Dictionary<string, string>? b)
     {
+        // 这三个键都是接收方在 apply 时单边写入的同步内部标记（源端 metadata 没有），
+        // 比对前必须剥离，否则「收到的 metadata 没有该键、本地有」会让 MetaEqual 恒判不等，
+        // 导致二进制/文本条目每次重同步都被当作「已变化」反复重写（Bugbot: MetaEqual ignores attachment URL key）。
         static string Norm(Dictionary<string, string>? m) => string.Join("\n", (m ?? new())
-            .Where(kv => kv.Key != SyncLineageKey && kv.Key != PeerSourceContentHashKey)
+            .Where(kv => kv.Key != SyncLineageKey && kv.Key != PeerSourceContentHashKey
+                && kv.Key != PeerSourceAttachmentUrlKey && kv.Key != PeerSourceAttachmentSizeKey)
             .OrderBy(kv => kv.Key, StringComparer.Ordinal)
             .Select(kv => kv.Key + "=" + kv.Value));
         return Norm(a) == Norm(b);

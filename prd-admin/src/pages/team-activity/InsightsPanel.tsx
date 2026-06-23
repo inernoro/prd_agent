@@ -243,17 +243,26 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     reload();
   }, [reload]);
 
-  // 浮层 ESC 关闭：全屏优先于下钻抽屉（栈式关闭）
+  // brief 对象每次渲染都是新引用（useSseStream 返回），用 ref 持有最新值，避免把它放进 ESC effect 依赖
+  // 导致每帧（尤其流式 delta 时）重挂 keydown 监听。
+  const briefRef = useRef(brief);
+  briefRef.current = brief;
+
+  // 浮层 ESC 关闭：按视觉层叠从上往下关。全屏最高；AI 用户分析抽屉的 portal 在下钻抽屉之后渲染，
+  // 同 z-[100] 下叠在下钻抽屉之上，故 brief 必须先于 drill 关，避免 ESC 关掉被盖住的 drill 而可见的 brief 仍开着。
   useEffect(() => {
-    if (!fullscreenOpen && !drillTarget) return;
+    if (!fullscreenOpen && !drillTarget && !briefOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (fullscreenOpen) setFullscreenOpen(false);
-      else closeDrill();
+      else if (briefOpen) {
+        briefRef.current.abort();
+        setBriefOpen(false);
+      } else if (drillTarget) closeDrill();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreenOpen, drillTarget, closeDrill]);
+  }, [fullscreenOpen, drillTarget, briefOpen, closeDrill]);
 
   const setState = useCallback(
     async (item: BehaviorInsight, status: 'confirmed' | 'resolved' | 'ignored' | 'open') => {
@@ -414,6 +423,20 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     );
   }
 
+  // 热力图头部常驻「AI 用户分析」入口：仪表盘填满整屏后，底部数据行那个触发按钮会落到首屏之下，
+  // 故在首屏可见的热力图卡头再放一个常驻入口（一键直达、点击才分析、不常驻空跑），底部那个保留。
+  const aiAnalysisHeaderBtn = (
+    <button
+      type="button"
+      onClick={startBrief}
+      title="从行为信号读懂用户此刻的处境（点击才分析）"
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border bg-cyan-500/10 text-cyan-200/90 border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+    >
+      <ScrollText size={11} />
+      AI 用户分析
+    </button>
+  );
+
   // 端点地图格头部右侧：热力图 ⇄ 站点地图 子切换器（端点地图的两种铺法，共用一格，不单独占格）
   const mapModeSwitcher = (
     <div className="inline-flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
@@ -438,7 +461,15 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     </div>
   );
 
-  // 端点地图格（热力图 ⇄ 站点地图）。两者都是端点地图，共用同一格，靠 headerExtra 注入子切换器。
+  // 头部右侧注入：AI 用户分析常驻入口 + 热力图⇄站点地图 子切换器（mapModeSwitcher 须先定义，避免 TDZ）
+  const mapHeaderExtra = (
+    <span className="inline-flex items-center gap-2 shrink-0">
+      {aiAnalysisHeaderBtn}
+      {mapModeSwitcher}
+    </span>
+  );
+
+  // 端点地图格（热力图 ⇄ 站点地图）。两者都是端点地图，共用同一格，靠 headerExtra 注入入口 + 子切换器。
   // compact=true（桌面格内/移动单图）时给热力图挂全屏按钮，格里小、全屏看大。
   const renderMapTile = () =>
     mapMode === 'heatmap' ? (
@@ -447,10 +478,10 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
         loading={loading}
         onSelectTarget={handleSelectTarget}
         onRequestFullscreen={() => setFullscreenOpen(true)}
-        headerExtra={mapModeSwitcher}
+        headerExtra={mapHeaderExtra}
       />
     ) : (
-      <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mapModeSwitcher} />
+      <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mapHeaderExtra} />
     );
 
   // 趋势格：桌面四图仪表盘传 hideWhenEmpty（无数据直接 null，让 grid 自适应铺满剩余格 + 上报空态）；
@@ -467,59 +498,55 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const renderStatsTile = () => (data ? <ExperienceStats items={data.items} /> : null);
   const renderBoardTile = () => <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} from={from} to={to} />;
 
-  // 桌面端（lg+）Bento 看板：四块大小不一拼成一张满看板（参照 behavior-insights-bento-demo.html）。
-  // 12 列 grid + 固定行高，每块按内容定大小：
-  //   - 热力图 hero：col-span-7 / row-span-2（左侧大块跨两行当主角）
-  //   - 趋势爆点：col-span-5 / row-span-1（右上宽而矮）
-  //   - 痛点指数：col-span-2 / row-span-1（最小方块）
-  //   - 声道看板：col-span-3 / row-span-1（右下中等）
-  // 「自由融合」：趋势无数据时整块移出布局，痛点指数 + 声道看板各长到 col-span-5 上下堆满右 5 列，
-  //   热力图主角不变，不留任何空洞。
+  // 桌面端（lg+）Bento 看板：全景热力图为主角。
+  // 12 列 grid 撑满首屏（gridTemplateRows 1fr/1fr + height:100%），热力图占 8 列（约 2/3）× 2 行满高；
+  //   其余仪表盘压在右 4 列（约 1/3，用户选定折中比例）：
+  //   - 热力图 hero：col-span-8 / row-span-2（左侧大块当主角）
+  //   - 右 1/3：趋势整宽在上（col-span-4），痛点指数仪表盘 + 声道并排在下（各 col-span-2）——给足高度让仪表盘完整渲染
+  // 「自由融合」：趋势无数据时整块移出，痛点指数 + 声道上下各占一行吸收其高度，热力图主角不变。
   // 布局关键尺寸（gridColumn/gridRow span、grid-template）一律走 inline style（frontend-modal 习惯，
   //   避免 Tailwind arbitrary span 在某些构建路径不生效）。
   const renderDesktopDashboard = () => {
-    // 各块 span：趋势有无数据两套尺寸（趋势无数据时 stats/board 吸收右 5 列上下堆叠）。
     const span = (col: number, row: number): CSSProperties => ({
       gridColumn: `span ${col}`,
       gridRow: `span ${row}`,
       minHeight: 0,
     });
-    const mapSpan = span(7, 2);
-    const trendSpan = span(5, 1);
-    const statsSpan = trendEmpty ? span(5, 1) : span(2, 1);
-    const boardSpan = trendEmpty ? span(5, 1) : span(3, 1);
 
     return (
-      <div className="hidden lg:block">
+      <div className="hidden lg:block h-full">
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
-            gridAutoRows: '244px',
+            gridTemplateRows: '1fr 1fr',
             gap: '12px',
+            height: '100%',
+            minHeight: 0,
             transition: 'grid-template-rows .4s',
           }}
         >
-          {/* 热力图 hero（跨两行主角）：内部 voc-hero-swap 入场 + 子切换 morph */}
-          <div style={mapSpan}>
+          {/* 热力图 hero（8 列 × 2 行主角，约占 2/3）：内部 voc-hero-swap 入场 + 子切换 morph */}
+          <div style={span(8, 2)}>
             <div key={mapMode} className="h-full" style={{ animation: 'voc-hero-swap .3s cubic-bezier(.22,1,.36,1) both', minHeight: 0 }}>
               {renderMapTile()}
             </div>
           </div>
-          {/* 趋势爆点（宽而矮）：有数据才进布局；无数据整块移出，由 stats/board 吸收 */}
-          {trendEmpty ? null : (
-            <div style={trendSpan} className="voc-bento-tile">
-              {renderTrendTile(true)}
-            </div>
+          {/* 右 1/3 列（4 列 × 2 行）：还原图2排布——趋势在上整宽，痛点指数 + 声道在下并排。
+              填满整屏后每格高度足够，痛点指数仪表盘与声道卡片都能完整渲染（不再被压扁裁掉）。
+              趋势无数据时整块移出，痛点指数 + 声道上下各占一行吸收其高度。 */}
+          {trendEmpty ? (
+            <>
+              <div style={span(4, 1)} className="voc-bento-tile">{renderStatsTile()}</div>
+              <div style={span(4, 1)} className="voc-bento-tile">{renderBoardTile()}</div>
+            </>
+          ) : (
+            <>
+              <div style={span(4, 1)} className="voc-bento-tile">{renderTrendTile(true)}</div>
+              <div style={span(2, 1)} className="voc-bento-tile">{renderStatsTile()}</div>
+              <div style={span(2, 1)} className="voc-bento-tile">{renderBoardTile()}</div>
+            </>
           )}
-          {/* 痛点指数（满数据时最小方块，趋势空时长成右 5 列上块） */}
-          <div style={statsSpan} className="voc-bento-tile">
-            {renderStatsTile()}
-          </div>
-          {/* 声道看板（满数据时中等，趋势空时长成右 5 列下块） */}
-          <div style={boardSpan} className="voc-bento-tile">
-            {renderBoardTile()}
-          </div>
         </div>
         {/* 趋势隐藏时的持续挂载点：不占布局，仅维持订阅 + 空态上报，使窗口切到有数据时本格能复现 */}
         {trendEmpty ? <div style={{ display: 'none' }}>{renderTrendTile(true)}</div> : null}
@@ -570,19 +597,21 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
 
   return (
     <GlassCard className="flex-1 flex flex-col" mobileFlush style={{ minHeight: 0 }}>
-      <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-        <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }
-          @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
-          @keyframes voc-hero-swap { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-          /* Bento 格：span 变化时平滑过渡（趋势吸收/补满有动效），内部卡撑满格高 */
-          .voc-bento-tile { transition: grid-column .45s cubic-bezier(.2,.7,.2,1), grid-row .45s cubic-bezier(.2,.7,.2,1); min-height: 0; }
-          .voc-bento-tile > * { height: 100%; min-height: 0; }`}</style>
-        {/* 闭环 ribbon：监测 → 预警 → AI 根因 → 转缺陷 → 修复追踪 → 复测回落，从热力图/洞察现算 */}
-        <div className="px-1.5 pt-2 sm:px-5 sm:pt-4">
-          <ExperienceRibbon mapData={mapData} insights={data} />
-          {/* Hero：桌面 2×2 四图仪表盘 / 移动单图切换。切换时间窗(loading && data)时叠一层「更新中」过渡态，
-              旧内容保持可见，数据到达后各图走自己的补间平滑过渡。 */}
-          <div className="relative">
+      <style>{`.voc-row-flash { box-shadow: inset 0 0 0 2px rgba(45,212,191,0.7); border-radius: 6px; }
+        @keyframes voc-shimmer-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+        @keyframes voc-hero-swap { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes voc-drawer-in { from { transform: translateX(36px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        /* Bento 格：span 变化时平滑过渡（趋势吸收/补满有动效），内部卡撑满格高 */
+        .voc-bento-tile { transition: grid-column .45s cubic-bezier(.2,.7,.2,1), grid-row .45s cubic-bezier(.2,.7,.2,1); min-height: 0; }
+        .voc-bento-tile > * { height: 100%; min-height: 0; }`}</style>
+      {/* 闭环 ribbon 作为固定头部（不随内容滚动），让下方 hero 能精确填满滚动视口首屏 */}
+      <div className="px-1.5 pt-2 sm:px-5 sm:pt-4 shrink-0">
+        <ExperienceRibbon mapData={mapData} insights={data} />
+      </div>
+      {/* 滚动区：hero 桌面填满首屏（lg:h-full），底部数据行 + 痛点明细全宽放其下方、滚动可见 */}
+      <div className="flex-1 flex flex-col" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+        {/* Hero：桌面 2/3 热力图 + 1/3 仪表盘填满首屏 / 移动单图切换。切换时间窗(loading && data)叠「更新中」过渡态。 */}
+        <div className="relative px-1.5 sm:px-5 lg:h-full lg:shrink-0">
             {renderHeroView()}
             {loading && data ? (
               <div
@@ -603,7 +632,6 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               </div>
             ) : null}
           </div>
-        </div>
         {/* 数据源状态行：诚实告知信号从哪来、采集到什么程度 */}
         {data ? (
           <div className="sticky top-0 z-10 flex items-center gap-3 flex-wrap px-2 sm:px-5 py-2.5 text-[11px] text-white/40 border-b border-white/[0.05] backdrop-blur-md" style={{ background: 'rgba(16,17,19,0.72)' }}>
@@ -624,7 +652,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               className="inline-flex items-center gap-1 px-2 h-[20px] rounded text-[11px] border bg-cyan-500/10 text-cyan-200/90 border-cyan-500/25 hover:bg-cyan-500/20 transition-colors cursor-pointer"
             >
               <ScrollText size={11} />
-              AI 简报
+              AI 用户分析
             </button>
             {data.ignoredCount > 0 || includeIgnored ? (
               <button
@@ -635,64 +663,6 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                 <IgnoreIcon size={11} />
                 {includeIgnored ? '隐藏已忽略' : `查看已忽略（${data.ignoredCount}）`}
               </button>
-            ) : null}
-          </div>
-        ) : null}
-
-        {briefOpen ? (
-          <div className="px-2 sm:px-5 py-4 border-b border-white/[0.05] flex flex-col gap-2.5">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="text-[11px] font-semibold text-cyan-200/90">AI 洞察简报</span>
-              {briefModel ? <span className="text-[10px] text-white/30 font-mono">{briefModel}</span> : null}
-              {brief.phase === 'connecting' || brief.phase === 'streaming' ? (
-                <span className="inline-flex items-center gap-1.5 text-[11px] text-white/40">
-                  <MapSpinner size={12} />
-                  {brief.phaseMessage || '生成中…'}
-                </span>
-              ) : null}
-              {brief.phase === 'done' && !briefComplete ? (
-                <span className="inline-flex items-center gap-1 text-[11px] text-amber-200/80">
-                  生成被中断（连接断开或超长截断），建议重新生成
-                </span>
-              ) : null}
-              <span className="ml-auto flex items-center gap-1.5">
-                {brief.phase === 'done' ? (
-                  <ActionButton onClick={startBrief} icon={RotateCcw} label="重新生成" />
-                ) : null}
-                {brief.phase === 'done' && briefComplete && brief.typing.trim() ? (
-                  publishedTitle ? (
-                    <span className="inline-flex items-center gap-1 px-2 h-[22px] rounded text-[11px] bg-emerald-500/10 text-emerald-200/80 border border-emerald-500/25">
-                      <CheckCircle2 size={11} />
-                      已发布
-                    </span>
-                  ) : (
-                    <ActionButton
-                      onClick={() => void publishBrief()}
-                      icon={BookOpen}
-                      label={publishing ? '发布中…' : '发布到知识库'}
-                      emphasis
-                      disabled={publishing}
-                    />
-                  )
-                ) : null}
-                <ActionButton
-                  onClick={() => {
-                    brief.abort();
-                    setBriefOpen(false);
-                  }}
-                  icon={X}
-                  label="关闭"
-                />
-              </span>
-            </div>
-            {brief.typing ? (
-              <div className="rounded-md px-3.5 py-3 bg-white/[0.02] border border-white/[0.05] text-[12.5px] leading-relaxed text-white/75 max-h-[360px]" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                {brief.phase === 'done' ? (
-                  <MarkdownContent content={brief.typing} variant="reading" />
-                ) : (
-                  <StreamingText text={brief.typing} streaming mode="blur" />
-                )}
-              </div>
             ) : null}
           </div>
         ) : null}
@@ -843,6 +813,116 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                 />
               </div>
               <style>{`@keyframes voc-drawer-in { from { transform: translateX(36px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }`}</style>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {/* AI 用户分析抽屉：从行为信号聚合的用户画像/处境简报。由数据源行「AI 用户分析」按钮点击触发，
+          右侧滑入浮层（与端点下钻同一种抽屉，不挤占热力图、不常驻空跑）。遵守 frontend-modal.md：
+          createPortal + 关键尺寸 inline style + 滚动区 min-h:0 + overscroll contain + z-[100] + ESC/遮罩关闭。 */}
+      {briefOpen
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[100] flex justify-end"
+              style={{ background: 'rgba(0,0,0,0.5)' }}
+              onClick={() => {
+                brief.abort();
+                setBriefOpen(false);
+              }}
+            >
+              <div
+                className="flex flex-col border-l border-white/10"
+                style={{
+                  width: 'min(440px, 94vw)',
+                  height: '100vh',
+                  background: '#16171b',
+                  boxShadow: '-24px 0 80px rgba(0,0,0,0.5)',
+                  animation: 'voc-drawer-in .26s cubic-bezier(.22,1,.36,1)',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* 头部：标题 + 模型可见（ai-model-visibility）+ 关闭 */}
+                <div className="flex items-center gap-2.5 px-4 pt-4 pb-3 border-b border-white/[0.06] shrink-0">
+                  <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'rgba(45,212,191,0.12)' }}>
+                    <ScrollText size={15} className="text-cyan-300/90" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-semibold text-white/85">AI 用户分析</div>
+                    <div className="text-[10px] text-white/35 truncate font-mono">
+                      {briefModel ?? '从行为信号读懂用户此刻的处境'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      brief.abort();
+                      setBriefOpen(false);
+                    }}
+                    title="关闭（ESC）"
+                    className="ml-auto inline-flex items-center justify-center w-7 h-7 rounded-md border border-white/10 bg-white/[0.03] text-white/55 hover:text-white/90 hover:border-white/25 transition-colors cursor-pointer"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                {/* 阶段状态行：禁止空白等待——连接/生成期有持续反馈 */}
+                {brief.phase === 'connecting' || brief.phase === 'streaming' ? (
+                  <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] text-white/45 shrink-0">
+                    <MapSpinner size={12} />
+                    {brief.phaseMessage || '正在从行为信号中聚合用户画像…'}
+                  </div>
+                ) : null}
+                {brief.phase === 'done' && !briefComplete ? (
+                  <div className="px-4 pt-3 text-[11px] text-amber-200/80 shrink-0">
+                    生成被中断（连接断开或超长截断），建议重新生成
+                  </div>
+                ) : null}
+                {/* 正文：流式逐字 / 完成态 markdown；未出字时给加载态过渡（artifact-is-experience） */}
+                <div className="flex-1 min-h-0 px-4 py-3.5" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                  {brief.typing ? (
+                    brief.phase === 'done' ? (
+                      <MarkdownContent content={brief.typing} variant="reading" />
+                    ) : (
+                      <div className="text-[12.5px] leading-relaxed text-white/80">
+                        <StreamingText text={brief.typing} streaming mode="blur" />
+                      </div>
+                    )
+                  ) : brief.phase === 'connecting' || brief.phase === 'streaming' ? (
+                    <MapSectionLoader text="正在聚合用户画像…" />
+                  ) : (
+                    // 终态空（error / 无 delta 的 done）：别再转 loader 假装在聚合，给明确空/错误态 + 重新生成
+                    <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+                      <Radar size={28} className="text-white/20" />
+                      <div className="text-[12.5px] text-white/55">
+                        {brief.phase === 'error' ? (brief.phaseMessage || '生成失败，请重试') : '本次没有生成内容，请重试'}
+                      </div>
+                      <ActionButton onClick={startBrief} icon={RotateCcw} label="重新生成" />
+                    </div>
+                  )}
+                </div>
+                {/* 底部操作：重新生成 / 发布到知识库（与原内联面板等价） */}
+                <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-t border-white/[0.06]" style={{ background: 'rgba(0,0,0,0.18)' }}>
+                  {brief.phase === 'done' ? (
+                    <ActionButton onClick={startBrief} icon={RotateCcw} label="重新生成" />
+                  ) : null}
+                  {brief.phase === 'done' && briefComplete && brief.typing.trim() ? (
+                    publishedTitle ? (
+                      <span className="inline-flex items-center gap-1 px-2 h-[22px] rounded text-[11px] bg-emerald-500/10 text-emerald-200/80 border border-emerald-500/25">
+                        <CheckCircle2 size={11} />
+                        已发布
+                      </span>
+                    ) : (
+                      <ActionButton
+                        onClick={() => void publishBrief()}
+                        icon={BookOpen}
+                        label={publishing ? '发布中…' : '发布到知识库'}
+                        emphasis
+                        disabled={publishing}
+                      />
+                    )
+                  ) : null}
+                </div>
+              </div>
             </div>,
             document.body
           )

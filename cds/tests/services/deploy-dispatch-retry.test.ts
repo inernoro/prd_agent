@@ -74,3 +74,69 @@ describe('shouldRetryInterruptedWebhookDispatch', () => {
     });
   });
 });
+
+describe('shouldRetryInterruptedWebhookDispatch — 重试风暴护栏 (opt-in options)', () => {
+  it('skips retry when the project is paused', () => {
+    expect(shouldRetryInterruptedWebhookDispatch(branch(), result, { isProjectPaused: true })).toMatchObject({
+      retry: false,
+      reason: 'project-paused',
+    });
+  });
+
+  it('skips retry while an operation is already in progress', () => {
+    expect(shouldRetryInterruptedWebhookDispatch(branch({ status: 'building' }), result, {
+      skipWhenOperationActive: true,
+    })).toMatchObject({
+      retry: false,
+      reason: 'operation-in-progress:building',
+    });
+  });
+
+  it('gives up once the retry cap is reached', () => {
+    expect(shouldRetryInterruptedWebhookDispatch(branch({ deployDispatchRetryCount: 3 }), result, {
+      maxRetries: 3,
+    })).toMatchObject({
+      retry: false,
+      reason: 'retry-cap-reached',
+    });
+  });
+
+  it('gives up once the dispatch is older than the age cap (anchored on first dispatch)', () => {
+    expect(shouldRetryInterruptedWebhookDispatch(branch({
+      deployDispatchFirstAt: '2026-05-26T00:00:00.000Z',
+    }), result, {
+      now: new Date('2026-05-26T12:30:00.000Z'),
+      maxAgeMs: 6 * 60 * 60 * 1000,
+    })).toMatchObject({
+      retry: false,
+      reason: 'dispatch-too-old',
+    });
+  });
+
+  it('holds off during the exponential backoff window', () => {
+    expect(shouldRetryInterruptedWebhookDispatch(branch({ deployDispatchRetryCount: 1 }), result, {
+      now: new Date('2026-05-26T12:02:00.000Z'),
+      baseBackoffMs: 5 * 60 * 1000,
+    })).toMatchObject({
+      retry: false,
+      reason: 'backoff-pending',
+    });
+  });
+
+  it('still retries when every guard is within budget', () => {
+    expect(shouldRetryInterruptedWebhookDispatch(branch({
+      deployDispatchRetryCount: 1,
+      deployDispatchFirstAt: '2026-05-26T11:55:00.000Z',
+    }), result, {
+      now: new Date('2026-05-26T12:20:00.000Z'),
+      isProjectPaused: false,
+      skipWhenOperationActive: true,
+      maxRetries: 3,
+      maxAgeMs: 6 * 60 * 60 * 1000,
+      baseBackoffMs: 5 * 60 * 1000,
+    })).toMatchObject({
+      retry: true,
+      reason: 'stale-webhook-dispatch-safe-to-retry',
+    });
+  });
+});
