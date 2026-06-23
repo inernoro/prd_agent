@@ -175,15 +175,19 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
   let resolved: BuildProfile = profile;
   if (mode && profile.deployModes?.[mode]) {
     const override = profile.deployModes[mode];
+    // 2026-06-23 极速版：prebuilt 模式跳过 source mount(复用 prebuiltImage 语义),
+    // containerPort 覆盖预构建镜像监听端口(api/admin 生产镜像 8080,与源码模式不同)。
+    const willBePrebuilt = override.prebuilt ?? profile.prebuiltImage ?? false;
     resolved = {
       ...profile,
-      command: override.command ?? profile.command,
+      // prebuilt 模式若未显式给 command,**不继承** baseline 的源码构建命令
+      // (镜像里没有 SDK/源码,跑 baseline 命令必失败),置空 → runService 用镜像
+      // 自带 ENTRYPOINT/CMD 启动。
+      command: override.command ?? (willBePrebuilt ? '' : profile.command),
       dockerImage: override.dockerImage ?? profile.dockerImage,
       env: override.env
         ? { ...profile.env, ...override.env }
         : profile.env,
-      // 2026-06-23 极速版：prebuilt 模式跳过 source mount(复用 prebuiltImage 语义),
-      // containerPort 覆盖预构建镜像监听端口(api/admin 生产镜像 8080,与源码模式不同)。
       ...(override.prebuilt !== undefined ? { prebuiltImage: override.prebuilt } : {}),
       ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
     };

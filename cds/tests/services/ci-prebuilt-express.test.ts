@@ -100,6 +100,8 @@ describe('极速版 — 纯函数', () => {
     expect(eff.prebuiltImage).toBe(true);
     expect(eff.containerPort).toBe(8080);
     expect(eff.dockerImage).toBe(`ghcr.io/inernoro/prd_agent/prdagent-server:sha-${FULL_SHA}`);
+    // 关键：express 无 command 时不继承 baseline 源码命令,置空 → 用镜像 ENTRYPOINT。
+    expect(eff.command || '').toBe('');
   });
 });
 
