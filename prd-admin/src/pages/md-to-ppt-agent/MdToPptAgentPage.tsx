@@ -1250,13 +1250,18 @@ export function MdToPptAgentPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // ─── CDS 连接门禁：进入页面即检测，未连接整页禁用（item 1）
-  useEffect(() => {
-    let alive = true;
+  // seq 守卫：重新检测可能与挂载检测/连点并发，慢的旧响应不得覆盖新结果（Bugbot Medium）
+  const connCheckSeqRef = useRef(0);
+  const runConnectionCheck = useCallback(() => {
+    const seq = ++connCheckSeqRef.current;
+    setConnStatus('checking');
     void getMdToPptConnectionStatus().then((connected) => {
-      if (alive) setConnStatus(connected ? 'connected' : 'disconnected');
+      if (seq === connCheckSeqRef.current) setConnStatus(connected ? 'connected' : 'disconnected');
     });
-    return () => { alive = false; };
   }, []);
+  useEffect(() => {
+    runConnectionCheck();
+  }, [runConnectionCheck]);
 
   // ─── Elapsed timer for artifact progress
   useEffect(() => {
@@ -2494,10 +2499,7 @@ export function MdToPptAgentPage() {
                 <ChevronRight size={13} />
               </button>
               <button
-                onClick={() => {
-                  setConnStatus('checking');
-                  void getMdToPptConnectionStatus().then((c) => setConnStatus(c ? 'connected' : 'disconnected'));
-                }}
+                onClick={runConnectionCheck}
                 className="text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] underline"
               >
                 已完成连接？点此重新检测
