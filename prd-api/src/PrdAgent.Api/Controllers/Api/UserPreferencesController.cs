@@ -56,8 +56,37 @@ public class UserPreferencesController : ControllerBase
             themeConfig = prefs?.ThemeConfig,
             visualAgentPreferences = prefs?.VisualAgentPreferences,
             literaryAgentPreferences = prefs?.LiteraryAgentPreferences,
-            agentSwitcherPreferences = prefs?.AgentSwitcherPreferences
+            agentSwitcherPreferences = prefs?.AgentSwitcherPreferences,
+            documentStorePinnedIds = prefs?.DocumentStorePinnedIds ?? new List<string>()
         }));
+    }
+
+    /// <summary>
+    /// 更新置顶的知识库 ID 列表（用户级，跨设备/重登录保持）
+    /// </summary>
+    [HttpPut("doc-store-pins")]
+    public async Task<IActionResult> UpdateDocumentStorePins([FromBody] UpdateDocumentStorePinsRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        var ids = (request.DocumentStorePinnedIds ?? new List<string>())
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct()
+            .Take(200)
+            .ToList();
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.DocumentStorePinnedIds, ids)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { documentStorePinnedIds = ids }));
     }
 
     /// <summary>
@@ -243,6 +272,11 @@ public class UserPreferencesController : ControllerBase
 public class UpdateNavOrderRequest
 {
     public List<string>? NavOrder { get; set; }
+}
+
+public class UpdateDocumentStorePinsRequest
+{
+    public List<string>? DocumentStorePinnedIds { get; set; }
 }
 
 public class UpdateNavHiddenRequest

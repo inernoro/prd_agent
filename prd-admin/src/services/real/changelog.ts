@@ -130,6 +130,29 @@ export interface GitHubLogsView {
   logs: GitHubLogEntry[];
 }
 
+export interface GitHubPendingReviewEntry {
+  number: number;
+  title: string;
+  authorName: string;
+  authorAvatarUrl?: string | null;
+  headBranch: string;
+  baseBranch: string;
+  headSha: string;
+  shortSha: string;
+  isDraft: boolean;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+  htmlUrl: string;
+}
+
+export interface GitHubPendingReviewView {
+  dataSourceAvailable: boolean;
+  source: 'github' | 'none';
+  fetchedAt: string;
+  totalCount?: number;
+  items: GitHubPendingReviewEntry[];
+}
+
 // ============ API Calls ============
 
 /**
@@ -178,7 +201,17 @@ export async function getChangelogGitHubLogs(opts: {
   return await apiRequest<GitHubLogsView>(api.changelog.githubLogs(opts), { method: 'GET' });
 }
 
-export type ChangelogAiSummarySubtab = 'releases' | 'fragments' | 'github_logs';
+/**
+ * 获取 GitHub 待审核提交（open PR），用于展示尚未 merge、不会出现在 commits 列表里的修复分支。
+ */
+export async function getChangelogGitHubPendingReview(opts: {
+  limit?: number;
+  force?: boolean;
+} = {}): Promise<ApiResponse<GitHubPendingReviewView>> {
+  return await apiRequest<GitHubPendingReviewView>(api.changelog.githubPendingReview(opts), { method: 'GET' });
+}
+
+export type ChangelogAiSummarySubtab = 'releases' | 'fragments' | 'github_logs' | 'github_pending_review';
 
 export interface ChangelogAiSummaryDto {
   title: string;

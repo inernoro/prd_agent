@@ -320,6 +320,20 @@ public class ChangelogController : ControllerBase
         return aliases;
     }
 
+    /// <summary>
+    /// GitHub 待审核提交（open PR）。用于展示自动化修复已经提交但尚未合入发布流水的 PR。
+    /// </summary>
+    [HttpGet("github-pending-review")]
+    public async Task<IActionResult> GetGitHubPendingReview(
+        [FromQuery] int limit = 50,
+        [FromQuery] bool force = false)
+    {
+        if (limit <= 0 || limit > 100) limit = 50;
+        var view = await _reader.GetGitHubPendingReviewAsync(limit, force).ConfigureAwait(false);
+        if (!force) SetClientCacheHeaders();
+        return Ok(ApiResponse<GitHubPendingReviewDto>.Ok(MapGitHubPendingReview(view)));
+    }
+
     // ── GitHub 作者名 ↔ 系统用户 彩蛋匹配 ────────────────────────────
 
     private sealed record GitHubUserMatchCandidate(
@@ -509,6 +523,18 @@ public class ChangelogController : ControllerBase
 
                 payload = new { subtab = "github_logs", data = gv };
                 sceneLabel = "GitHub 日志";
+                break;
+            }
+            case "github_pending_review":
+            {
+                var pv = await _reader.GetGitHubPendingReviewAsync(30, false).ConfigureAwait(false);
+                if (pv.Items.Count == 0)
+                {
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "当前没有可总结的 GitHub 待审核提交"));
+                }
+
+                payload = new { subtab = "github_pending_review", data = pv };
+                sceneLabel = "GitHub 待审核提交";
                 break;
             }
             default:
@@ -746,6 +772,29 @@ public class ChangelogController : ControllerBase
         Description = e.Description,
     };
 
+    private static GitHubPendingReviewDto MapGitHubPendingReview(GitHubPendingReviewView view) => new()
+    {
+        DataSourceAvailable = view.DataSourceAvailable,
+        Source = view.Source,
+        FetchedAt = view.FetchedAt.ToString("o"),
+        TotalCount = view.TotalCount,
+        Items = view.Items.ConvertAll(item => new GitHubPendingReviewEntryDto
+        {
+            Number = item.Number,
+            Title = item.Title,
+            AuthorName = item.AuthorName,
+            AuthorAvatarUrl = item.AuthorAvatarUrl,
+            HeadBranch = item.HeadBranch,
+            BaseBranch = item.BaseBranch,
+            HeadSha = item.HeadSha,
+            ShortSha = item.ShortSha,
+            IsDraft = item.IsDraft,
+            CreatedAtUtc = item.CreatedAtUtc.ToString("o"),
+            UpdatedAtUtc = item.UpdatedAtUtc.ToString("o"),
+            HtmlUrl = item.HtmlUrl,
+        }),
+    };
+
     private static ReleasesView FilterReleasesForSummary(ReleasesView v, string? typeFilter)
     {
         if (string.IsNullOrWhiteSpace(typeFilter))
@@ -884,7 +933,7 @@ public class ChangelogController : ControllerBase
 
     public sealed class ChangelogAiSummaryRequest
     {
-        /// <summary>releases / fragments / github_logs</summary>
+        /// <summary>releases / fragments / github_logs / github_pending_review</summary>
         public string Subtab { get; set; } = "";
         public string? TypeFilter { get; set; }
     }
@@ -1026,5 +1075,30 @@ public class ChangelogController : ControllerBase
         /// <summary>下一页 cursor（=本批次最后一条的 sha），前端传给 before 参数取下一批</summary>
         public string? NextCursor { get; set; }
         public List<GitHubLogEntryDto> Logs { get; set; } = new();
+    }
+
+    public sealed class GitHubPendingReviewEntryDto
+    {
+        public int Number { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string AuthorName { get; set; } = string.Empty;
+        public string? AuthorAvatarUrl { get; set; }
+        public string HeadBranch { get; set; } = string.Empty;
+        public string BaseBranch { get; set; } = string.Empty;
+        public string HeadSha { get; set; } = string.Empty;
+        public string ShortSha { get; set; } = string.Empty;
+        public bool IsDraft { get; set; }
+        public string CreatedAtUtc { get; set; } = string.Empty;
+        public string UpdatedAtUtc { get; set; } = string.Empty;
+        public string HtmlUrl { get; set; } = string.Empty;
+    }
+
+    public sealed class GitHubPendingReviewDto
+    {
+        public bool DataSourceAvailable { get; set; }
+        public string Source { get; set; } = "none";
+        public string FetchedAt { get; set; } = string.Empty;
+        public int TotalCount { get; set; }
+        public List<GitHubPendingReviewEntryDto> Items { get; set; } = new();
     }
 }

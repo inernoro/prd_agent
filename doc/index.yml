@@ -43,6 +43,7 @@ docs:
   spec.cds-compose-contract: CDS Compose 契约（SSOT）
   spec.cds-lifecycle: CDS 服务生命周期与缓存范围规格
   spec.cds-map-pairing-protocol: CDS MAP 配对协议规格
+  spec.map-kb-transfer-protocol: MAP 知识库传输协议（MAP-KBTP v1）规格
   spec.cds-project-model: CDS 多项目数据字典
   spec.short-links: 统一短链系统规格
   spec.speech-agent: 演讲智能体（长文本 → 思维导图演讲）产品规格
@@ -388,3 +389,5 @@ docs:
     title: "version-20260610-1 分支改动说明"
     status: active
   debt.map-mcp-connector: MAP MCP 连接器债务台账
+  debt.cds-performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
+  debt.voc: 行为洞察 / VOC 体验之声 工程债务台账

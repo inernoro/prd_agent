@@ -75,6 +75,9 @@
 - [CDS MAP 配对协议规格](spec.cds-map-pairing-protocol) `spec.cds-map-pairing-protocol`
   > CDS 与 MAP 平台之间的配对协议规格
 
+- [MAP 知识库传输协议（MAP-KBTP v1）规格](spec.map-kb-transfer-protocol) `spec.map-kb-transfer-protocol`
+  > MAP 平台知识库双向同步的底层传输协议规格（PeerSync + DocumentStoreSyncResource，v1.1 已落地）
+
 - [CDS 多项目数据字典](spec.cds-project-model) `spec.cds-project-model`
   > CDS 多项目数据模型的字段定义与约束
 
@@ -829,6 +832,9 @@
 - [MAP MCP 连接器 · 债务台账](debt.map-mcp-connector) `debt.map-mcp-connector`
   > MAP MCP 连接器核心链路已上线，债务台账记录 PR #836 后显式延后的硬化项（共 4 条，open 3）
 
+- [行为洞察 / VOC 体验之声 工程债务台账](debt.voc) `debt.voc`
+  > 行为洞察页面已知边界、待建造项（顶部 ribbon 流式动画、VOC 信息流等）与跨 session 债务
+
 ### 七、周报
 
 - [智能体宇宙 · 完备度看板](report.agent-universe-completeness) `report.agent-universe-completeness`
@@ -1075,3 +1081,4 @@
 | 2026-06-10 | 新增 | `plan.product-agent-version-workflow` | 产品管理智能体版本流程整改计划 |
 | 2026-06-20 | 新增 | `design.team-activity-voc` | 团队动态·用户体验之声(VOC) 设计（treemap + 痛点指数 + 闭环 + 设计思想） |
 | 2026-06-11 | 新增 | `report.version-20260610-1-summary` | version-20260610-1 分支改动说明 |
+| 2026-06-21 | 新增 | `debt.cds-performance` | CDS 性能债务台账（Docker 垃圾堆积致构建越来越慢 + mongo 索引非主因结论 + 逐步解决路线） |

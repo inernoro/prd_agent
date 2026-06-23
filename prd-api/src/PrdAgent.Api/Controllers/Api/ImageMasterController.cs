@@ -2147,11 +2147,17 @@ public class ImageMasterController : ControllerBase
         if (sha.Length != 64) return NotFound();
 
         // 按优先级尝试多个 domain/type 组合
+        // 注意：本地存储（ASSETS_PROVIDER=local）下，知识库/CDS 传图都经此接口读取。
+        // 必须覆盖 assets/img（DocumentStoreAssetNormalizer 默认域）与 cds/img
+        // （知识库单独传图 POST /document-store/stores/{id}/images 的存储域），
+        // 否则本地模式返回的 URL 会 404（Codex P2）。
         var searchPaths = new (string domain, string type)[]
         {
             (AppDomainPaths.DomainVisualAgent, AppDomainPaths.TypeImg),
             (AppDomainPaths.DomainLiteraryAgent, AppDomainPaths.TypeImg),
             (AppDomainPaths.DomainDefectAgent, AppDomainPaths.TypeLog),
+            (AppDomainPaths.DomainAssets, AppDomainPaths.TypeImg),
+            (AppDomainPaths.DomainCds, AppDomainPaths.TypeImg),
         };
 
         foreach (var (domain, type) in searchPaths)

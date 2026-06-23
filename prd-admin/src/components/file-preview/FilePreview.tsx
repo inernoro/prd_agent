@@ -6,6 +6,25 @@ import { MarkdownViewer } from './MarkdownViewer';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
 
+/**
+ * 给 srcDoc 渲染的 HTML 正文注入移动端响应式能力：
+ * - 缺 <meta viewport> 时补一条 width=device-width（核心：让移动端按真机宽度排版而非 980px 桌面视口）
+ * - 注入流式兜底 CSS（img/table/pre 等 max-width:100%），把固定像素宽内容收进屏宽
+ * 已含 viewport 的报告原样返回，不重复注入。纯静态注入，不改变报告语义。
+ */
+function ensureResponsiveHtml(html: string): string {
+  if (!html) return html;
+  if (/<meta[^>]+name=["']viewport["']/i.test(html)) return html;
+  const inject =
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<style>html,body{margin:0}*{box-sizing:border-box}' +
+    'img,video,table,pre,canvas,svg,iframe{max-width:100%!important;height:auto}' +
+    'body{padding:12px;-webkit-text-size-adjust:100%;overflow-wrap:break-word;word-break:break-word}</style>';
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + inject);
+  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + '<head>' + inject + '</head>');
+  return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
+}
+
 export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; preview: EntryPreview | null }) {
   if (!entry) {
     return (
@@ -90,9 +109,13 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
   const isHtmlFile = kind === 'html'
     || (entry.contentType ?? '').toLowerCase().includes('html') || /\.html?$/i.test(entry.title);
   if (isHtmlFile && (fileUrl || text)) {
+    // 移动端"报告很小"根因：HTML 报告缺 <meta viewport> 时，移动端 WebKit 按 980px 桌面
+    // 视口排版再缩放进窄 iframe → 整页看起来很小。srcDoc 正文可注入 viewport + 流式 CSS
+    // 让其按设备宽度重排（fileUrl 上传文件无法注入，由生成端补 viewport 兜底）。
+    const srcDocHtml = !fileUrl ? ensureResponsiveHtml(text ?? '') : null;
     return (
       <iframe
-        {...(fileUrl ? { src: fileUrl } : { srcDoc: text ?? '' })}
+        {...(fileUrl ? { src: fileUrl } : { srcDoc: srcDocHtml ?? '' })}
         title={entry.title}
         sandbox=""
         className="w-full rounded-lg"

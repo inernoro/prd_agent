@@ -34,7 +34,7 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences }>(
+  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences; documentStorePinnedIds?: string[] }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
@@ -47,7 +47,18 @@ async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
     visualAgentPreferences: res.data.visualAgentPreferences,
     literaryAgentPreferences: res.data.literaryAgentPreferences,
     agentSwitcherPreferences: res.data.agentSwitcherPreferences,
+    documentStorePinnedIds: res.data.documentStorePinnedIds ?? [],
   });
+}
+
+/** 更新置顶的知识库 ID 列表（用户级，跨设备/重登录保持） */
+export async function updateDocumentStorePins(documentStorePinnedIds: string[]): Promise<ApiResponse<void>> {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.docStorePins(), {
+    method: 'PUT',
+    body: { documentStorePinnedIds },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
 }
 
 export const updateNavLayoutReal: UpdateNavLayoutContract = async (payload): Promise<ApiResponse<void>> => {
