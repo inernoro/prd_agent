@@ -32,3 +32,4 @@
 | fix | cds | 极速版部署移除手动/单服务硬闸门(改为上面的逐组件回退):deploy 路由不再返回 409 ci_image_not_ready;镜像可用性下沉到 runService 逐组件回退处理,never 硬失败 |
 | fix | cds | workflow_run 匹配补「当前仍是极速版」校验(branchUsesPrebuiltMode),分支切回 dev/static 后旧 CI 完成事件不再被认领自动重部署一个已退出极速版的分支 |
 | docs | cds | debt.cds-ci-prebuilt 状态枚举改「进行中」(合规 rule.doc-naming);#3「每次构建两镜像」标记已偿还(改 path-filter + 回退) |
+| fix | cds | PR review 修复（Bugbot High）：极速版镜像 tag 的 ${CDS_COMMIT_SHA} 优先解析为 ciTargetSha(CI 真正构建镜像的 commit)而非 githubCommitSha——后者会被 docs-only push / 被拦的 check_run 重跑悄悄推进却不产新镜像,用它渲染会拉错 SHA 镜像或静默回退 branch-main,使预览与就绪 CI 产物不一致;ciTargetSha 未设时退回 githubCommitSha |

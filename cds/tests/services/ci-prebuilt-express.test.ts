@@ -65,6 +65,16 @@ describe('极速版 — 纯函数', () => {
     expect(resolveImageTemplate('node:20-slim', undefined)).toBe('node:20-slim');
   });
 
+  it('resolveImageTemplate 优先用 ciTargetSha（CI 就绪 SHA）而非 githubCommitSha（Bugbot High）', () => {
+    const OLD = 'aaaaaaaa00112233445566778899aabbccddeeff';
+    // docs-only push 把 githubCommitSha 推进到 NEW,但 ciTargetSha 仍是 CI 就绪的 OLD。
+    const branch = { githubCommitSha: FULL_SHA, ciTargetSha: OLD, branch: 'feature' } as BranchEntry;
+    expect(resolveImageTemplate('ghcr.io/x/api:sha-${CDS_COMMIT_SHA}', branch)).toBe(`ghcr.io/x/api:sha-${OLD}`);
+    // ciTargetSha 未设时退回 githubCommitSha。
+    const noTarget = { githubCommitSha: FULL_SHA, branch: 'feature' } as BranchEntry;
+    expect(resolveImageTemplate('ghcr.io/x/api:sha-${CDS_COMMIT_SHA}', noTarget)).toBe(`ghcr.io/x/api:sha-${FULL_SHA}`);
+  });
+
   it('slugifyBranchForImage 小写 + 非 [a-z0-9-] 转 - + 去头尾', () => {
     expect(slugifyBranchForImage('Feature/Foo_Bar')).toBe('feature-foo-bar');
     expect(slugifyBranchForImage('--main--')).toBe('main');

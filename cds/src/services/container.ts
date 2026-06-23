@@ -212,14 +212,21 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
  *
  * 极速版镜像 tag 由 commit SHA 决定（CI 按 `github.sha` 推 `sha-<SHA>` tag），
  * 必须在拿到具体分支上下文时才能确定。支持:
- *   - `${CDS_COMMIT_SHA}`  → branch.githubCommitSha
+ *   - `${CDS_COMMIT_SHA}`  → **优先 branch.ciTargetSha**，退而 branch.githubCommitSha
  *   - `${CDS_BRANCH_SLUG}` → 分支名 slugify（与 CI 的 branch-<slug> 移动 tag 对齐）
+ *
+ * 为何优先 ciTargetSha（Bugbot High: prebuilt image tag ignores ciTargetSha）：
+ *   ciTargetSha 是「CI 真正构建出镜像的那个 commit」的 SSOT；githubCommitSha 只是
+ *   「最近一次 push 的 commit」，会被 docs-only push / 被闸门拦下的 check_run 重跑悄悄推进，
+ *   而它们并不产生新镜像。若用 githubCommitSha 渲染 tag，会拉到错 SHA 的镜像或静默回退
+ *   branch-main，使预览与已就绪的 CI 产物不一致。故极速版 tag 锁定 ciTargetSha。
+ *   ciTargetSha 未设（如从未走过 CI 的分支）时退回 githubCommitSha，行为不变。
  *
  * 纯函数,export 给单测用。无模板变量时原样返回。
  */
 export function resolveImageTemplate(image: string | undefined, branch?: BranchEntry): string | undefined {
   if (!image || image.indexOf('${') === -1) return image;
-  const sha = branch?.githubCommitSha || '';
+  const sha = branch?.ciTargetSha || branch?.githubCommitSha || '';
   const slug = slugifyBranchForImage(branch?.branch || '');
   return image
     .replace(/\$\{CDS_COMMIT_SHA\}/g, sha)
