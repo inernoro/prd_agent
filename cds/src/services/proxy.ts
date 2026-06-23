@@ -580,7 +580,15 @@ export class ProxyService {
       // checkers doing `HEAD /` against a preview host must not restart cooled
       // containers (they aren't a user actually opening the page).
       const isGetNavigation = (req.method || 'GET').toUpperCase() === 'GET';
-      if (isGetNavigation && this.isHtmlNavigationRequest(req) && this.shouldAutoWakeCooled(branch)) {
+      // Only auto-wake on a PREVIEW host. The waiting page polls
+      // /_cds/waiting-status, which resolves the branch solely via
+      // extractPreviewBranch(host); for non-preview routing (X-Branch / cookie /
+      // routing rule / default branch) that poll can't resolve the branch, so
+      // the page would spin forever and never reload after the restart. Gate on
+      // the exact same resolution the poll uses, so a wake always implies a
+      // pollable waiting page. Non-preview routings keep the diagnostic page.
+      const isPreviewHost = this.extractPreviewBranch(req.headers.host || '') !== null;
+      if (isGetNavigation && isPreviewHost && this.isHtmlNavigationRequest(req) && this.shouldAutoWakeCooled(branch)) {
         this.triggerCooledWake(branch.id);
       }
       this.serveBranchStatusResponse(req, res, branchSlug, branch);

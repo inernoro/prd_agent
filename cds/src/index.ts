@@ -1298,6 +1298,14 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       }
       stateService.save();
 
+      // Enforce the scheduler's hot-pool budget the same way scheduler.wake()
+      // does — evict the LRU branch before bringing this one up. Otherwise
+      // opening several cooled preview URLs would markHot() them all past
+      // maxHotBranches until the next scheduler tick, blowing the configured
+      // hot-container budget. No-op when the scheduler is disabled or
+      // maxHotBranches is unset.
+      await schedulerService.evictLruIfOverCapacity(slug);
+
       const failed: string[] = [];
       for (const svc of services) {
         lease?.assertCurrent(`auto-wake before ${svc.profileId}`);

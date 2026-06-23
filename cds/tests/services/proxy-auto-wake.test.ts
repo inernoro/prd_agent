@@ -24,7 +24,12 @@ describe('ProxyService preview auto-wake scoping', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-autowake-'));
     stateService = new StateService(path.join(tmpDir, 'state.json'));
     stateService.load();
-    proxy = new ProxyService(stateService);
+    // Configure a preview domain so requests can route via a preview host —
+    // auto-wake only fires on preview hosts (where the waiting poll resolves).
+    proxy = new ProxyService(stateService, {
+      masterPort: 9900, workerPort: 5500, repoRoot: '/tmp', worktreeBase: '/tmp',
+      portStart: 9000, previewDomain: 'preview.example.com', rootDomains: ['preview.example.com'],
+    } as never);
     // Upstream resolver present so an eligible HOT branch would proxy normally.
     proxy.setResolveUpstream(() => 'http://127.0.0.1:39999');
   });
@@ -48,8 +53,11 @@ describe('ProxyService preview auto-wake scoping', () => {
     return entry;
   }
 
+  // The branch id is slugify('feat/cooled') = 'feat-cooled', so the preview
+  // host `feat-cooled.preview.example.com` resolves to it via the v1 direct
+  // lookup in resolveBranchEntry.
   function makeReq(url = '/', headers: Record<string, string> = {}): http.IncomingMessage {
-    return { method: 'GET', url, headers: { 'x-branch': 'feat/cooled', accept: 'text/html', ...headers } } as unknown as http.IncomingMessage;
+    return { method: 'GET', url, headers: { host: 'feat-cooled.preview.example.com', accept: 'text/html', ...headers } } as unknown as http.IncomingMessage;
   }
 
   function makeRes(): http.ServerResponse {
@@ -123,6 +131,25 @@ describe('ProxyService preview auto-wake scoping', () => {
     proxy.setOnReviveCooled(revive);
     const req = {
       method: 'HEAD',
+      url: '/',
+      headers: { host: 'feat-cooled.preview.example.com', accept: 'text/html' },
+    } as unknown as http.IncomingMessage;
+
+    await proxy.handleRequest(req, makeRes());
+
+    expect(revive).not.toHaveBeenCalled();
+  });
+
+  it('does NOT fire for non-preview-host routing (waiting poll cannot resolve it)', async () => {
+    // X-Branch / cookie / routing-rule / default-branch requests hit the same
+    // routeToBranch path, but the waiting page poll only resolves branches from
+    // a preview host — so auto-wake must stay scoped to preview hosts, else the
+    // page would spin forever.
+    addBranch({});
+    const revive = vi.fn(async () => {});
+    proxy.setOnReviveCooled(revive);
+    const req = {
+      method: 'GET',
       url: '/',
       headers: { 'x-branch': 'feat/cooled', accept: 'text/html' },
     } as unknown as http.IncomingMessage;
