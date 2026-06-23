@@ -12,7 +12,7 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
-import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
+import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
@@ -9859,6 +9859,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    // 极速版 CI 闸门（Bugbot: manual deploy skips CI gate）：极速版分支的镜像由 CI 构建,
+    // 在 CI 把目标 SHA 标 ready 之前手动/内部重部署只会 docker pull 一个还不存在的镜像而失败,
+    // 留下噪音错误态。push / check_run 路径已拦,这里补上 deploy 路径:waiting/failed 时
+    // block(409),给可操作提示。非极速版分支不受影响;CI 驱动的内部部署此时 status 已是 ready
+    // 故自然放行。确知镜像已存在的高级用户可 ?ignoreCiGate=1 强制(逃生口,与 ignoreRequired 同风格)。
+    const ignoreCiGate = req.query?.ignoreCiGate === '1' || req.query?.ignoreCiGate === 'true';
+    if (!ignoreCiGate
+      && branchUsesPrebuiltMode(profiles, entry)
+      && (entry.ciImageStatus === 'waiting' || entry.ciImageStatus === 'failed')) {
+      res.status(409).json({
+        error: 'ci_image_not_ready',
+        ciImageStatus: entry.ciImageStatus,
+        ciTargetSha: entry.ciTargetSha,
+        message: entry.ciImageStatus === 'failed'
+          ? '极速版分支的 CI 镜像构建失败,无法拉取部署。请重跑 CI,或在分支详情切回源码编译模式后再部署。'
+          : '极速版分支正在等待 CI 构建镜像,镜像就绪后会自动部署,无需手动触发。如确认镜像已存在可加 ?ignoreCiGate=1 强制。',
+        escapeHatch: { hint: '附加 ?ignoreCiGate=1 query 可跳过此检查(仅在确认 ghcr 镜像已存在时使用)' },
+      });
+      return;
+    }
+
     // Phase 8 — env required check:必填项未填则 412 Precondition Failed,UI 弹窗强制感知
     // 用户可以"承诺会跑起来"按 ?ignoreRequired=1 query 强制 deploy(降级路径,不推荐)
     const ignoreRequired = req.query?.ignoreRequired === '1' || req.query?.ignoreRequired === 'true';
@@ -10045,6 +10066,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+
+      // 极速版镜像 tag 用 githubCommitSha 渲染（:sha-${CDS_COMMIT_SHA}）。本地路径在分发前
+      // 已兜底推导过 githubCommitSha,但那是 pull **之前** 的 HEAD;若远端分支已前进,pull 会把
+      // 源码更新到新 HEAD,而镜像 tag 仍渲染旧 SHA → 跑旧镜像 / 拉一个和刚 pull 的 HEAD 不对应的
+      // tag（Codex P2: refresh prebuilt SHA after pulling latest code）。无显式 body.commitSha 时,
+      // 用 pull 后真实 HEAD 刷新,使镜像 tag 与源码一致。
+      if (!requestCommitSha
+        && !(pullResult as { skipped?: boolean }).skipped
+        && typeof pullResult.head === 'string'
+        && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
+        && entry.githubCommitSha !== pullResult.head) {
+        entry.githubCommitSha = pullResult.head;
+      }
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit) {
@@ -10900,6 +10934,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
+
+      // 同主 deploy 路径:pull 后用真实 HEAD 刷新 githubCommitSha,使极速版镜像 tag 与
+      // 刚拉到的源码一致（Codex P2: refresh prebuilt SHA after pulling latest code）。
+      // 本单服务路径无 requestCommitSha 变量,内联判定 body.commitSha 是否显式指定。
+      {
+        const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+          ? req.body.commitSha : undefined;
+        if (!bodySha
+          && !(pullResult as { skipped?: boolean }).skipped
+          && typeof pullResult.head === 'string'
+          && /^[0-9a-f]{7,40}$/i.test(pullResult.head)
+          && entry.githubCommitSha !== pullResult.head) {
+          entry.githubCommitSha = pullResult.head;
+        }
+      }
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit) {

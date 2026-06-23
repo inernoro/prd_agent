@@ -217,29 +217,34 @@ describe('极速版 — dispatcher', () => {
     expect(ready?.ciTargetSha).toBe(FULL_SHA);
   });
 
-  it('workflow_run 经 fallback(githubCommitSha)匹配后 ciTargetSha 同步到 head_sha,check_run 重跑可放行', async () => {
-    // 早到 + 后 push 之外的路径:构造一个 ciTargetSha 为旧值、githubCommitSha=新值的分支,
-    // 让 workflow_run 走 fallback 匹配,断言 ready 后 ciTargetSha 被钉到 head_sha。
-    const pushed = await pushOnce(); // waiting, ciTargetSha=FULL_SHA, githubCommitSha=FULL_SHA
-    const NEW = 'eeee5555ffff6666aaaa7777bbbb8888cccc9999';
-    // 手动把分支改成「githubCommitSha=NEW 但 ciTargetSha=旧」模拟 stamp 错位
-    stateService.updateBranchGithubMeta(pushed.branchId!, { githubCommitSha: NEW });
-    const result = await dispatcher.handle('workflow_run', {
+  it('docs-only 跳过的 commit 不被 workflow_run 自动部署（Codex P2: don\'t fallback-deploy docs-only CI runs）', async () => {
+    const pushed = await pushOnce();
+    // 先让 FULL_SHA 就绪并部署。
+    await dispatcher.handle('workflow_run', {
       action: 'completed',
-      workflow_run: { id: 80, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: NEW, head_branch: 'feature', conclusion: 'success' },
+      workflow_run: { id: 80, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: FULL_SHA, head_branch: 'feature', conclusion: 'success' },
       repository: { full_name: 'octocat/repo' },
     });
-    expect(result.action).toBe('ci-image-ready');
-    const b = stateService.getBranch(pushed.branchId!);
-    expect(b?.ciTargetSha).toBe(NEW); // fallback 匹配后已同步
-    // check_run 重跑携带 NEW → 此时 ready && ciTargetSha===NEW → 放行。
-    const cr = await dispatcher.handle('check_run', {
-      action: 'rerequested',
-      check_run: { external_id: pushed.branchId, head_sha: NEW },
+    expect(stateService.getBranch(pushed.branchId!)?.ciImageStatus).toBe('ready');
+    // docs-only push 到 NEW:分支是 ready(非 waiting),只刷新 githubCommitSha,
+    // 不推进 ciTargetSha(仍 FULL_SHA),显式不部署。
+    const NEW = 'eeee5555ffff6666aaaa7777bbbb8888cccc9999';
+    const doc = await dispatcher.handle('push', {
+      ref: 'refs/heads/feature', after: NEW, repository: { id: 1, full_name: 'octocat/repo' },
+      commits: [{ id: NEW, added: [], removed: [], modified: ['README.md'] }],
+    });
+    expect(doc.action).toBe('ignored-doc-only');
+    expect(stateService.getBranch(pushed.branchId!)?.ciTargetSha).toBe(FULL_SHA);
+    // NEW 的 CI 完成 → 不应自动部署(docs-only 已显式跳过),strict matcher 落空 → ack/缓存。
+    const wf = await dispatcher.handle('workflow_run', {
+      action: 'completed',
+      workflow_run: { id: 81, name: 'Branch Image', path: '.github/workflows/branch-image.yml', head_sha: NEW, head_branch: 'feature', conclusion: 'success' },
       repository: { full_name: 'octocat/repo' },
     });
-    expect(cr.action).toBe('check-run-requeued');
-    expect(cr.deployRequest).toEqual({ branchId: pushed.branchId, commitSha: NEW });
+    expect(wf.action).toBe('workflow-acknowledged');
+    expect(wf.deployRequest).toBeUndefined();
+    // 分支仍指向旧的就绪 SHA,未被 NEW 顶替部署。
+    expect(stateService.getBranch(pushed.branchId!)?.ciTargetSha).toBe(FULL_SHA);
   });
 
   it('workflow_run(branch-image.yml, failure) → ci-image-failed,无 deployRequest', async () => {

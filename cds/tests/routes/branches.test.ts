@@ -407,6 +407,39 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(400);
       expect((res.body as any).error).toBe('invalid_branch_name');
     });
+
+    // 极速版 CI 闸门（Bugbot: manual deploy skips CI gate）
+    function addExpressBranch(id: string, ciImageStatus: 'waiting' | 'failed' | 'ready', sha = 'deadbeef00112233445566778899aabbccddeeff') {
+      stateService.addBuildProfile({
+        id: 'api', projectId: 'default', name: 'API',
+        dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0', workDir: 'prd-api',
+        command: 'dotnet run', containerPort: 5000,
+        deployModes: { express: { label: '极速版', dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}', prebuilt: true, containerPort: 8080 } },
+      } as any);
+      stateService.addBranch({
+        id, projectId: 'default', branch: 'feature',
+        worktreePath: `/tmp/wt/${id}`, services: {}, status: 'idle',
+        createdAt: new Date().toISOString(),
+        profileOverrides: { api: { activeDeployMode: 'express' } },
+        ciImageStatus, ciTargetSha: sha, githubCommitSha: sha,
+      } as any);
+    }
+
+    it('refuses with 409 ci_image_not_ready when 极速版 branch is waiting for CI', async () => {
+      addExpressBranch('express-waiting', 'waiting');
+      const res = await request(server, 'POST', '/api/branches/express-waiting/deploy');
+      expect(res.status).toBe(409);
+      expect((res.body as any).error).toBe('ci_image_not_ready');
+      expect((res.body as any).ciImageStatus).toBe('waiting');
+    });
+
+    it('refuses with 409 ci_image_not_ready when 极速版 branch CI failed', async () => {
+      addExpressBranch('express-failed', 'failed');
+      const res = await request(server, 'POST', '/api/branches/express-failed/deploy');
+      expect(res.status).toBe(409);
+      expect((res.body as any).error).toBe('ci_image_not_ready');
+      expect((res.body as any).ciImageStatus).toBe('failed');
+    });
   });
 
   describe('GET /api/branches', () => {

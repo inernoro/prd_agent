@@ -793,25 +793,22 @@ export class GitHubWebhookDispatcher {
     //  3. waiting **或** failed —— 操作员对失败的 run 点 re-run 且同 SHA 成功时,应允许
     //     failed → ready 恢复,而不是因为不再是 waiting 就 ack 不动作（只能靠再 push 恢复）。
     const branches = this.deps.stateService.getBranchesForProject(project.id);
+    // 只按「显式等待标记」匹配:ciTargetSha===head_sha + waiting/failed + 分支名。
+    //  - ciTargetSha 是 push 路径**显式**置 waiting 时钉下的「我在等这个 SHA 的 CI 镜像」,
+    //    是部署意图的可信标记;docs-only 等不该部署的 push 不会置它。
+    //  - **不**用 githubCommitSha 兜底:那只是「最近一次 push 的 commit」,docs-only push
+    //    也会刷新它 → 按它匹配会把 docs-only 显式跳过的 commit 也部署掉
+    //    （Codex P2: don't fallback-deploy docs-only CI runs）。
+    //  - 延迟/重试导致 workflow_run 早于 push 到达的竞态,由下方 rememberCompletedRun 缓存
+    //    兜底(push 置 waiting 时 takeCompletedRun 认领),不靠 githubCommitSha 猜。
+    //  - waiting **或** failed:操作员对失败 run 点 re-run 且同 SHA 成功时允许 failed→ready 恢复。
+    //  - head_branch 比对:多分支可能指向同一 commit,GitHub 按分支分别跑 branch-image.yml,
+    //    缺省时退回只按 SHA(向后兼容)。
     const matchable = (b: BranchEntry): boolean =>
       (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
       && b.ciTargetSha === headSha
       && (!run.head_branch || b.branch === run.head_branch);
-    let target = branches.find(matchable);
-    if (!target) {
-      // 兜底:push webhook 被延迟/重试,而 branch-image.yml 的 workflow_run.completed
-      // 抢先到达时,分支可能还没被 stamp 成 waiting/ciTargetSha → strict matcher 落空,
-      // 成功的 CI 镜像被丢弃,之后 push 把分支置 waiting 却没有第二个 completion 事件
-      // 来推进 → 极速版分支卡死（Bugbot/Codex P2:don't drop early workflow_run completions）。
-      // 退而按 githubCommitSha===head_sha + 极速版 + 分支名兜底:push 路径已先 stamp
-      // githubCommitSha(早于 waiting),只要它已落盘就能据此恢复部署;已 ready 的不重复触发。
-      const fallbackProfiles = this.deps.stateService.getBuildProfilesForProject(project.id);
-      target = branches.find((b) =>
-        (!run.head_branch || b.branch === run.head_branch)
-        && b.githubCommitSha === headSha
-        && b.ciImageStatus !== 'ready'
-        && branchUsesPrebuiltMode(fallbackProfiles, b));
-    }
+    const target = branches.find(matchable);
     if (!target) {
       // 没有分支匹配:很可能是 push webhook 还没处理到(延迟/重试),分支尚未 stamp。
       // 暂存结果,等稍后 push 把分支置 express-waiting 时认领(takeCompletedRun)。
