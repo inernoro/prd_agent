@@ -102,6 +102,36 @@
     height: 100%;
   }
 
+  /*
+   * 全局常驻可见滚动条(2026-06-23,治用户反馈「进度条默认隐藏 / 看起来滑不动」)。
+   * CDS 控制台之前没有任何全局滚动条样式 → 走 OS 默认,macOS 上是 overlay
+   * 滚动条(默认隐藏、滚动时才淡出),长页(如 系统设置→更新与重启)滚动条看不见,
+   * 用户以为「滑不动」。webkit 一旦自定义 ::-webkit-scrollbar 即变非 overlay、
+   * 常驻占位;firefox 用 scrollbar-width:thin。颜色走 token,双主题自动翻转。
+   * 个别有意隐藏滚动条的横向 tab 条(.cds-settings-nav 等)用更高特异性自隐,不受影响。
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.45);
+    border-radius: 7px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.7);
+    background-clip: content-box;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -667,7 +697,15 @@
    * The shell paints surface-base; pages paint their own surface-raised cards.
    */
   .cds-app-shell {
-    @apply grid min-h-screen;
+    /*
+     * 2026-06-23：从 min-h-screen(文档滚动)改为 h-screen + overflow:hidden(壳固定、
+     * 内容区滚动)。原因：依赖 window/document 滚动时,macOS overlay 滚动条默认隐藏、
+     * 用户「看不见进度条、以为滑不动」(本次反馈)。改成内容区(.cds-main)自己滚后,
+     * 其滚动条是元素级、被自定义 ::-webkit-scrollbar 渲染成常驻可见的非 overlay 条;
+     * 同时左侧导航 + 顶栏被钉住,长页(系统设置→更新与重启)滚动体验更清晰。
+     * .cds-workspace--fill 的 height:100% 现在解析到一个有确定高度的 main,只会更稳。
+     */
+    @apply grid h-screen overflow-hidden;
     background-color: hsl(var(--surface-base));
     color: hsl(var(--foreground));
     grid-template-columns: 260px minmax(0, 1fr);
@@ -1121,15 +1159,16 @@
   .cds-main {
     @apply min-w-0 px-8 pb-12 pt-6;
     /*
-     * flex-grow + min-height:0 让 main 填满 topbar 之下的列高（列是 min-h-screen
-     * 的 grid item，短页 = 视口、长页 = 内容高度，二者都成立）。少了这两笔，
-     * .cds-workspace--fill 的 height:100% 会解析到一个塌成内容高度的 main 上，
-     * 预览/详情区被挤成小盒子（2026-06-21 验收报告页右侧预览塌成 182px 的根因）。
-     * 短页视觉不变（main 多出来的区域与列背景同色）；长页仍走文档滚动。
+     * flex-grow + min-height:0 让 main 填满 topbar 之下的列高。2026-06-23 起壳改为
+     * h-screen 固定高,本列(grid item)被 stretch 成视口高,main = flex:1 拿到确定高度,
+     * overflow-y:auto 让长页在 main 内部滚动(滚动条常驻可见,见 .cds-app-shell 注释)。
+     * .cds-workspace--fill 的 height:100% 解析到有确定高度的 main,占满更稳。
      * 详见 .claude/rules/content-fills-canvas.md。
      */
     flex: 1 1 auto;
     min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
   }
 
   @media (max-width: 767px) {

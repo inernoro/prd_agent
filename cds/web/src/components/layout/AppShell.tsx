@@ -205,7 +205,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
         logoutState={logoutState}
         onLogout={() => { void logout(); }}
       />
-      <div className="flex min-w-0 flex-col">
+      <div className="flex min-w-0 min-h-0 flex-col">
         {topbar}
         <main className={cn('cds-main', wide ? 'cds-main--wide' : null)}>
           {children}

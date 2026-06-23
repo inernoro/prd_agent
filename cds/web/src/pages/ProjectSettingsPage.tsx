@@ -506,7 +506,7 @@ export function ProjectSettingsPage(): JSX.Element {
             <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
               <TabsList
                 aria-label="项目设置分区"
-                className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-[72px] lg:self-start"
+                className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-0 lg:self-start"
               >
                 {tabGroups.map((group, groupIdx) => (
                   <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-2'}`}>
