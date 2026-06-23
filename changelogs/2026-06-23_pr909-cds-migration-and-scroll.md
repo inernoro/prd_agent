@@ -6,3 +6,4 @@
 | fix | prd-admin | 修复更新中心空数据渲染崩溃:releases/fragments/days/entries/highlights 全面补空值保护,避免整页跌入错误边界;更新中心滚动区加 .clg-scroll 常驻可见滚动条 |
 | fix | cds | 迁移「节点地址」输入框默认值由 noroenrn.com(测试残留)改为空,仅保留 placeholder,避免误添加错误目标 |
 | fix | cds | 迁移连接测试/数据扫描探活改用 import-config dryRun(复刻真正会打的端点)而非 /api/me:后者在 github-auth 远端无 cookie 会 401、auth-disabled 远端无脑 200,都无法证明 key 有效;/api/me 仅降级为取友好名(PR #909 Bugbot) |
+| fix | cds | 迁移 guard 在 CDS_AUTH_MODE=disabled(开放面板)下放行:该模式无 cookie/session 标记且本无安全边界,否则迁移整页 403 不可用(PR #909 Codex P2) |

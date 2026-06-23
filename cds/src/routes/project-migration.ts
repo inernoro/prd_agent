@@ -38,6 +38,8 @@ export interface ProjectMigrationDeps {
   stateService: StateService;
   /** 项目作用域守卫:项目级 key 越权访问别的项目时返回 403,admin/cookie 为 no-op。 */
   assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
+  /** CDS 鉴权模式。disabled(开放面板)时没有 cookie/session 标记且本就无安全边界,迁移放行。 */
+  authMode: 'disabled' | 'basic' | 'github';
 }
 
 /** 对外视图:绝不回明文 accessKey,只给掩码 + hasKey。 */
@@ -146,7 +148,10 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     // 项目级/全局 Agent Key、静态 AI_ACCESS_KEY 一律拒绝——否则任一非人类调用方都能加一个
     // 攻击者控制 baseUrl 的 peer,诱导服务端把 bootstrap key 发出去外泄(Bugbot High / Codex P1)。
     // 判定口径与 operator-console / remote-hosts 等系统级管理端一致(secret-revealing 须 cookie 鉴权)。
-    const isHumanAdmin = req._cdsCookieAuth === true || (!!req.cdsUser && !!req.cdsSession);
+    // disabled 模式 = 开放面板,无任何登录/标记,且本就没有安全边界(谁都能调任意 API),
+    // 强求人类管理员会让迁移在默认 disabled 装机完全不可用(Codex P2)→ 此模式放行。
+    const isHumanAdmin =
+      deps.authMode === 'disabled' || req._cdsCookieAuth === true || (!!req.cdsUser && !!req.cdsSession);
     if (!isHumanAdmin) {
       res.status(403).json({
         error: 'human_auth_required',

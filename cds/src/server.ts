@@ -3176,6 +3176,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createProjectMigrationRouter({
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
+    authMode,
   }));
   // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
   app.use('/api', createProjectStorageRouter({
