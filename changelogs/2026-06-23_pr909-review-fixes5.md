@@ -1,1 +1,0 @@
-| security | cds | 项目迁移 guard 收紧为「仅人类管理员」(_cdsCookieAuth 或 GitHub cdsUser+cdsSession):此前只挡项目级 key,AI 配对会话(x-cds-ai-token/_aiSession)仍可绕过去诱导服务端外泄 bootstrap AI_ACCESS_KEY;现 AI 会话/各类 key/静态 key 一律 403,与 operator-console/remote-hosts 系统级管理端一致(PR #909 Bugbot High) |
