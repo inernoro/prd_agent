@@ -83,6 +83,7 @@ export interface WebhookDispatchResult {
     | 'ignored-non-branch'
     | 'ignored-non-push-branch'
     | 'ignored-auto-deploy-off'
+    | 'ignored-project-paused'
     | 'ignored-doc-only'
     | 'ignored-ping'
     | 'ignored-event'
@@ -345,6 +346,7 @@ export class GitHubWebhookDispatcher {
    * 应直接 return ignored 短路。
    *
    * 解析顺序：
+   *   0. project.paused === true → 整个项目冻结，所有事件一律拒绝
    *   1. project.githubEventPolicy[eventKey] 为 false → 拒绝
    *   2. policy 缺失 / 该字段未设 → push 事件兜底 githubAutoDeploy（向后兼容老
    *      开关），其它事件默认放行
@@ -354,6 +356,9 @@ export class GitHubWebhookDispatcher {
     eventKey: keyof NonNullable<import('../types.js').Project['githubEventPolicy']>,
   ): boolean {
     if (!project) return true;
+    // 2026-06-23：项目暂停 = 冻结所有 webhook 行为（push/PR/delete/comment）。
+    // 暂停时不再自动建分支 / 部署 / 清理容器，是「反复构建止血」的核心闸门。
+    if (project.paused === true) return false;
     const v = project.githubEventPolicy?.[eventKey];
     if (v === false) return false;
     if (v === true) return true;
@@ -729,6 +734,12 @@ export class GitHubWebhookDispatcher {
     // PR_D.2: 统一走 isEventEnabled('push')，内部已 fallback 到老的
     // githubAutoDeploy；新代码用 githubEventPolicy.push。
     if (!this.isEventEnabled(project, 'push')) {
+      if (project.paused === true) {
+        return {
+          action: 'ignored-project-paused',
+          message: `Project '${project.name}' 已暂停，忽略 push 自动部署。`,
+        };
+      }
       return {
         action: 'ignored-auto-deploy-off',
         message: `Project '${project.name}' has push handling off. Ignoring push.`,
