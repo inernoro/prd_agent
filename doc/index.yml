@@ -330,21 +330,7 @@ docs:
   # ── 七、周报（降序：最新在前）──
   report.agent-universe.completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
   report.cds.visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）
-  report.cds.agent.goal-completion-audit.2026-05-19: CDS Agent 商业级可用闭环目标审计报告
-  report.cds.agent.p4-1-remote-preflight.2026-05-19: CDS Agent P4-1 远端发布前验收与试用入口报告
-  report.cds.agent.p4-2-provider-closure.2026-05-19: CDS Agent P4-2 远端 Provider 闭环验收报告
-  report.cds.agent.p4-3-remote-trial-acceptance.2026-05-19: CDS Agent P4-3 远端试用入口与发布验收包
-  report.cds.agent.p4-4-release-merge-strategy.2026-05-19: CDS Agent P4-4 发布/合并策略评估报告
-  report.cds.agent.p4-5-writable-trial-plan.2026-05-19: CDS Agent P4-5 writable / PR / KB apply 试用计划
-  report.cds.agent.phase1-acceptance.2026-05-19: CDS Agent Phase 1 验收报告
-  report.cds.agent.phase2-acceptance.2026-05-19: CDS Agent Phase 2 验收报告
-  report.cds.agent.phase3-acceptance.2026-05-19: CDS Agent Phase 3 验收报告
-  report.cds.agent.execution-ledger.2026-05-18: CDS Agent 执行过程账本
-  report.cds.agent.runtime-pool-contamination.2026-05-18: CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告
-  report.cds.agent.sidecar-contamination.2026-05-18: CDS Agent sidecar 侵入 MAP 分支服务 · 调查报告
-  report.cds.agent.sdk-map-intrusion-root-cause.2026-05-18: Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告
   report.cds.agent.current-progress: CDS Agent 当前进度面板
-  report.cds.agent.workbench.2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
   report.2026-W25: 周报 2026-W25 (06-15 ~ 06-21)
   report.2026-W24: 周报 2026-W24 (06-08 ~ 06-14)
   report.2026-W23: 周报 2026-W23 (06-01 ~ 06-07)
@@ -364,20 +350,14 @@ docs:
   report.2026-W09: 周报 2026-W09 (02-23 ~ 03-01)
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
   report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
-  report.cds.project-card-infra-audit.2026-05-12: CDS 项目卡片基础设施误读审计报告（2026-05-12）
-  report.cds.self-update-timing-observation.2026-05-13: CDS Self-Update 耗时观察记录（2026-05-13）
-  report.cds.github-auto-deploy-acceptance.2026-05-11: CDS GitHub 自动部署验收报告（2026-05-11）
   report.cds.forwarder-success: CDS Forwarder 替代蓝绿部署收尾报告
   report.cds.self-update-timing-audit: CDS Self-Update 时间体系审视报告
   report.frontend.prd-admin-surface-style-migration: prd-admin 样式统一统计报表
-  report.report-agent.weekly-map-data-accuracy-fix.2026-04-10: 周报 MAP 平台工作记录准确性修复
   report.prd-agent.web-sync: PRD Agent Web 端同步开发报告
-  report.cds.onboarding-uat: CDS Onboarding UAT 终结报告（合并自原 5 个子文件，含 18 friction 全清单 + 4 audit 子结果 + 41 契约对照 + 真人 UAT 剩余清单）
   report.skill.doc-evaluation: 文档技能评测报告：三技能 vs 已有文档
   report.skill.eval-sample-user-guide: 文档技能评测·user-guide-writing 样本输出
   report.skill.eval-sample-technical: 文档技能评测·technical-writing 样本输出
   report.skill.eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出
-  report.cds.mongo-log-split-incident.2026-05-23: CDS Mongo 日志拆分事故复盘（2026-05-23）
   report.daily-tips.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）
   debt.cds.nginx-loading-pages:
     title: "CDS loading pages 债务台账"
@@ -385,7 +365,6 @@ docs:
   design.cds.skill-version-update:
     title: "CDS 技能版本与更新架构"
     status: active
-  report.cds.agent.ux-acceptance.2026-06-06:
     title: "CDS Agent 体验修复验收报告（2026-06-06）"
     status: active
   plan.product-agent.version-workflow:

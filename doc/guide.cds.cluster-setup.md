@@ -41,7 +41,7 @@
 - [ ] **你能 SSH 到两台机器**：操作过程需要在两台机器上分别敲命令
 - [ ] **老机器上 CDS 已经能正常工作**：能登录 Dashboard、能创建分支预览
 
-> ⚠️ **如果新机器还没装 CDS**：先按 `doc/guide.platform.quickstart.md` 装好，跑通 `./exec_cds.sh init` + `./exec_cds.sh start`，确认本机 standalone 模式工作正常，**再回来做扩容**。
+> **如果新机器还没装 CDS**：先按 `doc/guide.platform.quickstart.md` 装好，跑通 `./exec_cds.sh init` + `./exec_cds.sh start`，确认本机 standalone 模式工作正常，**再回来做扩容**。
 
 ---
 
@@ -59,19 +59,19 @@ cd /path/to/cds
 **期望看到**：
 
 ```
-[OK]   已生成 bootstrap token (有效期 15 分钟)
+[OK] 已生成 bootstrap token (有效期 15 分钟)
 
-  下一步 — 在要加入集群的新机器上执行:
+ 下一步 — 在要加入集群的新机器上执行:
 
-    ./exec_cds.sh connect https://cds.miduo.org abcdef0123456789...
+ ./exec_cds.sh connect https://cds.miduo.org abcdef0123456789...
 
-  Token 过期时间: 2026-04-10T14:25:00Z
-  Token 消费后会自动清理并换成永久 token
+ Token 过期时间: 2026-04-10T14:25:00Z
+ Token 消费后会自动清理并换成永久 token
 ```
 
 **怎么办**：把上面那条 `./exec_cds.sh connect ...` 完整复制下来，准备粘到新机器上。
 
-> ⚠️ **token 是密码级别的敏感信息**。15 分钟内有效，过期会被服务端拒绝。不要发到公开聊天群、不要写在 wiki 里。复制完一次就用完。
+> **token 是密码级别的敏感信息**。15 分钟内有效，过期会被服务端拒绝。不要发到公开聊天群、不要写在 wiki 里。复制完一次就用完。
 
 ### 第 2 步：在新机器上跑 connect
 
@@ -86,15 +86,15 @@ cd /path/to/cds
 
 ```
 [INFO] 验证主节点可达: https://cds.miduo.org/healthz
-[OK]   主节点可达
-[OK]   已写入 executor 配置 -> /path/to/cds/.cds.env
+[OK] 主节点可达
+[OK] 已写入 executor 配置 -> /path/to/cds/.cds.env
 [INFO] 启动 CDS (executor 模式)...
-[OK]   已加入集群: https://cds.miduo.org
+[OK] 已加入集群: https://cds.miduo.org
 
-  本机已作为 executor 运行，心跳周期 15s
-  总容量会自动汇总到主节点的 /api/executors/capacity
-  查看集群状态: ./exec_cds.sh cluster
-  断开集群:    ./exec_cds.sh disconnect
+ 本机已作为 executor 运行，心跳周期 15s
+ 总容量会自动汇总到主节点的 /api/executors/capacity
+ 查看集群状态: ./exec_cds.sh cluster
+ 断开集群: ./exec_cds.sh disconnect
 ```
 
 **完事了。** 新机器已经加入集群，老机器的容量自动扩充。
@@ -110,18 +110,18 @@ cd /path/to/cds
 **期望看到**：
 
 ```
-  CDS 集群状态
-  ──────────────────
-  在线节点:  2
-  离线节点:  0
-  总分支槽:  14 (已用 3)
-  总内存:    16384 MB (已用 4200 MB)
-  总 CPU:    8 cores (负载 45%)
-  空闲比例:  74%
+ CDS 集群状态
+ ──────────────────
+ 在线节点: 2
+ 离线节点: 0
+ 总分支槽: 14 (已用 3)
+ 总内存: 16384 MB (已用 4200 MB)
+ 总 CPU: 8 cores (负载 45%)
+ 空闲比例: 74%
 
-  节点列表:
-    - [embedded] master-cds-a            127.0.0.1        online   branches=2
-    - [remote  ] executor-newserver-9901 192.168.1.42     online   branches=1
+ 节点列表:
+ - [embedded] master-cds-a 127.0.0.1 online branches=2
+ - [remote ] executor-newserver-9901 192.168.1.42 online branches=1
 ```
 
 **关键验证点**：

@@ -12,7 +12,7 @@ description: Guards document creation and modification in the doc/ directory, en
 ## 核心规则
 
 1. **doc/ 下每个 .md 文件必须属于以下 7 种类型之一**，无例外
-2. **文件名格式**：`doc/{type}.{topic}.md`，topic 使用 `kebab-case`
+2. **文件名格式**：`doc/{type}.{appname}[.{子模块}].md` —— appname 优先 + 点分层级（每段 kebab-case，段间用 `.`，禁止把 appname 和子模块用 `-` 黏死）。详见 `doc/rule.doc.naming.md`
 3. **必须包含标准头部**：版本 + 日期 + 状态
 4. **禁止发明新类型前缀**
 

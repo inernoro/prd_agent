@@ -856,51 +856,36 @@
   > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
 
 - [CDS 绝对可视化一键部署 · 完整报告](report.cds.visual-deploy) `report.cds.visual-deploy`
-- [CDS Agent 商业级可用闭环目标审计报告](report.cds.agent.goal-completion-audit.2026-05-19) `report.cds.agent.goal-completion-audit.2026-05-19`
   > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
-- [CDS Agent 体验修复验收报告](report.cds.agent.ux-acceptance.2026-06-06) `report.cds.agent.ux-acceptance.2026-06-06`
   > 用户 9 问逐条验收：发送卡死/不流式/噪声/展开空已修并取证；工具循环/线程不停在借来的 runtime（缓解）；工作区文件注入是需新建的接缝（gates md→ppt 案例）
 
-- [CDS Agent P4-1 远端发布前验收与试用入口报告](report.cds.agent.p4-1-remote-preflight.2026-05-19) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
   > CDS Agent P4-1 远端发布前验收与试用入口的验收报告
 
-- [CDS Agent P4-2 远端 Provider 闭环验收报告](report.cds.agent.p4-2-provider-closure.2026-05-19) `report.cds.agent.p4-2-provider-closure.2026-05-19`
   > CDS Agent P4-2 远端 Provider 闭环验收报告
 
-- [CDS Agent P4-3 远端试用入口与发布验收包](report.cds.agent.p4-3-remote-trial-acceptance.2026-05-19) `report.cds.agent.p4-3-remote-trial-acceptance.2026-05-19`
   > CDS Agent P4-3 远端试用入口与发布验收包
 
-- [CDS Agent P4-4 发布/合并策略评估报告](report.cds.agent.p4-4-release-merge-strategy.2026-05-19) `report.cds.agent.p4-4-release-merge-strategy.2026-05-19`
   > CDS Agent P4-4 发布与合并策略的评估报告
 
-- [CDS Agent P4-5 writable/PR/KB apply 试用计划](report.cds.agent.p4-5-writable-trial-plan.2026-05-19) `report.cds.agent.p4-5-writable-trial-plan.2026-05-19`
   > CDS Agent P4-5 writable / PR / KB apply 试用计划
 
-- [CDS Agent Phase 1 验收报告](report.cds.agent.phase1-acceptance.2026-05-19) `report.cds.agent.phase1-acceptance.2026-05-19`
   > CDS Agent Phase 1 阶段验收报告（2026-05-19）
 
-- [CDS Agent Phase 2 验收报告](report.cds.agent.phase2-acceptance.2026-05-19) `report.cds.agent.phase2-acceptance.2026-05-19`
   > CDS Agent Phase 2 阶段验收报告（2026-05-19）
 
-- [CDS Agent Phase 3 验收报告](report.cds.agent.phase3-acceptance.2026-05-19) `report.cds.agent.phase3-acceptance.2026-05-19`
   > CDS Agent Phase 3 阶段验收报告（2026-05-19）
 
-- [CDS Agent 执行过程账本](report.cds.agent.execution-ledger.2026-05-18) `report.cds.agent.execution-ledger.2026-05-18`
   > CDS Agent 开发执行过程的完整账本记录（2026-05-18）
 
-- [CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告](report.cds.agent.runtime-pool-contamination.2026-05-18) `report.cds.agent.runtime-pool-contamination.2026-05-18`
   > CDS Agent SDK Runtime 再次侵入 MAP 主系统的调查与根因分析报告（2026-05-18）
 
-- [CDS Agent sidecar 侵入 MAP 分支服务 · 调查报告](report.cds.agent.sidecar-contamination.2026-05-18) `report.cds.agent.sidecar-contamination.2026-05-18`
   > CDS Agent sidecar 侵入 MAP 分支服务的调查报告（2026-05-18）
 
-- [Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告](report.cds.agent.sdk-map-intrusion-root-cause.2026-05-18) `report.cds.agent.sdk-map-intrusion-root-cause.2026-05-18`
   > Claude Agent SDK 容器侵入 MAP 主系统的根因分析报告（2026-05-18）
 
 - [CDS Agent 当前进度面板](report.cds.agent.current-progress) `report.cds.agent.current-progress`
   > CDS Agent 当前开发进度与状态面板（已合并到权威入口）
 
-- [CDS Agent 工作台完成复盘（2026-05-15）](report.cds.agent.workbench.2026-05-15) `report.cds.agent.workbench.2026-05-15`
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
 
 - [周报 2026-W25 (06-15 ~ 06-21)](report.2026-W25) `report.2026-W25`
@@ -960,13 +945,10 @@
 - [周报 2026-W06 (02-03 ~ 02-08)](report.2026-W06) `report.2026-W06`
   > 2026 年第 6 周工作总结
 
-- [CDS Self-Update 耗时观察记录（2026-05-13）](report.cds.self-update-timing-observation.2026-05-13) `report.cds.self-update-timing-observation.2026-05-13`
   > CDS 自更新流程各阶段耗时的实测观察与数据记录（2026-05-13）
 
-- [CDS 项目卡片基础设施误读审计报告（2026-05-12）](report.cds.project-card-infra-audit.2026-05-12) `report.cds.project-card-infra-audit.2026-05-12`
   > CDS 项目卡片基础设施节点误读问题的审计与修复报告
 
-- [CDS GitHub 自动部署验收报告（2026-05-11）](report.cds.github-auto-deploy-acceptance.2026-05-11) `report.cds.github-auto-deploy-acceptance.2026-05-11`
   > CDS GitHub 自动部署 webhook 链路验收测试报告
 
 - [CDS Forwarder 替代蓝绿部署收尾报告](report.cds.forwarder-success) `report.cds.forwarder-success`
@@ -978,13 +960,11 @@
 - [prd-admin 样式统一统计报表](report.frontend.prd-admin-surface-style-migration) `report.frontend.prd-admin-surface-style-migration`
   > prd-admin Surface System 迁移完成度的统计数据报表
 
-- [周报 MAP 平台工作记录准确性修复](report.report-agent.weekly-map-data-accuracy-fix.2026-04-10) `report.report-agent.weekly-map-data-accuracy-fix.2026-04-10`
   > MAP 平台工作记录数据准确性问题的修复过程报告
 
 - [PRD Agent Web 端同步开发报告](report.prd-agent.web-sync) `report.prd-agent.web-sync`
   > PRD Agent Web 端与桌面端同步开发的完整报告
 
-- [CDS Onboarding UAT 终结报告](report.cds.onboarding-uat) `report.cds.onboarding-uat`
   > 18 friction 全清单 + 4 audit 子结果(隔离/SSE/UI/mysql)+ 41 契约对照 + 真人 UAT 剩余清单（合并自原 5 个子文件）
 
 - [文档技能评测报告](report.skill.doc-evaluation) `report.skill.doc-evaluation`
@@ -999,7 +979,6 @@
 - [文档技能评测·documentation-writer 样本输出](report.skill.eval-sample-diataxis) `report.skill.eval-sample-diataxis`
   > 评测报告引用的 skill 原始输出样本（Diátaxis 四象限类）
 
-- [CDS Mongo 日志拆分事故复盘（2026-05-23）](report.cds.mongo-log-split-incident.2026-05-23) `report.cds.mongo-log-split-incident.2026-05-23`
   > CDS 控制面 cds-master 崩溃导致 502 的事故根因分析与复盘
 
 ---
@@ -1020,9 +999,7 @@
 | 2026-06-02 | 新增 | `design.cds.visual-deploy` `guide.cds.one-click-deploy` `report.cds.visual-deploy` `debt.cds.visual-deploy` | CDS 绝对可视化一键部署收尾:设计(含架构图)+使用教程+完整报告+债务台账;`plan.cds.visual-deploy` 状态更新为核心收尾 |
 | 2026-06-01 | 新增 | `design.cds.ai-compose` `plan.cds.visual-deploy` `guide.cds.deploy-acceptance` | CDS AI 生成 compose 草稿设计、绝对可视化部署计划看板、可视化部署与验收指南（已发布到 KB） |
 | 2026-05-30 | 新增 | `debt.cds.agent` | CDS Agent 工作台债务台账（R1 商业级 / Lite 只读边界 / 文档熵减 / 无 profile 直跑） |
-| 2026-05-22 | 新增 | `design.defect-agent.share-skill-architecture` `debt.platform.share-link-security` `report.cds.mongo-log-split-incident.2026-05-23` | 缺陷分享架构设计、分享链接安全债务台账、CDS Mongo 事故复盘 |
 | 2026-05-15 | 新增 | `design.cds.agent.runtime-architecture` | CDS Agent 运行时架构设计 |
-| 2026-05-15 | 新增 | `report.cds.agent.workbench.2026-05-15` `guide.cds.agent.workbench-reproduce` `guide.cds.agent.next-agent-testing` | CDS Agent A10 完成复盘、复现教程、下一代测试与涌现建议 |
 | 2026-05-14 | 新增 | `guide.cds.agent.workbench` `guide.cds.agent.admin` `design.cds.agent.api` `guide.cds.agent.runbook` | CDS Agent 完全可用文档闭环 |
 | 2026-05-11 | 补齐 | 批量 | 补齐 57 个长期未登记文档（spec×4 / design×17 / guide×16 / rule×6 / plan×6 / debt×2 / report×5 + 文件重命名 2 个 + index.yml 同步 53 条） |
 | 2026-05-07 | 新增 | `guide.submission-gallery.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
@@ -1060,7 +1037,6 @@
 | 2026-03-31 | 新增 | `spec.submission-gallery` | 作品投稿与画廊展示规格 |
 | 2026-03-31 | 新增 | `plan.doc.design-doc-optimization` | Design 文档优化项目进度 |
 | 2026-05-03 | 新增 | `plan.cds.status` | CDS 当前状态看板（唯一"我在哪"入口） |
-| 2026-05-03 | 新增 | `report.cds.onboarding-uat` | CDS Onboarding UAT 终结报告（合并自 5 个子文件） |
 | 2026-05-03 | 删除 | `report.cds-handoff-2026-04-16` `report.cds-phase-b-e-handoff-2026-04-14` `guide.cds-handoff-2026-05-01` `guide.cds-web-migration-handoff` `report.cds-api-full-test-2026-03-28` `report.cds-railway-alignment` `plan.cds-mysql-readiness` `plan.cds-onboarding-uat-completion` `plan.cds-github-integration-followups` `report.cds-onboarding-uat-completion` `report.cds-onboarding-uat-ui-walkthrough` `report.cds-isolation-audit` `report.cds-server-authority-audit` | CDS 文档整合归档 13 个过期 / 已合并文件，进度统一改读 `plan.cds.status.md` |
 | 2026-03-31 | 替换 | `design.im-architecture` → `design.platform.llm-gateway` | IM 架构文档替换为 LLM Gateway |
 | 2026-03-31 | 批量更新 | 37 篇 `design.*` | 补全管理摘要、头部信息与废弃标注 |

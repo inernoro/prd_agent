@@ -53,11 +53,22 @@ doc/{type}.{topic}.md
 | 类别 | 约定 | 示例 |
 |------|------|------|
 | 周报 | `report.YYYY-WNN.md`，时间即主题 | `report.2026-W13.md` |
-| 带日期的事故 / 验收报告 | 日期作末段 `report.{appname}.{topic}.YYYY-MM-DD.md` | `report.cds.mongo-log-split-incident.2026-05-23.md` |
+| 验收 / 事故报告 | **不进 `doc/`** —— 验收报告归验收知识库（`document_stores`，见 `create-visual-test-to-kb` 技能并出分享链）；事故 postmortem 的架构教训并入相关 `design.*` / `debt.*`。`doc/` 的 `report.*` 只保留周报 | 知识库分享链，不是 `doc/*.md` |
 | 跨应用 / 平台级（不属单一 app） | 用保留域名段：`platform`（鉴权 / 网关 / 模型池 / 存储）、`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系） | `design.platform.llm-gateway.md`、`rule.frontend.modal.md`、`rule.skill.header.md` |
 | 顶层产品文档 | 保留概念名 | `spec.prd.md`、`spec.srs.md`、`spec.project-vision.md` |
 
 > 例外是「下限」：除上述四类，一律 appname 优先。拿不准时**优先归到某个 app**；确属跨切面才用保留域名段。新建文档前先想清楚它属于哪个 appname。
+
+### canonical appname 分类（固化清单，2026-06-24）
+
+appname 第一段**只能从下面四类里选，禁止自创**。新增应用 Agent 必须同步 `rule.platform.app-identity.md` 的 appKey。
+
+- **一、应用 Agent**（对齐 `app-identity` appKey；新 Agent 文档加这一类）：`visual-agent` `literary-agent` `defect-agent` `report-agent` `video-agent` `review-agent` `pr-review` `workflow-agent` `product-agent` `speech-agent` `shortcuts-agent` `front-end-agent` `channel-agent` `ccas-agent` `page-agent` `prd-agent` `agent-universe` `emergence` `marketplace` `open-platform` `knowledge-base` `web-hosting` `daily-tips` `team-activity` `ai-toolbox` `arena` `md-to-ppt` `submission-gallery` `executive-dashboard` `admin` `desktop` `infra-sandbox-agent` `acceptance`
+- **二、平台基础设施**：`cds`（云开发套件）、`platform`（鉴权 / 网关 / 模型池 / 存储等系统级）
+- **三、跨切面保留域**：`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系）
+- **四、顶层产品**（无 appname 段，保留概念名）：`prd` `srs` `project-vision`
+
+> `cds` 已达 100+ 篇（占 doc/ 约三成）。新增 cds 文档前先问能不能并入现有 canonical 文档，别再造「进度剧场」（见 `debt.cds.agent.md` 的收敛计划）。
 
 ---
 
