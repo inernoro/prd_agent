@@ -555,6 +555,40 @@ describe('StateService', () => {
       expect(service.getRemovedBranch('login-feat-demo')?.reason).toBe('merged');
     });
 
+    it('a different-PR abandoned replaces a stale merged (branch slug reuse)', () => {
+      service.load();
+      // PR #1 合并 → merged 墓碑。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo', branch: 'feat/login', projectId: 'proj',
+        reason: 'merged', prNumber: 1, prUrl: 'https://x/pr/1',
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // 同名分支被 PR #2 复用后关闭（未合并）→ 不同 prNumber，应替换陈旧 merged。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo', branch: 'feat/login', projectId: 'proj',
+        reason: 'abandoned', prNumber: 2, prUrl: 'https://x/pr/2',
+        removedAt: '2026-06-24T01:00:00.000Z',
+      });
+      const t = service.getRemovedBranch('login-feat-demo');
+      expect(t?.reason).toBe('abandoned');
+      expect(t?.prNumber).toBe(2);            // 不承袭旧 PR #1 元数据
+      expect(t?.prUrl).toBe('https://x/pr/2');
+    });
+
+    it('a much-later raw delete replaces a stale merged (reuse, no prNumber)', () => {
+      service.load();
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo', branch: 'feat/login', projectId: 'proj',
+        reason: 'merged', prNumber: 1, removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // 数小时后 raw delete（无 prNumber）= 复用分支被删的不同生命周期。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo', branch: 'feat/login', projectId: 'proj',
+        reason: 'abandoned', removedAt: '2026-06-24T05:00:00.000Z',
+      });
+      expect(service.getRemovedBranch('login-feat-demo')?.reason).toBe('abandoned');
+    });
+
     it('abandoned can be upgraded to merged when delete arrives before pr-close', () => {
       service.load();
       service.recordRemovedBranch({

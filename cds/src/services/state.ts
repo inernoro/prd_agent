@@ -3122,14 +3122,26 @@ export class StateService {
     if (!tombstone.previewSlug) return;
     const map = this.state.removedBranches ?? (this.state.removedBranches = {});
     const existing = map[tombstone.previewSlug];
-    if (existing?.reason === 'merged' && tombstone.reason === 'abandoned') {
-      return; // merged 粘性：不被后到的 delete 清理事件降级
+    // 分支名/slug 复用：同一 previewSlug 可能跨越**多个分支生命周期**（旧 PR 合并 → 同名分支
+    // 被新 PR 重新使用 → 新 PR 关闭/删除）。判定 incoming 是否属于与 existing **不同的、更晚的**
+    // 生命周期：incoming 带了不同的 prNumber（铁证），或 incoming 比 existing 晚很多（raw delete
+    // 复用兜底，合并后的自动删除是秒级，复用删除是小时级以上）。跨生命周期时既不保留 merged
+    // 粘性、也不承袭旧 PR 元数据/身份（否则旧 merged 页 + 旧 PR 链接会盖住当前 abandoned 状态，Codex P2）。
+    const existingAt = Date.parse(existing?.removedAt || '') || 0;
+    const incomingAt = Date.parse(tombstone.removedAt || '') || 0;
+    const differentPr = tombstone.prNumber != null && existing?.prNumber != null
+      && tombstone.prNumber !== existing.prNumber;
+    const farLater = existingAt > 0 && incomingAt > existingAt + 30 * 60 * 1000;
+    const crossLifecycle = !!existing && (differentPr || farLater);
+    if (existing?.reason === 'merged' && tombstone.reason === 'abandoned' && !crossLifecycle) {
+      return; // merged 粘性：同一生命周期的合并后 raw delete 不降级（跨生命周期复用则放行覆盖）
     }
     // 保留更丰富的 PR 元数据：典型流程「关 PR（写带 prNumber/prUrl 的 abandoned 墓碑）→
     // GitHub 删分支（delete 事件再写一条 abandoned 墓碑，但不带任何 PR 字段）」会让后者
     // 覆盖前者、丢掉「查看 PR」按钮。incoming 缺某 PR 字段而 existing 有，则承袭（Codex P2）。
+    // 跨生命周期（复用）时**不**承袭，避免旧 PR 元数据/身份污染新记录。
     const record: BranchTombstone = { ...tombstone };
-    if (existing) {
+    if (existing && !crossLifecycle) {
       if (record.prNumber == null && existing.prNumber != null) record.prNumber = existing.prNumber;
       if (!record.prUrl && existing.prUrl) record.prUrl = existing.prUrl;
       if (!record.baseRef && existing.baseRef) record.baseRef = existing.baseRef;
