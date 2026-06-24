@@ -13,13 +13,15 @@ import {
 } from 'lucide-react';
 
 import { apiRequest } from '@/lib/api';
+import { PROJECT_SETTINGS_INDEX, SYSTEM_SETTINGS_INDEX } from '@/lib/settingsSearchIndex';
 
 /*
- * CommandPalette — global Cmd/Ctrl+K palette.
+ * CommandPalette — global Cmd/Ctrl+K palette（苹果聚焦式全局搜索）。
  *
- * Search across projects + tracked branches; pick a row to navigate. This is
- * the "convenience layer" Railway / Linear users expect: any resource is one
- * keystroke + a few characters away.
+ * Search across projects + tracked branches + 字段级设置/配置；pick a row to
+ * navigate. This is the "convenience layer" Railway / Linear users expect: any
+ * resource — 包括藏在某个设置 tab 里的某个配置项 —— is one keystroke + a few
+ * characters away.
  *
  * Open: Cmd/Ctrl + K, or programmatic via the dispatch hook in AppShell.
  * Close: Esc, click backdrop, pick a result.
@@ -27,6 +29,8 @@ import { apiRequest } from '@/lib/api';
  * Data sources:
  *   GET /api/projects         — list of projects
  *   GET /api/branches?project — branches per project (lazy-loaded after open)
+ *   settingsSearchIndex.ts    — 系统级 + 项目级字段配置静态索引（带同义词），
+ *                               让「保活/探活/240/镜像加速」等口语词都能命中
  */
 
 interface ProjectRow {
@@ -52,11 +56,13 @@ interface PaletteData {
 
 interface ResultItem {
   key: string;
-  type: 'project' | 'branch' | 'action';
+  type: 'project' | 'branch' | 'action' | 'setting';
   label: string;
   hint?: string;
   href?: string;
   icon: 'project' | 'branch' | 'settings' | 'topology';
+  /** 额外的同义词集合，参与模糊匹配但不展示（来自 settingsSearchIndex） */
+  keywords?: string[];
 }
 
 function projectDisplay(project: ProjectRow): string {
@@ -87,6 +93,56 @@ function branchesToRows(branches: BranchRow[], projectsById: Map<string, Project
       icon: 'branch' as const,
     };
   });
+}
+
+// 系统级设置（/cds-settings#tab）→ ResultItem。每个 tab 内的字段级配置都登记
+// 在 settingsSearchIndex 里，keywords 带丰富同义词，让「保活」「探活」「240」这类
+// 用户脑子里的词也能命中 —— 这是「Cmd+K 能搜到所有配置」的关键。
+function systemSettingsToRows(): ResultItem[] {
+  return SYSTEM_SETTINGS_INDEX.map((entry) => ({
+    key: `setting:${entry.id}`,
+    type: 'setting' as const,
+    label: entry.label,
+    hint: entry.hint,
+    href: `/cds-settings#${entry.tab}`,
+    icon: 'settings' as const,
+    keywords: entry.keywords,
+  }));
+}
+
+// 项目级设置（/settings/<projectId>#tab）→ 对每个已加载项目展开一份，让用户
+// 在面板里直接选「哪个项目的哪个配置」，落到精确深链。
+function projectSettingsToRows(projects: ProjectRow[]): ResultItem[] {
+  const rows: ResultItem[] = [];
+  for (const project of projects) {
+    const projectLabel = projectDisplay(project);
+    for (const entry of PROJECT_SETTINGS_INDEX) {
+      rows.push({
+        key: `setting:${project.id}:${entry.id}`,
+        type: 'setting',
+        label: entry.label,
+        hint: `${projectLabel} · ${entry.hint}`,
+        href: `/settings/${encodeURIComponent(project.id)}#${entry.tab}`,
+        icon: 'settings',
+        // 把项目名也并进 keywords，这样「prd-agent 探活」能一次命中到该项目
+        keywords: [...entry.keywords, projectLabel, project.slug || '', project.name || ''].filter(Boolean),
+      });
+    }
+  }
+  return rows;
+}
+
+// 同义词参与匹配但不展示。给单条 entry 算最佳匹配分（取 keywords 里最高的那条）。
+function keywordScore(keywords: string[] | undefined, trimmed: string): number {
+  if (!keywords) return -1;
+  let best = -1;
+  for (const word of keywords) {
+    const idx = word.toLowerCase().indexOf(trimmed);
+    if (idx < 0) continue;
+    const score = word.toLowerCase().startsWith(trimmed) ? 70 - idx : 40 - idx;
+    if (score > best) best = score;
+  }
+  return best;
 }
 
 // 2026-05-07 wave 3.3:命令面板强化 — STATIC_ACTIONS 从 2 项扩到 12 项,
@@ -168,6 +224,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const trimmed = query.trim().toLowerCase();
     const projectRows = projectsToRows(data.projects);
     const branchRows = branchesToRows(data.branches, projectsById);
+    const systemSettingRows = systemSettingsToRows();
 
     if (!trimmed) {
       const favoriteBranches = data.branches.filter((branch) => branch.isFavorite);
@@ -184,11 +241,24 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       return text.toLowerCase().startsWith(trimmed) ? 100 - idx : 50 - idx;
     };
 
-    const merged = [...projectRows, ...branchRows, ...STATIC_ACTIONS];
+    // 项目级设置只在用户实际输入时展开（避免空态污染），keywords 已并入项目名。
+    const projectSettingRows = projectSettingsToRows(data.projects);
+    const merged = [
+      ...projectRows,
+      ...branchRows,
+      ...STATIC_ACTIONS,
+      ...systemSettingRows,
+      ...projectSettingRows,
+    ];
     return merged
       .map((item) => ({
         item,
-        rank: Math.max(score(item.label), item.hint ? score(item.hint) - 10 : -1),
+        rank: Math.max(
+          score(item.label),
+          item.hint ? score(item.hint) - 10 : -1,
+          // 同义词命中略低于正标题但高于 hint，保证「保活/探活」也能排到前面
+          keywordScore(item.keywords, trimmed) - 5,
+        ),
       }))
       .filter((entry) => entry.rank >= 0)
       .sort((left, right) => right.rank - left.rank)
@@ -208,7 +278,15 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     (item: ResultItem) => {
       if (!item.href) return;
       onClose();
+      const hashIdx = item.href.indexOf('#');
+      const targetPath = hashIdx >= 0 ? item.href.slice(0, hashIdx) : item.href;
+      const samePage = hashIdx >= 0 && window.location.pathname === targetPath;
       routerNavigate(item.href);
+      // react-router 的 history.pushState 不会触发 hashchange，已在目标设置页时
+      // 切 tab 全靠该页监听 hashchange。手动补一发，确保面板内深链能切到目标 tab。
+      if (samePage) {
+        window.setTimeout(() => window.dispatchEvent(new HashChangeEvent('hashchange')), 0);
+      }
     },
     [onClose, routerNavigate],
   );
@@ -253,7 +331,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="搜索项目、分支或操作"
+            placeholder="搜索项目、分支、设置或配置（如 保活 / 探活 / 镜像）"
             className="h-12 min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             autoComplete="off"
             spellCheck={false}
