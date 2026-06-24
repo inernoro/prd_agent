@@ -1200,19 +1200,35 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
     setPublishing(false);
   }, [store, storeId]);
 
-  // 下载当前知识库的全部文档：逐条拉正文 → 文本存为 .md、二进制附件下载原文件 → 打包成 ZIP。
-  // 禁止空白等待：按钮转圈 + toast 报进度（第 N / 总数），失败计数照实报。
+  // 下载当前知识库的全部文档：分页拉全量条目（不止内存首页）→ 文本类存为 .md/.html、
+  // 二进制类（pdf/docx/图片…）即使有抽取正文也下原文件 → 打包成 ZIP。
+  // 禁止空白等待：按钮转圈 + toast 报进度，失败计数照实报。
   const handleDownloadStore = useCallback(async () => {
     if (!store || downloading) return;
-    const docs = entries.filter(e => !e.isFolder);
-    if (docs.length === 0) {
-      toast.warning('没有可下载的文档', '当前知识库还没有任何文档条目');
-      return;
-    }
     setMoreOpen(false);
     setDownloading(true);
-    toast.info('正在打包文档…', `共 ${docs.length} 篇，正在逐篇导出`);
+    toast.info('正在准备下载…', '正在汇总知识库全部文档');
     try {
+      // 1) 分页拉全量条目（loadEntries 只取首页 200，大库会漏；这里按 total 翻页拉齐）
+      const PAGE = 200;
+      const allEntries: DocumentEntry[] = [];
+      let page = 1;
+      let total = Infinity;
+      while (allEntries.length < total) {
+        const res = await listDocumentEntries(storeId, page, PAGE);
+        if (!res.success || !res.data) break;
+        allEntries.push(...res.data.items);
+        total = res.data.total ?? allEntries.length;
+        if (res.data.items.length === 0) break; // 兜底：防 total 不可信导致死循环
+        page++;
+      }
+      const docs = allEntries.filter(e => !e.isFolder);
+      if (docs.length === 0) {
+        toast.warning('没有可下载的文档', '当前知识库还没有任何文档条目');
+        return;
+      }
+      toast.info('正在打包文档…', `共 ${docs.length} 篇，正在逐篇导出`);
+
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
       const usedNames = new Set<string>();
@@ -1225,6 +1241,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         usedNames.add(name);
         return name;
       };
+      // 是否为「文字类」内容（与 DocBrowser 同口径）：text/* 、markdown、html、空 contentType。
+      // 上传的 pdf/docx 等即使抽取出正文，contentType 仍是 application/*，走二进制分支下原文件。
+      const isTextType = (ct: string) => {
+        const c = (ct ?? '').toLowerCase();
+        return c === '' || c.startsWith('text/') || c.includes('markdown') || c.includes('html');
+      };
       let ok = 0;
       let fail = 0;
       for (const entry of docs) {
@@ -1232,13 +1254,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
           const res = await getDocumentContent(entry.id);
           if (!res.success || !res.data) { fail++; continue; }
           const { content, fileUrl, contentType } = res.data;
-          if (content != null && content !== '') {
-            // 文本类：markdown / 纯文本统一存 .md（阅读器即按 markdown 渲染）
-            const ext = contentType?.includes('html') ? '.html' : '.md';
+          const textType = isTextType(contentType);
+          if (textType && content != null && content !== '') {
+            // 纯文字类：markdown/纯文本存 .md，html 存 .html（阅读器即按 markdown 渲染）
+            const ext = (contentType ?? '').toLowerCase().includes('html') ? '.html' : '.md';
             zip.file(safeName(entry.title, ext), content);
             ok++;
           } else if (fileUrl) {
-            // 二进制附件：拉原文件体，沿用原扩展名（取不到则按标题）
+            // 二进制附件（pdf/docx/图片…）：下原文件，沿用原扩展名（取不到则无扩展名）
             const resp = await fetch(fileUrl);
             if (!resp.ok) { fail++; continue; }
             const blob = await resp.blob();
@@ -1247,6 +1270,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               return m ? `.${m[1]}` : '';
             })();
             zip.file(safeName(entry.title.replace(/\.[a-zA-Z0-9]{1,8}$/, ''), urlExt), blob);
+            ok++;
+          } else if (content != null && content !== '') {
+            // 二进制类但拿不到 fileUrl：退而保留抽取出的正文为 .txt，不至于整条丢失
+            zip.file(safeName(entry.title, '.txt'), content);
             ok++;
           } else {
             fail++;
@@ -1272,7 +1299,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
     } finally {
       setDownloading(false);
     }
-  }, [store, entries, downloading]);
+  }, [store, storeId, downloading]);
 
   if (!store) {
     return (
