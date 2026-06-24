@@ -1952,12 +1952,28 @@ def cmd_profile_readiness(args: argparse.Namespace) -> None:
 
 
 def cmd_branch_set_mode(args: argparse.Namespace) -> None:
+    # Codex P2「Preserve existing branch overrides when setting mode」：
+    # PUT /profile-overrides/:pid 是**整体替换**，只发 activeDeployMode 会把该分支已有的
+    # env / containerPort / dockerImage / pathPrefixes 等覆盖字段清掉，下次部署用错端口/镜像。
+    # 先取现有覆盖、只合并这一个字段再 PUT。
+    existing: dict = {}
+    try:
+        listing = _call("GET", "/api/branches", timeout=30)
+        for b in (listing.get("branches", []) if isinstance(listing, dict) else []):
+            if b.get("id") == args.id:
+                ov = (b.get("profileOverrides") or {}).get(args.profile)
+                if isinstance(ov, dict):
+                    existing = dict(ov)
+                break
+    except Exception:
+        existing = {}  # 取不到就退化为只设模式（与旧行为一致，至少不更糟）
+    existing["activeDeployMode"] = args.mode
     body = _call("PUT",
                  f"/api/branches/{urllib.parse.quote(args.id)}"
                  f"/profile-overrides/{urllib.parse.quote(args.profile)}",
-                 body={"activeDeployMode": args.mode})
+                 body=existing)
     ok(body, note=f"分支 {args.id} / profile {args.profile} 部署模式覆盖 -> {args.mode}"
-                  "(需重新部署生效)")
+                  "(已保留其它覆盖字段；需重新部署生效)")
 
 
 def cmd_self_branches(args: argparse.Namespace) -> None:

@@ -1313,6 +1313,70 @@ proxyService.setScheduler(schedulerService);
 // crashed / user-stopped branches are never revived here. Kill-switch:
 // CDS_PREVIEW_AUTOWAKE=0 disables it (falls back to the diagnostic page).
 if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
+  // #1 重启中断分支按需自愈：访问到一个被 CDS self-update/崩溃重启打断的 error 分支时，
+  // 走一次完整重部署（中断分支容器可能没建好，docker restart 不够）。demand-driven + 代理侧
+  // 去重，不复活「每 5min 全量补发」的重试风暴。Kill-switch 复用 CDS_PREVIEW_AUTOWAKE=0。
+  proxyService.setOnRecoverInterrupted(async (slug: string) => {
+    const branch = stateService.getBranch(slug);
+    if (!branch) return;
+    // 同步前缀（首个 await 前）：再核一遍仍是「重启中断」error 态，翻 loading 并 save，
+    // 让代理紧接着渲染的等待页立刻显示「正在恢复」而非 error 闪一下。
+    if (branch.status !== 'error' || branch.executorId) return;
+    const marker = '重启中断';
+    const interrupted = (typeof branch.errorMessage === 'string' && branch.errorMessage.includes(marker))
+      || Object.values(branch.services || {}).some((s) => typeof s?.errorMessage === 'string' && s.errorMessage.includes(marker));
+    if (!interrupted) return;
+    const commitSha = branch.githubCommitSha || branch.lastDeployDispatchCommitSha || '';
+    if (!commitSha) return;
+    branch.status = 'restarting';
+    for (const svc of Object.values(branch.services || {})) {
+      if (svc) { svc.status = 'building'; svc.errorMessage = undefined; }
+    }
+    stateService.save();
+    const requestId = `recover_${slug}_${Date.now()}`;
+    activeServerEventLogStore?.record({
+      category: 'system',
+      severity: 'warn',
+      source: 'proxy.preview-interrupted-recovery',
+      action: 'branch.interrupted.recover-started',
+      message: `按需自愈：重启中断分支 ${slug} 被访问，触发重部署`,
+      projectId: branch.projectId,
+      branchId: branch.id,
+      requestId,
+      details: { commitSha, trigger: 'preview-access' },
+    });
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(slug)}/deploy`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': 'preview-recovery',
+            'X-CDS-Request-Id': requestId,
+            ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
+          },
+          body: JSON.stringify({ commitSha }),
+        },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`);
+      const reader = response.body?.getReader();
+      if (reader) { for (;;) { const { done } = await reader.read(); if (done) break; } }
+    } catch (err) {
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: 'error',
+        source: 'proxy.preview-interrupted-recovery',
+        action: 'branch.interrupted.recover-failed',
+        message: `按需自愈重部署失败 ${slug}: ${(err as Error).message}`,
+        projectId: branch.projectId,
+        branchId: branch.id,
+        requestId,
+      });
+    }
+  });
+
   proxyService.setOnReviveCooled(async (slug: string) => {
     const branch = stateService.getBranch(slug);
     if (!branch) return;
