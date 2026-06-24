@@ -1328,6 +1328,11 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     if (!interrupted) return;
     const commitSha = branch.githubCommitSha || branch.lastDeployDispatchCommitSha || '';
     if (!commitSha) return;
+    // Bugbot Medium「Recovery skips operation lease」：乐观翻 loading + 发内部 /deploy 前，
+    // 若分支上已有在跑的操作（部署/重启/降温…）就**不抢状态**——那个操作拥有该分支，交给它，
+    // 避免与在途操作的状态写竞争（cooled-wake 走 lease 互斥，这里用同源的协调器判活兜底；
+    // 内部 /deploy 自己仍会拿真正的 lease）。
+    if ((branchOperationCoordinator.getActiveOperations(branch.id) || []).some((op) => !op.cancelled)) return;
     // 失败要还原的原始 error 文案（乐观翻 loading 前留存）。
     const prevErrorMessage = branch.errorMessage;
     const prevSvcError: Record<string, string | undefined> = {};
