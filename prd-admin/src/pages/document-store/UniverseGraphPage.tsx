@@ -256,6 +256,9 @@ export function UniverseGraphPage() {
 
   // ── 渲染循环 ──
   useEffect(() => {
+    // 星系视图下 canvas 已卸载：不启动 RAF 循环，避免 O(n²) 力导向仿真在后台空转抢主线程。
+    // 切回宇宙图时 viewMode 变化会重跑本 effect，循环自动恢复。
+    if (viewMode !== 'universe') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
@@ -369,7 +372,7 @@ export function UniverseGraphPage() {
       window.removeEventListener('resize', resize);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edges, hoverNodeId, focusNodeId, nodes]);
+  }, [edges, hoverNodeId, focusNodeId, nodes, viewMode]);
 
   // ── 鼠标交互 ──
   const dragRef = useRef<{

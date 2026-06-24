@@ -388,14 +388,34 @@ export function DocumentGalaxyView({ storeId, storeName }: DocumentGalaxyViewPro
     setGalaxy(null);
     setOpenEntryId(null);
 
+    // 先并行拉第一页 entries + 双链；entries 可能多页（doc/ 库 330+），下面再翻页补齐
     Promise.all([listDocumentEntriesReal(storeId, 1, 200), getStoreGraph(storeId)])
-      .then(([entriesRes, graphRes]) => {
+      .then(async ([firstRes, graphRes]) => {
         if (cancelled) return;
-        if (!entriesRes.success) {
-          setError(entriesRes.error?.message || '加载文档条目失败');
+        if (!firstRes.success) {
+          setError(firstRes.error?.message || '加载文档条目失败');
           return;
         }
-        const entries: GalaxyInputEntry[] = entriesRes.data.items.map((e) => ({
+        const PAGE_SIZE = 200;
+        const MAX_PAGES = 50; // 上限 10000 条，防御异常分页
+        const allItems = [...firstRes.data.items];
+        const total = firstRes.data.total ?? allItems.length;
+        // 还有剩余页就继续翻：用 total 推断总页数，items.length < pageSize 作兜底终止
+        let page = 1;
+        while (
+          allItems.length < total &&
+          firstRes.data.items.length >= PAGE_SIZE &&
+          page < MAX_PAGES
+        ) {
+          page += 1;
+          const res = await listDocumentEntriesReal(storeId, page, PAGE_SIZE);
+          if (cancelled) return;
+          if (!res.success) break;
+          allItems.push(...res.data.items);
+          if (res.data.items.length < PAGE_SIZE) break;
+        }
+
+        const entries: GalaxyInputEntry[] = allItems.map((e) => ({
           id: e.id,
           title: e.title,
           parentId: e.parentId ?? null,
