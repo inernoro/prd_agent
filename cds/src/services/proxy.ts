@@ -589,9 +589,13 @@ export class ProxyService {
       // fail-safe：无墓碑（绝大多数停止分支）则一切照旧；只拦真实 HTML 导航（asset/
       // API 请求继续走状态页，避免把 gone HTML 当成 CSS/JS 返回）。墓碑命中也意味着
       // 不该 auto-wake/恢复一个已合并/已放弃的分支，故置于这些副作用之前直接返回。
-      if (this.onBranchGone && this.isHtmlNavigationRequest(req)
-        && this.stateService.findRemovedBranchByIdentifier(branch.id)) {
-        this.onBranchGone(branch.id, req, res);
+      // 按 branchSlug（host label，标准 v3 预览即 previewSlug 主键）**和** branch.id 两路查，
+      // 因为墓碑以 previewSlug 为键、branchId 仅作兜底，二者可能都不等于对方（Bugbot）。
+      // 命中后转发墓碑自身的 previewSlug（map 主键）给 gone 页，保证它再查必命中。
+      const tomb = this.stateService.findRemovedBranchByIdentifier(branchSlug)
+        ?? this.stateService.findRemovedBranchByIdentifier(branch.id);
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb) {
+        this.onBranchGone(tomb.previewSlug || branch.id, req, res);
         return;
       }
       // Auto-wake: a branch put to sleep by the scheduler (containers preserved,

@@ -3134,8 +3134,16 @@ export class StateService {
       if (!record.prUrl && existing.prUrl) record.prUrl = existing.prUrl;
       if (!record.baseRef && existing.baseRef) record.baseRef = existing.baseRef;
       if (!record.mergeCommitSha && existing.mergeCommitSha) record.mergeCommitSha = existing.mergeCommitSha;
-      if (!record.branchId && existing.branchId) record.branchId = existing.branchId;
-      if ((!record.aliases || record.aliases.length === 0) && existing.aliases?.length) record.aliases = existing.aliases;
+      // 身份字段（branchId/aliases）合并：保留**已有** branchId 为主键（第一写入者通常来自
+      // 真实 entry.id，比后到事件用 canonicalId 计算的更权威），把另一个不同的 id 收进
+      // aliases，让 findRemovedBranchByIdentifier 按任一 id 都命中——避免后到的 canonicalId
+      // 覆盖真实 entry.id 导致停止分支 gone 页查不到（Bugbot）。
+      const aliasSet = new Set<string>([...(existing.aliases ?? []), ...(record.aliases ?? [])]);
+      if (existing.branchId && record.branchId && existing.branchId !== record.branchId) {
+        aliasSet.add(record.branchId);
+      }
+      if (existing.branchId) record.branchId = existing.branchId;
+      if (aliasSet.size) record.aliases = Array.from(aliasSet);
     }
     map[tombstone.previewSlug] = record;
     const entries = Object.entries(map);

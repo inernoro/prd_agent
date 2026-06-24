@@ -11,6 +11,7 @@ import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } 
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
+import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
@@ -3549,6 +3550,11 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
       const now = Date.now();
       for (const b of Object.values(state.branches || {})) {
         if (b.ciImageStatus !== 'waiting') continue;
+        // 校验分支**当前**仍是极速版：用户若把部署 override 从 express 切回 dev/static，
+        // profile 路由只存 override、不清旧的 ciImageStatus='waiting'，看门狗不该据此把一个
+        // 已退出极速版的源码模式分支误判超时翻 failed（Codex P2，与 workflow_run 同口径）。
+        const wdProfiles = stateService.getBuildProfilesForProject(b.projectId);
+        if (!branchUsesPrebuiltMode(wdProfiles, b)) continue;
         const sinceIso = b.ciWaitingSince || b.lastPushAt;
         const sinceMs = sinceIso ? Date.parse(sinceIso) : Number.NaN;
         if (!Number.isFinite(sinceMs)) continue;

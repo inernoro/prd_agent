@@ -599,6 +599,24 @@ describe('StateService', () => {
       expect(got?.prUrl).toBe('https://github.com/o/r/pull/42');
     });
 
+    it('keeps the first-written branchId and demotes a later differing id to aliases', () => {
+      service.load();
+      // delete 先写：真实 entry.id 作 branchId。
+      service.recordRemovedBranch({
+        previewSlug: 'feat-x-demo', branch: 'feat/x', projectId: 'p', reason: 'abandoned',
+        branchId: 'real-entry-id', removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // closed（无 entry）后写：用计算的 canonicalId，不得覆盖真实 id。
+      service.recordRemovedBranch({
+        previewSlug: 'feat-x-demo', branch: 'feat/x', projectId: 'p', reason: 'merged',
+        branchId: 'computed-canonical-id', removedAt: '2026-06-24T00:00:05.000Z',
+      });
+      // 两个 id 都能查到（主键 + alias 兜底），且 reason 升级为 merged。
+      expect(service.findRemovedBranchByIdentifier('real-entry-id')?.reason).toBe('merged');
+      expect(service.findRemovedBranchByIdentifier('computed-canonical-id')?.reason).toBe('merged');
+      expect(service.getRemovedBranch('feat-x-demo')?.branchId).toBe('real-entry-id');
+    });
+
     it('findRemovedBranchByIdentifier falls back to branchId / aliases', () => {
       service.load();
       service.recordRemovedBranch({

@@ -4568,8 +4568,13 @@ function BranchCard({
   //   只剩 lastStop* 残留的 idle 分支会被误显「容器停止」而非「待部署」，Bugbot Low）。
   //   面板里的来源/原因/时间文案仍读 lastStop*，只是不靠它来「判定是否停止」。
   // - isNeverDeployed：从没部署过（无 lastDeployAt、services 为空、无停止信号）→「待部署」。
-  const isCiWaiting = !isRunning && !isInterim && branch.ciImageStatus === 'waiting';
-  const isCiFailed = !isRunning && !isInterim && !isError && branch.ciImageStatus === 'failed';
+  // prebuilt !== false 门：分支若从极速版切回源码模式，profile 路由只存 override、不清旧的
+  // ciImageStatus，故源码模式分支不该再进 CI 等待/失败行（Codex P2）。用 !== false 而非
+  // === true：deployRuntime 仅由 GET /branches 注入，SSE 新建的极速版分支缺它（缺省=显示，
+  // 明确 prebuilt=false 即已切源码=隐藏），与下方 CI chip 同口径。
+  const ciPrebuilt = branch.deployRuntime?.prebuilt !== false;
+  const isCiWaiting = !isRunning && !isInterim && ciPrebuilt && branch.ciImageStatus === 'waiting';
+  const isCiFailed = !isRunning && !isInterim && !isError && ciPrebuilt && branch.ciImageStatus === 'failed';
   const branchServices = Object.values(branch.services || {});
   const hasStopSignal = branchServices.length > 0
     && !branchServices.some((svc) => svc.status === 'running' || svc.status === 'building'

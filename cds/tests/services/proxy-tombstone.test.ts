@@ -77,7 +77,8 @@ describe('ProxyService stopped-branch tombstone divert', () => {
     await proxy.handleRequest(makeReq(), makeRes());
 
     expect(gone).toHaveBeenCalledTimes(1);
-    expect(gone).toHaveBeenCalledWith(b.id, expect.anything(), expect.anything());
+    // 转发墓碑自身的 previewSlug（map 主键），保证 gone 页再查必命中（Bugbot）。
+    expect(gone).toHaveBeenCalledWith('feat-cooled-merged-slug', expect.anything(), expect.anything());
   });
 
   it('does NOT divert a stopped branch with NO tombstone (fail-safe)', async () => {
