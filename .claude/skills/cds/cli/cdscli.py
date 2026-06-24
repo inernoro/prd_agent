@@ -1866,6 +1866,100 @@ def cmd_env_set(args: argparse.Namespace) -> None:
     ok(body, note=f"set {k} in scope={scope}")
 
 
+# ── 构建配置(就绪超时 / 部署模式)──────────────────────────────────
+#
+# 背景(2026-06-24):就绪探测超时(探活)和部署模式(web=dev/release)以前被误以为
+# 是 dashboard 专属、API key 设不了。其实后端早有端点,且和 `branch deploy` 同一套
+# 鉴权(AI access key 直接可调):
+#   GET  /api/build-profiles[?project=ID]               列出构建配置
+#   PUT  /api/build-profiles/:id/deploy-mode {mode}     切换 profile 的激活部署模式
+#   PUT  /api/build-profiles/:id {readinessProbe:{...}} 改就绪探测(GET-合并-PUT 保字段)
+#   PUT  /api/branches/:id/profile-overrides/:pid {activeDeployMode} 单分支部署模式覆盖
+# 这一组命令把它们补进 cdscli,AI 用 key 即可设置,不再依赖 dashboard。
+
+def _find_build_profile(profile_id: str, project: str | None) -> dict[str, Any]:
+    """GET 构建配置列表并按 id 命中。readiness 改动要 GET-合并-PUT,避免整体替换
+    readinessProbe 丢掉 path/interval/noHttp。"""
+    path = "/api/build-profiles"
+    if project:
+        path += f"?project={urllib.parse.quote(project)}"
+    body = _call("GET", path)
+    profiles = (body or {}).get("profiles") if isinstance(body, dict) else None
+    for p in profiles or []:
+        if isinstance(p, dict) and p.get("id") == profile_id:
+            return p
+    die(f"构建配置 '{profile_id}' 未找到"
+        + (f"(project={project})" if project else "(可加 --project 缩小范围)"), code=2)
+    raise SystemExit(2)  # unreachable, satisfies type checker
+
+
+def _profile_summary(p: dict[str, Any]) -> dict[str, Any]:
+    rp = p.get("readinessProbe") or {}
+    return {
+        "id": p.get("id"),
+        "name": p.get("name"),
+        "projectId": p.get("projectId"),
+        "activeDeployMode": p.get("activeDeployMode") or None,
+        "deployModes": list((p.get("deployModes") or {}).keys()),
+        "readiness": {
+            "timeoutSeconds": rp.get("timeoutSeconds"),
+            "intervalSeconds": rp.get("intervalSeconds"),
+            "path": rp.get("path"),
+            "noHttp": rp.get("noHttp"),
+        },
+    }
+
+
+def cmd_profile_list(args: argparse.Namespace) -> None:
+    project = getattr(args, "project", None) or os.environ.get("CDS_PROJECT_ID")
+    path = "/api/build-profiles"
+    if project:
+        path += f"?project={urllib.parse.quote(project)}"
+    body = _call("GET", path)
+    profiles = (body or {}).get("profiles") if isinstance(body, dict) else []
+    ok([_profile_summary(p) for p in (profiles or []) if isinstance(p, dict)],
+       note=f"{len(profiles or [])} 个构建配置" + (f"(project={project})" if project else ""))
+
+
+def cmd_profile_deploy_mode(args: argparse.Namespace) -> None:
+    mode = "" if getattr(args, "reset", False) else args.mode
+    if not args.reset and not mode:
+        die("必须提供部署模式名,或用 --reset 恢复默认", code=1)
+    body = _call("PUT", f"/api/build-profiles/{urllib.parse.quote(args.id)}/deploy-mode",
+                 body={"mode": mode})
+    ok(body, note=f"profile {args.id} 部署模式 -> {mode or 'default'}")
+
+
+def cmd_profile_readiness(args: argparse.Namespace) -> None:
+    if (args.timeout is None and args.interval is None and args.path is None
+            and args.no_http is None):
+        die("至少提供一项:--timeout / --interval / --path / --no-http|--http", code=1)
+    project = getattr(args, "project", None) or os.environ.get("CDS_PROJECT_ID")
+    existing = _find_build_profile(args.id, project)
+    probe = dict(existing.get("readinessProbe") or {})  # 合并,不整体替换
+    if args.timeout is not None:
+        probe["timeoutSeconds"] = args.timeout
+    if args.interval is not None:
+        probe["intervalSeconds"] = args.interval
+    if args.path is not None:
+        probe["path"] = args.path
+    if args.no_http is not None:
+        probe["noHttp"] = args.no_http
+    _call("PUT", f"/api/build-profiles/{urllib.parse.quote(args.id)}",
+          body={"readinessProbe": probe})
+    ok({"profileId": args.id, "readinessProbe": probe},
+       note=f"profile {args.id} 就绪探测已更新(改完需重新部署生效)")
+
+
+def cmd_branch_set_mode(args: argparse.Namespace) -> None:
+    body = _call("PUT",
+                 f"/api/branches/{urllib.parse.quote(args.id)}"
+                 f"/profile-overrides/{urllib.parse.quote(args.profile)}",
+                 body={"activeDeployMode": args.mode})
+    ok(body, note=f"分支 {args.id} / profile {args.profile} 部署模式覆盖 -> {args.mode}"
+                  "(需重新部署生效)")
+
+
 def cmd_self_branches(args: argparse.Namespace) -> None:
     body = _call("GET", "/api/self-branches", timeout=10)
     ok(body)
@@ -6436,6 +6530,41 @@ def _build_parser() -> argparse.ArgumentParser:
     bc.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
     bc.add_argument("--branch", required=True, help="git 分支名(必填)")
     bc.set_defaults(func=cmd_branch_create)
+    bsm = br.add_parser("set-mode",
+                        help="设置单分支的部署模式覆盖(activeDeployMode)。"
+                             "如把某预览分支的 web 改成 dev 模式。")
+    bsm.add_argument("id", help="CDS canonical branch id")
+    bsm.add_argument("profile", help="构建配置 id(profileId)")
+    bsm.add_argument("mode", help="部署模式名(须存在于该 profile 的 deployModes)")
+    bsm.set_defaults(func=cmd_branch_set_mode)
+
+    prof = sub.add_parser(
+        "profile",
+        help="构建配置:就绪超时(探活) / 部署模式。AI 用 key 直接设,不依赖 dashboard。",
+    ).add_subparsers(dest="sub", required=True)
+    pfl = prof.add_parser("list", help="列出构建配置 + 当前部署模式 + 就绪超时")
+    pfl.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
+    pfl.set_defaults(func=cmd_profile_list)
+    pfdm = prof.add_parser("deploy-mode", help="切换 profile 的激活部署模式")
+    pfdm.add_argument("id", help="构建配置 id(profileId)")
+    pfdm.add_argument("mode", nargs="?", help="部署模式名(须存在于 deployModes)")
+    pfdm.add_argument("--reset", action="store_true", help="恢复默认(清空 activeDeployMode)")
+    pfdm.set_defaults(func=cmd_profile_deploy_mode)
+    pfr = prof.add_parser(
+        "readiness",
+        help="设置就绪探测(探活):超时 / 间隔 / 路径 / 是否跳过 HTTP。GET-合并-PUT 保留未改字段。",
+    )
+    pfr.add_argument("id", help="构建配置 id(profileId)")
+    pfr.add_argument("--timeout", type=int, default=None, help="就绪最长等待秒数(timeoutSeconds)")
+    pfr.add_argument("--interval", type=int, default=None, help="探测间隔秒数(intervalSeconds)")
+    pfr.add_argument("--path", default=None, help="HTTP 探测路径(如 /health)")
+    pfr_http = pfr.add_mutually_exclusive_group()
+    pfr_http.add_argument("--no-http", dest="no_http", action="store_const", const=True,
+                          default=None, help="跳过 HTTP 探测只做 TCP(后台 worker 用)")
+    pfr_http.add_argument("--http", dest="no_http", action="store_const", const=False,
+                          help="恢复 HTTP 探测(撤销 --no-http)")
+    pfr.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID),用于按 id 定位 profile")
+    pfr.set_defaults(func=cmd_profile_readiness)
 
     env = sub.add_parser("env", help="环境变量").add_subparsers(dest="sub", required=True)
     eg = env.add_parser("get"); eg.add_argument("--scope"); eg.set_defaults(func=cmd_env_get)

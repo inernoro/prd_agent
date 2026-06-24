@@ -51,6 +51,16 @@ $CLI env get --scope _global
 $CLI env get --scope <projectId>
 $CLI env set DB_PASS=s3cret --scope <projectId>
 
+# 构建配置：就绪超时(探活) / 部署模式 —— AI 用 key 直接设，不依赖 dashboard
+# （这些以前被误以为是 dashboard 专属、API key 设不了，其实和 branch deploy 同一套鉴权）
+$CLI profile list --project <id>                 # 列出 profile + 当前部署模式 + 就绪超时
+$CLI profile deploy-mode <profileId> dev         # 切 profile 激活部署模式（--reset 恢复默认）
+$CLI profile readiness <profileId> --timeout 1200  # 设就绪探测超时秒数（GET-合并-PUT 保留其它字段）
+$CLI profile readiness <profileId> --no-http     # 后台 worker：跳过 HTTP 探测只做 TCP（--http 撤销）
+$CLI branch set-mode <branchId> <profileId> dev  # 单分支部署模式覆盖（如把某预览分支 web 改 dev）
+# 注：就绪超时是「每服务/每 profile」级（无系统全局默认值），无标签时运行时默认 180s。
+#     改完都需要重新部署生效（$CLI branch deploy <id>）。
+
 # Key 管理
 $CLI global-key list                     # 全局 bootstrap key
 $CLI global-key create --label "for claude onboarding"
