@@ -1246,7 +1246,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
               {rec.durationMs !== undefined ? (
                 /* 2026-05-07 timing 审视:durationMs = 后端流程,totalElapsedMs = 真实总耗时
                  * (含 daemon 重启 + SSE 重连)。两者都显示让用户看清楚体感差异。
-                 * report.cds-self-update-timing-audit.md */
+                 * report.cds.self-update-timing-audit.md */
                 <span className="text-xs text-muted-foreground" title={
                   rec.totalElapsedMs
                     ? `后端流程: ${(rec.durationMs / 1000).toFixed(1)}s · 重启 + SSE 恢复: ${((rec.totalElapsedMs - rec.durationMs) / 1000).toFixed(1)}s`

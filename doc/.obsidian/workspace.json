@@ -190,16 +190,16 @@
     "report.cds-db-workbench-l1-acceptance.01-mysql-workbench.png",
     "design.team-activity.md",
     "version-20260610-1-summary.md",
-    "plan.product-agent-version-workflow.md",
+    "plan.product-agent.version-workflow.md",
     "acceptance/acc-prd-agent-202606101844-cds-数据库初始化自动识别推荐/02-env-dialog-init-card.png",
     "未命名.base",
     "未命名.canvas",
-    "debt.cds-state-json.md",
+    "debt.cds.state-json.md",
     "acceptance/cds-resource-console-upgrade/acc-prd-agent-202606100120-cds-resource-danger-and-multidb-backups.md",
-    "plan.ai-toolbox-next-steps.md",
+    "plan.ai-toolbox.next-steps.md",
     "acceptance/cds-resource-console-upgrade/acc-prd-agent-202606092359-cds-resource-console-permission-and-db-panels.md",
     "acceptance/acc-prd-agent-202606101844-cds-数据库初始化自动识别推荐.md",
     "acceptance/acc-prd-agent-202606081911-系统互联添加对端统一连接串流程.md",
-    "debt.acceptance-system.md"
+    "debt.acceptance.system.md"
   ]
 }

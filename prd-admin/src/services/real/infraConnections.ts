@@ -1,6 +1,6 @@
 /**
  * 基础设施连接 service（MAP 端剪贴板配对密钥）
- * 详见 doc/spec.cds-map-pairing-protocol.md
+ * 详见 doc/spec.cds.map-pairing-protocol.md
  */
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';

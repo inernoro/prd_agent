@@ -14,8 +14,8 @@
  * Routes (cds/src/routes/auth.ts) and middleware
  * (cds/src/middleware/github-auth.ts) call it; tests use it directly.
  *
- * See doc/design.cds-multi-project.md section 七 and
- * doc/plan.cds-multi-project-phases.md P2.
+ * See doc/design.cds.multi-project.md section 七 and
+ * doc/plan.cds.multi-project-phases.md P2.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';

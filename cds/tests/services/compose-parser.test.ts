@@ -11,7 +11,7 @@ import { parseResourceLimits, resolveEnvTemplates, parseCdsCompose, parseCompose
  *   1. `x-cds-resources` (our extension, numeric)
  *   2. `deploy.resources.limits` (standard compose, string with units)
  *
- * See doc/design.cds-resilience.md Phase 2.
+ * See doc/design.cds.resilience.md Phase 2.
  */
 describe('parseResourceLimits', () => {
   describe('x-cds-resources (our extension)', () => {

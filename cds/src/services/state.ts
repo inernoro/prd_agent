@@ -703,7 +703,7 @@ export class StateService {
    * On failure of step 2/3/4, state.json is untouched. Step 5/6 failures
    * are logged but do not propagate — the main write already succeeded.
    *
-   * See doc/design.cds-resilience.md §5.
+   * See doc/design.cds.resilience.md §5.
    */
   save(): void {
     // P3: delegate physical persistence to the backing store. The atomic
@@ -1746,7 +1746,7 @@ export class StateService {
   // ── CDS configuration pairing connections (MAP / CLI partners, 2026-05-06) ──
   //
   // 配对连接登记。pairing token / long token 仅存 SHA256 hash，明文不出库。
-  // 详见 doc/spec.cds-map-pairing-protocol.md 与 types.ts::CdsConnection。
+  // 详见 doc/spec.cds.map-pairing-protocol.md 与 types.ts::CdsConnection。
 
   /** 列出全部连接（含 pending-pairing / revoked）。 */
   getCdsConnections(): CdsConnection[] {
@@ -2770,7 +2770,7 @@ export class StateService {
   static readonly SELF_UPDATE_HISTORY_MAX = 20;
 
   /**
-   * 2026-05-07 timing 审视 (report.cds-self-update-timing-audit):
+   * 2026-05-07 timing 审视 (report.cds.self-update-timing-audit):
    * 新进程 server.listen 后调,盖戳 daemon 完整 ready 的时刻。
    * recordSelfUpdate 在 daemon 重启后第一次跑(no-op 短路或新一次 update)时,
    * 会用此时间戳回填上一条 success record 的 totalElapsedMs。
@@ -2961,7 +2961,7 @@ export class StateService {
    * 用户反馈"webhook 只有 1 条以为没日志"——根因是上限太小，遇到一阵 push 风暴
    * 几分钟就被旧条目挤掉。1000 条相当于一个忙项目两天的窗口，足够回溯排查。
    * 后续若上 MongoDB 持久化，把本 ring buffer 改成 capped collection，参考
-   * doc/debt.cds-state-json.md。
+   * doc/debt.cds.state-json.md。
    */
   static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 1000;
 

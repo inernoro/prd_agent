@@ -6,7 +6,7 @@
  * 2. 右侧输入框 (RichComposer chipRefs)
  * 3. 首页带入 (initialPrompt inlineImage)
  *
- * @see doc/design.inline-image-chat.md
+ * @see doc/design.visual-agent.inline-image-chat.md
  */
 
 /**

@@ -1,7 +1,7 @@
 /**
  * Forwarder 路由解析器(B'.2-forwarder)
  *
- * 对应 doc/report.cds-forwarder-success.md
+ * 对应 doc/report.cds.forwarder-success.md
  *
  * 纯函数:输入 (routes, host, path) → 返回唯一命中的 RouteRecord 或 null。
  * 不发 HTTP、不 IO、不 throw(参数缺陷返 null)。

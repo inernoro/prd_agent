@@ -7,7 +7,7 @@
  * 路由：/document-store/:storeId/universe（来自 navRegistry 的 store-scoped 入口）
  * 也支持顶层 /document-store/universe（用户自选库）。
  *
- * 详见 doc/design.knowledge-base-mention-network.md §宇宙图。
+ * 详见 doc/design.knowledge-base.mention-network.md §宇宙图。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';

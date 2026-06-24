@@ -858,7 +858,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   },
   {
     // claude-sdk sidecar 等共享基础设施服务的管理入口。
-    // v1：通过剪贴板配对密钥与 CDS 建立信任连接（spec.cds-map-pairing-protocol）。
+    // v1：通过剪贴板配对密钥与 CDS 建立信任连接（spec.cds.map-pairing-protocol）。
     // 后续：实例只读列表 / 路由策略 / 业务监控等。
     path: '/infra-services',
     permission: 'access',

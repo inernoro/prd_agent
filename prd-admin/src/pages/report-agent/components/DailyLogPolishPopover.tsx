@@ -14,7 +14,7 @@ interface Props {
  * 日常记录 AI 润色弹窗 — 收编到通用 AiPreviewModal + useAiPreviewStream 实现。
  *
  * 历史: 原 234 行自有实现含 useSseStream 管理 + 自渲染 portal/header/footer/thinking 折叠面板。
- * 已全部移到通用基础设施 (doc/rule.streaming-text.md), 本文件只剩"打开时自动 start, apply 应用"
+ * 已全部移到通用基础设施 (doc/rule.frontend.streaming-text.md), 本文件只剩"打开时自动 start, apply 应用"
  * 这条粘合逻辑。
  */
 export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {

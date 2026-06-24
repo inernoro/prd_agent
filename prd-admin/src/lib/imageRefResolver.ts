@@ -7,7 +7,7 @@
  * 3. 左侧画布选择
  * 4. 首页带入的内联图片
  *
- * @see doc/design.inline-image-chat.md
+ * @see doc/design.visual-agent.inline-image-chat.md
  */
 
 import type {

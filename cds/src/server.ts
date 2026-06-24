@@ -876,7 +876,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/cds-system\/remote-hosts\/(.+)$/, '删除远程主机'],
     [/^GET \/service-deployments\/(.+)\/stream$/, '订阅部署日志流'],
     [/^GET \/service-deployments\/(.+)$/, '查看部署详情'],
-    // shared-service Project 实例发现（spec.cds-map-pairing-protocol §3.2）
+    // shared-service Project 实例发现（spec.cds.map-pairing-protocol §3.2）
     [/^GET \/projects\/(.+)\/instances$/, '列出项目实例'],
     // 项目迁移(配置复刻 + 数据迁移扫描，2026-06-23)
     [/^GET \/projects\/(.+)\/migration\/peers$/, '列出迁移目标'],
@@ -1256,7 +1256,7 @@ export function createServer(deps: ServerDeps): express.Express {
   //
   // Returns 503 with the failing checks JSON-encoded so upstream knows
   // exactly what's wrong without having to SSH in.
-  // See doc/design.cds-resilience.md Phase 2 + .claude/rules/cds-first-verification.md.
+  // See doc/design.cds.resilience.md Phase 2 + .claude/rules/cds-first-verification.md.
   //
   app.get('/healthz', async (req, res) => {
     // ?lightweight=1 跳过所有 shell + fs check,只回最轻的 200 ok,
@@ -1388,7 +1388,7 @@ export function createServer(deps: ServerDeps): express.Express {
   //   uptimeSeconds     — os.uptime()
   //
   // Polled by the frontend every 5s. Cheap enough to not need caching.
-  // See doc/design.cds-resilience.md §八.
+  // See doc/design.cds.resilience.md §八.
   app.get('/api/host-stats', (_req, res) => {
     const totalBytes = os.totalmem();
     const freeBytes = os.freemem();
@@ -1610,7 +1610,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // Backward compatibility: if CDS_AUTH_MODE is unset and the legacy
   // CDS_USERNAME + CDS_PASSWORD env vars are present, default to 'basic'
   // so existing deployments keep working without an explicit toggle.
-  // See doc/design.cds-multi-project.md section 七.
+  // See doc/design.cds.multi-project.md section 七.
   const cdsUser = process.env.CDS_USERNAME;
   const cdsPass = process.env.CDS_PASSWORD;
   const rawAuthMode = (process.env.CDS_AUTH_MODE || '').toLowerCase();
@@ -1680,8 +1680,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // unauthenticated API requests with 401. See:
   //   - cds/src/services/auth-service.ts
   //   - cds/src/middleware/github-auth.ts
-  //   - doc/design.cds-multi-project.md section 七
-  //   - doc/plan.cds-multi-project-phases.md P2
+  //   - doc/design.cds.multi-project.md section 七
+  //   - doc/plan.cds.multi-project-phases.md P2
   //
   // P2 uses an in-memory AuthStore; P3 will swap it out for a MongoDB
   // implementation behind the same interface, no consumer changes required.
@@ -3192,7 +3192,7 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
   // Multi-project router. P4 Part 2 wires up real create/delete, so the
   // router now needs shell (for docker network commands) and config.
-  // See doc/design.cds-multi-project.md.
+  // See doc/design.cds.multi-project.md.
   app.use('/api', createProjectsRouter({
     stateService: deps.stateService,
     shell: deps.shell,

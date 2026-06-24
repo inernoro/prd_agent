@@ -31,7 +31,7 @@ import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch } from './deplo
  * 2026-06-23 极速版（CI 预构建）—— 负责构建预构建镜像的 GitHub Actions 工作流标识。
  * CDS 只在这个工作流的 workflow_run.completed 到达时才触发拉取部署,避免被 ci.yml /
  * cds.yml 等其它工作流的完成事件误触发（那时镜像还没 push 到 ghcr）。
- * 后续可做成 project 级配置以泛化到任意 public 仓库（见 doc/debt.cds-ci-prebuilt.md）。
+ * 后续可做成 project 级配置以泛化到任意 public 仓库（见 doc/debt.cds.ci-prebuilt.md）。
  */
 const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
 const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';

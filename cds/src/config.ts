@@ -108,7 +108,7 @@ const DEFAULT_CONFIG: CdsConfig = {
   bootstrapToken: resolveBootstrapToken(),
   // Warm-pool scheduler — disabled by default for backward compatibility.
   // Opt-in via cds.config.json { "scheduler": { "enabled": true, ... } }.
-  // See doc/design.cds-resilience.md.
+  // See doc/design.cds.resilience.md.
   scheduler: {
     enabled: false,
     maxHotBranches: 3,

@@ -224,7 +224,7 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
 
   return (
     <div className="rounded-lg border border-sky-500/20 bg-sky-500/[0.04] p-4 space-y-4">
-      {/* 模型信息横幅（rule.ai-model-visibility）*/}
+      {/* 模型信息横幅（rule.platform.ai-model-visibility）*/}
       {report.model && <ModelBadge model={{ model: report.model }} />}
 
       {/* 头部：一句话摘要 + 重跑按钮 */}
@@ -368,7 +368,7 @@ function ThinkingBlock({ text, done }: ThinkingBlockProps) {
 }
 
 // ============================================================
-// 模型标识（rule.ai-model-visibility）
+// 模型标识（rule.platform.ai-model-visibility）
 // ============================================================
 
 interface ModelBadgeProps {

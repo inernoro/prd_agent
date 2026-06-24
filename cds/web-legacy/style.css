@@ -418,7 +418,7 @@ h1 {
  * (small battery icon + label next to it) because the cluster version
  * would look out-of-scale without multiple numbers to display.
  *
- * See doc/design.cds-resilience.md §八.
+ * See doc/design.cds.resilience.md §八.
  */
 .capacity-badge {
   position: relative;

@@ -18,7 +18,7 @@ python3 ../../../.claude/skills/cds/cli/cdscli.py scan . --apply-to-cds <project
 ## 纵向①：直接配置 CDS（无 cds-compose.yml）
 
 把仓库接入后，在 onboarding 里把 runtime 选成 `静态站点(static)`，CDS 会自动用
-`npx serve` 托管构建产物。命令序列见 `doc/guide.cds-tutorial.md` § 场景①。
+`npx serve` 托管构建产物。命令序列见 `doc/guide.cds.tutorial.md` § 场景①。
 
 ## 预期结果
 

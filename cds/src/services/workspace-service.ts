@@ -10,7 +10,7 @@
  * The service is the single entry point for workspace business logic.
  * Routes (routes/workspaces.ts) call it; tests use it directly.
  *
- * See doc/plan.cds-multi-project-phases.md §8 P5.
+ * See doc/plan.cds.multi-project-phases.md §8 P5.
  */
 
 import type { AuthStore } from '../infra/auth-store/memory-store.js';

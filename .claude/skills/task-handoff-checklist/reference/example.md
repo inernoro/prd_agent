@@ -36,7 +36,7 @@
 | CLAUDE.md 快照 | ⚠️ 需更新 | 功能注册表+集合清单 |
 
 **待补文档**:
-- [ ] rule.data-dictionary.md: 3 个新集合字段定义
+- [ ] rule.platform.data-dictionary.md: 3 个新集合字段定义
 - [ ] CLAUDE.md: 功能注册表+集合清单
 
 ---

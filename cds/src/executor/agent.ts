@@ -8,7 +8,7 @@
  *  2. Resume: restart after bootstrap. Send `X-Executor-Token` directly,
  *     no token exchange needed.
  *
- * See `doc/design.cds-cluster-bootstrap.md` §5.2 for the full sequence.
+ * See `doc/design.cds.cluster-bootstrap.md` §5.2 for the full sequence.
  */
 import os from 'node:os';
 import type { CdsConfig, ExecutorNode } from '../types.js';

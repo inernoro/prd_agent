@@ -7,7 +7,7 @@
  *
  * If all four pieces light up green, the foundation is sound and the rest
  * of the migration (cds-settings → project-list → settings → index) is a
- * mechanical port. See doc/plan.cds-web-migration.md for the roadmap.
+ * mechanical port. See doc/plan.cds.web-migration.md for the roadmap.
  */
 import { useEffect, useState } from 'react';
 import { Moon, Sun, Cloud, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
@@ -93,7 +93,7 @@ export function HelloPage(): JSX.Element {
           <CardTitle>迁移进度</CardTitle>
           <CardDescription>
             <code>/cds-settings</code> 与 <code>/project-list</code> 已由 React 接管。后续按{' '}
-            <code>doc/plan.cds-web-migration.md</code> 继续迁移项目设置和分支列表。
+            <code>doc/plan.cds.web-migration.md</code> 继续迁移项目设置和分支列表。
           </CardDescription>
         </CardHeader>
       </Card>

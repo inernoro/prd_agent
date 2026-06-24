@@ -143,14 +143,14 @@ doc-store 归档是两步:`POST /entries`(建标题条目)→ `PUT /entries/{id}
 - **指向具体元素/区域/问题的截图必须在图上画框 + 标签**(harness `box`/`stepShot`/`stepClick`),不能只靠图外的文字 caption——读者的眼睛在图里,文字说不清"看这里"(见 `SKILL.md` §B2,2026-06-04 反哺)。仅"整体观感"overview 图可豁免。**此规则对任何发给用户的截图都生效,含临时诊断/方案评估/critique/前后对比,不限全流程 driver。**
 - **同一张图包含多个有先后关系的操作/状态时,图上标签必须编号**(①②③ 或 1/2/3 均可)。例如 `① 生成连接串`、`② 复制`、`③ 粘贴对端连接串`、`④ 添加按钮禁用/可点`。禁止用「串」「复制」「禁用」「表单」这类无序标签替代顺序,除非该图明确是无序信息盘点。验收者读图时如果需要知道先后,未编号即视为截图标注不合格。
 - **双主题**(L1 推荐 / L2 强制):核心页面暗 + 亮各一张。应用无亮色主题时,单张 + 在报告里注明"应用暗色 only"。
-- **测试矩阵**:覆盖维度沿用 issues 视觉验收的四轴 —— **视口 × 主题 × 状态 × 交互态**(见 `doc/rule.issues-system.md` §5 / 元 issue #605)。L2 必须按矩阵展开,不是只截一个 happy path。
+- **测试矩阵**:覆盖维度沿用 issues 视觉验收的四轴 —— **视口 × 主题 × 状态 × 交互态**(见 `doc/rule.skill.issues-system.md` §5 / 元 issue #605)。L2 必须按矩阵展开,不是只截一个 happy path。
 
 ## 5.1 硬约束与严重级:复用既有 SSOT(不重写)
 
 视觉验收的**方法论**(测什么、什么算缺陷、怎么分级)已是项目 SSOT,本标准**引用**而非重写,避免两套漂移:
 
-- **10 条项目硬约束**:`doc/rule.issues-system.md` §5.1(无 emoji / 白天无暗色 modal / Modal 三约束 / 全高布局 / 空状态 CTA / LLM 模型名可见 / 禁 >2s 静止 / 输入零摩擦 / 画布手势统一 / MAP Loader)。报告 §7 逐条核查,按改动类型勾或标 na。
-- **P0-P3 严重级 + 项目实例**:`doc/rule.issues-system.md` §5.2(P0 白天黑底/emoji/Modal 撑破/登录断/空状态无 CTA;P1 模型名缺/加载不统一/双主题不一致;P2 配色间距;P3 动效文案)。
+- **10 条项目硬约束**:`doc/rule.skill.issues-system.md` §5.1(无 emoji / 白天无暗色 modal / Modal 三约束 / 全高布局 / 空状态 CTA / LLM 模型名可见 / 禁 >2s 静止 / 输入零摩擦 / 画布手势统一 / MAP Loader)。报告 §7 逐条核查,按改动类型勾或标 na。
+- **P0-P3 严重级 + 项目实例**:`doc/rule.skill.issues-system.md` §5.2(P0 白天黑底/emoji/Modal 撑破/登录断/空状态无 CTA;P1 模型名缺/加载不统一/双主题不一致;P2 配色间距;P3 动效文案)。
 - **真值入口**:模板与矩阵的唯一可改入口是元 issue #605,§5 是离线镜像。本技能与 issue 体系**共用同一份方法论**。
 
 ## 5.2 读图必查「版式健康」——功能在 ≠ 版式对（2026-06-02 反哺，血泪）
@@ -204,7 +204,7 @@ doc-store 归档是两步:`POST /entries`(建标题条目)→ `PUT /entries/{id}
 
 ## 5.5 过程视频(可选,本地附件,不进知识库正文)
 
-issue #605 二.1 建议过程视频(`launch(cfg, {recordVideoDir})` + `finalizeVideo()`)。**默认关闭**;开启后产出 `walkthrough.webm` 作**本地可选证据**。沿用用户 2026-05-27 决定:视频**体积大、阅读器不渲染、不进知识库正文**(见 `debt.visual-acceptance-skill.md`)——仅本地留存/聊天直发,**不上传 KB**。需要长期托管走外部对象存储仅存链接。
+issue #605 二.1 建议过程视频(`launch(cfg, {recordVideoDir})` + `finalizeVideo()`)。**默认关闭**;开启后产出 `walkthrough.webm` 作**本地可选证据**。沿用用户 2026-05-27 决定:视频**体积大、阅读器不渲染、不进知识库正文**(见 `debt.visual-agent.acceptance-skill.md`)——仅本地留存/聊天直发,**不上传 KB**。需要长期托管走外部对象存储仅存链接。
 
 ---
 
@@ -308,7 +308,7 @@ issue #605 二.1 建议过程视频(`launch(cfg, {recordVideoDir})` + `finalizeV
 - **有条件通过 Conditional**:仅剩 P2/P3,列整改项
 - **不通过 Fail**:存在 open P0/P1 或 DoD 缺项 或核心用例 fail
 
-**严重级**:P0 阻塞 / P1 必修 / P2 可延后 / P3 优化建议(实例见 `doc/rule.issues-system.md` §5.2)。
+**严重级**:P0 阻塞 / P1 必修 / P2 可延后 / P3 优化建议(实例见 `doc/rule.skill.issues-system.md` §5.2)。
 
 ---
 

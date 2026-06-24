@@ -50,7 +50,7 @@ export interface AiPreviewModalProps {
  * - 滚动区 min-h-0 + overflow-y-auto + overscroll-behavior: contain
  * - ESC + 点蒙版关闭
  *
- * 动效约束 (遵守 doc/rule.streaming-text.md):
+ * 动效约束 (遵守 doc/rule.frontend.streaming-text.md):
  * - 流式主体用 <StreamingText> Blur focus
  * - 思考块用 <StreamingText> + 折叠面板, 禁裸文本
  * - 流式期间纯文本词级动画, 完成后切 markdown (markdown=true)

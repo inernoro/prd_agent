@@ -15,7 +15,7 @@ import type { BranchEntry, SchedulerConfig } from '../../src/types.js';
  * - Inject a fake Clock so LRU and idle TTL are deterministic.
  * - Record wake/cool calls via arrays rather than mocking containers.
  *
- * See doc/design.cds-resilience.md for the behaviors under test.
+ * See doc/design.cds.resilience.md for the behaviors under test.
  */
 
 class FakeClock implements Clock {

@@ -1,8 +1,8 @@
 /**
  * CDS 网络拓扑路由(B'.6,系统级)
  *
- * 对应 doc/design.cds-control-data-split.md §7.3
- * 对应 doc/report.cds-forwarder-success.md
+ * 对应 doc/design.cds.control-data-split.md §7.3
+ * 对应 doc/report.cds.forwarder-success.md
  *
  * GET /api/cds-system/network-topology
  *   返回完整网络图(域名 / nginx upstream / forwarder / admin / containers / edges)

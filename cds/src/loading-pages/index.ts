@@ -8,7 +8,7 @@
  * When updating styles, change the CSS tokens at the top of each builder —
  * they all share the same dual-theme token set.
  *
- * Migration status (see doc/debt.cds-nginx-loading-pages.md):
+ * Migration status (see doc/debt.cds.nginx-loading-pages.md):
  *   buildNginxWaitingHtml       - DONE (was exec_cds.sh heredoc)
  *   buildForwarderWaitingHtml   - pending migration from forwarder/waiting-page.ts
  *   buildLegacyWaitingHtml      - pending migration from routes/branches.ts

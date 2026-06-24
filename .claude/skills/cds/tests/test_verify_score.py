@@ -1,7 +1,7 @@
 """WS4 — cdscli verify 评分回归。
 
 验证 `_verify_score` / `_verify_grade` 把 ERROR/WARNING/INFO 聚合成 0-100 分 +
-字母等级,以及评分对 deductions 的拆分。SSOT:doc/spec.cds-compose-contract.md § 4.4。
+字母等级,以及评分对 deductions 的拆分。SSOT:doc/spec.cds.compose-contract.md § 4.4。
 """
 import sys
 from pathlib import Path
