@@ -62,7 +62,9 @@ export function AnchoredMenu({
 
   const reposition = useCallback(() => {
     const anchor = getAnchor();
-    if (!anchor) return;
+    // anchorEl 可能指向已被卸载（切 tab / 列表重挂载）的旧元素：detached 元素 rect 全为 0，
+    // 会把菜单定位到左上角错位显示。此时不定位（保持隐藏），交给下面的 effect 关闭。
+    if (!anchor || !anchor.isConnected) return;
     const a = anchor.getBoundingClientRect();
     const menu = menuRef.current;
     const mw = menu?.offsetWidth || minWidth;
@@ -86,10 +88,17 @@ export function AnchoredMenu({
       setPos(null);
       return;
     }
+    // 锚点已随父组件卸载（如 anchorEl 指向切 tab 前的旧按钮）：直接关闭，避免错位浮层 +
+    // 让父级 open 状态复位（否则回到原卡片首次点击只会 toggle 关掉、打不开）。
+    const anchor = getAnchor();
+    if (anchor && !anchor.isConnected) {
+      onClose();
+      return;
+    }
     reposition();
     const raf = requestAnimationFrame(reposition);
     return () => cancelAnimationFrame(raf);
-  }, [open, reposition]);
+  }, [open, reposition, getAnchor, onClose]);
 
   useEffect(() => {
     if (!open) return;

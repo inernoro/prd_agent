@@ -1957,6 +1957,8 @@ export function DocumentStorePage() {
   const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
   // 当前展开卡片「更多」菜单的触发按钮元素，供 AnchoredMenu 定位（列表里无法为每张卡片建独立 ref）
   const [cardMenuAnchor, setCardMenuAnchor] = useState<HTMLElement | null>(null);
+  // 切 tab 时列表重挂载，旧锚点失效：复位卡片菜单，避免 stale anchor 自动开 / 首点只关（Bugbot）
+  useEffect(() => { setOpenCardMenuId(null); setCardMenuAnchor(null); }, [tab]);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
