@@ -648,6 +648,32 @@ describe('GitHubWebhookDispatcher', () => {
       expect(result.tombstoneRequest?.mergeCommitSha).toBeUndefined();
     });
 
+    // Bugbot: prClose 策略关闭时,合并 PR 也必须写 merged 墓碑(只是不自动停容器),
+    // 否则随后的 delete 事件会把它错写成 abandoned，合并分支被误显「已放弃」。
+    it('records merged tombstone even when prClose policy disabled (no auto-stop)', async () => {
+      stateService.updateProject('p1', { githubEventPolicy: { prClose: false } });
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'closed',
+        number: 99,
+        pull_request: {
+          number: 99,
+          state: 'closed',
+          merged: true,
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'https://github.com/octocat/repo/pull/99',
+          title: 'Great feature',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      // prClose 关 → 不自动停容器（action=ignored-event、无 stopRequest）...
+      expect(result.action).toBe('ignored-event');
+      expect(result.stopRequest).toBeUndefined();
+      // ...但墓碑照记，reason=merged，供 gone 页分流 + merged 粘性防 delete 降级。
+      expect(result.tombstoneRequest).toMatchObject({ reason: 'merged', prNumber: 99, baseRef: 'main' });
+    });
+
     it('ignores synchronize (handled by companion push)', async () => {
       const d = buildDispatcher();
       const result = await d.handle('pull_request', {

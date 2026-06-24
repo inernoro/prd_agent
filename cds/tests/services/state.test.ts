@@ -574,6 +574,31 @@ describe('StateService', () => {
       expect(service.getRemovedBranch('login-feat-demo')?.reason).toBe('merged');
     });
 
+    it('preserves richer PR metadata when a later delete tombstone lacks it', () => {
+      service.load();
+      // 关 PR：abandoned 墓碑带 prNumber/prUrl。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'abandoned',
+        prNumber: 42,
+        prUrl: 'https://github.com/o/r/pull/42',
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      // GitHub 删分支：delete 事件再写一条 abandoned，但不带任何 PR 字段。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'abandoned',
+        removedAt: '2026-06-24T00:00:05.000Z',
+      });
+      const got = service.getRemovedBranch('login-feat-demo');
+      expect(got?.prNumber).toBe(42); // 「查看 PR」按钮不丢
+      expect(got?.prUrl).toBe('https://github.com/o/r/pull/42');
+    });
+
     it('caps tombstones to 200, evicting oldest by removedAt', () => {
       service.load();
       // 写 205 条，时间递增 → 最旧 5 条应被淘汰。

@@ -4563,14 +4563,18 @@ function BranchCard({
   // 「容器停止 · 无记录」里拆出来，别再把 idle 一律误标成「停止」。
   // - isCiWaiting：极速版还在等 GitHub Actions 把镜像构建好（不是停止，是没启动）。
   // - isCiFailed：CI 镜像构建失败 / 看门狗超时（有人类可读 ciImageError 归因）。
-  // - hasStopSignal：与后端 isStoppedBranch 同口径——真有停止信号（某 service stopped，
-  //   或 lastStop* 任一有值）才算「停止」。
+  // - hasStopSignal：严格对齐后端 isStoppedBranch 口径——services 非空 + 无任何活跃 service +
+  //   至少一个 stopped。**不**把孤立的 lastStop* 元数据当停止信号（否则 services 已清空、
+  //   只剩 lastStop* 残留的 idle 分支会被误显「容器停止」而非「待部署」，Bugbot Low）。
+  //   面板里的来源/原因/时间文案仍读 lastStop*，只是不靠它来「判定是否停止」。
   // - isNeverDeployed：从没部署过（无 lastDeployAt、services 为空、无停止信号）→「待部署」。
   const isCiWaiting = !isRunning && !isInterim && branch.ciImageStatus === 'waiting';
   const isCiFailed = !isRunning && !isInterim && !isError && branch.ciImageStatus === 'failed';
   const branchServices = Object.values(branch.services || {});
-  const hasStopSignal = !!branch.lastStoppedAt || !!branch.lastStopReason || !!branch.lastStopSource
-    || branchServices.some((svc) => svc.status === 'stopped');
+  const hasStopSignal = branchServices.length > 0
+    && !branchServices.some((svc) => svc.status === 'running' || svc.status === 'building'
+      || svc.status === 'starting' || svc.status === 'restarting')
+    && branchServices.some((svc) => svc.status === 'stopped');
   const isNeverDeployed = !isRunning && !isInterim && !isError && !isCiWaiting && !isCiFailed
     && !hasStopSignal && !branch.lastDeployAt && branchServices.length === 0;
   // 真正展示「停止记录」面板：非运行/中间态，且排除上面那几种「其实没停止」的情况。

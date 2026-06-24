@@ -3125,7 +3125,17 @@ export class StateService {
     if (existing?.reason === 'merged' && tombstone.reason === 'abandoned') {
       return; // merged 粘性：不被后到的 delete 清理事件降级
     }
-    map[tombstone.previewSlug] = tombstone;
+    // 保留更丰富的 PR 元数据：典型流程「关 PR（写带 prNumber/prUrl 的 abandoned 墓碑）→
+    // GitHub 删分支（delete 事件再写一条 abandoned 墓碑，但不带任何 PR 字段）」会让后者
+    // 覆盖前者、丢掉「查看 PR」按钮。incoming 缺某 PR 字段而 existing 有，则承袭（Codex P2）。
+    const record: BranchTombstone = { ...tombstone };
+    if (existing) {
+      if (record.prNumber == null && existing.prNumber != null) record.prNumber = existing.prNumber;
+      if (!record.prUrl && existing.prUrl) record.prUrl = existing.prUrl;
+      if (!record.baseRef && existing.baseRef) record.baseRef = existing.baseRef;
+      if (!record.mergeCommitSha && existing.mergeCommitSha) record.mergeCommitSha = existing.mergeCommitSha;
+    }
+    map[tombstone.previewSlug] = record;
     const entries = Object.entries(map);
     if (entries.length > StateService.REMOVED_BRANCHES_CAP) {
       // removedAt 升序排列，删掉最旧的几条直到回到上限。

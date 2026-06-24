@@ -3399,7 +3399,9 @@ function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.
   const tombstone = stateService.getRemovedBranch(slug);
   if (tombstone) {
     if (tombstone.reason === 'merged') {
-      const mainBranch = tombstone.defaultBranch || tombstone.baseRef || null;
+      // baseRef = PR 实际合并进的目标分支（可能不是项目默认分支，如合并进 develop）。
+      // 优先用它，defaultBranch 仅作兜底，避免对非默认目标错误显示「合并进 main」+ main 预览链接。
+      const mainBranch = tombstone.baseRef || tombstone.defaultBranch || null;
       const previewHost = derivePreviewHost(host);
       let mainPreviewUrl: string | null = null;
       if (previewHost && mainBranch) {
