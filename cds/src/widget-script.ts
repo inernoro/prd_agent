@@ -1774,6 +1774,31 @@ export function buildWidgetScript(
     },30000);
   }
 
+  // ── 每分支不同 favicon：同一应用的多个分支预览开多标签时，靠彩色字母图标一眼区分
+  //    （原 favicon 全一样分不清）。颜色由分支名 hash 出 hue，字母取分支尾巴前两位。
+  //    SPA 可能后续覆写 favicon，故定时轻量重申。──
+  function setBranchFavicon(){
+    try{
+      var s=(BRANCH_NAME&&BRANCH_NAME.indexOf('/')>=0?BRANCH_NAME.slice(BRANCH_NAME.lastIndexOf('/')+1):BRANCH_NAME)||'cds';
+      var h=0; for(var i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}
+      var hue=h%360;
+      var initials=(s.replace(/[^a-zA-Z0-9]/g,'').slice(0,2)||'cd').toUpperCase();
+      var svg='<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">'
+        +'<rect width="32" height="32" rx="7" fill="hsl('+hue+',62%,46%)"/>'
+        +'<text x="16" y="22" font-family="ui-monospace,Menlo,monospace" font-size="15" font-weight="700" text-anchor="middle" fill="#fff">'+initials+'</text></svg>';
+      var uri='data:image/svg+xml,'+encodeURIComponent(svg);
+      var head=document.head||document.getElementsByTagName('head')[0];
+      if(!head)return;
+      var existing=head.querySelectorAll('link[rel~="icon"]');
+      for(var j=0;j<existing.length;j++){ if(existing[j].getAttribute('data-cds-favicon')===null) existing[j].parentNode.removeChild(existing[j]); }
+      var link=head.querySelector('link[data-cds-favicon]');
+      if(!link){ link=document.createElement('link'); link.setAttribute('rel','icon'); link.setAttribute('type','image/svg+xml'); link.setAttribute('data-cds-favicon',''); head.appendChild(link); }
+      if(link.getAttribute('href')!==uri) link.setAttribute('href',uri);
+    }catch(e){}
+  }
+  setBranchFavicon();
+  setInterval(setBranchFavicon, 3000);
+
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
   fetchBranchInfo();
