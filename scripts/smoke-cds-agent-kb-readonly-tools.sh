@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOL_FILE="$ROOT/prd-api/src/PrdAgent.Infrastructure/Services/AgentTools/Tools/KnowledgeBaseReadonlyTools.cs"
 REGISTRY_FILE="$ROOT/prd-api/src/PrdAgent.Infrastructure/Services/AgentTools/AgentToolRegistry.cs"
-DOC_FILE="$ROOT/doc/design.cds-agent-commercial-architecture-and-roadmap.md"
+DOC_FILE="$ROOT/doc/design.cds.agent.commercial-architecture-and-roadmap.md"
 
 test -f "$TOOL_FILE"
 

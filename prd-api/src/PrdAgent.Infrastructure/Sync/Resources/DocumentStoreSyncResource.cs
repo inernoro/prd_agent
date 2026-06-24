@@ -22,14 +22,14 @@ namespace PrdAgent.Infrastructure.Sync.Resources;
 /// 知识库支持双向（SupportsBidirectional = true）。
 ///
 /// 注意：本实现与 DocumentStoreSyncController 的 token 路径并存——两者都用 metadata.syncLineageId
-/// 作血缘键，数据互通。旧 skblink 手动配对保留，新系统级配对走本资源。见 doc/design.peer-sync.md §6.1。
+/// 作血缘键，数据互通。旧 skblink 手动配对保留，新系统级配对走本资源。见 doc/design.platform.peer-sync.md §6.1。
 /// </summary>
 public class DocumentStoreSyncResource : ISyncableResource
 {
     private const string SyncLineageKey = "syncLineageId";
     private const string PeerSourceContentHashKey = "peerSourceContentHash";
     // 二进制附件条目（无正文、走 AttachmentId）的来源 URL 幂等键：接收方据此判断「这个对端附件是否已下载重建过」，
-    // 命中即廉价跳过，不重复下载。见 debt.peer-sync A 系列。
+    // 命中即廉价跳过，不重复下载。见 debt.platform.peer-sync A 系列。
     private const string PeerSourceAttachmentUrlKey = "peerSourceAttachmentUrl";
     // 源头附件字节数（与 url 同写）：用于幂等的「同源同字节」判定与漂移签名。必须与 url 一样比的是「源头侧的
     // att.Size」（导出端发的 pa.Size），不能拿来跟本地 DocumentEntry.FileSize 比 —— 二者是不同字段、不保证相等，
@@ -115,7 +115,7 @@ public class DocumentStoreSyncResource : ISyncableResource
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync(ct);
         var byId = entries.ToDictionary(e => e.Id, e => e);
         // 二进制/文件条目（无 DocumentId、有 AttachmentId）的附件元信息：批量取出，导出时带上其访问 URL，
-        // 接收方据此下载 + 重传到自己存储 + 重建条目（debt.peer-sync A 系列：二进制附件跨节点）。
+        // 接收方据此下载 + 重传到自己存储 + 重建条目（debt.platform.peer-sync A 系列：二进制附件跨节点）。
         var attachmentIds = entries
             .Where(e => !e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
             .Select(e => e.AttachmentId!).Distinct().ToList();

@@ -321,10 +321,10 @@ json_bool() {
 check_docs_calibration() {
   local log="$1"
   local failed=false
-  local quickstart="$ROOT_DIR/doc/guide.cds-agent-code-review-quickstart.md"
-  local next_testing="$ROOT_DIR/doc/guide.cds-agent-next-agent-testing.md"
-  local migration_plan="$ROOT_DIR/doc/plan.cds-agent-official-sdk-migration.md"
-  local report="$ROOT_DIR/doc/report.cds-agent-workbench-2026-05-15.md"
+  local quickstart="$ROOT_DIR/doc/guide.cds.agent.code-review-quickstart.md"
+  local next_testing="$ROOT_DIR/doc/guide.cds.agent.next-agent-testing.md"
+  local migration_plan="$ROOT_DIR/doc/plan.cds.agent.official-sdk-migration.md"
+  local report="$ROOT_DIR/doc/report.cds.agent.workbench.2026-05-15.md"
   : > "$log"
 
   require_doc_text() {
@@ -388,9 +388,9 @@ check_docs_calibration() {
     "migration plan stale branch-local alias stable evidence"
   forbid_doc_regex "$quickstart" '远程 preview 已能证明.*aliasCheck\.status=stable' \
     "quickstart stale branch-local alias stable evidence"
-  forbid_doc_regex "$ROOT_DIR/doc/design.cds-agent-official-sdk-adapter.md" '当前远程诊断已经证明 MAP/CDS 控制面、sidecar transport 和 `loopOwner=claude-agent-sdk` 的最小运行前置条件' \
+  forbid_doc_regex "$ROOT_DIR/doc/design.cds.agent.official-sdk-adapter.md" '当前远程诊断已经证明 MAP/CDS 控制面、sidecar transport 和 `loopOwner=claude-agent-sdk` 的最小运行前置条件' \
     "design stale remote R0 proof wording"
-  forbid_doc_regex "$ROOT_DIR/doc/design.cds-agent-official-sdk-adapter.md" 'preview sidecar 已迁到唯一 scoped alias `claude-agent-sdk-runtime-v2-prd-agent`' \
+  forbid_doc_regex "$ROOT_DIR/doc/design.cds.agent.official-sdk-adapter.md" 'preview sidecar 已迁到唯一 scoped alias `claude-agent-sdk-runtime-v2-prd-agent`' \
     "design stale branch-local alias success wording"
   forbid_doc_regex "$report" '它不是完整官方 Claude Code SDK / Claude Agent SDK 接入' \
     "A10 report old absolute SDK-not-integrated wording"
@@ -905,7 +905,7 @@ if [[ "$runtime_pool_plan_status" != "pass" ]]; then
   current_blocking_gate="R0"
   blocking_reason="Runtime pool recovery was not observed in this audit. Use the completed CDS-managed runtime correction plan as the boundary before treating any remote host/env input as fallback."
   deployment_advice="Do not redeploy for this state. Correct the facts and docs back to CDS-managed runtime/container/sandbox; SSH/env/image values are operator fallback only."
-  next_command="sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md && scripts/smoke-cds-agent-map-session-transport.sh && scripts/smoke-cds-agent-shared-service-pool.sh && scripts/check-cds-agent-progress-consistency.sh"
+  next_command="sed -n '70,120p' doc/design.cds.agent.managed-runtime-fact-source.md && scripts/smoke-cds-agent-map-session-transport.sh && scripts/smoke-cds-agent-shared-service-pool.sh && scripts/check-cds-agent-progress-consistency.sh"
   next_cycle_plan_json=$(jq -n \
     --arg command "$next_command" \
     '{
@@ -950,7 +950,7 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
           code: "D1",
           title: "CDS-managed runtime 架构纠偏",
           goal: "把当前恢复路径从 external host/env-driven recovery 纠回 CDS-managed runtime/container/sandbox。",
-          evidence: "doc/plan.cds-agent-runtime-correction-limited.md 与 progress consistency pass。",
+          evidence: "doc/plan.cds.agent.runtime-correction-limited.md 与 progress consistency pass。",
           status: "done",
           blockedBy: null,
           nextActions: [

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROADMAP="doc/design.cds-agent-commercial-architecture-and-roadmap.md"
-REPORT_MD="doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.md"
+ROADMAP="doc/design.cds.agent.commercial-architecture-and-roadmap.md"
+REPORT_MD="doc/report.cds.agent.p4-1-remote-preflight.2026-05-19.md"
 REPORT_HTML="doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.html"
 REPORT_PDF="doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.pdf"
 PREFLIGHT="scripts/preflight-cds-agent-cds-self-update.sh"

@@ -30,7 +30,7 @@ public sealed class PeerSyncScheduleWorker : BackgroundService
     /// 租约时长：必须 &gt; 单库同步最坏耗时，否则大库同步超时后租约被另一发起方抢走 → 同库并发同步
     /// （Bugbot High: Lease expiry allows concurrent sync）。单库最坏 ≈ 两阶段 HTTP(各 120s) + 资源重传，
     /// 取 30min 留足余量；同时也是 owner 崩溃后的接管延迟。若未来出现 &gt;30min 的超大库，应改为「同步期间
-    /// 心跳续租」（见 doc/debt.peer-sync.md，本 PR 未做）。
+    /// 心跳续租」（见 doc/debt.platform.peer-sync.md，本 PR 未做）。
     /// </summary>
     public static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(30);
 

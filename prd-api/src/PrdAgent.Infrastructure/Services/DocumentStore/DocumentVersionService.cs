@@ -95,7 +95,7 @@ public class DocumentVersionService
             .Find(filter)
             // 次级按 CreatedAt 倒序：并发写入极端下若出现重复 VersionNumber，列表顺序仍确定（新插入在前），
             // 「最新」徽章不会落到随机一条。真正的单调唯一性需 DBA 在 (EntryId, VersionNumber) 建唯一索引，
-            // 见 doc/guide.mongodb-indexes.md（本仓库禁止应用自建索引）。
+            // 见 doc/guide.platform.mongodb-indexes.md（本仓库禁止应用自建索引）。
             .Sort(Builders<DocumentEntryVersion>.Sort
                 .Descending(v => v.VersionNumber)
                 .Descending(v => v.CreatedAt))

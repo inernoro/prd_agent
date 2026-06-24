@@ -515,7 +515,7 @@ public static class OpenPlatform
 /// 这里是真正贴近真实开放平台的对外 LLM 网关（借鉴 OpenRouter 的 OpenAI 兼容风格），外部调用方用标准 OpenAI
 /// 请求方式（顶层 /api/v1/chat/completions 等）接入。
 ///
-/// 设计要点（见 .claude/rules + doc/debt.open-api.md）：
+/// 设计要点（见 .claude/rules + doc/debt.open-platform.open-api.md）：
 /// - 所有开放接口流量走这里的固定伞形 code（不为每个 Key 派生动态 code，
 ///   否则会被 LlmGateway.TryValidateAppCaller 的静态注册表门禁拦下）。
 /// - 每个 Key 的「固定模型 / 小模型池」绑定通过 expectedModel 通道下发：

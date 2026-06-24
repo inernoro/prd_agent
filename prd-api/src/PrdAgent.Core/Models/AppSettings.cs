@@ -68,7 +68,7 @@ public class AppSettings
 
     /// <summary>
     /// 本 MAP 实例的稳定标识（首次调用 InfraConnectionService.PasteAsync 时 lazy 生成）。
-    /// 用于 spec.cds-map-pairing-protocol §3.2 mapId 字段，让对端知道是哪个 MAP 实例。
+    /// 用于 spec.cds.map-pairing-protocol §3.2 mapId 字段，让对端知道是哪个 MAP 实例。
     /// </summary>
     public string? MapInstanceId { get; set; }
 

@@ -5,7 +5,7 @@ namespace PrdAgent.Core.Models;
 /// 一条记录 = 本节点记录的「我认识的另一个 MAP 实例」（如测试环境记录正式环境）。
 /// 配对成功后，两个节点各存一条互指的 PeerNode，持有相同的 SharedSecret，
 /// 后续所有跨节点数据请求用 HMAC-SHA256 签名鉴权，不再传明文令牌。
-/// 详见 doc/design.peer-sync.md。
+/// 详见 doc/design.platform.peer-sync.md。
 /// </summary>
 public class PeerNode
 {

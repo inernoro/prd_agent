@@ -27,7 +27,7 @@ namespace PrdAgent.Api.Controllers;
 ///
 /// 鉴权：`sk-ak-*` AgentApiKey（scheme=ApiKey）+ scope `open-api:call`。
 ///
-/// 模型选择（白名单语义，见 doc/guide.open-api.md）：
+/// 模型选择（白名单语义，见 doc/guide.open-platform.open-api.md）：
 /// - Key 配了模型白名单：client 的 model 命中白名单→用之；不填→用白名单第一个（默认）；
 ///   填了白名单外的→400 model_not_allowed。
 /// - Key 未配白名单：回落 default:chat / default:image 默认池（client model 被忽略）。

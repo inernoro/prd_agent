@@ -26,6 +26,6 @@ require_match "governanceOwnerPolicies" "prd-admin/src/pages/cds-agent/CdsAgentP
 require_match "policy\\.owner" "prd-admin/src/pages/cds-agent/CdsAgentPage.tsx" "frontend owner policy owner field"
 require_match "policy\\.nextAction" "prd-admin/src/pages/cds-agent/CdsAgentPage.tsx" "frontend owner policy next action"
 require_match "owner-or-team-visible" "prd-api/tests/PrdAgent.Api.Tests/Services/InfraAgentSessionServiceGovernanceDashboardTests.cs" "owner policy unit evidence"
-require_match "P3-5d repository/profile/approval owner UI" "doc/design.cds-agent-commercial-architecture-and-roadmap.md" "roadmap next entry"
+require_match "P3-5d repository/profile/approval owner UI" "doc/design.cds.agent.commercial-architecture-and-roadmap.md" "roadmap next entry"
 
 echo "PASS: CDS Agent owner policy UI static smoke"

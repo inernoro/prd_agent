@@ -16,7 +16,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 没有人工创建/删除 mention 的端点 —— 写入永远由 DocumentStoreController.UpdateEntryContent
 /// 触发，保证「正文是 SSOT」。
 ///
-/// 详见 doc/design.knowledge-base-mention-network.md。
+/// 详见 doc/design.knowledge-base.mention-network.md。
 /// </summary>
 [ApiController]
 [Route("api/mentions")]

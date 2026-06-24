@@ -8,7 +8,7 @@ REGISTRY_FILE="$ROOT/prd-api/src/PrdAgent.Infrastructure/Services/AgentTools/Age
 SESSION_SERVICE_FILE="$ROOT/prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs"
 POLICY_FILE="$ROOT/prd-api/src/PrdAgent.Core/Models/InfraAgentSession.cs"
 DB_FILE="$ROOT/prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs"
-DOC_FILE="$ROOT/doc/design.cds-agent-commercial-architecture-and-roadmap.md"
+DOC_FILE="$ROOT/doc/design.cds.agent.commercial-architecture-and-roadmap.md"
 
 for file in "$MODEL_FILE" "$TOOL_FILE" "$REGISTRY_FILE" "$SESSION_SERVICE_FILE" "$POLICY_FILE" "$DB_FILE" "$DOC_FILE"; do
   test -f "$file"

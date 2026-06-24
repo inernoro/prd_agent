@@ -3,7 +3,7 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 基础设施连接（MAP 端持久化形态）。
 ///
-/// 通过 spec.cds-map-pairing-protocol（剪贴板配对密钥）与外部部署平台
+/// 通过 spec.cds.map-pairing-protocol（剪贴板配对密钥）与外部部署平台
 /// （CDS / 未来的 k8s / nomad / agent-cli 等）建立双向信任连接。配对完成
 /// 后，本系统通过 LongTokenEncrypted（IDataProtector 加密）调用对端 API。
 ///

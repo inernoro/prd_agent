@@ -21,7 +21,7 @@ namespace PrdAgent.Infrastructure.Services.InfraConnections;
 /// <summary>
 /// MAP 端基础设施连接服务实现。
 ///
-/// 安全模型（spec.cds-map-pairing-protocol §5）：
+/// 安全模型（spec.cds.map-pairing-protocol §5）：
 /// - 剪贴板密文只含 pairingToken（10 分钟一次性），不含 longToken
 /// - longToken 通过 accept 响应派发，IDataProtector 加密落库
 /// - 解密失败只返回 null；连接 status 由显式探活更新，避免后台读取产生状态副作用

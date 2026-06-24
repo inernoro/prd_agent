@@ -16,7 +16,7 @@ namespace PrdAgent.Infrastructure.Services.AgentRuntime;
 /// 经现有 <see cref="ILlmGateway"/>（OpenRouter 等 openai-compatible 池，已有 key）做**只读**审查，
 /// 流式产出结论。明确标注「Lite 预览、非商业级、只读、无危险工具、无审批」。
 ///
-/// 与官方 SDK 路径的边界见 doc/design.cds-agent-official-sdk-adapter.md：
+/// 与官方 SDK 路径的边界见 doc/design.cds.agent.official-sdk-adapter.md：
 /// lite 是显式标注的 fallback，不冒充官方 SDK loop。
 /// </summary>
 public sealed class GatewayReviewRuntimeAdapter : IInfraAgentRuntimeAdapter
