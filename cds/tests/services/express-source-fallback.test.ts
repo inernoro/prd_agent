@@ -105,18 +105,29 @@ describe('resolveEffectiveProfile 极速版 → 附带源码回退 profile', () 
   it('分支 override 锁 express 时仍挂非 prebuilt 源码回退（生产复现回归）', () => {
     // 生产里 express 是经 branch.profileOverrides 设的；旧实现递归解析会被 override 再次
     // 锁回 express，回退 profile 变 prebuilt 被拒 → 永不挂载 → runService 报「无源码模式」。
-    const baselineStatic: BuildProfile = { ...baseline, activeDeployMode: 'static' } as BuildProfile;
+    const baselineStatic: BuildProfile = { ...baseline, activeDeployMode: 'static', containerPort: 5000 } as BuildProfile;
+    // 生产真实形态：override 把极速版的值都 pin 了 —— activeDeployMode=express、
+    // containerPort=null（极速版端口走 mode）、dockerImage=sha 模板。这些并进源码构建会坏。
     const branchWithOverride = {
       githubCommitSha: 'abc1234',
-      profileOverrides: { 'api-prd-agent': { activeDeployMode: 'express' } },
+      profileOverrides: {
+        'api-prd-agent': {
+          activeDeployMode: 'express',
+          containerPort: null,
+          dockerImage: 'ghcr.io/inernoro/prd_agent/prdagent-server:sha-${CDS_COMMIT_SHA}',
+          command: '',
+        },
+      },
     } as unknown as BranchEntry;
     const eff = resolveEffectiveProfile(baselineStatic, branchWithOverride);
     expect(eff.prebuiltImage).toBe(true); // override 生效 → 极速版
     const src = eff.sourceFallbackProfile;
     expect(src).toBeTruthy(); // 关键：仍挂上了源码回退
     expect(src!.prebuiltImage).toBeFalsy();
-    expect(src!.dockerImage).toBe('mcr.microsoft.com/dotnet/sdk:8.0'); // baseline 源码镜像
-    expect(src!.command).toContain('dotnet');
+    expect(src!.dockerImage).toBe('mcr.microsoft.com/dotnet/sdk:8.0'); // baseline 源码镜像，非 sha
+    expect(src!.dockerImage).not.toContain('ghcr.io');
+    expect(src!.containerPort).toBe(5000); // baseline 端口，**非 override 的 null**
+    expect(src!.command).toContain('dotnet'); // 源码命令，非 override 的空
     expect(src!.activeDeployMode).toBe('static');
   });
 

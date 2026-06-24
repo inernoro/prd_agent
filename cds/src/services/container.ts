@@ -354,15 +354,19 @@ export function resolveEffectiveProfile(
   if (resolved.prebuiltImage) {
     const srcMode = pickSourceFallbackMode(profile.deployModes, resolved.activeDeployMode);
     if (srcMode) {
-      // 关键：**手动**解析源码回退 profile，不走 resolveEffectiveProfile 递归 —— 否则
-      // branch.profileOverrides.activeDeployMode（已被设成 express）会在递归里再次把模式锁回
-      // express，回退 profile 又变成 prebuilt，被下面 `!prebuiltImage` 守卫拒掉、永不挂载
-      // （这正是生产复现的根因：单测无 branch override 故未暴露）。
-      // 步骤：套用 branch override 的其它字段(env/port) → 强制 activeDeployMode=srcMode +
-      // prebuiltImage=false → resolveProfileWithMode 解析该源码模式 → 解析镜像模板。
-      // 不递归亦自然杜绝无限递归。
+      // 关键：源码回退 profile **从 baseline 结构字段起步**（dockerImage / containerPort /
+      // deployModes），强制 activeDeployMode=srcMode + prebuiltImage=false，再 resolveProfileWithMode
+      // 解析该源码模式 + 解析镜像模板。
+      // 为什么不套 branch override 的结构字段：生产里 branch.profileOverrides 是按极速版 pin 的
+      //   - activeDeployMode=express（会把模式锁回 express，回退又变 prebuilt 被拒）
+      //   - containerPort=null（极速版端口走 mode override，override 层是 null）→ docker run
+      //     报 `invalid containerPort: null`
+      //   - dockerImage=sha 模板 → 源码构建误用 sha 基础镜像
+      // 这些都是极速版专属值，并进源码构建必坏。**只并入 override 的 env**（运行时配置如连库串），
+      // 结构字段一律用 baseline。手动解析亦自然杜绝无限递归。
       const srcBase = {
-        ...applyProfileOverride(profile, branchOverride),
+        ...profile,
+        env: branchOverride?.env ? { ...(profile.env || {}), ...branchOverride.env } : profile.env,
         activeDeployMode: srcMode,
         prebuiltImage: false,
       };
