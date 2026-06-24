@@ -63,6 +63,7 @@ docs:
   design.unified-skill-system: 技能系统统一设计
   design.llm-gateway: LLM Gateway 统一调用架构设计
   design.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
+  design.llm-gateway-unification: LLM 网关与模型池统一（协议下沉 + 池减负 + 接口绑模型）
   design.model-pool: 大模型池设计（三级调度/三级链路）
   design.open-platform: 开放平台功能概要
   design.external-authorization: 外部授权中心（TAPD/语雀/GitHub 凭证统一管理）
@@ -307,6 +308,7 @@ docs:
   debt.cds-visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
   debt.speech-agent: 演讲智能体 · 债务台账（MVP 已知边界 + Phase 2 backlog）
   debt.team-activity: 团队动态（团队脉搏）· 债务台账（排行刷量计分 / 直方图采样 / 深链下钻未通）
+  debt.llm-gateway: LLM 网关与模型池统一迁移债务台账
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.kb-inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
   debt.kb-selection-ai: 知识库划词 AI 局部编辑（AI 改写 + 选区配图）债务台账

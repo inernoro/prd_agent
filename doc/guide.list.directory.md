@@ -290,6 +290,8 @@
 
 - [LLM Gateway 图片生成重构设计](design.llm-gateway-refactor) `design.llm-gateway-refactor`
   > compute-then-send 重构方案，消除二次 Resolve 的根因
+- [LLM 网关与模型池统一设计](design.llm-gateway-unification) `design.llm-gateway-unification`
+  > 协议下沉到模型 + 池减负 + 图片并网关 + code 降级为标签（草案，分 6 相位）
 
 - [PR Review V2 设计](design.pr-review-v2) `design.pr-review-v2`
   > OAuth Device Flow 每用户独立 + PR 快照 + 笔记的最小可审查工作台
@@ -791,6 +793,8 @@
   > 6 条边界：排行按原始计数可刷量 / 直方图近 5000 条采样 / 整小时时区近似 / 环比同长上一窗 / TargetUrl 深链未通 / 鉴权态验收依赖人工
   > 11 条 open：输入仅支持粘贴 / 视图非画布 / 无 Run-Worker / 无配图 / 无备注 / 无播放态 / 无发布 / 白天主题待适配 / 无节点增删 / 无 chunk / CDS 自测待补
 
+- [LLM 网关与模型池统一迁移债务台账](debt.llm-gateway) `debt.llm-gateway`
+  > 6 条 open：接口绑平台 / 死策略引擎 / legacy 层 / code 只增不删 / 密钥下沉轮换 / OR 单点
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
 
