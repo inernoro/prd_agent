@@ -791,11 +791,10 @@ export default function WebPagesPage() {
         compactSlots
         dropzone={{
           hint: '拖文件到此上传',
-          accept: ['.html', '.zip', '.md', '.pdf', '.mp4', '.webm'],
+          accept: ['.html', '.htm', '.zip', '.md', '.pdf', '.mp4', '.webm'],
           // 两阶段：先只上传，再由用户在 dock 内二选一（无密码 / 有密码）创建分享并自动复制链接
           onFiles: async (files) => {
-            const f = files[0];
-            if (!f) return;
+            if (files.length === 0) return;
             // 在 await 之前快照「发起上传时」的空间：上传期间用户若切换个人/其它团队空间，
             // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
             const targetSpace = currentSpace;
@@ -809,7 +808,7 @@ export default function WebPagesPage() {
               toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
               return;
             }
-            const up = await uploadSite({ file: f });
+            const up = await uploadSite(files.length > 1 ? { files } : { file: files[0] });
             if (!up.success || !up.data) {
               toast.error('上传失败', up.error?.message || '请稍后重试');
               return;
@@ -2424,7 +2423,8 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
   const [description, setDescription] = useState(item?.description ?? '');
   const [tagInput, setTagInput] = useState((item?.tags ?? []).join(', '));
   const [folder, setFolder] = useState(item?.folder ?? '');
-  const [file, setFile] = useState<File | null>(initialFile ?? null);
+  const [files, setFiles] = useState<File[]>(initialFile ? [initialFile] : []);
+  const file = files[0] ?? null;
   // 用户是否亲自编辑过标题；编辑过则不再自动同步文件名
   const titleEditedRef = useRef(false);
   // 新增上传场景下，文件类型为 .md/.markdown 时把"文件名（去扩展名）"作为默认标题
@@ -2444,17 +2444,17 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
+    const dropped = Array.from(e.dataTransfer.files ?? []);
+    if (dropped.length > 0) setFiles(dropped);
   };
 
   const handleSave = async () => {
     setSaving(true);
 
     if (isEdit) {
-      if (file) {
+      if (files.length > 0) {
         // Reupload
-        const res = await reuploadSite(item.id, file);
+        const res = await reuploadSite(item.id, files.length === 1 ? files[0] : files);
         if (!res.success) { setSaving(false); return; }
       }
       // Update metadata
@@ -2468,10 +2468,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
       setSaving(false);
       if (res.success) onSaved(res.data, /*isCreate*/ false);
     } else {
-      if (!file) { setSaving(false); return; }
+      if (files.length === 0) { setSaving(false); return; }
       const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
       const res = await uploadSite({
-        file,
+        file: files.length === 1 ? files[0] : undefined,
+        files: files.length > 1 ? files : undefined,
         title: title.trim() || undefined,
         description: description.trim() || undefined,
         folder: folder.trim() || undefined,
@@ -2511,23 +2512,35 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
                 onDrop={handleDrop}
               >
                 <UploadCloud size={32} style={{ color: 'var(--text-muted)' }} />
-                {file ? (
+                {files.length > 0 ? (
                   <div className="text-center">
-                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{file.name}</p>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{fmtSize(file.size)}</p>
+                    {files.length === 1 ? (
+                      <>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{files[0].name}</p>
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{fmtSize(files[0].size)}</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>已选择 {files.length} 个 HTML 文件</p>
+                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          {files.slice(0, 3).map(f => f.name).join('、')}{files.length > 3 ? ` 等 ${files.length} 个` : ''}
+                        </p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center">
                     <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>拖拽文件到此处，或点击选择</p>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持 .html / .zip / .md / .pdf / 视频（.mp4/.webm/.mov），最大 500MB</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持单文件或多个 HTML 文件；ZIP / Markdown / PDF / 视频仍按单文件上传，最大 500MB</p>
                   </div>
                 )}
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+                  multiple
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { const selected = Array.from(e.target.files ?? []); if (selected.length > 0) setFiles(selected); }}
                 />
               </div>
             ) : (
@@ -2544,8 +2557,9 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
                   ref={fileInputRef}
                   type="file"
                   accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+                  multiple
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { const selected = Array.from(e.target.files ?? []); if (selected.length > 0) setFiles(selected); }}
                 />
               </div>
             )}
@@ -2605,7 +2619,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
 
           <div className="flex justify-end gap-2 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
             <Button variant="ghost" onClick={onClose}>取消</Button>
-            <Button onClick={handleSave} disabled={saving || (!isEdit && !file)}>
+            <Button onClick={handleSave} disabled={saving || (!isEdit && files.length === 0)}>
               {saving ? '处理中...' : isEdit ? '保存' : '上传并创建'}
             </Button>
           </div>

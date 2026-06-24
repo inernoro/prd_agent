@@ -83,25 +83,21 @@ public class WebPagesController : ControllerBase
     [RequestSizeLimit(MaxSingleFileSize)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
     public async Task<IActionResult> Upload(
-        IFormFile file,
+        [FromForm] IFormFile? file,
+        [FromForm] List<IFormFile>? files,
         [FromForm] string? title,
         [FromForm] string? description,
         [FromForm] string? folder,
         [FromForm] string? tags)
     {
-        if (file == null || file.Length == 0)
+        var uploadFiles = NormalizeUploadFiles(file, files);
+        if (uploadFiles.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
 
-        if (file.Length > MaxSingleFileSize)
+        if (uploadFiles.Sum(f => f.Length) > MaxSingleFileSize)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxSingleFileSize / 1024 / 1024}MB"));
 
         var userId = GetUserId();
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-
-        using var ms = new MemoryStream();
-        await file.CopyToAsync(ms);
-        var fileBytes = ms.ToArray();
-
         var tagList = string.IsNullOrWhiteSpace(tags)
             ? new List<string>()
             : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
@@ -109,13 +105,30 @@ public class WebPagesController : ControllerBase
         try
         {
             HostedSite site;
+            if (uploadFiles.Count > 1)
+            {
+                var zipBytes = await BuildMultiHtmlZipAsync(uploadFiles);
+                var effectiveTitle = string.IsNullOrWhiteSpace(title)
+                    ? BuildMultiHtmlDefaultTitle(uploadFiles)
+                    : title!.Trim();
+                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList);
+                return Ok(ApiResponse<object>.Ok(site));
+            }
+
+            var single = uploadFiles[0];
+            var ext = Path.GetExtension(single.FileName).ToLowerInvariant();
+
+            using var ms = new MemoryStream();
+            await single.CopyToAsync(ms);
+            var fileBytes = ms.ToArray();
+
             if (ext == ".zip")
             {
                 site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList);
             }
             else if (ext is ".html" or ".htm")
             {
-                site = await _siteService.CreateFromHtmlAsync(userId, fileBytes, file.FileName, title, description, folder, tagList);
+                site = await _siteService.CreateFromHtmlAsync(userId, fileBytes, single.FileName, title, description, folder, tagList);
             }
             else if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
             {
@@ -123,9 +136,9 @@ public class WebPagesController : ControllerBase
                 // 标题留空时用文件名（去扩展名）兜底，避免 ZIP 路径把视频/PDF 全落成"未命名站点"
                 // （前端 UploadEditDialog 仅对 .md 自动预填标题；其它媒体类型靠后端兜底）
                 var effectiveTitle = string.IsNullOrWhiteSpace(title)
-                    ? Path.GetFileNameWithoutExtension(file.FileName)
+                    ? Path.GetFileNameWithoutExtension(single.FileName)
                     : title!.Trim();
-                var zipBytes = BuildWrapperZip(file.FileName, fileBytes, ext, effectiveTitle);
+                var zipBytes = BuildWrapperZip(single.FileName, fileBytes, ext, effectiveTitle);
                 // 写 marker，下游靠它判定包装站，避免"用户上传的 index.html + report.pdf"被误判
                 var assetType = ext == ".pdf" ? "pdf"
                     : VideoExtensions.Contains(ext) ? "video"
@@ -835,27 +848,42 @@ public class WebPagesController : ControllerBase
     [HttpPost("{id}/reupload")]
     [RequestSizeLimit(MaxSingleFileSize)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
-    public async Task<IActionResult> Reupload(string id, IFormFile file)
+    public async Task<IActionResult> Reupload(string id, [FromForm] IFormFile? file, [FromForm] List<IFormFile>? files)
     {
-        if (file == null || file.Length == 0)
+        var uploadFiles = NormalizeUploadFiles(file, files);
+        if (uploadFiles.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
+        if (uploadFiles.Sum(f => f.Length) > MaxSingleFileSize)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxSingleFileSize / 1024 / 1024}MB"));
 
-        using var ms = new MemoryStream();
-        await file.CopyToAsync(ms);
-        var fileBytes = ms.ToArray();
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-        var uploadName = file.FileName;
-
-        // 视频 / PDF / Markdown：包装成 ZIP（保持与 Upload 一致的行为）
+        byte[] fileBytes;
+        string uploadName;
         string? wrappedAssetType = null;
-        if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+
+        if (uploadFiles.Count > 1)
         {
-            fileBytes = BuildWrapperZip(file.FileName, fileBytes, ext, title: null);
-            uploadName = Path.ChangeExtension(file.FileName, ".zip");
-            wrappedAssetType = ext == ".pdf" ? "pdf"
-                : VideoExtensions.Contains(ext) ? "video"
-                : MarkdownExtensions.Contains(ext) ? "markdown"
-                : null;
+            fileBytes = await BuildMultiHtmlZipAsync(uploadFiles);
+            uploadName = "multi-html.zip";
+        }
+        else
+        {
+            var single = uploadFiles[0];
+            using var ms = new MemoryStream();
+            await single.CopyToAsync(ms);
+            fileBytes = ms.ToArray();
+            var ext = Path.GetExtension(single.FileName).ToLowerInvariant();
+            uploadName = single.FileName;
+
+            // 视频 / PDF / Markdown：包装成 ZIP（保持与 Upload 一致的行为）
+            if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+            {
+                fileBytes = BuildWrapperZip(single.FileName, fileBytes, ext, title: null);
+                uploadName = Path.ChangeExtension(single.FileName, ".zip");
+                wrappedAssetType = ext == ".pdf" ? "pdf"
+                    : VideoExtensions.Contains(ext) ? "video"
+                    : MarkdownExtensions.Contains(ext) ? "markdown"
+                    : null;
+            }
         }
 
         try
@@ -873,6 +901,52 @@ public class WebPagesController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
+    }
+
+    private static List<IFormFile> NormalizeUploadFiles(IFormFile? file, List<IFormFile>? files)
+    {
+        var result = new List<IFormFile>();
+        if (files is { Count: > 0 })
+            result.AddRange(files.Where(f => f is { Length: > 0 }));
+        if (result.Count == 0 && file is { Length: > 0 })
+            result.Add(file);
+        return result;
+    }
+
+    private static async Task<byte[]> BuildMultiHtmlZipAsync(IReadOnlyList<IFormFile> files)
+    {
+        if (files.Count < 2)
+            throw new InvalidOperationException("多文件上传至少需要选择 2 个 HTML 文件");
+
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var file in files)
+            {
+                var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+                if (ext is not (".html" or ".htm"))
+                    throw new InvalidOperationException("多文件上传仅支持 .html / .htm 文件；其他资源请上传 ZIP");
+
+                var safeName = SanitizeFileName(file.FileName);
+                if (!usedNames.Add(safeName))
+                    throw new InvalidOperationException($"存在同名文件：{safeName}");
+
+                var entry = zip.CreateEntry(safeName, CompressionLevel.Optimal);
+                await using var target = entry.Open();
+                await file.CopyToAsync(target);
+            }
+        }
+        return ms.ToArray();
+    }
+
+    private static string BuildMultiHtmlDefaultTitle(IReadOnlyList<IFormFile> files)
+    {
+        var entry = files.FirstOrDefault(f =>
+                string.Equals(Path.GetFileName(f.FileName), "index.html", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Path.GetFileName(f.FileName), "index.htm", StringComparison.OrdinalIgnoreCase))
+            ?? files[0];
+        return Path.GetFileNameWithoutExtension(entry.FileName);
     }
 
     /// <summary>删除站点（含 COS 文件清理）</summary>

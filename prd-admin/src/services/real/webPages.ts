@@ -176,7 +176,8 @@ function joinUrl(base: string, path: string) {
 // ─── Upload (FormData) ───
 
 export async function uploadSite(input: {
-  file: File;
+  file?: File;
+  files?: File[];
   title?: string;
   description?: string;
   folder?: string;
@@ -187,7 +188,12 @@ export async function uploadSite(input: {
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const fd = new FormData();
-  fd.append('file', input.file);
+  const files = input.files && input.files.length > 0 ? input.files : (input.file ? [input.file] : []);
+  if (files.length > 1) {
+    files.forEach(f => fd.append('files', f));
+  } else if (files[0]) {
+    fd.append('file', files[0]);
+  }
   if (input.title) fd.append('title', input.title);
   if (input.description) fd.append('description', input.description);
   if (input.folder) fd.append('folder', input.folder);
@@ -203,13 +209,18 @@ export async function uploadSite(input: {
   }
 }
 
-export async function reuploadSite(id: string, file: File): Promise<ApiResponse<HostedSite>> {
+export async function reuploadSite(id: string, fileOrFiles: File | File[]): Promise<ApiResponse<HostedSite>> {
   const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const fd = new FormData();
-  fd.append('file', file);
+  const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+  if (files.length > 1) {
+    files.forEach(f => fd.append('files', f));
+  } else if (files[0]) {
+    fd.append('file', files[0]);
+  }
 
   const url = joinUrl(getApiBaseUrl(), api.webPages.reupload(encodeURIComponent(id)));
   const res = await fetch(url, { method: 'POST', headers, body: fd });
