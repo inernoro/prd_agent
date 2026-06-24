@@ -320,6 +320,34 @@ export function normalizeFallbackImages(fallback: string | string[] | undefined)
   return (Array.isArray(fallback) ? fallback : [fallback]).map((s) => (s || '').trim()).filter(Boolean);
 }
 
+/**
+ * 2026-06-24 发布探活分阶段（R4）。发布(部署)首启可能很慢（构建/迁移/JVM 暖机），
+ * 给足探测时间避免被探活超时误杀；运行期重启/唤醒不走这里，保持各 profile 自己的短超时。
+ * 下限解析优先级：项目覆盖 > 系统默认 > 1200 兜底。纯函数，可单测。
+ */
+export function resolveDeployReadinessFloorSeconds(
+  systemDefault: number | null | undefined,
+  projectOverride: number | null | undefined,
+): number {
+  if (typeof projectOverride === 'number' && projectOverride > 0) return projectOverride;
+  if (typeof systemDefault === 'number' && systemDefault > 0) return systemDefault;
+  return 1200;
+}
+
+/**
+ * 把就绪探测 timeout 抬到部署下限（取 max），其余字段(path/interval/noHttp)原样保留。
+ * 只在部署路径调用；返回新对象不改原 probe。floor<=0 时原样返回。
+ */
+export function applyDeployReadinessFloor(
+  probe: ReadinessProbe | undefined,
+  floorSeconds: number,
+): ReadinessProbe | undefined {
+  if (!(floorSeconds > 0)) return probe;
+  const current = probe?.timeoutSeconds ?? 0;
+  if (current >= floorSeconds) return probe;
+  return { ...(probe ?? {}), timeoutSeconds: floorSeconds };
+}
+
 function missingEnvTemplates(env: Record<string, string>): string[] {
   const missing = new Set<string>();
   for (const value of Object.values(env)) {

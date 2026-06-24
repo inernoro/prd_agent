@@ -11,7 +11,7 @@ import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
-import { resolveEffectiveProfile } from '../services/container.js';
+import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { acquireBuildSlot, buildGateStatus } from '../services/build-gate.js';
 import { recordBuild } from '../services/build-activity-tracker.js';
@@ -10560,7 +10560,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
             if (!profile.startupSignal || ready) {
               const probeReady = await containerService.waitForReadiness(
                 svc.hostPort,
-                profile.readinessProbe,
+                // 发布阶段就绪探测：抬到部署下限(默认 1200s)，避免慢首启被误杀。运行期重启/唤醒不走这里。
+                applyDeployReadinessFloor(
+                  profile.readinessProbe,
+                  resolveDeployReadinessFloorSeconds(
+                    stateService.getState().deployReadinessFloorSeconds,
+                    stateService.getProject(entry.projectId || 'default')?.deployReadinessFloorSeconds,
+                  ),
+                ),
                 (info) => {
                   sendSSE(res, 'probe', {
                     profileId: profile.id,
@@ -11130,7 +11137,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (!profile.startupSignal || ready) {
           ready = await containerService.waitForReadiness(
             svc.hostPort,
-            profile.readinessProbe,
+            // 发布阶段就绪探测：抬到部署下限(默认 1200s)，避免慢首启被误杀。运行期重启/唤醒不走这里。
+            applyDeployReadinessFloor(
+              profile.readinessProbe,
+              resolveDeployReadinessFloorSeconds(
+                stateService.getState().deployReadinessFloorSeconds,
+                stateService.getProject(entry.projectId || 'default')?.deployReadinessFloorSeconds,
+              ),
+            ),
             (info) => {
               sendSSE(res, 'probe', { profileId: profile.id, attempt: info.attempt, max: info.max, stage: info.stage, ok: info.ok, error: info.error });
             },
