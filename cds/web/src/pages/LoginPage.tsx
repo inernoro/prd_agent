@@ -12,6 +12,10 @@ function redirectTarget(): string {
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('redirect') || '/project-list';
   if (!raw.startsWith('/') || raw.startsWith('//')) return '/project-list';
+  // 绝不把目标指回登录路由本身 —— 否则已登录用户从 /login 跳 /login 是 no-op,
+  // spinner 永远转、登录框永不出现(Bugbot Medium「Login redirect target loops」)。
+  const path = raw.split(/[?#]/)[0];
+  if (path === '/login') return '/project-list';
   return raw;
 }
 
@@ -277,6 +281,12 @@ export function LoginPage(): JSX.Element {
         return;
       }
       const target = redirectTarget();
+      // 兜底:若目标解析后仍等于当前路径,navigate 是 no-op,spinner 会卡死 ——
+      // 这种情况直接落到登录框(redirectTarget 已排除 /login,这里只是双保险)。
+      if (target.split(/[?#]/)[0] === window.location.pathname) {
+        setAuthPhase('anon');
+        return;
+      }
       if (/\.html(?:$|[?#])/i.test(target)) {
         // legacy server 路径:hard-load 让 Express 的 legacy→React 重定向生效。
         window.location.assign(target);
