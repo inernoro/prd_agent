@@ -4,10 +4,8 @@ import {
   RefreshCw, FileOutput, CheckCircle2, Table2, X,
 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
-import { GlassCard } from '@/components/design/GlassCard';
 import { Surface } from '@/components/design/Surface';
 import { PageHeader } from '@/components/design/PageHeader';
-import { Select } from '@/components/design/Select';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import {
@@ -233,8 +231,7 @@ export default function FileConvertPage() {
   const stepIdx = STEPS.indexOf(step);
 
   return (
-    // overflow: clip 不创建 stacking context，避免 backdrop-filter + overflow:hidden 合成层爆炸
-    <div className="h-full min-h-0 flex flex-col" style={{ overflow: 'clip' }}>
+    <div className="h-full min-h-0 flex flex-col overflow-hidden">
       {/* 页头 */}
       <div className="shrink-0 px-6 pt-5 pb-4">
         <PageHeader
@@ -280,8 +277,7 @@ export default function FileConvertPage() {
         </div>
       </div>
 
-      {/* 主体 - overflow:clip 同上 */}
-      <div className="flex-1 min-h-0 flex gap-4 px-6 pb-6" style={{ overflow: 'clip' }}>
+      <div className="flex-1 min-h-0 flex gap-4 px-6 pb-6 overflow-hidden">
         {/* 内容区 */}
         <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
 
@@ -436,18 +432,24 @@ export default function FileConvertPage() {
                     {mappings.map((m, idx) => (
                       <div key={m.templatePlaceholder} className="grid grid-cols-2 items-center gap-0 px-4 py-2" style={{ borderBottom: idx < mappings.length - 1 ? '1px solid var(--border-default)' : undefined }}>
                         <span className="text-xs font-mono font-medium pr-4" style={{ color: 'var(--accent-primary, #6366f1)' }}>{`{{${m.templatePlaceholder}}}`}</span>
-                        <Select
+                        {/* 原生 select：零 portal 开销，不阻塞渲染 */}
+                        <select
                           value={m.sourceColumn}
-                          onValueChange={(v: string) => {
+                          onChange={(e) => {
                             const next = [...mappings];
-                            next[idx] = { ...m, sourceColumn: v };
+                            next[idx] = { ...m, sourceColumn: e.target.value };
                             setMappings(next);
                           }}
-                          uiSize="sm"
+                          className="h-8 rounded-lg px-2 text-xs outline-none w-full"
+                          style={{
+                            background: 'var(--bg-sunken)',
+                            border: '1px solid var(--border-default)',
+                            color: 'var(--text-primary)',
+                          }}
                         >
                           {sourceResult?.columns.map(c => <option key={c} value={c}>{c}</option>)}
                           <option value="__skip__">（不映射）</option>
-                        </Select>
+                        </select>
                       </div>
                     ))}
                   </div>
@@ -570,8 +572,8 @@ export default function FileConvertPage() {
 
         {/* ── 历史任务侧边栏 ── */}
         {showHistory && (
-          <div className="w-72 shrink-0 flex flex-col" style={{ minHeight: 0 }}>
-            <GlassCard variant="subtle" className="flex-1 flex flex-col overflow-hidden p-0">
+          <div className="w-72 shrink-0 flex flex-col min-h-0">
+            <Surface variant="raised" className="flex-1 flex flex-col rounded-2xl min-h-0" style={{ overflow: 'hidden' }}>
               <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: '1px solid var(--border-default)' }}>
                 <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>历史任务</span>
                 <div className="flex gap-1">
@@ -588,7 +590,7 @@ export default function FileConvertPage() {
                   ? <div className="p-6 text-center text-xs" style={{ color: 'var(--text-muted)' }}>暂无历史任务</div>
                   : tasks.map(t => <TaskRow key={t.id} task={t} />)}
               </div>
-            </GlassCard>
+            </Surface>
           </div>
         )}
       </div>
