@@ -24,6 +24,43 @@ doc/{type}.{topic}.md
 
 ---
 
+## topic 命名：appname 优先 + 点分层级（心智模型 SSOT）
+
+`{type}.{topic}` 里的 **topic 必须「appname 优先、点分层级」**，让文档列表按应用天然聚成簇，读者扫一眼就建立心理预期；发布到知识库时别人也更容易理解归属。
+
+格式：
+
+```
+{type}.{appname}[.{子模块}[.{子子模块}]].md
+```
+
+- **第一段 = appname**：应用 / 领域名，尽量对齐 `rule.app-identity.md` 的 appKey（`cds` / `defect-agent` / `visual-agent` / `literary-agent` / `report-agent` / `video-agent` / `review-agent` / `pr-review` / `workflow-agent` 等）。
+- **子模块用 `.` 续接**，**禁止**用 `-` 把 appname 和子模块黏在一起。每段内部仍是 kebab-case（段内单词用 `-`，段之间用 `.`）。
+- 同一应用的所有文档第一段一致 → 排序后自动成簇。
+
+| 正确（点分层级） | 含义 | 错误（连字符黏连） |
+|------------------|------|--------------------|
+| `spec.cds.md` | cds 整体规格 | — |
+| `spec.cds.settings.md` | cds 的 settings 子模块 | `spec.cds-settings.md` |
+| `design.cds.agent.runtime.md` | cds → agent → runtime | `design.cds-agent-runtime-architecture.md` |
+| `spec.defect-agent.automation-protocol.md` | defect-agent 的自动化协议 | `spec.defect-agent-automation-protocol.md` |
+| `design.defect-agent.automation-autonomy.md` | 缺陷自动化自治体系 | `design.defect-automation-autonomy.md` |
+
+> 注意：appKey 本身可含 `-`（如 `defect-agent`），它是**一个**段；`-` 不作分层用。分层只认 `.`。
+
+### 例外（不强制 appname 优先）
+
+| 类别 | 约定 | 示例 |
+|------|------|------|
+| 周报 | `report.YYYY-WNN.md`，时间即主题 | `report.2026-W13.md` |
+| 带日期的事故 / 验收报告 | 日期作末段 `report.{appname}.{topic}.YYYY-MM-DD.md` | `report.cds.mongo-log-split-incident.2026-05-23.md` |
+| 跨应用 / 平台级（不属单一 app） | 用保留域名段：`platform`（鉴权 / 网关 / 模型池 / 存储）、`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系） | `design.platform.llm-gateway.md`、`rule.frontend.modal.md`、`rule.skill.header.md` |
+| 顶层产品文档 | 保留概念名 | `spec.prd.md`、`spec.srs.md`、`spec.project-vision.md` |
+
+> 例外是「下限」：除上述四类，一律 appname 优先。拿不准时**优先归到某个 app**；确属跨切面才用保留域名段。新建文档前先想清楚它属于哪个 appname。
+
+---
+
 ## 文件头部格式
 
 每个文档的开头必须包含标准头部信息，统一使用 blockquote 键值对格式：
