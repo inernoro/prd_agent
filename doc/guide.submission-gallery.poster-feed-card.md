@@ -217,7 +217,7 @@ videoUrl,coverUrl,authorAvatarUrl
 
 ## 关联文档
 
-- `doc/plan.emergence-1-tiktok-douyin-poster.md`：本功能完整设计与三阶段交付历史
+- `doc/plan.emergence.tiktok-douyin-poster.md`：本功能完整设计与三阶段交付历史
 - `doc/debt.workflow-agent.md`：本功能已知边界与未还债务（含 dotnet watch 卡进程根因）
 - `.claude/rules/marketplace.md`：把工作流模板分享到海鲜市场
 - `.claude/rules/server-authority.md`：Run/Worker 模式（cron 调度真订阅时必读）

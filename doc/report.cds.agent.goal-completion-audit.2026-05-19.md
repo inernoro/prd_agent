@@ -45,15 +45,15 @@ bash scripts/audit-cds-agent-goal.sh
 
 | 要求 | 证据 |
 | --- | --- |
-| MAP/CDS 控制面 | `scripts/audit-cds-agent-goal.sh` A0/D1 pass；`doc/design.cds-agent-commercial-architecture-and-roadmap.md` §1/§2 |
+| MAP/CDS 控制面 | `scripts/audit-cds-agent-goal.sh` A0/D1 pass；`doc/design.cds.agent.commercial-architecture-and-roadmap.md` §1/§2 |
 | 官方 SDK adapter 主路径 | A0 pass：official adapter 289/320，bridge support 509/650，总胶水 798/850，legacy loop 425 |
 | 远端只读代码巡检 | `/tmp/cds-agent-p4-2-one-cycle-accepted/s1-report.json` pass |
 | 危险工具阻断与 stop | `/tmp/cds-agent-p4-2-one-cycle-accepted/controls-report.json` pass |
 | 远端视觉验收 | `/tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.png`；coverage pass |
 | 工作流调度 | `scripts/smoke-cds-agent-workflow-node.sh`；Phase 1 report |
 | KB 只读工具 | `scripts/smoke-cds-agent-kb-readonly-tools.sh`；Phase 1 report |
-| 写入扩展路径 | `doc/report.cds-agent-p4-5-writable-trial-plan-2026-05-19.md`；Phase 2 report |
-| 进度唯一看板 | `doc/design.cds-agent-commercial-architecture-and-roadmap.md` |
+| 写入扩展路径 | `doc/report.cds.agent.p4-5-writable-trial-plan.2026-05-19.md`；Phase 2 report |
+| 进度唯一看板 | `doc/design.cds.agent.commercial-architecture-and-roadmap.md` |
 
 ## 当前发布状态
 

@@ -136,8 +136,8 @@
 
 ## 相关文档
 
-- `doc/plan.emergence-1-tiktok-douyin-poster.md`：涌现 1 主计划文档（Phase 1 + 2 + 3 已完成）
-- `doc/guide.poster-feed-card.md`：用户教程（多平台博主订阅 → 首页海报）
+- `doc/plan.emergence.tiktok-douyin-poster.md`：涌现 1 主计划文档（Phase 1 + 2 + 3 已完成）
+- `doc/guide.submission-gallery.poster-feed-card.md`：用户教程（多平台博主订阅 → 首页海报）
 - `doc/debt.video-agent.md`：视频生成 Agent 债务（Remotion 已废弃路径）
 - `.claude/rules/llm-gateway.md`：LlmRequestContext 强制要求
 - `.claude/rules/server-authority.md`：CancellationToken.None + Run/Worker 模式

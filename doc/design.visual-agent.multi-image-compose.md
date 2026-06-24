@@ -350,7 +350,7 @@ sequenceDiagram
 
 ## 10. 与三级调度的关系
 
-本功能遵循 `doc/design.model-pool.md` 定义的三级调度机制：
+本功能遵循 `doc/design.platform.model-pool.md` 定义的三级调度机制：
 
 1. **专属模型池**：可为 `visual-agent.compose::vision` 配置专属 Vision 模型池
 2. **默认模型池**：未配置时回退到 `vision` 类型的默认池

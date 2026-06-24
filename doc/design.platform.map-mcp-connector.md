@@ -225,8 +225,8 @@ public class McpGatewayController : ControllerBase { ... }
 
 ## 十、关联文档与规则
 
-- `doc/design.skill-marketplace-open-api.md` —— Agent 开放接口 + AgentApiKey 的上游设计（本设计建在其 P3 基础设施之上）
-- `doc/design.open-api.md` —— OpenAI 兼容网关（同源鉴权范式参照）
+- `doc/design.skill.marketplace-open-api.md` —— Agent 开放接口 + AgentApiKey 的上游设计（本设计建在其 P3 基础设施之上）
+- `doc/design.open-platform.open-api.md` —— OpenAI 兼容网关（同源鉴权范式参照）
 - `.claude/rules/no-rootless-tree.md` —— 借用法则：MCP 连接器借用现成桩，不重建
 - `.claude/rules/server-authority.md` —— 无状态网关 + 服务端权威
 - `.claude/rules/app-caller-registry.md` —— 若回环调用涉及新 LLM caller，需登记

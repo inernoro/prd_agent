@@ -82,7 +82,7 @@
 - `AgentOpenEndpoint`（集合 `agent_open_endpoints`）—— P3 Agent 开放接口登记
 - `MarketplaceSkill` 新增字段 —— `ReferenceType`（`zip` / `open-api-reference`）+ `ReferenceEndpointId` 为自动桥接铺路
 
-详见 `doc/rule.data-dictionary.md`。
+详见 `doc/rule.platform.data-dictionary.md`。
 
 ### 4.2 鉴权链路
 
@@ -139,7 +139,7 @@ Controller 方法用 User.FindFirst("boundUserId").Value 当 userId 执行业务
 
 ### 5.1 AgentApiKey 字段
 
-见 `doc/rule.data-dictionary.md`。关键不变量：
+见 `doc/rule.platform.data-dictionary.md`。关键不变量：
 - `ApiKeyHash` 只存 SHA256，**禁止**存明文
 - `KeyPrefix` 前 12 字符仅 UI 识别用
 - `ExpiresAt == null` 仅允许管理员创建
@@ -266,7 +266,7 @@ GET /api/official-skills/findmapskills/download
 ## 十、关联设计文档
 
 - `doc/spec.marketplace.md` — 海鲜市场整体规格
-- `doc/rule.data-dictionary.md` — 数据字典（含本 PR 两新集合）
+- `doc/rule.platform.data-dictionary.md` — 数据字典（含本 PR 两新集合）
 - `.claude/rules/llm-gateway.md` — LLM 调用约束（本 PR 未触发）
 - `.claude/rules/frontend-modal.md` — 弹窗物理约束
 - `.claude/rules/server-authority.md` — 服务器权威性

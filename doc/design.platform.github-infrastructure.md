@@ -236,8 +236,8 @@ Exception
 
 ## 7. 关联文档
 
-- `doc/design.pr-review-v2.md` — PR 审查工作台 V2 设计（本次基础设施的第一个消费方）
-- `doc/design.llm-gateway.md` — LlmGateway 设计（本组件对照的基础设施组件样板）
+- `doc/design.pr-review.v2.md` — PR 审查工作台 V2 设计（本次基础设施的第一个消费方）
+- `doc/design.platform.llm-gateway.md` — LlmGateway 设计（本组件对照的基础设施组件样板）
 - `rule.platform.app-identity.md` — appKey 硬编码规范（消费方层面）
 - `rule.server-authority.md` — 长任务必须 `CancellationToken.None`（GitHub 同步场景需要）
 - `changelogs/2026-04-11_github-infrastructure.md` — 本次迁移的碎片记录

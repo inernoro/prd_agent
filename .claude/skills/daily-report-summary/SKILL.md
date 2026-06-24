@@ -46,7 +46,7 @@ git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --dat
 
 主仓库常见「feature 分支当天提交、当天/隔天 merge 到 main」。先取主干当日提交（`--first-parent` + 主干 merge commit 的 committer date = 落地时间，口径正确）；若发现当天有 merge commit，用 `git log <merge>^1..<merge>^2 --oneline` 穿透读 PR 真实 commits，以 commit 内容（而非 merge 标题）判断主题归属。**禁止**只读 merge 标题就归类。
 
-**已知边界（committer date 的口径）**：本仓库 PR 全部走 merge commit，merge 的 committer date 即落地日，统计准确。若仓库改用 **fast-forward / rebase 合并**，被合并的提交会保留更早的 committer date，可能让「当天 ff 落地」的提交按更早日期归档（当天显示零活动而实际已发版）。遇到 ff/rebase 流程，需改用 PR 元数据的落地 SHA 日期（参照 `weekly-update-summary` 纪律 3）。本边界已记入 `doc/debt.daily-report.md`。
+**已知边界（committer date 的口径）**：本仓库 PR 全部走 merge commit，merge 的 committer date 即落地日，统计准确。若仓库改用 **fast-forward / rebase 合并**，被合并的提交会保留更早的 committer date，可能让「当天 ff 落地」的提交按更早日期归档（当天显示零活动而实际已发版）。遇到 ff/rebase 流程，需改用 PR 元数据的落地 SHA 日期（参照 `weekly-update-summary` 纪律 3）。本边界已记入 `doc/debt.report-agent.daily.md`。
 
 ### 纪律 4：标题固定格式，库固定名
 

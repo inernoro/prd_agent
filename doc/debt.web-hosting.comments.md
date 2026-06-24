@@ -16,7 +16,7 @@
 | 防刷 | 评论无独立速率限制（仅借分享 view 门禁） | 如遇滥用，加 per-user / per-site 滑动窗口（仿 `EnforceShareAccessAsync`） |
 | 通知 | owner 不会收到「有人评论了你的站点」通知 | 接 `admin_notifications` 或团队活动流 |
 | 合集分享评论 | 合集分享（多站点）评论只挂到 `sites[0]` 首个站点 | 如需逐站点评论，前端按 site 分区 + 后端按 siteId 查询 |
-| 索引 | `hosted_site_comments` 未建索引（遵守 no-auto-index 规则） | DBA 手动建 `(siteId, createdAt)` 复合索引，写入 `doc/guide.mongodb-indexes.md` |
+| 索引 | `hosted_site_comments` 未建索引（遵守 no-auto-index 规则） | DBA 手动建 `(siteId, createdAt)` 复合索引，写入 `doc/guide.platform.mongodb-indexes.md` |
 
 ## 权限模型（已实现）
 

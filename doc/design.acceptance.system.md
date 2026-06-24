@@ -78,7 +78,7 @@
 - **双模式落地（doc-store / local）**：有知识库的项目把报告归档进文档空间、可分享；没有知识库的项目退化为写本地 `doc/acceptance/`，零密钥零网络。同一套标准，能力强弱自适应环境——这是"不假定不存在的能力"原则在架构层的体现。
 - **取证引擎是"人类模拟器"**：`harness.mjs` 暴露的不是"打开某 URL"，而是 `login / gotoByClick(可见文本) / click / shot / setTheme` 这些**以人的动作为单位**的原语。脚本读起来就是一段"人怎么操作"的剧本，而不是"程序怎么请求"的代码。
 
-方法论上不重造轮子：测什么、怎么分级，**复用** `doc/rule.issues-system.md §5` 的 10 条硬约束、P0-P3、四轴矩阵（视口 × 主题 × 状态 × 交互），与 issues 视觉验收体系共用同一份 SSOT。本体系只补它没有的"取证要走真人路径"和"结论要沉淀成资产"。
+方法论上不重造轮子：测什么、怎么分级，**复用** `doc/rule.skill.issues-system.md §5` 的 10 条硬约束、P0-P3、四轴矩阵（视口 × 主题 × 状态 × 交互），与 issues 视觉验收体系共用同一份 SSOT。本体系只补它没有的"取证要走真人路径"和"结论要沉淀成资产"。
 
 ---
 
@@ -193,7 +193,7 @@ v3 报告骨架（29119-3 对齐）与状态前置标题已在标准与配置中
 
 ## 11. 关联文档
 
-- 方法论 SSOT：`doc/rule.issues-system.md` §5（四轴矩阵 / 10 条硬约束 / P0-P3）
+- 方法论 SSOT：`doc/rule.skill.issues-system.md` §5（四轴矩阵 / 10 条硬约束 / P0-P3）
 - 端到端验收原则：`.claude/rules/e2e-verification.md`
 - 完成标准与自测优先：`CLAUDE.md` §8 / §8.1
 - 可执行实现：`.claude/skills/create-visual-test-to-kb/`

@@ -7,7 +7,7 @@
 | **版本** | v2.0 |
 | **日期** | 2026-05-26 |
 | **appKey** | pa-agent |
-| **关联** | `doc/spec.pa-agent-savage-upgrade.md`（v1.0 / v1.1 基线） |
+| **关联** | `doc/spec.product-agent.pa.savage-upgrade.md`（v1.0 / v1.1 基线） |
 
 ---
 
@@ -170,7 +170,7 @@ public class PaUserPreferences {
 }
 ```
 
-索引（由 DBA 手动加，登记在 `doc/guide.mongodb-indexes.md`）：
+索引（由 DBA 手动加，登记在 `doc/guide.platform.mongodb-indexes.md`）：
 - `{ UserId: 1 }` unique
 
 ### 5.2 PaSession 复用，加 `Type` 字段

@@ -4,9 +4,9 @@
 >
 > 主设计稿。配套文档：
 >
-> - `doc/spec.cds-project-model.md` — 数据字典
-> - `doc/plan.cds-multi-project-phases.md` — 7 期交付计划
-> - `doc/rule.cds-mongo-migration.md` — 迁移与回滚规范
+> - `doc/spec.cds.project-model.md` — 数据字典
+> - `doc/plan.cds.multi-project-phases.md` — 7 期交付计划
+> - `doc/rule.cds.mongo-migration.md` — 迁移与回滚规范
 >
 > **基线**：`doc/design.cds.md` v3.2（现有单项目架构）
 
@@ -196,7 +196,7 @@ P1 阶段（外壳先变）旧 API 路径仍然可用，通过一个 **implicit 
 
 ## 六、数据模型（MongoDB 扁平化）
 
-详细字段定义见 `doc/spec.cds-project-model.md`。这里列集合总表：
+详细字段定义见 `doc/spec.cds.project-model.md`。这里列集合总表：
 
 ### 集合清单
 
@@ -284,7 +284,7 @@ CDS_SUPERADMIN_EMAIL=admin@...   # 应急通道，OAuth 失效时可用
 
 ## 八、迁移策略概要
 
-详见 `doc/rule.cds-mongo-migration.md`。简要三阶段：
+详见 `doc/rule.cds.mongo-migration.md`。简要三阶段：
 
 ```
 P3a: Dual-write
@@ -311,9 +311,9 @@ P3c: Stop dual-write
 
 ## 九、7 期实施路线图（概要）
 
-详见 `doc/plan.cds-multi-project-phases.md`。
+详见 `doc/plan.cds.multi-project-phases.md`。
 
-> **2026-05-03 实施现状**:P1-P4 全部上线 + 部分 P3/P5 提前实现 + mongo-split 默认 + onboarding UAT 收尾。详见 `doc/plan.cds-status.md` §二「已完成里程碑」。
+> **2026-05-03 实施现状**:P1-P4 全部上线 + 部分 P3/P5 提前实现 + mongo-split 默认 + onboarding UAT 收尾。详见 `doc/plan.cds.status.md` §二「已完成里程碑」。
 
 | 期 | 交付 | 用户可见变化 | 内部变化 | 实施状态 |
 |---|---|---|---|---|
@@ -406,13 +406,13 @@ P3c: Stop dual-write
 
 ## 十二、关联文档
 
-- `doc/spec.cds-project-model.md` — 数据字典（User / Workspace / Project / Environment 全字段表 + 索引）
-- `doc/plan.cds-multi-project-phases.md` — 7 期详细交付计划 + 每期验收标准
-- `doc/rule.cds-mongo-migration.md` — state.json → MongoDB 迁移与回滚操作规范
+- `doc/spec.cds.project-model.md` — 数据字典（User / Workspace / Project / Environment 全字段表 + 索引）
+- `doc/plan.cds.multi-project-phases.md` — 7 期详细交付计划 + 每期验收标准
+- `doc/rule.cds.mongo-migration.md` — state.json → MongoDB 迁移与回滚操作规范
 - `doc/design.cds.md` — 现有 v3.2 单项目架构（本文档的基线，仍然有效直到 P4）
-- `doc/design.cds-resilience.md` — 温池 / 集群调度（P4 后需与 project 层集成）
-- `doc/design.cds-onboarding.md` — 一键导入配置（P4 中需扩展支持多项目）
-- `doc/design.cds-data-migration.md` — CDS 数据迁移（P3 时需同步思路）
+- `doc/design.cds.resilience.md` — 温池 / 集群调度（P4 后需与 project 层集成）
+- `doc/design.cds.onboarding.md` — 一键导入配置（P4 中需扩展支持多项目）
+- `doc/design.cds.data-migration.md` — CDS 数据迁移（P3 时需同步思路）
 
 ---
 

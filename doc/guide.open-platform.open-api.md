@@ -88,6 +88,6 @@ curl -X POST https://<域名>/api/v1/chat/completions \
 - 响应 `usage`（prompt/completion/total tokens）随补全返回（流式在最后一个 chunk）。
 - 管理后台「开放接口」tab 看每 Key 今日请求数 / token；专属模型降级会发站内管理预警。
 
-## 六、暂未支持（见 doc/debt.open-api.md）
+## 六、暂未支持（见 doc/debt.open-platform.open-api.md）
 
 `/v1/embeddings`、成本/额度账本、单次生成回查 `/v1/generation`、并发上限。需要再排期。

@@ -37,8 +37,8 @@
 - 已补齐：goal audit 现在把 progress consistency 作为 D1 guardrail；同时 N6 沙箱内失败不会覆盖 canonical N6 pass summary。
 - 已纠偏：用户确认最终目标不是 `MAP -> CDS -> external agent host`，而是 `MAP -> CDS -> CDS-managed Claude SDK runtime/container/sandbox`。
 - 已纠偏：`CDS_REMOTE_HOST_*`、SSH 私钥、sidecar image、env 只能作为 operator/debug fallback，不能作为普通用户主路径，也不能写成当前产品下一步。
-- 已启动：新增有限纠偏计划 `doc/plan.cds-agent-runtime-correction-limited.md`，本轮只校准文档入口和本地事实源，不实现 runtime。
-- 已设计：新增 R0 fact source 设计 `doc/design.cds-agent-managed-runtime-fact-source.md`，把 R0 blocker 改成 CDS-managed runtime/project/profile/container/session，而不是 remote host/image/env。
+- 已启动：新增有限纠偏计划 `doc/plan.cds.agent.runtime-correction-limited.md`，本轮只校准文档入口和本地事实源，不实现 runtime。
+- 已设计：新增 R0 fact source 设计 `doc/design.cds.agent.managed-runtime-fact-source.md`，把 R0 blocker 改成 CDS-managed runtime/project/profile/container/session，而不是 remote host/image/env。
 - 已校准：runtime-status execution panel 的 R0.2/R0.3、NextCommand、runbook 和 task board 已指向 CDS-managed runtime fact source；remote host/image 只作为 operator fallback debug。
 - 已修复：CDS `/agent-sessions` 非 fake runtime message 不再返回“delegated to MAP sidecar bridge”；runtime 缺失时由 CDS 返回 `cds_managed_runtime_unavailable`，避免再次把执行归属推回 MAP。
 - 已推进：CDS-managed official SDK runtime transport 已有最小闭环；CDS 可从 shared-service branch service 发现 `claude-agent-sdk` runtime，并投递 `/v1/agent/run` 后写回 `runtime_init/text_delta/done`。
@@ -57,7 +57,7 @@
 | 17:22 | 远程 BuildProfile/service residual 仍污染业务分支 | 经用户精确批准后运行 branch isolation evidence wrapper | `/tmp/cds-agent-branch-isolation-repair-apply-current/summary.json` | 40s | `beforeContaminatedBranchCount=4`、`afterContaminatedBranchCount=0` |
 | 17:23 | 需要确认是否只是 wrapper 误判 | 直接查远程 branch list 和 project list | `/tmp/cds-agent-branch-list-after-delete.json`、`/tmp/cds-agent-project-list-after-delete.json` | 约 2s | 污染列表 `[]`，`prd-agent.appServices=api,admin` |
 | 17:23 | 清理后 R0 是否恢复不清楚 | 运行 runtime pool evidence | `/tmp/cds-agent-runtime-pool-evidence-after-branch-clean/summary.json` | 11s | branch isolation clean；剩余 `REMOTE_HOST_AVAILABLE`、`SHARED_POOL_RUNNING` |
-| 17:24 | 报告/进度仍写旧 contaminated 状态 | 更新状态面板和事故报告 | `doc/status.cds-agent-current-progress.md`、`doc/report.cds-agent-runtime-pool-contamination-2026-05-18.md` | 本地编辑 | 文档与远程证据对齐 |
+| 17:24 | 报告/进度仍写旧 contaminated 状态 | 更新状态面板和事故报告 | `doc/status.cds-agent-current-progress.md`、`doc/report.cds.agent.runtime-pool-contamination.2026-05-18.md` | 本地编辑 | 文档与远程证据对齐 |
 | 17:25 | 页面执行面板只结构化 branch 删除，没有结构化 remote host 恢复 | 给 `remote-host-prepare` 增加后端 `applyManifest` | `InfraAgentSessionsControllerTests` | 后端测试 18/18，约数秒 | 页面可展示 remote host create / deploy sidecar 所需条件 |
 | 17:31 | 远程是否发布了 manifest UI 不清楚 | 运行发布验证脚本 | `/tmp/cds-agent-runbook-published/summary.json` | 首轮约 35s | 发现脚本错误地要求后端常量出现在前端 bundle |
 | 17:35 | 发布验证脚本误报 | 改为验证前端 bundle 的 `applyManifest/preconditions` 渲染能力，后端常量由控制器测试覆盖 | `/tmp/cds-agent-runbook-published/summary.json` | 约 35s | 发布验证通过，命中 `assets/index-D_MWXu97-local.js` |
@@ -107,8 +107,8 @@
 | 20:39 | R0 status refresh 底部 `Next Command` 仍固定指向 publish handoff，和进度面板冲突 | 调整 `scripts/refresh-cds-agent-r0-status.sh`：`userActionRequired=true` 时直接输出缺失输入刷新命令 | `/tmp/cds-agent-r0-status-refresh-current.md` | <1s | refresh 报告与 progress board 同口径 |
 | 20:48 | 多个进度面之间靠人工目测保持一致，容易再次漂移 | 新增 `scripts/check-cds-agent-progress-consistency.sh`，自动刷新并断言 refresh、progress board、主文档同口径 | terminal output | <3s | `CDS Agent progress consistency: pass` |
 | 20:51 | consistency check 单独通过，但接入 goal audit 时继承了“尚未生成”的 `CDS_AGENT_GOAL_AUDIT_REPORT` 导致假失败；同时 N6 沙箱失败会覆盖 canonical summary | consistency check 在 in-progress audit report 不存在时回退默认目标审计输入；goal audit 内 N6 attempt 写入 audit dir，只有 pass 才更新 canonical summary | `/tmp/cds-agent-goal-audit-with-progress-consistency.json`、`/tmp/cds-agent-n6-non-code-compatibility-current.json` | audit 约 10s；沙箱外 N6 约 30s | D1=pass，N6=pass；本地审计唯一失败收敛到 R0 runtime pool 未恢复 |
-| 21:35 | 用户明确指出 remote-host/env 路线偏离原始 CDS 设计，要求新建有限计划并先纠正文档 | 新增 `doc/plan.cds-agent-runtime-correction-limited.md`；主进度文档第一屏改为 CDS-managed runtime 纠偏；progress/refresh 下一步改为纠偏计划 | 本文档、`doc/status.cds-agent-current-progress.md`、progress consistency | 预计 65-90m，本轮先完成入口校准 | remote host/env 被降级为 operator fallback，不再作为产品主路径 |
-| 22:02 | D1 完成后 runtime-status 后端仍把 R0.2/R0.3 写成 remote host carrier / deploy sidecar image | 新增 R0 fact-source 设计文档；修正 runtime-status execution panel、debug command、task board、controller tests | `doc/design.cds-agent-managed-runtime-fact-source.md`、`InfraAgentSessionsControllerTests` | controller tests 18/18，约 11s | 页面数据源主线已改为 CDS-managed runtime fact source；下一步是 CDS `/agent-sessions` execution 改造 |
+| 21:35 | 用户明确指出 remote-host/env 路线偏离原始 CDS 设计，要求新建有限计划并先纠正文档 | 新增 `doc/plan.cds.agent.runtime-correction-limited.md`；主进度文档第一屏改为 CDS-managed runtime 纠偏；progress/refresh 下一步改为纠偏计划 | 本文档、`doc/status.cds-agent-current-progress.md`、progress consistency | 预计 65-90m，本轮先完成入口校准 | remote host/env 被降级为 operator fallback，不再作为产品主路径 |
+| 22:02 | D1 完成后 runtime-status 后端仍把 R0.2/R0.3 写成 remote host carrier / deploy sidecar image | 新增 R0 fact-source 设计文档；修正 runtime-status execution panel、debug command、task board、controller tests | `doc/design.cds.agent.managed-runtime-fact-source.md`、`InfraAgentSessionsControllerTests` | controller tests 18/18，约 11s | 页面数据源主线已改为 CDS-managed runtime fact source；下一步是 CDS `/agent-sessions` execution 改造 |
 | 22:08 | CDS `/agent-sessions` 非 fake message 仍可能把执行描述成 MAP sidecar bridge delegation | 改成 CDS-owned unavailable/error path；补 CDS route test，断言不出现 MAP sidecar bridge，也不要求 SSH/image/env | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | CDS route tests 3/3，约 0.5s | R0.2.2 ownership guard 完成；下一步是 CDS-managed official SDK runtime transport |
 | 22:28 | CDS `/agent-sessions` 仍只能返回 runtime unavailable，尚未真实投递 official SDK runtime | 增加 CDS-managed branch-service transport：发现 shared-service `claude-agent-sdk` runtime，POST `/v1/agent/run`，解析 SSE 并写回 session events；补 mock official SDK runtime route test | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | CDS route tests 4/4，约 0.9s；CDS build pass | R0.2.3 done_minimal；下一步是 MAP adapter session transport + managed-runtime smoke |
 | 23:05 | 需要把 R0.6 reconciler 接入真实 CDS container service，而不是继续走 remote host/image fallback | 增加 `liveApply=true`，由 CDS `ContainerService.runService` + readiness 创建/恢复官方 SDK runtime；补 route test/build/smoke | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts`、`scripts/smoke-cds-agent-managed-runtime-capacity.sh` | route test <1s；CDS build 约数秒；self-update 约 26s | CDS control plane 更新到 `5b5867e0` |
@@ -980,5 +980,5 @@ scripts/audit-cds-agent-goal.sh
 后续继续推进时，每轮必须更新：
 
 - `doc/status.cds-agent-current-progress.md`：当前状态、最新 evidence、下一步。
-- `doc/report.cds-agent-execution-ledger-2026-05-18.md`：问题、处理、耗时、优化。
+- `doc/report.cds.agent.execution-ledger.2026-05-18.md`：问题、处理、耗时、优化。
 - 对任何远程写动作：保留 evidence wrapper summary 和 post-check。

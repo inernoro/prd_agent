@@ -141,7 +141,7 @@
 
 ## 关联文档
 
-- **上手设计**：`doc/design.cds-onboarding.md`
-- **环境配置**：`doc/guide.cds-env.md`
+- **上手设计**：`doc/design.cds.onboarding.md`
+- **环境配置**：`doc/guide.cds.env.md`
 - **架构设计**：`doc/design.cds.md`
-- **部署方案**：`doc/plan.cds-deployment.md`
+- **部署方案**：`doc/plan.cds.deployment.md`

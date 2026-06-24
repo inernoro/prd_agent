@@ -16,7 +16,7 @@ P4-5 完成。写入能力进入试用前的边界、审批门禁、差异产物
 | KB diff/apply/reject | 本地已实现 | `kb_diff/kb_apply/kb_reject`；`kb_apply` 必须 MAP approval；`scripts/smoke-cds-agent-kb-diff-apply.sh` |
 | 工作流审批暂停 | 本地已实现 | `waiting_approval`、审批通过/拒绝、超时 `timed_out`；`scripts/smoke-cds-agent-workflow-approval.sh` |
 | 代码 writable profile | 本地已实现 | `code-writable-confirm`；默认只读不暴露代码写工具；`scripts/smoke-cds-agent-writable-profile.sh` |
-| Phase 2 验收包 | 已归档 | `doc/report.cds-agent-phase2-acceptance-2026-05-19.md` / `.pdf` |
+| Phase 2 验收包 | 已归档 | `doc/report.cds.agent.phase2-acceptance.2026-05-19.md` / `.pdf` |
 
 ## 不开放为默认路径
 

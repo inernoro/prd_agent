@@ -120,8 +120,8 @@
 
 | 文件 | 类型 | 内容 |
 |------|------|------|
-| `doc/guide.prd-agent-operations.md` | guide | PRD Agent 全平台操作手册（桌面框架、对话系统、预览系统、会话管理、文档管理、缺陷管理、内容缺失检测、API 端点清单、Web 端架构），共 9 大章节 2216 行 |
-| `doc/guide.cds-ai-auth.md` | guide | CDS 双层认证调试指南：应用层 + 用户层认证、401 快速诊断决策树、用户名自动发现，216 行 |
+| `doc/guide.prd-agent.operations.md` | guide | PRD Agent 全平台操作手册（桌面框架、对话系统、预览系统、会话管理、文档管理、缺陷管理、内容缺失检测、API 端点清单、Web 端架构），共 9 大章节 2216 行 |
+| `doc/guide.cds.ai-auth.md` | guide | CDS 双层认证调试指南：应用层 + 用户层认证、401 快速诊断决策树、用户名自动发现，216 行 |
 
 ---
 

@@ -95,7 +95,7 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/mds/model-groups" -Headers @{"
 
 ## 相关文件
 
-- 设计文档：`doc/design.multi-image-compose.md`
+- 设计文档：`doc/design.visual-agent.multi-image-compose.md`
 - 测试用例：`prd-api/tests/PrdAgent.Tests/MultiImageComposeIntegrationTests.cs`
 - 组合服务：`prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs`
 - 图片描述服务：`prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs`

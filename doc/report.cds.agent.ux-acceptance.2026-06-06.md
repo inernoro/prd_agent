@@ -3,7 +3,7 @@
 > **版本**：v1.0 | **日期**：2026-06-06 | **状态**：已落地
 
 > **读者**：想确认用户反馈的 cds-agent 9 个问题各自被解决到什么程度、有什么证据的人
-> **关联**：`doc/design.knowledge-agent-architecture.md`、`doc/design.cds-agent-runtime-architecture.md`、`changelogs/2026-06-06_cds-agent-ux-fixes.md`、`.claude/rules/blocked-state-circuit-breaker.md`
+> **关联**：`doc/design.knowledge-base.agent-architecture.md`、`doc/design.cds.agent.runtime-architecture.md`、`changelogs/2026-06-06_cds-agent-ux-fixes.md`、`.claude/rules/blocked-state-circuit-breaker.md`
 
 ---
 

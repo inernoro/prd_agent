@@ -128,6 +128,6 @@ sudo docker exec cds_nginx nginx -s reload
 
 ## 七、相关文档
 
-- `doc/design.cds-control-data-split.md` — 整体设计(forwarder + admin daemon 拆分)
-- `doc/report.cds-forwarder-success.md` — 2026-05-08 收尾报告
+- `doc/design.cds.control-data-split.md` — 整体设计(forwarder + admin daemon 拆分)
+- `doc/report.cds.forwarder-success.md` — 2026-05-08 收尾报告
 - `cds/CLAUDE.md` — CDS 模块约束

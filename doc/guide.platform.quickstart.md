@@ -63,5 +63,5 @@ cds.D      → Dashboard (别名)
 
 ## 详细文档
 
-- 环境变量配置：[doc/guide.cds-env.md](guide.cds.env.md)
+- 环境变量配置：[doc/guide.cds.env.md](guide.cds.env.md)
 - CDS 架构设计：[doc/design.cds.md](design.cds.md)

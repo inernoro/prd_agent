@@ -6,9 +6,9 @@
 >
 > **文档导航**：
 >
-> - 主设计稿：`doc/design.cds-multi-project.md`
-> - 数据字典：`doc/spec.cds-project-model.md`
-> - 迁移规范：`doc/rule.cds-mongo-migration.md`
+> - 主设计稿：`doc/design.cds.multi-project.md`
+> - 数据字典：`doc/spec.cds.project-model.md`
+> - 迁移规范：`doc/rule.cds.mongo-migration.md`
 
 ---
 
@@ -52,10 +52,10 @@
 
 ### 交付清单
 
-- [ ] `doc/design.cds-multi-project.md` — 主设计稿（管理摘要 + 架构 + API + 风险）
-- [ ] `doc/spec.cds-project-model.md` — 10 个集合的数据字典
-- [ ] `doc/plan.cds-multi-project-phases.md` — 本文档
-- [ ] `doc/rule.cds-mongo-migration.md` — 迁移与回滚规范
+- [ ] `doc/design.cds.multi-project.md` — 主设计稿（管理摘要 + 架构 + API + 风险）
+- [ ] `doc/spec.cds.project-model.md` — 10 个集合的数据字典
+- [ ] `doc/plan.cds.multi-project-phases.md` — 本文档
+- [ ] `doc/rule.cds.mongo-migration.md` — 迁移与回滚规范
 
 ### 验收标准
 
@@ -216,7 +216,7 @@
 
 把 `state.json` 承载的所有业务数据迁到 MongoDB。**这是整个 v4 里风险最大的一期**。
 
-采用三阶段双写策略（详见 `doc/rule.cds-mongo-migration.md`），任何阶段都可通过 `CDS_STORAGE_MODE` 回滚。
+采用三阶段双写策略（详见 `doc/rule.cds.mongo-migration.md`），任何阶段都可通过 `CDS_STORAGE_MODE` 回滚。
 
 ### 为什么拆成 Part 1 / Part 2 / Part 3
 
@@ -299,7 +299,7 @@ P3 全量在一个 session 里落地违反规则 8（完成标准）——mongo 
 
 ### 风险
 
-见 `doc/rule.cds-mongo-migration.md` 的风险章节。核心：**任何一致性告警都要立即停 P3 推进，查根因**。
+见 `doc/rule.cds.mongo-migration.md` 的风险章节。核心：**任何一致性告警都要立即停 P3 推进，查根因**。
 
 ### 预估工作量
 

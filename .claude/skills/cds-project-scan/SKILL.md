@@ -92,7 +92,7 @@ CDS 扫描进度：
 
 ## 7 类常见漏洞（提交前对照）
 
-详见 [doc/spec.cds-compose-contract.md](../../../doc/spec.cds-compose-contract.md) § 3-4。Top hits：
+详见 [doc/spec.cds.compose-contract.md](../../../doc/spec.cds.compose-contract.md) § 3-4。Top hits：
 
 | 现象 | 根因 | 自检 |
 |---|---|---|

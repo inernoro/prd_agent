@@ -1,6 +1,6 @@
 # doc/index.yml
 # 文档元数据 — 供外部同步工具（语雀、Confluence 等）消费
-# 命名规范见 doc/rule.doc-naming.md
+# 命名规范见 doc/rule.doc.naming.md
 # 排序原则：先理解产品 → 再了解架构 → 然后动手操作 → 参考规范 → 未来计划 → 历史记录
 
 # 文件夹定义：按阅读优先级排列

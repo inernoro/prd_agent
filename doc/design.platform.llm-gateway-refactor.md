@@ -1,7 +1,7 @@
 # LLM Gateway 图片生成重构 · 设计
 
 > **状态**：已实现（PR #490，分支 `claude/refactor-llm-gateway-arch-8f7eZ`，2026-04-23）
-> **关联**：`doc/design.llm-gateway.md`（Gateway 总体设计）、`.claude/rules/compute-then-send.md`
+> **关联**：`doc/design.platform.llm-gateway.md`（Gateway 总体设计）、`.claude/rules/compute-then-send.md`
 
 ---
 
@@ -264,7 +264,7 @@ Program.cs：IModelResolver 注册改回直接注册 ModelResolver
 ⏳ 后续：
   OpenAIImageClient.cs（等 Worker 接入后再删）
   _diag_resolver_calls MongoDB 集合（无新写入后可 drop）
-  doc/design.llm-gateway.md：追加图片生成重构说明，引用本文
+  doc/design.platform.llm-gateway.md：追加图片生成重构说明，引用本文
 ```
 
 ---
@@ -373,6 +373,6 @@ Phase 1 保持现有 `llmrequestlogs` 结构不变；Phase 2 新增：
 
 ## 十、关联设计文档
 
-- `doc/design.llm-gateway.md` — Gateway 总体设计（三级调度、池策略、健康管理）
+- `doc/design.platform.llm-gateway.md` — Gateway 总体设计（三级调度、池策略、健康管理）
 - `.claude/rules/compute-then-send.md` — 算/发两阶段原则（本次重构的理论依据）
 - `.claude/rules/llm-gateway.md` — LLM Gateway 调用规范

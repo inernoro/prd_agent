@@ -163,7 +163,7 @@ Phase 6 实战时,挑一个 Prisma + MySQL 项目,把 backend 的 dbScope 设成
 
 ## 8. 关联文档
 
-- `doc/spec.cds-compose-contract.md` — cds-compose 完整契约 SSOT
-- `doc/guide.cds-orm-support.md` — Phase 4 ORM migration 注入(per-branch 后,migration 命令在每个分支独立 DB 上跑一次)
-- `doc/plan.cds-status.md` — CDS 当前状态看板(mysql 接入完整里程碑见 §二)
+- `doc/spec.cds.compose-contract.md` — cds-compose 完整契约 SSOT
+- `doc/guide.cds.orm-support.md` — Phase 4 ORM migration 注入(per-branch 后,migration 命令在每个分支独立 DB 上跑一次)
+- `doc/plan.cds.status.md` — CDS 当前状态看板(mysql 接入完整里程碑见 §二)
 - `cds/src/services/db-scope-isolation.ts` — 实现 + 内联文档

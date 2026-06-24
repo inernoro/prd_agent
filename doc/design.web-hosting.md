@@ -354,7 +354,7 @@ public class VideoGenRunWorker
 
 | 事项 | 说明 | 依赖 |
 |------|------|------|
-| AI 文本辅助 | 上传 HTML 后自动提取/生成标题、描述、标签 | `IHostedSiteService` + LLM Gateway，详见 `doc/plan.ai-text-assist.md` |
+| AI 文本辅助 | 上传 HTML 后自动提取/生成标题、描述、标签 | `IHostedSiteService` + LLM Gateway，详见 `doc/plan.ai-toolbox.text-assist.md` |
 | 数据字典补全 | `hosted_sites` 和 `web_page_share_links` 需补录到 `rule.platform.data-dictionary.md` | 无 |
 
 ### P2 — 中期增强

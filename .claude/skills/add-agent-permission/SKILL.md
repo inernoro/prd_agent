@@ -20,7 +20,7 @@ description: 新增 Agent 权限。当需要为新功能添加权限时，自动
 
 ### Step 1: 读取规则文档
 
-先读取 `doc/rule.agent-permissions.md`，理解权限分类决策树和命名规范。
+先读取 `doc/rule.platform.agent-permissions.md`，理解权限分类决策树和命名规范。
 
 ### Step 2: 判断权限分类
 
@@ -99,7 +99,7 @@ new(NewAgentUse, "新 Agent 名称", "功能描述"),
 
 ### Step 4: 更新规则文档
 
-将新权限登记到 `doc/rule.agent-permissions.md` 的对应表格中。
+将新权限登记到 `doc/rule.platform.agent-permissions.md` 的对应表格中。
 
 ### Step 5: 验证清单
 
@@ -111,7 +111,7 @@ new(NewAgentUse, "新 Agent 名称", "功能描述"),
 - [ ] `authzMenuMapping.ts` — menuList + allPermissions
 - [ ] `App.tsx` — `RequirePermission` 使用正确权限
 - [ ] `toolboxStore.ts` — `BUILTIN_TOOLS` 已追加条目（默认必做）
-- [ ] `doc/rule.agent-permissions.md` — 已登记
+- [ ] `doc/rule.platform.agent-permissions.md` — 已登记
 
 ## 禁止事项
 

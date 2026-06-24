@@ -104,7 +104,7 @@ InsertOne activity_logs（CancellationToken.None，try/catch 包裹，失败仅 
 | Method / Path | 排障用 |
 | CreatedAt | UtcNow |
 
-索引（DBA 手工执行，见 `doc/guide.mongodb-indexes.md`）：`{CreatedAt:-1}`、`{ActorId:1,CreatedAt:-1}`、`{Module:1,CreatedAt:-1}`。
+索引（DBA 手工执行，见 `doc/guide.platform.mongodb-indexes.md`）：`{CreatedAt:-1}`、`{ActorId:1,CreatedAt:-1}`、`{Module:1,CreatedAt:-1}`。
 
 ## 5. 接口设计
 
@@ -123,7 +123,7 @@ InsertOne activity_logs（CancellationToken.None，try/catch 包裹，失败仅 
 
 ## 7. 关联文档
 
-- `doc/guide.mongodb-indexes.md` — activity_logs 手工索引
+- `doc/guide.platform.mongodb-indexes.md` — activity_logs 手工索引
 - `.claude/rules/data-audit.md` / `prd-api/src/PrdAgent.Api/Filters/PmAuditActionFilter.cs` — 本设计复用的审计模式源头
 
 ## 8. 已知边界与后续

@@ -4,7 +4,7 @@
 >
 > 本文档回答一个问题：**怎样让用户在第二台机器上执行一条命令，就能把这台机器加入现有 CDS 集群，同时让总容量（分支数 / 内存 / CPU）自动扩充？**
 >
-> 关联文档：`doc/design.cds-resilience.md`（Phase 3 分布式集群设计的基础）、`doc/design.cds.md`（CDS 整体架构）
+> 关联文档：`doc/design.cds.resilience.md`（Phase 3 分布式集群设计的基础）、`doc/design.cds.md`（CDS 整体架构）
 
 ---
 

@@ -150,7 +150,7 @@ ChatGPT Tasks 路线：在对话里用自然语言设定**定时执行的提示*
 
 ## 七、关联文档
 
-- `doc/spec.pa-agent.md`：产品规格与 Phase 1 能力基线
+- `doc/spec.product-agent.pa.md`：产品规格与 Phase 1 能力基线
 - 后续若落地架构与接口，建议新增 `design.pa-agent.md` 承接技术设计
 
 ---

@@ -168,7 +168,7 @@ test('登录后 XX 正常', async ({ page }, testInfo) => {
 
 ## 相关文档
 
-- `doc/guide.smoke-tests.md` —— Phase 2-4 HTTP 冒烟
+- `doc/guide.platform.smoke-tests.md` —— Phase 2-4 HTTP 冒烟
 - `.claude/skills/acceptance-checklist/SKILL.md` —— Phase 5 真人 UAT
 - `.claude/rules/e2e-verification.md` —— 端到端验收原则
-- `doc/plan.cds-status.md` —— CDS 当前状态看板(Phase 6 已并入主进度)
+- `doc/plan.cds.status.md` —— CDS 当前状态看板(Phase 6 已并入主进度)

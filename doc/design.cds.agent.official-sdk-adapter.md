@@ -6,7 +6,7 @@
 | 日期 | 2026-05-17 |
 | 状态 | Draft for implementation |
 | 目标 | 保留 MAP/CDS 控制面，把自研 agent loop 压缩为官方 SDK adapter |
-| 关联 | `doc/plan.cds-agent-official-sdk-migration.md`, `doc/design.cds-agent-runtime-architecture.md`, `doc/debt.claude-sdk-executor.md` |
+| 关联 | `doc/plan.cds.agent.official-sdk-migration.md`, `doc/design.cds.agent.runtime-architecture.md`, `doc/debt.cds.agent.sdk-executor.md` |
 
 ## 1. 结论
 

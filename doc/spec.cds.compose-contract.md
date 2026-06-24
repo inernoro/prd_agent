@@ -95,7 +95,7 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 | `prebuilt:` | bool | **极速版**：true → 跳过 source mount，直接 `docker pull image` + run 镜像里的编译产物（CI 已编译，CDS 不本机编译）。对齐 `BuildProfile.prebuiltImage` |
 | `containerPort:` | int | 覆盖容器端口（预构建镜像监听端口常与源码模式不同，如 prd-api 源码 5000 / 生产镜像 8080） |
 
-极速版（CI 预构建）整体链路：push → GitHub Actions（`.github/workflows/branch-image.yml`）按 `sha-<github.sha>` 推 ghcr 镜像 → CDS 收 `workflow_run.completed` 后按 commit SHA `docker pull` + run。镜像 tag 公式与 CDS `slugifyBranchForImage` / `resolveImageTemplate` 保持 SSOT。详见 `doc/debt.cds-ci-prebuilt.md`。
+极速版（CI 预构建）整体链路：push → GitHub Actions（`.github/workflows/branch-image.yml`）按 `sha-<github.sha>` 推 ghcr 镜像 → CDS 收 `workflow_run.completed` 后按 commit SHA `docker pull` + run。镜像 tag 公式与 CDS `slugifyBranchForImage` / `resolveImageTemplate` 保持 SSOT。详见 `doc/debt.cds.ci-prebuilt.md`。
 
 ### 2.3 基础设施 service(无相对路径,纯下载镜像)
 
@@ -294,7 +294,7 @@ services:
 
 实现位置:`_AUTOFIX_RULES`(rule → fixer 注册表)+ `_verify_autofix`。新增可自愈规则 = 写一个 `_autofix_<rule>(doc, issue)` fixer 并注册到 `_AUTOFIX_RULES`。需自动修的 issue 必须在生产端带结构化 `meta`(如 `{"var": ...}` / `{"service":..., "infra":...}`),fixer 不靠解析 message。
 
-> 限制:`--write` 用 PyYAML 重序列化整文件,注释会丢、缩进风格会变。务必先看 diff 再 write。详见 `doc/debt.cds-tutorial.md`。
+> 限制:`--write` 用 PyYAML 重序列化整文件,注释会丢、缩进风格会变。务必先看 diff 再 write。详见 `doc/debt.cds.tutorial.md`。
 
 ---
 
@@ -339,7 +339,7 @@ services:
 
 ## 7. 历史 / 关联文档
 
-- `doc/plan.cds-status.md` — CDS 当前状态看板(本文是 mysql 接入 Phase 2.5 产出,完整里程碑见 §二)
+- `doc/plan.cds.status.md` — CDS 当前状态看板(本文是 mysql 接入 Phase 2.5 产出,完整里程碑见 §二)
 - `cds/CLAUDE.md` — CDS 模块约束
 - `cds/.claude/rules/scope-naming.md` — 系统级 vs 项目级命名
 - `.claude/rules/cds-auto-deploy.md` — push 即部署原则

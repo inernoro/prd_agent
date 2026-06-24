@@ -6,7 +6,7 @@
 | 日期 | 2026-05-18 |
 | 状态 | Active plan |
 | 目标 | 保留 MAP/CDS 控制面，把自研 agent loop 压缩为官方 SDK adapter |
-| 关联 | `doc/design.cds-agent-official-sdk-adapter.md`, `doc/design.cds-agent-runtime-architecture.md`, `doc/plan.cds-agent-workbench.md`, `doc/guide.cds-agent-runtime-pool-recovery.md`, `doc/guide.cds-agent-code-review-quickstart.md` |
+| 关联 | `doc/design.cds.agent.official-sdk-adapter.md`, `doc/design.cds.agent.runtime-architecture.md`, `doc/plan.cds.agent.workbench.md`, `doc/guide.cds.agent.runtime-pool-recovery.md`, `doc/guide.cds.agent.code-review-quickstart.md` |
 
 ## 1. 北极星
 
@@ -212,8 +212,8 @@ preview alias 绕行的 `R0=pass` 或 `blocked_r1` 记录当作当前 shared run
 - 2026-05-17 远程 preview 已部署到 `d7449a49`，但真实 official SDK run 仍未通过：此前 `runtime-status` 显示 `isConfigured=false / instanceCount=0 / healthyCount=0`。最新诊断已把 4 条 CDS 返回 `invalid_long_token` 的 active 连接自动标为 revoked，当前只剩 1 条有效连接 `061b88ea`，其 `/api/projects/shared-sidecar-pool-mp4anabh/instances` 返回 `empty_instances`。剩余 blocker 是生产 CDS 本体的 `/api/projects/:id/instances` 尚未暴露源码分支 sidecar 服务，因此 running 的 sidecar pool 暂时不会被 MAP 发现。更新共享 CDS 控制面需要明确批准，不能作为普通 preview 部署自动执行。
 - CDS 本体已补路由级回归测试：`cds/tests/routes/remote-hosts-instances.test.ts` 用真实 `CdsPairingService` 签发 long token，经 HTTP 请求 `/api/projects/:id/instances` 证明 shared-service project 的 running branch service 会返回 `baseUrl/tags/host/port` 实例；这比 helper 单测更接近 MAP 的生产调用链。
 - CDS `/api/projects/:id/instances` 响应新增 `discovery` 摘要（project kind、deployment/running deployment、branch/running branch/running branch service、preview root），MAP 在 `empty_instances` 时会把摘要拼进 runtime-status blocker；远程 MAP 已部署到 `a46f4b8d`，但生产 CDS 控制面仍未返回该摘要，进一步证明共享 CDS 本体尚未应用实例发现更新。
-- 运行池恢复与官方 SDK smoke 已固化为 `doc/guide.cds-agent-runtime-pool-recovery.md`：先验证 CDS 实例发现，再跑只读、审批、取消、Toolbox 委托四个最小 smoke。该 runbook 是下一次真实验收的入口。
-- `doc/guide.cds-agent-code-review-quickstart.md` 已补面向使用者的代码审查上手路径：当前仓库/其他仓库如何填、每个阶段发生什么、官方 SDK 与 MAP/CDS 自研边界、失败先看哪里，以及哪些证据还没达到商业级验收。
+- 运行池恢复与官方 SDK smoke 已固化为 `doc/guide.cds.agent.runtime-pool-recovery.md`：先验证 CDS 实例发现，再跑只读、审批、取消、Toolbox 委托四个最小 smoke。该 runbook 是下一次真实验收的入口。
+- `doc/guide.cds.agent.code-review-quickstart.md` 已补面向使用者的代码审查上手路径：当前仓库/其他仓库如何填、每个阶段发生什么、官方 SDK 与 MAP/CDS 自研边界、失败先看哪里，以及哪些证据还没达到商业级验收。
 - 下一步应做真实 official SDK run、真实 MAP 审批、取消和远程 CDS 视觉验证；Toolbox 的远程会话重新附着已先落地，但仍需要真实长 run 和 approval run 证明闭环。
 
 验证记录：

@@ -26,5 +26,5 @@
 
 ## 关联
 
-- `doc/design.map-mcp-connector.md` —— 设计与实施阶段
+- `doc/design.platform.map-mcp-connector.md` —— 设计与实施阶段
 - PR #836 —— 落地 PR；评审中的 P1（知识库身份）、安全（Host 伪造 / 重定向跟随）、协议正确性、可见性等实质项均已在该 PR 内修复，仅本表两项显式延后

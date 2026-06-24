@@ -55,7 +55,7 @@
 
 ### 2.3 2 个新集合
 
-均已在 `doc/rule.data-dictionary.md` 登记：
+均已在 `doc/rule.platform.data-dictionary.md` 登记：
 - `agent_api_keys`（AgentApiKey）
 - `agent_open_endpoints`（AgentOpenEndpoint）
 
@@ -118,7 +118,7 @@
      ```
 2. 在 `AgentOpenEndpointsController` 的 `Create / Update / Delete` 尾部调桥接
 3. 注册到 DI（`Program.cs` 的 `AddScoped<AgentOpenEndpointBridgeService>`）
-4. 更新 `doc/design.skill-marketplace-open-api.md` 第 9.1 节状态从「待实现」改为「已实现」
+4. 更新 `doc/design.skill.marketplace-open-api.md` 第 9.1 节状态从「待实现」改为「已实现」
 
 **验收命令**：
 ```bash

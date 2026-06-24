@@ -294,6 +294,6 @@ curl -s -X POST $BASE/api/branches/smoke/container-logs \
 ## 8. 关联文档
 
 - `doc/design.cds.md` — CDS 架构设计
-- `doc/plan.cds-backlog-matrix.md` — 问题矩阵 SSOT
-- `doc/plan.cds-multi-project-phases.md` — P0-P6 里程碑
-- `doc/design.cds-resilience.md` — 服务器权威 / SSE 重连
+- `doc/plan.cds.backlog-matrix.md` — 问题矩阵 SSOT
+- `doc/plan.cds.multi-project-phases.md` — P0-P6 里程碑
+- `doc/design.cds.resilience.md` — 服务器权威 / SSE 重连

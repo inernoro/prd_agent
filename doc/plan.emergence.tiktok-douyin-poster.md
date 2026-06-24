@@ -4,7 +4,7 @@
 >
 > **状态**: Phase 1 / 2 / 3 已全部上线（branch `claude/review-emergence-plan-Y8pOR`，待提 PR）。任务 D（抖音 OAuth + cron 真订阅）待下一个智能体接手。
 >
-> **用户教程（必读）**: `doc/guide.poster-feed-card.md`
+> **用户教程（必读）**: `doc/guide.submission-gallery.poster-feed-card.md`
 >
 > **交接对象**: 下一个负责任务 D（真订阅闭环）的智能体（人 / Cursor / Claude Code 均可）。
 
@@ -329,7 +329,7 @@ git checkout claude/review-emergence-plan-Y8pOR
 # - 完成后登录主页应弹出图文混排海报，左动图 + 右 hook + bullets
 
 # 3. 读这份文档 + 关键文件
-cat doc/plan.emergence-1-tiktok-douyin-poster.md
+cat doc/plan.emergence.tiktok-douyin-poster.md
 # 看 §1.3（Phase 1）+ §2.5（Phase 2）"关键文件清单"
 ```
 

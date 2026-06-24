@@ -33,4 +33,4 @@
 
 ## 已知边界
 
-见 `doc/debt.onboarding-tips.md`。
+见 `doc/debt.daily-tips.onboarding.md`。

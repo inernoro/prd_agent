@@ -300,7 +300,7 @@ CDS (测试验证)
 
 ## 关联文档
 
-- **环境配置指南**：`doc/guide.cds-env.md`
-- **部署方案**：`doc/plan.cds-deployment.md`
+- **环境配置指南**：`doc/guide.cds.env.md`
+- **部署方案**：`doc/plan.cds.deployment.md`
 - **CDS 架构设计**：`doc/design.cds.md`
-- **实施路线图**：`doc/plan.cds-roadmap.md`
+- **实施路线图**：`doc/plan.cds.roadmap.md`

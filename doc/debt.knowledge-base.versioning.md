@@ -50,4 +50,4 @@
 - **大小徽章刷新**：`refreshKey` 绑 `entries.length`，增删条目即时刷新；同一条文档内容增大不一定即时刷新，
   重进库或增删条目后准确。
 - **索引**：`document_entry_versions` 未建索引（项目规则禁止应用自动建索引）。按 `EntryId`/`StoreId` 查询量大时，
-  需 DBA 手动建 `{EntryId:1, VersionNumber:-1}` 与 `{StoreId:1}` 索引（见 `doc/guide.mongodb-indexes.md`）。
+  需 DBA 手动建 `{EntryId:1, VersionNumber:-1}` 与 `{StoreId:1}` 索引（见 `doc/guide.platform.mongodb-indexes.md`）。

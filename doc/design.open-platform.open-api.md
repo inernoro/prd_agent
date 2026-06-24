@@ -174,7 +174,7 @@
 
 ## 14. 关联文档
 
-- `doc/guide.open-api.md`：客户接入指南（quickstart + 契约）
-- `doc/debt.open-api.md`：债务台账（并发/账本/embeddings/日志TTL 等留尾）
-- `doc/design.model-pool.md`：三级模型池调度
+- `doc/guide.open-platform.open-api.md`：客户接入指南（quickstart + 契约）
+- `doc/debt.open-platform.open-api.md`：债务台账（并发/账本/embeddings/日志TTL 等留尾）
+- `doc/design.platform.model-pool.md`：三级模型池调度
 - `.claude/rules/llm-gateway.md`、`server-authority.md`、`compute-then-send.md`

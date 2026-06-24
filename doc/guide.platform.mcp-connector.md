@@ -13,7 +13,7 @@ MAP 现在是一个 **MCP（Model Context Protocol）连接器**——和 GitHub
 | 端点 | `https://<你的域名>/api/mcp` |
 | 传输 | Streamable HTTP（JSON-RPC 2.0） |
 | 鉴权 | `Authorization: Bearer sk-ak-...` |
-| 设计 / 债务 | `doc/design.map-mcp-connector.md` / `doc/debt.map-mcp-connector.md` |
+| 设计 / 债务 | `doc/design.platform.map-mcp-connector.md` / `doc/debt.platform.map-mcp-connector.md` |
 
 ## 三步接入
 
@@ -100,6 +100,6 @@ POST /api/admin/agent-open-endpoints
 
 ## 相关
 
-- `doc/design.map-mcp-connector.md` —— 设计与实施
-- `doc/design.skill-marketplace-open-api.md` —— AgentApiKey + AgentOpenEndpoint 上游设计
+- `doc/design.platform.map-mcp-connector.md` —— 设计与实施
+- `doc/design.skill.marketplace-open-api.md` —— AgentApiKey + AgentOpenEndpoint 上游设计
 - `.claude/rules/no-rootless-tree.md` —— 借用法则（连接器借现成桩，不重建）

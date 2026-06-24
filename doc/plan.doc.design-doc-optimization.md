@@ -59,8 +59,8 @@
 | `.claude/rules/doc-types.md` | design.* 的所有规则（模板触发时自动加载） |
 | `.claude/skills/doc-writer/reference/templates.md` | 完整模板定义 |
 | `.claude/skills/doc-writer/reference/writing-principles.md` | 写作原则 |
-| `doc/rule.doc-templates.md` | 文档模板标准（v3.0） |
-| `doc/design.system-emergence.md` | 系统全貌（涌现篇） |
+| `doc/rule.doc.templates.md` | 文档模板标准（v3.0） |
+| `doc/design.emergence.system.md` | 系统全貌（涌现篇） |
 | `.claude/rules/codebase-snapshot.md` | 代码库快照（模块清单） |
 
 ## 下次继续的方法

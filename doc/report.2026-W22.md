@@ -97,13 +97,13 @@ timeline
 - **commit SHA 短哈希展示（#688）**：UI 显示 7 字符短 SHA，完整值移到 tooltip，节省宽度
 - **CDS 教程体系（#696）**
   - 4 个隔离示例工程：`tutorial-01-empty` / `02-fullstack` / `03-mongo` / `04-multi-service`
-  - 教程指南 `doc/guide.cds-tutorial.md` + 知识库发布脚本
+  - 教程指南 `doc/guide.cds.tutorial.md` + 知识库发布脚本
   - 4 个独立 DocumentStore 出分享链（appKey=cds-tutorial）
 - **cdscli verify 评分 / 自愈（#696）**
   - 0-100 分：ERROR -25 / WARNING -8 / INFO -2
   - 等级：A≥90 / B≥75 / C≥60 / D≥40 / F<40
   - `--min-score N` 门禁 + `--fix/--write` 自愈（env-var 自动注入 placeholder、depends-on 自动补 healthcheck）
-  - 规则 SSOT：`doc/spec.cds-compose-contract.md` §4.4/§4.5
+  - 规则 SSOT：`doc/spec.cds.compose-contract.md` §4.4/§4.5
 
 ### 5. CDS Agent 工作台 Lite 降级 — 绕开 R1 让用户先能用
 

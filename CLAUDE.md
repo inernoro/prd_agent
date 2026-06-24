@@ -233,18 +233,22 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 URL 格式见规则 #11（v3 公式：`{tail}-{prefix}-{project-slug}`，重要的靠前）。禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
 
-### 10. doc/ 文件命名必须走 7 类前缀
+### 10. doc/ 文件命名：`{类型前缀}.{appname}[.{子模块}].md`（不变的地基规则）
 
-`doc/` 下所有 `.md` 文件**必须**以 `spec.` / `design.` / `plan.` / `rule.` / `guide.` / `report.` / `debt.` 其中一个前缀开头，否则不允许落盘。详细前缀语义、文件头部格式、状态枚举见 `doc/rule.doc-naming.md`。
+`doc/` 下所有 `.md` 文件**必须**走格式 `{type}.{appname}[.{子模块}].md`，两条铁律缺一不可（详细语义、头部格式、状态枚举见 `doc/rule.doc.naming.md`）：
 
-- 正确：`doc/design.report-agent.md`、`doc/guide.quickstart.md`、`doc/report.2026-W13.md`、`doc/debt.video-agent.md`
-- 错误：`doc/output-xxx.md`、`doc/notes-temp.md`、`doc/report-agent.md`（无类型前缀）
-- 错误：`doc/samples/xxx.md`（禁止建子目录，保持 doc/ 扁平）
+1. **类型前缀**：`spec.` / `design.` / `plan.` / `rule.` / `guide.` / `report.` / `debt.` 七选一，否则不许落盘。
+2. **appname 优先 + 点分层级**：topic 第一段是应用名（对齐 `rule.platform.app-identity`），子模块用 `.` 续接，**禁止用 `-` 把 appname 和子模块黏死**。同一应用文档第一段一致 → 列表自动聚成簇，读者一眼建立心理预期、知识库归属清晰。
+
+跨切面/平台级文档用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`；例外（周报 `report.YYYY-WNN`、顶层 `spec.prd`/`spec.srs`/`spec.project-vision`、带日期报告日期作末段）见 `doc/rule.doc.naming.md`。
+
+- 正确：`spec.cds.md`（整体）、`spec.cds.settings.md`（子模块）、`design.cds.agent.runtime.md`、`spec.defect-agent.automation-protocol.md`
+- 错误：`spec.cds-settings.md`（appname 黏连子模块，应点分）、`design.defect-automation-autonomy.md`（appname 不在首段，应 `design.defect-agent.automation-autonomy.md`）、`output-xxx.md`（无前缀）、`doc/samples/xxx.md`（禁子目录，保持扁平）
 
 **`debt.*` 用于记录工程债务台账**（已知边界、后续可补、TODO 留尾、不确定风险）。任务交付时主动声明的"已知边界"段落必须固化到对应 `debt.{module}.md`，不能只留在 commit message 里 —— 否则下一次 session 没人记得。
 
 新增或重命名文档前：
-1. 先读 `doc/rule.doc-naming.md` 确认前缀、头部、状态枚举
+1. 先读 `doc/rule.doc.naming.md` 确认前缀、头部、状态枚举
 2. 同步更新 `doc/index.yml`（外部同步工具消费）与 `doc/guide.list.directory.md`（人类索引）
 3. 触发 `/doc-sync` 技能校验一致性（可选）
 
@@ -394,7 +398,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **acceptance-test-design** | `/验收设计` | 输入 PR/commit/昨日变更/发布范围 → 从行为断言出发，生成风险假设/用户可见影响/融合测试场景/证据要求，供下游视觉验收技能执行 |
 | **task-handoff-checklist** | `/handoff` | 输入当前变更 → 扫描导航/文档/规则/工作流/测试/风险/质量/后续 8 个维度，输出交接清单 |
 | **auto-fix-issues** | `/audit` | Agent 间 issue 反馈/修复/复测协议。三档标签 (`待解决` / `已解决待验收` / `已验收`)、issue + tracker + PR 收尾 + 复测报告四套模板，PR 合并必须改 label 的强制清单，杜绝"修了忘改 label" |
-| **issues-autofix** | `/issues-autofix` | 无人值守日常 issue 维护 Agent。批跑 open issue，按分类规则自动答复/修复/升级，绝不反向询问。完全跳过 `visual-test:*` / `discussion` / 其他 Agent 领地（详见 `doc/rule.issues-system.md` §3） |
+| **issues-autofix** | `/issues-autofix` | 无人值守日常 issue 维护 Agent。批跑 open issue，按分类规则自动答复/修复/升级，绝不反向询问。完全跳过 `visual-test:*` / `discussion` / 其他 Agent 领地（详见 `doc/rule.skill.issues-system.md` §3） |
 | **issues-visual-create** | `/issues-visual-create` | 创建一条视觉验收子 issue。输入"测什么"(PR#/commit/页面)，按 #605 模板 v0.x 生成 `[visual-test]` issue，挂 `visual-test:pending` 等执行者接单 |
 | **issues-visual-run** | `/issues-visual-run` | 24h 视觉测试执行者 Agent 逻辑。拉 `visual-test:pending` 队列，按矩阵跑用例(双主题强制)，回评论失败清单(P0-P3) 或 `/visual-pass`。完全不开新 issue |
 | **create-visual-test-to-kb** | `/验收` | 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）。三段不可分：标准/模板 → 模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图）→ 报告归档进知识库出分享链。归档前强制准入校验（目标/档位/Verdict/截图数/证据完整性不达标直接拒收）。项目无关，改 `acceptance.config.json` 跨仓库复用 |
@@ -456,7 +460,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 ### 使用指引
 
-0. **首次开发 Agent** → `/help` 进入新手引导，全程阶段式陪伴（详见 `doc/guide.agent-onboarding.md`）
+0. **首次开发 Agent** → `/help` 进入新手引导，全程阶段式陪伴（详见 `doc/guide.platform.agent-onboarding.md`）
 1. **新需求提出时** → `/validate` 验证需求质量和价值（中大型功能必跑）
 2. **方案设计时** → `/plan-first` 先出方案再动手，用户确认后执行
 3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路

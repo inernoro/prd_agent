@@ -3,7 +3,7 @@
 > 最后更新：2026-05-22
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
-> 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
+> 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc.naming.md`。
 >
 > **排序原则**：先理解产品 → 再了解架构 → 然后动手操作 → 参考规范 → 未来计划 → 当前债务 → 历史记录
 
@@ -1011,8 +1011,8 @@
 | 2026-06-21 | 新增 | `report.2026-W25` | 2026-W25 周报（06-15 ~ 06-21）：W24 峰值后归途收口周，缺陷自动化闭环合龙 + CDS 灰度预览体感升级 + 视觉/知识库收口 + 两条新系统规则 |
 | 2026-06-21 | 新增 | `.claude/rules/expectation-management.md` | 预期管理总纲：让用户任何时刻知道在做什么/还要多久/接下来怎样/刚才变了什么/我该做什么 |
 | 2026-06-21 | 新增 | `.claude/rules/content-fills-canvas.md` | 内容填满画布：主产物必须 flex-1 占主导，禁内容小盒子 + 大留白 |
-| 2026-06-21 | 新增 | `doc/debt.cds-branch-isolation.md` | CDS 多分支跨分支隔离债务台账 |
-| 2026-06-21 | 新增 | `doc/spec.defect-agent-automation-protocol.md` | 缺陷自动化协议契约 SSOT |
+| 2026-06-21 | 新增 | `doc/debt.cds.branch-isolation.md` | CDS 多分支跨分支隔离债务台账 |
+| 2026-06-21 | 新增 | `doc/spec.defect-agent.automation-protocol.md` | 缺陷自动化协议契约 SSOT |
 | 2026-06-19 | 新增 | `debt.visual-agent.storyboard` | 视觉分镜台债务台账：OpenRouter 出图画幅/modalities 按能力派生 + 拆镜 SSE 流式 + 关键帧 ImageGenRun 离场取消 |
 | 2026-06-19 | 新增 | `debt.cds.backend-deploy-freeze` | CDS 后端部署冻结台账：分支 api 跑旧代码（构建成功≠运行新代码）+ 图生视频下载修复/额度提醒待部署复验 |
 | 2026-06-04 | 新增 | `report.daily-tips.tutorial-coverage` `debt.daily-tips.onboarding` | 页面教程系统统一升级:全量路由覆盖审计 + 债务台账(video-agent/薄教程加厚/编辑器/跨页待补) |

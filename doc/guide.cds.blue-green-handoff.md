@@ -3,8 +3,8 @@
 > **版本**:v1.0 final | **日期**:2026-05-08 | **状态**:**蓝绿方案已废弃,改为独立 forwarder 进程**
 >
 > 2026-05-09 更新:蓝绿方案因 verify-target stage 反复卡住未达成"业务流量永不抖动"目标,
-> 改为更简单的"独立 forwarder 进程"方案 —— 见 `doc/report.cds-forwarder-success.md` +
-> `doc/guide.cds-forwarder-deploy.md`。蓝绿相关代码(supervisor / standby-controller /
+> 改为更简单的"独立 forwarder 进程"方案 —— 见 `doc/report.cds.forwarder-success.md` +
+> `doc/guide.cds.forwarder-deploy.md`。蓝绿相关代码(supervisor / standby-controller /
 > active-color-store / nginx-upstream-writer / blue-green-bootstrap 等)已全部从仓库
 > 删除,本文档仅作为踩坑教训和决策记录留档。
 >
@@ -172,7 +172,7 @@
 9. **网络拓扑 React 页面**(只有 API,前端没做)
 
 ### 替代方案(如果蓝绿仍不通)
-10. **采纳 forwarder 路线**:不做蓝绿,用 forwarder 进程独立反代,daemon 重启不影响业务流量。详见 `doc/design.cds-control-data-split.md` 第 4.1 节
+10. **采纳 forwarder 路线**:不做蓝绿,用 forwarder 进程独立反代,daemon 重启不影响业务流量。详见 `doc/design.cds.control-data-split.md` 第 4.1 节
 
 ---
 

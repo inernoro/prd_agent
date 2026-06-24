@@ -218,7 +218,7 @@ agent runtime 必须由 CDS shared-service runtime pool 管理，不能写入业
 - 远程污染 dry-run 已有：`scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh`
 - 远程 host / shared pool evidence 已有：`scripts/collect-cds-agent-runtime-pool-evidence.sh`
 - 当前进度文档已沉淀：`doc/status.cds-agent-current-progress.md`
-- 结构性报告已沉淀：`doc/report.cds-agent-runtime-pool-contamination-2026-05-18.md`
+- 结构性报告已沉淀：`doc/report.cds.agent.runtime-pool-contamination.2026-05-18.md`
 - 这份根因报告专门解释“为什么反复侵入 MAP 主系统”。
 
 ## 还没闭环的事

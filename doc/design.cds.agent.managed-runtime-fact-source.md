@@ -2,7 +2,7 @@
 
 > 创建时间：2026-05-18 22:05 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
-> 上游边界：`doc/plan.cds-agent-runtime-correction-limited.md`
+> 上游边界：`doc/plan.cds.agent.runtime-correction-limited.md`
 
 ## 1. 本轮目标
 

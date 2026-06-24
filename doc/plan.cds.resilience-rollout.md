@@ -2,7 +2,7 @@
 
 > **最后更新**：2026-04-09 | **状态**：Phase 1 实施中
 >
-> 本文档是 `doc/design.cds-resilience.md` 的**执行面**。每一步都带复选框和文件路径，下次接手的 Agent 直接读这个文件就能续上。
+> 本文档是 `doc/design.cds.resilience.md` 的**执行面**。每一步都带复选框和文件路径，下次接手的 Agent 直接读这个文件就能续上。
 >
 > **阅读建议**：先读设计文档了解"为什么"，再读本文档找"做到哪里了"。
 
@@ -12,7 +12,7 @@
 
 如果你是下次接手的 Agent，按以下顺序进入工作状态：
 
-1. **先读** `doc/design.cds-resilience.md` 了解整体设计意图（10 分钟）
+1. **先读** `doc/design.cds.resilience.md` 了解整体设计意图（10 分钟）
 2. **再读本文档的"进度总览"** 看做到哪里了（2 分钟）
 3. **找到第一个未勾选项** 开始动手
 4. **每完成一项** 立即勾选本文档对应复选框并 commit
@@ -47,9 +47,9 @@
 
 ### 1.1 文档
 
-- [x] 新增 `doc/design.cds-resilience.md`（核心设计）
+- [x] 新增 `doc/design.cds.resilience.md`（核心设计）
 - [x] 更新 `doc/design.cds.md`（补核心思想 + 文档地图 + §8 高可用章节）
-- [x] 新增本文档 `doc/plan.cds-resilience-rollout.md`
+- [x] 新增本文档 `doc/plan.cds.resilience-rollout.md`
 
 ### 1.2 类型与配置
 

@@ -320,7 +320,7 @@ v0.1 → v1.0 收敛的执行侧共识（实现见 `create-visual-test-to-kb/scr
 | `.claude/skills/issues-autofix/SKILL.md` | 日常 Agent 执行逻辑 |
 | `.claude/skills/issues-visual-create/SKILL.md` | 开单技能 |
 | `.claude/skills/issues-visual-run/SKILL.md` | 执行者技能 |
-| `doc/rule.doc-naming.md` | doc/ 文件命名规则（本文件本身遵守） |
+| `doc/rule.doc.naming.md` | doc/ 文件命名规则（本文件本身遵守） |
 | `.claude/rules/cds-theme-tokens.md` | 双主题硬规则（§5.1 第 2 条） |
 | `.claude/rules/frontend-modal.md` | Modal 三约束（§5.1 第 3 条） |
 | `.claude/rules/full-height-layout.md` | 撑满视口（§5.1 第 4 条） |

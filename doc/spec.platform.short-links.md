@@ -56,5 +56,5 @@
 
 - 实现：`prd-api/src/PrdAgent.Core/Models/ShortLink.cs`、`ShortLinkService.cs`、`ShortLinksController.cs`、`AdminShortLinksController.cs`
 - 前端：`prd-admin/src/pages/ShortLinkRouter.tsx`、`prd-admin/src/pages/settings/ShortLinksAdminSettings.tsx`
-- 索引手册：`doc/guide.mongodb-indexes.md` → `short_links` 段
+- 索引手册：`doc/guide.platform.mongodb-indexes.md` → `short_links` 段
 - PR：[#613](https://github.com/inernoro/prd_agent/pull/613)

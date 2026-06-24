@@ -99,7 +99,7 @@ Phase 3 明确不做：
 | P3-5b scoped resolve | `/tmp/cds-agent-p3-5b-profile-scope-report.png`；`/tmp/cds-agent-p3-5b-profile-scope-report.pdf` |
 | P3-5c team-shared policy | `/tmp/cds-agent-p3-5c-team-shared-profile-policy-report.png`；`/tmp/cds-agent-p3-5c-team-shared-profile-policy-report.pdf` |
 | P3-5d owner UI | `/tmp/cds-agent-p3-5d-owner-policy-ui-report.png`；`/tmp/cds-agent-p3-5d-owner-policy-ui-report.pdf` |
-| P3-6 验收包 | `doc/report.cds-agent-phase3-acceptance-2026-05-19.md`；`doc/report.cds-agent-phase3-acceptance-2026-05-19.pdf` |
+| P3-6 验收包 | `doc/report.cds.agent.phase3-acceptance.2026-05-19.md`；`doc/report.cds-agent-phase3-acceptance-2026-05-19.pdf` |
 
 ## 使用路径
 

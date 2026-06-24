@@ -5,7 +5,7 @@
 | 版本 | v2026-05-17 |
 | 状态 | active |
 | 读者 | 想理解 CDS Agent 为什么这样设计、哪里已完成、哪里还欠账的人 |
-| 关联 | `doc/report.cds-agent-workbench-2026-05-15.md`、`doc/guide.cds-agent-workbench-reproduce.md`、`doc/guide.cds-agent-next-agent-testing.md`、`doc/spec.cds-map-pairing-protocol.md` |
+| 关联 | `doc/report.cds.agent.workbench.2026-05-15.md`、`doc/guide.cds.agent.workbench-reproduce.md`、`doc/guide.cds.agent.next-agent-testing.md`、`doc/spec.cds.map-pairing-protocol.md` |
 
 ---
 

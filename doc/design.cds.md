@@ -2,7 +2,7 @@
 
 > **版本**：v3.2 | **日期**：2026-04-10 | **状态**：已落地
 >
-> 本文档是 CDS 的**主入口文档**，聚焦**核心思想 + 技术架构**。功能需求见 `doc/spec.cds.md`，容量与故障隔离（含跨机负载均衡）见 `doc/design.cds-resilience.md`。
+> 本文档是 CDS 的**主入口文档**，聚焦**核心思想 + 技术架构**。功能需求见 `doc/spec.cds.md`，容量与故障隔离（含跨机负载均衡）见 `doc/design.cds.resilience.md`。
 >
 > **v3.2 关键变更**：运维入口统一为单一 `cds/exec_cds.sh init|start|stop|restart` 脚本；Nginx 配置改为启动时按 `.cds.env` 幂等渲染，支持 `CDS_ROOT_DOMAINS` 逗号分隔的多根域名，无需域名迁移即可同时承载 `miduo.org` / `mycds.net` 等多套入口。
 
@@ -254,7 +254,7 @@ CDS Compose YAML 解析与生成。
 
 ### 5.8 SchedulerService（v3.1 新增）
 
-分支温池调度器，在小服务器上按需唤醒/休眠分支，避免资源超售。详见 `doc/design.cds-resilience.md`。
+分支温池调度器，在小服务器上按需唤醒/休眠分支，避免资源超售。详见 `doc/design.cds.resilience.md`。
 
 - `start()` / `stop()` — 启动/停止后台 tick
 - `touch(slug)` — 代理命中分支时更新 lastAccess
@@ -289,7 +289,7 @@ CDS Compose YAML 解析与生成。
 
 旧的 `CDS_SWITCH_DOMAIN` / `CDS_MAIN_DOMAIN` / `CDS_PREVIEW_DOMAIN` / `CDS_DASHBOARD_DOMAIN` / `CDS_NGINX_ENABLE` 均已废弃。`src/config.ts` 保留对它们的读取作为临时兼容，但 `.cds.env` 只写 4 个变量；新的部署推荐只认 `CDS_ROOT_DOMAINS`。
 
-详细配置指南见 `doc/guide.cds-env.md`，Quickstart 另见 `doc/guide.quickstart.md`。
+详细配置指南见 `doc/guide.cds.env.md`，Quickstart 另见 `doc/guide.platform.quickstart.md`。
 
 ---
 
@@ -314,7 +314,7 @@ CDS Compose YAML 解析与生成。
 }
 ```
 
-`scheduler` 段为 v3.1 新增，用于启用分支温池调度器。详见 `doc/design.cds-resilience.md §四、八`。
+`scheduler` 段为 v3.1 新增，用于启用分支温池调度器。详见 `doc/design.cds.resilience.md §四、八`。
 
 ---
 
@@ -421,8 +421,8 @@ v3.2 的 `exec_cds.sh` 只解决**单节点 Layer 3 入口**问题，与 v3.3 Ph
 详见：
 
 - 单节点入口设计 → 本节
-- 温池调度与容量算法 → `doc/design.cds-resilience.md §二、四`
-- 跨机 dispatcher + Layer 3 edge nginx 生成器 → `doc/design.cds-resilience.md §八`
+- 温池调度与容量算法 → `doc/design.cds.resilience.md §二、四`
+- 跨机 dispatcher + Layer 3 edge nginx 生成器 → `doc/design.cds.resilience.md §八`
 
 ---
 
@@ -430,8 +430,8 @@ v3.2 的 `exec_cds.sh` 只解决**单节点 Layer 3 入口**问题，与 v3.3 Ph
 
 小服务器场景下 CDS 有几个致命风险：单分支 runaway、state.json 损坏、Master 崩溃、磁盘爆满、单点宕机。这一块通过**分支温池 + cgroup 限制 + Janitor + Master 容器化 + 分布式调度**逐层解决，详见：
 
-- **设计文档**：`doc/design.cds-resilience.md`（Phase 1-3 完整方案）
-- **落地进度**：`doc/plan.cds-resilience-rollout.md`（可续传 checklist）
+- **设计文档**：`doc/design.cds.resilience.md`（Phase 1-3 完整方案）
+- **落地进度**：`doc/plan.cds.resilience-rollout.md`（可续传 checklist）
 
 三个层次的改造：
 

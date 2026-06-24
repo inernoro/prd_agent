@@ -471,8 +471,8 @@ E2E_ADMIN_PASS=your-admin-pass
 |------|----------|
 | `CLAUDE.md` | Codebase Skill 段落：应用标识表、功能注册表、MongoDB 集合 |
 | `doc/spec.srs.md` | 功能模块描述 |
-| `doc/rule.data-dictionary.md` | 新增集合定义 |
-| `doc/rule.app-identity.md` | 新增应用清单 |
+| `doc/rule.platform.data-dictionary.md` | 新增集合定义 |
+| `doc/rule.platform.app-identity.md` | 新增应用清单 |
 | `doc/design.{agent-name}.md` | 新建功能设计文档 |
 
 ---

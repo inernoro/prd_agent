@@ -299,5 +299,5 @@
 | 文档 | 关系 |
 |------|------|
 | `doc/spec.report-agent.v2.md` | PRD v2.0 (产品需求) |
-| `doc/plan.report-agent-impl.md` | 实施进度追踪 |
+| `doc/plan.report-agent.impl.md` | 实施进度追踪 |
 | `doc/spec.report-agent.md` | PRD v1.0 (存档，已删除) |

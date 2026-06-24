@@ -47,7 +47,7 @@
    `X-RateLimit-Limit/Remaining/Reset`。
 4. **成本防爆**：单请求输入字符上限 `MaxInputChars=200000`，超限 400 `input_too_large`。
    字符统计含多模态 `image_url`（base64 数据 URI 或 url 字符串），大图不绕过上限（Codex PR#732 P2）。
-5. **接入指南**：`doc/guide.open-api.md`（quickstart + 契约 + 白名单语义）。
+5. **接入指南**：`doc/guide.open-platform.open-api.md`（quickstart + 契约 + 白名单语义）。
 
 ## 仍未做（按优先级排期，本轮我主动决定不做的）
 
@@ -70,7 +70,7 @@
 - **图片端点真实出图未端到端验**：只验路由/鉴权；图片无 token/成本计。
 - **日志索引/TTL 待 DBA 建**：`open_api_request_logs` 含 IP/UA，按 no-auto-index 规则禁止应用自建索引。
   所需索引（`KeyId+CreatedAt` 抽屉查询、`CreatedAt` 全局序、`RequestId` 定位、可选 CreatedAt TTL）已写入
-  `doc/guide.mongodb-indexes.md`，由 DBA 手动建（Codex PR#732 P2）。
+  `doc/guide.platform.mongodb-indexes.md`，由 DBA 手动建（Codex PR#732 P2）。
 - **MaxInputChars 全局常量**：未做按 Key 可配。统计已含 messages 文本/多模态图片/prompt/tools+functions schema，
   但仍是字符近似（非精确 token），且未做"原始 body 字节硬上限"。
 - **绑定失效检测靠控制器启发式**（PR#732 P2 已缓解）：绑定的模型/池被删改时，`ModelResolver` 静默走默认调度

@@ -11,7 +11,7 @@
 | 状态 | 实现完成，待正式环境真人验收 |
 | 责任人 | Claude Code |
 | 时间 | 2026-05-07 |
-| 关联 | `doc/spec.cds-map-pairing-protocol.md`、`doc/design.claude-sdk-executor.md`、`doc/debt.claude-sdk-executor.md`、`doc/guide.claude-sdk-quickstart.md` |
+| 关联 | `doc/spec.cds.map-pairing-protocol.md`、`doc/design.cds.agent.sdk-executor.md`、`doc/debt.cds.agent.sdk-executor.md`、`doc/guide.cds.agent.sdk-quickstart.md` |
 
 ---
 
@@ -59,7 +59,7 @@
 
 新设计：CDS 端一键生成密钥（base64url JSON 含全部上下文），用户**只复制粘贴**，所有字段由协议自动协商。
 
-详细 contract 见 `doc/spec.cds-map-pairing-protocol.md`。
+详细 contract 见 `doc/spec.cds.map-pairing-protocol.md`。
 
 ### 1.3 为何 CDS 创建 shared-service Project 而不是 RemoteHost
 
@@ -128,7 +128,7 @@ prd-api                                          CDS state
 
 | 模块 | 文件 |
 |---|---|
-| 协议规范 | `doc/spec.cds-map-pairing-protocol.md` |
+| 协议规范 | `doc/spec.cds.map-pairing-protocol.md` |
 | **CDS 端配对** | `cds/src/services/connection/pairing-service.ts` |
 | CDS 端路由 | `cds/src/routes/cds-system-connections.ts` |
 | CDS 端类型 | `cds/src/types.ts` (CdsConnection / RemoteHost / ServiceDeployment / Project.kind='shared-service') |
@@ -351,7 +351,7 @@ const partnerBaseUrl = String(body.mapBaseUrl || body.partnerBaseUrl || '');
 
 **缓解**：spec §5 已要求 UI 二次确认 base URL；MAP 后端接 paste 时可加 HTTPS 强校验（除 localhost）。当前 v1 未加。
 
-**记录到** `doc/debt.claude-sdk-executor.md` 待补。
+**记录到** `doc/debt.cds.agent.sdk-executor.md` 待补。
 
 #### K-3 mapName 硬编码 "prd-agent"
 
@@ -399,10 +399,10 @@ const partnerBaseUrl = String(body.mapBaseUrl || body.partnerBaseUrl || '');
 
 | 文档 | 用途 |
 |---|---|
-| `doc/spec.cds-map-pairing-protocol.md` | 协议契约（剪贴板格式 / handshake / 安全模型 / 未来扩展） |
-| `doc/design.claude-sdk-executor.md` | claude-sdk 执行器设计 |
-| `doc/debt.claude-sdk-executor.md` | claude-sdk 子模块债务台账 |
-| `doc/guide.claude-sdk-quickstart.md` | sidecar 三步无脑配置 + 上游切换 |
+| `doc/spec.cds.map-pairing-protocol.md` | 协议契约（剪贴板格式 / handshake / 安全模型 / 未来扩展） |
+| `doc/design.cds.agent.sdk-executor.md` | claude-sdk 执行器设计 |
+| `doc/debt.cds.agent.sdk-executor.md` | claude-sdk 子模块债务台账 |
+| `doc/guide.cds.agent.sdk-quickstart.md` | sidecar 三步无脑配置 + 上游切换 |
 | `cds/scripts/mvp-demo.ts` | 沙箱端到端可执行验证脚本 |
 | `claude-sdk-sidecar/README.md` | sidecar 协议详情 |
 
@@ -424,7 +424,7 @@ const partnerBaseUrl = String(body.mapBaseUrl || body.partnerBaseUrl || '');
 ```
 你想验什么          走哪条
 ─────────────────────────────────────────────────────────
-看协议长什么样     →  doc/spec.cds-map-pairing-protocol.md §2 + §3
+看协议长什么样     →  doc/spec.cds.map-pairing-protocol.md §2 + §3
 看代码改了哪些      →  本文档 §4
 看怎么操作          →  本文档 §5
 看应该看到什么      →  本文档 §6

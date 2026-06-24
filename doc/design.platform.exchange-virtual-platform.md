@@ -263,6 +263,6 @@ URL 模板：`https://generativelanguage.googleapis.com/v1beta/models/{model}:ge
 
 ## 12. 关联设计文档
 
-- `doc/rule.data-dictionary.md` — `model_exchanges` 集合字段描述
-- `doc/design.llm-gateway.md` — ILlmGateway 统一调用接口
+- `doc/rule.platform.data-dictionary.md` — `model_exchanges` 集合字段描述
+- `doc/design.platform.llm-gateway.md` — ILlmGateway 统一调用接口
 - `doc/spec.model-pool.md` — 模型池策略引擎规格

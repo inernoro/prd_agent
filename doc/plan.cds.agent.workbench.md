@@ -226,14 +226,14 @@ Agent runtime
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P0.1 创建计划文档 | [x] | [x] | [x] | 新增 `doc/plan.cds-agent-workbench.md`，文件存在校验通过；该项无产品视觉面 |
+| P0.1 创建计划文档 | [x] | [x] | [x] | 新增 `doc/plan.cds.agent.workbench.md`，文件存在校验通过；该项无产品视觉面 |
 | P0.2 同步文档索引 | [x] | [x] | [x] | 更新 `doc/index.yml` 与 `doc/guide.list.directory.md`，`rg` 校验通过；该项无产品视觉面 |
 | P0.3 文档命名校验 | [x] | [x] | [x] | 文件名、头部、索引映射已校验；该项无产品视觉面 |
 | P0.4 当前范围声明 | [x] | [x] | [x] | 已明确连接页通过不等于 Agent 工作台通过；该项无产品视觉面 |
 
 冒烟测试：
 
-- `test -f doc/plan.cds-agent-workbench.md`
+- `test -f doc/plan.cds.agent.workbench.md`
 - `rg "plan.cds.agent.workbench" doc/index.yml doc/guide.list.directory.md`
 
 视觉测试：
@@ -679,17 +679,17 @@ Agent runtime
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
 | P9.1 更新本计划为 v2.0 | [x] | [x] | [x] | 增加完全可用定义、竞品基线和 P9-P17；已从真实设置页打开命令面板进入 CDS Agent 页面完成视觉检查 |
-| P9.2 新增用户指南 | [x] | [x] | [x] | `doc/guide.cds-agent-workbench.md` 已落地，页面视觉可见远程会话、工具审批、日志和 PR 验收提示 |
-| P9.3 新增管理员指南 | [x] | [x] | [x] | `doc/guide.cds-agent-admin.md` 已落地，页面视觉可见模型配置与长期授权入口字段 |
-| P9.4 新增 API 契约文档 | [x] | [x] | [x] | `doc/design.cds-agent-api.md` 已落地，页面视觉可见 API 契约对应的 session/events/log/tool 容器 |
-| P9.5 新增运行手册 | [x] | [x] | [x] | `doc/guide.cds-agent-runbook.md` 已落地，页面视觉可见 401/撤销、runtime、日志恢复所需字段 |
+| P9.2 新增用户指南 | [x] | [x] | [x] | `doc/guide.cds.agent.workbench.md` 已落地，页面视觉可见远程会话、工具审批、日志和 PR 验收提示 |
+| P9.3 新增管理员指南 | [x] | [x] | [x] | `doc/guide.cds.agent.admin.md` 已落地，页面视觉可见模型配置与长期授权入口字段 |
+| P9.4 新增 API 契约文档 | [x] | [x] | [x] | `doc/design.cds.agent.api.md` 已落地，页面视觉可见 API 契约对应的 session/events/log/tool 容器 |
+| P9.5 新增运行手册 | [x] | [x] | [x] | `doc/guide.cds.agent.runbook.md` 已落地，页面视觉可见 401/撤销、runtime、日志恢复所需字段 |
 | P9.6 明确非目标 | [x] | [x] | [x] | 文档已明确 fake 不可作为最终验收、危险工具不可绕过审批、MAP 文档空间不可替代工作台 |
 | P9.7 写入最终验收任务 | [x] | [x] | [x] | 远程 Agent 必须巡检 `prd_agent` 并提交 PR；视觉页面默认任务与事件中可见该目标 |
 
 冒烟测试：
 
-- `rg "完全可用" doc/plan.cds-agent-workbench.md`
-- `rg "巡检 .*prd_agent|系统级长期授权|baseUrl" doc/plan.cds-agent-workbench.md`
+- `rg "完全可用" doc/plan.cds.agent.workbench.md`
+- `rg "巡检 .*prd_agent|系统级长期授权|baseUrl" doc/plan.cds.agent.workbench.md`
 - `rg "guide.cds.agent.workbench|guide.cds.agent.admin|design.cds.agent.api|guide.cds.agent.runbook" doc/index.yml doc/guide.list.directory.md`
 - 2026-05-14 文档冒烟：四份文档均存在，`doc/index.yml` 和 `doc/guide.list.directory.md` 均已登记。
 
@@ -1135,10 +1135,10 @@ P10 当前结论：
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
 | 1 | 修正基础设施服务页底部仍显示“路线图：本页未来 4 个 tab”的问题 | P9 | [x] | 页面显示已落地的“基础设施操作台”，不是未来路线图 |
-| 2 | 补齐 `doc/guide.cds-agent-workbench.md` | P9 | [x] | 普通用户能按文档创建远程会话并完成一次对话 |
-| 3 | 补齐 `doc/guide.cds-agent-admin.md` | P9 | [x] | 管理员能按文档配置 CDS 地址、授权、runtime、Hook |
-| 4 | 补齐 `doc/design.cds-agent-api.md` | P9 | [x] | MAP/CDS API、事件、错误码、权限都可被实现和测试 |
-| 5 | 补齐 `doc/guide.cds-agent-runbook.md` | P9 | [x] | 部署、排错、401/撤销、runtime 失败、日志恢复都有步骤 |
+| 2 | 补齐 `doc/guide.cds.agent.workbench.md` | P9 | [x] | 普通用户能按文档创建远程会话并完成一次对话 |
+| 3 | 补齐 `doc/guide.cds.agent.admin.md` | P9 | [x] | 管理员能按文档配置 CDS 地址、授权、runtime、Hook |
+| 4 | 补齐 `doc/design.cds.agent.api.md` | P9 | [x] | MAP/CDS API、事件、错误码、权限都可被实现和测试 |
+| 5 | 补齐 `doc/guide.cds.agent.runbook.md` | P9 | [x] | 部署、排错、401/撤销、runtime 失败、日志恢复都有步骤 |
 | 6 | 同步 `doc/index.yml` 与 `doc/guide.list.directory.md` | P9 | [x] | 文档索引能搜索到全部新增文档 |
 | 7 | 修复 CDS long token 为长期授权 | P10 | [x] | 已建立连接不因 10 分钟过期，只有删除/撤销才失效 |
 | 8 | 增加系统级模型 runtime profile | P10 | [x] | 可配置任意 baseUrl、model、API key，并在会话中选择 |

@@ -5,7 +5,7 @@
 | 版本 | v1 |
 | 状态 | v1 MVP 已落地（CDS project instance discovery + MAP dynamic sidecar registry） |
 | 责任人 | Claude Code |
-| 关联 | `doc/plan.cds-shared-service-extension.md`、`doc/design.claude-sdk-executor.md` |
+| 关联 | `doc/plan.cds-shared-service-extension.md`、`doc/design.cds.agent.sdk-executor.md` |
 
 ---
 

@@ -131,14 +131,14 @@
 
 本文件位于仓库：
 
-`doc/spec.pa-agent.md`
+`doc/spec.product-agent.pa.md`
 
 **方式 A**：在 GitHub（或 Git 托管）打开该路径，使用页面上的 **Raw** 或 **Download** 保存为 `.md`。
 
 **方式 B**：克隆仓库后执行：
 
 ```bash
-cp doc/spec.pa-agent.md ~/Downloads/PA_Agent_Product_Proposal.md
+cp doc/spec.product-agent.pa.md ~/Downloads/PA_Agent_Product_Proposal.md
 ```
 
 ---
@@ -155,7 +155,7 @@ cp doc/spec.pa-agent.md ~/Downloads/PA_Agent_Product_Proposal.md
 | 看板 | `prd-admin/src/pages/pa-agent/PaTaskBoard.tsx` |
 | API 服务 | `prd-admin/src/services/real/paAgentService.ts` |
 
-竞品调研与分期改进方案见 `doc/plan.pa-agent-competitive-improvements.md`。
+竞品调研与分期改进方案见 `doc/plan.product-agent.pa.competitive-improvements.md`。
 
 ---
 

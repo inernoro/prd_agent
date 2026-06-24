@@ -4,7 +4,7 @@
 |---|---|
 | 模块 | 功能验收体系（`create-visual-test-to-kb` 技能 + 知识库归档） |
 | 状态 | open（未排期；方向已认可，2026-05-27） |
-| 关联 | `.claude/skills/create-visual-test-to-kb/`、`doc/design.acceptance-system.md`、文档空间 `document_stores` |
+| 关联 | `.claude/skills/create-visual-test-to-kb/`、`doc/design.acceptance.system.md`、文档空间 `document_stores` |
 | 提出 | 用户提议：用知识库当枢纽，把「标准创建 / 验收执行 / 结果归档」三方打通，标准与执行各由独立 Agent 承担 |
 
 ---

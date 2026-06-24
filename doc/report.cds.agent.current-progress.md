@@ -2,7 +2,7 @@
 
 > **状态**：已合并到权威入口
 > **最后校准**：2026-05-19 Asia/Shanghai
-> **权威文档**：`doc/design.cds-agent-commercial-architecture-and-roadmap.md`
+> **权威文档**：`doc/design.cds.agent.commercial-architecture-and-roadmap.md`
 
 当前不再维护独立进度页，避免架构、阶段、进度、视觉测试和冒烟测试分散在多个地方。
 
@@ -11,7 +11,7 @@
 请只看：
 
 ```text
-doc/design.cds-agent-commercial-architecture-and-roadmap.md
+doc/design.cds.agent.commercial-architecture-and-roadmap.md
 ```
 
 其中：

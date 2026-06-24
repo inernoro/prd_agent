@@ -13,7 +13,7 @@
 - 页面和 API 里仍有历史 runtime 名 `claude-sdk`。
 - `claude-agent-sdk` 是官方 Claude Agent SDK，不是本仓库自研；本仓库只写 adapter，把官方 SDK 事件、权限、取消和结果映射到 MAP/CDS。
 - 当前默认目标路径是 `runtimeAdapter=claude-agent-sdk`；`legacy-sidecar` 只作为显式 fallback，仍使用官方 `anthropic` Python SDK + 本仓库自研 loop。
-- 复现通过只证明 CDS Agent 工作台链路可用；要证明完整官方 SDK 迁移，必须额外通过 `doc/guide.cds-agent-runtime-pool-recovery.md` 里的 official SDK smoke。
+- 复现通过只证明 CDS Agent 工作台链路可用；要证明完整官方 SDK 迁移，必须额外通过 `doc/guide.cds.agent.runtime-pool-recovery.md` 里的 official SDK smoke。
 
 ## 前置条件
 
@@ -205,7 +205,7 @@ python3 .agents/skills/cds/cli/cdscli.py branch status prd-agent-main
 ## 十二、交接提示词
 
 ```text
-请按照 doc/guide.cds-agent-workbench-reproduce.md 复现 CDS Agent 工作台。必须从 https://main-prd-agent.miduo.org/ 真实入口进入，经百宝箱打开 CDS Agent。不要直达路由替代视觉测试。先验证 active CDS connection、OpenAI-compatible runtime profile、事件时间线、工具审批和产物面板，再发送一次远程仓库自巡检任务，让 Agent 使用 repo_* 工具读取、修改、测试并创建 PR。完成后输出 PR 链接、测试命令、事件 trace、截图路径和停止状态。
+请按照 doc/guide.cds.agent.workbench-reproduce.md 复现 CDS Agent 工作台。必须从 https://main-prd-agent.miduo.org/ 真实入口进入，经百宝箱打开 CDS Agent。不要直达路由替代视觉测试。先验证 active CDS connection、OpenAI-compatible runtime profile、事件时间线、工具审批和产物面板，再发送一次远程仓库自巡检任务，让 Agent 使用 repo_* 工具读取、修改、测试并创建 PR。完成后输出 PR 链接、测试命令、事件 trace、截图路径和停止状态。
 ```
 
 ## 十三、复现时必须额外记录的限制

@@ -193,7 +193,7 @@
 
 ## 九、Compute-then-Send 原则（外部调用两阶段）
 
-> 详见 `.claude/rules/compute-then-send.md` 和 `doc/design.llm-gateway-refactor.md`
+> 详见 `.claude/rules/compute-then-send.md` 和 `doc/design.platform.llm-gateway-refactor.md`
 
 外部调用（LLM / 图片生成 / 视频生成）必须把**计算阶段**和**发送阶段**严格拆分：
 

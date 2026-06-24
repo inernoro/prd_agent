@@ -264,7 +264,7 @@ ANTHROPIC_API_KEY=sk-ant-xxx CLAUDE_SDK_ENABLED=true \
 - `repo_run_command` 单次命令上限 180 秒，不适合大型测试套件或长构建。
 - 默认 `repo_create_pull_request` 会建 draft PR，后续应改成策略化配置。
 
-以上条目同步登记到 `doc/debt.claude-sdk-executor.md`。
+以上条目同步登记到 `doc/debt.cds.agent.sdk-executor.md`。
 
 ---
 

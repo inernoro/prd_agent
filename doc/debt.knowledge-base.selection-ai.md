@@ -38,4 +38,4 @@ AI 改写支持润色/精简/扩写/书面化/纠错 + 自定义指令，SSE 流
 
 - 接口：`POST /api/document-store/entries/{entryId}/selection-rewrite`（SSE：start/thinking/text/done/error）、`GET /api/document-store/selection-rewrite/actions`
 - 单测：`prd-admin/src/components/doc-browser/__tests__/selectionEdit.test.ts`（定位/替换/插入/前缀拼接 14 例）
-- 关联台账：`doc/debt.kb-inline-comment.md`（划词评论）、`doc/debt.knowledge-base-mention-network.md`（双链）
+- 关联台账：`doc/debt.knowledge-base.inline-comment.md`（划词评论）、`doc/debt.knowledge-base.mention-network.md`（双链）

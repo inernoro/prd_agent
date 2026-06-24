@@ -5,11 +5,11 @@ description: 无人值守的日常 issue 维护 Agent。手动触发后扫描仓
 
 # Issues Autofix — 日常无人值守 issue 维护
 
-> **版本**：v2.0.0 | **状态**：已落地 | **触发**：`/issues-autofix`、"日常issue巡检"、"自动修复issue" | **SSOT**：`doc/rule.issues-system.md` | **领地**：open issue 巡检（避让 `visual-test:*` 与其他 Agent）
+> **版本**：v2.0.0 | **状态**：已落地 | **触发**：`/issues-autofix`、"日常issue巡检"、"自动修复issue" | **SSOT**：`doc/rule.skill.issues-system.md` | **领地**：open issue 巡检（避让 `visual-test:*` 与其他 Agent）
 
 > 手动触发的"批量过 issue"技能。一轮跑完输出处理报告。**不和用户来回**，模糊场景按默认分支走，宁可跳过不要卡住。
 >
-> 完整 label 协议、跳过清单、配色等系统说明见 **`doc/rule.issues-system.md`**。本文件只写"执行逻辑"。
+> 完整 label 协议、跳过清单、配色等系统说明见 **`doc/rule.skill.issues-system.md`**。本文件只写"执行逻辑"。
 
 ## 0. 何时触发 / 何时别用
 
@@ -24,7 +24,7 @@ description: 无人值守的日常 issue 维护 Agent。手动触发后扫描仓
 
 ## 0.5 自治纪律（五层自治回路）
 
-> SSOT：`doc/design.defect-automation-autonomy.md`（缺陷自动化自治体系）。本技能与 `ai-defect-resolve` 同属无人值守 Agent，共用其自治模型。本技能监督层已强（§2 跳过 / §7 边界 / §12 兜底 / §13 禁止），这里把五层补齐成可辨的逐 issue 自检。
+> SSOT：`doc/design.defect-agent.automation-autonomy.md`（缺陷自动化自治体系）。本技能与 `ai-defect-resolve` 同属无人值守 Agent，共用其自治模型。本技能监督层已强（§2 跳过 / §7 边界 / §12 兜底 / §13 禁止），这里把五层补齐成可辨的逐 issue 自检。
 
 每个 issue 处理前按序自检：
 
@@ -83,7 +83,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 8. **作者是 maintainer 且无 `please-fix`/`bug` 类 label**
 9. **草稿 / template 占位**：正文 < 20 字 或 仅含模板未填项
 
-> 完整跳过清单与"为什么这样设计"在 `doc/rule.issues-system.md` §3。
+> 完整跳过清单与"为什么这样设计"在 `doc/rule.skill.issues-system.md` §3。
 
 ## 3. 扫描范围
 
@@ -94,7 +94,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 
 ## 4. 处理流程（单实例假设，无锁无 verify）
 
-> **前置假设**：本技能由用户**手动触发**，每天最多一次，同时刻只有一个实例运行。在这个假设下不需要分布式锁、claim-verify、reaper 等机制。详见 `doc/rule.issues-system.md` §0。
+> **前置假设**：本技能由用户**手动触发**，每天最多一次，同时刻只有一个实例运行。在这个假设下不需要分布式锁、claim-verify、reaper 等机制。详见 `doc/rule.skill.issues-system.md` §0。
 >
 > 如果未来扩展为自动 cron / 多实例并发，需要重新设计协议（git history 里有一版 v1.0 的完整并发协议可参考）。
 
@@ -194,7 +194,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 
 ## 11. 标签体系
 
-完整定义见 `doc/rule.issues-system.md` §2。
+完整定义见 `doc/rule.skill.issues-system.md` §2。
 
 ## 12. 失败兜底
 

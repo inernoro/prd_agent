@@ -14,4 +14,4 @@ globs: ["prd-api/src/**/*.cs"]
 4. SSE 流必须每 10 秒 keepalive 心跳，支持 `afterSeq` 断线续传
 5. Worker 关闭时必须将未完成的 run 标记为失败（`CancellationToken.None`）
 
-> 详细设计：`doc/design.server-authority.md`
+> 详细设计：`doc/design.platform.server-authority.md`

@@ -9,7 +9,7 @@ description: 手动触发创建一个视觉验收子 issue。输入"要测什么
 
 > 把"我想给这个改动做视觉验收"变成一条结构化、可被 24h 执行者 Agent 接单的 GitHub issue。
 >
-> **本技能只做"开单"**。执行由 `/issues-visual-run` 负责，协议演化在元 issue #605 讨论。系统说明见 `doc/rule.issues-system.md`。
+> **本技能只做"开单"**。执行由 `/issues-visual-run` 负责，协议演化在元 issue #605 讨论。系统说明见 `doc/rule.skill.issues-system.md`。
 
 ## 0. 何时触发 / 何时别用
 

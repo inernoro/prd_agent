@@ -80,5 +80,5 @@ Service 层若不走 SSE（`SendAsync` 同步调用），应在返回值里带 `
 ## 关联
 
 - LLM Gateway 接口：`prd-api/src/PrdAgent.Infrastructure/LlmGateway/ILlmGateway.cs`
-- 模型调度日志：`doc/design.llm-gateway.md`
+- 模型调度日志：`doc/design.platform.llm-gateway.md`
 - 原则补充：与 `rule.llm-visibility.md`（流式可见性）+ `rule.platform.llm-gateway.md`（调用统一）互补，三位一体保证"用户永远知道 AI 在干什么 / 用什么干"

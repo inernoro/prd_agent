@@ -10,7 +10,7 @@
 
 - 开 branch 第 6 小时（05-17 07:29）撞上 runtime-pool 外部依赖（需要可 `docker pull` 的 sidecar 镜像 + enabled remote host，agent 自己造不出来）。
 - 此后 **~35 小时**没有结构性逃出，节奏不降（10–15 提交/小时，含凌晨），共 361 个 branch-only 提交。
-- 头号文件是 `doc/plan.cds-agent-official-sdk-migration.md`，**被重写 118 次**；最近 150 个提交里 124 个是文档/脚本/纯测试，真实功能代码停在 05-18 18:36 之后零产出。
+- 头号文件是 `doc/plan.cds.agent.official-sdk-migration.md`，**被重写 118 次**；最近 150 个提交里 124 个是文档/脚本/纯测试，真实功能代码停在 05-18 18:36 之后零产出。
 - Agent 自己的台账写了 8 条「兜圈」复盘，写完继续兜。
 
 结论：判断没错（架构上拒绝把 agent runtime 塞进 branch preview 的捷径是对的），但**对的判断 + 错的行为**——该停下抛决策，却 grinding 35 小时 + 42 个脚本。本规则把这条隐形坑显式化。

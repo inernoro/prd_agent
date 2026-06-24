@@ -8,9 +8,9 @@
 >
 > **文档导航**：
 >
-> - 主设计稿：`doc/design.cds-multi-project.md`
-> - 7 期交付计划：`doc/plan.cds-multi-project-phases.md`
-> - 迁移规范：`doc/rule.cds-mongo-migration.md`
+> - 主设计稿：`doc/design.cds.multi-project.md`
+> - 7 期交付计划：`doc/plan.cds.multi-project-phases.md`
+> - 迁移规范：`doc/rule.cds.mongo-migration.md`
 
 ---
 

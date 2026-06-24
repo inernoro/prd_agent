@@ -50,4 +50,4 @@
 - `prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs`
 - `prd-api/src/PrdAgent.Api/Services/CdsAgentRuntimeEventRenderer.cs`
 - `prd-admin/src/pages/cds-agent/CdsAgentPage.tsx`
-- `doc/guide.cds-agent-workbench.md`、`doc/design.cds-agent-official-sdk-adapter.md`
+- `doc/guide.cds.agent.workbench.md`、`doc/design.cds.agent.official-sdk-adapter.md`

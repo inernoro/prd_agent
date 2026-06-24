@@ -3,7 +3,7 @@
 > **类型**：操作指南 (How-to) | **日期**：2026-04-10 | **版本**：v1.0
 >
 > 本文档教你**怎么用**两条命令把第二台服务器加入 CDS 集群。
-> 想了解**为什么这么设计**，请看 `doc/design.cds-cluster-bootstrap.md`。
+> 想了解**为什么这么设计**，请看 `doc/design.cds.cluster-bootstrap.md`。
 
 ---
 
@@ -41,7 +41,7 @@
 - [ ] **你能 SSH 到两台机器**：操作过程需要在两台机器上分别敲命令
 - [ ] **老机器上 CDS 已经能正常工作**：能登录 Dashboard、能创建分支预览
 
-> ⚠️ **如果新机器还没装 CDS**：先按 `doc/guide.quickstart.md` 装好，跑通 `./exec_cds.sh init` + `./exec_cds.sh start`，确认本机 standalone 模式工作正常，**再回来做扩容**。
+> ⚠️ **如果新机器还没装 CDS**：先按 `doc/guide.platform.quickstart.md` 装好，跑通 `./exec_cds.sh init` + `./exec_cds.sh start`，确认本机 standalone 模式工作正常，**再回来做扩容**。
 
 ---
 
@@ -385,8 +385,8 @@ cd /opt/prd_agent/cds
 
 ## 10. 相关文档
 
-- **设计原理**：`doc/design.cds-cluster-bootstrap.md`
+- **设计原理**：`doc/design.cds.cluster-bootstrap.md`
 - **CDS 整体架构**：`doc/design.cds.md`
-- **资源容量与故障隔离**：`doc/design.cds-resilience.md`
-- **环境变量配置**：`doc/guide.cds-env.md`
-- **从零开始装 CDS**：`doc/guide.quickstart.md`
+- **资源容量与故障隔离**：`doc/design.cds.resilience.md`
+- **环境变量配置**：`doc/guide.cds.env.md`
+- **从零开始装 CDS**：`doc/guide.platform.quickstart.md`

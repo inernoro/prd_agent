@@ -683,7 +683,7 @@
 - `cds/src/server.ts` — `ServerDeps.authStore?` + 使用 `deps.authStore ?? new MemoryAuthStore()`
 - `cds/src/index.ts` — `initAuthStore()` + 按 `CDS_AUTH_BACKEND` 分发
 - `cds/tests/infra/auth-store/mongo-store.test.ts` — 20 条单元测试，全绿
-- `doc/guide.cds-env.md §2.1` — `CDS_AUTH_BACKEND` 操作说明
+- `doc/guide.cds.env.md §2.1` — `CDS_AUTH_BACKEND` 操作说明
 
 ### FU-03 · detect-stack 加 nixpacks 风格依赖推断 · **done** 2026-04-16
 

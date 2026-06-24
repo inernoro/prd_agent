@@ -815,7 +815,7 @@ appKey: report-agent
 
 | 文档 | 关系 |
 |------|------|
-| `doc/rule.agent-development.md` | Agent 开发交付流程（Phase 1-6） |
+| `doc/rule.platform.agent-development.md` | Agent 开发交付流程（Phase 1-6） |
 | `doc/rule.app-key-definition.md` | appKey 定义规范 |
 | `doc/rule.app-feature-definition.md` | appCallerCode 命名规范 |
 | `doc/weekly-report-2026-W06.md` | 现有周报样例（作为汇总输出的参考格式） |

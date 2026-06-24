@@ -69,7 +69,7 @@
 - cdscli scan 识别 mysql,从 `init.sql` 文件读 DB 名(`MYSQL_DATABASE=app_db`)
 - POST /projects → POST /clone → 端到端跑通
 - 验证 envMeta 含 mysql 三色分类,DB 名 = scan 检出真名(不是默认 cds_db)
-- 步 1+2 真验 ✅;步 3+4 重放脚本就绪(`doc/guide.cds-mysql-validation-runbook.md`)
+- 步 1+2 真验 ✅;步 3+4 重放脚本就绪(`doc/guide.cds.mysql-validation-runbook.md`)
 
 ### P0-2 UI 端真验(子智能体 B,降级)
 
