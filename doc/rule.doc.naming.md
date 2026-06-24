@@ -53,7 +53,7 @@ doc/{type}.{topic}.md
 | 类别 | 约定 | 示例 |
 |------|------|------|
 | 周报 | `report.YYYY-WNN.md`，时间即主题 | `report.2026-W13.md` |
-| 验收 / 事故报告 | **不进 `doc/`** —— 验收报告归验收知识库（`document_stores`，见 `create-visual-test-to-kb` 技能并出分享链）；事故 postmortem 的架构教训并入相关 `design.*` / `debt.*`。`doc/` 的 `report.*` 只保留周报 | 知识库分享链，不是 `doc/*.md` |
+| 验收 / 事故报告 | **新增不进 `doc/`** —— 验收报告归验收知识库（`document_stores`，见 `create-visual-test-to-kb` 技能并出分享链）；事故 postmortem 的架构教训并入相关 `design.*` / `debt.*`。`doc/` 的 `report.*` 目标收敛到周报（存量被引用者 grandfather，见 §报告/验收/图片不进 doc/） | 知识库分享链，不是 `doc/*.md` |
 | 跨应用 / 平台级（不属单一 app） | 用保留域名段：`platform`（鉴权 / 网关 / 模型池 / 存储）、`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系） | `design.platform.llm-gateway.md`、`rule.frontend.modal.md`、`rule.skill.header.md` |
 | 顶层产品文档 | 保留概念名 | `spec.prd.md`、`spec.srs.md`、`spec.project-vision.md` |
 
@@ -151,12 +151,12 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 ### 反模式
 
 ```markdown
-<!-- ❌ 粗体键值对（旧格式） -->
+<!-- 错误：粗体键值对（旧格式） -->
 **文档版本**：v1.0
 **创建日期**：2025-01-25
 **最后更新**：2025-01-25
 
-<!-- ❌ 缺少"状态"字段 -->
+<!-- 错误：缺少"状态"字段 -->
 > **版本**：v1.0 | **创建日期**：2026-03-04
 ```
 
