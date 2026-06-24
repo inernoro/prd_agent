@@ -508,4 +508,47 @@ describe('StateService', () => {
       expect(collisions).toHaveLength(1);
     });
   });
+
+  describe('removed-branch tombstones', () => {
+    const makeTombstone = (slug: string, removedAt: string) => ({
+      previewSlug: slug,
+      branch: slug,
+      projectId: 'proj',
+      reason: 'merged' as const,
+      removedAt,
+    });
+
+    it('records and reads a tombstone by previewSlug', () => {
+      service.load();
+      service.recordRemovedBranch(makeTombstone('login-feat-demo', '2026-06-24T00:00:00.000Z'));
+      const got = service.getRemovedBranch('login-feat-demo');
+      expect(got?.reason).toBe('merged');
+      expect(got?.branch).toBe('login-feat-demo');
+      expect(service.getRemovedBranch('nope')).toBeUndefined();
+    });
+
+    it('persists tombstones across reload', () => {
+      service.load();
+      service.recordRemovedBranch(makeTombstone('a-feat-demo', '2026-06-24T00:00:00.000Z'));
+      const reloaded = new StateService(stateFile);
+      reloaded.load();
+      expect(reloaded.getRemovedBranch('a-feat-demo')?.reason).toBe('merged');
+    });
+
+    it('caps tombstones to 200, evicting oldest by removedAt', () => {
+      service.load();
+      // 写 205 条，时间递增 → 最旧 5 条应被淘汰。
+      for (let i = 0; i < 205; i += 1) {
+        const stamp = `2026-06-24T00:00:${String(i).padStart(2, '0')}.000Z`;
+        service.recordRemovedBranch(makeTombstone(`slug-${i}`, stamp));
+      }
+      const map = service.getState().removedBranches ?? {};
+      expect(Object.keys(map)).toHaveLength(200);
+      // 最旧的 slug-0..slug-4 被淘汰，最新的还在。
+      expect(service.getRemovedBranch('slug-0')).toBeUndefined();
+      expect(service.getRemovedBranch('slug-4')).toBeUndefined();
+      expect(service.getRemovedBranch('slug-5')).toBeDefined();
+      expect(service.getRemovedBranch('slug-204')).toBeDefined();
+    });
+  });
 });

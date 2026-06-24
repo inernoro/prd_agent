@@ -556,6 +556,37 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       });
     }
 
+    // PR closed → 写一条分支墓碑（previewSlug 为键），让过期分支预览页能区分
+    // "已合并到主分支"（引导切主分支）与"已放弃"（跳 PR/commit）。先于 stop/delete
+    // 落库即可：墓碑独立于 branch entry，分支随后被删也不受影响。
+    if (result.tombstoneRequest) {
+      const tr = result.tombstoneRequest;
+      try {
+        const tombProject = stateService.getProject(tr.projectId);
+        const previewSlug = buildPreviewUrlForProject(null, tr.branch, tombProject, tr.projectId).previewSlug;
+        if (previewSlug) {
+          stateService.recordRemovedBranch({
+            previewSlug,
+            branch: tr.branch,
+            projectId: tr.projectId,
+            reason: tr.reason,
+            prNumber: tr.prNumber,
+            prUrl: tr.prUrl,
+            mergeCommitSha: tr.mergeCommitSha,
+            baseRef: tr.baseRef,
+            defaultBranch: stateService.getDefaultBranchFor(tr.projectId),
+            removedAt: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[webhook] record branch tombstone failed for branch=${tr.branchId}:`,
+          (err as Error).message,
+        );
+      }
+    }
+
     // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":handleDelete 现在
     // 同时返 stopRequest + branchDeleteRequest。stopRequest 已在上面 fire-and-
     // forget 跑;这里再 schedule 一次 DELETE /api/branches/:id 彻底清 entry +

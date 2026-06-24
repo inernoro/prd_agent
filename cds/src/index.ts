@@ -2771,6 +2771,150 @@ ${redirectScript}
 </body></html>`;
 }
 
+// ── 过期分支预览页：已合并 / 已放弃 两种中间页 ──
+//
+// 分支被 PR 合并或关闭后会被删除，原先一律落到「启动失败」页。这里按墓碑
+// （BranchTombstone.reason）分流成两种更明确的中间页：
+//   merged    → 「已合并到主分支」+ 主按钮切换到主分支预览
+//   abandoned → 「分支已放弃」+ 跳 PR/commit
+// 两页沿用 transit/waiting 页同款 shapeGridBg 动效网格背景，并走暖色双主题
+// token（白天浅底深字，遵守 cds-theme-tokens.md 禁暗色背景规则）。
+
+/** 暖色双主题 token（:root 暗黑默认 + prefers-color-scheme:light 翻浅色）。 */
+const REMOVED_BRANCH_THEME_CSS = `:root{--bg-page:#0d1117;--bg-card:#161b22;--bg-elevated:#21262d;--border:#30363d;--border-subtle:#21262d;--text-primary:#f0f6fc;--text-secondary:#c9d1d9;--text-muted:#8b949e;--accent:#58a6ff;--accent-bg:rgba(88,166,255,.14);--success:#3fb950;--success-bg:rgba(63,185,80,.14);--shadow-card:0 24px 70px rgba(0,0,0,.45)}
+@media(prefers-color-scheme:light){:root{--bg-page:#f4efe9;--bg-card:#ffffff;--bg-elevated:#f1eae4;--border:#d8cfc6;--border-subtle:#e6ddd3;--text-primary:#2a1f19;--text-secondary:#3f3128;--text-muted:#7a6a5e;--accent:#1f6feb;--accent-bg:rgba(31,111,235,.10);--success:#1a7f37;--success-bg:rgba(26,127,55,.10);--shadow-card:0 16px 50px rgba(43,33,28,.12)}}`;
+
+/** 动效网格背景脚本（与 transit 页同款 shapeGridBg；stroke 用中性灰，双主题都可见）。 */
+const REMOVED_BRANCH_GRID_SCRIPT = `(function(){var canvas=document.getElementById('shapeGridBg');if(!canvas)return;var ctx=canvas.getContext('2d');if(!ctx)return;var offset={x:0,y:0};var size=42;var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;function resize(){var d=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.max(1,Math.floor(window.innerWidth*d));canvas.height=Math.max(1,Math.floor(window.innerHeight*d));canvas.style.width='100%';canvas.style.height='100%';ctx.setTransform(d,0,0,d,0,0);}function draw(){var w=window.innerWidth,h=window.innerHeight;ctx.clearRect(0,0,w,h);if(!reduced){offset.x=(offset.x-.14+size)%size;offset.y=(offset.y-.14+size)%size;}var ox=((offset.x%size)+size)%size;var oy=((offset.y%size)+size)%size;ctx.strokeStyle='rgba(125,130,145,.12)';ctx.lineWidth=1;for(var x=-size+ox;x<w+size;x+=size){for(var y=-size+oy;y<h+size;y+=size){ctx.strokeRect(x,y,size,size);}}requestAnimationFrame(draw);}resize();window.addEventListener('resize',resize);requestAnimationFrame(draw);}());`;
+
+function escapeRemovedBranchHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => {
+    switch (c) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      default: return '&#39;';
+    }
+  });
+}
+
+/** 过期分支页公共 CSS（卡片 + 按钮 + 网格背景，全部走 token，双主题）。 */
+const REMOVED_BRANCH_BASE_CSS = `${REMOVED_BRANCH_THEME_CSS}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg-page);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;overflow:hidden}
+.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:.5}
+.shape-grid-vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 28% 16%,var(--accent-bg),transparent 60%)}
+.card{position:relative;z-index:1;max-width:540px;width:100%;padding:34px 34px 30px;background:var(--bg-card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow-card);text-align:center}
+.badge{width:54px;height:54px;margin:0 auto 18px;border-radius:14px;display:flex;align-items:center;justify-content:center}
+.badge svg{width:28px;height:28px}
+.badge.merged{background:var(--success-bg);color:var(--success)}
+.badge.abandoned{background:var(--accent-bg);color:var(--text-muted)}
+h1{font-size:22px;font-weight:700;color:var(--text-primary);letter-spacing:.2px;margin-bottom:10px;line-height:1.3}
+.branch-chip{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;color:var(--text-secondary);background:var(--bg-elevated);border:1px solid var(--border-subtle);padding:5px 11px;border-radius:99px;margin-bottom:16px;word-break:break-all}
+.desc{font-size:14px;color:var(--text-muted);line-height:1.7;margin-bottom:24px}
+.desc strong{color:var(--text-secondary);font-weight:600}
+.actions{display:flex;flex-direction:column;gap:10px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 18px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:600;border:1px solid var(--border);color:var(--text-secondary);background:var(--bg-elevated);transition:filter .15s,transform .05s,border-color .15s}
+.btn:hover{border-color:var(--accent)}
+.btn:active{transform:scale(.985)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.hint{font-size:12px;color:var(--text-muted);margin-top:18px;line-height:1.6}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}`;
+
+const MERGE_ICON_SVG = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm0 2.122a2.25 2.25 0 10-1.5 0v.878A2.25 2.25 0 005.75 8.5h1.5v2.128a2.251 2.251 0 101.5 0V8.5h1.5a2.25 2.25 0 002.25-2.25v-.878a2.25 2.25 0 10-1.5 0v.878a.75.75 0 01-.75.75h-4.5A.75.75 0 015 6.25v-.878zm3.75 7.378a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm3-8.75a.75.75 0 100-1.5.75.75 0 000 1.5z"/></svg>';
+const ARCHIVE_ICON_SVG = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.75 2.5A1.75 1.75 0 000 4.25v1.5C0 6.44.41 7.03 1 7.35v6.4c0 .966.784 1.75 1.75 1.75h10.5A1.75 1.75 0 0015 13.75v-6.4c.59-.32 1-.91 1-1.6v-1.5a1.75 1.75 0 00-1.75-1.75H1.75zM2.5 7.5h11v6.25a.25.25 0 01-.25.25H2.75a.25.25 0 01-.25-.25V7.5zm-1-3.25a.25.25 0 01.25-.25h12.5a.25.25 0 01.25.25v1.5a.25.25 0 01-.25.25H1.75a.25.25 0 01-.25-.25v-1.5zM6 9.75A.75.75 0 016.75 9h2.5a.75.75 0 010 1.5h-2.5A.75.75 0 016 9.75z"/></svg>';
+
+/**
+ * 「已合并到主分支」中间页：告知分支已合并、预览已下线，主按钮切换到主分支预览。
+ * 用户点按钮跳转（按需求不做自动跳转，避免"莫名其妙跳走"的预期失控）。
+ */
+function buildBranchMergedPageHtml(opts: {
+  branch: string;
+  mainBranch: string | null;
+  mainPreviewUrl: string | null;
+  prNumber?: number;
+  prUrl?: string;
+  dashboardUrl?: string;
+}): string {
+  const branch = escapeRemovedBranchHtml(opts.branch || '');
+  const mainBranch = escapeRemovedBranchHtml(opts.mainBranch || '主分支');
+  const prLabel = opts.prNumber ? `PR #${opts.prNumber}` : 'PR';
+  const primaryBtn = opts.mainPreviewUrl
+    ? `<a class="btn primary" href="${escapeRemovedBranchHtml(opts.mainPreviewUrl)}">切换到主分支预览 →</a>`
+    : (opts.dashboardUrl ? `<a class="btn primary" href="${escapeRemovedBranchHtml(opts.dashboardUrl)}">返回 CDS 控制台 →</a>` : '');
+  const prBtn = opts.prUrl ? `<a class="btn" href="${escapeRemovedBranchHtml(opts.prUrl)}">查看 ${prLabel}</a>` : '';
+  const dashBtn = opts.dashboardUrl && opts.mainPreviewUrl
+    ? `<a class="btn" href="${escapeRemovedBranchHtml(opts.dashboardUrl)}">CDS 控制台</a>` : '';
+  return `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>分支已合并到主分支 — ${branch}</title>
+<style>${REMOVED_BRANCH_BASE_CSS}</style>
+</head><body>
+<canvas class="shape-grid-bg" id="shapeGridBg" aria-hidden="true"></canvas>
+<div class="shape-grid-vignette" aria-hidden="true"></div>
+<div class="card">
+  <div class="badge merged">${MERGE_ICON_SVG}</div>
+  <h1>分支已合并到主分支</h1>
+  <div class="branch-chip">${branch}</div>
+  <div class="desc">
+    该分支的 ${prLabel} 已合并进 <strong>${mainBranch}</strong>，预览环境已下线。<br>
+    主分支预览始终是最新的，点下面切换过去继续验收。
+  </div>
+  <div class="actions">
+    ${primaryBtn}
+    ${prBtn}
+    ${dashBtn}
+  </div>
+  ${opts.mainPreviewUrl ? '' : '<div class="hint">未能解析主分支预览地址，请从 CDS 控制台进入主分支。</div>'}
+</div>
+<script>${REMOVED_BRANCH_GRID_SCRIPT}</script>
+</body></html>`;
+}
+
+/**
+ * 「分支已放弃」中间页：PR 关闭未合并 / 分支被直接删除，预览不可恢复，跳 PR/commit。
+ * 后续打磨（commit 直链、可用分支推荐等）记入 doc/debt.cds-removed-branch-pages.md。
+ */
+function buildBranchAbandonedPageHtml(opts: {
+  branch: string;
+  prNumber?: number;
+  prUrl?: string;
+  dashboardUrl?: string;
+}): string {
+  const branch = escapeRemovedBranchHtml(opts.branch || '');
+  const prLabel = opts.prNumber ? `PR #${opts.prNumber}` : null;
+  const prBtn = opts.prUrl
+    ? `<a class="btn primary" href="${escapeRemovedBranchHtml(opts.prUrl)}">查看${prLabel ? ` ${prLabel}` : ' PR'} →</a>` : '';
+  const dashBtn = opts.dashboardUrl
+    ? `<a class="btn" href="${escapeRemovedBranchHtml(opts.dashboardUrl)}">返回 CDS 控制台</a>` : '';
+  return `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>分支已放弃 — ${branch}</title>
+<style>${REMOVED_BRANCH_BASE_CSS}</style>
+</head><body>
+<canvas class="shape-grid-bg" id="shapeGridBg" aria-hidden="true"></canvas>
+<div class="shape-grid-vignette" aria-hidden="true"></div>
+<div class="card">
+  <div class="badge abandoned">${ARCHIVE_ICON_SVG}</div>
+  <h1>分支已放弃</h1>
+  <div class="branch-chip">${branch}</div>
+  <div class="desc">
+    该分支${prLabel ? `的 ${prLabel}` : ''}已关闭但未合并，预览环境已删除且<strong>不可恢复</strong>。<br>
+    需要回看改动内容可前往对应的 PR。
+  </div>
+  <div class="actions">
+    ${prBtn}
+    ${dashBtn}
+  </div>
+</div>
+<script>${REMOVED_BRANCH_GRID_SCRIPT}</script>
+</body></html>`;
+}
+
 // ── Auto-build transit page HTML ──
 //
 // 这是用户访问"未构建"分支子域名时看到的全屏过渡页 —— 没有引入 dashboard
@@ -3064,17 +3208,21 @@ h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.
-function liveBranchesForGonePage(host: string, targetSlug: string): BranchGoneLivePreview[] {
-  const state = stateService.getState();
-  // Derive the preview host ("foo.miduo.org" → "miduo.org") so links work
-  // under any configured root domain without hardcoding.
+// Derive the preview host ("foo.miduo.org" → "miduo.org") so links work
+// under any configured root domain without hardcoding.
+function derivePreviewHost(host: string): string | null {
   const rootDomains = config.rootDomains || (config.previewDomain ? [config.previewDomain] : []);
   const hostLower = host.split(':')[0].toLowerCase();
-  let previewHost: string | null = null;
   for (const rd of rootDomains) {
     const s = `.${rd.toLowerCase()}`;
-    if (hostLower.endsWith(s)) { previewHost = rd.toLowerCase(); break; }
+    if (hostLower.endsWith(s)) return rd.toLowerCase();
   }
+  return null;
+}
+
+function liveBranchesForGonePage(host: string, targetSlug: string): BranchGoneLivePreview[] {
+  const state = stateService.getState();
+  const previewHost = derivePreviewHost(host);
   // 走 buildPreviewUrl 全栈唯一入口，列出来的链接和 PR 评论 / settings preview
   // 输出格式一致（v3 = tail-prefix-projectSlug）。
   const out: BranchGoneLivePreview[] = [];
@@ -3113,12 +3261,49 @@ function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.
   const host = req.headers.host || '';
   const dashboardDomain = config.dashboardDomain || config.mainDomain || null;
   const dashboardUrl = dashboardDomain ? `https://${dashboardDomain}` : undefined;
-  const live = liveBranchesForGonePage(host, slug);
-  const html = buildBranchGonePageHtml(slug, { dashboardUrl, mainDomain: config.mainDomain, liveBranches: live });
-  res.writeHead(404, {
+  const noCache = {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-cache, no-store, must-revalidate',
-  });
+  };
+
+  // 先查分支墓碑：PR 合并/关闭后分支被删，按原因分流到「已合并」/「已放弃」中间页，
+  // 而不是一律落「启动失败」。墓碑由 github-webhook 在 PR closed 时落库。
+  const tombstone = stateService.getRemovedBranch(slug);
+  if (tombstone) {
+    if (tombstone.reason === 'merged') {
+      const mainBranch = tombstone.defaultBranch || tombstone.baseRef || null;
+      const previewHost = derivePreviewHost(host);
+      let mainPreviewUrl: string | null = null;
+      if (previewHost && mainBranch) {
+        const project = tombstone.projectId ? stateService.getProject(tombstone.projectId) : undefined;
+        const built = buildPreviewUrlForProject(previewHost, mainBranch, project, tombstone.projectId);
+        if (built.url) mainPreviewUrl = built.url;
+      }
+      res.writeHead(404, noCache);
+      res.end(buildBranchMergedPageHtml({
+        branch: tombstone.branch,
+        mainBranch,
+        mainPreviewUrl,
+        prNumber: tombstone.prNumber,
+        prUrl: tombstone.prUrl,
+        dashboardUrl,
+      }));
+      return;
+    }
+    // reason === 'abandoned'
+    res.writeHead(404, noCache);
+    res.end(buildBranchAbandonedPageHtml({
+      branch: tombstone.branch,
+      prNumber: tombstone.prNumber,
+      prUrl: tombstone.prUrl,
+      dashboardUrl,
+    }));
+    return;
+  }
+
+  const live = liveBranchesForGonePage(host, slug);
+  const html = buildBranchGonePageHtml(slug, { dashboardUrl, mainDomain: config.mainDomain, liveBranches: live });
+  res.writeHead(404, noCache);
   res.end(html);
 }
 

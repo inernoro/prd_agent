@@ -144,6 +144,21 @@ export interface WebhookDispatchResult {
     branchId: string;
   };
   /**
+   * Populated on `pull_request.closed` —— 让路由层写一条分支墓碑，使过期分支
+   * 预览页能区分"已合并到主分支"（引导切主分支）与"已放弃"（跳 PR/commit）。
+   * 路由层据此计算 previewSlug + 解析默认分支后调 stateService.recordRemovedBranch。
+   */
+  tombstoneRequest?: {
+    branchId: string;
+    branch: string;
+    projectId: string;
+    reason: 'merged' | 'abandoned';
+    prNumber?: number;
+    prUrl?: string;
+    mergeCommitSha?: string;
+    baseRef?: string;
+  };
+  /**
    * Populated on slash-command events (`/cds <cmd>` in issue_comment).
    * The route layer wires the command to the right action + posts a
    * reply comment on the PR.
@@ -215,6 +230,7 @@ export interface GitHubPullRequestEvent {
     number: number;
     state: 'open' | 'closed';
     merged?: boolean;
+    merge_commit_sha?: string;
     head: { ref: string; sha: string };
     base: { ref: string };
     html_url: string;
@@ -926,11 +942,24 @@ export class GitHubWebhookDispatcher {
       if (!entry) {
         return { action: 'ignored-event', message: `PR closed but branch '${branchId}' not in CDS` };
       }
+      const merged = event.pull_request.merged === true;
       return {
         action: 'pr-branch-stopped',
-        message: `PR #${event.pull_request.number} ${event.pull_request.merged ? 'merged' : 'closed'}; stopping preview`,
+        message: `PR #${event.pull_request.number} ${merged ? 'merged' : 'closed'}; stopping preview`,
         branchId,
         stopRequest: { branchId },
+        // 留一条墓碑：分支随后被 GitHub 自动删除（delete 事件清掉 entry）后，
+        // 过期分支预览页据此区分"已合并 → 切主分支" vs "已放弃 → 跳 PR"。
+        tombstoneRequest: {
+          branchId,
+          branch: entry.branch || branchName,
+          projectId: project.id,
+          reason: merged ? 'merged' : 'abandoned',
+          prNumber: event.pull_request.number,
+          prUrl: event.pull_request.html_url,
+          mergeCommitSha: merged ? event.pull_request.merge_commit_sha : undefined,
+          baseRef: event.pull_request.base?.ref,
+        },
       };
     }
 

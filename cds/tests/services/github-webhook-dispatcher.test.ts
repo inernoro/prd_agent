@@ -615,6 +615,37 @@ describe('GitHubWebhookDispatcher', () => {
       });
       expect(result.action).toBe('pr-branch-stopped');
       expect(result.stopRequest).toEqual({ branchId: 'proj-feature' });
+      // 合并 PR → tombstone reason='merged'，带 PR/merge 元数据供「已合并」中间页用。
+      expect(result.tombstoneRequest).toMatchObject({
+        branchId: 'proj-feature',
+        branch: 'feature',
+        reason: 'merged',
+        prNumber: 99,
+        prUrl: 'https://github.com/octocat/repo/pull/99',
+        baseRef: 'main',
+      });
+    });
+
+    it('returns tombstoneRequest reason=abandoned when PR closed unmerged', async () => {
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'closed',
+        number: 99,
+        pull_request: {
+          number: 99,
+          state: 'closed',
+          merged: false,
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'https://github.com/octocat/repo/pull/99',
+          title: 'Abandoned feature',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(result.action).toBe('pr-branch-stopped');
+      expect(result.tombstoneRequest?.reason).toBe('abandoned');
+      // 未合并不带 mergeCommitSha。
+      expect(result.tombstoneRequest?.mergeCommitSha).toBeUndefined();
     });
 
     it('ignores synchronize (handled by companion push)', async () => {

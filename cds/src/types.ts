@@ -445,6 +445,41 @@ export interface ResourceLimits {
  */
 export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
 
+/**
+ * 分支被删原因，决定 gone 页渲染哪种中间页：
+ *  - 'merged'    PR 合并进主分支 → 引导用户切换到主分支预览
+ *  - 'abandoned' PR 关闭未合并 / 分支被直接删除 → 告知已放弃，跳 PR/commit
+ */
+export type BranchRemovalReason = 'merged' | 'abandoned';
+
+/**
+ * 分支墓碑 —— 分支删除后留下的一条轻量记录，让"过期分支预览页"能区分
+ * "已合并到主分支"（引导切主分支）与"已放弃/删除"（跳 PR/commit），
+ * 不必保留整个 BranchEntry。写入点见 github-webhook 路由层 recordRemovedBranch。
+ */
+export interface BranchTombstone {
+  /** 预览子域名 slug（gone 页查询主键，与 BranchTombstone 在 removedBranches 的 key 相同）。 */
+  previewSlug: string;
+  /** git 分支名（展示用）。 */
+  branch: string;
+  /** 所属项目 id。 */
+  projectId: string;
+  /** 删除原因。 */
+  reason: BranchRemovalReason;
+  /** 关联 PR 号（若由 PR 事件触发）。 */
+  prNumber?: number;
+  /** 关联 PR 的 GitHub 链接。 */
+  prUrl?: string;
+  /** 合并提交 SHA（reason='merged' 时由 PR payload 带出）。 */
+  mergeCommitSha?: string;
+  /** PR 的目标分支名（merged 时即合并进的分支，通常等于默认分支）。 */
+  baseRef?: string;
+  /** 记录当时解析出的项目默认分支名（"切换到主分支"按钮的目标分支）。 */
+  defaultBranch?: string | null;
+  /** 记录时间（ISO）。容量淘汰按此排序。 */
+  removedAt: string;
+}
+
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
   id: string;
@@ -1041,6 +1076,13 @@ export interface CdsState {
   resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
   /** Resource-scoped database clone / create / restore task history. */
   resourceCloneTasks?: ResourceCloneTask[];
+  /**
+   * 分支墓碑台账（PR 合并/关闭后分支被删，gone 页据此区分"已合并"与"已放弃"）。
+   * Keyed by previewSlug（即预览子域名 slug，与 gone 页收到的 slug 同口径），
+   * 这样 serveBranchGonePage(slug) 能直接命中。容量上限由 StateService
+   * recordRemovedBranch 维护（保留最近 N 条，按 removedAt 淘汰最旧）。
+   */
+  removedBranches?: Record<string, BranchTombstone>;
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
   cdsPeers?: CdsPeer[];
   /**

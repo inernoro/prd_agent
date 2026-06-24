@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -139,6 +139,7 @@ function emptyState(): CdsState {
     activityLogs: {},
     resourceExternalAccess: {},
     resourceCloneTasks: [],
+    removedBranches: {},
   };
 }
 
@@ -3099,6 +3100,33 @@ export class StateService {
       }
     }
     return this.state.defaultBranch ?? null;
+  }
+
+  /** 墓碑台账容量上限：超过即按 removedAt 淘汰最旧（防止无限增长）。 */
+  private static readonly REMOVED_BRANCHES_CAP = 200;
+
+  /**
+   * 记录一条分支墓碑（PR 合并/关闭后分支被删时调用）。以 previewSlug 为主键，
+   * 同 slug 重复写入按最新覆盖；超出容量上限时淘汰最旧的若干条。
+   */
+  recordRemovedBranch(tombstone: BranchTombstone): void {
+    if (!tombstone.previewSlug) return;
+    const map = this.state.removedBranches ?? (this.state.removedBranches = {});
+    map[tombstone.previewSlug] = tombstone;
+    const entries = Object.entries(map);
+    if (entries.length > StateService.REMOVED_BRANCHES_CAP) {
+      // removedAt 升序排列，删掉最旧的几条直到回到上限。
+      entries.sort((a, b) => (a[1].removedAt || '').localeCompare(b[1].removedAt || ''));
+      const overflow = entries.length - StateService.REMOVED_BRANCHES_CAP;
+      for (let i = 0; i < overflow; i += 1) delete map[entries[i][0]];
+    }
+    this.save();
+  }
+
+  /** 按 previewSlug 查分支墓碑；无记录返回 undefined。 */
+  getRemovedBranch(previewSlug: string): BranchTombstone | undefined {
+    if (!previewSlug) return undefined;
+    return this.state.removedBranches?.[previewSlug];
   }
 
   /** 项目级 preview 模式；fallback state.previewMode；都无返回 'multi'。 */
