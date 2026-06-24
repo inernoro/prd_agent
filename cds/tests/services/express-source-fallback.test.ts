@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { pickSourceFallbackMode } from '../../src/services/container.js';
-import type { DeployModeOverride } from '../../src/types.js';
+import { pickSourceFallbackMode, resolveEffectiveProfile } from '../../src/services/container.js';
+import type { BuildProfile, BranchEntry, DeployModeOverride } from '../../src/types.js';
 
 /**
  * 极速版镜像缺失 → 自动回退源码编译（用户 2026-06-24 决策，治「极速版永远不极速 / 打不开」）。
@@ -65,5 +65,64 @@ describe('pickSourceFallbackMode', () => {
       custom: mode({ command: 'run.sh' }),
     };
     expect(pickSourceFallbackMode(modes, 'express')).toBe('custom');
+  });
+});
+
+/**
+ * 回归：resolveEffectiveProfile 解析出极速版 profile 时，必须把源码回退 profile 从
+ * **baseline** 解析好挂在 sourceFallbackProfile 上 —— dockerImage 是源码基础镜像
+ * (dotnet-sdk)，不能误继承极速版的 sha 镜像（这正是 2026-06-24 首版 bug：原地从极速版
+ * profile 切换导致 docker run 拿 sha 镜像 not found）。
+ */
+describe('resolveEffectiveProfile 极速版 → 附带源码回退 profile', () => {
+  // 仿真 prd-agent 真实结构：baseline=dotnet sdk + 源码命令；static 继承 baseline 镜像；
+  // express 覆盖成 sha 镜像 + prebuilt + 8080。
+  const baseline: BuildProfile = {
+    id: 'api-prd-agent',
+    name: 'api',
+    dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
+    command: 'cd prd-api && dotnet run --urls http://0.0.0.0:5000',
+    containerPort: 5000,
+    activeDeployMode: 'express',
+    deployModes: {
+      static: { label: '源码', command: 'cd prd-api && dotnet build && dotnet run' },
+      express: {
+        label: '极速',
+        prebuilt: true,
+        dockerImage: 'ghcr.io/inernoro/prd_agent/prdagent-server:sha-${CDS_COMMIT_SHA}',
+        containerPort: 8080,
+      },
+    },
+  } as BuildProfile;
+  const branch = { githubCommitSha: 'eeba7bf14abc' } as BranchEntry;
+
+  it('极速版 profile 拿到 sha 镜像 + prebuilt', () => {
+    const eff = resolveEffectiveProfile(baseline, branch);
+    expect(eff.prebuiltImage).toBe(true);
+    expect(eff.dockerImage).toContain('sha-eeba7bf14abc');
+  });
+
+  it('sourceFallbackProfile 用 baseline 源码镜像，不是 sha 镜像（核心回归）', () => {
+    const eff = resolveEffectiveProfile(baseline, branch);
+    const src = eff.sourceFallbackProfile;
+    expect(src).toBeTruthy();
+    expect(src!.prebuiltImage).toBeFalsy();
+    expect(src!.dockerImage).toBe('mcr.microsoft.com/dotnet/sdk:8.0'); // 不是 sha 镜像！
+    expect(src!.dockerImage).not.toContain('ghcr.io');
+    expect(src!.containerPort).toBe(5000); // 不是极速版的 8080
+    expect(src!.command).toContain('dotnet'); // 源码构建命令
+    expect(src!.activeDeployMode).toBe('static');
+  });
+
+  it('源码模式自身不再嵌套 sourceFallbackProfile（递归一层即止）', () => {
+    const eff = resolveEffectiveProfile(baseline, branch);
+    expect(eff.sourceFallbackProfile?.sourceFallbackProfile).toBeUndefined();
+  });
+
+  it('无极速版（纯源码 profile）不附带回退', () => {
+    const src: BuildProfile = { ...baseline, activeDeployMode: 'static' } as BuildProfile;
+    const eff = resolveEffectiveProfile(src, branch);
+    expect(eff.prebuiltImage).toBeFalsy();
+    expect(eff.sourceFallbackProfile).toBeUndefined();
   });
 });

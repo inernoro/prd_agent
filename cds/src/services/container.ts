@@ -335,14 +335,29 @@ export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEn
     : resolveImageTemplate(withMode.fallbackImage, branch);
   const imageChanged = resolvedImage !== withMode.dockerImage;
   const fallbackChanged = JSON.stringify(resolvedFallback) !== JSON.stringify(withMode.fallbackImage);
-  if (imageChanged || fallbackChanged) {
-    return {
-      ...withMode,
-      dockerImage: resolvedImage || withMode.dockerImage,
-      ...(withMode.fallbackImage !== undefined ? { fallbackImage: resolvedFallback } : {}),
-    };
+  let resolved = (imageChanged || fallbackChanged)
+    ? {
+        ...withMode,
+        dockerImage: resolvedImage || withMode.dockerImage,
+        ...(withMode.fallbackImage !== undefined ? { fallbackImage: resolvedFallback } : {}),
+      }
+    : withMode;
+
+  // 2026-06-24 极速版自动回退源码编译：若解析出的是极速版(prebuilt)profile，**从 baseline**
+  // 额外解析一个源码编译 profile 挂到 sourceFallbackProfile，供 runService 在镜像拉不到时
+  // 直接切过去（baseline 解析保证 dockerImage=源码基础镜像、command=源码构建、端口正确，
+  // 不会误继承极速版的 sha 镜像/8080 端口）。仅 prebuilt 时计算；递归一层即止（源码 profile
+  // 非 prebuilt，不会再触发本分支）。
+  if (resolved.prebuiltImage) {
+    const srcMode = pickSourceFallbackMode(profile.deployModes, resolved.activeDeployMode);
+    if (srcMode) {
+      const srcProfile = resolveEffectiveProfile({ ...profile, activeDeployMode: srcMode }, branch);
+      if (!srcProfile.prebuiltImage && srcProfile.command && srcProfile.command.trim()) {
+        resolved = { ...resolved, sourceFallbackProfile: srcProfile };
+      }
+    }
   }
-  return withMode;
+  return resolved;
 }
 
 /** 把 BuildProfile.fallbackImage(string | string[] | undefined) 规整为有序候选数组。 */
@@ -1056,24 +1071,24 @@ export class ContainerService {
         // 极速版镜像全部拉取失败（path-filter 跳过本组件构建 → sha 镜像不存在,且回退链也没命中）。
         // 用户 2026-06-24 决策：**不再硬失败**,自动回退到源码编译模式,宁慢必成,根治
         // 「极速版永远不极速 / 部署出现异常打不开」。仅当该 profile 确实没有任何源码模式时才硬失败。
-        const fallbackMode = pickSourceFallbackMode(profile.deployModes, profile.activeDeployMode);
-        const sourceProfile = fallbackMode
-          ? resolveProfileWithMode({ ...profile, activeDeployMode: fallbackMode, prebuiltImage: false })
-          : null;
+        // 用 resolveEffectiveProfile 预先从 baseline 解析好的源码 profile（dockerImage=源码
+        // 基础镜像、command=源码构建、端口正确）。不在此处原地 re-resolve，避免误继承极速版
+        // 的 sha 镜像 / 8080 端口。
+        const sourceProfile = profile.sourceFallbackProfile;
         if (sourceProfile && sourceProfile.command && sourceProfile.command.trim()) {
-          onOutput?.(`── 极速版镜像缺失/拉取失败,自动回退源码编译模式 [${fallbackMode}]（较慢但必成功，无需手动切回）──\n`);
+          onOutput?.(`── 极速版镜像缺失/拉取失败,自动回退源码编译 [${sourceProfile.activeDeployMode ?? 'source'}]（较慢但必成功，无需手动切回）──\n`);
           this.recordContainerEvent({
             severity: 'warn',
             source: 'cds-container-service',
             action: 'app.pull.fallback-to-source',
-            message: `prebuilt image missing, auto fallback to source-build mode '${fallbackMode}': ${candidates.map((c) => c.image).join(', ')}`,
+            message: `prebuilt image missing, auto fallback to source-build mode '${sourceProfile.activeDeployMode}': ${candidates.map((c) => c.image).join(', ')}`,
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: profile.id,
             requestId: context.requestId ?? undefined,
             operationId: context.operationId ?? undefined,
             command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
-            details: { images: candidates.map((c) => c.image), fallbackMode, reason: '极速版镜像缺失→自动回退源码编译' },
+            details: { images: candidates.map((c) => c.image), fallbackMode: sourceProfile.activeDeployMode, sourceImage: sourceProfile.dockerImage, reason: '极速版镜像缺失→自动回退源码编译' },
           });
           // 切换到源码构建：改写 profile / command / entrypoint，跳出预构建分支后即走源码路径。
           profile = sourceProfile;

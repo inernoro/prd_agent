@@ -167,6 +167,14 @@ export interface BuildProfile {
    */
   fallbackImage?: string | string[];
   /**
+   * 2026-06-24 极速版自动回退源码编译新增 —— **运行期字段,不持久化**。
+   * 由 resolveEffectiveProfile 在解析出 prebuilt(极速版) profile 时,**从 baseline**
+   * 额外解析出一个源码编译 profile 挂在这里(dockerImage=源码基础镜像如 dotnet-sdk/node,
+   * command=源码构建命令,prebuiltImage=false)。runService 在极速版镜像全部拉不到时,
+   * 直接切到这个已正确解析的源码 profile,避免「从极速版 profile 原地切换」误继承 sha
+   * 镜像/8080 端口(那是 bug)。无源码模式可回退时为 undefined。 */
+  sourceFallbackProfile?: BuildProfile;
+  /**
    * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略。
    *
    * 'shared'(默认):所有分支共用一个数据库实例 + 一个 database name。
