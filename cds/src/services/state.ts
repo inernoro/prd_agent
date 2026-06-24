@@ -3108,10 +3108,19 @@ export class StateService {
   /**
    * 记录一条分支墓碑（PR 合并/关闭后分支被删时调用）。以 previewSlug 为主键，
    * 同 slug 重复写入按最新覆盖；超出容量上限时淘汰最旧的若干条。
+   *
+   * 一个例外（merged 粘性）：合并一个 PR 会先后投递两条 webhook —— `pull_request.closed`
+   * （reason='merged'）与随后 GitHub 自动删分支的 `delete`（reason='abandoned'）。两条
+   * 都会落墓碑，且投递顺序不保证。若已有 'merged' 记录，后到的 'abandoned' 不得把它降级
+   * （否则合并的分支会错显"已放弃"）；反向（先 abandoned 后 merged）允许覆盖，merged 信息更全。
    */
   recordRemovedBranch(tombstone: BranchTombstone): void {
     if (!tombstone.previewSlug) return;
     const map = this.state.removedBranches ?? (this.state.removedBranches = {});
+    const existing = map[tombstone.previewSlug];
+    if (existing?.reason === 'merged' && tombstone.reason === 'abandoned') {
+      return; // merged 粘性：不被后到的 delete 清理事件降级
+    }
     map[tombstone.previewSlug] = tombstone;
     const entries = Object.entries(map);
     if (entries.length > StateService.REMOVED_BRANCHES_CAP) {

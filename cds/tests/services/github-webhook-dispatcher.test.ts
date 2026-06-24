@@ -803,6 +803,26 @@ describe('GitHubWebhookDispatcher', () => {
       expect(r.branchDeleteRequest).toEqual({ branchId: 'proj-feat' });
     });
 
+    // 没走 PR 的直接删分支(git push --delete)也要留墓碑(reason=abandoned),
+    // 这样过期分支预览页能落到"已放弃"页而非泛化的"启动失败"页。
+    it('returns tombstoneRequest reason=abandoned for a raw branch delete', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('delete', {
+        ref: 'feat',
+        ref_type: 'branch',
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('branch-deleted');
+      expect(r.tombstoneRequest).toMatchObject({
+        branchId: 'proj-feat',
+        projectId: 'p1',
+        reason: 'abandoned',
+      });
+      // delete 事件不带 PR 语义 → 无 prNumber/mergeCommitSha
+      expect(r.tombstoneRequest?.prNumber).toBeUndefined();
+      expect(r.tombstoneRequest?.mergeCommitSha).toBeUndefined();
+    });
+
     it('ignores tag deletions', async () => {
       const d = buildDispatcher();
       const r = await d.handle('delete', {

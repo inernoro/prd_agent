@@ -535,6 +535,45 @@ describe('StateService', () => {
       expect(reloaded.getRemovedBranch('a-feat-demo')?.reason).toBe('merged');
     });
 
+    it('merged is sticky: a later abandoned does not downgrade it', () => {
+      service.load();
+      // 合并 PR 先落 merged 墓碑，随后 GitHub 自动删分支的 delete 事件想落 abandoned。
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'merged',
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'abandoned',
+        removedAt: '2026-06-24T00:00:05.000Z',
+      });
+      expect(service.getRemovedBranch('login-feat-demo')?.reason).toBe('merged');
+    });
+
+    it('abandoned can be upgraded to merged when delete arrives before pr-close', () => {
+      service.load();
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'abandoned',
+        removedAt: '2026-06-24T00:00:00.000Z',
+      });
+      service.recordRemovedBranch({
+        previewSlug: 'login-feat-demo',
+        branch: 'feat/login',
+        projectId: 'proj',
+        reason: 'merged',
+        removedAt: '2026-06-24T00:00:05.000Z',
+      });
+      expect(service.getRemovedBranch('login-feat-demo')?.reason).toBe('merged');
+    });
+
     it('caps tombstones to 200, evicting oldest by removedAt', () => {
       service.load();
       // 写 205 条，时间递增 → 最旧 5 条应被淘汰。

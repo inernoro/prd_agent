@@ -683,6 +683,16 @@ export class GitHubWebhookDispatcher {
       // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":除了 stopRequest 停容器,
       // 还要 branchDeleteRequest 删 CDS state.branches[id] + worktree。
       branchDeleteRequest: { branchId },
+      // 没走 PR 的直接删分支（git push --delete）也留墓碑，过期分支预览页才能落到
+      // "已放弃"页而非泛化的"启动失败"页。reason 固定 abandoned：delete 事件本身不带
+      // 合并语义。若该分支此前因 PR 合并已写过 'merged' 墓碑，recordRemovedBranch 的
+      // merged 粘性保证这条 abandoned 不会把它降级。
+      tombstoneRequest: {
+        branchId,
+        branch: entry.branch || event.ref,
+        projectId: project.id,
+        reason: 'abandoned',
+      },
     };
   }
 
