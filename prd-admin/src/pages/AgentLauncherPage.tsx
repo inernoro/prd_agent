@@ -951,17 +951,10 @@ export default function AgentLauncherPage() {
                       />
                     </div>
 
-                    {/* 教程中心承接卡（搜索态隐藏）—— 设计选型：三套效果并列对比，选定后保留其一 */}
+                    {/* 教程中心承接卡（搜索态隐藏） */}
                     {!searchQuery.trim() && (
                       <div className="flex flex-col gap-2" style={{ width: isMobile ? '100%' : 280, maxWidth: '100%' }}>
-                        {(['A', 'B', 'C'] as const).map((v, i) => (
-                          <div key={v} className="flex flex-col gap-1">
-                            <span className="text-[10px] font-semibold tracking-wide" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
-                              效果 {i + 1}
-                            </span>
-                            <LearningCenterTeaser compact variant={v} tourAnchor={i === 0} />
-                          </div>
-                        ))}
+                        <LearningCenterTeaser />
                       </div>
                     )}
                   </div>
