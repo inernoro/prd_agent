@@ -69,6 +69,21 @@ function verdictLabel(item: DimensionCheckItemResult): { text: string; tone: 'pa
   return { text: '未完成', tone: 'fail-soft' };
 }
 
+/** 按后端存的 errorMessage 文本，给出一句面向用户的下一步建议 */
+function reviewErrorHint(msg?: string | null): string {
+  const m = msg ?? '';
+  if (m.includes('网关') || m.includes('LLM')) {
+    return '这是 LLM 网关/模型侧的临时问题（配额、上游超时或模型池配置）。可点「重新评审」重试；若多次失败，请联系管理员检查评审模型池配置。';
+  }
+  if (m.includes('格式异常') || m.includes('解析')) {
+    return 'AI 输出未通过格式解析，常见原因是文档过长导致输出被截断。可点「重新评审」重试，或精简文档后用「重新上传方案」再评一次。';
+  }
+  if (m.includes('内容为空')) {
+    return '未能读取到方案正文，请确认上传的是包含文本内容的有效 Markdown 文件后重新上传。';
+  }
+  return '可点「重新评审」重试；若反复失败，请把下方错误信息反馈给管理员。';
+}
+
 function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
   const grouped = items.reduce<Record<string, DimensionCheckItemResult[]>>((acc, it) => {
     const key = it.category || '其他';
@@ -485,6 +500,24 @@ export function ReviewAgentResultPage() {
           )}
         </div>
       </div>
+
+      {/* 评审失败：直接显示后端记录的失败原因 + 下一步建议 */}
+      {isError && !isRunning && (
+        <div className="mb-6 bg-red-500/8 border border-red-500/20 rounded-xl p-4">
+          <div className="flex items-start gap-2.5">
+            <XCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-red-300">评审失败</p>
+              <p className="text-xs text-red-200/80 mt-1 leading-relaxed break-words">
+                {submission.errorMessage || '评审过程发生未知错误（后端未记录具体原因）'}
+              </p>
+              <p className="text-[11px] text-white/45 mt-2 leading-relaxed">
+                {reviewErrorHint(submission.errorMessage)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 申诉操作行（仅在相关状态下展示） */}
       {(canAppeal || canReupload || canReuploadOnFailure || hasAppealRecord) && (
