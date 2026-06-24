@@ -3582,7 +3582,10 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
           payload: {
             branchId: b.id,
             projectId: b.projectId,
-            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason, ciWorkflowRunUrl: undefined },
+            // ciWorkflowRunUrl 用 '' 而非 undefined 清空：SSE 流走 JSON.stringify 会丢弃
+            // undefined 字段，BranchList reducer 是「流式分支 merge 覆盖旧项」，丢字段 =
+            // 客户端保留旧的「查看构建」链接。空串可序列化 + falsy，能真正覆盖清空（Codex P2）。
+            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason, ciWorkflowRunUrl: '' },
             ts: nowIso(),
           },
         });

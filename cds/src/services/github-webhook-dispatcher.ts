@@ -803,9 +803,12 @@ export class GitHubWebhookDispatcher {
         patch: {
           ciImageStatus: status,
           ciTargetSha: sha,
-          ciWorkflowRunUrl: runUrl,
-          ciWorkflowConclusion: fresh?.ciWorkflowConclusion,
-          ciImageError: fresh?.ciImageError,
+          // 清空字段用 '' 而非 undefined：SSE JSON.stringify 丢 undefined，reducer merge
+          // 会让客户端保留旧值（如 failed→ready 恢复时旧 ciImageError 不消失）。空串可
+          // 序列化 + falsy，真正覆盖清空（Codex P2，与看门狗同源）。
+          ciWorkflowRunUrl: runUrl ?? '',
+          ciWorkflowConclusion: fresh?.ciWorkflowConclusion ?? '',
+          ciImageError: fresh?.ciImageError ?? '',
         },
         ts: nowIso(),
       },
