@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { CdsAccessMorphBoard } from '@/pages/LoginPage';
+import { fetchSessionAuthed } from '@/lib/api';
 import './HomePage.css';
 
 const FEED_LINES = [
@@ -20,9 +21,15 @@ const BranchIcon = (props: { className?: string }) => (
 );
 
 export function HomePage(): JSX.Element {
+  const navigate = useNavigate();
   const [feedIndex, setFeedIndex] = useState(0);
   const [feedOff, setFeedOff] = useState(false);
   const [accessMode, setAccessMode] = useState(false);
+  // 后台探测一次「当前会话 cookie 是否仍有效」。承诺在按钮点击前未必返回,
+  // 所以 enterConsole() 会 await 这个共享 promise 再决定:已登录直接进控制台,
+  // 未登录才弹登录框。null = 探测尚未完成。
+  const authedRef = useRef<boolean | null>(null);
+  const probeRef = useRef<Promise<boolean> | null>(null);
 
   useEffect(() => {
     // 预取访问面板和控制台 lazy chunk:首页点击 Access/Enter Console 时只做本页
@@ -34,10 +41,34 @@ export function HomePage(): JSX.Element {
     const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
     if (typeof ric === 'function') ric(preload);
     else window.setTimeout(preload, 200);
+
+    // 已登录的用户重新打开首页时,不应该再被甩一次登录框 —— 先探一次会话态。
+    const probe = fetchSessionAuthed().then((ok) => {
+      authedRef.current = ok;
+      return ok;
+    });
+    probeRef.current = probe;
   }, []);
 
+  async function enterConsole() {
+    // 已知已登录 → 直接进控制台,跳过登录框。
+    if (authedRef.current === true) {
+      navigate('/project-list', { viewTransition: true });
+      return;
+    }
+    // 已知未登录 → 弹登录框。
+    if (authedRef.current === false) {
+      setAccessMode(true);
+      return;
+    }
+    // 探测尚未完成(点得太快)→ 等结果再决定,避免误判。
+    const ok = await (probeRef.current ?? fetchSessionAuthed());
+    if (ok) navigate('/project-list', { viewTransition: true });
+    else setAccessMode(true);
+  }
+
   function openAccessMode() {
-    setAccessMode(true);
+    void enterConsole();
   }
 
   function closeAccessMode() {

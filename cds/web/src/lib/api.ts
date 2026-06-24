@@ -304,6 +304,24 @@ export async function fetchBootstrapStatus(): Promise<{ needsBootstrap: boolean 
   return apiRequest<{ needsBootstrap: boolean }>('/api/auth/bootstrap-status');
 }
 
+/**
+ * Probe whether the current same-origin session cookie is still valid.
+ *
+ * `GET /api/me` 是唯一能判断「当前 HttpOnly 会话 cookie 是否还有效」的途径
+ * （cookie 设了 HttpOnly,前端 JS 读不到）。200 = 已登录;401 = 未登录。
+ * 网络/瞬时错误一律按「未登录」处理,宁可多弹一次登录框也不要把匿名用户
+ * 误判成已登录后丢进控制台再吃 401。
+ */
+export async function fetchSessionAuthed(): Promise<boolean> {
+  try {
+    await apiRequest('/api/me');
+    return true;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return false;
+    return false;
+  }
+}
+
 /** Create the first local system-owner account (only valid when zero users). */
 export async function bootstrapFirstUser(input: {
   username: string;
