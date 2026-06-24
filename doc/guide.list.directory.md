@@ -343,6 +343,9 @@
 - [缺陷分享与 Agent 技能修复架构](design.defect-agent-share-skill-architecture) `design.defect-agent-share-skill-architecture`
   > 缺陷分享中心、外部 Agent 技能接入与修复报告闭环的架构设计
 
+- [缺陷自动化自治体系](design.defect-automation-autonomy) `design.defect-automation-autonomy`
+  > 把缺陷自动化从「会办事的脚本」收敛为有边界、能担责的自治体系：自主三档边界 + 五层自治回路（认知/规划/执行/记忆/监督），每层接真实代码
+
 - [系统级跨节点互传（Peer Sync）设计](design.peer-sync) `design.peer-sync`
   > 多节点间消息互传的协议设计、数据模型与同步机制
 

@@ -81,6 +81,7 @@ docs:
   design.defect-labels: 缺陷管理标签体系设计
   design.defect-image-analysis: 缺陷截图 VLM 预解析设计文档
   design.defect-agent-share-skill-architecture: 缺陷分享与 Agent 技能修复架构
+  design.defect-automation-autonomy: 缺陷自动化自治体系
   design.literary-agent: 文学创作 Agent 文章配图功能设计
   design.multi-doc-knowledge: 多文档知识库与文档类型系统设计文档
   design.multi-doc-and-citations: 多文档上下文与引用系统重设计
