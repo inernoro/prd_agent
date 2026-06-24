@@ -13,7 +13,12 @@ import {
 } from 'lucide-react';
 
 import { apiRequest } from '@/lib/api';
-import { PROJECT_SETTINGS_INDEX, SYSTEM_SETTINGS_INDEX } from '@/lib/settingsSearchIndex';
+import {
+  PROJECT_SETTINGS_INDEX,
+  PROJECT_TAB_LABELS,
+  SYSTEM_SETTINGS_INDEX,
+  SYSTEM_TAB_LABELS,
+} from '@/lib/settingsSearchIndex';
 
 /*
  * CommandPalette — global Cmd/Ctrl+K palette（苹果聚焦式全局搜索）。
@@ -61,9 +66,17 @@ interface ResultItem {
   hint?: string;
   href?: string;
   icon: 'project' | 'branch' | 'settings' | 'topology';
+  /**
+   * 面包屑路径，告诉用户这条结果在哪（如「CDS 系统设置 / 调度器」、
+   * 「prd-agent / 项目设置 / 项目配置」、分支的「prd-agent」）。带路径是为了
+   * 让用户搜一次就记住它的位置。用 ' / ' 分段，与全局 Crumb 一致。
+   */
+  path?: string;
   /** 额外的同义词集合，参与模糊匹配但不展示（来自 settingsSearchIndex） */
   keywords?: string[];
 }
+
+const PATH_SEP = ' / ';
 
 function projectDisplay(project: ProjectRow): string {
   return project.aliasName || project.name || project.slug || project.id;
@@ -74,6 +87,7 @@ function projectsToRows(projects: ProjectRow[]): ResultItem[] {
     key: `project:${project.id}`,
     type: 'project' as const,
     label: projectDisplay(project),
+    path: 'CDS',
     hint: project.branchCount != null ? `${project.branchCount} 分支` : '项目',
     href: `/branches/${encodeURIComponent(project.id)}`,
     icon: 'project' as const,
@@ -84,11 +98,14 @@ function branchesToRows(branches: BranchRow[], projectsById: Map<string, Project
   return branches.map((branch) => {
     const project = projectsById.get(branch.projectId);
     const projectLabel = project ? projectDisplay(project) : branch.projectId;
+    const status = `${branch.status || ''}${branch.isFavorite ? ' · 收藏' : ''}`.trim();
     return {
       key: `branch:${branch.id}`,
       type: 'branch' as const,
       label: branch.branch,
-      hint: `${projectLabel} · ${branch.status || ''}${branch.isFavorite ? ' · 收藏' : ''}`.trim(),
+      // 分支结果带上所属项目作路径，用户一眼知道这条分支归哪个项目（也好记）。
+      path: projectLabel,
+      hint: status || undefined,
       href: `/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(branch.projectId)}`,
       icon: 'branch' as const,
     };
@@ -103,6 +120,7 @@ function systemSettingsToRows(): ResultItem[] {
     key: `setting:${entry.id}`,
     type: 'setting' as const,
     label: entry.label,
+    path: ['CDS 系统设置', SYSTEM_TAB_LABELS[entry.tab] || entry.tab].join(PATH_SEP),
     hint: entry.hint,
     href: `/cds-settings#${entry.tab}`,
     icon: 'settings' as const,
@@ -121,7 +139,9 @@ function projectSettingsToRows(projects: ProjectRow[]): ResultItem[] {
         key: `setting:${project.id}:${entry.id}`,
         type: 'setting',
         label: entry.label,
-        hint: `${projectLabel} · ${entry.hint}`,
+        // 项目级配置路径带上项目名：「prd-agent / 项目设置 / 项目配置」
+        path: [projectLabel, '项目设置', PROJECT_TAB_LABELS[entry.tab] || entry.tab].join(PATH_SEP),
+        hint: entry.hint,
         href: `/settings/${encodeURIComponent(project.id)}#${entry.tab}`,
         icon: 'settings',
         // 把项目名也并进 keywords，这样「prd-agent 探活」能一次命中到该项目
@@ -149,18 +169,18 @@ function keywordScore(keywords: string[] | undefined, trimmed: string): number {
 // 涵盖 CDS 系统设置各 tab 的快速跳转 + 维护操作。模糊匹配靠 input value 的
 // 子串包含(已有逻辑),用户输入"集群"/"webhook"/"快照"等中文关键词都能命中。
 const STATIC_ACTIONS: ResultItem[] = [
-  { key: 'action:project-list',     type: 'action', label: '所有项目',           hint: '回到项目控制台',                href: '/project-list',                  icon: 'project' },
-  { key: 'action:cds-settings',     type: 'action', label: 'CDS 系统设置',       hint: '存储 / 集群 / GitHub / 维护',    href: '/cds-settings',                  icon: 'settings' },
-  { key: 'action:maintenance',      type: 'action', label: '更新与重启',         hint: 'self-update / 强制更新 / 历史',  href: '/cds-settings#maintenance',      icon: 'settings' },
-  { key: 'action:webhook-log',      type: 'action', label: 'GitHub Webhook 日志', hint: '每次 hook 投递详情 + payload',   href: '/cds-settings#webhook-log',      icon: 'settings' },
-  { key: 'action:cluster',          type: 'action', label: '集群',               hint: '节点列表 / 调度策略 / 加入退出',  href: '/cds-settings#cluster',          icon: 'settings' },
-  { key: 'action:remote-hosts',     type: 'action', label: '远程主机',           hint: 'shared-service 部署目标',        href: '/cds-settings#remote-hosts',     icon: 'settings' },
-  { key: 'action:connections',      type: 'action', label: '对接 MAP',           hint: '配对密钥 / 连接管理',            href: '/cds-settings#connections',      icon: 'settings' },
-  { key: 'action:snapshots',        type: 'action', label: '配置快照',           hint: '备份 / 回滚配置到任意时间点',    href: '/cds-settings#snapshots',        icon: 'settings' },
-  { key: 'action:storage',          type: 'action', label: '存储后端',           hint: 'JSON / Mongo / 切换',            href: '/cds-settings#storage',          icon: 'settings' },
-  { key: 'action:global-vars',      type: 'action', label: 'CDS 全局变量',       hint: '所有项目共享的环境变量',         href: '/cds-settings#global-vars',      icon: 'settings' },
-  { key: 'action:auth',             type: 'action', label: '登录与认证',         hint: 'GitHub OAuth / basic auth',      href: '/cds-settings#auth',             icon: 'settings' },
-  { key: 'action:access-keys',      type: 'action', label: 'AI Access Key',     hint: 'AI 访问密钥签发与撤销',          href: '/cds-settings#access-keys',      icon: 'settings' },
+  { key: 'action:project-list',     type: 'action', label: '所有项目',           path: 'CDS',           hint: '回到项目控制台',                href: '/project-list',                  icon: 'project' },
+  { key: 'action:cds-settings',     type: 'action', label: 'CDS 系统设置',       path: 'CDS',           hint: '存储 / 集群 / GitHub / 维护',    href: '/cds-settings',                  icon: 'settings' },
+  { key: 'action:maintenance',      type: 'action', label: '更新与重启',         path: 'CDS 系统设置',  hint: 'self-update / 强制更新 / 历史',  href: '/cds-settings#maintenance',      icon: 'settings' },
+  { key: 'action:webhook-log',      type: 'action', label: 'GitHub Webhook 日志', path: 'CDS 系统设置',  hint: '每次 hook 投递详情 + payload',   href: '/cds-settings#webhook-log',      icon: 'settings' },
+  { key: 'action:cluster',          type: 'action', label: '集群',               path: 'CDS 系统设置',  hint: '节点列表 / 调度策略 / 加入退出',  href: '/cds-settings#cluster',          icon: 'settings' },
+  { key: 'action:remote-hosts',     type: 'action', label: '远程主机',           path: 'CDS 系统设置',  hint: 'shared-service 部署目标',        href: '/cds-settings#remote-hosts',     icon: 'settings' },
+  { key: 'action:connections',      type: 'action', label: '对接 MAP',           path: 'CDS 系统设置',  hint: '配对密钥 / 连接管理',            href: '/cds-settings#connections',      icon: 'settings' },
+  { key: 'action:snapshots',        type: 'action', label: '配置快照',           path: 'CDS 系统设置',  hint: '备份 / 回滚配置到任意时间点',    href: '/cds-settings#snapshots',        icon: 'settings' },
+  { key: 'action:storage',          type: 'action', label: '存储后端',           path: 'CDS 系统设置',  hint: 'JSON / Mongo / 切换',            href: '/cds-settings#storage',          icon: 'settings' },
+  { key: 'action:global-vars',      type: 'action', label: 'CDS 全局变量',       path: 'CDS 系统设置',  hint: '所有项目共享的环境变量',         href: '/cds-settings#global-vars',      icon: 'settings' },
+  { key: 'action:auth',             type: 'action', label: '登录与认证',         path: 'CDS 系统设置',  hint: 'GitHub OAuth / basic auth',      href: '/cds-settings#auth',             icon: 'settings' },
+  { key: 'action:access-keys',      type: 'action', label: 'AI Access Key',     path: 'CDS 系统设置',  hint: 'AI 访问密钥签发与撤销',          href: '/cds-settings#access-keys',      icon: 'settings' },
 ];
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {
@@ -358,6 +378,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               >
                 <PaletteIcon kind={item.icon} />
                 <span className="min-w-0 flex-1">
+                  {item.path ? (
+                    <span className="mb-0.5 block truncate text-[11px] text-muted-foreground/70">{item.path}</span>
+                  ) : null}
                   <span className="block truncate text-sm font-medium">{item.label}</span>
                   {item.hint ? <span className="block truncate text-[11px] text-muted-foreground">{item.hint}</span> : null}
                 </span>

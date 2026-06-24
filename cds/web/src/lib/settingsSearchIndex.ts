@@ -37,6 +37,47 @@ export interface SettingsIndexEntry {
 }
 
 /*
+ * tab 值 → 人类可读的分区名。用于在命令面板里拼出完整面包屑路径
+ * （如「CDS 系统设置 / 调度器」），让用户搜到配置的同时记住它在哪。
+ * 与 CdsSettingsPage / ProjectSettingsPage 的 tab label 保持一致。
+ */
+export const SYSTEM_TAB_LABELS: Record<string, string> = {
+  maintenance: '更新与重启',
+  'access-keys': 'AI Access Key',
+  overview: '概览',
+  auth: '登录与认证',
+  users: '用户管理',
+  activity: '用户痕迹',
+  github: 'GitHub 集成',
+  'github-whitelist': 'GitHub 白名单',
+  'webhook-log': 'Webhook 日志',
+  storage: '存储后端',
+  scheduler: '调度器',
+  cluster: '集群',
+  'remote-hosts': '远程主机',
+  connections: '对接 MAP',
+  'global-vars': 'CDS 全局变量',
+  'loading-pages': '加载页预览',
+  snapshots: '配置快照',
+};
+
+export const PROJECT_TAB_LABELS: Record<string, string> = {
+  general: '基础信息',
+  github: 'GitHub',
+  'comment-template': '评论模板',
+  env: '项目环境变量',
+  'runtime-defaults': '新分支默认',
+  compose: '项目配置',
+  infra: '基础设施',
+  storage: '存储',
+  migration: '迁移',
+  cache: '缓存诊断',
+  stats: '统计',
+  activity: '活动日志',
+  danger: '删除项目',
+};
+
+/*
  * 系统级设置（/cds-settings#<tab>）。tab 取值见
  * CdsSettingsPage.tsx 的 TabValue。
  */
