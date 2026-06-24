@@ -143,6 +143,8 @@ export interface GitHubPendingReviewEntry {
   createdAtUtc: string;
   updatedAtUtc: string;
   htmlUrl: string;
+  /** 与该 open PR 关联的缺陷修复记录 */
+  linkedDefects?: GitHubLinkedDefect[];
 }
 
 export interface GitHubPendingReviewView {

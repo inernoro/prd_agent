@@ -72,6 +72,44 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 
 若暂时无法安装依赖,不要跳过前置设计:在本技能内按 `验收测试设计稿 -> 验收场景编排 -> 截图归档` 的顺序手写同名章节,并把缺失依赖记入报告风险。
 
+## 自动化任务契约（自动化只做调度壳）
+
+每日 6 点这类 cron 自动化只负责调度和注入运行上下文,验收规则必须由技能链维护。自动化 prompt 只允许保留:
+
+- 工作目录、目标日期规则、允许的预览测试数据前缀和禁止触碰生产破坏性数据。
+- Slack 通知目标,如 `#map` / `C0B23U0V9U4`。
+- 必要 env 名称,如 `MAP_AI_USER`、`MAP_ACCEPT_PASS`、`MAP_DOC_STORE_KEY`、`AI_ACCESS_KEY`;禁止写入明文账号密码。
+- 必用技能链:`acceptance-test-design -> acceptance-scenario-orchestrator -> create-visual-test-to-kb`。
+- 一句话说明:报告结构、深度门禁、CDS ready、归档、`verify-open` 和失败降级均以本技能为准。
+
+自动化 prompt 不得复制维护每日验收章节、截图数量、颜色标记、CDS 检查细则、报告模板或 Slack 长格式。规则只在技能中改,避免 prompt 与技能漂移。
+
+自动化启动后必须先执行这些运行门禁:
+
+- 读取当前仓库 `AGENTS.md`;保持 tracked 工作区干净,不得在旧 worktree 或脏 worktree 上验收。
+- 同步目标基线到最新远端代码。每日验收默认 `git fetch --all --prune` 后测试最新 `origin/main`,并在报告和 Slack 同时记录 `测试 commit` 与 `origin/main commit`。二者不一致必须解释原因。
+- `MAP_AI_USER` / `MAP_ACCEPT_PASS` 只用于 MAP 登录;CDS API、知识库写入和 Slack 不能误用这两个账号密码。
+- 缺少 `MAP_AI_USER`、`MAP_ACCEPT_PASS`、`MAP_DOC_STORE_KEY` 或 `AI_ACCESS_KEY` 时,仍必须生成失败报告并通知 Slack,不能静默退出或只报本地错误。
+
+## CDS 预览 ready 门禁（自动化/每日验收强制）
+
+每日验收开始取证前必须证明被测预览环境真的可测:
+
+- 预览域名和 branch 信息只能来自 `python3 .claude/skills/cds/cli/cdscli.py --human preview-url` 及 cdscli/API 查询结果;禁止手拼 `miduo.org`。
+- 必须检查目标 branch 的部署状态和 smoke 结果。状态为 building、starting、stopped、error、missing,或 smoke 非 0 时,最多每 30 秒重试一次,总等待不超过 15 分钟。
+- 15 分钟后仍未 ready,这轮每日验收判链路可运行但产品环境不可验,生成线上失败报告并通知 Slack。不得把登录页、构建中页面、503 页面、CDS shell 截图当作功能证据。
+- 取证过程中遇到 503/502/preview not ready,必须在报告「重试记录」写清每次 URL、HTTP 状态、时间和最终结论。偶发一次后重试通过可以继续,但首试失败不能从报告里抹掉。
+
+## 线上报告与通知门禁（自动化/每日验收强制）
+
+每日自动化的交付入口必须是线上可打开地址:
+
+- Slack 禁止发送 `/tmp`、`file://` 或本机 HTML 作为报告入口。报告 HTML/Markdown 必须发布到 CDS 验收报告页或 MAP 知识库分享链;优先 CDS 自托管报告,失败再回退 MAP 知识库。
+- 通知里出现的报告链接、raw 链接和页面链接必须同源且可由接收者打开。raw 内容验证通过不等于页面验证通过。
+- 归档后必须跑 `scripts/verify-open.mjs`,默认 3 次重试,同时等待标题、正文和图片。三次都失败时判验收链路失败;若第 2/3 次通过,报告必须记录首试失败和最终通过次数。
+- 如果所有线上归档路径都失败,仍要把本地报告路径写入失败报告摘要,但 Slack 结论必须写「线上归档失败」,不能伪装为已完成。
+- Slack 摘要保持短格式:总 Verdict、线上报告链接、测试 commit、origin/main commit、缺陷数量、未覆盖数量、归档结果、打开验证结果。详细证据放报告,不要塞进 automation prompt。
+
 ## 证据关联性门禁（2026-06-20 反哺）
 
 > 事故反哺：用户指出“知识库同步功能变更，却只截知识库列表页”，这是模块相邻，不是行为证明。验收报告必须证明提交信息里的行为，不是证明同一模块的某个页面能打开。
