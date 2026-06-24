@@ -1,25 +1,26 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { Upload, FileText, Table, Play, Save, Trash2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { useState, useRef, useCallback, useEffect, type CSSProperties } from 'react';
+import {
+  Upload, FileText, Play, Save, Trash2, ChevronDown, ChevronRight,
+  RefreshCw, FileOutput, CheckCircle2, Table2, X,
+} from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
+import { PageHeader } from '@/components/design/PageHeader';
 import { Select } from '@/components/design/Select';
-import { Surface } from '@/components/design/Surface';
 import { useAuthStore } from '@/stores/authStore';
+import { toast } from '@/lib/toast';
 import {
-  parseSourceFile,
-  parseTemplateFile,
-  createTask,
-  listTasks,
-  listRules,
-  saveRule,
-  deleteRule,
-  downloadResult,
-  type ParseSourceResult,
-  type ParseTemplateResult,
-  type FieldMapping,
-  type FileConvertTask,
-  type FileConvertRule,
+  parseSourceFile, parseTemplateFile, createTask, listTasks, listRules,
+  saveRule, deleteRule, downloadResult,
+  type ParseSourceResult, type ParseTemplateResult,
+  type FieldMapping, type FileConvertTask, type FileConvertRule,
 } from '@/services/real/fileConvertService';
+
+const inputStyle: CSSProperties = {
+  background: 'var(--bg-sunken)',
+  border: '1px solid var(--border-default)',
+  color: 'var(--text-primary)',
+};
 
 type Step = 'upload' | 'mapping' | 'running';
 
@@ -36,20 +37,19 @@ export default function FileConvertPage() {
   const [rules, setRules] = useState<FileConvertRule[]>([]);
   const [savingRule, setSavingRule] = useState(false);
   const [saveRuleName, setSaveRuleName] = useState('');
-  const [saveRuleDescription, setSaveRuleDescription] = useState('');
-  const [saveRuleError, setSaveRuleError] = useState<string | null>(null);
   const [saveRuleWithTemplate, setSaveRuleWithTemplate] = useState(true);
   const [showSaveRuleForm, setShowSaveRuleForm] = useState(false);
   const [rulesExpanded, setRulesExpanded] = useState(false);
 
   const [taskStatus, setTaskStatus] = useState<string | null>(null);
+  const [taskDoneId, setTaskDoneId] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [processedRows, setProcessedRows] = useState(0);
   const [totalRows, setTotalRows] = useState(0);
-  const [taskDoneId, setTaskDoneId] = useState<string | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<FileConvertTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -58,9 +58,7 @@ export default function FileConvertPage() {
     if (res.success && Array.isArray(res.data)) setRules(res.data);
   }, []);
 
-  useEffect(() => {
-    loadRules();
-  }, [loadRules]);
+  useEffect(() => { loadRules(); }, [loadRules]);
 
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
@@ -74,10 +72,7 @@ export default function FileConvertPage() {
     setUploadError(null);
     const res = await parseSourceFile(file);
     setSourceLoading(false);
-    if (!res.success) {
-      setUploadError(String(res.error?.message ?? '源文件解析失败'));
-      return;
-    }
+    if (!res.success) { setUploadError(String(res.error?.message ?? '源文件解析失败')); return; }
     setSourceResult(res.data);
   }, []);
 
@@ -86,10 +81,7 @@ export default function FileConvertPage() {
     setUploadError(null);
     const res = await parseTemplateFile(file);
     setTemplateLoading(false);
-    if (!res.success) {
-      setUploadError(String(res.error?.message ?? '模板文件解析失败'));
-      return;
-    }
+    if (!res.success) { setUploadError(String(res.error?.message ?? '模板文件解析失败')); return; }
     setTemplateResult(res.data);
   }, []);
 
@@ -108,64 +100,30 @@ export default function FileConvertPage() {
     if (!sourceResult || !templateResult) return;
     const initial: FieldMapping[] = templateResult.placeholders.map(ph => ({
       templatePlaceholder: ph,
-      sourceColumn:
-        sourceResult.columns.find(c => c.toLowerCase() === ph.toLowerCase()) ??
-        sourceResult.columns[0] ??
-        '',
+      sourceColumn: sourceResult.columns.find(c => c.toLowerCase() === ph.toLowerCase()) ?? sourceResult.columns[0] ?? '',
     }));
     setMappings(initial);
     setStep('mapping');
   }, [sourceResult, templateResult]);
 
-  const applyRule = useCallback(
-    (rule: FileConvertRule) => {
-      const applied: FieldMapping[] = rule.fieldMappings.map(m => ({
-        templatePlaceholder: m.templatePlaceholder,
-        sourceColumn:
-          sourceResult?.columns.find(c => c === m.sourceColumn) ?? m.sourceColumn,
-      }));
-      setMappings(applied);
-
-      // 若规则附带了永久模板，自动填充 templateResult，跳过手动上传
-      if (rule.templateFileKey && rule.templateFileName) {
-        const placeholders = [...new Set(rule.fieldMappings.map(m => m.templatePlaceholder))];
-        setTemplateResult({
-          fileKey: rule.templateFileKey,
-          fileName: rule.templateFileName,
-          placeholders,
-        });
-      }
-    },
-    [sourceResult]
-  );
-
-  const getValidMappings = useCallback(
-    (items: FieldMapping[]) =>
-      items.filter(
-        m =>
-          m.templatePlaceholder.trim() &&
-          m.sourceColumn &&
-          m.sourceColumn !== '__skip__'
-      ),
-    []
-  );
+  const applyRule = useCallback((rule: FileConvertRule) => {
+    const applied: FieldMapping[] = rule.fieldMappings.map(m => ({
+      templatePlaceholder: m.templatePlaceholder,
+      sourceColumn: sourceResult?.columns.find(c => c === m.sourceColumn) ?? m.sourceColumn,
+    }));
+    setMappings(applied);
+    if (rule.templateFileKey && rule.templateFileName) {
+      const placeholders = [...new Set(rule.fieldMappings.map(m => m.templatePlaceholder))];
+      setTemplateResult({ fileKey: rule.templateFileKey, fileName: rule.templateFileName, placeholders });
+    }
+  }, [sourceResult]);
 
   const handleSaveRule = useCallback(async () => {
-    setSaveRuleError(null);
-    if (!saveRuleName.trim()) {
-      setSaveRuleError('请填写规则名称');
-      return;
-    }
-    const validMappings = getValidMappings(mappings);
-    if (validMappings.length === 0) {
-      setSaveRuleError('请至少配置一条有效字段映射（模板占位符 + 源文件列）');
-      return;
-    }
+    if (!saveRuleName.trim()) return;
     setSavingRule(true);
     const res = await saveRule({
       name: saveRuleName.trim(),
-      description: saveRuleDescription.trim() || undefined,
-      fieldMappings: validMappings,
+      fieldMappings: mappings,
       lastSourceFileName: sourceResult?.fileName,
       ...(saveRuleWithTemplate && templateResult
         ? { tempTemplateFileKey: templateResult.fileKey, templateFileName: templateResult.fileName }
@@ -175,32 +133,12 @@ export default function FileConvertPage() {
     if (res.success) {
       setShowSaveRuleForm(false);
       setSaveRuleName('');
-      setSaveRuleDescription('');
-      setSaveRuleError(null);
       loadRules();
-      return;
+      toast.success('规则已保存');
+    } else {
+      toast.error('保存失败', String(res.error?.message ?? ''));
     }
-    setSaveRuleError(String(res.error?.message ?? '保存规则失败'));
-  }, [
-    saveRuleName,
-    saveRuleDescription,
-    mappings,
-    sourceResult,
-    templateResult,
-    saveRuleWithTemplate,
-    loadRules,
-    getValidMappings,
-  ]);
-
-  const addMappingRow = useCallback(() => {
-    setMappings(prev => [
-      ...prev,
-      {
-        templatePlaceholder: '',
-        sourceColumn: sourceResult?.columns[0] ?? '',
-      },
-    ]);
-  }, [sourceResult]);
+  }, [saveRuleName, mappings, sourceResult, templateResult, saveRuleWithTemplate, loadRules]);
 
   const handleDeleteRule = useCallback(async (ruleId: string) => {
     await deleteRule(ruleId);
@@ -209,7 +147,7 @@ export default function FileConvertPage() {
 
   const startTask = useCallback(async () => {
     if (!sourceResult || !templateResult) return;
-    const validMappings = getValidMappings(mappings);
+    const validMappings = mappings.filter(m => m.sourceColumn && m.sourceColumn !== '__skip__' && m.templatePlaceholder);
     if (validMappings.length === 0) return;
 
     setStep('running');
@@ -231,7 +169,6 @@ export default function FileConvertPage() {
     if (!res.success) { setTaskError(String(res.error?.message ?? '创建任务失败')); return; }
 
     const taskId = res.data.taskId;
-
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -240,544 +177,511 @@ export default function FileConvertPage() {
     fetch(`/api/file-convert/tasks/${taskId}/progress`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream', 'X-Client': 'admin' },
       signal: ac.signal,
-    })
-      .then(async (response) => {
-        if (!response.body) return;
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        const parseEvents = (chunk: string) => {
-          buffer += chunk;
-          const parts = buffer.split('\n\n');
-          buffer = parts.pop() ?? '';
-          for (const part of parts) {
-            const lines = part.split('\n');
-            let eventType = 'message';
-            let data = '';
-            for (const line of lines) {
-              if (line.startsWith('event: ')) eventType = line.slice(7).trim();
-              else if (line.startsWith('data: ')) data = line.slice(6);
-            }
-            if (!data) continue;
-            try {
-              const parsed = JSON.parse(data) as Record<string, unknown>;
-              if (eventType === 'log') setLogs(prev => [...prev, String(parsed.message ?? '')]);
-              else if (eventType === 'progress') {
-                setTaskStatus(String(parsed.status ?? ''));
-                setTotalRows(Number(parsed.totalRows) || 0);
-                setProcessedRows(Number(parsed.processedRows) || 0);
-              } else if (eventType === 'done') {
-                const doneStatus = String(parsed.status ?? '');
-                setTaskStatus(doneStatus);
-                if (doneStatus === 'done' && parsed.hasResult) setTaskDoneId(taskId);
-                setTaskError(parsed.errorMessage ? String(parsed.errorMessage) : null);
-                loadTasks();
-              }
-            } catch { /* ignore */ }
+    }).then(async (response) => {
+      if (!response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const parseEvents = (chunk: string) => {
+        buffer += chunk;
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+        for (const part of parts) {
+          const lines = part.split('\n');
+          let eventType = 'message'; let data = '';
+          for (const line of lines) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+            else if (line.startsWith('data: ')) data = line.slice(6);
           }
-        };
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          parseEvents(decoder.decode(value, { stream: true }));
+          if (!data) continue;
+          try {
+            const parsed = JSON.parse(data) as Record<string, unknown>;
+            if (eventType === 'log') setLogs(prev => [...prev, String(parsed.message ?? '')]);
+            else if (eventType === 'progress') {
+              setTaskStatus(String(parsed.status ?? ''));
+              setTotalRows(Number(parsed.totalRows) || 0);
+              setProcessedRows(Number(parsed.processedRows) || 0);
+            } else if (eventType === 'done') {
+              const doneStatus = String(parsed.status ?? '');
+              setTaskStatus(doneStatus);
+              if (doneStatus === 'done' && parsed.hasResult) setTaskDoneId(taskId);
+              setTaskError(parsed.errorMessage ? String(parsed.errorMessage) : null);
+              loadTasks();
+            }
+          } catch { /* ignore */ }
         }
-      })
-      .catch(() => { /* aborted or closed */ });
-  }, [sourceResult, templateResult, mappings, loadTasks, getValidMappings]);
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parseEvents(decoder.decode(value, { stream: true }));
+      }
+    }).catch(() => { /* aborted */ });
+  }, [sourceResult, templateResult, mappings, loadTasks]);
 
   useEffect(() => { return () => abortRef.current?.abort(); }, []);
 
+  const isFromRule = (key: string | undefined) => key?.startsWith('file-convert/rules/');
+
+  // ── 进度百分比 ──
+  const pct = totalRows > 0 ? Math.round((processedRows / totalRows) * 100) : 0;
+
   return (
-    <div className="h-full min-h-0 flex flex-col bg-background">
-      <div className="border-b px-6 py-4">
-        <h1 className="text-lg font-semibold">文件批量转换</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          上传源数据文件和目标模板，配置字段映射后批量生成文件并下载
-        </p>
+    <div className="h-full min-h-0 flex flex-col overflow-hidden">
+      {/* 页头 */}
+      <div className="shrink-0 px-6 pt-5 pb-4">
+        <PageHeader
+          title="文件批量转换"
+          description="上传源数据文件和目标模板，配置字段映射后批量生成目标文件并下载"
+          actions={
+            <Button variant="secondary" size="sm" onClick={() => { setShowHistory(v => !v); if (!showHistory) loadTasks(); }}>
+              <Table2 size={14} className="mr-1.5" />
+              历史任务
+            </Button>
+          }
+        />
       </div>
 
-      <div className="flex-1 min-h-0 flex overflow-hidden">
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-
-          {/* Step 1 */}
-          <CollapsibleSection
-            title="第一步：上传文件"
-            done={!!sourceResult && !!templateResult}
-            forceOpen={step === 'upload'}
-          >
-            <div className="grid grid-cols-2 gap-4">
-              <DropZone
-                label="源数据文件"
-                accept=".csv,.xlsx,.json"
-                hint="支持 CSV / Excel / JSON"
-                result={sourceResult ? `${sourceResult.fileName}（${sourceResult.totalRows} 行，${sourceResult.columns.length} 列）` : null}
-                loading={sourceLoading}
-                onFile={handleSourceUpload}
-                onDrop={(e) => handleFileDrop('source', e)}
-              />
-              <DropZone
-                label="目标模板文件"
-                accept=".docx,.xlsx,.csv"
-                hint={templateResult?.fileKey?.startsWith('file-convert/rules/') ? '由规则提供，可重新上传覆盖' : '支持 Word (.docx) / Excel (.xlsx) / CSV (.csv)'}
-                result={templateResult ? `${templateResult.fileName}（${templateResult.placeholders.length} 个占位符）${templateResult.fileKey?.startsWith('file-convert/rules/') ? ' · 来自规则' : ''}` : null}
-                loading={templateLoading}
-                onFile={handleTemplateUpload}
-                onDrop={(e) => handleFileDrop('template', e)}
-              />
-            </div>
-
-            {uploadError && <p className="text-sm text-red-500 mt-2">{uploadError}</p>}
-
-            {sourceResult && (
-              <Surface variant="inset" className="mt-3 p-3">
-                <p className="text-xs font-medium text-muted-foreground mb-2">列名预览</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {sourceResult.columns.map(c => (
-                    <span key={c} className="text-xs px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground">{c}</span>
-                  ))}
+      {/* 步骤指示器 */}
+      <div className="shrink-0 px-6 pb-4">
+        <div className="flex items-center gap-0">
+          {(['upload', 'mapping', 'running'] as Step[]).map((s, idx) => {
+            const labels = ['上传文件', '字段映射', '批量生成'];
+            const isDone = (step === 'mapping' && idx === 0) || (step === 'running' && idx < 2);
+            const isActive = step === s;
+            return (
+              <div key={s} className="flex items-center">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all"
+                    style={{
+                      background: isDone ? 'var(--accent-green, #22c55e)' : isActive ? 'var(--accent-primary, #6366f1)' : 'var(--bg-sunken)',
+                      color: isDone || isActive ? '#fff' : 'var(--text-muted)',
+                    }}
+                  >
+                    {isDone ? <CheckCircle2 size={14} /> : idx + 1}
+                  </div>
+                  <span className="text-xs font-medium" style={{ color: isActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    {labels[idx]}
+                  </span>
                 </div>
-              </Surface>
-            )}
-
-            {templateResult && (
-              <Surface variant="inset" className="mt-3 p-3">
-                <p className="text-xs font-medium text-muted-foreground mb-2">模板占位符</p>
-                {templateResult.placeholders.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {templateResult.placeholders.map(p => (
-                      <span key={p} className="text-xs px-2 py-0.5 rounded-md bg-primary/10 text-primary font-mono border border-primary/20">{`{{${p}}}`}</span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">未识别到占位符，进入第二步后可手动添加映射行</p>
-                )}
-              </Surface>
-            )}
-
-            {/* 历史规则入口 - 在 Step 1 展示，方便直接加载规则 */}
-            {rules.length > 0 && (
-              <div className="mt-3">
-                <button
-                  className="flex items-center gap-1 text-sm font-medium text-primary hover:text-primary/80 transition-colors"
-                  onClick={() => setRulesExpanded(v => !v)}
-                >
-                  {rulesExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                  加载历史规则（{rules.length} 条）
-                  <span className="text-xs text-muted-foreground ml-1">— 含模板的规则只需上传源文件</span>
-                </button>
-                {rulesExpanded && (
-                  <div className="mt-2 space-y-1">
-                    {rules.map(r => (
-                      <div key={r.id} className="flex items-center justify-between p-2 rounded border hover:bg-muted/40 transition-colors">
-                        <div>
-                          <span className="text-sm font-medium">{r.name}</span>
-                          {r.templateFileName && (
-                            <span className="text-xs text-blue-500 ml-2">含模板 · {r.templateFileName}</span>
-                          )}
-                          {r.lastSourceFileName && (
-                            <span className="text-xs text-muted-foreground ml-1">({r.lastSourceFileName})</span>
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="secondary" onClick={() => applyRule(r)}>加载</Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleDeleteRule(r.id)}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                {idx < 2 && (
+                  <div className="w-12 h-px mx-3" style={{ background: idx < ['upload', 'mapping', 'running'].indexOf(step) ? 'var(--accent-green, #22c55e)' : 'var(--border-default)' }} />
                 )}
               </div>
-            )}
+            );
+          })}
+        </div>
+      </div>
 
-            {sourceResult && templateResult && (
-              <Button className="mt-4" variant="primary" onClick={toMappingStep}>
-                下一步：配置字段映射
-              </Button>
-            )}
-          </CollapsibleSection>
+      {/* 主体 */}
+      <div className="flex-1 min-h-0 flex gap-4 px-6 pb-6 overflow-hidden">
+        {/* 内容区 */}
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
 
-          {/* Step 2 */}
-          {(step === 'mapping' || step === 'running') && (
-            <CollapsibleSection
-              title="第二步：字段映射"
-              done={step === 'running'}
-              forceOpen={step === 'mapping'}
-            >
-              <p className="text-sm text-muted-foreground mb-4">
-                为每个模板占位符选择对应的源文件列。模板中需使用 <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs">{`{{字段名}}`}</code> 格式。
-              </p>
+          {/* ── Step 1: 上传文件 ── */}
+          {step === 'upload' && (
+            <GlassCard className="p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style={{ background: 'var(--accent-primary, #6366f1)' }}>1</div>
+                <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>选择文件</span>
+              </div>
 
-              {mappings.length === 0 ? (
-                <Surface variant="inset" className="p-5 text-center space-y-3">
-                  <p className="text-sm text-muted-foreground">
-                    未在模板中识别到占位符。请确认模板含有 <code className="font-mono text-xs">{`{{字段名}}`}</code>，或手动添加映射行。
-                  </p>
-                  <Button size="sm" variant="secondary" onClick={addMappingRow}>
-                    手动添加映射行
-                  </Button>
-                </Surface>
-              ) : (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] gap-3 px-1 text-xs font-medium text-muted-foreground">
-                    <span>模板占位符</span>
-                    <span />
-                    <span>对应源文件列</span>
-                  </div>
-                  {mappings.map((m, idx) => (
-                    <Surface key={`${m.templatePlaceholder}-${idx}`} variant="row" className="grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] gap-3 items-center px-3 py-2.5">
-                      {templateResult?.placeholders.includes(m.templatePlaceholder) && m.templatePlaceholder ? (
-                        <span className="text-sm font-mono px-2.5 py-1.5 rounded-md bg-primary/10 text-primary border border-primary/20">
-                          {`{{${m.templatePlaceholder}}}`}
-                        </span>
-                      ) : (
-                        <input
-                          className="h-9 px-3 text-sm font-mono rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                          placeholder="占位符名，如 code_value"
-                          value={m.templatePlaceholder}
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                            const next = [...mappings];
-                            next[idx] = { ...m, templatePlaceholder: e.target.value.trim() };
-                            setMappings(next);
-                          }}
-                        />
-                      )}
-                      <span className="text-center text-muted-foreground text-xs">→</span>
-                      <Select
-                        value={m.sourceColumn}
-                        placeholder="选择源文件列"
-                        onValueChange={(v: string) => {
-                          const next = [...mappings];
-                          next[idx] = { ...m, sourceColumn: v };
-                          setMappings(next);
-                        }}
-                        uiSize="sm"
-                      >
-                        {(sourceResult?.columns ?? []).map(c => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                        <option value="__skip__">（不映射）</option>
-                      </Select>
-                    </Surface>
-                  ))}
-                  <Button size="sm" variant="ghost" className="mt-1" onClick={addMappingRow}>
-                    + 添加映射行
-                  </Button>
+              {/* 历史规则 */}
+              {rules.length > 0 && (
+                <div className="mb-4 rounded-xl overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
+                  <button
+                    className="w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors hover:opacity-80"
+                    style={{ background: 'var(--bg-sunken)' }}
+                    onClick={() => setRulesExpanded(v => !v)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <FileOutput size={14} style={{ color: 'var(--accent-primary, #6366f1)' }} />
+                      <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        从已保存规则加载（{rules.length} 条）
+                      </span>
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>— 含模板的规则只需上传源文件</span>
+                    </div>
+                    {rulesExpanded ? <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} /> : <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />}
+                  </button>
+                  {rulesExpanded && (
+                    <div className="divide-y" style={{ borderTop: '1px solid var(--border-default)' }}>
+                      {rules.map(r => (
+                        <div key={r.id} className="flex items-center justify-between px-4 py-2.5">
+                          <div className="flex items-center gap-3">
+                            <div>
+                              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{r.name}</span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                {r.templateFileName && (
+                                  <span className="text-[11px] px-1.5 py-px rounded font-medium" style={{ background: 'rgba(99,102,241,0.12)', color: 'var(--accent-primary, #6366f1)' }}>
+                                    含模板 · {r.templateFileName}
+                                  </span>
+                                )}
+                                {r.lastSourceFileName && (
+                                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{r.lastSourceFileName}</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="secondary" onClick={() => applyRule(r)}>加载</Button>
+                            <button className="p-1.5 rounded-lg transition-colors hover:opacity-70" onClick={() => handleDeleteRule(r.id)}>
+                              <Trash2 size={13} style={{ color: 'var(--text-muted)' }} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
-              <GlassCard className="mt-5 p-4 space-y-3" padding="none" variant="subtle">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">保存为复用规则</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      保存字段映射和模板，下次只需上传源文件即可复用
-                    </p>
-                  </div>
-                  {!showSaveRuleForm && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setShowSaveRuleForm(true);
-                        setSaveRuleError(null);
-                      }}
-                    >
-                      <Save className="w-3.5 h-3.5 mr-1.5" />
-                      保存规则
-                    </Button>
+              {/* 上传区 */}
+              <div className="grid grid-cols-2 gap-3">
+                <FileDropZone
+                  label="源数据文件"
+                  accept=".csv,.xlsx,.json"
+                  hint="CSV / Excel / JSON"
+                  result={sourceResult ? `${sourceResult.fileName}` : null}
+                  meta={sourceResult ? `${sourceResult.totalRows} 行 · ${sourceResult.columns.length} 列` : null}
+                  loading={sourceLoading}
+                  onFile={handleSourceUpload}
+                  onDrop={e => handleFileDrop('source', e)}
+                  onClear={() => setSourceResult(null)}
+                />
+                <FileDropZone
+                  label="目标模板文件"
+                  accept=".docx,.xlsx"
+                  hint="Word (.docx) / Excel (.xlsx)"
+                  result={templateResult ? `${templateResult.fileName}` : null}
+                  meta={templateResult ? `${templateResult.placeholders.length} 个占位符${isFromRule(templateResult.fileKey) ? ' · 来自规则' : ''}` : null}
+                  loading={templateLoading}
+                  fromRule={isFromRule(templateResult?.fileKey)}
+                  onFile={handleTemplateUpload}
+                  onDrop={e => handleFileDrop('template', e)}
+                  onClear={() => setTemplateResult(null)}
+                />
+              </div>
+
+              {uploadError && (
+                <div className="mt-3 flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444' }}>
+                  <X size={14} /> {uploadError}
+                </div>
+              )}
+
+              {/* 字段/占位符预览 */}
+              {(sourceResult || templateResult) && (
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  {sourceResult && (
+                    <div className="rounded-xl p-3" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                      <p className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>列名</p>
+                      <div className="flex flex-wrap gap-1">
+                        {sourceResult.columns.map(c => (
+                          <span key={c} className="text-[11px] px-2 py-0.5 rounded-md font-medium" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}>{c}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {templateResult && (
+                    <div className="rounded-xl p-3" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                      <p className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>占位符</p>
+                      <div className="flex flex-wrap gap-1">
+                        {templateResult.placeholders.map(p => (
+                          <span key={p} className="text-[11px] px-2 py-0.5 rounded-md font-mono font-medium" style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--accent-primary, #6366f1)', border: '1px solid rgba(99,102,241,0.2)' }}>{`{{${p}}}`}</span>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
+              )}
 
-                {showSaveRuleForm && (
-                  <div className="space-y-3 pt-3 border-t border-border/60">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-muted-foreground">规则名称（必填）</label>
+              {sourceResult && templateResult && (
+                <Button className="mt-4 w-full" variant="primary" onClick={toMappingStep}>
+                  下一步：配置字段映射
+                </Button>
+              )}
+            </GlassCard>
+          )}
+
+          {/* ── Step 2: 字段映射 ── */}
+          {(step === 'mapping' || step === 'running') && (
+            <GlassCard className="p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style={{ background: step === 'running' ? 'var(--accent-green, #22c55e)' : 'var(--accent-primary, #6366f1)' }}>
+                    {step === 'running' ? <CheckCircle2 size={12} /> : '2'}
+                  </div>
+                  <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>字段映射</span>
+                </div>
+                {step === 'mapping' && (
+                  <button className="text-xs" style={{ color: 'var(--text-muted)' }} onClick={() => { setStep('upload'); }}>
+                    返回修改文件
+                  </button>
+                )}
+              </div>
+
+              {step === 'mapping' && (
+                <>
+                  <div className="rounded-xl overflow-hidden mb-4" style={{ border: '1px solid var(--border-default)' }}>
+                    <div className="grid grid-cols-2 gap-0 px-4 py-2" style={{ background: 'var(--bg-sunken)', borderBottom: '1px solid var(--border-default)' }}>
+                      <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>模板占位符</span>
+                      <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>源文件列</span>
+                    </div>
+                    {mappings.map((m, idx) => (
+                      <div key={m.templatePlaceholder} className="grid grid-cols-2 items-center gap-0 px-4 py-2" style={{ borderBottom: idx < mappings.length - 1 ? '1px solid var(--border-default)' : undefined }}>
+                        <span className="text-xs font-mono font-medium pr-4" style={{ color: 'var(--accent-primary, #6366f1)' }}>{`{{${m.templatePlaceholder}}}`}</span>
+                        <Select
+                          value={m.sourceColumn}
+                          onValueChange={(v: string) => {
+                            const next = [...mappings];
+                            next[idx] = { ...m, sourceColumn: v };
+                            setMappings(next);
+                          }}
+                          uiSize="sm"
+                        >
+                          {sourceResult?.columns.map(c => <option key={c} value={c}>{c}</option>)}
+                          <option value="__skip__">（不映射）</option>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* 保存规则 */}
+                  {!showSaveRuleForm ? (
+                    <button className="flex items-center gap-1.5 text-xs mb-4 transition-opacity hover:opacity-70" style={{ color: 'var(--text-secondary)' }} onClick={() => setShowSaveRuleForm(true)}>
+                      <Save size={12} /> 保存为规则，下次直接复用
+                    </button>
+                  ) : (
+                    <div className="mb-4 rounded-xl p-4" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                      <p className="text-xs font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>保存规则</p>
                       <input
-                        className="w-full h-9 px-3 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder="例如：码值切割填入 code_value"
+                        className="w-full h-9 px-3 text-sm rounded-xl outline-none mb-3"
+                        style={inputStyle}
+                        placeholder="规则名称，例：员工信息转月度报告"
                         value={saveRuleName}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleName(e.target.value)}
                         onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleSaveRule()}
                       />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-muted-foreground">规则说明（选填）</label>
-                      <input
-                        className="w-full h-9 px-3 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder="例如：将码按 / 切割，最后一段填入 code_value"
-                        value={saveRuleDescription}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleDescription(e.target.value)}
-                      />
-                    </div>
-                    {templateResult && (
-                      <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={saveRuleWithTemplate}
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleWithTemplate(e.target.checked)}
-                          className="mt-0.5 w-4 h-4 rounded accent-primary"
-                        />
-                        <span>
-                          同时保存模板文件
-                          <span className="block text-xs text-muted-foreground mt-0.5">
-                            下次加载规则后无需重新上传模板 · {templateResult.fileName}
+                      {templateResult && (
+                        <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={saveRuleWithTemplate}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSaveRuleWithTemplate(e.target.checked)}
+                            className="w-4 h-4 rounded"
+                          />
+                          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                            同时保存模板文件（下次加载规则无需重新上传）
                           </span>
-                        </span>
-                      </label>
-                    )}
-                    {saveRuleError && (
-                      <p className="text-sm text-red-500">{saveRuleError}</p>
-                    )}
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="primary" onClick={handleSaveRule} disabled={savingRule || !saveRuleName.trim()}>
-                        {savingRule ? '保存中...' : '确认保存'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setShowSaveRuleForm(false);
-                          setSaveRuleError(null);
-                        }}
-                      >
-                        取消
-                      </Button>
+                        </label>
+                      )}
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="primary" onClick={handleSaveRule} disabled={savingRule || !saveRuleName.trim()}>
+                          {savingRule ? '保存中...' : '确认保存'}
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setShowSaveRuleForm(false)}>取消</Button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </GlassCard>
+                  )}
 
-              <Button
-                className="mt-5 w-full"
-                variant="primary"
-                onClick={startTask}
-                disabled={getValidMappings(mappings).length === 0}
-              >
-                <Play className="w-4 h-4 mr-2" />
-                开始批量生成
-              </Button>
-            </CollapsibleSection>
+                  <Button className="w-full" variant="primary" onClick={startTask}>
+                    <Play size={15} className="mr-1.5" />
+                    开始批量生成
+                  </Button>
+                </>
+              )}
+
+              {step === 'running' && (
+                <div className="text-xs space-y-1" style={{ color: 'var(--text-muted)' }}>
+                  {mappings.filter(m => m.sourceColumn !== '__skip__').map(m => (
+                    <span key={m.templatePlaceholder} className="inline-flex items-center gap-1 mr-2 mb-1 px-2 py-0.5 rounded-md" style={{ background: 'var(--bg-sunken)', color: 'var(--text-secondary)' }}>
+                      <span style={{ color: 'var(--accent-primary, #6366f1)' }}>{`{{${m.templatePlaceholder}}}`}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>←</span>
+                      {m.sourceColumn}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </GlassCard>
           )}
 
-          {/* Step 3 */}
+          {/* ── Step 3: 执行进度 ── */}
           {step === 'running' && (
-            <CollapsibleSection title="第三步：生成进度" done={taskStatus === 'done'} forceOpen>
+            <GlassCard className="p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style={{ background: taskStatus === 'done' ? 'var(--accent-green, #22c55e)' : 'var(--accent-primary, #6366f1)' }}>
+                  {taskStatus === 'done' ? <CheckCircle2 size={12} /> : '3'}
+                </div>
+                <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>批量生成</span>
+                {taskStatus === 'running' && totalRows > 0 && (
+                  <span className="text-xs ml-auto" style={{ color: 'var(--text-muted)' }}>{processedRows} / {totalRows} 个文件</span>
+                )}
+              </div>
+
+              {/* 进度条 */}
               {totalRows > 0 && (
                 <div className="mb-4">
-                  <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                    <span>{taskStatus === 'done' ? '已完成' : '处理中...'}</span>
-                    <span>{processedRows} / {totalRows}</span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                  <div className="w-full h-1.5 rounded-full overflow-hidden mb-1" style={{ background: 'var(--bg-sunken)' }}>
                     <div
-                      className="h-full bg-primary rounded-full transition-all duration-300"
-                      style={{ width: `${totalRows ? (processedRows / totalRows) * 100 : 0}%` }}
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${pct}%`, background: taskStatus === 'done' ? 'var(--accent-green, #22c55e)' : 'var(--accent-primary, #6366f1)' }}
                     />
+                  </div>
+                  <div className="flex justify-between text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    <span>{taskStatus === 'done' ? '全部完成' : '处理中...'}</span>
+                    <span>{pct}%</span>
                   </div>
                 </div>
               )}
 
-              <div className="bg-muted/30 rounded-lg border p-3 max-h-40 overflow-y-auto text-xs font-mono space-y-0.5">
-                {logs.length === 0 && <span className="text-muted-foreground">等待处理...</span>}
-                {logs.map((log, i) => <div key={i} className="text-muted-foreground">{log}</div>)}
+              {/* 日志 */}
+              <div className="rounded-xl p-3 max-h-36 overflow-y-auto text-xs font-mono space-y-0.5" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                {logs.length === 0
+                  ? <span style={{ color: 'var(--text-muted)' }}>等待处理...</span>
+                  : logs.map((log, i) => <div key={i} style={{ color: 'var(--text-secondary)' }}>{log}</div>)}
               </div>
 
               {taskError && (
-                <div className="mt-3 p-3 rounded-lg border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-900/20 text-sm text-red-600 dark:text-red-400">
-                  {taskError}
+                <div className="mt-3 flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444' }}>
+                  <X size={14} /> {taskError}
                 </div>
               )}
 
               {taskStatus === 'done' && taskDoneId && (
-                <Button className="mt-4 w-full" variant="primary" onClick={() => downloadResult(taskDoneId)}>
+                <Button className="mt-4 w-full" variant="primary" onClick={() => downloadResult(taskDoneId).catch(e => toast.error('下载失败', String(e?.message ?? '')))}>
                   下载 ZIP 包
                 </Button>
               )}
 
-              <div className="mt-4 flex gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setStep('upload');
-                    setSourceResult(null);
-                    setTemplateResult(null);
-                    setMappings([]);
-                    setTaskStatus(null);
-                  }}
-                >
+              <div className="mt-3 flex gap-2">
+                <Button variant="secondary" size="sm" onClick={() => { setStep('upload'); setSourceResult(null); setTemplateResult(null); setMappings([]); setTaskStatus(null); }}>
                   重新开始
                 </Button>
-                <Button variant="ghost" size="sm" onClick={loadTasks}>查看历史任务</Button>
               </div>
-            </CollapsibleSection>
+            </GlassCard>
           )}
         </div>
 
-        <HistoryPanel tasks={tasks} onLoad={loadTasks} loading={tasksLoading} />
-      </div>
-    </div>
-  );
-}
-
-// ── 子组件 ──
-
-function CollapsibleSection({
-  title, done, forceOpen, children,
-}: {
-  title: string;
-  done?: boolean;
-  forceOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(true);
-  useEffect(() => { if (forceOpen) setOpen(true); }, [forceOpen]);
-
-  return (
-    <GlassCard className="overflow-hidden" padding="none" variant="subtle">
-      <button
-        className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-muted/20 transition-colors"
-        onClick={() => setOpen(v => !v)}
-      >
-        <div className="flex items-center gap-2.5">
-          <span className="font-medium">{title}</span>
-          {done && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-              完成
-            </span>
-          )}
-        </div>
-        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
-      </button>
-      {open && <div className="px-5 pb-5 border-t border-border/50">{children}</div>}
-    </GlassCard>
-  );
-}
-
-function DropZone({
-  label, accept, hint, result, loading, onFile, onDrop,
-}: {
-  label: string;
-  accept: string;
-  hint: string;
-  result: string | null;
-  loading: boolean;
-  onFile: (f: File) => void;
-  onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  return (
-    <div>
-      <p className="text-sm font-medium mb-2">{label}</p>
-      <Surface
-        variant="interactive"
-        className="border-2 border-dashed p-5 text-center cursor-pointer transition-colors hover:border-primary/40"
-        onDragOver={(e: React.DragEvent<HTMLDivElement>) => e.preventDefault()}
-        onDrop={onDrop}
-        onClick={() => inputRef.current?.click()}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept={accept}
-          className="hidden"
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-            const f = e.target.files?.[0];
-            if (f) onFile(f);
-            e.target.value = '';
-          }}
-        />
-        {loading ? (
-          <p className="text-sm text-muted-foreground">解析中...</p>
-        ) : result ? (
-          <div>
-            <FileText className="w-5 h-5 mx-auto mb-1 text-primary" />
-            <p className="text-sm text-primary font-medium">{result}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">点击重新选择</p>
-          </div>
-        ) : (
-          <div>
-            <Upload className="w-6 h-6 mx-auto mb-1.5 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">点击或拖拽文件到此处</p>
-            <p className="text-xs text-muted-foreground/60 mt-0.5">{hint}</p>
+        {/* ── 历史任务侧边栏 ── */}
+        {showHistory && (
+          <div className="w-72 shrink-0 flex flex-col" style={{ minHeight: 0 }}>
+            <GlassCard className="flex-1 flex flex-col overflow-hidden p-0">
+              <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: '1px solid var(--border-default)' }}>
+                <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>历史任务</span>
+                <div className="flex gap-1">
+                  <button className="p-1.5 rounded-lg transition-opacity hover:opacity-70" onClick={loadTasks}>
+                    <RefreshCw size={13} className={tasksLoading ? 'animate-spin' : ''} style={{ color: 'var(--text-muted)' }} />
+                  </button>
+                  <button className="p-1.5 rounded-lg transition-opacity hover:opacity-70" onClick={() => setShowHistory(false)}>
+                    <X size={13} style={{ color: 'var(--text-muted)' }} />
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {tasks.length === 0
+                  ? <div className="p-6 text-center text-xs" style={{ color: 'var(--text-muted)' }}>暂无历史任务</div>
+                  : tasks.map(t => <TaskRow key={t.id} task={t} />)}
+              </div>
+            </GlassCard>
           </div>
         )}
-      </Surface>
+      </div>
     </div>
   );
 }
 
-function HistoryPanel({ tasks, onLoad, loading }: { tasks: FileConvertTask[]; onLoad: () => void; loading: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-
-  if (!expanded) {
-    return (
-      <button
-        className="w-8 border-l flex flex-col items-center justify-start pt-4 gap-1 text-muted-foreground hover:bg-muted/20 transition-colors"
-        onClick={() => { setExpanded(true); onLoad(); }}
-        title="历史任务"
-      >
-        <Table className="w-4 h-4" />
-      </button>
-    );
-  }
+// ── 文件上传区 ──
+function FileDropZone({
+  label, accept, hint, result, meta, loading, fromRule, onFile, onDrop, onClear,
+}: {
+  label: string; accept: string; hint: string;
+  result: string | null; meta: string | null;
+  loading: boolean; fromRule?: boolean;
+  onFile: (f: File) => void;
+  onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
+  onClear: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
 
   return (
-    <div className="w-72 border-l flex flex-col">
-      <div className="flex items-center justify-between px-4 py-3 border-b">
-        <span className="text-sm font-medium">历史任务</span>
-        <div className="flex gap-1">
-          <button className="p-1 rounded hover:bg-muted/40" onClick={onLoad} title="刷新">
-            <RefreshCw className={`w-3.5 h-3.5 text-muted-foreground ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          <button className="p-1 rounded hover:bg-muted/40" onClick={() => setExpanded(false)} title="收起">
-            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-          </button>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {tasks.length === 0
-          ? <div className="p-4 text-xs text-muted-foreground text-center">暂无历史任务</div>
-          : tasks.map(t => <TaskRow key={t.id} task={t} />)}
+    <div>
+      <p className="text-xs font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>{label}</p>
+      <div
+        className="relative rounded-xl transition-all cursor-pointer"
+        style={{
+          border: result ? '1px solid var(--border-default)' : '1.5px dashed var(--border-default)',
+          background: result ? 'var(--bg-sunken)' : 'transparent',
+          minHeight: 88,
+        }}
+        onDragOver={e => e.preventDefault()}
+        onDrop={onDrop}
+        onClick={() => !result && inputRef.current?.click()}
+      >
+        <input ref={inputRef} type="file" accept={accept} className="hidden"
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ''; }} />
+
+        {loading ? (
+          <div className="flex items-center justify-center h-[88px]">
+            <div className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'var(--accent-primary, #6366f1)', borderTopColor: 'transparent' }} />
+          </div>
+        ) : result ? (
+          <div className="flex items-start justify-between p-3">
+            <div className="flex items-start gap-2.5">
+              <FileText size={18} className="shrink-0 mt-0.5" style={{ color: fromRule ? 'var(--accent-primary, #6366f1)' : 'var(--text-secondary)' }} />
+              <div>
+                <p className="text-xs font-medium leading-tight" style={{ color: 'var(--text-primary)' }}>{result}</p>
+                {meta && <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{meta}</p>}
+              </div>
+            </div>
+            <button className="p-1 rounded-md transition-opacity hover:opacity-70 shrink-0 ml-2" onClick={e => { e.stopPropagation(); onClear(); }}>
+              <X size={12} style={{ color: 'var(--text-muted)' }} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-[88px] gap-1.5">
+            <Upload size={18} style={{ color: 'var(--text-muted)' }} />
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>点击或拖拽文件</p>
+            <p className="text-[11px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>{hint}</p>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
+// ── 历史任务行 ──
 function TaskRow({ task }: { task: FileConvertTask }) {
   const statusColor: Record<string, string> = {
-    queued: 'text-muted-foreground', running: 'text-blue-500',
-    done: 'text-green-600', error: 'text-red-500',
+    queued: 'var(--text-muted)', running: '#3b82f6', done: '#22c55e', error: '#ef4444',
   };
   const statusLabel: Record<string, string> = { queued: '排队中', running: '处理中', done: '完成', error: '失败' };
 
   return (
-    <div className="px-4 py-3 border-b last:border-0 hover:bg-muted/20 transition-colors">
+    <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border-default)' }}>
       <div className="flex items-center justify-between mb-0.5">
-        <span className="text-xs font-medium truncate max-w-[160px]">{task.sourceFileName}</span>
-        <span className={`text-[11px] ${statusColor[task.status] ?? 'text-muted-foreground'}`}>
+        <span className="text-xs font-medium truncate max-w-[170px]" style={{ color: 'var(--text-primary)' }}>{task.sourceFileName}</span>
+        <span className="text-[11px] font-medium" style={{ color: statusColor[task.status] ?? 'var(--text-muted)' }}>
           {statusLabel[task.status] ?? task.status}
         </span>
       </div>
-      <div className="text-[11px] text-muted-foreground">
+      <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>
         {task.totalRows > 0 ? `${task.processedRows}/${task.totalRows} 行 · ` : ''}
         {new Date(task.createdAt).toLocaleDateString('zh-CN')}
       </div>
       {task.status === 'done' && task.hasResult && (
         <button
-          className="mt-1 text-[11px] text-primary hover:underline"
+          className="text-[11px] font-medium transition-opacity hover:opacity-70"
+          style={{ color: 'var(--accent-primary, #6366f1)' }}
           onClick={() => downloadResult(task.id)}
         >
           下载 ZIP
         </button>
       )}
       {task.status === 'done' && !task.hasResult && (
-        <span className="mt-1 text-[11px] text-muted-foreground">文件已清理</span>
+        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>文件已清理</span>
       )}
       {task.status === 'error' && task.errorMessage && (
-        <div className="mt-1 text-[11px] text-red-500 truncate" title={task.errorMessage}>
+        <div className="text-[11px] truncate" style={{ color: '#ef4444' }} title={task.errorMessage}>
           {task.errorMessage}
         </div>
       )}
