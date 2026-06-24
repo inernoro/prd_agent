@@ -5,7 +5,7 @@ description: AI 模型可见性 —— UI 必须展示当前调用的模型名
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/ai-model-visibility.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-06-24T19:54:22Z -->
 
 # AI 模型可见性原则
 
@@ -47,4 +47,4 @@ data: { "model": "anthropic/claude-sonnet-4-6", "platform": "OpenRouter" }
 </div>
 ```
 
-> 详细：`doc/rule.ai-model-visibility.md`
+> 详细：`doc/rule.platform.ai-model-visibility.md`
