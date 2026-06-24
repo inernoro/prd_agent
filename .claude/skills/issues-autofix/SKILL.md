@@ -5,6 +5,8 @@ description: 无人值守的日常 issue 维护 Agent。手动触发后扫描仓
 
 # Issues Autofix — 日常无人值守 issue 维护
 
+> **版本**：v2.0.0 | **状态**：已落地 | **触发**：`/issues-autofix`、"日常issue巡检"、"自动修复issue" | **SSOT**：`doc/rule.issues-system.md` | **领地**：open issue 巡检（避让 `visual-test:*` 与其他 Agent）
+
 > 手动触发的"批量过 issue"技能。一轮跑完输出处理报告。**不和用户来回**，模糊场景按默认分支走，宁可跳过不要卡住。
 >
 > 完整 label 协议、跳过清单、配色等系统说明见 **`doc/rule.issues-system.md`**。本文件只写"执行逻辑"。
@@ -19,6 +21,18 @@ description: 无人值守的日常 issue 维护 Agent。手动触发后扫描仓
 - Agent 间互相反馈技能/产物 bug → 用 `/audit`（auto-fix-issues 技能，语义不同）
 - 给真人交付前的自检 → 用 `/verify`
 - 给真人验收 → 用 `/uat`
+
+## 0.5 自治纪律（五层自治回路）
+
+> SSOT：`doc/design.defect-automation-autonomy.md`（缺陷自动化自治体系）。本技能与 `ai-defect-resolve` 同属无人值守 Agent，共用其自治模型。本技能监督层已强（§2 跳过 / §7 边界 / §12 兜底 / §13 禁止），这里把五层补齐成可辨的逐 issue 自检。
+
+每个 issue 处理前按序自检：
+
+1. **认知（issue ≠ 真实诉求）**：先还原"报告者到底要解决什么"；Bug 类先**实际复现**确认描述成立。不成立 → `needs-info` / `cannot-reproduce`，不照过时描述改。
+2. **规划（值不值，不只看行数）**：即使 ≤ `max_diff_lines`，也心算成功率 / 影响面 / 回滚代价；没把握 → 降档 `proposed-fix`（评论思路、不开 PR）。
+3. **执行（事实核查）**：改动中实况与判断严重不符 → 停，转评论 / `needs-human`；开 PR 前本地校验全绿（§7）。
+4. **记忆（情景召回）**：先走 §8 去重 + 查 `doc/guide.faq.*` 与历史同类 issue，复用既有答复 / 沉淀，不重复造轮子。
+5. **监督（三道事前阀）**：① 合规红线：`protected_paths` / 安全敏感 → `needs-human`（§5 / §13）；② 不确定性预警：拿不准 → 跳过或 `proposed-fix` 而非硬改（§12「跳过 > 卡住」）；③ 紧急熔断：超时 `agent-timeout`、复现失败 `cannot-reproduce`、同日幂等指纹防反复处理（§12 + §2 #6）。
 
 ## 1. 可配置参数（每次运行前确认）
 

@@ -213,6 +213,7 @@ docs:
   # ── 四、规范与规则 ──
   # 先看文档相关规范，再看开发规范，最后是审计报告
   rule.doc-naming: 文档命名规则
+  rule.skill-header: 技能头部规范
   rule.doc-templates: 文档模板标准
   rule.doc-maintenance: 文档维护说明
   rule.app-identity: 应用身份定义规则

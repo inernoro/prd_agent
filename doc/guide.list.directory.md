@@ -541,6 +541,9 @@
 - [文档命名规则](rule.doc-naming) `rule.doc-naming`
   > doc/ 目录下文档的命名约定
 
+- [技能头部规范](rule.skill-header) `rule.skill-header`
+  > .claude/skills/ 技能头部统一格式：frontmatter（name+description+触发词）+ H1 后版本/状态/触发元信息行，对齐文档头规范
+
 - [文档模板标准](rule.doc-templates) `rule.doc-templates`
   > 六种文档类型的标准模板与写作规范
 
