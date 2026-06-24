@@ -2282,10 +2282,14 @@ ${shouldAutoRefresh ? `;(function(){
           const modeLabel = anyMode
             ? (/express|prebuilt/i.test(anyMode) ? '极速' : '发布')
             : '';
+          // Codex P2「Use the deployed CI target SHA in the widget」：极速版镜像 tag 用
+          // ciTargetSha 解析（docs-only push 只动 githubCommitSha、不动 ciTargetSha），故
+          // 徽章优先显 ciTargetSha 反映容器实际跑的镜像 commit，回退 githubCommitSha。
+          const badgeSha = entry?.ciTargetSha || entry?.githubCommitSha || '';
           const widget = buildWidgetScript(
             branchCtx.branchId,
             branchCtx.branchName,
-            entry?.githubCommitSha ?? '',
+            badgeSha,
             modeLabel,
           );
 

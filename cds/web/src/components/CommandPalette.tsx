@@ -152,17 +152,27 @@ function projectSettingsToRows(projects: ProjectRow[]): ResultItem[] {
   return rows;
 }
 
-// 同义词参与匹配但不展示。给单条 entry 算最佳匹配分（取 keywords 里最高的那条）。
+// 同义词参与匹配但不展示。给单条 entry 算匹配分。
+// Codex P2「Tokenize combined project setting queries」：多词查询（如「prd-agent 探活」=
+// 项目名 + 字段）原先把整串拿去跟单个 keyword 比，永远命不中。改为按空白分词：每个词都要
+// 在某个 keyword 命中，整条分取各词最佳分的均值；任一词没命中则整条不匹配。单词时与原逻辑等价。
 function keywordScore(keywords: string[] | undefined, trimmed: string): number {
   if (!keywords) return -1;
-  let best = -1;
-  for (const word of keywords) {
-    const idx = word.toLowerCase().indexOf(trimmed);
-    if (idx < 0) continue;
-    const score = word.toLowerCase().startsWith(trimmed) ? 70 - idx : 40 - idx;
-    if (score > best) best = score;
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return -1;
+  let total = 0;
+  for (const token of tokens) {
+    let bestForToken = -1;
+    for (const word of keywords) {
+      const idx = word.toLowerCase().indexOf(token);
+      if (idx < 0) continue;
+      const score = word.toLowerCase().startsWith(token) ? 70 - idx : 40 - idx;
+      if (score > bestForToken) bestForToken = score;
+    }
+    if (bestForToken < 0) return -1;
+    total += bestForToken;
   }
-  return best;
+  return Math.round(total / tokens.length);
 }
 
 // 2026-05-07 wave 3.3:命令面板强化 — STATIC_ACTIONS 从 2 项扩到 12 项,
@@ -304,8 +314,19 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       routerNavigate(item.href);
       // react-router 的 history.pushState 不会触发 hashchange，已在目标设置页时
       // 切 tab 全靠该页监听 hashchange。手动补一发，确保面板内深链能切到目标 tab。
+      // Bugbot Medium「Same-page hash sync race」：不能在下一 tick 直接 dispatch 裸
+      // hashchange —— 若 router 尚未把 hash 落到 window.location，监听会读到旧 hash、切错
+      // tab。改为 rAF 后核对：hash 未到目标值就直接 set（原生触发 hashchange 且值正确），
+      // 已到则补发合成事件。
       if (samePage) {
-        window.setTimeout(() => window.dispatchEvent(new HashChangeEvent('hashchange')), 0);
+        const targetHash = item.href.slice(hashIdx); // 含 '#'
+        requestAnimationFrame(() => {
+          if (window.location.hash !== targetHash) {
+            window.location.hash = targetHash;
+          } else {
+            window.dispatchEvent(new HashChangeEvent('hashchange'));
+          }
+        });
       }
     },
     [onClose, routerNavigate],
