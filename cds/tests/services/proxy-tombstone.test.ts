@@ -35,13 +35,14 @@ describe('ProxyService stopped-branch tombstone divert', () => {
     return { profileId, containerName: `c-${profileId}`, hostPort: 30000, status } as ServiceState;
   }
 
-  function addStoppedBranch(): BranchEntry {
+  function addStoppedBranch(createdAt = '2026-06-23T00:00:00.000Z'): BranchEntry {
     const id = StateService.slugify('feat/cooled');
     const entry = {
       id,
       branch: 'feat/cooled',
       projectId: 'default',
       status: 'stopped',
+      createdAt,
       services: { web: svc('web', 'stopped') },
       lastStopSource: 'user',
     } as BranchEntry;
@@ -79,6 +80,18 @@ describe('ProxyService stopped-branch tombstone divert', () => {
     expect(gone).toHaveBeenCalledTimes(1);
     // 转发墓碑自身的 previewSlug（map 主键），保证 gone 页再查必命中（Bugbot）。
     expect(gone).toHaveBeenCalledWith('feat-cooled-merged-slug', expect.anything(), expect.anything());
+  });
+
+  it('does NOT divert when the tombstone predates a reused branch incarnation', async () => {
+    // 分支名复用：旧墓碑(2026-06-24)残留，但同名分支在之后(2026-06-25)被重建。
+    const b = addStoppedBranch('2026-06-25T00:00:00.000Z');
+    tombstone(b.id); // removedAt = 2026-06-24，早于 createdAt → 陈旧，不应分流
+    const gone = vi.fn();
+    proxy.setOnBranchGone(gone);
+
+    await proxy.handleRequest(makeReq(), makeRes());
+
+    expect(gone).not.toHaveBeenCalled();
   });
 
   it('does NOT divert a stopped branch with NO tombstone (fail-safe)', async () => {

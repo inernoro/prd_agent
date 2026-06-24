@@ -3555,15 +3555,11 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         // 已退出极速版的源码模式分支误判超时翻 failed（Codex P2，与 workflow_run 同口径）。
         const wdProfiles = stateService.getBuildProfilesForProject(b.projectId);
         if (!branchUsesPrebuiltMode(wdProfiles, b)) continue;
-        // 有活跃容器（手动部署过，running/building/starting/restarting）→ 残留的
-        // ciImageStatus='waiting' 是陈旧标记，健康预览不该被超时翻 failed（Bugbot）。
-        // **不**跳过「有 stopped 容器」的分支：ciImageStatus='waiting' 只由新 push 写入，
-        // 是比残留 service 更新的权威信号——「停过 → 又 push」的分支确实在等 CI，应正常
-        // 超时兜底（Bugbot：stopped services 不该让它永远卡 waiting 无归因）。
-        const wdSvcs = Object.values(b.services || {});
-        const wdAnyActive = wdSvcs.some((s) => s.status === 'running' || s.status === 'building'
-          || s.status === 'starting' || s.status === 'restarting');
-        if (wdAnyActive) continue;
+        // 不再按 service 状态（活跃/停止）跳过：ciImageStatus='waiting' 只由新 push 写入，是
+        // 比残留 service 更新、更权威的信号。一个「在跑旧部署 + 新 push 等新 CI」的极速版分支，
+        // 其 running service 属于旧 commit，不代表新 commit 已就绪——若新 CI 永不回来，看门狗
+        // 必须照常超时翻 failed 把 ciImageError 浮出来（Codex P2：别因旧 service 在跑而永不超时）。
+        // 唯一的跳过条件是上面的「已切回源码模式」（prebuilt 守卫），与前端 precedence 同口径。
         const sinceIso = b.ciWaitingSince || b.lastPushAt;
         const sinceMs = sinceIso ? Date.parse(sinceIso) : Number.NaN;
         if (!Number.isFinite(sinceMs)) continue;

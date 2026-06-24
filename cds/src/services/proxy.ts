@@ -594,7 +594,17 @@ export class ProxyService {
       // 命中后转发墓碑自身的 previewSlug（map 主键）给 gone 页，保证它再查必命中。
       const tomb = this.stateService.findRemovedBranchByIdentifier(branchSlug)
         ?? this.stateService.findRemovedBranchByIdentifier(branch.id);
-      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb) {
+      // 分支名复用：同名分支在旧 PR 合并/放弃后被重建时，旧墓碑仍留在 removedBranches。
+      // 仅当墓碑确实**晚于**当前这个 incarnation 的活动时间才分流，否则重建的分支（极速版下
+      // idle 等 CI）会被误导到旧的合并/放弃页（Codex P2）。incarnation 基准取 createdAt /
+      // lastPushAt / lastDeployAt 最近者；墓碑早于它 = 属于上一代分支 = 陈旧，照常走状态页。
+      const liveSince = Math.max(
+        Date.parse(branch.createdAt || '') || 0,
+        Date.parse(branch.lastPushAt || '') || 0,
+        Date.parse(branch.lastDeployAt || '') || 0,
+      );
+      const tombAt = tomb ? (Date.parse(tomb.removedAt || '') || 0) : 0;
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb && tombAt >= liveSince) {
         this.onBranchGone(tomb.previewSlug || branch.id, req, res);
         return;
       }
