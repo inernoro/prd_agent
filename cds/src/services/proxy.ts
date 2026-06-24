@@ -5,6 +5,7 @@ import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
+import { buildPreviewVersionBadgeScript } from '../preview-version-badge.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { computeWaitTiming } from './wait-timing.js';
@@ -2271,12 +2272,31 @@ ${shouldAutoRefresh ? `;(function(){
           };
           const widget = buildWidgetScript(branchCtx.branchId, branchCtx.branchName);
 
+          // ── 预览版本标记（始终注入,与 Bridge 无关；CDS_PREVIEW_BADGE=off 可关）──
+          // 让「混搭多版本/多标签」时每个预览页自报家门：左上角药丸 + 标签页标题前缀。
+          // sha/mode 从分支真实状态取（githubCommitSha + 该 profile 容器钉的 deployedMode）。
+          let badge = '';
+          if (process.env.CDS_PREVIEW_BADGE !== 'off') {
+            const entry = this.stateService.getState().branches[branchCtx.branchId];
+            const svcMode = branchCtx.profileId
+              ? entry?.services?.[branchCtx.profileId]?.deployedMode
+              : undefined;
+            const anyMode = svcMode
+              ?? Object.values(entry?.services ?? {}).find((s) => s?.deployedMode)?.deployedMode;
+            badge = buildPreviewVersionBadgeScript({
+              branchName: branchCtx.branchName,
+              sha: entry?.githubCommitSha ?? null,
+              mode: anyMode ?? null,
+            });
+          }
+
           // Inject before </body> if present, otherwise append
+          const inject = badge + widget;
           const idx = body.lastIndexOf('</body>');
           if (idx !== -1) {
-            body = body.slice(0, idx) + widget + body.slice(idx);
+            body = body.slice(0, idx) + inject + body.slice(idx);
           } else {
-            body += widget;
+            body += inject;
           }
 
           // Remove encoding headers (we decoded), recalculate content-length
