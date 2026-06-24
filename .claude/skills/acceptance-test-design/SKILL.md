@@ -1,5 +1,6 @@
 ---
 name: acceptance-test-design
+version: 1.0.0
 description: Convert PRs, commits, yesterday's changes, or release scope into a test-minded acceptance design before visual execution. Use when the user asks for daily acceptance, visual acceptance, PR/commit acceptance, proof that code changes really affected product behavior, coverage planning, fusion testing, evidence strength, or when screenshots/reports looked related but failed to prove the assigned task.
 ---
 

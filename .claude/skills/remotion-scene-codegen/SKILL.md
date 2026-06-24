@@ -1,5 +1,6 @@
 ---
 name: remotion-scene-codegen
+version: 1.0.0
 description: Provides Remotion knowledge context for video scene code generation. Supplies the LLM Gateway with Remotion API references, animation utilities, reusable component libraries, and scene design principles to generate high-quality Remotion JSX code for video Agent storyboard scenes. Trigger words: "优化场景", "升级动效", "美化视频", "remotion codegen", "scene code", "场景代码生成".
 glob: prd-video/**/*.{ts,tsx}
 ---

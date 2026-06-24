@@ -1,5 +1,6 @@
 ---
 name: code-hygiene
+version: 1.0.0
 description: Audits code for post-migration residue and technical debt across 10 dimensions (dead fields, dead branches, compat shims, naming artifacts, redundant params/types, stale comments, migration guards, over-abstraction, near-duplicates, config-code drift). Outputs a structured report with auto-fix plan. Trigger words: "代码卫生", "清理残留", "hygiene", "代码体检", "/hygiene".
 ---
 

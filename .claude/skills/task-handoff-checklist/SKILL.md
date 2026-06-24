@@ -1,5 +1,6 @@
 ---
 name: task-handoff-checklist
+version: 1.0.0
 description: 开发任务完成后自动扫描变更，从导航、文档、规则、工作流、测试、风险、代码质量、后续事项八个维度生成结构化交接报告，让验收者零追问即可核对。触发词："交接"、"验收"、"handoff"、"/handoff"。
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: human-verify
+version: 1.0.0
 description: Multi-perspective code verification that simulates human review. Combines adversarial debate (Devil's Advocate), reverse verification, boundary testing, and user scenario simulation to catch issues that compilers and linters miss. Trigger words: "/verify", "验证一下", "帮我检查".
 ---
 

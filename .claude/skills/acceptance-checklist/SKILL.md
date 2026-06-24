@@ -1,5 +1,6 @@
 ---
 name: acceptance-checklist
+version: 1.0.0
 description: Generates a step-by-step user acceptance test (UAT) checklist that a real human executes by hand, with expected results and failure playbooks at every checkpoint. Covers CLI + Web UI scenarios, supports cold-start injection, and is checkbox-driven so the operator can mark progress. Trigger words: "/uat", "验收清单", "真人验收", "acceptance test", "让我验收".
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: conflict-resolution
+version: 1.0.0
 description: PR 前将 main 分支合并进当前特性分支，由 AI 代替开发者分级解决冲突，产出预合并报告并保证零冲突提交。触发词："合并主分支"、"预合并"、"merge main"、"/resolve"。
 ---
 
