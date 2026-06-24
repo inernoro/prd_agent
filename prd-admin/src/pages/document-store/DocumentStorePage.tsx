@@ -1282,16 +1282,30 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
             zip.file(safeName(entry.title, ext), content);
             ok++;
           } else if (fileUrl) {
-            // 二进制附件（pdf/docx/图片…）：下原文件，沿用原扩展名（取不到则无扩展名）
-            const resp = await fetch(fileUrl);
-            if (!resp.ok) { fail++; continue; }
-            const blob = await resp.blob();
-            const urlExt = (() => {
-              const m = /\.([a-zA-Z0-9]{1,8})(?:\?|$)/.exec(fileUrl);
-              return m ? `.${m[1]}` : '';
-            })();
-            zip.file(safeName(entry.title.replace(/\.[a-zA-Z0-9]{1,8}$/, ''), urlExt), blob);
-            ok++;
+            // 二进制附件（pdf/docx/图片…）：优先下原文件。但 fileUrl 多为对象存储/CDN 绝对地址
+            // （TencentCosStorage 返回公网 URL），其不带 Access-Control-Allow-Origin，浏览器
+            // 端 fetch 会被 CORS 拦掉（见 AudioWavePlayer 注释）。因此 fetch 失败时降级：
+            // 有抽取正文就存 .txt，至少不整条丢失（真·原文件打包需后端同源代理，见提交说明）。
+            let added = false;
+            try {
+              const resp = await fetch(fileUrl);
+              if (resp.ok) {
+                const blob = await resp.blob();
+                const urlExt = (() => {
+                  const m = /\.([a-zA-Z0-9]{1,8})(?:\?|$)/.exec(fileUrl);
+                  return m ? `.${m[1]}` : '';
+                })();
+                zip.file(safeName(entry.title.replace(/\.[a-zA-Z0-9]{1,8}$/, ''), urlExt), blob);
+                added = true;
+              }
+            } catch {
+              // CORS / 网络失败 → 走下面的正文降级
+            }
+            if (!added && content != null && content !== '') {
+              zip.file(safeName(entry.title, '.txt'), content);
+              added = true;
+            }
+            if (added) ok++; else fail++;
           } else if (content != null && content !== '') {
             // 二进制类但拿不到 fileUrl：退而保留抽取出的正文为 .txt，不至于整条丢失
             zip.file(safeName(entry.title, '.txt'), content);
