@@ -364,3 +364,7 @@ docs:
   debt.cds.performance: CDS 性能债务台账（构建越来越慢/前端缓慢根因 + 逐步解决）
   debt.team-activity.voc-legacy: 行为洞察 / VOC 体验之声 工程债务台账
   debt.frontend.mobile-control-bar-overload: 移动端控制条过载治理台账
+  report.cds.agent.phase3-acceptance.2026-05-19: CDS Agent Phase 3 验收报告
+  report.cds.agent.p4-1-remote-preflight.2026-05-19: CDS Agent P4-1 远端发布前验收与试用入口报告
+  report.cds.agent.runtime-pool-contamination.2026-05-18: CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告
+  report.cds.agent.workbench.2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
