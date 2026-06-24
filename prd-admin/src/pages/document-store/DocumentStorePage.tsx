@@ -814,6 +814,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   const [publishing, setPublishing] = useState(false);
   /** 下载整库文档（打包 ZIP）进行中 */
   const [downloading, setDownloading] = useState(false);
+  /** 离开本详情视图后置 false：下载这类长异步流程据此中止 setState / 触发下载，避免用户已离开还弹出文件 */
+  const downloadAliveRef = useRef(true);
+  useEffect(() => {
+    downloadAliveRef.current = true;
+    return () => { downloadAliveRef.current = false; };
+  }, []);
   /** 当前打开的订阅详情 entryId（null = 未打开） */
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
@@ -1216,7 +1222,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
       let total = Infinity;
       while (allEntries.length < total) {
         const res = await listDocumentEntries(storeId, page, PAGE);
-        if (!res.success || !res.data) break;
+        if (!downloadAliveRef.current) return; // 已离开视图：中止，不弹文件不改状态
+        // 任意一页拉取失败都必须硬失败，禁止静默打包「缺了后几页」的残缺 ZIP
+        if (!res.success || !res.data) {
+          toast.error('下载失败', '获取文档列表时出错，请重试（已避免导出不完整的文件）');
+          return;
+        }
         allEntries.push(...res.data.items);
         total = res.data.total ?? allEntries.length;
         if (res.data.items.length === 0) break; // 兜底：防 total 不可信导致死循环
@@ -1250,6 +1261,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
       let ok = 0;
       let fail = 0;
       for (const entry of docs) {
+        if (!downloadAliveRef.current) return; // 已离开视图：中止逐篇拉取
         try {
           const res = await getDocumentContent(entry.id);
           if (!res.success || !res.data) { fail++; continue; }
@@ -1287,6 +1299,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         return;
       }
       const out = await zip.generateAsync({ type: 'blob' });
+      if (!downloadAliveRef.current) return; // 已离开视图：不再触发用户没预期的文件下载
       const link = document.createElement('a');
       link.href = URL.createObjectURL(out);
       link.download = `${(store.name || '知识库').replace(/[\\/:*?"<>|]/g, '_')}.zip`;
@@ -1295,9 +1308,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
       toast.success('下载完成', `已打包 ${ok} 篇${fail > 0 ? `（${fail} 篇导出失败）` : ''}`);
     } catch (err) {
       console.error('[DocumentStore] download failed:', err);
-      toast.error('下载失败', '打包文档时出错，请重试');
+      if (downloadAliveRef.current) toast.error('下载失败', '打包文档时出错，请重试');
     } finally {
-      setDownloading(false);
+      if (downloadAliveRef.current) setDownloading(false);
     }
   }, [store, storeId, downloading]);
 

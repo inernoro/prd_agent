@@ -1814,7 +1814,11 @@ export function DocBrowser({
   const [commentsSyncTick, setCommentsSyncTick] = useState(0);
   // 批注栏 ↔ 正文高亮联动：hover 某条批注卡 → 命中分组 key → 对应高亮微亮
   const [hoveredCommentKey, setHoveredCommentKey] = useState<string | null>(null);
-  // 激活态（点正文气泡或点批注卡）：activeCommentKey != null 即「批注栏展开中」，高亮加亮 + 批注卡升起 + 画连线，一次只激活一条
+  // 批注栏是否展开（与「当前激活线程」解耦：点 inline 气泡打开，点关闭按钮收起）。
+  // 解耦的原因：右侧批注卡点击也会 onActivate，若直接用 activeKey 控制可见性，
+  // 点正在读的那张卡会把 key toggle 成 null → 整个面板被卸载（Codex P2）。
+  const [commentPanelOpen, setCommentPanelOpen] = useState(false);
+  // 激活态（点正文气泡或点批注卡）：高亮加亮 + 批注卡升起 + 画连线，一次只激活一条
   const [activeCommentKey, setActiveCommentKey] = useState<string | null>(null);
   // 划词后就地输入浮层（取代甩到右侧抽屉）
   // rects: 选区在打开浮层瞬间的所有 client rect（多行选区需要多个矩形），用于保留正文里的高亮覆盖层
@@ -1883,7 +1887,8 @@ export function DocBrowser({
 
   // 进入条目时预拉评论 + 复位上一条目的临时 UI 态。只在 entryId / shareToken 真正变化时跑。
   useEffect(() => {
-    // 切文档复位：未发完的就地输入浮层、激活/hover 态（activeCommentKey 置空即收起批注栏，回到内联）
+    // 切文档复位：收起批注栏 + 清未发完的就地输入浮层、激活/hover 态（回到内联）
+    setCommentPanelOpen(false);
     setComposer(null);
     setActiveCommentKey(null);
     setHoveredCommentKey(null);
@@ -2104,7 +2109,8 @@ export function DocBrowser({
         // 自动激活新评论的线程 → 触发 InlineCommentConnector 入场动画（从正文气泡画连线到右侧卡），
         // 用户不用再手动点气泡才看到联系。groupKey 必须和 Overlay/Margin 同一函数，否则 activeKey 对不上。
         if (input.selectedText) {
-          // 新建即激活该线程 → 批注栏自动展开并画连线，用户不用再手动点气泡。
+          // 新建即展开批注栏并激活该线程 → 自动画连线，用户不用再手动点气泡。
+          setCommentPanelOpen(true);
           setActiveCommentKey(groupKey(input.selectedText));
         }
         await refreshComments(); // 与服务器对账：成功则覆盖为真值，失败则保留乐观结果
@@ -2141,10 +2147,12 @@ export function DocBrowser({
     }
   }, [trackedEntryForComments]);
 
-  // 点正文气泡 → 激活该线程（右侧批注栏展开该条）；再点同一条 → 收起批注栏回到内联。toggle 即可。
-  // 滚动定位由下面的 effect 按真实锚点处理。
+  // 点正文气泡 / 批注卡 → 展开批注栏并选中该线程（高亮 + 连线）。
+  // 只「打开 + 选中」，不在此 toggle 关闭：关闭统一走批注栏的关闭按钮（onClose），
+  // 否则点正在读的那张卡会把面板关掉（Codex P2）。重复点同一条 = 维持打开（幂等）。
   const handleActivateComment = useCallback((key: string) => {
-    setActiveCommentKey((prev) => (prev === key ? null : key));
+    setCommentPanelOpen(true);
+    setActiveCommentKey(key);
   }, []);
 
   // 激活后把正文锚点滚到眼前：用 overlay 已按 findTextRange（去空白 + contextBefore 消歧）放置的
@@ -3655,8 +3663,8 @@ export function DocBrowser({
                   移动端单栏阅读不挂右侧 TOC（否则又把正文挤窄），isMobile 时隐藏 DocToc。
                   rightPanelCollapsed 时整列收起，给正文让宽（工具栏「收起/章节」切换）。 */}
               {!rightPanelCollapsed && (() => {
-                // 点开某条评论（activeCommentKey != null）→ 右侧切成批注栏；否则维持本页章节导航
-                const showMargin = !!activeCommentKey && !contentLoading && !editMode
+                // 点开某条评论 → 批注栏展开（commentPanelOpen，与激活线程解耦）；否则维持本页章节导航
+                const showMargin = commentPanelOpen && !contentLoading && !editMode
                   && !!tocContent && inlineCommentItems.length > 0;
                 if (showMargin) {
                   return (
@@ -3670,7 +3678,7 @@ export function DocBrowser({
                       onActivate={handleActivateComment}
                       onCreate={handleCreateComment}
                       onDelete={handleDeleteComment}
-                      onClose={() => setActiveCommentKey(null)}
+                      onClose={() => { setCommentPanelOpen(false); setActiveCommentKey(null); }}
                     />
                   );
                 }
@@ -3678,8 +3686,8 @@ export function DocBrowser({
                   <DocToc content={tocContent} scrollContainerRef={contentAreaRef} />
                 ) : null;
               })()}
-              {/* 激活批注的牵引连线（active-only，业界 Word/Figma 做法）：有激活项即出现 */}
-              {!rightPanelCollapsed && !editMode && !contentLoading
+              {/* 激活批注的牵引连线（active-only，业界 Word/Figma 做法）：批注栏展开且有激活项才出现 */}
+              {commentPanelOpen && !rightPanelCollapsed && !editMode && !contentLoading
                 && tocContent && inlineCommentItems.length > 0 && activeCommentKey && (
                 <InlineCommentConnector activeKey={activeCommentKey} color={threadColor(activeCommentKey)} boundsRef={contentAreaRef} />)}
             </div>
