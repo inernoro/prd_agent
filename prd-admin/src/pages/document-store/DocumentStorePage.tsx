@@ -820,6 +820,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
     downloadAliveRef.current = true;
     return () => { downloadAliveRef.current = false; };
   }, []);
+  /** 同步的「下载进行中」闸门：state 要等下次渲染才更新，连点两下会同时穿过；用 ref 同步挡住并发 */
+  const downloadInFlightRef = useRef(false);
   /** 当前打开的订阅详情 entryId（null = 未打开） */
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
@@ -1210,7 +1212,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   // 二进制类（pdf/docx/图片…）即使有抽取正文也下原文件 → 打包成 ZIP。
   // 禁止空白等待：按钮转圈 + toast 报进度，失败计数照实报。
   const handleDownloadStore = useCallback(async () => {
-    if (!store || downloading) return;
+    // 同步闸门挡并发：连点两下时 downloading state 还没刷新，靠 ref 立刻拒绝第二次进入
+    if (!store || downloadInFlightRef.current) return;
+    downloadInFlightRef.current = true;
     setMoreOpen(false);
     setDownloading(true);
     toast.info('正在准备下载…', '正在汇总知识库全部文档');
@@ -1230,7 +1234,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
         }
         allEntries.push(...res.data.items);
         total = res.data.total ?? allEntries.length;
-        if (res.data.items.length === 0) break; // 兜底：防 total 不可信导致死循环
+        if (allEntries.length >= total) break; // 已拉齐
+        if (res.data.items.length === 0) {
+          // 没拉齐却返回空页 = 服务端分页不一致：宁可报错，也不打包「以为是全量」的残缺 ZIP
+          toast.error('下载失败', '文档列表未能完整加载，请重试（已避免导出不完整的文件）');
+          return;
+        }
         page++;
       }
       const docs = allEntries.filter(e => !e.isFolder);
@@ -1310,9 +1319,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
       console.error('[DocumentStore] download failed:', err);
       if (downloadAliveRef.current) toast.error('下载失败', '打包文档时出错，请重试');
     } finally {
+      downloadInFlightRef.current = false;
       if (downloadAliveRef.current) setDownloading(false);
     }
-  }, [store, storeId, downloading]);
+  }, [store, storeId]);
 
   if (!store) {
     return (

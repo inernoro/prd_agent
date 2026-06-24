@@ -2110,6 +2110,9 @@ export function DocBrowser({
         // 用户不用再手动点气泡才看到联系。groupKey 必须和 Overlay/Margin 同一函数，否则 activeKey 对不上。
         if (input.selectedText) {
           // 新建即展开批注栏并激活该线程 → 自动画连线，用户不用再手动点气泡。
+          // 右侧栏曾收起时同样要展开，否则新评论的连线/卡片无处可挂（同 Codex P2）。
+          setRightPanelCollapsed(false);
+          sessionStorage.setItem('doc-browser-right-collapsed', '0');
           setCommentPanelOpen(true);
           setActiveCommentKey(groupKey(input.selectedText));
         }
@@ -2151,6 +2154,10 @@ export function DocBrowser({
   // 只「打开 + 选中」，不在此 toggle 关闭：关闭统一走批注栏的关闭按钮（onClose），
   // 否则点正在读的那张卡会把面板关掉（Codex P2）。重复点同一条 = 维持打开（幂等）。
   const handleActivateComment = useCallback((key: string) => {
+    // 右侧栏曾被用户收起（rightPanelCollapsed 持久化）时，批注栏挂在 !rightPanelCollapsed 分支下，
+    // 只设 commentPanelOpen 点了也看不到 → 这里一并展开右侧栏并持久化（Codex P2）。
+    setRightPanelCollapsed(false);
+    sessionStorage.setItem('doc-browser-right-collapsed', '0');
     setCommentPanelOpen(true);
     setActiveCommentKey(key);
   }, []);
