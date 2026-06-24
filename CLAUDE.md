@@ -363,6 +363,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `gesture-unification.md` | 任何可平移/缩放的 2D 画布（ReactFlow / 自定义 DOM canvas / Konva 等） | 手势统一：两指拖动=平移、双指捏合或 ⌘/Ctrl+滚轮=缩放、禁止双击缩放；提供 ReactFlow + 自定义 canvas 两套标准配置 |
 | `compute-then-send.md` | `prd-api/src/**/*.cs` 里 LLM / 外部 API 调用类（ILlmGateway / OpenAIImageClient 等） | 外部调用必须分"算/发"两阶段：发送阶段接收已解析结果不得再 resolve；禁止用 DI 装饰器 / AsyncLocal / 实例字段 在兄弟调用间传递 state |
 | `blocked-state-circuit-breaker.md` | 长任务 / 多轮自动执行 Agent | 撞上自己无法提供的外部输入时必须熔断：≥8 提交或≥2h 无功能净进展即停止进度剧场、发一条合并升级、切纯代码或挂起；禁止 plan thrashing 和不眠 grinding |
+| `autonomous-agent-charter.md` | 无人值守 / 定时 / 多轮自动执行 Agent（缺陷自动化、issues-autofix、CDS agent 等） | 自主智能体宪章（总纲）：无人值守 Agent 是「能担责的数字员工」不是「会办事的脚本」，第一步是定义自主边界（全权自主/请示后做/禁止自动做三档）。五层大脑自检：认知（指令≠目标）/规划（值不值）/执行（事实核查）/记忆（情景召回）/监督（合规红线+不确定性预警+紧急熔断三道事前护栏）。收编熔断/越界/验收闭环/自测优先等散落规则为统一框架 |
 | `artifact-is-experience.md` | 生成类功能（PPT/图片/报告/网页）的等待体验与外观参数 | 产物即体验：等待期主视觉必须是产物本身在生长（流式解析到哪渲染到哪），状态面板/进度卡只配做配角；风格 = AI 生成参照，禁止 CSS 换皮；固有启动开销藏进用户已有动作（如大纲确认期预热）；架构取舍不替用户保守 |
 | `miduo-review-lens.md` | 任何 UI 交付 / 截图 / 验收前 | 米多审查镜头：等待期产物感 / 比例美感 / 交互成本 / 变化可感知（过渡动画义务）/ AI 最小惊讶（未点名内容逐字保留）/ 证据闭环——交付前用用户的眼睛六连问 |
 | `expectation-management.md` | 任何用户感知的交互/反馈/产物/等待 + AI 回复 | 预期管理总纲：让用户任何时刻都知道「在做什么/还要多久/接下来怎样/刚才变了什么/我该做什么」。四种失控（不知在干嘛/不知多久/没料到/白等）逐一消灭；多数体验规则都是它的切面 |
