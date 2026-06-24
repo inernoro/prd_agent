@@ -429,8 +429,8 @@ export class GitHubWebhookDispatcher {
         ciTargetSha: commitSha,
         ciWorkflowConclusion: cached.conclusion,
         ciWorkflowRunUrl: cached.htmlUrl,
-        ciWaitingSince: undefined,
-        ciImageError: undefined,
+        ciWaitingSince: '',
+        ciImageError: '',
       });
       this.deps.stateService.save();
       this.emitCiStatus(branchId, projectId, 'ready', commitSha, cached.htmlUrl);
@@ -449,7 +449,7 @@ export class GitHubWebhookDispatcher {
       ciTargetSha: commitSha,
       ciWorkflowConclusion: cached.conclusion,
       ciWorkflowRunUrl: cached.htmlUrl,
-      ciWaitingSince: undefined,
+      ciWaitingSince: '',
       ciImageError: `CI 构建未成功（${cached.conclusion}）。可在分支详情切回源码编译重试。`,
     });
     this.deps.stateService.save();
@@ -791,9 +791,11 @@ export class GitHubWebhookDispatcher {
     sha: string,
     runUrl?: string,
   ): void {
-    // 带上 ciImageError + ciWorkflowConclusion：BranchList 的 SSE reducer 只合并 patch、不重拉，
-    // 若 patch 缺 ciImageError，已打开的看板会把卡片翻成 failed 却保留空/旧的错误文案，
-    // 「CI 镜像未就绪」解释无法实时送达（Codex P2）。从刚落库的 entry 读最新值一并下发。
+    // 真正驱动 UI 的不是这里的 patch —— /api/branches/stream 的 branch.updated 会从 state
+    // 重新序列化整个 branch 下发，BranchList 按 data.branch merge。所以 ciImageError 等的
+    // 清空必须在 **state** 里写 '' 而非 undefined（见各 updateBranchGithubMeta 调用），否则
+    // JSON.stringify 丢字段、客户端 merge 保留旧值（failed→ready 恢复时旧错误文案不消失）。
+    // patch 这里仍带上同名字段作语义说明，用 '' 兜底保持与 state 一致。
     const fresh = this.deps.stateService.getBranch(branchId);
     branchEvents.emitEvent({
       type: 'branch.updated',
@@ -803,9 +805,6 @@ export class GitHubWebhookDispatcher {
         patch: {
           ciImageStatus: status,
           ciTargetSha: sha,
-          // 清空字段用 '' 而非 undefined：SSE JSON.stringify 丢 undefined，reducer merge
-          // 会让客户端保留旧值（如 failed→ready 恢复时旧 ciImageError 不消失）。空串可
-          // 序列化 + falsy，真正覆盖清空（Codex P2，与看门狗同源）。
           ciWorkflowRunUrl: runUrl ?? '',
           ciWorkflowConclusion: fresh?.ciWorkflowConclusion ?? '',
           ciImageError: fresh?.ciImageError ?? '',
@@ -898,8 +897,8 @@ export class GitHubWebhookDispatcher {
           ciWorkflowRunUrl: run.html_url,
           // 真 CI 完成事件到达 → 清掉看门狗计时与超时文案（若此前已被判超时 failed,
           // 这里允许 failed → ready 恢复,见下方 matcher 的 waiting||failed 条件）。
-          ciWaitingSince: undefined,
-          ciImageError: undefined,
+          ciWaitingSince: '',
+          ciImageError: '',
         });
         this.deps.stateService.save();
         this.emitCiStatus(branchId, target.projectId, 'ready', headSha, run.html_url);
@@ -921,7 +920,7 @@ export class GitHubWebhookDispatcher {
         ciWorkflowRunUrl: run.html_url,
         // 真 CI 失败有了归因（conclusion + run 链接），停掉看门狗计时并写明原因,
         // 区别于「超时无 run」的看门狗失败。
-        ciWaitingSince: undefined,
+        ciWaitingSince: '',
         ciImageError: `CI 构建未成功（${conclusion}）。可在分支详情切回源码编译重试。`,
       });
       this.deps.stateService.save();
@@ -1371,14 +1370,14 @@ export class GitHubWebhookDispatcher {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'waiting',
         ciTargetSha: commitSha,
-        ciWorkflowConclusion: undefined,
+        ciWorkflowConclusion: '',
         // 同时清掉上一次 run 的链接,否则「等待 CI 镜像」卡片的「查看构建」会指向
         // 旧的(可能失败/无关)Actions run（Bugbot: stale CI run link on wait）。
-        ciWorkflowRunUrl: undefined,
+        ciWorkflowRunUrl: '',
         // 看门狗据此判定 waiting 是否超时（CI 完成事件永不到达时翻 failed + 留归因）；
         // 同时清掉上次的超时/失败文案,本次重新计时。
         ciWaitingSince: receivedAt,
-        ciImageError: undefined,
+        ciImageError: '',
       });
       this.deps.stateService.save();
       const waitEntry = this.deps.stateService.getBranch(branchId);

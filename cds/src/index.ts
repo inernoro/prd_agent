@@ -3560,11 +3560,15 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         stateService.updateBranchGithubMeta(b.id, {
           ciImageStatus: 'failed',
           ciWorkflowConclusion: 'timed_out_no_run',
-          ciWaitingSince: undefined,
+          // 清空字段一律用 '' 而非 undefined：/api/branches/stream 的 branch.updated 会
+          // 从 state 重新序列化**整个 branch** 下发，BranchList 按 data.branch merge 覆盖旧项；
+          // JSON.stringify 丢 undefined 字段 → 客户端 merge 时保留旧值（旧「查看构建」链接/
+          // 旧等待时间）。空串可序列化 + falsy，真正清空（Bugbot/Codex P2）。
+          ciWaitingSince: '',
           ciImageError: reason,
           // 超时原因是「无匹配构建完成」，任何旧 run 链接都与本次失败无关，清掉避免
-          // 卡片「查看构建」指向一个误导性的历史 Actions run（Bugbot）。
-          ciWorkflowRunUrl: undefined,
+          // 卡片「查看构建」指向一个误导性的历史 Actions run。
+          ciWorkflowRunUrl: '',
         });
         stateService.save();
         activeServerEventLogStore?.record({
@@ -3582,9 +3586,7 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
           payload: {
             branchId: b.id,
             projectId: b.projectId,
-            // ciWorkflowRunUrl 用 '' 而非 undefined 清空：SSE 流走 JSON.stringify 会丢弃
-            // undefined 字段，BranchList reducer 是「流式分支 merge 覆盖旧项」，丢字段 =
-            // 客户端保留旧的「查看构建」链接。空串可序列化 + falsy，能真正覆盖清空（Codex P2）。
+            // patch 仅作语义「本次变了什么」；真正驱动 UI 的是 SSE 层补的整 branch（见上）。
             patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason, ciWorkflowRunUrl: '' },
             ts: nowIso(),
           },
