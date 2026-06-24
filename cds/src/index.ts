@@ -3555,15 +3555,15 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         // 已退出极速版的源码模式分支误判超时翻 failed（Codex P2，与 workflow_run 同口径）。
         const wdProfiles = stateService.getBuildProfilesForProject(b.projectId);
         if (!branchUsesPrebuiltMode(wdProfiles, b)) continue;
-        // 已停止的分支（用户手动停 / 容器停）即便残留 ciImageStatus='waiting' 也不该被超时翻
-        // failed——否则用户主动停掉的预览会被看门狗改写状态 + 推 SSE（Bugbot）。对齐后端
-        // isStoppedBranch 口径：services 非空 + 无活跃 + 至少一个 stopped。
+        // 看门狗只该对「真正卡在 waiting、没有任何活容器」的分支兜底超时。凡是有实际容器
+        // 状态的分支（残留的 ciImageStatus 是陈旧标记）都跳过，避免改写其状态 + 误推 SSE：
+        //   - 有活跃容器（手动部署过，running/building/starting/restarting）→ 健康预览不该翻 failed（Bugbot）
+        //   - 已停止（用户手动停 / 容器停，有 stopped 容器）→ 用户主动停的预览不该被改写（Bugbot）
         const wdSvcs = Object.values(b.services || {});
-        const wdStopped = wdSvcs.length > 0
-          && !wdSvcs.some((s) => s.status === 'running' || s.status === 'building'
-            || s.status === 'starting' || s.status === 'restarting')
-          && wdSvcs.some((s) => s.status === 'stopped');
-        if (wdStopped) continue;
+        const wdAnyActive = wdSvcs.some((s) => s.status === 'running' || s.status === 'building'
+          || s.status === 'starting' || s.status === 'restarting');
+        if (wdAnyActive) continue;
+        if (wdSvcs.length > 0 && wdSvcs.some((s) => s.status === 'stopped')) continue;
         const sinceIso = b.ciWaitingSince || b.lastPushAt;
         const sinceMs = sinceIso ? Date.parse(sinceIso) : Number.NaN;
         if (!Number.isFinite(sinceMs)) continue;
