@@ -3,7 +3,9 @@ name: human-verify
 description: Multi-perspective code verification that simulates human review. Combines adversarial debate (Devil's Advocate), reverse verification, boundary testing, and user scenario simulation to catch issues that compilers and linters miss. Trigger words: "/verify", "验证一下", "帮我检查".
 ---
 
-# Human Verify — 多角度模拟验证
+# 多角度模拟验证
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/verify`、"验证一下"、"帮我检查"
 
 完成代码后，用**完全不同的视角**交叉验证——不是"能不能跑"，而是"对不对、全不全、稳不稳"。
 

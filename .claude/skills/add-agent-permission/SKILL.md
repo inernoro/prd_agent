@@ -3,11 +3,13 @@ name: add-agent-permission
 description: 新增 Agent 权限。当需要为新功能添加权限时，自动判断分类并同步修改所有相关文件。触发词："加权限"、"新增权限"、"add permission"、"注册 agent"。
 ---
 
-# Add Agent Permission - Agent 权限注册技能
+# Agent 权限注册
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`加权限`、"新增权限"、"add permission"、"注册 agent"
 
 为新功能自动注册权限，确保后端定义、前端映射、内置角色、路由守卫全部同步。
 
-## 触发词
+## 触发
 
 - "加权限"
 - "新增权限"

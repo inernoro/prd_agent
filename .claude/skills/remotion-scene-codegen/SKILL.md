@@ -4,7 +4,9 @@ description: Provides Remotion knowledge context for video scene code generation
 glob: prd-video/**/*.{ts,tsx}
 ---
 
-# Remotion Scene Code Generation — 视频场景代码生成技能
+# 视频场景代码生成技能
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/remotion-scene-codegen`、"优化场景"、"升级动效"、"美化视频"
 
 为视频 Agent 的 LLM 代码生成提供 Remotion 知识上下文。当需要优化视频场景的视觉表现时，将此技能的知识作为系统提示词注入 LLM Gateway，让大模型能生成高质量的 Remotion 场景代码。
 

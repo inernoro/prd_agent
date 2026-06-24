@@ -1,10 +1,17 @@
-# Skill: Update Image Generation Model Size Configuration
+---
+name: update-model-size
+description: 维护生图模型的尺寸配置（ImageGenModelConfigs.cs）。提供向外部工具索取官方文档的结构化提示模板，对比现有配置并应用差异，产出更新后的尺寸/约束/分辨率档位配置。触发词："更新模型尺寸"、"更新 [模型名] 的尺寸"、"更新生图模型尺寸配置"、"update model size"。
+---
 
-## Description
+# 更新生图模型尺寸配置
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/update-model-size`、"更新模型尺寸"、"更新生图模型尺寸配置"、"update model size"
+
+## 用途
 
 This skill helps maintain the image generation model size configurations in `ImageGenModelConfigs.cs`. When triggered, it provides a structured prompt template for requesting official model documentation from external tools (like Manus), then guides through comparing and applying changes.
 
-## Trigger Phrases
+## 触发
 
 - "更新 [模型名] 的尺寸"
 - "更新大模型尺寸"

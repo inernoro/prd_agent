@@ -1,9 +1,11 @@
 ---
 name: risk-matrix
-description: Performs MECE-based risk assessment on feature changes, evaluating probability and impact across non-overlapping dimensions to produce actionable risk reports.
+description: 基于 MECE 分析法对功能变更做全维度风险评估，按概率与影响在六个不重叠维度（正确性/兼容性/性能容量/安全合规/运维部署/用户体验）打分，产出可决策的风险矩阵报告。触发词："风险评估"、"风险矩阵"、"risk matrix"、"这样改有什么风险"、"/risk"。
 ---
 
-# Risk Matrix - 风险比对矩阵
+# 风险比对矩阵
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/risk`、"风险评估"、"风险矩阵"、"risk matrix"
 
 基于 **MECE 分析法**（Mutually Exclusive, Collectively Exhaustive），对功能变更进行全维度风险评估。
 

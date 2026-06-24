@@ -1,13 +1,15 @@
 ---
 name: api-debug
-description: Query the PrdAgent API to fetch real data for debugging. Use when you need to investigate issues, verify data states, or understand system behavior by querying actual API endpoints.
+description: 用 AI Access Key 认证查询 PrdAgent 真实 API 数据，辅助排查问题、核对数据状态、理解系统行为，产出可直接分析的 JSON 响应。触发词："查 API 数据"、"调试接口"、"看真实数据"、"api debug"、"verify data state"。
 ---
 
-# API Debug
+# API 调试
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/api-debug`、"查 API 数据"、"调试接口"
 
 Query the PrdAgent API using AI Access Key authentication to fetch real data for debugging and investigation.
 
-## When to Use
+## 何时用
 
 This skill should be used when:
 - Debugging issues that require checking actual data states

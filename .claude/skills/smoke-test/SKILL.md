@@ -3,7 +3,9 @@ name: smoke-test
 description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Controller 端点，生成链式 curl 命令（前一步的输出 ID 传给后续请求），读取环境变量 AI_ACCESS_KEY 作为认证凭据。触发词："冒烟测试"、"smoke test"、"跑个冒烟"。
 ---
 
-# Smoke Test - 自动化冒烟测试生成
+# 自动化冒烟测试生成
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/smoke`、"冒烟测试"、"smoke test"、"跑个冒烟"
 
 > ℹ️ **CDS 分支冒烟请优先用 `cds` 技能** (2026-04-18)：`cdscli smoke <branchId>` 覆盖了
 > 分层冒烟（L1 根路径 / L2 无认证 API / L3 认证 API）+ 预览域名自动推断。

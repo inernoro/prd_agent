@@ -1,9 +1,11 @@
 ---
 name: task-handoff-checklist
-description: Generates structured handoff reports after completing development tasks. Scans changes across 8 dimensions (navigation, documentation, rules, workflows, testing, risks, code quality, follow-ups) to enable zero-question acceptance. Trigger words: "交接", "验收", "handoff", "/handoff".
+description: 开发任务完成后自动扫描变更，从导航、文档、规则、工作流、测试、风险、代码质量、后续事项八个维度生成结构化交接报告，让验收者零追问即可核对。触发词："交接"、"验收"、"handoff"、"/handoff"。
 ---
 
-# Task Handoff Checklist — 任务交接清单
+# 任务交接清单
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/handoff`、"交接"、"验收"、"handoff"
 
 AI 完成开发后，自动扫描变更，生成结构化交接报告。验收者不用追问就知道：改了哪里、测什么、沉淀了什么、有什么坑。
 

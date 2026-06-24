@@ -3,7 +3,9 @@ name: create-skill-file
 description: Creates and evaluates Claude Code SKILL.md files following Anthropic best practices. Generates well-structured skills with correct frontmatter, progressive disclosure, and quality validation. Trigger words: "创建技能", "新建 skill", "create skill", "技能评分", "skill score", "/create-skill".
 ---
 
-# Create Skill File — 技能创建 & 质量评估
+# 技能创建与质量评估
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/create-skill`、"创建技能"、"新建 skill"、"技能评分"、"skill score"
 
 创建高质量的 SKILL.md 文件，或对现有技能进行质量评分和改进建议。
 

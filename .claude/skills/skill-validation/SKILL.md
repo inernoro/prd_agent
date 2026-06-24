@@ -3,7 +3,9 @@ name: skill-validation
 description: Validates new feature requirements before development begins. Combines requirement smell detection (ambiguity, incompleteness, untestability), deduplication against existing features, and multi-dimensional scoring (RICE + ISO 29148 hybrid) to produce go/no-go decisions with improvement suggestions. Trigger words: "验证需求", "评估需求", "需求评审", "validate requirement", "这个需求靠谱吗", "/validate".
 ---
 
-# Skill Validation — 需求验证判别系统
+# 需求验证判别系统
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/validate`、"验证需求"、"评估需求"、"需求评审"、"这个需求靠谱吗"
 
 在中大型功能需求提出时，**先验证再动手**——检测需求气味、排查功能雷同、多维度打分，输出"通过 / 改进 / 驳回"的结构化判定。
 

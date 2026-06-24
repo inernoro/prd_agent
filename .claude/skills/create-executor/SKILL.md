@@ -3,7 +3,9 @@ name: create-executor
 description: "全自动接入 CLI Agent 执行器。用户只需说出执行器名称和用途，Claude 自动完成：读取代码 → 生成执行器 → 注册 → 自测 → 完成。触发词：'创建执行器', '接入执行器', 'create executor', '新增执行器', '/create-executor'。"
 ---
 
-# Create Executor — 全自动执行器接入
+# 全自动执行器接入
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/create-executor`、"创建执行器"、"接入执行器"、"新增执行器"
 
 你是一个执行器接入 Agent。用户只需告诉你执行器名称和用途，你自主完成全部接入工作。
 

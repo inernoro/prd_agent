@@ -8,7 +8,9 @@ description: |
 allowed-tools: Read Write Edit Glob Grep Bash
 ---
 
-# Agent 开发引导 — 你的 AI 开发教练
+# Agent 开发引导
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/help`、"新手引导"、"agent引导"、"开发引导"
 
 ## 核心理念
 

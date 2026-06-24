@@ -3,7 +3,9 @@ name: theme-transition
 description: 为任意前端项目添加主题切换圆形过渡动效（View Transition API + clip-path 水波纹扩散）。适用于 React/Vanilla/Tauri 等技术栈，含完整 CSS、JS 代码与降级方案。触发词："主题过渡"、"皮肤切换动效"、"theme transition"、"ripple theme"、"/theme-transition"。
 ---
 
-# Theme Transition — 主题切换圆形过渡动效
+# 主题切换圆形过渡动效
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/theme-transition`、"主题过渡"、"皮肤切换动效"、"ripple theme"
 
 为项目添加从按钮位置向外扩散的圆形 clip-path 主题切换动画，基于 View Transition API，自动降级到瞬时切换。
 

@@ -3,7 +3,9 @@ name: issues-visual-create
 description: 手动触发创建一个视觉验收子 issue。输入"要测什么"（PR 号 / 页面路径 / 提交 hash），按 #605 元 issue 模板 v0.x 生成一条 [visual-test] 子 issue，挂 label visual-test:pending，等待执行者 Agent 接单。触发词："/issues-visual-create"、"创建视觉验收"、"开视觉测试 issue"、"visual test create"。
 ---
 
-# Issues Visual Create — 创建视觉验收子 issue
+# 创建视觉验收子 issue
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/issues-visual-create`、"创建视觉验收"、"开视觉测试 issue"、"visual test create"
 
 > 把"我想给这个改动做视觉验收"变成一条结构化、可被 24h 执行者 Agent 接单的 GitHub issue。
 >

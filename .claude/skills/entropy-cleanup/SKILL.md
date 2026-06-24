@@ -3,7 +3,9 @@ name: entropy-cleanup
 description: 日常熵清理技能。扫描六个维度的一致性债务并双向修复（补缺 + 删幽灵）：(1) doc/ 命名规范违规；(2) doc/index.yml 缺失/幽灵条目；(3) doc/guide.list.directory.md 缺失/幽灵条目；(4) CLAUDE.md 技能表缺失/幽灵行；(5) codebase-snapshot 过期数据；(6) changelog→doc 内容覆盖（增量，manifest 追踪）。触发词："/entropy"、"熵清理"、"文档欠债"、"索引同步"、"entropy cleanup"。
 ---
 
-# Entropy Cleanup — 日常熵清理
+# 日常熵清理
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/entropy`、"熵清理"、"文档欠债"、"索引同步"、"entropy cleanup"
 
 ## 背景
 

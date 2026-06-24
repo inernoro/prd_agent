@@ -3,9 +3,10 @@ name: findmapskills
 description: PrdAgent 海鲜市场（skill marketplace）操作技能。通过长效 API Key 搜索、下载、上传、订阅本平台的技能包。当用户说"找个海鲜市场的技能做 X"、"从市场装个技能"、"把这个技能发布到市场"、"订阅新技能"时触发。
 ---
 
-# findmapskills（海鲜市场全操作）
+# 海鲜市场全操作（findmapskills）
 
-> **版本**：1.1.0（2026-05-01）
+> **版本**：v1.1.0 | **状态**：已落地 | **触发**：`/findmapskills`、"海鲜市场"、"从市场装技能"、"发布到市场"、"订阅新技能"
+
 > **来源**：$PRD_AGENT_BASE —— PrdAgent 官方内置技能，持续跟随后端 API 契约更新
 > **最新版下载**：`curl -sSLo findmapskills.zip $PRD_AGENT_BASE/api/official-skills/findmapskills/download`
 

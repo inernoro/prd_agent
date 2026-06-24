@@ -3,7 +3,9 @@ name: weekly-update-summary
 description: Generates weekly project reports from git history. Collects commits, PRs, and contributor data, analyzes and categorizes changes, then produces a structured Chinese-language weekly report (overview, completed items, next-week priorities) saved to doc/report.YYYY-WXX.md. Trigger words: "生成周报", "写周报", "weekly report", "本周总结".
 ---
 
-# Weekly Update Summary — 自动化周报生成
+# 自动化周报生成
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/weekly`、"生成周报"、"写周报"、"weekly report"、"本周总结"
 
 每周自动从 git 历史中收集数据，分析归类后生成结构化中文周报。
 

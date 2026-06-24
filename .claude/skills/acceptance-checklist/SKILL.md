@@ -3,7 +3,9 @@ name: acceptance-checklist
 description: Generates a step-by-step user acceptance test (UAT) checklist that a real human executes by hand, with expected results and failure playbooks at every checkpoint. Covers CLI + Web UI scenarios, supports cold-start injection, and is checkbox-driven so the operator can mark progress. Trigger words: "/uat", "验收清单", "真人验收", "acceptance test", "让我验收".
 ---
 
-# Acceptance Checklist — 真人验收清单
+# 真人验收清单
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/uat`、"验收清单"、"真人验收"、"acceptance test"、"让我验收"
 
 给**即将亲手操作系统的真人**用的结构化打勾清单。不是代码审查，不是 curl 冒烟——是"按这张表操作，每一步都告诉我应该看到什么、看不到时按哪个键排错"。
 

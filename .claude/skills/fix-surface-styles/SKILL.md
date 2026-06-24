@@ -3,7 +3,9 @@ name: fix-surface-styles
 description: 扫描并修复 CSS 样式偏差，统一到 Surface System。当发现页面样式不一致（灰蒙蒙、不透明、hover 不统一）时一句话修复。触发词："修复样式"、"统一样式"、"fix styles"、"surface check"、"/fix-surface"。
 ---
 
-# Fix Surface Styles — CSS 样式统一修复
+# CSS 样式统一修复
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/fix-surface`、"修复样式"、"统一样式"、"fix styles"、"surface check"
 
 自动扫描 `prd-admin/src` 下所有 `.tsx` 文件，检测不符合 Surface System 规范的样式反模式，并批量修复。
 

@@ -3,9 +3,11 @@ name: acceptance-scenario-orchestrator
 description: 识别每日验收、PR 验收、commit 验收、未发布分支验收、缺陷复测、视觉回归和发布前验收等场景，并为 create-visual-test-to-kb 生成测试范围、指差法步骤、预期结果、证据链、截图回读和报告结构。Use when the user asks to optimize or run visual acceptance across different scenarios, asks whether yesterday's changes, a PR, a commit range, or an unpublished branch were really accepted, or needs PR/commit results to map to screenshots and MAP knowledge base reports.
 ---
 
-# Acceptance Scenario Orchestrator
+# 验收场景编排器
 
-## Overview
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/验收场景`、"PR 验收"、"每日验收"、"commit 验收"、"未发布分支验收"、"缺陷复测"
+
+## 用途
 
 Use this skill before `create-visual-test-to-kb` when the验收目标 is broader than a single linear page check. The output is an execution brief that tells the downstream acceptance skill exactly what to test, what to announce before testing, what evidence must be captured, and how to decide the final verdict.
 

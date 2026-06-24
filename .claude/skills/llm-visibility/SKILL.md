@@ -3,7 +3,9 @@ name: llm-visibility
 description: LLM 交互过程可视化审计。扫描代码中所有 LLM 调用点，检查是否符合「禁止空白等待」原则，生成合规报告并提供修复建议。触发词："可视化审计"、"llm visibility"、"/visibility"。
 ---
 
-# LLM Visibility — 交互过程可视化审计与组件指南
+# LLM 交互过程可视化审计
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/visibility`、"可视化审计"、"llm visibility"、"检查等待体验"
 
 确保所有涉及 LLM 调用的功能向用户展示交互过程，禁止静止等待超过 2 秒。
 

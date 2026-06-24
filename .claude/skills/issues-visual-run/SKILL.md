@@ -3,7 +3,9 @@ name: issues-visual-run
 description: 24h 视觉测试执行者 Agent 的逻辑。手动触发后从仓库拉取所有 label = visual-test:pending 的 issue，按子 issue body 的矩阵跑用例，回评论失败项 + 截图 + 严重级，或 /visual-pass 通过。完全不创建新 issue。触发词："/issues-visual-run"、"执行视觉验收"、"视觉测试接单"、"visual test run"。
 ---
 
-# Issues Visual Run — 24h 视觉测试执行者
+# 视觉测试执行者
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/issues-visual-run`、"执行视觉验收"、"视觉测试接单"、"visual test run" | **SSOT**：`doc/rule.issues-system.md`
 
 > 视觉测试执行者 Agent 的"接单 → 跑测 → 回报"逻辑。
 >

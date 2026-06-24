@@ -3,7 +3,9 @@ name: doc-sync
 description: 文档索引同步技能。扫描 doc/ 目录，自动对齐 index.yml 和 guide.list.directory.md。手动触发 /doc-sync，或由周报技能自动调用。触发词："同步文档索引"、"更新文档目录"、"doc sync"、"/doc-sync"。
 ---
 
-# Doc Sync — 文档索引同步
+# 文档索引同步
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/doc-sync`、"同步文档索引"、"更新文档目录"
 
 扫描 `doc/` 目录下所有 `.md` 文件，与 `doc/index.yml` 和 `doc/guide.list.directory.md` 进行双向对比，补齐缺失条目、移除已删除条目。
 

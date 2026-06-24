@@ -3,7 +3,9 @@ name: doc-writer
 description: Guards document creation and modification in the doc/ directory, enforcing 6 standardized type templates (spec, design, plan, rule, guide, report). Validates file naming, header format, and type compliance. Manually triggered via /doc to show the type quick-reference, or auto-triggered when creating/modifying .md files under doc/. Trigger words: "写文档", "新建文档", "文档模板", "/doc".
 ---
 
-# Doc Writer — 文档写作守护
+# 文档写作守护
+
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/doc`、"写文档"、"新建文档"、"文档模板"
 
 确保 `doc/` 下所有文档遵循统一的 6 种类型模板。创建新文档时自动套用模板，修改文档时校验格式。
 

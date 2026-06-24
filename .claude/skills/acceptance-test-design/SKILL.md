@@ -3,9 +3,11 @@ name: acceptance-test-design
 description: Convert PRs, commits, yesterday's changes, or release scope into a test-minded acceptance design before visual execution. Use when the user asks for daily acceptance, visual acceptance, PR/commit acceptance, proof that code changes really affected product behavior, coverage planning, fusion testing, evidence strength, or when screenshots/reports looked related but failed to prove the assigned task.
 ---
 
-# Acceptance Test Design
+# 验收测试设计
 
-## Purpose
+> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/验收设计`、"验收设计"、"PR/commit 验收"、"覆盖规划"、"融合测试"
+
+## 用途
 
 Use this skill before visual acceptance or MAP report archiving when the hard part is deciding what to test. It turns raw code changes into risk hypotheses, user-visible impact, fusion test scenarios, and evidence requirements.
 
