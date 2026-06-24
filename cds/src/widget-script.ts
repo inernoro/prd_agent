@@ -64,8 +64,9 @@ export function buildWidgetScript(
     #cds-widget .cds-branch{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #cds-widget .cds-tag{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.15);margin-left:2px}
     #cds-widget .cds-sha{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:5px;background:rgba(56,139,253,0.18);color:#dbeafe;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.6px;border:1px solid rgba(56,139,253,0.32)}
-    #cds-widget .cds-mode{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:5px;background:rgba(255,255,255,0.12);color:#e6edf3;letter-spacing:0.3px}
-    #cds-widget .cds-mode.fast{background:rgba(34,211,238,0.18);color:#a5f3fc;border:1px solid rgba(34,211,238,0.32)}
+    #cds-widget .cds-mode{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:5px;letter-spacing:0.3px;background:rgba(255,255,255,0.12);color:#e6edf3}
+    #cds-widget .cds-mode.fast{background:rgba(34,197,94,0.20);color:#86efac;border:1px solid rgba(34,197,94,0.36)}
+    #cds-widget .cds-mode.source{background:rgba(245,158,11,0.20);color:#fcd34d;border:1px solid rgba(245,158,11,0.36)}
     #cds-widget .cds-sync-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.12);font-size:9px;color:#f8fafc;letter-spacing:0.2px}
     #cds-widget .cds-sync-chip.done{background:rgba(63,185,80,0.16);border-color:rgba(63,185,80,0.34);color:#bef3c0}
     #cds-widget .cds-sync-chip.error{background:rgba(248,81,73,0.18);border-color:rgba(248,81,73,0.34);color:#ffb4ae}
@@ -618,9 +619,10 @@ export function buildWidgetScript(
     h+='<div class="'+badgeClass+'" onmousedown="return false">';
     h+='<div class="cds-badge-main">';
     h+='<span class="cds-badge-icon">'+(syncState.visible&&syncState.phase==='syncing'?ICON_REFRESH:ICON_BRANCH)+'</span>';
-    h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
+    // 版本信息放最前（紧跟图标），避免被很长的分支名挤到看不见；sha / 模式各自配色。
     if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
-    if(DEPLOY_MODE_LABEL)h+='<span class="cds-mode'+(DEPLOY_MODE_LABEL==='极速'?' fast':'')+'">'+DEPLOY_MODE_LABEL+'</span>';
+    if(DEPLOY_MODE_LABEL)h+='<span class="cds-mode'+(DEPLOY_MODE_LABEL==='极速'?' fast':' source')+'">'+DEPLOY_MODE_LABEL+'</span>';
+    h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
     if(syncState.visible){
       var syncChipClass='cds-sync-chip'+(syncState.phase==='done'?' done':syncState.phase==='error'?' error':'');
       h+='<span class="'+syncChipClass+'" title="'+syncLabelText().replace(/"/g,'&quot;')+'">';
@@ -630,8 +632,9 @@ export function buildWidgetScript(
       h+='<span>'+(syncState.phase==='done'?'完成':syncState.phase==='error'?'失败':'刷新')+' '+Math.round(syncState.progress)+'%</span>';
       h+='</span>';
     }
+    // 分支自定义标签照常显示；不再显示默认的「CDS」泛标签——部署类型已由前面的
+    // 极速/发布 chip 表达（用户 2026-06-24：分支标改为极速或发布标）。
     if(branchTags.length){for(var ti=0;ti<branchTags.length;ti++){h+='<span class="cds-tag">'+branchTags[ti]+'</span>';}}
-    else{h+='<span class="cds-tag">CDS</span>';}
     h+='<button data-action="toggle" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
     h+='<button data-action="dismiss">'+ICON_X+'</button>';
     h+='</div>';

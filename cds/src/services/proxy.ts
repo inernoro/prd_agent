@@ -2278,8 +2278,9 @@ ${shouldAutoRefresh ? `;(function(){
             : undefined;
           const anyMode = svcMode
             ?? Object.values(entry?.services ?? {}).find((s) => s?.deployedMode)?.deployedMode;
+          // 部署类型只分两类给用户看：极速（CI 预构建镜像）/ 发布（源码编译产出的发布版）。
           const modeLabel = anyMode
-            ? (/express|prebuilt|release/i.test(anyMode) ? '极速' : '源码')
+            ? (/express|prebuilt/i.test(anyMode) ? '极速' : '发布')
             : '';
           const widget = buildWidgetScript(
             branchCtx.branchId,
