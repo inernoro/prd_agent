@@ -46,12 +46,14 @@ describe('pickSourceFallbackMode', () => {
     expect(pickSourceFallbackMode(modes, 'express')).toBeNull();
   });
 
-  it('无 command 的模式被排除（无法源码构建）', () => {
+  it('不要求模式自带 command（可继承 baseline，Codex P2）', () => {
+    // 模式只覆盖元数据/env、command 继承 baseline 的合法配置：pickSourceFallbackMode 仍选它，
+    // command 是否解析得到交给下游 resolveEffectiveProfile 的 srcProfile.command 检查兜底。
     const modes: Record<string, DeployModeOverride> = {
       express: mode({ prebuilt: true }),
-      empty: mode({ command: '   ' }), // 空白 command 视为无
+      static: mode({}), // 无自带 command（继承 baseline）
     };
-    expect(pickSourceFallbackMode(modes, 'express')).toBeNull();
+    expect(pickSourceFallbackMode(modes, 'express')).toBe('static');
   });
 
   it('无 deployModes / 无可回退 → null（调用方维持硬失败，不假装能跑）', () => {

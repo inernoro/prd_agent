@@ -1776,11 +1776,15 @@ export const FENCED_CLEANUP_RUNTIME_PRODUCING_KINDS: ReadonlySet<BranchOperation
 
 /** 纯函数：在活跃操作里找出「会接管容器」的非己方操作（用于 fenced cleanup 跳过判定）。可单测。 */
 export function findFencedCleanupRuntimeOwner(
-  activeOps: ReadonlyArray<{ operationId: string; request: { kind: BranchOperationKind; source?: string | null } }>,
+  activeOps: ReadonlyArray<{ operationId: string; cancelled?: boolean; request: { kind: BranchOperationKind; source?: string | null } }>,
   selfOperationId: string | null | undefined,
 ): { operationId: string; kind: BranchOperationKind; source: string | null } | null {
   for (const op of activeOps) {
     if (op.operationId === selfOperationId) continue;
+    // Codex P2「Ignore older cancelled operations during fenced cleanup」：被取代但尚未
+    // 收尾的操作仍可能挂在 active 列表里且 cancelled=true。它**不会**接管容器，若把它当
+    // owner 会误跳过清理、把失败容器留下。已取消的操作一律不算 runtime owner。
+    if (op.cancelled) continue;
     if (FENCED_CLEANUP_RUNTIME_PRODUCING_KINDS.has(op.request.kind)) {
       return { operationId: op.operationId, kind: op.request.kind, source: op.request.source ?? null };
     }
@@ -10590,10 +10594,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
             if (ready) {
               svc.status = 'running';
               svc.errorMessage = undefined;
-              // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode
-              // 启动（用本次构建的 effectiveProfile，已含 override）。卡片
-              // 据此判断"真发布"还是"配置了但容器没跟上"。
-              svc.deployedMode = effectiveProfile.activeDeployMode || '';
+              // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode 启动。
+              // 2026-06-24（Bugbot）：runService 已在容器实际起来后权威钉过 svc.deployedMode
+              // （含极速版→源码自动回退后的真实模式），优先采纳它；仅其未设时退回
+              // effectiveProfile.activeDeployMode（极速版会是 express，回退场景下不准）。
+              svc.deployedMode = svc.deployedMode || effectiveProfile.activeDeployMode || '';
               logDeploy(id, `${profile.name} 启动成功 ✓`);
               const elapsed = Date.now() - serviceStartTime;
               logEvent({

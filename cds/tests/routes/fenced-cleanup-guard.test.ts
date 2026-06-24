@@ -38,6 +38,27 @@ describe('findFencedCleanupRuntimeOwner', () => {
     expect(findFencedCleanupRuntimeOwner([op('op_self', 'deploy')], 'op_self')).toBeNull();
   });
 
+  it('已取消的 runtime-producing 操作不算 owner（Codex P2）', () => {
+    // 被取代但未收尾的旧部署 cancelled=true 仍挂在 active 列表；它不会接管容器，
+    // 不能因它而跳过清理，否则失败容器被留下。
+    const owner = findFencedCleanupRuntimeOwner(
+      [{ operationId: 'op_old_cancelled', cancelled: true, request: { kind: 'deploy', source: 'api.old' } }],
+      'op_self',
+    );
+    expect(owner).toBeNull();
+  });
+
+  it('混入已取消旧操作时，仍能找到未取消的新 owner', () => {
+    const owner = findFencedCleanupRuntimeOwner(
+      [
+        { operationId: 'op_old_cancelled', cancelled: true, request: { kind: 'deploy', source: 'api.old' } },
+        { operationId: 'op_newer', cancelled: false, request: { kind: 'restart', source: 'api.new' } },
+      ],
+      'op_self',
+    );
+    expect(owner?.operationId).toBe('op_newer');
+  });
+
   it('抢占者是终止类操作（delete/stop/reset）→ 不算 runtime-producing，走原 terminal 判定', () => {
     for (const kind of ['delete', 'stop', 'reset', 'janitor-remove'] as BranchOperationKind[]) {
       expect(findFencedCleanupRuntimeOwner([op('op_term', kind)], 'op_self')).toBeNull();

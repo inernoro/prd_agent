@@ -215,9 +215,12 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
  * ≥1 个组件的 sha 镜像 → express docker pull 404。与其硬失败，不如自动切到本 profile 里
  * 一个非 prebuilt 的部署模式，从源码在 CDS 本机编译跑起来。
  *
- * 选择规则：在 deployModes 里挑 prebuilt!==true 且**带 command**（能真正源码构建）的模式，
- * 跳过当前（失败的）模式；按常见源码模式名 static/source/dev/build 优先，否则取第一个满足的。
- * 找不到（该 profile 压根没有源码模式）返回 null —— 调用方维持原有硬失败，不假装能跑。
+ * 选择规则：在 deployModes 里挑 prebuilt!==true 的模式（**不**要求该模式自带 command ——
+ * 有些源码/static 模式只覆盖 env/元数据、command 继承 baseline，resolveProfileWithMode 仍能
+ * 正确跑起来，Codex P2「Allow fallback modes to inherit baseline commands」）；跳过当前
+ * （失败的）模式；按常见源码模式名 static/source/dev/build 优先，否则取第一个。command 是否
+ * 真的解析得到，由 resolveEffectiveProfile 解析后那道 `srcProfile.command` 检查兜底——解析不出
+ * command 才不挂回退（维持硬失败，不假装能跑）。找不到任何非 prebuilt 模式返回 null。
  *
  * 纯函数，export 给单测。
  */
@@ -227,7 +230,7 @@ export function pickSourceFallbackMode(
 ): string | null {
   if (!deployModes) return null;
   const candidates = Object.entries(deployModes).filter(
-    ([name, ov]) => ov.prebuilt !== true && !!(ov.command && ov.command.trim()) && name !== currentMode,
+    ([name, ov]) => ov.prebuilt !== true && name !== currentMode,
   );
   if (candidates.length === 0) return null;
   const preferred = ['static', 'source', 'dev', 'build'];
@@ -1056,11 +1059,16 @@ export class ContainerService {
         seen.add(fb);
       }
 
+      let pulledImage: string | null = null;
+      let lastDetail = '';
+      // Bugbot Medium「Unresolved tag skips source fallback」：tag 未解析（空 SHA /
+      // 未展开 ${} / 无候选）时，**不再**提前硬抛 —— 走下面统一的 `!pulledImage` 分支，
+      // 同样自动回退源码编译。只有连源码模式都没有时才硬失败。
       if (candidates.length === 0) {
-        const reason = `极速版镜像 tag 未解析且无可用回退镜像: ${primary || '(空)'} —— 缺 commit SHA / 分支 slug。`;
-        onOutput?.(`── ${reason} ──\n`);
+        lastDetail = `极速版镜像 tag 未解析且无可用回退镜像: ${primary || '(空)'} —— 缺 commit SHA / 分支 slug。`;
+        onOutput?.(`── ${lastDetail} ──\n`);
         this.recordContainerEvent({
-          severity: 'error',
+          severity: 'warn',
           source: 'cds-container-service',
           action: 'app.pull.unresolved-tag',
           message: `prebuilt image tag unresolved: ${primary}`,
@@ -1071,23 +1079,20 @@ export class ContainerService {
           operationId: context.operationId ?? undefined,
           details: { image: primary, fallback: fallbackList, reason: '极速版镜像 tag 模板变量为空/未解析且无回退' },
         });
-        throw new Error(`${reason}\n请确认分支已有 commit（push 或部署请求携带 commitSha）,或配置回退镜像 / 切回源码编译。`);
-      }
-
-      let pulledImage: string | null = null;
-      let lastDetail = '';
-      for (let i = 0; i < candidates.length; i++) {
-        const cand = candidates[i];
-        onOutput?.(cand.kind === 'fallback'
-          ? `── 本 commit 无该组件 CI 镜像,按回退链尝试 ${cand.image} ──\n`
-          : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
-        context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
-        const pull = await this.shell.exec(`docker pull ${cand.image}`);
-        if (pull.stdout) onOutput?.(pull.stdout + '\n');
-        if (pull.exitCode === 0) { pulledImage = cand.image; break; }
-        lastDetail = (pull.stderr || pull.stdout || '').trim();
-        const hasNext = i < candidates.length - 1;
-        onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? `（改用下一个回退镜像 ${candidates[i + 1].image}）` : ''} ──\n`);
+      } else {
+        for (let i = 0; i < candidates.length; i++) {
+          const cand = candidates[i];
+          onOutput?.(cand.kind === 'fallback'
+            ? `── 本 commit 无该组件 CI 镜像,按回退链尝试 ${cand.image} ──\n`
+            : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
+          context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
+          const pull = await this.shell.exec(`docker pull ${cand.image}`);
+          if (pull.stdout) onOutput?.(pull.stdout + '\n');
+          if (pull.exitCode === 0) { pulledImage = cand.image; break; }
+          lastDetail = (pull.stderr || pull.stdout || '').trim();
+          const hasNext = i < candidates.length - 1;
+          onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? `（改用下一个回退镜像 ${candidates[i + 1].image}）` : ''} ──\n`);
+        }
       }
 
       if (!pulledImage) {
@@ -1236,6 +1241,12 @@ export class ContainerService {
         });
         throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
+      // 2026-06-24（Bugbot Medium「Fallback mode not recorded」）：在 runService 内
+      // 权威钉住**实际**启动用的 deploy mode —— profile 此刻已是回退后的真实 profile
+      // （极速版镜像缺失自动回退源码时 = static）。否则上层用未变的 effectiveProfile.
+      // activeDeployMode（仍是 express）钉 deployedMode，预览 widget 会把实际跑源码的
+      // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
+      service.deployedMode = profile.activeDeployMode || '';
       this.recordContainerEvent({
         severity: 'info',
         source: 'cds-container-service',
